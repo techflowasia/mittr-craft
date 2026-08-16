@@ -1,6 +1,6 @@
 {
   "name": "@openchamber/electron",
-  "version": "1.0.0",
+  "version": "1.18.4",
   "private": true,
   "description": "Electron desktop runtime for Mittr Craft",
   "author": "Mittr Craft",
