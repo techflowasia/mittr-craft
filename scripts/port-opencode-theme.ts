@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 
 /*
- * Port OpenCode themes into full OpenChamber theme JSON files.
+ * Port OpenCode themes into full Mittr Craft theme JSON files.
  *
  * Usage:
  *   bun run themes:port:opencode --list
@@ -11,8 +11,8 @@
  *
  * Expected result:
  *   - resolves theme colors from OpenCode desktop themes, TUI context themes,
- *     or existing OpenChamber theme JSON files
- *   - writes complete OpenChamber light/dark theme JSON output with solid core
+ *     or existing Mittr Craft theme JSON files
+ *   - writes complete Mittr Craft light/dark theme JSON output with solid core
  *     surfaces, interactive colors, syntax colors, and full schema coverage
  *   - produces files ready to register in presets without half-mapped tokens
  */

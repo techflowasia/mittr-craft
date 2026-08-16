@@ -1,4 +1,4 @@
-# OpenChamber Mobile Handoff
+# Mittr Craft Mobile Handoff
 
 Status and process reference for the native iOS/Android apps. Written so work can continue after
 merge — either by finishing CI/release automation, or by adding features as follow-up fixes. The
@@ -11,7 +11,7 @@ renderer), not the desktop shell. The native app is a WKWebView (iOS) / Android 
 bundled copy of the web build; native capabilities are added via Capacitor plugins and two iOS app
 extensions.
 
-- App id / package: `com.openchamber.app`; app name `OpenChamber`.
+- App id / package: `asia.mittr.app`; app name `Mittr Craft`.
 - Capacitor config: `capacitor.config.ts` (Keyboard `resize: 'none'`, StatusBar overlay, Push
   `presentationOptions: []`).
 - Renderer: the web build's `mobile.html` entry (`MobileApp`), copied into `dist/` and served by
@@ -92,7 +92,7 @@ iOS Simulator helpers: `mobile:sim:{boot,install,launch,run,serve,list,kill}` (s
   device's push when an interactive (desktop/web) client is visible.
 - **iOS widgets + Control Center + Notification Service Extension** — WidgetKit extension
   (`OpenChamberWidget`), a Control Center control, and an NSE (`OpenChamberNotificationService`)
-  that refreshes widgets from push. All share the App Group `group.com.openchamber.app`.
+  that refreshes widgets from push. All share the App Group `group.asia.mittr.app`.
 - **Native chrome** — status bar (iOS overlay + safe-area; Android inset + themed background),
   keyboard handling (iOS CSS inset; Android native `adjustResize`), edge-swipe session switch,
   back-button handling, app-icon badge.
@@ -117,16 +117,16 @@ iOS Simulator helpers: `mobile:sim:{boot,install,launch,run,serve,list,kill}` (s
 
 - Extensions: `OpenChamberWidget` (WidgetKit, deployment 17.0) and `OpenChamberNotificationService`
   (NSE, 15.5), both hand-wired into `App.xcodeproj/project.pbxproj` and embedded via a copy phase.
-- App Group `group.com.openchamber.app` in all three targets' entitlements (app + widget + NSE).
+- App Group `group.asia.mittr.app` in all three targets' entitlements (app + widget + NSE).
 - `Info.plist`: `CFBundleURLTypes` scheme `openchamber`, `NSCameraUsageDescription`.
 - Push entitlement (aps-environment) required.
 - APNs `mutable-content: 1` (set server/relay side) wakes the NSE to refresh widgets.
 
 ### Android (`android/app`)
 
-- `google-services.json` (committed; Firebase project `openchamber-8bf7e`). The Google Services
-  Gradle plugin is applied conditionally when the file exists; `@capacitor/push-notifications`
-  brings `firebase-messaging`.
+- Replace the committed `google-services.json` with Firebase configuration that contains
+  `asia.mittr.app` before enabling Android push. The Google Services Gradle plugin applies only
+  when the config contains this package; `@capacitor/push-notifications` brings `firebase-messaging`.
 - Manifest: permissions `INTERNET`, `CAMERA` (+ optional camera feature), `POST_NOTIFICATIONS`
   (Android 13+; older versions allow notifications by default). `windowSoftInputMode=adjustResize`.
   FCM `default_notification_icon=@drawable/ic_stat_notify`.
@@ -144,8 +144,8 @@ iOS Simulator helpers: `mobile:sim:{boot,install,launch,run,serve,list,kill}` (s
 - **Capacitor stream transport is locked to SSE** on the native apps (native WebSocket streaming is
   unreliable on Android). The Chat transport setting shows SSE selected and disables the others in
   the Capacitor shell.
-- **Android push needs the app rebuilt with `google-services.json`**; without it `register()` used
-  to crash ("Default FirebaseApp is not initialized"). Registration is gated to iOS/Android natives.
+- **Android push needs a Firebase `google-services.json` containing `asia.mittr.app`**. Until it is
+  supplied, the app builds but native push registration is unavailable.
 
 ## Validation
 
@@ -167,7 +167,7 @@ TestFlight / Play internal testing:
 ### iOS
 
 - Apple Developer account; App IDs for the app **and** both extensions
-  (`com.openchamber.app`, `.OpenChamberWidget`, `.OpenChamberNotificationService`), each enabled for
+  (`asia.mittr.app`, `.MittrCraftWidget`, `.MittrCraftNotificationService`), each enabled for
   the **App Group** and (app) **Push**.
 - Signing certificate + provisioning profiles for all three targets (extensions need their own).
 - App Store Connect API key for non-interactive TestFlight upload (`xcodebuild archive` +
@@ -180,7 +180,7 @@ TestFlight / Play internal testing:
   scripts here produce an unsigned debug APK.
 - Play Console app + internal testing track; a Play service account for automated upload (fastlane
   `supply` or the Play Developer API).
-- `google-services.json` is committed, so FCM builds in CI without extra setup.
+- Add the Firebase `google-services.json` for `asia.mittr.app` to CI before enabling FCM builds.
 - Runner: Linux with the Android SDK + `openjdk@21`.
 
 ### Notes for CI

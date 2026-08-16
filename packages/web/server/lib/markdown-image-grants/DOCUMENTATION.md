@@ -28,7 +28,7 @@ different machine.
   storage layer. Missing files return per-source results so the gallery can
   remove only those items.
 
-The routes are OpenChamber-owned and must be registered before the generic
+The routes are Mittr Craft-owned and must be registered before the generic
 OpenCode proxy. Web, Electron, hosted mobile, and Capacitor use the shared
 server implementation. VS Code does not call this route for workspace images;
 those use its local filesystem bridge. If called, the grant route returns an

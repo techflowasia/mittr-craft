@@ -1,17 +1,17 @@
 # Scheduled Tasks module
 
-Server-owned scheduled task runtime and routes for OpenChamber-only automation.
+Server-owned scheduled task runtime and routes for Mittr Craft-only automation.
 
 ## Scope
 
 - Per-project scheduled task persistence is owned by `packages/web/server/lib/projects/project-config.js`.
 - Markdown loop discovery/parsing is owned by `packages/web/server/lib/scheduled-tasks/loops.js`.
 - Runtime orchestration and execution is owned by `packages/web/server/lib/scheduled-tasks/runtime.js`.
-- This module is OpenChamber feature logic; it is intentionally separate from OpenCode proxy/runtime internals.
+- This module is Mittr Craft feature logic; it is intentionally separate from OpenCode proxy/runtime internals.
 
 ## Cross-instance occurrence claiming
 
-Multiple OpenChamber server processes can share the same on-disk project config
+Multiple Mittr Craft server processes can share the same on-disk project config
 (for example CLI `serve` on port 3000 and the Electron desktop server on port
 57123). Each process keeps its own timers, so without coordination a daily (or
 weekly / cron / once) slot would dispatch twice.
@@ -65,7 +65,7 @@ Manual `runNow` does not claim a schedule occurrence.
   - Timer scheduling and queueing
   - Concurrency controls
   - Session create + prompt_async execution
-  - Emits OpenChamber task-run events
+  - Emits Mittr Craft task-run events
 
 - `packages/web/server/lib/scheduled-tasks/loops.js`
   - Discovery of `.agents/loops/*.md` (project scope, ancestors up to the worktree root) and `~/.agents/loops/*.md` (user scope)
@@ -77,7 +77,7 @@ Manual `runNow` does not claim a schedule occurrence.
   - Listing tasks reconciles loop files first, so opening the Scheduled Tasks UI discovers file additions, edits, and removals without a server restart
   - Loop-file endpoints toggle `enabled` in frontmatter or delete the authoritative markdown file, then reconcile the project
   - Manual run endpoint
-  - OpenChamber events SSE stream endpoint
+  - Mittr Craft events SSE stream endpoint
 
 ## Loop file format
 

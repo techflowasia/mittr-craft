@@ -188,14 +188,14 @@ const TOOL_METADATA: Record<string, ToolMetadata> = {
     },
 
     openchamber: {
-      displayName: 'OpenChamber',
+      displayName: 'Mittr Craft',
       category: 'system',
       outputLanguage: 'json',
       inputFields: []
     },
 
     openchamber_web: {
-      displayName: 'OpenChamber Web',
+      displayName: 'Mittr Craft Web',
       category: 'system',
       outputLanguage: 'json',
       inputFields: []

@@ -1,4 +1,4 @@
-# Contributing to OpenChamber
+# Contributing to Mittr Craft
 
 ## Getting Started
 

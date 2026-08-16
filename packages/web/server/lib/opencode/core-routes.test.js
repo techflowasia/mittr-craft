@@ -438,7 +438,7 @@ describe('core-routes', () => {
     expect(response.headers['cache-control']).toBe('no-store');
     expect(response.body).toMatchObject({
       ok: true,
-      server: { label: 'OpenChamber', url: 'http://runtime.example', fingerprint: 'ABCD-1234' },
+      server: { label: 'Mittr Craft', url: 'http://runtime.example', fingerprint: 'ABCD-1234' },
       client: { id: 'client-1', authMethod: 'pairing' },
       clientToken: 'oc_client_token',
     });
@@ -690,7 +690,7 @@ describe('client auth routes', () => {
 
     const current = await request(app)
       .post('/api/client-auth/clients')
-      .send({ label: 'OpenChamber Desktop', clientKind: 'desktop-local' });
+      .send({ label: 'Mittr Craft Desktop', clientKind: 'desktop-local' });
     const other = await request(app)
       .post('/api/client-auth/clients')
       .send({ label: 'Other device' });
@@ -725,7 +725,7 @@ describe('client auth routes', () => {
 
     const desktop = await request(app)
       .post('/api/client-auth/clients')
-      .send({ label: 'OpenChamber Desktop', clientKind: 'desktop-local' });
+      .send({ label: 'Mittr Craft Desktop', clientKind: 'desktop-local' });
     const other = await request(app)
       .post('/api/client-auth/clients')
       .send({ label: 'Other device' });
@@ -758,7 +758,7 @@ describe('client auth routes', () => {
 
     const desktop = await request(app)
       .post('/api/client-auth/clients')
-      .send({ label: 'OpenChamber Desktop', clientKind: 'desktop-local' });
+      .send({ label: 'Mittr Craft Desktop', clientKind: 'desktop-local' });
     const remote = await request(app)
       .post('/api/client-auth/clients')
       .send({ label: 'Phone' });

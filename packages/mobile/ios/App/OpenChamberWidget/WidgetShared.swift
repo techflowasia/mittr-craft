@@ -25,7 +25,7 @@ struct WidgetSnapshot: Codable {
 }
 
 enum WidgetStore {
-    static let appGroup = "group.com.openchamber.app"
+    static let appGroup = "group.asia.mittr.app"
     static let snapshotKey = "widgetSnapshot"
 
     /// Reads the latest snapshot the app persisted. Returns `.empty` when nothing has been
@@ -84,9 +84,9 @@ struct OverviewProvider: TimelineProvider {
     }
 }
 
-// MARK: - Logo (full OpenChamber mark drawn from the SVG)
+// MARK: - Logo (full Mittr Craft mark drawn from the SVG)
 
-/// The OpenChamber logo, drawn to match packages/web/public/logo-dark-512x512.svg: an
+/// The Mittr Craft logo, drawn to match packages/web/public/logo-dark-512x512.svg: an
 /// isometric cube with translucent face fills, stroked edges, and the OpenCode mark on the
 /// top face. Faces use low-opacity `.primary` so the system tint on the Lock Screen / Control
 /// Center reads as a translucent fill (no colour) rather than a flat wireframe. Coordinates are

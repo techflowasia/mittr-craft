@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.openchamber.app',
-  appName: 'OpenChamber',
+  appId: 'asia.mittr.app',
+  appName: 'Mittr Craft',
   webDir: 'dist',
   server: {
     androidScheme: 'https',

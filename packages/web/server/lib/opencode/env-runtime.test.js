@@ -133,7 +133,7 @@ describe('OpenCode env runtime', () => {
 
   it('clears AppImage ARGV0 when applying a login-shell env snapshot', () => {
     const previousArgv0 = process.env.ARGV0;
-    process.env.ARGV0 = '/path/to/OpenChamber.AppImage';
+    process.env.ARGV0 = '/path/to/Mittr Craft.AppImage';
     delete process.env.OPENCHAMBER_ARGV0_TEST_MARKER;
     const { runtime, state } = createRuntime({});
     state.cachedLoginShellEnvSnapshot = {
@@ -155,7 +155,7 @@ describe('OpenCode env runtime', () => {
 
   it('clears AppImage ARGV0 even when no login-shell snapshot is available', () => {
     const previousArgv0 = process.env.ARGV0;
-    process.env.ARGV0 = '/path/to/OpenChamber.AppImage';
+    process.env.ARGV0 = '/path/to/Mittr Craft.AppImage';
     const { runtime, state } = createRuntime({});
     state.cachedLoginShellEnvSnapshot = null;
 

@@ -48,7 +48,7 @@ export const createServerStartupRuntime = (dependencies) => {
 
           if (typeof process.send === 'function') {
             if (!process.connected) {
-              throw new Error('OpenChamber startup IPC channel disconnected before ready notification');
+              throw new Error('Mittr Craft startup IPC channel disconnected before ready notification');
             }
 
             await new Promise((resolveReadyNotification, rejectReadyNotification) => {
@@ -69,7 +69,7 @@ export const createServerStartupRuntime = (dependencies) => {
           const displayHost = (bindHost === '0.0.0.0' || bindHost === '::' || bindHost === '[::]')
             ? 'localhost'
             : (bindHost.includes(':') ? `[${bindHost}]` : bindHost);
-          console.log(`OpenChamber server listening on ${bindHost}:${activePort}`);
+          console.log(`Mittr Craft server listening on ${bindHost}:${activePort}`);
           console.log(`Health check: http://${displayHost}:${activePort}/health`);
           console.log(`Web interface: http://${displayHost}:${activePort}`);
 

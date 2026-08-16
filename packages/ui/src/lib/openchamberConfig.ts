@@ -1,5 +1,5 @@
 /**
- * OpenChamber project-level configuration service.
+ * Mittr Craft project-level configuration service.
  * Stores per-project settings in ~/.config/openchamber/<projectId>.json.
  * Migrates from legacy <project>/.openchamber/openchamber.json.
  */

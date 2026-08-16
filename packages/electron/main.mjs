@@ -79,13 +79,13 @@ const shouldStartInBackground = (loginItemSettings = readLoginItemSettings()) =>
 };
 
 // Set the product name early so electron-log derives its log directory as
-// ~/Library/Logs/OpenChamber/ (not ~/Library/Logs/@openchamber/electron/).
-app.setName('OpenChamber');
+// ~/Library/Logs/Mittr Craft/ (not ~/Library/Logs/@openchamber/electron/).
+app.setName('Mittr Craft');
 if (process.platform === 'linux') {
   app.setDesktopName('openchamber.desktop');
 }
 if (isDev) {
-  app.setPath('userData', path.join(app.getPath('appData'), 'OpenChamber Dev'));
+  app.setPath('userData', path.join(app.getPath('appData'), 'Mittr Craft Dev'));
 }
 app.setAppUserModelId(APP_USER_MODEL_ID);
 app.commandLine.appendSwitch('proxy-bypass-list', '<-loopback>');
@@ -129,7 +129,7 @@ log.transports.console.level = isDev ? 'debug' : 'warn';
 
 // The in-process web server runs in this same Node process and uses plain
 // `console.log/warn/error`. Without piping console through electron-log,
-// that output never lands in ~/Library/Logs/OpenChamber/main.log and we
+// that output never lands in ~/Library/Logs/Mittr Craft/main.log and we
 // can't diagnose issues (e.g. OpenCode lifecycle, SSE disconnects) after
 // the fact. Route all console calls through electron-log so server-side
 // diagnostics are persisted.
@@ -344,7 +344,7 @@ const quitConfirmationMessage = () => {
   if (reasons.length === 0) {
     return 'Background processes (sidecar, SSH sessions) will be stopped.';
   }
-  return `OpenChamber detected ${reasons.join(', ')}. Quitting now will stop sidecar/background processes and may interrupt pending work.`;
+  return `Mittr Craft detected ${reasons.join(', ')}. Quitting now will stop sidecar/background processes and may interrupt pending work.`;
 };
 
 const shutdownBackgroundServices = () => {
@@ -458,8 +458,8 @@ const requestQuitWithConfirmation = async () => {
   try {
     const result = await dialog.showMessageBox({
       type: 'warning',
-      title: 'Quit OpenChamber?',
-      message: 'Quit OpenChamber?',
+      title: 'Quit Mittr Craft?',
+      message: 'Quit Mittr Craft?',
       detail: quitConfirmationMessage(),
       buttons: ['Quit', 'Cancel'],
       defaultId: 1,
@@ -592,7 +592,7 @@ const writeSettingsRoot = async (root) => writeJsonFile(settingsFilePath(), root
 
 // Stable per-install identifier for this desktop, persisted in settings. Used as
 // the client dedupe key on remote hosts so re-authenticating (e.g. after a login
-// session expires) reuses the same "OpenChamber Desktop" record instead of
+// session expires) reuses the same "Mittr Craft Desktop" record instead of
 // piling up a new one each time. Different desktops get different ids.
 // Display-only device metadata shown in a server's device list ("macOS",
 // app version). Never used for auth decisions.
@@ -1133,7 +1133,7 @@ const injectRuntimeConfigIntoHtml = (html) => {
 };
 
 /**
- * The browser panel's own session, kept separate from OpenChamber's.
+ * The browser panel's own session, kept separate from Mittr Craft's.
  *
  * Every page the user opens in the panel shares this partition, which is what
  * lets a dev-server login persist between sessions without touching the app's
@@ -1323,7 +1323,7 @@ const maybeShowNativeNotification = (rawInput) => {
 
   const title = typeof payload.title === 'string' && payload.title.trim()
     ? payload.title.trim()
-    : 'OpenChamber';
+    : 'Mittr Craft';
   const body = typeof payload.body === 'string' ? payload.body : '';
   const sessionId = typeof payload.sessionId === 'string' && payload.sessionId.trim()
     ? payload.sessionId.trim()
@@ -1801,7 +1801,7 @@ const buildStartupSplashHtml = () => {
   </head>
   <body>
     <div class="stack">
-      <svg width="120" height="120" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OpenChamber loading icon">
+      <svg width="120" height="120" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Mittr Craft loading icon">
         <path d="M50 50 L8.432 26 L8.432 74 L50 98 Z" fill="var(--splash-face-fill)" stroke="var(--splash-stroke)" stroke-width="2" stroke-linejoin="round"/>
         <path d="M50 50 L39.608 44 L39.608 56 L50 62 Z" fill="var(--splash-cell-fill)" opacity="0.2"/>
         <path d="M39.608 44 L29.216 38 L29.216 50 L39.608 56 Z" fill="var(--splash-cell-fill)" opacity="0.45"/>
@@ -1922,7 +1922,7 @@ const loginRemoteAndIssueClientToken = async ({ url, password, trustDevice, requ
       password: candidatePassword,
       trustDevice: trustDevice === true,
       issueClientToken: true,
-      clientLabel: 'OpenChamber Desktop',
+      clientLabel: 'Mittr Craft Desktop',
       ...clientIdentity,
     }),
   });
@@ -1950,7 +1950,7 @@ const loginRemoteAndIssueClientToken = async ({ url, password, trustDevice, requ
       Cookie: cookie,
     },
     body: JSON.stringify({
-      label: 'OpenChamber Desktop',
+      label: 'Mittr Craft Desktop',
       ...clientIdentity,
     }),
   });
@@ -2045,7 +2045,7 @@ const parseConnectPairingDeepLinkPayload = (raw) => {
     return {
       pairingId,
       secret,
-      label: typeof payload.label === 'string' && payload.label.trim() ? payload.label.trim() : 'OpenChamber',
+      label: typeof payload.label === 'string' && payload.label.trim() ? payload.label.trim() : 'Mittr Craft',
       fingerprint: typeof payload.fingerprint === 'string' && payload.fingerprint.trim() ? payload.fingerprint.trim() : '',
       expiresAt: expiresAt || null,
       candidates: candidates.sort((left, right) => left.priority - right.priority),
@@ -2117,9 +2117,9 @@ const redeemConnectPairingDeepLink = async (payload, serverUrl) => {
     body: JSON.stringify({
       pairingId: payload.pairingId,
       secret: payload.secret,
-      clientLabel: 'OpenChamber Desktop',
+      clientLabel: 'Mittr Craft Desktop',
       clientKind: 'desktop',
-      deviceName: 'OpenChamber Desktop',
+      deviceName: 'Mittr Craft Desktop',
       ...desktopDeviceMetadata(),
       dedupeKey: `desktop:${await getOrCreateDesktopInstallId()}`,
     }),
@@ -2179,7 +2179,7 @@ const confirmConnectDeepLink = async (payload) => {
   }
   const options = {
     type: 'warning',
-    title: 'Connect to OpenChamber server?',
+    title: 'Connect to Mittr Craft server?',
     message: `Connect to "${payload.label}"?`,
     detail:
       `This will add ${payload.serverUrl} as a remote instance and route this app's activity ` +
@@ -2407,7 +2407,7 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
   const autoHidesNativeMenuBar = process.platform !== 'darwin';
   const windowIconPath = getWindowIconPath();
   const options = {
-    title: 'OpenChamber',
+    title: 'Mittr Craft',
     ...(Number.isFinite(restoredBounds?.x) && Number.isFinite(restoredBounds?.y)
       ? { x: restoredBounds.x, y: restoredBounds.y }
       : {}),
@@ -2807,7 +2807,7 @@ const createMiniChatWindow = async ({ mode, sessionId = '', directory = '', proj
   const usesFramelessChrome = process.platform === 'win32' || process.platform === 'linux';
   const trayEnabled = process.platform !== 'darwin' || readSettingsRoot().desktopMacMenuBarEnabled !== false;
   const browserWindow = new BrowserWindow({
-    title: 'OpenChamber Mini Chat',
+    title: 'Mittr Craft Mini Chat',
     width: MINI_CHAT_WINDOW_WIDTH,
     height: MINI_CHAT_WINDOW_HEIGHT,
     minWidth: MINI_CHAT_MIN_WINDOW_WIDTH,
@@ -3833,7 +3833,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     // Dev-server tunnels: bind a loopback port here and pipe it to a dev server
-    // on the remote OpenChamber host, so the browser panel loads a real origin
+    // on the remote Mittr Craft host, so the browser panel loads a real origin
     // instead of a rewritten page. Deliberately absent from
     // COMMANDS_SAFE_FOR_REMOTE — a remote page must never open local listeners.
     case 'desktop_dev_tunnel_open': {
@@ -3867,7 +3867,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     /**
      * Forces prefers-color-scheme for one previewed page.
      *
-     * nativeTheme.themeSource is app-wide and would drag OpenChamber's own
+     * nativeTheme.themeSource is app-wide and would drag Mittr Craft's own
      * appearance along with it, so this goes through the page's own emulation
      * instead. The debugger session has to stay attached: emulation is part of
      * that session and resets the moment it detaches.
@@ -3902,7 +3902,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
      * Done here, in the panel's own session, rather than by the renderer: the
      * icon often sits behind the same login as the page, and letting the app's
      * own origin request it would both fail on those and quietly send traffic
-     * to third-party hosts from OpenChamber itself. The bytes come back as a
+     * to third-party hosts from Mittr Craft itself. The bytes come back as a
      * data URL so nothing else has to fetch anything.
      */
     case 'desktop_browser_fetch_favicon': {
@@ -3935,7 +3935,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     // Scoped to the browser panel's own partition, so clearing it can never
-    // touch OpenChamber's session or any other window's storage.
+    // touch Mittr Craft's session or any other window's storage.
     case 'desktop_browser_clear_data': {
       // Exact match, not a prefix: a prefix would also accept a partition that
       // merely starts with this name, which is not what the comment above
@@ -4441,7 +4441,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       if (applyUpdate && process.platform === 'darwin' && typeof app.isInApplicationsFolder === 'function') {
         try {
           if (!app.isInApplicationsFolder()) {
-            throw new Error('Desktop update requires OpenChamber.app to be installed in /Applications');
+            throw new Error('Desktop update requires Mittr Craft.app to be installed in /Applications');
           }
         } catch (error) {
           log.warn('[electron] desktop_restart blocked', error);
@@ -4699,7 +4699,7 @@ const buildMacMenu = () => {
     {
       label: app.name,
       submenu: [
-        { label: 'About OpenChamber', click: () => dispatchAction('about') },
+        { label: 'About Mittr Craft', click: () => dispatchAction('about') },
         {
           label: 'Check for Updates',
           click: () => dispatchCheckForUpdates(),
@@ -4803,9 +4803,9 @@ const buildAutoHiddenMenu = () => {
 
   return Menu.buildFromTemplate([
     {
-      label: 'OpenChamber',
+      label: 'Mittr Craft',
       submenu: [
-        { label: 'About OpenChamber', click: () => dispatchAction('about') },
+        { label: 'About Mittr Craft', click: () => dispatchAction('about') },
         {
           label: 'Check for Updates',
           click: () => dispatchCheckForUpdates(),

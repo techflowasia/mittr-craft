@@ -1,4 +1,4 @@
-package com.openchamber.app;
+package asia.mittr.app;
 
 import com.getcapacitor.BridgeActivity;
 

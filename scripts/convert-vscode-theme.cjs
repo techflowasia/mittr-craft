@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * VS Code Theme to OpenChamber Theme Converter
+ * VS Code Theme to Mittr Craft Theme Converter
  * 
  * USAGE:
  *   node scripts/convert-vscode-theme.cjs <path-to-vscode-theme.json>
@@ -12,7 +12,7 @@
  * 
  * WHAT IT DOES:
  *   1. Reads a VS Code theme JSON file (with comments support)
- *   2. Converts it to OpenChamber theme format:
+ *   2. Converts it to Mittr Craft theme format:
  *      - Extracts color palette (primary, surface, interactive, status, syntax)
  *      - Generates derived sections (markdown, chat, tools)
  *      - Adds default config (fonts, radius, transitions)
@@ -130,7 +130,7 @@ function convertVsCodeTheme(vscodeThemePath) {
   const statusColors = extractStatusColors(colors, tokenColors, semanticTokenColors);
   const syntaxColors = extractSyntaxColors(tokenColors, semanticTokenColors, colors);
   
-  // Build OpenChamber theme
+  // Build Mittr Craft theme
   const openchamberTheme = {
     metadata: {
       id: makeThemeId(normalizedTheme.name || 'untitled-theme', variant),

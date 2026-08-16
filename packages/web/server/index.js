@@ -1194,7 +1194,7 @@ const openChamberSessionService = createOpenChamberSessionService({
   waitForOpenCodeReady,
   emitSessionCreatedEvent,
 });
-// Browser actions are published to whichever OpenChamber clients are connected;
+// Browser actions are published to whichever Mittr Craft clients are connected;
 // the one owning the browser panel answers. `emitRequest` returns the number of
 // clients reached so the broker can fail fast when nobody is listening.
 const browserControlBroker = createBrowserControlBroker({
@@ -1466,7 +1466,7 @@ async function main(options = {}) {
     ? options.getDesktopRuntimeConfig
     : null;
 
-  console.log(`Starting OpenChamber on port ${port === 0 ? 'auto' : port}`);
+  console.log(`Starting Mittr Craft on port ${port === 0 ? 'auto' : port}`);
 
   // Voice enumeration is independent from route registration. Start it now,
   // but do not hold server listen or managed OpenCode startup on `say -v "?"`.
@@ -1601,9 +1601,9 @@ async function main(options = {}) {
     getServerLabel: () => {
       try {
         const name = os.hostname();
-        return typeof name === 'string' && name.trim().length > 0 ? name.trim() : 'OpenChamber';
+        return typeof name === 'string' && name.trim().length > 0 ? name.trim() : 'Mittr Craft';
       } catch {
-        return 'OpenChamber';
+        return 'Mittr Craft';
       }
     },
     readSettingsFromDiskMigrated,
@@ -1738,7 +1738,7 @@ async function main(options = {}) {
     buildOpenCodeUrl,
     getOpenCodeAuthHeaders,
     getOpenCodePort: () => openCodePort,
-    // Dev-server discovery must not offer OpenChamber's own listeners back to
+    // Dev-server discovery must not offer Mittr Craft's own listeners back to
     // the user as something to preview.
     getOwnPorts: () => [port, openCodePort].filter((value) => Number.isInteger(value) && value > 0),
     devServerScanner,

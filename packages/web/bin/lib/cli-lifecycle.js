@@ -191,8 +191,8 @@ async function discoverRunningInstances(options = {}) {
       }
 
       // A live PID-file is only the right instance if the recorded port also
-      // confirms OpenChamber. Cmdline identity alone can match a recycled PID
-      // from another OpenChamber process on a different port. Try all plausible
+      // confirms Mittr Craft. Cmdline identity alone can match a recycled PID
+      // from another Mittr Craft process on a different port. Try all plausible
       // hosts first; if matched/unknown identity still can't be confirmed, keep
       // the registry files but don't claim the instance is running.
       const { info: liveInfo, host: confirmedHost } = await fetchSystemInfoFromPortCandidates(

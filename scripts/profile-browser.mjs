@@ -14,7 +14,7 @@ import { projectSessionLoadPerformance } from "./profile-browser-session-load.mj
 const HELP = `Usage: bun run profile:browser -- [options]
 
 Options:
-  --url <url>             OpenChamber URL (default: http://localhost:3000)
+  --url <url>             Mittr Craft URL (default: http://localhost:3000)
   --duration <seconds>    Recording duration after Enter (default: 60)
   --output <directory>    Artifact directory (default: artifacts/browser-profile-<time>)
   --chrome <path>         Chrome/Chromium executable
@@ -25,7 +25,7 @@ Options:
   --help                  Show this help
 
 The command records a Chrome performance trace, a redacted HAR, browser metrics,
-and OpenChamber's numeric sync counters. It never records response bodies.`
+and Mittr Craft's numeric sync counters. It never records response bodies.`
 
 const parseArgs = (argv) => {
   const options = {
@@ -253,8 +253,8 @@ const writeTraceFile = (path, traceEvents) => new Promise((resolveWrite, rejectW
 const createHar = (records, pageUrl, startedAt) => ({
   log: {
     version: "1.2",
-    creator: { name: "OpenChamber browser profiler", version: "1" },
-    pages: [{ startedDateTime: startedAt, id: "page_1", title: "OpenChamber profile", pageTimings: {} }],
+    creator: { name: "Mittr Craft browser profiler", version: "1" },
+    pages: [{ startedDateTime: startedAt, id: "page_1", title: "Mittr Craft profile", pageTimings: {} }],
     entries: [...records.values()].map((record) => {
       const start = record.wallTime ? new Date(record.wallTime * 1000).toISOString() : startedAt
       const duration = record.finishedAt && record.startedAt
@@ -446,7 +446,7 @@ const main = async () => {
       ].join(","),
     })
 
-    console.log(`Recording for ${options.duration} seconds. Use OpenChamber normally during this window.`)
+    console.log(`Recording for ${options.duration} seconds. Use Mittr Craft normally during this window.`)
     const recordingStartedAt = Date.now()
     if (options.reload) {
       const recordedReload = client.once("Page.loadEventFired", 30_000)

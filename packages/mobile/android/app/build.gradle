@@ -9,10 +9,10 @@ def ciKeyPassword = System.getenv('OPENCHAMBER_ANDROID_KEY_PASSWORD')
 def hasCiSigning = ciKeystorePath && ciKeystorePassword && ciKeyAlias && ciKeyPassword
 
 android {
-    namespace "com.openchamber.app"
+    namespace "asia.mittr.app"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.openchamber.app"
+        applicationId "asia.mittr.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode ciVersionCode ? ciVersionCode.toInteger() : 1
@@ -63,8 +63,10 @@ apply from: 'capacitor.build.gradle'
 
 try {
     def servicesJSON = file('google-services.json')
-    if (servicesJSON.text) {
+    if (servicesJSON.text.contains('"package_name": "asia.mittr.app"')) {
         apply plugin: 'com.google.gms.google-services'
+    } else {
+        logger.warn("google-services.json does not include asia.mittr.app. Push Notifications won't work until it is replaced with the Firebase config for this app ID.")
     }
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")

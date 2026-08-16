@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Fully automated streaming capture for OpenChamber.
+ * Fully automated streaming capture for Mittr Craft.
  *
  * Where `profile:idle` measures what the app does when nothing happens, this
  * command measures the opposite: what it costs to receive and render a live
@@ -41,11 +41,11 @@ const DEFAULT_PROMPT = "Write a technical explanation of how a bytecode virtual 
 
 const HELP = `Usage: bun run profile:session -- [options]
 
-Records what OpenChamber costs while an assistant response streams in.
+Records what Mittr Craft costs while an assistant response streams in.
 
 Options:
-  --url <url>              OpenChamber URL (default: http://localhost:3000)
-  --port <port>            OpenChamber CLI port (default: from --url)
+  --url <url>              Mittr Craft URL (default: http://localhost:3000)
+  --port <port>            Mittr Craft CLI port (default: from --url)
   --dir <path>             Session directory (default: repository root)
   --session <id>           Reuse this session instead of creating one
   --expand-projects        Expand every project in the sidebar before recording

@@ -38,7 +38,7 @@ const quoteDesktopExecArg = (value) => {
 };
 
 export const buildLinuxAutostartDesktopEntry = ({
-  appName = 'OpenChamber',
+  appName = 'Mittr Craft',
   executable,
   backgroundArg,
   env = process.env,
@@ -73,7 +73,7 @@ export const readLinuxAutostartEnabled = async (options = {}) => {
 
 export const setLinuxAutostartEnabled = async ({
   enabled,
-  appName = 'OpenChamber',
+  appName = 'Mittr Craft',
   backgroundArg,
   env = process.env,
   execPath = process.execPath,

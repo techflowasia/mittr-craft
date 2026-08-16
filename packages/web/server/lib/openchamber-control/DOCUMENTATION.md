@@ -1,8 +1,8 @@
-# OpenChamber Control Service
+# Mittr Craft Control Service
 
 ## Purpose
 
-This module owns the typed control contract shared by the OpenChamber CLI and
+This module owns the typed control contract shared by the Mittr Craft CLI and
 the managed OpenCode `openchamber` tool. Both adapters delegate to
 `createOpenChamberControlService()`; neither adapter may call or spawn the
 other.

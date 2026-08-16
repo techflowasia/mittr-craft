@@ -11,7 +11,7 @@ import { useUIStore } from '@/stores/useUIStore';
 import { useI18n } from '@/lib/i18n';
 
 /**
- * Which OpenChamber capabilities agents are given.
+ * Which Mittr Craft capabilities agents are given.
  *
  * Each entry is one tool the managed OpenCode child is handed, so the choices
  * belong together and not under the CLI's own configuration — the binary path

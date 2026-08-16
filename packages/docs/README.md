@@ -1,6 +1,6 @@
-# OpenChamber Docs Source
+# Mittr Craft Docs Source
 
-This package is the source-of-truth for OpenChamber public docs content.
+This package is the source-of-truth for Mittr Craft public docs content.
 
 ## Layout
 

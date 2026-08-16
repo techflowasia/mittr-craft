@@ -16,7 +16,7 @@ import {
 //
 // "[Bug] new worktree， Filename too long"
 //
-// OpenChamber places worktrees under:
+// Mittr Craft places worktrees under:
 //   <XDG_DATA_HOME>/opencode/worktree/<40-char root commit hash>/<worktree name>
 // and populates them with `git reset --hard`. On Windows, that deep prefix plus
 // a deeply nested repo file (e.g. yudao ~173 chars) exceeds MAX_PATH (260) and

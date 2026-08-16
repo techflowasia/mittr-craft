@@ -1,21 +1,21 @@
-# Managed OpenChamber Agent Tool
+# Managed Mittr Craft Agent Tool
 
 ## Purpose
 
-This module exposes OpenChamber to agents as typed OpenCode custom tools. There
+This module exposes Mittr Craft to agents as typed OpenCode custom tools. There
 are two, because controlling sessions and driving a page are separate intents
 the user can want independently:
 
 - `openchamber` — projects, sessions, worktrees, and scheduled tasks. Enabled
   while the persisted `agentControlToolEnabled` setting is not `false`.
-- `openchamber_web` — looking at and interacting with the page in OpenChamber's
+- `openchamber_web` — looking at and interacting with the page in Mittr Craft's
   browser panel. Enabled while `agentWebToolEnabled` is not `false`.
 
 Both default to on, are toggled in Settings → General → OpenCode CLI, and apply
 on the next managed OpenCode restart. Each tool carries only its own actions and
 only the parameters those actions use, so turning one off removes its inputs
 from the schema rather than leaving them visible. The plugin is injected only
-when OpenChamber launches and owns the OpenCode process, and not at all when
+when Mittr Craft launches and owns the OpenCode process, and not at all when
 both settings are `false`.
 
 - The plugin accepts the action's inputs either inside `parameters` or beside
@@ -26,7 +26,7 @@ both settings are `false`.
 
 ## Runtime flow
 
-1. The OpenChamber HTTP listener binds and publishes its authoritative port.
+1. The Mittr Craft HTTP listener binds and publishes its authoritative port.
 2. `prepareManagedOpenCodeEnv()` materializes the plugin under
    `<openchamber-data-dir>/agent-tool/` and appends its `file://` URL to
    `OPENCODE_CONFIG_CONTENT` without replacing existing plugin entries.
@@ -35,7 +35,7 @@ both settings are `false`.
 4. The plugin calls `POST /api/openchamber/agent-tool` with its typed input and
    OpenCode's authoritative session directory.
 5. The route delegates the fixed action allowlist directly to the shared
-   OpenChamber control service. The CLI uses the same service through its
+   Mittr Craft control service. The CLI uses the same service through its
    authenticated HTTP adapter, so Goal Mode ordering, wait behavior,
    partial-failure reporting, and scheduled-task contracts have one owner.
 6. Each action definition owns a short presentation title and a separate
@@ -99,7 +99,7 @@ error state.
 
 - Web and Desktop managed OpenCode: injected automatically.
 - External OpenCode selected with `OPENCODE_HOST` or skip-start: not injected,
-  because OpenChamber does not control that process environment.
+  because Mittr Craft does not control that process environment.
 - VS Code: not injected; the extension owns a separate OpenCode lifecycle.
 - Hosted and Capacitor mobile clients use the server's managed OpenCode tool
   when connected to such a server; no tool runs in the client runtime.

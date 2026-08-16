@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * OpenChamber local development helper.
+ * Mittr Craft local development helper.
  *
  * This script owns the interactive `bun run oc-dev` menu and the equivalent
  * non-interactive commands for common local workflows: web deploys, mobile
@@ -299,7 +299,7 @@ function stopInstalledInstance(directory, port) {
 
 function startInstalledInstance(directory, port) {
   const cliPath = installedWebCli(directory);
-  if (!cliPath) throw new Error(`OpenChamber CLI was not installed in ${directory}`);
+  if (!cliPath) throw new Error(`Mittr Craft CLI was not installed in ${directory}`);
   run('node', [cliPath, '--port', port], {
     cwd: directory,
     env: {
@@ -377,7 +377,7 @@ async function deployWeb(options, config) {
   step('Installing package globally', () => run('bun', ['add', '-g', packageFile]));
   step(`Starting global instance on ${GLOBAL_PORT}`, () => {
     const cliPath = installedGlobalWebCli();
-    if (!cliPath) throw new Error('Global OpenChamber CLI was not installed by bun add -g');
+    if (!cliPath) throw new Error('Global Mittr Craft CLI was not installed by bun add -g');
     run('node', [cliPath, '--port', GLOBAL_PORT], { env: { OPENCHAMBER_UI_PASSWORD: process.env.OPENCHAMBER_PASSWORD || '', OPENCHAMBER_HOST: '0.0.0.0' } });
   });
 }
@@ -621,7 +621,7 @@ async function chooseAction(config) {
   if (config.remoteDeployments.length > 0) {
     options.splice(1, 0, { value: 'remote-deploy-web', label: 'Deploy configured remote web' });
   }
-  const action = await chooseValue('', options, 'Select OpenChamber dev action');
+  const action = await chooseValue('', options, 'Select Mittr Craft dev action');
   return action;
 }
 
@@ -634,7 +634,7 @@ async function main() {
 
   const config = loadConfig();
   const interactive = !options.action;
-  if (interactive) intro('OpenChamber dev');
+  if (interactive) intro('Mittr Craft dev');
   let action = normalizeAction(options.action || await chooseAction(config));
 
   switch (action) {
