@@ -1761,6 +1761,10 @@ const computeBootOutcome = ({ envTargetUrl, probe, config, localAvailable }) => 
 
 const buildStartupSplashHtml = () => {
   const settings = readSettingsRoot();
+  const splashLogoPath = path.join(resourceRoot(), 'icons', 'icon.png');
+  const splashLogoDataUrl = fs.existsSync(splashLogoPath)
+    ? `data:image/png;base64,${fs.readFileSync(splashLogoPath).toString('base64')}`
+    : '';
   const splashBgLight = typeof settings.splashBgLight === 'string' ? settings.splashBgLight.trim() : '#f5f5f4';
   const splashFgLight = typeof settings.splashFgLight === 'string' ? settings.splashFgLight.trim() : '#1c1917';
   const splashBgDark = typeof settings.splashBgDark === 'string' ? settings.splashBgDark.trim() : '#0c0a09';
@@ -1807,11 +1811,20 @@ const buildStartupSplashHtml = () => {
         display: grid;
         justify-items: center;
       }
+      .splash-logo {
+        width: 120px;
+        height: 120px;
+        object-fit: contain;
+      }
+      .splash-logo-fallback {
+        display: none;
+      }
     </style>
   </head>
   <body>
     <div class="stack">
-      <svg width="120" height="120" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MittrCraft loading icon">
+      <img class="splash-logo" src="${splashLogoDataUrl}" alt="MittrCraft" onerror="this.style.display='none';this.nextElementSibling.style.display='block'" />
+      <svg class="splash-logo-fallback" width="120" height="120" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MittrCraft loading icon">
         <path d="M50 50 L8.432 26 L8.432 74 L50 98 Z" fill="var(--splash-face-fill)" stroke="var(--splash-stroke)" stroke-width="2" stroke-linejoin="round"/>
         <path d="M50 50 L39.608 44 L39.608 56 L50 62 Z" fill="var(--splash-cell-fill)" opacity="0.2"/>
         <path d="M39.608 44 L29.216 38 L29.216 50 L39.608 56 Z" fill="var(--splash-cell-fill)" opacity="0.45"/>
