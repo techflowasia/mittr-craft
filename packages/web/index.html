@@ -508,6 +508,14 @@
         opacity: 0;
         pointer-events: none;
       }
+      #initial-loading .splash-logo {
+        width: 120px;
+        height: 120px;
+        object-fit: contain;
+      }
+      #initial-loading .legacy-splash-logo {
+        display: none;
+      }
     </style>
   </head>
   <body class="h-full bg-background text-foreground">
@@ -515,7 +523,8 @@
       <!-- Loading fallback while React initializes -->
       <div id="initial-loading">
         <div style="display: flex; align-items: center; justify-content: center;">
-          <svg width="120" height="120" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MittrCraft loading icon">
+          <img class="splash-logo" src="/mittr-mark.png" alt="MittrCraft" />
+          <svg class="legacy-splash-logo" width="120" height="120" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MittrCraft loading icon">
             <!-- Isometric cube: edge=48, centerY=50 -->
             <!-- Points: top(50,2), left(8.432,26), right(91.568,26), center(50,50), bottomLeft(8.432,74), bottomRight(91.568,74), bottom(50,98) -->
 
