@@ -7,6 +7,7 @@ const iconName = 'AppIcon';
 const iconsDir = path.join(__dirname, '..', 'resources', 'icons');
 const sourceIconPath = path.join(iconsDir, `${iconName}.icon`);
 const outputAssetsPath = path.join(iconsDir, 'Assets.car');
+const outputIcnsPath = path.join(iconsDir, 'icon.icns');
 
 const resolveActool = () => {
   try {
@@ -35,12 +36,14 @@ try {
   ], { stdio: 'inherit' });
 
   const generatedAssetsPath = path.join(tmpDir, 'Assets.car');
-  if (!fs.existsSync(generatedAssetsPath)) {
-    throw new Error(`actool did not generate Assets.car at ${generatedAssetsPath}`);
+  const generatedIcnsPath = path.join(tmpDir, `${iconName}.icns`);
+  if (!fs.existsSync(generatedAssetsPath) || !fs.existsSync(generatedIcnsPath)) {
+    throw new Error(`actool did not generate macOS icon assets at ${tmpDir}`);
   }
 
   fs.copyFileSync(generatedAssetsPath, outputAssetsPath);
-  console.log(`Generated ${outputAssetsPath}`);
+  fs.copyFileSync(generatedIcnsPath, outputIcnsPath);
+  console.log(`Generated ${outputAssetsPath} and ${outputIcnsPath}`);
 } finally {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 }

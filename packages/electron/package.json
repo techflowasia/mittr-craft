@@ -139,7 +139,7 @@
     "dmg": {
       "sign": true,
       "title": "${productName} ${version}",
-      "backgroundColor": "#FFFCF0",
+      "background": "resources/dmg-background.png",
       "iconSize": 100,
       "iconTextSize": 13,
       "window": {
