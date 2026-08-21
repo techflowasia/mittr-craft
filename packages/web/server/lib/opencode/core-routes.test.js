@@ -438,7 +438,7 @@ describe('core-routes', () => {
     expect(response.headers['cache-control']).toBe('no-store');
     expect(response.body).toMatchObject({
       ok: true,
-      server: { label: 'OpenChamber', url: 'http://runtime.example', fingerprint: 'ABCD-1234' },
+      server: { label: 'MittrCraft', url: 'http://runtime.example', fingerprint: 'ABCD-1234' },
       client: { id: 'client-1', authMethod: 'pairing' },
       clientToken: 'oc_client_token',
     });
@@ -544,6 +544,9 @@ describe('client auth routes', () => {
     const requireAuth = vi.fn((_req, _res, next) => next());
     const requireSessionAuth = vi.fn((_req, _res, next) => next());
     const resolveAuthContext = vi.fn(options.resolveAuthContext || (async () => ({ type: 'session' })));
+    const handleAdLoginStart = vi.fn((_req, res) => res.redirect(302, 'https://login.microsoftonline.com/tenant/authorize'));
+    const handleAdCallback = vi.fn((_req, res) => res.redirect(302, '/'));
+    const handleSessionDelete = vi.fn((_req, res) => res.json({ authenticated: false }));
     return {
       express,
       tunnelAuthController: {
@@ -555,6 +558,7 @@ describe('client auth routes', () => {
       uiAuthController: {
         handleSessionStatus: (_req, res) => res.json({ authenticated: true }),
         handleSessionCreate: (_req, res) => res.json({ authenticated: true }),
+        handleSessionDelete,
         handlePasskeyStatus: (_req, res) => res.json({ enabled: false }),
         handlePasskeyAuthenticationOptions: (_req, res) => res.json({}),
         handlePasskeyAuthenticationVerify: (_req, res) => res.json({ authenticated: true }),
@@ -566,6 +570,11 @@ describe('client auth routes', () => {
         handlePasskeyList: (_req, res) => res.json({ passkeys: [] }),
         handlePasskeyRevoke: (_req, res) => res.json({ revoked: true }),
         handleResetAuth: (_req, res) => res.json({ cleared: true }),
+        handleAdStatus: (_req, res) => res.json({ enabled: true, mode: 'entra' }),
+        handleAdLoginStart,
+        handleAdCallback,
+        handleAdSessionCreate: (_req, res) => res.status(400).json({ error: 'Use redirect' }),
+        handleAdProfile: (_req, res) => res.json({ profile: {} }),
       },
       remoteClientAuthRuntime: {
         listClients: async () => clients,
@@ -597,9 +606,47 @@ describe('client auth routes', () => {
       },
       readSettingsFromDiskMigrated: async () => ({}),
       normalizeTunnelSessionTtlMs: () => 1000,
-      testHooks: { clients, requireAuth, requireSessionAuth, resolveAuthContext },
+      testHooks: { clients, requireAuth, requireSessionAuth, resolveAuthContext, handleAdLoginStart, handleAdCallback, handleSessionDelete },
     };
   };
+
+  it('routes Microsoft login start and callback only for local scope', async () => {
+    const app = express();
+    const dependencies = createDependencies();
+    registerAuthAndAccessRoutes(app, dependencies);
+
+    await request(app).get('/auth/ad/login').expect(302);
+    await request(app).get('/auth/ad/callback?state=state-1&code=code-1').expect(302, 'Found. Redirecting to /');
+    expect(dependencies.testHooks.handleAdLoginStart).toHaveBeenCalledTimes(1);
+    expect(dependencies.testHooks.handleAdCallback).toHaveBeenCalledTimes(1);
+
+    const tunnelApp = express();
+    const tunnelDependencies = createDependencies();
+    tunnelDependencies.tunnelAuthController.classifyRequestScope = () => 'tunnel';
+    registerAuthAndAccessRoutes(tunnelApp, tunnelDependencies);
+
+    await request(tunnelApp).get('/auth/ad/login').expect(403);
+    await request(tunnelApp).get('/auth/ad/callback?state=state-1&code=code-1').expect(403);
+    expect(tunnelDependencies.testHooks.handleAdLoginStart).not.toHaveBeenCalled();
+    expect(tunnelDependencies.testHooks.handleAdCallback).not.toHaveBeenCalled();
+  });
+
+  it('logs out local UI sessions but rejects tunnel scope', async () => {
+    const app = express();
+    const dependencies = createDependencies();
+    registerAuthAndAccessRoutes(app, dependencies);
+
+    await request(app).delete('/auth/session').expect(200, { authenticated: false });
+    expect(dependencies.testHooks.handleSessionDelete).toHaveBeenCalledTimes(1);
+
+    const tunnelApp = express();
+    const tunnelDependencies = createDependencies();
+    tunnelDependencies.tunnelAuthController.classifyRequestScope = () => 'tunnel';
+    registerAuthAndAccessRoutes(tunnelApp, tunnelDependencies);
+
+    await request(tunnelApp).delete('/auth/session').expect(403);
+    expect(tunnelDependencies.testHooks.handleSessionDelete).not.toHaveBeenCalled();
+  });
 
   it('creates, lists, and revokes remote client tokens', async () => {
     const app = express();
@@ -690,7 +737,7 @@ describe('client auth routes', () => {
 
     const current = await request(app)
       .post('/api/client-auth/clients')
-      .send({ label: 'OpenChamber Desktop', clientKind: 'desktop-local' });
+      .send({ label: 'MittrCraft Desktop', clientKind: 'desktop-local' });
     const other = await request(app)
       .post('/api/client-auth/clients')
       .send({ label: 'Other device' });
@@ -725,7 +772,7 @@ describe('client auth routes', () => {
 
     const desktop = await request(app)
       .post('/api/client-auth/clients')
-      .send({ label: 'OpenChamber Desktop', clientKind: 'desktop-local' });
+      .send({ label: 'MittrCraft Desktop', clientKind: 'desktop-local' });
     const other = await request(app)
       .post('/api/client-auth/clients')
       .send({ label: 'Other device' });
@@ -758,7 +805,7 @@ describe('client auth routes', () => {
 
     const desktop = await request(app)
       .post('/api/client-auth/clients')
-      .send({ label: 'OpenChamber Desktop', clientKind: 'desktop-local' });
+      .send({ label: 'MittrCraft Desktop', clientKind: 'desktop-local' });
     const remote = await request(app)
       .post('/api/client-auth/clients')
       .send({ label: 'Phone' });

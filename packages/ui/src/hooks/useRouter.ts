@@ -19,7 +19,7 @@ function isVSCodeContext(): boolean {
 }
 
 /**
- * Hook that provides bidirectional URL routing for OpenChamber.
+ * Hook that provides bidirectional URL routing for MittrCraft.
  *
  * On mount:
  * - Parses URL parameters and applies them to app state

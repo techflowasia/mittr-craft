@@ -87,7 +87,7 @@ interface SettingsViewProps {
 }
 
 const pageOrder: SettingsPageSlug[] = [
-  // 'general' group — OpenChamber
+  // 'general' group — MittrCraft
   'general',
   'appearance',
   'chat',

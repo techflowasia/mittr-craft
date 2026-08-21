@@ -2,13 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { resolveOpenCodeUpgradeCapability } from './upgrade-capability.js';
 
 describe('OpenCode upgrade capability', () => {
-  it('assigns bundled binaries to the OpenChamber updater', () => {
+  it('assigns bundled binaries to the MittrCraft updater', () => {
     const isBundledBinary = vi.fn(() => true);
 
     expect(resolveOpenCodeUpgradeCapability({
       isExternal: false,
       hasManagedProcess: true,
-      activeBinary: '/Applications/OpenChamber.app/Contents/Resources/opencode-cli/opencode',
+      activeBinary: '/Applications/MittrCraft.app/Contents/Resources/opencode-cli/opencode',
       isBundledBinary,
     })).toEqual({
       supported: false,
