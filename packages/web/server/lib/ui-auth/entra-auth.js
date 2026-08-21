@@ -146,7 +146,7 @@ export const createEntraAuth = ({
     return metadataPromise;
   };
 
-  const beginAuthorization = async ({ trustDevice = false, returnTo = null } = {}) => {
+  const beginAuthorization = async ({ trustDevice = false } = {}) => {
     sweepTransactions();
     const metadata = await getMetadata();
     const state = randomBytes(32).toString('base64url');
@@ -157,7 +157,6 @@ export const createEntraAuth = ({
       nonce,
       codeVerifier,
       trustDevice: trustDevice === true,
-      returnTo: typeof returnTo === 'string' && returnTo ? returnTo : null,
       expiresAt: now() + TRANSACTION_TTL_MS,
     });
 
@@ -215,7 +214,6 @@ export const createEntraAuth = ({
     return {
       profile: profileFromClaims(verified.payload),
       trustDevice: transaction.trustDevice,
-      ...(transaction.returnTo ? { returnTo: transaction.returnTo } : {}),
     };
   };
 

@@ -97,7 +97,11 @@
     },
     "packages/electron": {
       "name": "@openchamber/electron",
+<<<<<<< HEAD
       "version": "1.19.0",
+=======
+      "version": "1.18.4",
+>>>>>>> 245ff364 (feat: implement Active Directory and Entra ID authentication support with session management updates)
       "dependencies": {
         "@openchamber/web": "workspace:*",
         "electron-context-menu": "^4.1.2",
@@ -134,7 +138,11 @@
     },
     "packages/ui": {
       "name": "@openchamber/ui",
+<<<<<<< HEAD
       "version": "1.19.0",
+=======
+      "version": "1.18.4",
+>>>>>>> 245ff364 (feat: implement Active Directory and Entra ID authentication support with session management updates)
       "dependencies": {
         "@aparajita/capacitor-secure-storage": "^8.0.0",
         "@base-ui/react": "^1.4.0",
@@ -238,7 +246,11 @@
     },
     "packages/vscode": {
       "name": "openchamber",
+<<<<<<< HEAD
       "version": "1.19.0",
+=======
+      "version": "1.18.4",
+>>>>>>> 245ff364 (feat: implement Active Directory and Entra ID authentication support with session management updates)
       "dependencies": {
         "@openchamber/ui": "workspace:*",
         "@opencode-ai/sdk": "1.18.18",
@@ -261,7 +273,11 @@
     },
     "packages/web": {
       "name": "@openchamber/web",
+<<<<<<< HEAD
       "version": "1.19.0",
+=======
+      "version": "1.18.4",
+>>>>>>> 245ff364 (feat: implement Active Directory and Entra ID authentication support with session management updates)
       "bin": {
         "openchamber": "./bin/cli.js",
       },

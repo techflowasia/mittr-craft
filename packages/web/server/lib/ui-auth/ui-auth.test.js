@@ -113,35 +113,6 @@ describe('ui auth client credential seam', () => {
     expect(sessionCalled).toBe(true);
   });
 
-  it('expires only the current UI session when logging out', async () => {
-    const createUiAuth = await loadCreateUiAuth();
-    const auth = createUiAuth({ password: 'secret' });
-    const loginRes = createResponse();
-    await auth.handleSessionCreate({ method: 'POST', headers: {}, body: { password: 'secret' } }, loginRes);
-    const sessionCookie = String(loginRes.getHeader('set-cookie')).split(';', 1)[0];
-    const urlTokenRes = createResponse();
-    await auth.handleUrlAuthToken({ method: 'POST', headers: { cookie: sessionCookie } }, urlTokenRes);
-    const urlToken = urlTokenRes.body.token;
-    const req = { method: 'DELETE', headers: { cookie: sessionCookie } };
-    const res = createResponse();
-
-    auth.handleSessionDelete(req, res);
-
-    expect(res.body).toEqual({ authenticated: false });
-    expect(res.getHeader('cache-control')).toBe('no-store');
-    expect(res.getHeader('set-cookie')).toContain('oc_ui_session=');
-    expect(res.getHeader('set-cookie')).toContain('Max-Age=0');
-
-    const tokenReq = { method: 'GET', url: `/api/event?oc_url_token=${urlToken}`, headers: { accept: 'application/json' } };
-    const tokenRes = createResponse();
-    let tokenAccepted = false;
-    await auth.requireAuth(tokenReq, tokenRes, () => {
-      tokenAccepted = true;
-    });
-    expect(tokenAccepted).toBe(false);
-    expect(tokenRes.statusCode).toBe(401);
-  });
-
   it('can require bearer client credentials when UI password is disabled', async () => {
     const createUiAuth = await loadCreateUiAuth();
     const auth = createUiAuth({
@@ -407,77 +378,6 @@ describe('ui auth Microsoft Entra seam', () => {
     expect(Array.isArray(cookies)).toBe(true);
     expect(cookies.some((cookie) => cookie.startsWith('oc_ad_transaction=;'))).toBe(true);
     expect(cookies.some((cookie) => cookie.startsWith('oc_ui_session='))).toBe(true);
-  });
-
-  it('returns a loopback HMR login to the initiating UI origin', async () => {
-    const createUiAuth = await loadCreateUiAuth();
-    let authorizationInput = null;
-    const auth = createUiAuth({
-      adAuthController: {
-        enabled: true,
-        configurationPresent: true,
-        mode: 'entra',
-        getStatus: () => ({ enabled: true, mode: 'entra', loginPath: '/auth/ad/login' }),
-        beginAuthorization: async (input) => {
-          authorizationInput = input;
-          return {
-            authorizationUrl: 'https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?state=state-hmr',
-            state: 'state-hmr',
-            expiresAt: Date.now() + 60_000,
-          };
-        },
-        completeAuthorization: async () => ({
-          trustDevice: false,
-          profile: { displayName: 'Ada Lovelace' },
-          returnTo: 'http://localhost:5180/',
-        }),
-        dispose: () => {},
-      },
-    });
-
-    const startRes = createResponse();
-    await auth.handleAdLoginStart({
-      headers: { host: 'localhost:3000', referer: 'http://localhost:5180/' },
-      query: { returnTo: 'http://localhost:5180/' },
-    }, startRes);
-    expect(authorizationInput).toEqual({ trustDevice: false, returnTo: 'http://localhost:5180/' });
-
-    const callbackRes = createResponse();
-    await auth.handleAdCallback({
-      headers: { cookie: 'oc_ad_transaction=state-hmr' },
-      query: { state: 'state-hmr', code: 'authorization-code' },
-    }, callbackRes);
-    expect(callbackRes.getHeader('location')).toBe('http://localhost:5180/');
-  });
-
-  it('rejects an untrusted Microsoft login return target', async () => {
-    const createUiAuth = await loadCreateUiAuth();
-    let authorizationInput = null;
-    const auth = createUiAuth({
-      adAuthController: {
-        enabled: true,
-        configurationPresent: true,
-        mode: 'entra',
-        getStatus: () => ({ enabled: true, mode: 'entra' }),
-        beginAuthorization: async (input) => {
-          authorizationInput = input;
-          return {
-            authorizationUrl: 'https://login.microsoftonline.com/tenant/authorize',
-            state: 'state-unsafe',
-            expiresAt: Date.now() + 60_000,
-          };
-        },
-        dispose: () => {},
-      },
-    });
-    const res = createResponse();
-
-    await auth.handleAdLoginStart({
-      headers: { host: 'localhost:3000', referer: 'http://localhost:5180/' },
-      query: { returnTo: 'https://attacker.example/' },
-    }, res);
-
-    expect(authorizationInput).toEqual({ trustDevice: false, returnTo: '/' });
   });
 
   it('rejects callbacks whose state does not match the browser cookie', async () => {

@@ -222,44 +222,6 @@ const isSecureRequest = (req) => {
   return false;
 };
 
-const readHeader = (req, name) => {
-  const value = req?.headers?.[name];
-  return typeof value === 'string' ? value.trim() : '';
-};
-
-const isLoopbackHostname = (hostname) => {
-  const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
-};
-
-const resolveAdReturnTo = (req) => {
-  const rawReturnTo = typeof req?.query?.returnTo === 'string' ? req.query.returnTo.trim() : '';
-  if (!rawReturnTo) return '/';
-  try {
-    const target = new URL(rawReturnTo);
-    if ((target.protocol !== 'http:' && target.protocol !== 'https:') || target.username || target.password || target.hash) {
-      return '/';
-    }
-    const requestHost = readHeader(req, 'host');
-    if (!requestHost) return '/';
-    const requestOrigin = new URL(`${isSecureRequest(req) ? 'https' : 'http'}://${requestHost}`);
-    if (target.origin === requestOrigin.origin) return `${target.pathname}${target.search}`;
-
-    const referrer = readHeader(req, 'referer');
-    const referrerOrigin = referrer ? new URL(referrer).origin : '';
-    if (
-      target.protocol === 'http:'
-      && isLoopbackHostname(target.hostname)
-      && isLoopbackHostname(requestOrigin.hostname)
-      && target.origin === referrerOrigin
-    ) {
-      return `${target.origin}${target.pathname}${target.search}`;
-    }
-  } catch {
-  }
-  return '/';
-};
-
 const parseCookies = (cookieHeader) => {
   if (!cookieHeader || typeof cookieHeader !== 'string') {
     return {};
@@ -539,25 +501,6 @@ export const createUiAuth = ({
     client: clientAuth?.client || null,
   });
 
-  const clearSessionCookie = (req, res) => {
-    const secure = isSecureRequest(req);
-    const header = buildCookie({
-      name: cookieName,
-      value: '',
-      maxAge: 0,
-      secure,
-    });
-    appendSetCookieHeader(res, header);
-  };
-
-  const revokeSessionUrlAuthTokens = (req) => {
-    const sessionToken = parseCookies(req.headers.cookie)[cookieName];
-    if (!sessionToken) return;
-    for (const [token, entry] of urlAuthTokens.entries()) {
-      if (entry?.sessionToken === sessionToken) urlAuthTokens.delete(token);
-    }
-  };
-
   if (!passwordEnabled && !adEnabled && !adConfigurationPresent) {
     const setSessionCookie = (req, res, token, ttlMs = sessionTtlMs) => {
       const secure = isSecureRequest(req);
@@ -638,12 +581,6 @@ export const createUiAuth = ({
       },
       handleSessionCreate: (_req, res) => {
         res.status(400).json({ error: 'UI password not configured' });
-      },
-      handleSessionDelete: (req, res) => {
-        revokeSessionUrlAuthTokens(req);
-        clearSessionCookie(req, res);
-        res.setHeader('Cache-Control', 'no-store');
-        res.json({ authenticated: false });
       },
       handleUrlAuthToken: async (req, res) => {
         const clientAuth = await authenticateClientRequest(req, { allowUrlToken: false });
@@ -756,6 +693,17 @@ export const createUiAuth = ({
       name: cookieName,
       value: encodeURIComponent(token),
       maxAge: maxAgeSeconds,
+      secure,
+    });
+    appendSetCookieHeader(res, header);
+  };
+
+  const clearSessionCookie = (req, res) => {
+    const secure = isSecureRequest(req);
+    const header = buildCookie({
+      name: cookieName,
+      value: '',
+      maxAge: 0,
       secure,
     });
     appendSetCookieHeader(res, header);
@@ -952,13 +900,6 @@ export const createUiAuth = ({
       authenticated: true,
       ...(clientTokenResult?.token ? { clientToken: clientTokenResult.token, client: clientTokenResult.client } : {}),
     });
-  };
-
-  const handleSessionDelete = (req, res) => {
-    revokeSessionUrlAuthTokens(req);
-    clearSessionCookie(req, res);
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({ authenticated: false });
   };
 
   const respondPasskeyError = (res, error) => {
@@ -1169,8 +1110,7 @@ export const createUiAuth = ({
     }
     try {
       const trustDevice = req.query?.trustDevice === 'true' || req.query?.trustDevice === '1';
-      const returnTo = resolveAdReturnTo(req);
-      const transaction = await adAuthController.beginAuthorization({ trustDevice, returnTo });
+      const transaction = await adAuthController.beginAuthorization({ trustDevice });
       const maxAge = Math.max(1, Math.floor((transaction.expiresAt - Date.now()) / 1000));
       res.setHeader('Cache-Control', 'no-store');
       appendSetCookieHeader(res, buildCookie({
@@ -1210,7 +1150,7 @@ export const createUiAuth = ({
         trustDevice: result.trustDevice,
         claims: { authMethod: 'entra', profile: result.profile },
       });
-      return res.redirect(302, result.returnTo || '/');
+      return res.redirect(302, '/');
     } catch (error) {
       console.error('[Entra] Sign-in callback failed:', error?.message || error);
       return res.status(401).send('Microsoft sign-in failed. Return to MittrCraft and try again.');
@@ -1256,7 +1196,6 @@ export const createUiAuth = ({
     resolveAuthContext,
     handleSessionStatus,
     handleSessionCreate,
-    handleSessionDelete,
     handleUrlAuthToken,
     handlePasskeyStatus,
     handlePasskeyRegistrationOptions,

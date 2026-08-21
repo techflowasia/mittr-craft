@@ -435,8 +435,11 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.footer.actions.update': '업데이트',
   'sessions.sidebar.footer.profile.signedInAs': '{name}(으)로 로그인됨',
   'sessions.sidebar.footer.profile.tooltip': '프로필',
+<<<<<<< HEAD
   'sessions.sidebar.footer.profile.logout': '로그아웃',
   'sessions.sidebar.footer.profile.logoutError': '로그아웃할 수 없습니다. 다시 시도하세요.',
+=======
+>>>>>>> 6899349e (feat: implement Active Directory and Entra ID authentication support with session management updates)
   'sessions.sidebar.footer.profile.details.title': '프로필 세부 정보',
   'sessions.sidebar.footer.profile.details.username': '사용자 이름',
   'sessions.sidebar.footer.profile.details.displayName': '표시 이름',

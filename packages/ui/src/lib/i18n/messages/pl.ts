@@ -246,8 +246,11 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.footer.actions.update': 'Aktualizuj',
   'sessions.sidebar.footer.profile.signedInAs': 'Zalogowano jako {name}',
   'sessions.sidebar.footer.profile.tooltip': 'Profil',
+<<<<<<< HEAD
   'sessions.sidebar.footer.profile.logout': 'Wyloguj się',
   'sessions.sidebar.footer.profile.logoutError': 'Nie udało się wylogować. Spróbuj ponownie.',
+=======
+>>>>>>> 6899349e (feat: implement Active Directory and Entra ID authentication support with session management updates)
   'sessions.sidebar.footer.profile.details.title': 'Szczegóły profilu',
   'sessions.sidebar.footer.profile.details.username': 'Nazwa użytkownika',
   'sessions.sidebar.footer.profile.details.displayName': 'Nazwa wyświetlana',
