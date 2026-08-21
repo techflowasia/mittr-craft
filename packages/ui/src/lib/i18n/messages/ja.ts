@@ -435,6 +435,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.footer.actions.update': '更新',
   'sessions.sidebar.footer.profile.signedInAs': '{name} としてログイン中',
   'sessions.sidebar.footer.profile.tooltip': 'プロフィール',
+  'sessions.sidebar.footer.profile.logout': 'ログアウト',
+  'sessions.sidebar.footer.profile.logoutError': 'ログアウトできませんでした。もう一度お試しください。',
   'sessions.sidebar.footer.profile.details.title': 'プロフィールの詳細',
   'sessions.sidebar.footer.profile.details.username': 'ユーザー名',
   'sessions.sidebar.footer.profile.details.displayName': '表示名',

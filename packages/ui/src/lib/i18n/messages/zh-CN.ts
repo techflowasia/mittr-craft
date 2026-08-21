@@ -435,6 +435,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.footer.actions.update': '更新',
   'sessions.sidebar.footer.profile.signedInAs': '已登录为 {name}',
   'sessions.sidebar.footer.profile.tooltip': '个人资料',
+  'sessions.sidebar.footer.profile.logout': '退出登录',
+  'sessions.sidebar.footer.profile.logoutError': '无法退出登录，请重试。',
   'sessions.sidebar.footer.profile.details.title': '个人资料详情',
   'sessions.sidebar.footer.profile.details.username': '用户名',
   'sessions.sidebar.footer.profile.details.displayName': '显示名称',

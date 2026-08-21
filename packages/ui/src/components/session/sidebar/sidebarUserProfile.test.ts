@@ -12,6 +12,7 @@ mock.module('@/lib/runtime-fetch', () => ({ runtimeFetch: runtimeFetchMock }));
 const {
   fetchSidebarUserProfile,
   getSidebarUserInitials,
+  logoutSidebarUserProfile,
   parseSidebarUserProfile,
 } = await import('./sidebarUserProfile');
 
@@ -135,6 +136,30 @@ describe('sidebar user profile', () => {
         secondaryLabel: 'prawee@example.com',
       },
     });
+  });
+
+  test('logs out only through the current UI session endpoint', async () => {
+    runtimeFetchResponses = [Response.json({ authenticated: false })];
+    const controller = new AbortController();
+
+    expect(await logoutSidebarUserProfile(controller.signal)).toBe(true);
+    expect(runtimeFetchCalls).toEqual([[
+      '/auth/session',
+      {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+        cache: 'no-store',
+        signal: controller.signal,
+        method: 'DELETE',
+      },
+    ]]);
+  });
+
+  test('reports a failed logout without treating it as success', async () => {
+    runtimeFetchResponses = [Response.json({ error: 'Logout failed' }, { status: 500 })];
+    const controller = new AbortController();
+
+    expect(await logoutSidebarUserProfile(controller.signal)).toBe(false);
   });
 
   test('creates compact initials for names and email fallbacks', () => {

@@ -56,7 +56,7 @@ describe('Microsoft Entra authentication', () => {
       jwtVerifyImpl,
     });
 
-    const started = await auth.beginAuthorization({ trustDevice: true });
+    const started = await auth.beginAuthorization({ trustDevice: true, returnTo: 'http://localhost:5180/' });
     const authorizationUrl = new URL(started.authorizationUrl);
     expectedNonce = authorizationUrl.searchParams.get('nonce');
     expect(authorizationUrl.searchParams.get('client_id')).toBe('client-id');
@@ -68,6 +68,7 @@ describe('Microsoft Entra authentication', () => {
     const result = await auth.completeAuthorization({ code: 'authorization-code', state: started.state });
     expect(result).toEqual({
       trustDevice: true,
+      returnTo: 'http://localhost:5180/',
       profile: {
         id: 'object-1',
         username: 'ada@example.com',

@@ -435,6 +435,8 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.footer.actions.update": "Оновити",
   "sessions.sidebar.footer.profile.signedInAs": "Вхід виконано як {name}",
   "sessions.sidebar.footer.profile.tooltip": "Профіль",
+  "sessions.sidebar.footer.profile.logout": "Вийти",
+  "sessions.sidebar.footer.profile.logoutError": "Не вдалося вийти. Спробуйте ще раз.",
   "sessions.sidebar.footer.profile.details.title": "Відомості профілю",
   "sessions.sidebar.footer.profile.details.username": "Ім’я користувача",
   "sessions.sidebar.footer.profile.details.displayName": "Відображуване ім’я",

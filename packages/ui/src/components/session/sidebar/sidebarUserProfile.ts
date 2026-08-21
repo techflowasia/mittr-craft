@@ -93,3 +93,11 @@ export const fetchSidebarUserProfile = async (signal: AbortSignal): Promise<Side
   const profile = parseSidebarUserProfile(await response.json().catch(() => null));
   return profile ? { status: 'ready', profile } : { status: 'auth-required' };
 };
+
+export const logoutSidebarUserProfile = async (signal: AbortSignal): Promise<boolean> => {
+  const response = await runtimeFetch('/auth/session', {
+    ...requestOptions(signal),
+    method: 'DELETE',
+  });
+  return response.ok;
+};

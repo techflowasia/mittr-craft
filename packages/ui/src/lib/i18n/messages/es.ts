@@ -435,6 +435,8 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.footer.actions.update": "Actualizar",
   "sessions.sidebar.footer.profile.signedInAs": "Sesión iniciada como {name}",
   "sessions.sidebar.footer.profile.tooltip": "Perfil",
+  "sessions.sidebar.footer.profile.logout": "Cerrar sesión",
+  "sessions.sidebar.footer.profile.logoutError": "No se pudo cerrar la sesión. Inténtalo de nuevo.",
   "sessions.sidebar.footer.profile.details.title": "Detalles del perfil",
   "sessions.sidebar.footer.profile.details.username": "Nombre de usuario",
   "sessions.sidebar.footer.profile.details.displayName": "Nombre para mostrar",

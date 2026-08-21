@@ -546,6 +546,7 @@ describe('client auth routes', () => {
     const resolveAuthContext = vi.fn(options.resolveAuthContext || (async () => ({ type: 'session' })));
     const handleAdLoginStart = vi.fn((_req, res) => res.redirect(302, 'https://login.microsoftonline.com/tenant/authorize'));
     const handleAdCallback = vi.fn((_req, res) => res.redirect(302, '/'));
+    const handleSessionDelete = vi.fn((_req, res) => res.json({ authenticated: false }));
     return {
       express,
       tunnelAuthController: {
@@ -557,6 +558,7 @@ describe('client auth routes', () => {
       uiAuthController: {
         handleSessionStatus: (_req, res) => res.json({ authenticated: true }),
         handleSessionCreate: (_req, res) => res.json({ authenticated: true }),
+        handleSessionDelete,
         handlePasskeyStatus: (_req, res) => res.json({ enabled: false }),
         handlePasskeyAuthenticationOptions: (_req, res) => res.json({}),
         handlePasskeyAuthenticationVerify: (_req, res) => res.json({ authenticated: true }),
@@ -604,7 +606,7 @@ describe('client auth routes', () => {
       },
       readSettingsFromDiskMigrated: async () => ({}),
       normalizeTunnelSessionTtlMs: () => 1000,
-      testHooks: { clients, requireAuth, requireSessionAuth, resolveAuthContext, handleAdLoginStart, handleAdCallback },
+      testHooks: { clients, requireAuth, requireSessionAuth, resolveAuthContext, handleAdLoginStart, handleAdCallback, handleSessionDelete },
     };
   };
 
@@ -627,6 +629,23 @@ describe('client auth routes', () => {
     await request(tunnelApp).get('/auth/ad/callback?state=state-1&code=code-1').expect(403);
     expect(tunnelDependencies.testHooks.handleAdLoginStart).not.toHaveBeenCalled();
     expect(tunnelDependencies.testHooks.handleAdCallback).not.toHaveBeenCalled();
+  });
+
+  it('logs out local UI sessions but rejects tunnel scope', async () => {
+    const app = express();
+    const dependencies = createDependencies();
+    registerAuthAndAccessRoutes(app, dependencies);
+
+    await request(app).delete('/auth/session').expect(200, { authenticated: false });
+    expect(dependencies.testHooks.handleSessionDelete).toHaveBeenCalledTimes(1);
+
+    const tunnelApp = express();
+    const tunnelDependencies = createDependencies();
+    tunnelDependencies.tunnelAuthController.classifyRequestScope = () => 'tunnel';
+    registerAuthAndAccessRoutes(tunnelApp, tunnelDependencies);
+
+    await request(tunnelApp).delete('/auth/session').expect(403);
+    expect(tunnelDependencies.testHooks.handleSessionDelete).not.toHaveBeenCalled();
   });
 
   it('creates, lists, and revokes remote client tokens', async () => {

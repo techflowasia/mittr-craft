@@ -3,11 +3,13 @@ import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { toast } from '@/components/ui';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
 import { subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
@@ -15,6 +17,7 @@ import { requestSessionLogin } from '@/components/auth/sessionAuthGateState';
 import {
   fetchSidebarUserProfile,
   getSidebarUserInitials,
+  logoutSidebarUserProfile,
   type SidebarUserProfile,
 } from './sidebarUserProfile';
 
@@ -92,6 +95,8 @@ export function SidebarFooter({
   requireProfileSession,
 }: Props): React.ReactNode {
   const { t } = useI18n();
+  const [isLoggingOut, setIsLoggingOut] = React.useState(false);
+  const logoutControllerRef = React.useRef<AbortController | null>(null);
   const profile = useSidebarUserProfile(showRuntimeButtons, requireProfileSession);
   const profileDetails = profile ? [
     { label: t('sessions.sidebar.footer.profile.details.username'), value: profile.username },
@@ -101,6 +106,33 @@ export function SidebarFooter({
     { label: t('sessions.sidebar.footer.profile.details.jobTitle'), value: profile.title },
     { label: t('sessions.sidebar.footer.profile.details.groups'), value: profile.groups.length > 0 ? profile.groups.join(', ') : null },
   ].filter((detail): detail is { label: string; value: string } => Boolean(detail.value)) : [];
+
+  React.useEffect(() => () => {
+    const controller = logoutControllerRef.current;
+    logoutControllerRef.current = null;
+    controller?.abort();
+  }, []);
+
+  const handleLogout = React.useCallback(async () => {
+    if (isLoggingOut) return;
+    const controller = new AbortController();
+    logoutControllerRef.current?.abort();
+    logoutControllerRef.current = controller;
+    setIsLoggingOut(true);
+    try {
+      if (!await logoutSidebarUserProfile(controller.signal)) {
+        throw new Error('Session logout failed');
+      }
+      requestSessionLogin();
+    } catch {
+      if (!controller.signal.aborted) toast.error(t('sessions.sidebar.footer.profile.logoutError'));
+    } finally {
+      if (logoutControllerRef.current === controller) {
+        logoutControllerRef.current = null;
+        setIsLoggingOut(false);
+      }
+    }
+  }, [isLoggingOut, t]);
 
   if (!showRuntimeButtons && !showUpdateButton) {
     return null;
@@ -154,6 +186,10 @@ export function SidebarFooter({
                     </div>
                   ))}
                 </dl>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem disabled={isLoggingOut} onSelect={() => { void handleLogout(); }}>
+                  {t('sessions.sidebar.footer.profile.logout')}
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           ) : null}

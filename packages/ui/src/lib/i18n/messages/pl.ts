@@ -246,6 +246,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.footer.actions.update': 'Aktualizuj',
   'sessions.sidebar.footer.profile.signedInAs': 'Zalogowano jako {name}',
   'sessions.sidebar.footer.profile.tooltip': 'Profil',
+  'sessions.sidebar.footer.profile.logout': 'Wyloguj się',
+  'sessions.sidebar.footer.profile.logoutError': 'Nie udało się wylogować. Spróbuj ponownie.',
   'sessions.sidebar.footer.profile.details.title': 'Szczegóły profilu',
   'sessions.sidebar.footer.profile.details.username': 'Nazwa użytkownika',
   'sessions.sidebar.footer.profile.details.displayName': 'Nazwa wyświetlana',

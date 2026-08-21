@@ -412,6 +412,8 @@ export const dict = {
   'sessions.sidebar.footer.actions.update': 'Aktualisieren',
   'sessions.sidebar.footer.profile.signedInAs': 'Angemeldet als {name}',
   'sessions.sidebar.footer.profile.tooltip': 'Profil',
+  'sessions.sidebar.footer.profile.logout': 'Abmelden',
+  'sessions.sidebar.footer.profile.logoutError': 'Abmelden nicht möglich. Bitte versuche es erneut.',
   'sessions.sidebar.footer.profile.details.title': 'Profildetails',
   'sessions.sidebar.footer.profile.details.username': 'Benutzername',
   'sessions.sidebar.footer.profile.details.displayName': 'Anzeigename',
