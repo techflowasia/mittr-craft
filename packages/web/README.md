@@ -47,6 +47,19 @@ openchamber stop                     # Stop server
 openchamber update                   # Update to latest version
 ```
 
+Microsoft Entra ID (Azure AD) can protect browser sessions without an additional UI password. Configure these four server-only environment variables and register the exact redirect URI in the Entra App Registration:
+
+```bash
+MITTR_AD_CLIENT_ID=your-client-id
+MITTR_AD_CLIENT_SECRET=your-client-secret
+MITTR_AD_TENANT_ID=your-tenant-id
+MITTR_AD_REDIRECT_URI=https://openchamber.example.com/auth/ad/callback
+```
+
+OpenChamber uses Authorization Code Flow with PKCE and validates the returned ID token. Keep `MITTR_AD_CLIENT_SECRET` on the server; never expose it to browser, desktop renderer, or mobile code. HTTP redirect URIs are accepted only for loopback development.
+
+This redirect flow signs in browser sessions. OpenChamber Desktop continues to use its client credential or UI-password flow; open an Entra-only remote instance in a browser.
+
 `startup enable` snapshots your current environment into the native service so startup behaves like you launched `openchamber` from the same shell. This preserves provider tokens, PATH, SSH agent settings, and other CLI auth/config env vars. Use `--no-env-snapshot` for a minimal service env.
 
 When OpenChamber launches the local OpenCode server, it also registers a native
