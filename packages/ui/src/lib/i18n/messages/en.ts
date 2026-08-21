@@ -434,6 +434,8 @@ export const dict = {
   'sessions.sidebar.footer.actions.update': 'Update',
   'sessions.sidebar.footer.profile.signedInAs': 'Signed in as {name}',
   'sessions.sidebar.footer.profile.tooltip': 'Profile',
+  'sessions.sidebar.footer.profile.logout': 'Log out',
+  'sessions.sidebar.footer.profile.logoutError': 'Could not log out. Please try again.',
   'sessions.sidebar.footer.profile.details.title': 'Profile details',
   'sessions.sidebar.footer.profile.details.username': 'Username',
   'sessions.sidebar.footer.profile.details.displayName': 'Display name',

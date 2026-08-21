@@ -265,6 +265,8 @@ export const dict = {
   'sessions.sidebar.footer.actions.update': 'Mise à jour',
   'sessions.sidebar.footer.profile.signedInAs': 'Connecté en tant que {name}',
   'sessions.sidebar.footer.profile.tooltip': 'Profil',
+  'sessions.sidebar.footer.profile.logout': 'Se déconnecter',
+  'sessions.sidebar.footer.profile.logoutError': 'Impossible de se déconnecter. Réessayez.',
   'sessions.sidebar.footer.profile.details.title': 'Détails du profil',
   'sessions.sidebar.footer.profile.details.username': 'Nom d’utilisateur',
   'sessions.sidebar.footer.profile.details.displayName': 'Nom d’affichage',

@@ -277,6 +277,7 @@ Managed health failures are classified as `timeout`, `connection_refused`, `conn
  - `registerAuthAndAccessRoutes(app, dependencies)`: registers browser auth/session exchange and API access middleware:
    - `GET /auth/session`
    - `POST /auth/session`
+   - `DELETE /auth/session`
    - `GET /auth/passkey/status`
    - `POST /auth/passkey/authenticate/options`
    - `POST /auth/passkey/authenticate/verify`

@@ -448,6 +448,8 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.footer.actions.update': '更新',
   'sessions.sidebar.footer.profile.signedInAs': '已登入為 {name}',
   'sessions.sidebar.footer.profile.tooltip': '個人資料',
+  'sessions.sidebar.footer.profile.logout': '登出',
+  'sessions.sidebar.footer.profile.logoutError': '無法登出，請再試一次。',
   'sessions.sidebar.footer.profile.details.title': '個人資料詳細資訊',
   'sessions.sidebar.footer.profile.details.username': '使用者名稱',
   'sessions.sidebar.footer.profile.details.displayName': '顯示名稱',
