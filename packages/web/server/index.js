@@ -11,6 +11,7 @@ import os from 'os';
 import crypto from 'crypto';
 import http2 from 'node:http2';
 import { createUiAuth } from './lib/ui-auth/ui-auth.js';
+import { createAdAuth } from './lib/ui-auth/ad-auth.js';
 import { createTunnelAuth } from './lib/opencode/tunnel-auth.js';
 import { createManagedTunnelConfigRuntime } from './lib/tunnels/managed-config.js';
 import { createTunnelProviderRegistry } from './lib/tunnels/registry.js';
@@ -1035,6 +1036,7 @@ const featureRoutesRuntime = createFeatureRoutesRuntime({
 });
 const bootstrapRuntime = createBootstrapRuntime({
   createUiAuth,
+  createAdAuth,
   registerServerStatusRoutes,
   registerCommonRequestMiddleware,
   registerAuthAndAccessRoutes,
@@ -1329,7 +1331,7 @@ const openChamberSessionService = createOpenChamberSessionService({
   emitSessionCreatedEvent,
   sessionKnowledgeRuntime,
 });
-// Browser actions are published to whichever OpenChamber clients are connected;
+// Browser actions are published to whichever MittrCraft clients are connected;
 // the one owning the browser panel answers. `emitRequest` returns the number of
 // clients reached so the broker can fail fast when nobody is listening.
 const browserControlBroker = createBrowserControlBroker({
@@ -1608,7 +1610,7 @@ async function main(options = {}) {
     ? options.getDesktopRuntimeConfig
     : null;
 
-  console.log(`Starting OpenChamber on port ${port === 0 ? 'auto' : port}`);
+  console.log(`Starting MittrCraft on port ${port === 0 ? 'auto' : port}`);
 
   // Voice enumeration is independent from route registration. Start it now,
   // but do not hold server listen or managed OpenCode startup on `say -v "?"`.
@@ -1746,9 +1748,9 @@ async function main(options = {}) {
     getServerLabel: () => {
       try {
         const name = os.hostname();
-        return typeof name === 'string' && name.trim().length > 0 ? name.trim() : 'OpenChamber';
+        return typeof name === 'string' && name.trim().length > 0 ? name.trim() : 'MittrCraft';
       } catch {
-        return 'OpenChamber';
+        return 'MittrCraft';
       }
     },
     readSettingsFromDiskMigrated,
@@ -1883,7 +1885,7 @@ async function main(options = {}) {
     buildOpenCodeUrl,
     getOpenCodeAuthHeaders,
     getOpenCodePort: () => openCodePort,
-    // Dev-server discovery must not offer OpenChamber's own listeners back to
+    // Dev-server discovery must not offer MittrCraft's own listeners back to
     // the user as something to preview.
     getOwnPorts: () => [port, openCodePort].filter((value) => Number.isInteger(value) && value > 0),
     devServerScanner,

@@ -1,6 +1,11 @@
 /**
+<<<<<<< HEAD
  * OpenChamber project-level configuration service.
  * Stores per-project settings in ~/.config/openchamber/projects/<projectId>.json.
+=======
+ * MittrCraft project-level configuration service.
+ * Stores per-project settings in ~/.config/openchamber/<projectId>.json.
+>>>>>>> 245ff364 (feat: implement Active Directory and Entra ID authentication support with session management updates)
  * Migrates from legacy <project>/.openchamber/openchamber.json.
  *
  * Notes, todos, and plan files used to live here too. They are now server-owned

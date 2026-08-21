@@ -6,6 +6,7 @@ import os from 'os';
 import { createUiPasskeys } from './ui-passkeys.js';
 
 const SESSION_COOKIE_NAME = 'oc_ui_session';
+const AD_TRANSACTION_COOKIE_NAME = 'oc_ad_transaction';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const TRUSTED_DEVICE_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const URL_AUTH_TOKEN_TTL_MS = 60 * 1000;
@@ -327,12 +328,14 @@ const buildCookie = ({
   value,
   maxAge,
   secure,
+  cookiePath = '/',
+  sameSite = 'Strict',
 }) => {
   const attributes = [
     `${name}=${value}`,
-    'Path=/',
+    `Path=${cookiePath}`,
     'HttpOnly',
-    'SameSite=Strict',
+    `SameSite=${sameSite}`,
   ];
 
   if (typeof maxAge === 'number') {
@@ -350,6 +353,17 @@ const buildCookie = ({
   }
 
   return attributes.join('; ');
+};
+
+const appendSetCookieHeader = (res, cookie) => {
+  const current = typeof res.getHeader === 'function' ? res.getHeader('Set-Cookie') : undefined;
+  if (Array.isArray(current)) {
+    res.setHeader('Set-Cookie', [...current, cookie]);
+  } else if (typeof current === 'string' && current) {
+    res.setHeader('Set-Cookie', [current, cookie]);
+  } else {
+    res.setHeader('Set-Cookie', cookie);
+  }
 };
 
 const normalizePassword = (candidate) => {
@@ -411,8 +425,12 @@ export const createUiAuth = ({
   readSettingsFromDiskMigrated,
   clientAuthController = null,
   requireClientAuth = false,
+  adAuthController = null,
 } = {}) => {
   const normalizedPassword = normalizePassword(password);
+  const passwordEnabled = Boolean(normalizedPassword);
+  const adEnabled = adAuthController?.enabled === true;
+  const adConfigurationPresent = adAuthController?.configurationPresent === true;
   const urlAuthTokens = new Map();
 
   const sweepUrlAuthTokens = () => {
@@ -483,7 +501,7 @@ export const createUiAuth = ({
     client: clientAuth?.client || null,
   });
 
-  if (!normalizedPassword) {
+  if (!passwordEnabled && !adEnabled && !adConfigurationPresent) {
     const setSessionCookie = (req, res, token, ttlMs = sessionTtlMs) => {
       const secure = isSecureRequest(req);
       const maxAgeSeconds = Math.floor(ttlMs / 1000);
@@ -493,7 +511,7 @@ export const createUiAuth = ({
         maxAge: maxAgeSeconds,
         secure,
       });
-      res.setHeader('Set-Cookie', header);
+      appendSetCookieHeader(res, header);
     };
 
     const ensureSessionToken = async (req, res) => {
@@ -601,6 +619,24 @@ export const createUiAuth = ({
       handleResetAuth: (_req, res) => {
         res.status(400).json({ error: 'UI password not configured' });
       },
+      handleAdStatus: (_req, res) => {
+        if (!adAuthController) {
+          return res.json({ enabled: false });
+        }
+        return res.json(adAuthController.getStatus());
+      },
+      handleAdSessionCreate: async (req, res) => {
+        return res.status(400).json({ error: 'AD authentication not configured' });
+      },
+      handleAdLoginStart: (_req, res) => {
+        res.status(400).json({ error: 'Microsoft authentication not configured' });
+      },
+      handleAdCallback: (_req, res) => {
+        res.status(400).send('Microsoft authentication is not configured');
+      },
+      handleAdProfile: (_req, res) => {
+        res.status(400).json({ error: 'AD authentication not configured' });
+      },
       ensureSessionToken: async (req, res) => {
         const clientAuth = await authenticateClientRequest(req);
         if (clientAuth) return clientSessionToken(clientAuth);
@@ -615,7 +651,9 @@ export const createUiAuth = ({
   const salt = crypto.randomBytes(16);
   const expectedHash = crypto.scryptSync(normalizedPassword, salt, 64);
   let jwtSecret = getOrCreateJwtSecret();
-  let passwordBinding = crypto.createHmac('sha256', jwtSecret).update(normalizedPassword).digest('hex');
+  let passwordBinding = passwordEnabled
+    ? crypto.createHmac('sha256', jwtSecret).update(normalizedPassword).digest('hex')
+    : '';
   const resolveSessionTtlMs = (trustDevice) => (trustDevice ? TRUSTED_DEVICE_SESSION_TTL_MS : sessionTtlMs);
   let passkeyController = createUiPasskeys({
     passwordBinding,
@@ -624,7 +662,9 @@ export const createUiAuth = ({
 
   const rebuildPasskeyController = () => {
     passkeyController.dispose();
-    passwordBinding = crypto.createHmac('sha256', jwtSecret).update(normalizedPassword).digest('hex');
+    passwordBinding = passwordEnabled
+      ? crypto.createHmac('sha256', jwtSecret).update(normalizedPassword).digest('hex')
+      : '';
     passkeyController = createUiPasskeys({
       passwordBinding,
       readSettingsFromDiskMigrated,
@@ -655,7 +695,7 @@ export const createUiAuth = ({
       maxAge: maxAgeSeconds,
       secure,
     });
-    res.setHeader('Set-Cookie', header);
+    appendSetCookieHeader(res, header);
   };
 
   const clearSessionCookie = (req, res) => {
@@ -666,7 +706,7 @@ export const createUiAuth = ({
       maxAge: 0,
       secure,
     });
-    res.setHeader('Set-Cookie', header);
+    appendSetCookieHeader(res, header);
   };
 
   const verifyPassword = (candidate) => {
@@ -697,9 +737,9 @@ export const createUiAuth = ({
     }
   };
 
-  const issueSession = async (req, res, { trustDevice = false } = {}) => {
+  const issueSession = async (req, res, { trustDevice = false, claims = {} } = {}) => {
     const ttlMs = resolveSessionTtlMs(trustDevice);
-    const token = await new SignJWT({ type: 'ui-session' })
+    const token = await new SignJWT({ type: 'ui-session', ...claims })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt()
       .setExpirationTime(ttlMs / 1000 + 's')
@@ -808,6 +848,11 @@ export const createUiAuth = ({
   };
 
   const handleSessionCreate = async (req, res) => {
+    if (!passwordEnabled) {
+      res.status(400).json({ error: 'UI password not configured' });
+      return;
+    }
+
     const rateLimitResult = await checkRateLimit(req);
 
     res.setHeader('X-RateLimit-Limit', rateLimitResult.limit);
@@ -966,6 +1011,182 @@ export const createUiAuth = ({
       rateLimitCleanupTimer = null;
     }
     passkeyController.dispose();
+    if (adAuthController) {
+      adAuthController.dispose();
+    }
+  };
+
+  const handleAdStatus = (_req, res) => {
+    if (!adAuthController) {
+      return res.json({ enabled: false, passwordEnabled });
+    }
+    return res.json({ ...adAuthController.getStatus(), passwordEnabled });
+  };
+
+  const handleAdSessionCreate = async (req, res) => {
+    if (!adAuthController) {
+      return res.status(400).json({ error: 'AD authentication not configured' });
+    }
+    if (adAuthController.mode === 'entra') {
+      return res.status(400).json({ error: 'Use the Microsoft sign-in redirect' });
+    }
+
+    const rateLimitResult = await checkRateLimit(req);
+
+    res.setHeader('X-RateLimit-Limit', rateLimitResult.limit);
+    res.setHeader('X-RateLimit-Remaining', rateLimitResult.remaining);
+    res.setHeader('X-RateLimit-Reset', rateLimitResult.reset);
+
+    if (!rateLimitResult.allowed) {
+      res.setHeader('Retry-After', rateLimitResult.retryAfter);
+      res.status(429).json({
+        error: 'Too many login attempts, please try again later',
+        retryAfter: rateLimitResult.retryAfter,
+      });
+      return;
+    }
+
+    const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
+
+    const result = await adAuthController.authenticate(username, password);
+
+    if (!result.ok) {
+      await recordFailedAttempt(req);
+      clearSessionCookie(req, res);
+      return res.status(401).json({ error: result.error || 'Invalid credentials' });
+    }
+
+    await clearRateLimit(req);
+
+    const trustDevice = isTrustedDeviceRequest(req.body?.trustDevice);
+    const ttlMs = resolveSessionTtlMs(trustDevice);
+    await issueSession(req, res, {
+      trustDevice,
+      claims: { authMethod: 'ad', username, profile: result.profile },
+    });
+
+    let clientTokenResult = null;
+    if (req.body?.issueClientToken === true && typeof clientAuthController?.createClient === 'function') {
+      clientTokenResult = await clientAuthController.createClient({
+        label: req.body?.clientLabel,
+        expiresAt: new Date(Date.now() + ttlMs).toISOString(),
+        clientKind: req.body?.clientKind,
+        dedupeKey: req.body?.dedupeKey,
+        authMethod: 'ad',
+        deviceName: req.body?.deviceName,
+        devicePlatform: req.body?.devicePlatform,
+        deviceModel: req.body?.deviceModel,
+        appVersion: req.body?.appVersion,
+      });
+    }
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      authenticated: true,
+      profile: result.profile,
+      ...(clientTokenResult?.token ? { clientToken: clientTokenResult.token, client: clientTokenResult.client } : {}),
+    });
+  };
+
+  const clearAdTransactionCookie = (req, res) => {
+    appendSetCookieHeader(res, buildCookie({
+      name: AD_TRANSACTION_COOKIE_NAME,
+      value: '',
+      maxAge: 0,
+      secure: isSecureRequest(req),
+      cookiePath: '/auth/ad/callback',
+      sameSite: 'Lax',
+    }));
+  };
+
+  const handleAdLoginStart = async (req, res) => {
+    if (!adAuthController?.enabled || adAuthController.mode !== 'entra') {
+      return res.status(400).json({ error: 'Microsoft authentication not configured' });
+    }
+    try {
+      const trustDevice = req.query?.trustDevice === 'true' || req.query?.trustDevice === '1';
+      const transaction = await adAuthController.beginAuthorization({ trustDevice });
+      const maxAge = Math.max(1, Math.floor((transaction.expiresAt - Date.now()) / 1000));
+      res.setHeader('Cache-Control', 'no-store');
+      appendSetCookieHeader(res, buildCookie({
+        name: AD_TRANSACTION_COOKIE_NAME,
+        value: encodeURIComponent(transaction.state),
+        maxAge,
+        secure: isSecureRequest(req),
+        cookiePath: '/auth/ad/callback',
+        sameSite: 'Lax',
+      }));
+      return res.redirect(302, transaction.authorizationUrl);
+    } catch (error) {
+      console.error('[Entra] Failed to start sign-in:', error?.message || error);
+      return res.status(502).json({ error: 'Unable to start Microsoft sign-in' });
+    }
+  };
+
+  const handleAdCallback = async (req, res) => {
+    if (!adAuthController?.enabled || adAuthController.mode !== 'entra') {
+      return res.status(400).send('Microsoft authentication is not configured');
+    }
+
+    const state = typeof req.query?.state === 'string' ? req.query.state : '';
+    const code = typeof req.query?.code === 'string' ? req.query.code : '';
+    const providerError = typeof req.query?.error === 'string' ? req.query.error : '';
+    const transactionCookie = parseCookies(req.headers.cookie)[AD_TRANSACTION_COOKIE_NAME] || '';
+    clearAdTransactionCookie(req, res);
+    res.setHeader('Cache-Control', 'no-store');
+
+    if (providerError || !state || !code || transactionCookie !== state) {
+      return res.status(400).send('Microsoft sign-in could not be verified. Return to MittrCraft and try again.');
+    }
+
+    try {
+      const result = await adAuthController.completeAuthorization({ code, state });
+      await issueSession(req, res, {
+        trustDevice: result.trustDevice,
+        claims: { authMethod: 'entra', profile: result.profile },
+      });
+      return res.redirect(302, '/');
+    } catch (error) {
+      console.error('[Entra] Sign-in callback failed:', error?.message || error);
+      return res.status(401).send('Microsoft sign-in failed. Return to MittrCraft and try again.');
+    }
+  };
+
+  const handleAdProfile = async (req, res) => {
+    if (!adAuthController) {
+      return res.status(400).json({ error: 'AD authentication not configured' });
+    }
+
+    const cookies = parseCookies(req.headers.cookie);
+    const token = cookies[cookieName];
+    if (!token) {
+      return res.status(401).json({ error: 'Not authenticated' });
+    }
+
+    try {
+      const payload = await jwtVerify(token, jwtSecret);
+      if (payload?.payload?.authMethod === 'entra' && payload?.payload?.profile) {
+        return res.json({ profile: payload.payload.profile });
+      }
+      const username = payload?.payload?.username;
+      if (!username) {
+        return res.status(400).json({ error: 'No username in session' });
+      }
+
+      const profile = await adAuthController.getProfile(username);
+      if (!profile) {
+        return res.status(404).json({ error: 'User profile not found' });
+      }
+
+      res.json({ profile });
+    } catch {
+      return res.status(401).json({ error: 'Invalid session' });
+    }
   };
 
   return {
@@ -984,6 +1205,11 @@ export const createUiAuth = ({
     handlePasskeyList,
     handlePasskeyRevoke,
     handleResetAuth,
+    handleAdStatus,
+    handleAdSessionCreate,
+    handleAdLoginStart,
+    handleAdCallback,
+    handleAdProfile,
     ensureSessionToken: async (req, _res) => {
       return resolveAuthenticatedSessionToken(req);
     },

@@ -94,6 +94,139 @@ const CURATED_SOURCES: CuratedSource[] = [
   },
 ];
 
+<<<<<<< HEAD
+=======
+// ============== ClawdHub API ==============
+
+const CLAWDHUB_API_BASE = 'https://clawdhub.com/api/v1';
+const CLAWDHUB_PAGE_LIMIT = 25;
+const CLAWDHUB_RATE_LIMIT_MS = 100;
+let clawdhubLastRequest = 0;
+
+function isClawdHubSource(source: string): boolean {
+  return typeof source === 'string' && source.startsWith('clawdhub:');
+}
+
+async function clawdhubFetch(url: string, options?: RequestInit): Promise<Response> {
+  const maxAttempts = 10;
+  let lastResponse: Response | null = null;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const now = Date.now();
+    const elapsed = now - clawdhubLastRequest;
+    if (elapsed < CLAWDHUB_RATE_LIMIT_MS) {
+      await new Promise((resolve) => setTimeout(resolve, CLAWDHUB_RATE_LIMIT_MS - elapsed));
+    }
+    clawdhubLastRequest = Date.now();
+
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'MittrCraft-VSCode/1.0',
+        ...options?.headers,
+      },
+    });
+
+    lastResponse = response;
+
+    if (response.status === 429 || response.status >= 500) {
+      if (attempt < maxAttempts - 1) {
+        const waitMs = 50 * (attempt + 1);
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        continue;
+      }
+    }
+
+    return response;
+  }
+
+  return lastResponse as Response;
+}
+
+type ClawdHubSkillListItem = {
+  slug: string;
+  displayName?: string;
+  summary?: string;
+  tags?: { latest?: string };
+  latestVersion?: { version?: string };
+  stats?: { downloads?: number; stars?: number };
+  owner?: { handle?: string };
+};
+
+type ClawdHubSkillsResponse = {
+  items: ClawdHubSkillListItem[];
+  nextCursor?: string;
+};
+
+async function scanClawdHub(): Promise<SkillsRepoScanResult> {
+  try {
+    const allItems: SkillsCatalogItem[] = [];
+    let cursor: string | null = null;
+    const maxPages = 20;
+
+    for (let page = 0; page < maxPages; page++) {
+      const url = cursor
+        ? `${CLAWDHUB_API_BASE}/skills?cursor=${encodeURIComponent(cursor)}&limit=${CLAWDHUB_PAGE_LIMIT}`
+        : `${CLAWDHUB_API_BASE}/skills?limit=${CLAWDHUB_PAGE_LIMIT}`;
+
+      let data: ClawdHubSkillsResponse;
+
+      try {
+        const response = await clawdhubFetch(url);
+        if (!response.ok) {
+          throw new Error(`ClawdHub API error: ${response.status}`);
+        }
+
+        data = (await response.json()) as ClawdHubSkillsResponse;
+      } catch (error) {
+        if (page > 0 && allItems.length > 0) {
+          break;
+        }
+        throw error;
+      }
+
+      for (const item of data.items || []) {
+        const latestVersion = item.tags?.latest || item.latestVersion?.version || '1.0.0';
+
+        allItems.push({
+          repoSource: 'clawdhub:registry',
+          skillDir: item.slug,
+          skillName: item.slug,
+          frontmatterName: item.displayName || item.slug,
+          description: item.summary || undefined,
+          installable: true,
+          clawdhub: {
+            slug: item.slug,
+            version: latestVersion,
+            displayName: item.displayName,
+            owner: item.owner?.handle,
+            downloads: item.stats?.downloads || 0,
+            stars: item.stats?.stars || 0,
+          },
+        });
+      }
+
+      if (!data.nextCursor) break;
+      cursor = data.nextCursor;
+    }
+
+    // Sort by downloads (most popular first)
+    allItems.sort((a, b) => (b.clawdhub?.downloads || 0) - (a.clawdhub?.downloads || 0));
+
+    return { ok: true, items: allItems };
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        kind: 'networkError',
+        message: error instanceof Error ? error.message : 'Failed to fetch skills from ClawdHub',
+      },
+    };
+  }
+}
+
+>>>>>>> 245ff364 (feat: implement Active Directory and Entra ID authentication support with session management updates)
 function validateSkillName(skillName: string): boolean {
   if (skillName.length < 1 || skillName.length > 64) return false;
   return SKILL_NAME_PATTERN.test(skillName);

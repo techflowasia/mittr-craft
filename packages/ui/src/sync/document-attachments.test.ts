@@ -223,8 +223,13 @@ describe("document attachment extraction", () => {
     const result = await extractDocumentAttachments(file)
     const text = await result?.textFile.text() ?? ""
 
+<<<<<<< HEAD
     expect(text.length <= 500_000).toBe(true)
     expect(text.endsWith("[Document text truncated by OpenChamber]\n")).toBe(true)
+=======
+    expect(text.length <= 2_000_000).toBe(true)
+    expect(text.endsWith("[Document text truncated by MittrCraft]\n")).toBe(true)
+>>>>>>> 245ff364 (feat: implement Active Directory and Entra ID authentication support with session management updates)
     expect(text.includes("[long-image-1.png]")).toBe(false)
     expect(result?.images).toEqual([])
   })

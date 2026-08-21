@@ -33,7 +33,7 @@ export const registerServerStatusRoutes = (app, dependencies) => {
     serverStartedAt,
     gracefulShutdown,
     getHealthSnapshot,
-    // Port this OpenChamber instance serves on and the tunnel public URL (if
+    // Port this MittrCraft instance serves on and the tunnel public URL (if
     // a tunnel is active). Exposed on /api/system/info so the UI can surface
     // the active instance's service URLs. Optional: older wiring omits them
     // and the endpoint reports null.
@@ -376,7 +376,7 @@ export const registerAuthAndAccessRoutes = (app, dependencies) => {
     getServerId = async () => null,
     // Display name a paired device shows for THIS server (issuing machine's
     // hostname), distinct from the per-device pairing label typed by the operator.
-    getServerLabel = () => 'OpenChamber',
+    getServerLabel = () => 'MittrCraft',
   } = dependencies;
   const PAIRING_REDEEM_RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
   const PAIRING_REDEEM_RATE_LIMIT_MAX_ATTEMPTS = 10;
@@ -719,6 +719,60 @@ export const registerAuthAndAccessRoutes = (app, dependencies) => {
     try {
       await uiAuthController.requireSessionAuth(req, res, async () => {
         await uiAuthController.handleResetAuth(req, res);
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/auth/ad/status', (req, res) => {
+    const requestScope = tunnelAuthController.classifyRequestScope(req);
+    if (requestScope === 'tunnel' || requestScope === 'unknown-public') {
+      return res.json({ enabled: false, tunnelLocked: true });
+    }
+    return uiAuthController.handleAdStatus(req, res);
+  });
+
+  app.get('/auth/ad/login', async (req, res, next) => {
+    const requestScope = tunnelAuthController.classifyRequestScope(req);
+    if (requestScope === 'tunnel' || requestScope === 'unknown-public') {
+      return res.status(403).json({ error: 'Microsoft login is disabled for tunnel scope', tunnelLocked: true });
+    }
+    try {
+      await uiAuthController.handleAdLoginStart(req, res);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.get('/auth/ad/callback', async (req, res, next) => {
+    const requestScope = tunnelAuthController.classifyRequestScope(req);
+    if (requestScope === 'tunnel' || requestScope === 'unknown-public') {
+      return res.status(403).send('Microsoft login is disabled for tunnel scope');
+    }
+    try {
+      await uiAuthController.handleAdCallback(req, res);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  app.post('/auth/ad/session', (req, res) => {
+    const requestScope = tunnelAuthController.classifyRequestScope(req);
+    if (requestScope === 'tunnel' || requestScope === 'unknown-public') {
+      return res.status(403).json({ error: 'AD login is disabled for tunnel scope', tunnelLocked: true });
+    }
+    return uiAuthController.handleAdSessionCreate(req, res);
+  });
+
+  app.get('/auth/ad/profile', async (req, res, next) => {
+    const requestScope = tunnelAuthController.classifyRequestScope(req);
+    if (requestScope === 'tunnel' || requestScope === 'unknown-public') {
+      return res.status(403).json({ error: 'AD profile is disabled for tunnel scope', tunnelLocked: true });
+    }
+    try {
+      await uiAuthController.requireSessionAuth(req, res, async () => {
+        await uiAuthController.handleAdProfile(req, res);
       });
     } catch (error) {
       next(error);

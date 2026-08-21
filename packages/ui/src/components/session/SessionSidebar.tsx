@@ -2013,6 +2013,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
         onOpenUpdate={handleOpenUpdateDialog}
         showRuntimeButtons={!isVSCode}
         showUpdateButton={showSidebarUpdateButton}
+        requireProfileSession={!isDesktopShellRuntime && !isVSCode}
       />
 
       <UpdateDialog

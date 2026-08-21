@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'bun:test';
+import { afterAll, describe, expect, it, mock } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,6 +26,15 @@ const createResponse = () => {
     },
     json(payload) {
       body = payload;
+      return this;
+    },
+    send(payload) {
+      body = payload;
+      return this;
+    },
+    redirect(code, location) {
+      statusCode = code;
+      headers.set('location', location);
       return this;
     },
     setHeader(name, value) {
@@ -287,7 +296,7 @@ describe('ui auth client credential seam', () => {
       body: {
         password: 'secret',
         issueClientToken: true,
-        clientLabel: 'OpenChamber Desktop',
+        clientLabel: 'MittrCraft Desktop',
       },
     };
     const res = createResponse();
@@ -295,9 +304,103 @@ describe('ui auth client credential seam', () => {
     await auth.handleSessionCreate(req, res);
 
     expect(res.body.clientToken).toBe('client-token');
-    expect(createClientInput.label).toBe('OpenChamber Desktop');
+    expect(createClientInput.label).toBe('MittrCraft Desktop');
     const expiresAt = Date.parse(createClientInput.expiresAt);
     expect(expiresAt).toBeGreaterThanOrEqual(before + 122_000);
     expect(expiresAt).toBeLessThanOrEqual(Date.now() + 124_000);
+  });
+});
+
+describe('ui auth Microsoft Entra seam', () => {
+  it('protects the UI with Entra even when no UI password is configured', async () => {
+    const createUiAuth = await loadCreateUiAuth();
+    const auth = createUiAuth({
+      adAuthController: {
+        enabled: true,
+        configurationPresent: true,
+        mode: 'entra',
+        getStatus: () => ({ enabled: true, mode: 'entra', loginPath: '/auth/ad/login' }),
+        dispose: () => {},
+      },
+    });
+    const req = { method: 'GET', path: '/api/config/settings', headers: { accept: 'application/json' } };
+    const res = createResponse();
+
+    await auth.requireAuth(req, res, () => {});
+
+    expect(auth.enabled).toBe(true);
+    expect(res.statusCode).toBe(401);
+    const statusRes = createResponse();
+    auth.handleAdStatus({}, statusRes);
+    expect(statusRes.body).toEqual({ enabled: true, mode: 'entra', loginPath: '/auth/ad/login', passwordEnabled: false });
+  });
+
+  it('binds the OIDC callback to its browser transaction and issues a UI session', async () => {
+    const createUiAuth = await loadCreateUiAuth();
+    const completeAuthorization = mock(async () => ({
+      trustDevice: true,
+      profile: { id: 'object-1', displayName: 'Ada Lovelace', email: 'ada@example.com' },
+    }));
+    const auth = createUiAuth({
+      sessionTtlMs: 60_000,
+      adAuthController: {
+        enabled: true,
+        configurationPresent: true,
+        mode: 'entra',
+        getStatus: () => ({ enabled: true, mode: 'entra', loginPath: '/auth/ad/login' }),
+        beginAuthorization: async () => ({
+          authorizationUrl: 'https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?state=state-1',
+          state: 'state-1',
+          expiresAt: Date.now() + 60_000,
+        }),
+        completeAuthorization,
+        dispose: () => {},
+      },
+    });
+
+    const startRes = createResponse();
+    await auth.handleAdLoginStart({ headers: {}, query: { trustDevice: 'true' } }, startRes);
+    expect(startRes.statusCode).toBe(302);
+    expect(startRes.getHeader('location')).toContain('login.microsoftonline.com');
+    expect(startRes.getHeader('set-cookie')).toContain('oc_ad_transaction=state-1');
+    expect(startRes.getHeader('set-cookie')).toContain('Path=/auth/ad/callback');
+    expect(startRes.getHeader('set-cookie')).toContain('SameSite=Lax');
+
+    const callbackRes = createResponse();
+    await auth.handleAdCallback({
+      headers: { cookie: 'oc_ad_transaction=state-1' },
+      query: { state: 'state-1', code: 'authorization-code' },
+    }, callbackRes);
+    expect(callbackRes.statusCode).toBe(302);
+    expect(callbackRes.getHeader('location')).toBe('/');
+    expect(completeAuthorization).toHaveBeenCalledWith({ code: 'authorization-code', state: 'state-1' });
+    const cookies = callbackRes.getHeader('set-cookie');
+    expect(Array.isArray(cookies)).toBe(true);
+    expect(cookies.some((cookie) => cookie.startsWith('oc_ad_transaction=;'))).toBe(true);
+    expect(cookies.some((cookie) => cookie.startsWith('oc_ui_session='))).toBe(true);
+  });
+
+  it('rejects callbacks whose state does not match the browser cookie', async () => {
+    const createUiAuth = await loadCreateUiAuth();
+    const completeAuthorization = mock(async () => ({ trustDevice: false, profile: {} }));
+    const auth = createUiAuth({
+      adAuthController: {
+        enabled: true,
+        configurationPresent: true,
+        mode: 'entra',
+        getStatus: () => ({ enabled: true, mode: 'entra' }),
+        completeAuthorization,
+        dispose: () => {},
+      },
+    });
+    const res = createResponse();
+
+    await auth.handleAdCallback({
+      headers: { cookie: 'oc_ad_transaction=state-for-another-browser' },
+      query: { state: 'state-1', code: 'authorization-code' },
+    }, res);
+
+    expect(res.statusCode).toBe(400);
+    expect(completeAuthorization).not.toHaveBeenCalled();
   });
 });

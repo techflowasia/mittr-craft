@@ -1,6 +1,7 @@
 export const createBootstrapRuntime = (dependencies) => {
   const {
     createUiAuth,
+    createAdAuth,
     registerServerStatusRoutes,
     registerCommonRequestMiddleware,
     registerAuthAndAccessRoutes,
@@ -69,9 +70,10 @@ export const createBootstrapRuntime = (dependencies) => {
       password: uiPassword,
       readSettingsFromDiskMigrated,
       clientAuthController: remoteClientAuthRuntime,
+      adAuthController: createAdAuth(),
     });
     if (uiAuthController.enabled) {
-      console.log('UI password protection enabled for browser sessions');
+      console.log('UI authentication enabled for browser sessions');
     }
 
     registerServerStatusRoutes(app, {
