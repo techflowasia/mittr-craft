@@ -20,6 +20,7 @@ Pairing v2 is implemented by `packages/web/server/lib/client-auth/pairing.js`. I
   - `requireAuth(req, res, next)`
   - `handleSessionStatus(req, res)`
   - `handleSessionCreate(req, res)`
+  - `handleSessionDelete(req, res)`
   - `handlePasskeyStatus(req, res)`
   - `handlePasskeyRegistrationOptions(req, res)`
   - `handlePasskeyRegistrationVerify(req, res)`
@@ -41,7 +42,9 @@ Entra login is enabled when all four server environment variables are present: `
 
 The server owns the client secret, one-time state and nonce values, PKCE verifier, code exchange, discovery document, signing keys, and ID-token validation. The browser receives only the Microsoft authorization redirect and the final HTTP-only OpenChamber session cookie. OpenChamber does not persist Microsoft access or refresh tokens. A partial Entra configuration fails closed instead of silently leaving the UI unauthenticated.
 
-The redirect flow authenticates browser and hosted-web sessions. Electron deliberately does not present the Entra button because its external-navigation policy opens Microsoft in the system browser, whose cookies do not authenticate the Desktop renderer. Desktop remote access continues to use its existing client credential or password flow; an Entra-only remote instance must be opened in a browser.
+The redirect flow authenticates browser and hosted-web sessions. The login transaction retains a validated return target so a loopback HMR UI returns to its initiating UI origin instead of the backend's static root; same-origin targets are reduced to relative paths, and cross-origin targets are accepted only for loopback HTTP origins matching the login request Referrer. Electron deliberately does not present the Entra button because its external-navigation policy opens Microsoft in the system browser, whose cookies do not authenticate the Desktop renderer. Desktop remote access continues to use its existing client credential or password flow; an Entra-only remote instance must be opened in a browser.
+
+`DELETE /auth/session` signs out only the current browser UI session by expiring its HTTP-only session cookie. It is idempotent and does not rotate the server signing secret, clear passkeys, or revoke trusted-device client credentials.
 
 ## Public exports (ui-passkeys.js)
 - `createUiPasskeys({ passwordBinding, readSettingsFromDiskMigrated, storeFile, rpName, challengeTtlMs })`: creates passkey runtime with methods:
