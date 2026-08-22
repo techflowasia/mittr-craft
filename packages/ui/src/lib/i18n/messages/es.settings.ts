@@ -990,10 +990,7 @@ export const settingsDict = {
   "settings.openchamber.tools.field.agentWebTool": "Herramienta MittrCraft Web",
   "settings.openchamber.tools.field.agentWebToolAria": "Activar la herramienta MittrCraft Web",
   "settings.openchamber.tools.field.agentWebToolInfo": "Permite que los agentes vean la página en el panel de navegador de MittrCraft e interactúen con ella: abrir una URL, leer el contenido, hacer clic, escribir, desplazarse y alternar entre diseño móvil y de escritorio. Añade una pequeña descripción de herramienta a cada sesión. Se aplica tras reiniciar OpenCode.",
-
-  "settings.openchamber.tools.field.agentMemoryTool": "Agent memory tool",
-  "settings.openchamber.tools.field.agentMemoryToolAria": "Agent memory tool",
-  "settings.openchamber.tools.field.agentMemoryToolInfo": "Let agents keep what they learn across sessions, in two stores: what is true about you, and what is true about each project. Sessions are given the stored titles so the agent can read an entry when it is relevant. Turning this off removes the tool, the Memory tab, and the session index. Applies after OpenCode restarts.",  "settings.openchamber.opencodeCli.tooltipPrefix": "Ruta absoluta opcional al",
+  "settings.openchamber.opencodeCli.tooltipPrefix": "Ruta absoluta opcional al",
   "settings.openchamber.opencodeCli.tooltipSuffix": "ejecutable.",
   "settings.openchamber.opencodeCli.field.binaryPath": "Ruta del ejecutable de OpenCode",
   "settings.openchamber.opencodeCli.field.binaryPathPlaceholder": "/Users/you/.bun/bin/opencode",

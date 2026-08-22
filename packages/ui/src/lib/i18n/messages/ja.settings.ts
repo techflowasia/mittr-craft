@@ -1023,10 +1023,7 @@ export const settingsDict = {
   'settings.openchamber.tools.field.agentWebTool': 'MittrCraft Web ツール',
   'settings.openchamber.tools.field.agentWebToolAria': 'MittrCraft Web ツールを有効にする',
   'settings.openchamber.tools.field.agentWebToolInfo': 'エージェントが MittrCraft のブラウザーパネルでページを確認し操作できるようにします。URL を開く、内容を読む、クリック、入力、スクロール、モバイルとデスクトップのレイアウト切り替えが可能です。各セッションに小さなツール説明が追加されます。OpenCode の再起動後に適用されます。',
-
-  'settings.openchamber.tools.field.agentMemoryTool': 'Agent memory tool',
-  'settings.openchamber.tools.field.agentMemoryToolAria': 'Agent memory tool',
-  'settings.openchamber.tools.field.agentMemoryToolInfo': 'Let agents keep what they learn across sessions, in two stores: what is true about you, and what is true about each project. Sessions are given the stored titles so the agent can read an entry when it is relevant. Turning this off removes the tool, the Memory tab, and the session index. Applies after OpenCode restarts.',  'settings.openchamber.opencodeCli.tooltipPrefix': '以下への絶対パス（任意）:',
+  'settings.openchamber.opencodeCli.tooltipPrefix': '以下への絶対パス（任意）:',
   'settings.openchamber.opencodeCli.tooltipSuffix': 'バイナリ。',
   'settings.openchamber.opencodeCli.field.binaryPath': 'OpenCode バイナリパス',
   'settings.openchamber.opencodeCli.field.binaryPathPlaceholder': '/Users/you/.bun/bin/opencode',

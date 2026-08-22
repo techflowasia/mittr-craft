@@ -865,10 +865,7 @@ export const settingsDict = {
   'settings.openchamber.tools.field.agentWebTool': 'Narzędzie MittrCraft Web',
   'settings.openchamber.tools.field.agentWebToolAria': 'Włącz narzędzie MittrCraft Web',
   'settings.openchamber.tools.field.agentWebToolInfo': 'Pozwól agentom oglądać stronę w panelu przeglądarki MittrCraft i wchodzić z nią w interakcję: otwierać adres URL, czytać treść, klikać, pisać, przewijać i przełączać między układem mobilnym a desktopowym. Dodaje krótki opis narzędzia do każdej sesji. Zastosowane po ponownym uruchomieniu OpenCode.',
-
-  'settings.openchamber.tools.field.agentMemoryTool': 'Agent memory tool',
-  'settings.openchamber.tools.field.agentMemoryToolAria': 'Agent memory tool',
-  'settings.openchamber.tools.field.agentMemoryToolInfo': 'Let agents keep what they learn across sessions, in two stores: what is true about you, and what is true about each project. Sessions are given the stored titles so the agent can read an entry when it is relevant. Turning this off removes the tool, the Memory tab, and the session index. Applies after OpenCode restarts.',  'settings.openchamber.opencodeCli.tooltipPrefix': 'Opcjonalna ścieżka absolutna do',
+  'settings.openchamber.opencodeCli.tooltipPrefix': 'Opcjonalna ścieżka absolutna do',
   'settings.openchamber.opencodeCli.tooltipSuffix': 'pliku binarnego.',
   'settings.openchamber.passkeys.actions.add': 'Dodaj klucz dostępu (passkey)',
   'settings.openchamber.passkeys.actions.cancelSetup': 'Anuluj konfigurację klucza dostępu',
