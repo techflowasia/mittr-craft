@@ -48,21 +48,21 @@ echo "==> 2. อัปเดต base branch (${BASE_BRANCH}) ล่าสุด�
 git checkout "${BASE_BRANCH}"
 git pull origin "${BASE_BRANCH}" || echo "ข้อสังเกต: ไม่สามารถ pull remote '${BASE_BRANCH}' ได้ ใช้ local แทน"
 
-echo "==> 3. ทำการ Squash และ Rebase branch ${TARGET_FEATURE} บน ${BASE_BRANCH}"
+echo "==> 3. ทำการ Rebase และ Squash branch ${TARGET_FEATURE} บน ${BASE_BRANCH}"
 git checkout "${TARGET_FEATURE}"
 
-# ย่อ commit ทั้งหมดเข้าหา base branch
+# 1. Rebase บน base branch ก่อนเสมอ เพื่อรับไฟล์ใหม่ทั้งหมดจาก base branch เข้ามาใน feature branch
+git rebase "${BASE_BRANCH}"
+
+# 2. ย่อ commit ทั้งหมดเข้าหา base branch
 git reset --soft "${BASE_BRANCH}"
 
-# ดึงไฟล์สคริปต์นี้กลับมาจาก base branch เพื่อป้องกันการถูกบันทึกเป็นการลบไฟล์
+# 3. ตรวจสอบและรักษาสคริปต์นี้จาก base branch
 if git checkout "${BASE_BRANCH}" -- scripts/sync-feature.sh 2>/dev/null; then
     git add scripts/sync-feature.sh 2>/dev/null || true
 fi
 
 git commit -m "feat: sync and squash ${TARGET_FEATURE} onto ${BASE_BRANCH}" || echo "ไม่มีความเปลี่ยนแปลงใหม่"
-
-# Rebase บน base branch
-git rebase "${BASE_BRANCH}"
 
 echo "==> 4. รวมโค้ดเข้า ${BASE_BRANCH}"
 git checkout "${BASE_BRANCH}"
