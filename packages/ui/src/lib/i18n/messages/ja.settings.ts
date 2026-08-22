@@ -1020,9 +1020,12 @@ export const settingsDict = {
   'settings.openchamber.tools.field.agentControlTool': 'エージェント制御ツール',
   'settings.openchamber.tools.field.agentControlToolAria': 'エージェント制御ツールを有効にする',
   'settings.openchamber.tools.field.agentControlToolInfo': 'エージェントがチャットから作業をオーケストレーションできるようにします。セッションや worktree の作成、他のエージェントへのプロンプト委任、スケジュールタスクの管理が可能です。各セッションに小さなツール説明が追加されます。OpenCode の再起動後に適用されます。',
+=======
   'settings.openchamber.tools.field.agentWebTool': 'MittrCraft Web ツール',
   'settings.openchamber.tools.field.agentWebToolAria': 'MittrCraft Web ツールを有効にする',
   'settings.openchamber.tools.field.agentWebToolInfo': 'エージェントが MittrCraft のブラウザーパネルでページを確認し操作できるようにします。URL を開く、内容を読む、クリック、入力、スクロール、モバイルとデスクトップのレイアウト切り替えが可能です。各セッションに小さなツール説明が追加されます。OpenCode の再起動後に適用されます。',
+>>>>>>> 245ff364 (feat: implement Active Directory and Entra ID authentication support with session management updates)
+>>>>>>> ee8bf75cf8d95fd0b4a32cd06e4aaec2ef5bc560
   'settings.openchamber.opencodeCli.tooltipPrefix': '以下への絶対パス（任意）:',
   'settings.openchamber.opencodeCli.tooltipSuffix': 'バイナリ。',
   'settings.openchamber.opencodeCli.field.binaryPath': 'OpenCode バイナリパス',
@@ -1288,8 +1291,8 @@ export const settingsDict = {
   'settings.remoteInstances.page.phase.checkingAuth': '認証を確認中',
   'settings.remoteInstances.page.phase.establishingSsh': 'SSH 接続を確立中',
   'settings.remoteInstances.page.phase.probingRemote': 'リモートマシンを確認中',
-  'settings.remoteInstances.page.phase.installingOpenChamber': 'MittrCraft をインストール中',
-  'settings.remoteInstances.page.phase.updatingOpenChamber': 'MittrCraft を更新中',
+  'settings.remoteInstances.page.phase.installingMittrCraft': 'MittrCraft をインストール中',
+  'settings.remoteInstances.page.phase.updatingMittrCraft': 'MittrCraft を更新中',
   'settings.remoteInstances.page.phase.detectingServer': 'サーバーを検出中',
   'settings.remoteInstances.page.phase.startingServer': 'サーバーを起動中',
   'settings.remoteInstances.page.phase.forwardingPorts': 'ポートを転送中',

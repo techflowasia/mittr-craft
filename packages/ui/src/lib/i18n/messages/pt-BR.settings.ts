@@ -987,9 +987,12 @@ export const settingsDict = {
   "settings.openchamber.tools.field.agentControlTool": "Ferramenta de controle para agentes",
   "settings.openchamber.tools.field.agentControlToolAria": "Ativar a ferramenta de controle para agentes",
   "settings.openchamber.tools.field.agentControlToolInfo": "Permita que agentes orquestrem seu trabalho pelo chat: criar sessões e worktrees, delegar prompts a outros agentes e gerenciar tarefas agendadas. Adiciona uma pequena descrição de ferramenta a cada sessão. Aplicado após reiniciar o OpenCode.",
+=======
   "settings.openchamber.tools.field.agentWebTool": "Ferramenta MittrCraft Web",
   "settings.openchamber.tools.field.agentWebToolAria": "Ativar a ferramenta MittrCraft Web",
   "settings.openchamber.tools.field.agentWebToolInfo": "Permita que agentes vejam a página no painel de navegador do MittrCraft e interajam com ela: abrir uma URL, ler o conteúdo, clicar, digitar, rolar e alternar entre layout móvel e desktop. Adiciona uma pequena descrição de ferramenta a cada sessão. Aplicado após reiniciar o OpenCode.",
+>>>>>>> 245ff364 (feat: implement Active Directory and Entra ID authentication support with session management updates)
+>>>>>>> ee8bf75cf8d95fd0b4a32cd06e4aaec2ef5bc560
   "settings.openchamber.opencodeCli.tooltipPrefix": "Caminho absoluto opcional para o",
   "settings.openchamber.opencodeCli.tooltipSuffix": "executável.",
   "settings.openchamber.opencodeCli.field.binaryPath": "Caminho do executável do OpenCode",
@@ -1255,8 +1258,8 @@ export const settingsDict = {
   "settings.remoteInstances.page.phase.checkingAuth": "Verificando autenticação",
   "settings.remoteInstances.page.phase.establishingSsh": "Estableciendo conexão SSH",
   "settings.remoteInstances.page.phase.probingRemote": "Verificando máquina remota",
-  "settings.remoteInstances.page.phase.installingOpenChamber": "Instalando MittrCraft",
-  "settings.remoteInstances.page.phase.updatingOpenChamber": "Atualizando MittrCraft",
+  "settings.remoteInstances.page.phase.installingMittrCraft": "Instalando MittrCraft",
+  "settings.remoteInstances.page.phase.updatingMittrCraft": "Atualizando MittrCraft",
   "settings.remoteInstances.page.phase.detectingServer": "Detectando servidor",
   "settings.remoteInstances.page.phase.startingServer": "Iniciando servidor",
   "settings.remoteInstances.page.phase.forwardingPorts": "Redeirigiendo portas",

@@ -987,9 +987,12 @@ export const settingsDict = {
   "settings.openchamber.tools.field.agentControlTool": "Інструмент керування для агентів",
   "settings.openchamber.tools.field.agentControlToolAria": "Увімкнути інструмент керування для агентів",
   "settings.openchamber.tools.field.agentControlToolInfo": "Дозвольте агентам оркеструвати вашу роботу з чату: створювати сесії та worktree, делегувати запити іншим агентам і керувати запланованими задачами. Додає невеликий опис інструмента до кожної сесії. Застосовується після перезапуску OpenCode.",
+=======
   "settings.openchamber.tools.field.agentWebTool": "Інструмент MittrCraft Web",
   "settings.openchamber.tools.field.agentWebToolAria": "Увімкнути інструмент MittrCraft Web",
   "settings.openchamber.tools.field.agentWebToolInfo": "Дозвольте агентам переглядати сторінку в панелі браузера MittrCraft і взаємодіяти з нею: відкривати URL, читати вміст, клікати, вводити текст, гортати та перемикатися між мобільним і десктопним виглядом. Додає невеликий опис інструмента до кожної сесії. Застосовується після перезапуску OpenCode.",
+>>>>>>> 245ff364 (feat: implement Active Directory and Entra ID authentication support with session management updates)
+>>>>>>> ee8bf75cf8d95fd0b4a32cd06e4aaec2ef5bc560
   "settings.openchamber.opencodeCli.tooltipPrefix": "Додатковий абсолютний шлях до",
   "settings.openchamber.opencodeCli.tooltipSuffix": "бінарного файлу.",
   "settings.openchamber.opencodeCli.field.binaryPath": "Шлях до бінарного файлу OpenCode",
@@ -1255,8 +1258,8 @@ export const settingsDict = {
   "settings.remoteInstances.page.phase.checkingAuth": "Перевірка автентифікації",
   "settings.remoteInstances.page.phase.establishingSsh": "Встановлення підключення SSH",
   "settings.remoteInstances.page.phase.probingRemote": "Перевірка віддаленої машини",
-  "settings.remoteInstances.page.phase.installingOpenChamber": "Встановлення MittrCraft",
-  "settings.remoteInstances.page.phase.updatingOpenChamber": "Оновлення MittrCraft",
+  "settings.remoteInstances.page.phase.installingMittrCraft": "Встановлення MittrCraft",
+  "settings.remoteInstances.page.phase.updatingMittrCraft": "Оновлення MittrCraft",
   "settings.remoteInstances.page.phase.detectingServer": "Виявлення сервера",
   "settings.remoteInstances.page.phase.startingServer": "Запуск сервера",
   "settings.remoteInstances.page.phase.forwardingPorts": "Пересилання портів",

@@ -987,9 +987,12 @@ export const settingsDict = {
   'settings.openchamber.tools.field.agentControlTool': '에이전트 제어 도구',
   'settings.openchamber.tools.field.agentControlToolAria': '에이전트 제어 도구 활성화',
   'settings.openchamber.tools.field.agentControlToolInfo': '에이전트가 채팅에서 작업을 오케스트레이션할 수 있습니다. 세션과 worktree 생성, 다른 에이전트에게 프롬프트 위임, 예약 작업 관리가 가능합니다. 각 세션에 작은 도구 설명이 추가됩니다. OpenCode를 다시 시작하면 적용됩니다.',
+=======
   'settings.openchamber.tools.field.agentWebTool': 'MittrCraft Web 도구',
   'settings.openchamber.tools.field.agentWebToolAria': 'MittrCraft Web 도구 활성화',
   'settings.openchamber.tools.field.agentWebToolInfo': '에이전트가 MittrCraft 브라우저 패널에서 페이지를 확인하고 조작할 수 있습니다. URL 열기, 내용 읽기, 클릭, 입력, 스크롤, 모바일과 데스크톱 레이아웃 전환이 가능합니다. 각 세션에 작은 도구 설명이 추가됩니다. OpenCode를 다시 시작하면 적용됩니다.',
+>>>>>>> 245ff364 (feat: implement Active Directory and Entra ID authentication support with session management updates)
+>>>>>>> ee8bf75cf8d95fd0b4a32cd06e4aaec2ef5bc560
   'settings.openchamber.opencodeCli.tooltipPrefix': '선택적 절대 경로:',
   'settings.openchamber.opencodeCli.tooltipSuffix': 'binary.',
   'settings.openchamber.opencodeCli.field.binaryPath': 'OpenCode binary 경로',
@@ -1255,8 +1258,8 @@ export const settingsDict = {
   'settings.remoteInstances.page.phase.checkingAuth': '인증 확인 중',
   'settings.remoteInstances.page.phase.establishingSsh': 'SSH 연결 설정 중',
   'settings.remoteInstances.page.phase.probingRemote': '원격 컴퓨터 확인 중',
-  'settings.remoteInstances.page.phase.installingOpenChamber': 'MittrCraft 설치 중',
-  'settings.remoteInstances.page.phase.updatingOpenChamber': 'MittrCraft 업데이트 중',
+  'settings.remoteInstances.page.phase.installingMittrCraft': 'MittrCraft 설치 중',
+  'settings.remoteInstances.page.phase.updatingMittrCraft': 'MittrCraft 업데이트 중',
   'settings.remoteInstances.page.phase.detectingServer': '서버 감지 중',
   'settings.remoteInstances.page.phase.startingServer': '서버 시작 중',
   'settings.remoteInstances.page.phase.forwardingPorts': '포트 포워딩 중',

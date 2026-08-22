@@ -529,7 +529,8 @@ const markdownBlockCacheKey = (
   contentHash: string,
   mode: MarkdownBlock['mode'],
   highlight: boolean,
-): string => `${contentHash}:${mode}:${highlight ? 1 : 0}`;
+  imageMode: MarkdownImageMode,
+): string => `${contentHash}:${mode}:${highlight ? 1 : 0}:${imageMode}`;
 
 /** Test-only: clear the render HTML caches between cases. */
 export const resetMarkdownHtmlCacheForTests = (): void => {

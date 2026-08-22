@@ -957,9 +957,12 @@ export const settingsDict = {
   'settings.openchamber.tools.field.agentControlTool': 'Agenten-Steuerungswerkzeug',
   'settings.openchamber.tools.field.agentControlToolAria': 'Das Agenten-Steuerungswerkzeug aktivieren',
   'settings.openchamber.tools.field.agentControlToolInfo': 'Lässt Agenten deine Arbeit per Chat orchestrieren: Sitzungen und Arbeitsbereiche starten, Prompts an andere Agenten delegieren und geplante Aufgaben verwalten. Fügt jeder Sitzung eine kleine Werkzeugbeschreibung hinzu. Gilt nach einem Neustart von OpenCode.',
+=======
   'settings.openchamber.tools.field.agentWebTool': 'MittrCraft-Web-Werkzeug',
   'settings.openchamber.tools.field.agentWebToolAria': 'Das MittrCraft-Web-Werkzeug aktivieren',
   'settings.openchamber.tools.field.agentWebToolInfo': 'Lässt Agenten die Seite im Browser-Panel von MittrCraft ansehen und bedienen: eine URL öffnen, den Inhalt lesen, klicken, tippen, scrollen und zwischen mobiler und Desktop-Ansicht wechseln. Fügt jeder Sitzung eine kleine Werkzeugbeschreibung hinzu. Gilt nach einem Neustart von OpenCode.',
+>>>>>>> 245ff364 (feat: implement Active Directory and Entra ID authentication support with session management updates)
+>>>>>>> ee8bf75cf8d95fd0b4a32cd06e4aaec2ef5bc560
   'settings.openchamber.opencodeCli.tooltipPrefix': 'Optionaler absoluter Pfad zur',
   'settings.openchamber.opencodeCli.tooltipSuffix': 'Binary.',
   'settings.openchamber.opencodeCli.field.binaryPath': 'OpenCode Binary-Pfad',
@@ -1225,8 +1228,8 @@ export const settingsDict = {
   'settings.remoteInstances.page.phase.checkingAuth': 'Authentifizierung wird überprüft',
   'settings.remoteInstances.page.phase.establishingSsh': 'SSH-Verbindung wird hergestellt',
   'settings.remoteInstances.page.phase.probingRemote': 'Entfernte Maschine wird überprüft',
-  'settings.remoteInstances.page.phase.installingOpenChamber': 'MittrCraft wird installiert',
-  'settings.remoteInstances.page.phase.updatingOpenChamber': 'MittrCraft wird aktualisiert',
+  'settings.remoteInstances.page.phase.installingMittrCraft': 'MittrCraft wird installiert',
+  'settings.remoteInstances.page.phase.updatingMittrCraft': 'MittrCraft wird aktualisiert',
   'settings.remoteInstances.page.phase.detectingServer': 'Server wird erkannt',
   'settings.remoteInstances.page.phase.startingServer': 'Server wird gestartet',
   'settings.remoteInstances.page.phase.forwardingPorts': 'Ports werden weitergeleitet',
