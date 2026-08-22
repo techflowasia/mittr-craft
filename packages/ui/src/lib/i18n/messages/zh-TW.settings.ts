@@ -961,12 +961,9 @@ export const settingsDict = {
   'settings.openchamber.tools.field.agentControlTool': '智慧代理控制工具',
   'settings.openchamber.tools.field.agentControlToolAria': '啟用智慧代理控制工具',
   'settings.openchamber.tools.field.agentControlToolInfo': '讓代理從聊天中協調你的工作：建立工作階段與 worktree、將提示委派給其他代理、管理排程任務。會為每個工作階段加入少量工具說明。在 OpenCode 重新啟動後生效。',
-=======
   'settings.openchamber.tools.field.agentWebTool': 'MittrCraft Web 工具',
   'settings.openchamber.tools.field.agentWebToolAria': '啟用 MittrCraft Web 工具',
   'settings.openchamber.tools.field.agentWebToolInfo': '讓代理在 MittrCraft 瀏覽器面板中檢視並操作頁面：開啟網址、讀取內容、點擊、輸入、捲動，以及在行動版與桌面版版面之間切換。會為每個工作階段加入少量工具說明。在 OpenCode 重新啟動後生效。',
->>>>>>> 245ff364 (feat: implement Active Directory and Entra ID authentication support with session management updates)
->>>>>>> ee8bf75cf8d95fd0b4a32cd06e4aaec2ef5bc560
   'settings.openchamber.opencodeCli.tooltipPrefix': '可選的',
   'settings.openchamber.opencodeCli.tooltipSuffix': '二進位檔絕對路徑。',
   'settings.openchamber.opencodeCli.field.binaryPath': 'OpenCode 可執行檔路徑',
@@ -1165,8 +1162,8 @@ export const settingsDict = {
   'settings.remoteInstances.page.phase.checkingAuth': '正在檢查驗證',
   'settings.remoteInstances.page.phase.establishingSsh': '正在建立 SSH 連線',
   'settings.remoteInstances.page.phase.probingRemote': '正在探測遠端主機',
-  'settings.remoteInstances.page.phase.installingMittrCraft': '正在安裝 MittrCraft',
-  'settings.remoteInstances.page.phase.updatingMittrCraft': '正在更新 MittrCraft',
+  'settings.remoteInstances.page.phase.installingOpenChamber': '正在安裝 MittrCraft',
+  'settings.remoteInstances.page.phase.updatingOpenChamber': '正在更新 MittrCraft',
   'settings.remoteInstances.page.phase.detectingServer': '正在偵測服務',
   'settings.remoteInstances.page.phase.startingServer': '正在啟動服務',
   'settings.remoteInstances.page.phase.forwardingPorts': '正在轉送連接埠',

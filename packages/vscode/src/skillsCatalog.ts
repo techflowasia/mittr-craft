@@ -94,8 +94,6 @@ const CURATED_SOURCES: CuratedSource[] = [
   },
 ];
 
-<<<<<<< HEAD
-=======
 // ============== ClawdHub API ==============
 
 const CLAWDHUB_API_BASE = 'https://clawdhub.com/api/v1';
@@ -226,7 +224,6 @@ async function scanClawdHub(): Promise<SkillsRepoScanResult> {
   }
 }
 
->>>>>>> 245ff364 (feat: implement Active Directory and Entra ID authentication support with session management updates)
 function validateSkillName(skillName: string): boolean {
   if (skillName.length < 1 || skillName.length > 64) return false;
   return SKILL_NAME_PATTERN.test(skillName);

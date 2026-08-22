@@ -112,6 +112,7 @@ const CONTROL_TOOL_DESCRIPTION = "Control MittrCraft projects, sessions, and sch
 
 const WEB_TOOL_DESCRIPTION = "Look at and interact with a web page in MittrCraft's browser panel, so you can check your own work rather than describing what you expect. Use one action per call. Open a page, snapshot it to read its text and its interactive elements, then click, type or scroll using the selectors the snapshot returned; snapshots also report any errors the page logged. Pass a selector to browser.snapshot to read one part of a long page. browser.inspect returns computed styles when the question is how something renders. Set viewport to check a layout at mobile, tablet or desktop size. The page runs with the user's real logins, so treat what you see as their live session.";
 
+const MEMORY_TOOL_DESCRIPTION = "Keep what you learn across sessions, so the user does not have to explain the same thing twice. Use one action per call. The session already lists the titles of what is stored. A title is an abbreviation, not the memory: read the entry with memory.read before acting on it, because titles leave out the conditions and exceptions that decide how the memory applies, and the ones that look self-explanatory hide them most often. Save something only when it will still be true in a later session — a stable preference, a project convention, a decision and its reason, or a hard-won pointer. Do not save one-off task state, anything you can read from the code, secrets or credentials, or anything the user asked you not to keep. Choose the scope deliberately: global is about the user and reaches every project, so put a project's conventions in project scope. What you save is shown to the user as unreviewed until they confirm it, so save plainly and say what you saved when it matters.";
 
 const asNonEmptyString = (value) => {
   if (typeof value !== 'string') return null;
@@ -312,16 +313,13 @@ export const createAgentToolRuntime = (dependencies) => {
 
   const execute = async (payload = {}, options = {}) => {
     const requested = asNonEmptyString(payload.input?.action);
-    // Resolved against the calling tool's own actions: models drop the
-    // namespace that the tool's name already implies, and answering "read" with
-    // a bare "unsupported" leaves them to guess a second wrong name.
     const resolution = resolveAgentToolAction(requested, asNonEmptyString(payload.tool));
     if (resolution.error) {
       return createResult({ ok: false, action: requested, error: { message: resolution.error, kind: 'usage' } });
     }
-    const action = asNonEmptyString(payload.input?.action);
-    if (!action || !ACTIONS.has(action)) {
-      return createResult({ ok: false, action, error: { message: `Unsupported MittrCraft action: ${action || 'missing'}`, kind: 'usage' } });
+    const action = resolution.action;
+    if (!ACTIONS.has(action)) {
+      return createResult({ ok: false, action, error: { message: `Unsupported MittrCraft action: ${action}`, kind: 'usage' } });
     }
     if (typeof executeAction !== 'function') {
       return createResult({ ok: false, action, error: { message: 'MittrCraft control service is unavailable', kind: 'runtime' } });

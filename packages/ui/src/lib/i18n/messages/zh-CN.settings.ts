@@ -987,12 +987,9 @@ export const settingsDict = {
   'settings.openchamber.tools.field.agentControlTool': '智能体控制工具',
   'settings.openchamber.tools.field.agentControlToolAria': '启用智能体控制工具',
   'settings.openchamber.tools.field.agentControlToolInfo': '让智能体在聊天中编排你的工作：创建会话和 worktree、将提示委派给其他智能体、管理计划任务。会为每个会话添加少量工具说明。在 OpenCode 重启后生效。',
-=======
   'settings.openchamber.tools.field.agentWebTool': 'MittrCraft Web 工具',
   'settings.openchamber.tools.field.agentWebToolAria': '启用 MittrCraft Web 工具',
   'settings.openchamber.tools.field.agentWebToolInfo': '让智能体在 MittrCraft 浏览器面板中查看并操作页面：打开网址、读取内容、点击、输入、滚动，以及在移动端与桌面端布局之间切换。会为每个会话添加少量工具说明。在 OpenCode 重启后生效。',
->>>>>>> 245ff364 (feat: implement Active Directory and Entra ID authentication support with session management updates)
->>>>>>> ee8bf75cf8d95fd0b4a32cd06e4aaec2ef5bc560
   'settings.openchamber.opencodeCli.tooltipPrefix': '可选的',
   'settings.openchamber.opencodeCli.tooltipSuffix': '二进制绝对路径。',
   'settings.openchamber.opencodeCli.field.binaryPath': 'OpenCode 可执行文件路径',
@@ -1258,8 +1255,8 @@ export const settingsDict = {
   'settings.remoteInstances.page.phase.checkingAuth': '正在检查认证',
   'settings.remoteInstances.page.phase.establishingSsh': '正在建立 SSH 连接',
   'settings.remoteInstances.page.phase.probingRemote': '正在检查远程机器',
-  'settings.remoteInstances.page.phase.installingMittrCraft': '正在安装 MittrCraft',
-  'settings.remoteInstances.page.phase.updatingMittrCraft': '正在更新 MittrCraft',
+  'settings.remoteInstances.page.phase.installingOpenChamber': '正在安装 MittrCraft',
+  'settings.remoteInstances.page.phase.updatingOpenChamber': '正在更新 MittrCraft',
   'settings.remoteInstances.page.phase.detectingServer': '正在检测服务',
   'settings.remoteInstances.page.phase.startingServer': '正在启动服务',
   'settings.remoteInstances.page.phase.forwardingPorts': '正在转发端口',
