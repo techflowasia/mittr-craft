@@ -134,6 +134,7 @@ Use an explicit override when testing a different OpenCode CLI build or when a u
 | `OPENCHAMBER_ELECTRON_DEV=1` | Marks the runtime as desktop development mode |
 | `OPENCHAMBER_ELECTRON_USE_BUNDLED_UI=1` | Uses staged web assets instead of the HMR dev server |
 | `OPENCHAMBER_SKIP_LOCAL_SERVER=1` | Skips the in-process local OpenChamber server and uses the configured default remote instance; Desktop imports this from the user's login-shell environment, and packaged/bundled UI remains available for connection recovery |
+| `OPENCHAMBER_DESKTOP_ENV_FILE` | Overrides the external server environment file loaded before Desktop starts its in-process server; defaults to `~/.config/openchamber/desktop.env` |
 | `OPENCHAMBER_HMR_UI_PORT` | Preferred Vite UI port for desktop dev, default `5173` |
 | `OPENCHAMBER_HMR_API_PORT` | Preferred API port for desktop dev, default `3901` |
 | `OPENCHAMBER_RUNTIME=desktop` | Set by Electron before starting the web server |
@@ -143,6 +144,8 @@ Use an explicit override when testing a different OpenCode CLI build or when a u
 | `OPENCHAMBER_SKIP_API_COMPRESSION=true` | Defaulted by Desktop to reduce local CPU overhead |
 | `OPENCHAMBER_STARTUP_PERF=1` | Enables privacy-safe startup phase timings in Desktop/server logs; disabled by default |
 | `OPENCODE_HOST` / `OPENCODE_PORT` / `OPENCODE_SKIP_START` | Connect Desktop to an external OpenCode server instead of starting one locally |
+
+Packaged Desktop does not embed server credentials. Put server-only settings such as Microsoft Entra ID or LDAP credentials in `~/.config/openchamber/desktop.env` and restrict the file to its owner with `chmod 600 ~/.config/openchamber/desktop.env`. Existing process environment values take precedence over values in this file. Set `OPENCHAMBER_DESKTOP_ENV_FILE` when deployment tooling manages the file at another path. Desktop refuses to start from a group-readable or world-readable environment file on macOS and Linux so a permissions mistake cannot silently expose the configured credentials or disable the intended login gate.
 
 ## Native Features Owned Here
 

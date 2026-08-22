@@ -19,6 +19,7 @@ import {
   shouldIgnoreLoopbackConnectionLimit,
 } from './startup-url-selection.mjs';
 import { sanitizeRuntimeRequestHeaders } from './runtime-request-headers.mjs';
+import { loadDesktopServerEnv } from './desktop-server-env.mjs';
 import { validateDesktopAuthUrl } from './desktop-auth-url.mjs';
 import { assertUpdaterCapability } from './updater-capability.mjs';
 import { checkForDesktopUpdate } from './updater-check.mjs';
@@ -5407,6 +5408,10 @@ app.on('activate', async () => {
 
 app.whenReady().then(async () => {
   recordElectronStartupPerformance('electron.app.ready');
+  const desktopServerEnv = loadDesktopServerEnv();
+  if (desktopServerEnv.status === 'loaded') {
+    log.info('[electron] loaded desktop server environment', desktopServerEnv.filePath);
+  }
   const loginItemSettings = readLoginItemSettings();
   const isBackgroundStart = shouldStartInBackground(loginItemSettings);
   log.info('[electron] app starting', {
