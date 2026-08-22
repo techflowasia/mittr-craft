@@ -25,6 +25,23 @@ const normalizeOptionalString = (value) => {
   return trimmed.length > 0 ? trimmed : null;
 };
 
+const normalizeAuthProfile = (value) => {
+  if (!value || Array.isArray(value)) return null;
+  const profile = {
+    id: normalizeOptionalString(value.id),
+    username: normalizeOptionalString(value.username),
+    displayName: normalizeOptionalString(value.displayName),
+    email: normalizeOptionalString(value.email),
+    department: normalizeOptionalString(value.department),
+    title: normalizeOptionalString(value.title),
+    groups: Array.isArray(value.groups)
+      ? value.groups.map(normalizeOptionalString).filter(Boolean)
+      : [],
+    tenantId: normalizeOptionalString(value.tenantId),
+  };
+  return profile.displayName || profile.username || profile.email ? profile : null;
+};
+
 const normalizeMetadata = (client) => ({
   authMethod: normalizeOptionalString(client.authMethod),
   pairingId: normalizeOptionalString(client.pairingId),
@@ -88,6 +105,7 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
           dedupeKey: normalizeOptionalString(client.dedupeKey),
           usesRelay: client.usesRelay === true,
           lastTransport: client.lastTransport === 'relay' || client.lastTransport === 'direct' ? client.lastTransport : null,
+          authProfile: normalizeAuthProfile(client.authProfile),
           ...normalizeMetadata(client),
         }))
         .filter((client) => client.tokenHash.length > 0)
@@ -167,6 +185,7 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
     deviceModel,
     appVersion,
     usesRelay,
+    authProfile,
   } = {}) => {
     return withStoreMutation(async () => {
       const store = await readStore();
@@ -189,6 +208,7 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
         deviceModel: normalizeOptionalString(deviceModel),
         appVersion: normalizeOptionalString(appVersion),
         usesRelay: usesRelay === true,
+        authProfile: normalizeAuthProfile(authProfile),
       };
       if (normalizedDedupeKey) {
         store.clients = store.clients.filter((entry) => entry.dedupeKey !== normalizedDedupeKey);
@@ -265,7 +285,13 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
         client.lastTransport = transport;
         await writeStore(store);
       }
-      return { ok: true, clientId: client.id, sessionToken: client.id, client: publicClient(client) };
+      return {
+        ok: true,
+        clientId: client.id,
+        sessionToken: client.id,
+        client: publicClient(client),
+        authProfile: client.authProfile,
+      };
     });
   };
 

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { resolveStartupUrlProbePlan, shouldIgnoreLoopbackConnectionLimit } from './startup-url-selection.mjs';
+import {
+  buildDesktopLoopbackUrl,
+  resolveStartupUrlProbePlan,
+  shouldIgnoreLoopbackConnectionLimit,
+} from './startup-url-selection.mjs';
 
 test('bundled development never probes HMR endpoints', () => {
   assert.deepEqual(resolveStartupUrlProbePlan({
@@ -51,4 +55,8 @@ test('keeps Chromium connection limits for the Vite HMR module graph', () => {
   assert.equal(shouldIgnoreLoopbackConnectionLimit({ development: true, packagedUi: false }), false);
   assert.equal(shouldIgnoreLoopbackConnectionLimit({ development: true, packagedUi: true }), true);
   assert.equal(shouldIgnoreLoopbackConnectionLimit({ development: false, packagedUi: false }), true);
+});
+
+test('uses localhost for the Desktop browser origin', () => {
+  assert.equal(buildDesktopLoopbackUrl(54065), 'http://localhost:54065');
 });

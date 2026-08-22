@@ -765,6 +765,18 @@ export const registerAuthAndAccessRoutes = (app, dependencies) => {
     }
   });
 
+  app.post('/auth/ad/desktop/redeem', express.json({ limit: '16kb' }), async (req, res, next) => {
+    const requestScope = tunnelAuthController.classifyRequestScope(req);
+    if (requestScope === 'tunnel' || requestScope === 'unknown-public') {
+      return res.status(403).json({ error: 'Microsoft login is disabled for tunnel scope', tunnelLocked: true });
+    }
+    try {
+      await uiAuthController.handleAdDesktopRedeem(req, res);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   app.post('/auth/ad/session', (req, res) => {
     const requestScope = tunnelAuthController.classifyRequestScope(req);
     if (requestScope === 'tunnel' || requestScope === 'unknown-public') {

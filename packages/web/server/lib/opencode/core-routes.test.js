@@ -546,6 +546,7 @@ describe('client auth routes', () => {
     const resolveAuthContext = vi.fn(options.resolveAuthContext || (async () => ({ type: 'session' })));
     const handleAdLoginStart = vi.fn((_req, res) => res.redirect(302, 'https://login.microsoftonline.com/tenant/authorize'));
     const handleAdCallback = vi.fn((_req, res) => res.redirect(302, '/'));
+    const handleAdDesktopRedeem = vi.fn((_req, res) => res.json({ clientToken: 'desktop-token' }));
     const handleSessionDelete = vi.fn((_req, res) => res.json({ authenticated: false }));
     return {
       express,
@@ -573,6 +574,7 @@ describe('client auth routes', () => {
         handleAdStatus: (_req, res) => res.json({ enabled: true, mode: 'entra' }),
         handleAdLoginStart,
         handleAdCallback,
+        handleAdDesktopRedeem,
         handleAdSessionCreate: (_req, res) => res.status(400).json({ error: 'Use redirect' }),
         handleAdProfile: (_req, res) => res.json({ profile: {} }),
       },
@@ -606,7 +608,16 @@ describe('client auth routes', () => {
       },
       readSettingsFromDiskMigrated: async () => ({}),
       normalizeTunnelSessionTtlMs: () => 1000,
-      testHooks: { clients, requireAuth, requireSessionAuth, resolveAuthContext, handleAdLoginStart, handleAdCallback, handleSessionDelete },
+      testHooks: {
+        clients,
+        requireAuth,
+        requireSessionAuth,
+        resolveAuthContext,
+        handleAdLoginStart,
+        handleAdCallback,
+        handleAdDesktopRedeem,
+        handleSessionDelete,
+      },
     };
   };
 
@@ -617,8 +628,10 @@ describe('client auth routes', () => {
 
     await request(app).get('/auth/ad/login').expect(302);
     await request(app).get('/auth/ad/callback?state=state-1&code=code-1').expect(302, 'Found. Redirecting to /');
+    await request(app).post('/auth/ad/desktop/redeem').send({ handoffId: 'handoff', verifier: 'verifier' }).expect(200);
     expect(dependencies.testHooks.handleAdLoginStart).toHaveBeenCalledTimes(1);
     expect(dependencies.testHooks.handleAdCallback).toHaveBeenCalledTimes(1);
+    expect(dependencies.testHooks.handleAdDesktopRedeem).toHaveBeenCalledTimes(1);
 
     const tunnelApp = express();
     const tunnelDependencies = createDependencies();
@@ -627,8 +640,10 @@ describe('client auth routes', () => {
 
     await request(tunnelApp).get('/auth/ad/login').expect(403);
     await request(tunnelApp).get('/auth/ad/callback?state=state-1&code=code-1').expect(403);
+    await request(tunnelApp).post('/auth/ad/desktop/redeem').send({}).expect(403);
     expect(tunnelDependencies.testHooks.handleAdLoginStart).not.toHaveBeenCalled();
     expect(tunnelDependencies.testHooks.handleAdCallback).not.toHaveBeenCalled();
+    expect(tunnelDependencies.testHooks.handleAdDesktopRedeem).not.toHaveBeenCalled();
   });
 
   it('logs out local UI sessions but rejects tunnel scope', async () => {

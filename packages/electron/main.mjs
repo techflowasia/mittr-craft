@@ -13,8 +13,13 @@ import updaterPkg from 'electron-updater';
 import { ElectronSshManager } from './ssh-manager.mjs';
 import { createTrayController } from './tray.mjs';
 import { resolveManagedOpenCodeCwd } from './opencode-cwd.mjs';
-import { resolveStartupUrlProbePlan, shouldIgnoreLoopbackConnectionLimit } from './startup-url-selection.mjs';
+import {
+  buildDesktopLoopbackUrl,
+  resolveStartupUrlProbePlan,
+  shouldIgnoreLoopbackConnectionLimit,
+} from './startup-url-selection.mjs';
 import { sanitizeRuntimeRequestHeaders } from './runtime-request-headers.mjs';
+import { validateDesktopAuthUrl } from './desktop-auth-url.mjs';
 import { assertUpdaterCapability } from './updater-capability.mjs';
 import { checkForDesktopUpdate } from './updater-check.mjs';
 import { resolveUpdaterChannel } from './updater-channel.mjs';
@@ -1112,8 +1117,6 @@ const detectLanIPv4Address = async () => {
   return null;
 };
 
-const buildLocalUrl = (port) => `http://127.0.0.1:${port}`;
-
 const resourceRoot = () => isDev ? path.join(__dirname, 'resources') : process.resourcesPath;
 const resolveWebDistDir = () => path.join(resourceRoot(), 'web-dist');
 const shouldUsePackagedUi = () => {
@@ -1575,7 +1578,7 @@ const spawnLocalServer = async () => {
   });
 
   const port = handle.getPort();
-  const url = buildLocalUrl(port);
+  const url = buildDesktopLoopbackUrl(port);
 
   state.serverHandle = handle;
   state.sidecarUrl = url;
@@ -4163,6 +4166,26 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       return null;
     }
 
+    case 'desktop_open_auth_url': {
+      const allowedOrigins = new Set();
+      for (const rawUrl of [
+        browserWindow?.webContents?.getURL?.(),
+        state.localOrigin,
+        state.sidecarUrl,
+        ...(readDesktopHostsConfig()?.hosts || []).map((entry) => entry?.url),
+      ]) {
+        if (typeof rawUrl !== 'string' || !rawUrl.trim()) continue;
+        try {
+          const candidate = new URL(rawUrl);
+          if (candidate.protocol === 'http:' || candidate.protocol === 'https:') allowedOrigins.add(candidate.origin);
+        } catch {
+        }
+      }
+      const target = validateDesktopAuthUrl(args.url, allowedOrigins);
+      await shell.openExternal(target);
+      return true;
+    }
+
     case 'desktop_reveal_path': {
       const validated = await validateLocalPath(typeof args.path === 'string' ? args.path.trim() : '');
       if (validated.stats.isDirectory()) {
@@ -5023,6 +5046,7 @@ const COMMANDS_SAFE_FOR_REMOTE = new Set([
   'desktop_get_app_version',
   'desktop_get_lan_address',
   'desktop_capture_page_rect',
+  'desktop_open_auth_url',
   'desktop_tray_update',
 ]);
 

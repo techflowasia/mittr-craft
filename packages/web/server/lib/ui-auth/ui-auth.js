@@ -11,6 +11,10 @@ const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const TRUSTED_DEVICE_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const URL_AUTH_TOKEN_TTL_MS = 60 * 1000;
 const URL_AUTH_TOKEN_PREFIX = 'oc_url_';
+const DESKTOP_HANDOFF_TTL_MS = 10 * 60 * 1000;
+const DESKTOP_HANDOFF_MAX_ENTRIES = 1_000;
+const DESKTOP_HANDOFF_ID_PATTERN = /^[A-Za-z0-9_-]{32,128}$/;
+const DESKTOP_HANDOFF_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 const RATE_LIMIT_MAX_ATTEMPTS = Number(process.env.OPENCHAMBER_RATE_LIMIT_MAX_ATTEMPTS) || 10;
@@ -308,6 +312,27 @@ const getUrlAuthTokenFromRequest = (req) => {
   return typeof token === 'string' && token.trim() ? token.trim() : null;
 };
 
+const normalizeDesktopHandoff = (handoffId, challenge) => {
+  const normalizedId = typeof handoffId === 'string' ? handoffId.trim() : '';
+  const normalizedChallenge = typeof challenge === 'string' ? challenge.trim() : '';
+  if (!DESKTOP_HANDOFF_ID_PATTERN.test(normalizedId) || !DESKTOP_HANDOFF_CHALLENGE_PATTERN.test(normalizedChallenge)) {
+    return null;
+  }
+  return { handoffId: normalizedId, challenge: normalizedChallenge };
+};
+
+const desktopHandoffSuccessPage = `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+  <title>Microsoft sign-in complete</title>
+  <style>body{margin:0;background:#111827;color:#f9fafb;font-family:system-ui,sans-serif;display:grid;min-height:100vh;place-items:center}.card{max-width:32rem;padding:2rem;text-align:center}h1{font-size:1.5rem;margin:0 0 .75rem}p{color:#d1d5db;line-height:1.5}</style>
+</head>
+<body><main class="card"><h1>Microsoft sign-in complete</h1><p>You can close this window and return to MittrCraft Desktop.</p></main></body>
+</html>`;
+
 const getRequestPathname = (req) => {
   const rawUrl = req?.originalUrl || req?.url;
   if (typeof rawUrl === 'string' && rawUrl) {
@@ -470,6 +495,14 @@ export const createUiAuth = ({
   const adEnabled = adAuthController?.enabled === true;
   const adConfigurationPresent = adAuthController?.configurationPresent === true;
   const urlAuthTokens = new Map();
+  const desktopHandoffs = new Map();
+
+  const sweepDesktopHandoffs = () => {
+    const timestamp = Date.now();
+    for (const [handoffId, handoff] of desktopHandoffs.entries()) {
+      if (!handoff || handoff.expiresAt <= timestamp) desktopHandoffs.delete(handoffId);
+    }
+  };
 
   const sweepUrlAuthTokens = () => {
     const now = Date.now();
@@ -696,6 +729,9 @@ export const createUiAuth = ({
       },
       handleAdCallback: (_req, res) => {
         res.status(400).send('Microsoft authentication is not configured');
+      },
+      handleAdDesktopRedeem: (_req, res) => {
+        res.status(400).json({ error: 'Microsoft authentication not configured' });
       },
       handleAdProfile: (_req, res) => {
         res.status(400).json({ error: 'AD authentication not configured' });
@@ -1070,6 +1106,7 @@ export const createUiAuth = ({
       rateLimitCleanupTimer = null;
     }
     passkeyController.dispose();
+    desktopHandoffs.clear();
     if (adAuthController) {
       adAuthController.dispose();
     }
@@ -1079,7 +1116,7 @@ export const createUiAuth = ({
     if (!adAuthController) {
       return res.json({ enabled: false, passwordEnabled });
     }
-    return res.json({ ...adAuthController.getStatus(), passwordEnabled });
+    return res.json({ ...adAuthController.getStatus(), passwordEnabled, desktopHandoff: adAuthController.mode === 'entra' });
   };
 
   const handleAdSessionCreate = async (req, res) => {
@@ -1137,6 +1174,7 @@ export const createUiAuth = ({
         clientKind: req.body?.clientKind,
         dedupeKey: req.body?.dedupeKey,
         authMethod: 'ad',
+        authProfile: result.profile,
         deviceName: req.body?.deviceName,
         devicePlatform: req.body?.devicePlatform,
         deviceModel: req.body?.deviceModel,
@@ -1170,7 +1208,31 @@ export const createUiAuth = ({
     try {
       const trustDevice = req.query?.trustDevice === 'true' || req.query?.trustDevice === '1';
       const returnTo = resolveAdReturnTo(req);
-      const transaction = await adAuthController.beginAuthorization({ trustDevice, returnTo });
+      const desktopHandoff = normalizeDesktopHandoff(req.query?.desktopHandoff, req.query?.desktopChallenge);
+      if ((req.query?.desktopHandoff || req.query?.desktopChallenge) && !desktopHandoff) {
+        return res.status(400).json({ error: 'Desktop sign-in handoff is invalid' });
+      }
+      sweepDesktopHandoffs();
+      if (desktopHandoff && desktopHandoffs.has(desktopHandoff.handoffId)) {
+        return res.status(409).json({ error: 'Desktop sign-in handoff already exists' });
+      }
+      if (desktopHandoff && desktopHandoffs.size >= DESKTOP_HANDOFF_MAX_ENTRIES) {
+        return res.status(503).json({ error: 'Too many pending Desktop sign-ins' });
+      }
+      const authorizationInput = {
+        trustDevice,
+        returnTo,
+      };
+      if (desktopHandoff) authorizationInput.desktopHandoff = desktopHandoff;
+      const transaction = await adAuthController.beginAuthorization(authorizationInput);
+      if (desktopHandoff) {
+        desktopHandoffs.set(desktopHandoff.handoffId, {
+          challenge: desktopHandoff.challenge,
+          status: 'pending',
+          trustDevice,
+          expiresAt: Date.now() + DESKTOP_HANDOFF_TTL_MS,
+        });
+      }
       const maxAge = Math.max(1, Math.floor((transaction.expiresAt - Date.now()) / 1000));
       res.setHeader('Cache-Control', 'no-store');
       appendSetCookieHeader(res, buildCookie({
@@ -1206,6 +1268,22 @@ export const createUiAuth = ({
 
     try {
       const result = await adAuthController.completeAuthorization({ code, state });
+      if (result.desktopHandoff) {
+        sweepDesktopHandoffs();
+        const handoff = desktopHandoffs.get(result.desktopHandoff.handoffId);
+        if (
+          !handoff
+          || handoff.status !== 'pending'
+          || handoff.challenge !== result.desktopHandoff.challenge
+        ) {
+          return res.status(400).send('Desktop sign-in handoff is invalid or expired. Return to MittrCraft and try again.');
+        }
+        handoff.status = 'completed';
+        handoff.profile = result.profile;
+        handoff.trustDevice = result.trustDevice;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.status(200).send(desktopHandoffSuccessPage);
+      }
       await issueSession(req, res, {
         trustDevice: result.trustDevice,
         claims: { authMethod: 'entra', profile: result.profile },
@@ -1217,9 +1295,77 @@ export const createUiAuth = ({
     }
   };
 
+  const handleAdDesktopRedeem = async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    if (!adAuthController?.enabled || adAuthController.mode !== 'entra') {
+      return res.status(400).json({ error: 'Microsoft authentication not configured' });
+    }
+
+    const handoffId = typeof req.body?.handoffId === 'string' ? req.body.handoffId.trim() : '';
+    const verifier = typeof req.body?.verifier === 'string' ? req.body.verifier.trim() : '';
+    if (!DESKTOP_HANDOFF_ID_PATTERN.test(handoffId) || !DESKTOP_HANDOFF_ID_PATTERN.test(verifier)) {
+      return res.status(400).json({ error: 'Desktop sign-in handoff is invalid' });
+    }
+
+    sweepDesktopHandoffs();
+    const handoff = desktopHandoffs.get(handoffId);
+    if (!handoff) return res.status(404).json({ error: 'Desktop sign-in handoff was not found or expired' });
+
+    const actualChallenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+    const expectedBuffer = Buffer.from(handoff.challenge);
+    const actualBuffer = Buffer.from(actualChallenge);
+    if (expectedBuffer.length !== actualBuffer.length || !crypto.timingSafeEqual(expectedBuffer, actualBuffer)) {
+      return res.status(401).json({ error: 'Desktop sign-in verifier is invalid' });
+    }
+    if (handoff.status === 'pending') return res.status(202).json({ pending: true });
+    if (handoff.status !== 'completed') return res.status(409).json({ error: 'Desktop sign-in handoff was already used' });
+    if (typeof clientAuthController?.createClient !== 'function') {
+      return res.status(503).json({ error: 'Desktop client authentication is unavailable' });
+    }
+
+    handoff.status = 'redeeming';
+    let result;
+    try {
+      const ttlMs = resolveSessionTtlMs(handoff.trustDevice);
+      result = await clientAuthController.createClient({
+        label: req.body?.clientLabel,
+        expiresAt: new Date(Date.now() + ttlMs).toISOString(),
+        clientKind: req.body?.clientKind,
+        dedupeKey: req.body?.dedupeKey,
+        authMethod: 'entra',
+        authProfile: handoff.profile,
+        deviceName: req.body?.deviceName,
+        devicePlatform: req.body?.devicePlatform,
+        deviceModel: req.body?.deviceModel,
+        appVersion: req.body?.appVersion,
+      });
+    } catch (error) {
+      handoff.status = 'completed';
+      throw error;
+    }
+    const profile = handoff.profile;
+    handoff.status = 'consumed';
+    handoff.profile = null;
+    return res.json({ authenticated: true, profile, clientToken: result.token, client: result.client });
+  };
+
   const handleAdProfile = async (req, res) => {
     if (!adAuthController) {
       return res.status(400).json({ error: 'AD authentication not configured' });
+    }
+
+    if (getBearerTokenFromRequest(req)) {
+      const clientAuth = await authenticateClientRequest(req, { allowUrlToken: false });
+      if (!clientAuth) {
+        return res.status(401).json({ error: 'Not authenticated' });
+      }
+      if (!clientAuth.authProfile) {
+        if (clientAuth.client?.authMethod === 'entra') {
+          return res.status(409).json({ error: 'Microsoft sign-in must be renewed', reauthenticationRequired: true });
+        }
+        return res.status(404).json({ error: 'User profile not found' });
+      }
+      return res.json({ profile: clientAuth.authProfile });
     }
 
     const cookies = parseCookies(req.headers.cookie);
@@ -1270,6 +1416,7 @@ export const createUiAuth = ({
     handleAdSessionCreate,
     handleAdLoginStart,
     handleAdCallback,
+    handleAdDesktopRedeem,
     handleAdProfile,
     ensureSessionToken: async (req, _res) => {
       return resolveAuthenticatedSessionToken(req);

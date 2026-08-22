@@ -6,3 +6,5 @@ export const resolveStartupUrlProbePlan = ({ development, packagedUi, skipLocalS
 export const shouldIgnoreLoopbackConnectionLimit = ({ development, packagedUi }) => (
   development !== true || packagedUi === true
 );
+
+export const buildDesktopLoopbackUrl = (port) => `http://localhost:${port}`;

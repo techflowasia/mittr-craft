@@ -3,6 +3,7 @@ export const thirdPartyIntegrationI18n = {
   en: {
     'settings.page.integrations.title': 'Integrations',
     'settings.page.integrations.description': 'Add third-party subscriptions to use as MittrCraft providers.',
+    'settings.integrations.experimentalWarning': 'These integrations are experimental and may change or stop working without notice.',
     'settings.integrations.messengers.title': 'Messengers',
     'settings.integrations.messengers.info': 'Chat with MittrCraft from Discord or Telegram. These bridges are not available yet.',
     'settings.integrations.messengers.discord.name': 'Discord',
@@ -43,6 +44,7 @@ export const thirdPartyIntegrationI18n = {
   de: {
     'settings.page.integrations.title': 'Integrationen',
     'settings.page.integrations.description': 'Füge Drittanbieter-Abonnements hinzu, um sie als MittrCraft-Provider zu nutzen.',
+    'settings.integrations.experimentalWarning': 'Diese Integrationen sind experimentell und können sich ohne Vorankündigung ändern oder nicht mehr funktionieren.',
     'settings.integrations.messengers.title': 'Messenger',
     'settings.integrations.messengers.info': 'Chatte mit MittrCraft über Discord oder Telegram. Diese Bridges sind noch nicht verfügbar.',
     'settings.integrations.messengers.discord.name': 'Discord',
@@ -83,6 +85,7 @@ export const thirdPartyIntegrationI18n = {
   fr: {
     'settings.page.integrations.title': 'Intégrations',
     'settings.page.integrations.description': 'Ajoutez des abonnements tiers à utiliser comme fournisseurs MittrCraft.',
+    'settings.integrations.experimentalWarning': 'Ces intégrations sont expérimentales et peuvent changer ou cesser de fonctionner sans préavis.',
     'settings.integrations.messengers.title': 'Messagers',
     'settings.integrations.messengers.info': 'Discutez avec MittrCraft depuis Discord ou Telegram. Ces ponts ne sont pas encore disponibles.',
     'settings.integrations.messengers.discord.name': 'Discord',
@@ -123,6 +126,7 @@ export const thirdPartyIntegrationI18n = {
   es: {
     'settings.page.integrations.title': 'Integraciones',
     'settings.page.integrations.description': 'Añade suscripciones de terceros para usarlas como proveedores de MittrCraft.',
+    'settings.integrations.experimentalWarning': 'Estas integraciones son experimentales y pueden cambiar o dejar de funcionar sin previo aviso.',
     'settings.integrations.messengers.title': 'Mensajeros',
     'settings.integrations.messengers.info': 'Chatea con MittrCraft desde Discord o Telegram. Estos puentes aún no están disponibles.',
     'settings.integrations.messengers.discord.name': 'Discord',
@@ -163,6 +167,7 @@ export const thirdPartyIntegrationI18n = {
   ja: {
     'settings.page.integrations.title': '連携',
     'settings.page.integrations.description': 'サードパーティのサブスクリプションを追加して、MittrCraft のプロバイダーとして使います。',
+    'settings.integrations.experimentalWarning': 'これらの連携は実験的な機能であり、予告なく変更されたり動作しなくなったりする場合があります。',
     'settings.integrations.messengers.title': 'メッセンジャー',
     'settings.integrations.messengers.info': 'Discord または Telegram から MittrCraft とチャットできます。これらの連携はまだ利用できません。',
     'settings.integrations.messengers.discord.name': 'Discord',
@@ -203,6 +208,7 @@ export const thirdPartyIntegrationI18n = {
   ko: {
     'settings.page.integrations.title': '통합',
     'settings.page.integrations.description': '타사 구독을 추가해 MittrCraft 프로바이더로 사용하세요.',
+    'settings.integrations.experimentalWarning': '이 통합 기능은 실험 단계이며 예고 없이 변경되거나 작동이 중단될 수 있습니다.',
     'settings.integrations.messengers.title': '메신저',
     'settings.integrations.messengers.info': 'Discord 또는 Telegram에서 MittrCraft와 채팅하세요. 이 브리지는 아직 사용할 수 없습니다.',
     'settings.integrations.messengers.discord.name': 'Discord',
@@ -243,6 +249,7 @@ export const thirdPartyIntegrationI18n = {
   pl: {
     'settings.page.integrations.title': 'Integracje',
     'settings.page.integrations.description': 'Dodaj subskrypcje zewnętrzne, aby używać ich jako dostawców MittrCraft.',
+    'settings.integrations.experimentalWarning': 'Te integracje są eksperymentalne i mogą się zmienić lub przestać działać bez uprzedzenia.',
     'settings.integrations.messengers.title': 'Komunikatory',
     'settings.integrations.messengers.info': 'Czatuj z MittrCraft przez Discord lub Telegram. Te mosty nie są jeszcze dostępne.',
     'settings.integrations.messengers.discord.name': 'Discord',
@@ -283,6 +290,7 @@ export const thirdPartyIntegrationI18n = {
   'pt-BR': {
     'settings.page.integrations.title': 'Integrações',
     'settings.page.integrations.description': 'Adicione assinaturas de terceiros para usar como provedores do MittrCraft.',
+    'settings.integrations.experimentalWarning': 'Estas integrações são experimentais e podem mudar ou deixar de funcionar sem aviso prévio.',
     'settings.integrations.messengers.title': 'Mensageiros',
     'settings.integrations.messengers.info': 'Converse com o MittrCraft pelo Discord ou Telegram. Essas pontes ainda não estão disponíveis.',
     'settings.integrations.messengers.discord.name': 'Discord',
@@ -323,6 +331,7 @@ export const thirdPartyIntegrationI18n = {
   uk: {
     'settings.page.integrations.title': 'Інтеграції',
     'settings.page.integrations.description': 'Додайте сторонні підписки, щоб використовувати їх як провайдери MittrCraft.',
+    'settings.integrations.experimentalWarning': 'Ці інтеграції є експериментальними й можуть змінитися або припинити працювати без попередження.',
     'settings.integrations.messengers.title': 'Месенджери',
     'settings.integrations.messengers.info': 'Спілкуйтеся з MittrCraft у Discord або Telegram. Ці мости ще недоступні.',
     'settings.integrations.messengers.discord.name': 'Discord',
@@ -363,6 +372,7 @@ export const thirdPartyIntegrationI18n = {
   'zh-CN': {
     'settings.page.integrations.title': '集成',
     'settings.page.integrations.description': '添加第三方订阅，将其用作 MittrCraft 提供商。',
+    'settings.integrations.experimentalWarning': '这些集成为实验性功能，可能会在不另行通知的情况下更改或停止工作。',
     'settings.integrations.messengers.title': '即时通讯',
     'settings.integrations.messengers.info': '通过 Discord 或 Telegram 与 MittrCraft 聊天。这些桥接尚不可用。',
     'settings.integrations.messengers.discord.name': 'Discord',
@@ -403,6 +413,7 @@ export const thirdPartyIntegrationI18n = {
   'zh-TW': {
     'settings.page.integrations.title': '整合',
     'settings.page.integrations.description': '新增第三方訂閱，將其用作 MittrCraft 供應商。',
+    'settings.integrations.experimentalWarning': '這些整合仍屬實驗性功能，可能會在不另行通知的情況下變更或停止運作。',
     'settings.integrations.messengers.title': '即時通訊',
     'settings.integrations.messengers.info': '透過 Discord 或 Telegram 與 MittrCraft 聊天。這些橋接尚不可用。',
     'settings.integrations.messengers.discord.name': 'Discord',

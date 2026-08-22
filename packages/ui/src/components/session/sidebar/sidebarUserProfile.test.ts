@@ -14,6 +14,7 @@ const {
   getSidebarUserInitials,
   logoutSidebarUserProfile,
   parseSidebarUserProfile,
+  shouldRequestSidebarProfileLogin,
 } = await import('./sidebarUserProfile');
 
 describe('sidebar user profile', () => {
@@ -115,6 +116,27 @@ describe('sidebar user profile', () => {
 
     expect(await fetchSidebarUserProfile(controller.signal)).toEqual({ status: 'auth-required' });
     expect(runtimeFetchCalls.map(([path]) => path)).toEqual(['/auth/ad/status', '/auth/ad/profile']);
+  });
+
+  test('requires one reauthentication for a legacy Desktop Entra token without a profile', async () => {
+    runtimeFetchResponses = [
+      Response.json({ enabled: true }),
+      Response.json(
+        { error: 'Microsoft sign-in must be renewed', reauthenticationRequired: true },
+        { status: 409 },
+      ),
+    ];
+    const controller = new AbortController();
+
+    const result = await fetchSidebarUserProfile(controller.signal);
+    expect(result).toEqual({ status: 'reauth-required' });
+    expect(shouldRequestSidebarProfileLogin(result, false)).toBe(true);
+  });
+
+  test('keeps ordinary Desktop bearer profile misses out of a login loop', () => {
+    expect(shouldRequestSidebarProfileLogin({ status: 'auth-required' }, false)).toBe(false);
+    expect(shouldRequestSidebarProfileLogin({ status: 'auth-required' }, true)).toBe(true);
+    expect(shouldRequestSidebarProfileLogin({ status: 'unavailable' }, true)).toBe(false);
   });
 
   test('returns a parsed profile for an authenticated AD session', async () => {

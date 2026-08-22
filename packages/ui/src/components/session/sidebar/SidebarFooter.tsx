@@ -18,6 +18,7 @@ import {
   fetchSidebarUserProfile,
   getSidebarUserInitials,
   logoutSidebarUserProfile,
+  shouldRequestSidebarProfileLogin,
   type SidebarUserProfile,
 } from './sidebarUserProfile';
 
@@ -61,7 +62,7 @@ const useSidebarUserProfile = (enabled: boolean, requireProfileSession: boolean)
               setState({ status: 'ready', profile: result.profile });
             } else {
               setState({ status: 'unavailable' });
-              if (result.status === 'auth-required' && requireProfileSession) requestSessionLogin();
+              if (shouldRequestSidebarProfileLogin(result, requireProfileSession)) requestSessionLogin();
             }
           }
         },

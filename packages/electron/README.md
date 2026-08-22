@@ -8,6 +8,10 @@ This package owns the native shell: windows, menus, deep links, native notificat
 
 Desktop starts the OpenChamber web server in the same Electron main process. There is no separate sidecar subprocess for the OpenChamber server.
 
+Microsoft Entra ID login opens in the system browser. Desktop supplies a one-time PKCE-style handoff challenge and polls the selected direct server until the verified browser callback can issue the normal Desktop client credential. No Microsoft token, Desktop client token, verifier, or browser cookie crosses through a URL or deep link. This flow is available for direct HTTPS and loopback servers; Private Relay remains intentionally unsupported for browser login.
+
+The local server binds to `127.0.0.1`, while Desktop addresses it through the equivalent `localhost` browser origin. Keeping the browser origin aligned with the loopback Entra redirect URI preserves the transaction cookie required to verify the callback.
+
 `main.mjs` imports `@openchamber/web/server/index.js` and calls `startWebUiServer()`. The Electron window then loads the UI from the local server in development, or from packaged `resources/web-dist` assets in packaged builds.
 
 Same-origin session-chat iframes complete an authenticated parent-frame handshake before creating their SDK client. The parent supplies its active in-memory endpoint and credentials; when relay is active it also supplies the public relay descriptor without any pairing grant, because Electron preload and IPC are unavailable inside the iframe. The iframe establishes its own transport and rebinds its SDK before rendering. Additional windows retain their own per-window runtime bootstrap instead of being overwritten by the main window. Credentials are never placed in iframe URLs, and other child pages do not receive this runtime state.

@@ -146,7 +146,7 @@ export const createEntraAuth = ({
     return metadataPromise;
   };
 
-  const beginAuthorization = async ({ trustDevice = false, returnTo = null } = {}) => {
+  const beginAuthorization = async ({ trustDevice = false, returnTo = null, desktopHandoff = null } = {}) => {
     sweepTransactions();
     const metadata = await getMetadata();
     const state = randomBytes(32).toString('base64url');
@@ -158,6 +158,7 @@ export const createEntraAuth = ({
       codeVerifier,
       trustDevice: trustDevice === true,
       returnTo: typeof returnTo === 'string' && returnTo ? returnTo : null,
+      desktopHandoff,
       expiresAt: now() + TRANSACTION_TTL_MS,
     });
 
@@ -212,11 +213,13 @@ export const createEntraAuth = ({
     if (verified.payload.nonce !== transaction.nonce) throw new Error('Microsoft identity nonce does not match');
     if (typeof verified.payload.sub !== 'string' || !verified.payload.sub) throw new Error('Microsoft identity is missing a subject');
 
-    return {
+    const result = {
       profile: profileFromClaims(verified.payload),
       trustDevice: transaction.trustDevice,
-      ...(transaction.returnTo ? { returnTo: transaction.returnTo } : {}),
     };
+    if (transaction.returnTo) result.returnTo = transaction.returnTo;
+    if (transaction.desktopHandoff) result.desktopHandoff = transaction.desktopHandoff;
+    return result;
   };
 
   return {

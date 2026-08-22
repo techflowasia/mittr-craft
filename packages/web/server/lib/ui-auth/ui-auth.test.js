@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it, mock } from 'bun:test';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -111,6 +112,43 @@ describe('ui auth client credential seam', () => {
       sessionCalled = true;
     });
     expect(sessionCalled).toBe(true);
+  });
+
+  it('returns the private auth profile for an authenticated bearer client', async () => {
+    const createUiAuth = await loadCreateUiAuth();
+    const profile = { id: 'object-1', displayName: 'Ada Lovelace', email: 'ada@example.com' };
+    const auth = createUiAuth({
+      clientAuthController: {
+        authenticateBearerToken: async (token) => token === 'client-token'
+          ? { ok: true, clientId: 'device-1', authProfile: profile }
+          : null,
+      },
+      adAuthController: { enabled: true },
+    });
+    const res = createResponse();
+
+    await auth.handleAdProfile({ headers: { authorization: 'Bearer client-token' } }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ profile });
+  });
+
+  it('requires one new Microsoft login for a legacy Entra client without a profile', async () => {
+    const createUiAuth = await loadCreateUiAuth();
+    const auth = createUiAuth({
+      clientAuthController: {
+        authenticateBearerToken: async (token) => token === 'client-token'
+          ? { ok: true, clientId: 'device-1', client: { id: 'device-1', authMethod: 'entra' }, authProfile: null }
+          : null,
+      },
+      adAuthController: { enabled: true },
+    });
+    const res = createResponse();
+
+    await auth.handleAdProfile({ headers: { authorization: 'Bearer client-token' } }, res);
+
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toEqual({ error: 'Microsoft sign-in must be renewed', reauthenticationRequired: true });
   });
 
   it('expires only the current UI session when logging out', async () => {
@@ -361,7 +399,13 @@ describe('ui auth Microsoft Entra seam', () => {
     expect(res.statusCode).toBe(401);
     const statusRes = createResponse();
     auth.handleAdStatus({}, statusRes);
-    expect(statusRes.body).toEqual({ enabled: true, mode: 'entra', loginPath: '/auth/ad/login', passwordEnabled: false });
+    expect(statusRes.body).toEqual({
+      enabled: true,
+      mode: 'entra',
+      loginPath: '/auth/ad/login',
+      passwordEnabled: false,
+      desktopHandoff: true,
+    });
   });
 
   it('binds the OIDC callback to its browser transaction and issues a UI session', async () => {
@@ -502,5 +546,124 @@ describe('ui auth Microsoft Entra seam', () => {
 
     expect(res.statusCode).toBe(400);
     expect(completeAuthorization).not.toHaveBeenCalled();
+  });
+
+  it('redeems a verified Desktop handoff once without creating a browser session', async () => {
+    const createUiAuth = await loadCreateUiAuth();
+    const handoffId = 'h'.repeat(43);
+    const verifier = 'v'.repeat(43);
+    const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+    const desktopHandoff = { handoffId, challenge };
+    let authorizationInput = null;
+    let createClientInput = null;
+    const auth = createUiAuth({
+      sessionTtlMs: 60_000,
+      clientAuthController: {
+        createClient: async (input) => {
+          createClientInput = input;
+          return { token: 'desktop-client-token', client: { id: 'desktop-client-1' } };
+        },
+      },
+      adAuthController: {
+        enabled: true,
+        configurationPresent: true,
+        mode: 'entra',
+        getStatus: () => ({ enabled: true, mode: 'entra' }),
+        beginAuthorization: async (input) => {
+          authorizationInput = input;
+          return {
+            authorizationUrl: 'https://login.microsoftonline.com/tenant/authorize',
+            state: 'state-desktop',
+            expiresAt: Date.now() + 60_000,
+          };
+        },
+        completeAuthorization: async () => ({
+          trustDevice: false,
+          profile: { id: 'object-1', displayName: 'Ada Lovelace' },
+          desktopHandoff,
+        }),
+        dispose: () => {},
+      },
+    });
+
+    const startRes = createResponse();
+    await auth.handleAdLoginStart({
+      headers: {},
+      query: { desktopHandoff: handoffId, desktopChallenge: challenge },
+    }, startRes);
+    expect(authorizationInput).toEqual({ trustDevice: false, returnTo: '/', desktopHandoff });
+
+    const pendingRes = createResponse();
+    await auth.handleAdDesktopRedeem({ body: { handoffId, verifier } }, pendingRes);
+    expect(pendingRes.statusCode).toBe(202);
+
+    const callbackRes = createResponse();
+    await auth.handleAdCallback({
+      headers: { cookie: 'oc_ad_transaction=state-desktop' },
+      query: { state: 'state-desktop', code: 'authorization-code' },
+    }, callbackRes);
+    expect(callbackRes.statusCode).toBe(200);
+    expect(callbackRes.getHeader('content-type')).toBe('text/html; charset=utf-8');
+    const callbackCookies = callbackRes.getHeader('set-cookie');
+    const normalizedCallbackCookies = Array.isArray(callbackCookies) ? callbackCookies : [callbackCookies];
+    expect(normalizedCallbackCookies.some((cookie) => cookie?.startsWith('oc_ui_session='))).toBe(false);
+
+    const redeemRes = createResponse();
+    await auth.handleAdDesktopRedeem({
+      body: { handoffId, verifier, clientLabel: 'MittrCraft Desktop', clientKind: 'desktop' },
+    }, redeemRes);
+    expect(redeemRes.statusCode).toBe(200);
+    expect(redeemRes.body).toMatchObject({
+      authenticated: true,
+      clientToken: 'desktop-client-token',
+      profile: { id: 'object-1', displayName: 'Ada Lovelace' },
+    });
+    expect(createClientInput).toMatchObject({
+      label: 'MittrCraft Desktop',
+      clientKind: 'desktop',
+      authMethod: 'entra',
+      authProfile: { id: 'object-1', displayName: 'Ada Lovelace' },
+    });
+
+    const reusedRes = createResponse();
+    await auth.handleAdDesktopRedeem({ body: { handoffId, verifier } }, reusedRes);
+    expect(reusedRes.statusCode).toBe(409);
+  });
+
+  it('rejects malformed Desktop handoffs and invalid verifiers', async () => {
+    const createUiAuth = await loadCreateUiAuth();
+    const handoffId = 'h'.repeat(43);
+    const verifier = 'v'.repeat(43);
+    const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+    const auth = createUiAuth({
+      adAuthController: {
+        enabled: true,
+        configurationPresent: true,
+        mode: 'entra',
+        getStatus: () => ({ enabled: true, mode: 'entra' }),
+        beginAuthorization: async () => ({
+          authorizationUrl: 'https://login.microsoftonline.com/tenant/authorize',
+          state: 'state-desktop-invalid',
+          expiresAt: Date.now() + 60_000,
+        }),
+        dispose: () => {},
+      },
+    });
+
+    const malformedRes = createResponse();
+    await auth.handleAdLoginStart({
+      headers: {},
+      query: { desktopHandoff: 'short', desktopChallenge: challenge },
+    }, malformedRes);
+    expect(malformedRes.statusCode).toBe(400);
+
+    const startRes = createResponse();
+    await auth.handleAdLoginStart({
+      headers: {},
+      query: { desktopHandoff: handoffId, desktopChallenge: challenge },
+    }, startRes);
+    const invalidVerifierRes = createResponse();
+    await auth.handleAdDesktopRedeem({ body: { handoffId, verifier: 'x'.repeat(43) } }, invalidVerifierRes);
+    expect(invalidVerifierRes.statusCode).toBe(401);
   });
 });

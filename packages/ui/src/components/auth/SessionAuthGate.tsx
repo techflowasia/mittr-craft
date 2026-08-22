@@ -1,5 +1,6 @@
 import React from 'react';
 import { browserSupportsWebAuthn } from '@simplewebauthn/browser';
+import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -47,6 +48,38 @@ const TRANSIENT_RETRY_BASE_DELAY_MS = 1_500;
 const TRUST_DEVICE_STORAGE_KEY = 'openchamber.uiAuth.trustDevice';
 const LOCAL_DESKTOP_CLIENT_KIND = 'desktop-local';
 const LOCAL_DESKTOP_CLIENT_DEDUPE_KEY = 'desktop-local';
+const DESKTOP_ENTRA_POLL_INTERVAL_MS = 1_000;
+const DESKTOP_ENTRA_TIMEOUT_MS = 10 * 60 * 1_000;
+const desktopEntraRedeemResponseSchema = z.object({ clientToken: z.string().min(1) });
+
+const randomBase64Url = (): string => {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+};
+
+const sha256Base64Url = async (value: string): Promise<string> => {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  let binary = '';
+  for (const byte of new Uint8Array(digest)) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+};
+
+const waitForDesktopEntraPoll = async (signal: AbortSignal): Promise<void> => {
+  if (signal.aborted) throw new DOMException('Microsoft sign-in canceled', 'AbortError');
+  await new Promise<void>((resolve, reject) => {
+    const handleAbort = () => {
+      window.clearTimeout(timer);
+      reject(new DOMException('Microsoft sign-in canceled', 'AbortError'));
+    };
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener('abort', handleAbort);
+      resolve();
+    }, DESKTOP_ENTRA_POLL_INTERVAL_MS);
+    signal.addEventListener('abort', handleAbort, { once: true });
+  });
+};
 
 const readLocalOrigin = (): string => {
   if (typeof window === 'undefined') return '';
@@ -358,6 +391,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
   const [activePasskeyAction, setActivePasskeyAction] = React.useState<'auth' | 'register' | null>(null);
   const [adEnabled, setAdEnabled] = React.useState(false);
   const [adMode, setAdMode] = React.useState<'ldap' | 'entra' | null>(null);
+  const [adDesktopHandoff, setAdDesktopHandoff] = React.useState(false);
   const [passwordEnabled, setPasswordEnabled] = React.useState(true);
   const [adUsername, setAdUsername] = React.useState('');
   const [adPassword, setAdPassword] = React.useState('');
@@ -365,6 +399,9 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
   const passwordInputRef = React.useRef<HTMLInputElement | null>(null);
   const adUsernameInputRef = React.useRef<HTMLInputElement | null>(null);
   const hasResyncedRef = React.useRef(skipAuth);
+  const desktopEntraAbortRef = React.useRef<AbortController | null>(null);
+
+  React.useEffect(() => () => desktopEntraAbortRef.current?.abort(), []);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') {
@@ -384,27 +421,106 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
           headers: { Accept: 'application/json' },
         });
         if (response.ok) {
-          const data = await response.json() as { enabled?: boolean; mode?: unknown; passwordEnabled?: boolean };
+          const data = await response.json() as {
+            enabled?: boolean;
+            mode?: unknown;
+            passwordEnabled?: boolean;
+            desktopHandoff?: boolean;
+          };
           setAdEnabled(data.enabled === true);
           setAdMode(data.mode === 'entra' || data.mode === 'ldap' ? data.mode : null);
           setPasswordEnabled(data.passwordEnabled !== false);
+          setAdDesktopHandoff(data.desktopHandoff === true);
         }
       } catch {
         setAdEnabled(false);
         setAdMode(null);
+        setAdDesktopHandoff(false);
       }
     };
 
     void checkAdStatus();
   }, [skipAuth]);
 
-  const handleEntraLogin = React.useCallback(() => {
+  const handleEntraLogin = React.useCallback(async () => {
+    if (isAdSubmitting) return;
+    if (!isDesktopShell()) {
+      const loginUrl = getRuntimeUrlResolver().auth('/auth/ad/login', {
+        trustDevice: trustDevice ? 'true' : undefined,
+        returnTo: window.location.origin,
+      });
+      window.location.assign(loginUrl);
+      return;
+    }
+
+    const runtime = captureRuntimeIdentity();
+    const requestHeaders = getRuntimeExtraHeadersSync();
+    const handoffId = randomBase64Url();
+    const verifier = randomBase64Url();
+    const desktopChallenge = await sha256Base64Url(verifier);
     const loginUrl = getRuntimeUrlResolver().auth('/auth/ad/login', {
       trustDevice: trustDevice ? 'true' : undefined,
-      returnTo: window.location.origin,
+      desktopHandoff: handoffId,
+      desktopChallenge,
     });
-    window.location.assign(loginUrl);
-  }, [trustDevice]);
+    const abortController = new AbortController();
+    desktopEntraAbortRef.current?.abort();
+    desktopEntraAbortRef.current = abortController;
+    setIsAdSubmitting(true);
+    setErrorMessage('');
+
+    try {
+      const opened = await invokeDesktop<boolean>('desktop_open_auth_url', { url: loginUrl });
+      if (!opened || !isRuntimeIdentityActive(runtime)) {
+        setErrorMessage(t('sessionAuth.error.unexpectedResponse'));
+        return;
+      }
+      const deadline = Date.now() + DESKTOP_ENTRA_TIMEOUT_MS;
+      while (Date.now() < deadline) {
+        if (!isRuntimeIdentityActive(runtime)) return;
+        const response = await runtimeFetch('/auth/ad/desktop/redeem', {
+          method: 'POST',
+          credentials: 'omit',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            ...requestHeaders,
+          },
+          body: JSON.stringify({
+            handoffId,
+            verifier,
+            clientLabel: 'MittrCraft Desktop',
+            clientKind: 'desktop',
+            ...desktopClientAuthMetadata(),
+          }),
+          signal: abortController.signal,
+        });
+        if (!isRuntimeIdentityActive(runtime)) return;
+        if (response.ok && response.status !== 202) {
+          const payload = desktopEntraRedeemResponseSchema.safeParse(await response.json().catch(() => null));
+          const clientToken = payload.success ? payload.data.clientToken.trim() : '';
+          if (!clientToken || !await applyDesktopClientToken(clientToken, runtime, requestHeaders)) return;
+          setIsTunnelLocked(false);
+          setState('authenticated');
+          return;
+        }
+        if (response.status !== 202 && response.status !== 404) {
+          setErrorMessage(t('sessionAuth.error.unexpectedResponse'));
+          return;
+        }
+        await waitForDesktopEntraPoll(abortController.signal);
+      }
+      setErrorMessage(t('sessionAuth.error.networkRetry'));
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      setErrorMessage(t('sessionAuth.error.networkRetry'));
+    } finally {
+      if (desktopEntraAbortRef.current === abortController) {
+        desktopEntraAbortRef.current = null;
+        setIsAdSubmitting(false);
+      }
+    }
+  }, [isAdSubmitting, t, trustDevice]);
 
   const handleAdLogin = React.useCallback(async () => {
     if (!adUsername || !adPassword || isAdSubmitting) return;
@@ -1048,14 +1164,15 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
                     : t('sessionAuth.actions.usePasskey')}</span>
                 </Button>
               )}
-              {adEnabled && adMode === 'entra' && !showHostSwitcher && (
+              {adEnabled && adMode === 'entra' && (!showHostSwitcher || adDesktopHandoff) && (
                 <Button
                   type="button"
                   variant="outline"
                   className="w-full"
-                  onClick={handleEntraLogin}
+                  onClick={() => void handleEntraLogin()}
+                  disabled={isAdSubmitting}
                 >
-                  <Icon name="user" className="h-4 w-4" />
+                  <Icon name={isAdSubmitting ? 'loader-4' : 'user'} className={`h-4 w-4${isAdSubmitting ? ' animate-spin' : ''}`} />
                   <span>{t('sessionAuth.actions.signInWithMicrosoft')}</span>
                 </Button>
               )}

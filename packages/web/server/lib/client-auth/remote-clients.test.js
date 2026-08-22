@@ -83,6 +83,41 @@ describe('remote client auth runtime', () => {
     }
   });
 
+  it('keeps an authentication profile private while restoring it for bearer requests', async () => {
+    const { dir, runtime } = await createRuntime();
+    try {
+      const created = await runtime.createClient({
+        label: 'Desktop',
+        authMethod: 'entra',
+        authProfile: {
+          id: 'object-1',
+          displayName: ' Ada Lovelace ',
+          email: 'ada@example.com',
+          groups: ['Engineering', '', 42],
+          tenantId: 'tenant-1',
+        },
+      });
+
+      const listed = await runtime.listClients();
+      expect(listed).toHaveLength(1);
+      expect('authProfile' in listed[0]).toBe(false);
+
+      const authenticated = await runtime.authenticateBearerToken(created.token);
+      expect(authenticated?.authProfile).toEqual({
+        id: 'object-1',
+        username: null,
+        displayName: 'Ada Lovelace',
+        email: 'ada@example.com',
+        department: null,
+        title: null,
+        groups: ['Engineering'],
+        tenantId: 'tenant-1',
+      });
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('keeps the token store private on disk', async () => {
     const { dir, runtime } = await createRuntime();
     try {

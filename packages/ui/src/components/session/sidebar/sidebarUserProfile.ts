@@ -1,4 +1,5 @@
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { z } from 'zod';
 
 export type SidebarUserProfile = {
   username: string | null;
@@ -12,28 +13,28 @@ export type SidebarUserProfile = {
 
 export type SidebarUserProfileResult =
   | { status: 'ready'; profile: SidebarUserProfile }
-  | { status: 'auth-required' | 'unavailable' };
+  | { status: 'auth-required' | 'reauth-required' | 'unavailable' };
 
-const readTrimmedString = (value: unknown): string | null => {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed || null;
-};
+type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
-export const parseSidebarUserProfile = (value: unknown): SidebarUserProfile | null => {
-  if (!value || typeof value !== 'object') return null;
-  const profileValue = (value as { profile?: unknown }).profile;
-  if (!profileValue || typeof profileValue !== 'object') return null;
+const optionalProfileStringSchema = z.string().trim().min(1).nullable().catch(null);
+const sidebarUserProfilePayloadSchema = z.object({
+  profile: z.object({
+    username: optionalProfileStringSchema,
+    displayName: optionalProfileStringSchema,
+    email: optionalProfileStringSchema,
+    department: optionalProfileStringSchema,
+    title: optionalProfileStringSchema,
+    groups: z.array(z.string().trim().min(1).nullable().catch(null)).catch([]),
+  }),
+});
+const adEnabledStatusSchema = z.object({ enabled: z.literal(true) });
 
-  const profile = profileValue as Record<string, unknown>;
-  const displayName = readTrimmedString(profile.displayName);
-  const username = readTrimmedString(profile.username);
-  const email = readTrimmedString(profile.email);
-  const department = readTrimmedString(profile.department);
-  const title = readTrimmedString(profile.title);
-  const groups = Array.isArray(profile.groups)
-    ? profile.groups.map(readTrimmedString).filter((group): group is string => Boolean(group))
-    : [];
+export const parseSidebarUserProfile = (value: JsonValue): SidebarUserProfile | null => {
+  const parsed = sidebarUserProfilePayloadSchema.safeParse(value);
+  if (!parsed.success) return null;
+  const { displayName, username, email, department, title } = parsed.data.profile;
+  const groups = parsed.data.profile.groups.filter((group) => group !== null);
   const primaryLabel = displayName ?? username ?? email;
   if (!primaryLabel) return null;
 
@@ -72,19 +73,15 @@ const requestOptions = (signal: AbortSignal): RequestInit => ({
 export const fetchSidebarUserProfile = async (signal: AbortSignal): Promise<SidebarUserProfileResult> => {
   const statusResponse = await runtimeFetch('/auth/ad/status', requestOptions(signal));
   if (!statusResponse.ok) return { status: 'unavailable' };
-  const statusPayload: unknown = await statusResponse.json().catch(() => null);
-  const adEnabled = Boolean(
-    statusPayload
-    && typeof statusPayload === 'object'
-    && !Array.isArray(statusPayload)
-    && (statusPayload as { enabled?: unknown }).enabled === true,
-  );
+  const statusPayload = await statusResponse.json().catch(() => null);
+  const adEnabled = adEnabledStatusSchema.safeParse(statusPayload).success;
   if (!adEnabled) return { status: 'unavailable' };
 
   const response = await runtimeFetch('/auth/ad/profile', {
     ...requestOptions(signal),
   });
   if (!response.ok) {
+    if (response.status === 409) return { status: 'reauth-required' };
     return response.status === 400 || response.status === 401 || response.status === 404
       ? { status: 'auth-required' }
       : { status: 'unavailable' };
@@ -93,6 +90,11 @@ export const fetchSidebarUserProfile = async (signal: AbortSignal): Promise<Side
   const profile = parseSidebarUserProfile(await response.json().catch(() => null));
   return profile ? { status: 'ready', profile } : { status: 'auth-required' };
 };
+
+export const shouldRequestSidebarProfileLogin = (
+  result: SidebarUserProfileResult,
+  requireProfileSession: boolean,
+): boolean => result.status === 'reauth-required' || (result.status === 'auth-required' && requireProfileSession);
 
 export const logoutSidebarUserProfile = async (signal: AbortSignal): Promise<boolean> => {
   const response = await runtimeFetch('/auth/session', {
