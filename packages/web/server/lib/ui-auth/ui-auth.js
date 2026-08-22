@@ -757,6 +757,7 @@ export const createUiAuth = ({
       value: encodeURIComponent(token),
       maxAge: maxAgeSeconds,
       secure,
+      sameSite: 'Lax',
     });
     appendSetCookieHeader(res, header);
   };
@@ -1158,7 +1159,7 @@ export const createUiAuth = ({
       value: '',
       maxAge: 0,
       secure: isSecureRequest(req),
-      cookiePath: '/auth/ad/callback',
+      cookiePath: '/',
       sameSite: 'Lax',
     }));
   };
@@ -1178,7 +1179,7 @@ export const createUiAuth = ({
         value: encodeURIComponent(transaction.state),
         maxAge,
         secure: isSecureRequest(req),
-        cookiePath: '/auth/ad/callback',
+        cookiePath: '/',
         sameSite: 'Lax',
       }));
       return res.redirect(302, transaction.authorizationUrl);
@@ -1201,6 +1202,10 @@ export const createUiAuth = ({
     res.setHeader('Cache-Control', 'no-store');
 
     if (providerError || !state || !code || transactionCookie !== state) {
+      if (providerError) console.warn('[Entra] Callback provider error:', providerError);
+      if (!state) console.warn('[Entra] Callback state missing');
+      if (!code) console.warn('[Entra] Callback code missing');
+      if (transactionCookie !== state) console.warn(`[Entra] Cookie mismatch: received='${transactionCookie}', expected='${state}', host='${req.headers.host}'`);
       return res.status(400).send('Microsoft sign-in could not be verified. Return to MittrCraft and try again.');
     }
 

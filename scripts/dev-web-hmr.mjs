@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { existsSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,11 +11,30 @@ const repoRoot = path.resolve(__dirname, '..');
 const useDetachedChildren = process.platform === 'darwin';
 const webRoot = path.join(repoRoot, 'packages/web');
 
+function loadDotEnv() {
+  const envPath = path.join(repoRoot, '.env');
+  if (!existsSync(envPath)) return {};
+  const content = readFileSync(envPath, 'utf-8');
+  const env = {};
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    const val = trimmed.slice(eqIdx + 1).trim();
+    env[key] = val;
+  }
+  return env;
+}
+
+const fileEnv = loadDotEnv();
+
 function run(label, command, args, env = {}, options = {}) {
   return spawn(command, args, {
     cwd: options.cwd || repoRoot,
     stdio: 'inherit',
-    env: { ...process.env, ...env },
+    env: { ...process.env, ...fileEnv, ...env },
     detached: useDetachedChildren,
   }).on('error', (error) => {
     console.error(`[dev:web:hmr] Failed to start ${label}:`, error);
@@ -81,9 +100,9 @@ async function stopChildTree(child) {
   }
 }
 
-const uiPort = process.env.OPENCHAMBER_HMR_UI_PORT || '5180';
-const backendPort = process.env.OPENCHAMBER_HMR_API_PORT || '3902';
-const hmrHost = process.env.OPENCHAMBER_HMR_HOST || '127.0.0.1';
+const uiPort = fileEnv.OPENCHAMBER_HMR_UI_PORT || process.env.OPENCHAMBER_HMR_UI_PORT || '5180';
+const backendPort = fileEnv.OPENCHAMBER_PORT || fileEnv.OPENCHAMBER_HMR_API_PORT || process.env.OPENCHAMBER_HMR_API_PORT || '3000';
+const hmrHost = fileEnv.OPENCHAMBER_HMR_HOST || process.env.OPENCHAMBER_HMR_HOST || '127.0.0.1';
 
 function getLanAddresses() {
   const addresses = [];

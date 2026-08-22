@@ -392,7 +392,7 @@ describe('ui auth Microsoft Entra seam', () => {
     expect(startRes.statusCode).toBe(302);
     expect(startRes.getHeader('location')).toContain('login.microsoftonline.com');
     expect(startRes.getHeader('set-cookie')).toContain('oc_ad_transaction=state-1');
-    expect(startRes.getHeader('set-cookie')).toContain('Path=/auth/ad/callback');
+    expect(startRes.getHeader('set-cookie')).toContain('Path=/');
     expect(startRes.getHeader('set-cookie')).toContain('SameSite=Lax');
 
     const callbackRes = createResponse();

@@ -964,7 +964,10 @@ export const settingsDict = {
   'settings.openchamber.tools.field.agentWebTool': 'MittrCraft Web 工具',
   'settings.openchamber.tools.field.agentWebToolAria': '啟用 MittrCraft Web 工具',
   'settings.openchamber.tools.field.agentWebToolInfo': '讓代理在 MittrCraft 瀏覽器面板中檢視並操作頁面：開啟網址、讀取內容、點擊、輸入、捲動，以及在行動版與桌面版版面之間切換。會為每個工作階段加入少量工具說明。在 OpenCode 重新啟動後生效。',
-  'settings.openchamber.opencodeCli.tooltipPrefix': '可選的',
+
+  'settings.openchamber.tools.field.agentMemoryTool': 'Agent memory tool',
+  'settings.openchamber.tools.field.agentMemoryToolAria': 'Agent memory tool',
+  'settings.openchamber.tools.field.agentMemoryToolInfo': 'Let agents keep what they learn across sessions, in two stores: what is true about you, and what is true about each project. Sessions are given the stored titles so the agent can read an entry when it is relevant. Turning this off removes the tool, the Memory tab, and the session index. Applies after OpenCode restarts.',  'settings.openchamber.opencodeCli.tooltipPrefix': '可選的',
   'settings.openchamber.opencodeCli.tooltipSuffix': '二進位檔絕對路徑。',
   'settings.openchamber.opencodeCli.field.binaryPath': 'OpenCode 可執行檔路徑',
   'settings.openchamber.opencodeCli.field.binaryPathPlaceholder': '/Users/you/.bun/bin/opencode',
