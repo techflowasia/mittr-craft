@@ -74,3 +74,44 @@ describe('mittr shim routes', () => {
     expect(res.body.error).toMatch(/Mittr/);
   });
 });
+
+const sseResponse = (chunks) => new Response(
+  new ReadableStream({
+    async start(controller) {
+      for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk));
+      controller.close();
+    },
+  }),
+  { status: 200, headers: { 'content-type': 'text/event-stream' } }
+);
+
+describe('mittr shim streaming', () => {
+  it('passes server-sent events through and keeps their order', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(sseResponse([
+      'data: {"choices":[{"delta":{"content":"he"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"llo"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ]));
+
+    const res = await request(createApp(fetchImpl))
+      .post('/v1/chat/completions')
+      .set('authorization', 'Bearer mc_local_abc')
+      .send({ model: 'mittr-craft-1-0', messages: [], stream: true })
+      .expect(200);
+
+    expect(res.headers['content-type']).toMatch(/text\/event-stream/);
+    expect(res.text.indexOf('"he"')).toBeLessThan(res.text.indexOf('"llo"'));
+    expect(res.text).toContain('data: [DONE]');
+  });
+
+  it('disables buffering so a proxy in front cannot re-buffer the stream', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(sseResponse(['data: [DONE]\n\n']));
+    const res = await request(createApp(fetchImpl))
+      .post('/v1/chat/completions')
+      .set('authorization', 'Bearer mc_local_abc')
+      .send({ model: 'mittr-craft-1-0', messages: [], stream: true })
+      .expect(200);
+    expect(res.headers['cache-control']).toMatch(/no-cache/);
+    expect(res.headers['x-accel-buffering']).toBe('no');
+  });
+});

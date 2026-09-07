@@ -35,10 +35,33 @@ export function registerMittrShimRoutes(app, { upstream, localToken, fetchImpl =
         return res.status(502).json({ error: 'Cannot reach Mittr' });
       }
 
-      const text = await upstreamResponse.text();
+      const contentType = upstreamResponse.headers.get('content-type') ?? 'application/json';
+      const isStream = Boolean(req.body?.stream) && upstreamResponse.body;
+
+      if (!isStream) {
+        const text = await upstreamResponse.text();
+        res.status(upstreamResponse.status);
+        res.setHeader('content-type', contentType);
+        return res.send(text);
+      }
+
       res.status(upstreamResponse.status);
-      res.setHeader('content-type', upstreamResponse.headers.get('content-type') ?? 'application/json');
-      return res.send(text);
+      res.setHeader('content-type', contentType);
+      res.setHeader('cache-control', 'no-cache, no-transform');
+      res.setHeader('connection', 'keep-alive');
+      // Anything that buffers this stream turns a live agent into a long pause
+      // followed by a wall of text.
+      res.setHeader('x-accel-buffering', 'no');
+      res.flushHeaders?.();
+
+      try {
+        for await (const chunk of upstreamResponse.body) {
+          res.write(chunk);
+        }
+      } catch (error) {
+        console.error('[mittr] upstream stream failed:', error?.message ?? error);
+      }
+      return res.end();
     }
   );
 }
