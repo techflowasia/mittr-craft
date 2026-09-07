@@ -33,7 +33,7 @@ two concurrent refreshes race and one loses. Task 7 adds it, serialised.
 - Packaged builds only. No `.env` a developer edits. (spec §4.1)
 - The platform key never leaves Mittr. Nothing here stores a Mittr API key. (spec §4.2)
 - No Azure AD changes. The desktop never contacts Microsoft directly. (spec §4.3)
-- The engine is never patched. (spec §4.4)
+- The engine fork carries string literals only. Behaviour belongs in `packages/`, not in a patch. (spec §4.4)
 - Everything in this repository is written in English. Thai appears only in UI strings.
 - No mention of AI assistants in commits, code, or documentation.
 - Run commands with `bun`.

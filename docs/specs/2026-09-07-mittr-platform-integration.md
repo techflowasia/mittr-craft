@@ -48,9 +48,25 @@ during implementation.
 3. **No Azure AD changes.** The desktop application never contacts Microsoft
    directly, so no new app registration, no new redirect URI, and no new admin
    consent round.
-4. **The engine is not patched.** The embedded engine stores a static API key and
-   has no concept of credential rotation. The design works around this rather
-   than forking the engine, so upstream updates stay cheap to absorb.
+4. **The engine is forked, and the fork stays thin.** *(revised 2026-09-08 by the
+   owner; this entry previously read "the engine is not patched" and was written
+   as though that were a wall. It was not — the upstream project is MIT and we
+   may modify it. It was an engineering trade the owner has since weighed
+   differently, and stating a preference as a constraint hid the choice.)*
+
+   The engine is built from source at a pinned tag with a patch set confined to
+   string literals and one helper: the nine prompt files that tell the model what
+   it is, and the project directory it reads. Neither has an environment
+   override. See `engine/README.md`.
+
+   The thinness is the constraint that still binds. Upstream ships roughly every
+   1.4 days; behaviour added to the fork is paid for at every upgrade, so work
+   that belongs to MittrCraft belongs in `packages/`.
+
+   This does not change how the credential is handled. The engine still stores a
+   static API key with no concept of rotation, and the shim in §6.1 still exists
+   for that reason — patching credential handling would be behaviour, which is
+   what this entry rules out.
 
 ## 5. Architecture
 

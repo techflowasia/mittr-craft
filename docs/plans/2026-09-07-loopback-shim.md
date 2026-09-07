@@ -14,7 +14,7 @@
 
 - Packaged builds only. No `.env` a developer edits; configuration ships in the build or is fetched at runtime. (spec §4.1)
 - The platform key never leaves Mittr. Nothing in this repository may store it. (spec §4.2)
-- The engine is never patched or forked. (spec §4.4)
+- The engine fork carries string literals only. Behaviour belongs in `packages/`, not in a patch. (spec §4.4)
 - The shim binds loopback only; any other bind address fails at startup. (spec §11.1)
 - Everything committed to this repository is written in English. Thai appears only in UI strings.
 - No mention of AI assistants in commit messages, file contents, or documentation.

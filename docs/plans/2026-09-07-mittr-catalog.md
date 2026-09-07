@@ -16,7 +16,7 @@
 
 - Packaged builds only; no `.env` a developer edits. (spec §4.1)
 - The platform key never leaves Mittr. (spec §4.2)
-- The engine is never patched. (spec §4.4)
+- The engine fork carries string literals only. Behaviour belongs in `packages/`, not in a patch. (spec §4.4)
 - A developer cannot add a model. MCP connectors and skills stay theirs to add. (spec §7)
 - Everything in this repository is written in English. Thai appears only in UI strings.
 - No mention of AI assistants in commits, code, or documentation.
