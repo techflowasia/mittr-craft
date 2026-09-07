@@ -1,0 +1,328 @@
+# MittrCraft ↔ Mittr platform integration
+
+Status: design approved, not implemented
+Date: 2026-09-07
+
+## 1. Context
+
+MittrCraft is a fork of an open-source coding agent, rebranded for internal use.
+Today it is a bring-your-own-key tool: a developer opens Settings, pastes a
+vendor API key, and talks to whichever provider they paid for. Skills, MCP
+connectors and agents are whatever that developer put on their own machine.
+
+Mittr already runs the pieces this product should stand on. Workspace issues
+governed keys and holds the Azure AD registration. A LiteLLM gateway fronts the
+team's own models and already exposes an alias reserved for this product,
+`mittr-craft-1-0`. Studio consumes that platform without owning any of it.
+
+This design makes MittrCraft a consumer of the same platform: identity, models,
+and the organisation's shared tooling all come from Mittr, while the repository,
+file edits and terminal stay on the developer's machine.
+
+## 2. Goals
+
+- Only people Mittr recognises can use the product.
+- Models come from Mittr's catalog. A developer cannot add their own.
+- The organisation can hand out skills, MCP connectors and knowledge sources.
+- Admins can see who used the product, on which repository, and what they asked.
+- The product ships as a packaged desktop application that updates itself.
+
+## 3. Non-goals
+
+- Running the agent loop on Mittr's servers. Tool calls read files, run tests and
+  edit code, so the loop stays on the developer's machine.
+- Offline operation. The only credential is a Mittr session; without the platform
+  there is nothing to talk to.
+- Forensic-grade auditing. See §8 for what the audit trail can and cannot prove.
+
+## 4. Fixed constraints
+
+These came out of the design discussion and are not open for re-litigation
+during implementation.
+
+1. **Packaged builds only.** Developers get a signed installer. There is no
+   `.env` to edit and no source checkout, so every setting either ships inside
+   the build or is fetched at runtime.
+2. **The platform key never leaves Mittr.** It does not expire, and no copy of it
+   exists on any developer machine.
+3. **No Azure AD changes.** The desktop application never contacts Microsoft
+   directly, so no new app registration, no new redirect URI, and no new admin
+   consent round.
+4. **The engine is not patched.** The embedded engine stores a static API key and
+   has no concept of credential rotation. The design works around this rather
+   than forking the engine, so upstream updates stay cheap to absorb.
+
+## 5. Architecture
+
+```
+developer machine                        │  Mittr
+                                         │
+  engine                                 │
+    │  static loopback token             │
+    ▼                                    │
+  MittrCraft server                      │
+    ├─ /v1 shim (127.0.0.1 only) ────────┼──▶ broker ──▶ LiteLLM gateway
+    ├─ session manager                   │      │
+    └─ catalog materializer              │      ├─ verifies the session
+                                         │      ├─ checks entitlement
+  repository, files, terminal            │      ├─ attaches the platform key
+    stay here                            │      ├─ writes the audit record
+                                         │      └─ serves the catalog
+```
+
+The shim exists because of constraint 4. The engine wants a key that never
+changes; a Mittr session does change. Putting a local proxy between them lets the
+engine hold a machine-local token forever while the session rotates behind it.
+
+## 6. Components
+
+### 6.1 Local provider shim — `packages/web/server`
+
+Exposes an OpenAI-compatible endpoint on loopback. The engine is configured to
+treat it as a custom provider through the existing `PUT /api/provider` route and
+`lib/opencode/auth.js`, which already writes `auth.json` with mode `0600`.
+
+- Binds `127.0.0.1` only. A configuration that would bind any other interface
+  must fail at startup, not bind quietly.
+- Streams straight through. No buffering of a completion before forwarding it.
+- The loopback token is generated per installation. It authorises the engine to
+  reach its own server and nothing else; it carries no authority at Mittr.
+
+### 6.2 Session manager
+
+Sign-in runs through Mittr, never through Microsoft directly:
+
+```
+desktop → system browser → Mittr → Microsoft → Mittr → mittrcraft://auth/callback
+```
+
+The desktop already registers a deep-link scheme (`app.setAsDefaultProtocolClient`
+in `packages/electron/main.mjs`). Microsoft's redirect target stays the Mittr URL
+that is registered today, which is what keeps constraint 3 true.
+
+- The code delivered to `mittrcraft://` is single-use and bound to a verifier the
+  desktop generated, so another application that claims the scheme cannot redeem
+  it.
+- Mittr's return target must be an allowlist. `entra-auth.js` already validates
+  return targets; extend that allowlist rather than accepting a free-form value,
+  or the login endpoint becomes an open redirect.
+- The session is stored in the OS keychain, refreshed silently, and only prompts
+  when refresh fails. A refresh prompt must not discard the work in progress.
+
+### 6.3 Catalog materializer
+
+The engine already has a layered configuration model: `readConfigLayers()`
+returns user, project and custom layers, and `getJsonEntrySource()` reports which
+layer an entry came from. Organisation content becomes another layer rather than
+a parallel mechanism.
+
+| Content | Written through |
+| --- | --- |
+| Skills | skill routes |
+| MCP servers | `lib/opencode/mcp.js` |
+| Agents | `lib/opencode/agents.js` |
+| Models | custom provider pointing at the shim |
+
+The directory holding organisation *definitions* is owned by MittrCraft and
+rewritten whole on every sync. Merging file by file leaves orphans behind when an
+admin removes something.
+
+### 6.4 Broker — lives in the `mittr` repository
+
+New service. Authenticates the caller by session, checks the MittrCraft
+entitlement, attaches the platform key, forwards to LiteLLM, records the audit
+entry, and serves the catalog and the update manifest.
+
+It must derive identity from the session it verified itself. A user identifier
+sent by the client is ignored.
+
+### 6.5 Platform key — workspace
+
+A new key class. Today's governed keys are personal, non-shareable and expire in
+30 days, with activity attributed to their owner. A platform key is none of those
+things: it is not tied to a person, it does not expire, and attribution comes from
+the broker instead.
+
+- Rotation stays possible. The gateway must accept two active platform keys at
+  once so a rotation never takes every developer offline mid-task.
+- Because the key is not personal, removing one person's access happens at the
+  entitlement layer, not by revoking the key.
+
+## 7. Catalog and local control
+
+Mittr decides **what is available**. The developer decides **what is switched on**.
+
+- `sync` refreshes availability only. It never touches a developer's on/off state.
+- A developer who disables an organisation connector has disabled it. It does not
+  come back on the next sync.
+- Organisation items and personal items are listed separately, with organisation
+  items labelled. Neither shadows the other, so no silent override rule is needed.
+
+| | Admin | Developer |
+| --- | --- | --- |
+| Models | defines what is available | picks one; **cannot add** |
+| MCP / skills | adds to the catalog | enables, disables, adds their own |
+| Knowledge | manages the content | chooses whether to use it |
+
+Models are the single exception to local freedom. Allowing a developer to add a
+model is bring-your-own-key by another name, which is what this work removes.
+
+The catalog carries model aliases only. `mittr-craft-1-0` is what the developer
+sees; the backend model behind it is Mittr's business, so it can be swapped
+without touching any machine.
+
+**An absent field and an empty list are different states.** A missing field means
+the admin never configured that category and application defaults apply. `[]`
+means the admin deliberately published nothing, and the UI says so. Conflating the
+two has already caused an outage on Studio.
+
+## 8. Audit
+
+Written by the broker, never by the client. The developer's machine is the thing
+being recorded; it cannot also be the recorder.
+
+One record per session, not per request. An agent task issues dozens of model
+calls, and a per-request log is too long to read.
+
+```
+who        Chaiwat Tanupan
+when       2026-09-07 14:02 – 14:41
+where      techflowasia/mittr-craft (branch feat/mittr-rebrand)
+model      mittr-craft-1-0
+volume     41 turns · 260k tokens
+actions    edit ×23 · bash ×11 · read ×88
+prompts    14:02  "ช่วยดู test ที่ fail ใน pr-status หน่อย"
+           14:19  "อันนี้พังมาก่อนหรือเปล่า"
+           14:33  "ok commit ให้เลย"
+outcome    completed
+```
+
+- `actions` records tool names and counts, never arguments. An admin can see that
+  someone edited 23 files without reading what they wrote.
+- `prompts` records what the person typed, in full. The desktop sends it as its
+  own field; the broker must not try to recover it from the request payload,
+  because the assembled payload has file contents interleaved into it.
+- `where` is the git remote, not the local path. A folder name can itself be
+  confidential, for example a client's name.
+- Retention is 90 days, then automatic deletion.
+- Visible to admins only.
+
+**Never recorded:** assembled prompts, model responses, file contents, tool
+arguments, shell commands, terminal output.
+
+### Two limits to state plainly
+
+**People paste code into chat.** Recording what a person typed means a pasted
+stack trace or config block reaches Mittr. Truncation does not fix this, because
+anything sensitive is usually at the start. The mitigation is disclosure, not
+technology: the application tells developers that their instructions are recorded
+and visible to admins. Someone who knows will not paste a production secret;
+someone who finds out later has a legitimate grievance.
+
+**`who` is verified, `where` is claimed.** The broker proves identity because it
+verified the session. It cannot know which repository is open unless the desktop
+tells it, and a determined person could lie. This audit trail is for
+understanding usage, not for proving misconduct.
+
+## 9. Behaviour when things break
+
+The rule for this whole section: **fail loudly**. Every expensive incident in this
+team's history was something that failed silently — a gateway returning 201 with
+an empty body while the UI showed a 0-byte result, a tool parser mismatch emitting
+raw markup as content, an exhausted credit balance returning 402 that never
+surfaced.
+
+| Failure | What the developer sees |
+| --- | --- |
+| Not signed in | Sign-in gate before the application |
+| Session expired mid-task | Re-authenticate; the conversation is preserved |
+| Broker or network down | Explicit "cannot reach Mittr" with a retry |
+| Entitlement revoked | Cut at the end of the current turn, not mid-sentence |
+| Platform key rotated | Nothing; two keys are valid during rotation |
+| Audit write fails | Nothing; the request proceeds (see below) |
+
+**Audit failures do not block work.** This trail exists to understand usage, not
+to gate access, and the broker still sees the traffic even when the write fails.
+
+Three cases need deliberate handling because they have burned this team before:
+
+1. **The gateway answers 200 while the model is dead.** `/v1/models` and
+   `/health/liveliness` respond from configuration without touching the backend.
+   Health checks must issue a real chat completion with `max_tokens: 1`.
+2. **Tool calling fails silently.** A parser mismatch yields empty `tool_calls`
+   and raw markup in `content`, with no error. For a chat product that looks odd;
+   for a coding agent it is total failure. Detect the shape and say "this model
+   cannot call tools through the gateway".
+3. **Gateway response caching interferes with the agent loop.** The gateway caches
+   on `(model, messages)`, so a retry with identical input returns the previous
+   answer instead of reconsidering. Caching must be disabled for this product's
+   traffic; a coding agent gains nothing from it and can loop because of it.
+
+## 10. Update distribution
+
+The application already contains the full `electron-updater` stack:
+`updater-check.mjs`, `updater-channel.mjs`, `updater-capability.mjs`, manifest
+verification and an end-to-end fixture. Only the source of updates is missing.
+
+The current publish configuration points at a repository that does not exist and
+must be changed regardless.
+
+**Updates are hosted by Mittr and fetched with the session** the application
+already holds, using a generic provider with authenticated requests. Only someone
+who can sign in to Mittr can download a build. A public repository would leak the
+installer; a private one would require a token on every machine, which is the
+pattern this design removes elsewhere.
+
+**Code signing and notarisation are prerequisites, not polish.** An unsigned macOS
+build downloads updates and then fails to install them, retrying forever. Without
+a company certificate the update path does not work at all.
+
+## 11. Security invariants
+
+Each of these is enforced by a test that fails the build.
+
+1. The shim refuses to bind anything but loopback.
+2. The broker ignores client-supplied identity and uses the verified session.
+3. The audit payload matches an allowlist of fields. A new field carrying content
+   fails the test. This one guards against a future contributor adding `prompt`
+   "to make debugging easier".
+4. The deep-link callback code is single-use and bound to the desktop's verifier.
+
+Invariant 3 matters most, because it is the only one whose violation nobody would
+notice until it was too late.
+
+## 12. Testing
+
+**Before anything is built:** call `mittr-craft-1-0` through the real gateway with
+a prompt that forces a tool call, and confirm real `tool_calls` come back. If this
+fails, this design changes rather than proceeds.
+
+- **Unit:** catalog merging, organisation and personal items staying distinct,
+  local switches surviving a sync, absent-versus-empty handling, audit record
+  assembly.
+- **Integration against a fake broker:** streaming passthrough, session expiry
+  mid-stream, entitlement rejection, broker outage messaging.
+- **Against the real platform:** open a real repository, give a real instruction,
+  and confirm files actually changed. A 200 response is not the result. Thai
+  prompts are part of this from the first run, not a later pass: the current
+  primary model is known to mix other scripts into Thai output.
+
+Streaming responsiveness, whether the agent is looping, and whether a developer
+who is not the author understands that they must sign in cannot be covered by
+tests and must be checked by using the product.
+
+## 13. Dependencies outside this repository
+
+| Owner | Needed |
+| --- | --- |
+| `mittr` repo | The broker |
+| Workspace | Non-expiring platform key class; MittrCraft entitlement per account |
+| Gateway / infra | Caching disabled for this traffic; two-key rotation window; token pricing in `config.yaml` so usage figures stop reporting zero |
+| IT | Code signing certificate and notarisation credentials |
+
+## 14. Open questions
+
+1. Where exactly Mittr hosts update artifacts, and who owns that storage.
+2. Whether the entitlement is per-person or derived from an existing group.
+3. What an admin sees when a developer has disabled an organisation connector —
+   whether that is visible at all, and whether it should be.
