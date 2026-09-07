@@ -52,6 +52,9 @@ import { createOpenCodeLifecycleRuntime } from './lib/opencode/lifecycle.js';
 import { createOpenCodeEnvRuntime } from './lib/opencode/env-runtime.js';
 import { resolveOpenCodeEnvConfig } from './lib/opencode/env-config.js';
 import { createHmrStateRuntime } from './lib/opencode/hmr-state-runtime.js';
+import { startMittrShim } from './lib/mittr/index.js';
+import { upsertProviderConfig } from './lib/opencode/providers.js';
+import { readAuthFile, writeAuthFile } from './lib/opencode/auth.js';
 import { createOpenCodeNetworkRuntime } from './lib/opencode/network-runtime.js';
 import { createOpenCodeAuthStateRuntime } from './lib/opencode/auth-state-runtime.js';
 import { createProjectDirectoryRuntime } from './lib/opencode/project-directory-runtime.js';
@@ -1317,6 +1320,27 @@ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
 
 const gracefulShutdown = (...args) => gracefulShutdownRuntime.gracefulShutdown(...args);
 
+// Registers the shim as an engine provider. The config and the credential live in
+// two different stores, so this is two writes, not one. The token written here is
+// the machine-local one: the engine may hold it forever because it grants nothing
+// outside this machine.
+const registerMittrProvider = (shim) => {
+  upsertProviderConfig(
+    'mittr',
+    {
+      name: 'Mittr',
+      options: { baseURL: shim.baseUrl },
+      models: { 'mittr-craft-1-0': { name: 'MittrCraft 1.0' } },
+    },
+    null,
+    'user',
+  );
+
+  const auth = readAuthFile();
+  auth.mittr = { type: 'api', key: shim.localToken };
+  writeAuthFile(auth);
+};
+
 async function main(options = {}) {
   const port = Number.isFinite(options.port) && options.port >= 0 ? Math.trunc(options.port) : DEFAULT_PORT;
   const host = typeof options.host === 'string' && options.host.length > 0 ? options.host : undefined;
@@ -1484,6 +1508,26 @@ async function main(options = {}) {
   ]);
   const isLocalDevClientOrigin = (origin) => /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
   app.set('trust proxy', true);
+
+  // The engine talks to this shim instead of to Mittr directly, so it can hold a
+  // credential that never changes while the Mittr session behind it rotates.
+  // A failure here leaves the rest of the server running without the Mittr
+  // provider rather than refusing to boot: a machine bound to a LAN address is a
+  // supported way to run this app, and it must keep working even though the shim
+  // cannot be offered there.
+  let mittrShim = null;
+  try {
+    mittrShim = startMittrShim({
+      app,
+      host: effectiveBindHost,
+      port,
+      tokenPath: path.join(MITTRCRAFT_DATA_DIR, 'mittr-shim-token'),
+    });
+    registerMittrProvider(mittrShim);
+  } catch (error) {
+    console.warn(`[mittr] provider unavailable: ${error?.message ?? error}`);
+  }
+
   // Keep self-hosted instances out of search engines. The app shell is served
   // publicly (it loads before prompting for the UI password), so without this
   // even a password-protected instance gets crawled and indexed. Applies to
