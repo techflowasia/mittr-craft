@@ -10,13 +10,13 @@ const parsePositiveInt = (value, fallback) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
-const HEALTH_CHECK_TIMEOUT_MS = parsePositiveInt(process.env.OPENCHAMBER_OPENCODE_HEALTH_TIMEOUT_MS, 5000);
+const HEALTH_CHECK_TIMEOUT_MS = parsePositiveInt(process.env.MITTRCRAFT_OPENCODE_HEALTH_TIMEOUT_MS, 5000);
 const HEALTH_CHECK_MAX_CONSECUTIVE_FAILURES = parsePositiveInt(
-  process.env.OPENCHAMBER_OPENCODE_HEALTH_CONSECUTIVE_FAILURES,
+  process.env.MITTRCRAFT_OPENCODE_HEALTH_CONSECUTIVE_FAILURES,
   20
 );
-const HEALTH_CHECK_INTERVAL_OVERRIDE_MS = parsePositiveInt(process.env.OPENCHAMBER_OPENCODE_HEALTH_INTERVAL_MS, 0);
-const HEALTH_CHECK_RESULT_CACHE_MS = parsePositiveInt(process.env.OPENCHAMBER_OPENCODE_HEALTH_CACHE_MS, 750);
+const HEALTH_CHECK_INTERVAL_OVERRIDE_MS = parsePositiveInt(process.env.MITTRCRAFT_OPENCODE_HEALTH_INTERVAL_MS, 0);
+const HEALTH_CHECK_RESULT_CACHE_MS = parsePositiveInt(process.env.MITTRCRAFT_OPENCODE_HEALTH_CACHE_MS, 750);
 const OPENCODE_HEALTH_PATH = '/global/health';
 // Last-used directory plus the three most recently opened projects — deeper
 // tails are unlikely to be the user's first click and just add background work.
@@ -265,7 +265,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       const launchSpec = resolveManagedOpenCodeLaunchSpec(binary);
       if (launchSpec?.binary) {
         if (launchSpec.wrapperType) {
-          console.log(`Launching OpenCode via ${launchSpec.wrapperType}: ${launchSpec.binary}`);
+          console.log(`Launching MittrCraft Engine via ${launchSpec.wrapperType}: ${launchSpec.binary}`);
         }
         launchWrapperType = launchSpec.wrapperType || null;
         binary = launchSpec.binary;
@@ -288,7 +288,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       hasShellEnv: shellEnvKeysCount > 0,
       shellEnvKeysCount,
     };
-    console.log('[OpenCode] Launching managed server', state.lastOpenCodeLaunchDiagnostics);
+    console.log('[MittrCraft Engine] Launching managed server', state.lastOpenCodeLaunchDiagnostics);
 
     const child = spawn(binary, args, {
       cwd,
@@ -356,7 +356,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
 
     // Record this child so a future run can reap it if we crash before teardown.
     // The web-server lifecycle runs in-process inside multiple hosts, so tag the
-    // actual host (Electron sets OPENCHAMBER_RUNTIME='desktop'; the standalone
+    // actual host (Electron sets MITTRCRAFT_RUNTIME='desktop'; the standalone
     // web CLI leaves it unset → 'web'; SSH remote → 'ssh-remote') rather than a
     // hardcoded label, matching the server's existing runtimeName convention.
     registerManagedProcess({
@@ -364,7 +364,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       ownerPid: process.pid,
       port,
       binary,
-      runtime: process.env.OPENCHAMBER_RUNTIME || 'web',
+      runtime: process.env.MITTRCRAFT_RUNTIME || 'web',
     });
 
     return {
@@ -492,8 +492,8 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     const spawnPort = await resolveManagedOpenCodePort(desiredPort, env.ENV_CONFIGURED_OPENCODE_HOSTNAME);
     console.log(
       desiredPort > 0
-        ? `Starting OpenCode on requested port ${desiredPort}...`
-        : `Starting OpenCode on allocated port ${spawnPort}...`
+        ? `Starting MittrCraft Engine on requested port ${desiredPort}...`
+        : `Starting MittrCraft Engine on allocated port ${spawnPort}...`
     );
 
     await applyOpencodeBinaryFromSettings({ strict: true });
@@ -585,7 +585,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
         totalDurationMs: performance.now() - attemptStartedAt,
         outcome: 'error',
       });
-      console.error(`Failed to start OpenCode: ${message}`);
+      console.error(`Failed to start MittrCraft Engine: ${message}`);
       throw error;
     }
   };
@@ -605,7 +605,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
         }
 
         const message = error instanceof Error ? error.message : String(error);
-        console.warn(`[OpenCode] Managed server startup failed on attempt ${attempt}/${START_OPEN_CODE_MAX_ATTEMPTS}; retrying: ${message}`);
+        console.warn(`[MittrCraft Engine] Managed server startup failed on attempt ${attempt}/${START_OPEN_CODE_MAX_ATTEMPTS}; retrying: ${message}`);
         state.openCodePort = null;
         state.isOpenCodeReady = false;
         state.openCodeNotReadySince = Date.now();
@@ -628,15 +628,15 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       state.isRestartingOpenCode = true;
       state.isOpenCodeReady = false;
       state.openCodeNotReadySince = Date.now();
-      console.log('Restarting OpenCode process...');
+      console.log('Restarting MittrCraft Engine process...');
 
       if (state.isExternalOpenCode) {
-        console.log('Re-probing external OpenCode server...');
+        console.log('Re-probing external MittrCraft Engine server...');
         const probePort = state.openCodePort || env.ENV_CONFIGURED_OPENCODE_PORT || 4096;
         const probeOrigin = state.openCodeBaseUrl ?? env.ENV_CONFIGURED_OPENCODE_HOST?.origin;
         const healthy = await probeExternalOpenCode(probePort, probeOrigin);
         if (healthy) {
-          console.log(`External OpenCode server on port ${probePort} is healthy`);
+          console.log(`External MittrCraft Engine server on port ${probePort} is healthy`);
           setOpenCodePort(probePort);
           state.isOpenCodeReady = true;
           state.lastOpenCodeError = null;
@@ -658,11 +658,11 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       const portToKill = state.openCodePort;
 
       if (state.openCodeProcess) {
-        console.log('Stopping existing OpenCode process...');
+        console.log('Stopping existing MittrCraft Engine process...');
         try {
           await state.openCodeProcess.close();
         } catch (error) {
-          console.warn('Error closing OpenCode process:', error);
+          console.warn('Error closing MittrCraft Engine process:', error);
         }
         state.openCodeProcess = null;
         syncToHmrState();
@@ -670,11 +670,11 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
 
       killProcessOnPort(portToKill);
       if (!(await waitForPortRelease(portToKill, 5000))) {
-        console.warn(`Timed out waiting for OpenCode port ${portToKill} to be released`);
+        console.warn(`Timed out waiting for MittrCraft Engine port ${portToKill} to be released`);
       }
 
       if (env.ENV_CONFIGURED_OPENCODE_PORT) {
-        console.log(`Using OpenCode port from environment: ${env.ENV_CONFIGURED_OPENCODE_PORT}`);
+        console.log(`Using MittrCraft Engine port from environment: ${env.ENV_CONFIGURED_OPENCODE_PORT}`);
         setOpenCodePort(env.ENV_CONFIGURED_OPENCODE_PORT);
       } else {
         state.openCodePort = null;
@@ -705,14 +705,14 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       try {
         onOpenCodeRestarted?.();
       } catch (error) {
-        console.warn('Failed to rebind event stream after OpenCode restart:', error?.message ?? error);
+        console.warn('Failed to rebind event stream after MittrCraft Engine restart:', error?.message ?? error);
       }
     })();
 
     try {
       await state.currentRestartPromise;
     } catch (error) {
-      console.error(`Failed to restart OpenCode: ${error.message}`);
+      console.error(`Failed to restart MittrCraft Engine: ${error.message}`);
       state.lastOpenCodeError = error.message;
       if (!env.ENV_CONFIGURED_OPENCODE_PORT) {
         state.openCodePort = null;
@@ -816,7 +816,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   const refreshOpenCodeAfterConfigChange = async (reason, options = {}) => {
     const { agentName } = options;
 
-    console.log(`Refreshing OpenCode after ${reason}`);
+    console.log(`Refreshing MittrCraft Engine after ${reason}`);
     clearResolvedOpenCodeBinary();
     await applyOpencodeBinaryFromSettings();
 
@@ -846,7 +846,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     } catch (error) {
       state.isOpenCodeReady = false;
       state.openCodeNotReadySince = Date.now();
-      console.error(`Failed to refresh OpenCode after ${reason}:`, error.message);
+      console.error(`Failed to refresh MittrCraft Engine after ${reason}:`, error.message);
       throw error;
     }
 
@@ -868,17 +868,17 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
           durationMs: performance.now() - orphanReapStartedAt,
           totalDurationMs: performance.now() - bootstrapStartedAt,
         });
-        if (reaped > 0) console.log(`[lifecycle] startup reaped ${reaped} orphaned OpenCode process(es)`);
+        if (reaped > 0) console.log(`[lifecycle] startup reaped ${reaped} orphaned MittrCraft Engine process(es)`);
       } catch (error) {
         console.warn('[lifecycle] orphan reap failed:', error?.message ?? error);
       }
 
       syncFromHmrState();
       if (await isOpenCodeProcessHealthy()) {
-        console.log(`[HMR] Reusing existing OpenCode process on port ${state.openCodePort}`);
+        console.log(`[HMR] Reusing existing MittrCraft Engine process on port ${state.openCodePort}`);
       } else if (env.ENV_SKIP_OPENCODE_START && env.ENV_EFFECTIVE_PORT) {
         const label = env.ENV_CONFIGURED_OPENCODE_HOST ? env.ENV_CONFIGURED_OPENCODE_HOST.origin : `http://localhost:${env.ENV_EFFECTIVE_PORT}`;
-        console.log(`Using external OpenCode server at ${label} (skip-start mode)`);
+        console.log(`Using external MittrCraft Engine server at ${label} (skip-start mode)`);
         state.openCodeBaseUrl = env.ENV_CONFIGURED_OPENCODE_HOST?.origin ?? null;
         setOpenCodePort(env.ENV_EFFECTIVE_PORT);
         state.isOpenCodeReady = true;
@@ -888,7 +888,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
         syncToHmrState();
       } else if (env.ENV_EFFECTIVE_PORT && await probeExternalOpenCode(env.ENV_EFFECTIVE_PORT, env.ENV_CONFIGURED_OPENCODE_HOST?.origin)) {
         const label = env.ENV_CONFIGURED_OPENCODE_HOST ? env.ENV_CONFIGURED_OPENCODE_HOST.origin : `http://localhost:${env.ENV_EFFECTIVE_PORT}`;
-        console.log(`Auto-detected existing OpenCode server at ${label}`);
+        console.log(`Auto-detected existing MittrCraft Engine server at ${label}`);
         state.openCodeBaseUrl = env.ENV_CONFIGURED_OPENCODE_HOST?.origin ?? null;
         setOpenCodePort(env.ENV_EFFECTIVE_PORT);
         state.isOpenCodeReady = true;
@@ -906,7 +906,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
         // the OpenCode desktop app), coupling our lifecycle to theirs and
         // breaking init against an unexpected server version/config.
         if (env.ENV_EFFECTIVE_PORT) {
-          console.log(`Using OpenCode port from environment: ${env.ENV_EFFECTIVE_PORT}`);
+          console.log(`Using MittrCraft Engine port from environment: ${env.ENV_EFFECTIVE_PORT}`);
           setOpenCodePort(env.ENV_EFFECTIVE_PORT);
         } else {
           state.openCodePort = null;
@@ -922,12 +922,12 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
         await waitForOpenCodeReady();
       } catch (error) {
         bootstrapError = error;
-        console.error(`OpenCode readiness check failed: ${error.message}`);
+        console.error(`MittrCraft Engine readiness check failed: ${error.message}`);
       }
     } catch (error) {
       bootstrapError = error;
-      console.error(`Failed to start OpenCode: ${error.message}`);
-      console.log('Continuing without OpenCode integration...');
+      console.error(`Failed to start MittrCraft Engine: ${error.message}`);
+      console.log('Continuing without MittrCraft Engine integration...');
       state.lastOpenCodeError = error.message;
     }
     recordStartupPerformance(
@@ -1061,7 +1061,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       const healthy = await probeOpenCodeHealth();
       if (!healthy) {
         if (!isManagedOpenCodeProcessAlive()) {
-          console.log(`[lifecycle] ${source} health check: OpenCode process exited, restarting...`);
+          console.log(`[lifecycle] ${source} health check: MittrCraft Engine process exited, restarting...`);
           consecutiveHealthFailures = 0;
           lastHealthProbeResult = null;
           await restartOpenCode();
@@ -1078,7 +1078,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
         );
         if (consecutiveHealthFailures < HEALTH_CHECK_MAX_CONSECUTIVE_FAILURES) return;
         if (shouldSkipRestartForBusySessions()) return;
-        console.log(`[lifecycle] ${source} health check failure threshold reached, restarting OpenCode...`);
+        console.log(`[lifecycle] ${source} health check failure threshold reached, restarting MittrCraft Engine...`);
         consecutiveHealthFailures = 0;
         lastHealthProbeResult = null;
         await restartOpenCode();

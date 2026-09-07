@@ -1,5 +1,5 @@
 {
-  "name": "@openchamber/electron",
+  "name": "@mittrcraft/electron",
   "version": "1.18.4",
   "private": true,
   "description": "Electron desktop runtime for MittrCraft",
@@ -7,7 +7,7 @@
   "type": "module",
   "main": "./dist-bundle/main.mjs",
   "dependencies": {
-    "@openchamber/web": "workspace:*",
+    "@mittrcraft/web": "workspace:*",
     "electron-context-menu": "^4.1.2",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.8.3"
@@ -52,7 +52,7 @@
     "lint": "node -e \"process.exit(0)\""
   },
   "build": {
-    "appId": "dev.openchamber.desktop",
+    "appId": "dev.mittrcraft.desktop",
     "productName": "MittrCraft",
     "files": [
       "dist-bundle/main.mjs",
@@ -118,14 +118,14 @@
       ],
       "category": "Development",
       "icon": "resources/icons/icon.png",
-      "executableName": "openchamber",
+      "executableName": "mittrcraft",
       "artifactName": "${productName}-${version}-linux-${arch}.${ext}",
       "desktop": {
         "entry": {
           "Name": "MittrCraft",
           "Comment": "Desktop runtime for MittrCraft",
-          "Icon": "openchamber",
-          "StartupWMClass": "openchamber"
+          "Icon": "mittrcraft",
+          "StartupWMClass": "mittrcraft"
         }
       }
     },
@@ -162,8 +162,8 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "openchamber",
-      "repo": "openchamber"
+      "owner": "mittrcraft",
+      "repo": "mittrcraft"
     }
   }
 }

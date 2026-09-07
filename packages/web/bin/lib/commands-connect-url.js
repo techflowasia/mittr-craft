@@ -42,10 +42,10 @@ function isValidRelayUrl(value) {
 }
 
 // Resolve the relay endpoint the same way the running host does (service.js):
-// OPENCHAMBER_RELAY_URL env override, then the stored setting, then the default —
+// MITTRCRAFT_RELAY_URL env override, then the stored setting, then the default —
 // so the pairing link points at the same relay the host connects out to.
 function resolveRelayUrl(settings) {
-  const envUrl = process.env.OPENCHAMBER_RELAY_URL;
+  const envUrl = process.env.MITTRCRAFT_RELAY_URL;
   if (isValidRelayUrl(envUrl)) return envUrl.trim();
   const stored = settings?.privateRelay?.relayUrl;
   if (isValidRelayUrl(stored)) return stored.trim();
@@ -56,7 +56,7 @@ function resolveRelayUrl(settings) {
 // whole object and writes it back with the relay keys added, so other settings
 // are preserved. Enough for the CLI without wiring the full settings runtime.
 function createSettingsAccessors() {
-  const settingsPath = path.join(getOpenChamberDataDir(), SETTINGS_FILE_NAME);
+  const settingsPath = path.join(getMittrCraftDataDir(), SETTINGS_FILE_NAME);
   const readSettingsFromDiskMigrated = async () => {
     try {
       return JSON.parse(await fs.promises.readFile(settingsPath, 'utf8'));
@@ -101,7 +101,7 @@ async function buildRelayPairingCandidate() {
 // session created here is redeemable by the live server. createPairingSession
 // only writes the store (no server needed to mint); redeem is served by the host.
 function createCliPairingRuntime() {
-  const dataDir = getOpenChamberDataDir();
+  const dataDir = getMittrCraftDataDir();
   const remoteClientAuthRuntime = createRemoteClientAuthRuntime({
     fsPromises: fs.promises,
     path,
@@ -117,12 +117,12 @@ function createCliPairingRuntime() {
   });
 }
 
-// Mirror of encodePairingConnectionPayload in @openchamber/ui (the bin cannot
+// Mirror of encodePairingConnectionPayload in @mittrcraft/ui (the bin cannot
 // import the UI package). Keep in sync: v2 payload → base64url(JSON) in the URL
 // query, so the one-time secret rides the link, never the network.
 function encodePairingConnectUrl(payload) {
   const encoded = bytesToBase64Url(new TextEncoder().encode(JSON.stringify(payload)));
-  return `openchamber://connect?v=2&p=${encoded}`;
+  return `mittrcraft://connect?v=2&p=${encoded}`;
 }
 
 function buildPairingPayload({ pairing, label, candidates }) {
@@ -139,7 +139,7 @@ function buildPairingPayload({ pairing, label, candidates }) {
 
 async function resolveConnectUrlServerUrl(options) {
   let hostOverride = options.host;
-  if (typeof hostOverride !== 'string' && !process.env.OPENCHAMBER_HOST) {
+  if (typeof hostOverride !== 'string' && !process.env.MITTRCRAFT_HOST) {
     const storedOptions = readInstanceOptions(await getInstanceFilePath(options.port));
     if (typeof storedOptions?.host === 'string' && storedOptions.host.trim()) {
       hostOverride = storedOptions.host.trim();
@@ -206,10 +206,10 @@ function normalizeServerUrlForConnection(value) {
   }
 }
 
-function getOpenChamberDataDir() {
-  return process.env.OPENCHAMBER_DATA_DIR
-    ? path.resolve(process.env.OPENCHAMBER_DATA_DIR)
-    : path.join(os.homedir(), '.config', 'openchamber');
+function getMittrCraftDataDir() {
+  return process.env.MITTRCRAFT_DATA_DIR
+    ? path.resolve(process.env.MITTRCRAFT_DATA_DIR)
+    : path.join(os.homedir(), '.config', 'mittrcraft');
 }
 
 async function displayTunnelQrCode(url) {

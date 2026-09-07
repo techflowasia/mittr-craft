@@ -66,7 +66,7 @@ export const createOpenCodeAuthStateRuntime = (dependencies) => {
 
     if (rotateManaged) {
       const rotatedPassword = setOpenCodeAuthState(generateSecureOpenCodePassword(), 'rotated');
-      console.log('Rotated secure password for managed local OpenCode instance');
+      console.log('Rotated secure password for managed local MittrCraft Engine instance');
       return rotatedPassword;
     }
 
@@ -77,7 +77,7 @@ export const createOpenCodeAuthStateRuntime = (dependencies) => {
     }
 
     const generatedPassword = setOpenCodeAuthState(generateSecureOpenCodePassword(), 'generated');
-    console.log('Generated secure password for managed local OpenCode instance');
+    console.log('Generated secure password for managed local MittrCraft Engine instance');
     return generatedPassword;
   };
 

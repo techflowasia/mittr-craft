@@ -201,8 +201,8 @@ export const ComposerDictation: React.FC<ComposerDictationProps> = ({
                 void confirmDictation();
             }
         };
-        window.addEventListener('openchamber:dictation-toggle', onToggle);
-        return () => window.removeEventListener('openchamber:dictation-toggle', onToggle);
+        window.addEventListener('mittrcraft:dictation-toggle', onToggle);
+        return () => window.removeEventListener('mittrcraft:dictation-toggle', onToggle);
     }, [startDictation, confirmDictation]);
 
     // While recording: Enter confirms (insert), Escape cancels. Capture-phase

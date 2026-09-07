@@ -20,10 +20,10 @@
       const baseUrl = location.origin;
       const defaultAppName = 'MittrCraft - AI Coding Assistant';
       const defaultShortName = 'MittrCraft';
-      const pwaNameStorageKey = 'openchamber.pwaName';
-      const pwaOrientationStorageKey = 'openchamber.pwaOrientation';
-      const mobileKeyboardModeStorageKey = 'openchamber.mobileKeyboardMode';
-      const pwaRecentSessionsStorageKey = 'openchamber.pwaRecentSessions';
+      const pwaNameStorageKey = 'mittrcraft.pwaName';
+      const pwaOrientationStorageKey = 'mittrcraft.pwaOrientation';
+      const mobileKeyboardModeStorageKey = 'mittrcraft.mobileKeyboardMode';
+      const pwaRecentSessionsStorageKey = 'mittrcraft.pwaRecentSessions';
       const viewportBaseContent = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
 
       const normalizePwaName = (value, fallback) => {
@@ -353,18 +353,18 @@
       const initialInstallNameOverride = getQueryInstallNameOverride();
       void updateManifest(initialInstallNameOverride);
 
-      window.__OPENCHAMBER_GET_PWA_INSTALL_NAME__ = () => getStoredInstallName();
-      window.__OPENCHAMBER_SET_PWA_INSTALL_NAME__ = (value) => {
+      window.__MITTRCRAFT_GET_PWA_INSTALL_NAME__ = () => getStoredInstallName();
+      window.__MITTRCRAFT_SET_PWA_INSTALL_NAME__ = (value) => {
         const resolvedName = setStoredInstallName(value);
         void updateManifest(resolvedName);
         return resolvedName;
       };
-      window.__OPENCHAMBER_SET_PWA_ORIENTATION__ = (value) => {
+      window.__MITTRCRAFT_SET_PWA_ORIENTATION__ = (value) => {
         const resolvedOrientation = setStoredOrientation(value);
         void updateManifest(null, resolvedOrientation);
         return resolvedOrientation;
       };
-      window.__OPENCHAMBER_UPDATE_PWA_MANIFEST__ = () => {
+      window.__MITTRCRAFT_UPDATE_PWA_MANIFEST__ = () => {
         refreshManifestFromStorage();
       };
     </script>
@@ -579,7 +579,7 @@
       // Desktop shells manage their own splash via the injected boot outcome;
       // do not force-remove for desktop windows.
       setTimeout(function() {
-        if (typeof window.__OPENCHAMBER_LOCAL_ORIGIN__ === 'string' && window.__OPENCHAMBER_LOCAL_ORIGIN__.length > 0) {
+        if (typeof window.__MITTRCRAFT_LOCAL_ORIGIN__ === 'string' && window.__MITTRCRAFT_LOCAL_ORIGIN__.length > 0) {
           return;
         }
         var loading = document.getElementById('initial-loading');
@@ -600,7 +600,7 @@
     <script>
       (function() {
         let nerdFontsPromise = null;
-        window.__openchamberEnsureNerdFonts = function() {
+        window.__mittrcraftEnsureNerdFonts = function() {
           if (nerdFontsPromise) {
             return nerdFontsPromise;
           }

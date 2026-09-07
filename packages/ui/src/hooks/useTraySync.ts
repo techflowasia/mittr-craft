@@ -36,7 +36,7 @@ import type { QuestionRequest } from '@/types/question';
 // Only meaningful on desktop platforms with a native tray/menu bar — main.mjs
 // no-ops the command elsewhere, but we still gate here to avoid pointless work.
 
-const TRAY_ACTION_EVENT = 'openchamber:tray-action';
+const TRAY_ACTION_EVENT = 'mittrcraft:tray-action';
 // Event-driven updates do the real work; this is just a slow safety net.
 const POLL_INTERVAL_MS = 5000;
 const FLUSH_DEBOUNCE_MS = 500;
@@ -89,7 +89,7 @@ type TraySnapshot = {
 };
 
 // focus-session / new-session are routed natively by the main process through
-// the existing `openchamber:open-session` / `openchamber:open-draft-session`
+// the existing `mittrcraft:open-session` / `mittrcraft:open-draft-session`
 // events (handled in App.tsx). Only respond-permission needs handling here.
 type TrayAction =
   | { type: 'respond-permission'; sessionId: string; id: string; response: 'once' | 'always' | 'reject' };
@@ -103,12 +103,12 @@ type DesktopBridgeGlobal = {
 
 const isTrayPlatform = (): boolean => {
   if (typeof window === 'undefined') return false;
-  const platform = (window as unknown as { __OPENCHAMBER_PLATFORM__?: string }).__OPENCHAMBER_PLATFORM__;
+  const platform = (window as unknown as { __MITTRCRAFT_PLATFORM__?: string }).__MITTRCRAFT_PLATFORM__;
   return platform === 'darwin' || platform === 'win32' || platform === 'linux';
 };
 
 const isTrayEnabled = (): boolean =>
-  typeof window !== 'undefined' && window.__OPENCHAMBER_ELECTRON__?.trayEnabled !== false;
+  typeof window !== 'undefined' && window.__MITTRCRAFT_ELECTRON__?.trayEnabled !== false;
 
 const permissionLabel = (request: PermissionRequest): string => {
   const head = typeof request.permission === 'string' ? request.permission : 'Permission';
@@ -209,7 +209,7 @@ const buildUsage = (): TrayUsage => {
 const resolveInstanceName = async (): Promise<string> => {
   try {
     if (isDesktopLocalOriginActive()) return 'Local MittrCraft';
-    const localOrigin = (window as unknown as { __OPENCHAMBER_LOCAL_ORIGIN__?: string }).__OPENCHAMBER_LOCAL_ORIGIN__
+    const localOrigin = (window as unknown as { __MITTRCRAFT_LOCAL_ORIGIN__?: string }).__MITTRCRAFT_LOCAL_ORIGIN__
       || window.location.origin;
     const runtimeApiBaseUrl = getRuntimeApiBaseUrl();
     if (runtimeApiBaseUrl && locationMatchesHost(runtimeApiBaseUrl, localOrigin)) return 'Local MittrCraft';
@@ -587,7 +587,7 @@ export const useTraySync = (): void => {
 
   React.useEffect(() => {
     if (!isTrayPlatform() || !isTrayEnabled() || typeof window === 'undefined') return;
-    const bridge = (window as unknown as { __OPENCHAMBER_DESKTOP__?: DesktopBridgeGlobal }).__OPENCHAMBER_DESKTOP__;
+    const bridge = (window as unknown as { __MITTRCRAFT_DESKTOP__?: DesktopBridgeGlobal }).__MITTRCRAFT_DESKTOP__;
     const listen = bridge?.listen;
     if (typeof listen !== 'function') return;
 

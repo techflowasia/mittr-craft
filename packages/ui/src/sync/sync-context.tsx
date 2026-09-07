@@ -93,7 +93,7 @@ type SyncSystem = {
   directory: string
 }
 
-const SYNC_CONTEXT_GLOBAL_KEY = "__openchamber_sync_context__"
+const SYNC_CONTEXT_GLOBAL_KEY = "__mittrcraft_sync_context__"
 type SyncGlobal = typeof globalThis & {
   [SYNC_CONTEXT_GLOBAL_KEY]?: React.Context<SyncSystem | null>
 }
@@ -446,7 +446,7 @@ const asOptionalString = (value: unknown): string | undefined => {
 }
 
 const handleUiNotificationEvent = (payload: Event, fallbackDirectory: string): boolean => {
-  if ((payload as { type?: unknown }).type !== "openchamber:notification") {
+  if ((payload as { type?: unknown }).type !== "mittrcraft:notification") {
     return false
   }
 
@@ -694,7 +694,7 @@ const SHOULD_DISPATCH_VSCODE_NOTIFICATIONS = isVSCodeRuntime()
 
 const dispatchVSCodeRuntimeNotificationEvent = (directory: string, payload: Event) => {
   if (!SHOULD_DISPATCH_VSCODE_NOTIFICATIONS || typeof window === "undefined") return
-  window.dispatchEvent(new CustomEvent("openchamber:vscode-notification-event", {
+  window.dispatchEvent(new CustomEvent("mittrcraft:vscode-notification-event", {
     detail: { directory, payload },
   }))
 }
@@ -1420,7 +1420,7 @@ export function handleEvent(
   streamingDirectory?: string,
   batch?: DirectoryEventBatch,
 ) {
-  if ((payload as { type?: unknown }).type === "openchamber:permission-auto-accept.updated") {
+  if ((payload as { type?: unknown }).type === "mittrcraft:permission-auto-accept.updated") {
     const properties = (payload as unknown as { properties?: unknown }).properties
     if (properties && typeof properties === "object") {
       const snapshot = properties as { sessions?: unknown; revision?: unknown }
@@ -1902,7 +1902,7 @@ export function interruptedTurnToolParts(
 
 const dispatchOpenCodeUpdateAvailable = (payload: { version: string }) => {
   if (typeof window === "undefined") return
-  window.dispatchEvent(new CustomEvent("openchamber:opencode-update-available", { detail: payload }))
+  window.dispatchEvent(new CustomEvent("mittrcraft:opencode-update-available", { detail: payload }))
 }
 
 export function SyncProvider(props: {
@@ -1989,8 +1989,8 @@ export function SyncProvider(props: {
         .finally(() => resyncing.delete(directory))
     }
 
-    window.addEventListener("openchamber:system-resume", onSystemResume)
-    return () => window.removeEventListener("openchamber:system-resume", onSystemResume)
+    window.addEventListener("mittrcraft:system-resume", onSystemResume)
+    return () => window.removeEventListener("mittrcraft:system-resume", onSystemResume)
   }, [childStores])
 
   // Configure child store manager

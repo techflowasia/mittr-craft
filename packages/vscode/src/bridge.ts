@@ -56,7 +56,7 @@ export interface BridgeContext {
 
 const CLIENT_RELOAD_DELAY_MS = 800;
 
-const UPDATE_CHECK_URL = process.env.OPENCHAMBER_UPDATE_API_URL || 'https://api.openchamber.dev/v1/update/check';
+const UPDATE_CHECK_URL = process.env.MITTRCRAFT_UPDATE_API_URL || 'https://api.mittrcraft.dev/v1/update/check';
 const GITHUB_BACKEND_DISABLED_ERROR = 'MittrCraft VS Code backend GitHub integration is disabled. Use native VS Code GitHub integrations.';
 
 
@@ -69,7 +69,7 @@ export async function handleBridgeMessage(message: BridgeRequest, ctx?: BridgeCo
       ctx?.context,
       {
         broadcast: (snapshot) => vscode.commands.executeCommand(
-          'openchamber.internal.permissionAutoAcceptSynced',
+          'mittrcraft.internal.permissionAutoAcceptSynced',
           snapshot,
         ),
       },

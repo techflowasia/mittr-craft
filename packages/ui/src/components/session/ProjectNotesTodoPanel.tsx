@@ -24,14 +24,14 @@ import {
   deleteProjectPlanFile,
   getProjectContextData,
   importProjectPlanFileFromContent,
-  OPENCHAMBER_PROJECT_NOTES_MAX_LENGTH,
+  MITTRCRAFT_PROJECT_NOTES_MAX_LENGTH,
   readProjectPlanFile,
-  OPENCHAMBER_PROJECT_TODO_TEXT_MAX_LENGTH,
+  MITTRCRAFT_PROJECT_TODO_TEXT_MAX_LENGTH,
   saveProjectNotesAndTodos,
-  type OpenChamberProjectPlanFileLink,
-  type OpenChamberProjectTodoItem,
+  type MittrCraftProjectPlanFileLink,
+  type MittrCraftProjectTodoItem,
   type ProjectRef,
-} from '@/lib/openchamberConfig';
+} from '@/lib/mittrcraftConfig';
 import { requestFileAccess } from '@/lib/desktop';
 import { generateBranchName } from '@/lib/git/branchNameGenerator';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
@@ -90,12 +90,12 @@ type PendingSendTarget = {
   todoText: string;
 };
 
-type ProjectPlanListItem = OpenChamberProjectPlanFileLink & {
+type ProjectPlanListItem = MittrCraftProjectPlanFileLink & {
   title: string;
 };
 
 const toPlanListItem = async (
-  plan: OpenChamberProjectPlanFileLink,
+  plan: MittrCraftProjectPlanFileLink,
   fallbackTitle: string,
 ): Promise<ProjectPlanListItem> => {
   const file = await readProjectPlanFile(plan.path);
@@ -112,12 +112,12 @@ const createTodoId = (): string => {
   return `todo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 };
 
-const sortTodosWithCompletedLast = (items: OpenChamberProjectTodoItem[]): OpenChamberProjectTodoItem[] => [
+const sortTodosWithCompletedLast = (items: MittrCraftProjectTodoItem[]): MittrCraftProjectTodoItem[] => [
   ...items.filter((todo) => !todo.completed),
   ...items.filter((todo) => todo.completed),
 ];
 
-const insertTodoBeforeCompleted = (items: OpenChamberProjectTodoItem[], item: OpenChamberProjectTodoItem): OpenChamberProjectTodoItem[] => {
+const insertTodoBeforeCompleted = (items: MittrCraftProjectTodoItem[], item: MittrCraftProjectTodoItem): MittrCraftProjectTodoItem[] => {
   const firstCompletedIndex = items.findIndex((todo) => todo.completed);
   if (firstCompletedIndex === -1) {
     return [...items, item];
@@ -171,7 +171,7 @@ export const ProjectNotesTodoPanel: React.FC<ProjectNotesTodoPanelProps> = ({
   const { t } = useI18n();
   const [isLoading, setIsLoading] = React.useState(false);
   const [notes, setNotes] = React.useState('');
-  const [todos, setTodos] = React.useState<OpenChamberProjectTodoItem[]>([]);
+  const [todos, setTodos] = React.useState<MittrCraftProjectTodoItem[]>([]);
   const [newTodoText, setNewTodoText] = React.useState('');
   const [sendingTodoId, setSendingTodoId] = React.useState<string | null>(null);
   const [expandedTodoIds, setExpandedTodoIds] = React.useState<Set<string>>(() => new Set());
@@ -192,7 +192,7 @@ export const ProjectNotesTodoPanel: React.FC<ProjectNotesTodoPanelProps> = ({
 
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   const createSession = useSessionUIStore((state) => state.createSession);
-  const initializeNewOpenChamberSession = useSessionUIStore((state) => state.initializeNewOpenChamberSession);
+  const initializeNewMittrCraftSession = useSessionUIStore((state) => state.initializeNewMittrCraftSession);
   const sendMessage = useSessionUIStore((state) => state.sendMessage);
   const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
   const setPendingInputText = useInputStore((state) => state.setPendingInputText);
@@ -203,7 +203,7 @@ export const ProjectNotesTodoPanel: React.FC<ProjectNotesTodoPanelProps> = ({
   const padding = useUIStore((state) => state.padding);
 
   const persistProjectData = React.useCallback(
-    async (nextNotes: string, nextTodos: OpenChamberProjectTodoItem[]) => {
+    async (nextNotes: string, nextTodos: MittrCraftProjectTodoItem[]) => {
       if (!projectRef) {
         return false;
       }
@@ -296,11 +296,11 @@ export const ProjectNotesTodoPanel: React.FC<ProjectNotesTodoPanelProps> = ({
       setContextReloadTick((previous) => previous + 1);
     };
 
-    window.addEventListener('openchamber:project-plan-saved', handleProjectContextRefresh);
-    window.addEventListener('openchamber:project-notes-updated', handleProjectContextRefresh);
+    window.addEventListener('mittrcraft:project-plan-saved', handleProjectContextRefresh);
+    window.addEventListener('mittrcraft:project-notes-updated', handleProjectContextRefresh);
     return () => {
-      window.removeEventListener('openchamber:project-plan-saved', handleProjectContextRefresh);
-      window.removeEventListener('openchamber:project-notes-updated', handleProjectContextRefresh);
+      window.removeEventListener('mittrcraft:project-plan-saved', handleProjectContextRefresh);
+      window.removeEventListener('mittrcraft:project-notes-updated', handleProjectContextRefresh);
     };
   }, [projectRef]);
 
@@ -397,7 +397,7 @@ export const ProjectNotesTodoPanel: React.FC<ProjectNotesTodoPanelProps> = ({
 
     const nextTodos = insertTodoBeforeCompleted(todos, {
       id: createTodoId(),
-      text: trimmed.slice(0, OPENCHAMBER_PROJECT_TODO_TEXT_MAX_LENGTH),
+      text: trimmed.slice(0, MITTRCRAFT_PROJECT_TODO_TEXT_MAX_LENGTH),
       completed: false,
       createdAt: Date.now(),
     });
@@ -475,7 +475,7 @@ export const ProjectNotesTodoPanel: React.FC<ProjectNotesTodoPanelProps> = ({
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
 
-  const todoInputValue = newTodoText.slice(0, OPENCHAMBER_PROJECT_TODO_TEXT_MAX_LENGTH);
+  const todoInputValue = newTodoText.slice(0, MITTRCRAFT_PROJECT_TODO_TEXT_MAX_LENGTH);
   const completedTodoCount = todos.reduce((count, todo) => count + (todo.completed ? 1 : 0), 0);
 
   const routeToChat = React.useCallback(() => {
@@ -564,7 +564,7 @@ export const ProjectNotesTodoPanel: React.FC<ProjectNotesTodoPanelProps> = ({
           }
           sessionId = session.id;
           directoryHint = session.directory ?? projectRef.path;
-          initializeNewOpenChamberSession(session.id, useConfigStore.getState().agents ?? []);
+          initializeNewMittrCraftSession(session.id, useConfigStore.getState().agents ?? []);
         }
 
         if (!sessionId) {
@@ -612,7 +612,7 @@ export const ProjectNotesTodoPanel: React.FC<ProjectNotesTodoPanelProps> = ({
         setSendingTodoId(null);
       }
     },
-    [canCreateWorktree, createSession, initializeNewOpenChamberSession, onActionComplete, pendingSendTarget, projectRef, routeToChat, sendMessage, setCurrentSession, t]
+    [canCreateWorktree, createSession, initializeNewMittrCraftSession, onActionComplete, pendingSendTarget, projectRef, routeToChat, sendMessage, setCurrentSession, t]
   );
 
   const planFileInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -632,7 +632,7 @@ export const ProjectNotesTodoPanel: React.FC<ProjectNotesTodoPanelProps> = ({
           return;
         }
         setPlans((previous) => previous.filter((entry) => entry.id !== planId));
-        window.dispatchEvent(new CustomEvent('openchamber:project-plan-saved', {
+        window.dispatchEvent(new CustomEvent('mittrcraft:project-plan-saved', {
           detail: { projectId: projectRef.id },
         }));
       } finally {
@@ -679,7 +679,7 @@ export const ProjectNotesTodoPanel: React.FC<ProjectNotesTodoPanelProps> = ({
           toast.error(t('rightSidebar.contextNotesTodo.toast.importPlanFailed'));
           return;
         }
-        window.dispatchEvent(new CustomEvent('openchamber:project-plan-saved', {
+        window.dispatchEvent(new CustomEvent('mittrcraft:project-plan-saved', {
           detail: { projectId: projectRef.id },
         }));
         toast.success(t('rightSidebar.contextNotesTodo.toast.planImported'));
@@ -713,7 +713,7 @@ export const ProjectNotesTodoPanel: React.FC<ProjectNotesTodoPanelProps> = ({
           toast.error(t('rightSidebar.contextNotesTodo.toast.importPlanFailed'));
           return;
         }
-        window.dispatchEvent(new CustomEvent('openchamber:project-plan-saved', {
+        window.dispatchEvent(new CustomEvent('mittrcraft:project-plan-saved', {
           detail: { projectId: projectRef.id },
         }));
         toast.success(t('rightSidebar.contextNotesTodo.toast.planImported'));
@@ -767,11 +767,11 @@ export const ProjectNotesTodoPanel: React.FC<ProjectNotesTodoPanelProps> = ({
               project: projectLabel?.trim() || projectRef.path.split('/').filter(Boolean).pop() || projectRef.path,
             })}
           </h3>
-          <span className="typography-meta text-muted-foreground">{notes.length}/{OPENCHAMBER_PROJECT_NOTES_MAX_LENGTH}</span>
+          <span className="typography-meta text-muted-foreground">{notes.length}/{MITTRCRAFT_PROJECT_NOTES_MAX_LENGTH}</span>
         </div>
         <Textarea
           value={notes}
-          onChange={(event) => setNotes(event.target.value.slice(0, OPENCHAMBER_PROJECT_NOTES_MAX_LENGTH))}
+          onChange={(event) => setNotes(event.target.value.slice(0, MITTRCRAFT_PROJECT_NOTES_MAX_LENGTH))}
           onBlur={handleNotesBlur}
           placeholder={t('rightSidebar.contextNotesTodo.notes.placeholder')}
           resizedHeight={notesPanelHeight}
@@ -802,13 +802,13 @@ export const ProjectNotesTodoPanel: React.FC<ProjectNotesTodoPanelProps> = ({
               {t('rightSidebar.contextNotesTodo.todo.clearCompleted')}
             </button>
           </div>
-          <span className="typography-meta text-muted-foreground">{todoInputValue.length}/{OPENCHAMBER_PROJECT_TODO_TEXT_MAX_LENGTH}</span>
+          <span className="typography-meta text-muted-foreground">{todoInputValue.length}/{MITTRCRAFT_PROJECT_TODO_TEXT_MAX_LENGTH}</span>
         </div>
 
         <div className="flex items-center gap-1.5">
           <Input
             value={todoInputValue}
-            onChange={(event) => setNewTodoText(event.target.value.slice(0, OPENCHAMBER_PROJECT_TODO_TEXT_MAX_LENGTH))}
+            onChange={(event) => setNewTodoText(event.target.value.slice(0, MITTRCRAFT_PROJECT_TODO_TEXT_MAX_LENGTH))}
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 event.preventDefault();

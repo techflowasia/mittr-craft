@@ -171,7 +171,7 @@ export const VSCodeLayout: React.FC = () => {
   const openNewSessionDraft = useSessionUIStore((state) => state.openNewSessionDraft);
   const [connectionStatus, setConnectionStatus] = React.useState<'connecting' | 'connected' | 'error' | 'disconnected'>(
     () => (typeof window !== 'undefined'
-      ? (window as { __OPENCHAMBER_CONNECTION__?: { status?: string } }).__OPENCHAMBER_CONNECTION__?.status as
+      ? (window as { __MITTRCRAFT_CONNECTION__?: { status?: string } }).__MITTRCRAFT_CONNECTION__?.status as
         'connecting' | 'connected' | 'error' | 'disconnected' | undefined
       : 'connecting') || 'connecting'
   );
@@ -199,7 +199,7 @@ export const VSCodeLayout: React.FC = () => {
       return;
     }
 
-    void vscodeApi.executeCommand('openchamber.setActiveSession', currentSessionId, activeSessionTitle);
+    void vscodeApi.executeCommand('mittrcraft.setActiveSession', currentSessionId, activeSessionTitle);
   }, [activeSessionTitle, currentSessionId, runtimeApis.vscode]);
 
   React.useEffect(() => {
@@ -212,7 +212,7 @@ export const VSCodeLayout: React.FC = () => {
       return;
     }
 
-    void vscodeApi.executeCommand('openchamber.updateSessionEditorTitle', currentSessionId, activeSessionTitle);
+    void vscodeApi.executeCommand('mittrcraft.updateSessionEditorTitle', currentSessionId, activeSessionTitle);
   }, [activeSessionTitle, currentSessionId, runtimeApis.vscode, viewMode]);
 
   // If the active session disappears (e.g., deleted), go back to sessions list
@@ -336,7 +336,7 @@ export const VSCodeLayout: React.FC = () => {
     // before this component registered the event listener.
     const current =
       (typeof window !== 'undefined'
-        ? (window as { __OPENCHAMBER_CONNECTION__?: { status?: string } }).__OPENCHAMBER_CONNECTION__?.status
+        ? (window as { __MITTRCRAFT_CONNECTION__?: { status?: string } }).__MITTRCRAFT_CONNECTION__?.status
         : undefined) as 'connecting' | 'connected' | 'error' | 'disconnected' | undefined;
     if (current === 'connected' || current === 'connecting' || current === 'error' || current === 'disconnected') {
       setConnectionStatus(current);
@@ -349,8 +349,8 @@ export const VSCodeLayout: React.FC = () => {
         setConnectionStatus(status);
       }
     };
-    window.addEventListener('openchamber:connection-status', handler as EventListener);
-    return () => window.removeEventListener('openchamber:connection-status', handler as EventListener);
+    window.addEventListener('mittrcraft:connection-status', handler as EventListener);
+    return () => window.removeEventListener('mittrcraft:connection-status', handler as EventListener);
   }, []);
 
   // Listen for navigation events from VS Code extension title bar buttons
@@ -369,8 +369,8 @@ export const VSCodeLayout: React.FC = () => {
         setCurrentView('sessions');
       }
     };
-    window.addEventListener('openchamber:navigate', handler as EventListener);
-    return () => window.removeEventListener('openchamber:navigate', handler as EventListener);
+    window.addEventListener('mittrcraft:navigate', handler as EventListener);
+    return () => window.removeEventListener('mittrcraft:navigate', handler as EventListener);
   }, []);
 
   // Bootstrap config and sessions when connected
@@ -389,7 +389,7 @@ export const VSCodeLayout: React.FC = () => {
         const debugEnabled = (() => {
           if (typeof window === 'undefined') return false;
           try {
-            return window.localStorage.getItem('openchamber_stream_debug') === '1';
+            return window.localStorage.getItem('mittrcraft_stream_debug') === '1';
           } catch {
             return false;
           }

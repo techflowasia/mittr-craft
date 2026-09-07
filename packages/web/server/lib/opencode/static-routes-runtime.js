@@ -16,7 +16,7 @@ export const createStaticRoutesRuntime = (dependencies) => {
   } = dependencies;
 
   const resolveDistPath = () => {
-    const env = typeof process.env.OPENCHAMBER_DIST_DIR === 'string' ? process.env.OPENCHAMBER_DIST_DIR.trim() : '';
+    const env = typeof process.env.MITTRCRAFT_DIST_DIR === 'string' ? process.env.MITTRCRAFT_DIST_DIR.trim() : '';
     if (env) {
       return path.resolve(env);
     }
@@ -61,7 +61,7 @@ export const createStaticRoutesRuntime = (dependencies) => {
 
   const registerApiOnlyFallbackRoutes = (app) => {
     app.get(/^(?!\/api|\/auth|\/health|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (req, res) => {
-      const command = 'openchamber connect-url --help';
+      const command = 'mittrcraft connect-url --help';
       res.status(200).format({
         html: () => {
           res.send(`<!doctype html>

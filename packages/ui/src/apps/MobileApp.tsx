@@ -1,11 +1,11 @@
 import React from 'react';
 
-import { AboutSettings } from '@/components/sections/openchamber/AboutSettings';
+import { AboutSettings } from '@/components/sections/mittrcraft/AboutSettings';
 import { OpenCodeUpdateToast } from '@/components/update/OpenCodeUpdateToast';
 import { MobileAppUpdateToast } from '@/components/update/MobileAppUpdateToast';
 import { ConfigUpdateOverlay } from '@/components/ui/ConfigUpdateOverlay';
 import { Button } from '@/components/ui/button';
-import { OpenChamberLogo } from '@/components/ui/OpenChamberLogo';
+import { MittrCraftLogo } from '@/components/ui/MittrCraftLogo';
 import { ChatView } from '@/components/views/ChatView';
 import { PlanView } from '@/components/views/PlanView';
 import { SettingsView } from '@/components/views/SettingsView';
@@ -177,10 +177,10 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
     setWorkspaceOpen(true);
   }, []);
 
-  const leftResize = useIpadSidebarResize('left', 'openchamber.ipad.leftSidebarWidth', IPAD_LEFT_SIDEBAR_WIDTH);
+  const leftResize = useIpadSidebarResize('left', 'mittrcraft.ipad.leftSidebarWidth', IPAD_LEFT_SIDEBAR_WIDTH);
   const rightResize = useIpadSidebarResize(
     'right',
-    'openchamber.ipad.rightSidebarWidth',
+    'mittrcraft.ipad.rightSidebarWidth',
     IPAD_RIGHT_SIDEBAR_WIDTH,
     IPAD_WORKSPACE_SIDEBAR_MAX_WIDTH,
   );
@@ -242,7 +242,7 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
     [openChangesSurface, openFilesSurface, openSettingsSurface],
   );
 
-  // Expose the shell's panel-opening actions to the deep-link layer so openchamber:// URLs
+  // Expose the shell's panel-opening actions to the deep-link layer so mittrcraft:// URLs
   // (and notification taps / widgets) can navigate to these surfaces. Session and
   // new-session intents resolve directly against the store, so they aren't wired here.
   const deepLinkHandlers = React.useMemo(
@@ -741,7 +741,7 @@ export function MobileApp({ apis }: MobileAppProps) {
     const now = Date.now();
     if (now - lastNativeResumeSyncEventAtRef.current >= NATIVE_RESUME_SYNC_EVENT_THROTTLE_MS) {
       lastNativeResumeSyncEventAtRef.current = now;
-      window.dispatchEvent(new Event('openchamber:system-resume'));
+      window.dispatchEvent(new Event('mittrcraft:system-resume'));
     }
   }, [agentsCount, apis.github, initializeApp, loadAgents, loadProviders, providersCount, refreshGitHubAuthStatus]);
 
@@ -1122,7 +1122,7 @@ export function MobileApp({ apis }: MobileAppProps) {
   // (document.hasFocus() is unreliable) and leaked while the app was open; the in-app SSE
   // notification dispatch is no-op'd for native in renderMobileApp.
   useNativePushRegistration({ enabled: isNativeMobileApp && isConnected });
-  // Single native deep-link entry point: notification taps AND the openchamber:// URL
+  // Single native deep-link entry point: notification taps AND the mittrcraft:// URL
   // scheme (widgets, Live Activities, external links). Registered unconditionally so a
   // cold-launch tap/open isn't lost on the connect/splash screen; intents stash until
   // the app is ready (connected + initialized) and shell handlers are registered.
@@ -1141,7 +1141,7 @@ export function MobileApp({ apis }: MobileAppProps) {
   if (!fontsReady) {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-background text-foreground">
-        <OpenChamberLogo width={120} height={120} isAnimated />
+        <MittrCraftLogo width={120} height={120} isAnimated />
       </main>
     );
   }
@@ -1159,7 +1159,7 @@ export function MobileApp({ apis }: MobileAppProps) {
       return (
         <main className="flex min-h-dvh items-center justify-center bg-background px-6 text-center text-foreground">
           <div className="flex max-w-sm flex-col items-center gap-4">
-            <OpenChamberLogo width={120} height={120} isAnimated={!showConnectionRecovery} />
+            <MittrCraftLogo width={120} height={120} isAnimated={!showConnectionRecovery} />
             {showConnectionRecovery ? (
               <>
                 <div className="space-y-2">
@@ -1190,7 +1190,7 @@ export function MobileApp({ apis }: MobileAppProps) {
     if (autoConnectPhase !== 'done') {
       return (
         <main className="relative flex min-h-dvh items-center justify-center bg-background text-foreground">
-          <OpenChamberLogo width={120} height={120} isAnimated />
+          <MittrCraftLogo width={120} height={120} isAnimated />
           {/* Absolutely positioned below the (still perfectly centered) logo so
               the text never pushes it up. 50% + half the 120px logo + a gap. */}
           {autoConnectLabel ? (
@@ -1222,7 +1222,7 @@ export function MobileApp({ apis }: MobileAppProps) {
     if (!showConnectionRecovery) {
       return (
         <main className="flex min-h-dvh items-center justify-center bg-background text-foreground">
-          <OpenChamberLogo width={120} height={120} isAnimated />
+          <MittrCraftLogo width={120} height={120} isAnimated />
         </main>
       );
     }
@@ -1248,7 +1248,7 @@ export function MobileApp({ apis }: MobileAppProps) {
                   shell (and sync) still mounts and warms up underneath. */}
               {isNativeMobileApp && lastSessionRestorePending ? (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
-                  <OpenChamberLogo width={120} height={120} isAnimated />
+                  <MittrCraftLogo width={120} height={120} isAnimated />
                 </div>
               ) : null}
               <SyncAppEffects embeddedBackgroundWorkEnabled={isInitialized} />

@@ -57,7 +57,7 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
 
   // Self-contained page for the OAuth return leg: the system browser has no UI
   // session, so it cannot load the SPA behind the auth gate — everything it
-  // needs ships inline. `openchamber://focus/mcp-auth` raises the desktop app;
+  // needs ships inline. `mittrcraft://focus/mcp-auth` raises the desktop app;
   // the link stays visible because some browsers only follow custom-protocol
   // URLs from a user gesture.
   const renderMcpOAuthCallbackPage = ({ title, message, desktopReturn }) => `<!doctype html>
@@ -82,8 +82,8 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
 <main>
 <h1>${escapeHtml(title)}</h1>
 <p>${escapeHtml(message)}</p>
-${desktopReturn ? `<a class="return" href="openchamber://focus/mcp-auth">Return to MittrCraft</a>
-<script>window.location.href = 'openchamber://focus/mcp-auth';</script>` : ''}
+${desktopReturn ? `<a class="return" href="mittrcraft://focus/mcp-auth">Return to MittrCraft</a>
+<script>window.location.href = 'mittrcraft://focus/mcp-auth';</script>` : ''}
 </main>
 </body>
 </html>`;
@@ -189,7 +189,7 @@ ${desktopReturn ? `<a class="return" href="openchamber://focus/mcp-auth">Return 
       const resolution = await getOpenCodeResolutionSnapshot(settings);
       res.json(resolution);
     } catch (error) {
-      console.error('Failed to resolve OpenCode binary:', error);
+      console.error('Failed to resolve MittrCraft Engine binary:', error);
       res.status(500).json({ error: 'Failed to resolve OpenCode binary' });
     }
   });
@@ -203,7 +203,7 @@ ${desktopReturn ? `<a class="return" href="openchamber://focus/mcp-auth">Return 
         return res.status(409).json({
           success: false,
           code: capability.reason === 'bundled'
-            ? 'OPENCODE_UPGRADE_MANAGED_BY_OPENCHAMBER'
+            ? 'OPENCODE_UPGRADE_MANAGED_BY_MITTRCRAFT'
             : 'OPENCODE_UPGRADE_UNSUPPORTED',
           error: capability.reason === 'bundled'
             ? 'OpenCode is bundled with MittrCraft Desktop and updates with the app.'
@@ -273,7 +273,7 @@ ${desktopReturn ? `<a class="return" href="openchamber://focus/mcp-auth">Return 
         }
       }
     } catch (error) {
-      console.error('Failed to upgrade OpenCode:', error);
+      console.error('Failed to upgrade MittrCraft Engine:', error);
       return res.status(500).json({
         success: false,
         error: error instanceof Error ? error.message : 'Failed to upgrade OpenCode',
@@ -753,7 +753,7 @@ ${desktopReturn ? `<a class="return" href="openchamber://focus/mcp-auth">Return 
         settings: updated,
       });
     } catch (error) {
-      console.error('Failed to update OpenCode working directory:', error);
+      console.error('Failed to update MittrCraft Engine working directory:', error);
       return res.status(500).json({ error: error.message || 'Failed to update working directory' });
     }
   });

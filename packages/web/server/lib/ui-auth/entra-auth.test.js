@@ -5,7 +5,7 @@ const completeEnv = {
   MITTR_AD_CLIENT_ID: 'client-id',
   MITTR_AD_CLIENT_SECRET: 'server-secret',
   MITTR_AD_TENANT_ID: '11111111-2222-3333-4444-555555555555',
-  MITTR_AD_REDIRECT_URI: 'https://openchamber.example.com/auth/ad/callback',
+  MITTR_AD_REDIRECT_URI: 'https://mittrcraft.example.com/auth/ad/callback',
 };
 
 const metadata = {

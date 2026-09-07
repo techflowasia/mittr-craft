@@ -30,7 +30,7 @@ describe('settings search', () => {
 
   test('finds third-party integrations by MittrCraft npm package names', () => {
     const results = buildSettingsSearchResults({
-      query: '@openchamber/opencode-cursor',
+      query: '@mittrcraft/opencode-cursor',
       runtimeCtx,
       t,
       getPageTitle: (page) => page,

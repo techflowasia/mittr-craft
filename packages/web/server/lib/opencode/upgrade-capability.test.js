@@ -12,7 +12,7 @@ describe('OpenCode upgrade capability', () => {
       isBundledBinary,
     })).toEqual({
       supported: false,
-      manager: 'openchamber',
+      manager: 'mittrcraft',
       reason: 'bundled',
     });
   });

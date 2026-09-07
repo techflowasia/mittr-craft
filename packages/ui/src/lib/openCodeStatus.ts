@@ -14,7 +14,7 @@ type ProbeResult = {
   summary: string;
 };
 
-type OpenChamberHealthSnapshot = {
+type MittrCraftHealthSnapshot = {
   openCodePort?: unknown;
   openCodeRunning?: unknown;
   openCodeSecureConnection?: unknown;
@@ -31,7 +31,7 @@ type OpenChamberHealthSnapshot = {
   bunBinaryResolved?: unknown;
 };
 
-type OpenChamberOpencodeResolution = {
+type MittrCraftOpencodeResolution = {
   configured?: unknown;
   resolved?: unknown;
   resolvedDir?: unknown;
@@ -159,7 +159,7 @@ const buildOpenCodeStatusReport = async (): Promise<string> => {
   const healthUrl = urls.health();
   const apiBase = urls.api('/api/');
 
-  const openChamberHealth: OpenChamberHealthSnapshot | null = await (async () => {
+  const mittrCraftHealth: MittrCraftHealthSnapshot | null = await (async () => {
     if (!healthUrl) return null;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
@@ -172,7 +172,7 @@ const buildOpenCodeStatusReport = async (): Promise<string> => {
       if (!resp.ok) return null;
       const json = (await resp.json().catch(() => null)) as unknown;
       if (!json || typeof json !== 'object' || Array.isArray(json)) return null;
-      return json as OpenChamberHealthSnapshot;
+      return json as MittrCraftHealthSnapshot;
     } catch {
       return null;
     } finally {
@@ -180,8 +180,8 @@ const buildOpenCodeStatusReport = async (): Promise<string> => {
     }
   })();
 
-  const openChamberOpencodeResolutionResult: {
-    data: OpenChamberOpencodeResolution | null;
+  const mittrCraftOpencodeResolutionResult: {
+    data: MittrCraftOpencodeResolution | null;
     status: number | null;
     error: string | null;
   } = await (async () => {
@@ -213,7 +213,7 @@ const buildOpenCodeStatusReport = async (): Promise<string> => {
       if (!json || typeof json !== 'object' || Array.isArray(json)) {
         return { data: null, status: resp.status, error: `invalid json-shape content-type=${contentType}` };
       }
-      return { data: json as OpenChamberOpencodeResolution, status: resp.status, error: null };
+      return { data: json as MittrCraftOpencodeResolution, status: resp.status, error: null };
     } catch (error) {
       return {
         data: null,
@@ -266,20 +266,20 @@ const buildOpenCodeStatusReport = async (): Promise<string> => {
   lines.push(`Directory: ${directory || '(none)'}`);
   lines.push(`Platform: ${platform}`);
 
-  const runtimeOpenCodePort = normalizePort(openChamberHealth?.openCodePort);
+  const runtimeOpenCodePort = normalizePort(mittrCraftHealth?.openCodePort);
   lines.push(`OpenCode runtime port: ${runtimeOpenCodePort ?? '(unknown)'}`);
-  if (typeof openChamberHealth?.openCodeRunning === 'boolean') {
-    lines.push(`OpenCode runtime running: ${openChamberHealth.openCodeRunning ? 'yes' : 'no'}`);
+  if (typeof mittrCraftHealth?.openCodeRunning === 'boolean') {
+    lines.push(`OpenCode runtime running: ${mittrCraftHealth.openCodeRunning ? 'yes' : 'no'}`);
   }
-  if (typeof openChamberHealth?.openCodeSecureConnection === 'boolean') {
-    lines.push(`Secure OpenCode connection: ${openChamberHealth.openCodeSecureConnection ? 'true' : 'false'}`);
+  if (typeof mittrCraftHealth?.openCodeSecureConnection === 'boolean') {
+    lines.push(`Secure OpenCode connection: ${mittrCraftHealth.openCodeSecureConnection ? 'true' : 'false'}`);
   }
-  if (typeof openChamberHealth?.openCodeAuthSource === 'string' && openChamberHealth.openCodeAuthSource.trim()) {
-    lines.push(`OpenCode auth source: ${openChamberHealth.openCodeAuthSource}`);
+  if (typeof mittrCraftHealth?.openCodeAuthSource === 'string' && mittrCraftHealth.openCodeAuthSource.trim()) {
+    lines.push(`OpenCode auth source: ${mittrCraftHealth.openCodeAuthSource}`);
   }
 
   if (typeof window !== 'undefined') {
-    const injected = (window as unknown as { __OPENCHAMBER_MACOS_MAJOR__?: unknown }).__OPENCHAMBER_MACOS_MAJOR__;
+    const injected = (window as unknown as { __MITTRCRAFT_MACOS_MAJOR__?: unknown }).__MITTRCRAFT_MACOS_MAJOR__;
     if (typeof injected === 'number' && Number.isFinite(injected) && injected > 0) {
       lines.push(`macOS major: ${injected}`);
     }
@@ -290,58 +290,58 @@ const buildOpenCodeStatusReport = async (): Promise<string> => {
     lines.push('');
     lines.push('OpenCode CLI resolution:');
 
-    const launchDiagnostics = isRecord(openChamberHealth?.lastOpenCodeLaunchDiagnostics)
-      ? openChamberHealth.lastOpenCodeLaunchDiagnostics
+    const launchDiagnostics = isRecord(mittrCraftHealth?.lastOpenCodeLaunchDiagnostics)
+      ? mittrCraftHealth.lastOpenCodeLaunchDiagnostics
       : null;
     const actualLaunchArgs = launchDiagnostics && Array.isArray(launchDiagnostics.args)
       ? launchDiagnostics.args.filter((value): value is string => typeof value === 'string')
       : [];
-    const openChamberOpencodeResolution = openChamberOpencodeResolutionResult.data;
+    const mittrCraftOpencodeResolution = mittrCraftOpencodeResolutionResult.data;
     const configured =
-      openChamberOpencodeResolution && typeof openChamberOpencodeResolution.configured === 'string'
-        ? openChamberOpencodeResolution.configured
+      mittrCraftOpencodeResolution && typeof mittrCraftOpencodeResolution.configured === 'string'
+        ? mittrCraftOpencodeResolution.configured
         : null;
     const resolved =
-      openChamberOpencodeResolution && typeof openChamberOpencodeResolution.resolved === 'string'
-        ? openChamberOpencodeResolution.resolved
-        : (openChamberHealth && typeof openChamberHealth.opencodeBinaryResolved === 'string' ? openChamberHealth.opencodeBinaryResolved : '');
+      mittrCraftOpencodeResolution && typeof mittrCraftOpencodeResolution.resolved === 'string'
+        ? mittrCraftOpencodeResolution.resolved
+        : (mittrCraftHealth && typeof mittrCraftHealth.opencodeBinaryResolved === 'string' ? mittrCraftHealth.opencodeBinaryResolved : '');
     const resolvedDir =
-      openChamberOpencodeResolution && typeof openChamberOpencodeResolution.resolvedDir === 'string'
-        ? openChamberOpencodeResolution.resolvedDir
+      mittrCraftOpencodeResolution && typeof mittrCraftOpencodeResolution.resolvedDir === 'string'
+        ? mittrCraftOpencodeResolution.resolvedDir
         : '';
     const source =
-      openChamberOpencodeResolution && typeof openChamberOpencodeResolution.source === 'string'
-        ? openChamberOpencodeResolution.source
-        : (openChamberHealth && typeof openChamberHealth.opencodeBinarySource === 'string' ? openChamberHealth.opencodeBinarySource : '');
+      mittrCraftOpencodeResolution && typeof mittrCraftOpencodeResolution.source === 'string'
+        ? mittrCraftOpencodeResolution.source
+        : (mittrCraftHealth && typeof mittrCraftHealth.opencodeBinarySource === 'string' ? mittrCraftHealth.opencodeBinarySource : '');
     const configuredLaunchBinary =
-      openChamberOpencodeResolution && typeof openChamberOpencodeResolution.launchBinary === 'string'
-        ? openChamberOpencodeResolution.launchBinary
-        : (openChamberHealth && typeof openChamberHealth.opencodeLaunchBinary === 'string' ? openChamberHealth.opencodeLaunchBinary : '');
+      mittrCraftOpencodeResolution && typeof mittrCraftOpencodeResolution.launchBinary === 'string'
+        ? mittrCraftOpencodeResolution.launchBinary
+        : (mittrCraftHealth && typeof mittrCraftHealth.opencodeLaunchBinary === 'string' ? mittrCraftHealth.opencodeLaunchBinary : '');
     const configuredLaunchWrapperType =
-      openChamberOpencodeResolution && typeof openChamberOpencodeResolution.launchWrapperType === 'string'
-        ? openChamberOpencodeResolution.launchWrapperType
-        : (openChamberHealth && typeof openChamberHealth.opencodeLaunchWrapperType === 'string' ? openChamberHealth.opencodeLaunchWrapperType : '');
+      mittrCraftOpencodeResolution && typeof mittrCraftOpencodeResolution.launchWrapperType === 'string'
+        ? mittrCraftOpencodeResolution.launchWrapperType
+        : (mittrCraftHealth && typeof mittrCraftHealth.opencodeLaunchWrapperType === 'string' ? mittrCraftHealth.opencodeLaunchWrapperType : '');
     const configuredLaunchArgs =
-      openChamberOpencodeResolution && Array.isArray(openChamberOpencodeResolution.launchArgs)
-        ? openChamberOpencodeResolution.launchArgs.filter((value): value is string => typeof value === 'string')
-        : (openChamberHealth && Array.isArray(openChamberHealth.opencodeLaunchArgs)
-          ? openChamberHealth.opencodeLaunchArgs.filter((value): value is string => typeof value === 'string')
+      mittrCraftOpencodeResolution && Array.isArray(mittrCraftOpencodeResolution.launchArgs)
+        ? mittrCraftOpencodeResolution.launchArgs.filter((value): value is string => typeof value === 'string')
+        : (mittrCraftHealth && Array.isArray(mittrCraftHealth.opencodeLaunchArgs)
+          ? mittrCraftHealth.opencodeLaunchArgs.filter((value): value is string => typeof value === 'string')
           : []);
     const node =
-      openChamberOpencodeResolution && typeof openChamberOpencodeResolution.node === 'string'
-        ? openChamberOpencodeResolution.node
-        : (openChamberHealth && typeof openChamberHealth.nodeBinaryResolved === 'string' ? openChamberHealth.nodeBinaryResolved : '');
+      mittrCraftOpencodeResolution && typeof mittrCraftOpencodeResolution.node === 'string'
+        ? mittrCraftOpencodeResolution.node
+        : (mittrCraftHealth && typeof mittrCraftHealth.nodeBinaryResolved === 'string' ? mittrCraftHealth.nodeBinaryResolved : '');
     const bun =
-      openChamberOpencodeResolution && typeof openChamberOpencodeResolution.bun === 'string'
-        ? openChamberOpencodeResolution.bun
-        : (openChamberHealth && typeof openChamberHealth.bunBinaryResolved === 'string' ? openChamberHealth.bunBinaryResolved : '');
+      mittrCraftOpencodeResolution && typeof mittrCraftOpencodeResolution.bun === 'string'
+        ? mittrCraftOpencodeResolution.bun
+        : (mittrCraftHealth && typeof mittrCraftHealth.bunBinaryResolved === 'string' ? mittrCraftHealth.bunBinaryResolved : '');
     const detectedNow =
-      openChamberOpencodeResolution && typeof openChamberOpencodeResolution.detectedNow === 'string'
-        ? openChamberOpencodeResolution.detectedNow
+      mittrCraftOpencodeResolution && typeof mittrCraftOpencodeResolution.detectedNow === 'string'
+        ? mittrCraftOpencodeResolution.detectedNow
         : '';
     const detectedSourceNow =
-      openChamberOpencodeResolution && typeof openChamberOpencodeResolution.detectedSourceNow === 'string'
-        ? openChamberOpencodeResolution.detectedSourceNow
+      mittrCraftOpencodeResolution && typeof mittrCraftOpencodeResolution.detectedSourceNow === 'string'
+        ? mittrCraftOpencodeResolution.detectedSourceNow
         : '';
 
     if (configured !== null) {
@@ -374,8 +374,8 @@ const buildOpenCodeStatusReport = async (): Promise<string> => {
       lines.push(`- launch-args: ${configuredLaunchArgs.length ? configuredLaunchArgs.join(' ') : '(none)'}`);
       lines.push(`- runtime: ${formatLaunchRuntime(configuredLaunchWrapperType || '', node, bun)}`);
     }
-    if (!openChamberOpencodeResolution && openChamberOpencodeResolutionResult.error) {
-      lines.push(`- resolution-endpoint: ${openChamberOpencodeResolutionResult.error}`);
+    if (!mittrCraftOpencodeResolution && mittrCraftOpencodeResolutionResult.error) {
+      lines.push(`- resolution-endpoint: ${mittrCraftOpencodeResolutionResult.error}`);
     }
   }
 

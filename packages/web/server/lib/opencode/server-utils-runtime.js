@@ -36,7 +36,7 @@ export const createServerUtilsRuntime = (dependencies) => {
     if (portChanged || currentPort === null) {
       setOpenCodePortState(numericPort);
       syncToHmrState();
-      console.log(`Detected OpenCode port: ${numericPort}`);
+      console.log(`Detected MittrCraft Engine port: ${numericPort}`);
 
       if (portChanged) {
         markOpenCodeNotReady();

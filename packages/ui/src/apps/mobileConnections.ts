@@ -28,9 +28,9 @@ import { getRuntimeApiBaseUrl, getRuntimeKey, switchRuntimeEndpoint } from '@/li
 
 import { recordMobileConnectDebug } from './mobileConnectionDebug';
 
-const MOBILE_CONNECTIONS_STORAGE_KEY = 'openchamber.mobile.connections.v1';
-const MOBILE_SECURE_STORAGE_PREFIX = 'openchamber.mobile.';
-const MOBILE_DEVICE_ID_STORAGE_KEY = 'openchamber.mobile.deviceId';
+const MOBILE_CONNECTIONS_STORAGE_KEY = 'mittrcraft.mobile.connections.v1';
+const MOBILE_SECURE_STORAGE_PREFIX = 'mittrcraft.mobile.';
+const MOBILE_DEVICE_ID_STORAGE_KEY = 'mittrcraft.mobile.deviceId';
 
 // Stable per-install identifier for this phone, persisted in localStorage. Used
 // as the client dedupe key so every way this device authenticates to a given

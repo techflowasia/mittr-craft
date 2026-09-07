@@ -9,7 +9,7 @@ const PROVIDER_PROMPT_BOUNDARY = ${JSON.stringify(PROVIDER_PROMPT_BOUNDARY)}
 const MINIMAL_IDENTITY = ${JSON.stringify(MINIMAL_IDENTITY)}
 const optimizedSessions = new Map()
 
-export const OpenChamberSystemPromptPlugin = async () => ({
+export const MittrCraftSystemPromptPlugin = async () => ({
   "chat.message": async (input, output) => {
     if (!input.sessionID) return
     const agent = output?.message?.agent ?? input.agent
@@ -54,7 +54,7 @@ const mergePluginConfig = (rawConfig, pluginUrl) => {
 
 export const createSystemPromptRuntime = ({ fsPromises, path, dataDir }) => {
   const pluginDirectory = path.join(dataDir, 'system-prompt');
-  const pluginPath = path.join(pluginDirectory, 'openchamber-system-prompt-plugin.js');
+  const pluginPath = path.join(pluginDirectory, 'mittrcraft-system-prompt-plugin.js');
 
   const prepareManagedOpenCodeEnv = async (rawConfig) => {
     await fsPromises.mkdir(pluginDirectory, { recursive: true });

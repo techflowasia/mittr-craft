@@ -1,18 +1,18 @@
 import { parse as parseJsonc } from 'jsonc-parser';
 import { pathToFileURL } from 'node:url';
 import {
-  OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS,
-  OPENCHAMBER_AGENT_TOOL_ACTIONS,
-  OPENCHAMBER_WEB_ACTION_DEFINITIONS,
-  OPENCHAMBER_WEB_ACTIONS,
-} from '../openchamber-control/actions.js';
+  MITTRCRAFT_AGENT_TOOL_ACTION_DEFINITIONS,
+  MITTRCRAFT_AGENT_TOOL_ACTIONS,
+  MITTRCRAFT_WEB_ACTION_DEFINITIONS,
+  MITTRCRAFT_WEB_ACTIONS,
+} from '../mittrcraft-control/actions.js';
 
 const TOOL_SCHEMA_VERSION = 1;
 // Everything either managed tool may ask for; the agent allowlist stays
 // narrower than the full control surface.
-const ACTIONS = new Set([...OPENCHAMBER_AGENT_TOOL_ACTIONS, ...OPENCHAMBER_WEB_ACTIONS]);
+const ACTIONS = new Set([...MITTRCRAFT_AGENT_TOOL_ACTIONS, ...MITTRCRAFT_WEB_ACTIONS]);
 const AGENT_TOOL_ACTION_TITLES = Object.fromEntries(
-  [...OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, ...OPENCHAMBER_WEB_ACTION_DEFINITIONS]
+  [...MITTRCRAFT_AGENT_TOOL_ACTION_DEFINITIONS, ...MITTRCRAFT_WEB_ACTION_DEFINITIONS]
     .map(({ action, title }) => [action, title]),
 );
 
@@ -136,12 +136,12 @@ const createToolEntry = ({ name, description, actions, definitions, parameters }
             },
           },
         })
-        const endpoint = process.env.OPENCHAMBER_AGENT_TOOL_URL
-        const token = process.env.OPENCHAMBER_AGENT_TOOL_TOKEN
+        const endpoint = process.env.MITTRCRAFT_AGENT_TOOL_URL
+        const token = process.env.MITTRCRAFT_AGENT_TOOL_TOKEN
         const failure = (payload) => ({
           title,
           output: JSON.stringify(payload),
-          metadata: { openchamber: { schemaVersion: ${TOOL_SCHEMA_VERSION}, action: args.action, description: title, ok: false } },
+          metadata: { mittrcraft: { schemaVersion: ${TOOL_SCHEMA_VERSION}, action: args.action, description: title, ok: false } },
         })
         if (!endpoint || !token) {
           return failure({ schemaVersion: ${TOOL_SCHEMA_VERSION}, ok: false, action: args.action, error: { message: "MittrCraft managed tool connection is unavailable" } })
@@ -172,7 +172,7 @@ const createToolEntry = ({ name, description, actions, definitions, parameters }
               },
             },
           })
-          if (valid) return { title, output, metadata: { openchamber: { schemaVersion: ${TOOL_SCHEMA_VERSION}, action: args.action, description: title, ok: result.ok === true } } }
+          if (valid) return { title, output, metadata: { mittrcraft: { schemaVersion: ${TOOL_SCHEMA_VERSION}, action: args.action, description: title, ok: result.ok === true } } }
           return failure({ schemaVersion: ${TOOL_SCHEMA_VERSION}, ok: false, action: args.action, error: { message: "MittrCraft returned an invalid response", kind: "runtime", status: response.status } })
         } catch (error) {
           if (context.abort.aborted) throw error
@@ -186,24 +186,24 @@ const createPluginSource = ({ includeControl, includeWeb }) => {
   const entries = [];
   if (includeControl) {
     entries.push(createToolEntry({
-      name: 'openchamber',
+      name: 'mittrcraft',
       description: CONTROL_TOOL_DESCRIPTION,
-      actions: OPENCHAMBER_AGENT_TOOL_ACTIONS,
-      definitions: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS,
+      actions: MITTRCRAFT_AGENT_TOOL_ACTIONS,
+      definitions: MITTRCRAFT_AGENT_TOOL_ACTION_DEFINITIONS,
       parameters: CONTROL_PARAMETER_PROPERTIES,
     }));
   }
   if (includeWeb) {
     entries.push(createToolEntry({
-      name: 'openchamber_web',
+      name: 'mittrcraft_web',
       description: WEB_TOOL_DESCRIPTION,
-      actions: OPENCHAMBER_WEB_ACTIONS,
-      definitions: OPENCHAMBER_WEB_ACTION_DEFINITIONS,
+      actions: MITTRCRAFT_WEB_ACTIONS,
+      definitions: MITTRCRAFT_WEB_ACTION_DEFINITIONS,
       parameters: WEB_PARAMETER_PROPERTIES,
     }));
   }
 
-  return `export const OpenChamberPlugin = async () => ({
+  return `export const MittrCraftPlugin = async () => ({
   tool: {
 ${entries.join('')}  },
 })
@@ -238,7 +238,7 @@ export const createAgentToolRuntime = (dependencies) => {
     env = process.env,
   } = dependencies;
   const pluginDirectory = path.join(dataDir, 'agent-tool');
-  const pluginPath = path.join(pluginDirectory, 'openchamber-plugin.js');
+  const pluginPath = path.join(pluginDirectory, 'mittrcraft-plugin.js');
   let activeToken = null;
 
   const prepareManagedOpenCodeEnv = async ({ includeControl = true, includeWeb = true } = {}) => {
@@ -255,8 +255,8 @@ export const createAgentToolRuntime = (dependencies) => {
     const pluginUrl = pathToFileURL(pluginPath).href;
     return {
       OPENCODE_CONFIG_CONTENT: mergePluginConfig(env.OPENCODE_CONFIG_CONTENT, pluginUrl),
-      OPENCHAMBER_AGENT_TOOL_URL: `http://127.0.0.1:${port}/api/openchamber/agent-tool`,
-      OPENCHAMBER_AGENT_TOOL_TOKEN: activeToken,
+      MITTRCRAFT_AGENT_TOOL_URL: `http://127.0.0.1:${port}/api/mittrcraft/agent-tool`,
+      MITTRCRAFT_AGENT_TOOL_TOKEN: activeToken,
     };
   };
 
@@ -299,7 +299,7 @@ export const createAgentToolRuntime = (dependencies) => {
   };
 
   const registerRoutes = (app, express) => {
-    app.post('/api/openchamber/agent-tool', express.json({ limit: '1mb' }), async (req, res) => {
+    app.post('/api/mittrcraft/agent-tool', express.json({ limit: '1mb' }), async (req, res) => {
       if (!authorize(req)) return res.status(401).json({ error: 'Unauthorized' });
       const controller = new AbortController();
       const abortOnDisconnect = () => {

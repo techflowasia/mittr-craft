@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const previousQuotaDataDirectory = process.env.OPENCHAMBER_DATA_DIR;
-const temporaryQuotaDataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-vscode-quota-'));
-process.env.OPENCHAMBER_DATA_DIR = temporaryQuotaDataDirectory;
+const previousQuotaDataDirectory = process.env.MITTRCRAFT_DATA_DIR;
+const temporaryQuotaDataDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-vscode-quota-'));
+process.env.MITTRCRAFT_DATA_DIR = temporaryQuotaDataDirectory;
 
 // readAuthFile reads ~/.local/share/opencode/auth.json via fs.readFileSync.
 // Stub fs to serve a known auth entry so the providers treat themselves as
@@ -28,8 +28,8 @@ import { fetchQuotaForProvider } from './quotaProviders';
 type MockResponseInit = { ok?: boolean; status?: number };
 
 after(() => {
-  if (previousQuotaDataDirectory === undefined) delete process.env.OPENCHAMBER_DATA_DIR;
-  else process.env.OPENCHAMBER_DATA_DIR = previousQuotaDataDirectory;
+  if (previousQuotaDataDirectory === undefined) delete process.env.MITTRCRAFT_DATA_DIR;
+  else process.env.MITTRCRAFT_DATA_DIR = previousQuotaDataDirectory;
   fs.rmSync(temporaryQuotaDataDirectory, { recursive: true, force: true });
 });
 

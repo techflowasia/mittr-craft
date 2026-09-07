@@ -1,6 +1,6 @@
 ---
 name: changelog-authoring
-description: Use when drafting or updating user-facing CHANGELOG.md entries for the OpenChamber `[Unreleased]` section, including the VS Code extension changelog, summarizing changes since the latest git tag.
+description: Use when drafting or updating user-facing CHANGELOG.md entries for the MittrCraft `[Unreleased]` section, including the VS Code extension changelog, summarizing changes since the latest git tag.
 license: MIT
 compatibility: opencode
 ---

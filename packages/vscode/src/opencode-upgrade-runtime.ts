@@ -1,6 +1,6 @@
 type UpgradeCapability = {
   supported: boolean;
-  manager: 'opencode' | 'external' | 'openchamber' | null;
+  manager: 'opencode' | 'external' | 'mittrcraft' | null;
   reason: 'external' | 'unavailable' | 'windows-arm64-workaround' | null;
 };
 
@@ -45,7 +45,7 @@ const compareVersions = (left: unknown, right: unknown): number => {
 };
 
 const getCapability = (manager?: OpenCodeUpgradeManager): UpgradeCapability => {
-  if (isWindowsArm64()) return { supported: false, manager: 'openchamber', reason: 'windows-arm64-workaround' };
+  if (isWindowsArm64()) return { supported: false, manager: 'mittrcraft', reason: 'windows-arm64-workaround' };
   if (!manager) return { supported: false, manager: null, reason: 'unavailable' };
   if (manager.getDebugInfo().mode !== 'managed') return { supported: false, manager: 'external', reason: 'external' };
   if (!manager.getApiUrl()) return { supported: false, manager: null, reason: 'unavailable' };

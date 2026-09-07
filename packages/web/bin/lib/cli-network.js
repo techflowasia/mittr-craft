@@ -26,8 +26,8 @@ function isUnsafeBrowserPort(port) {
 function resolveConfiguredBindHost(hostOverride) {
   const configured = typeof hostOverride === 'string' && hostOverride.trim()
     ? hostOverride.trim()
-    : typeof process.env.OPENCHAMBER_HOST === 'string'
-      ? process.env.OPENCHAMBER_HOST.trim()
+    : typeof process.env.MITTRCRAFT_HOST === 'string'
+      ? process.env.MITTRCRAFT_HOST.trim()
       : '';
   return configured || '127.0.0.1';
 }

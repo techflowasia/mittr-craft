@@ -17,7 +17,7 @@ releaseDate: '2026-07-30T00:00:00.000Z'
 `;
 
 const createFixture = ({ includeArm64 = true } = {}) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-latest-yml-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-latest-yml-'));
   const artifacts = path.join(root, 'artifacts');
   const output = path.join(root, 'output');
   fs.mkdirSync(path.join(artifacts, 'latest-yml-x86_64-pc-windows-msvc'), { recursive: true });
@@ -34,8 +34,8 @@ const environment = ({ artifacts, output }) => ({
   ...process.env,
   LATEST_YML_DIR: artifacts,
   RUNNER_TEMP: output,
-  GH_REPO: 'openchamber/openchamber',
-  OPENCHAMBER_VERSION: '1.2.3',
+  GH_REPO: 'techflowasia/mittr-craft',
+  MITTRCRAFT_VERSION: '1.2.3',
 });
 
 test('writes separate x64 and ARM64 Windows update channels', (context) => {

@@ -31,19 +31,19 @@ import {
   setLinuxAutostartEnabled,
 } from './linux-autostart.mjs';
 import { unsupportedAppSpecificOpenError, validateLocalPath } from './path-open-utils.mjs';
-import { mintOutsideFileGrant } from '@openchamber/web/server/lib/fs/routes.js';
+import { mintOutsideFileGrant } from '@mittrcraft/web/server/lib/fs/routes.js';
 
 const execFileAsync = promisify(execFile);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const isDev = process.env.OPENCHAMBER_ELECTRON_DEV === '1' || !app.isPackaged;
+const isDev = process.env.MITTRCRAFT_ELECTRON_DEV === '1' || !app.isPackaged;
 const electronStartupStartedAt = performance.now();
 
-const DEEP_LINK_PROTOCOL = 'openchamber';
-const UI_PROTOCOL = 'openchamber-ui';
-const PACKAGED_APP_USER_MODEL_ID = 'dev.openchamber.desktop';
-const DEV_APP_USER_MODEL_ID = 'dev.openchamber.desktop.dev';
+const DEEP_LINK_PROTOCOL = 'mittrcraft';
+const UI_PROTOCOL = 'mittrcraft-ui';
+const PACKAGED_APP_USER_MODEL_ID = 'dev.mittrcraft.desktop';
+const DEV_APP_USER_MODEL_ID = 'dev.mittrcraft.desktop.dev';
 const APP_USER_MODEL_ID = app.isPackaged ? PACKAGED_APP_USER_MODEL_ID : DEV_APP_USER_MODEL_ID;
 const BACKGROUND_START_ARG = '--background';
 
@@ -79,10 +79,10 @@ const shouldStartInBackground = (loginItemSettings = readLoginItemSettings()) =>
 };
 
 // Set the product name early so electron-log derives its log directory as
-// ~/Library/Logs/MittrCraft/ (not ~/Library/Logs/@openchamber/electron/).
+// ~/Library/Logs/MittrCraft/ (not ~/Library/Logs/@mittrcraft/electron/).
 app.setName('MittrCraft');
 if (process.platform === 'linux') {
-  app.setDesktopName('openchamber.desktop');
+  app.setDesktopName('mittrcraft.desktop');
 }
 if (isDev) {
   app.setPath('userData', path.join(app.getPath('appData'), 'MittrCraft Dev'));
@@ -95,7 +95,7 @@ app.commandLine.appendSwitch('proxy-bypass-list', '<-loopback>');
 // to a minute before React mounts.
 if (shouldIgnoreLoopbackConnectionLimit({
   development: isDev,
-  packagedUi: process.env.OPENCHAMBER_ELECTRON_USE_BUNDLED_UI === '1',
+  packagedUi: process.env.MITTRCRAFT_ELECTRON_USE_BUNDLED_UI === '1',
 })) {
   app.commandLine.appendSwitch('ignore-connections-limit', '127.0.0.1,localhost');
 }
@@ -148,7 +148,7 @@ const ELECTRON_STARTUP_PERF_PHASES = new Set([
 ]);
 const ELECTRON_STARTUP_DOCUMENT_CLASSES = new Set(['splash', 'application']);
 const recordElectronStartupPerformance = (phase, details = {}) => {
-  const enabled = STARTUP_PERF_ENABLED_VALUES.has(String(process.env.OPENCHAMBER_STARTUP_PERF ?? '').toLowerCase());
+  const enabled = STARTUP_PERF_ENABLED_VALUES.has(String(process.env.MITTRCRAFT_STARTUP_PERF ?? '').toLowerCase());
   if (!enabled || !ELECTRON_STARTUP_PERF_PHASES.has(phase)) return;
   const event = {
     phase,
@@ -198,13 +198,13 @@ const readAppMetadata = () => {
     try {
       const raw = fs.readFileSync(candidate, 'utf8');
       const parsed = JSON.parse(raw);
-      if (parsed?.name === '@openchamber/electron' && typeof parsed.version === 'string') {
+      if (parsed?.name === '@mittrcraft/electron' && typeof parsed.version === 'string') {
         return { name: parsed.name, version: parsed.version };
       }
     } catch {
     }
   }
-  return { name: '@openchamber/electron', version: app.getVersion() };
+  return { name: '@mittrcraft/electron', version: app.getVersion() };
 };
 
 const APP_METADATA = readAppMetadata();
@@ -230,9 +230,9 @@ const LOCAL_DESKTOP_CLIENT_DEDUPE_KEY = 'desktop-local';
 // connecting to someone else's server).
 const REMOTE_DESKTOP_CLIENT_KIND = 'desktop';
 const ENV_OVERRIDE_HOST_ID = '__env';
-const CHANGELOG_URL = 'https://raw.githubusercontent.com/openchamber/openchamber/main/CHANGELOG.md';
-const GITHUB_BUG_REPORT_URL = 'https://github.com/openchamber/openchamber/issues/new?template=bug_report.yml';
-const GITHUB_FEATURE_REQUEST_URL = 'https://github.com/openchamber/openchamber/issues/new?template=feature_request.yml';
+const CHANGELOG_URL = 'https://raw.githubusercontent.com/techflowasia/mittr-craft/main/CHANGELOG.md';
+const GITHUB_BUG_REPORT_URL = 'https://github.com/techflowasia/mittr-craft/issues/new?template=bug_report.yml';
+const GITHUB_FEATURE_REQUEST_URL = 'https://github.com/techflowasia/mittr-craft/issues/new?template=feature_request.yml';
 const DISCORD_INVITE_URL = 'https://discord.gg/ZYRSdnwwKA';
 const INSTALLED_APPS_CACHE_TTL_SECS = 60 * 60 * 24;
 const INSTALLED_APPS_CACHE_FILE = 'discovered-apps.json';
@@ -497,8 +497,8 @@ const refreshQuitRiskFlags = async () => {
   const base = typeof state.sidecarUrl === 'string' ? state.sidecarUrl.trim().replace(/\/$/, '') : '';
   if (!base) return;
 
-  const scheduledUrl = `${base}/api/openchamber/scheduled-tasks/status`;
-  const tunnelUrl = `${base}/api/openchamber/tunnel/status`;
+  const scheduledUrl = `${base}/api/mittrcraft/scheduled-tasks/status`;
+  const tunnelUrl = `${base}/api/mittrcraft/tunnel/status`;
 
   const fetchJson = async (url) => {
     try {
@@ -527,10 +527,10 @@ const refreshQuitRiskFlags = async () => {
 };
 
 const settingsFilePath = () => {
-  if (typeof process.env.OPENCHAMBER_DATA_DIR === 'string' && process.env.OPENCHAMBER_DATA_DIR.trim()) {
-    return path.join(process.env.OPENCHAMBER_DATA_DIR.trim(), 'settings.json');
+  if (typeof process.env.MITTRCRAFT_DATA_DIR === 'string' && process.env.MITTRCRAFT_DATA_DIR.trim()) {
+    return path.join(process.env.MITTRCRAFT_DATA_DIR.trim(), 'settings.json');
   }
-  return path.join(os.homedir(), '.config', 'openchamber', 'settings.json');
+  return path.join(os.homedir(), '.config', 'mittrcraft', 'settings.json');
 };
 
 const sshManager = new ElectronSshManager({
@@ -1116,8 +1116,8 @@ const buildLocalUrl = (port) => `http://127.0.0.1:${port}`;
 const resourceRoot = () => isDev ? path.join(__dirname, 'resources') : process.resourcesPath;
 const resolveWebDistDir = () => path.join(resourceRoot(), 'web-dist');
 const shouldUsePackagedUi = () => {
-  if (process.env.OPENCHAMBER_ELECTRON_LOAD_SERVER_UI === '1') return false;
-  if (process.env.OPENCHAMBER_ELECTRON_USE_BUNDLED_UI === '1') return true;
+  if (process.env.MITTRCRAFT_ELECTRON_LOAD_SERVER_UI === '1') return false;
+  if (process.env.MITTRCRAFT_ELECTRON_USE_BUNDLED_UI === '1') return true;
   return app.isPackaged;
 };
 const packagedUiOrigin = () => `${UI_PROTOCOL}://app`;
@@ -1126,7 +1126,7 @@ const buildPackagedUiUrl = (pathname = '/index.html') => new URL(pathname, `${pa
 const injectRuntimeConfigIntoHtml = (html) => {
   const apiBaseUrl = state.apiBaseUrl || state.sidecarUrl || '';
   const localOrigin = state.localOrigin || state.sidecarUrl || '';
-  const initScript = `<script>if(window.__OPENCHAMBER_LOCAL_ORIGIN__===undefined){window.__OPENCHAMBER_LOCAL_ORIGIN__=${JSON.stringify(localOrigin)};}if(window.__OPENCHAMBER_API_BASE_URL__===undefined){window.__OPENCHAMBER_API_BASE_URL__=${JSON.stringify(apiBaseUrl)};}if(window.__OPENCHAMBER_CLIENT_TOKEN__===undefined&&${JSON.stringify(state.clientToken || '')}){window.__OPENCHAMBER_CLIENT_TOKEN__=${JSON.stringify(state.clientToken || '')};}</script>`;
+  const initScript = `<script>if(window.__MITTRCRAFT_LOCAL_ORIGIN__===undefined){window.__MITTRCRAFT_LOCAL_ORIGIN__=${JSON.stringify(localOrigin)};}if(window.__MITTRCRAFT_API_BASE_URL__===undefined){window.__MITTRCRAFT_API_BASE_URL__=${JSON.stringify(apiBaseUrl)};}if(window.__MITTRCRAFT_CLIENT_TOKEN__===undefined&&${JSON.stringify(state.clientToken || '')}){window.__MITTRCRAFT_CLIENT_TOKEN__=${JSON.stringify(state.clientToken || '')};}</script>`;
   if (html.includes('<head>')) return html.replace('<head>', `<head>${initScript}`);
   if (html.includes('</head>')) return html.replace('</head>', `${initScript}</head>`);
   return `${initScript}${html}`;
@@ -1139,7 +1139,7 @@ const injectRuntimeConfigIntoHtml = (html) => {
  * lets a dev-server login persist between sessions without touching the app's
  * own storage.
  */
-const BROWSER_PANEL_PARTITION = 'persist:openchamber-browser';
+const BROWSER_PANEL_PARTITION = 'persist:mittrcraft-browser';
 
 /**
  * Denies device and location access to pages shown in the browser panel.
@@ -1345,7 +1345,7 @@ const maybeShowNativeNotification = (rawInput) => {
   notification.on('click', () => {
     focusForegroundWindow();
     if (sessionId) {
-      emitToAllWindows('openchamber:open-session', { sessionId, directory });
+      emitToAllWindows('mittrcraft:open-session', { sessionId, directory });
     }
     release();
   });
@@ -1446,8 +1446,8 @@ const loadShellEnv = () => {
 };
 
 // Merge the user's login-shell env (PATH, etc.) into this process before we
-import { pathLooksUserConfigured, mergePathValues } from '@openchamber/web/server/lib/opencode/path-utils.js';
-import { clearAppImageArgv0FromProcessEnv } from '@openchamber/web/server/lib/inherited-env.js';
+import { pathLooksUserConfigured, mergePathValues } from '@mittrcraft/web/server/lib/opencode/path-utils.js';
+import { clearAppImageArgv0FromProcessEnv } from '@mittrcraft/web/server/lib/inherited-env.js';
 
 // import/start the server in-process. The server and its children (opencode
 // CLI, git, etc.) inherit process.env directly now — there is no sidecar
@@ -1480,7 +1480,7 @@ const inheritUserShellEnv = () => {
 
 const shouldSkipLocalServer = () => {
   inheritUserShellEnv();
-  return process.env.OPENCHAMBER_SKIP_LOCAL_SERVER === '1';
+  return process.env.MITTRCRAFT_SKIP_LOCAL_SERVER === '1';
 };
 
 const spawnLocalServer = async () => {
@@ -1518,36 +1518,36 @@ const spawnLocalServer = async () => {
     chosenPort = await pickUnusedPort(bindHost);
   }
 
-  // The server module reads ENV_DESKTOP_NOTIFY / OPENCHAMBER_DIST_DIR /
-  // OPENCHAMBER_RUNTIME at import time (top-level const), so these must be
+  // The server module reads ENV_DESKTOP_NOTIFY / MITTRCRAFT_DIST_DIR /
+  // MITTRCRAFT_RUNTIME at import time (top-level const), so these must be
   // set before the first import. After this point, the same env is used by
   // both the Electron main and the server running inside it.
-  process.env.OPENCHAMBER_HOST = bindHost;
-  process.env.OPENCHAMBER_DESKTOP_LAN_ACCESS_ACTIVE = effectiveLanAccessEnabled ? 'true' : 'false';
+  process.env.MITTRCRAFT_HOST = bindHost;
+  process.env.MITTRCRAFT_DESKTOP_LAN_ACCESS_ACTIVE = effectiveLanAccessEnabled ? 'true' : 'false';
   if (lanAccessBlockedByMissingPassword) {
-    process.env.OPENCHAMBER_DESKTOP_LAN_ACCESS_BLOCKED_REASON = 'missing-password';
+    process.env.MITTRCRAFT_DESKTOP_LAN_ACCESS_BLOCKED_REASON = 'missing-password';
   } else {
-    delete process.env.OPENCHAMBER_DESKTOP_LAN_ACCESS_BLOCKED_REASON;
+    delete process.env.MITTRCRAFT_DESKTOP_LAN_ACCESS_BLOCKED_REASON;
   }
-  process.env.OPENCHAMBER_DIST_DIR = resolveWebDistDir();
-  process.env.OPENCHAMBER_RUNTIME = 'desktop';
+  process.env.MITTRCRAFT_DIST_DIR = resolveWebDistDir();
+  process.env.MITTRCRAFT_RUNTIME = 'desktop';
   // OpenCode uses process cwd as a fallback directory; app userData would make
   // packaged desktop look like a separate empty workspace.
-  process.env.OPENCHAMBER_OPENCODE_CWD = resolveManagedOpenCodeCwd({
+  process.env.MITTRCRAFT_OPENCODE_CWD = resolveManagedOpenCodeCwd({
     env: process.env,
     homedir: () => os.homedir(),
   });
-  process.env.OPENCHAMBER_DESKTOP_NOTIFY = 'true';
+  process.env.MITTRCRAFT_DESKTOP_NOTIFY = 'true';
   if (desktopUiPassword) {
-    process.env.OPENCHAMBER_UI_PASSWORD = desktopUiPassword;
+    process.env.MITTRCRAFT_UI_PASSWORD = desktopUiPassword;
   } else {
-    delete process.env.OPENCHAMBER_UI_PASSWORD;
+    delete process.env.MITTRCRAFT_UI_PASSWORD;
   }
-  process.env.OPENCHAMBER_SKIP_API_COMPRESSION = process.env.OPENCHAMBER_SKIP_API_COMPRESSION || 'true';
+  process.env.MITTRCRAFT_SKIP_API_COMPRESSION = process.env.MITTRCRAFT_SKIP_API_COMPRESSION || 'true';
   process.env.NO_PROXY = process.env.NO_PROXY || 'localhost,127.0.0.1';
   process.env.no_proxy = process.env.no_proxy || 'localhost,127.0.0.1';
 
-  const { startWebUiServer } = await import('@openchamber/web/server/index.js');
+  const { startWebUiServer } = await import('@mittrcraft/web/server/index.js');
 
   const handle = await startWebUiServer({
     port: chosenPort,
@@ -1653,7 +1653,7 @@ Stop-ProcessTree $targetPid $true
     'if [ "$pid" -gt 0 ] 2>/dev/null; then kill -KILL "-$pid" 2>/dev/null; kill -KILL "$pid" 2>/dev/null; fi',
     'if [ "$port" -gt 0 ] 2>/dev/null && command -v lsof >/dev/null 2>&1; then for target in $(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null; lsof -ti ":$port" 2>/dev/null); do [ "$target" = "$$" ] || kill -KILL "$target" 2>/dev/null; done; fi',
   ].join('; ');
-  const child = spawn('/bin/sh', ['-c', script, 'openchamber-opencode-killer', normalizedPid, normalizedPort, String(OPENCODE_SHUTDOWN_GRACE_MS / 1000)], {
+  const child = spawn('/bin/sh', ['-c', script, 'mittrcraft-opencode-killer', normalizedPid, normalizedPort, String(OPENCODE_SHUTDOWN_GRACE_MS / 1000)], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
@@ -1695,7 +1695,7 @@ const buildInitScript = (localOrigin, bootOutcome, apiBaseUrl = '', clientToken 
   const outcome = JSON.stringify(bootOutcome ?? null);
   return [
     '(function(){',
-    `try{var __oc_local=${local};var __oc_api=${apiBase};var __oc_headers=${headers};var __oc_packaged=${packagedOrigin};var __oc_origin=window.location&&window.location.origin||'';var __oc_is_packaged=__oc_origin===__oc_packaged;var __oc_is_local=__oc_local&&__oc_origin===new URL(__oc_local).origin;window.__OPENCHAMBER_MACOS_MAJOR__=${macVersion};window.__OPENCHAMBER_LOCAL_ORIGIN__=__oc_local;window.__OPENCHAMBER_API_BASE_URL__=__oc_api;if(__oc_is_local||__oc_is_packaged){window.__OPENCHAMBER_HOME__=${home};window.__OPENCHAMBER_RUNTIME_HEADERS__=__oc_headers;}if((__oc_is_local||__oc_is_packaged)&&${token}){window.__OPENCHAMBER_CLIENT_TOKEN__=${token};}var __oc_bo=${outcome};if(__oc_bo){window.__OPENCHAMBER_DESKTOP_BOOT_OUTCOME__=__oc_bo;}}catch(_e){}`,
+    `try{var __oc_local=${local};var __oc_api=${apiBase};var __oc_headers=${headers};var __oc_packaged=${packagedOrigin};var __oc_origin=window.location&&window.location.origin||'';var __oc_is_packaged=__oc_origin===__oc_packaged;var __oc_is_local=__oc_local&&__oc_origin===new URL(__oc_local).origin;window.__MITTRCRAFT_MACOS_MAJOR__=${macVersion};window.__MITTRCRAFT_LOCAL_ORIGIN__=__oc_local;window.__MITTRCRAFT_API_BASE_URL__=__oc_api;if(__oc_is_local||__oc_is_packaged){window.__MITTRCRAFT_HOME__=${home};window.__MITTRCRAFT_RUNTIME_HEADERS__=__oc_headers;}if((__oc_is_local||__oc_is_packaged)&&${token}){window.__MITTRCRAFT_CLIENT_TOKEN__=${token};}var __oc_bo=${outcome};if(__oc_bo){window.__MITTRCRAFT_DESKTOP_BOOT_OUTCOME__=__oc_bo;}}catch(_e){}`,
     '}())',
   ].join('');
 };
@@ -1964,7 +1964,7 @@ const loginRemoteAndIssueClientToken = async ({ url, password, trustDevice, requ
 
 const emitToWindow = (browserWindow, event, detail) => {
   if (!browserWindow || browserWindow.isDestroyed()) return;
-  browserWindow.webContents.send('openchamber:emit', { event, detail });
+  browserWindow.webContents.send('mittrcraft:emit', { event, detail });
 };
 
 const emitToAllWindows = (event, detail) => {
@@ -2249,12 +2249,12 @@ const dispatchDeepLink = (link) => {
       target.show();
       target.focus();
     }
-    emitToAllWindows('openchamber:deep-link-focus', { reason: link.value || null });
+    emitToAllWindows('mittrcraft:deep-link-focus', { reason: link.value || null });
     return;
   }
 
   if (link.type === 'session' && link.value) {
-    emitToAllWindows('openchamber:open-session', { sessionId: link.value });
+    emitToAllWindows('mittrcraft:open-session', { sessionId: link.value });
     return;
   }
   if (link.type === 'host' && link.value) {
@@ -2311,15 +2311,15 @@ const getMenuTargetWindow = () => {
 
 const dispatchMenuAction = (action) => {
   const target = getMenuTargetWindow();
-  emitToWindow(target, 'openchamber:menu-action', action);
-  dispatchDomEventToWindow(target, 'openchamber:menu-action', action);
+  emitToWindow(target, 'mittrcraft:menu-action', action);
+  dispatchDomEventToWindow(target, 'mittrcraft:menu-action', action);
 };
 
 // Append-style menu actions must reach the renderer exactly once. Dual IPC+DOM
 // delivery (dispatchMenuAction) would insert the selection twice.
 const dispatchAddSelectionToChat = () => {
   const target = getMenuTargetWindow();
-  if (target) emitToWindow(target, 'openchamber:menu-action', 'add-selection-to-chat');
+  if (target) emitToWindow(target, 'mittrcraft:menu-action', 'add-selection-to-chat');
 };
 
 // Mini-chat draft windows are not deduplicated, so this must reach the renderer
@@ -2327,13 +2327,13 @@ const dispatchAddSelectionToChat = () => {
 // resolves the active directory/project and opens the window.
 const dispatchOpenMiniChat = (browserWindow) => {
   const target = browserWindow && !browserWindow.isDestroyed() ? browserWindow : getMenuTargetWindow();
-  if (target) emitToWindow(target, 'openchamber:open-mini-chat');
+  if (target) emitToWindow(target, 'mittrcraft:open-mini-chat');
 };
 
 const dispatchCheckForUpdates = () => {
-  emitToAllWindows('openchamber:check-for-updates');
+  emitToAllWindows('mittrcraft:check-for-updates');
   for (const browserWindow of BrowserWindow.getAllWindows()) {
-    dispatchDomEventToWindow(browserWindow, 'openchamber:check-for-updates');
+    dispatchDomEventToWindow(browserWindow, 'mittrcraft:check-for-updates');
   }
 };
 
@@ -2427,15 +2427,15 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
     trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 17 } : undefined,
     webPreferences: {
       additionalArguments: [
-        `--openchamber-local-origin=${desktopLocalOrigin}`,
-        `--openchamber-api-base-url=${desktopApiBaseUrl}`,
-        `--openchamber-client-token=${desktopClientToken}`,
-        `--openchamber-runtime-headers=${JSON.stringify(desktopRequestHeaders)}`,
-        `--openchamber-home=${desktopHome}`,
-        `--openchamber-macos-major=${desktopMacosMajor}`,
-        `--openchamber-tray-enabled=${trayEnabled ? '1' : '0'}`,
-        `--openchamber-boot-outcome=${JSON.stringify(state.bootOutcome || null)}`,
-        `--openchamber-relay-host-id=${rendererRuntimeConfig.relayHostId || ''}`,
+        `--mittrcraft-local-origin=${desktopLocalOrigin}`,
+        `--mittrcraft-api-base-url=${desktopApiBaseUrl}`,
+        `--mittrcraft-client-token=${desktopClientToken}`,
+        `--mittrcraft-runtime-headers=${JSON.stringify(desktopRequestHeaders)}`,
+        `--mittrcraft-home=${desktopHome}`,
+        `--mittrcraft-macos-major=${desktopMacosMajor}`,
+        `--mittrcraft-tray-enabled=${trayEnabled ? '1' : '0'}`,
+        `--mittrcraft-boot-outcome=${JSON.stringify(state.bootOutcome || null)}`,
+        `--mittrcraft-relay-host-id=${rendererRuntimeConfig.relayHostId || ''}`,
       ],
       preload: isDev ? path.join(__dirname, 'preload.mjs') : path.join(app.getAppPath(), 'preload.mjs'),
       backgroundThrottling: false,
@@ -2494,16 +2494,16 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
 
   browserWindow.on('resize', () => {
     if (process.platform === 'darwin') {
-      emitToWindow(browserWindow, 'openchamber:window-resized');
+      emitToWindow(browserWindow, 'mittrcraft:window-resized');
     }
     debounceWindowStatePersist(browserWindow, false);
   });
   browserWindow.on('maximize', () => {
-    emitToWindow(browserWindow, 'openchamber:window-maximized-changed', { maximized: true });
+    emitToWindow(browserWindow, 'mittrcraft:window-maximized-changed', { maximized: true });
     debounceWindowStatePersist(browserWindow, false);
   });
   browserWindow.on('unmaximize', () => {
-    emitToWindow(browserWindow, 'openchamber:window-maximized-changed', { maximized: false });
+    emitToWindow(browserWindow, 'mittrcraft:window-maximized-changed', { maximized: false });
     debounceWindowStatePersist(browserWindow, false);
   });
   browserWindow.on('move', () => {
@@ -2821,13 +2821,13 @@ const createMiniChatWindow = async ({ mode, sessionId = '', directory = '', proj
     trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 17 } : undefined,
     webPreferences: {
       additionalArguments: [
-        `--openchamber-local-origin=${desktopLocalOrigin}`,
-        `--openchamber-api-base-url=${desktopApiBaseUrl}`,
-        `--openchamber-client-token=${desktopClientToken}`,
-        `--openchamber-runtime-headers=${JSON.stringify(desktopRequestHeaders)}`,
-        `--openchamber-home=${desktopHome}`,
-        `--openchamber-macos-major=${desktopMacosMajor}`,
-        `--openchamber-tray-enabled=${trayEnabled ? '1' : '0'}`,
+        `--mittrcraft-local-origin=${desktopLocalOrigin}`,
+        `--mittrcraft-api-base-url=${desktopApiBaseUrl}`,
+        `--mittrcraft-client-token=${desktopClientToken}`,
+        `--mittrcraft-runtime-headers=${JSON.stringify(desktopRequestHeaders)}`,
+        `--mittrcraft-home=${desktopHome}`,
+        `--mittrcraft-macos-major=${desktopMacosMajor}`,
+        `--mittrcraft-tray-enabled=${trayEnabled ? '1' : '0'}`,
       ],
       preload: isDev ? path.join(__dirname, 'preload.mjs') : path.join(app.getAppPath(), 'preload.mjs'),
       backgroundThrottling: false,
@@ -2936,8 +2936,8 @@ const resolveMiniChatRuntimeConfig = (browserWindow, args = {}) => {
 };
 
 const resolveInitialUrl = async () => {
-  const hmrApiPort = process.env.OPENCHAMBER_HMR_API_PORT || '3901';
-  const hmrUiPort = process.env.OPENCHAMBER_HMR_UI_PORT || '5173';
+  const hmrApiPort = process.env.MITTRCRAFT_HMR_API_PORT || '3901';
+  const hmrUiPort = process.env.MITTRCRAFT_HMR_UI_PORT || '5173';
   const hmrApiUrl = `http://127.0.0.1:${hmrApiPort}`;
   const hmrUiUrl = `http://127.0.0.1:${hmrUiPort}`;
   const usePackagedUi = shouldUsePackagedUi();
@@ -2969,7 +2969,7 @@ const resolveInitialUrl = async () => {
   let requestHeaders = {};
   let remoteProbe = null;
 
-  const envTarget = normalizeHostUrl(process.env.OPENCHAMBER_SERVER_URL || '');
+  const envTarget = normalizeHostUrl(process.env.MITTRCRAFT_SERVER_URL || '');
   const config = readDesktopHostsConfig();
   if (envTarget) {
     apiBaseUrl = envTarget;
@@ -3005,7 +3005,7 @@ const resolveInitialUrl = async () => {
   }
   if (!initialUrl) {
     throw new Error(
-      'OPENCHAMBER_SKIP_LOCAL_SERVER=1 requires bundled UI, a running desktop HMR UI, or a reachable remote instance.',
+      'MITTRCRAFT_SKIP_LOCAL_SERVER=1 requires bundled UI, a running desktop HMR UI, or a reachable remote instance.',
     );
   }
 
@@ -3041,8 +3041,8 @@ const setupAutoUpdater = () => {
   autoUpdater.disableWebInstaller = false;
   autoUpdater.logger = log;
 
-  const testBuild = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
-    && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
+  const testBuild = typeof __MITTRCRAFT_UPDATER_E2E_BUILD__ !== 'undefined'
+    && __MITTRCRAFT_UPDATER_E2E_BUILD__ === true;
   const feed = resolveUpdaterFeed({ testBuild });
   const updaterChannel = feed.provider === 'github'
     ? resolveUpdaterChannel({ platform: process.platform, architecture: process.arch })
@@ -3061,7 +3061,7 @@ const setupAutoUpdater = () => {
     const total = Number(progress.total || 0);
     const transferred = Number(progress.transferred || 0);
     setTaskbarProgress(total > 0 ? Math.max(0, Math.min(1, transferred / total)) : 0.01);
-    emitToAllWindows('openchamber:update-progress', mapUpdaterProgressEvent({
+    emitToAllWindows('mittrcraft:update-progress', mapUpdaterProgressEvent({
       event: 'Progress',
       data: {
         chunkLength: Math.max(0, Math.round(progress.bytesPerSecond || 0)),
@@ -3144,7 +3144,7 @@ const isAppBundleInstalled = async (appName) => Boolean(await resolveAppBundlePa
 const iconToDataUrl = async (iconPath, appName) => {
   if (!iconPath || !(await pathExists(iconPath))) return null;
   const safeName = String(appName || 'app').replace(/[^a-z0-9]/gi, '_');
-  const tempPath = path.join(os.tmpdir(), `openchamber-icon-${safeName}-${Date.now()}.png`);
+  const tempPath = path.join(os.tmpdir(), `mittrcraft-icon-${safeName}-${Date.now()}.png`);
   try {
     await execFileAsync('sips', ['-s', 'format', 'png', '-Z', '32', iconPath, '--out', tempPath], { stdio: 'ignore' });
   } catch {
@@ -3724,7 +3724,7 @@ const runSpecChain = (specs, appName) => {
 let devTunnelClientPromise = null;
 const getDevTunnelClient = async () => {
   if (!devTunnelClientPromise) {
-    devTunnelClientPromise = import('@openchamber/web/server/lib/dev-tunnel/client.js')
+    devTunnelClientPromise = import('@mittrcraft/web/server/lib/dev-tunnel/client.js')
       .then(({ createDevTunnelClient }) => createDevTunnelClient({ logger: log }))
       .catch((error) => {
         devTunnelClientPromise = null;
@@ -4033,7 +4033,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       if (!underHome && !underTmp) {
         throw new Error('File is outside the allowed workspace');
       }
-      const DENIED_SEGMENTS = ['.ssh', '.aws', '.gnupg', '.gpg', '.config/gh', '.config/openchamber/credentials'];
+      const DENIED_SEGMENTS = ['.ssh', '.aws', '.gnupg', '.gpg', '.config/gh', '.config/mittrcraft/credentials'];
       const relFromHome = underHome ? filePath.slice(home.length + 1) : '';
       const relNormalized = relFromHome.split(path.sep).join('/');
       if (DENIED_SEGMENTS.some((segment) => relNormalized === segment || relNormalized.startsWith(`${segment}/`))) {
@@ -4280,7 +4280,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
         const apps = await buildPlatformInstalledApps(Array.isArray(args.apps) ? args.apps : []);
         await fsp.mkdir(path.dirname(cachePath), { recursive: true });
         await fsp.writeFile(cachePath, JSON.stringify({ updatedAt: now, apps }, null, 2));
-        emitToAllWindows('openchamber:installed-apps-updated', apps);
+        emitToAllWindows('mittrcraft:installed-apps-updated', apps);
       };
       if (process.platform !== 'darwin' && process.platform !== 'win32' && process.platform !== 'linux') {
         return { apps: [], hasCache: false, isCacheStale: false, supported: false };
@@ -4301,7 +4301,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       const nextConfigInput = args.input || args.config || {};
       await writeDesktopHostsConfig(nextConfigInput);
       const updatedConfig = readDesktopHostsConfig();
-      const envTarget = normalizeHostUrl(process.env.OPENCHAMBER_SERVER_URL || '');
+      const envTarget = normalizeHostUrl(process.env.MITTRCRAFT_SERVER_URL || '');
       if (Object.prototype.hasOwnProperty.call(nextConfigInput, 'localClientToken') && isLocalRuntimeUrl(state.apiBaseUrl || state.sidecarUrl || state.localOrigin || '')) {
         state.clientToken = readDesktopLocalClientToken();
       }
@@ -4395,7 +4395,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
         throw new Error('No pending update');
       }
       setTaskbarProgress(0.01);
-      emitToAllWindows('openchamber:update-progress', mapUpdaterProgressEvent({
+      emitToAllWindows('mittrcraft:update-progress', mapUpdaterProgressEvent({
         event: 'Started',
         data: {
           contentLength: null,
@@ -4425,7 +4425,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
             Promise.resolve(autoUpdater.downloadUpdate()).catch((error) => finish(reject, error));
           });
         }
-        emitToAllWindows('openchamber:update-progress', mapUpdaterProgressEvent({
+        emitToAllWindows('mittrcraft:update-progress', mapUpdaterProgressEvent({
           event: 'Finished',
           data: {},
         }));
@@ -4600,9 +4600,9 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       state.mainWindow.show();
       state.mainWindow.focus();
       if (sessionId) {
-        emitToWindow(state.mainWindow, 'openchamber:open-session', { sessionId, directory });
+        emitToWindow(state.mainWindow, 'mittrcraft:open-session', { sessionId, directory });
       } else if (mode === 'draft') {
-        emitToWindow(state.mainWindow, 'openchamber:open-draft-session', { directory, projectId });
+        emitToWindow(state.mainWindow, 'mittrcraft:open-draft-session', { directory, projectId });
       }
       return { focused: true };
     }
@@ -4958,7 +4958,7 @@ const isLocalSender = (webContents) => {
     if (url.protocol === `${UI_PROTOCOL}:` && url.hostname === 'app') return true;
     // Electron dev renders from Vite while the local API is served on a
     // separate port. This exact loopback HMR origin is trusted only in dev.
-    if (isDev && url.origin === `http://127.0.0.1:${process.env.OPENCHAMBER_HMR_UI_PORT || '5173'}`) return true;
+    if (isDev && url.origin === `http://127.0.0.1:${process.env.MITTRCRAFT_HMR_UI_PORT || '5173'}`) return true;
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
     if (state.localOrigin) {
       try {
@@ -5000,7 +5000,7 @@ const COMMANDS_SAFE_FOR_REMOTE = new Set([
   'desktop_tray_update',
 ]);
 
-ipcMain.handle('openchamber:invoke', async (event, command, args) => {
+ipcMain.handle('mittrcraft:invoke', async (event, command, args) => {
   if (!isLocalSender(event.sender) && !COMMANDS_SAFE_FOR_REMOTE.has(command)) {
     log.warn(`[ipc] rejected ${command} from non-local origin: ${event.sender?.getURL?.() || '(unknown)'}`);
     throw new Error('IPC not available for this origin');
@@ -5009,7 +5009,7 @@ ipcMain.handle('openchamber:invoke', async (event, command, args) => {
   return handleInvoke(browserWindow, command, args);
 });
 
-ipcMain.handle('openchamber:dialog:open', async (event, options) => {
+ipcMain.handle('mittrcraft:dialog:open', async (event, options) => {
   // Native file dialogs expose absolute local paths; never grant to remote.
   if (!isLocalSender(event.sender)) {
     log.warn(`[ipc] rejected dialog:open from non-local origin: ${event.sender?.getURL?.() || '(unknown)'}`);
@@ -5058,7 +5058,7 @@ ipcMain.handle('openchamber:dialog:open', async (event, options) => {
   return result.filePaths[0] || null;
 });
 
-ipcMain.handle('openchamber:file:grant-existing', async (event, filePath) => {
+ipcMain.handle('mittrcraft:file:grant-existing', async (event, filePath) => {
   if (!isLocalSender(event.sender)) {
     log.warn(`[ipc] rejected file:grant-existing from non-local origin: ${event.sender?.getURL?.() || '(unknown)'}`);
     throw new Error('IPC not available for this origin');
@@ -5193,7 +5193,7 @@ const focusMainWindowWithSession = async (sessionId, directory) => {
     state.mainWindow.show();
     state.mainWindow.focus();
     if (sessionId) {
-      emitToWindow(state.mainWindow, 'openchamber:open-session', { sessionId, directory: directory || '' });
+      emitToWindow(state.mainWindow, 'mittrcraft:open-session', { sessionId, directory: directory || '' });
     }
     return;
   }
@@ -5238,7 +5238,7 @@ const dispatchTrayAction = async (action) => {
     const target = (state.mainWindow && !state.mainWindow.isDestroyed())
       ? state.mainWindow
       : await revealMainWindow();
-    emitToWindow(target, 'openchamber:tray-action', action);
+    emitToWindow(target, 'mittrcraft:tray-action', action);
     return;
   }
 
@@ -5260,7 +5260,7 @@ const dispatchTrayAction = async (action) => {
       if (surface.isMinimized()) surface.restore();
       surface.show();
       surface.focus();
-      emitToWindow(surface, 'openchamber:open-session', {
+      emitToWindow(surface, 'mittrcraft:open-session', {
         sessionId: action.sessionId,
         directory: action.directory || '',
       });
@@ -5274,7 +5274,7 @@ const dispatchTrayAction = async (action) => {
   if (!target || target.isDestroyed()) return;
 
   if (action.type === 'new-session') {
-    emitToWindow(target, 'openchamber:open-draft-session', { directory: '', projectId: '' });
+    emitToWindow(target, 'mittrcraft:open-draft-session', { directory: '', projectId: '' });
   }
   // show-main-window: revealing the window above is the whole action.
 };
@@ -5434,7 +5434,7 @@ app.whenReady().then(async () => {
   // Notify renderer on OS wake-from-sleep so the SSE event pipeline can
   // reconnect immediately instead of waiting for the heartbeat watchdog.
   powerMonitor.on('resume', () => {
-    emitToAllWindows('openchamber:system-resume', { timestamp: Date.now() });
+    emitToAllWindows('mittrcraft:system-resume', { timestamp: Date.now() });
   });
 }).catch((error) => {
   log.error('[electron] startup failed:', error);

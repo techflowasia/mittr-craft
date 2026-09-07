@@ -99,7 +99,7 @@ export function getDesktopRecoveryConfig(
       const host = formatHostDisplay(hostLabel, hostUrl);
       return {
         title: 'Incompatible Server',
-        description: `The server at "${host || 'unknown'}" is not running MittrCraft. Verify the address points to an MittrCraft server.`,
+        description: `The server at "${host || 'unknown'}" is not running MittrCraft. Verify the address points to a MittrCraft server.`,
         titleKey: 'onboarding.desktopRecovery.incompatibleServer.title',
         descriptionKey: 'onboarding.desktopRecovery.incompatibleServer.description',
         descriptionParams: host ? { host } : undefined,

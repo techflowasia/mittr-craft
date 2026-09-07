@@ -201,9 +201,9 @@ export const registerOpenCodeProxy = (app, deps) => {
 
   const runtime = getRuntime();
   if (runtime.openCodePort) {
-    console.log(`Setting up proxy to OpenCode on port ${runtime.openCodePort}`);
+    console.log(`Setting up proxy to MittrCraft Engine on port ${runtime.openCodePort}`);
   } else {
-    console.log('Setting up OpenCode API gate (OpenCode not started yet)');
+    console.log('Setting up MittrCraft Engine API gate (MittrCraft Engine not started yet)');
   }
   app.set('opencodeProxyConfigured', true);
 
@@ -307,7 +307,7 @@ export const registerOpenCodeProxy = (app, deps) => {
   };
 
   const PROXY_REQUEST_TIMEOUT_MS = normalizeProxyTimeout(LONG_REQUEST_TIMEOUT_MS);
-  const PROXY_TIMEOUT_MARKER = Symbol('openchamberProxyTimedOut');
+  const PROXY_TIMEOUT_MARKER = Symbol('mittrcraftProxyTimedOut');
 
   // A provider OAuth callback blocks upstream for as long as the user takes to
   // sign in in their browser (device-code polling, or a loopback redirect), so
@@ -485,7 +485,7 @@ export const registerOpenCodeProxy = (app, deps) => {
         }
         return;
       }
-      console.error('[proxy] OpenCode SSE proxy error:', error?.message ?? error);
+      console.error('[proxy] MittrCraft Engine SSE proxy error:', error?.message ?? error);
       if (!res.headersSent) {
         res.status(503).json({ error: 'OpenCode service unavailable' });
       } else {
@@ -580,7 +580,7 @@ export const registerOpenCodeProxy = (app, deps) => {
       if (isAbortError(error)) {
         return;
       }
-      console.error(`[proxy] OpenCode ${logLabel} proxy error:`, error?.message ?? error);
+      console.error(`[proxy] MittrCraft Engine ${logLabel} proxy error:`, error?.message ?? error);
       if (!res.headersSent) {
         res.status(503).json({ error: 'OpenCode service unavailable' });
         return;
@@ -693,7 +693,7 @@ export const registerOpenCodeProxy = (app, deps) => {
           return null;
         });
 
-        const settingsPath = path.join(os.homedir(), '.config', 'openchamber', 'settings.json');
+        const settingsPath = path.join(os.homedir(), '.config', 'mittrcraft', 'settings.json');
         let projectDirs = [];
         try {
           const settingsRaw = fs.readFileSync(settingsPath, 'utf8');
@@ -809,7 +809,7 @@ export const registerOpenCodeProxy = (app, deps) => {
         }
       },
       error: (err, req, res) => {
-        console.error('[proxy] OpenCode proxy error:', err.message);
+        console.error('[proxy] MittrCraft Engine proxy error:', err.message);
         if (req?.[PROXY_TIMEOUT_MARKER]) {
           return;
         }

@@ -79,7 +79,7 @@ describe('project icon routes', () => {
       fsPromises,
       path,
       crypto,
-      openchamberDataDir: '/tmp/openchamber-test',
+      mittrcraftDataDir: '/tmp/mittrcraft-test',
       sanitizeProjects: (projects) => projects,
       readSettingsFromDiskMigrated: async () => ({
         projects: [{

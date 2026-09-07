@@ -695,7 +695,7 @@ const getConfigForPath = (layers: ReturnType<typeof readConfigLayers>, targetPat
 
 const writeConfig = (config: Record<string, unknown>, filePath: string = CONFIG_FILE) => {
   if (fs.existsSync(filePath)) {
-    const backupFile = `${filePath}.openchamber.backup`;
+    const backupFile = `${filePath}.mittrcraft.backup`;
     try {
       fs.copyFileSync(filePath, backupFile);
     } catch {
@@ -1065,7 +1065,7 @@ const NPM_CACHE_TTL_MS = 3_600_000;
 const lookupNpmPackage = async (name: string): Promise<NpmLookupResult> => {
   try {
     const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name).replace(/^%40/, '@')}`, {
-      headers: { Accept: 'application/json', 'User-Agent': 'openchamber-vscode/dev' },
+      headers: { Accept: 'application/json', 'User-Agent': 'mittrcraft-vscode/dev' },
       signal: AbortSignal.timeout(5000),
     });
     if (response.ok) {

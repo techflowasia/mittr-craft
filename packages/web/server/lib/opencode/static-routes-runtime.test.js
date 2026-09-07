@@ -27,7 +27,7 @@ describe('static routes runtime', () => {
     expect(response.status).toBe(200);
     expect(response.text).toContain('MittrCraft is running in headless mode');
     expect(response.text).toContain('Open it from the MittrCraft desktop or mobile app');
-    expect(response.text).toContain('openchamber connect-url --help');
+    expect(response.text).toContain('mittrcraft connect-url --help');
     expect(response.text).toContain('Copy command');
   });
 

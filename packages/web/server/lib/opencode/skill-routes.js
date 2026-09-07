@@ -182,7 +182,7 @@ export const registerSkillRoutes = (app, dependencies) => {
         })
         .filter(Boolean);
     } catch (error) {
-      console.error('Failed to list OpenCode skills:', error);
+      console.error('Failed to list MittrCraft Engine skills:', error);
       return [];
     }
   };

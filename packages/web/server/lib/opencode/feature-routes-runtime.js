@@ -13,8 +13,8 @@ import { registerConfigEntityRoutes } from './config-entity-routes.js';
 import { registerSettingsUtilityRoutes } from './core-routes.js';
 import { registerProjectIconRoutes } from './project-icon-routes.js';
 import { registerScheduledTaskRoutes } from '../scheduled-tasks/routes.js';
-import { registerOpenChamberSessionRoutes } from '../openchamber-sessions/routes.js';
-import { registerOpenChamberControlRoutes } from '../openchamber-control/routes.js';
+import { registerMittrCraftSessionRoutes } from '../mittrcraft-sessions/routes.js';
+import { registerMittrCraftControlRoutes } from '../mittrcraft-control/routes.js';
 import { registerMarkdownImageGrantRoutes } from '../markdown-image-grants/routes.js';
 import { registerSkillRoutes } from './skill-routes.js';
 import { registerPluginRoutes } from './plugin-routes.js';
@@ -92,8 +92,8 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       spawn,
       resolveGitBinaryForSpawn,
       createFsSearchRuntime,
-      openchamberDataDir,
-      openchamberUserConfigRoot,
+      mittrcraftDataDir,
+      mittrcraftUserConfigRoot,
       normalizeDirectoryPath,
       resolveProjectDirectory,
       resolveOptionalProjectDirectory,
@@ -118,10 +118,10 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       projectConfigRuntime,
       scheduledTasksRuntime,
       scheduledTaskService,
-      openChamberSessionService,
-      openChamberControlService,
+      mittrCraftSessionService,
+      mittrCraftControlService,
       waitForOpenCodeReady,
-      getOpenChamberEventClients,
+      getMittrCraftEventClients,
       writeSseEvent,
       emitSessionCreatedEvent,
       permissionAutoAcceptRuntime,
@@ -159,7 +159,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       fsPromises,
       path,
       crypto,
-      openchamberDataDir,
+      mittrcraftDataDir,
       sanitizeProjects,
       readSettingsFromDiskMigrated,
       persistSettings,
@@ -174,11 +174,11 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       projectConfigRuntime,
       scheduledTasksRuntime,
       scheduledTaskService,
-      getOpenChamberEventClients,
+      getMittrCraftEventClients,
       writeSseEvent,
     });
 
-    registerOpenChamberSessionRoutes(app, {
+    registerMittrCraftSessionRoutes(app, {
       readSettingsFromDiskMigrated,
       sanitizeProjects,
       validateDirectoryPath,
@@ -186,10 +186,10 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       getOpenCodeAuthHeaders,
       waitForOpenCodeReady,
       emitSessionCreatedEvent,
-      sessionService: openChamberSessionService,
+      sessionService: mittrCraftSessionService,
     });
 
-    registerOpenChamberControlRoutes(app, { controlService: openChamberControlService });
+    registerMittrCraftControlRoutes(app, { controlService: mittrCraftControlService });
 
     registerMarkdownImageGrantRoutes(app, {
       fsPromises,
@@ -302,12 +302,12 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     registerMagicPromptRoutes(app, {
       fsPromises,
       path,
-      openchamberDataDir,
+      mittrcraftDataDir,
     });
     registerSessionFoldersRoutes(app, {
       fsPromises,
       path,
-      openchamberDataDir,
+      mittrcraftDataDir,
     });
     registerFsRoutes(app, {
       os,
@@ -319,7 +319,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       resolveProjectDirectory,
       buildAugmentedPath,
       resolveGitBinaryForSpawn,
-      openchamberUserConfigRoot,
+      mittrcraftUserConfigRoot,
     });
   };
 

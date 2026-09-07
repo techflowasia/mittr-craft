@@ -282,7 +282,7 @@ export const createOpenCodeEnvRuntime = (deps) => {
   const bundledOpenCodeCliCandidates = () => {
     const names = process.platform === 'win32' ? ['opencode.exe'] : ['opencode'];
     const roots = [
-      process.env.OPENCHAMBER_BUNDLED_OPENCODE_CLI_DIR,
+      process.env.MITTRCRAFT_BUNDLED_OPENCODE_CLI_DIR,
       typeof process.resourcesPath === 'string' ? path.join(process.resourcesPath, 'opencode-cli') : null,
     ]
       .map((value) => (typeof value === 'string' ? value.trim() : ''))
@@ -355,8 +355,8 @@ export const createOpenCodeEnvRuntime = (deps) => {
     const explicit = [
       process.env.OPENCODE_BINARY,
       process.env.OPENCODE_PATH,
-      process.env.OPENCHAMBER_OPENCODE_PATH,
-      process.env.OPENCHAMBER_OPENCODE_BIN,
+      process.env.MITTRCRAFT_OPENCODE_PATH,
+      process.env.MITTRCRAFT_OPENCODE_BIN,
     ]
       .map(stripWrappingQuotes)
       .filter(Boolean);
@@ -477,7 +477,7 @@ export const createOpenCodeEnvRuntime = (deps) => {
   };
 
   const resolveNodeCliPath = () => {
-    const explicit = [process.env.NODE_BINARY, process.env.OPENCHAMBER_NODE_BINARY]
+    const explicit = [process.env.NODE_BINARY, process.env.MITTRCRAFT_NODE_BINARY]
       .map((v) => (typeof v === 'string' ? v.trim() : ''))
       .filter(Boolean);
 
@@ -542,7 +542,7 @@ export const createOpenCodeEnvRuntime = (deps) => {
   };
 
   const resolveBunCliPath = () => {
-    const explicit = [process.env.BUN_BINARY, process.env.OPENCHAMBER_BUN_BINARY]
+    const explicit = [process.env.BUN_BINARY, process.env.MITTRCRAFT_BUN_BINARY]
       .map((v) => (typeof v === 'string' ? v.trim() : ''))
       .filter(Boolean);
 
@@ -1116,7 +1116,7 @@ export const createOpenCodeEnvRuntime = (deps) => {
       return state.resolvedGitBinary;
     }
 
-    const explicit = [process.env.GIT_BINARY, process.env.OPENCHAMBER_GIT_BINARY]
+    const explicit = [process.env.GIT_BINARY, process.env.MITTRCRAFT_GIT_BINARY]
       .map((value) => (typeof value === 'string' ? value.trim() : ''))
       .filter(Boolean);
     for (const candidate of explicit) {

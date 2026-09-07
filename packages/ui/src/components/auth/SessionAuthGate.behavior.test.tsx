@@ -227,8 +227,8 @@ mock.module('@/components/ui', () => ({
   },
 }));
 
-mock.module('@/components/ui/OpenChamberLogo', () => ({
-  OpenChamberLogo: () => 'logo',
+mock.module('@/components/ui/MittrCraftLogo', () => ({
+  MittrCraftLogo: () => 'logo',
 }));
 
 mock.module('@/components/icon/Icon', () => ({

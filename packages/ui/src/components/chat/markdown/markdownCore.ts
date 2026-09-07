@@ -143,7 +143,7 @@ const renderMarkdownImageLabel = ({
 }): string => {
   const label = getMarkdownImageFilename(href ?? '', text);
   const titleAttr = title ? ` title="${escapeAttr(title)}"` : '';
-  return `<span${titleAttr} class="inline-flex items-center gap-1 align-text-bottom text-muted-foreground" data-openchamber-markdown-image-label="true">${escapeAttr(label)}</span>`;
+  return `<span${titleAttr} class="inline-flex items-center gap-1 align-text-bottom text-muted-foreground" data-mittrcraft-markdown-image-label="true">${escapeAttr(label)}</span>`;
 };
 
 export const extractMarkdownImageCandidates = (
@@ -335,7 +335,7 @@ const createParser = (imageMode: MarkdownImageMode) => new Marked().use({
       const target = href ?? '';
       const agentName = parseAgentHref(target);
       if (agentName) {
-        return `<a href="${escapeAttr(buildAgentMentionUrl(agentName))}" data-openchamber-agent-mention="true" class="text-primary hover:underline" target="_blank" rel="noopener noreferrer">${text}</a>`;
+        return `<a href="${escapeAttr(buildAgentMentionUrl(agentName))}" data-mittrcraft-agent-mention="true" class="text-primary hover:underline" target="_blank" rel="noopener noreferrer">${text}</a>`;
       }
       const skillName = parseSkillHref(target);
       if (skillName) {
