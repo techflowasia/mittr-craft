@@ -59,7 +59,12 @@ describe('audit record', () => {
     record.addToolUse('edit');
     record.addToolUse('edit');
     record.addToolUse('bash');
-    expect(record.finish('completed').actions).toEqual({ edit: 2, bash: 1 });
+    // The broker accepts [{ tool, count }]. An object map is dropped silently by
+    // its allowlist, which would look like a working audit with no tool data.
+    expect(record.finish('completed').actions).toEqual([
+      { tool: 'edit', count: 2 },
+      { tool: 'bash', count: 1 },
+    ]);
   });
 
   it('keeps typed instructions in full and in order', () => {
@@ -137,8 +142,11 @@ export function createAuditRecord({ now = Date.now } = {}) {
       repository,
       turns,
       tokens,
-      actions,
-      prompts,
+      // Counted in an object because that is cheap to accumulate, emitted as an
+      // array because that is the shape the broker accepts. Capped at 100
+      // entries and 200 prompts to match its limits.
+      actions: Object.entries(actions).slice(0, 100).map(([tool, count]) => ({ tool, count })),
+      prompts: prompts.slice(0, 200).map(({ at, text }) => ({ at, text: text.slice(0, 4000) })),
       outcome,
     }),
   };
@@ -188,7 +196,7 @@ const record = {
   repository: 'techflowasia/mittr-craft',
   turns: 2,
   tokens: 2000,
-  actions: { edit: 2 },
+  actions: [{ tool: 'edit', count: 2 }],
   prompts: [{ at: 100, text: 'do the thing' }],
   outcome: 'completed',
 };
@@ -212,12 +220,15 @@ describe('audit serialiser', () => {
     expect(JSON.stringify(serialized)).not.toContain('secret');
   });
 
-  it('keeps action names but never action arguments', () => {
+  it('keeps action names but strips anything else off an action', () => {
     const serialized = serializeAuditRecord({
       ...record,
-      actions: { bash: 3 },
+      actions: [{ tool: 'bash', count: 3, args: { command: 'rm -rf /' } }],
     });
-    expect(serialized.actions).toEqual({ bash: 3 });
+    // The broker drops `args` too, but relying on that would mean the command
+    // still left this machine. Strip it here, at the last point we control.
+    expect(serialized.actions).toEqual([{ tool: 'bash', count: 3 }]);
+    expect(JSON.stringify(serialized)).not.toContain('rm -rf');
   });
 
   it('keeps typed prompts intact', () => {
@@ -228,7 +239,7 @@ describe('audit serialiser', () => {
     // Adding a field here without discussing it is the failure mode this guards
     // against. If this assertion fails, read spec section 8 before changing it.
     expect([...AUDIT_FIELDS].sort()).toEqual([
-      'actions', 'endedAt', 'outcome', 'prompts', 'repository', 'startedAt', 'tokens', 'turns',
+      'actions', 'endedAt', 'model', 'outcome', 'prompts', 'repository', 'startedAt', 'tokens', 'turns',
     ]);
   });
 });
@@ -252,6 +263,7 @@ export const AUDIT_FIELDS = Object.freeze([
   'startedAt',
   'endedAt',
   'repository',
+  'model',
   'turns',
   'tokens',
   'actions',
@@ -264,6 +276,17 @@ export function serializeAuditRecord(record) {
   for (const field of AUDIT_FIELDS) {
     serialized[field] = record?.[field] ?? null;
   }
+
+  // Actions and prompts are the two fields carrying nested objects, so they get
+  // rebuilt from named keys rather than copied. Copying would let an `args` key
+  // ride along inside an entry and defeat the allowlist one level down.
+  if (Array.isArray(serialized.actions)) {
+    serialized.actions = serialized.actions.map(({ tool, count }) => ({ tool, count }));
+  }
+  if (Array.isArray(serialized.prompts)) {
+    serialized.prompts = serialized.prompts.map(({ at, text }) => ({ at, text }));
+  }
+
   return serialized;
 }
 ```
@@ -435,7 +458,7 @@ describe('mittr audit routes', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
     expect(body.prompts[0].text).toBe('do the thing');
-    expect(body.actions).toEqual({ edit: 1 });
+    expect(body.actions).toEqual([{ tool: 'edit', count: 1 }]);
     expect(body.repository).toBe('techflowasia/mittr-craft');
   });
 

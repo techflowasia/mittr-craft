@@ -12,6 +12,22 @@
 
 **Depends on:** `docs/plans/2026-09-07-loopback-shim.md` (tasks 1-6 complete)
 
+**Wire contract:** `docs/specs/2026-09-07-mittr-broker-wire-contract.md`. Two
+things in it change this plan and are carried through the tasks below:
+
+- **The broker does not echo a client `state`.** Its callback carries an opaque
+  state of its own and hands the desktop `<redirect_uri>?code=<code>`. The code
+  is bound to the verifier, and a code minted against another challenge cannot be
+  redeemed with ours, so the verifier is what actually protects the exchange.
+  Task 1 keeps `state` only as a local marker that a sign-in is in progress, and
+  `verifyCallback` no longer requires it in the URL.
+- **A code is spent on first presentation, valid or not, and expires in ten
+  minutes.** Never retry an exchange; restart sign-in.
+
+Refresh moves into this plan rather than the next one: `POST /auth/desktop/refresh`
+exists, the access token lasts an hour, and **refresh rotates both tokens**, so
+two concurrent refreshes race and one loses. Task 7 adds it, serialised.
+
 ## Global Constraints
 
 - Packaged builds only. No `.env` a developer edits. (spec §4.1)
@@ -56,36 +72,29 @@ describe('sign-in transaction', () => {
     expect(tx.challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 
-  it('accepts a callback carrying the matching state', () => {
+  it('accepts a callback carrying a code', () => {
     const tx = txAt(0);
-    const url = `mittrcraft://auth/callback?state=${tx.state}&code=abc123`;
-    expect(verifyCallback(tx, url, { now: () => 1000 })).toEqual({ code: 'abc123' });
-  });
-
-  it('rejects a callback whose state belongs to another transaction', () => {
-    const tx = txAt(0);
-    const other = txAt(0);
-    const url = `mittrcraft://auth/callback?state=${other.state}&code=abc123`;
-    expect(() => verifyCallback(tx, url, { now: () => 1000 })).toThrow(/state/);
+    expect(verifyCallback(tx, 'mittrcraft://auth/callback?code=abc123', { now: () => 1000 }))
+      .toEqual({ code: 'abc123' });
   });
 
   it('rejects a callback with no code', () => {
     const tx = txAt(0);
-    expect(() => verifyCallback(tx, `mittrcraft://auth/callback?state=${tx.state}`, { now: () => 1000 }))
+    expect(() => verifyCallback(tx, 'mittrcraft://auth/callback', { now: () => 1000 }))
       .toThrow(/code/);
   });
 
   it('rejects a callback on the wrong scheme or path', () => {
     const tx = txAt(0);
-    expect(() => verifyCallback(tx, `https://evil.test/callback?state=${tx.state}&code=x`, { now: () => 1 }))
+    expect(() => verifyCallback(tx, 'https://evil.test/callback?code=x', { now: () => 1 }))
       .toThrow(/callback/);
-    expect(() => verifyCallback(tx, `mittrcraft://connect/callback?state=${tx.state}&code=x`, { now: () => 1 }))
+    expect(() => verifyCallback(tx, 'mittrcraft://connect/callback?code=x', { now: () => 1 }))
       .toThrow(/callback/);
   });
 
   it('rejects a callback that arrives after the transaction expires', () => {
     const tx = txAt(0);
-    const url = `mittrcraft://auth/callback?state=${tx.state}&code=abc123`;
+    const url = 'mittrcraft://auth/callback?code=abc123';
     expect(() => verifyCallback(tx, url, { now: () => 10 * 60 * 1000 + 1 })).toThrow(/expired/);
   });
 });
@@ -134,11 +143,10 @@ export function verifyCallback(transaction, callbackUrl, { now = Date.now } = {}
     throw new Error('Sign-in transaction expired');
   }
 
-  const state = url.searchParams.get('state') ?? '';
-  if (!state || state !== transaction.state) {
-    throw new Error('Sign-in callback state does not match the pending transaction');
-  }
-
+  // The broker does not echo our state; it keeps an opaque one of its own and
+  // returns only the code. The code is bound to the challenge we sent, so a code
+  // minted for anybody else cannot be redeemed with our verifier — that binding,
+  // not a matching state, is what protects this exchange.
   const code = (url.searchParams.get('code') ?? '').trim();
   if (!code) throw new Error('Sign-in callback carried no code');
 
@@ -463,7 +471,6 @@ describe('mittr auth routes', () => {
 
     const opened = new URL(openExternal.mock.calls[0][0]);
     expect(opened.origin).toBe('https://mittr.test');
-    expect(opened.searchParams.get('state')).toMatch(/^[0-9a-f]{32}$/);
     expect(opened.searchParams.get('code_challenge')).toBeTruthy();
     expect(opened.searchParams.get('redirect_uri')).toBe('mittrcraft://auth/callback');
   });
@@ -478,11 +485,10 @@ describe('mittr auth routes', () => {
 
     const { app, sessionStore, openExternal } = createApp({ fetchImpl });
     await request(app).post('/api/mittr/auth/start').send({}).expect(200);
-    const state = new URL(openExternal.mock.calls[0][0]).searchParams.get('state');
 
     await request(app)
       .post('/api/mittr/auth/callback')
-      .send({ url: `mittrcraft://auth/callback?state=${state}&code=abc` })
+      .send({ url: 'mittrcraft://auth/callback?code=abc' })
       .expect(200, { signedIn: true, displayName: 'Chaiwat' });
 
     expect(sessionStore.read().accessToken).toBe('at-1');
@@ -494,7 +500,7 @@ describe('mittr auth routes', () => {
     await request(app).post('/api/mittr/auth/start').send({}).expect(200);
     await request(app)
       .post('/api/mittr/auth/callback')
-      .send({ url: 'mittrcraft://auth/callback?state=deadbeefdeadbeefdeadbeefdeadbeef&code=abc' })
+      .send({ url: 'mittrcraft://auth/callback?code=abc' })
       .expect(400);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -505,8 +511,7 @@ describe('mittr auth routes', () => {
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
     const { app, openExternal } = createApp({ fetchImpl });
     await request(app).post('/api/mittr/auth/start').send({}).expect(200);
-    const state = new URL(openExternal.mock.calls[0][0]).searchParams.get('state');
-    const url = `mittrcraft://auth/callback?state=${state}&code=abc`;
+    const url = 'mittrcraft://auth/callback?code=abc';
 
     await request(app).post('/api/mittr/auth/callback').send({ url }).expect(200);
     await request(app).post('/api/mittr/auth/callback').send({ url }).expect(400);
@@ -551,7 +556,6 @@ export function registerMittrAuthRoutes(app, {
   app.post('/api/mittr/auth/start', async (_req, res) => {
     pending = createTransaction();
     const url = new URL('/auth/desktop/start', brokerBaseUrl);
-    url.searchParams.set('state', pending.state);
     url.searchParams.set('code_challenge', pending.challenge);
     url.searchParams.set('redirect_uri', REDIRECT_URI);
     await openExternal(url.toString());
@@ -887,9 +891,140 @@ git commit -m "feat(mittr): gate the application behind Mittr sign-in"
 
 ---
 
+---
+
+### Task 7: Refresh, serialised
+
+The access token lasts an hour and refresh rotates both tokens, so a second
+refresh started while the first is in flight redeems a token that is already
+dead. One in-flight refresh at a time, shared by every caller.
+
+**Files:**
+- Modify: `packages/web/server/lib/mittr/auth-routes.js`
+- Modify: `packages/web/server/lib/mittr/auth-routes.test.js`
+
+**Interfaces:**
+- Produces: `ensureFreshSession() -> Promise<session | null>`, exported from the
+  module registering the routes so the shim can call it before forwarding.
+
+- [ ] **Step 1: Write the failing test**
+
+```javascript
+it('refreshes once when two callers race', async () => {
+  let resolveRefresh;
+  const fetchImpl = vi.fn().mockImplementation(() => new Promise((resolve) => {
+    resolveRefresh = () => resolve(new Response(JSON.stringify({
+      accessToken: 'at-2', refreshToken: 'rt-2', expiresAt: Date.now() + 3_600_000,
+      subject: { userId: 'u1', displayName: 'C' },
+    }), { status: 201, headers: { 'content-type': 'application/json' } }));
+  }));
+
+  const sessionStore = memoryStore();
+  sessionStore.write({ accessToken: 'at-1', refreshToken: 'rt-1', expiresAt: Date.now() - 1 });
+  const { ensureFreshSession } = buildAuth({ fetchImpl, sessionStore });
+
+  const both = Promise.all([ensureFreshSession(), ensureFreshSession()]);
+  resolveRefresh();
+  const [first, second] = await both;
+
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+  expect(first.accessToken).toBe('at-2');
+  expect(second.accessToken).toBe('at-2');
+});
+
+it('clears the session when the refresh token is rejected', async () => {
+  const fetchImpl = vi.fn().mockResolvedValue(new Response('', { status: 401 }));
+  const sessionStore = memoryStore();
+  sessionStore.write({ accessToken: 'at-1', refreshToken: 'rt-1', expiresAt: Date.now() - 1 });
+  const { ensureFreshSession } = buildAuth({ fetchImpl, sessionStore });
+
+  await expect(ensureFreshSession()).resolves.toBeNull();
+  expect(sessionStore.read()).toBeNull();
+});
+
+it('does not refresh a session that is still valid', async () => {
+  const fetchImpl = vi.fn();
+  const sessionStore = memoryStore();
+  sessionStore.write({ accessToken: 'at-1', refreshToken: 'rt-1', expiresAt: Date.now() + 3_600_000 });
+  const { ensureFreshSession } = buildAuth({ fetchImpl, sessionStore });
+
+  await expect(ensureFreshSession()).resolves.toMatchObject({ accessToken: 'at-1' });
+  expect(fetchImpl).not.toHaveBeenCalled();
+});
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+```bash
+bun run --cwd packages/web test -- auth-routes
+```
+
+Expected: FAIL, `ensureFreshSession` is not exported.
+
+- [ ] **Step 3: Write the implementation**
+
+```javascript
+  // One in-flight refresh, shared. The broker kills the old refresh token the
+  // moment it answers, so a second concurrent call would present a dead token
+  // and sign the developer out in the middle of their work.
+  let refreshing = null;
+  const REFRESH_MARGIN_MS = 60_000;
+
+  const ensureFreshSession = async () => {
+    const session = sessionStore.read();
+    if (!session?.refreshToken) return session ?? null;
+    if (typeof session.expiresAt === 'number' && session.expiresAt - Date.now() > REFRESH_MARGIN_MS) {
+      return session;
+    }
+
+    if (!refreshing) {
+      refreshing = (async () => {
+        try {
+          const response = await fetchImpl(new URL('/auth/desktop/refresh', brokerBaseUrl).toString(), {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ refresh_token: session.refreshToken }),
+          });
+          if (!response.ok) {
+            sessionStore.clear();
+            return null;
+          }
+          const refreshed = await response.json();
+          sessionStore.write(refreshed);
+          return refreshed;
+        } catch {
+          // A network failure is not a rejected token: keep the session and let
+          // the caller surface "cannot reach Mittr" instead of signing out.
+          return sessionStore.read();
+        } finally {
+          refreshing = null;
+        }
+      })();
+    }
+
+    return refreshing;
+  };
+```
+
+Return `ensureFreshSession` from `registerMittrAuthRoutes` and have the shim call
+it in place of `sessionStore.read()`.
+
+- [ ] **Step 4: Run the tests**
+
+```bash
+bun run --cwd packages/web test -- auth-routes
+```
+
+Expected: 9 passing.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add packages/web/server/lib/mittr/auth-routes.js packages/web/server/lib/mittr/auth-routes.test.js
+git commit -m "feat(mittr): refresh the session once when callers race"
+```
+
+
 ## What this plan leaves to later plans
 
-- **Token refresh.** A session that expires mid-task surfaces as a 401 from the
-  shim today. Silent refresh belongs with the broker contract and lands with
-  plan 3 once the broker exists to refresh against.
 - **Catalog.** Plan 3. **Audit.** Plan 4. **Updates.** Plan 5.
