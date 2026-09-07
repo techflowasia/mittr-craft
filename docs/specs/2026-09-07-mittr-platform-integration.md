@@ -326,3 +326,13 @@ tests and must be checked by using the product.
 2. Whether the entitlement is per-person or derived from an existing group.
 3. What an admin sees when a developer has disabled an organisation connector —
    whether that is visible at all, and whether it should be.
+
+4. **Whether Mittr Memory applies to desktop traffic.** Found while planning the
+   broker: `apps/api/src/openai/openai.controller.ts` in the `mittr` repository
+   calls `memory.autoExtract(userId, lastUserText)` after every turn, and the API
+   Keys screen tells key holders that a key "always uses Memory". Riding that
+   surface unchanged would persist prompt text — which in an agent loop is often
+   tool output and file contents — into a store outside this design's audit trail
+   and its 90-day retention, contradicting §8. The broker plan turns Memory off
+   for desktop traffic, but that is a product decision for whoever owns Memory.
+   If it must stay on, §8 is the section that changes, not the implementation.
