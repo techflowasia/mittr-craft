@@ -34,32 +34,81 @@
 
 ---
 
-## Read this first: a conflict between this repository and the design
+## Read this first: what the implementation found
 
-`openai.controller.ts` calls `extractAfter()` after every turn, which calls
-`this.memory.autoExtract(userId, userText)` — a fire-and-forget write of the last
-user text into that person's Mittr memory. The API Keys screen states the same
-thing to the person issuing a key: *"always uses Memory"*.
+**Status: implemented in `techflowasia/mittr` on `feat/desktop-surface` (7 commits, not yet
+pushed).** Two things in this plan were wrong about the target repository. Both were checked
+against the real code before anything was written, and both are corrected below rather than in
+the commits, so the next reader of this plan does not re-derive them.
 
-For a chat client that is a feature. For MittrCraft it is a problem, for two
-reasons:
+### 1. The Memory conflict is smaller than this plan claimed — and points the other way
 
-1. **It stores code.** The design promises that assembled prompts and file
-   contents never reach Mittr (spec §8). `autoExtract` would persist them into a
-   long-term store that sits outside the audit trail and outside its 90-day
-   retention.
-2. **The "last user text" is often not a person talking.** In an agent loop the
-   final user-role message is frequently tool output or injected context, so what
-   gets extracted is machine-generated text, including file contents, rather than
-   anything a person said.
+This plan said `openai.controller.ts` calls `memory.autoExtract(userId, lastUserText)` after
+every turn, that riding the surface unchanged would persist code, and that turning Memory off
+for desktop traffic is a product decision needing the Memory owner's sign-off.
 
-`injectMemory()` is the mirror image: it unshifts recalled memory as a system
-message. In a coding agent that spends context on unrelated recollections and can
-steer the model away from the task.
+The first half is right. The conclusion is not. `memoryOwnerId()` reads:
 
-**Task 3 turns both off for desktop traffic.** This needs a decision from
-whoever owns Memory before it is implemented, because it makes desktop keys
-behave differently from every other key.
+```ts
+private memoryOwnerId(req: Request): string | null {
+  const grant = this.grantOf(req);
+  if (grant) return grant.ownerUserId;
+  return keyMemoryEnabled(req) ? getUserId(req) : null;
+}
+```
+
+A **governed key** always uses Memory — the grant is present, so its owner is returned
+unconditionally, and `OwnerIssuanceOptionsSchema` pins this with `memoryRequired: z.literal(true)`.
+But with **no grant and no `req.apiKey`**, `keyMemoryEnabled` is false and this returns `null`.
+**Memory is already off for session-authenticated requests**, and desktop traffic authenticates
+as a session.
+
+So the real risk is the inverse of the one described. If the desktop path had resolved the
+platform key by attaching an `externalKeyGrant` to the request — the obvious reading of "resolve
+the platform credential server-side" — Memory would have switched **on**, and every developer's
+tool output and file contents would have been extracted into the platform key owner's long-term
+store. That is a bug to avoid, not a policy to change.
+
+**Decision (owner, 2026-09-07): do not attach a grant.** Desktop traffic carries no
+`externalKeyGrant`, so `memoryOwnerId()` returns `null` by the rule that already exists. No new
+special case, no divergence from how any existing key behaves, and nothing to escalate to
+whoever owns Memory, because no existing behaviour changes. The platform key's grants are
+enforced on a separate path that does not touch the request's grant field.
+
+Spec §14 question 4 is answered by this and can be closed.
+
+### 2. The platform key is not forwarded to the gateway
+
+Task 3 below asserts `upstream.lastRequest.headers.authorization === Bearer ${platformKeySecret}`.
+That does not describe this platform. In `mittr`, the credential that goes upstream to LiteLLM
+comes from `this.providers.authHeaders(providerKey)` inside `MastraService.passthrough` — it is
+the gateway credential, it is configured per provider, and it already never leaves the server.
+
+The platform key is a different object: it is a **Mittr** governed key, the kind a client
+presents *to* Mittr. Its job in this design is to carry the policy that says which agents
+MittrCraft may use. It is never sent onward to the gateway, so there is no request whose
+`authorization` header could equal it.
+
+The **intent** behind that assertion is implementable exactly, and is what was built: the client
+never holds or names a credential, the server resolves the policy itself, and nothing
+credential-shaped appears in a response. The tests assert those three things instead.
+
+### What else changed against the plan as written
+
+- **Entitlement** (question 3 below, spec §14 question 2) is `ExternalResourceEligibilityService.requireAllowed(userId, 'agent', alias)` —
+  the existing per-person, admin-decided, default-deny grant that governed keys already go
+  through. It is checked live, so revoking one person takes effect on the next request without
+  rotating the key every developer shares. No new table and no new admin screen.
+- **Update artifacts** (question 2 below, spec §14 question 1) are served from a directory this
+  API owns, with the root configurable so it can be repointed without a code change.
+- The service signatures sketched below do not match the real ones (`issue(actor, input)`,
+  `list()` returning `{ policies }`, everything behind a repository in `@mittr/database`). The
+  sketches were kept as intent; the committed tests are written against the real shapes.
+- A **refresh** endpoint was added alongside `exchange`. The plan's own return type includes a
+  `refreshToken`, and spec §6.2 requires silent refresh, so leaving it out would have shipped a
+  token nothing could redeem.
+- The audit **retention sweep** is wired to a running timer. `purgeExpired` with no caller would
+  have made "retention is ninety days" false while looking implemented.
 
 ---
 
@@ -80,7 +129,7 @@ browser at Mittr, and Mittr hands back a one-time code on a custom URL scheme.
 - Produces: `GET /auth/desktop/start?state&code_challenge&redirect_uri` (public, redirects into the existing Microsoft flow)
 - Produces: `POST /auth/desktop/exchange { code, code_verifier, redirect_uri }` (public) returning `{ accessToken, refreshToken, expiresAt, subject: { userId, displayName } }`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 import { DesktopAuthService } from './desktop-auth.service';
@@ -133,7 +182,7 @@ describe('DesktopAuthService', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 pnpm --filter api test -- desktop-auth
@@ -141,7 +190,7 @@ pnpm --filter api test -- desktop-auth
 
 Expected: FAIL, cannot resolve `./desktop-auth.service`.
 
-- [ ] **Step 3: Implement the service and controller**
+- [x] **Step 3: Implement the service and controller**
 
 The verifier is never sent to Mittr; only its SHA-256 is, at sign-in start. A
 process that intercepts the deep link therefore holds a code it cannot redeem.
@@ -152,7 +201,7 @@ Mount the controller with `@Public()` on both routes, because a client that is
 signing in has no session yet by definition. Reuse the existing better-auth
 Microsoft flow to establish who the person is; do not add a second identity path.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 ```bash
 pnpm --filter api test -- desktop-auth
@@ -160,7 +209,7 @@ pnpm --filter api test -- desktop-auth
 
 Expected: 5 passing.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/desktop apps/api/src/app.module.ts
@@ -181,7 +230,7 @@ expire, and attribution comes from the session on each request.
 - Modify: `apps/api/src/keys/external-api-key.service.spec.ts`
 - Modify: `apps/api/src/keys/keys.controller.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 describe('platform keys', () => {
@@ -216,7 +265,7 @@ describe('platform keys', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 pnpm --filter api test -- external-api-key.service
@@ -224,7 +273,7 @@ pnpm --filter api test -- external-api-key.service
 
 Expected: FAIL, `kind` is not part of the draft type.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add the `platform` kind alongside the existing personal one. Two active keys per
 label is the rotation window: publish the new one, move traffic, revoke the old.
@@ -235,7 +284,7 @@ Revocation of a platform key cuts every desktop at once. Per-person removal
 belongs to the entitlement check in Task 3, not here, and the admin screen should
 say so where the revoke button lives.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 ```bash
 pnpm --filter api test -- external-api-key.service
@@ -243,7 +292,7 @@ pnpm --filter api test -- external-api-key.service
 
 Expected: 5 new tests passing and the existing suite still green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/keys
@@ -258,25 +307,37 @@ git commit -m "feat(keys): add a non-expiring platform key with a rotation windo
 - Modify: `apps/api/src/openai/openai.controller.ts`
 - Modify: `apps/api/src/openai/openai.controller.spec.ts` (create if absent)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 describe('desktop traffic on the completions surface', () => {
-  it('authorises a desktop session and resolves the platform key server-side', async () => {
+  // Corrected: the platform key is a Mittr key a client presents TO Mittr, not something
+  // Mittr forwards to the gateway (the gateway credential is providers.authHeaders(), already
+  // server-side). What matters is that the CLIENT never names or holds one.
+  it('authorises a desktop session without the client naming a credential', async () => {
     const res = await request(app.getHttpServer())
       .post('/v1/chat/completions')
       .set('authorization', `Bearer ${desktopSessionToken}`)
       .send({ model: 'mittr-craft-1-0', messages: [{ role: 'user', content: 'hi' }] });
     expect(res.status).toBe(200);
-    expect(upstream.lastRequest.headers.authorization).toBe(`Bearer ${platformKeySecret}`);
+    // Looked up here, never sent by the desktop.
+    expect(desktopAccess.platformPolicyFor).toHaveBeenCalledWith('mittr-craft-1-0');
   });
 
-  it('never lets the platform credential reach the client', async () => {
+  it('never lets a credential reach the client', async () => {
     const res = await request(app.getHttpServer())
       .post('/v1/chat/completions')
       .set('authorization', `Bearer ${desktopSessionToken}`)
       .send({ model: 'mittr-craft-1-0', messages: [] });
-    expect(JSON.stringify(res.body)).not.toContain(platformKeySecret);
+    expect(JSON.stringify(res.body)).not.toMatch(/mitr_|sk-|ekp-/);
+  });
+
+  it('refuses a model the platform key was not granted', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/chat/completions')
+      .set('authorization', `Bearer ${desktopSessionToken}`)
+      .send({ model: 'some-other-agent', messages: [] });
+    expect(res.status).toBe(403);
   });
 
   it('refuses a person without the MittrCraft entitlement', async () => {
@@ -315,7 +376,7 @@ describe('desktop traffic on the completions surface', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 pnpm --filter api test -- openai.controller
@@ -323,14 +384,16 @@ pnpm --filter api test -- openai.controller
 
 Expected: FAIL, the surface rejects a session token.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Three behaviours change, and only for desktop traffic:
 
 1. A desktop session is accepted as a credential, and the platform key is looked
    up server-side. The client never names a key.
-2. `injectMemory` and `extractAfter` are skipped. See the conflict section above;
-   this is why the tests assert `recall` and `autoExtract` were never called.
+2. Memory is not touched — but NOT by skipping `injectMemory`/`extractAfter`. See the
+   corrections at the top: a governed grant is deliberately not attached to the request, so
+   `memoryOwnerId()` returns null by the rule that already exists. The tests assert `recall`
+   and `autoExtract` were never called; nothing about any existing key changes.
 3. `cache-control: no-store` goes upstream. The gateway caches on
    `(model, messages)`, and an agent that retries with identical input would get
    its previous answer back instead of reconsidering — a loop nobody can see.
@@ -338,7 +401,7 @@ Three behaviours change, and only for desktop traffic:
 The existing API-key path must keep working unchanged, memory included. The last
 test exists to make a regression there impossible to miss.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 ```bash
 pnpm --filter api test -- openai.controller
@@ -346,7 +409,7 @@ pnpm --filter api test -- openai.controller
 
 Expected: 6 passing, and the existing controller suite still green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/openai
@@ -366,7 +429,7 @@ git commit -m "feat(desktop): authorise desktop sessions without Memory or upstr
 - Produces: `GET /desktop/catalog` returning
   `{ bundleVersion, issuedAt, subject, models[], mcp[], skills[], knowledge[] }`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 describe('DesktopCatalogService', () => {
@@ -398,7 +461,7 @@ describe('DesktopCatalogService', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 pnpm --filter api test -- desktop-catalog
@@ -406,7 +469,7 @@ pnpm --filter api test -- desktop-catalog
 
 Expected: FAIL, cannot resolve `./desktop-catalog.service`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 An absent field and an empty array must stay distinguishable all the way to the
 wire. This is the `studio_agents` lesson: `null` meaning "never configured" and
@@ -416,7 +479,7 @@ for everybody. The desktop reads these as different states.
 `bundleVersion` is what lets a client skip work when nothing changed. It must
 increase on every admin edit, including a deletion.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 ```bash
 pnpm --filter api test -- desktop-catalog
@@ -424,7 +487,7 @@ pnpm --filter api test -- desktop-catalog
 
 Expected: 5 passing.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/desktop
@@ -445,7 +508,7 @@ git commit -m "feat(desktop): serve a per-person catalog of aliases and shared t
 - Produces: `POST /desktop/audit` accepting
   `{ startedAt, endedAt, repository, turns, tokens, actions, prompts, outcome }`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 describe('DesktopAuditService', () => {
@@ -488,7 +551,7 @@ describe('DesktopAuditService', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 pnpm --filter api test -- desktop-audit
@@ -496,7 +559,7 @@ pnpm --filter api test -- desktop-audit
 
 Expected: FAIL, cannot resolve `./desktop-audit.service`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Accept named fields and ignore the rest, rather than stripping known-bad ones. A
 field that arrives without being named here is dropped by default, which is what
@@ -505,7 +568,7 @@ keeps a future desktop change from quietly persisting code (spec §11.3).
 Retention is ninety days with automatic deletion. The records contain what people
 typed, so keeping them indefinitely turns a usage log into a personnel file.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 ```bash
 pnpm --filter api test -- desktop-audit
@@ -513,7 +576,7 @@ pnpm --filter api test -- desktop-audit
 
 Expected: 5 passing.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/desktop
@@ -528,7 +591,7 @@ git commit -m "feat(desktop): record audit entries under the verified identity"
 - Create: `apps/api/src/desktop/desktop-updates.controller.ts`
 - Create: `apps/api/src/desktop/desktop-updates.controller.spec.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```typescript
 describe('desktop update feed', () => {
@@ -552,7 +615,7 @@ describe('desktop update feed', () => {
 });
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 pnpm --filter api test -- desktop-updates
@@ -560,7 +623,7 @@ pnpm --filter api test -- desktop-updates
 
 Expected: FAIL, cannot resolve `./desktop-updates.controller`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Serve manifests and installers from a directory this endpoint owns, gated by the
 same desktop session. Resolve every requested path and reject anything that lands
@@ -569,7 +632,7 @@ outside that directory.
 Publishing an installer without its manifest makes it invisible to every client,
 so the release job must upload both.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 ```bash
 pnpm --filter api test -- desktop-updates
@@ -577,7 +640,8 @@ pnpm --filter api test -- desktop-updates
 
 Expected: 3 passing.
 
-- [ ] **Step 5: Run the whole suite and open the pull request**
+- [ ] **Step 5: Run the whole suite and open the pull request** — suite run (5,579 passing);
+  the push and PR are held pending the owner's go-ahead.
 
 ```bash
 pnpm --filter api test
@@ -591,13 +655,28 @@ Open the pull request against `develop`.
 
 ---
 
-## Questions for the platform team, in order of how much they block
+## Questions for the platform team — all three answered (owner, 2026-09-07)
 
-1. **Memory for desktop traffic.** Task 3 turns it off. This is a real behaviour
-   change and it needs an owner's decision, not an implementer's. If Memory must
-   stay on, the design in `mittr-craft` changes rather than this plan.
-2. **Where update artifacts live.** Task 6 assumes a directory this API serves.
-   If they belong on object storage behind a signed URL instead, Task 6 changes
-   shape and so does plan 5 on the MittrCraft side.
-3. **How the MittrCraft entitlement is expressed** — a per-person grant, or
-   membership of a group that already exists.
+1. ~~**Memory for desktop traffic.**~~ **Closed, and it was not the decision this plan
+   expected.** Memory is already off for session traffic; the work was to keep it that way by
+   not attaching a governed grant. No existing behaviour changes, so nothing needed escalating.
+   See the corrections at the top.
+2. ~~**Where update artifacts live.**~~ **A directory this API serves**, session-gated, with the
+   root configurable (`DESKTOP_UPDATES_DIR`) so it can be repointed to object storage later
+   without a code change. Task 6 and MittrCraft plan 5 stand as written.
+3. ~~**How the MittrCraft entitlement is expressed.**~~ **The existing per-person eligibility
+   decision** — `requireAllowed(userId, 'agent', alias)`. Per-person, admin-decided,
+   default-deny, checked live. No new mechanism.
+
+## Still open, and owned outside this repository
+
+- **Code signing and notarisation** (spec §10). Without a company certificate an unsigned macOS
+  build downloads updates and then fails to install them, retrying forever. The update endpoint
+  is done; the update *path* does not work until IT provides this.
+- **Gateway-side work** (spec §13): token pricing in `config.yaml` so usage figures stop
+  reporting zero. Caching and the two-key rotation window are handled from this side —
+  `cache-control: no-store` goes upstream per request, and two active platform keys are
+  accepted — but the gateway team should confirm it honours the header.
+- **The pre-flight in spec §12** — calling `mittr-craft-1-0` through the real gateway with a
+  prompt that forces a tool call — has not been run. It needs the real gateway, and per spec if
+  it fails the design changes rather than proceeds.

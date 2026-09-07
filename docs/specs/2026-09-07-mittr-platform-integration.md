@@ -1,7 +1,7 @@
 # MittrCraft ↔ Mittr platform integration
 
-Status: design approved, not implemented
-Date: 2026-09-07
+Status: design approved; broker implemented in `techflowasia/mittr` on `feat/desktop-surface`
+Date: 2026-09-07 (broker section updated 2026-09-07 after implementation)
 
 ## 1. Context
 
@@ -65,7 +65,7 @@ developer machine                        │  Mittr
     ├─ session manager                   │      │
     └─ catalog materializer              │      ├─ verifies the session
                                          │      ├─ checks entitlement
-  repository, files, terminal            │      ├─ attaches the platform key
+  repository, files, terminal            │      ├─ resolves the platform policy
     stay here                            │      ├─ writes the audit record
                                          │      └─ serves the catalog
 ```
@@ -130,8 +130,18 @@ admin removes something.
 ### 6.4 Broker — lives in the `mittr` repository
 
 New service. Authenticates the caller by session, checks the MittrCraft
-entitlement, attaches the platform key, forwards to LiteLLM, records the audit
-entry, and serves the catalog and the update manifest.
+entitlement, resolves the platform key's policy server-side, forwards to LiteLLM,
+records the audit entry, and serves the catalog and the update manifest.
+
+**Correction found during implementation.** "Attaches the platform key" was the
+original wording and it does not describe the platform. The credential that goes
+upstream to LiteLLM is Mittr's own gateway credential
+(`providers.authHeaders(providerKey)`), which is configured per provider and has
+always been server-side. The platform key is a *Mittr* key — the kind a client
+presents **to** Mittr — and its job here is to carry the policy naming which
+agents MittrCraft may use. It is never forwarded onward. The invariant this
+sentence was protecting is unchanged and enforced: the desktop never holds or
+names a credential, and nothing credential-shaped appears in a response.
 
 It must derive identity from the session it verified itself. A user identifier
 sent by the client is ignored.
@@ -322,17 +332,31 @@ tests and must be checked by using the product.
 
 ## 14. Open questions
 
-1. Where exactly Mittr hosts update artifacts, and who owns that storage.
-2. Whether the entitlement is per-person or derived from an existing group.
+1. ~~Where exactly Mittr hosts update artifacts, and who owns that storage.~~
+   **Answered (owner, 2026-09-07):** a directory the Mittr API owns and serves,
+   gated by the desktop session, with the root configurable
+   (`DESKTOP_UPDATES_DIR`) so it can move to object storage behind a signed URL
+   later without a code change. §10 stands as written.
+2. ~~Whether the entitlement is per-person or derived from an existing group.~~
+   **Answered (owner, 2026-09-07): per-person**, via the eligibility decision
+   Mittr already has — `requireAllowed(userId, 'agent', alias)`. Admin-decided,
+   default-deny, checked live on every request, so revoking one person takes
+   effect immediately without touching the key every developer shares. No new
+   mechanism was added.
 3. What an admin sees when a developer has disabled an organisation connector —
-   whether that is visible at all, and whether it should be.
+   whether that is visible at all, and whether it should be. **Still open.**
 
-4. **Whether Mittr Memory applies to desktop traffic.** Found while planning the
-   broker: `apps/api/src/openai/openai.controller.ts` in the `mittr` repository
-   calls `memory.autoExtract(userId, lastUserText)` after every turn, and the API
-   Keys screen tells key holders that a key "always uses Memory". Riding that
-   surface unchanged would persist prompt text — which in an agent loop is often
-   tool output and file contents — into a store outside this design's audit trail
-   and its 90-day retention, contradicting §8. The broker plan turns Memory off
-   for desktop traffic, but that is a product decision for whoever owns Memory.
-   If it must stay on, §8 is the section that changes, not the implementation.
+4. ~~**Whether Mittr Memory applies to desktop traffic.**~~ **Answered (owner,
+   2026-09-07), and the premise was partly wrong.** The finding recorded here —
+   that `memory.autoExtract` runs after every turn and that key holders are told
+   a key "always uses Memory" — is true, but only for **governed keys**, where a
+   grant is attached to the request. `memoryOwnerId()` returns `null` when there
+   is neither a grant nor an API key, so **Memory is already off for
+   session-authenticated traffic**, which is what a desktop session is.
+
+   The real hazard was the opposite of the one described: resolving the platform
+   key by attaching a governed grant would have switched Memory **on** and
+   extracted developers' tool output and file contents into the platform key
+   owner's store. The implementation therefore attaches no grant, and §8 needs no
+   change. Nothing about how any existing key behaves was altered, so this never
+   required a decision from whoever owns Memory.
