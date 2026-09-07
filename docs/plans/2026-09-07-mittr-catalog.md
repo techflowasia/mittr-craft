@@ -806,6 +806,121 @@ git add packages/web/server/lib/mittr
 git commit -m "feat(mittr): drive the model and connector list from the catalog"
 ```
 
+
+---
+
+### Task 6: Say the right thing when a model is refused
+
+A refusal from the completions surface has two unrelated causes, and one of them
+the developer can fix without asking anybody. Collapsing them into a single
+message sends people to an admin for something a button would have solved.
+
+**Files:**
+- Create: `packages/web/server/lib/mittr/model-refusal.js`
+- Test: `packages/web/server/lib/mittr/model-refusal.test.js`
+- Modify: `packages/ui/src/lib/i18n/messages/*.ts`
+
+**Interfaces:**
+- Produces: `describeModelRefusal(body) -> { reason: 'entitlement' | 'stale-catalog' | 'unknown', messageKey, canResync }`.
+
+- [ ] **Step 1: Write the failing test**
+
+```javascript
+import { describe, expect, it } from 'vitest';
+import { describeModelRefusal } from './model-refusal.js';
+
+describe('describeModelRefusal', () => {
+  it('sends an entitlement refusal to an admin', () => {
+    expect(describeModelRefusal({ error: 'desktop_entitlement_required' })).toEqual({
+      reason: 'entitlement',
+      messageKey: 'mittr.model.refused.entitlement',
+      canResync: false,
+    });
+  });
+
+  it('offers a re-sync when the platform no longer grants the model', () => {
+    expect(describeModelRefusal({ error: 'agent_not_granted' })).toEqual({
+      reason: 'stale-catalog',
+      messageKey: 'mittr.model.refused.staleCatalog',
+      canResync: true,
+    });
+  });
+
+  it('falls back without inventing a cause', () => {
+    expect(describeModelRefusal({ error: 'something_else' }).reason).toBe('unknown');
+    expect(describeModelRefusal(null).reason).toBe('unknown');
+  });
+
+  it('never offers a re-sync for an entitlement problem, which re-syncing cannot fix', () => {
+    expect(describeModelRefusal({ error: 'desktop_entitlement_required' }).canResync).toBe(false);
+  });
+});
+```
+
+- [ ] **Step 2: Run it and watch it fail**
+
+```bash
+bun run --cwd packages/web test -- model-refusal
+```
+
+Expected: FAIL, cannot resolve `./model-refusal.js`.
+
+- [ ] **Step 3: Write the implementation**
+
+```javascript
+// Catalog models come from the same platform key grants that agent_not_granted
+// reads, so that refusal means the cached catalog has drifted — something the
+// client can repair itself. An entitlement refusal cannot be repaired here.
+const REFUSALS = {
+  desktop_entitlement_required: {
+    reason: 'entitlement',
+    messageKey: 'mittr.model.refused.entitlement',
+    canResync: false,
+  },
+  agent_not_granted: {
+    reason: 'stale-catalog',
+    messageKey: 'mittr.model.refused.staleCatalog',
+    canResync: true,
+  },
+};
+
+export function describeModelRefusal(body) {
+  return REFUSALS[String(body?.error ?? '')] ?? {
+    reason: 'unknown',
+    messageKey: 'mittr.model.refused.unknown',
+    canResync: false,
+  };
+}
+```
+
+Add the three keys to every locale file. English values:
+
+```
+'mittr.model.refused.entitlement': 'You do not have access to this model. Ask a Mittr admin to grant it.',
+'mittr.model.refused.staleCatalog': 'This model is no longer available from Mittr. Refresh your catalog to see what is.',
+'mittr.model.refused.unknown': 'Mittr refused this request.',
+```
+
+Do not word the entitlement message as "not in your catalog". The catalog gate is
+entitled-to-any, so a person can hold a catalog listing two models while being
+entitled to only one of them. That wording would be wrong precisely when the
+message appears.
+
+- [ ] **Step 4: Run the tests**
+
+```bash
+bun run --cwd packages/web test -- model-refusal
+```
+
+Expected: 4 passing.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add packages/web/server/lib/mittr/model-refusal.js packages/web/server/lib/mittr/model-refusal.test.js packages/ui/src/lib/i18n/messages
+git commit -m "feat(mittr): tell an access problem apart from a stale catalog"
+```
+
 ---
 
 ## What this plan leaves to later plans

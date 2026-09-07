@@ -48,9 +48,16 @@ GET  /desktop/catalog
      403 desktop_entitlement_required
 
 POST /desktop/audit           201 { accepted: true }, always
-GET  /desktop/updates/*path   200 file, Cache-Control: no-store
+GET  /desktop/updates/*path   200 file
+     latest*.yml | *.yaml  →  Cache-Control: no-store
+     anything else         →  Cache-Control: public, max-age=31536000, immutable
      400 update_artifact_path_invalid · 404 update_artifact_not_found
 ```
+
+The caching split matters to the updater. A manifest is a mutable pointer and must
+never be cached; an installer is that build forever, and marking it `no-store`
+leaves an interrupted download with nothing to resume against — every retry pulls
+the whole file again. Range requests are honoured either way.
 
 Three things the client has to get right:
 
@@ -60,6 +67,30 @@ Three things the client has to get right:
 2. `models` carries aliases only. There is no backend model id in the response.
 3. `/desktop/audit` answers 201 even when the write fails, by design (§9). It is
    never confirmation that the record landed, and it is never retried.
+
+## Failures the client must tell apart
+
+`POST /v1/chat/completions` can refuse for two unrelated reasons, and they need
+different words in the UI.
+
+| Code | What is true | What the person should be told |
+| --- | --- | --- |
+| `desktop_entitlement_required` | **this person** is not allowed this model | ask an admin for access |
+| `agent_not_granted` | no active platform key grants this model | the cached catalog is stale — re-sync |
+
+`agent_not_granted` is a state the client can fix by itself: catalog `models` are
+derived from the same platform key grants this check reads, so being refused means
+the local catalog has drifted from the platform. Offer a re-sync, not an admin.
+
+**Do not word the entitlement failure as "not in your catalog".** The catalog gate
+is entitled-to-*any*, so somebody can hold a catalog listing models A and B while
+being entitled only to A. Picking B returns `desktop_entitlement_required` even
+though B is legitimately in their catalog, and that wording would be wrong exactly
+when it fires.
+
+Entitlement is checked before platform grants on purpose, so a person with no
+entitlement cannot probe which models the platform key carries. When both fail
+they see `desktop_entitlement_required`.
 
 ## Audit payload
 
