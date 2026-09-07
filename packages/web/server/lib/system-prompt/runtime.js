@@ -2,7 +2,7 @@ import { parse as parseJsonc } from 'jsonc-parser';
 import { pathToFileURL } from 'node:url';
 
 const PROVIDER_PROMPT_BOUNDARY = 'You are powered by the model named';
-const MINIMAL_IDENTITY = 'You are OpenCode, a coding agent.';
+const MINIMAL_IDENTITY = 'You are MittrCraft, a coding agent.';
 
 const createPluginSource = () => String.raw`
 const PROVIDER_PROMPT_BOUNDARY = ${JSON.stringify(PROVIDER_PROMPT_BOUNDARY)}

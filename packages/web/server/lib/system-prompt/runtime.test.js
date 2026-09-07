@@ -35,7 +35,7 @@ describe('managed system prompt runtime', () => {
     );
     await hooks['experimental.chat.system.transform']({ sessionID: 'session-1' }, output);
     expect(output.system).toEqual([
-      'You are OpenCode, a coding agent.\n\nYou are powered by the model named GPT.\n<env>kept</env>',
+      'You are MittrCraft, a coding agent.\n\nYou are powered by the model named GPT.\n<env>kept</env>',
     ]);
   });
 
