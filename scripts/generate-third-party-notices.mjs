@@ -80,7 +80,10 @@ const readLicenseText = (dir) => {
   const parts = [];
   for (const name of matches) {
     try {
-      const text = readFileSync(path.join(dir, name), 'utf8').trim();
+      // Normalize line endings: some packages ship CRLF license files, and git
+      // stores this file as LF, so leaving them as-is makes `--check` report a
+      // drift that no edit can fix.
+      const text = readFileSync(path.join(dir, name), 'utf8').replace(/\r\n?/g, '\n').trim();
       if (text) parts.push(matches.length > 1 ? `----- ${name} -----\n${text}` : text);
     } catch {
       /* unreadable license file: fall back to the SPDX id alone */
