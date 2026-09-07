@@ -1,0 +1,330 @@
+diff --git a/packages/core/src/plugin/agent.ts b/packages/core/src/plugin/agent.ts
+index 915df79..b00b021 100644
+--- a/packages/core/src/plugin/agent.ts
++++ b/packages/core/src/plugin/agent.ts
+@@ -139,7 +139,7 @@ export const Plugin = define({
+             { action: "plan_exit", resource: "*", effect: "allow" },
+             { action: "external_directory", resource: path.join(Global.Path.data, "plans", "*"), effect: "allow" },
+             { action: "edit", resource: "*", effect: "deny" },
+-            { action: "edit", resource: path.join(".opencode", "plans", "*.md"), effect: "allow" },
++            { action: "edit", resource: path.join(".mittr", "plans", "*.md"), effect: "allow" },
+             {
+               action: "edit",
+               resource: path.relative(worktree, path.join(Global.Path.data, "plans", "*.md")),
+diff --git a/packages/opencode/src/agent/agent.ts b/packages/opencode/src/agent/agent.ts
+index 536a642..26f74d3 100644
+--- a/packages/opencode/src/agent/agent.ts
++++ b/packages/opencode/src/agent/agent.ts
+@@ -31,6 +31,7 @@ import { LocationServiceMap, locationServiceMapLayer } from "@opencode-ai/core/l
+ import { Reference } from "@opencode-ai/core/reference"
+ import { Location } from "@opencode-ai/core/location"
+ import { PluginV2 } from "@opencode-ai/core/plugin"
++import * as ConfigPaths from "@/config/paths"
+ 
+ export const Info = Schema.Struct({
+   name: Schema.String,
+@@ -170,7 +171,7 @@ const layer = Layer.effect(
+                 },
+                 edit: {
+                   "*": "deny",
+-                  [path.join(".opencode", "plans", "*.md")]: "allow",
++                  [path.join(ConfigPaths.PROJECT_DIR_PRIMARY, "plans", "*.md")]: "allow",
+                   [path.relative(ctx.worktree, path.join(Global.Path.data, path.join("plans", "*.md")))]: "allow",
+                 },
+               }),
+diff --git a/packages/opencode/src/cli/cmd/agent.ts b/packages/opencode/src/cli/cmd/agent.ts
+index c9c1d2c..c899715 100644
+--- a/packages/opencode/src/cli/cmd/agent.ts
++++ b/packages/opencode/src/cli/cmd/agent.ts
+@@ -10,6 +10,7 @@ import { EOL } from "os"
+ import type { Argv } from "yargs"
+ import { Effect } from "effect"
+ import { effectCmd } from "../effect-cmd"
++import * as ConfigPaths from "@/config/paths"
+ 
+ type AgentMode = "all" | "primary" | "subagent"
+ 
+@@ -108,7 +109,7 @@ const AgentCreateCommand = effectCmd({
+           if (prompts.isCancel(scopeResult)) throw new UI.CancelledError()
+           scope = scopeResult
+         }
+-        targetPath = path.join(scope === "global" ? Global.Path.config : path.join(ctx.worktree, ".opencode"), "agents")
++        targetPath = path.join(scope === "global" ? Global.Path.config : path.join(ctx.worktree, ConfigPaths.PROJECT_DIR_PRIMARY), "agents")
+       }
+ 
+       // Get description
+diff --git a/packages/opencode/src/cli/cmd/mcp.ts b/packages/opencode/src/cli/cmd/mcp.ts
+index c2d2ee2..e58d1bc 100644
+--- a/packages/opencode/src/cli/cmd/mcp.ts
++++ b/packages/opencode/src/cli/cmd/mcp.ts
+@@ -20,6 +20,7 @@ import { Global } from "@opencode-ai/core/global"
+ import { modify, applyEdits } from "jsonc-parser"
+ import { Filesystem } from "@/util/filesystem"
+ import { Effect } from "effect"
++import * as ConfigPaths from "@/config/paths"
+ 
+ function getAuthStatusIcon(status: MCP.AuthStatus): string {
+   switch (status) {
+@@ -396,7 +397,11 @@ async function resolveConfigPath(baseDir: string, global = false) {
+   const candidates = [path.join(baseDir, "opencode.json"), path.join(baseDir, "opencode.jsonc")]
+ 
+   if (!global) {
+-    candidates.push(path.join(baseDir, ".opencode", "opencode.json"), path.join(baseDir, ".opencode", "opencode.jsonc"))
++    for (const dirName of ConfigPaths.PROJECT_DIR_NAMES) {
++      for (const fileName of ConfigPaths.projectConfigFileNames()) {
++        candidates.push(path.join(baseDir, dirName, fileName))
++      }
++    }
+   }
+ 
+   for (const candidate of candidates) {
+diff --git a/packages/opencode/src/config/config.ts b/packages/opencode/src/config/config.ts
+index 86238f1..44bf2dc 100644
+--- a/packages/opencode/src/config/config.ts
++++ b/packages/opencode/src/config/config.ts
+@@ -404,7 +404,7 @@ const layer = Layer.effect(
+         }
+ 
+         if (!Flag.OPENCODE_DISABLE_PROJECT_CONFIG) {
+-          for (const file of yield* ConfigPaths.files("opencode", ctx.directory, ctx.worktree).pipe(Effect.orDie)) {
++          for (const file of yield* ConfigPaths.files(["mittr", "opencode"], ctx.directory, ctx.worktree).pipe(Effect.orDie)) {
+             yield* merge(file, yield* loadFile(file, authEnv), "local")
+           }
+         }
+@@ -422,8 +422,8 @@ const layer = Layer.effect(
+         const deps: Fiber.Fiber<void>[] = []
+ 
+         for (const dir of directories) {
+-          if (dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR) {
+-            for (const file of ["opencode.json", "opencode.jsonc"]) {
++          if (ConfigPaths.isProjectConfigDir(dir) || dir === Flag.OPENCODE_CONFIG_DIR) {
++            for (const file of ConfigPaths.projectConfigFileNames()) {
+               const source = path.join(dir, file)
+               yield* Effect.logDebug(`loading config from ${source}`)
+               yield* merge(source, yield* loadFile(source, authEnv))
+diff --git a/packages/opencode/src/config/paths.ts b/packages/opencode/src/config/paths.ts
+index 11d90f1..baa439a 100644
+--- a/packages/opencode/src/config/paths.ts
++++ b/packages/opencode/src/config/paths.ts
+@@ -7,14 +7,29 @@ import { unique } from "remeda"
+ import * as Effect from "effect/Effect"
+ import { FSUtil } from "@opencode-ai/core/fs-util"
+ 
++// MittrCraft owns `.mittr`; `.opencode` stays readable so existing checkouts keep
++// working. `.mittr` is listed first, so it wins wherever both are present.
++export const PROJECT_DIR_NAMES = [".mittr", ".opencode"] as const
++export const PROJECT_CONFIG_NAMES = ["mittr", "opencode"] as const
++export const PROJECT_DIR_PRIMARY = PROJECT_DIR_NAMES[0]
++
++export function isProjectConfigDir(dir: string) {
++  return PROJECT_DIR_NAMES.some((name) => dir.endsWith(name))
++}
++
++export function projectConfigFileNames() {
++  return PROJECT_CONFIG_NAMES.flatMap((name) => [`${name}.json`, `${name}.jsonc`])
++}
++
+ export const files = Effect.fn("ConfigPaths.projectFiles")(function* (
+-  name: string,
++  name: string | string[],
+   directory: string,
+   worktree?: string,
+ ) {
+   const afs = yield* FSUtil.Service
++  const names = Array.isArray(name) ? name : [name]
+   return (yield* afs.up({
+-    targets: [`${name}.jsonc`, `${name}.json`],
++    targets: names.flatMap((each) => [`${each}.jsonc`, `${each}.json`]),
+     start: directory,
+     stop: worktree,
+   })).toReversed()
+@@ -26,13 +41,13 @@ export const directories = Effect.fn("ConfigPaths.directories")(function* (direc
+     Global.Path.config,
+     ...(!Flag.OPENCODE_DISABLE_PROJECT_CONFIG
+       ? yield* afs.up({
+-          targets: [".opencode"],
++          targets: [...PROJECT_DIR_NAMES],
+           start: directory,
+           stop: worktree,
+         })
+       : []),
+     ...(yield* afs.up({
+-      targets: [".opencode"],
++      targets: [...PROJECT_DIR_NAMES],
+       start: Global.Path.home,
+       stop: Global.Path.home,
+     })),
+diff --git a/packages/opencode/src/config/tui.ts b/packages/opencode/src/config/tui.ts
+index 8f50375..4c29025 100644
+--- a/packages/opencode/src/config/tui.ts
++++ b/packages/opencode/src/config/tui.ts
+@@ -200,10 +200,10 @@ const loadState = Effect.fn("TuiConfig.loadState")(function* (ctx: { directory:
+   // 4. `.opencode` directories (and OPENCODE_CONFIG_DIR) discovered while
+   // walking up the tree. Also returned below so callers can install plugin
+   // dependencies from each location.
+-  const dirs = unique(directories).filter((dir) => dir.endsWith(".opencode") || dir === Flag.OPENCODE_CONFIG_DIR)
++  const dirs = unique(directories).filter((dir) => ConfigPaths.isProjectConfigDir(dir) || dir === Flag.OPENCODE_CONFIG_DIR)
+ 
+   for (const dir of dirs) {
+-    if (!dir.endsWith(".opencode") && dir !== Flag.OPENCODE_CONFIG_DIR) continue
++    if (!ConfigPaths.isProjectConfigDir(dir) && dir !== Flag.OPENCODE_CONFIG_DIR) continue
+     for (const file of ConfigPaths.fileInDirectory(dir, "tui")) {
+       yield* mergeFile(acc, file)
+     }
+diff --git a/packages/opencode/src/plugin/install.ts b/packages/opencode/src/plugin/install.ts
+index f07b78b..52aaea5 100644
+--- a/packages/opencode/src/plugin/install.ts
++++ b/packages/opencode/src/plugin/install.ts
+@@ -334,7 +334,7 @@ function patchDir(input: PatchInput) {
+   if (input.global) return input.config ?? Global.Path.config
+   const git = input.vcs === "git" && input.worktree !== "/"
+   const root = git ? input.worktree : input.directory
+-  return path.join(root, ".opencode")
++  return path.join(root, ConfigPaths.PROJECT_DIR_PRIMARY)
+ }
+ 
+ function patchName(kind: Kind): "opencode" | "tui" {
+diff --git a/packages/opencode/src/plugin/tui/runtime.ts b/packages/opencode/src/plugin/tui/runtime.ts
+index 2a88ad3..08724f5 100644
+--- a/packages/opencode/src/plugin/tui/runtime.ts
++++ b/packages/opencode/src/plugin/tui/runtime.ts
+@@ -43,6 +43,7 @@ import { createCommandShim } from "@opencode-ai/tui/plugin/command-shim"
+ import { RuntimeFlags } from "@/effect/runtime-flags"
+ import { Effect } from "effect"
+ import { createPluginRuntime, type PluginRuntime, type TuiPluginHost } from "@opencode-ai/tui/plugin/runtime"
++import * as ConfigPaths from "@/config/paths"
+ 
+ ensureRuntimePluginSupport({ additional: keymapRuntimeModules })
+ 
+@@ -253,9 +254,9 @@ function createThemeInstaller(
+     const name = path.basename(src, path.extname(src))
+     const source_dir = path.dirname(meta.source)
+     const local_dir =
+-      path.basename(source_dir) === ".opencode"
++      ConfigPaths.isProjectConfigDir(source_dir)
+         ? path.join(source_dir, "themes")
+-        : path.join(source_dir, ".opencode", "themes")
++        : path.join(source_dir, ConfigPaths.PROJECT_DIR_PRIMARY, "themes")
+     const dest_dir = meta.scope === "local" ? local_dir : path.join(Global.Path.config, "themes")
+     const dest = path.join(dest_dir, `${name}.json`)
+     const stat = await Filesystem.statAsync(src)
+@@ -814,7 +815,7 @@ function defaultPluginOrigin(state: RuntimeState, spec: string): ConfigPlugin.Or
+   return {
+     spec,
+     scope: "local",
+-    source: state.api.state.path.config || path.join(state.directory, ".opencode", "tui.json"),
++    source: state.api.state.path.config || path.join(state.directory, ConfigPaths.PROJECT_DIR_PRIMARY, "tui.json"),
+   }
+ }
+ 
+diff --git a/packages/opencode/src/session/prompt/anthropic.txt b/packages/opencode/src/session/prompt/anthropic.txt
+index 21d9c0e..91ef7b9 100644
+--- a/packages/opencode/src/session/prompt/anthropic.txt
++++ b/packages/opencode/src/session/prompt/anthropic.txt
+@@ -1,4 +1,4 @@
+-You are OpenCode, the best coding agent on the planet.
++You are MittrCraft, the best coding agent on the planet.
+ 
+ You are an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.
+ 
+diff --git a/packages/opencode/src/session/prompt/beast.txt b/packages/opencode/src/session/prompt/beast.txt
+index e92e4d0..06f7956 100644
+--- a/packages/opencode/src/session/prompt/beast.txt
++++ b/packages/opencode/src/session/prompt/beast.txt
+@@ -1,4 +1,4 @@
+-You are opencode, an agent - please keep going until the user’s query is completely resolved, before ending your turn and yielding back to the user.
++You are MittrCraft, an agent - please keep going until the user’s query is completely resolved, before ending your turn and yielding back to the user.
+ 
+ Your thinking should be thorough and so it's fine if it's very long. However, avoid unnecessary repetition and verbosity. You should be concise, but thorough.
+ 
+diff --git a/packages/opencode/src/session/prompt/codex.txt b/packages/opencode/src/session/prompt/codex.txt
+index d595cad..313e13a 100644
+--- a/packages/opencode/src/session/prompt/codex.txt
++++ b/packages/opencode/src/session/prompt/codex.txt
+@@ -1,4 +1,4 @@
+-You are OpenCode, the best coding agent on the planet.
++You are MittrCraft, the best coding agent on the planet.
+ 
+ You are an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.
+ 
+diff --git a/packages/opencode/src/session/prompt/default.txt b/packages/opencode/src/session/prompt/default.txt
+index c8d9046..11ae055 100644
+--- a/packages/opencode/src/session/prompt/default.txt
++++ b/packages/opencode/src/session/prompt/default.txt
+@@ -1,4 +1,4 @@
+-You are opencode, an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.
++You are MittrCraft, an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.
+ 
+ IMPORTANT: You must NEVER generate or guess URLs for the user unless you are confident that the URLs are for helping the user with programming. You may use URLs provided by the user in their messages or local files.
+ 
+diff --git a/packages/opencode/src/session/prompt/gemini.txt b/packages/opencode/src/session/prompt/gemini.txt
+index 87fe422..4947897 100644
+--- a/packages/opencode/src/session/prompt/gemini.txt
++++ b/packages/opencode/src/session/prompt/gemini.txt
+@@ -1,4 +1,4 @@
+-You are opencode, an interactive CLI agent specializing in software engineering tasks. Your primary goal is to help users safely and efficiently, adhering strictly to the following instructions and utilizing your available tools.
++You are MittrCraft, an interactive CLI agent specializing in software engineering tasks. Your primary goal is to help users safely and efficiently, adhering strictly to the following instructions and utilizing your available tools.
+ 
+ # Core Mandates
+ 
+diff --git a/packages/opencode/src/session/prompt/gpt.txt b/packages/opencode/src/session/prompt/gpt.txt
+index 9068df4..663d228 100644
+--- a/packages/opencode/src/session/prompt/gpt.txt
++++ b/packages/opencode/src/session/prompt/gpt.txt
+@@ -1,4 +1,4 @@
+-You are OpenCode, You and the user share the same workspace and collaborate to achieve the user's goals.
++You are MittrCraft, You and the user share the same workspace and collaborate to achieve the user's goals.
+ 
+ You are a deeply pragmatic, effective software engineer. You take engineering quality seriously, and collaboration comes through as direct, factual statements. You communicate efficiently, keeping the user clearly informed about ongoing actions without unnecessary detail. You build context by examining the codebase first without making assumptions or jumping to conclusions. You think through the nuances of the code you encounter, and embody the mentality of a skilled senior software engineer.
+ 
+diff --git a/packages/opencode/src/session/prompt/kimi.txt b/packages/opencode/src/session/prompt/kimi.txt
+index beff675..5903e2a 100644
+--- a/packages/opencode/src/session/prompt/kimi.txt
++++ b/packages/opencode/src/session/prompt/kimi.txt
+@@ -1,4 +1,4 @@
+-You are OpenCode, an interactive general AI agent running on a user's computer.
++You are MittrCraft, an interactive general AI agent running on a user's computer.
+ 
+ Your primary goal is to help users with software engineering tasks by taking action — use the tools available to you to make real changes on the user's system. You should also answer questions when asked. Always adhere strictly to the following system instructions and the user's requirements.
+ 
+diff --git a/packages/opencode/src/session/prompt/meta.txt b/packages/opencode/src/session/prompt/meta.txt
+index d5aa008..f037374 100644
+--- a/packages/opencode/src/session/prompt/meta.txt
++++ b/packages/opencode/src/session/prompt/meta.txt
+@@ -1,4 +1,4 @@
+-You are OpenCode, a coding agent that helps users with software engineering tasks. You are powered by {{MODEL_NAME}}, a large language model trained by Meta MSL.
++You are MittrCraft, a coding agent that helps users with software engineering tasks. You are powered by {{MODEL_NAME}}, a large language model trained by Meta MSL.
+ 
+ Use the instructions below and the tools available to assist the user.
+ 
+diff --git a/packages/opencode/src/session/prompt/trinity.txt b/packages/opencode/src/session/prompt/trinity.txt
+index 28ee4c4..14edcc1 100644
+--- a/packages/opencode/src/session/prompt/trinity.txt
++++ b/packages/opencode/src/session/prompt/trinity.txt
+@@ -1,4 +1,4 @@
+-You are opencode, an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.
++You are MittrCraft, an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.
+ 
+ # Tone and style
+ You should be concise, direct, and to the point. When you run a non-trivial bash command, you should explain what the command does and why you are running it, to make sure the user understands what you are doing (this is especially important when you are running a command that will make changes to the user's system).
+diff --git a/packages/opencode/src/session/session.ts b/packages/opencode/src/session/session.ts
+index cfe0341..6095b6c 100644
+--- a/packages/opencode/src/session/session.ts
++++ b/packages/opencode/src/session/session.ts
+@@ -44,6 +44,7 @@ import { RuntimeFlags } from "@/effect/runtime-flags"
+ import { ProviderV2 } from "@opencode-ai/core/provider"
+ import { ModelV2 } from "@opencode-ai/core/model"
+ import { SessionMessage } from "@opencode-ai/schema/session-message"
++import * as ConfigPaths from "@/config/paths"
+ 
+ const parentTitlePrefix = "New session - "
+ const childTitlePrefix = "Child session - "
+@@ -330,7 +331,7 @@ export const Event = {
+ 
+ export function plan(input: { slug: string; time: { created: number } }, instance: InstanceContext) {
+   const base = instance.project.vcs
+-    ? path.join(instance.worktree, ".opencode", "plans")
++    ? path.join(instance.worktree, ConfigPaths.PROJECT_DIR_PRIMARY, "plans")
+     : path.join(Global.Path.data, "plans")
+   return path.join(base, [input.time.created, input.slug].join("-") + ".md")
+ }
