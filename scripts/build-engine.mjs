@@ -29,6 +29,9 @@ const pinnedVersion = readFileSync(path.join(repoRoot, 'engine', 'UPSTREAM_VERSI
 const version = readFlag('--version', pinnedVersion);
 const workDir = path.resolve(readFlag('--work', path.join(os.tmpdir(), 'mittrcraft-engine')));
 const skipClone = process.argv.includes('--skip-clone');
+// `--single` restricts the upstream script to the current platform. Dropping it
+// builds all twelve targets, which Bun cross-compiles from one machine.
+const buildArgs = process.argv.includes('--all') ? [] : ['--single'];
 const sourceDir = path.join(workDir, 'opencode');
 
 const run = (command, args, cwd) => {
@@ -63,10 +66,20 @@ for (const patch of patchFiles()) {
 
 run('bun', ['install'], sourceDir);
 run('bun', ['run', '--cwd', 'packages/opencode', 'typecheck'], sourceDir);
-run('./packages/opencode/script/build.ts', ['--single'], sourceDir);
+// The build stamps whatever OPENCODE_VERSION says, and defaults to a 0.0.0
+// development string. Stamping the upstream tag we built from keeps every
+// version comparison downstream — the packaging check, the engine version shown
+// in the UI — reading the number that actually describes protocol compatibility.
+console.log(`+ ./packages/opencode/script/build.ts ${buildArgs.join(' ')}  (OPENCODE_VERSION=${version})`);
+execFileSync('./packages/opencode/script/build.ts', buildArgs, {
+  cwd: sourceDir,
+  stdio: 'inherit',
+  env: { ...process.env, OPENCODE_VERSION: version },
+});
 
 const platform = `${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
-const binary = path.join(sourceDir, 'packages', 'opencode', 'dist', `opencode-${platform}`, 'bin', 'opencode');
+const distDir = path.join(sourceDir, 'packages', 'opencode', 'dist');
+const binary = path.join(distDir, `opencode-${platform}`, 'bin', process.platform === 'win32' ? 'opencode.exe' : 'opencode');
 
 // The build script runs its own smoke test, but it tests the binary it just
 // wrote — not that our patches took. Verifying the identity here is what makes

@@ -74,6 +74,49 @@ Requires Bun 1.3+; upstream pins the same version this repository does.
    script proves the strings changed; it does not prove the engine still drives a
    session correctly.
 
+## Building every target
+
+```bash
+node scripts/build-engine.mjs --all
+```
+
+Bun cross-compiles: one machine produces all twelve targets upstream defines —
+linux, darwin and windows, arm64 and x64, plus musl and baseline variants. This is
+measured, not assumed: all twelve were built from a single macOS machine, and the
+identity patch is present in each. Two gigabytes in total.
+
+The binary reports the version in `engine/UPSTREAM_VERSION`, because the build
+script passes it as `OPENCODE_VERSION`. Without that it stamps a `0.0.0-` string
+and the packaging step rejects it — correctly, since it verifies the prepared
+engine reports the pinned version.
+
+## Getting a built engine into the desktop app
+
+`packages/electron/scripts/prepare-opencode-cli.mjs` downloads a release from
+upstream by default. Set `MITTRCRAFT_ENGINE_BINARY` to a path and it installs that
+instead, keeping the version verification that a download would get.
+
+```bash
+MITTRCRAFT_ENGINE_BINARY=/path/to/opencode bun run --cwd packages/electron build
+```
+
+`.github/workflows/engine.yml` builds every target and publishes one artifact per
+platform the desktop ships. It is a separate workflow from Release on purpose: it
+has never run, and a mistake in it must not be able to break a release. Once it
+passes, the desktop jobs in `release.yml` can download the artifact for their
+platform and set `MITTRCRAFT_ENGINE_BINARY` before packaging.
+
+Signing needs nothing new. The engine ships through `extraResources`, and the app
+is built with `hardenedRuntime`, `notarize` and `entitlementsInherit`, so nested
+binaries are signed with it.
+
+## Known gaps
+
+- Cross-compilation is proven from a macOS host. The workflow runs on Linux, and
+  that first run is the test.
+- The engine is built but not yet consumed by `release.yml`. Until that is wired,
+  releases still bundle the upstream binary — with the upstream identity.
+
 ## Attribution
 
 The upstream project is MIT licensed and its notice ships in

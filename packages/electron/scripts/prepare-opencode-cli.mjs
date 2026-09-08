@@ -154,21 +154,37 @@ const main = async () => {
     return;
   }
 
-  const cacheDir = path.join(cacheRoot, version, `${process.platform}-${targetArchitecture.opencode}`);
-  const archivePath = path.join(cacheDir, artifact.name);
-  const url = `https://github.com/anomalyco/opencode/releases/download/v${version}/${artifact.name}`;
-  if (!fs.existsSync(archivePath)) {
-    console.log(`[electron] downloading OpenCode CLI ${version}: ${artifact.name}`);
-    await download(url, archivePath);
-  } else {
-    console.log(`[electron] using cached OpenCode CLI archive: ${archivePath}`);
-  }
+  // A locally built engine, from scripts/build-engine.mjs or a CI artifact. It
+  // stamps the same upstream version it was built from, so the verification at
+  // the end of this function still applies and an accidentally stale or
+  // mismatched binary is caught the same way a bad download would be.
+  const providedBinary = (process.env.MITTRCRAFT_ENGINE_BINARY || '').trim();
+  let sourceBinary;
 
-  const extractDir = path.join(cacheDir, 'extract');
-  extractArchive(archivePath, extractDir);
-  const extractedBinary = findBinary(extractDir, artifact.binary);
-  if (!extractedBinary) {
-    throw new Error(`Archive ${archivePath} did not contain ${artifact.binary}`);
+  if (providedBinary) {
+    if (!fs.existsSync(providedBinary)) {
+      throw new Error(`MITTRCRAFT_ENGINE_BINARY does not exist: ${providedBinary}`);
+    }
+    console.log(`[electron] using locally built engine: ${providedBinary}`);
+    sourceBinary = providedBinary;
+  } else {
+    const cacheDir = path.join(cacheRoot, version, `${process.platform}-${targetArchitecture.opencode}`);
+    const archivePath = path.join(cacheDir, artifact.name);
+    const url = `https://github.com/anomalyco/opencode/releases/download/v${version}/${artifact.name}`;
+    if (!fs.existsSync(archivePath)) {
+      console.log(`[electron] downloading OpenCode CLI ${version}: ${artifact.name}`);
+      await download(url, archivePath);
+    } else {
+      console.log(`[electron] using cached OpenCode CLI archive: ${archivePath}`);
+    }
+
+    const extractDir = path.join(cacheDir, 'extract');
+    extractArchive(archivePath, extractDir);
+    const extractedBinary = findBinary(extractDir, artifact.binary);
+    if (!extractedBinary) {
+      throw new Error(`Archive ${archivePath} did not contain ${artifact.binary}`);
+    }
+    sourceBinary = extractedBinary;
   }
 
   fs.mkdirSync(outputDir, { recursive: true });
@@ -176,7 +192,7 @@ const main = async () => {
     if (entry === '.gitkeep') continue;
     fs.rmSync(path.join(outputDir, entry), { recursive: true, force: true });
   }
-  fs.copyFileSync(extractedBinary, outputBinary);
+  fs.copyFileSync(sourceBinary, outputBinary);
   ensureExecutable(outputBinary);
 
   const preparedVersion = readBinaryVersion(outputBinary);

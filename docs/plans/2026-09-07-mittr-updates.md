@@ -235,53 +235,51 @@ git commit -m "feat(mittr): fetch updates from Mittr with the signed-in session"
 
 ---
 
-### Task 3: Signing and notarisation
+### Task 3: Confirm signing, do not rebuild it
 
-Without this the update path does not work at all: an unsigned macOS build
-downloads an update and then fails to install it, retrying forever (spec §10).
+**Corrected 2026-09-08.** This task previously told you to add `hardenedRuntime`,
+`gatekeeperAssess` and `notarize` to the mac build block and described signing as
+a missing prerequisite. All three are already set in
+`packages/electron/package.json`, `entitlementsInherit` is configured so nested
+binaries in `extraResources` are signed with the app, and `release.yml` already
+installs an Apple certificate into a temporary keychain and verifies signature,
+entitlements and notarization after the build. Adding what is there would have
+been noise at best.
+
+The engine binary ships through `extraResources` as `resources/opencode-cli`, so
+it is signed as part of the app rather than separately.
 
 **Files:**
-- Modify: `packages/electron/package.json` (the `mac` and `win` build blocks)
 - Create: `docs/RELEASING.md`
 
-- [ ] **Step 1: Add the signing configuration**
+- [ ] **Step 1: Confirm the secrets exist, rather than the configuration**
 
-In the `mac` block of `packages/electron/package.json`:
-
-```json
-"hardenedRuntime": true,
-"gatekeeperAssess": false,
-"notarize": true
-```
-
-electron-builder reads the identity and the notarisation credentials from the
-environment, so no secret belongs in this file:
-
-```
-CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
-```
+The configuration is in place; what cannot be read from this repository is
+whether the secrets behind it are populated. Check that `APPLE_CERTIFICATE`,
+`APPLE_CERTIFICATE_PASSWORD` and the notarisation credentials are set on the
+repository, and that the certificate has not expired. A missing secret fails the
+release job, which is the good case; an expired certificate signs nothing and is
+the case worth catching before a release.
 
 - [ ] **Step 2: Write the release document**
 
-Create `docs/RELEASING.md` covering: which environment variables the release job
-needs and where they come from, how to confirm a build is signed, and how to
-confirm it is notarised.
+Create `docs/RELEASING.md` covering which secrets the release job needs, how to
+confirm a build is signed, and how to confirm it is notarised.
 
 ```markdown
 # Releasing MittrCraft
 
-## Prerequisites
+## Signing
 
-A Developer ID Application certificate and an Apple ID enrolled in the team.
-Both live in the release job's secret store, never in the repository.
+Configured already: `hardenedRuntime`, `notarize` and `entitlementsInherit` in
+`packages/electron/package.json`, and certificate installation plus verification
+in `.github/workflows/release.yml`. The engine binary is signed with the app
+because it ships inside `extraResources`.
 
-| Variable | What it is |
+| Secret | What it is |
 | --- | --- |
-| `CSC_LINK` | base64 of the .p12 certificate |
-| `CSC_KEY_PASSWORD` | password for that certificate |
-| `APPLE_ID` | Apple ID used for notarisation |
-| `APPLE_APP_SPECIFIC_PASSWORD` | app-specific password for that Apple ID |
-| `APPLE_TEAM_ID` | Apple developer team identifier |
+| `APPLE_CERTIFICATE` | base64 of the Developer ID .p12 |
+| `APPLE_CERTIFICATE_PASSWORD` | password for that certificate |
 
 ## Verifying a build before publishing
 
@@ -291,21 +289,21 @@ spctl --assess --type execute --verbose "dist/mac/MittrCraft.app"
 xcrun stapler validate "dist/mac/MittrCraft.app"
 ```
 
-All three must pass. `spctl` reporting `rejected` means the build will install
-once by hand and then fail every automatic update.
+All three must pass. `spctl` reporting `rejected` means the build installs once
+by hand and then fails every automatic update.
 
 ## Publishing
 
 Upload the installers together with the `latest-mac.yml` and `latest.yml`
-manifests to the update feed. The manifests are what the application reads; an
-installer published without its manifest is invisible to every client.
+manifests. The manifests are what the application reads; an installer published
+without its manifest is invisible to every client.
 ```
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add packages/electron/package.json docs/RELEASING.md
-git commit -m "build(mittr): sign and notarise desktop builds so updates can install"
+git add docs/RELEASING.md
+git commit -m "docs(release): record what signing already covers and how to verify it"
 ```
 
 ---
