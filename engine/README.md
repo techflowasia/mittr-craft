@@ -92,30 +92,59 @@ engine reports the pinned version.
 
 ## Getting a built engine into the desktop app
 
-`packages/electron/scripts/prepare-opencode-cli.mjs` downloads a release from
-upstream by default. Set `MITTRCRAFT_ENGINE_BINARY` to a path and it installs that
-instead, keeping the version verification that a download would get.
+`packages/electron/scripts/prepare-opencode-cli.mjs` downloads the engine from a
+release on **this** repository, tagged `engine-v<version>`. Upstream's release
+carries upstream's identity, so it is not what we ship.
+
+For local work, skip the download entirely:
 
 ```bash
 MITTRCRAFT_ENGINE_BINARY=/path/to/opencode bun run --cwd packages/electron build
 ```
 
-`.github/workflows/engine.yml` builds every target and publishes one artifact per
-platform the desktop ships. It is a separate workflow from Release on purpose: it
-has never run, and a mistake in it must not be able to break a release. Once it
-passes, the desktop jobs in `release.yml` can download the artifact for their
-platform and set `MITTRCRAFT_ENGINE_BINARY` before packaging.
+Either way the version is verified: the prepared engine must report the version
+pinned in the root `package.json`, so a stale or mismatched build is caught.
 
-Signing needs nothing new. The engine ships through `extraResources`, and the app
-is built with `hardenedRuntime`, `notarize` and `entitlementsInherit`, so nested
-binaries are signed with it.
+## Publishing an engine release
+
+Deliberately a manual step, not CI. The engine changes only when someone decides
+to move `UPSTREAM_VERSION` — a few times a year — and a job that rebuilds two
+gigabytes on every touch of this directory would spend far more than it saves.
+The cost of that choice is that provenance rests on the person doing it, which
+is what this procedure is for.
+
+1. Build every target and package the assets:
+
+   ```bash
+   node scripts/build-engine.mjs --all
+   ```
+
+   This fails if any shipped target is missing, and refuses to finish if the
+   identity strings in the binary are not ours. The assets land in
+   `<work>/assets`.
+
+2. Create a release on this repository tagged `engine-v<version>`, matching
+   `engine/UPSTREAM_VERSION`, and attach all five files.
+
+3. Verify the packaging step can fetch them, on a clean checkout:
+
+   ```bash
+   rm -rf packages/electron/.cache/opencode-cli packages/electron/resources/opencode-cli/*
+   node packages/electron/scripts/prepare-opencode-cli.mjs
+   ```
+
+Build from a clean checkout of this repository. Nothing downstream can tell that
+an asset was built from a modified working tree.
 
 ## Known gaps
 
-- Cross-compilation is proven from a macOS host. The workflow runs on Linux, and
-  that first run is the test.
-- The engine is built but not yet consumed by `release.yml`. Until that is wired,
-  releases still bundle the upstream binary — with the upstream identity.
+- Cross-compilation is proven from a macOS host. A Linux host should work the
+  same way — Bun downloads the runtime for each target — but that is untested.
+- Signing needs nothing extra: the engine ships through `extraResources`, and the
+  app is built with `hardenedRuntime`, `notarize` and `entitlementsInherit`, so
+  nested binaries are signed with it.
+- Until an `engine-v` release exists, packaging has nothing to download. Use
+  `MITTRCRAFT_ENGINE_BINARY` in the meantime.
 
 ## Attribution
 

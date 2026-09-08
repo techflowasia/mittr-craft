@@ -43,8 +43,8 @@ const readPinnedSdkVersion = () => {
 const artifactForPlatform = (platform, targetArchitecture) => {
   const arch = targetArchitecture.opencode;
   if (platform === 'darwin') {
-    if (arch === 'arm64') return { name: 'opencode-darwin-arm64.zip', binary: 'opencode' };
-    if (arch === 'x64') return { name: 'opencode-darwin-x64-baseline.zip', binary: 'opencode' };
+    if (arch === 'arm64') return { name: 'mittrcraft-engine-darwin-arm64.zip', binary: 'opencode' };
+    if (arch === 'x64') return { name: 'mittrcraft-engine-darwin-x64-baseline.zip', binary: 'opencode' };
   }
   if (platform === 'win32') {
     // TEMPORARY WORKAROUND — Windows ARM64: native opencode.exe fails with a Bun
@@ -57,12 +57,12 @@ const artifactForPlatform = (platform, targetArchitecture) => {
     // if (arch === 'arm64') return { name: 'opencode-windows-arm64.zip', binary: 'opencode.exe' };
     // if (arch === 'x64') return { name: 'opencode-windows-x64-baseline.zip', binary: 'opencode.exe' };
     // --- END ORIGINAL ---
-    if (arch === 'arm64') return { name: 'opencode-windows-x64-baseline.zip', binary: 'opencode.exe' };
-    if (arch === 'x64') return { name: 'opencode-windows-x64-baseline.zip', binary: 'opencode.exe' };
+    if (arch === 'arm64') return { name: 'mittrcraft-engine-windows-x64-baseline.zip', binary: 'opencode.exe' };
+    if (arch === 'x64') return { name: 'mittrcraft-engine-windows-x64-baseline.zip', binary: 'opencode.exe' };
   }
   if (platform === 'linux') {
-    if (arch === 'arm64') return { name: 'opencode-linux-arm64.tar.gz', binary: 'opencode' };
-    if (arch === 'x64') return { name: 'opencode-linux-x64-baseline.tar.gz', binary: 'opencode' };
+    if (arch === 'arm64') return { name: 'mittrcraft-engine-linux-arm64.tar.gz', binary: 'opencode' };
+    if (arch === 'x64') return { name: 'mittrcraft-engine-linux-x64-baseline.tar.gz', binary: 'opencode' };
   }
   throw new Error(`No OpenCode CLI artifact mapping for ${platform}/${arch}`);
 };
@@ -170,7 +170,9 @@ const main = async () => {
   } else {
     const cacheDir = path.join(cacheRoot, version, `${process.platform}-${targetArchitecture.opencode}`);
     const archivePath = path.join(cacheDir, artifact.name);
-    const url = `https://github.com/anomalyco/opencode/releases/download/v${version}/${artifact.name}`;
+    // Our own build, from scripts/build-engine.mjs, attached to an engine-v tag on
+    // this repository. Upstream's release carries upstream's identity.
+    const url = `https://github.com/techflowasia/mittr-craft/releases/download/engine-v${version}/${artifact.name}`;
     if (!fs.existsSync(archivePath)) {
       console.log(`[electron] downloading OpenCode CLI ${version}: ${artifact.name}`);
       await download(url, archivePath);

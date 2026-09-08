@@ -12,7 +12,7 @@
 // Output: <work>/opencode/packages/opencode/dist/opencode-<platform>/bin/opencode
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -98,3 +98,42 @@ if (!strings.includes('.mittr')) {
 
 console.log(`\nBuilt ${binary}`);
 console.log(`Identity: ${ours} MittrCraft, ${upstream} upstream.`);
+
+// Only the targets the desktop actually ships. The names and formats are what
+// packages/electron/scripts/prepare-opencode-cli.mjs expects to download, so
+// these files can be attached to a release and fetched unchanged.
+//
+// Windows arm64 is absent on purpose: it ships the x64 baseline build while an
+// upstream arm64 defect is open.
+const RELEASE_TARGETS = [
+  { target: 'opencode-darwin-arm64', asset: 'mittrcraft-engine-darwin-arm64.zip' },
+  { target: 'opencode-darwin-x64-baseline', asset: 'mittrcraft-engine-darwin-x64-baseline.zip' },
+  { target: 'opencode-windows-x64-baseline', asset: 'mittrcraft-engine-windows-x64-baseline.zip' },
+  { target: 'opencode-linux-x64-baseline', asset: 'mittrcraft-engine-linux-x64-baseline.tar.gz' },
+  { target: 'opencode-linux-arm64', asset: 'mittrcraft-engine-linux-arm64.tar.gz' },
+];
+
+if (process.argv.includes('--all')) {
+  const assetDir = path.join(workDir, 'assets');
+  rmSync(assetDir, { recursive: true, force: true });
+  mkdirSync(assetDir, { recursive: true });
+
+  for (const { target, asset } of RELEASE_TARGETS) {
+    const targetDir = path.join(distDir, target);
+    if (!existsSync(targetDir)) {
+      throw new Error(`Expected ${target} in ${distDir}. The build did not produce every shipped target.`);
+    }
+    const output = path.join(assetDir, asset);
+    // Archive the bin/ directory itself, so the layout matches what the
+    // packaging step's findBinary() walks.
+    if (asset.endsWith('.zip')) {
+      execFileSync('zip', ['-q', '-r', output, 'bin'], { cwd: targetDir, stdio: 'inherit' });
+    } else {
+      execFileSync('tar', ['-czf', output, 'bin'], { cwd: targetDir, stdio: 'inherit' });
+    }
+    console.log(`packaged ${asset}`);
+  }
+
+  console.log(`\nRelease assets in ${assetDir}`);
+  console.log(`Attach them to a release tagged engine-v${version} on this repository.`);
+}
