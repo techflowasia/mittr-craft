@@ -1,5 +1,14 @@
+import express from 'express';
 import { createAuditRecord } from './audit-record.js';
 import { serializeAuditRecord } from './audit-serializer.js';
+
+// Each route brings its own body parser: the application does not parse JSON
+// globally. See auth-routes.js.
+//
+// A prompt is capped at 4000 characters in the record, but a request may
+// legitimately carry a longer one to be truncated, so its limit is the generous
+// one; nothing else here carries more than a few small fields.
+const readJson = (limit) => express.json({ limit });
 
 // No `/api` prefix: that path belongs to Better Auth's middleware on the
 // platform side and 404s. See auth-routes.js.
@@ -27,20 +36,20 @@ export function registerMittrAuditRoutes(app, {
     return open.get(sessionId);
   };
 
-  app.post('/api/mittr/audit/prompt', (req, res) => {
+  app.post('/api/mittr/audit/prompt', readJson('256kb'), (req, res) => {
     const text = String(req.body?.text ?? '');
     if (text) recordFor(String(req.body?.sessionId ?? '')).addPrompt(text);
     return res.status(204).end();
   });
 
-  app.post('/api/mittr/audit/tool', (req, res) => {
+  app.post('/api/mittr/audit/tool', readJson('8kb'), (req, res) => {
     const name = String(req.body?.name ?? '');
     // The name only. Arguments are never read off this request.
     if (name) recordFor(String(req.body?.sessionId ?? '')).addToolUse(name);
     return res.status(204).end();
   });
 
-  app.post('/api/mittr/audit/turn', (req, res) => {
+  app.post('/api/mittr/audit/turn', readJson('8kb'), (req, res) => {
     const tokens = Number(req.body?.tokens);
     recordFor(String(req.body?.sessionId ?? '')).addTurn({
       tokens: Number.isFinite(tokens) ? tokens : 0,
@@ -48,7 +57,7 @@ export function registerMittrAuditRoutes(app, {
     return res.status(204).end();
   });
 
-  app.post('/api/mittr/audit/finish', async (req, res) => {
+  app.post('/api/mittr/audit/finish', readJson('8kb'), async (req, res) => {
     const sessionId = String(req.body?.sessionId ?? '');
     const record = recordFor(sessionId);
     open.delete(sessionId);

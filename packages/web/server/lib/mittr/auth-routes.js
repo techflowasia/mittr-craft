@@ -1,3 +1,4 @@
+import express from 'express';
 import { createTransaction, verifyCallback } from './sign-in-transaction.js';
 import { parseSession } from './session.js';
 
@@ -16,6 +17,12 @@ const ENDPOINT = {
   exchange: '/auth/desktop/exchange',
   refresh: '/auth/desktop/refresh',
 };
+
+// Each route brings its own body parser. The application does not parse JSON
+// globally -- every other route that needs a body declares one -- so a route
+// that assumes a parsed body reads undefined on the real server while passing
+// every test whose harness happened to add one.
+const readJson = (limit) => express.json({ limit });
 
 // Refresh a little before expiry, so a request that is already in flight when
 // the token turns over does not fail on a technicality.
@@ -56,7 +63,7 @@ export function registerMittrAuthRoutes(app, {
     return res.json({ authorizeUrl: authorizeUrl.toString() });
   });
 
-  app.post('/api/mittr/auth/callback', async (req, res) => {
+  app.post('/api/mittr/auth/callback', readJson('8kb'), async (req, res) => {
     let code;
     try {
       ({ code } = verifyCallback(pending, req.body?.url));

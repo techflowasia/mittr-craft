@@ -23,7 +23,10 @@ const jsonBody = (body, status = 201) => new Response(JSON.stringify(body), {
 
 const build = ({ fetchImpl = vi.fn(), store = memoryStore() } = {}) => {
   const app = express();
-  app.use(express.json());
+  // Deliberately no express.json() here. The application does not parse JSON
+  // globally, so a harness that parses for the routes proves nothing about
+  // whether they work on the real server -- which is how a sign-in that could
+  // never complete passed every test.
   const api = registerMittrAuthRoutes(app, {
     brokerBaseUrl: 'https://mittr.test',
     sessionStore: store,

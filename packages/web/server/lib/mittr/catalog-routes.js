@@ -1,4 +1,9 @@
+import express from 'express';
 import { parseCatalog } from './catalog.js';
+
+// Each route brings its own body parser: the application does not parse JSON
+// globally. See auth-routes.js.
+const readJson = (limit) => express.json({ limit });
 
 // Mittr's desktop catalog endpoint. No `/api` prefix: that path belongs to
 // Better Auth's middleware on the platform side and 404s. See auth-routes.js.
@@ -86,7 +91,7 @@ export function registerMittrCatalogRoutes(app, {
     });
   });
 
-  app.put('/api/mittr/catalog/enablement', (req, res) => {
+  app.put('/api/mittr/catalog/enablement', readJson('8kb'), (req, res) => {
     const kind = String(req.body?.kind ?? '');
     const name = String(req.body?.name ?? '');
     if (!SWITCHABLE_KINDS.includes(kind) || !name) {
