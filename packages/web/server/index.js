@@ -54,7 +54,7 @@ import { resolveOpenCodeEnvConfig } from './lib/opencode/env-config.js';
 import { createHmrStateRuntime } from './lib/opencode/hmr-state-runtime.js';
 import { startMittrShim } from './lib/mittr/index.js';
 import { resolveBrokerBaseUrl } from './lib/mittr/broker-target.js';
-import { upsertProviderConfig, removeProviderConfig } from './lib/opencode/providers.js';
+import { upsertProviderConfig, removeProviderConfig, readProviderModelIds } from './lib/opencode/providers.js';
 import { readAuthFile, writeAuthFile } from './lib/opencode/auth.js';
 import { createOpenCodeNetworkRuntime } from './lib/opencode/network-runtime.js';
 import { createOpenCodeAuthStateRuntime } from './lib/opencode/auth-state-runtime.js';
@@ -1347,9 +1347,25 @@ const storeMittrCredential = (shim) => {
 // A provider with no models cannot be registered at all — the engine's own
 // validation requires at least one — so an empty catalog removes the provider
 // rather than leaving a hollow one that offers a model nobody can use.
+//
+// The engine reads its provider config at startup, so writing the config is
+// only half the job: without a reload a developer signs in, the catalog
+// arrives, and the model picker still says "no models found" — which is what
+// happened the first time this was driven end to end.
+//
+// The reload restarts the engine, so it is spent only when the set of aliases
+// actually changed — and "changed" is measured against the config already on
+// disk, not against anything remembered in memory. Otherwise every boot would
+// restart the engine to write back what was already there.
 const syncMittrModels = (shim) => async (models) => {
-  if (!Array.isArray(models) || models.length === 0) {
-    removeProviderConfig('mittr', null, 'user');
+  const wanted = Array.isArray(models) ? models.map((model) => model.alias).sort() : [];
+  const present = readProviderModelIds('mittr', null);
+  const unchanged = wanted.length === present.length
+    && wanted.every((alias, index) => alias === present[index]);
+
+  if (wanted.length === 0) {
+    const removed = removeProviderConfig('mittr', null, 'user');
+    if (removed) await refreshOpenCodeAfterConfigChange('Mittr catalog: no models offered');
     return;
   }
 
@@ -1366,6 +1382,8 @@ const syncMittrModels = (shim) => async (models) => {
     'user',
     { hasStoredAuth: true },
   );
+
+  if (!unchanged) await refreshOpenCodeAfterConfigChange('Mittr catalog changed');
 };
 
 async function main(options = {}) {
