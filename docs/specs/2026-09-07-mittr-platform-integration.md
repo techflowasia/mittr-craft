@@ -401,11 +401,24 @@ tests and must be checked by using the product.
    later without a code change. §10 stands as written.
 2. ~~Whether the entitlement is per-person or derived from an existing group.~~
    **Answered (owner, 2026-09-07): per-person**, via the eligibility decision
-   Mittr already has — `requireAllowed(userId, 'agent', alias)`. The kind is
-   `agent`: a grant names the agent, and the alias sent back by the catalog is
-   that agent's key (implemented in mittr v0.15.0; the first implementation
-   used agent keys and was wrong, then briefly corrected to `provider_model`,
-   which was also wrong — see the notes below).
+   Mittr already has. There are two checks, at two different moments, and the
+   desktop's path uses only the first:
+
+   - **Request time**, on every desktop call —
+     `requireAllowed(userId, 'provider_model', <pm id derived from the grant>)`.
+     The third argument is **not** the alias: it is an id computed from the
+     providerKey and upstream model that the grant pinned when it was issued.
+     The alias is used only to find that grant, and a request whose alias no
+     active platform policy grants is refused before eligibility is consulted
+     at all.
+   - **Issuance time**, when an admin opens or saves the assignment panel —
+     `requireAllowed(actor, 'agent', agentKey)` **and**
+     `requireAllowed(actor, 'provider_model', <pm id>)`. This is where the
+     agent-grained check lives.
+
+   Nothing in the desktop depends on either. It sends the alias and names no
+   entitlement kind on the wire, which is why two regrains on the platform side
+   have cost this repository no code.
 
    *(Corrected 2026-09-09: this line previously called that source a "studio
    registry." There is no Studio registry anywhere in this product's path.
@@ -413,20 +426,17 @@ tests and must be checked by using the product.
    MittrCraft can run depend on a Studio configuration row was rejected for
    exactly that reason.)*
 
-   *(Corrected again 2026-09-10: the 2026-09-09 pass also changed the
-   entitlement kind above to `provider_model`, on the theory that a grant was
-   keyed by provider and model. That was wrong: several agents can share one
-   backend model with different instructions, RAG and skills, so keying by
-   provider+model collapsed distinct agents into one grant. The kind is
-   `agent`, keyed by the same opaque alias the catalog hands back. See
-   `docs/plans/2026-09-09-mittr-side-ready.md`.*
+   *(Corrected again 2026-09-10, twice in one day. The 2026-09-09 pass wrote
+   `requireAllowed(userId, 'provider_model', alias)`. A later pass changed the
+   kind to `agent`, reasoning from the platform's regrain — a grant names the
+   agent — that the desktop's check must have followed. That reasoning was
+   marked as inferred rather than verified, and it was wrong: the kind on the
+   desktop path is `provider_model` after all. The agent-grained check is real
+   but belongs to issuance, not to requests.*
 
-   *The kind is inferred from what the platform side did confirm — that a grant
-   now names the agent and the alias is its key — not from a reading of the
-   call itself. The exact signature above is unverified from this repository and
-   nothing here depends on it: the desktop never names an entitlement kind, it
-   only sends the alias. Left written down because a wrong note is worse than a
-   marked one.)*
+   *The third argument was wrong in **both** earlier versions, which each called
+   it the alias. It is the pinned provider-and-model id. That error survived a
+   correction because the correction only questioned the kind.)*
    Admin-decided,
    default-deny, checked live on every request, so revoking one person takes
    effect immediately without touching the key every developer shares. No new

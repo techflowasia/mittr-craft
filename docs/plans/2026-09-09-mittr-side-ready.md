@@ -216,6 +216,51 @@ untestable end to end until both are cleared.
     `content` verbatim will show it — the two models make a ready-made pair for testing a
     stripper.
 
+## What is actually on develop (2026-09-10)
+
+Thirteen agents, and **every one of them resolves to the same backend model,
+`llm-dev / gemma-4-26b`** — the four with no explicit setting inherit the
+installation default, which is that same pair. This is the case the alias
+regrain exists for: one model, many agents, each with its own instructions, RAG
+and skills.
+
+| Scope | Agents | Agent-level state |
+|---|---|---|
+| Org | Senior Analyst, Lead Engineer, QA Engineer, Developer, Product Owner, R & D | denied |
+| Org, built-in | General Assistant | **allowed** — the only explicit agent allow in the environment |
+| Org, built-in | Code Helper | denied |
+| Personal, owned by the workspace admin | นักกฎหมาย, ผู้ช่วยความปลอดภัย, ทนายสัญญาไทย, นักออกแบบสไลด์ | auto-allowed to their owner |
+| Personal, owned by someone else | POD Agent | not visible to the admin, not offerable |
+
+So the panel offers five today: General Assistant and the four personal ones.
+The other six need one tick each.
+
+**Eligibility is two ticks, not one.** Allowing an agent does not carry its
+model and allowing a model does not carry its agents; both rows must be
+allowed. The exception is a personal agent, which is auto-allowed at the agent
+level to the person who owns it — which is why four personal agents are
+offerable in an environment holding exactly one explicit agent allow. On
+develop the model tick is already satisfied for everything, so the six org
+agents are missing only the agent tick.
+
+### Two consequences worth deciding on rather than discovering
+
+**Four of the five agents offerable today belong to one person.** Assigning any
+of them hands every developer who signs in an agent owned by an individual,
+along with that person's RAG and skills. That sits badly against the platform
+semantics this product is built on — a platform key issued to the platform, not
+to a person — and it is a decision for the owner, not something either side
+should quietly settle by ticking a box.
+
+**Every agent on develop runs `gemma-4-26b`, which is the model that leaks
+`<|channel>thought` / `<channel|>` into `content`.** `qwen3.8-27b`, which the
+prod grant is pinned to, is clean. So a build pointed at develop will show that
+markup to whoever uses it, on essentially every reply, and the detector in
+`packages/web/server/lib/mittr/response-markup.js` will report it on every
+call. The detector reports and never edits, by design. Whether the desktop
+should strip this markup before rendering is a product decision that has not
+been taken; it is worth taking before the team sees it rather than after.
+
 ## One label bug, fixed on the Mittr side
 
 Found while proving the alias: the assignment panel and the desktop catalog chose different
