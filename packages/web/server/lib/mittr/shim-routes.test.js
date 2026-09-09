@@ -15,6 +15,11 @@ const createApp = (fetchImpl, session = { accessToken: 'at-1' }) => {
   return app;
 };
 
+const post = (app, body) => request(app)
+  .post('/v1/chat/completions')
+  .set('authorization', 'Bearer mc_local_abc')
+  .send(body);
+
 const jsonResponse = (body, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { 'content-type': 'application/json' },
@@ -129,11 +134,6 @@ describe('mittr shim streaming', () => {
 });
 
 describe('mittr shim markup detection', () => {
-  const post = (app, body) => request(app)
-    .post('/v1/chat/completions')
-    .set('authorization', 'Bearer mc_local_abc')
-    .send(body);
-
   it('reports a tool call that came back as text, and forwards the bytes untouched', async () => {
     const chunks = [
       'data: {"choices":[{"delta":{"content":"<|tool_"}}]}\n\n',
@@ -202,6 +202,42 @@ describe('mittr shim markup detection', () => {
       expect(warn).not.toHaveBeenCalled();
     } finally {
       error.mockRestore();
+      warn.mockRestore();
+    }
+  });
+});
+
+describe('mittr shim refusals', () => {
+  const refused = (error) => vi.fn().mockResolvedValue(new Response(JSON.stringify({ error }), {
+    status: 403,
+    headers: { 'content-type': 'application/json' },
+  }));
+
+  it('forwards a refusal body untouched, because the engine parses it', async () => {
+    const res = await post(createApp(refused('agent_not_granted')), { model: 'pm_9f2c1d4e7b', messages: [] })
+      .expect(403);
+    expect(JSON.parse(res.text)).toEqual({ error: 'agent_not_granted' });
+  });
+
+  it('names a stale catalog as repairable and an entitlement as not', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await post(createApp(refused('agent_not_granted')), { model: 'pm_9f2c1d4e7b', messages: [] }).expect(403);
+      expect(warn.mock.calls.at(-1)[0]).toMatch(/re-sync/);
+
+      await post(createApp(refused('desktop_entitlement_required')), { model: 'pm_9f2c1d4e7b', messages: [] }).expect(403);
+      expect(warn.mock.calls.at(-1)[0]).toMatch(/admin/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('says nothing when the refusal is one it cannot name', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await post(createApp(refused('some_other_problem')), { model: 'pm_9f2c1d4e7b', messages: [] }).expect(403);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
       warn.mockRestore();
     }
   });

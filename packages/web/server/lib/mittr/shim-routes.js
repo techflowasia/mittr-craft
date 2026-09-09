@@ -1,5 +1,6 @@
 import express from 'express';
 import { createStreamMarkupWatcher, describeMarkup } from './response-markup.js';
+import { describeModelRefusal } from './model-refusal.js';
 
 const reportMarkup = (result, model) => {
   if (result.kind === 'tool-calls-lost') {
@@ -64,6 +65,26 @@ export function registerMittrShimRoutes(app, { upstream, localToken, ensureFresh
 
       if (!isStream) {
         const text = await upstreamResponse.text();
+
+        // A refusal reaches the developer as whatever the engine makes of the
+        // body, which is not enough to tell "ask an admin" from "your catalog
+        // is stale". The body is still forwarded untouched — the engine's
+        // parser must keep working — but the distinction is named in the log,
+        // where somebody helping them can find it.
+        if (!upstreamResponse.ok) {
+          try {
+            const refusal = describeModelRefusal(JSON.parse(text));
+            if (refusal.reason !== 'unknown') {
+              console.warn(
+                `[mittr] model ${req.body?.model} refused (${refusal.reason})`
+                + `${refusal.canResync ? ': a catalog re-sync should repair this' : ': this needs a Mittr admin'}`,
+              );
+            }
+          } catch {
+            /* a refusal body that is not JSON tells us nothing to name */
+          }
+        }
+
         try {
           const message = JSON.parse(text)?.choices?.[0]?.message;
           reportMarkup(
