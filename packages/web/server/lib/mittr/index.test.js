@@ -64,7 +64,10 @@ describe('startMittrShim', () => {
     expect(syncModels).toHaveBeenCalledWith([{ alias: 'pm_9f2c1d4e7b', label: 'MittrCraft 1.0' }]);
   });
 
-  it('refuses to start when the upstream is unconfigured', () => {
+  it('starts with nothing configured, because a packaged build sets no environment', () => {
+    // This is the packaged case, and it used to throw: the shim required
+    // MITTRCRAFT_UPSTREAM_URL, nothing in the desktop set it, and the whole
+    // Mittr provider was silently absent from every build.
     expect(() => startMittrShim({
       app: express(),
       host: '127.0.0.1',
@@ -72,6 +75,17 @@ describe('startMittrShim', () => {
       dataDir: dir,
       brokerBaseUrl,
       env: {},
-    })).toThrow(/MITTRCRAFT_UPSTREAM_URL/);
+    })).not.toThrow();
+  });
+
+  it('still refuses to start when there is no broker to derive an upstream from', () => {
+    expect(() => startMittrShim({
+      app: express(),
+      host: '127.0.0.1',
+      port: 3902,
+      dataDir: dir,
+      brokerBaseUrl: '',
+      env: {},
+    })).toThrow(/MITTRCRAFT_UPSTREAM_URL|valid URL/);
   });
 });

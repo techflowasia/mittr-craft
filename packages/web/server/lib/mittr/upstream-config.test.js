@@ -29,3 +29,24 @@ describe('resolveUpstream', () => {
       .toThrow(/https/);
   });
 });
+
+describe('resolveUpstream defaults', () => {
+  it('derives the upstream from the broker, so the two cannot disagree', () => {
+    expect(resolveUpstream({}, { defaultBaseUrl: 'https://api.mittr.asia/v1' }))
+      .toEqual({ baseUrl: 'https://api.mittr.asia/v1' });
+  });
+
+  it('lets a development run point at a local stand-in', () => {
+    expect(resolveUpstream(
+      { MITTRCRAFT_UPSTREAM_URL: 'http://127.0.0.1:4599/v1' },
+      { defaultBaseUrl: 'https://api.mittr.asia/v1' },
+    )).toEqual({ baseUrl: 'http://127.0.0.1:4599/v1' });
+  });
+
+  it('ignores the environment in a packaged build, which must not be repointable', () => {
+    expect(resolveUpstream(
+      { MITTRCRAFT_UPSTREAM_URL: 'https://somewhere-else.example/v1' },
+      { defaultBaseUrl: 'https://api.mittr.asia/v1', allowOverride: false },
+    )).toEqual({ baseUrl: 'https://api.mittr.asia/v1' });
+  });
+});

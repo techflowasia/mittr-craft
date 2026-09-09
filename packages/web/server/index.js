@@ -1574,6 +1574,8 @@ async function main(options = {}) {
       brokerBaseUrl: resolveBrokerBaseUrl({ packaged: options.brokerBaseUrl, env: process.env }),
       secretStore: options.secretStore ?? undefined,
       syncModels: (models) => syncMittrModels(mittrShim)(models),
+      // A build that named its own broker locks the upstream to it as well.
+      allowUpstreamOverride: !String(options.brokerBaseUrl ?? '').trim(),
     });
     storeMittrCredential(mittrShim);
 

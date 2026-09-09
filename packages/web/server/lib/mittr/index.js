@@ -48,11 +48,16 @@ export function startMittrShim({
   dataDir,
   brokerBaseUrl,
   syncModels,
+  // False in a packaged build, whose origin was decided when it was built.
+  allowUpstreamOverride = true,
   secretStore = createPlaintextSecretStore(),
   env = process.env,
 }) {
   assertLoopbackHost(host);
-  const upstream = resolveUpstream(env);
+  const upstream = resolveUpstream(env, {
+    defaultBaseUrl: `${String(brokerBaseUrl).replace(/\/+$/, '')}/v1`,
+    allowOverride: allowUpstreamOverride,
+  });
   const localToken = ensureLocalToken({ tokenPath: path.join(dataDir, 'mittr-shim-token') });
 
   const sessionStore = createSessionStore({
