@@ -12,6 +12,14 @@
 
 **Depends on:** `docs/plans/2026-09-07-mittr-sign-in.md`
 
+*(Corrected 2026-09-09: the code samples below originally used `mittr-craft-1-0`
+as a stand-in alias — written before the alias contract was pinned down. A real
+alias is opaque: the literal prefix `pm_` followed by a hash of the provider
+and upstream model. The samples now use `pm_9f2c1d4e7b` as an illustrative
+placeholder — it is not a real value, and nothing in this codebase may
+construct, guess, or hardcode one. See
+`docs/plans/2026-09-09-mittr-side-ready.md`.)*
+
 ## Global Constraints
 
 - Packaged builds only; no `.env` a developer edits. (spec §4.1)
@@ -56,10 +64,10 @@ describe('parseCatalog', () => {
   });
 
   it('keeps the items of a populated collection', () => {
-    const parsed = parseCatalog({ ...base, models: [{ alias: 'mittr-craft-1-0', label: 'MittrCraft 1.0' }] });
+    const parsed = parseCatalog({ ...base, models: [{ alias: 'pm_9f2c1d4e7b', label: 'MittrCraft 1.0' }] });
     expect(parsed.models).toEqual({
       configured: true,
-      items: [{ alias: 'mittr-craft-1-0', label: 'MittrCraft 1.0' }],
+      items: [{ alias: 'pm_9f2c1d4e7b', label: 'MittrCraft 1.0' }],
     });
   });
 
@@ -154,7 +162,7 @@ import { createCatalogCache } from './catalog-cache.js';
 let dir;
 const catalog = {
   bundleVersion: 7,
-  models: { configured: true, items: [{ alias: 'mittr-craft-1-0' }] },
+  models: { configured: true, items: [{ alias: 'pm_9f2c1d4e7b' }] },
   mcp: { configured: false, items: [] },
   skills: { configured: false, items: [] },
   knowledge: { configured: false, items: [] },
@@ -556,7 +564,7 @@ git commit -m "feat(mittr): reconcile organisation MCP entries without touching 
 
 ### Task 5: Sync routes and the model list
 
-Plan 1 task 6 registered `mittr-craft-1-0` as a hardcoded model. This task
+Plan 1 task 6 registered `pm_9f2c1d4e7b` as a hardcoded model. This task
 replaces it with whatever the catalog says.
 
 **Files:**
@@ -584,7 +592,7 @@ const memoryCache = () => {
 
 const catalogPayload = {
   bundleVersion: 7,
-  models: [{ alias: 'mittr-craft-1-0', label: 'MittrCraft 1.0' }],
+  models: [{ alias: 'pm_9f2c1d4e7b', label: 'MittrCraft 1.0' }],
   mcp: [],
 };
 
@@ -619,7 +627,7 @@ describe('mittr catalog routes', () => {
 
     expect(fetchImpl.mock.calls[0][1].headers.authorization).toBe('Bearer at-1');
     expect(cache.read().bundleVersion).toBe(7);
-    expect(syncModels).toHaveBeenCalledWith([{ alias: 'mittr-craft-1-0', label: 'MittrCraft 1.0' }]);
+    expect(syncModels).toHaveBeenCalledWith([{ alias: 'pm_9f2c1d4e7b', label: 'MittrCraft 1.0' }]);
   });
 
   it('keeps the cached catalog when the broker is unreachable', async () => {
@@ -766,7 +774,7 @@ Expected: 5 passing.
 - [ ] **Step 5: Replace the hardcoded model registration**
 
 In `packages/web/server/lib/mittr/index.js`, delete the hardcoded
-`models: { 'mittr-craft-1-0': ... }` object that plan 1 task 6 added, and pass a
+`models: { 'pm_9f2c1d4e7b': ... }` object that plan 1 task 6 added, and pass a
 `syncModels` function that builds the same shape from the catalog:
 
 ```javascript

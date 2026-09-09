@@ -13,6 +13,13 @@
 
 **Consumed by:** the five MittrCraft plans in the same directory. Plans 2 through 5 can only be finished once tasks 1, 3, 4 and 5 below exist.
 
+*(Corrected 2026-09-09: the code samples below originally used `mittr-craft-1-0`
+as a stand-in alias, written before the alias contract was pinned down. A real
+alias is opaque — the literal prefix `pm_` followed by a hash of the provider
+and upstream model. The samples now use `pm_9f2c1d4e7b` as an illustrative
+placeholder, not a real value. See
+`docs/plans/2026-09-09-mittr-side-ready.md`.)*
+
 ## What already exists — read these before writing anything
 
 | File | What it gives you |
@@ -318,17 +325,17 @@ describe('desktop traffic on the completions surface', () => {
     const res = await request(app.getHttpServer())
       .post('/v1/chat/completions')
       .set('authorization', `Bearer ${desktopSessionToken}`)
-      .send({ model: 'mittr-craft-1-0', messages: [{ role: 'user', content: 'hi' }] });
+      .send({ model: 'pm_9f2c1d4e7b', messages: [{ role: 'user', content: 'hi' }] });
     expect(res.status).toBe(200);
     // Looked up here, never sent by the desktop.
-    expect(desktopAccess.platformPolicyFor).toHaveBeenCalledWith('mittr-craft-1-0');
+    expect(desktopAccess.platformPolicyFor).toHaveBeenCalledWith('pm_9f2c1d4e7b');
   });
 
   it('never lets a credential reach the client', async () => {
     const res = await request(app.getHttpServer())
       .post('/v1/chat/completions')
       .set('authorization', `Bearer ${desktopSessionToken}`)
-      .send({ model: 'mittr-craft-1-0', messages: [] });
+      .send({ model: 'pm_9f2c1d4e7b', messages: [] });
     expect(JSON.stringify(res.body)).not.toMatch(/mitr_|sk-|ekp-/);
   });
 
@@ -344,7 +351,7 @@ describe('desktop traffic on the completions surface', () => {
     const res = await request(app.getHttpServer())
       .post('/v1/chat/completions')
       .set('authorization', `Bearer ${sessionWithoutEntitlement}`)
-      .send({ model: 'mittr-craft-1-0', messages: [] });
+      .send({ model: 'pm_9f2c1d4e7b', messages: [] });
     expect(res.status).toBe(403);
   });
 
@@ -352,7 +359,7 @@ describe('desktop traffic on the completions surface', () => {
     await request(app.getHttpServer())
       .post('/v1/chat/completions')
       .set('authorization', `Bearer ${desktopSessionToken}`)
-      .send({ model: 'mittr-craft-1-0', messages: [{ role: 'user', content: 'const secret = 1' }] });
+      .send({ model: 'pm_9f2c1d4e7b', messages: [{ role: 'user', content: 'const secret = 1' }] });
     expect(memory.recall).not.toHaveBeenCalled();
     expect(memory.autoExtract).not.toHaveBeenCalled();
   });
@@ -361,7 +368,7 @@ describe('desktop traffic on the completions surface', () => {
     await request(app.getHttpServer())
       .post('/v1/chat/completions')
       .set('authorization', `Bearer ${desktopSessionToken}`)
-      .send({ model: 'mittr-craft-1-0', messages: [] });
+      .send({ model: 'pm_9f2c1d4e7b', messages: [] });
     expect(upstream.lastRequest.headers['cache-control']).toBe('no-store');
   });
 
@@ -435,7 +442,7 @@ git commit -m "feat(desktop): authorise desktop sessions without Memory or upstr
 describe('DesktopCatalogService', () => {
   it('returns only model aliases, never the backend model behind them', async () => {
     const catalog = await service.forUser('u1');
-    expect(catalog.models).toEqual([{ alias: 'mittr-craft-1-0', label: expect.any(String) }]);
+    expect(catalog.models).toEqual([{ alias: 'pm_9f2c1d4e7b', label: expect.any(String) }]);
     expect(JSON.stringify(catalog)).not.toContain('mittr-prod/');
   });
 
@@ -677,6 +684,6 @@ Open the pull request against `develop`.
   reporting zero. Caching and the two-key rotation window are handled from this side —
   `cache-control: no-store` goes upstream per request, and two active platform keys are
   accepted — but the gateway team should confirm it honours the header.
-- **The pre-flight in spec §12** — calling `mittr-craft-1-0` through the real gateway with a
+- **The pre-flight in spec §12** — calling `pm_9f2c1d4e7b` through the real gateway with a
   prompt that forces a tool call — has not been run. It needs the real gateway, and per spec if
   it fails the design changes rather than proceeds.

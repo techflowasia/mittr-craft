@@ -666,7 +666,7 @@ it('sends the session token upstream, not a static key', async () => {
   await request(createApp(fetchImpl))
     .post('/v1/chat/completions')
     .set('authorization', 'Bearer mc_local_abc')
-    .send({ model: 'mittr-craft-1-0', messages: [] })
+    .send({ model: 'pm_9f2c1d4e7b', messages: [] })
     .expect(200);
   expect(fetchImpl.mock.calls[0][1].headers.authorization).toBe('Bearer at-1');
 });
@@ -676,7 +676,7 @@ it('answers 401 with a sign-in hint when there is no session', async () => {
   const res = await request(createApp(fetchImpl, null))
     .post('/v1/chat/completions')
     .set('authorization', 'Bearer mc_local_abc')
-    .send({ model: 'mittr-craft-1-0', messages: [] })
+    .send({ model: 'pm_9f2c1d4e7b', messages: [] })
     .expect(401);
   expect(res.body.error).toMatch(/sign in/i);
   expect(fetchImpl).not.toHaveBeenCalled();
