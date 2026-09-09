@@ -53,7 +53,7 @@ import { createOpenCodeEnvRuntime } from './lib/opencode/env-runtime.js';
 import { resolveOpenCodeEnvConfig } from './lib/opencode/env-config.js';
 import { createHmrStateRuntime } from './lib/opencode/hmr-state-runtime.js';
 import { startMittrShim } from './lib/mittr/index.js';
-import { upsertProviderConfig } from './lib/opencode/providers.js';
+import { upsertProviderConfig, removeProviderConfig } from './lib/opencode/providers.js';
 import { readAuthFile, writeAuthFile } from './lib/opencode/auth.js';
 import { createOpenCodeNetworkRuntime } from './lib/opencode/network-runtime.js';
 import { createOpenCodeAuthStateRuntime } from './lib/opencode/auth-state-runtime.js';
@@ -294,7 +294,9 @@ const getCachedZenModels = (...args) => notificationTemplateRuntime.getCachedZen
 const MITTRCRAFT_DATA_DIR = process.env.MITTRCRAFT_DATA_DIR
   ? path.resolve(process.env.MITTRCRAFT_DATA_DIR)
   : path.join(os.homedir(), '.config', 'mittrcraft');
-const MITTRCRAFT_BROKER_URL = process.env.MITTRCRAFT_BROKER_URL || 'https://mittr.asia';
+// The API host, not the workspace host: the workspace only proxies `/api/*`,
+// and none of the desktop endpoints live under that prefix.
+const MITTRCRAFT_BROKER_URL = process.env.MITTRCRAFT_BROKER_URL || 'https://api.mittr.asia';
 const SETTINGS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'settings.json');
 const PUSH_SUBSCRIPTIONS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'push-subscriptions.json');
 const APNS_TOKENS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'apns-tokens.json');
@@ -1321,26 +1323,45 @@ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
 
 const gracefulShutdown = (...args) => gracefulShutdownRuntime.gracefulShutdown(...args);
 
-// Registers the shim as an engine provider. The config and the credential live in
-// two different stores, so this is two writes, not one. The token written here is
-// the machine-local one: the engine may hold it forever because it grants nothing
+// Stores the credential the engine presents to the shim. It is the
+// machine-local token: the engine may hold it forever because it grants nothing
 // outside this machine.
-const registerMittrProvider = (shim) => {
-  // The credential goes first. upsertProviderConfig refuses a provider that has
-  // neither an env credential nor one already stored, and this order is also the
-  // safer one to fail halfway through: a stored credential with no provider
-  // config is inert, while a provider config with no credential is a provider
-  // that cannot authenticate.
+//
+// The credential is written on its own, before any provider config exists,
+// because upsertProviderConfig refuses a provider that has neither an env
+// credential nor one already stored. It is also the safer half to write first:
+// a stored credential with no provider config is inert, while a provider config
+// with no credential is a provider that cannot authenticate.
+const storeMittrCredential = (shim) => {
   const auth = readAuthFile();
   auth.mittr = { type: 'api', key: shim.localToken };
   writeAuthFile(auth);
+};
+
+// Registers exactly the models the catalog listed, under the opaque aliases
+// Mittr issued for them.
+//
+// An alias is not a readable name and is never written by hand here: it is
+// minted by Mittr from the provider and model behind it, and is the only string
+// the completions surface will resolve. Anything invented locally is refused.
+//
+// A provider with no models cannot be registered at all — the engine's own
+// validation requires at least one — so an empty catalog removes the provider
+// rather than leaving a hollow one that offers a model nobody can use.
+const syncMittrModels = (shim) => async (models) => {
+  if (!Array.isArray(models) || models.length === 0) {
+    removeProviderConfig('mittr', null, 'user');
+    return;
+  }
 
   upsertProviderConfig(
     'mittr',
     {
       name: 'Mittr',
       options: { baseURL: shim.baseUrl },
-      models: { 'mittr-craft-1-0': { name: 'MittrCraft 1.0' } },
+      models: Object.fromEntries(
+        models.map((model) => [model.alias, { name: model.label || model.alias }]),
+      ),
     },
     null,
     'user',
@@ -1531,8 +1552,24 @@ async function main(options = {}) {
       dataDir: MITTRCRAFT_DATA_DIR,
       brokerBaseUrl: MITTRCRAFT_BROKER_URL,
       secretStore: options.secretStore ?? undefined,
+      syncModels: (models) => syncMittrModels(mittrShim)(models),
     });
-    registerMittrProvider(mittrShim);
+    storeMittrCredential(mittrShim);
+
+    // Before the network is touched: what the engine offers must come from the
+    // catalog, and an install carrying a model from an older build must lose it
+    // rather than keep offering something that no longer resolves.
+    void mittrShim.applyCachedCatalog().catch((error) => {
+      console.warn(`[mittr] could not apply the cached catalog: ${error?.message ?? error}`);
+    });
+
+    // A catalog fetched at startup keeps a signed-in developer's model list
+    // current across restarts. It is deliberately not awaited and its failure
+    // is not fatal: nobody is signed in on a first run, and a broker that is
+    // unreachable must not delay the server coming up.
+    void mittrShim.syncCatalog().catch((error) => {
+      console.warn(`[mittr] startup catalog sync failed: ${error?.message ?? error}`);
+    });
   } catch (error) {
     console.warn(`[mittr] provider unavailable: ${error?.message ?? error}`);
   }

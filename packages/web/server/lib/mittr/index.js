@@ -5,6 +5,12 @@ import { ensureLocalToken } from './local-token.js';
 import { createSessionStore } from './session.js';
 import { registerMittrAuthRoutes } from './auth-routes.js';
 import { registerMittrShimRoutes } from './shim-routes.js';
+import { registerMittrCatalogRoutes } from './catalog-routes.js';
+import { registerMittrAuditRoutes } from './audit-routes.js';
+import { createCatalogCache } from './catalog-cache.js';
+import { createEnablementStore } from './local-enablement.js';
+import { reconcileMcp } from './mcp-reconciler.js';
+import { resolveRepositoryIdentity } from './repository-identity.js';
 
 /**
  * Used when the host offers no OS-backed secret storage — a standalone server or
@@ -41,6 +47,7 @@ export function startMittrShim({
   port,
   dataDir,
   brokerBaseUrl,
+  syncModels,
   secretStore = createPlaintextSecretStore(),
   env = process.env,
 }) {
@@ -53,13 +60,73 @@ export function startMittrShim({
     ...secretStore,
   });
 
+  // The catalog routes are registered after the auth routes but the sign-in
+  // handler needs to reach them, so the sync is handed over through a holder
+  // rather than by reordering registration and losing the guard ordering above.
+  const catalog = { sync: null };
+
   const { ensureFreshSession } = registerMittrAuthRoutes(app, {
     brokerBaseUrl,
     sessionStore,
     fetchImpl: (...args) => fetch(...args),
+    onSignIn: () => catalog.sync?.(),
   });
 
   registerMittrShimRoutes(app, { upstream, localToken, ensureFreshSession });
 
-  return { localToken, baseUrl: `http://${host}:${port}/v1` };
+  const cache = createCatalogCache({ filePath: path.join(dataDir, 'mittr-catalog.json') });
+  const enablement = createEnablementStore({ filePath: path.join(dataDir, 'mittr-enablement.json') });
+
+  // The engine's MCP writers and the git service are both loaded on demand. The
+  // shim starts on every boot; neither of these is needed until somebody signs
+  // in, and the git service in particular is large.
+  const load = (() => {
+    const cached = new Map();
+    return (specifier) => {
+      if (!cached.has(specifier)) cached.set(specifier, import(specifier));
+      return cached.get(specifier);
+    };
+  })();
+
+  const { sync: syncCatalog } = registerMittrCatalogRoutes(app, {
+    brokerBaseUrl,
+    ensureFreshSession,
+    cache,
+    enablement,
+    syncModels,
+    reconcile: async (catalog) => {
+      const mcpApi = await load('../opencode/mcp.js');
+      // Organisation connectors are written at user scope, so they are not tied
+      // to whichever directory happened to be open when the sync ran.
+      reconcileMcp({ catalog, enablement, workingDirectory: null, mcpApi });
+    },
+  });
+
+  registerMittrAuditRoutes(app, {
+    brokerBaseUrl,
+    ensureFreshSession,
+    resolveRepository: async (directory) => {
+      const { getRemoteUrl } = await load('../git/index.js');
+      return resolveRepositoryIdentity(directory, { getRemoteUrl });
+    },
+  });
+
+  catalog.sync = syncCatalog;
+
+  /**
+   * Brings the engine's provider config in line with the last catalog we hold,
+   * before any network call is made.
+   *
+   * This runs even when the cache is empty, and that is the point. An install
+   * upgraded from a build that registered a fixed model still carries it, and
+   * that id resolves to nothing now — so a developer would see a model, pick
+   * it, and be refused. Deriving the provider from the catalog alone, including
+   * the case where the catalog is empty, is what clears it.
+   */
+  const applyCachedCatalog = async () => {
+    const cached = cache.read();
+    await syncModels(cached?.models?.configured ? cached.models.items : []);
+  };
+
+  return { localToken, baseUrl: `http://${host}:${port}/v1`, syncCatalog, applyCachedCatalog };
 }

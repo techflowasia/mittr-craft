@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -40,6 +40,28 @@ describe('startMittrShim', () => {
       brokerBaseUrl,
       env,
     })).toThrow(/loopback/);
+  });
+
+  it('applies an empty model list when nothing is cached, so a model left by an older build is dropped', async () => {
+    const syncModels = vi.fn();
+    const shim = startMittrShim({
+      app: express(), host: '127.0.0.1', port: 3902, dataDir: dir, brokerBaseUrl, env, syncModels,
+    });
+    await shim.applyCachedCatalog();
+    expect(syncModels).toHaveBeenCalledWith([]);
+  });
+
+  it('applies the cached models before any network call', async () => {
+    const syncModels = vi.fn();
+    fs.writeFileSync(path.join(dir, 'mittr-catalog.json'), JSON.stringify({
+      bundleVersion: 7,
+      models: { configured: true, items: [{ alias: 'pm_9f2c1d4e7b', label: 'MittrCraft 1.0' }] },
+    }));
+    const shim = startMittrShim({
+      app: express(), host: '127.0.0.1', port: 3902, dataDir: dir, brokerBaseUrl, env, syncModels,
+    });
+    await shim.applyCachedCatalog();
+    expect(syncModels).toHaveBeenCalledWith([{ alias: 'pm_9f2c1d4e7b', label: 'MittrCraft 1.0' }]);
   });
 
   it('refuses to start when the upstream is unconfigured', () => {
