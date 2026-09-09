@@ -3110,4 +3110,8 @@ export const dict = {
   'mittr.signIn.action': 'Se connecter avec Mittr',
   'mittr.signIn.checking': 'Vérification de votre session…',
   'mittr.signIn.error': 'Impossible de démarrer la connexion. Réessayez.',
+  'mittr.audit.notice': 'Vos instructions sont enregistrées et visibles par les administrateurs Mittr. Votre code et vos fichiers ne le sont pas.',
+  'mittr.model.refused.entitlement': "Vous n'avez pas accès à ce modèle. Demandez à un administrateur Mittr de vous l'accorder.",
+  'mittr.model.refused.staleCatalog': "Ce modèle n'est plus disponible sur Mittr. Actualisez votre catalogue pour voir ceux qui le sont.",
+  'mittr.model.refused.unknown': 'Mittr a refusé cette requête.',
 } as const;

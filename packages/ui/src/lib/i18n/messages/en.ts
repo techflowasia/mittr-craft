@@ -3112,6 +3112,10 @@ export const dict = {
   'mittr.signIn.action': 'Sign in with Mittr',
   'mittr.signIn.checking': 'Checking your session…',
   'mittr.signIn.error': 'Could not start sign-in. Try again.',
+  'mittr.audit.notice': 'Your instructions are recorded and visible to Mittr admins. Your code and files are not.',
+  'mittr.model.refused.entitlement': 'You do not have access to this model. Ask a Mittr admin to grant it.',
+  'mittr.model.refused.staleCatalog': 'This model is no longer available from Mittr. Refresh your catalog to see what is.',
+  'mittr.model.refused.unknown': 'Mittr refused this request.',
 } as const;
 
 export type I18nKey = keyof typeof dict;

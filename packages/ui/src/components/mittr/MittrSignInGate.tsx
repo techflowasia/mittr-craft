@@ -2,6 +2,7 @@ import React from 'react';
 import { Button } from '@/components/ui/button';
 import { MittrCraftLogo } from '@/components/ui/MittrCraftLogo';
 import { useI18n } from '@/lib/i18n';
+import { AuditNotice } from './AuditNotice';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import {
   gateStateFromStatus,
@@ -74,6 +75,9 @@ export function MittrSignInGate({ children }: { children: React.ReactNode }) {
           </div>
           <Button onClick={() => { void startSignIn(); }}>{t('mittr.signIn.action')}</Button>
           {failed ? <p className="text-destructive">{t('mittr.signIn.error')}</p> : null}
+          {/* Before first use, not buried in a settings page somebody may never
+              open. What is recorded is part of the deal being accepted here. */}
+          <AuditNotice className="max-w-sm" />
         </>
       )}
     </div>

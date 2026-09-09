@@ -3129,4 +3129,8 @@ export const dict: Record<I18nKey, string> = {
   'mittr.signIn.action': 'Zaloguj się przez Mittr',
   'mittr.signIn.checking': 'Sprawdzanie sesji…',
   'mittr.signIn.error': 'Nie udało się rozpocząć logowania. Spróbuj ponownie.',
+  'mittr.audit.notice': 'Twoje polecenia są zapisywane i widoczne dla administratorów Mittr. Twój kod i pliki nie.',
+  'mittr.model.refused.entitlement': 'Nie masz dostępu do tego modelu. Poproś administratora Mittr o przyznanie dostępu.',
+  'mittr.model.refused.staleCatalog': 'Ten model nie jest już dostępny w Mittr. Odśwież katalog, aby zobaczyć dostępne modele.',
+  'mittr.model.refused.unknown': 'Mittr odrzucił to żądanie.',
 } as const;

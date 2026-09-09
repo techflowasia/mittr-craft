@@ -3113,4 +3113,8 @@ export const dict: Record<I18nKey, string> = {
   'mittr.signIn.action': '使用 Mittr 登录',
   'mittr.signIn.checking': '正在检查你的会话…',
   'mittr.signIn.error': '无法开始登录，请重试。',
+  'mittr.audit.notice': '你输入的指令会被记录，Mittr 管理员可以查看。你的代码和文件不会被记录。',
+  'mittr.model.refused.entitlement': '你没有该模型的使用权限。请让 Mittr 管理员为你开通。',
+  'mittr.model.refused.staleCatalog': '该模型已不再由 Mittr 提供。请刷新目录查看可用的模型。',
+  'mittr.model.refused.unknown': 'Mittr 拒绝了此请求。',
 };

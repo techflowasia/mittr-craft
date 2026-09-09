@@ -3112,4 +3112,8 @@ export const dict: Record<I18nKey, string> = {
   'mittr.signIn.action': 'Mittr로 로그인',
   'mittr.signIn.checking': '세션을 확인하는 중…',
   'mittr.signIn.error': '로그인을 시작할 수 없습니다. 다시 시도하세요.',
+  'mittr.audit.notice': '입력한 지시는 기록되며 Mittr 관리자가 볼 수 있습니다. 코드와 파일은 기록되지 않습니다.',
+  'mittr.model.refused.entitlement': '이 모델에 대한 접근 권한이 없습니다. Mittr 관리자에게 권한을 요청하세요.',
+  'mittr.model.refused.staleCatalog': '이 모델은 더 이상 Mittr에서 제공되지 않습니다. 카탈로그를 새로 고쳐 사용할 수 있는 모델을 확인하세요.',
+  'mittr.model.refused.unknown': 'Mittr가 이 요청을 거부했습니다.',
 };

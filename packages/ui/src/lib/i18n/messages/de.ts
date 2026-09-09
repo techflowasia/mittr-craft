@@ -3110,4 +3110,8 @@ export const dict = {
   'mittr.signIn.action': 'Mit Mittr anmelden',
   'mittr.signIn.checking': 'Sitzung wird geprüft …',
   'mittr.signIn.error': 'Anmeldung konnte nicht gestartet werden. Bitte erneut versuchen.',
+  'mittr.audit.notice': 'Ihre Anweisungen werden aufgezeichnet und sind für Mittr-Admins sichtbar. Ihr Code und Ihre Dateien nicht.',
+  'mittr.model.refused.entitlement': 'Sie haben keinen Zugriff auf dieses Modell. Bitten Sie einen Mittr-Admin um Freigabe.',
+  'mittr.model.refused.staleCatalog': 'Dieses Modell ist bei Mittr nicht mehr verfügbar. Aktualisieren Sie Ihren Katalog, um zu sehen, was verfügbar ist.',
+  'mittr.model.refused.unknown': 'Mittr hat diese Anfrage abgelehnt.',
 };

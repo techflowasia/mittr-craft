@@ -3112,4 +3112,8 @@ export const dict: Record<I18nKey, string> = {
   'mittr.signIn.action': '使用 Mittr 登入',
   'mittr.signIn.checking': '正在檢查你的工作階段…',
   'mittr.signIn.error': '無法開始登入，請再試一次。',
+  'mittr.audit.notice': '你輸入的指令會被記錄，Mittr 管理員可以查看。你的程式碼與檔案不會被記錄。',
+  'mittr.model.refused.entitlement': '你沒有該模型的使用權限。請讓 Mittr 管理員為你開通。',
+  'mittr.model.refused.staleCatalog': '該模型已不再由 Mittr 提供。請重新整理目錄以查看可用的模型。',
+  'mittr.model.refused.unknown': 'Mittr 拒絕了此請求。',
 };
