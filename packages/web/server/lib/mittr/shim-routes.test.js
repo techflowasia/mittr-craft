@@ -127,3 +127,82 @@ describe('mittr shim streaming', () => {
     expect(res.headers['x-accel-buffering']).toBe('no');
   });
 });
+
+describe('mittr shim markup detection', () => {
+  const post = (app, body) => request(app)
+    .post('/v1/chat/completions')
+    .set('authorization', 'Bearer mc_local_abc')
+    .send(body);
+
+  it('reports a tool call that came back as text, and forwards the bytes untouched', async () => {
+    const chunks = [
+      'data: {"choices":[{"delta":{"content":"<|tool_"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"call>call:read_file{}"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await post(createApp(vi.fn().mockResolvedValue(sseResponse(chunks))), {
+        model: 'mittr-craft-1-0', messages: [], stream: true,
+      }).expect(200);
+
+      // The detector must not be a filter: what the engine receives is exactly
+      // what the gateway sent, markup and all.
+      expect(res.text).toBe(chunks.join(''));
+      expect(error).toHaveBeenCalled();
+      expect(error.mock.calls[0][0]).toMatch(/emitted a tool call as text/);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('stays quiet about markup when the tool call actually arrived', async () => {
+    const chunks = [
+      'data: {"choices":[{"delta":{"content":"<|channel>thought"}}]}\n\n',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0}]}}]}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await post(createApp(vi.fn().mockResolvedValue(sseResponse(chunks))), {
+        model: 'mittr-craft-1-0', messages: [], stream: true,
+      }).expect(200);
+      expect(error).not.toHaveBeenCalled();
+      // Still worth a word: the transcript carries markup a reader will see.
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
+  it('reports the same failure on a non-streamed answer', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({
+        choices: [{ message: { content: '<function=read_file><parameter=path>x</parameter></function>' } }],
+      }));
+      await post(createApp(fetchImpl), { model: 'mittr-craft-1-0', messages: [] }).expect(200);
+      expect(error.mock.calls[0][0]).toMatch(/emitted a tool call as text/);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('says nothing about an ordinary answer', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({
+        choices: [{ message: { content: 'The version is 4.2.1.' } }],
+      }));
+      await post(createApp(fetchImpl), { model: 'mittr-craft-1-0', messages: [] }).expect(200);
+      expect(error).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+      warn.mockRestore();
+    }
+  });
+});

@@ -1,4 +1,21 @@
 import express from 'express';
+import { createStreamMarkupWatcher, describeMarkup } from './response-markup.js';
+
+const reportMarkup = (result, model) => {
+  if (result.kind === 'tool-calls-lost') {
+    // The failure this whole detector exists for: the model wrote a tool call as
+    // text and nothing came back as a call. Nothing else errors, so this line is
+    // the only warning anyone gets.
+    console.error(
+      `[mittr] model ${model} emitted a tool call as text and returned none: ${result.markers.join(' ')}. `
+      + 'The gateway tool parser most likely does not match this model.',
+    );
+    return;
+  }
+  if (result.kind === 'channel-markup') {
+    console.warn(`[mittr] model ${model} leaked markup into content: ${result.markers.join(' ')}`);
+  }
+};
 
 const bearerOf = (header) => {
   const value = String(header ?? '');
@@ -47,6 +64,19 @@ export function registerMittrShimRoutes(app, { upstream, localToken, ensureFresh
 
       if (!isStream) {
         const text = await upstreamResponse.text();
+        try {
+          const message = JSON.parse(text)?.choices?.[0]?.message;
+          reportMarkup(
+            describeMarkup({
+              content: message?.content,
+              hasToolCalls: Array.isArray(message?.tool_calls) && message.tool_calls.length > 0,
+            }),
+            req.body?.model,
+          );
+        } catch {
+          // Inspecting the answer is diagnostics; failing to inspect it must not
+          // cost the developer the answer itself.
+        }
         res.status(upstreamResponse.status);
         res.setHeader('content-type', contentType);
         return res.send(text);
@@ -61,13 +91,19 @@ export function registerMittrShimRoutes(app, { upstream, localToken, ensureFresh
       res.setHeader('x-accel-buffering', 'no');
       res.flushHeaders?.();
 
+      // The stream is forwarded untouched. The watcher only reads what goes
+      // past and holds a marker's worth of tail, so nothing is buffered and
+      // nothing is rewritten.
+      const watcher = createStreamMarkupWatcher();
       try {
         for await (const chunk of upstreamResponse.body) {
           res.write(chunk);
+          watcher.observe(chunk);
         }
       } catch (error) {
         console.error('[mittr] upstream stream failed:', error?.message ?? error);
       }
+      reportMarkup(watcher.finish(), req.body?.model);
       return res.end();
     }
   );
