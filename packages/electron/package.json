@@ -162,8 +162,8 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "mittrcraft",
-      "repo": "mittrcraft"
+      "owner": "techflowasia",
+      "repo": "mittr-craft"
     }
   }
 }

@@ -142,16 +142,16 @@ updater falls back to the `publish` block in `packages/electron/package.json`.
 
 `packages/electron/package.json` currently reads:
 
-```json
-"publish": {
-  "provider": "github",
-  "owner": "mittrcraft",
-  "repo": "mittrcraft"
-}
-```
+**Corrected 2026-09-09.** The block named `mittrcraft/mittrcraft`, a repository
+that does not exist — fallout from the brand rename, not a decision. It now names
+`techflowasia/mittr-craft`, and so does `PRODUCTION_UPDATER_FEED` in
+`packages/electron/updater-feed.mjs`, which is the feed the packaged app actually
+checks. That correction makes the reference true; it does **not** make updates
+work, because the repository is private and the GitHub provider has no credential
+to read it.
 
-`github.com/mittrcraft/mittrcraft` does not exist. Replace it with the generic
-provider so the packaged manifest matches the feed the application asks for:
+Replace it with the generic provider so the packaged manifest matches the feed
+the application asks for:
 
 ```json
 "publish": {
