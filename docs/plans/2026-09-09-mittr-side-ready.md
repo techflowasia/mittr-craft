@@ -37,7 +37,14 @@ that set, on their next sign-in.
 not exist.** `/api/auth/*` is Better Auth's own handler, mounted as Express middleware ahead of
 the application's routes, and it answers 404 for anything it does not recognise. So
 `/api/auth/desktop/start` is a 404 on prod today, and so is `/api/desktop/catalog`. Verified
-against prod on 2026-09-09.
+against prod on 2026-09-09:
+
+```
+GET https://api.mittr.asia/api/auth/desktop/start   404
+GET https://api.mittr.asia/auth/desktop/start       302   <- the real one
+GET https://api.mittr.asia/api/desktop/catalog      404
+GET https://api.mittr.asia/desktop/catalog          401   <- the real one
+```
 
 Base URL is the API host, **`https://api.mittr.asia`** — not the workspace host, which only
 proxies `/api/*`.
@@ -82,29 +89,31 @@ without the entitlement answers `desktop_entitlement_required`.
 
 - `DESKTOP_UPDATES_DIR` on the prod API container — devops. Only needed for auto-update.
 - macOS code signing — IT.
-- **§12 pre-flight: run 2026-09-09. The tool-loop gap is closed; the alias gap is not.**
+- **§12 pre-flight: run 2026-09-09. The tool loop and the alias are both closed. One step is
+  left, and it is ours.**
 
   Both gateway models answer a real two-turn tool loop: tool call out, tool result fed back,
   correct final answer, `finish_reason: tool_calls` with a populated `tool_calls` and empty
   `content`. This is not the markup-in-content-with-empty-`tool_calls` parser failure.
 
-  **Alias resolution end to end is still UNPROVEN.** *(Corrected 2026-09-09, later the same day:
-  an earlier version of this section claimed the alias had been exercised end to end. That was
-  wrong — read back what was actually run, below, before trusting anything else in this file.)*
+  **Alias resolution now runs end to end.** *(This section has been rewritten twice in one day.
+  It first claimed the alias was proven, which was wrong; it was then corrected to UNPROVEN;
+  it is now proven, on the evidence below. Read the evidence, not the heading.)*
 
-  Every pre-flight run so far — the tool-loop runs included — named a vendor model id directly
-  in `model`, for example `gemma-4-26b`, never an alias read from `GET /desktop/catalog`. That
-  proves the gateway and its tool-call parsing work for those models. It proves nothing about
-  the path this product actually uses: catalog → alias → `/v1/chat/completions` → grant
-  resolution → pinned provider/model. No run has gone through that path.
+  The full round trip was run on the same commit that is on prod, `v0.15.2`: sign-in →
+  exchange → `GET /desktop/catalog` → `POST /v1/chat/completions` with `model` set to the alias
+  the catalog returned, then the two-turn tool loop above. The `model` field came back **as the
+  alias** in both responses, not the vendor id, so the upstream model never reaches our UI.
 
-  Said plainly, because it matters: sign-in itself has not been driven end to end either. Prod's
+  Be exact about what that run was: **a local instance of that commit, not prod.** Prod's
   `DESKTOP_REDIRECT_URIS` is the packaged `mittrcraft://auth/callback` scheme alone, so only the
-  desktop application itself can complete sign-in there — which is the correct boundary and the
-  reason it cannot be driven from a browser or a probe script. On prod the model assignment is
-  done and the grant is stored; the first real desktop sign-in, followed by a real
-  `/v1/chat/completions` call using the alias that `GET /desktop/catalog` hands back, is the step
-  that actually proves this. **The Mittr side will run that test after `v0.15.2` deploys.**
+  desktop application itself can finish sign-in there. That is the correct boundary and the
+  reason it cannot be driven from a browser or a probe script.
+
+  **So the last unproven step is ours: the first real desktop sign-in against prod, followed by a
+  real call using the alias that `GET /desktop/catalog` hands back.** On prod the assignment is
+  done and the grant is stored, pinned to `qwen3.8-27b`. If it fails, report it rather than
+  working around it.
 
   Still not covered:
   - **The gateway's tool-call parser setting was not inspected.** The symptom being absent is
@@ -114,6 +123,16 @@ without the entitlement answers `desktop_entitlement_required`.
     `gemma-4-26b`. `qwen3.8-27b` is clean. Harmless to the tool loop, but a client that renders
     `content` verbatim will show it — the two models make a ready-made pair for testing a
     stripper.
+
+## One label bug, fixed on the Mittr side
+
+Found while proving the alias: the assignment panel and the desktop catalog chose different
+agent names for the same model, so an admin could tick one name and the desktop would offer
+that model under another. One rule now decides the name for both. Fixed on branch
+`fix/one-name-per-model`, not yet in a release.
+
+Nothing on the wire changes — `label` simply stops disagreeing with what the admin picked. We
+render `label` as given and never derive anything from it, so no change is needed here.
 
 ## One caveat worth knowing
 
