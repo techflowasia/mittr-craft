@@ -3107,4 +3107,9 @@ export const dict: Record<I18nKey, string> = {
   'settings.mcp.page.connection.kindLink': '連結',
   'settings.mcp.page.connection.hintCommand': '在本機執行。貼上完整指令後會依每行一個參數拆分。',
   'settings.mcp.page.connection.hintLink': '連線到他人代管的伺服器。貼上其 https 位址。',
+  'mittr.signIn.title': '登入 MittrCraft',
+  'mittr.signIn.description': '請使用你的 Mittr 帳號登入以繼續。',
+  'mittr.signIn.action': '使用 Mittr 登入',
+  'mittr.signIn.checking': '正在檢查你的工作階段…',
+  'mittr.signIn.error': '無法開始登入，請再試一次。',
 };

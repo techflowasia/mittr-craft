@@ -3108,4 +3108,9 @@ export const dict: Record<I18nKey, string> = {
   'settings.mcp.page.connection.kindLink': 'Посилання',
   'settings.mcp.page.connection.hintCommand': 'Запускається на цьому комп’ютері. Вставте цілу команду — вона розділиться на один аргумент у рядку.',
   'settings.mcp.page.connection.hintLink': 'Під’єднується до сервера, який хостить хтось інший. Вставте його https-адресу.',
+  'mittr.signIn.title': 'Увійти в MittrCraft',
+  'mittr.signIn.description': 'Увійдіть за допомогою облікового запису Mittr, щоб продовжити.',
+  'mittr.signIn.action': 'Увійти через Mittr',
+  'mittr.signIn.checking': 'Перевіряємо вашу сесію…',
+  'mittr.signIn.error': 'Не вдалося розпочати вхід. Спробуйте ще раз.',
 };

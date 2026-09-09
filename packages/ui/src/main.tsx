@@ -4,6 +4,7 @@ import './styles/fonts'
 import './index.css'
 import App from './App.tsx'
 import { SessionAuthGate } from './components/auth/SessionAuthGate'
+import { MittrSignInGate } from '@/components/mittr/MittrSignInGate';
 import { ThemeSystemProvider } from './contexts/ThemeSystemContext'
 import { ThemeProvider } from './components/providers/ThemeProvider'
 import './lib/debug'
@@ -59,7 +60,13 @@ createRoot(rootElement).render(
       <ThemeSystemProvider>
         <ThemeProvider>
           <SessionAuthGate>
-            <App apis={runtimeAPIs} />
+            {/* Inside the instance gate on purpose: that one decides who may
+                reach this machine, this one decides who may use Mittr's models.
+                Asking for a Mittr identity before the instance has admitted you
+                would put the second question first. */}
+            <MittrSignInGate>
+              <App apis={runtimeAPIs} />
+            </MittrSignInGate>
           </SessionAuthGate>
         </ThemeProvider>
       </ThemeSystemProvider>

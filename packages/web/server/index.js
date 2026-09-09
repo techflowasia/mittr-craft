@@ -1530,6 +1530,7 @@ async function main(options = {}) {
       port,
       dataDir: MITTRCRAFT_DATA_DIR,
       brokerBaseUrl: MITTRCRAFT_BROKER_URL,
+      secretStore: options.secretStore ?? undefined,
     });
     registerMittrProvider(mittrShim);
   } catch (error) {

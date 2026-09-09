@@ -3107,6 +3107,11 @@ export const dict = {
   'settings.mcp.page.connection.kindLink': 'Link',
   'settings.mcp.page.connection.hintCommand': 'Runs on this machine. Paste a whole command and it is split into one argument per line.',
   'settings.mcp.page.connection.hintLink': 'Connects to a server someone else hosts. Paste its https address.',
+  'mittr.signIn.title': 'Sign in to MittrCraft',
+  'mittr.signIn.description': 'Sign in with your Mittr account to continue.',
+  'mittr.signIn.action': 'Sign in with Mittr',
+  'mittr.signIn.checking': 'Checking your session…',
+  'mittr.signIn.error': 'Could not start sign-in. Try again.',
 } as const;
 
 export type I18nKey = keyof typeof dict;

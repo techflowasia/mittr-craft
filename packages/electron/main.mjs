@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, screen, session, shell, webContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, shell, webContents } from 'electron';
 import contextMenu from 'electron-context-menu';
 import log from 'electron-log/main.js';
 import dgram from 'node:dgram';
@@ -19,6 +19,7 @@ import { assertUpdaterCapability } from './updater-capability.mjs';
 import { checkForDesktopUpdate } from './updater-check.mjs';
 import { resolveUpdaterChannel } from './updater-channel.mjs';
 import { isAuthCallbackLink } from './auth-deep-link.mjs';
+import { createSafeStorageSecretStore } from './secret-store.mjs';
 import { resolveUpdaterFeed } from './updater-feed.mjs';
 import {
   buildLinuxInstalledApps,
@@ -1558,6 +1559,10 @@ const spawnLocalServer = async () => {
     exitOnShutdown: false,
     apiOnly: false,
     onDesktopNotification: (payload) => maybeShowNativeNotification(payload),
+    // The OS keychain is native, so the server cannot reach it on its own. When
+    // the platform has none this is null and the server stores the Mittr
+    // session unencrypted, which it logs.
+    secretStore: createSafeStorageSecretStore({ safeStorage }),
     getIsWindowFocused: isAnyWindowFocused,
     getDesktopRuntimeConfig: () => ({
       apiBaseUrl: state.apiBaseUrl || '',

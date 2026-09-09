@@ -3105,4 +3105,9 @@ export const dict = {
   'settings.mcp.page.connection.kindLink': 'Lien',
   'settings.mcp.page.connection.hintCommand': 'S’exécute sur cette machine. Collez une commande entière : elle est découpée en un argument par ligne.',
   'settings.mcp.page.connection.hintLink': 'Se connecte à un serveur hébergé par quelqu’un d’autre. Collez son adresse https.',
+  'mittr.signIn.title': 'Se connecter à MittrCraft',
+  'mittr.signIn.description': 'Connectez-vous avec votre compte Mittr pour continuer.',
+  'mittr.signIn.action': 'Se connecter avec Mittr',
+  'mittr.signIn.checking': 'Vérification de votre session…',
+  'mittr.signIn.error': 'Impossible de démarrer la connexion. Réessayez.',
 } as const;

@@ -3108,4 +3108,9 @@ export const dict: Record<I18nKey, string> = {
   'settings.mcp.page.connection.kindLink': 'Enlace',
   'settings.mcp.page.connection.hintCommand': 'Se ejecuta en este equipo. Pega un comando completo y se dividirá en un argumento por línea.',
   'settings.mcp.page.connection.hintLink': 'Se conecta a un servidor alojado por otra persona. Pega su dirección https.',
+  'mittr.signIn.title': 'Iniciar sesión en MittrCraft',
+  'mittr.signIn.description': 'Inicia sesión con tu cuenta de Mittr para continuar.',
+  'mittr.signIn.action': 'Iniciar sesión con Mittr',
+  'mittr.signIn.checking': 'Comprobando tu sesión…',
+  'mittr.signIn.error': 'No se pudo iniciar el inicio de sesión. Inténtalo de nuevo.',
 };

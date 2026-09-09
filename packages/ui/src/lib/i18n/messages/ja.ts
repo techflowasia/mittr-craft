@@ -3107,4 +3107,9 @@ export const dict: Record<I18nKey, string> = {
   'settings.mcp.page.connection.kindLink': 'リンク',
   'settings.mcp.page.connection.hintCommand': 'このマシンで実行します。コマンド全体を貼り付けると、1 行に 1 引数へ分割されます。',
   'settings.mcp.page.connection.hintLink': '他者がホストするサーバーに接続します。その https アドレスを貼り付けてください。',
+  'mittr.signIn.title': 'MittrCraft にサインイン',
+  'mittr.signIn.description': '続行するには Mittr アカウントでサインインしてください。',
+  'mittr.signIn.action': 'Mittr でサインイン',
+  'mittr.signIn.checking': 'セッションを確認しています…',
+  'mittr.signIn.error': 'サインインを開始できませんでした。もう一度お試しください。',
 };

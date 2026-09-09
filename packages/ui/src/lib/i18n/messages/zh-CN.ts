@@ -3108,4 +3108,9 @@ export const dict: Record<I18nKey, string> = {
   'settings.mcp.page.connection.kindLink': '链接',
   'settings.mcp.page.connection.hintCommand': '在本机运行。粘贴完整命令后会按每行一个参数拆分。',
   'settings.mcp.page.connection.hintLink': '连接到他人托管的服务器。粘贴其 https 地址。',
+  'mittr.signIn.title': '登录 MittrCraft',
+  'mittr.signIn.description': '请使用你的 Mittr 账号登录以继续。',
+  'mittr.signIn.action': '使用 Mittr 登录',
+  'mittr.signIn.checking': '正在检查你的会话…',
+  'mittr.signIn.error': '无法开始登录，请重试。',
 };
