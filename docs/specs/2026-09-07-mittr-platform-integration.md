@@ -355,7 +355,11 @@ tests and must be checked by using the product.
    later without a code change. §10 stands as written.
 2. ~~Whether the entitlement is per-person or derived from an existing group.~~
    **Answered (owner, 2026-09-07): per-person**, via the eligibility decision
-   Mittr already has — `requireAllowed(userId, 'agent', alias)`. Admin-decided,
+   Mittr already has — `requireAllowed(userId, 'provider_model', alias)`. The kind
+   is `provider_model`, not `agent`: a platform key grants MODELS from the studio
+   registry, which is what §5 already said the catalog carries (implemented in
+   mittr v0.15.0; the first implementation used agent keys and was wrong).
+   Admin-decided,
    default-deny, checked live on every request, so revoking one person takes
    effect immediately without touching the key every developer shares. No new
    mechanism was added.
