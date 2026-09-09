@@ -21,12 +21,18 @@ export function parseCatalog(payload) {
     parsed[name] = parseCollection(name, payload[name]);
   }
 
-  // `alias` is an opaque identifier minted by Mittr — a `pm_` prefix and a hash
-  // of the provider and model behind it. It is never a readable name, it is
-  // never constructed here, and it is sent back to the completions surface
-  // exactly as it arrived. A model without one cannot be selected or
-  // attributed, and registering it would put a nameless entry in the provider
-  // list, so it is dropped rather than repaired.
+  // `alias` is an opaque key issued by Mittr. Nothing here may depend on its
+  // shape: it has already changed once, from a hash of the provider and model
+  // to the key of the agent a grant names, because several agents can sit on
+  // the same backend model with different instructions and skills. Whatever it
+  // looks like next, it is read from the catalog and sent back to the
+  // completions surface exactly as it arrived.
+  //
+  // Only emptiness is rejected. Two entries may share a backend model on
+  // purpose and are genuinely different agents, so nothing here collapses or
+  // deduplicates them. A model with no alias cannot be selected or attributed
+  // and would put a nameless entry in the provider list, so it is dropped
+  // rather than repaired.
   parsed.models.items = parsed.models.items.filter(
     (model) => typeof model?.alias === 'string' && model.alias.trim(),
   );

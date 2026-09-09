@@ -3,9 +3,12 @@ import { parseCatalog } from './catalog.js';
 
 const base = { bundleVersion: 7, issuedAt: '2026-09-07T00:00:00Z', subject: { userId: 'u1' } };
 
-// Aliases are opaque: `pm_` and a hash. Fixtures use that shape so nothing in
-// this suite can pass while the code assumes a readable name.
-const ALIAS = 'pm_9f2c1d4e7b';
+// Aliases are opaque and their shape is not ours to know: it has already
+// changed once, from a provider-and-model hash to an agent key. The fixtures
+// deliberately use two unlike shapes so nothing in this suite can pass while
+// the code assumes either one.
+const ALIAS = 'agent-17okpqe';
+const OTHER_ALIAS = 'assistant';
 
 describe('parseCatalog', () => {
   it('marks an absent collection as not configured', () => {
@@ -37,6 +40,20 @@ describe('parseCatalog', () => {
   it('drops a model whose alias is not a string instead of coercing one', () => {
     const parsed = parseCatalog({ ...base, models: [{ alias: 12345 }, { alias: ALIAS }] });
     expect(parsed.models.items).toEqual([{ alias: ALIAS }]);
+  });
+
+  it('keeps two agents that share a backend model, because they are not duplicates', () => {
+    // Several agents can run the same model with different instructions, RAG
+    // and skills. Collapsing them by anything but the alias would silently take
+    // one away.
+    const parsed = parseCatalog({
+      ...base,
+      models: [
+        { alias: ALIAS, label: 'MittrCraft 1.0' },
+        { alias: OTHER_ALIAS, label: 'MittrCraft 1.0' },
+      ],
+    });
+    expect(parsed.models.items.map((m) => m.alias)).toEqual([ALIAS, OTHER_ALIAS]);
   });
 
   it('rejects a payload with no bundle version, because sync cannot compare it', () => {
