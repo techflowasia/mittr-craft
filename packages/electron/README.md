@@ -80,6 +80,32 @@ That runs, in order:
 
 Build output goes to `packages/electron/dist`.
 
+### Choosing which Mittr the build talks to
+
+`MITTRCRAFT_BROKER_URL` is read at **build** time and baked into
+`dist-bundle/main.mjs` by `bundle:main`. The shell hands it to the web server,
+which uses it in preference to anything in the environment.
+
+```bash
+MITTRCRAFT_BROKER_URL=https://api-dev.mittr.asia bun run electron:build
+```
+
+Left unset, the build carries nothing and the server falls back to its own
+default, production.
+
+Two reasons it is a build input rather than something the application reads at
+startup. A packaged build has no `.env` for anyone to edit, so a person handed
+the application must not have to configure it. And the origin named here is
+where a signed-in developer's Mittr session is sent, so an installed
+application must not be repointable by an environment variable somebody
+happened to export.
+
+The value must be an https origin with no path — a path would be silently
+dropped when endpoints are resolved against it, so a build pointed at a
+prefixed host would look configured and reach the wrong place. Loopback may use
+http, so the whole path can be exercised against a local instance. Anything
+else fails the build's first request rather than falling back.
+
 macOS builds produce `dmg` and `zip` artifacts. Windows builds produce an NSIS installer. Linux builds produce an AppImage for the native x64 or arm64 host.
 
 ## Platform Notes
@@ -133,6 +159,7 @@ Use an explicit override when testing a different OpenCode CLI build or when a u
 | `MITTRCRAFT_HMR_UI_PORT` | Preferred Vite UI port for desktop dev, default `5173` |
 | `MITTRCRAFT_HMR_API_PORT` | Preferred API port for desktop dev, default `3901` |
 | `MITTRCRAFT_RUNTIME=desktop` | Set by Electron before starting the web server |
+| `MITTRCRAFT_BROKER_URL` | **Build-time**, not runtime: which Mittr the packaged build talks to. See Packaging. A packaged build ignores it at startup |
 | `MITTRCRAFT_OPENCODE_CLI_VERSION` | Optional packaging override for the bundled OpenCode CLI version; defaults to the pinned root `@opencode-ai/sdk` version |
 | `MITTRCRAFT_TARGET_ARCH` | Explicit desktop package architecture (`x64` or `arm64`); Linux requires it to match the native host |
 | `MITTRCRAFT_DESKTOP_NOTIFY=true` | Enables desktop notification flow in the web server |

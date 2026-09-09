@@ -21,6 +21,14 @@ import { resolveUpdaterChannel } from './updater-channel.mjs';
 import { isAuthCallbackLink } from './auth-deep-link.mjs';
 import { createSafeStorageSecretStore } from './secret-store.mjs';
 import { resolveUpdaterFeed } from './updater-feed.mjs';
+
+// Baked in by scripts/bundle-main.mjs at build time: which Mittr this build
+// talks to. Absent in an unbundled development run -- the define was never
+// applied there, so a bare reference would be a ReferenceError at startup --
+// and the empty string lets the server fall back to its own default.
+const BUILD_BROKER_BASE_URL = typeof __MITTRCRAFT_BROKER_URL__ === 'string'
+  ? __MITTRCRAFT_BROKER_URL__
+  : '';
 import {
   buildLinuxInstalledApps,
   buildLinuxOpenSpecs,
@@ -1563,6 +1571,9 @@ const spawnLocalServer = async () => {
     // the platform has none this is null and the server stores the Mittr
     // session unencrypted, which it logs.
     secretStore: createSafeStorageSecretStore({ safeStorage }),
+    // Which Mittr this build talks to, decided by whoever ran the build rather
+    // than by whoever runs the app.
+    brokerBaseUrl: BUILD_BROKER_BASE_URL,
     getIsWindowFocused: isAnyWindowFocused,
     getDesktopRuntimeConfig: () => ({
       apiBaseUrl: state.apiBaseUrl || '',

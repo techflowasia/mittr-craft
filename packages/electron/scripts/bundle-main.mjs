@@ -18,6 +18,12 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const updaterE2eBuild = process.env.MITTRCRAFT_UPDATER_E2E_BUILD === '1';
+// Which Mittr the built application talks to. Set at build time -- a develop
+// build points at develop, a release build at production -- because a packaged
+// application has no .env for anyone to edit, and the origin named here is
+// where a signed-in developer's Mittr session is sent. Left empty, the server
+// falls back to its own default.
+const brokerBaseUrl = (process.env.MITTRCRAFT_BROKER_URL ?? '').trim();
 
 const result = await Bun.build({
   entrypoints: [path.join(root, 'main.mjs')],
@@ -36,6 +42,7 @@ const result = await Bun.build({
   naming: '[name].mjs',
   define: {
     __MITTRCRAFT_UPDATER_E2E_BUILD__: updaterE2eBuild ? 'true' : 'false',
+    __MITTRCRAFT_BROKER_URL__: JSON.stringify(brokerBaseUrl),
   },
 });
 
@@ -44,4 +51,7 @@ if (!result.success) {
   process.exit(1);
 }
 
-console.log(`[electron] main.mjs bundled -> dist-bundle/main.mjs (updater E2E=${updaterE2eBuild})`);
+console.log(
+  `[electron] main.mjs bundled -> dist-bundle/main.mjs (updater E2E=${updaterE2eBuild}, `
+  + `broker=${brokerBaseUrl || 'server default'})`,
+);

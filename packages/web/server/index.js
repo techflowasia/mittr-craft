@@ -53,6 +53,7 @@ import { createOpenCodeEnvRuntime } from './lib/opencode/env-runtime.js';
 import { resolveOpenCodeEnvConfig } from './lib/opencode/env-config.js';
 import { createHmrStateRuntime } from './lib/opencode/hmr-state-runtime.js';
 import { startMittrShim } from './lib/mittr/index.js';
+import { resolveBrokerBaseUrl } from './lib/mittr/broker-target.js';
 import { upsertProviderConfig, removeProviderConfig } from './lib/opencode/providers.js';
 import { readAuthFile, writeAuthFile } from './lib/opencode/auth.js';
 import { createOpenCodeNetworkRuntime } from './lib/opencode/network-runtime.js';
@@ -294,9 +295,7 @@ const getCachedZenModels = (...args) => notificationTemplateRuntime.getCachedZen
 const MITTRCRAFT_DATA_DIR = process.env.MITTRCRAFT_DATA_DIR
   ? path.resolve(process.env.MITTRCRAFT_DATA_DIR)
   : path.join(os.homedir(), '.config', 'mittrcraft');
-// The API host, not the workspace host: the workspace only proxies `/api/*`,
-// and none of the desktop endpoints live under that prefix.
-const MITTRCRAFT_BROKER_URL = process.env.MITTRCRAFT_BROKER_URL || 'https://api.mittr.asia';
+
 const SETTINGS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'settings.json');
 const PUSH_SUBSCRIPTIONS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'push-subscriptions.json');
 const APNS_TOKENS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'apns-tokens.json');
@@ -1550,7 +1549,11 @@ async function main(options = {}) {
       host: effectiveBindHost,
       port,
       dataDir: MITTRCRAFT_DATA_DIR,
-      brokerBaseUrl: MITTRCRAFT_BROKER_URL,
+      // The API host, not the workspace host: the workspace only proxies
+      // `/api/*`, and none of the desktop endpoints live under that prefix.
+      // A packaged build passes the environment it was built against; nothing
+      // a person exports afterwards can move an installed application.
+      brokerBaseUrl: resolveBrokerBaseUrl({ packaged: options.brokerBaseUrl, env: process.env }),
       secretStore: options.secretStore ?? undefined,
       syncModels: (models) => syncMittrModels(mittrShim)(models),
     });
