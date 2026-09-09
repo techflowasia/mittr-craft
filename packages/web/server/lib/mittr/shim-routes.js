@@ -5,7 +5,7 @@ const bearerOf = (header) => {
   return value.startsWith('Bearer ') ? value.slice('Bearer '.length).trim() : '';
 };
 
-export function registerMittrShimRoutes(app, { upstream, localToken, fetchImpl = fetch }) {
+export function registerMittrShimRoutes(app, { upstream, localToken, ensureFreshSession, fetchImpl = fetch }) {
   const requireLocalToken = (req, res, next) => {
     if (bearerOf(req.headers.authorization) !== localToken) {
       return res.status(401).json({ error: 'Unauthorized' });
@@ -18,15 +18,22 @@ export function registerMittrShimRoutes(app, { upstream, localToken, fetchImpl =
     requireLocalToken,
     express.json({ limit: '32mb' }),
     async (req, res) => {
+      const session = await ensureFreshSession();
+      if (!session) {
+        // The engine cannot prompt anybody, so this message has to be legible
+        // where it surfaces: in the developer's chat window.
+        return res.status(401).json({ error: 'Not signed in to Mittr. Sign in to continue.' });
+      }
+
       let upstreamResponse;
       try {
         // The local token authenticates the engine to this process and stops
-        // here. Only the upstream credential travels onward.
+        // here. What travels onward is the developer's own session.
         upstreamResponse = await fetchImpl(`${upstream.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
-            authorization: `Bearer ${upstream.token}`,
+            authorization: `Bearer ${session.accessToken}`,
           },
           body: JSON.stringify(req.body),
         });

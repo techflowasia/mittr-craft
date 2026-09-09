@@ -6,10 +6,8 @@ import path from 'node:path';
 import { startMittrShim } from './index.js';
 
 let dir;
-const env = {
-  MITTRCRAFT_UPSTREAM_URL: 'https://upstream.test/v1',
-  MITTRCRAFT_UPSTREAM_TOKEN: 'sk-upstream',
-};
+const env = { MITTRCRAFT_UPSTREAM_URL: 'https://upstream.test/v1' };
+const brokerBaseUrl = 'https://mittr.test';
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-shim-'));
@@ -25,7 +23,8 @@ describe('startMittrShim', () => {
       app: express(),
       host: '127.0.0.1',
       port: 3902,
-      tokenPath: path.join(dir, 'shim-token'),
+      dataDir: dir,
+      brokerBaseUrl,
       env,
     });
     expect(result.localToken).toMatch(/^mc_local_/);
@@ -37,7 +36,8 @@ describe('startMittrShim', () => {
       app: express(),
       host: '0.0.0.0',
       port: 3902,
-      tokenPath: path.join(dir, 'shim-token'),
+      dataDir: dir,
+      brokerBaseUrl,
       env,
     })).toThrow(/loopback/);
   });
@@ -47,7 +47,8 @@ describe('startMittrShim', () => {
       app: express(),
       host: '127.0.0.1',
       port: 3902,
-      tokenPath: path.join(dir, 'shim-token'),
+      dataDir: dir,
+      brokerBaseUrl,
       env: {},
     })).toThrow(/MITTRCRAFT_UPSTREAM_URL/);
   });

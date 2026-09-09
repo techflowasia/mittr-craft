@@ -3,12 +3,13 @@ import express from 'express';
 import request from 'supertest';
 import { registerMittrShimRoutes } from './shim-routes.js';
 
-const createApp = (fetchImpl) => {
+const createApp = (fetchImpl, session = { accessToken: 'at-1' }) => {
   const app = express();
   app.use(express.json());
   registerMittrShimRoutes(app, {
-    upstream: { baseUrl: 'https://upstream.test/v1', token: 'sk-upstream' },
+    upstream: { baseUrl: 'https://upstream.test/v1' },
     localToken: 'mc_local_abc',
+    ensureFreshSession: async () => session,
     fetchImpl,
   });
   return app;
@@ -40,7 +41,7 @@ describe('mittr shim routes', () => {
 
     const [url, init] = fetchImpl.mock.calls[0];
     expect(url).toBe('https://upstream.test/v1/chat/completions');
-    expect(init.headers.authorization).toBe('Bearer sk-upstream');
+    expect(init.headers.authorization).toBe('Bearer at-1');
     expect(JSON.parse(init.body).model).toBe('mittr-craft-1-0');
   });
 
@@ -62,6 +63,17 @@ describe('mittr shim routes', () => {
       .set('authorization', 'Bearer mc_local_abc')
       .send({ model: 'mittr-craft-1-0', messages: [] })
       .expect(403, { error: 'agent_not_granted' });
+  });
+
+  it('answers 401 with a sign-in hint when nobody is signed in', async () => {
+    const fetchImpl = vi.fn();
+    const res = await request(createApp(fetchImpl, null))
+      .post('/v1/chat/completions')
+      .set('authorization', 'Bearer mc_local_abc')
+      .send({ model: 'mittr-craft-1-0', messages: [] })
+      .expect(401);
+    expect(res.body.error).toMatch(/sign in/i);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('reports an unreachable upstream as 502, not 500', async () => {

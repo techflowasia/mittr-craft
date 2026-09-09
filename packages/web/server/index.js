@@ -294,6 +294,7 @@ const getCachedZenModels = (...args) => notificationTemplateRuntime.getCachedZen
 const MITTRCRAFT_DATA_DIR = process.env.MITTRCRAFT_DATA_DIR
   ? path.resolve(process.env.MITTRCRAFT_DATA_DIR)
   : path.join(os.homedir(), '.config', 'mittrcraft');
+const MITTRCRAFT_BROKER_URL = process.env.MITTRCRAFT_BROKER_URL || 'https://mittr.asia';
 const SETTINGS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'settings.json');
 const PUSH_SUBSCRIPTIONS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'push-subscriptions.json');
 const APNS_TOKENS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'apns-tokens.json');
@@ -1325,6 +1326,15 @@ const gracefulShutdown = (...args) => gracefulShutdownRuntime.gracefulShutdown(.
 // the machine-local one: the engine may hold it forever because it grants nothing
 // outside this machine.
 const registerMittrProvider = (shim) => {
+  // The credential goes first. upsertProviderConfig refuses a provider that has
+  // neither an env credential nor one already stored, and this order is also the
+  // safer one to fail halfway through: a stored credential with no provider
+  // config is inert, while a provider config with no credential is a provider
+  // that cannot authenticate.
+  const auth = readAuthFile();
+  auth.mittr = { type: 'api', key: shim.localToken };
+  writeAuthFile(auth);
+
   upsertProviderConfig(
     'mittr',
     {
@@ -1334,11 +1344,8 @@ const registerMittrProvider = (shim) => {
     },
     null,
     'user',
+    { hasStoredAuth: true },
   );
-
-  const auth = readAuthFile();
-  auth.mittr = { type: 'api', key: shim.localToken };
-  writeAuthFile(auth);
 };
 
 async function main(options = {}) {
@@ -1521,7 +1528,8 @@ async function main(options = {}) {
       app,
       host: effectiveBindHost,
       port,
-      tokenPath: path.join(MITTRCRAFT_DATA_DIR, 'mittr-shim-token'),
+      dataDir: MITTRCRAFT_DATA_DIR,
+      brokerBaseUrl: MITTRCRAFT_BROKER_URL,
     });
     registerMittrProvider(mittrShim);
   } catch (error) {

@@ -18,6 +18,7 @@ import { sanitizeRuntimeRequestHeaders } from './runtime-request-headers.mjs';
 import { assertUpdaterCapability } from './updater-capability.mjs';
 import { checkForDesktopUpdate } from './updater-check.mjs';
 import { resolveUpdaterChannel } from './updater-channel.mjs';
+import { isAuthCallbackLink } from './auth-deep-link.mjs';
 import { resolveUpdaterFeed } from './updater-feed.mjs';
 import {
   buildLinuxInstalledApps,
@@ -2202,6 +2203,28 @@ const confirmConnectDeepLink = async (payload) => {
 const dispatchDeepLink = (link) => {
   if (!link) return;
   log.info('[electron] dispatching deep-link', { type: link.type, valueLen: link.value?.length || 0 });
+  if (isAuthCallbackLink(link)) {
+    // Deliberately the local server and nothing else. It is the only process
+    // holding the verifier for the sign-in this machine started, so it is the
+    // only one that can redeem the code — and handing the code to a remote
+    // instance the user happens to be connected to would be handing it to a
+    // machine that never asked for it.
+    const localUrl = state.sidecarUrl;
+    if (!localUrl) {
+      log.warn('[electron] auth callback arrived with no local server to redeem it');
+      return;
+    }
+    // The renderer never sees the raw callback; there is nothing it could do
+    // with it that the server cannot do more safely.
+    void fetch(`${localUrl}/api/mittr/auth/callback`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: link.raw }),
+    }).catch((error) => {
+      log.warn('[electron] failed to hand the auth callback to the local server:', error?.message ?? error);
+    });
+    return;
+  }
   if (link.type === 'connect') {
     const pairingPayload = parseConnectPairingDeepLinkPayload(link.raw);
     if (pairingPayload) {
