@@ -691,8 +691,31 @@ git commit -m "feat(mittr): tell developers what the audit trail records"
 ## What this plan leaves to later plans
 
 - **Wiring the engine's tool events.** This plan exposes
-  `POST /api/mittr/audit/tool`; connecting the engine's tool lifecycle to it is a
-  follow-up once the event surface is chosen.
+  `POST /api/mittr/audit/prompt`, `/tool` and `/turn`; nothing calls them yet, so
+  the trail records nothing until something does. Until then the endpoints and
+  the allowlist are proven but idle.
+
+  Both obvious surfaces were examined on 2026-09-09 and **neither is correct as
+  it stands**, which is worth writing down so it is not rediscovered:
+
+  - **The proxy request path** (`POST /api/session/:id/message` in
+    `packages/web/server/lib/opencode/proxy.js`) sees each typed prompt exactly
+    once, which is the right cardinality. But that route is streamed, not
+    parsed: reading the body means adding `express.json()` to the hottest path
+    in the product, buffering every prompt before forwarding it and taking over
+    content-length rewriting. A tap must not do that.
+
+  - **The engine's event stream** (`/api/event`, forwarded by
+    `forwardSseRequest`) already iterates chunks, so a read-only observer there
+    costs almost nothing and cannot affect the request path. But that stream is
+    a broadcast: every open window holds its own connection and receives its own
+    copy. Counting from it would multiply every tool use by the number of
+    windows a developer has open, and a count that is silently wrong is worse
+    than no count.
+
+  What is needed is a surface that sees each event once and does not sit in
+  front of the prompt body — most likely a hook inside the session service that
+  already owns session lifecycle, rather than either transport.
 - **Retention.** Ninety days and automatic deletion are the broker's to
   implement (spec §8).
 - **Updates.** Plan 5.
