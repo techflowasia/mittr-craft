@@ -50,7 +50,7 @@ describe('mittr auth routes', () => {
     const res = await request(app).post('/api/mittr/auth/start').expect(200);
     const url = new URL(res.body.authorizeUrl);
     expect(url.origin).toBe('https://mittr.test');
-    expect(url.pathname).toBe('/api/auth/desktop/start');
+    expect(url.pathname).toBe('/auth/desktop/start');
     expect(url.searchParams.get('code_challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(url.searchParams.get('redirect_uri')).toBe('mittrcraft://auth/callback');
     expect(url.searchParams.get('state')).toBeNull();
@@ -63,7 +63,7 @@ describe('mittr auth routes', () => {
     await startAndCallback(app).then((r) => expect(r.status).toBe(200));
 
     const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('https://mittr.test/api/auth/desktop/exchange');
+    expect(url).toBe('https://mittr.test/auth/desktop/exchange');
     const body = JSON.parse(init.body);
     expect(body.code).toBe('abc');
     expect(body.code_verifier).toMatch(/^[0-9a-f]{64}$/);

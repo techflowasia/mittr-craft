@@ -3,22 +3,33 @@ import { parseSession } from './session.js';
 
 export const REDIRECT_URI = 'mittrcraft://auth/callback';
 
-// Mittr's desktop endpoints, in one place because two handover documents from
-// the platform side disagreed about the prefix: an earlier one wrote
-// `/auth/desktop/*`, the later one — written after walking a running stack —
-// wrote `/api/auth/desktop/*`. The later one is used. If it turns out to be
-// wrong, this is the only edit.
+// Mittr's desktop endpoints, in one place because the prefix has been wrong
+// twice. Two handover documents disagreed — `/auth/desktop/*` against
+// `/api/auth/desktop/*` — and the second was taken because it was written later
+// and against a running stack. It was still wrong: on 2026-09-09 the platform
+// side checked prod and found `/api/auth/*` is Better Auth's own middleware,
+// mounted ahead of the application's routes, answering 404 for anything it does
+// not recognise. There is no `/api` prefix. Keeping them here is what made that
+// a three-line correction.
 const ENDPOINT = {
-  start: '/api/auth/desktop/start',
-  exchange: '/api/auth/desktop/exchange',
-  refresh: '/api/auth/desktop/refresh',
+  start: '/auth/desktop/start',
+  exchange: '/auth/desktop/exchange',
+  refresh: '/auth/desktop/refresh',
 };
 
 // Refresh a little before expiry, so a request that is already in flight when
 // the token turns over does not fail on a technicality.
 const REFRESH_MARGIN_MS = 60_000;
 
-export function registerMittrAuthRoutes(app, { brokerBaseUrl, sessionStore, fetchImpl = fetch }) {
+export function registerMittrAuthRoutes(app, {
+  brokerBaseUrl,
+  sessionStore,
+  fetchImpl = fetch,
+  // Called once a session has been stored. The catalog is fetched here rather
+  // than left to the client, so a person who signs in has models to choose from
+  // without a second deliberate step they have no reason to know about.
+  onSignIn = null,
+}) {
   const url = (endpoint) => new URL(endpoint, brokerBaseUrl).toString();
 
   // One pending sign-in at a time. Starting a second replaces the first, which
@@ -86,6 +97,18 @@ export function registerMittrAuthRoutes(app, { brokerBaseUrl, sessionStore, fetc
     }
 
     sessionStore.write(session);
+
+    if (onSignIn) {
+      // Sign-in has already succeeded by this point. A catalog that cannot be
+      // fetched is a smaller failure than a sign-in that reports itself failed,
+      // so this never changes the answer.
+      try {
+        await onSignIn();
+      } catch (error) {
+        console.warn('[mittr] catalog sync after sign-in failed:', error?.message ?? error);
+      }
+    }
+
     return res.json(statusOf(session));
   });
 
