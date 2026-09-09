@@ -13,11 +13,20 @@
 **Depends on:** `docs/plans/2026-09-07-mittr-sign-in.md`
 
 *(Corrected 2026-09-09: the code samples below originally used `mittr-craft-1-0`
-as a stand-in alias — written before the alias contract was pinned down. A real
-alias is opaque: the literal prefix `pm_` followed by a hash of the provider
-and upstream model. The samples now use `pm_9f2c1d4e7b` as an illustrative
-placeholder — it is not a real value, and nothing in this codebase may
-construct, guess, or hardcode one. See
+as a stand-in alias — written before the alias contract was pinned down. The
+samples now use `agent-17okpqe` as an illustrative placeholder — it is not a
+real value, and nothing in this codebase may construct, guess, or hardcode
+one.)*
+
+*(Corrected again 2026-09-10: the 2026-09-09 pass also described the alias as
+opaque *because* it was the literal prefix `pm_` plus a hash of the provider
+and upstream model. That description is wrong too — the alias is the agent
+key a grant names, unrelated to any provider/model hash, and carries no fixed
+prefix. It has changed shape twice now, so the durable rule is: treat it as
+opaque, full stop. Read it from the catalog, echo it back verbatim, and never
+construct, guess, hardcode, or pattern-match it. Two catalog entries must
+never be collapsed as duplicates just because they share a label or a backend
+model — they can be genuinely different agents. See
 `docs/plans/2026-09-09-mittr-side-ready.md`.)*
 
 ## Global Constraints
@@ -64,10 +73,10 @@ describe('parseCatalog', () => {
   });
 
   it('keeps the items of a populated collection', () => {
-    const parsed = parseCatalog({ ...base, models: [{ alias: 'pm_9f2c1d4e7b', label: 'MittrCraft 1.0' }] });
+    const parsed = parseCatalog({ ...base, models: [{ alias: 'agent-17okpqe', label: 'MittrCraft 1.0' }] });
     expect(parsed.models).toEqual({
       configured: true,
-      items: [{ alias: 'pm_9f2c1d4e7b', label: 'MittrCraft 1.0' }],
+      items: [{ alias: 'agent-17okpqe', label: 'MittrCraft 1.0' }],
     });
   });
 
@@ -162,7 +171,7 @@ import { createCatalogCache } from './catalog-cache.js';
 let dir;
 const catalog = {
   bundleVersion: 7,
-  models: { configured: true, items: [{ alias: 'pm_9f2c1d4e7b' }] },
+  models: { configured: true, items: [{ alias: 'agent-17okpqe' }] },
   mcp: { configured: false, items: [] },
   skills: { configured: false, items: [] },
   knowledge: { configured: false, items: [] },
@@ -564,7 +573,7 @@ git commit -m "feat(mittr): reconcile organisation MCP entries without touching 
 
 ### Task 5: Sync routes and the model list
 
-Plan 1 task 6 registered `pm_9f2c1d4e7b` as a hardcoded model. This task
+Plan 1 task 6 registered `agent-17okpqe` as a hardcoded model. This task
 replaces it with whatever the catalog says.
 
 **Files:**
@@ -592,7 +601,7 @@ const memoryCache = () => {
 
 const catalogPayload = {
   bundleVersion: 7,
-  models: [{ alias: 'pm_9f2c1d4e7b', label: 'MittrCraft 1.0' }],
+  models: [{ alias: 'agent-17okpqe', label: 'MittrCraft 1.0' }],
   mcp: [],
 };
 
@@ -627,7 +636,7 @@ describe('mittr catalog routes', () => {
 
     expect(fetchImpl.mock.calls[0][1].headers.authorization).toBe('Bearer at-1');
     expect(cache.read().bundleVersion).toBe(7);
-    expect(syncModels).toHaveBeenCalledWith([{ alias: 'pm_9f2c1d4e7b', label: 'MittrCraft 1.0' }]);
+    expect(syncModels).toHaveBeenCalledWith([{ alias: 'agent-17okpqe', label: 'MittrCraft 1.0' }]);
   });
 
   it('keeps the cached catalog when the broker is unreachable', async () => {
@@ -774,7 +783,7 @@ Expected: 5 passing.
 - [ ] **Step 5: Replace the hardcoded model registration**
 
 In `packages/web/server/lib/mittr/index.js`, delete the hardcoded
-`models: { 'pm_9f2c1d4e7b': ... }` object that plan 1 task 6 added, and pass a
+`models: { 'agent-17okpqe': ... }` object that plan 1 task 6 added, and pass a
 `syncModels` function that builds the same shape from the catalog:
 
 ```javascript

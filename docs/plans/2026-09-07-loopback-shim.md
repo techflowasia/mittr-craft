@@ -11,10 +11,16 @@
 **Spec:** `docs/specs/2026-09-07-mittr-platform-integration.md`
 
 *(Corrected 2026-09-09: the code samples below originally used `mittr-craft-1-0`
-as a stand-in alias, written before the alias contract was pinned down. A real
-alias is opaque — the literal prefix `pm_` followed by a hash of the provider
-and upstream model. The samples now use `pm_9f2c1d4e7b` as an illustrative
-placeholder, not a real value. See
+as a stand-in alias, written before the alias contract was pinned down. The
+samples now use `agent-17okpqe` as an illustrative placeholder, not a real
+value.)*
+
+*(Corrected again 2026-09-10: the 2026-09-09 pass described the alias as the
+literal prefix `pm_` followed by a hash of the provider and upstream model.
+That is also wrong — the alias is the opaque key of the agent a grant names,
+not derived from provider or model, with no fixed prefix. It has changed
+shape twice now; nothing here may assume anything about it. Read it from
+`GET /desktop/catalog` and echo it back verbatim as `model`. See
 `docs/plans/2026-09-09-mittr-side-ready.md`.)*
 
 ## Global Constraints
@@ -43,7 +49,7 @@ answer, not code. Anything written here is throwaway and must not be committed.
 // Throwaway. Do not commit.
 const BASE = process.env.PROBE_BASE_URL;   // e.g. https://llm-dev.mittr.asia/v1
 const KEY = process.env.PROBE_API_KEY;
-const MODEL = process.env.PROBE_MODEL;     // pm_9f2c1d4e7b
+const MODEL = process.env.PROBE_MODEL;     // agent-17okpqe
 
 const body = {
   model: MODEL,
@@ -80,7 +86,7 @@ console.log('content       ', JSON.stringify(message.content ?? null));
 - [ ] **Step 2: Run it against the real gateway**
 
 ```bash
-PROBE_BASE_URL=... PROBE_API_KEY=... PROBE_MODEL=pm_9f2c1d4e7b node /tmp/tool-probe.mjs
+PROBE_BASE_URL=... PROBE_API_KEY=... PROBE_MODEL=agent-17okpqe node /tmp/tool-probe.mjs
 ```
 
 Expected: `tool_calls` is a non-empty array naming `read_file`.
@@ -96,7 +102,7 @@ Three outcomes, and only the first lets this plan continue:
   is on the gateway (`--tool-call-parser`), not in this repository. Report it and
   wait.
 - Any non-200 status → report the status and body. A 403 `agent_not_granted`
-  means the key lacks the `pm_9f2c1d4e7b` grant and an admin must extend it.
+  means the key lacks the `agent-17okpqe` grant and an admin must extend it.
 
 - [ ] **Step 4: Delete the probe**
 
@@ -437,7 +443,7 @@ describe('mittr shim routes', () => {
     const fetchImpl = vi.fn();
     await request(createApp(fetchImpl))
       .post('/v1/chat/completions')
-      .send({ model: 'pm_9f2c1d4e7b', messages: [] })
+      .send({ model: 'agent-17okpqe', messages: [] })
       .expect(401);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -448,13 +454,13 @@ describe('mittr shim routes', () => {
     await request(createApp(fetchImpl))
       .post('/v1/chat/completions')
       .set('authorization', 'Bearer mc_local_abc')
-      .send({ model: 'pm_9f2c1d4e7b', messages: [{ role: 'user', content: 'hi' }] })
+      .send({ model: 'agent-17okpqe', messages: [{ role: 'user', content: 'hi' }] })
       .expect(200, { choices: [] });
 
     const [url, init] = fetchImpl.mock.calls[0];
     expect(url).toBe('https://upstream.test/v1/chat/completions');
     expect(init.headers.authorization).toBe('Bearer sk-upstream');
-    expect(JSON.parse(init.body).model).toBe('pm_9f2c1d4e7b');
+    expect(JSON.parse(init.body).model).toBe('agent-17okpqe');
   });
 
   it('never leaks the local token upstream', async () => {
@@ -462,7 +468,7 @@ describe('mittr shim routes', () => {
     await request(createApp(fetchImpl))
       .post('/v1/chat/completions')
       .set('authorization', 'Bearer mc_local_abc')
-      .send({ model: 'pm_9f2c1d4e7b', messages: [] });
+      .send({ model: 'agent-17okpqe', messages: [] });
     expect(JSON.stringify(fetchImpl.mock.calls[0][1])).not.toContain('mc_local_abc');
   });
 
@@ -473,7 +479,7 @@ describe('mittr shim routes', () => {
     await request(createApp(fetchImpl))
       .post('/v1/chat/completions')
       .set('authorization', 'Bearer mc_local_abc')
-      .send({ model: 'pm_9f2c1d4e7b', messages: [] })
+      .send({ model: 'agent-17okpqe', messages: [] })
       .expect(403, { error: 'agent_not_granted' });
   });
 
@@ -482,7 +488,7 @@ describe('mittr shim routes', () => {
     const res = await request(createApp(fetchImpl))
       .post('/v1/chat/completions')
       .set('authorization', 'Bearer mc_local_abc')
-      .send({ model: 'pm_9f2c1d4e7b', messages: [] })
+      .send({ model: 'agent-17okpqe', messages: [] })
       .expect(502);
     expect(res.body.error).toMatch(/Mittr/);
   });
@@ -601,7 +607,7 @@ describe('mittr shim streaming', () => {
     const res = await request(createApp(fetchImpl))
       .post('/v1/chat/completions')
       .set('authorization', 'Bearer mc_local_abc')
-      .send({ model: 'pm_9f2c1d4e7b', messages: [], stream: true })
+      .send({ model: 'agent-17okpqe', messages: [], stream: true })
       .expect(200);
 
     expect(res.headers['content-type']).toMatch(/text\/event-stream/);
@@ -614,7 +620,7 @@ describe('mittr shim streaming', () => {
     const res = await request(createApp(fetchImpl))
       .post('/v1/chat/completions')
       .set('authorization', 'Bearer mc_local_abc')
-      .send({ model: 'pm_9f2c1d4e7b', messages: [], stream: true })
+      .send({ model: 'agent-17okpqe', messages: [], stream: true })
       .expect(200);
     expect(res.headers['cache-control']).toMatch(/no-cache/);
     expect(res.headers['x-accel-buffering']).toBe('no');
@@ -849,7 +855,7 @@ await fetch(`http://127.0.0.1:${port}/api/provider`, {
     config: {
       name: 'Mittr',
       options: { baseURL: mittrShim.baseUrl },
-      models: { 'pm_9f2c1d4e7b': { name: 'MittrCraft 1.0' } },
+      models: { 'agent-17okpqe': { name: 'MittrCraft 1.0' } },
     },
   }),
 });
@@ -910,6 +916,6 @@ git commit -m "feat(mittr): start the shim and register it as the engine provide
   path can be proven before the session work begins. Plan 2 replaces it with a
   Mittr session and removes the variable.
 - **Catalog.** The model list registered in Task 6 is hardcoded to
-  `pm_9f2c1d4e7b`. Plan 3 replaces it with the catalog the broker serves.
+  `agent-17okpqe`. Plan 3 replaces it with the catalog the broker serves.
 - **Audit.** Plan 4.
 - **Updates.** Plan 5.

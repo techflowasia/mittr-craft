@@ -12,16 +12,26 @@ connectors and agents are whatever that developer put on their own machine.
 
 Mittr already runs the pieces this product should stand on. Workspace issues
 governed keys and holds the Azure AD registration. A LiteLLM gateway fronts the
-team's own models, and each one this product can reach gets its own opaque
-alias — the literal prefix `pm_` followed by a hash of the provider and
-upstream model, for example `pm_9f2c1d4e7b` (illustrative only, not a real
-value). Studio consumes that platform without owning any of it.
+team's own models, and each one this product can reach is offered under an
+opaque alias — for example `agent-17okpqe`, or a short readable one such as
+`assistant` (illustrative only, not guaranteed to be real values). The alias
+names the agent granted, not the backend model behind it, and its shape is not
+this product's business: read it from the catalog and echo it back, never
+construct or parse it. Studio consumes that platform without owning any of it.
 
 *(Corrected 2026-09-09: this paragraph originally named a single hand-written
 alias, `mittr-craft-1-0`, as if it were a fixed registry name reserved for this
 product. The platform team corrected that — an alias is opaque, per model, and
-read from the catalog, never a name written down anywhere. See
-`docs/plans/2026-09-09-mittr-side-ready.md`.)*
+read from the catalog, never a name written down anywhere.)*
+
+*(Corrected again 2026-09-10: the 2026-09-09 correction above said the alias
+was the literal prefix `pm_` followed by a hash of the provider and model. That
+was also wrong. A grant names the agent, not a (provider, model) pair — several
+agents can sit on the same backend model with different instructions, RAG and
+skills, and keying grants by provider+model collapsed them into one agent. The
+alias is the agent key, has no fixed prefix or shape, and has now changed twice
+in two days. That history is the reason nothing in this product may depend on
+its format — see `docs/plans/2026-09-09-mittr-side-ready.md`.)*
 
 This design makes MittrCraft a consumer of the same platform: identity, models,
 and the organisation's shared tooling all come from Mittr, while the repository,
@@ -201,17 +211,30 @@ Mittr decides **what is available**. The developer decides **what is switched on
 Models are the single exception to local freedom. Allowing a developer to add a
 model is bring-your-own-key by another name, which is what this work removes.
 
-The catalog carries model aliases only. Each alias is opaque — `pm_` followed
-by a hash of the provider and upstream model, for example `pm_9f2c1d4e7b`
-(illustrative; a real alias cannot be derived from this text) — and the client
-must read it from the catalog and send it back verbatim as `model`. It must
-never construct, guess or hardcode one. The backend model behind an alias is
-Mittr's business, so it can be swapped without touching any machine.
+The catalog carries model aliases only. Each alias is opaque — for example
+`agent-17okpqe`, or `assistant` (illustrative; a real alias cannot be derived
+from this text) — and the client must read it from the catalog and send it
+back verbatim as `model`. It must never construct, guess or hardcode one, and
+must never assume anything about its shape. The backend model behind an alias
+is Mittr's business, so it can be swapped without touching any machine.
+
+Two catalog entries with the same label or the same backend model are still
+two different aliases, and the client must not deduplicate them. Several
+agents can run on the same backend model while carrying different
+instructions, RAG and skills, so collapsing entries that merely look alike
+would hide a real, distinct grant.
 
 *(Corrected 2026-09-09: this paragraph previously showed `mittr-craft-1-0` as
 if it were a readable name a developer would see and could write down. Aliases
-carry no meaning a human assigned; they are opaque hashes issued per model
-grant. See `docs/plans/2026-09-09-mittr-side-ready.md`.)*
+carry no meaning a human assigned.)*
+
+*(Corrected again 2026-09-10: the 2026-09-09 correction said an alias was the
+literal prefix `pm_` followed by a hash of the provider and model — a fixed
+shape derived from a (provider, model) pair. That is also wrong: the alias is
+the agent key a grant names, not a hash of provider and model, and it has no
+guaranteed prefix. The alias has now been redefined twice, which is exactly
+why its shape must never be relied on — read it, echo it, and treat it as
+opaque. See `docs/plans/2026-09-09-mittr-side-ready.md`.)*
 
 **An absent field and an empty list are different states.** A missing field means
 the admin never configured that category and application defaults apply. `[]`
@@ -230,7 +253,7 @@ calls, and a per-request log is too long to read.
 who        Chaiwat Tanupan
 when       2026-09-07 14:02 – 14:41
 where      techflowasia/mittr-craft (branch feat/mittr-rebrand)
-model      pm_9f2c1d4e7b   (opaque alias, illustrative)
+model      agent-17okpqe   (opaque alias, illustrative)
 volume     41 turns · 260k tokens
 actions    edit ×23 · bash ×11 · read ×88
 prompts    14:02  "ช่วยดู test ที่ fail ใน pr-status หน่อย"
@@ -341,9 +364,10 @@ real `tool_calls` come back. If this fails, this design changes rather than
 proceeds.
 
 *(Corrected 2026-09-09: this step originally named a literal alias,
-`mittr-craft-1-0`, to call directly. Aliases are opaque per-model ids read from
-the catalog at run time, not a fixed name to hardcode into a test. See
-`docs/plans/2026-09-09-mittr-side-ready.md`.)*
+`mittr-craft-1-0`, to call directly. Aliases are opaque ids read from the
+catalog at run time, not a fixed name to hardcode into a test. See
+`docs/plans/2026-09-09-mittr-side-ready.md`, which also carries the
+2026-09-10 correction to what the alias identifies.)*
 
 - **Unit:** catalog merging, organisation and personal items staying distinct,
   local switches surviving a sync, absent-versus-empty handling, audit record
@@ -377,17 +401,32 @@ tests and must be checked by using the product.
    later without a code change. §10 stands as written.
 2. ~~Whether the entitlement is per-person or derived from an existing group.~~
    **Answered (owner, 2026-09-07): per-person**, via the eligibility decision
-   Mittr already has — `requireAllowed(userId, 'provider_model', alias)`. The kind
-   is `provider_model`, not `agent`: a platform key grants MODELS resolved from
-   the installation's own agent configuration, which is what §5 already said the
-   catalog carries (implemented in mittr v0.15.0; the first implementation used
-   agent keys and was wrong).
+   Mittr already has — `requireAllowed(userId, 'agent', alias)`. The kind is
+   `agent`: a grant names the agent, and the alias sent back by the catalog is
+   that agent's key (implemented in mittr v0.15.0; the first implementation
+   used agent keys and was wrong, then briefly corrected to `provider_model`,
+   which was also wrong — see the notes below).
 
    *(Corrected 2026-09-09: this line previously called that source a "studio
    registry." There is no Studio registry anywhere in this product's path.
    Studio is a separate product, and an earlier design that made what
    MittrCraft can run depend on a Studio configuration row was rejected for
-   exactly that reason. See `docs/plans/2026-09-09-mittr-side-ready.md`.)*
+   exactly that reason.)*
+
+   *(Corrected again 2026-09-10: the 2026-09-09 pass also changed the
+   entitlement kind above to `provider_model`, on the theory that a grant was
+   keyed by provider and model. That was wrong: several agents can share one
+   backend model with different instructions, RAG and skills, so keying by
+   provider+model collapsed distinct agents into one grant. The kind is
+   `agent`, keyed by the same opaque alias the catalog hands back. See
+   `docs/plans/2026-09-09-mittr-side-ready.md`.*
+
+   *The kind is inferred from what the platform side did confirm — that a grant
+   now names the agent and the alias is its key — not from a reading of the
+   call itself. The exact signature above is unverified from this repository and
+   nothing here depends on it: the desktop never names an entitlement kind, it
+   only sends the alias. Left written down because a wrong note is worse than a
+   marked one.)*
    Admin-decided,
    default-deny, checked live on every request, so revoking one person takes
    effect immediately without touching the key every developer shares. No new

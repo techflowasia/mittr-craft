@@ -6,6 +6,13 @@ Written 2026-09-09, after mittr `v0.15.0`. Everything below is on `main` in
 Read this before `2026-09-07-mittr-broker-handoff.md`: two things in that plan and in
 the integration spec were wrong, and one of them changes the wire.
 
+**Updated 2026-09-10:** the alias contract described below turned out to be wrong a
+second time, one day after it was written. See "The alias contract, corrected again
+(2026-09-10)" below for the current truth and "Develop environment, verified
+2026-09-10" for what was checked against `api-dev.mittr.asia` since. The rest of this
+file is left as originally written, corrections marked inline, so the sequence of what
+was believed and when stays readable.
+
 ## What changed since the handoff plan
 
 **1. A platform key grants MODELS, not agents.**
@@ -20,6 +27,15 @@ catalog carries model aliases; the implementation now matches it.
   there is no Studio configuration anywhere in this product's path. The backend model behind it
   stays Mittr's business and can be swapped without touching a single desktop.
 - The entitlement kind is `provider_model`, not `agent`.
+
+*(Corrected 2026-09-10: this whole point turned out to be wrong. A grant does not name a
+(provider, model) pair — it names the agent. Several agents can sit on the same backend
+model while carrying different instructions, RAG and skills, so keying grants by
+provider+model collapsed distinct agents into one. Grants are `{ agentKey }` again, the
+entitlement kind is `agent`, and the `modelKey`/`pm_`+hash shape described above never
+existed on the wire the way this section claimed. This is the second time the alias
+contract has been corrected in as many days — see the section below for what that means
+for how the client is allowed to treat it.)*
 
 **2. Nobody types the platform key anywhere.**
 
@@ -65,7 +81,7 @@ The catalog's shape is what it always was, and now genuinely carries models:
 ```json
 { "bundleVersion": 7, "issuedAt": 1757400000000,
   "subject": { "userId": "...", "displayName": "..." },
-  "models": [ { "alias": "pm_74468a9c32725d1187cce803b266c0d2", "label": "Code Helper" } ] }
+  "models": [ { "alias": "agent-17okpqe", "label": "Code Helper" } ] }
 ```
 
 **`alias` is an opaque id, not a name you can write down.** It is `pm_` followed by a hash of
@@ -78,6 +94,82 @@ to the provider and upstream model **the grant pinned when it was issued**, so a
 rotating the registry later cannot silently move a running desktop onto a different
 model. A model the platform has not assigned answers `agent_not_granted`; a person
 without the entitlement answers `desktop_entitlement_required`.
+
+*(Corrected 2026-09-10: "it is `pm_` followed by a hash of the provider and upstream
+model" is wrong. `alias` is the agent key of the agent the grant names — `assistant`,
+or a generated one such as `agent-17okpqe` — not a hash of provider and model, and it
+carries no fixed prefix. See "The alias contract, corrected again (2026-09-10)" below
+for the full correction and the rule it leaves behind.)*
+
+## The alias contract, corrected again (2026-09-10)
+
+The platform team corrected the alias contract twice now, one day apart:
+
+- 2026-09-09 said an alias was a readable registry name like `mittr-craft-1-0`. Wrong.
+- 2026-09-09 (later the same day) said an alias was `pm_` followed by a hash of the
+  provider and model, e.g. `pm_9f2c1d4e7b`. Also wrong.
+- 2026-09-10: a grant names the **agent**, not a (provider, model) pair. Several agents
+  can sit on the same backend model while carrying different instructions, RAG and
+  skills — keying grants by provider+model collapsed them into one. The alias is the
+  agent key: real examples are `assistant`, or a generated one such as `agent-17okpqe`.
+  There is no `pm_` prefix.
+
+The rule this leaves behind is the point, not the specific shape: **the alias is opaque
+and its shape is not the client's business.** It has changed twice in two days; nothing
+in MittrCraft may depend on its format. Concretely:
+
+- Read it from `GET /desktop/catalog` and echo it back verbatim as `model` on
+  `/v1/chat/completions`. Never construct, guess, hardcode, or pattern-match one.
+- Never assume a prefix, a length, a character set, or that it encodes provider/model
+  information — the last two beliefs about its shape were both wrong.
+- Never deduplicate catalog entries. Two entries can legitimately point at the same
+  backend model and still be genuinely different agents with different instructions,
+  RAG or skills; collapsing them by label or by backend model would silently drop a
+  real grant.
+
+## Develop environment, verified 2026-09-10
+
+The develop environment is up and carries the desktop work: **`https://api-dev.mittr.asia`**,
+no `/api` prefix, same as prod. Verified:
+
+```
+GET  https://api-dev.mittr.asia/                                    200
+GET  https://api-dev.mittr.asia/auth/desktop/start?...               302
+GET  https://api-dev.mittr.asia/desktop/catalog                      401
+```
+
+Develop is at commit `f6c3ce36`, deployed by Jenkins job "non-prd mittr" build #241.
+
+The redirect allowlist is genuinely enforced there, not just on prod:
+
+```
+redirect_uri=mittrcraft://auth/callback        -> 302
+redirect_uri=https://evil.example/cb           -> 400  desktop_redirect_not_allowed
+```
+
+Two blockers, both outside this repository and neither fixable from here:
+
+**1. Develop returns its own origin as `localhost`.** The `/auth/desktop/start` redirect
+lands on:
+
+```
+http://localhost:3000/api/auth/sign-in/social?...&callbackURL=http%3A%2F%2Flocalhost%3A3000%2Fauth%2Fdesktop%2Fcallback%3Fstate%3D...
+```
+
+because `BETTER_AUTH_URL` is unset on the non-prd deployment and better-auth falls back
+to its own default. A packaged app that follows that redirect lands on the user's own
+machine, and sign-in cannot complete. The fix is deploy-side — set
+`BETTER_AUTH_URL=https://api-dev.mittr.asia` and redeploy — and is owned by whoever has
+access to that environment's config.
+
+**2. No platform key / model assignment exists on develop yet.** The admin panel says
+"No models assigned — no desktop can sign in," and org-level agents are default-denied
+in resource eligibility for that environment. This one is self-serve: in the develop
+workspace admin screen, under API Keys, allow the agent and the provider/model it uses,
+tick it under "Models MittrCraft can use," then Save.
+
+Neither blocker can be worked around from this repository. Sign-in against develop stays
+untestable end to end until both are cleared.
 
 ## Defaults you do not need to configure
 
