@@ -28,8 +28,23 @@ const withScratch = async (body) => {
   // Preserve whatever the working copy had, so running tests never quietly
   // replaces an engine somebody already prepared.
   const saved = fs.existsSync(outputDir)
-    ? fs.readdirSync(outputDir).map((name) => [name, fs.readFileSync(path.join(outputDir, name))])
+    ? fs.readdirSync(outputDir).map((name) => [
+      name,
+      fs.readFileSync(path.join(outputDir, name)),
+      // The mode travels with the bytes. The engine is staged executable, and
+      // a restore that writes the content alone hands back a file the packaged
+      // app cannot run -- a test leaving the working copy broken behind it.
+      fs.statSync(path.join(outputDir, name)).mode,
+    ])
     : [];
+  // Start from an empty staging directory. Preserving the working copy is not
+  // the same as clearing it, and the script returns early when a prepared
+  // engine of the pinned version is already there -- so on any machine that
+  // had packaged once, these tests asserted against that early return instead
+  // of the branch they name, and passed only where nobody had built.
+  if (fs.existsSync(outputDir)) {
+    for (const name of fs.readdirSync(outputDir)) fs.rmSync(path.join(outputDir, name), { force: true });
+  }
   try {
     await body(tmp);
   } finally {
@@ -37,7 +52,11 @@ const withScratch = async (body) => {
     if (fs.existsSync(outputDir)) {
       for (const name of fs.readdirSync(outputDir)) fs.rmSync(path.join(outputDir, name), { force: true });
     }
-    for (const [name, body] of saved) fs.writeFileSync(path.join(outputDir, name), body);
+    for (const [name, body, mode] of saved) {
+      const restored = path.join(outputDir, name);
+      fs.writeFileSync(restored, body);
+      fs.chmodSync(restored, mode);
+    }
   }
 };
 

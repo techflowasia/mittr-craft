@@ -50,7 +50,7 @@ const __dirname = path.dirname(__filename);
 const isDev = process.env.MITTRCRAFT_ELECTRON_DEV === '1' || !app.isPackaged;
 const electronStartupStartedAt = performance.now();
 
-const DEEP_LINK_PROTOCOL = 'mittrcraft';
+import { DEEP_LINK_PROTOCOL } from './deep-link-protocol.mjs';
 const UI_PROTOCOL = 'mittrcraft-ui';
 const PACKAGED_APP_USER_MODEL_ID = 'dev.mittrcraft.desktop';
 const DEV_APP_USER_MODEL_ID = 'dev.mittrcraft.desktop.dev';
@@ -2215,6 +2215,10 @@ const confirmConnectDeepLink = async (payload) => {
   }
 };
 
+// Announced once the sign-in exchange has actually stored a session, so the
+// sign-in surface stops guessing from window focus.
+const MITTR_SIGN_IN_EVENT = 'mittrcraft:mittr-signed-in';
+
 const dispatchDeepLink = (link) => {
   if (!link) return;
   log.info('[electron] dispatching deep-link', { type: link.type, valueLen: link.value?.length || 0 });
@@ -2231,13 +2235,33 @@ const dispatchDeepLink = (link) => {
     }
     // The renderer never sees the raw callback; there is nothing it could do
     // with it that the server cannot do more safely.
-    void fetch(`${localUrl}/api/mittr/auth/callback`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url: link.raw }),
-    }).catch((error) => {
-      log.warn('[electron] failed to hand the auth callback to the local server:', error?.message ?? error);
-    });
+    //
+    // The sign-in surface is told when the exchange lands. It cannot infer it:
+    // it re-checks on window focus, and macOS focuses this app to deliver the
+    // deep link -- before the exchange has been made, let alone finished. So
+    // the check ran against a session that did not exist yet, the surface
+    // stayed on the sign-in screen, and signing in appeared to need two
+    // attempts. The second one worked only because the first had by then
+    // stored its session.
+    void (async () => {
+      try {
+        const response = await fetch(`${localUrl}/api/mittr/auth/callback`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ url: link.raw }),
+        });
+        if (!response.ok) {
+          log.warn('[electron] the local server rejected the auth callback:', response.status);
+          return;
+        }
+        emitToAllWindows(MITTR_SIGN_IN_EVENT);
+        for (const browserWindow of BrowserWindow.getAllWindows()) {
+          dispatchDomEventToWindow(browserWindow, MITTR_SIGN_IN_EVENT);
+        }
+      } catch (error) {
+        log.warn('[electron] failed to hand the auth callback to the local server:', error?.message ?? error);
+      }
+    })();
     return;
   }
   if (link.type === 'connect') {

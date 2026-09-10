@@ -8,6 +8,7 @@ import {
   gateStateFromStatus,
   parseAuthorizeUrl,
   parseSignInStatus,
+  SIGN_IN_COMPLETED_EVENT,
   SIGN_IN_START_ENDPOINT,
   SIGN_IN_STATUS_ENDPOINT,
   type MittrSignInStatus,
@@ -36,10 +37,19 @@ export function MittrSignInGate({ children }: { children: React.ReactNode }) {
 
   React.useEffect(() => {
     void refresh();
-    // Sign-in finishes in the system browser and returns here by deep link, so
-    // regaining focus is the moment a session may have appeared.
+    // Focus is a hint, not the event. The desktop shell focuses this window to
+    // deliver the callback deep link, which happens before the code has been
+    // exchanged -- so a check driven by focus alone reads the session that has
+    // not been stored yet and leaves the developer looking at a sign-in screen
+    // that already succeeded.
     window.addEventListener('focus', refresh);
-    return () => window.removeEventListener('focus', refresh);
+    // The shell announces the exchange once a session exists. Web surfaces
+    // never emit it and keep the focus behaviour, which is all they have.
+    window.addEventListener(SIGN_IN_COMPLETED_EVENT, refresh);
+    return () => {
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener(SIGN_IN_COMPLETED_EVENT, refresh);
+    };
   }, [refresh]);
 
   const startSignIn = React.useCallback(async () => {
@@ -63,23 +73,75 @@ export function MittrSignInGate({ children }: { children: React.ReactNode }) {
   if (state === 'signed-in') return <>{children}</>;
 
   return (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-6 bg-background p-8 text-center">
-      <MittrCraftLogo className="size-12" />
-      {state === 'checking' ? (
-        <p className="text-muted-foreground">{t('mittr.signIn.checking')}</p>
-      ) : (
-        <>
-          <div className="flex flex-col gap-2">
-            <h1 className="text-lg font-medium text-foreground">{t('mittr.signIn.title')}</h1>
-            <p className="text-muted-foreground">{t('mittr.signIn.description')}</p>
+    <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-background p-8">
+      {/*
+        Two washes of the brand ramp behind the card, blurred past recognition.
+        They are what keeps the page from reading as a flat plane: the card can
+        only look lifted if there is something behind it to lift away from.
+      */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -top-32 left-1/2 size-[38rem] -translate-x-1/2 rounded-full bg-[image:var(--grad-brand)] opacity-[0.07] blur-3xl"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -bottom-40 left-1/2 size-[30rem] -translate-x-1/2 rounded-full bg-[image:var(--grad-accent)] opacity-[0.05] blur-3xl"
+      />
+
+      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-[var(--interactive-border)] bg-[var(--surface-elevated)] shadow-[var(--elev-3)]">
+        {/* The light falls from above: a sheen down the first stretch of the
+            card, and a hairline where it catches the top edge. */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 bg-[image:var(--grad-sheen)]"
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-0 h-px bg-[image:var(--grad-accent)] opacity-40"
+        />
+
+        <div className="relative flex flex-col items-start gap-5 p-8">
+          <div className="relative">
+            <div
+              aria-hidden="true"
+              className="absolute inset-0 rounded-xl bg-[image:var(--grad-accent)] opacity-30 blur-lg"
+            />
+            <div className="relative flex size-14 items-center justify-center rounded-xl border border-[var(--interactive-border)] bg-[var(--surface-background)] shadow-[var(--elev-2)]">
+              <MittrCraftLogo className="size-8" />
+            </div>
           </div>
-          <Button onClick={() => { void startSignIn(); }}>{t('mittr.signIn.action')}</Button>
-          {failed ? <p className="text-destructive">{t('mittr.signIn.error')}</p> : null}
-          {/* Before first use, not buried in a settings page somebody may never
-              open. What is recorded is part of the deal being accepted here. */}
-          <AuditNotice className="max-w-sm" />
-        </>
-      )}
+
+          {state === 'checking' ? (
+            <p className="typography-meta text-muted-foreground">{t('mittr.signIn.checking')}</p>
+          ) : (
+            <>
+              <div className="flex flex-col gap-2 text-left">
+                <h1 className="typography-settings-page-title font-semibold text-foreground">
+                  {t('mittr.signIn.title')}
+                </h1>
+                <p className="typography-meta text-muted-foreground">{t('mittr.signIn.description')}</p>
+              </div>
+
+              <Button
+                size="lg"
+                onClick={() => { void startSignIn(); }}
+                className="w-full shadow-[0_0_20px_-6px_var(--primary-muted)]"
+              >
+                {t('mittr.signIn.action')}
+              </Button>
+
+              {failed ? (
+                <p className="typography-meta text-[var(--status-error)]">{t('mittr.signIn.error')}</p>
+              ) : null}
+
+              {/* Before first use, not buried in a settings page somebody may
+                  never open. What is recorded is part of the deal being
+                  accepted here. */}
+              <AuditNotice className="text-left" />
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

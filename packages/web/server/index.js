@@ -1540,6 +1540,31 @@ async function main(options = {}) {
   const isLocalDevClientOrigin = (origin) => /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
   app.set('trust proxy', true);
 
+  // Before any route is mounted, including the ones a helper registers on its
+  // own. Express runs middleware in registration order, so a route added above
+  // this never reaches it: the Mittr shim was mounted first and every one of
+  // its routes answered without an `Access-Control-Allow-Origin` header. The
+  // preflight still passed -- OPTIONS falls through to this handler when no
+  // route claims it -- so the failure only appeared on the real request, and
+  // only in a packaged build, where the renderer's origin is
+  // `mittrcraft-ui://app` rather than the server's own.
+  app.use((req, res, next) => {
+    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
+    if (packagedClientOrigins.has(origin) || isLocalDevClientOrigin(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,X-Requested-With,Cache-Control,X-OpenCode-Directory,X-OpenCode-Directory-Encoding');
+      res.setHeader('Access-Control-Expose-Headers', 'x-next-cursor');
+      res.setHeader('Vary', 'Origin');
+      if (req.method === 'OPTIONS') {
+        res.status(204).end();
+        return;
+      }
+    }
+    next();
+  });
+
   // The engine talks to this shim instead of to Mittr directly, so it can hold a
   // credential that never changes while the Mittr session behind it rotates.
   // A failure here leaves the rest of the server running without the Mittr
@@ -1593,22 +1618,6 @@ async function main(options = {}) {
   });
   app.get('/robots.txt', (_req, res) => {
     res.type('text/plain').send('User-agent: *\nDisallow: /\n');
-  });
-  app.use((req, res, next) => {
-    const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
-    if (packagedClientOrigins.has(origin) || isLocalDevClientOrigin(origin)) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Access-Control-Allow-Credentials', 'true');
-      res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,Accept,X-Requested-With,Cache-Control,X-OpenCode-Directory,X-OpenCode-Directory-Encoding');
-      res.setHeader('Access-Control-Expose-Headers', 'x-next-cursor');
-      res.setHeader('Vary', 'Origin');
-      if (req.method === 'OPTIONS') {
-        res.status(204).end();
-        return;
-      }
-    }
-    next();
   });
   app.use(compression({
     filter: (req, res) => {

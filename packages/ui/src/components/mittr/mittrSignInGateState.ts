@@ -30,6 +30,13 @@ export const gateStateFromStatus = (status: MittrSignInStatus | null): MittrGate
 };
 
 export const SIGN_IN_STATUS_ENDPOINT = '/api/mittr/auth/status';
+
+/**
+ * Emitted on `window` by the desktop shell once the callback has been redeemed
+ * and a session stored. It carries no payload: the surface re-reads the status
+ * route rather than trusting a claim that arrived on an event.
+ */
+export const SIGN_IN_COMPLETED_EVENT = 'mittrcraft:mittr-signed-in';
 export const SIGN_IN_START_ENDPOINT = '/api/mittr/auth/start';
 
 /**
