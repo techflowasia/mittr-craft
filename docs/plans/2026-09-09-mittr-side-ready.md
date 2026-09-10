@@ -218,39 +218,42 @@ untestable end to end until both are cleared.
 
 ## What is actually on develop (2026-09-10)
 
-Thirteen agents, and **every one of them resolves to the same backend model,
-`llm-dev / gemma-4-26b`** — the four with no explicit setting inherit the
-installation default, which is that same pair. This is the case the alias
-regrain exists for: one model, many agents, each with its own instructions, RAG
-and skills.
+Eight agents on the org roster, and **every one of them resolves to the same
+backend model, `llm-dev / gemma-4-26b`**. This is the case the alias regrain
+exists for: one model, many agents, each with its own instructions, RAG and
+skills.
 
-| Scope | Agents | Agent-level state |
-|---|---|---|
-| Org | Senior Analyst, Lead Engineer, QA Engineer, Developer, Product Owner, R & D | denied |
-| Org, built-in | General Assistant | **allowed** — the only explicit agent allow in the environment |
-| Org, built-in | Code Helper | denied |
-| Personal, owned by the workspace admin | นักกฎหมาย, ผู้ช่วยความปลอดภัย, ทนายสัญญาไทย, นักออกแบบสไลด์ | auto-allowed to their owner |
-| Personal, owned by someone else | POD Agent | not visible to the admin, not offerable |
+| Agent | Agent-level state |
+|---|---|
+| General Assistant | **allowed** — offerable today |
+| Code Helper | denied |
+| Senior Analyst | denied |
+| Lead Engineer | denied |
+| QA Engineer | denied |
+| Developer | denied |
+| Product Owner | denied |
+| R & D | denied |
 
-So the panel offers five today: General Assistant and the four personal ones.
-The other six need one tick each.
+Seven need one agent-level tick each. The model tick is already satisfied on
+develop for all eight.
 
 **Eligibility is two ticks, not one.** Allowing an agent does not carry its
 model and allowing a model does not carry its agents; both rows must be
-allowed. The exception is a personal agent, which is auto-allowed at the agent
-level to the person who owns it — which is why four personal agents are
-offerable in an environment holding exactly one explicit agent allow. On
-develop the model tick is already satisfied for everything, so the six org
-agents are missing only the agent tick.
+allowed.
 
-### Two consequences worth deciding on rather than discovering
+*(Corrected 2026-09-10: an earlier version of this section listed thirteen
+agents, of which four were one person's personal agents and appeared offerable.
+That was a structural fault on the platform side — the registry was being asked
+for every agent rather than for the workspace's org roster, and an admin's own
+personal agents are auto-allowed to themselves. Assigning any of them would
+have handed that person's agent, RAG and skills to every desktop in the
+company. Fixed on the platform side in #139, on develop as build #242
+(revision 0e604b6e): personal agents can no longer appear in this panel at all.
+The self-access caveat that came with the old list is moot for the same reason.
+Recorded rather than deleted, because the near miss is the argument for the
+rule that replaced it.)*
 
-**Four of the five agents offerable today belong to one person.** Assigning any
-of them hands every developer who signs in an agent owned by an individual,
-along with that person's RAG and skills. That sits badly against the platform
-semantics this product is built on — a platform key issued to the platform, not
-to a person — and it is a decision for the owner, not something either side
-should quietly settle by ticking a box.
+### One consequence still worth deciding on rather than discovering
 
 **Every agent on develop runs `gemma-4-26b`, which is the model that leaks
 `<|channel>thought` / `<channel|>` into `content`.** `qwen3.8-27b`, which the
