@@ -181,35 +181,19 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
             </div>
           )}
 
-          <div className="flex flex-col items-center gap-2 pt-2">
-            <div className="flex items-center justify-center gap-4">
-              <a
-                href="https://github.com/techflowasia/mittr-craft"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 typography-meta text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <Icon name="github-fill" className="h-4 w-4" />
-                <span>GitHub</span>
-              </a>
-              <a
-                href="https://discord.gg/ZYRSdnwwKA"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 typography-meta text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <Icon name="discord-fill" className="h-4 w-4" />
-                <span>Discord</span>
-              </a>
-            </div>
+          {/* The repository is ours. The Discord server and the X account that
+              used to sit beside it were upstream's, and the rebrand renamed the
+              handle to one that does not exist — a link to nowhere wearing our
+              name. */}
+          <div className="flex items-center justify-center pt-2">
             <a
-              href="https://x.com/mittrcraft_dev"
+              href="https://github.com/techflowasia/mittr-craft"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 typography-meta text-muted-foreground hover:text-foreground transition-colors"
             >
-              <Icon name="twitter-xfill" className="h-4 w-4" />
-              <span>@mittrcraft_dev</span>
+              <Icon name="github-fill" className="h-4 w-4" />
+              <span>GitHub</span>
             </a>
           </div>
 
