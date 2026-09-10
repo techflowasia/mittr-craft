@@ -1567,7 +1567,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
         if (state.status === 'error' && 'error' in state) {
             return (
                 <div className="relative pr-2 pb-2 pt-2 space-y-2 pl-4">
-                    <div className="typography-meta font-medium text-muted-foreground/80 mb-1">{t('chat.toolPart.error')}</div>
+                    <div className="typography-meta font-medium text-muted-foreground mb-1">{t('chat.toolPart.error')}</div>
                     <div className="typography-meta p-2 rounded-xl border" style={{
                         backgroundColor: 'var(--status-error-background)',
                         color: 'var(--status-error)',
@@ -1656,7 +1656,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
 
                     {state.status === 'error' && 'error' in state && (
                         <div>
-                            <div className="typography-meta font-medium text-muted-foreground/80 mb-1">{t('chat.toolPart.error')}</div>
+                            <div className="typography-meta font-medium text-muted-foreground mb-1">{t('chat.toolPart.error')}</div>
                             <div className="typography-meta p-2 rounded-xl border" style={{
                                 backgroundColor: 'var(--status-error-background)',
                                 color: 'var(--status-error)',
@@ -2172,7 +2172,7 @@ const ToolPartContent: React.FC<ToolPartProps> = ({
                                 </MinDurationShineText>
                             </div>
                             {normalizedPartTool === 'bash' && typeof effectiveTimeStart === 'number' ? (
-                                <span className={cn('flex-shrink-0 tabular-nums text-muted-foreground/80', TOOL_ROW_DESCRIPTION_CLASS)}>
+                                <span className={cn('flex-shrink-0 tabular-nums text-muted-foreground', TOOL_ROW_DESCRIPTION_CLASS)}>
                                     <LiveDuration
                                         start={effectiveTimeStart}
                                         end={typeof effectiveTimeEnd === 'number' ? effectiveTimeEnd : undefined}

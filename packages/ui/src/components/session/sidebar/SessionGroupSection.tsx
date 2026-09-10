@@ -1060,7 +1060,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
         <button
           type="button"
           onClick={() => showMoreGroupSessions(groupKey, visibleSessions.length)}
-          className="mt-0.5 flex items-center justify-start rounded-md pl-[26px] pr-1.5 py-0.5 text-left text-xs text-muted-foreground/70 leading-tight hover:text-foreground hover:underline"
+          className="mt-0.5 flex items-center justify-start rounded-md pl-[26px] pr-1.5 py-0.5 text-left text-xs text-muted-foreground leading-tight hover:text-foreground hover:underline"
         >
           {t('sessions.sidebar.group.showMore')}
         </button>
@@ -1069,7 +1069,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
         <button
           type="button"
           onClick={() => resetGroupSessionLimit(groupKey)}
-          className="mt-0.5 flex items-center justify-start rounded-md pl-[26px] pr-1.5 py-0.5 text-left text-xs text-muted-foreground/70 leading-tight hover:text-foreground hover:underline"
+          className="mt-0.5 flex items-center justify-start rounded-md pl-[26px] pr-1.5 py-0.5 text-left text-xs text-muted-foreground leading-tight hover:text-foreground hover:underline"
         >
           {t('sessions.sidebar.group.showFewer')}
         </button>
@@ -1176,7 +1176,7 @@ function SessionGroupSectionBase(props: Props): React.ReactNode {
                 ) : (
                   <Icon name="git-branch" className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
                 )}
-                <span className="min-w-0 truncate text-[11px] font-medium text-muted-foreground/80">
+                <span className="min-w-0 truncate text-[11px] font-medium text-muted-foreground">
                   {statusLine.label}
                 </span>
               </span>

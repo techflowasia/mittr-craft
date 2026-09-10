@@ -1946,7 +1946,7 @@ export const Header: React.FC<HeaderProps> = ({
               {activeSurfaceHeader.title}
             </span>
             {activeSurfaceHeader.subtitle ? (
-              <span className="truncate typography-micro text-[10.5px] font-normal leading-tight text-muted-foreground/75 max-w-full">
+              <span className="truncate typography-micro text-[10.5px] font-normal leading-tight text-muted-foreground max-w-full">
                 {activeSurfaceHeader.subtitle}
               </span>
             ) : null}
@@ -2011,7 +2011,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </span>
               )}
               {showHeaderMetaRow ? (
-                <span className="flex min-w-0 max-w-full items-center gap-1.5 truncate typography-micro text-[10.5px] font-normal leading-tight text-muted-foreground/75">
+                <span className="flex min-w-0 max-w-full items-center gap-1.5 truncate typography-micro text-[10.5px] font-normal leading-tight text-muted-foreground">
                   {activeProjectLabel ? <span className="truncate">{activeProjectLabel}</span> : null}
                   {currentBranchLabel ? (
                     <span className="inline-flex min-w-0 items-center gap-0.5">

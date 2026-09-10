@@ -81,7 +81,7 @@ const TurnChangedFileChipContent = React.memo(({ file, interactive = false }: { 
         <span className="max-w-52 truncate text-foreground/80" title={file.file}>{getDisplayFileName(file.file)}</span>
         <span className="flex-shrink-0 inline-flex items-center gap-0 typography-meta" style={{ fontSize: '0.8rem', lineHeight: '1' }}>
             <span style={{ color: 'var(--status-success)' }}>+{file.additions}</span>
-            <span className="text-muted-foreground/70">/</span>
+            <span className="text-muted-foreground">/</span>
             <span style={{ color: 'var(--status-error)' }}>-{file.deletions}</span>
         </span>
     </span>
@@ -599,7 +599,7 @@ const UserMessageBody = React.memo(({ messageId, parts, messageCreatedAt, isMobi
                     <Tooltip>
                         <TooltipTrigger asChild>
                             <span
-                                className="mr-1 flex items-center gap-1 text-sm tabular-nums text-muted-foreground/60"
+                                className="mr-1 flex items-center gap-1 text-sm tabular-nums text-muted-foreground"
                                 aria-label={`Message time: ${timestamp}`}
                             >
                                 <Icon name="time" className="h-3.5 w-3.5" />
@@ -2070,7 +2070,7 @@ const AssistantMessageBody = React.memo(({
         return formatted.length > 0 ? formatted : null;
     }, [messageCompletedAt, messageCreatedAt, timeFormatPreference, locale]);
 
-    const footerTimestampClassName = 'text-sm text-muted-foreground/60 tabular-nums flex items-center gap-1';
+    const footerTimestampClassName = 'text-sm text-muted-foreground tabular-nums flex items-center gap-1';
     const canOpenMessagePreview = !isMiniChatSurface && !isMobile && !isVSCode;
 
     const finalTurnActionButtons = (
@@ -2259,7 +2259,7 @@ const AssistantMessageBody = React.memo(({
                         className="mt-2 mb-1 flex flex-wrap items-center justify-start gap-x-3 gap-y-1.5"
                         style={MESSAGE_FOOTER_CONTAINER_STYLE}
                     >
-                        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-sm text-muted-foreground/60">
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 text-sm text-muted-foreground">
                         {footerModelName ? (
                             <span className="flex min-w-0 items-center gap-1.5">
                                 {footerHasLogo && footerLogoSrc ? (
@@ -2299,7 +2299,7 @@ const AssistantMessageBody = React.memo(({
                         {turnDurationText ? (
                             <Tooltip>
                                 <TooltipTrigger asChild>
-                                    <span className="text-sm text-muted-foreground/60 tabular-nums flex items-center gap-1">
+                                    <span className="text-sm text-muted-foreground tabular-nums flex items-center gap-1">
                                         <Icon name="hourglass" className="h-3.5 w-3.5" />
                                         <span className="message-footer__label">{turnDurationText}</span>
                                     </span>
