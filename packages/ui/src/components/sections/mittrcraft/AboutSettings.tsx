@@ -81,14 +81,14 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
 
     const loadOpenCodeVersion = async () => {
       try {
-        const response = await runtimeFetch('/api/opencode/upgrade-status', {
+        const response = await runtimeFetch('/api/opencode/version', {
           method: 'GET',
           headers: { Accept: 'application/json' },
         });
         if (!response.ok) return;
-        const data = await response.json().catch(() => null) as { currentVersion?: unknown } | null;
-        const version = typeof data?.currentVersion === 'string' && data.currentVersion.trim().length > 0
-          ? data.currentVersion.trim()
+        const data = await response.json().catch(() => null) as { version?: unknown } | null;
+        const version = typeof data?.version === 'string' && data.version.trim().length > 0
+          ? data.version.trim()
           : null;
         if (!cancelled) setOpenCodeVersion(version);
       } catch {

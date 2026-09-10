@@ -1018,8 +1018,6 @@ export const settingsDict = {
   'settings.mittrcraft.opencodeCli.tooltipSuffix': 'バイナリ。',
   'settings.mittrcraft.opencodeCli.field.binaryPath': 'MittrCraft Engine バイナリパス',
   'settings.mittrcraft.opencodeCli.field.binaryPathPlaceholder': '/Users/you/.bun/bin/opencode',
-  'settings.mittrcraft.opencodeCli.field.showUpdateNotifications': 'MittrCraft Engine のアップデート通知を表示',
-  'settings.mittrcraft.opencodeCli.field.showUpdateNotificationsAria': 'MittrCraft Engine のアップデート通知を表示',
   'settings.mittrcraft.opencodeCli.actions.browseAria': 'MittrCraft Engine バイナリパスを参照',
   'settings.mittrcraft.opencodeCli.actions.browse': '参照',
   'settings.mittrcraft.opencodeCli.actions.saveAndReload': '保存して再読み込み',

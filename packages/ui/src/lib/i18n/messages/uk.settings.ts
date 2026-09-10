@@ -985,8 +985,6 @@ export const settingsDict = {
   "settings.mittrcraft.opencodeCli.tooltipSuffix": "бінарного файлу.",
   "settings.mittrcraft.opencodeCli.field.binaryPath": "Шлях до бінарного файлу MittrCraft Engine",
   "settings.mittrcraft.opencodeCli.field.binaryPathPlaceholder": "/Users/you/.bun/bin/opencode",
-  "settings.mittrcraft.opencodeCli.field.showUpdateNotifications": "Показувати сповіщення про оновлення MittrCraft Engine",
-  "settings.mittrcraft.opencodeCli.field.showUpdateNotificationsAria": "Показувати сповіщення про оновлення MittrCraft Engine",
   "settings.mittrcraft.opencodeCli.actions.browseAria": "Вибрати шлях до виконуваного файла MittrCraft Engine",
   "settings.mittrcraft.opencodeCli.actions.browse": "Огляд",
   "settings.mittrcraft.opencodeCli.actions.saveAndReload": "Зберегти й перезавантажити",

@@ -89,12 +89,12 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
     let cancelled = false;
     const fetchOpenCodeVersion = async () => {
       try {
-        const response = await runtimeFetch('/api/opencode/upgrade-status', {
+        const response = await runtimeFetch('/api/opencode/version', {
           headers: { Accept: 'application/json' },
         });
         if (!response.ok) return;
-        const data = await response.json().catch(() => null) as null | { currentVersion?: unknown };
-        const currentVersion = typeof data?.currentVersion === 'string' ? data.currentVersion.trim() : '';
+        const data = await response.json().catch(() => null) as null | { version?: unknown };
+        const currentVersion = typeof data?.version === 'string' ? data.version.trim() : '';
         if (!cancelled && currentVersion) {
           setOpenCodeVersion(currentVersion);
         }

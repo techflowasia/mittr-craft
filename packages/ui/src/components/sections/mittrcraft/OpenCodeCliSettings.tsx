@@ -5,7 +5,6 @@ import { Icon } from "@/components/icon/Icon";
 import {
   SettingsSection,
   SettingsFieldRow,
-  SettingsCheckboxRow,
   SettingsInset,
   SETTINGS_ICON_BUTTON_CLASS,
   SETTINGS_OPTION_STACK_CLASS,
@@ -13,10 +12,8 @@ import {
 import { isDesktopShell, requestFileAccess } from '@/lib/desktop';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { recordDeferredOpenCodeRestart } from '@/lib/opencode/deferredRestart';
-import { useUIStore } from '@/stores/useUIStore';
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
-import { isWindowsArm64 } from '@/lib/platform';
 import { toast } from '@/components/ui';
 
 export const OpenCodeCliSettings: React.FC = () => {
@@ -24,8 +21,6 @@ export const OpenCodeCliSettings: React.FC = () => {
   const [value, setValue] = React.useState('');
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSaving, setIsSaving] = React.useState(false);
-  const showOpenCodeUpdateNotifications = useUIStore((state) => state.showOpenCodeUpdateNotifications);
-  const setShowOpenCodeUpdateNotifications = useUIStore((state) => state.setShowOpenCodeUpdateNotifications);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -95,11 +90,6 @@ export const OpenCodeCliSettings: React.FC = () => {
     }
   }, [t, value]);
 
-  const handleShowUpdateNotificationsChange = React.useCallback((enabled: boolean) => {
-    setShowOpenCodeUpdateNotifications(enabled);
-    void updateDesktopSettings({ showOpenCodeUpdateNotifications: enabled });
-  }, [setShowOpenCodeUpdateNotifications]);
-
   return (
     <SettingsSection title={t('settings.mittrcraft.opencodeCli.title')}>
       <div className="space-y-0.5">
@@ -143,16 +133,6 @@ export const OpenCodeCliSettings: React.FC = () => {
         </SettingsFieldRow>
 
         <SettingsInset className={SETTINGS_OPTION_STACK_CLASS}>
-          {!isWindowsArm64() && (
-            <SettingsCheckboxRow
-              settingsItem="sessions.opencode-update-notifications"
-              checked={showOpenCodeUpdateNotifications}
-              onChange={handleShowUpdateNotificationsChange}
-              label={t('settings.mittrcraft.opencodeCli.field.showUpdateNotifications')}
-              ariaLabel={t('settings.mittrcraft.opencodeCli.field.showUpdateNotificationsAria')}
-            />
-          )}
-
           <div className="flex justify-start py-1.5">
             <Button
               type="button"

@@ -985,8 +985,6 @@ export const settingsDict = {
   "settings.mittrcraft.opencodeCli.tooltipSuffix": "executável.",
   "settings.mittrcraft.opencodeCli.field.binaryPath": "Caminho do executável do MittrCraft Engine",
   "settings.mittrcraft.opencodeCli.field.binaryPathPlaceholder": "/Users/you/.bun/bin/opencode",
-  "settings.mittrcraft.opencodeCli.field.showUpdateNotifications": "Mostrar notificações de atualização do MittrCraft Engine",
-  "settings.mittrcraft.opencodeCli.field.showUpdateNotificationsAria": "Mostrar notificações de atualização do MittrCraft Engine",
   "settings.mittrcraft.opencodeCli.actions.browseAria": "Buscar caminho do executável do MittrCraft Engine",
   "settings.mittrcraft.opencodeCli.actions.browse": "Buscar",
   "settings.mittrcraft.opencodeCli.actions.saveAndReload": "Salvar + Recarregar",

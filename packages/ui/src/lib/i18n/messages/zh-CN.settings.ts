@@ -985,8 +985,6 @@ export const settingsDict = {
   'settings.mittrcraft.opencodeCli.tooltipSuffix': '二进制绝对路径。',
   'settings.mittrcraft.opencodeCli.field.binaryPath': 'MittrCraft Engine 可执行文件路径',
   'settings.mittrcraft.opencodeCli.field.binaryPathPlaceholder': '/Users/you/.bun/bin/opencode',
-  'settings.mittrcraft.opencodeCli.field.showUpdateNotifications': '显示 MittrCraft Engine 更新通知',
-  'settings.mittrcraft.opencodeCli.field.showUpdateNotificationsAria': '显示 MittrCraft Engine 更新通知',
   'settings.mittrcraft.opencodeCli.actions.browseAria': '浏览 MittrCraft Engine 可执行文件路径',
   'settings.mittrcraft.opencodeCli.actions.browse': '浏览',
   'settings.mittrcraft.opencodeCli.actions.saveAndReload': '保存并重载',

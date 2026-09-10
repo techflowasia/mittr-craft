@@ -985,8 +985,6 @@ export const settingsDict = {
   'settings.mittrcraft.opencodeCli.tooltipSuffix': 'binary.',
   'settings.mittrcraft.opencodeCli.field.binaryPath': 'MittrCraft Engine binary 경로',
   'settings.mittrcraft.opencodeCli.field.binaryPathPlaceholder': '/Users/you/.bun/bin/opencode',
-  'settings.mittrcraft.opencodeCli.field.showUpdateNotifications': 'MittrCraft Engine 업데이트 알림 표시',
-  'settings.mittrcraft.opencodeCli.field.showUpdateNotificationsAria': 'MittrCraft Engine 업데이트 알림 표시',
   'settings.mittrcraft.opencodeCli.actions.browseAria': 'MittrCraft Engine binary 경로 찾아보기',
   'settings.mittrcraft.opencodeCli.actions.browse': '찾아보기',
   'settings.mittrcraft.opencodeCli.actions.saveAndReload': '저장 + 다시 로드',

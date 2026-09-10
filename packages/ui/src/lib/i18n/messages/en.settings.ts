@@ -1017,8 +1017,6 @@ export const settingsDict = {
   'settings.mittrcraft.opencodeCli.tooltipSuffix': 'binary.',
   'settings.mittrcraft.opencodeCli.field.binaryPath': 'MittrCraft Engine Binary Path',
   'settings.mittrcraft.opencodeCli.field.binaryPathPlaceholder': '/Users/you/.bun/bin/opencode',
-  'settings.mittrcraft.opencodeCli.field.showUpdateNotifications': 'Show MittrCraft Engine update notifications',
-  'settings.mittrcraft.opencodeCli.field.showUpdateNotificationsAria': 'Show MittrCraft Engine update notifications',
   'settings.mittrcraft.opencodeCli.actions.browseAria': 'Browse for MittrCraft Engine binary path',
   'settings.mittrcraft.opencodeCli.actions.browse': 'Browse',
   'settings.mittrcraft.opencodeCli.actions.saveAndReload': 'Save + Reload',

@@ -853,8 +853,6 @@ export const settingsDict = {
   'settings.mittrcraft.opencodeCli.dialog.selectBinaryTitle': 'Wybierz plik binarny opencode',
   'settings.mittrcraft.opencodeCli.field.binaryPath': 'Ścieżka do pliku binarnego MittrCraft Engine',
   'settings.mittrcraft.opencodeCli.field.binaryPathPlaceholder': '/Users/you/.bun/bin/opencode',
-  'settings.mittrcraft.opencodeCli.field.showUpdateNotifications': 'Pokazuj powiadomienia o aktualizacjach MittrCraft Engine',
-  'settings.mittrcraft.opencodeCli.field.showUpdateNotificationsAria': 'Pokazuj powiadomienia o aktualizacjach MittrCraft Engine',
   'settings.mittrcraft.opencodeCli.tipMiddle': 'zmienna środowiskowa, ale to ustawienie jest zapisywane w',
   'settings.mittrcraft.opencodeCli.tipPrefix': 'Wskazówka: możesz również użyć',
   'settings.mittrcraft.opencodeCli.title': 'MittrCraft Engine',
