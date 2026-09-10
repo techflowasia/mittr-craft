@@ -79,7 +79,7 @@ const CustomAnswerTextarea = React.memo(function CustomAnswerTextarea({
       onKeyDown={onKeyDown}
       style={{ height }}
       className={cn(
-        'w-full bg-transparent border border-border/30 focus:border-primary rounded px-2 py-1 outline-none typography-meta text-foreground placeholder:text-muted-foreground/50 transition-colors resize-none',
+        'w-full bg-transparent border border-border/30 focus:border-primary rounded px-2 py-1 outline-none typography-meta text-foreground placeholder:text-muted-foreground transition-colors resize-none',
         isScrollable ? 'overflow-y-auto' : 'overflow-hidden'
       )}
       autoFocus
@@ -385,7 +385,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({ question }) => {
                           : isSummary
                             ? 'text-muted-foreground hover:text-foreground hover:bg-interactive-hover/20'
                             : isAnswered
-                              ? 'text-muted-foreground/60 hover:text-muted-foreground hover:bg-interactive-hover/20'
+                              ? 'text-muted-foreground hover:text-muted-foreground hover:bg-interactive-hover/20'
                               : 'text-foreground/85 hover:text-foreground hover:bg-interactive-hover/20'
                       )}
                     >
@@ -413,7 +413,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({ question }) => {
                       <div className="typography-micro text-muted-foreground">{q.header || t('chat.questionCard.questionFallback', { index: index + 1 })}</div>
                       <div className={cn(
                         'typography-meta',
-                        hasAnswer ? 'text-foreground' : 'text-muted-foreground/50 italic'
+                        hasAnswer ? 'text-foreground' : 'text-muted-foreground italic'
                       )}>
                         {answer}
                       </div>
@@ -500,7 +500,7 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({ question }) => {
                     <div className="flex items-center gap-2">
                       <Icon name="edit" className={cn(
                         'h-3.5 w-3.5',
-                        isCustomActive ? 'text-primary' : 'text-muted-foreground/50'
+                        isCustomActive ? 'text-primary' : 'text-muted-foreground'
                       )} />
                       <span className={cn(
                         'typography-meta',

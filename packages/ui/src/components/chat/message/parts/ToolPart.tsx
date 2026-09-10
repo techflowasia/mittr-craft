@@ -911,7 +911,7 @@ const TaskSummaryEntryRow = React.memo(({
                         ) : (
                             <Text
                                 variant={animateTailText ? 'generate-effect' : 'static'}
-                                className="typography-meta flex-1 min-w-0 truncate text-muted-foreground/70"
+                                className="typography-meta flex-1 min-w-0 truncate text-muted-foreground"
                                 style={{ color: 'var(--tools-description)' }}
                                 title={label}
                             >
@@ -953,7 +953,7 @@ const TaskSummaryEntriesList = React.memo(({
         <ToolScrollableSection maxHeightClass={isExpanded ? 'max-h-[40vh]' : 'max-h-56'} disableHorizontal>
             <div className="w-full min-w-0 space-y-1">
                 {hiddenCount > 0 ? (
-                    <div className="typography-micro text-muted-foreground/70">+{hiddenCount} more…</div>
+                    <div className="typography-micro text-muted-foreground">+{hiddenCount} more…</div>
                 ) : null}
 
                 {visibleEntries.map((entry, idx) => {
@@ -1033,7 +1033,7 @@ const TaskToolSummary: React.FC<{
     if (entries.length === 0 && !hasOutput && !sessionId) {
         return (
             <div className="relative pr-2 pb-2 pt-2 space-y-2 pl-[1.4375rem]">
-                <div className="typography-meta text-muted-foreground/70">
+                <div className="typography-meta text-muted-foreground">
                     {isActive ? 'Waiting for subagent activity...' : 'No subagent session id on task metadata.'}
                 </div>
             </div>
@@ -1554,7 +1554,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
         }
 
         return renderScrollableBlock(
-            <div className="typography-meta text-muted-foreground/70">{t('chat.toolPart.noOutputProduced')}</div>,
+            <div className="typography-meta text-muted-foreground">{t('chat.toolPart.noOutputProduced')}</div>,
             { maxHeightClass: 'max-h-60' }
         );
     };
@@ -1627,7 +1627,7 @@ const ToolExpandedContent: React.FC<ToolExpandedContentProps> = React.memo(({
                                         diffViewMode={diffViewMode}
                                     />
                                 ) : (
-                                    <blockquote className="tool-input-text whitespace-pre-wrap break-words typography-meta italic text-muted-foreground/70">
+                                    <blockquote className="tool-input-text whitespace-pre-wrap break-words typography-meta italic text-muted-foreground">
                                         {inputTextContent}
                                     </blockquote>
                                 ),

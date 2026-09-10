@@ -452,11 +452,11 @@ export const DesktopNetworkSettings: React.FC = () => {
             info={t('settings.mittrcraft.desktopNetwork.field.allowLanAccessDescription')}
             description={(
               <>
-                <span className="block text-[var(--status-warning)]/85">
+                <span className="block text-[var(--status-warning)]">
                   {t('settings.mittrcraft.desktopNetwork.field.warning')}
                 </span>
                 {lanRequiresPassword || lanBlockedByMissingPassword ? (
-                  <span className="block text-[var(--status-warning)]/85">
+                  <span className="block text-[var(--status-warning)]">
                     {t('settings.mittrcraft.desktopNetwork.field.passwordRequiredWarning')}
                   </span>
                 ) : null}
@@ -471,7 +471,7 @@ export const DesktopNetworkSettings: React.FC = () => {
         ) : null}
 
         {lanUrl ? (
-          <div className="typography-micro text-muted-foreground/80">
+          <div className="typography-micro text-muted-foreground">
             {isDirty && !savedValue
               ? t('settings.mittrcraft.desktopNetwork.hint.openAfterRestart')
               : t('settings.mittrcraft.desktopNetwork.hint.openNow')}

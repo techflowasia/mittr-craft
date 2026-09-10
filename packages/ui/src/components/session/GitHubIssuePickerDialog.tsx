@@ -672,7 +672,7 @@ export function GitHubIssuePickerDialog({
                 )}
               </button>
               <span className="typography-meta text-muted-foreground">{t('session.githubIssuePicker.actions.createInWorktree')}</span>
-              <span className="typography-meta text-muted-foreground/70 hidden sm:inline">(issue-&lt;number&gt;-&lt;slug&gt;)</span>
+              <span className="typography-meta text-muted-foreground hidden sm:inline">(issue-&lt;number&gt;-&lt;slug&gt;)</span>
             </div>
             <div className="hidden sm:block sm:flex-1" />
             <div className="flex items-center gap-2">

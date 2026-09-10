@@ -1268,7 +1268,7 @@ export const TunnelSettings: React.FC = () => {
                     : 'border-[var(--status-success-border)] bg-[var(--status-success-background)] text-[var(--status-success)]';
                 const statusDotClass = record.isActive
                   ? (isQuick ? 'text-[var(--status-warning)]' : isManagedRemote ? 'text-[var(--status-info)]' : 'text-[var(--status-success)]')
-                  : 'text-muted-foreground/50';
+                  : 'text-muted-foreground';
                 const modeLabel = isQuick
                   ? t('settings.mittrcraft.tunnel.badge.quick')
                   : isManagedRemote
@@ -1284,7 +1284,7 @@ export const TunnelSettings: React.FC = () => {
                     <span className={cn('typography-micro rounded border px-1.5 py-0.5 uppercase', modeBadgeClass)}>
                       {modeLabel}
                     </span>
-                    <span className="typography-meta text-muted-foreground/80">
+                    <span className="typography-meta text-muted-foreground">
                       {t('settings.mittrcraft.tunnel.session.redeemedAt', { time: formatAbsoluteTime(record.createdAt, timeFormatPreference) })}
                     </span>
                     <span className="typography-meta text-foreground">
@@ -1310,7 +1310,7 @@ export const TunnelSettings: React.FC = () => {
               <p className={SETTINGS_CALLOUT_TITLE_CLASS}>
                 {t('settings.mittrcraft.tunnel.notAvailable.dependencyNotFound', { dependency: displayedDependencyInstallInfo.dependency })}
               </p>
-              <p className="typography-meta text-muted-foreground/70">{t('settings.mittrcraft.tunnel.notAvailable.installHint')}</p>
+              <p className="typography-meta text-muted-foreground">{t('settings.mittrcraft.tunnel.notAvailable.installHint')}</p>
               <code className="typography-code block rounded bg-muted/50 px-2 py-1 text-xs text-foreground">
                 {displayedDependencyInstallInfo.installCommand}
               </code>
@@ -1519,7 +1519,7 @@ export const TunnelSettings: React.FC = () => {
 
                           <CollapsibleContent className="pt-1.5">
                             <div className="space-y-1 px-3 pb-2">
-                              <p className="typography-meta text-muted-foreground/70">{t('settings.mittrcraft.tunnel.field.hostnameLabel')} <code>{preset.hostname}</code></p>
+                              <p className="typography-meta text-muted-foreground">{t('settings.mittrcraft.tunnel.field.hostnameLabel')} <code>{preset.hostname}</code></p>
                               <Input
                                 type="password"
                                 value={rowToken}
@@ -1570,7 +1570,7 @@ export const TunnelSettings: React.FC = () => {
                   })}
                 </div>
               ) : (
-                <p className="typography-meta text-muted-foreground/70">{t('settings.mittrcraft.tunnel.empty.noManagedRemoteTunnels')}</p>
+                <p className="typography-meta text-muted-foreground">{t('settings.mittrcraft.tunnel.empty.noManagedRemoteTunnels')}</p>
               )}
 
               {isAddingPreset && (
@@ -1598,7 +1598,7 @@ export const TunnelSettings: React.FC = () => {
                     disabled={isSavingMode || state === 'starting' || state === 'stopping'}
                   />
                   {typeof suggestedConnectorPort === 'number' && (
-                    <p className="typography-meta text-muted-foreground/70">
+                    <p className="typography-meta text-muted-foreground">
                       {t('settings.mittrcraft.tunnel.note.cloudflareConnectorTargetUse')} <code>http://localhost:{suggestedConnectorPort}</code>.
                     </p>
                   )}
@@ -1633,7 +1633,7 @@ export const TunnelSettings: React.FC = () => {
               )}
 
               <div className="flex items-center gap-1.5">
-                <p className="typography-meta text-muted-foreground/80">{t('settings.mittrcraft.tunnel.note.tokensSavedPerTunnel')}</p>
+                <p className="typography-meta text-muted-foreground">{t('settings.mittrcraft.tunnel.note.tokensSavedPerTunnel')}</p>
                 <SettingsInfoHint>
                   {t('settings.mittrcraft.tunnel.tooltip.tokensSavedPath')}
                 </SettingsInfoHint>
@@ -1698,7 +1698,7 @@ export const TunnelSettings: React.FC = () => {
                     </Button>
                   )}
                 </div>
-                <p className="typography-meta text-muted-foreground/70">
+                <p className="typography-meta text-muted-foreground">
                   {managedLocalConfigPath
                     ? t('settings.mittrcraft.tunnel.note.customConfigUsed')
                     : t('settings.mittrcraft.tunnel.note.defaultConfigUsed')}
@@ -1829,7 +1829,7 @@ export const TunnelSettings: React.FC = () => {
             </div>
 
             <div>
-              <p className="typography-meta mb-1 text-muted-foreground/70">{t('settings.mittrcraft.tunnel.field.publicUrlHint')}</p>
+              <p className="typography-meta mb-1 text-muted-foreground">{t('settings.mittrcraft.tunnel.field.publicUrlHint')}</p>
               <code className="typography-code block truncate rounded bg-muted/50 px-2 py-1 text-xs text-foreground">
                 {tunnelInfo.url}
               </code>
@@ -1838,7 +1838,7 @@ export const TunnelSettings: React.FC = () => {
             {isConnectLinkLive && tunnelInfo.connectUrl && (
               <>
                 <div>
-                  <p className="typography-meta mb-1 text-muted-foreground/70">{t('settings.mittrcraft.tunnel.field.connectLink')}</p>
+                  <p className="typography-meta mb-1 text-muted-foreground">{t('settings.mittrcraft.tunnel.field.connectLink')}</p>
                   <div className="flex items-center gap-2">
                     <code className="typography-code flex-1 truncate rounded bg-muted/50 px-2 py-1 text-xs text-foreground">
                       {tunnelInfo.connectUrl}
@@ -1850,7 +1850,7 @@ export const TunnelSettings: React.FC = () => {
                       {copied ? t('settings.mittrcraft.tunnel.actions.copied') : t('settings.common.actions.copyAll')}
                     </Button>
                   </div>
-                  <p className="typography-meta mt-1 text-muted-foreground/70">
+                  <p className="typography-meta mt-1 text-muted-foreground">
                     {t('settings.mittrcraft.tunnel.field.expires')}: {tunnelInfo.bootstrapExpiresAt ? remainingText : t('settings.mittrcraft.tunnel.state.never')}
                   </p>
                 </div>

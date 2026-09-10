@@ -306,12 +306,12 @@ export const GitHubSettings: React.FC = () => {
                   <span>{activeAccountSourceLabel}</span>
                 </div>
                 {status?.scope && (
-                  <div className="typography-micro text-muted-foreground/70 mt-0.5">
+                  <div className="typography-micro text-muted-foreground mt-0.5">
                     {t('settings.github.page.label.scopes', { value: status.scope })}
                   </div>
                 )}
                 {ghCli?.active && (
-                  <div className="typography-micro text-muted-foreground/70 mt-0.5">
+                  <div className="typography-micro text-muted-foreground mt-0.5">
                     {t('settings.github.page.ghCli.activeDescription')}
                   </div>
                 )}

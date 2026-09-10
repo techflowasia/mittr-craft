@@ -569,7 +569,7 @@ export const ProvidersPage: React.FC = () => {
                                   : t('settings.providers.page.connect.selectProviderPlaceholder')}
                             </span>
                           </span>
-                          <Icon name="arrow-down-s" className="h-4 w-4 flex-shrink-0 text-muted-foreground/50" />
+                          <Icon name="arrow-down-s" className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
                         </button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent

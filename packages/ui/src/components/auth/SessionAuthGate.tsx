@@ -1062,7 +1062,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
               {adEnabled && adMode === 'ldap' && (
                 <div className="space-y-2">
                   <div className="relative">
-                    <Icon name="user" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
+                    <Icon name="user" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="ad-username"
                       ref={adUsernameInputRef}
@@ -1080,7 +1080,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="relative flex-1">
-                      <Icon name="lock" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
+                      <Icon name="lock" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
                         id="ad-password"
                         type="password"
@@ -1133,7 +1133,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
               )}
               {passwordEnabled && <div className="flex items-center gap-2">
                 <div className="relative flex-1">
-                  <Icon name="lock" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
+                  <Icon name="lock" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     id="mittrcraft-ui-password"
                     ref={passwordInputRef}

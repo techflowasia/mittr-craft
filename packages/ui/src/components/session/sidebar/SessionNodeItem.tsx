@@ -1247,7 +1247,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                       {alwaysShowActions ? (
                         // Touch runtimes have no hover tooltip, so the compact
                         // date stays inline there.
-                        <span className="ml-2 inline-flex flex-shrink-0 items-center gap-1 text-[0.72rem] text-muted-foreground/75">
+                        <span className="ml-2 inline-flex flex-shrink-0 items-center gap-1 text-[0.72rem] text-muted-foreground">
                           {showActivityDuration ? (
                             <SessionActivityDuration sessionId={session.id} running={isStreaming} />
                           ) : (
@@ -1256,7 +1256,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                               {showInlineBranchMarker ? (
                                 <Icon
                                   name="git-branch"
-                                  className={cn('h-3 w-3', !prIconColor && 'text-muted-foreground/60')}
+                                  className={cn('h-3 w-3', !prIconColor && 'text-muted-foreground')}
                                   style={prIconColor ? { color: prIconColor } : undefined}
                                 />
                               ) : null}
@@ -1284,7 +1284,7 @@ function SessionNodeItemComponent(props: Props): React.ReactNode {
                                 {showInlineBranchMarker ? (
                                   <Icon
                                     name="git-branch"
-                                    className={cn('h-3 w-3', !prIconColor && 'text-muted-foreground/60')}
+                                    className={cn('h-3 w-3', !prIconColor && 'text-muted-foreground')}
                                     style={prIconColor ? { color: prIconColor } : undefined}
                                   />
                                 ) : null}

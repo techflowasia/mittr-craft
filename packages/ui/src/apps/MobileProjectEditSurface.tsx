@@ -78,7 +78,7 @@ const SortableWorktreeRow: React.FC<{
     >
       <button
         type="button"
-        className="flex size-9 shrink-0 cursor-grab touch-none items-center justify-center rounded-xl text-muted-foreground/70 transition-colors hover:text-foreground active:cursor-grabbing"
+        className="flex size-9 shrink-0 cursor-grab touch-none items-center justify-center rounded-xl text-muted-foreground transition-colors hover:text-foreground active:cursor-grabbing"
         aria-label={t('mobile.projectEdit.dragWorktreeAria', { label })}
         {...attributes}
         {...listeners}

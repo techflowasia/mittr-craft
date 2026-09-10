@@ -427,7 +427,7 @@ export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ 
               />
               <span className={cn(
                 'typography-ui-label font-normal',
-                waitForSetupCommands ? 'text-foreground' : 'text-foreground/60'
+                waitForSetupCommands ? 'text-foreground' : 'text-foreground'
               )}>
                 {t('settings.mittrcraft.worktrees.setup.waitForCommands')}
               </span>
@@ -444,7 +444,7 @@ export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ 
         {isLoadingWorktrees ? (
           <p className="typography-meta text-muted-foreground">{t('settings.mittrcraft.worktrees.list.loading')}</p>
         ) : availableWorktrees.length === 0 ? (
-          <p className="typography-meta text-muted-foreground/70">
+          <p className="typography-meta text-muted-foreground">
             {t('settings.mittrcraft.worktrees.list.empty')}
           </p>
         ) : (
@@ -462,7 +462,7 @@ export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ 
                       {worktree.label || worktree.branch || t('settings.mittrcraft.worktrees.list.detachedHead')}
                     </p>
                   </div>
-                  <p className="typography-micro truncate text-muted-foreground/60">
+                  <p className="typography-micro truncate text-muted-foreground">
                     {formatPathForDisplay(worktree.path, homeDirectory)}
                   </p>
                 </div>
@@ -470,7 +470,7 @@ export const WorktreeSectionContent: React.FC<WorktreeSectionContentProps> = ({ 
                   type="button"
                   onClick={() => handleDeleteWorktree(worktree)}
                   className={cn(
-                    'flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground/50 transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+                    'flex h-7 w-7 shrink-0 items-center justify-center rounded text-muted-foreground transition-opacity hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
                     alwaysShowActions ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
                   )}
                   aria-label={t('settings.mittrcraft.worktrees.list.deleteWorktreeAria', { name: worktree.branch || worktree.label || worktree.path })}

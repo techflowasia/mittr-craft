@@ -82,7 +82,7 @@ export const SessionSuggestionChip: React.FC<SessionSuggestionChipProps> = React
           onMouseDown={(event) => event.preventDefault()}
           aria-label={t('chat.suggestion.dismissAria')}
           title={t('chat.suggestion.dismissAria')}
-          className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:bg-[var(--interactive-hover)] hover:text-foreground"
+          className="absolute right-1.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--interactive-hover)] hover:text-foreground"
         >
           <Icon name="close" className="h-3 w-3" />
         </button>

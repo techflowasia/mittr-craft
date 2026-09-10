@@ -266,7 +266,7 @@ export const AddPluginDialog: React.FC<AddPluginDialogProps> = ({
                     <span
                       className={cn(
                         'typography-ui-label font-normal',
-                        selected ? 'text-foreground' : 'text-foreground/60',
+                        selected ? 'text-foreground' : 'text-foreground',
                       )}
                     >
                       {label}

@@ -328,7 +328,7 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
                 <span className="text-muted-foreground">{info.currentVersion}</span>
               )}
               {info?.currentVersion && info?.version && (
-                <span className="text-muted-foreground/50">→</span>
+                <span className="text-muted-foreground">→</span>
               )}
               {info?.version && (
                 <span className="text-[var(--primary-base)] font-medium">{info.version}</span>

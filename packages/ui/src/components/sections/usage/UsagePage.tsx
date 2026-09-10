@@ -190,7 +190,7 @@ export const UsagePage: React.FC = () => {
       {(error || selectedProviderError) && (
         <div className="mb-8 rounded-lg border border-[var(--status-error-border)] bg-[var(--status-error-background)] px-4 py-3">
           <p className="typography-ui-label font-medium text-[var(--status-error)]">{t('settings.usage.page.state.refreshFailedTitle')}</p>
-          <p className="typography-meta text-[var(--status-error)]/80 mt-1">{error ?? selectedProviderError}</p>
+          <p className="typography-meta text-[var(--status-error)] mt-1">{error ?? selectedProviderError}</p>
         </div>
       )}
 
@@ -198,7 +198,7 @@ export const UsagePage: React.FC = () => {
       {selectedResult && !selectedResult.configured && !hasCredentialsForm && (
         <div className="mb-8 rounded-lg border border-[var(--status-warning-border)] bg-[var(--status-warning-background)] px-4 py-3">
           <p className="typography-ui-label font-medium text-[var(--status-warning)]">{t('settings.usage.page.state.providerNotConfiguredTitle')}</p>
-          <p className="typography-meta text-[var(--status-warning)]/80 mt-1">
+          <p className="typography-meta text-[var(--status-warning)] mt-1">
             {t('settings.usage.page.state.providerNotConfiguredDescription')}
           </p>
         </div>

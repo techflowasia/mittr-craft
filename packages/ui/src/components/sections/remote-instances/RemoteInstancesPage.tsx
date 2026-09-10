@@ -2353,7 +2353,7 @@ export const RemoteInstancesPage: React.FC = () => {
         contentClassName="space-y-2"
       >
           {draft.portForwards.length === 0 ? (
-            <p className="typography-micro text-muted-foreground/80">{t('settings.remoteInstances.page.empty.noExtraForwards')}</p>
+            <p className="typography-micro text-muted-foreground">{t('settings.remoteInstances.page.empty.noExtraForwards')}</p>
           ) : null}
 
           {draft.portForwards.map((forward, index) => {
@@ -2544,7 +2544,7 @@ export const RemoteInstancesPage: React.FC = () => {
                     ) : null}
 
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md bg-[var(--surface-subtle)] p-2">
-                      <div className="flex flex-wrap items-center gap-1 typography-micro text-muted-foreground/80">
+                      <div className="flex flex-wrap items-center gap-1 typography-micro text-muted-foreground">
                         {forward.type === 'dynamic' ? (
                           <>
                             <Icon name="computer" className="h-3.5 w-3.5" />

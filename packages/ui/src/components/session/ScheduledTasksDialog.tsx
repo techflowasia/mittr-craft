@@ -497,7 +497,7 @@ export function ScheduledTasksDialog() {
                   </div>
                   {task.loopFile ? (
                     <div
-                      className="typography-micro truncate text-muted-foreground/70"
+                      className="typography-micro truncate text-muted-foreground"
                       title={task.loopFile}
                     >
                       {t('sessions.scheduledTasks.dialog.loopFile.note', { file: task.loopFile })}
@@ -512,7 +512,7 @@ export function ScheduledTasksDialog() {
                     {nextAt ? (
                       <>
                         <span className="text-foreground">{formatRelativeTime(nextAt, t)}</span>
-                        <span className="text-muted-foreground/50">·</span>
+                        <span className="text-muted-foreground">·</span>
                         <span>{formatClockTime(nextAt, timeFormatPreference)}</span>
                       </>
                     ) : (
@@ -541,7 +541,7 @@ export function ScheduledTasksDialog() {
                             {statusLabel}
                           </span>
                         ) : null}
-                        <span className="text-muted-foreground/50">·</span>
+                        <span className="text-muted-foreground">·</span>
                         <span>{formatRelativeTime(lastAt, t)}</span>
                       </>
                     ) : (

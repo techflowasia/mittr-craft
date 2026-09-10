@@ -59,7 +59,7 @@ export const UsageProviderCards: React.FC<{
                       {row.subtitle ? `${row.subtitle} · ${row.label}` : row.label}
                     </span>
                     {resetLabel ? (
-                      <span className="shrink-0 truncate typography-micro text-muted-foreground/70">
+                      <span className="shrink-0 truncate typography-micro text-muted-foreground">
                         {resetLabel}
                       </span>
                     ) : null}

@@ -202,7 +202,7 @@ const LocalModelPicker = ({
                                 </div>
                                 <div className="min-w-0 flex-1 space-y-2">
                                     <div className="flex flex-wrap items-center gap-2">
-                                        <span className={cn('typography-ui-label font-normal', selected ? 'text-foreground' : 'text-foreground/50')}>
+                                        <span className={cn('typography-ui-label font-normal', selected ? 'text-foreground' : 'text-foreground')}>
                                             {tUnsafe(entry.labelKey)}
                                         </span>
                                         {entry.badgeKey ? (
@@ -841,7 +841,7 @@ export const VoiceSettings: React.FC = () => {
                                     <span className={cn(SETTINGS_FIELD_LABEL_CLASS, !isOpenAIAvailable && "text-[var(--status-error)]")}>
                                         {t('settings.voice.page.field.apiKey')}
                                     </span>
-                                    <span className={cn(SETTINGS_HELPER_CLASS, !isOpenAIAvailable && "text-[var(--status-error)]/80")}>
+                                    <span className={cn(SETTINGS_HELPER_CLASS, !isOpenAIAvailable && "text-[var(--status-error)]")}>
                                         {isOpenAIAvailable && !openaiApiKey
                                           ? t('settings.voice.page.field.apiKeyHintUsingConfig')
                                           : !isOpenAIAvailable

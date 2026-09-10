@@ -48,7 +48,7 @@ export const WalkthroughStages = ({ progress }: WalkthroughStagesProps) => {
             <span
               className={cn(
                 'typography-meta',
-                isActive ? 'text-foreground' : isDone ? 'text-muted-foreground' : 'text-muted-foreground/60'
+                isActive ? 'text-foreground' : isDone ? 'text-muted-foreground' : 'text-muted-foreground'
               )}
             >
               {t(entry.labelKey)}

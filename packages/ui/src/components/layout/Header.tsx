@@ -2022,7 +2022,7 @@ export const Header: React.FC<HeaderProps> = ({
                   {!isNewSessionDraftOpen && worktreeBadgeKind ? (
                     <span className={cn(
                       "inline-flex min-w-0 items-center gap-0.5",
-                      worktreeBadgeKind === 'attention' || worktreeBadgeKind === 'invalid' || worktreeBadgeKind === 'missing' ? 'text-status-warning' : 'text-muted-foreground/60'
+                      worktreeBadgeKind === 'attention' || worktreeBadgeKind === 'invalid' || worktreeBadgeKind === 'missing' ? 'text-status-warning' : 'text-muted-foreground'
                     )}>
                       <Icon name="alert" className="h-3 w-3 flex-shrink-0" />
                       <span className="truncate">{worktreeBadge}</span>
@@ -2150,7 +2150,7 @@ export const Header: React.FC<HeaderProps> = ({
                     'mr-1',
                     // On is the resting state and carries no chrome; off is the
                     // one worth signalling, so it dims instead of filling.
-                    workStatusToggleActive ? 'text-foreground' : 'text-muted-foreground/50',
+                    workStatusToggleActive ? 'text-foreground' : 'text-muted-foreground',
                   )}
                 >
                   <Icon name="list-indefinite" className="h-[18px] w-[18px]" />

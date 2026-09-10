@@ -810,7 +810,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
               onKeyDown={handleSettingsSearchKeyDown}
               placeholder={t('settings.view.search.placeholder')}
               aria-label={t('settings.view.search.aria')}
-              className="typography-ui min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground/70"
+              className="typography-ui min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
             />
             {hasSearchQuery && (
               <button
@@ -833,7 +833,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
                 let resultIndex = 0;
                 return groupedSettingsSearchResults.map((group) => (
                   <div key={group.page} className="space-y-0.5">
-                    <div className="px-2 pb-0.5 pt-2 typography-micro font-medium text-muted-foreground/70">
+                    <div className="px-2 pb-0.5 pt-2 typography-micro font-medium text-muted-foreground">
                       {group.pageTitle}
                     </div>
                     {group.results.map((result) => {
@@ -861,7 +861,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
                         >
                           <span className="typography-ui-label text-foreground truncate">{result.title}</span>
                           {hasDescription && (
-                            <span className="typography-micro text-muted-foreground/70 line-clamp-2">{result.description}</span>
+                            <span className="typography-micro text-muted-foreground line-clamp-2">{result.description}</span>
                           )}
                         </button>
                       );

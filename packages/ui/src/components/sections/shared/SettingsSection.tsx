@@ -480,7 +480,7 @@ export const SettingsRadioOption: React.FC<SettingsRadioOptionProps> = ({
         <span
           className={cn(
             'typography-settings-field-label font-normal',
-            selected ? 'text-foreground' : 'text-foreground/50',
+            selected ? 'text-foreground' : 'text-foreground',
           )}
         >
           {label}
