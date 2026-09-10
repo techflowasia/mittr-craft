@@ -63,6 +63,17 @@
       "infoBackground": "#08619320",
       "infoBorder": "#08619350"
     },
+    "elevation": {
+      "level1": "0 1px 2px rgb(9 20 36 / .06)",
+      "level2": "0 4px 14px rgb(9 20 36 / .10)",
+      "level3": "0 16px 40px rgb(9 20 36 / .18)"
+    },
+    "gradients": {
+      "accent": "linear-gradient(140deg, #0a689e 0%, #086193 52%, #05486e 100%)",
+      "accentHover": "linear-gradient(140deg, #086193 0%, #05486e 52%, #043a58 100%)",
+      "brand": "linear-gradient(145deg, #086193 0%, #5b4bd6 100%)",
+      "sheen": "linear-gradient(180deg, #ffffff14, #fff0 42%)"
+    },
     "pr": {
       "open": "#0d7255",
       "draft": "#5c6b84",

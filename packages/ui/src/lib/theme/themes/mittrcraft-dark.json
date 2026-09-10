@@ -63,6 +63,17 @@
       "infoBackground": "#7fd7ff20",
       "infoBorder": "#7fd7ff50"
     },
+    "elevation": {
+      "level1": "0 1px 2px rgb(9 20 36 / .40)",
+      "level2": "0 4px 14px rgb(9 20 36 / .50)",
+      "level3": "0 16px 40px rgb(9 20 36 / .62)"
+    },
+    "gradients": {
+      "accent": "linear-gradient(140deg, #7fd7ff 0%, #38bdf8 52%, #6f8cff 100%)",
+      "accentHover": "linear-gradient(140deg, #9ce2ff 0%, #55c8fa 52%, #869dff 100%)",
+      "brand": "linear-gradient(145deg, #7fd7ff 0%, #7c6bff 100%)",
+      "sheen": "linear-gradient(180deg, #ffffff17, #fff0 42%)"
+    },
     "pr": {
       "open": "#34d399",
       "draft": "#7d8ca6",

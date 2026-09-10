@@ -1,23 +1,40 @@
+/**
+ * The sizes the browser actually uses.
+ *
+ * `typographyWatcher` writes these into an unlayered `:root` block in the
+ * document head, and an unlayered rule beats `@layer base` unconditionally —
+ * so the matching `--text-*` declarations in `design-system.css` are a
+ * fallback, not the source of truth. Change both together or the change does
+ * not render.
+ *
+ * Values sit on the six-step scale in `design-system.css`
+ * (display / title / heading / body / meta / micro). `meta` and `micro` were
+ * both 0.875rem before, which made "micro" a second name for the same size
+ * rather than a step below it.
+ */
 export const SEMANTIC_TYPOGRAPHY = {
   markdown: '0.9375rem',
   code: '0.8125rem',
   uiHeader: '0.9375rem',
-  uiLabel: '0.8750rem',
-  meta: '0.875rem',
-  micro: '0.875rem',
+  uiLabel: '0.8125rem',
+  meta: '0.8125rem',
+  micro: '0.75rem',
   /** Settings page / detail-pane title — larger than section headers */
-  settingsPageTitle: '1.125rem',
+  settingsPageTitle: '1.25rem',
 } as const;
 
 export const VSCODE_TYPOGRAPHY = {
   // Keep VS Code webview typography slightly tighter; VS Code UI chrome already provides density.
+  // `uiLabel`, `meta` and `micro` moved with the base scale: leaving them would
+  // have made the webview LARGER than the app it is meant to sit tighter than.
   markdown: '0.9063rem',
   code: '0.8750rem',
   uiHeader: '0.9063rem',
-  uiLabel: '0.8438rem',
-  meta: '0.8438rem',
-  micro: '0.7813rem',
-  settingsPageTitle: '1.0625rem',
+  uiLabel: '0.7813rem',
+  meta: '0.7813rem',
+  // The bottom of the scale, so the webview matches rather than undercuts it.
+  micro: '0.75rem',
+  settingsPageTitle: '1.125rem',
 } as const;
 
 export type SemanticTypographyKey = keyof typeof SEMANTIC_TYPOGRAPHY;

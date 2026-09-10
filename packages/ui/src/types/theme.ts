@@ -95,6 +95,30 @@ interface SyntaxColors {
   highlights?: Record<string, string>;
 }
 
+/**
+ * Elevation is expressed by job, not by size: `level1` sits on the page,
+ * `level2` is a lifted panel, `level3` floats above the app. Dark themes need
+ * far heavier alpha than light ones because a translucent shadow barely
+ * registers on a dark ground.
+ */
+interface ElevationTokens {
+  level1: string;
+  level2: string;
+  level3: string;
+}
+
+/**
+ * Named gradients so accent fills are not flat. `sheen` is an overlay layer
+ * with no foreground of its own; every other gradient may sit under text and
+ * must stay legible at both of its end stops.
+ */
+interface GradientTokens {
+  accent: string;
+  accentHover: string;
+  brand: string;
+  sheen: string;
+}
+
 interface ButtonVariant {
   bg?: string;
   fg?: string;
@@ -154,7 +178,8 @@ export interface Theme {
     table?: Record<string, string>;
     charts?: Record<string, string | string[]>;
     a11y?: Record<string, string | boolean>;
-    shadows?: Record<string, string>;
+    elevation?: ElevationTokens;
+    gradients?: GradientTokens;
     animation?: Record<string, string>;
   };
 
@@ -163,13 +188,6 @@ export interface Theme {
       sans?: string;
       mono?: string;
       heading?: string;
-    };
-    spacing?: {
-      xs?: string;
-      sm?: string;
-      md?: string;
-      lg?: string;
-      xl?: string;
     };
     transitions?: {
       fast?: string;

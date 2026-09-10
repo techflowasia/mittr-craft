@@ -10,22 +10,22 @@
 
   .typography-ui-header {
     font-size: var(--text-ui-header);
-    line-height: round(1.45em, 1px);
+    line-height: round(calc(var(--lh-tight) * 1em), 1px);
   }
 
   .typography-ui-label {
     font-size: var(--text-ui-label);
-    line-height: round(1.45em, 1px);
+    line-height: round(calc(var(--lh-tight) * 1em), 1px);
   }
 
   .typography-meta {
     font-size: var(--text-meta);
-    line-height: round(1.45em, 1px);
+    line-height: round(calc(var(--lh-tight) * 1em), 1px);
   }
 
   .typography-micro {
     font-size: var(--text-micro);
-    line-height: round(1.45em, 1px);
+    line-height: round(calc(var(--lh-tight) * 1em), 1px);
   }
 
   /*
@@ -65,11 +65,11 @@
   .typography-settings-description {
     font-size: var(--text-meta);
     font-weight: 400;
-    line-height: 1.5;
+    line-height: var(--lh-body);
   }
 
   .typography-settings-link {
-    font-size: 0.8125rem; /* 13px */
+    font-size: var(--text-meta);
     font-weight: 500;
     line-height: 1.2;
     color: var(--primary-base);
@@ -133,7 +133,7 @@
   .model-favorite-button:focus-visible {
     outline: 2px solid var(--primary);
     outline-offset: 2px;
-    border-radius: 0.25rem;
+    border-radius: var(--radius-sm);
   }
 
   .model-favorite-button:active {
