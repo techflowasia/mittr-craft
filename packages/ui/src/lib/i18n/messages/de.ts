@@ -2782,7 +2782,7 @@ export const dict = {
   'memoryDebugPanel.common.untitled': 'Unbenannt',
   'directoryTree.field.newDirectoryPlaceholder': 'neues_verzeichnis',
   'textarea.resizeHandleAria': 'Größe des Textbereichs ändern',
-  'sidebar.resize.leftPanelAria': 'Größe des linken Panels ändern',
+  'sidebar.resize.leftPanelAria': 'Größe der Seitenleiste ändern',
   'sidebar.resize.rightPanelAria': 'Größe des rechten Panels ändern',
   'mainLayout.mobile.closeDrawerAria': 'Drawer schließen',
   'sortableTabsStrip.aria.tabs': 'Tabs',

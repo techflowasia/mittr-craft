@@ -167,6 +167,7 @@ const VisualSectionContent: React.FC = () => {
     return <MittrCraftVisualSettings visibleSettings={[
         'theme',
         'windowControlsPosition',
+        'sidebarSide',
         'pwaInstallName',
         'pwaOrientation',
         'mobileKeyboardMode',

@@ -2960,7 +2960,7 @@ export const dict: Record<I18nKey, string> = {
   'memoryDebugPanel.common.untitled': '제목 없음',
   'directoryTree.field.newDirectoryPlaceholder': '새 디렉터리',
   'textarea.resizeHandleAria': '텍스트 영역 크기 조정',
-  'sidebar.resize.leftPanelAria': '왼쪽 패널 크기 조정',
+  'sidebar.resize.leftPanelAria': '사이드바 크기 조정',
   'sidebar.resize.rightPanelAria': '오른쪽 패널 크기 조정',
   'mainLayout.mobile.closeDrawerAria': '드로어 닫기',
   'sortableTabsStrip.aria.tabs': '탭',

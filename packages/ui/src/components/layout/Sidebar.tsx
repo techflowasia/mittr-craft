@@ -19,6 +19,12 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, className, topBar }) => {
     const { t } = useI18n();
+    const sidebarSide = useUIStore((state) => state.sidebarSide);
+    // When the sidebar is docked right, every edge-anchored detail mirrors:
+    // the outer border, the inset shadow, the resize handle position, and the
+    // sign of the resize drag. The handle always lives on the sidebar's inner
+    // edge (the one facing the content), so it stays grabbable.
+    const isRightSide = sidebarSide === 'right';
     const sidebarWidth = useUIStore((state) => state.sidebarWidth);
     const setSidebarWidth = useUIStore((state) => state.setSidebarWidth);
     const [isResizing, setIsResizing] = React.useState(false);
@@ -92,7 +98,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
             return;
         }
 
-        const delta = event.clientX - startXRef.current;
+        // Dragging the handle away from the sidebar's own outer edge grows it.
+        // Docked left that means increasing clientX; docked right the handle is
+        // on the left edge, so the same gesture is a decreasing clientX.
+        const pointerDelta = event.clientX - startXRef.current;
+        const delta = isRightSide ? -pointerDelta : pointerDelta;
         const nextWidth = clampSidebarWidth(startWidthRef.current + delta);
         if (resizingWidthRef.current === nextWidth) {
             return;
@@ -126,9 +136,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
         <aside
             ref={sidebarRef}
             className={cn(
-                'relative flex h-full overflow-hidden border-r border-border will-change-[width] motion-reduce:transition-none',
+                'relative flex h-full overflow-hidden border-border will-change-[width] motion-reduce:transition-none',
+                isRightSide ? 'border-l' : 'border-r',
                 'bg-sidebar',
-                !isOpen && 'border-r-0',
+                !isOpen && (isRightSide ? 'border-l-0' : 'border-r-0'),
                 className,
             )}
             style={{
@@ -145,14 +156,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
         >
             {isOpen && (
                 <div
-                    className="pointer-events-none absolute inset-0 z-30 shadow-[inset_-2px_0_10px_-2px_rgb(0_0_0_/_0.06)]"
+                    className={cn(
+                        'pointer-events-none absolute inset-0 z-30',
+                        isRightSide
+                            ? 'shadow-[inset_2px_0_10px_-2px_rgb(0_0_0_/_0.06)]'
+                            : 'shadow-[inset_-2px_0_10px_-2px_rgb(0_0_0_/_0.06)]',
+                    )}
                     aria-hidden="true"
                 />
             )}
             {isOpen && (
                 <div
                     className={cn(
-                        'absolute right-0 top-0 z-20 h-full w-[3px] cursor-col-resize hover:bg-[var(--interactive-border)]/80 transition-colors',
+                        'absolute top-0 z-20 h-full w-[3px] cursor-col-resize hover:bg-[var(--interactive-border)]/80 transition-colors',
+                        isRightSide ? 'left-0' : 'right-0',
                         isResizing && 'bg-[var(--interactive-border)]'
                     )}
                     onPointerDown={handlePointerDown}
@@ -161,6 +178,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
                     onPointerCancel={handlePointerEnd}
                     role="separator"
                     aria-orientation="vertical"
+                    // The key still reads `leftPanelAria`; its text is now
+                    // side-neutral ("Resize sidebar") in every locale, which is
+                    // what a screen reader announces. Renaming the id would
+                    // touch eleven dictionaries to change nothing anyone hears.
                     aria-label={t('sidebar.resize.leftPanelAria')}
                 />
             )}

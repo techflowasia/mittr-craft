@@ -2926,7 +2926,7 @@ export const dict: Record<I18nKey, string> = {
   'memoryDebugPanel.common.untitled': '未命名',
   'directoryTree.field.newDirectoryPlaceholder': 'new_directory',
   'textarea.resizeHandleAria': '调整文本区域大小',
-  'sidebar.resize.leftPanelAria': '调整左侧面板大小',
+  'sidebar.resize.leftPanelAria': '调整侧边栏大小',
   'sidebar.resize.rightPanelAria': '调整右侧面板大小',
   'mainLayout.mobile.closeDrawerAria': '关闭抽屉',
   'sortableTabsStrip.aria.tabs': '标签页',

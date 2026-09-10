@@ -2923,7 +2923,7 @@ export const dict: Record<I18nKey, string> = {
   'memoryDebugPanel.common.untitled': '未命名',
   'directoryTree.field.newDirectoryPlaceholder': 'new_directory',
   'textarea.resizeHandleAria': '調整文字區域大小',
-  'sidebar.resize.leftPanelAria': '調整左側面板大小',
+  'sidebar.resize.leftPanelAria': '調整側邊欄大小',
   'sidebar.resize.rightPanelAria': '調整右側面板大小',
   'mainLayout.mobile.closeDrawerAria': '關閉抽屜',
   'sortableTabsStrip.aria.tabs': '分頁',

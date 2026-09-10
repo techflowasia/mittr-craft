@@ -14,6 +14,8 @@ import { isWindowsArm64 } from '@/lib/platform';
 import { isVSCodeRuntime } from '@/lib/desktop';
 
 export type MainTab = 'chat' | 'plan' | 'git' | 'diff' | 'terminal' | 'files' | 'context' | 'diagram';
+/** Which edge the session sidebar sits on. */
+export type SidebarSide = 'left' | 'right';
 export type PendingDiffScope = 'working' | 'staged' | 'turn';
 export type ContextPanelMode = 'diff' | 'walkthrough' | 'file' | 'context' | 'plan' | 'chat' | 'browser' | 'git' | 'pr' | 'notes' | 'terminal';
 export type MermaidRenderingMode = 'svg' | 'ascii';
@@ -601,6 +603,12 @@ interface UIStore {
   multiRunLauncherPrefillPrompt: string;
   isSidebarOpen: boolean;
   sidebarWidth: number;
+  /**
+   * Which edge the session sidebar sits on. Every surface reads this one
+   * value, so a person who moves it once finds it moved everywhere rather
+   * than per window.
+   */
+  sidebarSide: SidebarSide;
   hasManuallyResizedLeftSidebar: boolean;
   contextPanelByDirectory: Record<string, ContextPanelDirectoryState>;
   contextRailOrder: string[];
@@ -777,6 +785,7 @@ interface UIStore {
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
+  setSidebarSide: (side: SidebarSide) => void;
   setContextRailOrder: (order: string[]) => void;
   toggleContextEditorTree: () => void;
   setContextEditorTreeWidth: (width: number) => void;
@@ -966,6 +975,7 @@ export const useUIStore = create<UIStore>()(
         multiRunLauncherPrefillPrompt: '',
         isSidebarOpen: true,
         sidebarWidth: LEFT_SIDEBAR_MIN_WIDTH,
+        sidebarSide: 'left',
         hasManuallyResizedLeftSidebar: false,
         contextPanelByDirectory: {},
         contextRailOrder: [],
@@ -1153,6 +1163,7 @@ export const useUIStore = create<UIStore>()(
         setSidebarWidth: (width) => {
           set({ sidebarWidth: width, hasManuallyResizedLeftSidebar: true });
         },
+        setSidebarSide: (side) => set({ sidebarSide: side }),
 
         setContextRailOrder: (order) => {
           const sanitized = Array.isArray(order)
@@ -2615,6 +2626,7 @@ export const useUIStore = create<UIStore>()(
           theme: state.theme,
           isSidebarOpen: state.isSidebarOpen,
           sidebarWidth: state.sidebarWidth,
+          sidebarSide: state.sidebarSide,
           contextPanelByDirectory: state.contextPanelByDirectory,
           contextRailOrder: state.contextRailOrder,
           contextEditorTreeVisible: state.contextEditorTreeVisible,

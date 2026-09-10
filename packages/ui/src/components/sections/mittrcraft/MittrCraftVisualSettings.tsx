@@ -3,7 +3,7 @@ import { runtimeFetch } from '@/lib/runtime-fetch';
 
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import type { ThemeMode } from '@/types/theme';
-import { useUIStore } from '@/stores/useUIStore';
+import { useUIStore, type SidebarSide } from '@/stores/useUIStore';
 import { useMessageQueueStore, type FollowUpBehavior } from '@/stores/messageQueueStore';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -278,11 +278,16 @@ const normalizeUserMessageRenderingMode = (mode: unknown): 'markdown' | 'plain' 
     return mode === 'markdown' ? 'markdown' : 'plain';
 };
 
-type VisibleSetting = 'sessionAssist' | 'sessionGoal' | 'theme' | 'windowControlsPosition' | 'pwaInstallName' | 'pwaOrientation' | 'mobileKeyboardMode' | 'timeFormat' | 'weekStart' | 'fontSize' | 'terminalFontSize' | 'terminalShell' | 'terminalLoginShell' | 'editorFontSize' | 'spacing' | 'inputBarOffset' | 'mermaidRendering' | 'userMessageRendering' | 'chatRenderMode' | 'messageTransport' | 'activityRenderMode' | 'collapsibleUserMessages' | 'stickyUserHeader' | 'promptNavigatorEnabled' | 'wideChatLayout' | 'codeBlockLineWrap' | 'splitAssistantMessageActions' | 'subagentReadOnlyBanner' | 'diffLayout' | 'mobileStatusBar' | 'dotfiles' | 'fileViewerPreview' | 'reasoning' | 'showToolFileIcons' | 'showTurnChangedFiles' | 'expandedTools' | 'followUpBehavior' | 'terminalQuickKeys' | 'fileEditorKeymap' | 'persistDraft' | 'inputSpellcheck' | 'reportUsage' | 'expandedEditorToolbar' | 'autoSaveEnabled';
+type VisibleSetting = 'sessionAssist' | 'sessionGoal' | 'theme' | 'sidebarSide' | 'windowControlsPosition' | 'pwaInstallName' | 'pwaOrientation' | 'mobileKeyboardMode' | 'timeFormat' | 'weekStart' | 'fontSize' | 'terminalFontSize' | 'terminalShell' | 'terminalLoginShell' | 'editorFontSize' | 'spacing' | 'inputBarOffset' | 'mermaidRendering' | 'userMessageRendering' | 'chatRenderMode' | 'messageTransport' | 'activityRenderMode' | 'collapsibleUserMessages' | 'stickyUserHeader' | 'promptNavigatorEnabled' | 'wideChatLayout' | 'codeBlockLineWrap' | 'splitAssistantMessageActions' | 'subagentReadOnlyBanner' | 'diffLayout' | 'mobileStatusBar' | 'dotfiles' | 'fileViewerPreview' | 'reasoning' | 'showToolFileIcons' | 'showTurnChangedFiles' | 'expandedTools' | 'followUpBehavior' | 'terminalQuickKeys' | 'fileEditorKeymap' | 'persistDraft' | 'inputSpellcheck' | 'reportUsage' | 'expandedEditorToolbar' | 'autoSaveEnabled';
 
 const WINDOW_CONTROLS_POSITION_OPTIONS: Array<{ id: DesktopWindowControlsPosition; labelKey: string }> = [
     { id: 'left', labelKey: 'settings.mittrcraft.desktopNetwork.option.windowControlsLeft' },
     { id: 'right', labelKey: 'settings.mittrcraft.desktopNetwork.option.windowControlsRight' },
+];
+
+const SIDEBAR_SIDE_OPTIONS: Array<{ id: SidebarSide; labelKey: string }> = [
+    { id: 'left', labelKey: 'settings.mittrcraft.visual.option.sidebarSide.left' },
+    { id: 'right', labelKey: 'settings.mittrcraft.visual.option.sidebarSide.right' },
 ];
 
 const WINDOW_CONTROLS_STYLE_OPTIONS: Array<{ id: DesktopWindowControlsStyle; labelKey: string }> = [
@@ -417,6 +422,8 @@ export const MittrCraftVisualSettings: React.FC<MittrCraftVisualSettingsProps> =
             && (window as unknown as { __MITTRCRAFT_PLATFORM__?: string }).__MITTRCRAFT_PLATFORM__ === 'darwin',
         [],
     );
+    const sidebarSide = useUIStore(state => state.sidebarSide);
+    const setSidebarSide = useUIStore(state => state.setSidebarSide);
     const dockBadgeEnabled = useUIStore(state => state.dockBadgeEnabled);
     const setDockBadgeEnabled = useUIStore(state => state.setDockBadgeEnabled);
     const showWindowControlsPosition = usesFramelessElectronChrome();
@@ -630,9 +637,12 @@ export const MittrCraftVisualSettings: React.FC<MittrCraftVisualSettingsProps> =
     const showWindowControlsPositionSetting = shouldShow('windowControlsPosition') && showWindowControlsPosition;
     const hasLocalizationSettings = shouldShow('theme') || shouldShow('timeFormat') || shouldShow('weekStart');
     const showMobileLayoutSetting = isMobile && isWebRuntime() && !isDesktopShell() && !isVSCode;
+    // The sidebar exists on every surface (web, desktop, VS Code, mobile), so the
+    // side choice has no runtime guard beyond the page's own visibleSettings list.
+    const showSidebarSideSetting = shouldShow('sidebarSide');
     const hasAppearanceSettings = isVSCode
-        ? hasLocalizationSettings
-        : (shouldShow('theme') || showWindowControlsPositionSetting || showMobileLayoutSetting || shouldShow('pwaInstallName') || shouldShow('pwaOrientation') || shouldShow('timeFormat') || shouldShow('weekStart'));
+        ? (hasLocalizationSettings || showSidebarSideSetting)
+        : (shouldShow('theme') || showWindowControlsPositionSetting || showMobileLayoutSetting || showSidebarSideSetting || shouldShow('pwaInstallName') || shouldShow('pwaOrientation') || shouldShow('timeFormat') || shouldShow('weekStart'));
     const hasLayoutSettings = shouldShow('fontSize') || shouldShow('terminalFontSize') || shouldShow('editorFontSize') || shouldShow('spacing') || (shouldShow('inputBarOffset') && isMobile);
     const hasNavigationSettings = (shouldShow('terminalQuickKeys') && !isMobile) || ((shouldShow('terminalShell') || shouldShow('terminalLoginShell')) && !isVSCode) || shouldShow('fileEditorKeymap') || shouldShow('autoSaveEnabled') || (shouldShow('expandedEditorToolbar') && !isVSCode);
     const hasBehaviorSettings = shouldShow('mermaidRendering')
@@ -1018,6 +1028,29 @@ export const MittrCraftVisualSettings: React.FC<MittrCraftVisualSettingsProps> =
                                         />
                                     </SettingsStackedField>
                                 </SettingsTwoColumn>
+                            </SettingsSection>
+                        )}
+
+                        {showSidebarSideSetting && (
+                            <SettingsSection
+                                title={t('settings.mittrcraft.visual.section.sidebar')}
+                                divider={hasThemeSettings || showWindowControlsPositionSetting}
+                            >
+                                <SettingsStackedField
+                                    label={t('settings.mittrcraft.visual.field.sidebarSide')}
+                                    info={t('settings.mittrcraft.visual.field.sidebarSideHint')}
+                                    settingsItem="appearance.sidebar-side"
+                                >
+                                    <SettingsChipGroup
+                                        value={sidebarSide}
+                                        options={SIDEBAR_SIDE_OPTIONS.map((option) => ({
+                                            value: option.id,
+                                            label: tUnsafe(option.labelKey),
+                                        }))}
+                                        onChange={setSidebarSide}
+                                        aria-label={t('settings.mittrcraft.visual.field.sidebarSideAria')}
+                                    />
+                                </SettingsStackedField>
                             </SettingsSection>
                         )}
 

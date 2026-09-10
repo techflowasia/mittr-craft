@@ -66,6 +66,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
+    id: 'appearance.sidebar-side',
+    page: 'appearance',
+    titleKey: 'settings.mittrcraft.visual.field.sidebarSide',
+    descriptionKey: 'settings.mittrcraft.visual.field.sidebarSideHint',
+    keywords: ['sidebar', 'session list', 'panel', 'left', 'right', 'side', 'position', 'layout', 'dock'],
+    // The sidebar renders on every surface, so this control has no runtime guard.
+  },
+  {
     id: 'appearance.dock-badge',
     page: 'appearance',
     titleKey: 'settings.mittrcraft.visual.field.dockBadge',

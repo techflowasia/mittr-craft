@@ -2926,7 +2926,7 @@ export const dict: Record<I18nKey, string> = {
   "memoryDebugPanel.common.untitled": "Sin título",
   "directoryTree.field.newDirectoryPlaceholder": "new_directory",
   "textarea.resizeHandleAria": "Ajustar textarea",
-  "sidebar.resize.leftPanelAria": "Ajustar panel izquierdo",
+  "sidebar.resize.leftPanelAria": "Ajustar barra lateral",
   "sidebar.resize.rightPanelAria": "Ajustar panel derecho",
   "mainLayout.mobile.closeDrawerAria": "Cerrar drawer",
   "sortableTabsStrip.aria.tabs": "Pestañas",

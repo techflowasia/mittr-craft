@@ -2786,7 +2786,7 @@ export const dict: Record<I18nKey, string> = {
   'sessionAuth.toast.passkeyAdded': 'Dodano klucz dostępu',
   'sessionAuth.toast.passkeySetupCanceled': 'Konfiguracja klucza dostępu została anulowana',
   'sessions.sidebar.folders.none': 'Brak folderów',
-  'sidebar.resize.leftPanelAria': 'Zmień rozmiar lewego panelu',
+  'sidebar.resize.leftPanelAria': 'Zmień rozmiar panelu bocznego',
   'sidebar.resize.rightPanelAria': 'Zmień rozmiar prawego panelu',
   'sidebarFilesTree.actions.newFileTitle': 'Nowy plik',
   'sidebarFilesTree.actions.newFolderTitle': 'Nowy folder',

@@ -118,6 +118,15 @@ export const VSCodeLayout: React.FC = () => {
   const expandedSidebarResizeStartXRef = React.useRef(0);
   const expandedSidebarResizeStartWidthRef = React.useRef(SESSIONS_SIDEBAR_WIDTH);
   const expandedSidebarResizePointerIdRef = React.useRef<number | null>(null);
+  // The webview honours `sidebarSide` like every other surface. VS Code owns
+  // which side its own container is docked on; it neither knows nor cares how
+  // the webview splits the space inside that container, so placing our sessions
+  // list opposite the chat is not a fight with the host. Mirroring our split
+  // from the host's dock side was rejected deliberately: the webview cannot read
+  // that position authoritatively, so it would be a guess overriding an explicit
+  // user setting.
+  const sidebarSide = useUIStore((state) => state.sidebarSide);
+  const sessionsSidebarOnRight = sidebarSide === 'right';
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   const sessions = useSessions();
   const globalActiveSessions = useGlobalSessionsStore((state) => state.activeSessions);
@@ -500,9 +509,12 @@ export const VSCodeLayout: React.FC = () => {
       return;
     }
     const delta = event.clientX - expandedSidebarResizeStartXRef.current;
-    const nextWidth = clampExpandedSidebarWidth(expandedSidebarResizeStartWidthRef.current + delta);
+    // Dragging the handle away from the sidebar's own edge always widens it, so
+    // the pointer delta inverts once the sidebar sits on the right.
+    const widthDelta = sessionsSidebarOnRight ? -delta : delta;
+    const nextWidth = clampExpandedSidebarWidth(expandedSidebarResizeStartWidthRef.current + widthDelta);
     setExpandedSidebarWidth((current) => (current === nextWidth ? current : nextWidth));
-  }, [clampExpandedSidebarWidth]);
+  }, [clampExpandedSidebarWidth, sessionsSidebarOnRight]);
 
   const handleExpandedSidebarResizeEnd = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (expandedSidebarResizePointerIdRef.current !== event.pointerId) {
@@ -557,10 +569,14 @@ export const VSCodeLayout: React.FC = () => {
         </React.Suspense>
       ) : usesExpandedLayout ? (
         // Expanded layout: sessions sidebar + chat side by side
-        <div className="flex h-full">
+        <div className={cn('flex h-full', sessionsSidebarOnRight && 'flex-row-reverse')}>
           {/* Sessions sidebar */}
           <div
-            className={cn('relative h-full border-r border-border overflow-hidden flex-shrink-0', isResizingExpandedSidebar && 'select-none')}
+            className={cn(
+              'relative h-full border-border overflow-hidden flex-shrink-0',
+              sessionsSidebarOnRight ? 'border-l' : 'border-r',
+              isResizingExpandedSidebar && 'select-none',
+            )}
             style={{ width: expandedSidebarWidth, minWidth: expandedSidebarWidth, maxWidth: expandedSidebarWidth }}
           >
             <SessionSidebar
@@ -570,7 +586,9 @@ export const VSCodeLayout: React.FC = () => {
             />
             <div
               className={cn(
-                'absolute right-0 top-0 z-20 h-full w-[3px] cursor-col-resize transition-colors hover:bg-[var(--interactive-border)]/80',
+                'absolute top-0 z-20 h-full w-[3px] cursor-col-resize transition-colors hover:bg-[var(--interactive-border)]/80',
+                // Always the edge that faces the chat.
+                sessionsSidebarOnRight ? 'left-0' : 'right-0',
                 isResizingExpandedSidebar && 'bg-[var(--interactive-border)]'
               )}
               onPointerDown={handleExpandedSidebarResizeStart}

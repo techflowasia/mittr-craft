@@ -23,11 +23,39 @@ const ICON_BUTTON_CLASS =
  * a fixed control cluster instead. Its height tracks `--oc-header-height` and
  * its left padding clears the OS window controls via `--oc-titlebar-left-inset`.
  * The cluster's measured width is published as `--oc-titlebar-controls-width`
- * so the header can reserve matching space when the sidebar is collapsed.
+ * so whichever pane owns the window's top-left corner can reserve matching space.
+ *
+ * ## Placement rule (deliberate): the cluster never follows the sidebar.
+ *
+ * It stays pinned to the window's top-left corner on every platform and for
+ * both `sidebarSide` values. This cluster is titlebar chrome, not sidebar
+ * chrome: it hosts the frameless window controls when the user puts them on the
+ * left, and the native app-menu button. Window chrome must not migrate because
+ * a *content* panel was docked to the other side.
+ *
+ * The rejected alternatives, and why:
+ * - "Follow the sidebar unconditionally" breaks two cases outright. On frameless
+ *   Windows/Linux with left-side window controls, the close/minimize/maximize
+ *   buttons live inside this cluster and would be dragged away from the corner
+ *   the user asked for; with right-side window controls, the cluster would land
+ *   on the corner those controls own.
+ * - "Follow the sidebar only when the target corner is free of window controls"
+ *   is collision-safe but makes the same product behave differently per
+ *   platform — the cluster would sit right on macOS and left on Windows for
+ *   identical settings. Runtime divergence is worth paying for when the platform
+ *   forces it (traffic-light insets do); it is not worth paying for here, where
+ *   one stable rule works everywhere.
+ *
+ * What does move is the *reservation*: whichever pane covers the top-left corner
+ * reserves the cluster footprint and carves the matching no-drag region — the
+ * sidebar's `SidebarTopBar` when the sidebar is open and docked left, the header
+ * otherwise (closed, or docked right). The toggle icon mirrors to match the side
+ * the sidebar is actually on.
  */
 export const TitlebarLeftControls: React.FC = () => {
   const { t } = useI18n();
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
+  const sidebarSide = useUIStore((state) => state.sidebarSide);
   const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
   const projectActionsContext = useProjectActionsContext();
   const clusterRef = React.useRef<HTMLDivElement | null>(null);
@@ -116,7 +144,12 @@ export const TitlebarLeftControls: React.FC = () => {
               aria-label={t('header.actions.openSessionsAria')}
               className={cn(ICON_BUTTON_CLASS, 'shrink-0')}
             >
-              <Icon name="layout-left" className="h-[18px] w-[18px]" />
+              {/* The button stays put; only the glyph mirrors, so it keeps
+                  pointing at the edge the sidebar is actually docked to. */}
+              <Icon
+                name={sidebarSide === 'right' ? 'layout-right' : 'layout-left'}
+                className="h-[18px] w-[18px]"
+              />
             </button>
           </TooltipTrigger>
           <TooltipContent>

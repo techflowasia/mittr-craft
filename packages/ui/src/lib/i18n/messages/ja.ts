@@ -2956,7 +2956,7 @@ export const dict: Record<I18nKey, string> = {
   'memoryDebugPanel.common.untitled': '無題',
   'directoryTree.field.newDirectoryPlaceholder': 'new_directory',
   'textarea.resizeHandleAria': 'テキストエリアのサイズを変更',
-  'sidebar.resize.leftPanelAria': '左パネルのサイズを変更',
+  'sidebar.resize.leftPanelAria': 'サイドバーのサイズを変更',
   'sidebar.resize.rightPanelAria': '右パネルのサイズを変更',
   'mainLayout.mobile.closeDrawerAria': 'ドロワーを閉じる',
   'sortableTabsStrip.aria.tabs': 'タブ',

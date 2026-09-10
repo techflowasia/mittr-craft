@@ -2653,7 +2653,7 @@ export const dict = {
   'memoryDebugPanel.common.untitled': 'Sans titre',
   'directoryTree.field.newDirectoryPlaceholder': 'nouveau_répertoire',
   'textarea.resizeHandleAria': 'Redimensionner la zone de texte',
-  'sidebar.resize.leftPanelAria': 'Redimensionner le panneau de gauche',
+  'sidebar.resize.leftPanelAria': 'Redimensionner la barre latérale',
   'sidebar.resize.rightPanelAria': 'Redimensionner le panneau de droite',
   'mainLayout.mobile.closeDrawerAria': 'Fermer le tiroir',
   'sortableTabsStrip.aria.tabs': 'Onglets',
