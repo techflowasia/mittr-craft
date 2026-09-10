@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { engineHomeEnv, migrateEngineHome } from './home.js';
 import net from 'node:net';
 import { stripAppImageArgv0Leak } from '../inherited-env.js';
 import { registerManagedProcess, unregisterManagedProcess, reapOrphanedProcesses } from './managed-process-registry.js';
@@ -522,6 +523,8 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     });
     phaseStartedAt = performance.now();
 
+    migrateEngineHome();
+
     try {
       const serverInstance = await createManagedOpenCodeServerProcess({
         hostname: env.ENV_CONFIGURED_OPENCODE_HOSTNAME,
@@ -533,6 +536,10 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
           ...shellEnv,
           ...process.env,
           ...managedOpenCodeEnv,
+          // After the inherited environment, so a stray XDG_* the developer
+          // exported for their own engine cannot pull this one back into the
+          // shared home. See lib/opencode/home.js.
+          ...engineHomeEnv(),
           PATH: envPath,
           OPENCODE_SERVER_PASSWORD: openCodePassword,
         })),

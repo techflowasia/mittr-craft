@@ -1287,6 +1287,8 @@ export const settingsDict = {
   'settings.providers.page.empty.selectProviderFromSidebar': 'Wählen Sie einen Anbieter aus der Seitenleiste',
   'settings.providers.page.empty.reviewDetailsAndConfigureAuth': 'Details überprüfen und Authentifizierung konfigurieren',
   'settings.providers.page.connect.title': 'Anbieter verbinden',
+  'settings.providers.page.external.label': 'Modelle ausserhalb der Mittr-Liste anzeigen',
+  'settings.providers.page.external.description': 'Ihre Administration entscheidet, welche Modelle dieser Arbeitsbereich anbietet. Aktivieren Sie dies, um auch selbst hinzugefuegte Anbieter zu sehen.',
   'settings.providers.page.connect.selectProviderTitle': 'Anbieter auswählen',
   'settings.providers.page.connect.providerField': 'Anbieter',
   'settings.providers.page.connect.selectProviderPlaceholder': 'Anbieter auswählen',

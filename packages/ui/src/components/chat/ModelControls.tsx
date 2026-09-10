@@ -1,4 +1,5 @@
 import React from 'react';
+import { useMittrCatalogStore } from '@/stores/useMittrCatalogStore';
 import { focusChatInput } from './composer/editor/dom';
 import type { EditPermissionMode } from '@/stores/types/sessionTypes';
 import type { ModelMetadata } from '@/types';
@@ -541,9 +542,22 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     const currentProvider = getCurrentProvider();
     const models = Array.isArray(currentProvider?.models) ? currentProvider.models : [];
 
+    // The granted roster is the default view; the engine's own catalog arrives
+    // alongside it and is opt-in. Until the catalog has answered, nothing is
+    // treated as external -- an unanswered question is not evidence a provider
+    // was ungranted, and hiding the roster would be the worse failure.
+    const grantedProviderId = useMittrCatalogStore((state) => state.grantedProviderId);
+    const refreshMittrCatalog = useMittrCatalogStore((state) => state.refresh);
+    const showExternalModels = useUIStore((state) => state.showExternalModels);
+
+    React.useEffect(() => { void refreshMittrCatalog(); }, [refreshMittrCatalog]);
+
     const visibleProviders = React.useMemo(() => {
         const result: typeof providers = [];
         for (const provider of providers) {
+            if (!showExternalModels && grantedProviderId && String(provider.id) !== grantedProviderId) {
+                continue;
+            }
             const providerModels = Array.isArray(provider.models) ? provider.models : [];
             const visibleModels = providerModels.filter((model: ProviderModel) => {
                 const modelId = typeof model?.id === 'string' ? model.id : '';
@@ -556,7 +570,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             }
         }
         return result;
-    }, [providers, hiddenModels]);
+    }, [providers, hiddenModels, grantedProviderId, showExternalModels]);
 
     const normalizeModelSearchValue = React.useCallback((value: string) => {
         const lower = value.toLowerCase().trim();

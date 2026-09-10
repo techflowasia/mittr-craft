@@ -1317,6 +1317,8 @@ export const settingsDict = {
   "settings.providers.page.empty.selectProviderFromSidebar": "Виберіть провайдера на бічній панелі",
   "settings.providers.page.empty.reviewDetailsAndConfigureAuth": "Перегляньте деталі та налаштуйте авторизацію",
   "settings.providers.page.connect.title": "Підключити провайдера",
+  "settings.providers.page.external.label": "Показувати моделі поза переліком Mittr",
+  "settings.providers.page.external.description": "Адміністратор вирішує, які моделі пропонує цей робочий простір. Увімкніть, щоб бачити також доданих вами постачальників.",
   "settings.providers.page.connect.selectProviderTitle": "Вибрати провайдера",
   "settings.providers.page.connect.providerField": "Провайдер",
   "settings.providers.page.connect.selectProviderPlaceholder": "Виберіть провайдера",

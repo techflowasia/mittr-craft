@@ -1235,6 +1235,8 @@ export const settingsDict = {
   'settings.providers.page.empty.selectProviderFromSidebar': 'Sélectionnez un fournisseur dans la barre latérale',
   'settings.providers.page.empty.reviewDetailsAndConfigureAuth': 'Vérifier les détails et configurer l\'authentification',
   'settings.providers.page.connect.title': 'Connecter le fournisseur',
+  'settings.providers.page.external.label': 'Afficher les modeles hors de la liste Mittr',
+  'settings.providers.page.external.description': 'Votre administration decide des modeles proposes par cet espace de travail. Activez ceci pour voir aussi les fournisseurs que vous ajoutez.',
   'settings.providers.page.connect.selectProviderTitle': 'Sélectionnez le fournisseur',
   'settings.providers.page.connect.providerField': 'Fournisseur',
   'settings.providers.page.connect.selectProviderPlaceholder': 'Sélectionnez le fournisseur',

@@ -1474,6 +1474,8 @@ export const settingsDict = {
   'settings.providers.page.connect.selectProviderPlaceholder': 'Wybierz dostawcę',
   'settings.providers.page.connect.selectProviderTitle': 'Wybierz dostawcę',
   'settings.providers.page.connect.title': 'Połącz dostawcę',
+  'settings.providers.page.external.label': 'Pokaz modele spoza listy Mittr',
+  'settings.providers.page.external.description': 'Administrator decyduje, jakie modele oferuje ta przestrzen robocza. Wlacz, aby widziec takze dostawcow dodanych przez siebie.',
   'settings.providers.page.connectionDetails.configuredIn': 'Skonfigurowano w:',
   'settings.providers.page.connectionDetails.noActiveSource': 'Brak aktywnego źródła konfiguracji',
   'settings.providers.page.connectionDetails.source.authCredentials': 'dane uwierzytelniające',

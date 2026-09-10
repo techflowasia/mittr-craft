@@ -1,4 +1,5 @@
 import React from 'react';
+import { Switch } from '@/components/ui/switch';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { SettingsPageLayout } from '@/components/sections/shared/SettingsPageLayout';
 import { SettingsSection, SETTINGS_CUSTOM_TRIGGER_CLASS } from '@/components/sections/shared/SettingsSection';
@@ -150,6 +151,8 @@ export const ProvidersPage: React.FC = () => {
   const getModelMetadata = useConfigStore((state) => state.getModelMetadata);
   const hiddenModels = useUIStore((state) => state.hiddenModels);
   const toggleHiddenModel = useUIStore((state) => state.toggleHiddenModel);
+  const showExternalModels = useUIStore((state) => state.showExternalModels);
+  const setShowExternalModels = useUIStore((state) => state.setShowExternalModels);
   const hideAllModels = useUIStore((state) => state.hideAllModels);
   const showAllModels = useUIStore((state) => state.showAllModels);
 
@@ -541,6 +544,24 @@ export const ProvidersPage: React.FC = () => {
           divider={false}
           settingsItem="providers.connect"
         >
+              {/* Placed with "add a provider" rather than in a general
+                  settings list: this is the switch that decides whether what
+                  a developer adds here shows up in the picker at all. */}
+              <div className="flex items-start justify-between gap-4 py-2">
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className="typography-ui-label text-foreground">
+                    {t('settings.providers.page.external.label')}
+                  </span>
+                  <span className="typography-meta text-muted-foreground">
+                    {t('settings.providers.page.external.description')}
+                  </span>
+                </div>
+                <Switch
+                  checked={showExternalModels}
+                  onCheckedChange={setShowExternalModels}
+                  aria-label={t('settings.providers.page.external.label')}
+                />
+              </div>
               <div className="flex flex-wrap items-center gap-2 py-1.5">
                 <span className="typography-ui-label text-foreground">{t('settings.providers.page.connect.providerField')}</span>
                   {availableLoading ? (

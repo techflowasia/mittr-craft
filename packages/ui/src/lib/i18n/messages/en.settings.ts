@@ -1349,6 +1349,8 @@ export const settingsDict = {
   'settings.providers.page.empty.selectProviderFromSidebar': 'Select a provider from the sidebar',
   'settings.providers.page.empty.reviewDetailsAndConfigureAuth': 'Review details and configure auth',
   'settings.providers.page.connect.title': 'Connect Provider',
+  'settings.providers.page.external.label': 'Show models outside the Mittr roster',
+  'settings.providers.page.external.description': 'Your administrator decides which models this workspace offers. Turn this on to also show providers you add yourself.',
   'settings.providers.page.connect.selectProviderTitle': 'Select Provider',
   'settings.providers.page.connect.providerField': 'Provider',
   'settings.providers.page.connect.selectProviderPlaceholder': 'Select provider',

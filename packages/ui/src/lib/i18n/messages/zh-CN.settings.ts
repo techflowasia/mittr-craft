@@ -1317,6 +1317,8 @@ export const settingsDict = {
   'settings.providers.page.empty.selectProviderFromSidebar': '请从侧边栏选择提供商',
   'settings.providers.page.empty.reviewDetailsAndConfigureAuth': '查看详情并配置认证',
   'settings.providers.page.connect.title': '连接提供商',
+  'settings.providers.page.external.label': '显示 Mittr 名单之外的模型',
+  'settings.providers.page.external.description': '本工作区提供哪些模型由管理员决定。开启后也会显示你自己添加的提供方。',
   'settings.providers.page.connect.selectProviderTitle': '选择提供商',
   'settings.providers.page.connect.providerField': '提供商',
   'settings.providers.page.connect.selectProviderPlaceholder': '选择提供商',

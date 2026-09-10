@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { registerMittrCatalogRoutes } from './catalog-routes.js';
+import { MITTR_PROVIDER_ID, registerMittrCatalogRoutes } from './catalog-routes.js';
 
 const ALIAS = 'pm_9f2c1d4e7b';
 
@@ -139,10 +139,22 @@ describe('mittr catalog routes', () => {
     const { app } = createApp({ fetchImpl: vi.fn() });
     const res = await request(app).get('/api/mittr/catalog').expect(200);
     expect(res.body).toEqual({
+      // Named even before a sync: the client hides providers the roster does
+      // not cover, and it cannot tell which provider that is from an answer
+      // that omits it.
+      providerId: MITTR_PROVIDER_ID,
       bundleVersion: null,
       models: { configured: false, items: [] },
       mcp: { configured: false, items: [] },
       skills: { configured: false, items: [] },
     });
+  });
+
+  it('names the provider it registers the roster under once synced', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(ok(catalogPayload));
+    const { app } = createApp({ fetchImpl });
+    await request(app).post('/api/mittr/catalog/sync').expect(200);
+    const res = await request(app).get('/api/mittr/catalog').expect(200);
+    expect(res.body.providerId).toBe(MITTR_PROVIDER_ID);
   });
 });

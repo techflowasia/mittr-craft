@@ -1,9 +1,10 @@
 import fs from 'fs';
+import { engineConfigDir } from './home.js';
 import path from 'path';
 import os from 'os';
 import yaml from 'yaml';
 
-const OPENCODE_CONFIG_DIR = path.join(os.homedir(), '.config', 'opencode');
+const OPENCODE_CONFIG_DIR = path.join(engineConfigDir());
 const GLOBAL_SNIPPET_DIR = path.join(OPENCODE_CONFIG_DIR, 'snippet');
 const GLOBAL_SNIPPET_DIR_ALT = path.join(OPENCODE_CONFIG_DIR, 'snippets');
 const SNIPPET_EXTENSION = '.md';

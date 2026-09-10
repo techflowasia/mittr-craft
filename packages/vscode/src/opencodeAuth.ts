@@ -1,8 +1,9 @@
 import fs from 'node:fs';
+import { engineDataDir } from './engine-home';
 import path from 'node:path';
 import os from 'node:os';
 
-const OPENCODE_DATA_DIR = path.join(os.homedir(), '.local', 'share', 'opencode');
+const OPENCODE_DATA_DIR = path.join(engineDataDir());
 const AUTH_FILE = path.join(OPENCODE_DATA_DIR, 'auth.json');
 
 export type AuthEntry = Record<string, unknown>;

@@ -711,6 +711,17 @@ interface UIStore {
 
   favoriteModels: Array<{ providerID: string; modelID: string }>;
   hiddenModels: Array<{ providerID: string; modelID: string }>;
+  /**
+   * Whether providers Mittr did not grant appear in the model picker.
+   *
+   * Off to begin with: what an administrator sent is the roster this tool is
+   * for, and the engine's own catalog otherwise arrives alongside it offering
+   * models nobody approved and no audit record covers. A developer can turn it
+   * on -- adding a provider is theirs to do -- but it is a decision they make,
+   * not a default they have to notice and undo.
+   */
+  showExternalModels: boolean;
+  setShowExternalModels: (value: boolean) => void;
   providerOrder: string[];
   collapsedModelProviders: string[];
   recentModels: Array<{ providerID: string; modelID: string }>;
@@ -1049,6 +1060,8 @@ export const useUIStore = create<UIStore>()(
         mobileKeyboardMode: getStoredMobileKeyboardMode(),
         favoriteModels: [],
         hiddenModels: [],
+        showExternalModels: false,
+        setShowExternalModels: (value: boolean) => set({ showExternalModels: value === true }),
         providerOrder: [],
         collapsedModelProviders: [],
         recentModels: [],
@@ -2668,6 +2681,7 @@ export const useUIStore = create<UIStore>()(
           cornerRadius: state.cornerRadius,
           favoriteModels: state.favoriteModels,
           hiddenModels: state.hiddenModels,
+          showExternalModels: state.showExternalModels,
           providerOrder: state.providerOrder,
           collapsedModelProviders: state.collapsedModelProviders,
           recentModels: state.recentModels,

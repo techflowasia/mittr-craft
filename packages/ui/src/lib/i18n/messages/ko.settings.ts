@@ -1317,6 +1317,8 @@ export const settingsDict = {
   'settings.providers.page.empty.selectProviderFromSidebar': '사이드바에서 프로바이더를 선택하세요',
   'settings.providers.page.empty.reviewDetailsAndConfigureAuth': '세부 정보를 확인하고 인증을 설정하세요',
   'settings.providers.page.connect.title': '프로바이더 연결',
+  'settings.providers.page.external.label': 'Mittr 목록 외 모델 표시',
+  'settings.providers.page.external.description': '이 워크스페이스에서 제공하는 모델은 관리자가 정합니다. 직접 추가한 공급자도 표시하려면 켜세요.',
   'settings.providers.page.connect.selectProviderTitle': '프로바이더 선택',
   'settings.providers.page.connect.providerField': '프로바이더',
   'settings.providers.page.connect.selectProviderPlaceholder': '프로바이더 선택',

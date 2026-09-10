@@ -1350,6 +1350,8 @@ export const settingsDict = {
   'settings.providers.page.empty.selectProviderFromSidebar': 'サイドバーから Provider を選択',
   'settings.providers.page.empty.reviewDetailsAndConfigureAuth': '詳細を確認し認証を設定',
   'settings.providers.page.connect.title': 'Provider に接続',
+  'settings.providers.page.external.label': 'Mittr の一覧にないモデルを表示',
+  'settings.providers.page.external.description': 'このワークスペースで使えるモデルは管理者が決めます。自分で追加したプロバイダーも表示するにはこれを有効にします。',
   'settings.providers.page.connect.selectProviderTitle': 'Provider を選択',
   'settings.providers.page.connect.providerField': 'プロバイダー',
   'settings.providers.page.connect.selectProviderPlaceholder': 'Provider を選択',

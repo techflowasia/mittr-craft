@@ -9,6 +9,12 @@ const readJson = (limit) => express.json({ limit });
 // Better Auth's middleware on the platform side and 404s. See auth-routes.js.
 const CATALOG_ENDPOINT = '/desktop/catalog';
 
+// Every model the catalog offers is registered under this one engine provider,
+// so it is also the answer to "which models did Mittr grant". Reported to the
+// client rather than repeated there: a surface that hardcoded the string would
+// start showing the wrong list the day this moved.
+export const MITTR_PROVIDER_ID = 'mittr';
+
 // Models are not a developer's to switch off: removing bring-your-own-key is
 // the whole point of the catalog (spec §7).
 const SWITCHABLE_KINDS = ['mcp', 'skills'];
@@ -77,6 +83,7 @@ export function registerMittrCatalogRoutes(app, {
     const catalog = cache.read();
     if (!catalog) {
       return res.json({
+        providerId: MITTR_PROVIDER_ID,
         bundleVersion: null,
         models: EMPTY_COLLECTION,
         mcp: EMPTY_COLLECTION,
@@ -84,6 +91,7 @@ export function registerMittrCatalogRoutes(app, {
       });
     }
     return res.json({
+      providerId: MITTR_PROVIDER_ID,
       bundleVersion: catalog.bundleVersion,
       models: withEnablement(catalog.models ?? EMPTY_COLLECTION, 'models', enablement),
       mcp: withEnablement(catalog.mcp ?? EMPTY_COLLECTION, 'mcp', enablement),

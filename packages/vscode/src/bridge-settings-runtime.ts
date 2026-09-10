@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { engineConfigDir } from './engine-home';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -76,7 +77,7 @@ const inferSkillScopeAndSourceFromLocation = (location: string, workingDirectory
 
   const home = os.homedir();
   const userRoots = [
-    path.join(home, '.config', 'opencode'),
+    path.join(engineConfigDir()),
     path.join(home, '.opencode'),
     path.join(home, '.claude', 'skills'),
     path.join(home, '.agents', 'skills'),

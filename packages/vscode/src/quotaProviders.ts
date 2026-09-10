@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { engineConfigDir, engineDataDir } from './engine-home';
 import path from 'node:path';
 import os from 'node:os';
 import { fetchOpenCodeGoUsage } from './opencodeGoQuota';
@@ -171,8 +172,8 @@ export type ProviderResult = {
   error?: string;
 };
 
-const OPENCODE_CONFIG_DIR = path.join(os.homedir(), '.config', 'opencode');
-const OPENCODE_DATA_DIR = path.join(os.homedir(), '.local', 'share', 'opencode');
+const OPENCODE_CONFIG_DIR = path.join(engineConfigDir());
+const OPENCODE_DATA_DIR = path.join(engineDataDir());
 const AUTH_FILE = path.join(OPENCODE_DATA_DIR, 'auth.json');
 
 const XAI_USAGE_ENDPOINT = 'https://grok.com/grok_api_v2.GrokBuildBilling/GetGrokCreditsConfig';

@@ -1224,6 +1224,8 @@ export const settingsDict = {
   'settings.providers.page.empty.selectProviderFromSidebar': '請從側邊欄選擇供應商',
   'settings.providers.page.empty.reviewDetailsAndConfigureAuth': '查看詳情並設定驗證',
   'settings.providers.page.connect.title': '連線供應商',
+  'settings.providers.page.external.label': '顯示 Mittr 名單以外的模型',
+  'settings.providers.page.external.description': '本工作區提供哪些模型由管理員決定。開啟後也會顯示你自己新增的提供者。',
   'settings.providers.page.connect.selectProviderTitle': '選擇供應商',
   'settings.providers.page.connect.providerField': '供應商',
   'settings.providers.page.connect.selectProviderPlaceholder': '選擇供應商',

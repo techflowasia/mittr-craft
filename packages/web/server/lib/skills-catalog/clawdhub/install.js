@@ -6,6 +6,7 @@
  */
 
 import fs from 'fs';
+import { engineConfigDir } from '../../opencode/home.js';
 import os from 'os';
 import path from 'path';
 import AdmZip from 'adm-zip';
@@ -16,8 +17,8 @@ const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
 
 function normalizeUserSkillDir(userSkillDir) {
   if (!userSkillDir) return null;
-  const legacySkillDir = path.join(os.homedir(), '.config', 'opencode', 'skill');
-  const pluralSkillDir = path.join(os.homedir(), '.config', 'opencode', 'skills');
+  const legacySkillDir = path.join(engineConfigDir(), 'skill');
+  const pluralSkillDir = path.join(engineConfigDir(), 'skills');
   if (userSkillDir === legacySkillDir) {
     if (fs.existsSync(legacySkillDir) && !fs.existsSync(pluralSkillDir)) return legacySkillDir;
     return pluralSkillDir;

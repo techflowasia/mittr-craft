@@ -53,6 +53,7 @@ import { createOpenCodeEnvRuntime } from './lib/opencode/env-runtime.js';
 import { resolveOpenCodeEnvConfig } from './lib/opencode/env-config.js';
 import { createHmrStateRuntime } from './lib/opencode/hmr-state-runtime.js';
 import { startMittrShim } from './lib/mittr/index.js';
+import { MITTR_PROVIDER_ID } from './lib/mittr/catalog-routes.js';
 import { resolveBrokerBaseUrl } from './lib/mittr/broker-target.js';
 import { upsertProviderConfig, removeProviderConfig, readProviderModelIds } from './lib/opencode/providers.js';
 import { readAuthFile, writeAuthFile } from './lib/opencode/auth.js';
@@ -1345,18 +1346,18 @@ const storeMittrCredential = (shim) => {
 // restart the engine to write back what was already there.
 const syncMittrModels = (shim) => async (models) => {
   const wanted = Array.isArray(models) ? models.map((model) => model.alias).sort() : [];
-  const present = readProviderModelIds('mittr', null);
+  const present = readProviderModelIds(MITTR_PROVIDER_ID, null);
   const unchanged = wanted.length === present.length
     && wanted.every((alias, index) => alias === present[index]);
 
   if (wanted.length === 0) {
-    const removed = removeProviderConfig('mittr', null, 'user');
+    const removed = removeProviderConfig(MITTR_PROVIDER_ID, null, 'user');
     if (removed) await refreshOpenCodeAfterConfigChange('Mittr catalog: no models offered');
     return;
   }
 
   upsertProviderConfig(
-    'mittr',
+    MITTR_PROVIDER_ID,
     {
       name: 'Mittr',
       options: { baseURL: shim.baseUrl },
