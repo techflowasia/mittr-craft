@@ -89,6 +89,7 @@ import {
     classifyMention,
     scanMentions,
 } from './composer/language/mentions';
+import { continueListOnNewline } from './composer/listContinuation';
 import { collectKnownTokenNames } from './composer/language/prefixTokens';
 import { resolveAutocompleteTrigger, type AutocompleteKind } from './composer/language/triggers';
 import { type ComposerLanguageContext } from './composer/language/tokenize';
@@ -1548,6 +1549,35 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
                     }
                 }
             }
+        }
+
+        // Markdown list editing, on the keys that edit rather than send.
+        //
+        // The newline key differs by surface: on the desktop Enter sends and
+        // Shift+Enter breaks the line, while on mobile plain Enter breaks it
+        // and sending needs a modifier. Continuation hangs off whichever one
+        // inserts a newline here, so it never competes with sending.
+        if (inputMode === 'normal' && !isAnyAutocompleteOpen && !e.altKey) {
+            const selection = composerRef.current?.getSelection();
+            const insertsNewline = e.key === 'Enter'
+                && (e.shiftKey || (isMobile && !e.ctrlKey && !e.metaKey));
+
+            if (selection && insertsNewline) {
+                const continued = continueListOnNewline(message, selection.start, selection.end);
+                if (continued) {
+                    e.preventDefault();
+                    setMessage(continued.text);
+                    composerRef.current?.setSelection(continued.caret, continued.caret);
+                    updateAutocompleteState(continued.text, continued.caret);
+                    return;
+                }
+            }
+
+            // Nesting is deliberately not on Tab: `cycle_agent` already binds
+            // it (and Shift+Tab), it is customisable, and it runs earlier in
+            // this handler. Taking it would break a shortcut somebody uses.
+            // Indentation typed by hand is carried forward by continuation,
+            // and an empty item steps back out.
         }
 
         if (e.key === 'ArrowUp' && canNavigateHistoryUp) {
