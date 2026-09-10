@@ -235,3 +235,79 @@ export const withDayHeadings = <T>(
     return { item, dayHeading: timestamp };
   });
 };
+
+/**
+ * How long a step took, from its own timestamps.
+ *
+ * Under a minute the seconds carry one decimal, because most steps land there
+ * and whole seconds would round half of them to the same value. Past a minute
+ * the decimal stops meaning anything and the clock shape reads faster.
+ *
+ * Returns null while a step is still running: it has a start and no end, and
+ * a duration measured against "now" would be a number that changes every time
+ * the panel repaints. The caller shows that state as running instead.
+ */
+export const formatStepDuration = (
+  created: number | null,
+  completed: number | null,
+): string | null => {
+  // Tested for absence rather than falsiness: a timestamp of 0 is a real
+  // number and a guard that reads it as "missing" reports no duration for it.
+  if (created === null || completed === null) return null;
+  if (!Number.isFinite(created) || !Number.isFinite(completed)) return null;
+  const ms = completed - created;
+  if (ms < 0) return null;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const whole = Math.round(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+};
+
+type ActivityStep<T> = {
+  message: T;
+  /** 1-based position of this step within its turn, counting from the start. */
+  index: number;
+  /** How many steps the turn holds. Known because a turn is grouped whole. */
+  total: number;
+};
+
+type ActivityTurn<T> = {
+  /** The user message that opened the turn, or null for work with no prompt. */
+  prompt: T | null;
+  steps: ActivityStep<T>[];
+};
+
+/**
+ * Group a chronological run of messages into turns.
+ *
+ * A user message opens a turn and everything after it belongs to that turn
+ * until the next one. Work that arrives before any user message — a resumed
+ * session, a summary written on load — is kept in a leading turn with a null
+ * prompt rather than discarded or attached to a prompt that did not cause it.
+ *
+ * Steps are numbered within their turn, which is why grouping happens before
+ * any reversal: a step's position is a fact about the conversation, not about
+ * the order the panel happens to list them in.
+ */
+export const groupIntoTurns = <T>(
+  messages: readonly T[],
+  isPrompt: (message: T) => boolean,
+): ActivityTurn<T>[] => {
+  const turns: ActivityTurn<T>[] = [];
+  let current: ActivityTurn<T> | null = null;
+
+  for (const message of messages) {
+    if (isPrompt(message) || current === null) {
+      current = { prompt: isPrompt(message) ? message : null, steps: [] };
+      turns.push(current);
+      if (isPrompt(message)) continue;
+    }
+    current.steps.push({ message, index: current.steps.length + 1, total: 0 });
+  }
+
+  for (const turn of turns) {
+    for (const step of turn.steps) step.total = turn.steps.length;
+  }
+
+  return turns;
+};

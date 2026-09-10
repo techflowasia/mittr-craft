@@ -1,39 +1,21 @@
 import React from 'react';
 import type { Message, Part } from '@opencode-ai/sdk/v2';
-import { WorkerHighlightedCode } from '@/components/code/WorkerHighlightedCode';
 
 import { deriveMessageRole } from '@/components/chat/message/messageRole';
-import { Icon } from "@/components/icon/Icon";
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { computeCacheHitRate } from '@/stores/utils/tokenUtils';
-import { useSessions, useSessionMessageRecords } from '@/sync/sync-context';
-import { copyTextToClipboard } from '@/lib/clipboard';
+import { useAllLiveSessions, useSessions, useSessionMessageRecords } from '@/sync/sync-context';
 import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
-import {
-  deriveMessageLabel,
-  deriveUserSnippet,
-  formatAssistantTokens,
-  formatMessagePreviewClock,
-  formatMessagePreviewDay,
-  withDayHeadings,
-} from './rawMessagePreview';
-import { cn } from '@/lib/utils';
+import { ActivityTimeline } from './ActivityTimeline';
+import { isEmbeddedSessionChat } from '@/components/layout/contextPanelEmbeddedChat';
+import { isVSCodeRuntime } from '@/lib/desktop';
 import type { TimeFormatPreference } from '@/stores/useUIStore';
 import { formatDateTimeForPreference } from '@/lib/timeFormat';
 
 type SessionMessage = { info: Message; parts: Part[] };
 
-/**
- * Raw Messages row grid: label, token counters, clock.
- *
- * The counter column is a fixed width rather than `max-content` so the clock
- * stays on one vertical line down the whole run; sized to the counters it
- * carries, a shared column that every row can align to is worth more than the
- * few pixels a per-row fit would return.
- */
-const RAW_MESSAGE_COLUMNS = 'minmax(0, 1fr) 6.5rem max-content';
 
 type ProviderModelLike = {
   id?: string;
@@ -283,9 +265,6 @@ const resolveProviderAndModel = (
 export const ContextPanelContent: React.FC = () => {
   const { t } = useI18n();
   const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
-  const [expandedRawMessages, setExpandedRawMessages] = React.useState<Record<string, boolean>>({});
-  const [copiedRawMessageId, setCopiedRawMessageId] = React.useState<string | null>(null);
-  const copyResetTimeoutRef = React.useRef<number | null>(null);
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   const currentSessionDirectory = useSessionUIStore((state) => state.currentSessionDirectory);
   const sessions = useSessions(currentSessionDirectory ?? undefined);
@@ -295,39 +274,32 @@ export const ContextPanelContent: React.FC = () => {
   );
   const providers = useConfigStore((state) => state.providers);
 
-  React.useEffect(() => {
-    if (copyResetTimeoutRef.current !== null) {
-      window.clearTimeout(copyResetTimeoutRef.current);
-      copyResetTimeoutRef.current = null;
-    }
-    setExpandedRawMessages((prev) => (Object.keys(prev).length > 0 ? {} : prev));
-    setCopiedRawMessageId(null);
-  }, [currentSessionDirectory, currentSessionId]);
+  const liveSessions = useAllLiveSessions();
+  const childSessions = React.useMemo(
+    () => (currentSessionId
+      ? liveSessions.filter((candidate) => candidate.parentID === currentSessionId)
+      : []),
+    [liveSessions, currentSessionId],
+  );
+  const isMobile = useUIStore((state) => state.isMobile);
+  const openContextPanelTab = useUIStore((state) => state.openContextPanelTab);
+  const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
 
-  React.useEffect(() => {
-    return () => {
-      if (copyResetTimeoutRef.current !== null) {
-        window.clearTimeout(copyResetTimeoutRef.current);
-        copyResetTimeoutRef.current = null;
-      }
-    };
-  }, []);
-
-  const handleCopyRawMessage = React.useCallback(async (messageId: string, value: string) => {
-    const result = await copyTextToClipboard(value);
-    if (result.ok) {
-      setCopiedRawMessageId(messageId);
-      if (copyResetTimeoutRef.current !== null) {
-        window.clearTimeout(copyResetTimeoutRef.current);
-      }
-      copyResetTimeoutRef.current = window.setTimeout(() => {
-        setCopiedRawMessageId((prev) => (prev === messageId ? null : prev));
-        copyResetTimeoutRef.current = null;
-      }, 2000);
-    } else {
-      setCopiedRawMessageId(null);
+  // The same branch the transcript's Task tool takes: surfaces that cannot
+  // host an embedded panel navigate to the child session instead.
+  const openChildSession = React.useCallback((childId: string, label: string) => {
+    if (!currentSessionDirectory) return;
+    if (isEmbeddedSessionChat() || isMobile || isVSCodeRuntime()) {
+      setCurrentSession(childId, currentSessionDirectory);
+      return;
     }
-  }, []);
+    openContextPanelTab(currentSessionDirectory, {
+      mode: 'chat',
+      dedupeKey: `session:${childId}`,
+      label,
+      readOnly: true,
+    });
+  }, [currentSessionDirectory, isMobile, openContextPanelTab, setCurrentSession]);
 
   const viewModel = React.useMemo(() => {
     const currentSession = currentSessionId ? sessions.find((session) => session.id === currentSessionId) ?? null : null;
@@ -545,172 +517,14 @@ export const ContextPanelContent: React.FC = () => {
           </div>
         </div>
 
-        {/* ── Raw messages ── */}
-        <div>
-          <div className="typography-micro text-muted-foreground">{t('contextSidebar.section.rawMessages')}</div>
-          {/*
-            Column labels sit once above the run instead of on every row. A
-            bare `37,115 / 169` did not say which half was which, and repeating
-            "in / out" on each row would have spent the width the labels were
-            meant to explain.
-          */}
-          <div
-            className="mt-2 grid gap-x-2 pl-5 typography-micro text-muted-foreground"
-            style={{ gridTemplateColumns: RAW_MESSAGE_COLUMNS }}
-            aria-hidden="true"
-          >
-            <span />
-            <span className="text-right">{t('contextSidebar.rawMessages.column.tokens')}</span>
-            <span />
-          </div>
-          <div className="mt-1">
-            {withDayHeadings(
-              [...sessionMessages].reverse(),
-              (message) => (message.info.time?.created ?? null) as number | null,
-            ).map(({ item: message, dayHeading }) => {
-              const roleInfo = deriveMessageRole(message.info);
-              const role = roleInfo.role;
-              const isAssistant = role === 'assistant';
-              const isUser = role === 'user';
-              const isExpanded = expandedRawMessages[message.info.id] === true;
-              const isCopied = copiedRawMessageId === message.info.id;
-              const messageCreatedAt = (message.info.time?.created ?? null) as number | null;
-              const messageLabel = deriveMessageLabel(message.parts);
-              const tokens = isAssistant ? extractTokenBreakdown({ info: message.info, parts: message.parts }) : null;
-              const userSnippet = isUser ? deriveUserSnippet(message.parts) : '';
-              const previewClock = formatMessagePreviewClock(messageCreatedAt, timeFormatPreference);
-              const primaryLabel = isUser
-                ? userSnippet
-                : (messageLabel.primary || '\u2014');
-
-              const jsonValue = isExpanded
-                ? JSON.stringify({ info: message.info, parts: message.parts }, null, 2)
-                : '';
-
-              return (
-                <React.Fragment key={message.info.id}>
-                  {dayHeading !== null && (
-                    <div className="flex items-center gap-2 pt-3 pb-1.5 first:pt-0">
-                      <span className="typography-micro text-muted-foreground">
-                        {formatMessagePreviewDay(dayHeading)}
-                      </span>
-                      <span className="h-px flex-1 bg-[var(--surface-subtle)]" aria-hidden="true" />
-                    </div>
-                  )}
-                  {/*
-                    The spine is drawn per row rather than around the run, so it
-                    is continuous within a day and stops at each day heading
-                    without any row needing to know it is first or last.
-                  */}
-                  <div className="relative">
-                    <span
-                      className="absolute top-0 left-[3px] h-full w-px bg-[var(--surface-subtle)]"
-                      aria-hidden="true"
-                    />
-                    <span
-                      className={cn(
-                        'absolute top-[0.6rem] left-0 size-[7px] rounded-full',
-                        isUser
-                          ? 'bg-[var(--interactive-selection)]'
-                          : 'border border-[var(--interactive-border)] bg-[var(--surface-background)]',
-                      )}
-                      aria-hidden="true"
-                    />
-                    <div className="overflow-hidden rounded-md">
-                      <button
-                        type="button"
-                        className="w-full cursor-pointer rounded-md py-1.5 pr-2 pl-5 text-left transition-colors hover:bg-[var(--interactive-hover)]"
-                        aria-expanded={isExpanded}
-                        onClick={() => {
-                          setExpandedRawMessages((prev) => ({
-                            ...prev,
-                            [message.info.id]: !(prev[message.info.id] === true),
-                          }));
-                        }}
-                      >
-                        <div
-                          className="grid items-baseline gap-x-2 whitespace-nowrap typography-micro"
-                          style={{ gridTemplateColumns: RAW_MESSAGE_COLUMNS }}
-                        >
-                          {/*
-                            Three weights, not one: what the step did, then its
-                            counters, then its clock. Every column rendered at
-                            the same muted weight gave the eye nothing to hold.
-                          */}
-                          <span className="min-w-0 truncate">
-                            {isUser && (
-                              <span className="text-foreground">
-                                {t('contextSidebar.rawMessages.roleUser')}{' '}
-                              </span>
-                            )}
-                            <span className={isUser ? 'text-muted-foreground' : 'text-foreground'}>
-                              {primaryLabel}
-                            </span>
-                            {messageLabel.ambient && !isUser && (
-                              <span className="text-muted-foreground">
-                                {' \u00b7 '}
-                                {messageLabel.ambient}
-                              </span>
-                            )}
-                          </span>
-                          {tokens ? (
-                            <span
-                              className="text-right text-muted-foreground tabular-nums"
-                              aria-label={t('contextSidebar.rawMessages.tokensAria', {
-                                input: formatNumber(tokens.input),
-                                output: formatNumber(tokens.output),
-                              })}
-                            >
-                              {formatAssistantTokens(tokens.input, tokens.output, formatNumber)}
-                            </span>
-                          ) : (
-                            <span />
-                          )}
-                          <span className="text-right text-muted-foreground tabular-nums">
-                            {previewClock}
-                          </span>
-                        </div>
-                      </button>
-
-                      {isExpanded && (
-                        <div className="border-t border-[var(--surface-subtle)] p-0">
-                          <div className="group relative max-h-[26rem] w-full overflow-auto bg-[var(--surface-background)]">
-                            <div className="absolute top-1 right-2 z-10 opacity-0 transition-opacity group-hover:opacity-100">
-                              <button
-                                type="button"
-                                className="rounded p-1 text-muted-foreground transition-colors hover:bg-interactive-hover/60 hover:text-foreground"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  void handleCopyRawMessage(message.info.id, jsonValue);
-                                }}
-                                aria-label={isCopied ? t('contextSidebar.actions.copied') : t('contextSidebar.actions.copyJson')}
-                                title={isCopied ? t('contextSidebar.actions.copied') : t('contextSidebar.actions.copy')}
-                              >
-                                {isCopied ? <Icon name="check" className="size-3.5" /> : <Icon name="file-copy" className="size-3.5" />}
-                              </button>
-                            </div>
-                            <WorkerHighlightedCode
-                              language="json"
-                              code={jsonValue}
-                              style={{
-                                margin: 0,
-                                padding: '0.75rem',
-                                background: 'transparent',
-                                fontSize: 'var(--text-micro)',
-                                lineHeight: '1.35',
-                              }}
-                              wrap
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </React.Fragment>
-              );
-            })}
-          </div>
-        </div>
+        {/* ── Activity timeline ── */}
+        <ActivityTimeline
+          messages={sessionMessages}
+          childSessions={childSessions}
+          onOpenChild={openChildSession}
+          timeFormatPreference={timeFormatPreference}
+          sessionKey={`${currentSessionDirectory ?? ''}::${currentSessionId ?? ''}`}
+        />
       </div>
     </div>
   );

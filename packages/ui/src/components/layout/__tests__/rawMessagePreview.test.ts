@@ -8,6 +8,8 @@ import {
   formatMessagePreviewClock,
   formatMessagePreviewDay,
   isSameCalendarDay,
+  formatStepDuration,
+  groupIntoTurns,
   withDayHeadings,
   truncateMessageId,
 } from '../rawMessagePreview';
@@ -265,5 +267,61 @@ describe('withDayHeadings', () => {
   test('returns every item it was given', () => {
     const items = [at(2024, 0, 15, 8), null, at(2024, 0, 16, 9)];
     expect(withDayHeadings(items, (value) => value).map((row) => row.item)).toEqual(items);
+  });
+});
+
+describe('formatStepDuration', () => {
+  test('sub-minute keeps one decimal', () => {
+    expect(formatStepDuration(1000, 1000 + 22060)).toBe('22.1s');
+  });
+
+  test('a minute or more reads as a clock', () => {
+    expect(formatStepDuration(0, 84000)).toBe('1:24');
+  });
+
+  test('pads the seconds past a minute', () => {
+    expect(formatStepDuration(0, 65000)).toBe('1:05');
+  });
+
+  test('a running step has no duration yet', () => {
+    expect(formatStepDuration(1000, null)).toBeNull();
+  });
+
+  test('a clock that went backwards is not a duration', () => {
+    expect(formatStepDuration(5000, 1000)).toBeNull();
+  });
+});
+
+describe('groupIntoTurns', () => {
+  const prompt = (v: string) => v.startsWith('user');
+
+  test('a user message opens a turn and the rest are its steps', () => {
+    const turns = groupIntoTurns(['user:a', 'step1', 'step2', 'user:b', 'step3'], prompt);
+    expect(turns.map((t) => [t.prompt, t.steps.map((s) => s.message)])).toEqual([
+      ['user:a', ['step1', 'step2']],
+      ['user:b', ['step3']],
+    ]);
+  });
+
+  test('numbers each step within its own turn', () => {
+    const turns = groupIntoTurns(['user:a', 's1', 's2', 'user:b', 's3'], prompt);
+    expect(turns[0].steps.map((s) => `${s.index}/${s.total}`)).toEqual(['1/2', '2/2']);
+    expect(turns[1].steps.map((s) => `${s.index}/${s.total}`)).toEqual(['1/1']);
+  });
+
+  test('work before any prompt is kept in a turn with no prompt', () => {
+    const turns = groupIntoTurns(['orphan', 'user:a', 's1'], prompt);
+    expect(turns[0].prompt).toBeNull();
+    expect(turns[0].steps.map((s) => s.message)).toEqual(['orphan']);
+    expect(turns[1].prompt).toBe('user:a');
+  });
+
+  test('a prompt with no reply yet is a turn with no steps', () => {
+    const turns = groupIntoTurns(['user:a'], prompt);
+    expect(turns).toEqual([{ prompt: 'user:a', steps: [] }]);
+  });
+
+  test('no messages means no turns', () => {
+    expect(groupIntoTurns([], prompt)).toEqual([]);
   });
 });
