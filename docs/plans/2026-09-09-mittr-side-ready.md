@@ -253,16 +253,34 @@ The self-access caveat that came with the old list is moot for the same reason.
 Recorded rather than deleted, because the near miss is the argument for the
 rule that replaced it.)*
 
-### One consequence still worth deciding on rather than discovering
+### Which agents get offered is not this product's decision
 
-**Every agent on develop runs `gemma-4-26b`, which is the model that leaks
-`<|channel>thought` / `<channel|>` into `content`.** `qwen3.8-27b`, which the
-prod grant is pinned to, is clean. So a build pointed at develop will show that
-markup to whoever uses it, on essentially every reply, and the detector in
-`packages/web/server/lib/mittr/response-markup.js` will report it on every
-call. The detector reports and never edits, by design. Whether the desktop
-should strip this markup before rendering is a product decision that has not
-been taken; it is worth taking before the team sees it rather than after.
+Whatever an admin publishes is what the desktop offers. There is no curated
+list here, no default set, and nothing to agree with the platform side in
+advance — the catalog is read and its entries are shown. Asking which agents
+"should" be enabled turns an administrator's decision into a product decision,
+which is the thing this design exists to avoid.
+
+The seven denied agents above are a fact about the environment today, not a
+list awaiting our opinion.
+
+### Channel markup: a general question, not a gemma question
+
+Every agent on develop runs `gemma-4-26b`, which leaks `<|channel>thought` /
+`<channel|>` into `content`; `qwen3.8-27b` is clean. So a develop build shows
+that markup on nearly every reply, and the detector in
+`packages/web/server/lib/mittr/response-markup.js` reports it on every call.
+
+**That is not a reason to build a stripper.** Which model sits behind an alias
+is Mittr's to change at any time, and writing client behaviour around the
+quirks of whichever model is there this week produces code nobody can safely
+remove later. If the desktop ever strips scaffolding markup it will be because
+rendering it verbatim is wrong in general — true of any model that emits it,
+including ones that do not exist yet — and it will be built to that argument,
+not to this one.
+
+Until then the detector reports and never edits, which is what it was built
+for: naming the problem without pretending to own it.
 
 ## One label bug, fixed on the Mittr side
 
