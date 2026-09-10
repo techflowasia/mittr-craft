@@ -158,9 +158,44 @@ http://localhost:3000/api/auth/sign-in/social?...&callbackURL=http%3A%2F%2Flocal
 
 because `BETTER_AUTH_URL` is unset on the non-prd deployment and better-auth falls back
 to its own default. A packaged app that follows that redirect lands on the user's own
-machine, and sign-in cannot complete. The fix is deploy-side — set
-`BETTER_AUTH_URL=https://api-dev.mittr.asia` and redeploy — and is owned by whoever has
-access to that environment's config.
+machine, and sign-in cannot complete.
+
+*(Corrected 2026-09-10, after this was already relayed to devops: **this is not an
+environment gap and no value of `BETTER_AUTH_URL` fixes it.** The variable is read once
+and used to build two different URLs — the social sign-in route and the desktop callback
+— and those two paths are served by different hosts:*
+
+```
+workspace.mittr.asia/auth/desktop/callback      404
+api.mittr.asia/auth/desktop/callback            401   ← exists
+workspace-dev.mittr.asia/auth/desktop/callback  404
+api-dev.mittr.asia/auth/desktop/callback        401   ← exists
+```
+
+*Measured here. The callback is served only by the API host, on both environments, while
+the social sign-in route answers only on the workspace host. One base cannot name both,
+so there is no correct value to set. The platform side additionally measured that the
+redirect target accepts POST but answers 404 to GET, and `res.redirect()` makes a browser
+issue a GET — which would break the flow even if the hosts agreed. That second
+measurement is theirs, not reproduced here: probing had run into rate limiting by then.*
+
+*The consequence worth stating plainly: **prod's desktop sign-in has never completed
+through a browser either.** Prod's own redirect points its callbackURL at
+`workspace.mittr.asia/auth/desktop/callback`, which 404s. Nothing had caught it because
+nobody has walked that flow on prod — the end-to-end alias run was against a local
+instance. So prod is not a working fallback for this, and treating it as one, which this
+repository briefly did, was wrong.*
+
+*The fix is a code change on the mittr side — resolve the provider authorization URL
+server-side instead of bouncing a browser at a POST route, and build the callback URL
+from the host that actually serves it. Timing is not ours. Devops has been told to stand
+down.)*
+
+*How this was found is worth keeping too. The value `api-dev.mittr.asia` was relayed to a
+colleague without being checked against the environment that demonstrably works.
+Comparing against prod took three requests and showed prod pointed somewhere else
+entirely; reading the code then showed that neither host is right. Each step that touched
+something real corrected the step before it.*
 
 **2. No platform key / model assignment exists on develop yet.** The admin panel says
 "No models assigned — no desktop can sign in," and org-level agents are default-denied
