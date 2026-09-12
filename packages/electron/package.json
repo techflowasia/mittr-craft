@@ -100,7 +100,7 @@
       "icon": "resources/icons/icon.icns",
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
       "extendInfo": {
-        "CFBundleIconName": "AppIcon"
+        "//": "CFBundleIconName is deliberately absent. It names an AppIcon inside a compiled Assets.car, and macOS prefers it over CFBundleIconFile -- so while a catalog left over from before the rebrand sat in buildResources, every packaged build wore the upstream cube in the Dock no matter what icon.icns held. Compiling a replacement needs actool, which needs full Xcode. Without the key macOS falls back to CFBundleIconFile, which is ours. Restoring it means shipping a catalog built from resources/icons/AppIcon.icon."
       },
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
