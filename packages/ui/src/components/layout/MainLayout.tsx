@@ -14,6 +14,7 @@ import { OpenCodeStatusDialog } from '../ui/OpenCodeStatusDialog';
 import { SessionSidebar } from '@/components/session/SessionSidebar';
 import { SessionDialogs } from '@/components/session/SessionDialogs';
 import { ScheduledTasksDialog } from '@/components/session/ScheduledTasksDialog';
+import { MyWorkDialog } from '@/components/session/MyWorkDialog';
 import { ArchiveView } from '@/components/views/ArchiveView';
 import { WorktreesView } from '@/components/views/WorktreesView';
 import { DiffWorkerProvider } from '@/contexts/DiffWorkerProvider';
@@ -72,13 +73,14 @@ export const MainLayout: React.FC = () => {
     const setMultiRunLauncherOpen = useUIStore((state) => state.setMultiRunLauncherOpen);
     const multiRunLauncherPrefillPrompt = useUIStore((state) => state.multiRunLauncherPrefillPrompt);
     const isScheduledTasksPageOpen = useUIStore((state) => state.isScheduledTasksDialogOpen);
+    const isMyWorkPageOpen = useUIStore((state) => state.isMyWorkDialogOpen);
     const isArchivePageOpen = useUIStore((state) => state.isArchivePageOpen);
     const worktreesPageProjectId = useUIStore((state) => state.worktreesPageProjectId);
     // Any full-page surface replacing the chat area. While open, the chat and
     // secondary views are fully hidden (not just covered) so none of their
     // floating chrome bleeds through, and selecting a session / draft / main
     // tab anywhere closes the surface.
-    const isSurfacePageOpen = isScheduledTasksPageOpen || isArchivePageOpen || Boolean(worktreesPageProjectId) || isMultiRunLauncherOpen;
+    const isSurfacePageOpen = isScheduledTasksPageOpen || isMyWorkPageOpen || isArchivePageOpen || Boolean(worktreesPageProjectId) || isMultiRunLauncherOpen;
 
     React.useEffect(() => {
         const closeSurfacePages = () => useUIStore.getState().closeMainSurfaces();
@@ -355,6 +357,7 @@ export const MainLayout: React.FC = () => {
                                     </div>
                                 )}
                                 <ErrorBoundary><ScheduledTasksDialog /></ErrorBoundary>
+                                <ErrorBoundary><MyWorkDialog /></ErrorBoundary>
                                 <ErrorBoundary><ArchiveView /></ErrorBoundary>
                                 <ErrorBoundary><WorktreesView /></ErrorBoundary>
                             </main>
@@ -448,6 +451,7 @@ export const MainLayout: React.FC = () => {
                                 </div>
                             )}
                             <ErrorBoundary><ScheduledTasksDialog /></ErrorBoundary>
+                            <ErrorBoundary><MyWorkDialog /></ErrorBoundary>
                             <ErrorBoundary><ArchiveView /></ErrorBoundary>
                             <ErrorBoundary><WorktreesView /></ErrorBoundary>
                             {/* Always mount SessionSidebar on mobile to match desktop behavior.

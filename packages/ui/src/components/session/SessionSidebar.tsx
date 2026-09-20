@@ -394,6 +394,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
   const setAboutDialogOpen = useUIStore((state) => state.setAboutDialogOpen);
   const setSessionSwitcherOpen = useUIStore((state) => state.setSessionSwitcherOpen);
   const setScheduledTasksDialogOpen = useUIStore((state) => state.setScheduledTasksDialogOpen);
+  const setMyWorkDialogOpen = useUIStore((state) => state.setMyWorkDialogOpen);
   const setArchivePageOpen = useUIStore((state) => state.setArchivePageOpen);
   const setWorktreesPageProjectId = useUIStore((state) => state.setWorktreesPageProjectId);
   const openMultiRunLauncher = useUIStore((state) => state.openMultiRunLauncher);
@@ -1851,6 +1852,10 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
         onOpenScheduled={() => {
           if (mobileVariant) setSessionSwitcherOpen(false);
           setScheduledTasksDialogOpen(true);
+        }}
+        onOpenMyWork={() => {
+          if (mobileVariant) setSessionSwitcherOpen(false);
+          setMyWorkDialogOpen(true);
         }}
         onOpenMultiRun={handleOpenMultiRunFromHeader}
         canOpenMultiRun={projects.length > 0}
