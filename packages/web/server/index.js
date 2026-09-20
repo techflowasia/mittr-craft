@@ -1831,6 +1831,7 @@ async function main(options = {}) {
     createFsSearchRuntime: createFsSearchRuntimeFactory,
     mittrcraftDataDir: MITTRCRAFT_DATA_DIR,
     mittrcraftUserConfigRoot: MITTRCRAFT_USER_CONFIG_ROOT,
+    uiAuthController,
     normalizeDirectoryPath,
     resolveProjectDirectory,
     resolveOptionalProjectDirectory,

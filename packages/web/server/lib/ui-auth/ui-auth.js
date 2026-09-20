@@ -700,6 +700,7 @@ export const createUiAuth = ({
       handleAdProfile: (_req, res) => {
         res.status(400).json({ error: 'AD authentication not configured' });
       },
+      getSessionEmail: async () => null,
       ensureSessionToken: async (req, res) => {
         const clientAuth = await authenticateClientRequest(req);
         if (clientAuth) return clientSessionToken(clientAuth);
@@ -1249,6 +1250,29 @@ export const createUiAuth = ({
     }
   };
 
+  const getSessionEmail = async (req) => {
+    const cookies = parseCookies(req.headers.cookie);
+    const token = cookies[cookieName];
+    if (!token) return null;
+    try {
+      const payload = await jwtVerify(token, jwtSecret);
+      const profile = payload?.payload?.profile;
+      if (payload?.payload?.authMethod === 'entra' && typeof profile?.email === 'string' && profile.email) {
+        return profile.email;
+      }
+      const username = payload?.payload?.username;
+      if (username && adAuthController) {
+        const resolvedProfile = await adAuthController.getProfile(username);
+        if (typeof resolvedProfile?.email === 'string' && resolvedProfile.email) {
+          return resolvedProfile.email;
+        }
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
   return {
     enabled: true,
     requireAuth,
@@ -1271,6 +1295,7 @@ export const createUiAuth = ({
     handleAdLoginStart,
     handleAdCallback,
     handleAdProfile,
+    getSessionEmail,
     ensureSessionToken: async (req, _res) => {
       return resolveAuthenticatedSessionToken(req);
     },
