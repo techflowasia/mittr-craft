@@ -41,7 +41,6 @@ export const ComingSoonMessengersSection: React.FC = () => {
     <SettingsSection
       title={t('settings.integrations.messengers.title')}
       info={t('settings.integrations.messengers.info')}
-      divider={false}
       settingsItem="integrations.messengers"
       contentClassName="space-y-3"
     >
