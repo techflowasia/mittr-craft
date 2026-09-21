@@ -456,6 +456,8 @@ export const settingsDict = {
   "settings.mittrcraft.about.actions.update": "Actualizar",
   "settings.mittrcraft.about.actions.updateToVersion": "Actualizar a {version}",
   "settings.mittrcraft.about.actions.checkForUpdates": "Comprobar actualizaciones",
+  "settings.mittrcraft.about.actions.signOutMittr": "Cerrar sesión de Mittr",
+  "settings.mittrcraft.about.toast.signOutFailed": "No se pudo cerrar sesión de Mittr",
   "settings.mittrcraft.about.toast.latestVersion": "Ya estás en la última versión",
   "settings.agents.sidebar.title": "Agentes",
   "settings.agents.sidebar.total": "Total {count}",

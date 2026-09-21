@@ -456,6 +456,8 @@ export const settingsDict = {
   'settings.mittrcraft.about.actions.update': '업데이트',
   'settings.mittrcraft.about.actions.updateToVersion': '{version}으로 업데이트',
   'settings.mittrcraft.about.actions.checkForUpdates': '업데이트 확인',
+  'settings.mittrcraft.about.actions.signOutMittr': 'Mittr 로그아웃',
+  'settings.mittrcraft.about.toast.signOutFailed': 'Mittr 로그아웃에 실패했습니다',
   'settings.mittrcraft.about.toast.latestVersion': '최신 버전을 사용 중입니다',
   'settings.agents.sidebar.title': '에이전트',
   'settings.agents.sidebar.total': '총 {count}개',

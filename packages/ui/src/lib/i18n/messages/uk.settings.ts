@@ -456,6 +456,8 @@ export const settingsDict = {
   "settings.mittrcraft.about.actions.update": "Оновити",
   "settings.mittrcraft.about.actions.updateToVersion": "Оновити до {version}",
   "settings.mittrcraft.about.actions.checkForUpdates": "Перевірити наявність оновлень",
+  "settings.mittrcraft.about.actions.signOutMittr": "Вийти з Mittr",
+  "settings.mittrcraft.about.toast.signOutFailed": "Не вдалося вийти з Mittr",
   "settings.mittrcraft.about.toast.latestVersion": "Ви використовуєте останню версію",
   "settings.agents.sidebar.title": "Агенти",
   "settings.agents.sidebar.total": "Усього {count}",

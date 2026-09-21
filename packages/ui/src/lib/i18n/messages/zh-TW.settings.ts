@@ -453,6 +453,8 @@ export const settingsDict = {
   'settings.mittrcraft.about.actions.update': '更新',
   'settings.mittrcraft.about.actions.updateToVersion': '更新到 {version}',
   'settings.mittrcraft.about.actions.checkForUpdates': '檢查更新',
+  'settings.mittrcraft.about.actions.signOutMittr': '登出 Mittr',
+  'settings.mittrcraft.about.toast.signOutFailed': '無法登出 Mittr',
   'settings.mittrcraft.about.toast.latestVersion': '你已是最新版本',
   'settings.agents.sidebar.title': 'Agents',
   'settings.agents.sidebar.total': '總計 {count}',

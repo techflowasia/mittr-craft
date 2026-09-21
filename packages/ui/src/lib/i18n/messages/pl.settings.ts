@@ -721,6 +721,8 @@ export const settingsDict = {
   'settings.notifications.page.toast.testNotificationFailed': 'Nie udało się wysłać powiadomienia testowego',
   'settings.notifications.page.toast.testNotificationSent': 'Powiadomienie testowe zostało wysłane pomyślnie',
   'settings.mittrcraft.about.actions.checkForUpdates': 'Sprawdź aktualizacje',
+  'settings.mittrcraft.about.actions.signOutMittr': 'Wyloguj się z Mittr',
+  'settings.mittrcraft.about.toast.signOutFailed': 'Nie udało się wylogować z Mittr',
   'settings.mittrcraft.about.actions.checkUpdates': 'Sprawdź aktualizacje',
   'settings.mittrcraft.about.actions.update': 'Aktualizuj',
   'settings.mittrcraft.about.actions.updateToVersion': 'Aktualizuj do wersji {version}',

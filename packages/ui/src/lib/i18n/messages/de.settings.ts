@@ -469,6 +469,8 @@ export const settingsDict = {
   'settings.mittrcraft.about.actions.update': 'Aktualisieren',
   'settings.mittrcraft.about.actions.updateToVersion': 'Auf {version} aktualisieren',
   'settings.mittrcraft.about.actions.checkForUpdates': 'Nach Updates suchen',
+  'settings.mittrcraft.about.actions.signOutMittr': 'Von Mittr abmelden',
+  'settings.mittrcraft.about.toast.signOutFailed': 'Abmeldung von Mittr fehlgeschlagen',
   'settings.mittrcraft.about.toast.latestVersion': 'Sie verwenden die neueste Version',
   'settings.agents.sidebar.title': 'Agents',
   'settings.agents.sidebar.total': 'Gesamt {count}',

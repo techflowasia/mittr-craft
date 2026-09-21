@@ -488,6 +488,8 @@ export const settingsDict = {
   'settings.mittrcraft.about.actions.update': 'Update',
   'settings.mittrcraft.about.actions.updateToVersion': 'Update to {version}',
   'settings.mittrcraft.about.actions.checkForUpdates': 'Check for updates',
+  'settings.mittrcraft.about.actions.signOutMittr': 'Sign out of Mittr',
+  'settings.mittrcraft.about.toast.signOutFailed': 'Could not sign out of Mittr',
   'settings.mittrcraft.about.toast.latestVersion': 'You are on the latest version',
   'settings.agents.sidebar.title': 'Agents',
   'settings.agents.sidebar.total': 'Total {count}',

@@ -125,6 +125,19 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
   }, [t, updateStore.checking, showChecking, updateStore.available, updateStore.error]);
 
   const isChecking = updateStore.checking || showChecking;
+  const [signingOut, setSigningOut] = React.useState(false);
+
+  const handleSignOutMittr = React.useCallback(async () => {
+    setSigningOut(true);
+    try {
+      const response = await runtimeFetch('/api/mittr/auth/session', { method: 'DELETE' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      window.location.reload();
+    } catch {
+      toast.error(t('settings.mittrcraft.about.toast.signOutFailed'));
+      setSigningOut(false);
+    }
+  }, [t]);
 
   if (isMobile) {
     return (
@@ -188,6 +201,17 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
 
           </div>
 
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => { void handleSignOutMittr(); }}
+            disabled={signingOut}
+            className="gap-1.5 text-muted-foreground"
+          >
+            {signingOut ? <Icon name="loader" className="size-4 animate-spin" /> : null}
+            {t('settings.mittrcraft.about.actions.signOutMittr')}
+          </Button>
         </div>
 
         <p className="text-center typography-ui text-muted-foreground">
@@ -267,7 +291,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
           <InstanceServiceUrls />
         </div>
 
-        <div className="flex items-center gap-4 px-4 py-4">
+        <div className="flex items-center justify-between gap-4 px-4 py-4">
           <a
             href={GITHUB_URL}
             target="_blank"
@@ -278,6 +302,17 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
             <span>GitHub</span>
           </a>
 
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => { void handleSignOutMittr(); }}
+            disabled={signingOut}
+            className="gap-1.5 text-muted-foreground"
+          >
+            {signingOut ? <Icon name="loader" className="h-4 w-4 animate-spin" /> : null}
+            {t('settings.mittrcraft.about.actions.signOutMittr')}
+          </Button>
         </div>
       </div>
 

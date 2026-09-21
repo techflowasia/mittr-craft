@@ -489,6 +489,8 @@ export const settingsDict = {
   'settings.mittrcraft.about.actions.update': 'アップデート',
   'settings.mittrcraft.about.actions.updateToVersion': '{version} にアップデート',
   'settings.mittrcraft.about.actions.checkForUpdates': 'アップデートを確認',
+  'settings.mittrcraft.about.actions.signOutMittr': 'Mittr からサインアウト',
+  'settings.mittrcraft.about.toast.signOutFailed': 'Mittr からのサインアウトに失敗しました',
   'settings.mittrcraft.about.toast.latestVersion': '最新バージョンです',
   'settings.agents.sidebar.title': 'エージェント',
   'settings.agents.sidebar.total': '合計 {count}',
