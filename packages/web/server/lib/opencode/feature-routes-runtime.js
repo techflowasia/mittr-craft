@@ -181,7 +181,6 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     });
 
     registerMittrWorkRoutes(app, {
-      uiAuthController,
       brokerBaseUrl,
       ensureFreshSession,
     });

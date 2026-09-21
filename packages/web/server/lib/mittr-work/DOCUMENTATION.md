@@ -7,8 +7,9 @@ person, backing the desktop "My work" panel.
 
 - `service.js` owns the outbound call to the Mittr platform and the mapping
   from its response to what the route returns.
-- `routes.js` owns the single HTTP route, gating on the signed-in MittrCraft
-  session and translating service errors to HTTP status codes.
+- `routes.js` owns the single HTTP route and translating service errors to
+  HTTP status codes. It has no session or identity check of its own — see
+  below.
 - Nothing here persists anything; every request is a live read-through to the
   platform.
 
@@ -42,17 +43,21 @@ updatedAt}` shape, regardless of where an item actually came from.
 
 `GET /api/mittr/work`
 
-- No query parameters, no body. The route itself only checks that the
-  MittrCraft UI session exists (`uiAuthController.getSessionEmail`); the
-  work-item identity is carried by the Mittr session's access token, not by
-  that email.
+- No query parameters, no body, and no gate of its own on who can call it.
+  Earlier this checked `uiAuthController.getSessionEmail` (a *separate* local
+  login layer for the MittrCraft server itself — password/passkey/AD to the
+  desktop app), which was both wrong and redundant: it only recognises
+  AD/Entra-based local logins, so anyone using password or passkey login (or
+  an install with no local login layer at all) got a permanent false 401
+  despite being fully signed in and using the rest of the app. The real
+  identity was never that email anyway — it's the Mittr session's access
+  token. Removed; `mittrWorkService.listWork()` already covers "nobody is
+  signed in to Mittr" via `configured: false`.
 - 200 `{ items: [...], configured: true }` on a successful platform read.
 - 200 `{ items: [], configured: false }` when the Mittr broker isn't
   reachable (`brokerBaseUrl` unset, e.g. a LAN-bound install where the shim
   failed to start) or nobody has completed the Mittr sign-in yet, so the UI
   can say "not connected" instead of showing an error.
-- 401 `{ error: string }` when the request has no signed-in MittrCraft
-  session.
 - 401/403 `{ error: string }` when the platform rejects the access token.
 - 500 `{ error: string }` for an unexpected failure, or when the platform is
   down (mapped from a 5xx response).
@@ -88,6 +93,6 @@ cd packages/web && npx vitest run lib/mittr-work
 
 `service.test.js` covers the configured/unconfigured split, the 200 mapping,
 401/403 handling, 5xx handling, and the request timeout, all against a fake
-`fetchImpl`. `routes.test.js` covers the route with a signed-in session, no
-session, and service failures, using the same fake-dependency/handler-capture
-style as `../scheduled-tasks/service.test.js`.
+`fetchImpl`. `routes.test.js` covers the happy path, the not-connected case,
+and service failures, using the same fake-dependency/handler-capture style as
+`../scheduled-tasks/service.test.js`.
