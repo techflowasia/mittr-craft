@@ -28,6 +28,16 @@ The practical effect: work shows up automatically for anyone whose Plane
 workspace-member email matches the platform user their AD/SSO login
 resolves to. Nothing needs to be typed in or configured per user.
 
+## Sources: Plane and Jira, merged on the platform side
+
+`GET /desktop/work` on the platform already merges more than one source —
+`DesktopWorkController` combines `PlaneMirrorRepository.listWorkForUser` and
+`JiraMirrorRepository.listWorkForUser` into one list, sorted by recency,
+before this route ever sees it. This module has no idea Jira exists and
+needs no change when a new source is added on that side; it only ever sees
+the same generic `{id, title, project, phase, state, priority, due, url,
+updatedAt}` shape, regardless of where an item actually came from.
+
 ## Route
 
 `GET /api/mittr/work`
