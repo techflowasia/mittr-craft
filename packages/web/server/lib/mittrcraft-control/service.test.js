@@ -316,3 +316,127 @@ describe('browser capture', () => {
     expect(request).toHaveBeenCalledWith('browser.capture', { label: 'before' }, expect.anything());
   });
 });
+
+describe('computer control', () => {
+  const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  const apps = [
+    { name: 'MittrCraft', pid: 111, running: true, bundle_id: 'dev.mittrcraft.desktop' },
+    { name: 'Finder', pid: 1, running: true, bundle_id: 'com.apple.finder' },
+    { name: 'Notes', pid: 2, running: false, bundle_id: 'com.apple.Notes' },
+  ];
+
+  const createComputerService = (overrides = {}) => {
+    const request = vi.fn(async (tool) => {
+      if (tool === 'list_apps') return { apps };
+      if (tool === 'get_desktop_state') {
+        return { screenshot_png_b64: pixel, screenshot_mime_type: 'image/png', screen_width: 1470, screen_height: 956 };
+      }
+      if (tool === 'bring_to_front') return { process_activated: true, exact_window_effect: { verified: true } };
+      throw new Error(`unexpected tool ${tool}`);
+    });
+    const { service } = createService({ computerControl: { available: true, request, ...overrides } });
+    return { service, request };
+  };
+
+  it('refuses computer actions when no computerControl is wired in', async () => {
+    const { service } = createService();
+    await expect(service.execute('computer.list_apps')).rejects.toThrow(/not available/);
+  });
+
+  it('trims list_apps down to what an agent needs', async () => {
+    const { service } = createComputerService();
+    await expect(service.execute('computer.list_apps')).resolves.toEqual({
+      apps: [
+        { name: 'MittrCraft', pid: 111, running: true, bundleId: 'dev.mittrcraft.desktop' },
+        { name: 'Finder', pid: 1, running: true, bundleId: 'com.apple.finder' },
+        { name: 'Notes', pid: 2, running: false, bundleId: 'com.apple.Notes' },
+      ],
+    });
+  });
+
+  it('resolves an app name to a pid before asking the driver to activate it', async () => {
+    const { service, request } = await createComputerService();
+    const result = await service.execute('computer.bring_to_front', { app: 'mittrcraft' });
+    expect(request).toHaveBeenCalledWith('bring_to_front', { pid: 111 });
+    expect(result).toEqual({ activated: true, windowVerified: true });
+  });
+
+  it('rejects bring_to_front for an app that is not running rather than guessing', async () => {
+    const { service } = await createComputerService();
+    await expect(service.execute('computer.bring_to_front', { app: 'Notes' })).rejects.toThrow(/No running app named/);
+    await expect(service.execute('computer.bring_to_front', { app: 'Nonexistent' })).rejects.toThrow(/No running app named/);
+  });
+
+  it('reports ambiguous windows instead of picking one', async () => {
+    const { service } = await createComputerService({
+      request: vi.fn(async (tool) => {
+        if (tool === 'list_apps') return { apps };
+        if (tool === 'bring_to_front') {
+          return { code: 'ambiguous_window_target', candidates: [{ window_id: 1, title: 'A' }, { window_id: 2, title: '' }] };
+        }
+        throw new Error(`unexpected tool ${tool}`);
+      }),
+    });
+    const result = await service.execute('computer.bring_to_front', { app: 'MittrCraft' });
+    expect(result).toEqual({
+      activated: false,
+      reason: 'ambiguous_window_target',
+      candidates: [{ windowId: 1, title: 'A' }, { windowId: 2, title: null }],
+      hint: expect.stringContaining('does not pick one'),
+    });
+  });
+
+  it('saves a desktop screenshot the same way browser.capture does', async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-desktop-'));
+    const { service } = await createComputerService();
+    const result = await service.execute('computer.screenshot', {}, directory);
+    expect(result.path.startsWith('.mittrcraft/screenshots/desktop-')).toBe(true);
+    expect(result.hint).toContain(`![](${result.path})`);
+    expect(result.width).toBe(1470);
+    const written = await fs.readFile(path.join(directory, result.path));
+    expect(written.length > 0).toBe(true);
+  });
+
+  it('refuses to screenshot with no project to save into', async () => {
+    const { service } = await createComputerService();
+    await expect(service.execute('computer.screenshot', {})).rejects.toThrow(/directory is required/);
+  });
+});
+
+describe('jira control', () => {
+  it('refuses when no Mittr session is available yet', async () => {
+    const { service } = createService({ getJiraControl: () => null });
+    await expect(service.execute('jira.get_issue', { key: 'MRKB-2122' })).rejects.toThrow(
+      /session is not available/,
+    );
+  });
+
+  it('requires a key', async () => {
+    const { service } = createService({ getJiraControl: () => ({ getJiraIssue: vi.fn() }) });
+    await expect(service.execute('jira.get_issue', {})).rejects.toThrow(/key is required/);
+  });
+
+  it('reads the issue through the same Mittr session as My work, not a separate connection', async () => {
+    const getJiraIssue = vi.fn(async () => ({ key: 'MRKB-2122', summary: 'Hide the tab' }));
+    const { service } = createService({ getJiraControl: () => ({ getJiraIssue }) });
+
+    const result = await service.execute('jira.get_issue', { key: 'MRKB-2122' });
+
+    expect(result).toEqual({ key: 'MRKB-2122', summary: 'Hide the tab' });
+    expect(getJiraIssue).toHaveBeenCalledWith('MRKB-2122');
+  });
+
+  it('surfaces the underlying failure rather than a generic 502', async () => {
+    const getJiraIssue = vi.fn(async () => {
+      const error = new Error('Jira ยังไม่ได้ตั้งค่า — ไปที่หน้า Integrations ก่อน');
+      error.statusCode = 400;
+      throw error;
+    });
+    const { service } = createService({ getJiraControl: () => ({ getJiraIssue }) });
+
+    await expect(service.execute('jira.get_issue', { key: 'MRKB-2122' })).rejects.toThrow(
+      /Integrations/,
+    );
+  });
+});

@@ -4,6 +4,8 @@ import { MittrCraftControlError, asControlError } from './error.js';
 import { MITTRCRAFT_ALL_ACTIONS } from './actions.js';
 import { writeScreenshot } from './screenshots.js';
 
+const APP_NAME_PATTERN = /^[\w .()&-]{1,80}$/;
+
 const DEFAULT_WAIT_TIMEOUT_SECONDS = 600;
 const MAX_WAIT_TIMEOUT_SECONDS = 86_400;
 const WAIT_POLL_INTERVAL_MS = 500;
@@ -144,6 +146,12 @@ export const createMittrCraftControlService = (dependencies) => {
     sessionService,
     scheduledTaskService,
     browserControl = null,
+    computerControl = null,
+    // A function, not a value: brokerBaseUrl/ensureFreshSession only exist once the Mittr
+    // shim has started, which happens after this service is constructed. Reading through a
+    // getter means the wiring in index.js can fill this in later without this file caring
+    // about that ordering.
+    getJiraControl = () => null,
     createClient = createOpencodeClient,
     sleep = (duration) => new Promise((resolve) => setTimeout(resolve, duration)),
     now = Date.now,
@@ -453,6 +461,91 @@ export const createMittrCraftControlService = (dependencies) => {
     return result;
   };
 
+  /**
+   * `list_apps` first so a name can be resolved to a pid: the model names an
+   * app the way a person would ("MittrCraft"), never a pid it has no way to
+   * know. Ambiguity (several windows for one pid) is reported rather than
+   * guessed at, the same way the driver itself refuses rather than picks —
+   * see `bring_to_front_exact_window_unverified` in its own output.
+   */
+  const computerAction = async (action, input, contextDirectory) => {
+    if (action === 'computer.list_apps') {
+      const result = await computerControl.request('list_apps');
+      const apps = Array.isArray(result?.apps) ? result.apps : [];
+      return {
+        apps: apps.map((app) => ({
+          name: app.name,
+          pid: app.pid,
+          running: app.running === true,
+          bundleId: app.bundle_id ?? null,
+        })),
+      };
+    }
+
+    if (action === 'computer.bring_to_front') {
+      const name = asNonEmptyString(input.app);
+      if (!name) throw new MittrCraftControlError('app is required for computer.bring_to_front', 400);
+      if (!APP_NAME_PATTERN.test(name)) throw new MittrCraftControlError('app must be a plain app name', 400);
+      const listed = await computerControl.request('list_apps');
+      const apps = Array.isArray(listed?.apps) ? listed.apps : [];
+      const match = apps.find((app) => app.running === true && String(app.name).toLowerCase() === name.toLowerCase());
+      if (!match) throw new MittrCraftControlError(`No running app named "${name}"`, 404);
+      const result = await computerControl.request('bring_to_front', { pid: match.pid });
+      if (result?.code === 'ambiguous_window_target') {
+        return {
+          activated: false,
+          reason: 'ambiguous_window_target',
+          candidates: (result.candidates ?? []).map((c) => ({ windowId: c.window_id, title: c.title || null })),
+          hint: 'Several windows belong to this app; this action does not pick one for you yet.',
+        };
+      }
+      return {
+        activated: result?.process_activated === true,
+        windowVerified: result?.exact_window_effect?.verified === true,
+      };
+    }
+
+    if (action === 'computer.screenshot') {
+      const directory = asNonEmptyString(input.directory) || asNonEmptyString(contextDirectory);
+      if (!directory) throw new MittrCraftControlError('directory is required to save a screenshot', 400);
+      const result = await computerControl.request('get_desktop_state');
+      const saved = await writeScreenshot({
+        directory,
+        base64: result?.screenshot_png_b64,
+        mime: result?.screenshot_mime_type || 'image/png',
+        label: 'desktop',
+      });
+      return {
+        path: saved.path,
+        hint: `Write ![](${saved.path}) in your reply to show this image to the user; it is rendered under your message.`,
+        width: result?.screen_width ?? null,
+        height: result?.screen_height ?? null,
+      };
+    }
+
+    throw new MittrCraftControlError(`Unsupported computer action: ${action}`, 400);
+  };
+
+  const jiraAction = async (action, input) => {
+    if (action !== 'jira.get_issue') {
+      throw new MittrCraftControlError(`Unsupported Jira action: ${action}`, 400);
+    }
+    const key = asNonEmptyString(input.key);
+    if (!key) throw new MittrCraftControlError('key is required for jira.get_issue', 400);
+    const jiraControl = getJiraControl();
+    if (!jiraControl) {
+      throw new MittrCraftControlError('Mittr platform session is not available', 503);
+    }
+    try {
+      return await jiraControl.getJiraIssue(key);
+    } catch (error) {
+      throw new MittrCraftControlError(
+        error instanceof Error ? error.message : `Failed to read Jira issue ${key}`,
+        Number(error?.statusCode) || 502,
+      );
+    }
+  };
+
   const execute = async (action, input = {}, contextDirectory, options = {}) => {
     try {
       if (!CONTROL_ACTIONS.has(action)) {
@@ -463,6 +556,15 @@ export const createMittrCraftControlService = (dependencies) => {
           throw new MittrCraftControlError('The in-app browser is not available on this server', 503);
         }
         return browserAction(action, input, options.signal, contextDirectory);
+      }
+      if (action.startsWith('computer.')) {
+        if (!computerControl || computerControl.available !== true) {
+          throw new MittrCraftControlError('Computer use is not available on this build', 503);
+        }
+        return computerAction(action, input, contextDirectory);
+      }
+      if (action.startsWith('jira.')) {
+        return jiraAction(action, input);
       }
       if (action === 'projects.list') return { projects: await projects() };
       if (action === 'models.list') return models();

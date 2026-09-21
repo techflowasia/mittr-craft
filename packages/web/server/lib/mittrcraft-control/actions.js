@@ -28,9 +28,25 @@ const MITTRCRAFT_CONTROL_ACTIONS = Object.freeze(
   MITTRCRAFT_CONTROL_ACTION_DEFINITIONS.map(({ action }) => action),
 );
 
-export const MITTRCRAFT_AGENT_TOOL_ACTION_DEFINITIONS = Object.freeze(
-  MITTRCRAFT_CONTROL_ACTION_DEFINITIONS.filter(({ agentExposed }) => agentExposed !== false),
+/**
+ * Reads one Jira card live, through the SAME Integrations credential the settings screen
+ * already manages (base URL + email + API token, per user) — never a second connection an
+ * agent or a machine has to authorize on its own. Belongs beside `session.*`/`schedule.*` in
+ * the one control tool rather than a tool of its own: it is one more thing this account can
+ * read, not a distinct capability with its own inputs to hide when off.
+ */
+export const MITTRCRAFT_JIRA_ACTION_DEFINITIONS = Object.freeze([
+  { action: 'jira.get_issue', title: 'Read a Jira card', description: 'Read one Jira issue by key (e.g. MRKB-2122): summary, description, status, priority, assignee' },
+]);
+
+const MITTRCRAFT_JIRA_ACTIONS = Object.freeze(
+  MITTRCRAFT_JIRA_ACTION_DEFINITIONS.map(({ action }) => action),
 );
+
+export const MITTRCRAFT_AGENT_TOOL_ACTION_DEFINITIONS = Object.freeze([
+  ...MITTRCRAFT_CONTROL_ACTION_DEFINITIONS.filter(({ agentExposed }) => agentExposed !== false),
+  ...MITTRCRAFT_JIRA_ACTION_DEFINITIONS,
+]);
 
 export const MITTRCRAFT_AGENT_TOOL_ACTIONS = Object.freeze(
   MITTRCRAFT_AGENT_TOOL_ACTION_DEFINITIONS.map(({ action }) => action),
@@ -53,8 +69,27 @@ export const MITTRCRAFT_WEB_ACTIONS = Object.freeze(
   MITTRCRAFT_WEB_ACTION_DEFINITIONS.map(({ action }) => action),
 );
 
+/**
+ * Desktop control via the bundled `cua-driver` — a separate tool from
+ * `mittrcraft_web` because it acts on the whole screen, not one page in the
+ * panel. Only read/activate actions today; clicking or typing blind against a
+ * live desktop is deferred until each action's exact argument shape has been
+ * verified against a running driver, not guessed from its help text.
+ */
+export const MITTRCRAFT_COMPUTER_ACTION_DEFINITIONS = Object.freeze([
+  { action: 'computer.list_apps', title: 'List desktop apps', description: 'List running and installed apps on the desktop, with name, pid, and running state; no parameters' },
+  { action: 'computer.bring_to_front', title: 'Bring an app to the front', description: 'Activate app (by name, case-insensitive) and try to bring its main window to the front; report which window it targeted' },
+  { action: 'computer.screenshot', title: 'Screenshot the desktop', description: 'Save a screenshot of the whole desktop as an image file in the project and return its path; no parameters' },
+]);
+
+export const MITTRCRAFT_COMPUTER_ACTIONS = Object.freeze(
+  MITTRCRAFT_COMPUTER_ACTION_DEFINITIONS.map(({ action }) => action),
+);
+
 /** Everything the callback route will dispatch, whichever tool asked. */
 export const MITTRCRAFT_ALL_ACTIONS = Object.freeze([
   ...MITTRCRAFT_CONTROL_ACTIONS,
+  ...MITTRCRAFT_JIRA_ACTIONS,
   ...MITTRCRAFT_WEB_ACTIONS,
+  ...MITTRCRAFT_COMPUTER_ACTIONS,
 ]);
