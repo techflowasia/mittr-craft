@@ -72,6 +72,10 @@
         "to": "icons/icon.png"
       },
       {
+        "from": "resources/icons/splash-icon.png",
+        "to": "icons/splash-icon.png"
+      },
+      {
         "from": "resources/icons/tray",
         "to": "icons/tray"
       },

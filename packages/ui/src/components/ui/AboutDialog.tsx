@@ -3,7 +3,6 @@ import {
   Dialog,
   DialogContent,
 } from '@/components/ui/dialog';
-import { MittrCraftLogo } from '@/components/ui/MittrCraftLogo';
 import { debugUtils } from '@/lib/debug';
 import { cn } from '@/lib/utils';
 import { toast } from '@/components/ui';
@@ -144,7 +143,7 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xs p-6">
         <div className="flex flex-col items-center text-center space-y-4">
-          <MittrCraftLogo width={64} height={64} />
+          <img src="/app-icon-512.png" alt="" aria-hidden="true" width={64} height={64} />
 
           <div className="space-y-1">
             <h2 className="text-lg font-semibold">MittrCraft</h2>

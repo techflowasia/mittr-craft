@@ -1,6 +1,5 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
-import { MittrCraftLogo } from '@/components/ui/MittrCraftLogo';
 import { useI18n } from '@/lib/i18n';
 import { AuditNotice } from './AuditNotice';
 import { runtimeFetch } from '@/lib/runtime-fetch';
@@ -106,9 +105,7 @@ export function MittrSignInGate({ children }: { children: React.ReactNode }) {
               aria-hidden="true"
               className="absolute inset-0 rounded-xl bg-[image:var(--grad-accent)] opacity-30 blur-lg"
             />
-            <div className="relative flex size-14 items-center justify-center rounded-xl border border-[var(--interactive-border)] bg-[var(--surface-background)] shadow-[var(--elev-2)]">
-              <MittrCraftLogo className="size-8" />
-            </div>
+            <img src="/app-icon-512.png" alt="" aria-hidden="true" className="relative size-14" />
           </div>
 
           {state === 'checking' ? (
