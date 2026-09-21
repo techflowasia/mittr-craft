@@ -11,6 +11,7 @@ export type MittrWorkItem = {
   estimate: string | null;
   url: string;
   updatedAt: string;
+  source?: 'plane' | 'jira';
 };
 
 export type MittrWorkResult = {

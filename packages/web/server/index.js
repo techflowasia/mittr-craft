@@ -109,6 +109,8 @@ import { createSystemPromptRuntime } from './lib/system-prompt/runtime.js';
 import { createMittrCraftSessionService } from './lib/mittrcraft-sessions/routes.js';
 import { createScheduledTaskService } from './lib/scheduled-tasks/service.js';
 import { createMittrCraftControlService } from './lib/mittrcraft-control/service.js';
+import { createComputerControl } from './lib/mittrcraft-control/computer-control.js';
+import { createMittrWorkService } from './lib/mittr-work/service.js';
 import webPush from 'web-push';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1106,8 +1108,12 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
     // injected while at least one of them is on.
     const includeControl = settings?.agentControlToolEnabled !== false;
     const includeWeb = settings?.agentWebToolEnabled !== false;
-    const managedEnv = includeControl || includeWeb
-      ? await (agentToolRuntime?.prepareManagedOpenCodeEnv({ includeControl, includeWeb }) || {})
+    // Opt-in, unlike the two above: this one controls the whole desktop, not a
+    // page in our own panel, so an existing install must not gain it silently
+    // on upgrade just because the setting was never touched.
+    const includeComputer = settings?.agentComputerToolEnabled === true;
+    const managedEnv = includeControl || includeWeb || includeComputer
+      ? await (agentToolRuntime?.prepareManagedOpenCodeEnv({ includeControl, includeWeb, includeComputer }) || {})
       : {};
     if (settings?.optimizeSystemPrompt !== true) return managedEnv;
 
@@ -1219,15 +1225,25 @@ const browserControlBroker = createBrowserControlBroker({
   },
 });
 
+const computerControl = createComputerControl();
+
+// Filled in once `main()` starts the Mittr shim, which is when brokerBaseUrl/ensureFreshSession
+// first exist. A getter (not the value itself) so this service's construction order does not
+// have to change to accommodate a dependency that shows up later.
+let jiraControl = null;
+const getJiraControl = () => jiraControl;
+
 const mittrCraftControlService = createMittrCraftControlService({
   readSettingsFromDiskMigrated,
   sanitizeProjects,
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
   waitForOpenCodeReady,
+  getJiraControl,
   sessionService: mittrCraftSessionService,
   scheduledTaskService,
   browserControl: browserControlBroker,
+  computerControl,
 });
 
 const ensureGlobalWatcherStarted = async () => {
@@ -1590,6 +1606,13 @@ async function main(options = {}) {
       allowUpstreamOverride: !String(options.brokerBaseUrl ?? '').trim(),
     });
     storeMittrCredential(mittrShim);
+
+    // Same session, same broker as `/api/mittr/work` — the agent's `jira.get_issue` action
+    // reads through this, not a connection of its own.
+    jiraControl = createMittrWorkService({
+      brokerBaseUrl: mittrShim.brokerBaseUrl,
+      ensureFreshSession: mittrShim.ensureFreshSession,
+    });
 
     // Before the network is touched: what the engine offers must come from the
     // catalog, and an install carrying a model from an older build must lose it

@@ -76,8 +76,55 @@ export const createMittrWorkService = ({
     }
   };
 
+  /** One Jira card, read live — same session, same auth, no second connection to manage. */
+  const getJiraIssue = async (key) => {
+    if (!configured) {
+      throw createHttpError('Mittr platform session is not available', 503);
+    }
+    const session = await ensureFreshSession();
+    if (!session) {
+      throw createHttpError('Not signed in to Mittr. Sign in to continue.', 401);
+    }
+
+    const url = new URL(`/desktop/jira/issues/${encodeURIComponent(key)}`, brokerBaseUrl).toString();
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetchImpl(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${session.accessToken}`,
+        },
+        signal: controller.signal,
+      });
+
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw createHttpError(
+          typeof body?.message === 'string' && body.message
+            ? body.message
+            : `Failed to load Jira issue ${key}`,
+          response.status,
+        );
+      }
+      return body;
+    } catch (error) {
+      if (typeof error?.statusCode === 'number') {
+        throw error;
+      }
+      if (error?.name === 'AbortError') {
+        throw createHttpError('Mittr platform request timed out', 504);
+      }
+      throw createHttpError(error instanceof Error ? error.message : 'Failed to load Jira issue', 502);
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+  };
+
   return {
     configured,
     listWork,
+    getJiraIssue,
   };
 };
