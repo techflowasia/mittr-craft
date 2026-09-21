@@ -1,40 +1,37 @@
 const REQUEST_TIMEOUT_MS = 10_000;
 
-const readNonEmpty = (env, key) => {
-  const value = env?.[key];
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : '';
-};
-
-const normalizeBaseUrl = (baseUrl) => baseUrl.replace(/\/+$/, '');
-
 const createHttpError = (message, statusCode) => {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
 };
 
+/**
+ * Reuses the same Mittr desktop session that already gates the rest of the
+ * app (MittrSignInGate) and already authorises the model catalog and audit
+ * routes. A person who can use MittrCraft at all has already signed in to
+ * Mittr as themselves, so this needs nothing an admin has to configure and
+ * nothing a person has to connect separately: the platform resolves the
+ * work items for whoever the access token says they are.
+ */
 export const createMittrWorkService = ({
-  env = process.env,
+  brokerBaseUrl,
+  ensureFreshSession,
   fetchImpl = globalThis.fetch,
-  now = () => Date.now(),
 } = {}) => {
-  void now;
+  const configured = Boolean(brokerBaseUrl && typeof ensureFreshSession === 'function');
 
-  const baseUrl = readNonEmpty(env, 'MITTR_PLATFORM_BASE_URL');
-  const serviceKey = readNonEmpty(env, 'MITTR_PLATFORM_SERVICE_KEY');
-  const configured = Boolean(baseUrl && serviceKey);
-
-  const listWork = async (email) => {
+  const listWork = async () => {
     if (!configured) {
       return { configured: false, items: [] };
     }
 
-    const normalizedEmail = typeof email === 'string' ? email.trim() : '';
-    if (!normalizedEmail) {
-      throw createHttpError('email is required', 400);
+    const session = await ensureFreshSession();
+    if (!session) {
+      return { configured: false, items: [] };
     }
 
-    const url = `${normalizeBaseUrl(baseUrl)}/desktop/work?email=${encodeURIComponent(normalizedEmail)}`;
+    const url = new URL('/desktop/work', brokerBaseUrl).toString();
     const controller = new AbortController();
     const timeoutHandle = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -42,7 +39,7 @@ export const createMittrWorkService = ({
       const response = await fetchImpl(url, {
         method: 'GET',
         headers: {
-          Authorization: `Bearer ${serviceKey}`,
+          Authorization: `Bearer ${session.accessToken}`,
         },
         signal: controller.signal,
       });

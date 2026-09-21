@@ -3,10 +3,10 @@ import { createMittrWorkService } from './service.js';
 export const registerMittrWorkRoutes = (app, dependencies) => {
   const {
     uiAuthController,
-    env,
+    brokerBaseUrl,
+    ensureFreshSession,
     fetchImpl,
-    now,
-    mittrWorkService = createMittrWorkService({ env, fetchImpl, now }),
+    mittrWorkService = createMittrWorkService({ brokerBaseUrl, ensureFreshSession, fetchImpl }),
   } = dependencies;
 
   app.get('/api/mittr/work', async (req, res) => {
@@ -18,7 +18,7 @@ export const registerMittrWorkRoutes = (app, dependencies) => {
         return res.status(401).json({ error: 'Not authenticated' });
       }
 
-      const result = await mittrWorkService.listWork(email);
+      const result = await mittrWorkService.listWork();
       return res.json(result);
     } catch (error) {
       if (error?.statusCode) {

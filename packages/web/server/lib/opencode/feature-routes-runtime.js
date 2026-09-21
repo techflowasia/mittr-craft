@@ -126,6 +126,8 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       emitSessionCreatedEvent,
       permissionAutoAcceptRuntime,
       uiAuthController,
+      brokerBaseUrl,
+      ensureFreshSession,
     } = routeDependencies;
 
     registerSettingsUtilityRoutes(app, {
@@ -180,6 +182,8 @@ export const createFeatureRoutesRuntime = (dependencies) => {
 
     registerMittrWorkRoutes(app, {
       uiAuthController,
+      brokerBaseUrl,
+      ensureFreshSession,
     });
 
     registerMittrCraftSessionRoutes(app, {

@@ -133,5 +133,12 @@ export function startMittrShim({
     await syncModels(cached?.models?.configured ? cached.models.items : []);
   };
 
-  return { localToken, baseUrl: `http://${host}:${port}/v1`, syncCatalog, applyCachedCatalog };
+  return {
+    localToken,
+    baseUrl: `http://${host}:${port}/v1`,
+    syncCatalog,
+    applyCachedCatalog,
+    ensureFreshSession,
+    brokerBaseUrl,
+  };
 }

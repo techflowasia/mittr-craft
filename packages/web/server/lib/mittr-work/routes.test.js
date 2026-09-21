@@ -64,7 +64,7 @@ describe('GET /api/mittr/work', () => {
     await handler({ body: { email: 'attacker@example.com' } }, res);
 
     expect(getSessionEmail).toHaveBeenCalledOnce();
-    expect(mittrWorkService.listWork).toHaveBeenCalledWith('chaibluesky37@gmail.com');
+    expect(mittrWorkService.listWork).toHaveBeenCalledWith();
     expect(res.statusCode).toBe(200);
     expect(res.payload).toEqual({ configured: true, items });
   });

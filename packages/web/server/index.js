@@ -1832,6 +1832,8 @@ async function main(options = {}) {
     mittrcraftDataDir: MITTRCRAFT_DATA_DIR,
     mittrcraftUserConfigRoot: MITTRCRAFT_USER_CONFIG_ROOT,
     uiAuthController,
+    brokerBaseUrl: mittrShim?.brokerBaseUrl,
+    ensureFreshSession: mittrShim?.ensureFreshSession,
     normalizeDirectoryPath,
     resolveProjectDirectory,
     resolveOptionalProjectDirectory,
