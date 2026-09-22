@@ -319,4 +319,79 @@ describe('managed agent tool runtime', () => {
       await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
   });
+
+  it('lifts a screenshot result into an attachment instead of inlining it in output', async () => {
+    const { runtime, dataDir } = await createRuntime();
+    const prepared = await runtime.prepareManagedOpenCodeEnv({ includeComputer: true });
+    const pluginPath = path.join(dataDir, 'agent-tool', 'mittrcraft-plugin.js');
+    const pluginModule = await import(`${pathToFileURL(pluginPath).href}?screenshot=${Date.now()}`);
+    const { tool } = await pluginModule.MittrCraftPlugin();
+
+    const originalFetch = globalThis.fetch;
+    const originalUrl = process.env.MITTRCRAFT_AGENT_TOOL_URL;
+    const originalToken = process.env.MITTRCRAFT_AGENT_TOOL_TOKEN;
+    process.env.MITTRCRAFT_AGENT_TOOL_URL = prepared.MITTRCRAFT_AGENT_TOOL_URL;
+    process.env.MITTRCRAFT_AGENT_TOOL_TOKEN = prepared.MITTRCRAFT_AGENT_TOOL_TOKEN;
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({
+        schemaVersion: 1,
+        ok: true,
+        action: 'computer.screenshot',
+        data: {
+          path: '.mittrcraft/screenshots/desktop-1.png',
+          hint: 'The image is attached for you to view directly; write ![](...) in your reply to also show it to the user.',
+          width: 1920,
+          height: 1080,
+          imageBase64: 'ZmFrZS1wbmctYnl0ZXM=',
+          imageMime: 'image/png',
+        },
+      }));
+    const context = { directory: '/work/project', abort: new AbortController().signal, metadata: () => {} };
+
+    let result;
+    try {
+      result = await tool.mittrcraft_computer.execute({ action: 'computer.screenshot', parameters: {} }, context);
+    } finally {
+      globalThis.fetch = originalFetch;
+      process.env.MITTRCRAFT_AGENT_TOOL_URL = originalUrl;
+      process.env.MITTRCRAFT_AGENT_TOOL_TOKEN = originalToken;
+    }
+
+    expect(result.attachments).toEqual([
+      { type: 'file', mime: 'image/png', url: 'data:image/png;base64,ZmFrZS1wbmctYnl0ZXM=', filename: 'screenshot.png' },
+    ]);
+    const parsedOutput = JSON.parse(result.output);
+    expect(parsedOutput.data.path).toBe('.mittrcraft/screenshots/desktop-1.png');
+    expect(parsedOutput.data.imageBase64).toBeUndefined();
+    expect(result.output).not.toContain('ZmFrZS1wbmctYnl0ZXM=');
+  });
+
+  it('leaves output untouched for actions with no image data', async () => {
+    const { runtime, dataDir } = await createRuntime();
+    const prepared = await runtime.prepareManagedOpenCodeEnv({ includeComputer: true });
+    const pluginPath = path.join(dataDir, 'agent-tool', 'mittrcraft-plugin.js');
+    const pluginModule = await import(`${pathToFileURL(pluginPath).href}?noimage=${Date.now()}`);
+    const { tool } = await pluginModule.MittrCraftPlugin();
+
+    const originalFetch = globalThis.fetch;
+    const originalUrl = process.env.MITTRCRAFT_AGENT_TOOL_URL;
+    const originalToken = process.env.MITTRCRAFT_AGENT_TOOL_TOKEN;
+    process.env.MITTRCRAFT_AGENT_TOOL_URL = prepared.MITTRCRAFT_AGENT_TOOL_URL;
+    process.env.MITTRCRAFT_AGENT_TOOL_TOKEN = prepared.MITTRCRAFT_AGENT_TOOL_TOKEN;
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ schemaVersion: 1, ok: true, action: 'computer.list_apps', data: { apps: [] } }));
+    const context = { directory: '/work/project', abort: new AbortController().signal, metadata: () => {} };
+
+    let result;
+    try {
+      result = await tool.mittrcraft_computer.execute({ action: 'computer.list_apps', parameters: {} }, context);
+    } finally {
+      globalThis.fetch = originalFetch;
+      process.env.MITTRCRAFT_AGENT_TOOL_URL = originalUrl;
+      process.env.MITTRCRAFT_AGENT_TOOL_TOKEN = originalToken;
+    }
+
+    expect(result.attachments).toBeUndefined();
+    expect(JSON.parse(result.output)).toEqual({ schemaVersion: 1, ok: true, action: 'computer.list_apps', data: { apps: [] } });
+  });
 });

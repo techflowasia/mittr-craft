@@ -61,7 +61,7 @@ export const MITTRCRAFT_WEB_ACTION_DEFINITIONS = Object.freeze([
   { action: 'browser.back', title: 'Go back in the browser panel', description: 'Return to the previous page in this tab; no parameters' },
   { action: 'browser.forward', title: 'Go forward in the browser panel', description: 'Move forward again in this tab; no parameters' },
   { action: 'browser.inspect', title: 'Read how an element renders', description: 'Read the computed styles of the element matched by selector — colours, fonts, spacing, borders — as the page actually renders them' },
-  { action: 'browser.capture', title: 'Save a screenshot of the page', description: 'Save what is currently visible in the browser panel as an image file in the project and return its path, so a change can be shown rather than described. Pass label to name it (for example before-fix); the result reports the page, layout and path to reference in your answer' },
+  { action: 'browser.capture', title: 'Save a screenshot of the page', description: 'Save what is currently visible in the browser panel as an image file in the project and see it directly — the image is attached to the result, so a change can be checked visually rather than described. Pass label to name it (for example before-fix); the result also reports the page, layout and path to reference in your answer' },
   { action: 'browser.resize', title: 'Change the page viewport', description: 'Lay the open page out at a different size; viewport is mobile, tablet, desktop, or fill to use the whole panel' },
 ]);
 
@@ -79,7 +79,7 @@ export const MITTRCRAFT_WEB_ACTIONS = Object.freeze(
 export const MITTRCRAFT_COMPUTER_ACTION_DEFINITIONS = Object.freeze([
   { action: 'computer.list_apps', title: 'List desktop apps', description: 'List running and installed apps on the desktop, with name, pid, and running state; no parameters' },
   { action: 'computer.bring_to_front', title: 'Bring an app to the front', description: 'Activate app (by name, case-insensitive) and try to bring its main window to the front; report which window it targeted' },
-  { action: 'computer.screenshot', title: 'Screenshot the desktop', description: 'Save a screenshot of the whole desktop as an image file in the project and return its path; no parameters' },
+  { action: 'computer.screenshot', title: 'Screenshot the desktop', description: 'Screenshot the whole desktop and see it directly — the image is attached to the result, and also saved as a file in the project whose path is returned; no parameters' },
 ]);
 
 export const MITTRCRAFT_COMPUTER_ACTIONS = Object.freeze(

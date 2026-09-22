@@ -87,7 +87,7 @@ const CONTROL_TOOL_DESCRIPTION = "Control MittrCraft projects, sessions, and sch
 
 const WEB_TOOL_DESCRIPTION = "Look at and interact with a web page in MittrCraft's browser panel, so you can check your own work rather than describing what you expect. Use one action per call. Open a page, snapshot it to read its text and its interactive elements, then click, type or scroll using the selectors the snapshot returned; snapshots also report any errors the page logged. Pass a selector to browser.snapshot to read one part of a long page. browser.inspect returns computed styles when the question is how something renders. Set viewport to check a layout at mobile, tablet or desktop size. The page runs with the user's real logins, so treat what you see as their live session.";
 
-const COMPUTER_TOOL_DESCRIPTION = "Look at and act on the user's whole desktop, not just MittrCraft's own panels — use only when a task genuinely needs another app. Use one action per call. computer.list_apps first to see what is running and get an exact app name; computer.bring_to_front to activate one by that name; computer.screenshot to see the current desktop and get an image path to reference in your answer. Clicking or typing into other apps is not available yet. This is a live, real desktop the user can see moving in front of them — never use it for anything the user has not clearly asked for.";
+const COMPUTER_TOOL_DESCRIPTION = "Look at and act on the user's whole desktop, not just MittrCraft's own panels — use only when a task genuinely needs another app. Use one action per call. computer.list_apps first to see what is running and get an exact app name; computer.bring_to_front to activate one by that name; computer.screenshot to see the current desktop — the image is attached to the result for you to read directly, so there is no need to open it with a file-reading tool. Clicking or typing into other apps is not available yet. This is a live, real desktop the user can see moving in front of them — never use it for anything the user has not clearly asked for.";
 
 const asNonEmptyString = (value) => {
   if (typeof value !== 'string') return null;
@@ -180,7 +180,23 @@ const createToolEntry = ({ name, description, actions, definitions, parameters }
               },
             },
           })
-          if (valid) return { title, output, metadata: { mittrcraft: { schemaVersion: ${TOOL_SCHEMA_VERSION}, action: args.action, description: title, ok: result.ok === true } } }
+          if (valid) {
+            // A captured image travels as an attachment, never as base64 text: the
+            // engine resizes and embeds attachments as real image content for the
+            // model, while the same bytes inlined into output would just be wasted
+            // context the model cannot see a picture in either way.
+            const data = result.data && typeof result.data === "object" ? result.data : null
+            const imageBase64 = typeof data?.imageBase64 === "string" ? data.imageBase64 : null
+            if (!imageBase64) return { title, output, metadata: { mittrcraft: { schemaVersion: ${TOOL_SCHEMA_VERSION}, action: args.action, description: title, ok: result.ok === true } } }
+            const { imageBase64: _omit, imageMime, ...restData } = data
+            const mime = imageMime || "image/png"
+            return {
+              title,
+              output: JSON.stringify({ ...result, data: restData }),
+              attachments: [{ type: "file", mime, url: "data:" + mime + ";base64," + imageBase64, filename: "screenshot.png" }],
+              metadata: { mittrcraft: { schemaVersion: ${TOOL_SCHEMA_VERSION}, action: args.action, description: title, ok: result.ok === true } },
+            }
+          }
           return failure({ schemaVersion: ${TOOL_SCHEMA_VERSION}, ok: false, action: args.action, error: { message: "MittrCraft returned an invalid response", kind: "runtime", status: response.status } })
         } catch (error) {
           if (context.abort.aborted) throw error

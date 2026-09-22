@@ -293,15 +293,20 @@ describe('browser capture', () => {
     expect(result.path.endsWith('.png')).toBe(true);
     expect(result.url).toBe('http://localhost:3000/');
     expect(result.viewport).toEqual({ mode: 'mobile', width: 390, height: 844 });
-    // The bytes stay on disk; a tool result is not a place to carry an image.
+    // The bytes still travel in the result too — not as `base64` (the raw
+    // field the browser control API returned), but as `imageBase64`, which
+    // the agent-tool runtime lifts into an attachment for the model to see.
     expect('base64' in result).toBe(false);
+    expect(result.imageBase64).toBe(pixel);
+    expect(result.imageMime).toBe('image/png');
     const written = await fs.readFile(path.join(directory, result.path));
     expect(written.length > 0).toBe(true);
   });
 
-  it('tells the agent how to actually show the image', async () => {
+  it('tells the agent the image is attached and how to also show it to the user', async () => {
     const { service, directory } = await createBrowserService({ base64: pixel, mime: 'image/png' });
     const result = await service.execute('browser.capture', {}, directory);
+    expect(result.hint).toContain('attached for you to view directly');
     expect(result.hint).toContain(`![](${result.path})`);
   });
 
@@ -392,8 +397,11 @@ describe('computer control', () => {
     const { service } = await createComputerService();
     const result = await service.execute('computer.screenshot', {}, directory);
     expect(result.path.startsWith('.mittrcraft/screenshots/desktop-')).toBe(true);
+    expect(result.hint).toContain('attached for you to view directly');
     expect(result.hint).toContain(`![](${result.path})`);
     expect(result.width).toBe(1470);
+    expect(result.imageBase64).toBe(pixel);
+    expect(result.imageMime).toBe('image/png');
     const written = await fs.readFile(path.join(directory, result.path));
     expect(written.length > 0).toBe(true);
   });

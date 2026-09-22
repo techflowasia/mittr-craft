@@ -441,20 +441,22 @@ export const createMittrCraftControlService = (dependencies) => {
         mime: capture.mime,
         label: input.label,
       });
-      // The base64 never goes back to the caller: it is large, and the path is
-      // what an answer, a commit, or a review can actually use.
+      // The path is what an answer, a commit, or a review can actually use;
+      // the base64 travels alongside it only as far as the agent-tool runtime,
+      // which lifts it into an attachment instead of leaving it in this text.
       return {
         path: saved.path,
-        // Saving the file is only half of showing it. Chat collects the image
-        // paths written in a finished answer and renders them below it, so the
-        // agent is told the one thing it cannot infer: that writing the path is
-        // what puts the picture in front of the user.
-        hint: `Write ![](${saved.path}) in your reply to show this image to the user; it is rendered under your message.`,
+        // Saving the file only shows it to the user once the path is written
+        // into a finished reply, which chat renders below that message — the
+        // attachment is what lets the agent itself see the picture right now.
+        hint: `The image is attached for you to view directly; write ![](${saved.path}) in your reply to also show it to the user.`,
         url: capture.url ?? null,
         title: capture.title ?? null,
         viewport: capture.viewport ?? null,
         width: capture.width ?? null,
         height: capture.height ?? null,
+        imageBase64: capture.base64 ?? null,
+        imageMime: capture.mime || 'image/png',
       };
     }
 
@@ -517,9 +519,11 @@ export const createMittrCraftControlService = (dependencies) => {
       });
       return {
         path: saved.path,
-        hint: `Write ![](${saved.path}) in your reply to show this image to the user; it is rendered under your message.`,
+        hint: `The image is attached for you to view directly; write ![](${saved.path}) in your reply to also show it to the user.`,
         width: result?.screen_width ?? null,
         height: result?.screen_height ?? null,
+        imageBase64: result?.screenshot_png_b64 ?? null,
+        imageMime: result?.screenshot_mime_type || 'image/png',
       };
     }
 
