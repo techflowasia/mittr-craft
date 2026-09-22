@@ -9,13 +9,28 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 const BINARY_NAME = process.platform === 'win32' ? 'cua-driver.exe' : 'cua-driver';
 
-const bundledBinaryCandidates = () => {
+// packages/web/server/lib/mittrcraft-control -> packages/electron/resources: the
+// monorepo-relative copy prepare-cua-driver.mjs writes, and the only one that
+// resolves in an unpackaged Electron run (`electron:dev`). A packaged app runs this
+// backend in-process inside Electron's main process, where process.resourcesPath
+// correctly points at the app's own bundled resources; electron:dev instead runs it
+// as a plain child process outside Electron entirely, so process.resourcesPath is
+// simply undefined there and every computer.* action would otherwise be permanently
+// unavailable in dev, never mind whichever computer.* action is being worked on.
+const devResourcesDir = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../../electron/resources',
+);
+
+export const bundledBinaryCandidates = () => {
   const roots = [
     process.env.MITTRCRAFT_BUNDLED_CUA_DRIVER_DIR,
     typeof process.resourcesPath === 'string' ? path.join(process.resourcesPath, 'cua-driver') : null,
+    path.join(devResourcesDir, 'cua-driver'),
   ]
     .map((value) => (typeof value === 'string' ? value.trim() : ''))
     .filter(Boolean);

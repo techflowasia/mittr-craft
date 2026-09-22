@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { createOpencodeClient } from '@opencode-ai/sdk/v2';
 import { MittrCraftControlError, asControlError } from './error.js';
 import { MITTRCRAFT_ALL_ACTIONS } from './actions.js';
@@ -155,6 +156,19 @@ export const createMittrCraftControlService = (dependencies) => {
     createClient = createOpencodeClient,
     sleep = (duration) => new Promise((resolve) => setTimeout(resolve, duration)),
     now = Date.now,
+    // Plain `open -a`, not cua-driver: launching an app needs no Accessibility or
+    // Screen Recording grant, so it does not belong behind the same binary as the
+    // other computer.* actions and works even where cua-driver is unavailable.
+    launchApp = (name) => new Promise((resolve, reject) => {
+      const child = spawn('open', ['-a', name], { stdio: ['ignore', 'ignore', 'pipe'] });
+      let stderr = '';
+      child.stderr.on('data', (chunk) => { stderr += chunk; });
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(stderr.trim() || `open -a "${name}" exited with code ${code}`));
+      });
+    }),
   } = dependencies;
 
   const wait = (duration, signal) => {
@@ -482,6 +496,19 @@ export const createMittrCraftControlService = (dependencies) => {
           bundleId: app.bundle_id ?? null,
         })),
       };
+    }
+
+    if (action === 'computer.open_app') {
+      const name = asNonEmptyString(input.app);
+      if (!name) throw new MittrCraftControlError('app is required for computer.open_app', 400);
+      if (!APP_NAME_PATTERN.test(name)) throw new MittrCraftControlError('app must be a plain app name', 400);
+      try {
+        await launchApp(name);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        throw new MittrCraftControlError(`Could not open "${name}": ${message}`, 502);
+      }
+      return { launched: true, app: name };
     }
 
     if (action === 'computer.bring_to_front') {

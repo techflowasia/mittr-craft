@@ -410,6 +410,31 @@ describe('computer control', () => {
     const { service } = await createComputerService();
     await expect(service.execute('computer.screenshot', {})).rejects.toThrow(/directory is required/);
   });
+
+  it('launches an app by name via open -a, not cua-driver', async () => {
+    const launchApp = vi.fn(async () => {});
+    const { service } = createService({ computerControl: { available: true, request: vi.fn() }, launchApp });
+
+    const result = await service.execute('computer.open_app', { app: 'Microsoft Teams' });
+    expect(launchApp).toHaveBeenCalledWith('Microsoft Teams');
+    expect(result).toEqual({ launched: true, app: 'Microsoft Teams' });
+  });
+
+  it('reports a clear error when the app cannot be opened', async () => {
+    const launchApp = vi.fn(async () => {
+      throw new Error('Unable to find application named "Nonexistent"');
+    });
+    const { service } = createService({ computerControl: { available: true, request: vi.fn() }, launchApp });
+
+    await expect(service.execute('computer.open_app', { app: 'Nonexistent' })).rejects.toThrow(
+      /Could not open "Nonexistent"/,
+    );
+  });
+
+  it('rejects computer.open_app with no app name', async () => {
+    const { service } = await createComputerService();
+    await expect(service.execute('computer.open_app', {})).rejects.toThrow(/app is required/);
+  });
 });
 
 describe('jira control', () => {

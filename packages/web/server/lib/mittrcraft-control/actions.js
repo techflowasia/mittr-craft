@@ -72,12 +72,16 @@ export const MITTRCRAFT_WEB_ACTIONS = Object.freeze(
 /**
  * Desktop control via the bundled `cua-driver` — a separate tool from
  * `mittrcraft_web` because it acts on the whole screen, not one page in the
- * panel. Only read/activate actions today; clicking or typing blind against a
+ * panel. Read/activate/launch actions only; clicking or typing blind against a
  * live desktop is deferred until each action's exact argument shape has been
  * verified against a running driver, not guessed from its help text.
+ * computer.open_app does not go through cua-driver at all — it is the plain
+ * macOS `open -a`, which needs no Accessibility/Screen Recording grant, so it
+ * carries none of that deferral.
  */
 export const MITTRCRAFT_COMPUTER_ACTION_DEFINITIONS = Object.freeze([
   { action: 'computer.list_apps', title: 'List desktop apps', description: 'List running and installed apps on the desktop, with name, pid, and running state; no parameters' },
+  { action: 'computer.open_app', title: 'Open an app', description: 'Launch app by name if it is not already running (macOS "open -a"). Use this first when computer.list_apps shows it is not running; opening does not itself bring its window to the front, so follow with computer.bring_to_front' },
   { action: 'computer.bring_to_front', title: 'Bring an app to the front', description: 'Activate app (by name, case-insensitive) and try to bring its main window to the front; report which window it targeted' },
   { action: 'computer.screenshot', title: 'Screenshot the desktop', description: 'Screenshot the whole desktop and see it directly — the image is attached to the result, and also saved as a file in the project whose path is returned; no parameters' },
 ]);
