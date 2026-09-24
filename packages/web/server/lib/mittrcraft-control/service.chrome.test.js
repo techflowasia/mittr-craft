@@ -1,0 +1,133 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import { createMittrCraftControlService } from './service.js';
+
+const createService = ({ settings = {}, pageUrl = 'https://plane.techflow.asia/', runImpl } = {}) => {
+  let stored = { agentChromeProfile: 'Default', agentChromeApprovedHosts: ['plane.techflow.asia'], ...settings };
+  const run = vi.fn(runImpl ?? (async (command) => {
+    if (command[0] === 'get' && command[1] === 'url') return { url: pageUrl };
+    if (command[0] === 'open') return { url: command[1], title: 'Page' };
+    if (command[0] === 'snapshot') return { origin: pageUrl, snapshot: '- link "Home" [ref=e1]', refs: { e1: {} } };
+    return {};
+  }));
+  const chromeControl = { available: true, chromeInstalled: () => true, run, profiles: vi.fn(async () => [{ directory: 'Default', name: 'Your Chrome' }]) };
+  const persistSettings = vi.fn(async (changes) => { stored = { ...stored, ...changes }; });
+  const service = createMittrCraftControlService({
+    readSettingsFromDiskMigrated: vi.fn(async () => stored),
+    sanitizeProjects: (projects) => projects,
+    buildOpenCodeUrl: () => 'http://127.0.0.1:4096/',
+    getOpenCodeAuthHeaders: () => ({}),
+    waitForOpenCodeReady: vi.fn(),
+    sessionService: {},
+    scheduledTaskService: {},
+    chromeControl,
+    persistSettings,
+  });
+  return { service, run, persistSettings, chromeControl };
+};
+
+const opts = { sessionId: 'ses_1' };
+
+describe('chrome actions', () => {
+  it('opens an approved host with the chosen profile and this session', async () => {
+    const { service, run } = createService();
+    await expect(service.execute('chrome.open', { url: 'https://plane.techflow.asia/x' }, '/repo', opts))
+      .resolves.toMatchObject({ url: 'https://plane.techflow.asia/x' });
+    expect(run).toHaveBeenCalledWith(['open', 'https://plane.techflow.asia/x'], expect.objectContaining({ sessionName: 'mc-ses_1', profile: 'Default' }));
+  });
+
+  it('asks for approval on a host that is not on the list', async () => {
+    const { service, run } = createService();
+    await expect(service.execute('chrome.open', { url: 'https://github.com/' }, '/repo', opts))
+      .rejects.toMatchObject({ code: 'site_approval_required', host: 'github.com', statusCode: 403 });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('records the host and proceeds when the plugin passes approveHost for it', async () => {
+    const { service, persistSettings } = createService();
+    await service.execute('chrome.open', { url: 'https://github.com/' }, '/repo', { ...opts, approveHost: 'github.com' });
+    expect(persistSettings).toHaveBeenCalledWith({ agentChromeApprovedHosts: ['plane.techflow.asia', 'github.com'] });
+  });
+
+  it('does not treat approveHost for one host as approval of another', async () => {
+    const { service } = createService();
+    await expect(service.execute('chrome.open', { url: 'https://evil.example/' }, '/repo', { ...opts, approveHost: 'github.com' }))
+      .rejects.toMatchObject({ code: 'site_approval_required', host: 'evil.example' });
+  });
+
+  it.each(['file:///etc/passwd', 'javascript:alert(1)', 'chrome://settings', 'not a url'])('refuses %s before running anything', async (url) => {
+    const { service, run } = createService();
+    await expect(service.execute('chrome.open', { url }, '/repo', opts)).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/http\(s\)/) });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('gates a page action on the host the page is on now, e.g. after an SSO redirect', async () => {
+    const { service, run } = createService({ pageUrl: 'https://login.microsoftonline.com/common/oauth2' });
+    await expect(service.execute('chrome.click', { ref: '@e1' }, '/repo', opts))
+      .rejects.toMatchObject({ code: 'site_approval_required', host: 'login.microsoftonline.com' });
+    expect(run).not.toHaveBeenCalledWith(['click', '@e1'], expect.anything());
+  });
+
+  it('asks the agent to open a page first when nothing is open', async () => {
+    const { service } = createService({ pageUrl: 'about:blank' });
+    await expect(service.execute('chrome.snapshot', {}, '/repo', opts)).rejects.toThrow(/chrome\.open/);
+  });
+
+  it('refuses until a profile is chosen', async () => {
+    const { service } = createService({ settings: { agentChromeProfile: '' } });
+    await expect(service.execute('chrome.open', { url: 'https://plane.techflow.asia/' }, '/repo', opts))
+      .rejects.toThrow(/choose a Chrome profile/i);
+  });
+
+  it('needs the calling session', async () => {
+    const { service } = createService();
+    await expect(service.execute('chrome.read', {}, '/repo', {})).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/calling session/) });
+  });
+
+  it('closes quietly even when the session never opened a page', async () => {
+    const { service } = createService({ runImpl: async () => { throw new Error('No session'); } });
+    await expect(service.execute('chrome.close', {}, '/repo', opts)).resolves.toEqual({ closed: true });
+  });
+
+  it('says Chrome is missing when it is not installed', async () => {
+    const { service, chromeControl } = createService();
+    chromeControl.chromeInstalled = () => false;
+    await expect(service.execute('chrome.open', { url: 'https://plane.techflow.asia/' }, '/repo', opts))
+      .rejects.toThrow(/Google Chrome is not installed/);
+  });
+
+  it('maps each page action to its fixed command', async () => {
+    const { service, run } = createService();
+    await service.execute('chrome.fill', { ref: '@e3', value: 'hello' }, '/repo', opts);
+    await service.execute('chrome.press', { key: 'Enter' }, '/repo', opts);
+    await service.execute('chrome.select', { ref: '@e4', value: 'High' }, '/repo', opts);
+    await service.execute('chrome.wait', { text: 'Saved' }, '/repo', opts);
+    await service.execute('chrome.snapshot', { selector: 'main' }, '/repo', opts);
+    const commands = run.mock.calls.map(([command]) => command).filter((command) => command[0] !== 'get');
+    expect(commands).toEqual([
+      ['fill', '@e3', 'hello'],
+      ['press', 'Enter'],
+      ['select', '@e4', 'High'],
+      ['wait', '--text', 'Saved'],
+      ['snapshot', '-i', '-s', 'main'],
+    ]);
+  });
+
+  it('closes the session when the call is cancelled mid-action', async () => {
+    const controller = new AbortController();
+    const { service, run } = createService({
+      runImpl: async (command) => {
+        if (command[0] === 'get') return { url: 'https://plane.techflow.asia/' };
+        if (command[0] === 'read') { controller.abort(); throw new Error('aborted'); }
+        return {};
+      },
+    });
+    await expect(service.execute('chrome.read', {}, '/repo', { ...opts, signal: controller.signal })).rejects.toThrow('aborted');
+    expect(run).toHaveBeenLastCalledWith(['close'], expect.objectContaining({ sessionName: 'mc-ses_1', signal: undefined }));
+  });
+
+  it('lists Chrome profiles for settings', async () => {
+    const { service } = createService();
+    await expect(service.chromeProfiles()).resolves.toEqual([{ directory: 'Default', name: 'Your Chrome' }]);
+  });
+});

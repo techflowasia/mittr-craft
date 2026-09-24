@@ -1,9 +1,12 @@
 import path from 'node:path';
+import fsPromises from 'node:fs/promises';
+import os from 'node:os';
 import { spawn } from 'node:child_process';
 import { createOpencodeClient } from '@opencode-ai/sdk/v2';
 import { MittrCraftControlError, asControlError } from './error.js';
 import { MITTRCRAFT_ALL_ACTIONS } from './actions.js';
 import { writeScreenshot } from './screenshots.js';
+import { chromeSessionName } from './chrome-control.js';
 
 const APP_NAME_PATTERN = /^[\w .()&-]{1,80}$/;
 
@@ -148,6 +151,8 @@ export const createMittrCraftControlService = (dependencies) => {
     scheduledTaskService,
     browserControl = null,
     computerControl = null,
+    chromeControl = null,
+    persistSettings = async () => {},
     // A function, not a value: brokerBaseUrl/ensureFreshSession only exist once the Mittr
     // shim has started, which happens after this service is constructed. Reading through a
     // getter means the wiring in index.js can fill this in later without this file caring
@@ -598,6 +603,128 @@ export const createMittrCraftControlService = (dependencies) => {
     }
   };
 
+  const required = (value, name) => {
+    const text = asNonEmptyString(value);
+    if (!text) throw new MittrCraftControlError(`${name} is required`, 400);
+    return text;
+  };
+
+  const hostOf = (url) => {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new MittrCraftControlError('url must be a full http(s) address', 400);
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new MittrCraftControlError('Only http(s) pages can be opened in Chrome', 400);
+    }
+    return parsed.hostname.toLowerCase();
+  };
+
+  const CHROME_COMMANDS = {
+    'chrome.snapshot': (input) => (asNonEmptyString(input.selector) ? ['snapshot', '-i', '-s', asNonEmptyString(input.selector)] : ['snapshot', '-i']),
+    'chrome.read': () => ['read'],
+    'chrome.click': (input) => ['click', required(input.ref, 'ref')],
+    'chrome.fill': (input) => ['fill', required(input.ref, 'ref'), String(input.value ?? '')],
+    'chrome.type': (input) => ['type', required(input.ref, 'ref'), String(input.value ?? '')],
+    'chrome.press': (input) => ['press', required(input.key, 'key')],
+    'chrome.select': (input) => ['select', required(input.ref, 'ref'), required(input.value, 'value')],
+    'chrome.wait': (input) => (asNonEmptyString(input.text) ? ['wait', '--text', asNonEmptyString(input.text)] : ['wait', required(input.ref, 'ref')]),
+  };
+
+  const chromeAction = async (action, input, contextDirectory, options = {}) => {
+    const sessionId = asNonEmptyString(options.sessionId);
+    if (!sessionId) throw new MittrCraftControlError('The Chrome tool needs the calling session', 400);
+    const settings = (await readSettingsFromDiskMigrated()) ?? {};
+    const profile = asNonEmptyString(settings.agentChromeProfile);
+    const runOptions = {
+      sessionName: chromeSessionName(sessionId),
+      profile: profile ?? 'Default',
+      headed: settings.agentChromeHeaded === true,
+      signal: options.signal,
+    };
+
+    if (action === 'chrome.close') {
+      await chromeControl.run(['close'], runOptions).catch(() => undefined);
+      return { closed: true };
+    }
+    if (!chromeControl.chromeInstalled()) {
+      throw new MittrCraftControlError('Google Chrome is not installed on this Mac; ask the user to install it', 503);
+    }
+    if (!profile) {
+      throw new MittrCraftControlError('No Chrome profile is chosen yet; ask the user to choose a Chrome profile in Settings → MittrCraft tools', 409);
+    }
+
+    const approved = Array.isArray(settings.agentChromeApprovedHosts) ? settings.agentChromeApprovedHosts : [];
+    const ensureApproved = async (host) => {
+      if (approved.includes(host)) return;
+      if (asNonEmptyString(options.approveHost) === host) {
+        await persistSettings({ agentChromeApprovedHosts: [...approved, host] });
+        return;
+      }
+      throw new MittrCraftControlError(
+        `The user has not yet allowed using their Chrome sign-in on ${host}`,
+        403,
+        { code: 'site_approval_required', host },
+      );
+    };
+
+    const runAction = async (command) => {
+      try {
+        return await chromeControl.run(command, runOptions);
+      } catch (error) {
+        if (options.signal?.aborted) {
+          await chromeControl.run(['close'], { ...runOptions, signal: undefined }).catch(() => undefined);
+        }
+        throw error;
+      }
+    };
+
+    if (action === 'chrome.open') {
+      const url = required(input.url, 'url');
+      await ensureApproved(hostOf(url));
+      return runAction(['open', url]);
+    }
+
+    const current = await chromeControl.run(['get', 'url'], runOptions);
+    const currentUrl = asNonEmptyString(current?.url);
+    if (!currentUrl || currentUrl === 'about:blank') {
+      throw new MittrCraftControlError('No page is open in this session; call chrome.open first', 400);
+    }
+    await ensureApproved(hostOf(currentUrl));
+
+    if (action === 'chrome.screenshot') {
+      const directory = asNonEmptyString(input.directory) || asNonEmptyString(contextDirectory);
+      if (!directory) throw new MittrCraftControlError('directory is required to save a screenshot', 400);
+      const scratch = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'mittrcraft-chrome-'));
+      try {
+        const file = path.join(scratch, 'page.png');
+        await runAction(['screenshot', file]);
+        const base64 = (await fsPromises.readFile(file)).toString('base64');
+        const saved = await writeScreenshot({ directory, base64, mime: 'image/png', label: input.label || 'chrome' });
+        return {
+          path: saved.path,
+          hint: `The image is attached for you to view directly; write ![](${saved.path}) in your reply to also show it to the user.`,
+          url: currentUrl,
+          imageBase64: base64,
+          imageMime: 'image/png',
+        };
+      } finally {
+        await fsPromises.rm(scratch, { recursive: true, force: true });
+      }
+    }
+
+    const build = CHROME_COMMANDS[action];
+    if (!build) throw new MittrCraftControlError(`Unsupported Chrome action: ${action}`, 400);
+    return runAction(build(input));
+  };
+
+  const chromeProfiles = async () => {
+    if (!chromeControl?.available) return [];
+    return chromeControl.profiles();
+  };
+
   const execute = async (action, input = {}, contextDirectory, options = {}) => {
     try {
       if (!CONTROL_ACTIONS.has(action)) {
@@ -614,6 +741,12 @@ export const createMittrCraftControlService = (dependencies) => {
           throw new MittrCraftControlError('Computer use is not available on this build', 503);
         }
         return computerAction(action, input, contextDirectory);
+      }
+      if (action.startsWith('chrome.')) {
+        if (!chromeControl || chromeControl.available !== true) {
+          throw new MittrCraftControlError('The Chrome tool is not bundled in this build of MittrCraft', 503);
+        }
+        return chromeAction(action, input, contextDirectory, options);
       }
       if (action.startsWith('jira.')) {
         return jiraAction(action, input);
@@ -711,5 +844,5 @@ export const createMittrCraftControlService = (dependencies) => {
     }
   };
 
-  return { execute };
+  return { execute, chromeProfiles };
 };
