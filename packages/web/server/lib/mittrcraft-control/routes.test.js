@@ -44,3 +44,13 @@ describe('MittrCraft control route', () => {
     });
   });
 });
+
+describe('Chrome profiles route', () => {
+  it('lists Chrome profiles for the settings screen', async () => {
+    const app = express();
+    registerMittrCraftControlRoutes(app, { controlService: { execute: vi.fn(), chromeProfiles: vi.fn(async () => [{ directory: 'Default', name: 'Your Chrome' }]) } });
+    const response = await request(app).get('/api/mittrcraft/chrome/profiles');
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ profiles: [{ directory: 'Default', name: 'Your Chrome' }] });
+  });
+});

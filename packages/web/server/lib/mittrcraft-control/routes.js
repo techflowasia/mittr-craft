@@ -2,6 +2,16 @@ import express from 'express';
 import { asControlError } from './error.js';
 
 export const registerMittrCraftControlRoutes = (app, { controlService }) => {
+  app.get('/api/mittrcraft/chrome/profiles', async (_req, res) => {
+    try {
+      const profiles = typeof controlService.chromeProfiles === 'function' ? await controlService.chromeProfiles() : [];
+      return res.json({ profiles });
+    } catch (error) {
+      const controlError = asControlError(error, 'Could not list Chrome profiles');
+      return res.status(controlError.statusCode).json({ error: controlError.message });
+    }
+  });
+
   app.post('/api/mittrcraft/control', express.json({ limit: '1mb' }), async (req, res) => {
     const controller = new AbortController();
     const abortOnDisconnect = () => {

@@ -110,6 +110,7 @@ import { createMittrCraftSessionService } from './lib/mittrcraft-sessions/routes
 import { createScheduledTaskService } from './lib/scheduled-tasks/service.js';
 import { createMittrCraftControlService } from './lib/mittrcraft-control/service.js';
 import { createComputerControl } from './lib/mittrcraft-control/computer-control.js';
+import { createChromeControl } from './lib/mittrcraft-control/chrome-control.js';
 import { createMittrWorkService } from './lib/mittr-work/service.js';
 import webPush from 'web-push';
 
@@ -1109,8 +1110,9 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
     const includeControl = settings?.agentControlToolEnabled !== false;
     const includeWeb = settings?.agentWebToolEnabled !== false;
     const includeComputer = settings?.agentComputerToolEnabled !== false;
-    const managedEnv = includeControl || includeWeb || includeComputer
-      ? await (agentToolRuntime?.prepareManagedOpenCodeEnv({ includeControl, includeWeb, includeComputer }) || {})
+    const includeChrome = settings?.agentChromeToolEnabled !== false && chromeControl.available;
+    const managedEnv = includeControl || includeWeb || includeComputer || includeChrome
+      ? await (agentToolRuntime?.prepareManagedOpenCodeEnv({ includeControl, includeWeb, includeComputer, includeChrome }) || {})
       : {};
     if (settings?.optimizeSystemPrompt !== true) return managedEnv;
 
@@ -1223,6 +1225,7 @@ const browserControlBroker = createBrowserControlBroker({
 });
 
 const computerControl = createComputerControl();
+const chromeControl = createChromeControl();
 
 // Filled in once `main()` starts the Mittr shim, which is when brokerBaseUrl/ensureFreshSession
 // first exist. A getter (not the value itself) so this service's construction order does not
@@ -1242,6 +1245,8 @@ const mittrCraftControlService = createMittrCraftControlService({
   scheduledTaskService,
   browserControl: browserControlBroker,
   computerControl,
+  chromeControl,
+  persistSettings,
 });
 
 const ensureGlobalWatcherStarted = async () => {
@@ -1278,6 +1283,7 @@ const fetchModelsSnapshot = (...args) => serverUtilsRuntime.fetchModelsSnapshot(
 const setupProxy = (...args) => serverUtilsRuntime.setupProxy(...args);
 const gracefulShutdownRuntime = createGracefulShutdownRuntime({
   process,
+  closeBrowserSessions: () => chromeControl.closeAll(),
   shutdownTimeoutMs: SHUTDOWN_TIMEOUT,
   getExitOnShutdown: () => exitOnShutdown,
   getIsShuttingDown: () => isShuttingDown,

@@ -480,3 +480,22 @@ describe('settings helpers', () => {
     });
   });
 });
+
+describe('sanitizeSettingsUpdate — agent tools', () => {
+  it('keeps the computer and Chrome tool settings', () => {
+    const { sanitizeSettingsUpdate } = createTestHelpers();
+    expect(sanitizeSettingsUpdate({
+      agentComputerToolEnabled: false,
+      agentChromeToolEnabled: false,
+      agentChromeProfile: 'Profile 1',
+      agentChromeHeaded: true,
+      agentChromeApprovedHosts: ['Plane.Techflow.Asia', 'plane.techflow.asia', '', 42, 'github.com'],
+    })).toMatchObject({
+      agentComputerToolEnabled: false,
+      agentChromeToolEnabled: false,
+      agentChromeProfile: 'Profile 1',
+      agentChromeHeaded: true,
+      agentChromeApprovedHosts: ['plane.techflow.asia', 'github.com'],
+    });
+  });
+});
