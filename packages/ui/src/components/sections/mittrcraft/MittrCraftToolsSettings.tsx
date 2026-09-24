@@ -27,6 +27,8 @@ export const MittrCraftToolsSettings: React.FC = () => {
   const setAgentControlToolEnabled = useUIStore((state) => state.setAgentControlToolEnabled);
   const agentWebToolEnabled = useUIStore((state) => state.agentWebToolEnabled);
   const setAgentWebToolEnabled = useUIStore((state) => state.setAgentWebToolEnabled);
+  const agentComputerToolEnabled = useUIStore((state) => state.agentComputerToolEnabled);
+  const setAgentComputerToolEnabled = useUIStore((state) => state.setAgentComputerToolEnabled);
 
   const handleAgentControlToolChange = React.useCallback((enabled: boolean) => {
     setAgentControlToolEnabled(enabled);
@@ -39,6 +41,12 @@ export const MittrCraftToolsSettings: React.FC = () => {
     void updateDesktopSettings({ agentWebToolEnabled: enabled });
     recordDeferredOpenCodeRestart('cli', { id: 'agent-web-tool' });
   }, [setAgentWebToolEnabled]);
+
+  const handleAgentComputerToolChange = React.useCallback((enabled: boolean) => {
+    setAgentComputerToolEnabled(enabled);
+    void updateDesktopSettings({ agentComputerToolEnabled: enabled });
+    recordDeferredOpenCodeRestart('cli', { id: 'agent-computer-tool' });
+  }, [setAgentComputerToolEnabled]);
 
   return (
     <SettingsSection title={t('settings.mittrcraft.tools.title')}>
@@ -59,6 +67,15 @@ export const MittrCraftToolsSettings: React.FC = () => {
           label={t('settings.mittrcraft.tools.field.agentWebTool')}
           ariaLabel={t('settings.mittrcraft.tools.field.agentWebToolAria')}
           info={t('settings.mittrcraft.tools.field.agentWebToolInfo')}
+        />
+
+        <SettingsCheckboxRow
+          settingsItem="sessions.agent-computer-tool"
+          checked={agentComputerToolEnabled}
+          onChange={handleAgentComputerToolChange}
+          label={t('settings.mittrcraft.tools.field.agentComputerTool')}
+          ariaLabel={t('settings.mittrcraft.tools.field.agentComputerToolAria')}
+          info={t('settings.mittrcraft.tools.field.agentComputerToolInfo')}
         />
       </div>
     </SettingsSection>

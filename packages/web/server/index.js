@@ -1108,10 +1108,7 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
     // injected while at least one of them is on.
     const includeControl = settings?.agentControlToolEnabled !== false;
     const includeWeb = settings?.agentWebToolEnabled !== false;
-    // Opt-in, unlike the two above: this one controls the whole desktop, not a
-    // page in our own panel, so an existing install must not gain it silently
-    // on upgrade just because the setting was never touched.
-    const includeComputer = settings?.agentComputerToolEnabled === true;
+    const includeComputer = settings?.agentComputerToolEnabled !== false;
     const managedEnv = includeControl || includeWeb || includeComputer
       ? await (agentToolRuntime?.prepareManagedOpenCodeEnv({ includeControl, includeWeb, includeComputer }) || {})
       : {};

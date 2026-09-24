@@ -767,6 +767,7 @@ interface UIStore {
   persistChatDraft: boolean;
   agentControlToolEnabled: boolean;
   agentWebToolEnabled: boolean;
+  agentComputerToolEnabled: boolean;
   inputSpellcheckEnabled: boolean;
   wideChatLayoutEnabled: boolean;
   codeBlockLineWrap: boolean;
@@ -942,6 +943,7 @@ interface UIStore {
   setPersistChatDraft: (value: boolean) => void;
   setAgentControlToolEnabled: (value: boolean) => void;
   setAgentWebToolEnabled: (value: boolean) => void;
+  setAgentComputerToolEnabled: (value: boolean) => void;
   setInputSpellcheckEnabled: (value: boolean) => void;
   setWideChatLayoutEnabled: (value: boolean) => void;
   setCodeBlockLineWrap: (value: boolean) => void;
@@ -1104,6 +1106,7 @@ export const useUIStore = create<UIStore>()(
         persistChatDraft: true,
         agentControlToolEnabled: true,
         agentWebToolEnabled: true,
+        agentComputerToolEnabled: true,
         inputSpellcheckEnabled: false,
         wideChatLayoutEnabled: false,
         codeBlockLineWrap: true,
@@ -2335,6 +2338,9 @@ export const useUIStore = create<UIStore>()(
         setAgentWebToolEnabled: (value) => {
           set({ agentWebToolEnabled: value });
         },
+        setAgentComputerToolEnabled: (value) => {
+          set({ agentComputerToolEnabled: value });
+        },
         setInputSpellcheckEnabled: (value) => {
           set({ inputSpellcheckEnabled: value });
         },
@@ -2719,6 +2725,7 @@ export const useUIStore = create<UIStore>()(
           persistChatDraft: state.persistChatDraft,
           agentControlToolEnabled: state.agentControlToolEnabled,
           agentWebToolEnabled: state.agentWebToolEnabled,
+          agentComputerToolEnabled: state.agentComputerToolEnabled,
           inputSpellcheckEnabled: state.inputSpellcheckEnabled,
           wideChatLayoutEnabled: state.wideChatLayoutEnabled,
           codeBlockLineWrap: state.codeBlockLineWrap,

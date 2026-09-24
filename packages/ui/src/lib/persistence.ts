@@ -542,6 +542,7 @@ const materializeAuthoritativeUiSettings = (settings: DesktopSettings): DesktopS
     inputSpellcheckEnabled: defaults.inputSpellcheckEnabled,
     agentControlToolEnabled: defaults.agentControlToolEnabled,
     agentWebToolEnabled: defaults.agentWebToolEnabled,
+    agentComputerToolEnabled: defaults.agentComputerToolEnabled,
     showToolFileIcons: defaults.showToolFileIcons,
     codeBlockLineWrap: defaults.codeBlockLineWrap,
     showTurnChangedFiles: defaults.showTurnChangedFiles,
@@ -717,6 +718,12 @@ const applyDesktopUiPreferences = (settings: DesktopSettings) => {
     && settings.agentWebToolEnabled !== store.agentWebToolEnabled
   ) {
     store.setAgentWebToolEnabled(settings.agentWebToolEnabled);
+  }
+  if (
+    typeof settings.agentComputerToolEnabled === 'boolean'
+    && settings.agentComputerToolEnabled !== store.agentComputerToolEnabled
+  ) {
+    store.setAgentComputerToolEnabled(settings.agentComputerToolEnabled);
   }
   if (typeof settings.showToolFileIcons === 'boolean' && settings.showToolFileIcons !== store.showToolFileIcons) {
     store.setShowToolFileIcons(settings.showToolFileIcons);
@@ -1363,6 +1370,9 @@ const sanitizeWebSettings = (payload: unknown): DesktopSettings | null => {
   }
   if (typeof candidate.agentWebToolEnabled === 'boolean') {
     result.agentWebToolEnabled = candidate.agentWebToolEnabled;
+  }
+  if (typeof candidate.agentComputerToolEnabled === 'boolean') {
+    result.agentComputerToolEnabled = candidate.agentComputerToolEnabled;
   }
   if (typeof candidate.showToolFileIcons === 'boolean') {
     result.showToolFileIcons = candidate.showToolFileIcons;
