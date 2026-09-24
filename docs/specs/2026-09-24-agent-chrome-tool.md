@@ -1,6 +1,6 @@
 # Agent tool: sites the user is signed in to in Chrome (`mittrcraft_chrome`)
 
-Status: design approved in conversation; awaiting spec review
+Status: approved 2026-09-24; §6 revised after the implementation review
 Date: 2026-09-24
 
 ## 1. Context
@@ -125,26 +125,40 @@ to ask the user to choose a profile in Settings.
 
 ### Per-site approval (owner decision: ask the first time per site)
 
-1. Before `chrome.open`, the plugin asks the server whether the URL's host is on
-   the approved list.
-2. If not, the plugin calls OpenCode's
-   `context.ask({ permission: 'mittrcraft_chrome', patterns: [host], always: [host], metadata: { profile, url } })`
-   (available in `@opencode-ai/plugin` 1.18.25). MittrCraft's existing
-   permission prompt shows it: the agent wants to use your Chrome sign-in
-   (profile X) on `host`.
-3. Allowed → the server adds `host` to the persisted approved list and the call
-   proceeds. Denied → `ask` throws and the tool returns "the user did not allow
-   this site".
-4. The list lives in MittrCraft's desktop settings next to
-   `agentWebToolEnabled`, is shown in Settings, and each host can be removed.
+1. Before any action, the server checks the host (for `chrome.open` the target
+   URL, otherwise the page's current URL) against the saved list and this
+   session's grants.
+2. If it is not allowed, the call returns `site_approval_required` with the
+   host, and the plugin calls OpenCode's
+   `context.ask({ permission: 'mittrcraft_chrome', patterns: [host], always: [host], metadata: { host } })`.
+   MittrCraft's permission prompt shows it.
+3. The server records the answer only from OpenCode's own events
+   (`permission.asked` then `permission.replied` for that request): "always"
+   saves the host, "once" allows it for that session only, "reject" allows
+   nothing. The plugin's retry carries only `approvalAnswered: true`, which
+   makes the server wait for that answer; it approves nothing by itself. (An
+   earlier design let the retry carry the host to approve; the review showed
+   anything holding the callback token could send that, so it was removed.)
+4. Auto-accept never answers this permission.
+5. The saved list lives in MittrCraft's desktop settings next to
+   `agentWebToolEnabled`, is shown in Settings, and each host can be removed;
+   adding and removing re-read the list inside one lock so concurrent changes
+   are not lost.
 
 ### Domain fence
 
 agent-browser's documentation says `--allowed-domains` refuses `--profile`
-(verify during implementation; if they do combine, pass it as well). Either way
-MittrCraft fences domains itself: after every action the server reads the current URL; if a click
-or redirect has moved to a host that is not approved, the result reports it and
-the next call on that host goes through the same approval as step 2.
+(verify during the walk; if they do combine, pass it as well). Either way
+MittrCraft fences domains itself: after every action, including `chrome.open`,
+the server reads the current URL; if a click or redirect has moved to a host
+that is not allowed, the call returns `site_moved` with that host and nothing
+from the page. Opening that URL goes through the approval above.
+
+All sessions run in their own agent-browser namespace (`mittrcraft`), so
+closing them on quit never touches agent-browser sessions the user runs
+elsewhere. Inputs that agent-browser would read as its own flags (anything
+starting with `-`, refs that are not `@eN`, keys that are not key names) are
+refused.
 
 ## 7. Settings
 
