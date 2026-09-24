@@ -126,6 +126,29 @@ describe('chrome actions', () => {
     expect(run).toHaveBeenLastCalledWith(['close'], expect.objectContaining({ sessionName: 'mc-ses_1', signal: undefined }));
   });
 
+  it.each([
+    ['chrome.click', { ref: '--session' }],
+    ['chrome.click', { ref: 'e1; --profile x' }],
+    ['chrome.fill', { ref: '@e3', value: '--profile' }],
+    ['chrome.type', { ref: '@e3', value: '-x' }],
+    ['chrome.select', { ref: '@e4', value: '--proxy' }],
+    ['chrome.press', { key: '--allow-file-access' }],
+    ['chrome.wait', { text: '--session' }],
+    ['chrome.snapshot', { selector: '--auto-connect' }],
+  ])('refuses %s input that agent-browser would read as a flag', async (action, input) => {
+    const { service, run } = createService();
+    await expect(service.execute(action, input, '/repo', opts)).rejects.toMatchObject({ statusCode: 400 });
+    expect(run.mock.calls.map(([command]) => command[0])).not.toContain(action.split('.')[1]);
+  });
+
+  it('accepts refs with or without the @ and ordinary key names', async () => {
+    const { service, run } = createService();
+    await service.execute('chrome.click', { ref: 'e12' }, '/repo', opts);
+    await service.execute('chrome.press', { key: 'Control+a' }, '/repo', opts);
+    const commands = run.mock.calls.map(([command]) => command).filter((command) => command[0] !== 'get');
+    expect(commands).toEqual([['click', '@e12'], ['press', 'Control+a']]);
+  });
+
   it('lists Chrome profiles for settings', async () => {
     const { service } = createService();
     await expect(service.chromeProfiles()).resolves.toEqual([{ directory: 'Default', name: 'Your Chrome' }]);

@@ -622,15 +622,36 @@ export const createMittrCraftControlService = (dependencies) => {
     return parsed.hostname.toLowerCase();
   };
 
+  const refOf = (value) => {
+    const match = /^@?(e\d+)$/.exec(asNonEmptyString(value) ?? '');
+    if (!match) throw new MittrCraftControlError('ref must be an element ref from chrome.snapshot, such as @e3', 400);
+    return `@${match[1]}`;
+  };
+
+  const keyOf = (value) => {
+    const key = asNonEmptyString(value) ?? '';
+    if (!/^[A-Za-z0-9]+(\+[A-Za-z0-9]+)*$/.test(key)) {
+      throw new MittrCraftControlError('key must be a key name such as Enter, Tab or Control+a', 400);
+    }
+    return key;
+  };
+
+  const plainArg = (value, name, { allowEmpty = false } = {}) => {
+    const text = String(value ?? '');
+    if (!allowEmpty && text.trim().length === 0) throw new MittrCraftControlError(`${name} is required`, 400);
+    if (text.startsWith('-')) throw new MittrCraftControlError(`${name} cannot start with "-"`, 400);
+    return text;
+  };
+
   const CHROME_COMMANDS = {
-    'chrome.snapshot': (input) => (asNonEmptyString(input.selector) ? ['snapshot', '-i', '-s', asNonEmptyString(input.selector)] : ['snapshot', '-i']),
+    'chrome.snapshot': (input) => (asNonEmptyString(input.selector) ? ['snapshot', '-i', '-s', plainArg(input.selector, 'selector')] : ['snapshot', '-i']),
     'chrome.read': () => ['read'],
-    'chrome.click': (input) => ['click', required(input.ref, 'ref')],
-    'chrome.fill': (input) => ['fill', required(input.ref, 'ref'), String(input.value ?? '')],
-    'chrome.type': (input) => ['type', required(input.ref, 'ref'), String(input.value ?? '')],
-    'chrome.press': (input) => ['press', required(input.key, 'key')],
-    'chrome.select': (input) => ['select', required(input.ref, 'ref'), required(input.value, 'value')],
-    'chrome.wait': (input) => (asNonEmptyString(input.text) ? ['wait', '--text', asNonEmptyString(input.text)] : ['wait', required(input.ref, 'ref')]),
+    'chrome.click': (input) => ['click', refOf(input.ref)],
+    'chrome.fill': (input) => ['fill', refOf(input.ref), plainArg(input.value, 'value', { allowEmpty: true })],
+    'chrome.type': (input) => ['type', refOf(input.ref), plainArg(input.value, 'value', { allowEmpty: true })],
+    'chrome.press': (input) => ['press', keyOf(input.key)],
+    'chrome.select': (input) => ['select', refOf(input.ref), plainArg(input.value, 'value')],
+    'chrome.wait': (input) => (asNonEmptyString(input.text) ? ['wait', '--text', plainArg(input.text, 'text')] : ['wait', refOf(input.ref)]),
   };
 
   const chromeAction = async (action, input, contextDirectory, options = {}) => {
