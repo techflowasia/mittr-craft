@@ -1396,6 +1396,18 @@ const sanitizeWebSettings = (payload: unknown): DesktopSettings | null => {
   if (typeof candidate.agentComputerToolEnabled === 'boolean') {
     result.agentComputerToolEnabled = candidate.agentComputerToolEnabled;
   }
+  if (typeof candidate.agentChromeToolEnabled === 'boolean') {
+    result.agentChromeToolEnabled = candidate.agentChromeToolEnabled;
+  }
+  if (typeof candidate.agentChromeProfile === 'string') {
+    result.agentChromeProfile = candidate.agentChromeProfile;
+  }
+  if (Array.isArray(candidate.agentChromeApprovedHosts)) {
+    result.agentChromeApprovedHosts = candidate.agentChromeApprovedHosts.filter((host): host is string => typeof host === 'string');
+  }
+  if (typeof candidate.agentChromeHeaded === 'boolean') {
+    result.agentChromeHeaded = candidate.agentChromeHeaded;
+  }
   if (typeof candidate.showToolFileIcons === 'boolean') {
     result.showToolFileIcons = candidate.showToolFileIcons;
   }

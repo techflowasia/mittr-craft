@@ -11,7 +11,7 @@ import {
 } from '@/components/sections/shared/SettingsSection';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { fetchChromeProfiles, type ChromeProfile } from '@/lib/chromeProfilesApi';
+import { fetchChromeProfiles, removeChromeApprovedHost, type ChromeProfile } from '@/lib/chromeProfilesApi';
 import { recordDeferredOpenCodeRestart } from '@/lib/opencode/deferredRestart';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { useUIStore } from '@/stores/useUIStore';
@@ -92,10 +92,10 @@ export const MittrCraftToolsSettings: React.FC = () => {
   }, [setAgentChromeHeaded]);
 
   const handleRemoveChromeHost = React.useCallback((host: string) => {
-    const next = agentChromeApprovedHosts.filter((entry) => entry !== host);
-    setAgentChromeApprovedHosts(next);
-    void updateDesktopSettings({ agentChromeApprovedHosts: next });
-  }, [agentChromeApprovedHosts, setAgentChromeApprovedHosts]);
+    void removeChromeApprovedHost(host).then((hosts) => {
+      if (hosts) setAgentChromeApprovedHosts(hosts);
+    });
+  }, [setAgentChromeApprovedHosts]);
 
   return (
     <SettingsSection title={t('settings.mittrcraft.tools.title')}>
