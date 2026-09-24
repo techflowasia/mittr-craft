@@ -17,7 +17,7 @@ const fakeBinary = async (reply) => {
   const log = path.join(directory, 'argv.json');
   await fs.writeFile(binary, `#!/usr/bin/env node
 const fs = require('node:fs');
-fs.writeFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), chrome: process.env.AGENT_BROWSER_EXECUTABLE_PATH }));
+fs.writeFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), chrome: process.env.AGENT_BROWSER_EXECUTABLE_PATH, namespace: process.env.AGENT_BROWSER_NAMESPACE }));
 process.stdout.write(${JSON.stringify(JSON.stringify(reply))});
 `, { mode: 0o755 });
   return { binary, readCall: async () => JSON.parse(await fs.readFile(log, 'utf8')) };
@@ -66,6 +66,16 @@ describe('createChromeControl.run', () => {
     const { binary, readCall } = await fakeBinary({ success: true, data: {}, error: null });
     await controlFor(binary).run(['fill', '@e3', 'a "quoted" value; rm -rf /'], { sessionName: 's', profile: 'Default' });
     expect((await readCall()).argv.slice(-3)).toEqual(['fill', '@e3', 'a "quoted" value; rm -rf /']);
+  });
+});
+
+describe('createChromeControl namespace', () => {
+  it('keeps MittrCraft\'s sessions in their own namespace so close --all never touches the user\'s', async () => {
+    const { binary, readCall } = await fakeBinary({ success: true, data: {}, error: null });
+    await controlFor(binary).closeAll();
+    const call = await readCall();
+    expect(call.argv).toEqual(['--json', 'close', '--all']);
+    expect(call.namespace).toBe('mittrcraft');
   });
 });
 

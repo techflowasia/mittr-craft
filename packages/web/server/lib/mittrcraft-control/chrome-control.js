@@ -55,7 +55,7 @@ export const createChromeControl = ({
   execute = executeBinary,
 } = {}) => {
   const binary = resolve();
-  const env = { ...process.env, AGENT_BROWSER_EXECUTABLE_PATH: chromePath };
+  const env = { ...process.env, AGENT_BROWSER_EXECUTABLE_PATH: chromePath, AGENT_BROWSER_NAMESPACE: 'mittrcraft' };
 
   const call = async (argv, signal) => {
     if (!binary) throw new Error('The Chrome tool is not bundled in this build of MittrCraft');
