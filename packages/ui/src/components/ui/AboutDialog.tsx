@@ -139,6 +139,20 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
 
   const displayVersion = version;
 
+  const [signingOut, setSigningOut] = React.useState(false);
+
+  const handleSignOutMittr = React.useCallback(async () => {
+    setSigningOut(true);
+    try {
+      const response = await runtimeFetch('/api/mittr/auth/session', { method: 'DELETE' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      window.location.reload();
+    } catch {
+      toast.error(t('settings.mittrcraft.about.toast.signOutFailed'));
+      setSigningOut(false);
+    }
+  }, [t]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xs p-6">
@@ -195,6 +209,19 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
               <span>GitHub</span>
             </a>
           </div>
+
+          <button
+            type="button"
+            onClick={() => { void handleSignOutMittr(); }}
+            disabled={signingOut}
+            className={cn(
+              'typography-meta text-muted-foreground hover:text-foreground',
+              'underline-offset-2 hover:underline',
+              'disabled:opacity-50 disabled:cursor-not-allowed'
+            )}
+          >
+            {t('settings.mittrcraft.about.actions.signOutMittr')}
+          </button>
 
           <p className="typography-meta text-muted-foreground pt-2">
             {t('aboutDialog.footerNote')}
