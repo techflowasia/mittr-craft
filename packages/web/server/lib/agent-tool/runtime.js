@@ -10,6 +10,7 @@ import {
   MITTRCRAFT_CHROME_ACTION_DEFINITIONS,
   MITTRCRAFT_CHROME_ACTIONS,
 } from '../mittrcraft-control/actions.js';
+import { CHROME_PERMISSION } from '../mittrcraft-control/chrome-approvals.js';
 
 const TOOL_SCHEMA_VERSION = 1;
 // Everything either managed tool may ask for; the agent allowlist stays
@@ -299,7 +300,7 @@ ${entries.join('')}  },${chromeEvents}
 `;
 };
 
-const mergePluginConfig = (rawConfig, pluginUrl) => {
+const mergePluginConfig = (rawConfig, pluginUrl, { askChrome = false } = {}) => {
   const errors = [];
   const parsed = asNonEmptyString(rawConfig) ? parseJsonc(rawConfig, errors, { allowTrailingComma: true }) : {};
   if (errors.length > 0 || !parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
@@ -313,6 +314,13 @@ const mergePluginConfig = (rawConfig, pluginUrl) => {
     ...configured.filter((value) => value !== pluginUrl && (!Array.isArray(value) || value[0] !== pluginUrl)),
     pluginUrl,
   ];
+  if (askChrome) {
+    const existing = parsed.permission;
+    const rules = typeof existing === 'string'
+      ? { '*': existing }
+      : existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {};
+    parsed.permission = { ...rules, [CHROME_PERMISSION]: 'ask' };
+  }
   return JSON.stringify(parsed);
 };
 
@@ -343,7 +351,7 @@ export const createAgentToolRuntime = (dependencies) => {
     activeToken = crypto.randomBytes(32).toString('base64url');
     const pluginUrl = pathToFileURL(pluginPath).href;
     return {
-      OPENCODE_CONFIG_CONTENT: mergePluginConfig(env.OPENCODE_CONFIG_CONTENT, pluginUrl),
+      OPENCODE_CONFIG_CONTENT: mergePluginConfig(env.OPENCODE_CONFIG_CONTENT, pluginUrl, { askChrome: includeChrome }),
       MITTRCRAFT_AGENT_TOOL_URL: `http://127.0.0.1:${port}/api/mittrcraft/agent-tool`,
       MITTRCRAFT_AGENT_TOOL_TOKEN: activeToken,
     };

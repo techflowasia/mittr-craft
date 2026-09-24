@@ -500,3 +500,24 @@ describe('mittrcraft_chrome tool', () => {
     expect(bodies).toEqual([{ input: { action: 'chrome.close' }, contextSessionId: 'ses_9' }]);
   });
 });
+
+describe('Chrome sign-in permission', () => {
+  it('makes OpenCode ask about the Chrome permission when the Chrome tool is on', async () => {
+    const { runtime } = await createRuntime({ env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: { bash: 'allow', mittrcraft_chrome: 'allow' } }) } });
+    const prepared = await runtime.prepareManagedOpenCodeEnv({ includeChrome: true });
+    const config = JSON.parse(prepared.OPENCODE_CONFIG_CONTENT);
+    expect(config.permission).toEqual({ bash: 'allow', mittrcraft_chrome: 'ask' });
+  });
+
+  it('leaves permissions alone when the Chrome tool is off', async () => {
+    const { runtime } = await createRuntime({ env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: { bash: 'allow' } }) } });
+    const prepared = await runtime.prepareManagedOpenCodeEnv({ includeChrome: false });
+    expect(JSON.parse(prepared.OPENCODE_CONFIG_CONTENT).permission).toEqual({ bash: 'allow' });
+  });
+
+  it('adds the rule even when no permission block exists yet', async () => {
+    const { runtime } = await createRuntime();
+    const prepared = await runtime.prepareManagedOpenCodeEnv({ includeChrome: true });
+    expect(JSON.parse(prepared.OPENCODE_CONFIG_CONTENT).permission).toEqual({ mittrcraft_chrome: 'ask' });
+  });
+});
