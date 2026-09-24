@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,6 +23,41 @@ export const bundledAgentBrowserCandidates = () => [
   .map((root) => path.join(root, BINARY_NAME));
 
 const resolveBinary = () => bundledAgentBrowserCandidates().find((candidate) => fs.existsSync(candidate)) || null;
+
+const BANNER_TEXT = 'MittrCraft agent กำลังควบคุมหน้าต่างนี้ · MittrCraft agent is controlling this window';
+
+export const AGENT_BANNER_SCRIPT = `(() => {
+  const ID = 'mittrcraft-agent-banner';
+  const mount = () => {
+    if (!document.documentElement || document.getElementById(ID)) return;
+    const host = document.createElement('div');
+    host.id = ID;
+    host.setAttribute('aria-hidden', 'true');
+    host.style.cssText = 'all:initial;position:fixed;top:0;left:0;right:0;z-index:2147483647;pointer-events:none;';
+    const root = host.attachShadow({ mode: 'closed' });
+    const bar = document.createElement('div');
+    bar.textContent = ${JSON.stringify(BANNER_TEXT)};
+    bar.style.cssText = 'font:600 12px/1.6 -apple-system,system-ui,sans-serif;color:#1a1300;background:#ffd84d;text-align:center;padding:3px 8px;box-shadow:0 1px 4px rgba(0,0,0,.25);pointer-events:none;';
+    root.appendChild(bar);
+    document.documentElement.appendChild(host);
+  };
+  mount();
+  document.addEventListener('DOMContentLoaded', mount);
+  new MutationObserver(mount).observe(document, { childList: true, subtree: true });
+})();
+`;
+
+const bannerScriptPath = () => {
+  const file = path.join(os.tmpdir(), 'mittrcraft-agent-banner.js');
+  let current = null;
+  try {
+    current = fs.readFileSync(file, 'utf8');
+  } catch {
+    current = null;
+  }
+  if (current !== AGENT_BANNER_SCRIPT) fs.writeFileSync(file, AGENT_BANNER_SCRIPT);
+  return file;
+};
 
 export const chromeSessionName = (sessionId) => `mc-${String(sessionId).replace(/[^A-Za-z0-9_-]/g, '')}`;
 
@@ -67,7 +103,7 @@ export const createChromeControl = ({
       '--session', sessionName,
       '--profile', profile,
       '--json',
-      ...(headed ? ['--headed'] : []),
+      ...(headed ? ['--headed', '--init-script', bannerScriptPath()] : []),
       '--max-output', String(MAX_OUTPUT_CHARS),
       ...command,
     ];

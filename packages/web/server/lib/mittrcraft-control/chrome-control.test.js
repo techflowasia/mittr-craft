@@ -79,6 +79,26 @@ describe('createChromeControl namespace', () => {
   });
 });
 
+describe('createChromeControl banner', () => {
+  it('marks every page as agent-controlled when the window is shown', async () => {
+    const { binary, readCall } = await fakeBinary({ success: true, data: {}, error: null });
+    await controlFor(binary).run(['open', 'https://example.com'], { sessionName: 's', profile: 'Default', headed: true });
+    const { argv } = await readCall();
+    const index = argv.indexOf('--init-script');
+    expect(index).toBeGreaterThan(-1);
+    const script = await fs.readFile(argv[index + 1], 'utf8');
+    expect(script).toContain('MittrCraft agent');
+    expect(script).toContain('pointer-events');
+    expect(script).toContain('aria-hidden');
+  });
+
+  it('adds nothing to pages nobody is watching', async () => {
+    const { binary, readCall } = await fakeBinary({ success: true, data: {}, error: null });
+    await controlFor(binary).run(['open', 'https://example.com'], { sessionName: 's', profile: 'Default', headed: false });
+    expect((await readCall()).argv).not.toContain('--init-script');
+  });
+});
+
 describe('createChromeControl availability', () => {
   it('is unavailable when no binary resolves', () => {
     expect(createChromeControl({ resolve: () => null }).available).toBe(false);
