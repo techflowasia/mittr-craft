@@ -2,6 +2,16 @@ import express from 'express';
 import { asControlError } from './error.js';
 
 export const registerMittrCraftControlRoutes = (app, { controlService }) => {
+  app.delete('/api/mittrcraft/chrome/approved-hosts/:host', async (req, res) => {
+    try {
+      const hosts = typeof controlService.removeChromeHost === 'function' ? await controlService.removeChromeHost(req.params.host) : [];
+      return res.json({ hosts });
+    } catch (error) {
+      const controlError = asControlError(error, 'Could not remove the site');
+      return res.status(controlError.statusCode).json({ error: controlError.message });
+    }
+  });
+
   app.get('/api/mittrcraft/chrome/profiles', async (_req, res) => {
     try {
       const profiles = typeof controlService.chromeProfiles === 'function' ? await controlService.chromeProfiles() : [];

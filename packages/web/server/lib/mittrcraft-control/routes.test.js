@@ -54,3 +54,15 @@ describe('Chrome profiles route', () => {
     expect(response.body).toEqual({ profiles: [{ directory: 'Default', name: 'Your Chrome' }] });
   });
 });
+
+describe('Chrome approved hosts route', () => {
+  it('removes one host through the service and returns the list that remains', async () => {
+    const app = express();
+    const removeChromeHost = vi.fn(async () => ['plane.techflow.asia']);
+    registerMittrCraftControlRoutes(app, { controlService: { execute: vi.fn(), removeChromeHost } });
+    const response = await request(app).delete('/api/mittrcraft/chrome/approved-hosts/github.com');
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ hosts: ['plane.techflow.asia'] });
+    expect(removeChromeHost).toHaveBeenCalledWith('github.com');
+  });
+});

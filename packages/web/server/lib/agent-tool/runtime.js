@@ -142,7 +142,7 @@ const SITE_APPROVAL_SNIPPET = String.raw`
               if (context.abort.aborted) throw error
               return failure({ schemaVersion: ${TOOL_SCHEMA_VERSION}, ok: false, action: args.action, error: { message: "The user did not allow using their Chrome sign-in on " + pendingHost, kind: "usage" } })
             }
-            response = await post({ approveHost: pendingHost })
+            response = await post({ approvalAnswered: true })
             output = await response.text()
             result = null
             try { result = JSON.parse(output) } catch {}
@@ -370,7 +370,7 @@ export const createAgentToolRuntime = (dependencies) => {
       const forwarded = {
         ...options,
         ...(asNonEmptyString(payload.contextSessionId) ? { sessionId: asNonEmptyString(payload.contextSessionId) } : {}),
-        ...(asNonEmptyString(payload.approveHost) ? { approveHost: asNonEmptyString(payload.approveHost) } : {}),
+        ...(payload.approvalAnswered === true ? { approvalAnswered: true } : {}),
       };
       const data = await executeAction(action, payload.input, payload.contextDirectory, forwarded);
       return createResult({ ok: true, action, data });

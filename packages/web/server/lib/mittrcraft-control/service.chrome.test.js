@@ -1,17 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createMittrCraftControlService } from './service.js';
+import { createChromeApprovals } from './chrome-approvals.js';
 
 const createService = ({ settings = {}, pageUrl = 'https://plane.techflow.asia/', runImpl } = {}) => {
   let stored = { agentChromeProfile: 'Default', agentChromeApprovedHosts: ['plane.techflow.asia'], ...settings };
+  const page = { url: pageUrl };
   const run = vi.fn(runImpl ?? (async (command) => {
-    if (command[0] === 'get' && command[1] === 'url') return { url: pageUrl };
+    if (command[0] === 'get' && command[1] === 'url') return { url: page.url };
     if (command[0] === 'open') return { url: command[1], title: 'Page' };
     if (command[0] === 'snapshot') return { origin: pageUrl, snapshot: '- link "Home" [ref=e1]', refs: { e1: {} } };
     return {};
   }));
   const chromeControl = { available: true, chromeInstalled: () => true, run, profiles: vi.fn(async () => [{ directory: 'Default', name: 'Your Chrome' }]) };
   const persistSettings = vi.fn(async (changes) => { stored = { ...stored, ...changes }; });
+  const chromeApprovals = createChromeApprovals({ readSettings: async () => stored, persistSettings });
   const service = createMittrCraftControlService({
     readSettingsFromDiskMigrated: vi.fn(async () => stored),
     sanitizeProjects: (projects) => projects,
@@ -21,9 +24,11 @@ const createService = ({ settings = {}, pageUrl = 'https://plane.techflow.asia/'
     sessionService: {},
     scheduledTaskService: {},
     chromeControl,
-    persistSettings,
+    chromeApprovals,
   });
-  return { service, run, persistSettings, chromeControl };
+  const ask = (host, id = 'per_1') => chromeApprovals.handleEvent({ type: 'permission.asked', properties: { id, sessionID: 'ses_1', permission: 'mittrcraft_chrome', patterns: [host], always: [host], metadata: {} } });
+  const answer = (reply, id = 'per_1') => chromeApprovals.handleEvent({ type: 'permission.replied', properties: { requestID: id, sessionID: 'ses_1', reply } });
+  return { service, run, persistSettings, chromeControl, ask, answer, page, stored: () => stored };
 };
 
 const opts = { sessionId: 'ses_1' };
@@ -43,16 +48,53 @@ describe('chrome actions', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it('records the host and proceeds when the plugin passes approveHost for it', async () => {
-    const { service, persistSettings } = createService();
-    await service.execute('chrome.open', { url: 'https://github.com/' }, '/repo', { ...opts, approveHost: 'github.com' });
-    expect(persistSettings).toHaveBeenCalledWith({ agentChromeApprovedHosts: ['plane.techflow.asia', 'github.com'] });
+  it('proceeds once the user\'s answer arrives, even if it arrives after the retry', async () => {
+    const { service, ask, answer, page, stored } = createService();
+    await ask('github.com');
+    page.url = 'https://github.com/';
+    const call = service.execute('chrome.open', { url: 'https://github.com/' }, '/repo', { ...opts, approvalAnswered: true });
+    await answer('always');
+    await expect(call).resolves.toMatchObject({ url: 'https://github.com/' });
+    expect(stored().agentChromeApprovedHosts).toEqual(['plane.techflow.asia', 'github.com']);
   });
 
-  it('does not treat approveHost for one host as approval of another', async () => {
-    const { service } = createService();
-    await expect(service.execute('chrome.open', { url: 'https://evil.example/' }, '/repo', { ...opts, approveHost: 'github.com' }))
+  it('refuses when the user rejected the site', async () => {
+    const { service, ask, answer } = createService();
+    await ask('github.com');
+    await answer('reject');
+    await expect(service.execute('chrome.open', { url: 'https://github.com/' }, '/repo', { ...opts, approvalAnswered: true }))
+      .rejects.toThrow(/did not allow.*github\.com/);
+  });
+
+  it('never approves on the caller\'s word alone — no question asked means ask again', async () => {
+    const { service, run } = createService();
+    await expect(service.execute('chrome.open', { url: 'https://evil.example/' }, '/repo', { ...opts, approvalAnswered: true }))
       .rejects.toMatchObject({ code: 'site_approval_required', host: 'evil.example' });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('withholds the result when an action lands on a host the user has not allowed', async () => {
+    const { service, page } = createService({
+      runImpl: async (command) => {
+        if (command[0] === 'get') return { url: page.url };
+        if (command[0] === 'click') { page.url = 'https://evil.example/landing'; return { clicked: '@e1' }; }
+        return {};
+      },
+    });
+    await expect(service.execute('chrome.click', { ref: '@e1' }, '/repo', opts))
+      .rejects.toMatchObject({ code: 'site_moved', host: 'evil.example', statusCode: 409 });
+  });
+
+  it('withholds an opened page that redirected to a host the user has not allowed', async () => {
+    const { service, page } = createService({
+      runImpl: async (command) => {
+        if (command[0] === 'get') return { url: page.url };
+        if (command[0] === 'open') { page.url = 'https://login.microsoftonline.com/common'; return { url: command[1], title: 'Sign in' }; }
+        return {};
+      },
+    });
+    await expect(service.execute('chrome.open', { url: 'https://plane.techflow.asia/' }, '/repo', opts))
+      .rejects.toMatchObject({ code: 'site_moved', host: 'login.microsoftonline.com' });
   });
 
   it.each(['file:///etc/passwd', 'javascript:alert(1)', 'chrome://settings', 'not a url'])('refuses %s before running anything', async (url) => {
@@ -152,5 +194,13 @@ describe('chrome actions', () => {
   it('lists Chrome profiles for settings', async () => {
     const { service } = createService();
     await expect(service.chromeProfiles()).resolves.toEqual([{ directory: 'Default', name: 'Your Chrome' }]);
+  });
+});
+
+describe('removing an allowed Chrome site', () => {
+  it('removes it from the persisted list, lowercased', async () => {
+    const { service, stored } = createService({ settings: { agentChromeApprovedHosts: ['plane.techflow.asia', 'github.com'] } });
+    await expect(service.removeChromeHost('GitHub.com')).resolves.toEqual(['plane.techflow.asia']);
+    expect(stored().agentChromeApprovedHosts).toEqual(['plane.techflow.asia']);
   });
 });

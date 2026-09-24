@@ -111,6 +111,7 @@ import { createScheduledTaskService } from './lib/scheduled-tasks/service.js';
 import { createMittrCraftControlService } from './lib/mittrcraft-control/service.js';
 import { createComputerControl } from './lib/mittrcraft-control/computer-control.js';
 import { createChromeControl } from './lib/mittrcraft-control/chrome-control.js';
+import { createChromeApprovals } from './lib/mittrcraft-control/chrome-approvals.js';
 import { createMittrWorkService } from './lib/mittr-work/service.js';
 import webPush from 'web-push';
 
@@ -1226,6 +1227,8 @@ const browserControlBroker = createBrowserControlBroker({
 
 const computerControl = createComputerControl();
 const chromeControl = createChromeControl();
+const chromeApprovals = createChromeApprovals({ readSettings: readSettingsFromDiskMigrated, persistSettings });
+chromeApprovals.subscribe(globalMessageStreamHub);
 
 // Filled in once `main()` starts the Mittr shim, which is when brokerBaseUrl/ensureFreshSession
 // first exist. A getter (not the value itself) so this service's construction order does not
@@ -1246,7 +1249,7 @@ const mittrCraftControlService = createMittrCraftControlService({
   browserControl: browserControlBroker,
   computerControl,
   chromeControl,
-  persistSettings,
+  chromeApprovals,
 });
 
 const ensureGlobalWatcherStarted = async () => {

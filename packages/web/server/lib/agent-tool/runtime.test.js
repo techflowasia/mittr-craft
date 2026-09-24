@@ -431,7 +431,7 @@ describe('mittrcraft_chrome tool', () => {
     expect(without.tool.mittrcraft_chrome).toBeUndefined();
   });
 
-  it('asks the user once for an unapproved host and retries with approveHost', async () => {
+  it('asks the user once for an unapproved host and retries saying the question was answered', async () => {
     const { runtime, dataDir } = await createRuntime();
     const { prepared, hooks } = await loadPlugin(runtime, dataDir, { includeChrome: true });
     const bodies = [];
@@ -440,7 +440,7 @@ describe('mittrcraft_chrome tool', () => {
       globalThis.fetch = async (_url, init) => {
         const body = JSON.parse(init.body);
         bodies.push(body);
-        if (!body.approveHost) {
+        if (!body.approvalAnswered) {
           return new Response(JSON.stringify({ schemaVersion: 1, ok: false, action: 'chrome.open', error: { message: 'not allowed yet', kind: 'usage', code: 'site_approval_required', host: 'github.com' } }));
         }
         return new Response(JSON.stringify({ schemaVersion: 1, ok: true, action: 'chrome.open', data: { url: 'https://github.com/' } }));
@@ -450,7 +450,8 @@ describe('mittrcraft_chrome tool', () => {
     });
     expect(ask).toHaveBeenCalledTimes(1);
     expect(ask).toHaveBeenCalledWith(expect.objectContaining({ permission: 'mittrcraft_chrome', patterns: ['github.com'], always: ['github.com'] }));
-    expect(bodies.map((body) => body.approveHost ?? null)).toEqual([null, 'github.com']);
+    expect(bodies.map((body) => body.approvalAnswered ?? null)).toEqual([null, true]);
+    expect(bodies.every((body) => body.approveHost === undefined)).toBe(true);
     expect(bodies[0].contextSessionId).toBe('ses_1');
   });
 
@@ -471,14 +472,14 @@ describe('mittrcraft_chrome tool', () => {
 
   it('never lets the model approve a host through its own parameters', async () => {
     const { runtime, executeAction } = await createRuntime();
-    await runtime.execute({ input: { action: 'chrome.open', url: 'https://x.example/', approveHost: 'x.example' }, contextDirectory: '/w', contextSessionId: 'ses_1' });
+    await runtime.execute({ input: { action: 'chrome.open', url: 'https://x.example/', approveHost: 'x.example', approvalAnswered: true }, contextDirectory: '/w', contextSessionId: 'ses_1', approveHost: 'x.example' });
     expect(executeAction).toHaveBeenCalledWith('chrome.open', expect.anything(), '/w', { sessionId: 'ses_1' });
   });
 
-  it('passes the plugin\'s approveHost and session through to the service', async () => {
+  it('passes the plugin\'s approvalAnswered flag and session through to the service', async () => {
     const { runtime, executeAction } = await createRuntime();
-    await runtime.execute({ input: { action: 'chrome.read' }, contextDirectory: '/w', contextSessionId: 'ses_1', approveHost: 'plane.techflow.asia' });
-    expect(executeAction).toHaveBeenCalledWith('chrome.read', { action: 'chrome.read' }, '/w', { sessionId: 'ses_1', approveHost: 'plane.techflow.asia' });
+    await runtime.execute({ input: { action: 'chrome.read' }, contextDirectory: '/w', contextSessionId: 'ses_1', approvalAnswered: true });
+    expect(executeAction).toHaveBeenCalledWith('chrome.read', { action: 'chrome.read' }, '/w', { sessionId: 'ses_1', approvalAnswered: true });
   });
 
   it('carries the approval code and host in the result error', async () => {
