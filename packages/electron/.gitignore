@@ -12,6 +12,8 @@ resources/opencode-cli/*
 !resources/opencode-cli/.gitkeep
 resources/cua-driver/*
 !resources/cua-driver/.gitkeep
+resources/agent-browser/*
+!resources/agent-browser/.gitkeep
 .cache/
 
 # OS-specific
