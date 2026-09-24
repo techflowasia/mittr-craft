@@ -232,6 +232,7 @@ export const dict: Record<I18nKey, string> = {
   "sessions.myWork.dialog.filter.empty": "No work items match \"{query}\".",
   "sessions.myWork.dialog.source.jira": "Jira",
   "sessions.myWork.dialog.source.plane": "Plane",
+  "sessions.myWork.dialog.source.filter.all": "All",
   "sessions.myWork.dialog.source.count": "{count} items",
   "sessions.myWork.dialog.actions.goWork": "Go work",
   "sessions.myWork.dialog.toast.sessionCreated": "Session started",
