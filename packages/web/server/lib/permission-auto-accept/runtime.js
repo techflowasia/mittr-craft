@@ -1,3 +1,4 @@
+import { CHROME_PERMISSION } from '../mittrcraft-control/chrome-approvals.js';
 const SETTINGS_KEY = 'permissionAutoAccept';
 const RETRY_DELAYS_MS = [0, 250, 1000];
 const REQUEST_TIMEOUT_MS = 5000;
@@ -146,6 +147,7 @@ export function createPermissionAutoAcceptRuntime({
 
   const replyOnce = async (permission, directory) => {
     if (!permission?.id || !permission?.sessionID) return false;
+    if (permission.permission === CHROME_PERMISSION) return false;
     await load();
     if (!(await isSessionAutoAccepting(permission.sessionID, directory))) return false;
     await request(`/permission/${encodeURIComponent(permission.id)}/reply`, {
