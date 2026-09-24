@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import { Icon } from "@/components/icon/Icon";
 import { toast } from '@/components/ui';
 import { useUIStore } from '@/stores/useUIStore';
@@ -16,6 +17,46 @@ import { useSelectionStore } from '@/sync/selection-store';
 import * as sessionActions from '@/sync/session-actions';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { parseModelIdentifier } from '@/lib/modelIdentifier';
+import {
+  countBySource,
+  groupItems,
+  groupStartsOpen,
+  scopeBySource,
+  stateRankColor,
+  type Source,
+  type SourceFilter,
+} from './myWorkGrouping';
+
+const SOURCE_FILTER_STORAGE_KEY = 'mittrcraft.myWork.source';
+const GROUP_OPEN_STORAGE_PREFIX = 'mittrcraft.myWork.groupOpen.';
+
+const readStorage = (key: string): string | null => {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const writeStorage = (key: string, value: string): void => {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    return;
+  }
+};
+
+const getStoredSourceFilter = (): SourceFilter => {
+  const stored = readStorage(SOURCE_FILTER_STORAGE_KEY);
+  return stored === 'jira' || stored === 'plane' ? stored : 'all';
+};
+
+const getStoredGroupOpen = (key: string, fallback: boolean): boolean => {
+  const stored = readStorage(GROUP_OPEN_STORAGE_PREFIX + key);
+  if (stored === '1') return true;
+  if (stored === '0') return false;
+  return fallback;
+};
 
 const JIRA_KEY_PATTERN = /\/browse\/([A-Z][A-Z0-9]*-\d+)/;
 
@@ -23,50 +64,6 @@ const JIRA_KEY_PATTERN = /\/browse\/([A-Z][A-Z0-9]*-\d+)/;
 const jiraKeyOf = (item: MittrWorkItem): string | null => {
   const match = item.url.match(JIRA_KEY_PATTERN);
   return match ? match[1] : null;
-};
-
-type Source = 'jira' | 'plane';
-
-const sourceOf = (item: MittrWorkItem): Source => (item.source === 'jira' ? 'jira' : 'plane');
-
-/**
- * Lower rank surfaces first. States are free text from two different platforms with no shared
- * vocabulary, so this reads intent from a few common substrings rather than an exact match —
- * good enough to put "doing" ahead of "backlog" ahead of "done" without a lookup table neither
- * platform commits to keeping stable.
- */
-const stateRank = (state: string): number => {
-  const s = state.toLowerCase();
-  if (/(progress|doing|active|review|test)/.test(s)) return 0;
-  if (/(todo|backlog|plan|ready|open)/.test(s)) return 1;
-  if (/(done|complete|closed|resolved)/.test(s)) return 3;
-  if (/cancel/.test(s)) return 4;
-  return 2;
-};
-
-type StateGroup = { state: string; items: MittrWorkItem[] };
-type SourceGroup = { source: Source; items: MittrWorkItem[]; states: StateGroup[] };
-
-const groupItems = (items: MittrWorkItem[]): SourceGroup[] => {
-  const bySource = new Map<Source, Map<string, MittrWorkItem[]>>();
-  for (const item of items) {
-    const source = sourceOf(item);
-    if (!bySource.has(source)) bySource.set(source, new Map());
-    const byState = bySource.get(source)!;
-    const stateKey = item.state || '';
-    if (!byState.has(stateKey)) byState.set(stateKey, []);
-    byState.get(stateKey)!.push(item);
-  }
-  const order: Source[] = ['jira', 'plane'];
-  return order
-    .filter((source) => bySource.has(source))
-    .map((source) => {
-      const byState = bySource.get(source)!;
-      const states = Array.from(byState.entries())
-        .map(([state, stateItems]) => ({ state, items: stateItems }))
-        .sort((a, b) => stateRank(a.state) - stateRank(b.state) || a.state.localeCompare(b.state));
-      return { source, items: states.flatMap((g) => g.items), states };
-    });
 };
 
 const handleOpenItem = (event: React.MouseEvent, url: string) => {
@@ -89,6 +86,7 @@ export function MyWorkDialog() {
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
   const [query, setQuery] = React.useState('');
   const [startingItemId, setStartingItemId] = React.useState<string | null>(null);
+  const [sourceFilter, setSourceFilter] = React.useState<SourceFilter>(() => getStoredSourceFilter());
 
   const reload = React.useCallback(async () => {
     setLoading(true);
@@ -114,13 +112,22 @@ export function MyWorkDialog() {
     if (!open) setQuery('');
   }, [open]);
 
+  const selectSourceFilter = React.useCallback((value: SourceFilter) => {
+    setSourceFilter(value);
+    writeStorage(SOURCE_FILTER_STORAGE_KEY, value);
+  }, []);
+
   const filtered = React.useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return items;
     return items.filter((item) => item.title.toLowerCase().includes(needle));
   }, [items, query]);
 
-  const groups = React.useMemo(() => groupItems(filtered), [filtered]);
+  const sourceCounts = React.useMemo(() => countBySource(filtered), [filtered]);
+
+  const scopedItems = React.useMemo(() => scopeBySource(filtered, sourceFilter), [filtered, sourceFilter]);
+
+  const groups = React.useMemo(() => groupItems(scopedItems), [scopedItems]);
 
   const resolveDefaultAgentName = React.useCallback((): string | undefined => {
     const configState = useConfigStore.getState();
@@ -246,6 +253,33 @@ export function MyWorkDialog() {
         </Button>
       </div>
 
+      <div className="flex items-center gap-1.5">
+        <Button
+          variant="chip"
+          size="sm"
+          aria-pressed={sourceFilter === 'all'}
+          onClick={() => selectSourceFilter('all')}
+        >
+          {t('sessions.myWork.dialog.source.filter.all')} {sourceCounts.all}
+        </Button>
+        <Button
+          variant="chip"
+          size="sm"
+          aria-pressed={sourceFilter === 'jira'}
+          onClick={() => selectSourceFilter('jira')}
+        >
+          {t('sessions.myWork.dialog.source.jira')} {sourceCounts.jira}
+        </Button>
+        <Button
+          variant="chip"
+          size="sm"
+          aria-pressed={sourceFilter === 'plane'}
+          onClick={() => selectSourceFilter('plane')}
+        >
+          {t('sessions.myWork.dialog.source.plane')} {sourceCounts.plane}
+        </Button>
+      </div>
+
       {loading ? (
         <div className="flex items-center gap-2 typography-meta text-muted-foreground">
           <Icon name="loader-4" className="h-4 w-4 animate-spin" /> {t('sessions.myWork.dialog.loading')}
@@ -273,62 +307,82 @@ export function MyWorkDialog() {
       ) : (
         <div className="space-y-6">
           {groups.map((group) => (
-            <div key={group.source} className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Icon name={sourceIcon(group.source)} className="h-4 w-4 text-muted-foreground" />
-                <span className="typography-ui-header font-semibold text-foreground">{sourceLabel(group.source)}</span>
-                <span className="typography-micro text-muted-foreground">
-                  {t('sessions.myWork.dialog.source.count', { count: group.items.length })}
-                </span>
-              </div>
-              {group.states.map((stateGroup) => (
-                <div key={stateGroup.state || '—'} className="space-y-1.5">
-                  <div className="flex items-center gap-2 typography-meta text-muted-foreground">
-                    <span>{stateGroup.state || '—'}</span>
-                    <span className="rounded-full bg-muted px-1.5 py-0.5 typography-micro">{stateGroup.items.length}</span>
-                  </div>
-                  <div className="space-y-1.5">
-                    {stateGroup.items.map((item) => (
-                      <div
-                        key={item.id}
-                        className="group flex items-center gap-2 rounded-lg border border-border p-3 transition-colors hover:bg-interactive-hover/50"
-                      >
-                        <a
-                          href={item.url}
-                          onClick={(event) => handleOpenItem(event, item.url)}
-                          className="min-w-0 flex-1"
-                        >
-                          <div className="typography-ui-label truncate font-medium text-foreground">
-                            {item.title}
-                          </div>
-                          <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 typography-micro text-muted-foreground">
-                            {item.priority ? (
-                              <span>{t('sessions.myWork.dialog.row.priority', { priority: item.priority })}</span>
-                            ) : null}
-                            {item.due ? (
-                              <span>{t('sessions.myWork.dialog.row.due', { due: item.due })}</span>
-                            ) : null}
-                          </div>
-                        </a>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="shrink-0"
-                          disabled={startingItemId === item.id}
-                          onClick={() => void goWork(item)}
-                        >
-                          {startingItemId === item.id ? (
-                            <Icon name="loader-4" className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Icon name="play" className="h-3.5 w-3.5" />
-                          )}
-                          {t('sessions.myWork.dialog.actions.goWork')}
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
+            <div key={group.source} className="space-y-2">
+              {sourceFilter === 'all' ? (
+                <div className="flex items-center gap-2">
+                  <Icon name={sourceIcon(group.source)} className="h-4 w-4 text-muted-foreground" />
+                  <span className="typography-ui-header font-semibold text-foreground">{sourceLabel(group.source)}</span>
+                  <span className="typography-micro text-muted-foreground">
+                    {t('sessions.myWork.dialog.source.count', { count: group.items.length })}
+                  </span>
                 </div>
-              ))}
+              ) : null}
+              {group.states.map((stateGroup) => {
+                const groupKey = `${group.source}:${stateGroup.state}`;
+                const defaultOpen = groupStartsOpen(stateGroup.rank);
+                const color = stateRankColor(stateGroup.rank);
+                return (
+                  <Collapsible
+                    key={groupKey}
+                    defaultOpen={getStoredGroupOpen(groupKey, defaultOpen)}
+                    onOpenChange={(nextOpen: boolean) => writeStorage(GROUP_OPEN_STORAGE_PREFIX + groupKey, nextOpen ? '1' : '0')}
+                  >
+                    <CollapsibleTrigger className="group">
+                      <span className="flex items-center gap-2 typography-meta text-muted-foreground">
+                        <Icon name="arrow-right-s" className="h-3.5 w-3.5 shrink-0 transition-transform group-data-[panel-open]:rotate-90" />
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                        <span>{stateGroup.state || '—'}</span>
+                        <span className="rounded-full bg-muted px-1.5 py-0.5 typography-micro">{stateGroup.items.length}</span>
+                      </span>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <div className="space-y-1 pt-1">
+                        {stateGroup.items.map((item) => (
+                          <div
+                            key={item.id}
+                            className="group flex items-center gap-2 rounded-md border-y border-r border-l-2 border-border py-1.5 pl-2.5 pr-2 transition-colors hover:bg-interactive-hover/50"
+                            style={{ borderLeftColor: color }}
+                          >
+                            <a
+                              href={item.url}
+                              onClick={(event) => handleOpenItem(event, item.url)}
+                              className="flex min-w-0 flex-1 items-baseline gap-2"
+                            >
+                              <span className="typography-ui-label min-w-0 truncate font-medium text-foreground" title={item.title}>
+                                {item.title}
+                              </span>
+                              {item.priority || item.due ? (
+                                <span className="flex shrink-0 items-center gap-2 typography-micro text-muted-foreground">
+                                  {item.priority ? (
+                                    <span>{t('sessions.myWork.dialog.row.priority', { priority: item.priority })}</span>
+                                  ) : null}
+                                  {item.due ? (
+                                    <span>{t('sessions.myWork.dialog.row.due', { due: item.due })}</span>
+                                  ) : null}
+                                </span>
+                              ) : null}
+                            </a>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="shrink-0"
+                              disabled={startingItemId === item.id}
+                              onClick={() => void goWork(item)}
+                            >
+                              {startingItemId === item.id ? (
+                                <Icon name="loader-4" className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Icon name="play" className="h-3.5 w-3.5" />
+                              )}
+                              {t('sessions.myWork.dialog.actions.goWork')}
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                );
+              })}
             </div>
           ))}
         </div>
