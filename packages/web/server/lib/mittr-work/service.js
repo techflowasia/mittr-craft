@@ -76,8 +76,8 @@ export const createMittrWorkService = ({
     }
   };
 
-  /** One Jira card, read live — same session, same auth, no second connection to manage. */
-  const getJiraIssue = async (key) => {
+  /** One record, read live from the platform — same session, same auth, no second connection to manage. */
+  const readLive = async (path, what) => {
     if (!configured) {
       throw createHttpError('Mittr platform session is not available', 503);
     }
@@ -86,7 +86,7 @@ export const createMittrWorkService = ({
       throw createHttpError('Not signed in to Mittr. Sign in to continue.', 401);
     }
 
-    const url = new URL(`/desktop/jira/issues/${encodeURIComponent(key)}`, brokerBaseUrl).toString();
+    const url = new URL(path, brokerBaseUrl).toString();
     const controller = new AbortController();
     const timeoutHandle = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -104,7 +104,7 @@ export const createMittrWorkService = ({
         throw createHttpError(
           typeof body?.message === 'string' && body.message
             ? body.message
-            : `Failed to load Jira issue ${key}`,
+            : `Failed to load ${what}`,
           response.status,
         );
       }
@@ -116,15 +116,22 @@ export const createMittrWorkService = ({
       if (error?.name === 'AbortError') {
         throw createHttpError('Mittr platform request timed out', 504);
       }
-      throw createHttpError(error instanceof Error ? error.message : 'Failed to load Jira issue', 502);
+      throw createHttpError(error instanceof Error ? error.message : `Failed to load ${what}`, 502);
     } finally {
       clearTimeout(timeoutHandle);
     }
   };
 
+  const getJiraIssue = (key) =>
+    readLive(`/desktop/jira/issues/${encodeURIComponent(key)}`, `Jira issue ${key}`);
+
+  const getPlaneIssue = (ref) =>
+    readLive(`/desktop/plane/issues?ref=${encodeURIComponent(ref)}`, `Plane work item ${ref}`);
+
   return {
     configured,
     listWork,
     getJiraIssue,
+    getPlaneIssue,
   };
 };

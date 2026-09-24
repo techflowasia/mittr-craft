@@ -153,6 +153,7 @@ export const createMittrCraftControlService = (dependencies) => {
     // getter means the wiring in index.js can fill this in later without this file caring
     // about that ordering.
     getJiraControl = () => null,
+    getPlaneControl = () => null,
     createClient = createOpencodeClient,
     sleep = (duration) => new Promise((resolve) => setTimeout(resolve, duration)),
     now = Date.now,
@@ -577,6 +578,26 @@ export const createMittrCraftControlService = (dependencies) => {
     }
   };
 
+  const planeAction = async (action, input) => {
+    if (action !== 'plane.get_issue') {
+      throw new MittrCraftControlError(`Unsupported Plane action: ${action}`, 400);
+    }
+    const ref = asNonEmptyString(input.ref);
+    if (!ref) throw new MittrCraftControlError('ref is required for plane.get_issue', 400);
+    const planeControl = getPlaneControl();
+    if (!planeControl) {
+      throw new MittrCraftControlError('Mittr platform session is not available', 503);
+    }
+    try {
+      return await planeControl.getPlaneIssue(ref);
+    } catch (error) {
+      throw new MittrCraftControlError(
+        error instanceof Error ? error.message : `Failed to read Plane work item ${ref}`,
+        Number(error?.statusCode) || 502,
+      );
+    }
+  };
+
   const execute = async (action, input = {}, contextDirectory, options = {}) => {
     try {
       if (!CONTROL_ACTIONS.has(action)) {
@@ -596,6 +617,9 @@ export const createMittrCraftControlService = (dependencies) => {
       }
       if (action.startsWith('jira.')) {
         return jiraAction(action, input);
+      }
+      if (action.startsWith('plane.')) {
+        return planeAction(action, input);
       }
       if (action === 'projects.list') return { projects: await projects() };
       if (action === 'models.list') return models();

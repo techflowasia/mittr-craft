@@ -43,9 +43,18 @@ const MITTRCRAFT_JIRA_ACTIONS = Object.freeze(
   MITTRCRAFT_JIRA_ACTION_DEFINITIONS.map(({ action }) => action),
 );
 
+export const MITTRCRAFT_PLANE_ACTION_DEFINITIONS = Object.freeze([
+  { action: 'plane.get_issue', title: 'Read a Plane work item', description: 'Read one Plane work item by its link or key (e.g. MITRAI-12): name, description, state, priority, due date' },
+]);
+
+const MITTRCRAFT_PLANE_ACTIONS = Object.freeze(
+  MITTRCRAFT_PLANE_ACTION_DEFINITIONS.map(({ action }) => action),
+);
+
 export const MITTRCRAFT_AGENT_TOOL_ACTION_DEFINITIONS = Object.freeze([
   ...MITTRCRAFT_CONTROL_ACTION_DEFINITIONS.filter(({ agentExposed }) => agentExposed !== false),
   ...MITTRCRAFT_JIRA_ACTION_DEFINITIONS,
+  ...MITTRCRAFT_PLANE_ACTION_DEFINITIONS,
 ]);
 
 export const MITTRCRAFT_AGENT_TOOL_ACTIONS = Object.freeze(
@@ -94,6 +103,7 @@ export const MITTRCRAFT_COMPUTER_ACTIONS = Object.freeze(
 export const MITTRCRAFT_ALL_ACTIONS = Object.freeze([
   ...MITTRCRAFT_CONTROL_ACTIONS,
   ...MITTRCRAFT_JIRA_ACTIONS,
+  ...MITTRCRAFT_PLANE_ACTIONS,
   ...MITTRCRAFT_WEB_ACTIONS,
   ...MITTRCRAFT_COMPUTER_ACTIONS,
 ]);

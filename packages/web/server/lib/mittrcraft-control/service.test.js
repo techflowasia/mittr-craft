@@ -473,3 +473,28 @@ describe('jira control', () => {
     );
   });
 });
+
+describe('plane control', () => {
+  it('refuses when no Mittr session is available yet', async () => {
+    const { service } = createService({ getPlaneControl: () => null });
+    await expect(service.execute('plane.get_issue', { ref: 'MITRAI-12' })).rejects.toThrow(
+      /session is not available/,
+    );
+  });
+
+  it('requires a ref', async () => {
+    const { service } = createService({ getPlaneControl: () => ({ getPlaneIssue: vi.fn() }) });
+    await expect(service.execute('plane.get_issue', {})).rejects.toThrow(/ref is required/);
+  });
+
+  it('reads the work item through the Mittr session', async () => {
+    const getPlaneIssue = vi.fn(async () => ({ key: 'MITRAI-12', name: 'Create Evals' }));
+    const { service } = createService({ getPlaneControl: () => ({ getPlaneIssue }) });
+
+    const result = await service.execute('plane.get_issue', { ref: 'MITRAI-12' });
+
+    expect(result).toEqual({ key: 'MITRAI-12', name: 'Create Evals' });
+    expect(getPlaneIssue).toHaveBeenCalledWith('MITRAI-12');
+  });
+});
+

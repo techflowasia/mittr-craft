@@ -144,3 +144,35 @@ describe('createMittrWorkService listWork', () => {
     vi.useRealTimers();
   });
 });
+
+describe('createMittrWorkService live reads', () => {
+  it('reads one Plane work item by link or key through the Mittr session', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { key: 'MITRAI-12', name: 'Create Evals' }));
+    const service = createMittrWorkService({
+      brokerBaseUrl: baseUrl,
+      ensureFreshSession: vi.fn(async () => session),
+      fetchImpl,
+    });
+    const link = 'https://plane.techflow.asia/techflow/projects/p1/issues/i1';
+
+    await expect(service.getPlaneIssue(link)).resolves.toEqual({ key: 'MITRAI-12', name: 'Create Evals' });
+
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe(`${baseUrl}/desktop/plane/issues?ref=${encodeURIComponent(link)}`);
+    expect(init.headers.Authorization).toBe('Bearer access-token-123');
+  });
+
+  it("passes the platform's own refusal through instead of a generic failure", async () => {
+    const service = createMittrWorkService({
+      brokerBaseUrl: baseUrl,
+      ensureFreshSession: vi.fn(async () => session),
+      fetchImpl: vi.fn(async () => jsonResponse(400, { message: 'Plane is not connected for this account' })),
+    });
+
+    await expect(service.getPlaneIssue('MITRAI-12')).rejects.toMatchObject({
+      message: 'Plane is not connected for this account',
+      statusCode: 400,
+    });
+  });
+});
+

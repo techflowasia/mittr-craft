@@ -1237,6 +1237,7 @@ const mittrCraftControlService = createMittrCraftControlService({
   getOpenCodeAuthHeaders,
   waitForOpenCodeReady,
   getJiraControl,
+  getPlaneControl: getJiraControl,
   sessionService: mittrCraftSessionService,
   scheduledTaskService,
   browserControl: browserControlBroker,
