@@ -7,14 +7,16 @@ import {
   MITTRCRAFT_WEB_ACTIONS,
   MITTRCRAFT_COMPUTER_ACTION_DEFINITIONS,
   MITTRCRAFT_COMPUTER_ACTIONS,
+  MITTRCRAFT_CHROME_ACTION_DEFINITIONS,
+  MITTRCRAFT_CHROME_ACTIONS,
 } from '../mittrcraft-control/actions.js';
 
 const TOOL_SCHEMA_VERSION = 1;
 // Everything either managed tool may ask for; the agent allowlist stays
 // narrower than the full control surface.
-const ACTIONS = new Set([...MITTRCRAFT_AGENT_TOOL_ACTIONS, ...MITTRCRAFT_WEB_ACTIONS, ...MITTRCRAFT_COMPUTER_ACTIONS]);
+const ACTIONS = new Set([...MITTRCRAFT_AGENT_TOOL_ACTIONS, ...MITTRCRAFT_WEB_ACTIONS, ...MITTRCRAFT_COMPUTER_ACTIONS, ...MITTRCRAFT_CHROME_ACTIONS]);
 const AGENT_TOOL_ACTION_TITLES = Object.fromEntries(
-  [...MITTRCRAFT_AGENT_TOOL_ACTION_DEFINITIONS, ...MITTRCRAFT_WEB_ACTION_DEFINITIONS, ...MITTRCRAFT_COMPUTER_ACTION_DEFINITIONS]
+  [...MITTRCRAFT_AGENT_TOOL_ACTION_DEFINITIONS, ...MITTRCRAFT_WEB_ACTION_DEFINITIONS, ...MITTRCRAFT_COMPUTER_ACTION_DEFINITIONS, ...MITTRCRAFT_CHROME_ACTION_DEFINITIONS]
     .map(({ action, title }) => [action, title]),
 );
 
@@ -84,10 +86,21 @@ const CONTROL_PARAMETER_PROPERTIES = pickParameters(
 const WEB_PARAMETER_PROPERTIES = pickParameters(WEB_PARAMETER_NAMES);
 const COMPUTER_PARAMETER_PROPERTIES = pickParameters(COMPUTER_PARAMETER_NAMES);
 
+const CHROME_PARAMETER_PROPERTIES = {
+  url: { type: 'string', description: 'http(s) URL for chrome.open' },
+  ref: { type: 'string', description: 'Element ref from the last chrome.snapshot, such as @e3' },
+  value: { type: 'string', description: 'Text for chrome.fill or chrome.type, or the option for chrome.select' },
+  key: { type: 'string', description: 'Key for chrome.press, such as Enter or Control+a' },
+  text: { type: 'string', description: 'Text to wait for with chrome.wait' },
+  selector: { type: 'string', description: 'CSS selector to read only part of the page in chrome.snapshot' },
+  label: { type: 'string', description: 'Short name for a chrome.screenshot image' },
+};
+
 const CONTROL_TOOL_DESCRIPTION = "Control MittrCraft projects, sessions, and scheduled tasks on the user's behalf. Sessions and scheduled tasks you create are for the user to follow and interact with; never use this tool to delegate parts of your own current task. Use one action per call. Scope with projectId or directory; omit both to use the current session directory. Session dispatches return immediately by default and you receive no notification when a dispatched session finishes, so never promise to report back on it; the user follows it in MittrCraft; a dispatched session needs no follow-up from you. If the user later asks how it went, use session.messages (add wait to block until it is idle, lastAssistant for just the final answer) — session.send always sends a NEW prompt and never just waits. Set wait only when the user asks or the next step requires the completed result. Session and worktree deletion are unavailable. jira.get_issue reads one Jira card by key (e.g. MRKB-2122) and plane.get_issue reads one Plane work item by its link or key (e.g. MITRAI-12), both through whatever this account already connected on the Integrations settings page — nothing else to set up. A Plane link is a sign-in page to a plain fetch; read it with plane.get_issue.";
 
 const WEB_TOOL_DESCRIPTION = "Look at and interact with a web page in MittrCraft's browser panel, so you can check your own work rather than describing what you expect. Use one action per call. Open a page, snapshot it to read its text and its interactive elements, then click, type or scroll using the selectors the snapshot returned; snapshots also report any errors the page logged. Pass a selector to browser.snapshot to read one part of a long page. browser.inspect returns computed styles when the question is how something renders. Set viewport to check a layout at mobile, tablet or desktop size. The page runs with the user's real logins, so treat what you see as their live session.";
 
+const CHROME_TOOL_DESCRIPTION = "Use a Chrome session that starts from the user's own Chrome profile, for sites the user is already signed in to in Chrome (Plane, Jira, internal tools) and for web work that should not take over MittrCraft's browser panel. To look at the app being built, use mittrcraft_web instead. Use one action per call: chrome.open a page, chrome.snapshot to get refs, then act on those refs. The first time you open a site the user is asked whether you may use their sign-in there. If a page asks you to sign in, stop and tell the user which site — never type a password or fill a sign-in form.";
 const COMPUTER_TOOL_DESCRIPTION = "Look at and act on the user's whole desktop, not just MittrCraft's own panels — use only when a task genuinely needs another app. Use one action per call. computer.list_apps first to see what is running and get an exact app name; if the app you need is not running, computer.open_app launches it by name; computer.bring_to_front activates a running app by that name; computer.screenshot to see the current desktop — the image is attached to the result for you to read directly, so there is no need to open it with a file-reading tool. Clicking or typing into other apps is not available yet. This is a live, real desktop the user can see moving in front of them — never use it for anything the user has not clearly asked for.";
 
 const asNonEmptyString = (value) => {
@@ -120,7 +133,23 @@ const isLoopbackAddress = (value) => {
  * keeps the transport, metadata and failure handling identical, which is what
  * the caller depends on.
  */
-const createToolEntry = ({ name, description, actions, definitions, parameters }) => String.raw`    ${name}: {
+const SITE_APPROVAL_SNIPPET = String.raw`
+          const pendingHost = result?.ok === false && result?.error?.code === "site_approval_required" && typeof result?.error?.host === "string" ? result.error.host : null
+          if (pendingHost) {
+            try {
+              await context.ask({ permission: "mittrcraft_chrome", patterns: [pendingHost], always: [pendingHost], metadata: { host: pendingHost } })
+            } catch (error) {
+              if (context.abort.aborted) throw error
+              return failure({ schemaVersion: ${TOOL_SCHEMA_VERSION}, ok: false, action: args.action, error: { message: "The user did not allow using their Chrome sign-in on " + pendingHost, kind: "usage" } })
+            }
+            response = await post({ approveHost: pendingHost })
+            output = await response.text()
+            result = null
+            try { result = JSON.parse(output) } catch {}
+          }
+`;
+
+const createToolEntry = ({ name, description, actions, definitions, parameters, siteApproval = false }) => String.raw`    ${name}: {
       description: ${JSON.stringify(description)},
       args: {
         action: { type: "string", enum: ${JSON.stringify(actions)}, oneOf: ${JSON.stringify(definitions.map((entry) => ({ const: entry.action, description: entry.description })))}, description: "MittrCraft action to perform" },
@@ -156,20 +185,22 @@ const createToolEntry = ({ name, description, actions, definitions, parameters }
           return failure({ schemaVersion: ${TOOL_SCHEMA_VERSION}, ok: false, action: args.action, error: { message: "MittrCraft managed tool connection is unavailable" } })
         }
 
+        const post = (extra) => fetch(endpoint, {
+          method: "POST",
+          headers: {
+            authorization: "Bearer " + token,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ input: args, contextDirectory: context.directory, contextSessionId: context.sessionID, ...extra }),
+          signal: context.abort,
+        })
+
         try {
-          const response = await fetch(endpoint, {
-            method: "POST",
-            headers: {
-              authorization: "Bearer " + token,
-              "content-type": "application/json",
-            },
-            body: JSON.stringify({ input: args, contextDirectory: context.directory }),
-            signal: context.abort,
-          })
-          const output = await response.text()
+          let response = await post({})
+          let output = await response.text()
           let result = null
           try { result = JSON.parse(output) } catch {}
-          const valid = result?.schemaVersion === ${TOOL_SCHEMA_VERSION} && typeof result?.ok === "boolean" && typeof result?.action === "string"
+${siteApproval ? SITE_APPROVAL_SNIPPET : ''}          const valid = result?.schemaVersion === ${TOOL_SCHEMA_VERSION} && typeof result?.ok === "boolean" && typeof result?.action === "string"
           context.metadata({
             title,
             metadata: {
@@ -207,7 +238,7 @@ const createToolEntry = ({ name, description, actions, definitions, parameters }
     },
 `;
 
-const createPluginSource = ({ includeControl, includeWeb, includeComputer }) => {
+const createPluginSource = ({ includeControl, includeWeb, includeComputer, includeChrome }) => {
   const entries = [];
   if (includeControl) {
     entries.push(createToolEntry({
@@ -237,9 +268,33 @@ const createPluginSource = ({ includeControl, includeWeb, includeComputer }) => 
     }));
   }
 
+  if (includeChrome) {
+    entries.push(createToolEntry({
+      name: 'mittrcraft_chrome',
+      description: CHROME_TOOL_DESCRIPTION,
+      actions: MITTRCRAFT_CHROME_ACTIONS,
+      definitions: MITTRCRAFT_CHROME_ACTION_DEFINITIONS,
+      parameters: CHROME_PARAMETER_PROPERTIES,
+      siteApproval: true,
+    }));
+  }
+  const chromeEvents = includeChrome ? String.raw`
+  event: async ({ event }) => {
+    if (event?.type !== "session.deleted") return
+    const id = event.properties?.info?.id
+    const endpoint = process.env.MITTRCRAFT_AGENT_TOOL_URL
+    const token = process.env.MITTRCRAFT_AGENT_TOOL_TOKEN
+    if (!id || !endpoint || !token) return
+    await fetch(endpoint, {
+      method: "POST",
+      headers: { authorization: "Bearer " + token, "content-type": "application/json" },
+      body: JSON.stringify({ input: { action: "chrome.close" }, contextSessionId: id }),
+    }).catch(() => {})
+  },` : '';
+
   return `export const MittrCraftPlugin = async () => ({
   tool: {
-${entries.join('')}  },
+${entries.join('')}  },${chromeEvents}
 })
 `;
 };
@@ -275,16 +330,16 @@ export const createAgentToolRuntime = (dependencies) => {
   const pluginPath = path.join(pluginDirectory, 'mittrcraft-plugin.js');
   let activeToken = null;
 
-  const prepareManagedOpenCodeEnv = async ({ includeControl = true, includeWeb = true, includeComputer = false } = {}) => {
+  const prepareManagedOpenCodeEnv = async ({ includeControl = true, includeWeb = true, includeComputer = false, includeChrome = false } = {}) => {
     const port = getActivePort();
     if (!Number.isInteger(port) || port <= 0) {
       throw new Error('MittrCraft listener port is unavailable for managed tool injection');
     }
-    if (!includeControl && !includeWeb && !includeComputer) {
+    if (!includeControl && !includeWeb && !includeComputer && !includeChrome) {
       throw new Error('At least one MittrCraft managed tool must be enabled to inject the plugin');
     }
     await fsPromises.mkdir(pluginDirectory, { recursive: true });
-    await fsPromises.writeFile(pluginPath, createPluginSource({ includeControl, includeWeb, includeComputer }), { mode: 0o600 });
+    await fsPromises.writeFile(pluginPath, createPluginSource({ includeControl, includeWeb, includeComputer, includeChrome }), { mode: 0o600 });
     activeToken = crypto.randomBytes(32).toString('base64url');
     const pluginUrl = pathToFileURL(pluginPath).href;
     return {
@@ -312,7 +367,12 @@ export const createAgentToolRuntime = (dependencies) => {
       return createResult({ ok: false, action, error: { message: 'MittrCraft control service is unavailable', kind: 'runtime' } });
     }
     try {
-      const data = await executeAction(action, payload.input, payload.contextDirectory, options);
+      const forwarded = {
+        ...options,
+        ...(asNonEmptyString(payload.contextSessionId) ? { sessionId: asNonEmptyString(payload.contextSessionId) } : {}),
+        ...(asNonEmptyString(payload.approveHost) ? { approveHost: asNonEmptyString(payload.approveHost) } : {}),
+      };
+      const data = await executeAction(action, payload.input, payload.contextDirectory, forwarded);
       return createResult({ ok: true, action, data });
     } catch (error) {
       return createResult({
@@ -327,6 +387,8 @@ export const createAgentToolRuntime = (dependencies) => {
         error: {
           message: error instanceof Error ? error.message : String(error),
           kind: Number(error?.statusCode) >= 400 && Number(error?.statusCode) < 499 ? 'usage' : 'runtime',
+          ...(typeof error?.code === 'string' ? { code: error.code } : {}),
+          ...(typeof error?.host === 'string' ? { host: error.host } : {}),
         },
       });
     }
