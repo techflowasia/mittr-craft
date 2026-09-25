@@ -170,6 +170,17 @@ export function MyWorkDialog() {
 
   const goWork = React.useCallback(async (item: MittrWorkItem, projectDirectory: string) => {
     if (startingItemId) return;
+    const configState = useConfigStore.getState();
+    const lastUsedProvider = useSelectionStore.getState().lastUsedProvider;
+    const defaultModel = resolveDefaultModelSelection();
+    const providerID = defaultModel?.providerID || configState.currentProviderId || lastUsedProvider?.providerID;
+    const modelID = defaultModel?.modelID || configState.currentModelId || lastUsedProvider?.modelID;
+    const agentName = resolveDefaultAgentName() || configState.currentAgentName || undefined;
+    if (!providerID || !modelID) {
+      toast.error(t('sessions.myWork.dialog.error.noModelSelected'));
+      return;
+    }
+    const variant = resolveDefaultVariant(providerID, modelID);
     setStartingItemId(item.id);
     try {
       const session = await sessionActions.createSession(item.title, projectDirectory, null);
@@ -183,18 +194,6 @@ export function MyWorkDialog() {
       }
 
       setOpen(false);
-
-      const configState = useConfigStore.getState();
-      const lastUsedProvider = useSelectionStore.getState().lastUsedProvider;
-      const defaultModel = resolveDefaultModelSelection();
-      const providerID = defaultModel?.providerID || configState.currentProviderId || lastUsedProvider?.providerID;
-      const modelID = defaultModel?.modelID || configState.currentModelId || lastUsedProvider?.modelID;
-      const agentName = resolveDefaultAgentName() || configState.currentAgentName || undefined;
-      if (!providerID || !modelID) {
-        toast.error(t('sessions.myWork.dialog.error.noModelSelected'));
-        return;
-      }
-      const variant = resolveDefaultVariant(providerID, modelID);
 
       const key = jiraKeyOf(item);
       const prompt = key
