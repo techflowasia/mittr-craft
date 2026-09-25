@@ -343,6 +343,9 @@ export function MyWorkDialog() {
                               onClick={(event) => handleOpenItem(event, item.url)}
                               className="flex min-w-0 flex-1 items-baseline gap-2"
                             >
+                              {jiraKeyOf(item) ? (
+                                <span className="shrink-0 typography-micro font-mono text-muted-foreground">{jiraKeyOf(item)}</span>
+                              ) : null}
                               <span className="typography-ui-label min-w-0 truncate font-medium text-foreground" title={item.title}>
                                 {item.title}
                               </span>
