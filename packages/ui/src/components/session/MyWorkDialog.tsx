@@ -61,8 +61,10 @@ const getStoredGroupOpen = (key: string, fallback: boolean): boolean => {
 
 const JIRA_KEY_PATTERN = /\/browse\/([A-Z][A-Z0-9]*-\d+)/;
 
-/** `MRKB-2122` out of a Jira browse URL — items carry no separate key field. */
-const jiraKeyOf = (item: MittrWorkItem): string | null => {
+/** The card number the platform sends (`MRKB-2122`, `MITRAI-12`), or the Jira key read from its browse URL when an older platform does not send one. */
+const cardKeyOf = (item: MittrWorkItem): string | null => {
+  const sent = item.key?.trim();
+  if (sent) return sent;
   const match = item.url.match(JIRA_KEY_PATTERN);
   return match ? match[1] : null;
 };
@@ -195,7 +197,7 @@ export function MyWorkDialog() {
 
       setOpen(false);
 
-      const key = jiraKeyOf(item);
+      const key = item.source === 'plane' ? null : cardKeyOf(item);
       const prompt = key
         ? t('sessions.myWork.dialog.prompt.jira', { key, title: item.title, url: item.url })
         : t('sessions.myWork.dialog.prompt.plane', { title: item.title, url: item.url });
@@ -343,8 +345,8 @@ export function MyWorkDialog() {
                               onClick={(event) => handleOpenItem(event, item.url)}
                               className="flex min-w-0 flex-1 items-baseline gap-2"
                             >
-                              {jiraKeyOf(item) ? (
-                                <span className="shrink-0 typography-micro font-mono text-muted-foreground">{jiraKeyOf(item)}</span>
+                              {cardKeyOf(item) ? (
+                                <span className="shrink-0 typography-micro font-mono text-muted-foreground">{cardKeyOf(item)}</span>
                               ) : null}
                               <span className="typography-ui-label min-w-0 truncate font-medium text-foreground" title={item.title}>
                                 {item.title}
