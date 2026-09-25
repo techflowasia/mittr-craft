@@ -3,11 +3,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Icon } from "@/components/icon/Icon";
 import { toast } from '@/components/ui';
 import { useUIStore } from '@/stores/useUIStore';
 import { useI18n } from '@/lib/i18n';
-import { cn } from '@/lib/utils';
+import { cn, formatDirectoryName } from '@/lib/utils';
 import { openExternalUrl } from '@/lib/url';
 import { fetchMittrWork, type MittrWorkItem } from '@/lib/mittrWorkApi';
 import { useProjectsStore } from '@/stores/useProjectsStore';
@@ -77,8 +78,8 @@ export function MyWorkDialog() {
   const open = useUIStore((state) => state.isMyWorkDialogOpen);
   const setOpen = useUIStore((state) => state.setMyWorkDialogOpen);
   const isMobile = useUIStore((state) => state.isMobile);
-  const activeProject = useProjectsStore((state) => state.getActiveProject());
-  const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
+  const projects = useProjectsStore((state) => state.projects);
+  const homeDirectory = useDirectoryStore((state) => state.homeDirectory);
 
   const [items, setItems] = React.useState<MittrWorkItem[]>([]);
   const [configured, setConfigured] = React.useState(true);
@@ -167,13 +168,8 @@ export function MyWorkDialog() {
     return undefined;
   }, []);
 
-  const goWork = React.useCallback(async (item: MittrWorkItem) => {
+  const goWork = React.useCallback(async (item: MittrWorkItem, projectDirectory: string) => {
     if (startingItemId) return;
-    const projectDirectory = activeProject?.path?.trim() || currentDirectory?.trim() || null;
-    if (!projectDirectory) {
-      toast.error(t('sessions.myWork.dialog.error.noActiveProject'));
-      return;
-    }
     setStartingItemId(item.id);
     try {
       const session = await sessionActions.createSession(item.title, projectDirectory, null);
@@ -230,7 +226,7 @@ export function MyWorkDialog() {
     } finally {
       setStartingItemId(null);
     }
-  }, [activeProject?.path, currentDirectory, resolveDefaultAgentName, resolveDefaultModelSelection, resolveDefaultVariant, setOpen, startingItemId, t]);
+  }, [resolveDefaultAgentName, resolveDefaultModelSelection, resolveDefaultVariant, setOpen, startingItemId, t]);
 
   const sourceLabel = (source: Source) => (source === 'jira' ? t('sessions.myWork.dialog.source.jira') : t('sessions.myWork.dialog.source.plane'));
   const sourceIcon = (source: Source) => (source === 'jira' ? 'task' : 'stack');
@@ -362,20 +358,39 @@ export function MyWorkDialog() {
                                 </span>
                               ) : null}
                             </a>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="shrink-0"
-                              disabled={startingItemId === item.id}
-                              onClick={() => void goWork(item)}
-                            >
-                              {startingItemId === item.id ? (
-                                <Icon name="loader-4" className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Icon name="play" className="h-3.5 w-3.5" />
-                              )}
-                              {t('sessions.myWork.dialog.actions.goWork')}
-                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="shrink-0"
+                                  disabled={startingItemId === item.id}
+                                >
+                                  {startingItemId === item.id ? (
+                                    <Icon name="loader-4" className="h-3.5 w-3.5 animate-spin" />
+                                  ) : (
+                                    <Icon name="play" className="h-3.5 w-3.5" />
+                                  )}
+                                  {t('sessions.myWork.dialog.actions.goWork')}
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-64">
+                                <DropdownMenuLabel>{t('sessions.myWork.dialog.projectMenu.label')}</DropdownMenuLabel>
+                                {projects.length === 0 ? (
+                                  <DropdownMenuItem disabled>{t('sessions.myWork.dialog.projectMenu.empty')}</DropdownMenuItem>
+                                ) : (
+                                  projects.map((project) => {
+                                    const name = project.label?.trim() || formatDirectoryName(project.path, homeDirectory || undefined);
+                                    return (
+                                      <DropdownMenuItem key={project.id} onClick={() => void goWork(item, project.path)}>
+                                        <Icon name="folder" className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                        <span className="min-w-0 truncate" title={project.path}>{name}</span>
+                                      </DropdownMenuItem>
+                                    );
+                                  })
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         ))}
                       </div>
