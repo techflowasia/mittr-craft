@@ -89,6 +89,7 @@ export const MITTRCRAFT_CHROME_ACTION_DEFINITIONS = Object.freeze([
   { action: 'chrome.select', title: 'Choose an option in Chrome', description: 'Choose value in the dropdown with ref, by value or visible label' },
   { action: 'chrome.wait', title: 'Wait in Chrome', description: 'Wait until text appears on the page, or until the element with ref appears' },
   { action: 'chrome.screenshot', title: 'Screenshot the Chrome page', description: 'Save the visible page as an image in the project and see it directly; pass label to name it' },
+  { action: 'chrome.do', title: 'Do a task on the Chrome page', description: 'Give goal in plain words and MittrCraft works through the open page on its own, one step at a time (click, fill, choose), until the goal is done, it needs to ask the user, or maxSteps runs out. Returns every step it took and where it stopped. chrome.open the page first' },
   { action: 'chrome.close', title: 'Close the Chrome session', description: 'Close this session\'s Chrome; no parameters' },
 ]);
 

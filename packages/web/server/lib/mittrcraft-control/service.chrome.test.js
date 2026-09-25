@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createMittrCraftControlService } from './service.js';
 import { createChromeApprovals } from './chrome-approvals.js';
 
-const createService = ({ settings = {}, pageUrl = 'https://plane.techflow.asia/', runImpl } = {}) => {
+const createService = ({ settings = {}, pageUrl = 'https://plane.techflow.asia/', runImpl, stepper = null } = {}) => {
   let stored = { agentChromeProfile: 'Default', agentChromeApprovedHosts: ['plane.techflow.asia'], ...settings };
   const page = { url: pageUrl };
   const run = vi.fn(runImpl ?? (async (command) => {
@@ -25,6 +25,7 @@ const createService = ({ settings = {}, pageUrl = 'https://plane.techflow.asia/'
     scheduledTaskService: {},
     chromeControl,
     chromeApprovals,
+    getBrowserStepper: () => stepper,
   });
   const ask = (host, id = 'per_1') => chromeApprovals.handleEvent({ type: 'permission.asked', properties: { id, sessionID: 'ses_1', permission: 'mittrcraft_chrome', patterns: [host], always: [host], metadata: {} } });
   const answer = (reply, id = 'per_1') => chromeApprovals.handleEvent({ type: 'permission.replied', properties: { requestID: id, sessionID: 'ses_1', reply } });
@@ -202,5 +203,93 @@ describe('removing an allowed Chrome site', () => {
     const { service, stored } = createService({ settings: { agentChromeApprovedHosts: ['plane.techflow.asia', 'github.com'] } });
     await expect(service.removeChromeHost('GitHub.com')).resolves.toEqual(['plane.techflow.asia']);
     expect(stored().agentChromeApprovedHosts).toEqual(['plane.techflow.asia']);
+  });
+});
+
+describe('chrome.do', () => {
+  const stepperOf = (replies) => {
+    const calls = [];
+    return {
+      calls,
+      nextStep: vi.fn(async (body) => {
+        calls.push(structuredClone(body));
+        const next = replies.shift();
+        if (next instanceof Error) throw next;
+        return next;
+      }),
+    };
+  };
+  const reply = (step, extra = {}) => ({ step, decidedBy: ['typesafe/jev-1.13'], ms: 350, ...extra });
+
+  it('works through the page until the platform says done, feeding back what it did', async () => {
+    const stepper = stepperOf([
+      reply({ action: 'select', ref: 'e4', target: 'combobox "ประเภทการลา"', value: 'ลาพักร้อน' }),
+      reply({ action: 'fill', ref: 'e5', target: 'textbox "เหตุผล"', value: 'พาครอบครัวไปเที่ยว' }, { values: ['พาครอบครัวไปเที่ยว'] }),
+      reply({ action: 'click', ref: 'e3', target: 'button "ส่งใบลา"' }),
+      reply({ action: 'done' }),
+    ]);
+    const { service, run } = createService({ stepper });
+    const result = await service.execute('chrome.do', { goal: 'ยื่นลาพักร้อน เหตุผล พาครอบครัวไปเที่ยว' }, '/repo', opts);
+    expect(result).toMatchObject({ outcome: 'done', url: 'https://plane.techflow.asia/' });
+    expect(result.steps.map((s) => s.step)).toEqual([
+      'select combobox "ประเภทการลา" = "ลาพักร้อน"',
+      'fill textbox "เหตุผล" = "พาครอบครัวไปเที่ยว"',
+      'click button "ส่งใบลา"',
+    ]);
+    expect(run).toHaveBeenCalledWith(['select', '@e4', 'ลาพักร้อน'], expect.anything());
+    expect(run).toHaveBeenCalledWith(['fill', '@e5', 'พาครอบครัวไปเที่ยว'], expect.anything());
+    expect(run).toHaveBeenCalledWith(['click', '@e3'], expect.anything());
+    expect(stepper.calls[2].history).toHaveLength(2);
+    expect(stepper.calls[3].values).toEqual(['พาครอบครัวไปเที่ยว']);
+    expect(stepper.calls[0].snapshot).toBe('- link "Home" [ref=e1]');
+  });
+
+  it('stops and hands the question back when the platform asks', async () => {
+    const stepper = stepperOf([reply({ action: 'ask', question: 'ลูกค้าสยามรายไหน?' })]);
+    const { service, run } = createService({ stepper });
+    await expect(service.execute('chrome.do', { goal: 'ปิดดีลลูกค้าสยาม' }, '/repo', opts))
+      .resolves.toMatchObject({ outcome: 'ask', question: 'ลูกค้าสยามรายไหน?', steps: [] });
+    expect(run.mock.calls.some(([command]) => command[0] === 'click')).toBe(false);
+  });
+
+  it('stops when the same step comes back three times instead of looping', async () => {
+    const same = () => reply({ action: 'click', ref: 'e1', target: 'link "Home"' });
+    const stepper = stepperOf([same(), same(), same()]);
+    const { service } = createService({ stepper });
+    const result = await service.execute('chrome.do', { goal: 'x' }, '/repo', opts);
+    expect(result).toMatchObject({ outcome: 'stuck' });
+    expect(result.steps).toHaveLength(2);
+  });
+
+  it('stops at maxSteps', async () => {
+    const stepper = stepperOf([
+      reply({ action: 'click', ref: 'e1', target: 'link "A"' }),
+      reply({ action: 'click', ref: 'e2', target: 'link "B"' }),
+    ]);
+    const { service } = createService({ stepper });
+    await expect(service.execute('chrome.do', { goal: 'x', maxSteps: 2 }, '/repo', opts))
+      .resolves.toMatchObject({ outcome: 'step_limit', steps: [{}, {}] });
+  });
+
+  it('reports a platform failure as where it stopped, keeping the steps already taken', async () => {
+    const stepper = stepperOf([
+      reply({ action: 'click', ref: 'e1', target: 'link "Home"' }),
+      Object.assign(new Error('Sign in to Mittr first'), { statusCode: 401 }),
+    ]);
+    const { service } = createService({ stepper });
+    await expect(service.execute('chrome.do', { goal: 'x' }, '/repo', opts))
+      .resolves.toMatchObject({ outcome: 'stopped', reason: 'Sign in to Mittr first', steps: [{ step: 'click link "Home"' }] });
+  });
+
+  it('still refuses a page the user has not allowed', async () => {
+    const { service } = createService({ stepper: stepperOf([]), pageUrl: 'https://evil.example/' });
+    await expect(service.execute('chrome.do', { goal: 'x' }, '/repo', opts))
+      .rejects.toMatchObject({ code: 'site_approval_required', host: 'evil.example' });
+  });
+
+  it('says what to do when the platform is not reachable from this install', async () => {
+    const { service } = createService({ stepper: null });
+    await expect(service.execute('chrome.do', { goal: 'x' }, '/repo', opts))
+      .rejects.toMatchObject({ statusCode: 503 });
   });
 });

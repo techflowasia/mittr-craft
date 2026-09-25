@@ -113,6 +113,7 @@ import { createComputerControl } from './lib/mittrcraft-control/computer-control
 import { createChromeControl } from './lib/mittrcraft-control/chrome-control.js';
 import { createChromeApprovals } from './lib/mittrcraft-control/chrome-approvals.js';
 import { createMittrWorkService } from './lib/mittr-work/service.js';
+import { createMittrBrowserStepper } from './lib/mittr-browser-step/service.js';
 import webPush from 'web-push';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1235,6 +1236,8 @@ chromeApprovals.subscribe(globalMessageStreamHub);
 // have to change to accommodate a dependency that shows up later.
 let jiraControl = null;
 const getJiraControl = () => jiraControl;
+let browserStepper = null;
+const getBrowserStepper = () => browserStepper;
 
 const mittrCraftControlService = createMittrCraftControlService({
   readSettingsFromDiskMigrated,
@@ -1244,6 +1247,7 @@ const mittrCraftControlService = createMittrCraftControlService({
   waitForOpenCodeReady,
   getJiraControl,
   getPlaneControl: getJiraControl,
+  getBrowserStepper,
   sessionService: mittrCraftSessionService,
   scheduledTaskService,
   browserControl: browserControlBroker,
@@ -1617,6 +1621,10 @@ async function main(options = {}) {
     // Same session, same broker as `/api/mittr/work` — the agent's `jira.get_issue` action
     // reads through this, not a connection of its own.
     jiraControl = createMittrWorkService({
+      brokerBaseUrl: mittrShim.brokerBaseUrl,
+      ensureFreshSession: mittrShim.ensureFreshSession,
+    });
+    browserStepper = createMittrBrowserStepper({
       brokerBaseUrl: mittrShim.brokerBaseUrl,
       ensureFreshSession: mittrShim.ensureFreshSession,
     });

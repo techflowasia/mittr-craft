@@ -159,6 +159,7 @@ export const createMittrCraftControlService = (dependencies) => {
     // about that ordering.
     getJiraControl = () => null,
     getPlaneControl = () => null,
+    getBrowserStepper = () => null,
     createClient = createOpencodeClient,
     sleep = (duration) => new Promise((resolve) => setTimeout(resolve, duration)),
     now = Date.now,
@@ -654,6 +655,57 @@ export const createMittrCraftControlService = (dependencies) => {
     'chrome.wait': (input) => (asNonEmptyString(input.text) ? ['wait', '--text', plainArg(input.text, 'text')] : ['wait', refOf(input.ref)]),
   };
 
+  const CHROME_DO_DEFAULT_STEPS = 15;
+  const CHROME_DO_MAX_STEPS = 40;
+
+  const stepCommand = (step) => {
+    if (step.action === 'click') return ['click', refOf(step.ref)];
+    if (step.action === 'fill') return ['fill', refOf(step.ref), plainArg(step.value, 'value', { allowEmpty: true })];
+    return ['select', refOf(step.ref), plainArg(step.value, 'value')];
+  };
+
+  const doChromeTask = async (input, { runAction, ensureStillApproved, signal }) => {
+    const stepper = getBrowserStepper();
+    if (!stepper) {
+      throw new MittrCraftControlError('chrome.do needs the Mittr platform; ask the user to sign in to Mittr, or work step by step with chrome.snapshot', 503);
+    }
+    const goal = required(input.goal, 'goal');
+    const asked = Number(input.maxSteps);
+    const limit = Number.isInteger(asked) && asked > 0 ? Math.min(asked, CHROME_DO_MAX_STEPS) : CHROME_DO_DEFAULT_STEPS;
+    const steps = [];
+    const history = [];
+    let values;
+    const finish = async (outcome, extra = {}) => {
+      const landed = await runAction(['get', 'url']).catch(() => null);
+      return { outcome, ...extra, steps, url: asNonEmptyString(landed?.url) ?? null };
+    };
+    for (let index = 0; index < limit; index += 1) {
+      if (signal?.aborted) return finish('stopped', { reason: 'the call was cancelled' });
+      const page = await runAction(['snapshot', '-i']);
+      const snapshot = typeof page?.snapshot === 'string' ? page.snapshot : '';
+      let reply;
+      try {
+        reply = await stepper.nextStep({ goal, snapshot, history, values }, signal);
+      } catch (error) {
+        return finish('stopped', { reason: error instanceof Error ? error.message : 'no step could be chosen' });
+      }
+      if (reply.values) values = reply.values;
+      const { step } = reply;
+      if (step.action === 'done') return finish('done');
+      if (step.action === 'ask') return finish('ask', { question: step.question });
+      if (step.action === 'stop') return finish('stopped', { reason: step.reason });
+      const line = `${step.action} ${step.target ?? `@${step.ref}`}${step.action === 'click' ? '' : ` = "${step.value}"`}`;
+      if (history.length >= 2 && history.slice(-2).every((previous) => previous === line)) {
+        return finish('stuck', { reason: `the same step was chosen three times: ${line}` });
+      }
+      await runAction(stepCommand(step));
+      await ensureStillApproved();
+      history.push(line);
+      steps.push({ step: line, decidedBy: reply.decidedBy, ms: reply.ms });
+    }
+    return finish('step_limit', { reason: `stopped after ${limit} steps` });
+  };
+
   const chromeAction = async (action, input, contextDirectory, options = {}) => {
     const sessionId = asNonEmptyString(options.sessionId);
     if (!sessionId) throw new MittrCraftControlError('The Chrome tool needs the calling session', 400);
@@ -759,6 +811,10 @@ export const createMittrCraftControlService = (dependencies) => {
       } finally {
         await fsPromises.rm(scratch, { recursive: true, force: true });
       }
+    }
+
+    if (action === 'chrome.do') {
+      return doChromeTask(input, { runAction, ensureStillApproved, signal: options.signal });
     }
 
     const build = CHROME_COMMANDS[action];
