@@ -84,13 +84,19 @@ export const createCriteriaEvaluator = ({ getMittrGoalJudge, getSmallModelServic
     const verdicts = new Map();
     let evaluation = null;
 
+    const scriptPassed = new Map();
     for (const criterion of criteria) {
       if (!SCRIPT_CHECKS.has(criterion.check.type)) continue;
       const result = await runScriptCheck(criterion, { directory, evidence, fsImpl });
-      if (result) verdicts.set(criterion.id, { ...result, by: 'script' });
+      if (!result) continue;
+      if (result.status === 'met') scriptPassed.set(criterion.id, result);
+      else verdicts.set(criterion.id, { ...result, by: 'script' });
     }
 
     const open = () => criteria.filter((criterion) => !verdicts.has(criterion.id));
+    const askedText = (criterion) => (scriptPassed.has(criterion.id)
+      ? `${criterion.text} (automatic check passed: ${String(scriptPassed.get(criterion.id).reason).slice(0, 120)}; judge everything else this criterion states)`
+      : criterion.text);
 
     const mittr = typeof getMittrGoalJudge === 'function' ? getMittrGoalJudge() : null;
     if (open().length > 0 && mittr) {
@@ -98,7 +104,7 @@ export const createCriteriaEvaluator = ({ getMittrGoalJudge, getSmallModelServic
       try {
         const answer = await mittr.judge({
           objective,
-          criteria: asked.map(({ id, text }) => ({ id, text })),
+          criteria: asked.map((criterion) => ({ id: criterion.id, text: askedText(criterion) })),
           evidence: evidence.digest,
           report: evidence.report,
         });
@@ -117,7 +123,13 @@ export const createCriteriaEvaluator = ({ getMittrGoalJudge, getSmallModelServic
       try {
         const service = await getSmallModelService();
         const answer = await judgeWithModel({
-          service, objective, criteria: open(), evidence, directory, providerID, modelID,
+          service,
+          objective,
+          criteria: open().map((criterion) => ({ ...criterion, text: askedText(criterion) })),
+          evidence,
+          directory,
+          providerID,
+          modelID,
         });
         const openIds = new Set(open().map((criterion) => criterion.id));
         for (const result of answer.results) {
@@ -128,6 +140,10 @@ export const createCriteriaEvaluator = ({ getMittrGoalJudge, getSmallModelServic
       } catch (error) {
         if (Number(error?.statusCode) !== 404) warn('model judge failed', error);
       }
+    }
+
+    for (const [id, result] of scriptPassed) {
+      if (!verdicts.has(id)) verdicts.set(id, { ...result, by: 'script' });
     }
 
     return {

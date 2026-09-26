@@ -18,19 +18,48 @@ const modelService = (results) => ({
 });
 
 describe('criteria evaluator', () => {
-  it('decides script criteria without any model and asks Mittr only for the rest', async () => {
-    const judge = vi.fn(async () => ({ results: [{ id: 'c2', verdict: 'met', why: 'README written' }], decidedBy: ['jev'] }));
+  it('asks Mittr to confirm a passed script criterion with the check result, and to judge the rest', async () => {
+    const judge = vi.fn(async () => ({
+      results: [{ id: 'c1', verdict: 'met', why: 'run #1 passed' }, { id: 'c2', verdict: 'met', why: 'README written' }],
+      decidedBy: ['jev'],
+    }));
     const service = modelService([]);
     const evaluate = createCriteriaEvaluator({ getMittrGoalJudge: () => ({ judge }), getSmallModelService: async () => service });
 
     const result = await evaluate({ objective: 'o', criteria, evidence, directory: '/w' });
 
     expect(judge).toHaveBeenCalledOnce();
-    expect(judge.mock.calls[0][0].criteria).toEqual([{ id: 'c2', text: 'The README explains setup' }]);
+    const asked = judge.mock.calls[0][0].criteria;
+    expect(asked.map((c) => c.id)).toEqual(['c1', 'c2']);
+    expect(asked[0].text).toMatch(/^Tests pass \(automatic check passed: .*bun test/);
+    expect(asked[1]).toEqual({ id: 'c2', text: 'The README explains setup' });
     expect(service.generateSmallModelText).not.toHaveBeenCalled();
-    expect(result.criteria.map((c) => [c.id, c.status, c.by])).toEqual([['c1', 'met', 'script'], ['c2', 'met', 'mittr']]);
+    expect(result.criteria.map((c) => [c.id, c.status, c.by])).toEqual([['c1', 'met', 'mittr'], ['c2', 'met', 'mittr']]);
     expect(result.unresolved).toEqual([]);
     expect(result.evaluation).toEqual({ providerID: 'mittr', modelID: 'jev' });
+  });
+
+  it('keeps a criterion missing when its script passes but the rest of what it states is not shown', async () => {
+    const constrained = [{ ...criteria[0], text: 'Tests pass without editing the tests' }];
+    const judge = vi.fn(async () => ({ results: [{ id: 'c1', verdict: 'missing', why: 'test file edited in #3' }], decidedBy: ['jev'] }));
+    const evaluate = createCriteriaEvaluator({ getMittrGoalJudge: () => ({ judge }), getSmallModelService: async () => modelService([]) });
+
+    const result = await evaluate({ objective: 'o', criteria: constrained, evidence, directory: '/w' });
+
+    expect(result.criteria[0]).toMatchObject({ status: 'missing', by: 'mittr', reason: 'test file edited in #3' });
+  });
+
+  it('never asks a judge about a criterion its script already failed', async () => {
+    const failing = [{ ...criteria[0], check: { type: 'command', command: 'npm test' } }];
+    const judge = vi.fn(async () => ({ results: [], decidedBy: [] }));
+    const service = modelService([]);
+    const evaluate = createCriteriaEvaluator({ getMittrGoalJudge: () => ({ judge }), getSmallModelService: async () => service });
+
+    const result = await evaluate({ objective: 'o', criteria: failing, evidence, directory: '/w' });
+
+    expect(judge).not.toHaveBeenCalled();
+    expect(service.generateSmallModelText).not.toHaveBeenCalled();
+    expect(result.criteria[0]).toMatchObject({ status: 'missing', by: 'script' });
   });
 
   it('falls back to the session model when Mittr cannot judge', async () => {
@@ -43,7 +72,18 @@ describe('criteria evaluator', () => {
     expect(result.criteria[1]).toMatchObject({ status: 'missing', by: 'model', reason: 'no README change in the record' });
     const prompt = service.generateSmallModelText.mock.calls[0][0].prompt;
     expect(prompt).toContain('c2: The README explains setup');
-    expect(prompt).not.toContain('c1: Tests pass');
+    expect(prompt).toMatch(/c1: Tests pass \(automatic check passed:/);
+  });
+
+  it('falls back to a passed script verdict when no judge answers', async () => {
+    const evaluate = createCriteriaEvaluator({
+      getMittrGoalJudge: () => null,
+      getSmallModelService: async () => { throw Object.assign(new Error('none'), { statusCode: 404 }); },
+    });
+
+    const result = await evaluate({ objective: 'o', criteria, evidence, directory: '/w' });
+
+    expect(result.criteria[0]).toMatchObject({ status: 'met', by: 'script' });
   });
 
   it('reports what nobody could judge instead of guessing', async () => {

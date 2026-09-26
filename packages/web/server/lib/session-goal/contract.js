@@ -92,6 +92,9 @@ const CONTRACT_SYSTEM = [
   '- check "command": the outcome is proven by a command exiting successfully (tests pass, the build succeeds, a script runs). command = the literal command as this workspace runs it.',
   '- check "sources": the outcome is research that must rest on real sources. path = the file that holds the citations, or "" when the answer is given in the chat.',
   '- check "judge": anything else; it is judged from the record of the tool calls.',
+  '- Every constraint the person stated is its own criterion with check "judge": what must not change, what must not be done, how or where it must be done (for example "without editing the tests", "fix the root cause", "only in this folder").',
+  '- A "file" or "command" check proves only that the file exists or the command succeeds. When the requirements also ask something of the content (what it explains, its length or form, that it cites sources), add a separate criterion for that: "sources" when it must cite pages that were actually read, "judge" otherwise.',
+  '- Before answering, go through the requirements sentence by sentence and make sure every demand in them is covered by at least one criterion.',
   '- Unused fields are "".',
   '- Write each text as a short statement of the finished state, in the same language as the requirements.',
 ].join('\n');
