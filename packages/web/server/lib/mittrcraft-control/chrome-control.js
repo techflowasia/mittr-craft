@@ -1,0 +1,135 @@
+import { execFile } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+export const CHROME_EXECUTABLE = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const BINARY_NAME = 'agent-browser';
+const MAX_OUTPUT_CHARS = 12_000;
+
+const devResourcesDir = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../../electron/resources',
+);
+
+export const bundledAgentBrowserCandidates = () => [
+  process.env.MITTRCRAFT_BUNDLED_AGENT_BROWSER_DIR,
+  typeof process.resourcesPath === 'string' ? path.join(process.resourcesPath, 'agent-browser') : null,
+  path.join(devResourcesDir, 'agent-browser'),
+]
+  .map((value) => (typeof value === 'string' ? value.trim() : ''))
+  .filter(Boolean)
+  .map((root) => path.join(root, BINARY_NAME));
+
+const resolveBinary = () => bundledAgentBrowserCandidates().find((candidate) => fs.existsSync(candidate)) || null;
+
+const BANNER_TEXT = 'MittrCraft agent กำลังควบคุมหน้าต่างนี้ · MittrCraft agent is controlling this window';
+
+export const AGENT_BANNER_SCRIPT = `(() => {
+  const ID = 'mittrcraft-agent-banner';
+  const mount = () => {
+    if (!document.documentElement || document.getElementById(ID)) return;
+    const host = document.createElement('div');
+    host.id = ID;
+    host.setAttribute('aria-hidden', 'true');
+    host.style.cssText = 'all:initial;position:fixed;top:0;left:0;right:0;z-index:2147483647;pointer-events:none;';
+    const root = host.attachShadow({ mode: 'closed' });
+    const bar = document.createElement('div');
+    bar.textContent = ${JSON.stringify(BANNER_TEXT)};
+    bar.style.cssText = 'font:600 12px/1.6 -apple-system,system-ui,sans-serif;color:#1a1300;background:#ffd84d;text-align:center;padding:3px 8px;box-shadow:0 1px 4px rgba(0,0,0,.25);pointer-events:none;';
+    root.appendChild(bar);
+    document.documentElement.appendChild(host);
+  };
+  mount();
+  document.addEventListener('DOMContentLoaded', mount);
+  new MutationObserver(mount).observe(document, { childList: true, subtree: true });
+})();
+`;
+
+const bannerScriptPath = () => {
+  const file = path.join(os.tmpdir(), 'mittrcraft-agent-banner.js');
+  let current = null;
+  try {
+    current = fs.readFileSync(file, 'utf8');
+  } catch {
+    current = null;
+  }
+  if (current !== AGENT_BANNER_SCRIPT) fs.writeFileSync(file, AGENT_BANNER_SCRIPT);
+  return file;
+};
+
+export const chromeSessionName = (sessionId) => `mc-${String(sessionId).replace(/[^A-Za-z0-9_-]/g, '')}`;
+
+const executeBinary = (binary, argv, { env, signal }) => new Promise((resolve, reject) => {
+  execFile(binary, argv, { env, signal, maxBuffer: 32 * 1024 * 1024 }, (error, stdout) => {
+    if (error && !stdout) {
+      reject(error);
+      return;
+    }
+    resolve(stdout);
+  });
+});
+
+const parseReply = (stdout) => {
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    throw new Error(`agent-browser did not return JSON: ${String(stdout).slice(0, 200)}`);
+  }
+  if (parsed?.success !== true) {
+    throw new Error(typeof parsed?.error === 'string' && parsed.error ? parsed.error : 'agent-browser command failed');
+  }
+  return parsed.data;
+};
+
+export const createChromeControl = ({
+  resolve = resolveBinary,
+  chromePath = CHROME_EXECUTABLE,
+  exists = fs.existsSync,
+  execute = executeBinary,
+} = {}) => {
+  const binary = resolve();
+  const env = { ...process.env, AGENT_BROWSER_EXECUTABLE_PATH: chromePath, AGENT_BROWSER_NAMESPACE: 'mittrcraft' };
+
+  const call = async (argv, signal) => {
+    if (!binary) throw new Error('The Chrome tool is not bundled in this build of MittrCraft');
+    return parseReply(await execute(binary, argv, { env, signal }));
+  };
+
+  const run = async (command, { sessionName, profile, headed = false, signal } = {}) => {
+    const argv = [
+      '--session', sessionName,
+      '--profile', profile,
+      '--json',
+      ...(headed ? ['--headed', '--init-script', bannerScriptPath()] : []),
+      '--max-output', String(MAX_OUTPUT_CHARS),
+      ...command,
+    ];
+    const data = await call(argv, signal);
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      const { lifecycle: _lifecycle, ...rest } = data;
+      return rest;
+    }
+    return data;
+  };
+
+  const profiles = async () => {
+    const data = await call(['--json', 'profiles']);
+    return Array.isArray(data) ? data : [];
+  };
+
+  const closeAll = async () => {
+    if (!binary) return;
+    await call(['--json', 'close', '--all']).catch(() => undefined);
+  };
+
+  return {
+    available: binary !== null,
+    chromeInstalled: () => exists(chromePath),
+    run,
+    profiles,
+    closeAll,
+  };
+};

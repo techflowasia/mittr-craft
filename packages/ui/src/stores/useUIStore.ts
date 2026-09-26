@@ -768,6 +768,10 @@ interface UIStore {
   agentControlToolEnabled: boolean;
   agentWebToolEnabled: boolean;
   agentComputerToolEnabled: boolean;
+  agentChromeToolEnabled: boolean;
+  agentChromeProfile: string;
+  agentChromeApprovedHosts: string[];
+  agentChromeHeaded: boolean;
   inputSpellcheckEnabled: boolean;
   wideChatLayoutEnabled: boolean;
   codeBlockLineWrap: boolean;
@@ -944,6 +948,10 @@ interface UIStore {
   setAgentControlToolEnabled: (value: boolean) => void;
   setAgentWebToolEnabled: (value: boolean) => void;
   setAgentComputerToolEnabled: (value: boolean) => void;
+  setAgentChromeToolEnabled: (value: boolean) => void;
+  setAgentChromeProfile: (value: string) => void;
+  setAgentChromeApprovedHosts: (value: string[]) => void;
+  setAgentChromeHeaded: (value: boolean) => void;
   setInputSpellcheckEnabled: (value: boolean) => void;
   setWideChatLayoutEnabled: (value: boolean) => void;
   setCodeBlockLineWrap: (value: boolean) => void;
@@ -1107,6 +1115,10 @@ export const useUIStore = create<UIStore>()(
         agentControlToolEnabled: true,
         agentWebToolEnabled: true,
         agentComputerToolEnabled: true,
+        agentChromeToolEnabled: true,
+        agentChromeProfile: '',
+        agentChromeApprovedHosts: [],
+        agentChromeHeaded: false,
         inputSpellcheckEnabled: false,
         wideChatLayoutEnabled: false,
         codeBlockLineWrap: true,
@@ -2341,6 +2353,18 @@ export const useUIStore = create<UIStore>()(
         setAgentComputerToolEnabled: (value) => {
           set({ agentComputerToolEnabled: value });
         },
+        setAgentChromeToolEnabled: (value) => {
+          set({ agentChromeToolEnabled: value });
+        },
+        setAgentChromeProfile: (value) => {
+          set({ agentChromeProfile: value });
+        },
+        setAgentChromeApprovedHosts: (value) => {
+          set({ agentChromeApprovedHosts: value });
+        },
+        setAgentChromeHeaded: (value) => {
+          set({ agentChromeHeaded: value });
+        },
         setInputSpellcheckEnabled: (value) => {
           set({ inputSpellcheckEnabled: value });
         },
@@ -2726,6 +2750,10 @@ export const useUIStore = create<UIStore>()(
           agentControlToolEnabled: state.agentControlToolEnabled,
           agentWebToolEnabled: state.agentWebToolEnabled,
           agentComputerToolEnabled: state.agentComputerToolEnabled,
+          agentChromeToolEnabled: state.agentChromeToolEnabled,
+          agentChromeProfile: state.agentChromeProfile,
+          agentChromeApprovedHosts: state.agentChromeApprovedHosts,
+          agentChromeHeaded: state.agentChromeHeaded,
           inputSpellcheckEnabled: state.inputSpellcheckEnabled,
           wideChatLayoutEnabled: state.wideChatLayoutEnabled,
           codeBlockLineWrap: state.codeBlockLineWrap,

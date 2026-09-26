@@ -426,6 +426,25 @@ describe('updateDesktopSettings', () => {
     expect(state.recentEfforts).toEqual(settings.recentEfforts);
   });
 
+  test('applies the agent Chrome settings from server settings', async () => {
+    getWindow();
+    const settings = {
+      agentChromeToolEnabled: false,
+      agentChromeProfile: 'Profile 1',
+      agentChromeApprovedHosts: ['plane.techflow.asia', 'github.com'],
+      agentChromeHeaded: true,
+    } satisfies SettingsPayload;
+    registerSettingsApi(async () => ({}), async () => ({ settings, source: 'web' }));
+
+    await syncDesktopSettings();
+
+    const state = useUIStore.getState();
+    expect(state.agentChromeToolEnabled).toBe(false);
+    expect(state.agentChromeProfile).toBe('Profile 1');
+    expect(state.agentChromeApprovedHosts).toEqual(['plane.techflow.asia', 'github.com']);
+    expect(state.agentChromeHeaded).toBe(true);
+  });
+
   test('applies the persisted terminal shell from server settings', async () => {
     getWindow();
     invalidateSettingsCache();

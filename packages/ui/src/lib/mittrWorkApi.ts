@@ -12,6 +12,7 @@ export type MittrWorkItem = {
   url: string;
   updatedAt: string;
   source?: 'plane' | 'jira';
+  key?: string | null;
 };
 
 export type MittrWorkResult = {

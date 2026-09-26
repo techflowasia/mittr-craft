@@ -10,6 +10,7 @@ import { registerMittrAuditRoutes } from './audit-routes.js';
 import { createCatalogCache } from './catalog-cache.js';
 import { createEnablementStore } from './local-enablement.js';
 import { reconcileMcp } from './mcp-reconciler.js';
+import { reconcileSkills, skillsChanged } from './skill-reconciler.js';
 import { resolveRepositoryIdentity } from './repository-identity.js';
 
 /**
@@ -48,6 +49,7 @@ export function startMittrShim({
   dataDir,
   brokerBaseUrl,
   syncModels,
+  refreshEngine = async () => {},
   // False in a packaged build, whose origin was decided when it was built.
   allowUpstreamOverride = true,
   secretStore = createPlaintextSecretStore(),
@@ -104,6 +106,12 @@ export function startMittrShim({
       // Organisation connectors are written at user scope, so they are not tied
       // to whichever directory happened to be open when the sync ran.
       reconcileMcp({ catalog, enablement, workingDirectory: null, mcpApi });
+      const { SKILL_DIR } = await load('../opencode/shared.js');
+      const skills = reconcileSkills({ catalog, enablement, skillsRoot: SKILL_DIR });
+      for (const failure of skills.failed) {
+        console.warn(`[mittr] skill '${failure.name}' not installed: ${failure.error}`);
+      }
+      if (skillsChanged(skills)) await refreshEngine('Mittr catalog skills changed');
     },
   });
 

@@ -74,6 +74,32 @@ describe('mittr auth routes', () => {
     expect(store.read().accessToken).toBe('at-1');
   });
 
+  it('signs a dev flavor in on its own deep link, end to end', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonBody(session()));
+    const app = express();
+    registerMittrAuthRoutes(app, {
+      brokerBaseUrl: 'https://mittr.test',
+      sessionStore: memoryStore(),
+      fetchImpl,
+      redirectUri: 'mittrcraft-dev://auth/callback',
+    });
+    const start = await request(app).post('/api/mittr/auth/start').expect(200);
+    expect(new URL(start.body.authorizeUrl).searchParams.get('redirect_uri')).toBe('mittrcraft-dev://auth/callback');
+    await request(app)
+      .post('/api/mittr/auth/callback')
+      .set('content-type', 'application/json')
+      .send({ url: 'mittrcraft://auth/callback?code=abc' })
+      .expect(400);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    await request(app).post('/api/mittr/auth/start').expect(200);
+    await request(app)
+      .post('/api/mittr/auth/callback')
+      .set('content-type', 'application/json')
+      .send({ url: 'mittrcraft-dev://auth/callback?code=abc' })
+      .expect(200);
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).redirect_uri).toBe('mittrcraft-dev://auth/callback');
+  });
+
   it('refuses a callback that arrives with no sign-in pending', async () => {
     const { app, fetchImpl } = build();
     await request(app)

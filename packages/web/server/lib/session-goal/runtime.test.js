@@ -119,12 +119,11 @@ describe('session goal live activity gate', () => {
     runtime.stop();
   });
 
-  it('audits normally when the idle parent has no working children', async () => {
+  it('derives the contract, judges it, and settles complete when every criterion is met', async () => {
     const requests = [];
     const fetchImpl = vi.fn(async (input, init = {}) => {
       const pathname = requestPath(input);
       requests.push({ pathname, method: init.method ?? 'GET', body: init.body });
-      if (pathname === `/session/${SESSION_ID}` && init.method === 'PATCH') return jsonResponse(session);
       if (pathname === `/session/${SESSION_ID}`) return jsonResponse(session);
       if (pathname === '/session/status') return jsonResponse({});
       if (pathname === `/session/${SESSION_ID}/children`) return jsonResponse([]);
@@ -136,7 +135,7 @@ describe('session goal live activity gate', () => {
             role: 'assistant',
             providerID: 'provider',
             modelID: 'model',
-            time: { completed: 2 },
+            time: { created: 2, completed: 2 },
             tokens: { input: 1, output: 1, cache: { read: 0 } },
           },
           parts: [{ type: 'text', text: 'The task is verified complete.' }],
@@ -145,8 +144,10 @@ describe('session goal live activity gate', () => {
       throw new Error(`Unexpected request: ${pathname}`);
     });
     const service = {
-      generateSmallModelText: vi.fn(async () => ({
-        text: '{"verdict":"complete","note":"Task verified complete"}',
+      generateSmallModelText: vi.fn(async ({ responseSchema }) => ({
+        text: responseSchema.properties.criteria
+          ? '{"criteria":[{"text":"The task is finished","check":"judge","path":"","contains":"","command":""}]}'
+          : '{"results":[{"id":"c1","verdict":"met","why":"shown"}]}',
         providerID: 'provider',
         modelID: 'model',
       })),
@@ -165,15 +166,117 @@ describe('session goal live activity gate', () => {
     });
     await vi.advanceTimersByTimeAsync(10);
 
-    expect(service.generateSmallModelText).toHaveBeenCalledOnce();
+    expect(service.generateSmallModelText).toHaveBeenCalledTimes(2);
     const patch = requests.find((request) => request.pathname === `/session/${SESSION_ID}` && request.method === 'PATCH');
     expect(patch).toBeDefined();
     const writtenGoal = JSON.parse(patch.body).metadata.mittrcraft.goal;
     expect(writtenGoal).toMatchObject({
       status: 'complete',
+      statusReason: 'verified by judge',
       evaluationProviderID: 'provider',
       evaluationModelID: 'model',
+      criteria: [{ id: 'c1', text: 'The task is finished', status: 'met', by: 'model' }],
     });
     runtime.stop();
+  });
+});
+
+const commandCriterion = { id: 'c1', text: 'Tests pass', check: { type: 'command', command: 'bun test' }, status: 'pending', reason: '', by: '' };
+
+const runJudgedTick = async ({ goalOverrides = {}, parts }) => {
+  const judgedSession = {
+    ...session,
+    metadata: { mittrcraft: { goal: { ...goal, criteria: [commandCriterion], ...goalOverrides } } },
+  };
+  const requests = [];
+  const messages = [{
+    info: {
+      id: 'msg_assistant',
+      sessionID: SESSION_ID,
+      role: 'assistant',
+      providerID: 'provider',
+      modelID: 'model',
+      agent: 'build',
+      time: { created: 2, completed: 2 },
+      tokens: { input: 1, output: 1, cache: { read: 0 } },
+    },
+    parts,
+  }];
+  vi.stubGlobal('fetch', vi.fn(async (input, init = {}) => {
+    const pathname = requestPath(input);
+    requests.push({ pathname, method: init.method ?? 'GET', body: init.body ? JSON.parse(init.body) : null });
+    if (pathname === `/session/${SESSION_ID}`) return jsonResponse(judgedSession);
+    if (pathname === '/session/status') return jsonResponse({});
+    if (pathname === `/session/${SESSION_ID}/children`) return jsonResponse([]);
+    if (pathname === `/session/${SESSION_ID}/message`) return jsonResponse(messages);
+    if (pathname === `/session/${SESSION_ID}/prompt_async`) return jsonResponse({});
+    throw new Error(`Unexpected request: ${pathname}`);
+  }));
+  const getSmallModelService = vi.fn();
+  const runtime = createSessionGoalRuntime({
+    buildOpenCodeUrl: (pathname) => `http://opencode.test${pathname}`,
+    getOpenCodeAuthHeaders: () => ({}),
+    getSmallModelService,
+    idleQuietMs: 10,
+  });
+  runtime.processPayload({
+    type: 'session.status',
+    properties: { sessionID: SESSION_ID, status: { type: 'idle' }, directory: DIRECTORY },
+  });
+  await vi.advanceTimersByTimeAsync(10);
+  runtime.stop();
+  return {
+    getSmallModelService,
+    patches: requests.filter((request) => request.method === 'PATCH').map((request) => request.body.metadata.mittrcraft.goal),
+    prompts: requests.filter((request) => request.pathname.endsWith('/prompt_async')).map((request) => request.body),
+  };
+};
+
+describe('mittr goal judge loop', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('sends a fabricated "done" back with what the record is missing', async () => {
+    const { patches, prompts, getSmallModelService } = await runJudgedTick({
+      parts: [{ type: 'text', text: 'Everything is done and all tests pass.' }],
+    });
+
+    expect(getSmallModelService).not.toHaveBeenCalled();
+    expect(patches[0]).toMatchObject({
+      status: 'active',
+      turnsUsed: 2,
+      note: 'Tests pass',
+      criteria: [{ id: 'c1', status: 'missing', by: 'script' }],
+    });
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toMatchObject({ model: { providerID: 'provider', modelID: 'model' }, agent: 'build' });
+    const text = prompts[0].parts[0].text;
+    expect(text).toContain('[NOT MET] Tests pass — `bun test` has not been run in this goal');
+    expect(text).toContain('Only your tool calls count as evidence.');
+  });
+
+  it('settles complete from the tool record alone', async () => {
+    const { patches, prompts } = await runJudgedTick({
+      parts: [{ type: 'tool', tool: 'bash', state: { status: 'completed', input: { command: 'bun test' }, output: '3 pass', metadata: { exit: 0 } } }],
+    });
+
+    expect(prompts).toHaveLength(0);
+    expect(patches[0]).toMatchObject({ status: 'complete', criteria: [{ status: 'met', by: 'script' }] });
+  });
+
+  it('stops as blocked when no criterion has been met for several rounds', async () => {
+    const { patches, prompts } = await runJudgedTick({
+      goalOverrides: { stallStreak: 4, bestMet: 0 },
+      parts: [{ type: 'text', text: 'Still working.' }],
+    });
+
+    expect(prompts).toHaveLength(0);
+    expect(patches[0]).toMatchObject({ status: 'blocked', statusReason: 'no progress on the remaining criteria', note: 'Tests pass' });
   });
 });

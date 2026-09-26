@@ -78,6 +78,25 @@ export const MITTRCRAFT_WEB_ACTIONS = Object.freeze(
   MITTRCRAFT_WEB_ACTION_DEFINITIONS.map(({ action }) => action),
 );
 
+export const MITTRCRAFT_CHROME_ACTION_DEFINITIONS = Object.freeze([
+  { action: 'chrome.open', title: 'Open a page in Chrome', description: 'Open url in a Chrome session that starts from the user\'s chosen Chrome profile, so sites they are signed in to stay signed in. The first use on a site asks the user' },
+  { action: 'chrome.snapshot', title: 'Read the Chrome page', description: 'Interactive elements of the open page with refs (@e1) the other chrome actions take; pass selector to read one part' },
+  { action: 'chrome.read', title: 'Read the Chrome page as text', description: 'The open page as readable markdown text' },
+  { action: 'chrome.click', title: 'Click in Chrome', description: 'Click the element with ref from the last snapshot' },
+  { action: 'chrome.fill', title: 'Fill a field in Chrome', description: 'Clear the field with ref and fill it with value' },
+  { action: 'chrome.type', title: 'Type in Chrome', description: 'Type value into the field with ref without clearing it' },
+  { action: 'chrome.press', title: 'Press a key in Chrome', description: 'Press key, such as Enter, Tab or Control+a' },
+  { action: 'chrome.select', title: 'Choose an option in Chrome', description: 'Choose value in the dropdown with ref, by value or visible label' },
+  { action: 'chrome.wait', title: 'Wait in Chrome', description: 'Wait until text appears on the page, or until the element with ref appears' },
+  { action: 'chrome.screenshot', title: 'Screenshot the Chrome page', description: 'Save the visible page as an image in the project and see it directly; pass label to name it' },
+  { action: 'chrome.do', title: 'Do a task on the Chrome page', description: 'Give goal in plain words and MittrCraft works through the open page on its own, one step at a time (click, fill, choose), until the goal is done, it needs to ask the user, or maxSteps runs out. Returns every step it took and where it stopped. chrome.open the page first' },
+  { action: 'chrome.close', title: 'Close the Chrome session', description: 'Close this session\'s Chrome; no parameters' },
+]);
+
+export const MITTRCRAFT_CHROME_ACTIONS = Object.freeze(
+  MITTRCRAFT_CHROME_ACTION_DEFINITIONS.map(({ action }) => action),
+);
+
 /**
  * Desktop control via the bundled `cua-driver` — a separate tool from
  * `mittrcraft_web` because it acts on the whole screen, not one page in the
@@ -106,4 +125,5 @@ export const MITTRCRAFT_ALL_ACTIONS = Object.freeze([
   ...MITTRCRAFT_PLANE_ACTIONS,
   ...MITTRCRAFT_WEB_ACTIONS,
   ...MITTRCRAFT_COMPUTER_ACTIONS,
+  ...MITTRCRAFT_CHROME_ACTIONS,
 ]);

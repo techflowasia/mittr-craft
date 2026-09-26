@@ -1,6 +1,6 @@
 {
   "name": "@mittrcraft/electron",
-  "version": "1.19.1",
+  "version": "1.20.0",
   "private": true,
   "description": "Electron desktop runtime for MittrCraft",
   "author": "MittrCraft",
@@ -35,6 +35,7 @@
     "ensure:electron": "node ./scripts/ensure-electron.mjs",
     "prepare:opencode-cli": "node ./scripts/prepare-opencode-cli.mjs",
     "prepare:cua-driver": "node ./scripts/prepare-cua-driver.mjs",
+    "prepare:agent-browser": "node ./scripts/prepare-agent-browser.mjs",
     "verify:opencode-cli": "node ./scripts/verify-opencode-cli.mjs --staged",
     "verify:opencode-cli:packaged": "node ./scripts/verify-opencode-cli.mjs --packaged",
     "verify:linux-appimage": "node ./scripts/verify-linux-appimage.mjs",
@@ -47,7 +48,7 @@
     "test:linux-desktop": "node --test ./linux-autostart.test.mjs && node ./scripts/smoke-linux-app-discovery.mjs && node ./scripts/smoke-path-open-utils.mjs",
     "updater:e2e:fixture": "node ./scripts/updater-e2e-fixture.mjs",
     "verify:update-manifest": "node ./scripts/verify-update-manifest.mjs",
-    "package": "bun run build:web-assets && bun run prepare:opencode-cli && bun run prepare:cua-driver && bun run bundle:main && bun run rebuild:native && node ./scripts/package.mjs",
+    "package": "bun run build:web-assets && bun run prepare:opencode-cli && bun run prepare:cua-driver && bun run prepare:agent-browser && bun run bundle:main && bun run rebuild:native && node ./scripts/package.mjs",
     "finalize:latest-yml": "node ./scripts/finalize-latest-yml.mjs",
     "type-check": "node --check ./main.mjs && node --check ./preload.mjs",
     "lint": "node -e \"process.exit(0)\""
@@ -87,6 +88,10 @@
       {
         "from": "resources/cua-driver",
         "to": "cua-driver"
+      },
+      {
+        "from": "resources/agent-browser",
+        "to": "agent-browser"
       }
     ],
     "afterPack": "scripts/after-pack.cjs",

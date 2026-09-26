@@ -110,7 +110,11 @@ import { createMittrCraftSessionService } from './lib/mittrcraft-sessions/routes
 import { createScheduledTaskService } from './lib/scheduled-tasks/service.js';
 import { createMittrCraftControlService } from './lib/mittrcraft-control/service.js';
 import { createComputerControl } from './lib/mittrcraft-control/computer-control.js';
+import { createChromeControl } from './lib/mittrcraft-control/chrome-control.js';
+import { createChromeApprovals } from './lib/mittrcraft-control/chrome-approvals.js';
 import { createMittrWorkService } from './lib/mittr-work/service.js';
+import { createMittrBrowserStepper } from './lib/mittr-browser-step/service.js';
+import { createMittrGoalJudge } from './lib/mittr-goal-judge/service.js';
 import webPush from 'web-push';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -261,7 +265,9 @@ const sanitizeModelRefs = (...args) => settingsNormalizationRuntime.sanitizeMode
 const sanitizeSkillCatalogs = (...args) => settingsNormalizationRuntime.sanitizeSkillCatalogs(...args);
 const sanitizeProjects = (...args) => settingsNormalizationRuntime.sanitizeProjects(...args);
 
-const MITTRCRAFT_USER_CONFIG_ROOT = path.join(os.homedir(), '.config', 'mittrcraft');
+const MITTRCRAFT_USER_CONFIG_ROOT = process.env.MITTRCRAFT_DATA_DIR
+  ? path.resolve(process.env.MITTRCRAFT_DATA_DIR)
+  : path.join(os.homedir(), '.config', 'mittrcraft');
 const MITTRCRAFT_USER_THEMES_DIR = path.join(MITTRCRAFT_USER_CONFIG_ROOT, 'themes');
 const MITTRCRAFT_PROJECTS_CONFIG_DIR = path.join(MITTRCRAFT_USER_CONFIG_ROOT, 'projects');
 
@@ -742,10 +748,12 @@ const sessionAssistRuntime = createSessionAssistRuntime({
   getSmallModelService: async () => import('./lib/small-model/index.js'),
 });
 
+let mittrGoalJudge = null;
 const sessionGoalRuntime = createSessionGoalRuntime({
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
   getSmallModelService: async () => import('./lib/small-model/index.js'),
+  getMittrGoalJudge: () => mittrGoalJudge,
   emitGoalNotification: async ({ sessionId, directory, status, goal }) => {
     // The goal settle notification replaces the per-turn ready notifications
     // (suppressed while the goal is active) — so it obeys the same toggle.
@@ -756,7 +764,7 @@ const sessionGoalRuntime = createSessionGoalRuntime({
     const title = status === 'complete'
       ? 'Goal complete'
       : (status === 'budgetLimited' ? 'Goal reached its token budget' : 'Goal blocked');
-    const detail = goal?.statusReason && goal.statusReason !== 'verified by audit' && goal.statusReason !== 'reported by agent'
+    const detail = goal?.statusReason && goal.statusReason !== 'verified by judge'
       ? goal.statusReason
       : (goal?.note || '');
     const objective = typeof goal?.objective === 'string' ? goal.objective.slice(0, 140) : '';
@@ -1109,8 +1117,9 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
     const includeControl = settings?.agentControlToolEnabled !== false;
     const includeWeb = settings?.agentWebToolEnabled !== false;
     const includeComputer = settings?.agentComputerToolEnabled !== false;
-    const managedEnv = includeControl || includeWeb || includeComputer
-      ? await (agentToolRuntime?.prepareManagedOpenCodeEnv({ includeControl, includeWeb, includeComputer }) || {})
+    const includeChrome = settings?.agentChromeToolEnabled !== false && chromeControl.available;
+    const managedEnv = includeControl || includeWeb || includeComputer || includeChrome
+      ? await (agentToolRuntime?.prepareManagedOpenCodeEnv({ includeControl, includeWeb, includeComputer, includeChrome }) || {})
       : {};
     if (settings?.optimizeSystemPrompt !== true) return managedEnv;
 
@@ -1223,12 +1232,17 @@ const browserControlBroker = createBrowserControlBroker({
 });
 
 const computerControl = createComputerControl();
+const chromeControl = createChromeControl();
+const chromeApprovals = createChromeApprovals({ readSettings: readSettingsFromDiskMigrated, persistSettings });
+chromeApprovals.subscribe(globalMessageStreamHub);
 
 // Filled in once `main()` starts the Mittr shim, which is when brokerBaseUrl/ensureFreshSession
 // first exist. A getter (not the value itself) so this service's construction order does not
 // have to change to accommodate a dependency that shows up later.
 let jiraControl = null;
 const getJiraControl = () => jiraControl;
+let browserStepper = null;
+const getBrowserStepper = () => browserStepper;
 
 const mittrCraftControlService = createMittrCraftControlService({
   readSettingsFromDiskMigrated,
@@ -1238,10 +1252,13 @@ const mittrCraftControlService = createMittrCraftControlService({
   waitForOpenCodeReady,
   getJiraControl,
   getPlaneControl: getJiraControl,
+  getBrowserStepper,
   sessionService: mittrCraftSessionService,
   scheduledTaskService,
   browserControl: browserControlBroker,
   computerControl,
+  chromeControl,
+  chromeApprovals,
 });
 
 const ensureGlobalWatcherStarted = async () => {
@@ -1278,6 +1295,7 @@ const fetchModelsSnapshot = (...args) => serverUtilsRuntime.fetchModelsSnapshot(
 const setupProxy = (...args) => serverUtilsRuntime.setupProxy(...args);
 const gracefulShutdownRuntime = createGracefulShutdownRuntime({
   process,
+  closeBrowserSessions: () => chromeControl.closeAll(),
   shutdownTimeoutMs: SHUTDOWN_TIMEOUT,
   getExitOnShutdown: () => exitOnShutdown,
   getIsShuttingDown: () => isShuttingDown,
@@ -1600,6 +1618,7 @@ async function main(options = {}) {
       brokerBaseUrl: resolveBrokerBaseUrl({ packaged: options.brokerBaseUrl, env: process.env }),
       secretStore: options.secretStore ?? undefined,
       syncModels: (models) => syncMittrModels(mittrShim)(models),
+      refreshEngine: (reason) => refreshOpenCodeAfterConfigChange(reason),
       // A build that named its own broker locks the upstream to it as well.
       allowUpstreamOverride: !String(options.brokerBaseUrl ?? '').trim(),
     });
@@ -1608,6 +1627,14 @@ async function main(options = {}) {
     // Same session, same broker as `/api/mittr/work` — the agent's `jira.get_issue` action
     // reads through this, not a connection of its own.
     jiraControl = createMittrWorkService({
+      brokerBaseUrl: mittrShim.brokerBaseUrl,
+      ensureFreshSession: mittrShim.ensureFreshSession,
+    });
+    browserStepper = createMittrBrowserStepper({
+      brokerBaseUrl: mittrShim.brokerBaseUrl,
+      ensureFreshSession: mittrShim.ensureFreshSession,
+    });
+    mittrGoalJudge = createMittrGoalJudge({
       brokerBaseUrl: mittrShim.brokerBaseUrl,
       ensureFreshSession: mittrShim.ensureFreshSession,
     });

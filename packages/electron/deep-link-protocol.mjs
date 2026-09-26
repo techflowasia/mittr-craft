@@ -9,4 +9,6 @@
  * its Info.plist — and every deep link into a packaged build was dead while
  * the code that registered it looked correct.
  */
-export const DEEP_LINK_PROTOCOL = 'mittrcraft';
+import { APP_FLAVOR } from './app-flavor.mjs';
+
+export const DEEP_LINK_PROTOCOL = APP_FLAVOR.protocol;

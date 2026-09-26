@@ -395,3 +395,129 @@ describe('managed agent tool runtime', () => {
     expect(JSON.parse(result.output)).toEqual({ schemaVersion: 1, ok: true, action: 'computer.list_apps', data: { apps: [] } });
   });
 });
+
+describe('mittrcraft_chrome tool', () => {
+  const loadPlugin = async (runtime, dataDir, options) => {
+    const prepared = await runtime.prepareManagedOpenCodeEnv(options);
+    const pluginPath = path.join(dataDir, 'agent-tool', 'mittrcraft-plugin.js');
+    const pluginModule = await import(`${pathToFileURL(pluginPath).href}?chrome=${Date.now()}-${Math.random()}`);
+    return { prepared, hooks: await pluginModule.MittrCraftPlugin() };
+  };
+
+  const withEnv = async (prepared, fn) => {
+    const originalUrl = process.env.MITTRCRAFT_AGENT_TOOL_URL;
+    const originalToken = process.env.MITTRCRAFT_AGENT_TOOL_TOKEN;
+    const originalFetch = globalThis.fetch;
+    process.env.MITTRCRAFT_AGENT_TOOL_URL = prepared.MITTRCRAFT_AGENT_TOOL_URL;
+    process.env.MITTRCRAFT_AGENT_TOOL_TOKEN = prepared.MITTRCRAFT_AGENT_TOOL_TOKEN;
+    try {
+      return await fn();
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalUrl === undefined) delete process.env.MITTRCRAFT_AGENT_TOOL_URL;
+      else process.env.MITTRCRAFT_AGENT_TOOL_URL = originalUrl;
+      if (originalToken === undefined) delete process.env.MITTRCRAFT_AGENT_TOOL_TOKEN;
+      else process.env.MITTRCRAFT_AGENT_TOOL_TOKEN = originalToken;
+    }
+  };
+
+  const context = (ask) => ({ sessionID: 'ses_1', directory: '/work', abort: new AbortController().signal, metadata: () => {}, ask });
+
+  it('is emitted only when enabled', async () => {
+    const { runtime, dataDir } = await createRuntime();
+    const { hooks } = await loadPlugin(runtime, dataDir, { includeChrome: true });
+    expect(hooks.tool.mittrcraft_chrome).toBeDefined();
+    const { hooks: without } = await loadPlugin(runtime, dataDir, { includeChrome: false });
+    expect(without.tool.mittrcraft_chrome).toBeUndefined();
+  });
+
+  it('asks the user once for an unapproved host and retries saying the question was answered', async () => {
+    const { runtime, dataDir } = await createRuntime();
+    const { prepared, hooks } = await loadPlugin(runtime, dataDir, { includeChrome: true });
+    const bodies = [];
+    const ask = vi.fn(async () => {});
+    await withEnv(prepared, async () => {
+      globalThis.fetch = async (_url, init) => {
+        const body = JSON.parse(init.body);
+        bodies.push(body);
+        if (!body.approvalAnswered) {
+          return new Response(JSON.stringify({ schemaVersion: 1, ok: false, action: 'chrome.open', error: { message: 'not allowed yet', kind: 'usage', code: 'site_approval_required', host: 'github.com' } }));
+        }
+        return new Response(JSON.stringify({ schemaVersion: 1, ok: true, action: 'chrome.open', data: { url: 'https://github.com/' } }));
+      };
+      const result = await hooks.tool.mittrcraft_chrome.execute({ action: 'chrome.open', parameters: { url: 'https://github.com/' } }, context(ask));
+      expect(JSON.parse(result.output).ok).toBe(true);
+    });
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ permission: 'mittrcraft_chrome', patterns: ['github.com'], always: ['github.com'] }));
+    expect(bodies.map((body) => body.approvalAnswered ?? null)).toEqual([null, true]);
+    expect(bodies.every((body) => body.approveHost === undefined)).toBe(true);
+    expect(bodies[0].contextSessionId).toBe('ses_1');
+  });
+
+  it('reports a refusal and does not retry when the user denies', async () => {
+    const { runtime, dataDir } = await createRuntime();
+    const { prepared, hooks } = await loadPlugin(runtime, dataDir, { includeChrome: true });
+    let calls = 0;
+    await withEnv(prepared, async () => {
+      globalThis.fetch = async () => {
+        calls += 1;
+        return new Response(JSON.stringify({ schemaVersion: 1, ok: false, action: 'chrome.open', error: { message: 'x', kind: 'usage', code: 'site_approval_required', host: 'github.com' } }));
+      };
+      const result = await hooks.tool.mittrcraft_chrome.execute({ action: 'chrome.open', parameters: { url: 'https://github.com/' } }, context(async () => { throw new Error('rejected'); }));
+      expect(JSON.parse(result.output).error.message).toMatch(/did not allow.*github\.com/);
+    });
+    expect(calls).toBe(1);
+  });
+
+  it('never lets the model approve a host through its own parameters', async () => {
+    const { runtime, executeAction } = await createRuntime();
+    await runtime.execute({ input: { action: 'chrome.open', url: 'https://x.example/', approveHost: 'x.example', approvalAnswered: true }, contextDirectory: '/w', contextSessionId: 'ses_1', approveHost: 'x.example' });
+    expect(executeAction).toHaveBeenCalledWith('chrome.open', expect.anything(), '/w', { sessionId: 'ses_1' });
+  });
+
+  it('passes the plugin\'s approvalAnswered flag and session through to the service', async () => {
+    const { runtime, executeAction } = await createRuntime();
+    await runtime.execute({ input: { action: 'chrome.read' }, contextDirectory: '/w', contextSessionId: 'ses_1', approvalAnswered: true });
+    expect(executeAction).toHaveBeenCalledWith('chrome.read', { action: 'chrome.read' }, '/w', { sessionId: 'ses_1', approvalAnswered: true });
+  });
+
+  it('carries the approval code and host in the result error', async () => {
+    const error = Object.assign(new Error('nope'), { statusCode: 403, code: 'site_approval_required', host: 'github.com' });
+    const { runtime } = await createRuntime({ executeAction: vi.fn(async () => { throw error; }) });
+    const result = await runtime.execute({ input: { action: 'chrome.open' }, contextSessionId: 'ses_1' });
+    expect(result.error).toMatchObject({ code: 'site_approval_required', host: 'github.com' });
+  });
+
+  it('closes the session\'s Chrome when OpenCode deletes the session', async () => {
+    const { runtime, dataDir } = await createRuntime();
+    const { prepared, hooks } = await loadPlugin(runtime, dataDir, { includeChrome: true });
+    const bodies = [];
+    await withEnv(prepared, async () => {
+      globalThis.fetch = async (_url, init) => { bodies.push(JSON.parse(init.body)); return new Response('{}'); };
+      await hooks.event({ event: { type: 'session.deleted', properties: { info: { id: 'ses_9' } } } });
+    });
+    expect(bodies).toEqual([{ input: { action: 'chrome.close' }, contextSessionId: 'ses_9' }]);
+  });
+});
+
+describe('Chrome sign-in permission', () => {
+  it('makes OpenCode ask about the Chrome permission when the Chrome tool is on', async () => {
+    const { runtime } = await createRuntime({ env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: { bash: 'allow', mittrcraft_chrome: 'allow' } }) } });
+    const prepared = await runtime.prepareManagedOpenCodeEnv({ includeChrome: true });
+    const config = JSON.parse(prepared.OPENCODE_CONFIG_CONTENT);
+    expect(config.permission).toEqual({ bash: 'allow', mittrcraft_chrome: 'ask' });
+  });
+
+  it('leaves permissions alone when the Chrome tool is off', async () => {
+    const { runtime } = await createRuntime({ env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ permission: { bash: 'allow' } }) } });
+    const prepared = await runtime.prepareManagedOpenCodeEnv({ includeChrome: false });
+    expect(JSON.parse(prepared.OPENCODE_CONFIG_CONTENT).permission).toEqual({ bash: 'allow' });
+  });
+
+  it('adds the rule even when no permission block exists yet', async () => {
+    const { runtime } = await createRuntime();
+    const prepared = await runtime.prepareManagedOpenCodeEnv({ includeChrome: true });
+    expect(JSON.parse(prepared.OPENCODE_CONFIG_CONTENT).permission).toEqual({ mittrcraft_chrome: 'ask' });
+  });
+});

@@ -155,6 +155,10 @@ export type DesktopSettings = {
   agentControlToolEnabled?: boolean;
   agentWebToolEnabled?: boolean;
   agentComputerToolEnabled?: boolean;
+  agentChromeToolEnabled?: boolean;
+  agentChromeProfile?: string;
+  agentChromeApprovedHosts?: string[];
+  agentChromeHeaded?: boolean;
   optimizeSystemPrompt?: boolean;
   showToolFileIcons?: boolean;
   codeBlockLineWrap?: boolean;

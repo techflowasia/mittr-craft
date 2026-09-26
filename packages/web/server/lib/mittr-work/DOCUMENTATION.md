@@ -68,10 +68,17 @@ updatedAt}` shape, regardless of where an item actually came from.
 GET {brokerBaseUrl}/desktop/work
 Header: Authorization: Bearer <Mittr desktop session access token>
 
-200 -> { "items": [ { "id": string, "title": string, "project": string, "phase": string|null, "state": string, "priority": string|null, "due": string|null, "estimate": string|null, "url": string, "updatedAt": string } ] }
+200 -> { "items": [ { "id": string, "title": string, "project": string, "phase": string|null, "state": string, "priority": string|null, "due": string|null, "estimate": string|null, "url": string, "updatedAt": string, "source": "plane"|"jira", "key": string|null } ] }
 401/403 -> { "error": string }
 5xx -> treated as unavailable
 ```
+
+`key` is the card number people use to talk about an item: the Jira issue
+key (`MRKB-2122`) or Plane's `<project identifier>-<sequence id>`
+(`MITRAI-12`), and `null` when the platform does not know it. The route
+passes it through untouched. A platform older than `key` omits the field; the
+My work list then falls back to the key in a Jira browse URL and shows
+nothing for Plane.
 
 `brokerBaseUrl` and `ensureFreshSession` are the same values `startMittrShim`
 (`../mittr/index.js`) already produces and hands to the catalog and audit

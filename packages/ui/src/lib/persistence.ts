@@ -543,6 +543,10 @@ const materializeAuthoritativeUiSettings = (settings: DesktopSettings): DesktopS
     agentControlToolEnabled: defaults.agentControlToolEnabled,
     agentWebToolEnabled: defaults.agentWebToolEnabled,
     agentComputerToolEnabled: defaults.agentComputerToolEnabled,
+    agentChromeToolEnabled: defaults.agentChromeToolEnabled,
+    agentChromeProfile: defaults.agentChromeProfile,
+    agentChromeApprovedHosts: defaults.agentChromeApprovedHosts,
+    agentChromeHeaded: defaults.agentChromeHeaded,
     showToolFileIcons: defaults.showToolFileIcons,
     codeBlockLineWrap: defaults.codeBlockLineWrap,
     showTurnChangedFiles: defaults.showTurnChangedFiles,
@@ -724,6 +728,24 @@ const applyDesktopUiPreferences = (settings: DesktopSettings) => {
     && settings.agentComputerToolEnabled !== store.agentComputerToolEnabled
   ) {
     store.setAgentComputerToolEnabled(settings.agentComputerToolEnabled);
+  }
+  if (
+    typeof settings.agentChromeToolEnabled === 'boolean'
+    && settings.agentChromeToolEnabled !== store.agentChromeToolEnabled
+  ) {
+    store.setAgentChromeToolEnabled(settings.agentChromeToolEnabled);
+  }
+  if (typeof settings.agentChromeProfile === 'string' && settings.agentChromeProfile !== store.agentChromeProfile) {
+    store.setAgentChromeProfile(settings.agentChromeProfile);
+  }
+  if (
+    Array.isArray(settings.agentChromeApprovedHosts)
+    && JSON.stringify(settings.agentChromeApprovedHosts) !== JSON.stringify(store.agentChromeApprovedHosts)
+  ) {
+    store.setAgentChromeApprovedHosts(settings.agentChromeApprovedHosts);
+  }
+  if (typeof settings.agentChromeHeaded === 'boolean' && settings.agentChromeHeaded !== store.agentChromeHeaded) {
+    store.setAgentChromeHeaded(settings.agentChromeHeaded);
   }
   if (typeof settings.showToolFileIcons === 'boolean' && settings.showToolFileIcons !== store.showToolFileIcons) {
     store.setShowToolFileIcons(settings.showToolFileIcons);
@@ -1373,6 +1395,18 @@ const sanitizeWebSettings = (payload: unknown): DesktopSettings | null => {
   }
   if (typeof candidate.agentComputerToolEnabled === 'boolean') {
     result.agentComputerToolEnabled = candidate.agentComputerToolEnabled;
+  }
+  if (typeof candidate.agentChromeToolEnabled === 'boolean') {
+    result.agentChromeToolEnabled = candidate.agentChromeToolEnabled;
+  }
+  if (typeof candidate.agentChromeProfile === 'string') {
+    result.agentChromeProfile = candidate.agentChromeProfile;
+  }
+  if (Array.isArray(candidate.agentChromeApprovedHosts)) {
+    result.agentChromeApprovedHosts = candidate.agentChromeApprovedHosts.filter((host): host is string => typeof host === 'string');
+  }
+  if (typeof candidate.agentChromeHeaded === 'boolean') {
+    result.agentChromeHeaded = candidate.agentChromeHeaded;
   }
   if (typeof candidate.showToolFileIcons === 'boolean') {
     result.showToolFileIcons = candidate.showToolFileIcons;

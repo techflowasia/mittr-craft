@@ -30,6 +30,7 @@ export const createGracefulShutdownRuntime = (dependencies) => {
     getActiveTunnelController,
     setActiveTunnelController,
     tunnelAuthController,
+    closeBrowserSessions = null,
   } = dependencies;
 
   let shutdownPromise = null;
@@ -38,6 +39,10 @@ export const createGracefulShutdownRuntime = (dependencies) => {
     if (getIsShuttingDown()) return;
 
     setIsShuttingDown(true);
+
+    if (typeof closeBrowserSessions === 'function') {
+      await Promise.resolve(closeBrowserSessions()).catch(() => undefined);
+    }
     syncToHmrState();
     console.log('Starting graceful shutdown...');
     const exitProcess = typeof options.exitProcess === 'boolean' ? options.exitProcess : getExitOnShutdown();

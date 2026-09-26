@@ -75,7 +75,7 @@ import {
 import { useInputStore, type SyntheticContextPart } from "./input-store"
 import { useSessionGoalArmStore } from "@/stores/useSessionGoalArmStore"
 import { setSessionGoal } from "@/lib/sessionGoalActions"
-import { wrapSystemReminder } from "@/lib/systemReminder"
+import { buildGoalIntro } from "@/lib/sessionGoalIntro"
 import { useUIStore } from "@/stores/useUIStore"
 import { useSelectionStore } from "./selection-store"
 import { getViewportSessionMemory, useViewportStore, viewportSessionKey } from "./viewport-store"
@@ -1330,18 +1330,8 @@ export const useSessionUIStore = create<SessionUIState>()((set, get) => ({
       : { armed: false, objectiveOverride: null }
     const goalArmed = goalArm.armed
     if (goalArmed) {
-      // Teach the agent the goal protocol from turn one — without this it
-      // only learns about goal mode from the first server continuation.
       const uiState = useUIStore.getState()
-      const budgetLine = uiState.sessionGoalDefaultBudgetEnabled
-        ? ` A token budget of ${uiState.sessionGoalDefaultBudget} tokens applies to this goal.`
-        : ""
-      const goalIntro = wrapSystemReminder(
-        "Goal mode is active for this session. The user message above defines the goal objective. "
-        + "Work toward it across turns; whenever you stop before the objective is verifiably complete, the system will automatically prompt you to continue. "
-        + "Progress is evaluated independently after each turn, so end every turn with a clear, factual statement of what is done, what was verified, and what remains."
-        + budgetLine,
-      )
+      const goalIntro = buildGoalIntro(uiState.sessionGoalDefaultBudgetEnabled ? uiState.sessionGoalDefaultBudget : null)
       additionalParts = [...(additionalParts ?? []), { text: goalIntro, synthetic: true }]
     }
     const applyArmedGoal = async (goalSessionId: string, goalDirectory: string | null | undefined) => {

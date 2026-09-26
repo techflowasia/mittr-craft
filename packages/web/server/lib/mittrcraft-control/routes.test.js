@@ -44,3 +44,25 @@ describe('MittrCraft control route', () => {
     });
   });
 });
+
+describe('Chrome profiles route', () => {
+  it('lists Chrome profiles for the settings screen', async () => {
+    const app = express();
+    registerMittrCraftControlRoutes(app, { controlService: { execute: vi.fn(), chromeProfiles: vi.fn(async () => [{ directory: 'Default', name: 'Your Chrome' }]) } });
+    const response = await request(app).get('/api/mittrcraft/chrome/profiles');
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ profiles: [{ directory: 'Default', name: 'Your Chrome' }] });
+  });
+});
+
+describe('Chrome approved hosts route', () => {
+  it('removes one host through the service and returns the list that remains', async () => {
+    const app = express();
+    const removeChromeHost = vi.fn(async () => ['plane.techflow.asia']);
+    registerMittrCraftControlRoutes(app, { controlService: { execute: vi.fn(), removeChromeHost } });
+    const response = await request(app).delete('/api/mittrcraft/chrome/approved-hosts/github.com');
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ hosts: ['plane.techflow.asia'] });
+    expect(removeChromeHost).toHaveBeenCalledWith('github.com');
+  });
+});

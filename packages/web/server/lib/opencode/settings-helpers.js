@@ -507,6 +507,26 @@ export const createSettingsHelpers = (dependencies) => {
     if (typeof candidate.agentControlToolEnabled === 'boolean') {
       result.agentControlToolEnabled = candidate.agentControlToolEnabled;
     }
+    if (typeof candidate.agentComputerToolEnabled === 'boolean') {
+      result.agentComputerToolEnabled = candidate.agentComputerToolEnabled;
+    }
+    if (typeof candidate.agentChromeToolEnabled === 'boolean') {
+      result.agentChromeToolEnabled = candidate.agentChromeToolEnabled;
+    }
+    if (typeof candidate.agentChromeHeaded === 'boolean') {
+      result.agentChromeHeaded = candidate.agentChromeHeaded;
+    }
+    if (typeof candidate.agentChromeProfile === 'string') {
+      result.agentChromeProfile = candidate.agentChromeProfile.trim();
+    }
+    if (Array.isArray(candidate.agentChromeApprovedHosts)) {
+      result.agentChromeApprovedHosts = [...new Set(
+        candidate.agentChromeApprovedHosts
+          .filter((host) => typeof host === 'string')
+          .map((host) => host.trim().toLowerCase())
+          .filter(Boolean),
+      )];
+    }
     if (typeof candidate.optimizeSystemPrompt === 'boolean') {
       result.optimizeSystemPrompt = candidate.optimizeSystemPrompt;
     }

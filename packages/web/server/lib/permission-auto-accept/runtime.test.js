@@ -144,3 +144,19 @@ describe('permission auto-accept runtime', () => {
     expect(await runtime.load()).toEqual({ sessions: { root: true }, revision: 1 });
   });
 });
+
+describe('permission auto-accept and Chrome sign-in', () => {
+  it('never answers the Chrome sign-in question for the user, even in an auto-accepting session', async () => {
+    const replies = [];
+    const fetchImpl = vi.fn(async (url, init = {}) => {
+      const path = new URL(url).pathname;
+      if (init.method === 'POST') replies.push(path);
+      if (path === '/permission') return new Response('[]');
+      return Response.json({ id: 'root' });
+    });
+    const { runtime } = createRuntime({ stored: { permissionAutoAccept: { sessions: { root: true } } }, fetchImpl });
+    await expect(runtime.processPermission({ id: 'perm_chrome', sessionID: 'root', permission: 'mittrcraft_chrome', patterns: ['github.com'] }, '/project')).resolves.toBe(false);
+    await expect(runtime.processPermission({ id: 'perm_bash', sessionID: 'root', permission: 'bash', patterns: ['ls'] }, '/project')).resolves.toBe(true);
+    expect(replies).toEqual(['/permission/perm_bash/reply']);
+  });
+});

@@ -693,7 +693,8 @@ export const registerOpenCodeProxy = (app, deps) => {
           return null;
         });
 
-        const settingsPath = path.join(os.homedir(), '.config', 'mittrcraft', 'settings.json');
+        const dataDir = String(process.env.MITTRCRAFT_DATA_DIR ?? '').trim();
+        const settingsPath = path.join(dataDir ? path.resolve(dataDir) : path.join(os.homedir(), '.config', 'mittrcraft'), 'settings.json');
         let projectDirs = [];
         try {
           const settingsRaw = fs.readFileSync(settingsPath, 'utf8');

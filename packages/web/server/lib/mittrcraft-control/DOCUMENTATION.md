@@ -62,3 +62,13 @@ other.
   used as a path. The result also states how to present the image, because chat
   renders the image paths written in a finished answer below that message —
   saving the file is not what shows it to anyone.
+- `chrome.do` runs a whole goal on the open Chrome page. MittrCraft reads the
+  page (`snapshot -i`), asks the Mittr platform for the next step
+  (`../mittr-browser-step`), runs that step with the same argument checks and
+  site fence as the single-step actions, and then reads the page again. It
+  stops when the platform answers done, ask or stop, when the same step comes
+  back three times, or at `maxSteps` (default 15, at most 40). The result
+  always carries the steps already taken and where it stopped. A platform
+  failure is reported as `stopped` with its reason, not thrown, so the steps
+  that did happen are never lost. Values typed into fields come only from the
+  goal; the platform asks instead of inventing one.

@@ -2,7 +2,7 @@
   "name": "mittrcraft",
   "displayName": "MittrCraft",
   "description": "%extension.description%",
-  "version": "1.19.1",
+  "version": "1.20.0",
   "publisher": "fedaykindev",
   "private": true,
   "repository": {
