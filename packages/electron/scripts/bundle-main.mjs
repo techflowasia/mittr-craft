@@ -14,6 +14,7 @@
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveAppFlavor } from '../app-flavor.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -24,6 +25,7 @@ const updaterE2eBuild = process.env.MITTRCRAFT_UPDATER_E2E_BUILD === '1';
 // where a signed-in developer's Mittr session is sent. Left empty, the server
 // falls back to its own default.
 const brokerBaseUrl = (process.env.MITTRCRAFT_BROKER_URL ?? '').trim();
+const appFlavor = resolveAppFlavor(process.env.MITTRCRAFT_APP_FLAVOR);
 
 const result = await Bun.build({
   entrypoints: [path.join(root, 'main.mjs')],
@@ -43,6 +45,7 @@ const result = await Bun.build({
   define: {
     __MITTRCRAFT_UPDATER_E2E_BUILD__: updaterE2eBuild ? 'true' : 'false',
     __MITTRCRAFT_BROKER_URL__: JSON.stringify(brokerBaseUrl),
+    __MITTRCRAFT_APP_FLAVOR__: JSON.stringify(appFlavor.id),
   },
 });
 
@@ -53,5 +56,5 @@ if (!result.success) {
 
 console.log(
   `[electron] main.mjs bundled -> dist-bundle/main.mjs (updater E2E=${updaterE2eBuild}, `
-  + `broker=${brokerBaseUrl || 'server default'})`,
+  + `broker=${brokerBaseUrl || 'server default'}, flavor=${appFlavor.id})`,
 );

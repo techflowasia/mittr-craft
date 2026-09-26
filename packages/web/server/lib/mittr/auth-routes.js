@@ -1,8 +1,7 @@
 import express from 'express';
 import { createTransaction, verifyCallback } from './sign-in-transaction.js';
 import { parseSession } from './session.js';
-
-export const REDIRECT_URI = 'mittrcraft://auth/callback';
+import { authRedirectUri } from './deep-link-scheme.js';
 
 // Mittr's desktop endpoints, in one place because the prefix has been wrong
 // twice. Two handover documents disagreed — `/auth/desktop/*` against
@@ -36,6 +35,7 @@ export function registerMittrAuthRoutes(app, {
   // than left to the client, so a person who signs in has models to choose from
   // without a second deliberate step they have no reason to know about.
   onSignIn = null,
+  redirectUri = authRedirectUri(),
 }) {
   const url = (endpoint) => new URL(endpoint, brokerBaseUrl).toString();
 
@@ -56,7 +56,7 @@ export function registerMittrAuthRoutes(app, {
     pending = createTransaction();
     const authorizeUrl = new URL(ENDPOINT.start, brokerBaseUrl);
     authorizeUrl.searchParams.set('code_challenge', pending.challenge);
-    authorizeUrl.searchParams.set('redirect_uri', REDIRECT_URI);
+    authorizeUrl.searchParams.set('redirect_uri', redirectUri);
     // The caller opens this: Electron in the system browser, the web UI by
     // navigating. The server has no business launching a browser, and doing so
     // would have no meaning on every runtime that is not the desktop.
@@ -66,7 +66,7 @@ export function registerMittrAuthRoutes(app, {
   app.post('/api/mittr/auth/callback', readJson('8kb'), async (req, res) => {
     let code;
     try {
-      ({ code } = verifyCallback(pending, req.body?.url));
+      ({ code } = verifyCallback(pending, req.body?.url, { scheme: new URL(redirectUri).protocol.slice(0, -1) }));
     } catch (error) {
       return res.status(400).json({ error: error.message });
     }
@@ -82,7 +82,7 @@ export function registerMittrAuthRoutes(app, {
       response = await fetchImpl(url(ENDPOINT.exchange), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ code, code_verifier: verifier, redirect_uri: REDIRECT_URI }),
+        body: JSON.stringify({ code, code_verifier: verifier, redirect_uri: redirectUri }),
       });
     } catch (error) {
       console.error('[mittr] sign-in exchange failed:', error?.message ?? error);

@@ -1,8 +1,8 @@
 import nodeCrypto from 'node:crypto';
+import { deepLinkScheme } from './deep-link-scheme.js';
 
 const TRANSACTION_TTL_MS = 10 * 60 * 1000;
 
-const CALLBACK_SCHEME = 'mittrcraft:';
 const CALLBACK_HOST = 'auth';
 
 /**
@@ -32,7 +32,7 @@ export function createTransaction({
  * application on the machine can claim the URL scheme, and a callback that
  * arrives when nobody asked to sign in is refused rather than acted on.
  */
-export function verifyCallback(transaction, callbackUrl, { now = Date.now } = {}) {
+export function verifyCallback(transaction, callbackUrl, { now = Date.now, scheme = deepLinkScheme() } = {}) {
   if (!transaction) throw new Error('No sign-in is in progress');
 
   let url;
@@ -42,7 +42,7 @@ export function verifyCallback(transaction, callbackUrl, { now = Date.now } = {}
     throw new Error('Sign-in callback is not a valid URL');
   }
 
-  if (url.protocol !== CALLBACK_SCHEME || url.hostname !== CALLBACK_HOST) {
+  if (url.protocol !== `${scheme}:` || url.hostname !== CALLBACK_HOST) {
     throw new Error('Sign-in callback did not arrive on the auth deep link');
   }
 

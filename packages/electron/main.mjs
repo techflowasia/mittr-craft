@@ -1,3 +1,5 @@
+import './app-flavor-env.mjs';
+import { APP_FLAVOR } from './app-flavor.mjs';
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, shell, webContents } from 'electron';
 import contextMenu from 'electron-context-menu';
 import log from 'electron-log/main.js';
@@ -52,7 +54,7 @@ const electronStartupStartedAt = performance.now();
 
 import { DEEP_LINK_PROTOCOL } from './deep-link-protocol.mjs';
 const UI_PROTOCOL = 'mittrcraft-ui';
-const PACKAGED_APP_USER_MODEL_ID = 'dev.mittrcraft.desktop';
+const PACKAGED_APP_USER_MODEL_ID = APP_FLAVOR.appId;
 const DEV_APP_USER_MODEL_ID = 'dev.mittrcraft.desktop.dev';
 const APP_USER_MODEL_ID = app.isPackaged ? PACKAGED_APP_USER_MODEL_ID : DEV_APP_USER_MODEL_ID;
 const BACKGROUND_START_ARG = '--background';
@@ -90,11 +92,11 @@ const shouldStartInBackground = (loginItemSettings = readLoginItemSettings()) =>
 
 // Set the product name early so electron-log derives its log directory as
 // ~/Library/Logs/MittrCraft/ (not ~/Library/Logs/@mittrcraft/electron/).
-app.setName('MittrCraft');
+app.setName(APP_FLAVOR.productName);
 if (process.platform === 'linux') {
-  app.setDesktopName('mittrcraft.desktop');
+  app.setDesktopName(`${APP_FLAVOR.dataDirName}.desktop`);
 }
-if (isDev) {
+if (isDev || APP_FLAVOR.id !== 'production') {
   app.setPath('userData', path.join(app.getPath('appData'), 'MittrCraft Dev'));
 }
 app.setAppUserModelId(APP_USER_MODEL_ID);
@@ -220,7 +222,7 @@ const readAppMetadata = () => {
 const APP_METADATA = readAppMetadata();
 const APP_VERSION = APP_METADATA.version;
 
-const DEFAULT_DESKTOP_PORT = 57123;
+const DEFAULT_DESKTOP_PORT = APP_FLAVOR.desktopPort;
 const LOOPBACK_BIND_HOST = '127.0.0.1';
 const LAN_BIND_HOST = '0.0.0.0';
 const MIN_WINDOW_WIDTH = 800;
@@ -3053,8 +3055,14 @@ const compareSemver = (left, right) => {
   return 0;
 };
 
+const assertFlavorUpdates = () => {
+  if (!APP_FLAVOR.updates) {
+    throw new Error(`${APP_FLAVOR.productName} does not update itself. Install a newer ${APP_FLAVOR.productName} build instead.`);
+  }
+};
+
 const setupAutoUpdater = () => {
-  if (!app.isPackaged) {
+  if (!app.isPackaged || !APP_FLAVOR.updates) {
     return;
   }
   autoUpdater.autoDownload = false;
@@ -4389,6 +4397,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     case 'desktop_check_for_updates': {
+      assertFlavorUpdates();
       assertUpdaterCapability({ packaged: app.isPackaged });
       const currentVersion = APP_VERSION;
       const { available, updateInfo, updateResult, nextVersion, pendingUpdate } = await checkForDesktopUpdate({
@@ -4413,6 +4422,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     case 'desktop_download_and_install_update':
+      assertFlavorUpdates();
       assertUpdaterCapability({ packaged: app.isPackaged });
       if (!state.pendingUpdate) {
         throw new Error('No pending update');
@@ -4459,7 +4469,10 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
 
     case 'desktop_restart': {
       const applyUpdate = Boolean(state.pendingUpdate?.downloaded && app.isPackaged);
-      if (applyUpdate) assertUpdaterCapability({ packaged: app.isPackaged });
+      if (applyUpdate) {
+        assertFlavorUpdates();
+        assertUpdaterCapability({ packaged: app.isPackaged });
+      }
       log.info(`[electron] desktop_restart applyUpdate=${applyUpdate} packaged=${app.isPackaged}`);
       if (applyUpdate && process.platform === 'darwin' && typeof app.isInApplicationsFolder === 'function') {
         try {

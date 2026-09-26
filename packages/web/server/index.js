@@ -265,7 +265,9 @@ const sanitizeModelRefs = (...args) => settingsNormalizationRuntime.sanitizeMode
 const sanitizeSkillCatalogs = (...args) => settingsNormalizationRuntime.sanitizeSkillCatalogs(...args);
 const sanitizeProjects = (...args) => settingsNormalizationRuntime.sanitizeProjects(...args);
 
-const MITTRCRAFT_USER_CONFIG_ROOT = path.join(os.homedir(), '.config', 'mittrcraft');
+const MITTRCRAFT_USER_CONFIG_ROOT = process.env.MITTRCRAFT_DATA_DIR
+  ? path.resolve(process.env.MITTRCRAFT_DATA_DIR)
+  : path.join(os.homedir(), '.config', 'mittrcraft');
 const MITTRCRAFT_USER_THEMES_DIR = path.join(MITTRCRAFT_USER_CONFIG_ROOT, 'themes');
 const MITTRCRAFT_PROJECTS_CONFIG_DIR = path.join(MITTRCRAFT_USER_CONFIG_ROOT, 'projects');
 

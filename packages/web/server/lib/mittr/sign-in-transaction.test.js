@@ -46,4 +46,11 @@ describe('sign-in transaction', () => {
   it('rejects a malformed url instead of throwing something unreadable', () => {
     expect(() => verifyCallback(txAt(0), 'not a url', { now: () => 1 })).toThrow(/valid url/i);
   });
+
+  it('accepts only the scheme of the flavor that started the sign-in', () => {
+    const tx = { verifier: 'v', challenge: 'c', createdAt: 0 };
+    expect(verifyCallback(tx, 'mittrcraft-dev://auth/callback?code=abc', { now: () => 1, scheme: 'mittrcraft-dev' }).code).toBe('abc');
+    expect(() => verifyCallback(tx, 'mittrcraft://auth/callback?code=abc', { now: () => 1, scheme: 'mittrcraft-dev' }))
+      .toThrow(/auth deep link/);
+  });
 });

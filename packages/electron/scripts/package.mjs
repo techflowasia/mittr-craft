@@ -2,7 +2,9 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveTargetArchitecture } from './target-architecture.mjs';
+import os from 'node:os';
 import { DEEP_LINK_PROTOCOL } from '../deep-link-protocol.mjs';
+import { resolveAppFlavor } from '../app-flavor.mjs';
 
 const packageRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 
@@ -15,9 +17,29 @@ const packageRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname)
  * Info.plist -- so a build with deep links entirely dead looks identical to a
  * working one until somebody clicks a link.
  */
-const assertProtocolDeclared = () => {
+const appFlavor = resolveAppFlavor(process.env.MITTRCRAFT_APP_FLAVOR);
+
+const effectiveBuildConfig = () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(packageRoot, 'package.json'), 'utf8'));
-  const declared = (manifest.build?.protocols ?? []).flatMap((entry) => entry.schemes ?? []);
+  if (appFlavor.id === 'production') return manifest.build;
+  return {
+    ...manifest.build,
+    appId: appFlavor.appId,
+    productName: appFlavor.productName,
+    protocols: [{ name: appFlavor.productName, schemes: [appFlavor.protocol] }],
+  };
+};
+
+const writeFlavorConfig = () => {
+  if (appFlavor.id === 'production') return null;
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-flavor-')), 'electron-builder.json');
+  fs.writeFileSync(file, JSON.stringify(effectiveBuildConfig(), null, 2));
+  console.log(`[electron] building the ${appFlavor.productName} flavor (${appFlavor.appId}, scheme ${appFlavor.protocol})`);
+  return file;
+};
+
+const assertProtocolDeclared = () => {
+  const declared = (effectiveBuildConfig()?.protocols ?? []).flatMap((entry) => entry.schemes ?? []);
   if (!declared.includes(DEEP_LINK_PROTOCOL)) {
     throw new Error(
       `build.protocols does not declare "${DEEP_LINK_PROTOCOL}". `
@@ -74,6 +96,9 @@ if (process.platform === 'linux' && !builderArgs.some((argument) => (
 }
 
 assertProtocolDeclared();
+
+const flavorConfig = writeFlavorConfig();
+if (flavorConfig) builderArgs.push('--config', flavorConfig);
 
 const child = spawn(bunBinary, ['x', 'electron-builder', ...builderArgs], {
   env,
