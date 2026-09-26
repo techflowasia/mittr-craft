@@ -74,7 +74,7 @@ describe('session goal creation', () => {
   });
 
   it('builds the same goal intro with an optional budget', () => {
-    expect(buildGoalIntroText(null)).toContain('Goal mode is active for this session.');
+    expect(buildGoalIntroText(null)).toContain('Mittr goal is active for this session.');
     expect(buildGoalIntroText(200_000)).toContain('A token budget of 200000 tokens applies to this goal.');
   });
 });
