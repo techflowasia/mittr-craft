@@ -53,6 +53,13 @@ const checkFile = async (check, { directory, fsImpl }) => {
   return met(check.contains ? `${check.path} exists and contains "${check.contains}"` : `${check.path} exists`);
 };
 
+const REDIRECTION = /\s*\d*>>?&?\s*(?:\d+|\/dev\/null|\S+)/g;
+
+const exitIsMasked = (command, wanted) => {
+  const after = command.slice(command.lastIndexOf(wanted) + wanted.length).replace(REDIRECTION, '');
+  return /[;|\n]|&(?!&)/.test(after.replace(/&&/g, ''));
+};
+
 const checkCommand = (check, { evidence }) => {
   const wanted = squash(check.command);
   const entries = evidence.entries;
@@ -65,6 +72,9 @@ const checkCommand = (check, { evidence }) => {
     }
   }
   if (!run) return missing(`\`${check.command}\` has not been run in this goal`);
+  if (exitIsMasked(squash(run.command), wanted)) {
+    return missing(`the last run of \`${check.command}\` was followed by another command in the same line, so its own exit code is hidden; run it on its own`);
+  }
   if (run.status !== 'completed') return missing(`the last run of \`${check.command}\` did not complete (${run.status})`);
   if (run.exit === null) return missing(`the last run of \`${check.command}\` recorded no exit code`);
   if (run.exit !== 0) return missing(`the last run of \`${check.command}\` exited with ${run.exit}`);

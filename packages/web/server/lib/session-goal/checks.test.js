@@ -42,6 +42,22 @@ describe('command checks', () => {
     expect((await runScriptCheck(check, { directory: '/w', evidence })).reason).toContain('changed after');
   });
 
+  it('does not accept an exit code hidden by a following command', async () => {
+    for (const command of ['bun test; echo "EXIT=$?"', 'bun test 2>&1 | tail -5', 'bun test || true', 'bun test &']) {
+      const evidence = collectGoalEvidence(turn(tool('bash', { command }, { exit: 0 })));
+      const result = await runScriptCheck(check, { directory: '/w', evidence });
+      expect(result.status, command).toBe('missing');
+      expect(result.reason).toContain('hidden');
+    }
+  });
+
+  it('accepts redirections and a chain that still fails with the command', async () => {
+    for (const command of ['bun test 2>&1', 'bun test > out.txt', 'bun test && echo ok', 'cd /w && bun test']) {
+      const evidence = collectGoalEvidence(turn(tool('bash', { command }, { exit: 0 })));
+      expect((await runScriptCheck(check, { directory: '/w', evidence })).status, command).toBe('met');
+    }
+  });
+
   it('is met by a green run after the last edit', async () => {
     const evidence = collectGoalEvidence(turn(
       tool('edit', { filePath: '/w/a.ts' }),
