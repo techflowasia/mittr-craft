@@ -121,7 +121,7 @@ agent's plan. Each criterion is one observable outcome with one check:
 | Check | Meaning | Decided by |
 |---|---|---|
 | `file` | a file in the workspace exists, is not empty, optionally contains a literal text | script |
-| `command` | the tool record holds a run of this command that exited 0 **after the last file edit** | script |
+| `command` | the tool record holds a run of this command that exited 0 **after the last file edit**, and the command decides that exit code (it is the last command on its line, or joined by `&&`) | script |
 | `sources` | every URL cited in a file (or the final report) was actually fetched or returned by a search in this goal | script |
 | `judge` | anything else | Jev (platform) → small model fallback |
 
@@ -211,7 +211,39 @@ including MCP tools such as `mittrcraft`, `mittrcraft_web` and `mittrcraft_chrom
 - Every runtime write re-reads the session and drops the write if the goal id
   changed (existing stale-write guard); the new fields ride the same write.
 
-## 10. Decisions to confirm
+## 10. Validation (2026-09-26)
+
+Walked on the real engine (1.18.18) and server, in an isolated home, with a free
+engine model (`opencode/big-pickle`):
+
+- **Brief, through the UI.** Goal armed with the composer button, requirements
+  that leave the customer's name open: the agent searched the workspace first,
+  then asked one question through `question`; after the answer it wrote the
+  file, re-read it, reported with evidence. Strip `Complete 2/2 done`; the
+  dialog lists both criteria as met, checked by script.
+- **Sent back, then done.** A four-criterion goal (file, file, command,
+  sources). Round 1: the agent verified with `node --test 2>&1; echo
+  "EXIT=$?"`; the command check refused it (echo decides that exit code) and
+  the continuation listed `[NOT MET] The tests pass …` with the reason. Round 2:
+  the agent ran `node --test` on its own; every criterion met, `complete`.
+  The first version of that rule was fooled by a command name inside an echo
+  string; both cases are now tests.
+- **Fabrication.** A prompt telling the agent to claim success without tools:
+  the method in the goal intro made the agent refuse and do the work.
+- **Contract and judge prompts** on a real model, over the real record: the
+  contract came back as five criteria (file, judge, file, command, sources);
+  the judge accepted the real record with reasons that cite tool call numbers
+  and rejected the same claims with an empty record (3/3 missing, "only the
+  agent's own claim").
+- **Judge unavailable.** Signed out and no usable small model: one unaudited
+  continuation, then `blocked` ("progress audit unavailable").
+
+Not walked: the Mittr judge (needs a signed-in desktop and a platform with
+`goal.criterion`), and the direct small-model call (the free engine models
+refuse calls made outside the engine, so the prompt check above went through
+an engine session instead).
+
+## 11. Decisions to confirm
 
 1. **Surface.** MittrCraft first, reusing the composer goal button (relabelled
    "Mittr goal"). Studio later, on the same platform decision.
