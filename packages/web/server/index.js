@@ -1613,6 +1613,7 @@ async function main(options = {}) {
       brokerBaseUrl: resolveBrokerBaseUrl({ packaged: options.brokerBaseUrl, env: process.env }),
       secretStore: options.secretStore ?? undefined,
       syncModels: (models) => syncMittrModels(mittrShim)(models),
+      refreshEngine: (reason) => refreshOpenCodeAfterConfigChange(reason),
       // A build that named its own broker locks the upstream to it as well.
       allowUpstreamOverride: !String(options.brokerBaseUrl ?? '').trim(),
     });
