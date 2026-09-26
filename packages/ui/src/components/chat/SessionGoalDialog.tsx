@@ -19,6 +19,7 @@ import { sessionGoalStatusColor, sessionGoalStatusLabelKey } from '@/lib/session
 import { clearSessionGoal, setSessionGoal } from '@/lib/sessionGoalActions';
 import { useI18n } from '@/lib/i18n';
 import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
+import { SessionGoalCriteria } from '@/components/chat/SessionGoalCriteria';
 import { useUIStore } from '@/stores/useUIStore';
 
 interface SessionGoalDialogProps {
@@ -85,7 +86,7 @@ export function SessionGoalDialog({ open, onOpenChange, sessionId, directory }: 
   const canSave = !isCompleted && trimmedObjective.length > 0 && (!goal || objectiveChanged || budgetChanged);
 
   const handleSave = () => run(
-    () => setSessionGoal(sessionId, directory, { objective: trimmedObjective, tokenBudget: budgetValue }, goal),
+    () => setSessionGoal(sessionId, directory, { objective: trimmedObjective, tokenBudget: budgetValue, keepContract: !objectiveChanged }, goal),
     true,
   );
 
@@ -125,6 +126,7 @@ export function SessionGoalDialog({ open, onOpenChange, sessionId, directory }: 
                   </span>
                 </div>
               ) : null}
+              <SessionGoalCriteria criteria={goal.criteria} />
             </div>
           )}
 

@@ -71,6 +71,7 @@ export async function fetchGoalObjectiveContent(sessionId: string): Promise<stri
 export interface SetSessionGoalInput {
   objective: string;
   tokenBudget: number | null;
+  keepContract?: boolean;
 }
 
 /**
@@ -126,6 +127,8 @@ export async function setSessionGoal(
         status: 'active',
         statusReason: 'resumed',
         blockedStreak: 0,
+        stallStreak: 0,
+        ...(input.keepContract ? {} : { criteria: [], bestMet: 0 }),
         updatedAt: now,
       };
     }
@@ -166,6 +169,7 @@ export async function setSessionGoalStatus(
       // 'resumed' is the server's kickoff signal for an already-idle session.
       statusReason: status === 'active' ? 'resumed' : (status === 'complete' ? 'marked by user' : ''),
       blockedStreak: 0,
+      stallStreak: 0,
       // An explicit resume grants a fresh auto-continuation allowance —
       // otherwise a goal blocked on the turn cap would re-block on the very
       // next tick and Resume would be a dead end.

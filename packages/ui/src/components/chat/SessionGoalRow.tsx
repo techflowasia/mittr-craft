@@ -52,6 +52,11 @@ export const SessionGoalRow: React.FC<SessionGoalRowProps> = React.memo(({ sessi
       })
     : (goal.tokensUsed > 0 ? t('chat.goal.usage.tokens', { used: formatGoalTokens(goal.tokensUsed) }) : null);
 
+  const metCount = goal.criteria.filter((criterion) => criterion.status === 'met').length;
+  const progress = goal.criteria.length > 0
+    ? t('chat.goal.criteria.progress', { met: metCount, total: goal.criteria.length })
+    : null;
+
   const pauseResume = goal.status === 'active'
     ? { icon: 'pause' as const, labelKey: 'chat.goal.action.pause' as const, next: 'paused' as const }
     : (goal.status === 'paused' || goal.status === 'blocked' || goal.status === 'budgetLimited'
@@ -85,6 +90,11 @@ export const SessionGoalRow: React.FC<SessionGoalRowProps> = React.memo(({ sessi
           {t(sessionGoalStatusLabelKey[goal.status] as never)}
         </span>
       )}
+      {progress ? (
+        <span className="flex-shrink-0 typography-meta tabular-nums text-muted-foreground">
+          {progress}
+        </span>
+      ) : null}
       {usage ? (
         <span className="flex-shrink-0 typography-meta tabular-nums text-muted-foreground">
           {usage}
