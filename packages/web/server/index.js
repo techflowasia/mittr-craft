@@ -114,6 +114,7 @@ import { createChromeControl } from './lib/mittrcraft-control/chrome-control.js'
 import { createChromeApprovals } from './lib/mittrcraft-control/chrome-approvals.js';
 import { createMittrWorkService } from './lib/mittr-work/service.js';
 import { createMittrBrowserStepper } from './lib/mittr-browser-step/service.js';
+import { createMittrGoalJudge } from './lib/mittr-goal-judge/service.js';
 import webPush from 'web-push';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -745,10 +746,12 @@ const sessionAssistRuntime = createSessionAssistRuntime({
   getSmallModelService: async () => import('./lib/small-model/index.js'),
 });
 
+let mittrGoalJudge = null;
 const sessionGoalRuntime = createSessionGoalRuntime({
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
   getSmallModelService: async () => import('./lib/small-model/index.js'),
+  getMittrGoalJudge: () => mittrGoalJudge,
   emitGoalNotification: async ({ sessionId, directory, status, goal }) => {
     // The goal settle notification replaces the per-turn ready notifications
     // (suppressed while the goal is active) — so it obeys the same toggle.
@@ -759,7 +762,7 @@ const sessionGoalRuntime = createSessionGoalRuntime({
     const title = status === 'complete'
       ? 'Goal complete'
       : (status === 'budgetLimited' ? 'Goal reached its token budget' : 'Goal blocked');
-    const detail = goal?.statusReason && goal.statusReason !== 'verified by audit' && goal.statusReason !== 'reported by agent'
+    const detail = goal?.statusReason && goal.statusReason !== 'verified by judge'
       ? goal.statusReason
       : (goal?.note || '');
     const objective = typeof goal?.objective === 'string' ? goal.objective.slice(0, 140) : '';
@@ -1626,6 +1629,10 @@ async function main(options = {}) {
       ensureFreshSession: mittrShim.ensureFreshSession,
     });
     browserStepper = createMittrBrowserStepper({
+      brokerBaseUrl: mittrShim.brokerBaseUrl,
+      ensureFreshSession: mittrShim.ensureFreshSession,
+    });
+    mittrGoalJudge = createMittrGoalJudge({
       brokerBaseUrl: mittrShim.brokerBaseUrl,
       ensureFreshSession: mittrShim.ensureFreshSession,
     });
