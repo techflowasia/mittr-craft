@@ -243,7 +243,7 @@ export const PullRequestView: React.FC = () => {
   if (!currentDirectory || !currentBranch) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-        <Icon name="git-pull-request" className="h-12 w-12 text-muted-foreground/50" />
+        <Icon name="git-pull-request" className="h-12 w-12 text-muted-foreground" />
         <div className="typography-ui-header text-foreground">{t('gitView.pullRequest.title')}</div>
         <div className="max-w-sm typography-micro text-muted-foreground">{t('gitView.pullRequest.createHint')}</div>
       </div>

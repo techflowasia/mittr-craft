@@ -13,7 +13,7 @@ import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { refreshGlobalSessions } from '@/stores/useGlobalSessionsStore';
-import { subscribeOpenchamberEvents } from '@/lib/openchamberEvents';
+import { subscribeMittrCraftEvents } from '@/lib/mittrcraftEvents';
 import { PROJECT_COLOR_MAP, PROJECT_ICON_MAP, ProjectIconImage } from '@/lib/projectMeta';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { cn, formatDirectoryName } from '@/lib/utils';
@@ -279,7 +279,7 @@ export function ScheduledTasksDialog() {
       return;
     }
     let timeoutID: ReturnType<typeof setTimeout> | null = null;
-    const unsubscribe = subscribeOpenchamberEvents((event) => {
+    const unsubscribe = subscribeMittrCraftEvents((event) => {
       if (event.type !== 'scheduled-task-ran') {
         return;
       }
@@ -497,7 +497,7 @@ export function ScheduledTasksDialog() {
                   </div>
                   {task.loopFile ? (
                     <div
-                      className="typography-micro truncate text-muted-foreground/70"
+                      className="typography-micro truncate text-muted-foreground"
                       title={task.loopFile}
                     >
                       {t('sessions.scheduledTasks.dialog.loopFile.note', { file: task.loopFile })}
@@ -512,7 +512,7 @@ export function ScheduledTasksDialog() {
                     {nextAt ? (
                       <>
                         <span className="text-foreground">{formatRelativeTime(nextAt, t)}</span>
-                        <span className="text-muted-foreground/50">·</span>
+                        <span className="text-muted-foreground">·</span>
                         <span>{formatClockTime(nextAt, timeFormatPreference)}</span>
                       </>
                     ) : (
@@ -541,7 +541,7 @@ export function ScheduledTasksDialog() {
                             {statusLabel}
                           </span>
                         ) : null}
-                        <span className="text-muted-foreground/50">·</span>
+                        <span className="text-muted-foreground">·</span>
                         <span>{formatRelativeTime(lastAt, t)}</span>
                       </>
                     ) : (

@@ -23,8 +23,8 @@ export const SessionRecapNote: React.FC<SessionRecapNoteProps> = React.memo(({ s
     <div className="chat-message-column">
       {/* The last assistant turn carries pb-8 — pull the recap up into that gap. */}
       <div aria-label={t('chat.recap.aria')}>
-        <span className={`typography-meta text-muted-foreground/70 ${isMobile ? 'line-clamp-4' : 'line-clamp-2'}`}>
-          <span className="italic text-muted-foreground/50">{t('chat.recap.label')} </span>
+        <span className={`typography-meta text-muted-foreground ${isMobile ? 'line-clamp-4' : 'line-clamp-2'}`}>
+          <span className="italic text-muted-foreground">{t('chat.recap.label')} </span>
           {visibleRecap}
         </span>
       </div>

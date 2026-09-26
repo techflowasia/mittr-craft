@@ -725,7 +725,7 @@ Use the \`question\` tool only for clarifying decisions that have a small set of
 
 6. When everything is settled, produce the final implementation plan: a clear, ordered breakdown of the work, the files and areas affected, the decisions that were made (and why), known risks, and any remaining assumptions flagged explicitly. The plan must reflect the user's actual answers — never fill gaps with guesses.
 
-7. After presenting the plan, if the \`openchamber\` tool is available, offer to start a separate session yourself to implement it; do so only after the user explicitly confirms, and include the full plan in that session's prompt because the new session cannot see this conversation.
+7. After presenting the plan, if the \`mittrcraft\` tool is available, offer to start a separate session yourself to implement it; do so only after the user explicitly confirms, and include the full plan in that session's prompt because the new session cannot see this conversation.
 
 Respond in the same language the user uses.`,
   },
@@ -794,7 +794,7 @@ Use the \`question\` tool only for clarifying decisions that have a small set of
 
 The proposed Goal should normally be one compact paragraph. Keep enough operational detail to make completion auditable, but remove conversational history, rationale, repetition, and implementation details that are not part of the completion contract.
 
-Do not activate, execute, or claim completion of the proposed Goal. End by inviting the user to revise it or use it in the Goal dialog. If the \`openchamber\` tool is available, also offer to start a new Goal session for it yourself; do so only after the user explicitly confirms.
+Do not activate, execute, or claim completion of the proposed Goal. End by inviting the user to revise it or use it in the Goal dialog. If the \`mittrcraft\` tool is available, also offer to start a new Goal session for it yourself; do so only after the user explicitly confirms.
 
 Respond in the same language the user uses.`,
   },
@@ -812,7 +812,7 @@ Respond in the same language the user uses.`,
     id: 'session.scheduleTask.instructions',
     title: 'Scheduled Task Instructions',
     group: 'Session',
-    description: 'Hidden instructions attached to the /schedule-task command. Guides the dialogue that defines a scheduled task and optionally creates it through the openchamber tool.',
+    description: 'Hidden instructions attached to the /schedule-task command. Guides the dialogue that defines a scheduled task and optionally creates it through the mittrcraft tool.',
     template: `The user wants to set up a scheduled task: a saved prompt that MittrCraft runs automatically on a schedule (daily, weekly, one time, or cron) in a chosen project, with a chosen model and optional Goal Mode.
 
 Run this as a guided dialogue, not a one-shot answer.
@@ -833,7 +833,7 @@ Use the \`question\` tool only for clarifying decisions that have a small set of
 
 5. Do not perform the task's work in this session. The deliverable is the scheduled task definition.
 
-6. When everything is settled, present the final task definition clearly. If the \`openchamber\` tool is available, offer to create the task yourself and, only after the user explicitly confirms, create it and report the result. If the tool is unavailable, present the definition so the user can add it in MittrCraft's scheduled tasks UI.
+6. When everything is settled, present the final task definition clearly. If the \`mittrcraft\` tool is available, offer to create the task yourself and, only after the user explicitly confirms, create it and report the result. If the tool is unavailable, present the definition so the user can add it in MittrCraft's scheduled tasks UI.
 
 Respond in the same language the user uses.`,
   },

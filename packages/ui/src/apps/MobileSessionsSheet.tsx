@@ -609,7 +609,7 @@ const SessionRow: React.FC<{
         {isStreaming || showUnreadDot || (hasChildren && onToggleChildren) ? (
           <button
             type="button"
-            className="absolute z-10 flex w-6 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            className="absolute z-10 flex w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             style={{ left: Math.max(indent - 32, 2), top: 0, bottom: 0, touchAction: 'manipulation' }}
             aria-label={expanded
               ? t('sessions.sidebar.session.subsessions.collapse')
@@ -748,7 +748,7 @@ const SortableWorktreeReorderRow: React.FC<{ worktree: WorktreeMetadata }> = ({ 
     >
       <button
         type="button"
-        className="flex size-8 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg text-muted-foreground/70 transition-colors hover:text-foreground active:cursor-grabbing"
+        className="flex size-8 shrink-0 cursor-grab touch-none items-center justify-center rounded-lg text-muted-foreground transition-colors hover:text-foreground active:cursor-grabbing"
         aria-label={t('mobile.sessions.dragHandleAria', { label })}
         {...attributes}
         {...listeners}
@@ -804,7 +804,7 @@ const SortableProjectRow: React.FC<{
       <div className="flex items-center gap-1">
         <button
           type="button"
-          className="flex size-9 shrink-0 cursor-grab touch-none items-center justify-center rounded-xl text-muted-foreground/70 transition-colors hover:text-foreground active:cursor-grabbing"
+          className="flex size-9 shrink-0 cursor-grab touch-none items-center justify-center rounded-xl text-muted-foreground transition-colors hover:text-foreground active:cursor-grabbing"
           aria-label={t('mobile.sessions.dragHandleAria', { label: project.label })}
           {...attributes}
           {...listeners}

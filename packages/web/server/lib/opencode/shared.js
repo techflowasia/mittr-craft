@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { engineConfigDir } from './home.js';
 import path from 'path';
 import os from 'os';
 import yaml from 'yaml';
@@ -6,7 +7,7 @@ import { parse as parseJsonc } from 'jsonc-parser';
 
 // ============== PATH CONSTANTS ==============
 
-const OPENCODE_CONFIG_DIR = path.join(os.homedir(), '.config', 'opencode');
+const OPENCODE_CONFIG_DIR = path.join(engineConfigDir());
 const AGENT_DIR = path.join(OPENCODE_CONFIG_DIR, 'agents');
 const COMMAND_DIR = path.join(OPENCODE_CONFIG_DIR, 'commands');
 const SKILL_DIR = path.join(OPENCODE_CONFIG_DIR, 'skills');
@@ -246,7 +247,7 @@ function getConfigForPath(layers, targetPath) {
 function writeConfig(config, filePath = CONFIG_FILE) {
   try {
     if (fs.existsSync(filePath)) {
-      const backupFile = `${filePath}.openchamber.backup`;
+      const backupFile = `${filePath}.mittrcraft.backup`;
       fs.copyFileSync(filePath, backupFile);
       console.log(`Created config backup: ${backupFile}`);
     }

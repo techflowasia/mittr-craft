@@ -1,4 +1,5 @@
 import express from 'express';
+import { engineConfigDir } from './home.js';
 import { createProjectIdFromPath } from '../projects/project-id.js';
 import fs from 'fs';
 import os from 'os';
@@ -12,7 +13,6 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
   const {
     crypto,
     getOpenCodeResolutionSnapshot,
-    getOpenCodeUpgradeCapability,
     formatSettingsResponse,
     readSettingsFromDisk,
     readSettingsFromDiskMigrated,
@@ -57,7 +57,7 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
 
   // Self-contained page for the OAuth return leg: the system browser has no UI
   // session, so it cannot load the SPA behind the auth gate — everything it
-  // needs ships inline. `openchamber://focus/mcp-auth` raises the desktop app;
+  // needs ships inline. `mittrcraft://focus/mcp-auth` raises the desktop app;
   // the link stays visible because some browsers only follow custom-protocol
   // URLs from a user gesture.
   const renderMcpOAuthCallbackPage = ({ title, message, desktopReturn }) => `<!doctype html>
@@ -82,87 +82,11 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
 <main>
 <h1>${escapeHtml(title)}</h1>
 <p>${escapeHtml(message)}</p>
-${desktopReturn ? `<a class="return" href="openchamber://focus/mcp-auth">Return to MittrCraft</a>
-<script>window.location.href = 'openchamber://focus/mcp-auth';</script>` : ''}
+${desktopReturn ? `<a class="return" href="mittrcraft://focus/mcp-auth">Return to MittrCraft</a>
+<script>window.location.href = 'mittrcraft://focus/mcp-auth';</script>` : ''}
 </main>
 </body>
 </html>`;
-
-  const readOpenCodeCurrentVersion = async () => {
-    const healthResponse = await fetch(buildOpenCodeUrl('/global/health', ''), {
-      method: 'GET',
-      headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
-    });
-    const health = await healthResponse.json().catch(() => null);
-    if (!healthResponse.ok) {
-      return { ok: false, status: healthResponse.status, error: health?.error || healthResponse.statusText };
-    }
-    const currentVersion = typeof health?.version === 'string' ? health.version.replace(/^v/, '') : null;
-    return { ok: true, currentVersion };
-  };
-
-  const parseVersionForComparison = (value) => {
-    const normalized = String(value || '').replace(/^v/, '').split('+')[0];
-    const prereleaseIndex = normalized.indexOf('-');
-    const core = prereleaseIndex >= 0 ? normalized.slice(0, prereleaseIndex) : normalized;
-    const parts = core.split('.').map((part) => {
-      const parsed = Number.parseInt(part || '0', 10);
-      return Number.isFinite(parsed) ? parsed : 0;
-    });
-    return { parts, prerelease: prereleaseIndex >= 0 };
-  };
-
-  const compareVersions = (left, right) => {
-    const a = parseVersionForComparison(left);
-    const b = parseVersionForComparison(right);
-    const length = Math.max(a.parts.length, b.parts.length);
-    for (let index = 0; index < length; index += 1) {
-      const diff = (a.parts[index] || 0) - (b.parts[index] || 0);
-      if (diff !== 0) return diff;
-    }
-    if (a.prerelease !== b.prerelease) return a.prerelease ? -1 : 1;
-    return 0;
-  };
-
-  const fetchLatestOpenCodeVersionFromGithub = async () => {
-    const response = await fetch('https://api.github.com/repos/anomalyco/opencode/releases/latest', {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) {
-      throw new Error(`OpenCode releases responded with ${response.status}`);
-    }
-    const payload = await response.json();
-    const tag = typeof payload?.tag_name === 'string' ? payload.tag_name.trim() : '';
-    return tag.replace(/^v/, '');
-  };
-
-  const fetchLatestOpenCodeVersionFromNpm = async () => {
-    const response = await fetch('https://registry.npmjs.org/opencode-ai/latest', {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) {
-      throw new Error(`OpenCode npm registry responded with ${response.status}`);
-    }
-    const payload = await response.json();
-    return typeof payload?.version === 'string' ? payload.version.trim().replace(/^v/, '') : '';
-  };
-
-  const fetchLatestOpenCodeVersion = async () => {
-    const results = await Promise.allSettled([
-      fetchLatestOpenCodeVersionFromNpm(),
-      fetchLatestOpenCodeVersionFromGithub(),
-    ]);
-    const versions = results
-      .filter((result) => result.status === 'fulfilled' && result.value)
-      .map((result) => result.value);
-    if (versions.length === 0) {
-      const failure = results.find((result) => result.status === 'rejected');
-      throw failure?.reason instanceof Error ? failure.reason : new Error('Failed to resolve latest OpenCode version');
-    }
-    return versions.sort((left, right) => compareVersions(right, left))[0];
-  };
 
   const pruneExpiredPendingMcpAuthContexts = () => {
     const now = Date.now();
@@ -189,141 +113,8 @@ ${desktopReturn ? `<a class="return" href="openchamber://focus/mcp-auth">Return 
       const resolution = await getOpenCodeResolutionSnapshot(settings);
       res.json(resolution);
     } catch (error) {
-      console.error('Failed to resolve OpenCode binary:', error);
+      console.error('Failed to resolve MittrCraft Engine binary:', error);
       res.status(500).json({ error: 'Failed to resolve OpenCode binary' });
-    }
-  });
-
-  let openCodeUpgradePromise = null;
-
-  app.post('/api/opencode/upgrade', async (req, res) => {
-    try {
-      const capability = getOpenCodeUpgradeCapability();
-      if (!capability.supported) {
-        return res.status(409).json({
-          success: false,
-          code: capability.reason === 'bundled'
-            ? 'OPENCODE_UPGRADE_MANAGED_BY_OPENCHAMBER'
-            : 'OPENCODE_UPGRADE_UNSUPPORTED',
-          error: capability.reason === 'bundled'
-            ? 'OpenCode is bundled with MittrCraft Desktop and updates with the app.'
-            : 'This OpenCode runtime cannot be upgraded by MittrCraft.',
-        });
-      }
-      if (openCodeUpgradePromise) {
-        return res.status(409).json({
-          success: false,
-          code: 'OPENCODE_UPGRADE_IN_PROGRESS',
-          error: 'An OpenCode upgrade is already in progress.',
-        });
-      }
-
-      const target = typeof req.body?.target === 'string' && req.body.target.trim().length > 0
-        ? req.body.target.trim()
-        : undefined;
-      const upgradeOperation = (async () => {
-        const response = await fetch(buildOpenCodeUrl('/global/upgrade', ''), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-            ...getOpenCodeAuthHeaders(),
-          },
-          body: JSON.stringify(target ? { target } : {}),
-        });
-        const payload = await response.json().catch(() => null);
-        if (!response.ok) {
-          return {
-            status: response.status,
-            body: {
-              success: false,
-              error: payload?.error || response.statusText || 'Failed to upgrade OpenCode',
-            },
-          };
-        }
-
-        try {
-          await refreshOpenCodeAfterConfigChange('OpenCode upgrade');
-        } catch (restartError) {
-          return {
-            status: 500,
-            body: {
-              success: false,
-              upgraded: true,
-              error: restartError instanceof Error
-                ? `OpenCode upgraded, but restart failed: ${restartError.message}`
-                : 'OpenCode upgraded, but restart failed',
-            },
-          };
-        }
-
-        return {
-          status: 200,
-          body: { ...(payload ?? { success: true }), restarted: true },
-        };
-      })();
-      openCodeUpgradePromise = upgradeOperation;
-
-      try {
-        const result = await upgradeOperation;
-        return res.status(result.status).json(result.body);
-      } finally {
-        if (openCodeUpgradePromise === upgradeOperation) {
-          openCodeUpgradePromise = null;
-        }
-      }
-    } catch (error) {
-      console.error('Failed to upgrade OpenCode:', error);
-      return res.status(500).json({
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to upgrade OpenCode',
-      });
-    }
-  });
-
-  app.get('/api/opencode/upgrade-status', async (_req, res) => {
-    try {
-      const capability = getOpenCodeUpgradeCapability();
-      if (!capability.supported) {
-        const current = await readOpenCodeCurrentVersion().catch(() => ({ ok: false, currentVersion: null }));
-        return res.json({
-          available: false,
-          currentVersion: current.ok ? current.currentVersion : null,
-          latestVersion: null,
-          upgrade: capability,
-        });
-      }
-
-      const [healthResponse, latestVersion] = await Promise.all([
-        fetch(buildOpenCodeUrl('/global/health', ''), {
-          method: 'GET',
-          headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
-        }),
-        fetchLatestOpenCodeVersion(),
-      ]);
-      const health = await healthResponse.json().catch(() => null);
-      if (!healthResponse.ok) {
-        return res.status(healthResponse.status).json({
-          available: null,
-          error: health?.error || healthResponse.statusText || 'Failed to read OpenCode version',
-        });
-      }
-      const currentVersion = typeof health?.version === 'string' ? health.version.replace(/^v/, '') : null;
-      if (!currentVersion || !latestVersion) {
-        return res.json({ available: null, currentVersion, latestVersion: latestVersion || null });
-      }
-      const available = compareVersions(latestVersion, currentVersion) > 0;
-      return res.json({
-        available,
-        currentVersion,
-        latestVersion,
-        upgrade: capability,
-      });
-    } catch (error) {
-      return res.status(500).json({
-        available: null,
-        error: error instanceof Error ? error.message : 'Failed to check OpenCode upgrade status',
-      });
     }
   });
 
@@ -753,13 +544,13 @@ ${desktopReturn ? `<a class="return" href="openchamber://focus/mcp-auth">Return 
         settings: updated,
       });
     } catch (error) {
-      console.error('Failed to update OpenCode working directory:', error);
+      console.error('Failed to update MittrCraft Engine working directory:', error);
       return res.status(500).json({ error: error.message || 'Failed to update working directory' });
     }
   });
 
   // Behavior / Global AGENTS.md endpoints
-  const AGENTS_MD_PATH = path.join(os.homedir(), '.config', 'opencode', 'AGENTS.md');
+  const AGENTS_MD_PATH = path.join(engineConfigDir(), 'AGENTS.md');
   const MAX_BEHAVIOR_PROMPT_SIZE = 1024 * 1024; // 1 MB
 
   app.get('/api/behavior/agents-md', async (_req, res) => {

@@ -2,15 +2,21 @@ import type { Part } from '@opencode-ai/sdk/v2';
 import type { TimeFormatPreference } from '@/stores/useUIStore';
 
 /**
- * Helpers for the Raw Messages preview row in the context sidebar.
+ * Helpers for the Raw Messages preview rows in the context sidebar.
  *
- * Each collapsed entry shows a role label, parts summary (e.g. "bash",
- * "text + todowrite"), I/O token counters (assistant only), a content
- * snippet, an 8-char message id suffix, and a locale-aware timestamp.
+ * A row reads left to right as what the step did, what it cost, and when it
+ * happened: the tool or reply that distinguishes it, then the ambient parts
+ * that do not, then I/O token counters (assistant only), then a clock. Rows
+ * run under a heading for each calendar day, which is why no row carries a
+ * date of its own.
  *
- * Note: we surface the **suffix** of the message id (last 8 chars), not the
- * prefix. OpenCode ids share a long common prefix (e.g. `msg_e39e98d…`); the
- * tail is what actually differentiates them.
+ * The three columns are deliberately not one weight. Every value rendered at
+ * the same muted weight is what the previous row degenerated into: a stack of
+ * identical grey bars with nothing for the eye to hold.
+ *
+ * Note: `truncateMessageId` surfaces the **suffix** of a message id (last 8
+ * chars), not the prefix. OpenCode ids share a long common prefix (e.g.
+ * `msg_e39e98d…`); the tail is what actually differentiates them.
  *
  * Helpers here are pure and DOM-free so they can be unit tested.
  */
@@ -43,16 +49,48 @@ const labelForPart = (part: Part): string => {
   return type || 'unknown';
 };
 
-export const derivePartsLabel = (parts: Part[]): string => {
-  if (parts.length === 0) return '';
-  const seen: string[] = [];
+/**
+ * Part types that say how the assistant worked rather than what it did. They
+ * appear on almost every assistant message, so a row that leads with them
+ * reads as identical to the row above it and carries no information; the tool
+ * or the reply is what distinguishes one step from the next.
+ */
+const AMBIENT_PART_TYPES = ['reasoning', 'step-start', 'step-finish'];
+
+type MessageLabel = {
+  /** What the step did. Never empty when the message has parts. */
+  primary: string;
+  /** How it worked. Rendered de-emphasised, and often empty. */
+  ambient: string;
+};
+
+/**
+ * Split a message's parts into what it did and how it worked.
+ *
+ * Source order is preserved inside each half, so a message that reasoned, then
+ * replied, then ran a command reads `text + bash` rather than a re-sorted list
+ * that no longer matches the transcript.
+ *
+ * When a message carries nothing but ambient parts they become the primary
+ * label: a row with no label at all is worse than a row labelled `reasoning`.
+ */
+export const deriveMessageLabel = (parts: Part[]): MessageLabel => {
+  const primary: string[] = [];
+  const ambient: string[] = [];
+
   for (const part of parts) {
     const label = labelForPart(part);
-    if (!seen.includes(label)) {
-      seen.push(label);
+    const bucket = AMBIENT_PART_TYPES.includes(partTypeOf(part)) ? ambient : primary;
+    if (!bucket.includes(label)) {
+      bucket.push(label);
     }
   }
-  return seen.join(' + ');
+
+  if (primary.length === 0) {
+    return { primary: ambient.join(' + '), ambient: '' };
+  }
+
+  return { primary: primary.join(' + '), ambient: ambient.join(' + ') };
 };
 
 /**
@@ -99,7 +137,8 @@ export const deriveUserSnippet = (parts: Part[]): string => {
 /**
  * Format the assistant token counters as `<input> / <output>`. Both zero
  * still renders as `0 / 0` so streaming-not-started messages stay visible
- * in the column instead of disappearing.
+ * in the column instead of disappearing. The row labels which half is which;
+ * the bare slash was ambiguous on its own.
  */
 export const formatAssistantTokens = (
   input: number,
@@ -114,22 +153,161 @@ const resolveHour12 = (preference: TimeFormatPreference): boolean | undefined =>
 };
 
 /**
- * Format a message timestamp for the Raw Messages preview row.
+ * Format the clock shown on a preview row, honouring the user's
+ * `timeFormatPreference`. In 24h mode no AM/PM is rendered.
  *
- * Mirrors the original short "MM/DD HH:MM" shape but honors the user's
- * `timeFormatPreference` setting. In 24h mode no AM/PM is rendered.
+ * The date is deliberately absent: rows are grouped under a day heading, so
+ * repeating it on every row spent most of the column's width restating what
+ * the heading already said.
  */
-export const formatMessagePreviewTime = (
+export const formatMessagePreviewClock = (
   timestamp: number | null,
   preference: TimeFormatPreference,
 ): string => {
   if (!timestamp || !Number.isFinite(timestamp)) return '-';
   const hour12 = resolveHour12(preference);
-  return new Date(timestamp).toLocaleString(undefined, {
-    month: 'numeric',
-    day: 'numeric',
+  return new Date(timestamp).toLocaleTimeString(undefined, {
     hour: hour12 === false ? '2-digit' : 'numeric',
     minute: '2-digit',
     ...(hour12 === undefined ? {} : { hour12 }),
   });
+};
+
+/**
+ * Format the day heading that a run of rows sits under. The year is included
+ * only when it is not the current one, so an ordinary session does not carry a
+ * year on every heading.
+ */
+export const formatMessagePreviewDay = (
+  timestamp: number | null,
+  now: number = Date.now(),
+): string => {
+  if (!timestamp || !Number.isFinite(timestamp)) return '-';
+  const date = new Date(timestamp);
+  return date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(date.getFullYear() === new Date(now).getFullYear() ? {} : { year: 'numeric' }),
+  });
+};
+
+/**
+ * Whether two timestamps fall on the same local calendar day. Compared field
+ * by field rather than by dividing into 24h buckets, which drifts across a
+ * daylight-saving change and would then split or merge a day's rows.
+ */
+export const isSameCalendarDay = (a: number | null, b: number | null): boolean => {
+  if (!a || !b || !Number.isFinite(a) || !Number.isFinite(b)) return false;
+  const left = new Date(a);
+  const right = new Date(b);
+  return left.getFullYear() === right.getFullYear()
+    && left.getMonth() === right.getMonth()
+    && left.getDate() === right.getDate();
+};
+
+/**
+ * Annotate an ordered run of items with the day heading each one opens.
+ *
+ * `dayHeading` carries the timestamp when the item is the first of its
+ * calendar day in this ordering, and null otherwise, so the caller renders one
+ * heading per day without tracking state across a `.map()`.
+ *
+ * Ordering is the caller's: the preview lists newest first, and this walks
+ * whatever order it is handed rather than sorting, so it stays correct if that
+ * choice changes. An item with no timestamp opens no heading and does not
+ * close the run, because a missing time is not evidence the day changed.
+ */
+export const withDayHeadings = <T>(
+  items: readonly T[],
+  timestampOf: (item: T) => number | null,
+): Array<{ item: T; dayHeading: number | null }> => {
+  let currentDay: number | null = null;
+
+  return items.map((item) => {
+    const timestamp = timestampOf(item);
+    if (timestamp === null || !Number.isFinite(timestamp)) {
+      return { item, dayHeading: null };
+    }
+    if (isSameCalendarDay(currentDay, timestamp)) {
+      return { item, dayHeading: null };
+    }
+    currentDay = timestamp;
+    return { item, dayHeading: timestamp };
+  });
+};
+
+/**
+ * How long a step took, from its own timestamps.
+ *
+ * Under a minute the seconds carry one decimal, because most steps land there
+ * and whole seconds would round half of them to the same value. Past a minute
+ * the decimal stops meaning anything and the clock shape reads faster.
+ *
+ * Returns null while a step is still running: it has a start and no end, and
+ * a duration measured against "now" would be a number that changes every time
+ * the panel repaints. The caller shows that state as running instead.
+ */
+export const formatStepDuration = (
+  created: number | null,
+  completed: number | null,
+): string | null => {
+  // Tested for absence rather than falsiness: a timestamp of 0 is a real
+  // number and a guard that reads it as "missing" reports no duration for it.
+  if (created === null || completed === null) return null;
+  if (!Number.isFinite(created) || !Number.isFinite(completed)) return null;
+  const ms = completed - created;
+  if (ms < 0) return null;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const whole = Math.round(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+};
+
+type ActivityStep<T> = {
+  message: T;
+  /** 1-based position of this step within its turn, counting from the start. */
+  index: number;
+  /** How many steps the turn holds. Known because a turn is grouped whole. */
+  total: number;
+};
+
+type ActivityTurn<T> = {
+  /** The user message that opened the turn, or null for work with no prompt. */
+  prompt: T | null;
+  steps: ActivityStep<T>[];
+};
+
+/**
+ * Group a chronological run of messages into turns.
+ *
+ * A user message opens a turn and everything after it belongs to that turn
+ * until the next one. Work that arrives before any user message — a resumed
+ * session, a summary written on load — is kept in a leading turn with a null
+ * prompt rather than discarded or attached to a prompt that did not cause it.
+ *
+ * Steps are numbered within their turn, which is why grouping happens before
+ * any reversal: a step's position is a fact about the conversation, not about
+ * the order the panel happens to list them in.
+ */
+export const groupIntoTurns = <T>(
+  messages: readonly T[],
+  isPrompt: (message: T) => boolean,
+): ActivityTurn<T>[] => {
+  const turns: ActivityTurn<T>[] = [];
+  let current: ActivityTurn<T> | null = null;
+
+  for (const message of messages) {
+    if (isPrompt(message) || current === null) {
+      current = { prompt: isPrompt(message) ? message : null, steps: [] };
+      turns.push(current);
+      if (isPrompt(message)) continue;
+    }
+    current.steps.push({ message, index: current.steps.length + 1, total: 0 });
+  }
+
+  for (const turn of turns) {
+    for (const step of turn.steps) step.total = turn.steps.length;
+  }
+
+  return turns;
 };

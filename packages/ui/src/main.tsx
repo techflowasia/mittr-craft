@@ -4,6 +4,7 @@ import './styles/fonts'
 import './index.css'
 import App from './App.tsx'
 import { SessionAuthGate } from './components/auth/SessionAuthGate'
+import { MittrSignInGate } from '@/components/mittr/MittrSignInGate';
 import { ThemeSystemProvider } from './contexts/ThemeSystemContext'
 import { ThemeProvider } from './components/providers/ThemeProvider'
 import './lib/debug'
@@ -17,11 +18,11 @@ import type { RuntimeAPIs } from './lib/api/types'
 
 declare global {
   interface Window {
-    __OPENCHAMBER_RUNTIME_APIS__?: RuntimeAPIs;
+    __MITTRCRAFT_RUNTIME_APIS__?: RuntimeAPIs;
   }
 }
 
-const runtimeAPIs = (typeof window !== 'undefined' && window.__OPENCHAMBER_RUNTIME_APIS__) || (() => {
+const runtimeAPIs = (typeof window !== 'undefined' && window.__MITTRCRAFT_RUNTIME_APIS__) || (() => {
   throw new Error('Runtime APIs not provided for legacy UI entrypoint.');
 })();
 
@@ -59,7 +60,13 @@ createRoot(rootElement).render(
       <ThemeSystemProvider>
         <ThemeProvider>
           <SessionAuthGate>
-            <App apis={runtimeAPIs} />
+            {/* Inside the instance gate on purpose: that one decides who may
+                reach this machine, this one decides who may use Mittr's models.
+                Asking for a Mittr identity before the instance has admitted you
+                would put the second question first. */}
+            <MittrSignInGate>
+              <App apis={runtimeAPIs} />
+            </MittrSignInGate>
           </SessionAuthGate>
         </ThemeProvider>
       </ThemeSystemProvider>

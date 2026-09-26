@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { engineConfigDir } from './home.js';
 import os from 'os';
 import path from 'path';
 import {
@@ -70,7 +71,7 @@ function getActiveOpencodeConfigDir() {
   if (customConfigPath) {
     return path.dirname(path.resolve(customConfigPath));
   }
-  return path.join(os.homedir(), '.config', 'opencode');
+  return path.join(engineConfigDir());
 }
 
 function getActiveUserConfigPaths() {

@@ -77,7 +77,7 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
   // Use VS Code CSS variables for proper theme integration
   // These variables are automatically provided by VS Code to webviews
   // 
-  // Logo geometry matches OpenChamberLogo.tsx:
+  // Logo geometry matches MittrCraftLogo.tsx:
   // edge=48, cos30=0.866, sin30=0.5, centerY=50
   // top=(50, 2), left=(8.432, 26), right=(91.568, 26), center=(50, 50)
   // bottomLeft=(8.432, 74), bottomRight=(91.568, 74), bottom=(50, 98)
@@ -194,12 +194,12 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
       viewMode: "${viewMode}",
       initialSessionId: ${initialSessionId ? `"${initialSessionId.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : 'null'},
     };
-    window.__OPENCHAMBER_HOME__ = "${workspaceFolder.replace(/\\/g, '\\\\')}";
+    window.__MITTRCRAFT_HOME__ = "${workspaceFolder.replace(/\\/g, '\\\\')}";
     
     function getBootstrapMessages() {
       var locale = 'en';
       try {
-        var rawLocale = window.localStorage.getItem('openchamber.i18n.v1');
+        var rawLocale = window.localStorage.getItem('mittrcraft.i18n.v1');
         if (rawLocale) {
           var parsedLocale = JSON.parse(rawLocale);
           if (parsedLocale && typeof parsedLocale.locale === 'string' && parsedLocale.locale.toLowerCase().indexOf('fr') === 0) {
@@ -280,7 +280,7 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
       const statusEl = document.getElementById('loading-status');
       const getDevMessages = () => {
         try {
-          const rawLocale = window.localStorage.getItem('openchamber.i18n.v1');
+          const rawLocale = window.localStorage.getItem('mittrcraft.i18n.v1');
           if (rawLocale) {
             const parsedLocale = JSON.parse(rawLocale);
             if (parsedLocale && typeof parsedLocale.locale === 'string' && parsedLocale.locale.toLowerCase().indexOf('fr') === 0) {

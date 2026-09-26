@@ -8,7 +8,7 @@ import {
   restartTerminalSession,
   forceKillTerminal,
   listTerminalShells,
-} from '@openchamber/ui/lib/terminalApi';
+} from '@mittrcraft/ui/lib/terminalApi';
 import type {
   TerminalAPI,
   TerminalHandlers,
@@ -16,7 +16,7 @@ import type {
   ResizeTerminalPayload,
   TerminalSession,
   ForceKillOptions,
-} from '@openchamber/ui/lib/api/types';
+} from '@mittrcraft/ui/lib/api/types';
 
 export const createWebTerminalAPI = (): TerminalAPI => ({
   async listShells() {

@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { engineConfigDir } from './engine-home';
 import os from 'os';
 import path from 'path';
 import { execFile } from 'child_process';
@@ -394,7 +395,7 @@ export async function scanSkillsRepository(options: { source: string; subpath?: 
   }
 
   const effectiveSubpath = parsed.effectiveSubpath || options.defaultSubpath || null;
-  const tempBase = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'openchamber-vscode-skills-scan-'));
+  const tempBase = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'mittrcraft-vscode-skills-scan-'));
 
   try {
     const cloned = await cloneRepo(parsed.cloneUrlHttps, tempBase);
@@ -545,8 +546,8 @@ async function copyDirectoryNoSymlinks(srcDir: string, dstDir: string) {
 }
 
 function getUserSkillBaseDir() {
-  const pluralPath = path.join(os.homedir(), '.config', 'opencode', 'skills');
-  const legacyPath = path.join(os.homedir(), '.config', 'opencode', 'skill');
+  const pluralPath = path.join(engineConfigDir(), 'skills');
+  const legacyPath = path.join(engineConfigDir(), 'skill');
   if (fs.existsSync(legacyPath) && !fs.existsSync(pluralPath)) return legacyPath;
   return pluralPath;
 }
@@ -620,7 +621,7 @@ export async function installSkillsFromRepository(options: {
     };
   }
 
-  const tempBase = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'openchamber-vscode-skills-install-'));
+  const tempBase = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'mittrcraft-vscode-skills-install-'));
 
   try {
     const cloned = await cloneRepo(parsed.cloneUrlHttps, tempBase);

@@ -37,7 +37,7 @@ const getCatalogPluginPresentation = (
   }
 ).getCatalogPluginPresentation;
 
-const claudePackage = '@openchamber/opencode-claude';
+const claudePackage = '@mittrcraft/opencode-claude';
 
 const entry = (spec: string, scope: PluginEntry['scope'] = 'user'): PluginEntry => ({
   id: `config:${scope}:${spec}`,
@@ -117,7 +117,7 @@ describe('third-party plugin catalog helpers', () => {
   test('matches only a package or its versioned spec', () => {
     expect(specMatchesPackage(claudePackage, claudePackage)).toBe(true);
     expect(specMatchesPackage(`${claudePackage}@0.6.0`, claudePackage)).toBe(true);
-    expect(specMatchesPackage('@openchamber/opencode-claude-extra@0.6.0', claudePackage)).toBe(false);
+    expect(specMatchesPackage('@mittrcraft/opencode-claude-extra@0.6.0', claudePackage)).toBe(false);
   });
 
   test('points catalog plugins at the MittrCraft GitHub and npm packages', () => {
@@ -128,17 +128,17 @@ describe('third-party plugin catalog helpers', () => {
     }))).toEqual([
       {
         id: 'opencode-claude',
-        packageName: '@openchamber/opencode-claude',
+        packageName: '@mittrcraft/opencode-claude',
         homepage: 'https://github.com/openchamber/opencode-claude',
       },
       {
         id: 'opencode-commandcode',
-        packageName: '@openchamber/opencode-commandcode',
+        packageName: '@mittrcraft/opencode-commandcode',
         homepage: 'https://github.com/openchamber/opencode-commandcode',
       },
       {
         id: 'opencode-cursor-oauth',
-        packageName: '@openchamber/opencode-cursor',
+        packageName: '@mittrcraft/opencode-cursor',
         homepage: 'https://github.com/openchamber/opencode-cursor',
       },
     ]);

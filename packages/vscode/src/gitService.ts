@@ -1343,7 +1343,7 @@ const resolveCandidateDirectory = async (
       return { name, directory, branch: explicitBranchName };
     }
 
-    const branch = `openchamber/${name}`;
+    const branch = `mittrcraft/${name}`;
     const branchRef = `refs/heads/${branch}`;
     const branchExists = await runGitCommand(primaryWorktree, ['show-ref', '--verify', '--quiet', branchRef]);
     if (branchExists.success) {
@@ -2492,7 +2492,7 @@ export async function applyGitHunk(
 
   const flags = HUNK_ACTION_ARGS[action];
   const tmpDir = os.tmpdir();
-  const tmpPath = path.join(tmpDir, `openchamber-hunk-${Date.now()}-${Math.random().toString(36).slice(2)}.patch`);
+  const tmpPath = path.join(tmpDir, `mittrcraft-hunk-${Date.now()}-${Math.random().toString(36).slice(2)}.patch`);
 
   try {
     await fs.promises.writeFile(tmpPath, patch, 'utf8');

@@ -2,6 +2,6 @@
 <resources>
     <string name="app_name">MittrCraft</string>
     <string name="title_activity_main">MittrCraft</string>
-    <string name="package_name">com.openchamber.app</string>
-    <string name="custom_url_scheme">com.openchamber.app</string>
+    <string name="package_name">com.mittrcraft.app</string>
+    <string name="custom_url_scheme">com.mittrcraft.app</string>
 </resources>

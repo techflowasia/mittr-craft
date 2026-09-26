@@ -442,7 +442,7 @@ describe('OpenCode lifecycle', () => {
     });
     const getManagedOpenCodeEnv = vi.fn(async () => ({
       OPENCODE_CONFIG_CONTENT: '{"plugin":["file:///tool.js"]}',
-      OPENCHAMBER_AGENT_TOOL_TOKEN: 'ephemeral',
+      MITTRCRAFT_AGENT_TOOL_TOKEN: 'ephemeral',
       PATH: '/untrusted/path',
       OPENCODE_SERVER_PASSWORD: 'untrusted-password',
     }));
@@ -453,7 +453,7 @@ describe('OpenCode lifecycle', () => {
 
     expect(getManagedOpenCodeEnv).toHaveBeenCalledOnce();
     expect(options.env.OPENCODE_CONFIG_CONTENT).toBe('{"plugin":["file:///tool.js"]}');
-    expect(options.env.OPENCHAMBER_AGENT_TOOL_TOKEN).toBe('ephemeral');
+    expect(options.env.MITTRCRAFT_AGENT_TOOL_TOKEN).toBe('ephemeral');
     expect(options.env.PATH).toBe('/home/user/.bun/bin:/usr/local/bin:/usr/bin');
     expect(options.env.OPENCODE_SERVER_PASSWORD).toBe('password');
 

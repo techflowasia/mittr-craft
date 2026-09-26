@@ -89,6 +89,7 @@ import {
     classifyMention,
     scanMentions,
 } from './composer/language/mentions';
+import { continueListOnNewline } from './composer/listContinuation';
 import { collectKnownTokenNames } from './composer/language/prefixTokens';
 import { resolveAutocompleteTrigger, type AutocompleteKind } from './composer/language/triggers';
 import { type ComposerLanguageContext } from './composer/language/tokenize';
@@ -1550,6 +1551,35 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
             }
         }
 
+        // Markdown list editing, on the keys that edit rather than send.
+        //
+        // The newline key differs by surface: on the desktop Enter sends and
+        // Shift+Enter breaks the line, while on mobile plain Enter breaks it
+        // and sending needs a modifier. Continuation hangs off whichever one
+        // inserts a newline here, so it never competes with sending.
+        if (inputMode === 'normal' && !isAnyAutocompleteOpen && !e.altKey) {
+            const selection = composerRef.current?.getSelection();
+            const insertsNewline = e.key === 'Enter'
+                && (e.shiftKey || (isMobile && !e.ctrlKey && !e.metaKey));
+
+            if (selection && insertsNewline) {
+                const continued = continueListOnNewline(message, selection.start, selection.end);
+                if (continued) {
+                    e.preventDefault();
+                    setMessage(continued.text);
+                    composerRef.current?.setSelection(continued.caret, continued.caret);
+                    updateAutocompleteState(continued.text, continued.caret);
+                    return;
+                }
+            }
+
+            // Nesting is deliberately not on Tab: `cycle_agent` already binds
+            // it (and Shift+Tab), it is customisable, and it runs earlier in
+            // this handler. Taking it would break a shortcut somebody uses.
+            // Indentation typed by hand is carried forward by continuation,
+            // and an empty item steps back out.
+        }
+
         if (e.key === 'ArrowUp' && canNavigateHistoryUp) {
             e.preventDefault();
             const recalled = messageHistory.older(message);
@@ -2097,7 +2127,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
         e.preventDefault();
         e.stopPropagation();
         dragEnterCountRef.current++;
-        const isInternal = e.dataTransfer.types?.includes('application/x-openchamber-file-path') ?? false;
+        const isInternal = e.dataTransfer.types?.includes('application/x-mittrcraft-file-path') ?? false;
         if (isInternal !== isInternalDrag) {
             setIsInternalDrag(isInternal);
         }
@@ -2151,7 +2181,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
         if (!currentSessionId && !newSessionDraftOpen) return;
 
         // Internal drag: file tree → chat input (relative path as @mention)
-        const internalPath = e.dataTransfer.getData('application/x-openchamber-file-path');
+        const internalPath = e.dataTransfer.getData('application/x-mittrcraft-file-path');
         if (internalPath && internalPath !== '.') {
             confirmedMentionsRef.current.add(internalPath);
             const mention = `@${internalPath}`;
@@ -2396,7 +2426,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({ onOpenSettings, scrollTo
 
     /** The dictation engine listens for this globally; the composer only asks. */
     const toggleDictation = React.useCallback(() => {
-        window.dispatchEvent(new CustomEvent('openchamber:dictation-toggle'));
+        window.dispatchEvent(new CustomEvent('mittrcraft:dictation-toggle'));
     }, []);
 
     const openMobileAttachSheet = React.useCallback(() => {

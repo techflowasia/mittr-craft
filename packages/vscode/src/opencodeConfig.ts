@@ -1,10 +1,11 @@
 import fs from 'node:fs';
+import { engineConfigDir } from './engine-home';
 import path from 'node:path';
 import os from 'node:os';
 import yaml from 'yaml';
 import { parse as parseJsonc } from 'jsonc-parser';
 
-const OPENCODE_CONFIG_DIR = path.join(os.homedir(), '.config', 'opencode');
+const OPENCODE_CONFIG_DIR = path.join(engineConfigDir());
 const AGENT_DIR = path.join(OPENCODE_CONFIG_DIR, 'agents');
 const COMMAND_DIR = path.join(OPENCODE_CONFIG_DIR, 'commands');
 const GLOBAL_SNIPPET_DIR = path.join(OPENCODE_CONFIG_DIR, 'snippet');
@@ -695,7 +696,7 @@ const getConfigForPath = (layers: ReturnType<typeof readConfigLayers>, targetPat
 
 const writeConfig = (config: Record<string, unknown>, filePath: string = CONFIG_FILE) => {
   if (fs.existsSync(filePath)) {
-    const backupFile = `${filePath}.openchamber.backup`;
+    const backupFile = `${filePath}.mittrcraft.backup`;
     try {
       fs.copyFileSync(filePath, backupFile);
     } catch {
@@ -1065,7 +1066,7 @@ const NPM_CACHE_TTL_MS = 3_600_000;
 const lookupNpmPackage = async (name: string): Promise<NpmLookupResult> => {
   try {
     const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(name).replace(/^%40/, '@')}`, {
-      headers: { Accept: 'application/json', 'User-Agent': 'openchamber-vscode/dev' },
+      headers: { Accept: 'application/json', 'User-Agent': 'mittrcraft-vscode/dev' },
       signal: AbortSignal.timeout(5000),
     });
     if (response.ok) {

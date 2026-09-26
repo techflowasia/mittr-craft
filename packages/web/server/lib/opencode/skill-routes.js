@@ -1,4 +1,5 @@
 import { createOpencodeClient } from '@opencode-ai/sdk/v2';
+import { engineConfigDir } from './home.js';
 import { buildDeferredRestartResponse } from './config-mutation-response.js';
 
 /**
@@ -113,7 +114,7 @@ export const registerSkillRoutes = (app, dependencies) => {
     }
 
     const userRoots = [
-      path.join(home, '.config', 'opencode'),
+      path.join(engineConfigDir()),
       path.join(home, '.opencode'),
       path.join(home, '.claude', 'skills'),
       path.join(home, '.agents', 'skills'),
@@ -182,7 +183,7 @@ export const registerSkillRoutes = (app, dependencies) => {
         })
         .filter(Boolean);
     } catch (error) {
-      console.error('Failed to list OpenCode skills:', error);
+      console.error('Failed to list MittrCraft Engine skills:', error);
       return [];
     }
   };

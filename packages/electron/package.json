@@ -1,13 +1,13 @@
 {
-  "name": "@openchamber/electron",
-  "version": "1.18.4",
+  "name": "@mittrcraft/electron",
+  "version": "1.19.1",
   "private": true,
   "description": "Electron desktop runtime for MittrCraft",
   "author": "MittrCraft",
   "type": "module",
   "main": "./dist-bundle/main.mjs",
   "dependencies": {
-    "@openchamber/web": "workspace:*",
+    "@mittrcraft/web": "workspace:*",
     "electron-context-menu": "^4.1.2",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.8.3"
@@ -34,6 +34,7 @@
     "build": "bun -e \"process.exit(0)\"",
     "ensure:electron": "node ./scripts/ensure-electron.mjs",
     "prepare:opencode-cli": "node ./scripts/prepare-opencode-cli.mjs",
+    "prepare:cua-driver": "node ./scripts/prepare-cua-driver.mjs",
     "verify:opencode-cli": "node ./scripts/verify-opencode-cli.mjs --staged",
     "verify:opencode-cli:packaged": "node ./scripts/verify-opencode-cli.mjs --packaged",
     "verify:linux-appimage": "node ./scripts/verify-linux-appimage.mjs",
@@ -46,13 +47,13 @@
     "test:linux-desktop": "node --test ./linux-autostart.test.mjs && node ./scripts/smoke-linux-app-discovery.mjs && node ./scripts/smoke-path-open-utils.mjs",
     "updater:e2e:fixture": "node ./scripts/updater-e2e-fixture.mjs",
     "verify:update-manifest": "node ./scripts/verify-update-manifest.mjs",
-    "package": "bun run build:web-assets && bun run prepare:opencode-cli && bun run bundle:main && bun run rebuild:native && node ./scripts/package.mjs",
+    "package": "bun run build:web-assets && bun run prepare:opencode-cli && bun run prepare:cua-driver && bun run bundle:main && bun run rebuild:native && node ./scripts/package.mjs",
     "finalize:latest-yml": "node ./scripts/finalize-latest-yml.mjs",
     "type-check": "node --check ./main.mjs && node --check ./preload.mjs",
     "lint": "node -e \"process.exit(0)\""
   },
   "build": {
-    "appId": "dev.openchamber.desktop",
+    "appId": "dev.mittrcraft.desktop",
     "productName": "MittrCraft",
     "files": [
       "dist-bundle/main.mjs",
@@ -72,12 +73,20 @@
         "to": "icons/icon.png"
       },
       {
+        "from": "resources/icons/splash-icon.png",
+        "to": "icons/splash-icon.png"
+      },
+      {
         "from": "resources/icons/tray",
         "to": "icons/tray"
       },
       {
         "from": "resources/opencode-cli",
         "to": "opencode-cli"
+      },
+      {
+        "from": "resources/cua-driver",
+        "to": "cua-driver"
       }
     ],
     "afterPack": "scripts/after-pack.cjs",
@@ -87,12 +96,21 @@
     },
     "artifactName": "${productName}-${version}-${arch}.${ext}",
     "npmRebuild": false,
+    "protocols": [
+      {
+        "name": "MittrCraft",
+        "schemes": [
+          "mittrcraft"
+        ]
+      }
+    ],
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "resources/icons/icon.icns",
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
       "extendInfo": {
-        "CFBundleIconName": "AppIcon"
+        "CFBundleIconName": "AppIcon",
+        "//": "resources/icons/Assets.car now holds the current Mittr mark (not the pre-rebrand cube that once made this key dangerous), so CFBundleIconName can point at it again: macOS prefers the named catalog entry over CFBundleIconFile, which is what gives the Dock and Launchpad the adaptive light/dark rendering instead of the flat icon.icns fallback. after-pack.cjs still copies Assets.car in only when the file exists, so a build that somehow loses it falls back to icon.icns rather than failing."
       },
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
@@ -118,14 +136,14 @@
       ],
       "category": "Development",
       "icon": "resources/icons/icon.png",
-      "executableName": "openchamber",
+      "executableName": "mittrcraft",
       "artifactName": "${productName}-${version}-linux-${arch}.${ext}",
       "desktop": {
         "entry": {
           "Name": "MittrCraft",
           "Comment": "Desktop runtime for MittrCraft",
-          "Icon": "openchamber",
-          "StartupWMClass": "openchamber"
+          "Icon": "mittrcraft",
+          "StartupWMClass": "mittrcraft"
         }
       }
     },
@@ -162,8 +180,8 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "openchamber",
-      "repo": "openchamber"
+      "owner": "techflowasia",
+      "repo": "mittr-craft"
     }
   }
 }

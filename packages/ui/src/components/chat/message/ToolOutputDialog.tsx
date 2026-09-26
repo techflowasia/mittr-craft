@@ -479,7 +479,7 @@ const ImagePreviewDialog: React.FC<{
                         </div>
                         <button
                             type="button"
-                            className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground/80 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/60"
+                            className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/60"
                             onClick={() => onOpenChange(false)}
                             aria-label={t('chat.toolOutputDialog.image.closeAria')}
                         >
@@ -911,7 +911,7 @@ const MermaidPreviewDialog: React.FC<{
                     <div className="flex items-center justify-end">
                         <button
                             type="button"
-                            className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground/80 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/60"
+                            className="h-8 w-8 flex items-center justify-center rounded-lg text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary/60"
                             onClick={() => onOpenChange(false)}
                             aria-label={t('chat.toolOutputDialog.mermaid.closeAria')}
                         >
@@ -1157,7 +1157,7 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
 
                                 if (tool === 'task' || tool === 'reasoning') {
                                     return (
-                                        <div className={tool === 'reasoning' ? "text-muted-foreground/70" : ""}>
+                                        <div className={tool === 'reasoning' ? "text-muted-foreground" : ""}>
                                             <SimpleMarkdownRenderer content={popup.content} variant="tool" />
                                         </div>
                                     );

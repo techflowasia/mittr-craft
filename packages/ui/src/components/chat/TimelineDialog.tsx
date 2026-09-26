@@ -386,7 +386,7 @@ export const TimelineDialog: React.FC<TimelineDialogProps> = ({
                         >
                             {t('chat.timeline.actions.previousTurn')}
                         </button>
-                        <span className="text-muted-foreground/50">/</span>
+                        <span className="text-muted-foreground">/</span>
                         <button
                             type="button"
                             className="text-[11px] uppercase tracking-wide text-muted-foreground/90 hover:text-foreground"

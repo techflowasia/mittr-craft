@@ -31,7 +31,7 @@ interface UpdateDialogProps {
   runtimeType?: 'desktop' | 'web' | 'vscode' | 'mobile' | null;
 }
 
-const GITHUB_RELEASES_URL = 'https://github.com/openchamber/openchamber/releases';
+const GITHUB_RELEASES_URL = 'https://github.com/techflowasia/mittr-craft/releases';
 
 type ChangelogSection = {
   version: string;
@@ -122,7 +122,7 @@ const WEB_UPDATE_MAX_WAIT_MS = 10 * 60 * 1000;
 
 async function installWebUpdate(): Promise<InstallWebUpdateResult> {
   try {
-    const response = await runtimeFetch('/api/openchamber/update-install', {
+    const response = await runtimeFetch('/api/mittrcraft/update-install', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
@@ -162,7 +162,7 @@ async function waitForUpdateApplied(
   for (let i = 0; i < maxAttempts; i++) {
     try {
       // Status-only poll while waiting for the update to apply; not a usage report.
-      const response = await runtimeFetch('/api/openchamber/update-check?reportUsage=false', {
+      const response = await runtimeFetch('/api/mittrcraft/update-check?reportUsage=false', {
         method: 'GET',
         headers: { Accept: 'application/json' },
       });
@@ -218,7 +218,7 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
 
   const isWebRuntime = runtimeType === 'web';
   const isMobileRuntime = runtimeType === 'mobile';
-  const updateCommand = info?.updateCommand || 'openchamber update';
+  const updateCommand = info?.updateCommand || 'mittrcraft update';
 
   // Reset state when dialog closes
   useEffect(() => {
@@ -328,7 +328,7 @@ export const UpdateDialog: React.FC<UpdateDialogProps> = ({
                 <span className="text-muted-foreground">{info.currentVersion}</span>
               )}
               {info?.currentVersion && info?.version && (
-                <span className="text-muted-foreground/50">→</span>
+                <span className="text-muted-foreground">→</span>
               )}
               {info?.version && (
                 <span className="text-[var(--primary-base)] font-medium">{info.version}</span>

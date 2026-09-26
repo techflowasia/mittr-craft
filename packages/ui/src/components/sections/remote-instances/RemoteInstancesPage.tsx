@@ -114,9 +114,9 @@ const phaseLabelKey = (phase?: string): I18nKey => {
     case 'remote_probe':
       return 'settings.remoteInstances.page.phase.probingRemote';
     case 'installing':
-      return 'settings.remoteInstances.page.phase.installingOpenChamber';
+      return 'settings.remoteInstances.page.phase.installingMittrCraft';
     case 'updating':
-      return 'settings.remoteInstances.page.phase.updatingOpenChamber';
+      return 'settings.remoteInstances.page.phase.updatingMittrCraft';
     case 'server_detecting':
       return 'settings.remoteInstances.page.phase.detectingServer';
     case 'server_starting':
@@ -368,11 +368,11 @@ const normalizeForSave = (instance: DesktopSshInstance): DesktopSshInstance => {
           ? Math.max(1, Math.min(65535, Math.round(instance.localForward.preferredLocalPort)))
           : undefined,
     },
-    remoteOpenchamber: {
-      ...instance.remoteOpenchamber,
+    remoteMittrCraft: {
+      ...instance.remoteMittrCraft,
       preferredPort:
-        typeof instance.remoteOpenchamber.preferredPort === 'number'
-          ? Math.max(1, Math.min(65535, Math.round(instance.remoteOpenchamber.preferredPort)))
+        typeof instance.remoteMittrCraft.preferredPort === 'number'
+          ? Math.max(1, Math.min(65535, Math.round(instance.remoteMittrCraft.preferredPort)))
           : undefined,
     },
     portForwards: forwards,
@@ -1105,14 +1105,14 @@ export const RemoteInstancesPage: React.FC = () => {
     }
 
     if (
-      normalized.auth.openchamberPassword?.enabled &&
-      normalized.auth.openchamberPassword.value?.trim() &&
-      normalized.auth.openchamberPassword.store !== 'settings'
+      normalized.auth.mittrcraftPassword?.enabled &&
+      normalized.auth.mittrcraftPassword.value?.trim() &&
+      normalized.auth.mittrcraftPassword.store !== 'settings'
     ) {
       const store = window.confirm(t('settings.remoteInstances.page.confirm.storeUiPasswordPlaintext'));
-      normalized.auth.openchamberPassword.store = store ? 'settings' : 'never';
+      normalized.auth.mittrcraftPassword.store = store ? 'settings' : 'never';
       if (!store) {
-        normalized.auth.openchamberPassword.value = undefined;
+        normalized.auth.mittrcraftPassword.value = undefined;
       }
     }
 
@@ -1924,7 +1924,7 @@ export const RemoteInstancesPage: React.FC = () => {
     );
   }
 
-  const isManagedMode = draft.remoteOpenchamber.mode === 'managed';
+  const isManagedMode = draft.remoteMittrCraft.mode === 'managed';
   const instanceTitle = draft.nickname?.trim() || draft.sshParsed?.destination || draft.id;
 
   return (
@@ -2078,12 +2078,12 @@ export const RemoteInstancesPage: React.FC = () => {
                 />
             </div>
             <Select
-              value={draft.remoteOpenchamber.mode}
+              value={draft.remoteMittrCraft.mode}
               onValueChange={(value) =>
                 updateDraft((current) => ({
                   ...current,
-                  remoteOpenchamber: {
-                    ...current.remoteOpenchamber,
+                  remoteMittrCraft: {
+                    ...current.remoteMittrCraft,
                     mode: value === 'external' ? 'external' : 'managed',
                   },
                 }))
@@ -2112,12 +2112,12 @@ export const RemoteInstancesPage: React.FC = () => {
               max={65535}
               step={1}
               className="w-20 tabular-nums"
-              value={draft.remoteOpenchamber.preferredPort}
+              value={draft.remoteMittrCraft.preferredPort}
               onValueChange={(next) => {
                 updateDraft((current) => ({
                   ...current,
-                  remoteOpenchamber: {
-                    ...current.remoteOpenchamber,
+                  remoteMittrCraft: {
+                    ...current.remoteMittrCraft,
                     preferredPort: Number.isFinite(next) && next > 0 ? next : undefined,
                   },
                 }));
@@ -2125,8 +2125,8 @@ export const RemoteInstancesPage: React.FC = () => {
               onClear={() => {
                 updateDraft((current) => ({
                   ...current,
-                  remoteOpenchamber: {
-                    ...current.remoteOpenchamber,
+                  remoteMittrCraft: {
+                    ...current.remoteMittrCraft,
                     preferredPort: undefined,
                   },
                 }));
@@ -2144,12 +2144,12 @@ export const RemoteInstancesPage: React.FC = () => {
                 />
               </div>
               <Select
-                value={draft.remoteOpenchamber.installMethod}
+                value={draft.remoteMittrCraft.installMethod}
                 onValueChange={(value) =>
                   updateDraft((current) => ({
                     ...current,
-                    remoteOpenchamber: {
-                      ...current.remoteOpenchamber,
+                    remoteMittrCraft: {
+                      ...current.remoteMittrCraft,
                       installMethod:
                         value === 'npm' || value === 'download_release' || value === 'upload_bundle'
                           ? value
@@ -2181,12 +2181,12 @@ export const RemoteInstancesPage: React.FC = () => {
               </div>
               <div className="flex w-full items-center gap-2 md:max-w-xs">
                 <Switch
-                  checked={draft.remoteOpenchamber.keepRunning}
+                  checked={draft.remoteMittrCraft.keepRunning}
                   onCheckedChange={(checked) =>
                     updateDraft((current) => ({
                       ...current,
-                      remoteOpenchamber: {
-                        ...current.remoteOpenchamber,
+                      remoteMittrCraft: {
+                        ...current.remoteMittrCraft,
                         keepRunning: checked,
                       },
                     }))
@@ -2328,16 +2328,16 @@ export const RemoteInstancesPage: React.FC = () => {
             <Input
               className="h-7 md:max-w-sm"
               type="password"
-              value={draft.auth.openchamberPassword?.value || ''}
+              value={draft.auth.mittrcraftPassword?.value || ''}
               onChange={(event) =>
                 updateDraft((current) => ({
                   ...current,
                   auth: {
                     ...current.auth,
-                    openchamberPassword: {
+                    mittrcraftPassword: {
                       enabled: event.target.value.trim().length > 0,
                       value: event.target.value,
-                      store: current.auth.openchamberPassword?.store || 'never',
+                      store: current.auth.mittrcraftPassword?.store || 'never',
                     },
                   },
                 }))
@@ -2353,7 +2353,7 @@ export const RemoteInstancesPage: React.FC = () => {
         contentClassName="space-y-2"
       >
           {draft.portForwards.length === 0 ? (
-            <p className="typography-micro text-muted-foreground/80">{t('settings.remoteInstances.page.empty.noExtraForwards')}</p>
+            <p className="typography-micro text-muted-foreground">{t('settings.remoteInstances.page.empty.noExtraForwards')}</p>
           ) : null}
 
           {draft.portForwards.map((forward, index) => {
@@ -2544,7 +2544,7 @@ export const RemoteInstancesPage: React.FC = () => {
                     ) : null}
 
                     <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md bg-[var(--surface-subtle)] p-2">
-                      <div className="flex flex-wrap items-center gap-1 typography-micro text-muted-foreground/80">
+                      <div className="flex flex-wrap items-center gap-1 typography-micro text-muted-foreground">
                         {forward.type === 'dynamic' ? (
                           <>
                             <Icon name="computer" className="h-3.5 w-3.5" />

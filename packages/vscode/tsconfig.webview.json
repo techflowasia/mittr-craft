@@ -17,7 +17,7 @@
     "paths": {
       "@/*": ["../ui/src/*"],
       "@vscode/*": ["./webview/*"],
-      "@openchamber/ui/*": ["../ui/src/*"]
+      "@mittrcraft/ui/*": ["../ui/src/*"]
     }
   },
   "include": ["webview/**/*", "../ui/src/**/*"]

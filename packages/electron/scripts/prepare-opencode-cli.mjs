@@ -43,8 +43,8 @@ const readPinnedSdkVersion = () => {
 const artifactForPlatform = (platform, targetArchitecture) => {
   const arch = targetArchitecture.opencode;
   if (platform === 'darwin') {
-    if (arch === 'arm64') return { name: 'opencode-darwin-arm64.zip', binary: 'opencode' };
-    if (arch === 'x64') return { name: 'opencode-darwin-x64-baseline.zip', binary: 'opencode' };
+    if (arch === 'arm64') return { name: 'mittrcraft-engine-darwin-arm64.zip', binary: 'opencode' };
+    if (arch === 'x64') return { name: 'mittrcraft-engine-darwin-x64-baseline.zip', binary: 'opencode' };
   }
   if (platform === 'win32') {
     // TEMPORARY WORKAROUND — Windows ARM64: native opencode.exe fails with a Bun
@@ -57,12 +57,12 @@ const artifactForPlatform = (platform, targetArchitecture) => {
     // if (arch === 'arm64') return { name: 'opencode-windows-arm64.zip', binary: 'opencode.exe' };
     // if (arch === 'x64') return { name: 'opencode-windows-x64-baseline.zip', binary: 'opencode.exe' };
     // --- END ORIGINAL ---
-    if (arch === 'arm64') return { name: 'opencode-windows-x64-baseline.zip', binary: 'opencode.exe' };
-    if (arch === 'x64') return { name: 'opencode-windows-x64-baseline.zip', binary: 'opencode.exe' };
+    if (arch === 'arm64') return { name: 'mittrcraft-engine-windows-x64-baseline.zip', binary: 'opencode.exe' };
+    if (arch === 'x64') return { name: 'mittrcraft-engine-windows-x64-baseline.zip', binary: 'opencode.exe' };
   }
   if (platform === 'linux') {
-    if (arch === 'arm64') return { name: 'opencode-linux-arm64.tar.gz', binary: 'opencode' };
-    if (arch === 'x64') return { name: 'opencode-linux-x64-baseline.tar.gz', binary: 'opencode' };
+    if (arch === 'arm64') return { name: 'mittrcraft-engine-linux-arm64.tar.gz', binary: 'opencode' };
+    if (arch === 'x64') return { name: 'mittrcraft-engine-linux-x64-baseline.tar.gz', binary: 'opencode' };
   }
   throw new Error(`No OpenCode CLI artifact mapping for ${platform}/${arch}`);
 };
@@ -140,7 +140,7 @@ const findBinary = (root, binaryName) => {
 };
 
 const main = async () => {
-  const version = process.env.OPENCHAMBER_OPENCODE_CLI_VERSION || readPinnedSdkVersion();
+  const version = process.env.MITTRCRAFT_OPENCODE_CLI_VERSION || readPinnedSdkVersion();
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
     throw new Error(`Invalid OpenCode CLI version: ${version}`);
   }
@@ -154,21 +154,39 @@ const main = async () => {
     return;
   }
 
-  const cacheDir = path.join(cacheRoot, version, `${process.platform}-${targetArchitecture.opencode}`);
-  const archivePath = path.join(cacheDir, artifact.name);
-  const url = `https://github.com/anomalyco/opencode/releases/download/v${version}/${artifact.name}`;
-  if (!fs.existsSync(archivePath)) {
-    console.log(`[electron] downloading OpenCode CLI ${version}: ${artifact.name}`);
-    await download(url, archivePath);
-  } else {
-    console.log(`[electron] using cached OpenCode CLI archive: ${archivePath}`);
-  }
+  // A locally built engine, from scripts/build-engine.mjs or a CI artifact. It
+  // stamps the same upstream version it was built from, so the verification at
+  // the end of this function still applies and an accidentally stale or
+  // mismatched binary is caught the same way a bad download would be.
+  const providedBinary = (process.env.MITTRCRAFT_ENGINE_BINARY || '').trim();
+  let sourceBinary;
 
-  const extractDir = path.join(cacheDir, 'extract');
-  extractArchive(archivePath, extractDir);
-  const extractedBinary = findBinary(extractDir, artifact.binary);
-  if (!extractedBinary) {
-    throw new Error(`Archive ${archivePath} did not contain ${artifact.binary}`);
+  if (providedBinary) {
+    if (!fs.existsSync(providedBinary)) {
+      throw new Error(`MITTRCRAFT_ENGINE_BINARY does not exist: ${providedBinary}`);
+    }
+    console.log(`[electron] using locally built engine: ${providedBinary}`);
+    sourceBinary = providedBinary;
+  } else {
+    const cacheDir = path.join(cacheRoot, version, `${process.platform}-${targetArchitecture.opencode}`);
+    const archivePath = path.join(cacheDir, artifact.name);
+    // Our own build, from scripts/build-engine.mjs, attached to an engine-v tag on
+    // this repository. Upstream's release carries upstream's identity.
+    const url = `https://github.com/techflowasia/mittr-craft/releases/download/engine-v${version}/${artifact.name}`;
+    if (!fs.existsSync(archivePath)) {
+      console.log(`[electron] downloading OpenCode CLI ${version}: ${artifact.name}`);
+      await download(url, archivePath);
+    } else {
+      console.log(`[electron] using cached OpenCode CLI archive: ${archivePath}`);
+    }
+
+    const extractDir = path.join(cacheDir, 'extract');
+    extractArchive(archivePath, extractDir);
+    const extractedBinary = findBinary(extractDir, artifact.binary);
+    if (!extractedBinary) {
+      throw new Error(`Archive ${archivePath} did not contain ${artifact.binary}`);
+    }
+    sourceBinary = extractedBinary;
   }
 
   fs.mkdirSync(outputDir, { recursive: true });
@@ -176,7 +194,7 @@ const main = async () => {
     if (entry === '.gitkeep') continue;
     fs.rmSync(path.join(outputDir, entry), { recursive: true, force: true });
   }
-  fs.copyFileSync(extractedBinary, outputBinary);
+  fs.copyFileSync(sourceBinary, outputBinary);
   ensureExecutable(outputBinary);
 
   const preparedVersion = readBinaryVersion(outputBinary);

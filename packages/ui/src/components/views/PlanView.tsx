@@ -38,7 +38,7 @@ import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { EditorView } from '@codemirror/view';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { generateBranchName } from '@/lib/git/branchNameGenerator';
-import { parseProjectPlanMarkdown } from '@/lib/openchamberConfig';
+import { parseProjectPlanMarkdown } from '@/lib/mittrcraftConfig';
 import { createWorktreeSessionForNewBranch } from '@/lib/worktreeSessionCreator';
 import { TodoSendDialog, type TodoSendExecution } from '@/components/session/TodoSendDialog';
 import { Icon } from "@/components/icon/Icon";
@@ -154,7 +154,7 @@ export const PlanView: React.FC<PlanViewProps> = ({ targetPath = null, onNavigat
   const { t } = useI18n();
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   const createSession = useSessionUIStore((state) => state.createSession);
-  const initializeNewOpenChamberSession = useSessionUIStore((state) => state.initializeNewOpenChamberSession);
+  const initializeNewMittrCraftSession = useSessionUIStore((state) => state.initializeNewMittrCraftSession);
   const sendMessage = useSessionUIStore((state) => state.sendMessage);
   const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
   const sessions = useSessions();
@@ -224,7 +224,7 @@ export const PlanView: React.FC<PlanViewProps> = ({ targetPath = null, onNavigat
   const editorViewRef = React.useRef<EditorView | null>(null);
   const editorWrapperRef = React.useRef<HTMLDivElement | null>(null);
 
-  const MD_VIEWER_MODE_KEY = 'openchamber:plan:md-viewer-mode';
+  const MD_VIEWER_MODE_KEY = 'mittrcraft:plan:md-viewer-mode';
 
   React.useEffect(() => {
     try {
@@ -577,7 +577,7 @@ export const PlanView: React.FC<PlanViewProps> = ({ targetPath = null, onNavigat
           }
           sessionId = sessionResult.id;
           directoryHint = sessionResult.directory ?? currentProjectRef.path;
-          initializeNewOpenChamberSession(sessionResult.id, useConfigStore.getState().agents ?? []);
+          initializeNewMittrCraftSession(sessionResult.id, useConfigStore.getState().agents ?? []);
         }
 
         if (!sessionId) {
@@ -637,7 +637,7 @@ export const PlanView: React.FC<PlanViewProps> = ({ targetPath = null, onNavigat
         setIsPlanSendSubmitting(false);
       }
     },
-    [canCreateWorktree, content, createSession, currentProjectRef, initializeNewOpenChamberSession, pendingPlanSend, resolvedPath, routeToChat, sendMessage, sendPromptTitle, setCurrentSession]
+    [canCreateWorktree, content, createSession, currentProjectRef, initializeNewMittrCraftSession, pendingPlanSend, resolvedPath, routeToChat, sendMessage, sendPromptTitle, setCurrentSession]
   );
 
   const blockWidgets = React.useMemo(() => {

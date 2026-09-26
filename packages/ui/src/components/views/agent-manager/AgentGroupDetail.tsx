@@ -230,7 +230,7 @@ export const AgentGroupDetail: React.FC<AgentGroupDetailProps> = ({
                         <SessionStatusDot sessionId={session.id} />
                       </div>
                       {session.branch && (
-                        <div className="flex items-center gap-1 typography-micro text-muted-foreground/60">
+                        <div className="flex items-center gap-1 typography-micro text-muted-foreground">
                           <Icon name="git-branch" className="h-3 w-3" />
                           <span className="truncate">{session.worktreeMetadata?.label || session.branch}</span>
                         </div>
@@ -343,7 +343,7 @@ export const AgentGroupDetail: React.FC<AgentGroupDetailProps> = ({
                   <p className="typography-body text-muted-foreground mb-2">
                     {t('agentManager.detail.state.loadingSessionFor', { label: selectedSession.displayLabel })}
                   </p>
-                  <p className="typography-micro text-muted-foreground/60">
+                  <p className="typography-micro text-muted-foreground">
                     {t('agentManager.detail.state.sessionId', { id: selectedSession.id })}
                   </p>
                 </div>

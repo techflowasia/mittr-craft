@@ -13,10 +13,10 @@ import { CommandAutocomplete, type CommandAutocompleteHandle, type CommandInfo }
 import { FileMentionAutocomplete, type FileMentionHandle } from '@/components/chat/FileMentionAutocomplete';
 import { Icon } from "@/components/icon/Icon";
 import { isIMECompositionEvent } from '@/lib/ime';
-import { getWorktreeSetupCommands } from '@/lib/openchamberConfig';
+import { getWorktreeSetupCommands } from '@/lib/mittrcraftConfig';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
-import type { ProjectRef } from '@/lib/openchamberConfig';
+import type { ProjectRef } from '@/lib/mittrcraftConfig';
 import type { CreateMultiRunParams, MultiRunFileAttachment } from '@/types/multirun';
 import { useI18n } from '@/lib/i18n';
 
@@ -444,7 +444,7 @@ export const AgentManagerEmptyState: React.FC<AgentManagerEmptyStateProps> = ({
               {(() => {
                 const trimmedCommandCount = setupCommands.filter(cmd => cmd.trim()).length;
                 return trimmedCommandCount > 0 ? (
-                  <span className="font-normal text-muted-foreground/70">
+                  <span className="font-normal text-muted-foreground">
                     {' '}({t('agentManager.empty.setupCommands.configured', { count: trimmedCommandCount })})
                   </span>
                 ) : null;
@@ -457,11 +457,11 @@ export const AgentManagerEmptyState: React.FC<AgentManagerEmptyStateProps> = ({
           </CollapsibleTrigger>
           <CollapsibleContent>
             <div className="pt-2 space-y-2">
-              <p className="typography-micro text-muted-foreground/70">
+              <p className="typography-micro text-muted-foreground">
                 {t('agentManager.empty.setupCommands.description')}
               </p>
               {isLoadingSetupCommands ? (
-                <p className="typography-meta text-muted-foreground/70">{t('agentManager.empty.setupCommands.loading')}</p>
+                <p className="typography-meta text-muted-foreground">{t('agentManager.empty.setupCommands.loading')}</p>
               ) : (
                 <div className="space-y-1.5">
                   {setupCommands.map((command, index) => (

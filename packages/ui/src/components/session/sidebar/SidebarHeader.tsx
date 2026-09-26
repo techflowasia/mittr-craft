@@ -19,6 +19,7 @@ type Props = {
   showRecentControls: boolean;
   handleOpenDirectoryDialog: () => void;
   onOpenScheduled: () => void;
+  onOpenMyWork: () => void;
   onOpenMultiRun: () => void;
   canOpenMultiRun: boolean;
   onOpenArchive: () => void;
@@ -44,6 +45,7 @@ export function SidebarHeader(props: Props): React.ReactNode {
     showRecentControls,
     handleOpenDirectoryDialog,
     onOpenScheduled,
+    onOpenMyWork,
     onOpenMultiRun,
     canOpenMultiRun,
     onOpenArchive,
@@ -110,6 +112,20 @@ export function SidebarHeader(props: Props): React.ReactNode {
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={4}><p>{t('sessions.sidebar.header.actions.scheduledTasks')}</p></TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={onOpenMyWork}
+                  className={cn(headerActionButtonClass, 'text-muted-foreground hover:text-foreground hover:bg-transparent')}
+                  aria-label={t('sessions.sidebar.header.actions.myWork')}
+                >
+                  <Icon name="briefcase" className={headerActionIconClass} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={4}><p>{t('sessions.sidebar.header.actions.myWork')}</p></TooltipContent>
             </Tooltip>
 
             <Tooltip>
@@ -260,7 +276,7 @@ export function SidebarHeader(props: Props): React.ReactNode {
 
         {isSessionSearchOpen ? (
           <div className="pb-1">
-            <div className="mb-1 flex items-center justify-between px-0.5 typography-micro text-muted-foreground/80">
+            <div className="mb-1 flex items-center justify-between px-0.5 typography-micro text-muted-foreground">
               {hasSessionSearchQuery ? (
                 <span>{searchMatchCount === 1
                   ? t('sessions.sidebar.header.search.matchCountSingle', { count: searchMatchCount })

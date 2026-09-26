@@ -18,8 +18,8 @@ import {
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { useGitIdentitiesStore, type GitIdentityProfile, type DiscoveredGitCredential } from '@/stores/useGitIdentitiesStore';
 import { useShallow } from 'zustand/react/shallow';
-import { GitSettings } from '@/components/sections/openchamber/GitSettings';
-import { GitHubSettings } from '@/components/sections/openchamber/GitHubSettings';
+import { GitSettings } from '@/components/sections/mittrcraft/GitSettings';
+import { GitHubSettings } from '@/components/sections/mittrcraft/GitHubSettings';
 import { GitIdentityEditorDialog } from './GitIdentityEditorDialog';
 import { Icon } from "@/components/icon/Icon";
 import type { IconName } from "@/components/icon/icons";
@@ -316,7 +316,7 @@ const IdentityRow: React.FC<IdentityRowProps> = ({
               </span>
             )}
           </div>
-          <div className="typography-micro text-muted-foreground/60 truncate leading-tight">
+          <div className="typography-micro text-muted-foreground truncate leading-tight">
             {authType === 'token' && profile.host ? profile.host : profile.userEmail}
           </div>
         </div>
@@ -368,7 +368,7 @@ const DiscoveredRow: React.FC<DiscoveredRowProps> = ({ credential, onImport, has
     >
       <div className="min-w-0">
         <span className="typography-ui-label text-foreground truncate block">{displayName}</span>
-        <span className="typography-micro text-muted-foreground/60 truncate block leading-tight">
+        <span className="typography-micro text-muted-foreground truncate block leading-tight">
           {isRepoSpecific ? credential.host : credential.username}
         </span>
       </div>

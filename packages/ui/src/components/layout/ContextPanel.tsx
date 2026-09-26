@@ -785,7 +785,7 @@ export const ContextPanel: React.FC = () => {
 
       frameWindow.postMessage(
         {
-          type: 'openchamber:theme-sync',
+          type: 'mittrcraft:theme-sync',
           payload,
         },
         window.location.origin,
@@ -801,7 +801,7 @@ export const ContextPanel: React.FC = () => {
       const frameWindow = frame.contentWindow;
       if (!frameWindow) continue;
 
-      frameWindow.postMessage({ type: 'openchamber:chat-settings-sync', payload }, window.location.origin);
+      frameWindow.postMessage({ type: 'mittrcraft:chat-settings-sync', payload }, window.location.origin);
     }
   }, [allowPromptingSubagentSessions]);
 
@@ -862,8 +862,8 @@ export const ContextPanel: React.FC = () => {
         const payload: EmbeddedSessionRuntimeBootstrap = {
           apiBaseUrl: getRuntimeApiBaseUrl(),
           clientToken: getRuntimeBearerTokenSync(),
-          localOrigin: typeof window.__OPENCHAMBER_LOCAL_ORIGIN__ === 'string'
-            ? window.__OPENCHAMBER_LOCAL_ORIGIN__
+          localOrigin: typeof window.__MITTRCRAFT_LOCAL_ORIGIN__ === 'string'
+            ? window.__MITTRCRAFT_LOCAL_ORIGIN__
             : '',
           runtimeHeaders: getRuntimeExtraHeadersSync(),
           relayHostId: runtimeKey.startsWith('host:') ? runtimeKey.slice('host:'.length) : '',
@@ -876,15 +876,15 @@ export const ContextPanel: React.FC = () => {
         }, event.origin);
         return;
       }
-      if (data?.type === 'openchamber:theme-sync-request') {
+      if (data?.type === 'mittrcraft:theme-sync-request') {
         postThemeSyncToEmbeddedChat();
         return;
       }
-      if (data?.type === 'openchamber:chat-settings-request') {
+      if (data?.type === 'mittrcraft:chat-settings-request') {
         postChatSettingsSyncToEmbeddedChat();
         return;
       }
-      if (data?.type !== 'openchamber:cycle-theme-request') {
+      if (data?.type !== 'mittrcraft:cycle-theme-request') {
         return;
       }
 
@@ -1158,7 +1158,7 @@ export const ContextPanel: React.FC = () => {
                 <React.Suspense fallback={null}><FilesView mode="editor-only" /></React.Suspense>
               ) : (
                 <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
-                  <Icon name="file-code" className="h-12 w-12 text-muted-foreground/50" />
+                  <Icon name="file-code" className="h-12 w-12 text-muted-foreground" />
                   <div className="typography-ui-header text-foreground">{t('contextPanel.editorEmpty.title')}</div>
                   <div className="max-w-sm typography-micro text-muted-foreground">{t('contextPanel.editorEmpty.description')}</div>
                 </div>

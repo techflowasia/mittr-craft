@@ -1,18 +1,20 @@
 import { parse as parseJsonc } from 'jsonc-parser';
 import { pathToFileURL } from 'node:url';
 import {
-  OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS,
-  OPENCHAMBER_AGENT_TOOL_ACTIONS,
-  OPENCHAMBER_WEB_ACTION_DEFINITIONS,
-  OPENCHAMBER_WEB_ACTIONS,
-} from '../openchamber-control/actions.js';
+  MITTRCRAFT_AGENT_TOOL_ACTION_DEFINITIONS,
+  MITTRCRAFT_AGENT_TOOL_ACTIONS,
+  MITTRCRAFT_WEB_ACTION_DEFINITIONS,
+  MITTRCRAFT_WEB_ACTIONS,
+  MITTRCRAFT_COMPUTER_ACTION_DEFINITIONS,
+  MITTRCRAFT_COMPUTER_ACTIONS,
+} from '../mittrcraft-control/actions.js';
 
 const TOOL_SCHEMA_VERSION = 1;
 // Everything either managed tool may ask for; the agent allowlist stays
 // narrower than the full control surface.
-const ACTIONS = new Set([...OPENCHAMBER_AGENT_TOOL_ACTIONS, ...OPENCHAMBER_WEB_ACTIONS]);
+const ACTIONS = new Set([...MITTRCRAFT_AGENT_TOOL_ACTIONS, ...MITTRCRAFT_WEB_ACTIONS, ...MITTRCRAFT_COMPUTER_ACTIONS]);
 const AGENT_TOOL_ACTION_TITLES = Object.fromEntries(
-  [...OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, ...OPENCHAMBER_WEB_ACTION_DEFINITIONS]
+  [...MITTRCRAFT_AGENT_TOOL_ACTION_DEFINITIONS, ...MITTRCRAFT_WEB_ACTION_DEFINITIONS, ...MITTRCRAFT_COMPUTER_ACTION_DEFINITIONS]
     .map(({ action, title }) => [action, title]),
 );
 
@@ -24,6 +26,7 @@ const AGENT_TOOL_ACTION_TITLES = Object.fromEntries(
  * on every call.
  */
 const WEB_PARAMETER_NAMES = ['url', 'selector', 'text', 'value', 'submit', 'direction', 'viewport', 'label'];
+const COMPUTER_PARAMETER_NAMES = ['app'];
 
 const ALL_PARAMETER_PROPERTIES = {
   projectId: { type: 'string', description: 'Configured project ID; do not combine with directory' },
@@ -66,6 +69,9 @@ const ALL_PARAMETER_PROPERTIES = {
   direction: { type: 'string', enum: ['up', 'down', 'top', 'bottom'], description: 'Scroll direction for browser.scroll' },
   viewport: { type: 'string', enum: ['mobile', 'tablet', 'desktop', 'fill'], description: 'Page layout size; snapshots report which one is in effect' },
   label: { type: 'string', description: 'Short name for a browser.capture image, such as before-fix' },
+  app: { type: 'string', description: 'App name (as list_apps reports it, or its ordinary name to launch it), for computer.bring_to_front and computer.open_app' },
+  key: { type: 'string', description: 'Jira issue key (e.g. MRKB-2122), for jira.get_issue' },
+  ref: { type: 'string', description: 'Plane work item link or key (e.g. MITRAI-12), for plane.get_issue' },
 };
 
 const pickParameters = (names) => Object.fromEntries(
@@ -73,13 +79,16 @@ const pickParameters = (names) => Object.fromEntries(
 );
 
 const CONTROL_PARAMETER_PROPERTIES = pickParameters(
-  Object.keys(ALL_PARAMETER_PROPERTIES).filter((name) => !WEB_PARAMETER_NAMES.includes(name)),
+  Object.keys(ALL_PARAMETER_PROPERTIES).filter((name) => !WEB_PARAMETER_NAMES.includes(name) && !COMPUTER_PARAMETER_NAMES.includes(name)),
 );
 const WEB_PARAMETER_PROPERTIES = pickParameters(WEB_PARAMETER_NAMES);
+const COMPUTER_PARAMETER_PROPERTIES = pickParameters(COMPUTER_PARAMETER_NAMES);
 
-const CONTROL_TOOL_DESCRIPTION = "Control MittrCraft projects, sessions, and scheduled tasks on the user's behalf. Sessions and scheduled tasks you create are for the user to follow and interact with; never use this tool to delegate parts of your own current task. Use one action per call. Scope with projectId or directory; omit both to use the current session directory. Session dispatches return immediately by default and you receive no notification when a dispatched session finishes, so never promise to report back on it; the user follows it in MittrCraft; a dispatched session needs no follow-up from you. If the user later asks how it went, use session.messages (add wait to block until it is idle, lastAssistant for just the final answer) — session.send always sends a NEW prompt and never just waits. Set wait only when the user asks or the next step requires the completed result. Session and worktree deletion are unavailable.";
+const CONTROL_TOOL_DESCRIPTION = "Control MittrCraft projects, sessions, and scheduled tasks on the user's behalf. Sessions and scheduled tasks you create are for the user to follow and interact with; never use this tool to delegate parts of your own current task. Use one action per call. Scope with projectId or directory; omit both to use the current session directory. Session dispatches return immediately by default and you receive no notification when a dispatched session finishes, so never promise to report back on it; the user follows it in MittrCraft; a dispatched session needs no follow-up from you. If the user later asks how it went, use session.messages (add wait to block until it is idle, lastAssistant for just the final answer) — session.send always sends a NEW prompt and never just waits. Set wait only when the user asks or the next step requires the completed result. Session and worktree deletion are unavailable. jira.get_issue reads one Jira card by key (e.g. MRKB-2122) and plane.get_issue reads one Plane work item by its link or key (e.g. MITRAI-12), both through whatever this account already connected on the Integrations settings page — nothing else to set up. A Plane link is a sign-in page to a plain fetch; read it with plane.get_issue.";
 
 const WEB_TOOL_DESCRIPTION = "Look at and interact with a web page in MittrCraft's browser panel, so you can check your own work rather than describing what you expect. Use one action per call. Open a page, snapshot it to read its text and its interactive elements, then click, type or scroll using the selectors the snapshot returned; snapshots also report any errors the page logged. Pass a selector to browser.snapshot to read one part of a long page. browser.inspect returns computed styles when the question is how something renders. Set viewport to check a layout at mobile, tablet or desktop size. The page runs with the user's real logins, so treat what you see as their live session.";
+
+const COMPUTER_TOOL_DESCRIPTION = "Look at and act on the user's whole desktop, not just MittrCraft's own panels — use only when a task genuinely needs another app. Use one action per call. computer.list_apps first to see what is running and get an exact app name; if the app you need is not running, computer.open_app launches it by name; computer.bring_to_front activates a running app by that name; computer.screenshot to see the current desktop — the image is attached to the result for you to read directly, so there is no need to open it with a file-reading tool. Clicking or typing into other apps is not available yet. This is a live, real desktop the user can see moving in front of them — never use it for anything the user has not clearly asked for.";
 
 const asNonEmptyString = (value) => {
   if (typeof value !== 'string') return null;
@@ -136,12 +145,12 @@ const createToolEntry = ({ name, description, actions, definitions, parameters }
             },
           },
         })
-        const endpoint = process.env.OPENCHAMBER_AGENT_TOOL_URL
-        const token = process.env.OPENCHAMBER_AGENT_TOOL_TOKEN
+        const endpoint = process.env.MITTRCRAFT_AGENT_TOOL_URL
+        const token = process.env.MITTRCRAFT_AGENT_TOOL_TOKEN
         const failure = (payload) => ({
           title,
           output: JSON.stringify(payload),
-          metadata: { openchamber: { schemaVersion: ${TOOL_SCHEMA_VERSION}, action: args.action, description: title, ok: false } },
+          metadata: { mittrcraft: { schemaVersion: ${TOOL_SCHEMA_VERSION}, action: args.action, description: title, ok: false } },
         })
         if (!endpoint || !token) {
           return failure({ schemaVersion: ${TOOL_SCHEMA_VERSION}, ok: false, action: args.action, error: { message: "MittrCraft managed tool connection is unavailable" } })
@@ -172,7 +181,23 @@ const createToolEntry = ({ name, description, actions, definitions, parameters }
               },
             },
           })
-          if (valid) return { title, output, metadata: { openchamber: { schemaVersion: ${TOOL_SCHEMA_VERSION}, action: args.action, description: title, ok: result.ok === true } } }
+          if (valid) {
+            // A captured image travels as an attachment, never as base64 text: the
+            // engine resizes and embeds attachments as real image content for the
+            // model, while the same bytes inlined into output would just be wasted
+            // context the model cannot see a picture in either way.
+            const data = result.data && typeof result.data === "object" ? result.data : null
+            const imageBase64 = typeof data?.imageBase64 === "string" ? data.imageBase64 : null
+            if (!imageBase64) return { title, output, metadata: { mittrcraft: { schemaVersion: ${TOOL_SCHEMA_VERSION}, action: args.action, description: title, ok: result.ok === true } } }
+            const { imageBase64: _omit, imageMime, ...restData } = data
+            const mime = imageMime || "image/png"
+            return {
+              title,
+              output: JSON.stringify({ ...result, data: restData }),
+              attachments: [{ type: "file", mime, url: "data:" + mime + ";base64," + imageBase64, filename: "screenshot.png" }],
+              metadata: { mittrcraft: { schemaVersion: ${TOOL_SCHEMA_VERSION}, action: args.action, description: title, ok: result.ok === true } },
+            }
+          }
           return failure({ schemaVersion: ${TOOL_SCHEMA_VERSION}, ok: false, action: args.action, error: { message: "MittrCraft returned an invalid response", kind: "runtime", status: response.status } })
         } catch (error) {
           if (context.abort.aborted) throw error
@@ -182,28 +207,37 @@ const createToolEntry = ({ name, description, actions, definitions, parameters }
     },
 `;
 
-const createPluginSource = ({ includeControl, includeWeb }) => {
+const createPluginSource = ({ includeControl, includeWeb, includeComputer }) => {
   const entries = [];
   if (includeControl) {
     entries.push(createToolEntry({
-      name: 'openchamber',
+      name: 'mittrcraft',
       description: CONTROL_TOOL_DESCRIPTION,
-      actions: OPENCHAMBER_AGENT_TOOL_ACTIONS,
-      definitions: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS,
+      actions: MITTRCRAFT_AGENT_TOOL_ACTIONS,
+      definitions: MITTRCRAFT_AGENT_TOOL_ACTION_DEFINITIONS,
       parameters: CONTROL_PARAMETER_PROPERTIES,
     }));
   }
   if (includeWeb) {
     entries.push(createToolEntry({
-      name: 'openchamber_web',
+      name: 'mittrcraft_web',
       description: WEB_TOOL_DESCRIPTION,
-      actions: OPENCHAMBER_WEB_ACTIONS,
-      definitions: OPENCHAMBER_WEB_ACTION_DEFINITIONS,
+      actions: MITTRCRAFT_WEB_ACTIONS,
+      definitions: MITTRCRAFT_WEB_ACTION_DEFINITIONS,
       parameters: WEB_PARAMETER_PROPERTIES,
     }));
   }
+  if (includeComputer) {
+    entries.push(createToolEntry({
+      name: 'mittrcraft_computer',
+      description: COMPUTER_TOOL_DESCRIPTION,
+      actions: MITTRCRAFT_COMPUTER_ACTIONS,
+      definitions: MITTRCRAFT_COMPUTER_ACTION_DEFINITIONS,
+      parameters: COMPUTER_PARAMETER_PROPERTIES,
+    }));
+  }
 
-  return `export const OpenChamberPlugin = async () => ({
+  return `export const MittrCraftPlugin = async () => ({
   tool: {
 ${entries.join('')}  },
 })
@@ -238,25 +272,25 @@ export const createAgentToolRuntime = (dependencies) => {
     env = process.env,
   } = dependencies;
   const pluginDirectory = path.join(dataDir, 'agent-tool');
-  const pluginPath = path.join(pluginDirectory, 'openchamber-plugin.js');
+  const pluginPath = path.join(pluginDirectory, 'mittrcraft-plugin.js');
   let activeToken = null;
 
-  const prepareManagedOpenCodeEnv = async ({ includeControl = true, includeWeb = true } = {}) => {
+  const prepareManagedOpenCodeEnv = async ({ includeControl = true, includeWeb = true, includeComputer = false } = {}) => {
     const port = getActivePort();
     if (!Number.isInteger(port) || port <= 0) {
       throw new Error('MittrCraft listener port is unavailable for managed tool injection');
     }
-    if (!includeControl && !includeWeb) {
+    if (!includeControl && !includeWeb && !includeComputer) {
       throw new Error('At least one MittrCraft managed tool must be enabled to inject the plugin');
     }
     await fsPromises.mkdir(pluginDirectory, { recursive: true });
-    await fsPromises.writeFile(pluginPath, createPluginSource({ includeControl, includeWeb }), { mode: 0o600 });
+    await fsPromises.writeFile(pluginPath, createPluginSource({ includeControl, includeWeb, includeComputer }), { mode: 0o600 });
     activeToken = crypto.randomBytes(32).toString('base64url');
     const pluginUrl = pathToFileURL(pluginPath).href;
     return {
       OPENCODE_CONFIG_CONTENT: mergePluginConfig(env.OPENCODE_CONFIG_CONTENT, pluginUrl),
-      OPENCHAMBER_AGENT_TOOL_URL: `http://127.0.0.1:${port}/api/openchamber/agent-tool`,
-      OPENCHAMBER_AGENT_TOOL_TOKEN: activeToken,
+      MITTRCRAFT_AGENT_TOOL_URL: `http://127.0.0.1:${port}/api/mittrcraft/agent-tool`,
+      MITTRCRAFT_AGENT_TOOL_TOKEN: activeToken,
     };
   };
 
@@ -299,7 +333,7 @@ export const createAgentToolRuntime = (dependencies) => {
   };
 
   const registerRoutes = (app, express) => {
-    app.post('/api/openchamber/agent-tool', express.json({ limit: '1mb' }), async (req, res) => {
+    app.post('/api/mittrcraft/agent-tool', express.json({ limit: '1mb' }), async (req, res) => {
       if (!authorize(req)) return res.status(401).json({ error: 'Unauthorized' });
       const controller = new AbortController();
       const abortOnDisconnect = () => {

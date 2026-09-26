@@ -14,6 +14,7 @@ import { OpenCodeStatusDialog } from '../ui/OpenCodeStatusDialog';
 import { SessionSidebar } from '@/components/session/SessionSidebar';
 import { SessionDialogs } from '@/components/session/SessionDialogs';
 import { ScheduledTasksDialog } from '@/components/session/ScheduledTasksDialog';
+import { MyWorkDialog } from '@/components/session/MyWorkDialog';
 import { ArchiveView } from '@/components/views/ArchiveView';
 import { WorktreesView } from '@/components/views/WorktreesView';
 import { DiffWorkerProvider } from '@/contexts/DiffWorkerProvider';
@@ -45,6 +46,13 @@ const SettingsWindow = lazyWithChunkRecovery(() => import('@/components/views/Se
 
 export const MainLayout: React.FC = () => {
     const isSidebarOpen = useUIStore((state) => state.isSidebarOpen);
+    const sidebarSide = useUIStore((state) => state.sidebarSide);
+    const isSidebarRight = sidebarSide === 'right';
+    // Direction the mobile session drawer is parked in while closed: off the
+    // left edge by default, off the right edge when the sidebar is docked
+    // right. The drawer itself is a full-viewport `inset-0` overlay, so the
+    // translate sign is the only edge-specific detail it has.
+    const leftDrawerHiddenSign = isSidebarRight ? 1 : -1;
     const activeMainTab = useUIStore((state) => state.activeMainTab);
     const setIsMobile = useUIStore((state) => state.setIsMobile);
     const isSessionSwitcherOpen = useUIStore((state) => state.isSessionSwitcherOpen);
@@ -65,13 +73,14 @@ export const MainLayout: React.FC = () => {
     const setMultiRunLauncherOpen = useUIStore((state) => state.setMultiRunLauncherOpen);
     const multiRunLauncherPrefillPrompt = useUIStore((state) => state.multiRunLauncherPrefillPrompt);
     const isScheduledTasksPageOpen = useUIStore((state) => state.isScheduledTasksDialogOpen);
+    const isMyWorkPageOpen = useUIStore((state) => state.isMyWorkDialogOpen);
     const isArchivePageOpen = useUIStore((state) => state.isArchivePageOpen);
     const worktreesPageProjectId = useUIStore((state) => state.worktreesPageProjectId);
     // Any full-page surface replacing the chat area. While open, the chat and
     // secondary views are fully hidden (not just covered) so none of their
     // floating chrome bleeds through, and selecting a session / draft / main
     // tab anywhere closes the surface.
-    const isSurfacePageOpen = isScheduledTasksPageOpen || isArchivePageOpen || Boolean(worktreesPageProjectId) || isMultiRunLauncherOpen;
+    const isSurfacePageOpen = isScheduledTasksPageOpen || isMyWorkPageOpen || isArchivePageOpen || Boolean(worktreesPageProjectId) || isMultiRunLauncherOpen;
 
     React.useEffect(() => {
         const closeSurfacePages = () => useUIStore.getState().closeMainSurfaces();
@@ -105,8 +114,9 @@ export const MainLayout: React.FC = () => {
     const initialDrawerWidthRef = React.useRef(typeof window === 'undefined' ? 0 : window.innerWidth);
 
     // Left drawer motion value
-    const leftDrawerX = useMotionValue(-initialDrawerWidthRef.current);
+    const leftDrawerX = useMotionValue(leftDrawerHiddenSign * initialDrawerWidthRef.current);
     const leftDrawerWidth = useRef(0);
+    const leftDrawerHiddenSignRef = useRef(leftDrawerHiddenSign);
 
     // Right drawer motion value
     const rightDrawerX = useMotionValue(initialDrawerWidthRef.current);
@@ -129,13 +139,22 @@ export const MainLayout: React.FC = () => {
         if (mobileLeftDrawerOpen) {
             setMobileLeftDrawerVisible(true);
         }
-        animate(leftDrawerX, mobileLeftDrawerOpen ? 0 : -leftDrawerWidth.current, {
+        const closedX = leftDrawerHiddenSign * leftDrawerWidth.current;
+        const sideChanged = leftDrawerHiddenSignRef.current !== leftDrawerHiddenSign;
+        leftDrawerHiddenSignRef.current = leftDrawerHiddenSign;
+        if (!mobileLeftDrawerOpen && sideChanged) {
+            // Re-park instantly: animating from one off-screen edge to the
+            // other would sweep the closed drawer straight across the viewport.
+            leftDrawerX.set(closedX);
+            return;
+        }
+        animate(leftDrawerX, mobileLeftDrawerOpen ? 0 : closedX, {
             type: 'spring',
             stiffness: 400,
             damping: 35,
             mass: 0.8,
         });
-    }, [mobileLeftDrawerOpen, isMobile, leftDrawerX]);
+    }, [mobileLeftDrawerOpen, isMobile, leftDrawerX, leftDrawerHiddenSign]);
 
     // Sync right drawer state and motion value
     useEffect(() => {
@@ -158,7 +177,9 @@ export const MainLayout: React.FC = () => {
         if (!isMobile) return;
         return leftDrawerX.on('change', (value) => {
             const width = leftDrawerWidth.current || initialDrawerWidthRef.current;
-            const visible = mobileLeftDrawerOpen || value > -width + 0.5;
+            // Side-agnostic: the drawer is hidden only while parked a full
+            // width off whichever edge it slides from.
+            const visible = mobileLeftDrawerOpen || Math.abs(value) < width - 0.5;
             setMobileLeftDrawerVisible((previous) => previous === visible ? previous : visible);
         });
     }, [isMobile, leftDrawerX, mobileLeftDrawerOpen]);
@@ -288,6 +309,69 @@ export const MainLayout: React.FC = () => {
 
     const isChatActive = activeMainTab === 'chat';
 
+    // Desktop panes are built as a keyed pair so docking the sidebar right can
+    // reorder them in the DOM (see the flex row below) without remounting either.
+    const desktopSidebarPane = (
+        <Sidebar
+            key="sidebar"
+            isOpen={isSidebarOpen}
+            isMobile={isMobile}
+            className="border-border"
+            topBar={<SidebarTopBar />}
+        >
+            <SessionSidebar isVisible={isSidebarOpen} />
+        </Sidebar>
+    );
+    const desktopContentPane = (
+        <div key="content" className="relative flex flex-1 min-w-0 flex-col overflow-hidden bg-background" data-page-scroll-lock="true">
+            <Header />
+            <div className="relative flex flex-1 min-h-0 overflow-hidden bg-background" data-page-scroll-lock="true">
+                <div className="relative flex flex-1 min-w-0 flex-col overflow-hidden border-t border-border bg-background" data-page-scroll-lock="true">
+                    <div className="flex flex-1 min-h-0 overflow-hidden" data-page-scroll-lock="true">
+                        {/* Holds the chat and the context panel together, so its
+                            width does not move when the context panel opens. The
+                            work-status panel measures this rather than the chat,
+                            which the context panel animates. */}
+                        <div className="relative flex flex-1 min-h-0 min-w-0 overflow-hidden" data-page-scroll-lock="true" data-chat-area="true">
+                            <main className="flex-1 overflow-hidden bg-background relative" data-page-scroll-lock="true">
+                                <div className={cn('absolute inset-0', (!isChatActive || isSurfacePageOpen) && 'invisible')}>
+                                    <ErrorBoundary><ChatView active={isChatActive && !isSettingsDialogOpen && !isSurfacePageOpen} /></ErrorBoundary>
+                                </div>
+                                {secondaryView && (
+                                    <div className={cn('absolute inset-0', isSurfacePageOpen && 'invisible')}>
+                                        <ErrorBoundary>{secondaryView}</ErrorBoundary>
+                                    </div>
+                                )}
+                                {isMultiRunLauncherOpen && (
+                                    <div className="absolute inset-0 z-10 bg-background">
+                                        <ErrorBoundary>
+                                            {/* isWindowed: the app Header already shows the surface
+                                                title, so skip the launcher's own title bar. */}
+                                            <MultiRunLauncher
+                                                isWindowed
+                                                initialPrompt={multiRunLauncherPrefillPrompt}
+                                                onCreated={() => setMultiRunLauncherOpen(false)}
+                                                onCancel={() => setMultiRunLauncherOpen(false)}
+                                            />
+                                        </ErrorBoundary>
+                                    </div>
+                                )}
+                                <ErrorBoundary><ScheduledTasksDialog /></ErrorBoundary>
+                                <ErrorBoundary><MyWorkDialog /></ErrorBoundary>
+                                <ErrorBoundary><ArchiveView /></ErrorBoundary>
+                                <ErrorBoundary><WorktreesView /></ErrorBoundary>
+                            </main>
+                            <ContextPanel />
+                        </div>
+                    </div>
+                </div>
+                <div className="border-t border-border" data-page-scroll-lock="true">
+                    <ErrorBoundary><ContextPanelRail /></ErrorBoundary>
+                </div>
+            </div>
+        </div>
+    );
+
     return (
         <DiffWorkerProvider>
             <div
@@ -367,6 +451,7 @@ export const MainLayout: React.FC = () => {
                                 </div>
                             )}
                             <ErrorBoundary><ScheduledTasksDialog /></ErrorBoundary>
+                            <ErrorBoundary><MyWorkDialog /></ErrorBoundary>
                             <ErrorBoundary><ArchiveView /></ErrorBoundary>
                             <ErrorBoundary><WorktreesView /></ErrorBoundary>
                             {/* Always mount SessionSidebar on mobile to match desktop behavior.
@@ -422,62 +507,18 @@ export const MainLayout: React.FC = () => {
                     {/* Persistent top-left controls (toggle + project actions) that
                         stay put while the sidebar/header animate beneath them. */}
                     <TitlebarLeftControls />
-                    {/* Desktop: full-height Sidebar beside [Header above (chat | RightSidebar)] */}
+                    {/* Desktop: full-height Sidebar beside [Header above (chat | RightSidebar)]
+                        Docking right reorders these two children in the DOM rather than
+                        visually mirroring them with `flex-row-reverse`: tab order and
+                        screen-reader reading order follow the DOM, so a visual flip alone
+                        would leave keyboard and assistive-tech users traversing the panes in
+                        the opposite order from what is on screen. Both children are keyed, so
+                        the swap moves the existing DOM nodes instead of remounting the
+                        sidebar and the whole chat column. */}
                     <div className="flex flex-1 overflow-hidden" data-page-scroll-lock="true">
-                        <Sidebar
-                            isOpen={isSidebarOpen}
-                            isMobile={isMobile}
-                            className="border-border"
-                            topBar={<SidebarTopBar />}
-                        >
-                            <SessionSidebar isVisible={isSidebarOpen} />
-                        </Sidebar>
-                        <div className="relative flex flex-1 min-w-0 flex-col overflow-hidden bg-background" data-page-scroll-lock="true">
-                            <Header />
-                            <div className="relative flex flex-1 min-h-0 overflow-hidden bg-background" data-page-scroll-lock="true">
-                                <div className="relative flex flex-1 min-w-0 flex-col overflow-hidden border-t border-border bg-background" data-page-scroll-lock="true">
-                                    <div className="flex flex-1 min-h-0 overflow-hidden" data-page-scroll-lock="true">
-                                        {/* Holds the chat and the context panel together, so its
-                                            width does not move when the context panel opens. The
-                                            work-status panel measures this rather than the chat,
-                                            which the context panel animates. */}
-                                        <div className="relative flex flex-1 min-h-0 min-w-0 overflow-hidden" data-page-scroll-lock="true" data-chat-area="true">
-                                            <main className="flex-1 overflow-hidden bg-background relative" data-page-scroll-lock="true">
-                                                <div className={cn('absolute inset-0', (!isChatActive || isSurfacePageOpen) && 'invisible')}>
-                                                    <ErrorBoundary><ChatView active={isChatActive && !isSettingsDialogOpen && !isSurfacePageOpen} /></ErrorBoundary>
-                                                </div>
-                                                {secondaryView && (
-                                                    <div className={cn('absolute inset-0', isSurfacePageOpen && 'invisible')}>
-                                                        <ErrorBoundary>{secondaryView}</ErrorBoundary>
-                                                    </div>
-                                                )}
-                                                {isMultiRunLauncherOpen && (
-                                                    <div className="absolute inset-0 z-10 bg-background">
-                                                        <ErrorBoundary>
-                                                            {/* isWindowed: the app Header already shows the surface
-                                                                title, so skip the launcher's own title bar. */}
-                                                            <MultiRunLauncher
-                                                                isWindowed
-                                                                initialPrompt={multiRunLauncherPrefillPrompt}
-                                                                onCreated={() => setMultiRunLauncherOpen(false)}
-                                                                onCancel={() => setMultiRunLauncherOpen(false)}
-                                                            />
-                                                        </ErrorBoundary>
-                                                    </div>
-                                                )}
-                                                <ErrorBoundary><ScheduledTasksDialog /></ErrorBoundary>
-                                                <ErrorBoundary><ArchiveView /></ErrorBoundary>
-                                                <ErrorBoundary><WorktreesView /></ErrorBoundary>
-                                            </main>
-                                            <ContextPanel />
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="border-t border-border" data-page-scroll-lock="true">
-                                    <ErrorBoundary><ContextPanelRail /></ErrorBoundary>
-                                </div>
-                            </div>
-                        </div>
+                        {isSidebarRight
+                            ? [desktopContentPane, desktopSidebarPane]
+                            : [desktopSidebarPane, desktopContentPane]}
                     </div>
 
                     {/* Desktop settings: windowed dialog with blur */}

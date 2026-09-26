@@ -162,9 +162,9 @@ const MarkdownImageThumbnail: React.FC<{
       aria-label={candidate.filename}
       disabled={image.status === 'loading'}
       onClick={openPreview}
-      data-openchamber-markdown-image-action="true"
-      data-openchamber-markdown-image-source={candidate.source}
-      data-openchamber-markdown-image-filename={candidate.filename}
+      data-mittrcraft-markdown-image-action="true"
+      data-mittrcraft-markdown-image-source={candidate.source}
+      data-mittrcraft-markdown-image-filename={candidate.filename}
     >
       <span className="flex h-[72px] w-[100px] items-center justify-center overflow-hidden rounded-lg border border-border/40 bg-muted/10">
         {image.url && image.status !== 'error' ? (
@@ -177,9 +177,9 @@ const MarkdownImageThumbnail: React.FC<{
             referrerPolicy="no-referrer"
             onLoad={() => setImage((current) => ({ ...current, status: 'ready' }))}
             onError={() => setImage({ url: '', status: 'error' })}
-            data-openchamber-markdown-image="true"
-            data-openchamber-markdown-image-thumbnail="true"
-            data-openchamber-markdown-image-state={image.status}
+            data-mittrcraft-markdown-image="true"
+            data-mittrcraft-markdown-image-thumbnail="true"
+            data-mittrcraft-markdown-image-state={image.status}
           />
         ) : (
           <Icon name="file-image" className="h-5 w-5 text-muted-foreground" />
@@ -188,7 +188,7 @@ const MarkdownImageThumbnail: React.FC<{
       <span
         className="mt-1 flex w-[100px] items-center justify-center gap-1 text-muted-foreground"
         title={candidate.filename}
-        data-openchamber-markdown-image-caption="true"
+        data-mittrcraft-markdown-image-caption="true"
       >
         <Icon name="file-image" className="h-3 w-3 shrink-0" />
         <span className="min-w-0 truncate typography-meta">{candidate.filename}</span>
@@ -275,7 +275,7 @@ export const MarkdownImageGallery: React.FC<{
     <div
       ref={galleryRef}
       className="mt-3 flex max-w-full gap-2 overflow-x-auto pb-1"
-      data-openchamber-markdown-image-gallery="true"
+      data-mittrcraft-markdown-image-gallery="true"
     >
       {visibleCandidates.map((candidate) => (
         <MarkdownImageThumbnail

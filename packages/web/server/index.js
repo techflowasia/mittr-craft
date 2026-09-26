@@ -52,6 +52,11 @@ import { createOpenCodeLifecycleRuntime } from './lib/opencode/lifecycle.js';
 import { createOpenCodeEnvRuntime } from './lib/opencode/env-runtime.js';
 import { resolveOpenCodeEnvConfig } from './lib/opencode/env-config.js';
 import { createHmrStateRuntime } from './lib/opencode/hmr-state-runtime.js';
+import { startMittrShim } from './lib/mittr/index.js';
+import { MITTR_PROVIDER_ID } from './lib/mittr/catalog-routes.js';
+import { resolveBrokerBaseUrl } from './lib/mittr/broker-target.js';
+import { upsertProviderConfig, removeProviderConfig, readProviderModelIds } from './lib/opencode/providers.js';
+import { readAuthFile, writeAuthFile } from './lib/opencode/auth.js';
 import { createOpenCodeNetworkRuntime } from './lib/opencode/network-runtime.js';
 import { createOpenCodeAuthStateRuntime } from './lib/opencode/auth-state-runtime.js';
 import { createProjectDirectoryRuntime } from './lib/opencode/project-directory-runtime.js';
@@ -65,12 +70,11 @@ import {
   registerCommonRequestMiddleware,
   registerServerStatusRoutes,
 } from './lib/opencode/core-routes.js';
-import { registerOpenChamberRoutes } from './lib/opencode/openchamber-routes.js';
+import { registerMittrCraftRoutes } from './lib/opencode/mittrcraft-routes.js';
 import { createServerUtilsRuntime } from './lib/opencode/server-utils-runtime.js';
 import { createStaticRoutesRuntime } from './lib/opencode/static-routes-runtime.js';
 import { createSettingsRuntime } from './lib/opencode/settings-runtime.js';
 import { createOpenCodeResolutionRuntime } from './lib/opencode/opencode-resolution-runtime.js';
-import { resolveOpenCodeUpgradeCapability } from './lib/opencode/upgrade-capability.js';
 import { createBootstrapRuntime } from './lib/opencode/bootstrap-runtime.js';
 import { createSessionRuntime } from './lib/opencode/session-runtime.js';
 import { createOpenCodeWatcherRuntime } from './lib/opencode/watcher.js';
@@ -102,19 +106,21 @@ import { createDevServerScanner } from './lib/dev-servers/routes.js';
 import { createDevTunnelRuntime } from './lib/dev-tunnel/runtime.js';
 import { registerBrowserControlRoutes } from './lib/browser-control/routes.js';
 import { createSystemPromptRuntime } from './lib/system-prompt/runtime.js';
-import { createOpenChamberSessionService } from './lib/openchamber-sessions/routes.js';
+import { createMittrCraftSessionService } from './lib/mittrcraft-sessions/routes.js';
 import { createScheduledTaskService } from './lib/scheduled-tasks/service.js';
-import { createOpenChamberControlService } from './lib/openchamber-control/service.js';
+import { createMittrCraftControlService } from './lib/mittrcraft-control/service.js';
+import { createComputerControl } from './lib/mittrcraft-control/computer-control.js';
+import { createMittrWorkService } from './lib/mittr-work/service.js';
 import webPush from 'web-push';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const DEFAULT_PORT = 3000;
-const DESKTOP_NOTIFY_PREFIX = '[OpenChamberDesktopNotify] ';
+const DESKTOP_NOTIFY_PREFIX = '[MittrCraftDesktopNotify] ';
 const uiNotificationClients = new Set();
 const uiNotificationWsClients = new Set();
-const uiOpenChamberEventClients = new Set();
+const uiMittrCraftEventClients = new Set();
 const HEALTH_CHECK_INTERVAL = 15000;
 const SHUTDOWN_TIMEOUT = 10000;
 const MODELS_DEV_API_URL = 'https://models.dev/api.json';
@@ -154,12 +160,12 @@ const SSE_PATH_PREFIXES = [
   '/api/event',
   '/api/global/event',
   '/api/notifications/stream',
-  '/api/openchamber/events',
-  '/api/openchamber/realtime-proxy/sse',
+  '/api/mittrcraft/events',
+  '/api/mittrcraft/realtime-proxy/sse',
 ];
 
 function shouldSkipCompression(req, res) {
-  if (process.env.OPENCHAMBER_RUNTIME === 'desktop') {
+  if (process.env.MITTRCRAFT_RUNTIME === 'desktop') {
     return true;
   }
 
@@ -181,7 +187,7 @@ function shouldSkipCompression(req, res) {
   return headerIncludesEventStream(res.getHeader('Content-Type'));
 }
 
-const OPENCHAMBER_VERSION = (() => {
+const MITTRCRAFT_VERSION = (() => {
   try {
     const packagePath = path.resolve(__dirname, '..', 'package.json');
     const raw = fs.readFileSync(packagePath, 'utf8');
@@ -209,13 +215,13 @@ const isEnvFlagDisabled = (value) => {
 };
 
 const shouldSkipApiCompression = () => {
-  if (isEnvFlagEnabled(process.env.OPENCHAMBER_SKIP_API_COMPRESSION)) return true;
-  if (isEnvFlagEnabled(process.env.OPENCHAMBER_COMPRESS_API)) return false;
-  if (isEnvFlagDisabled(process.env.OPENCHAMBER_COMPRESS_API)) return true;
-  return process.env.OPENCHAMBER_RUNTIME === 'desktop';
+  if (isEnvFlagEnabled(process.env.MITTRCRAFT_SKIP_API_COMPRESSION)) return true;
+  if (isEnvFlagEnabled(process.env.MITTRCRAFT_COMPRESS_API)) return false;
+  if (isEnvFlagDisabled(process.env.MITTRCRAFT_COMPRESS_API)) return true;
+  return process.env.MITTRCRAFT_RUNTIME === 'desktop';
 };
 
-const OPENCHAMBER_VERBOSE_REQUEST_LOGS = isEnvFlagEnabled(process.env.OPENCHAMBER_VERBOSE_REQUEST_LOGS);
+const MITTRCRAFT_VERBOSE_REQUEST_LOGS = isEnvFlagEnabled(process.env.MITTRCRAFT_VERBOSE_REQUEST_LOGS);
 
 const PLAN_MODE_EXPERIMENT_ENABLED =
   isEnvFlagEnabled(process.env.OPENCODE_EXPERIMENTAL_PLAN_MODE)
@@ -255,9 +261,9 @@ const sanitizeModelRefs = (...args) => settingsNormalizationRuntime.sanitizeMode
 const sanitizeSkillCatalogs = (...args) => settingsNormalizationRuntime.sanitizeSkillCatalogs(...args);
 const sanitizeProjects = (...args) => settingsNormalizationRuntime.sanitizeProjects(...args);
 
-const OPENCHAMBER_USER_CONFIG_ROOT = path.join(os.homedir(), '.config', 'openchamber');
-const OPENCHAMBER_USER_THEMES_DIR = path.join(OPENCHAMBER_USER_CONFIG_ROOT, 'themes');
-const OPENCHAMBER_PROJECTS_CONFIG_DIR = path.join(OPENCHAMBER_USER_CONFIG_ROOT, 'projects');
+const MITTRCRAFT_USER_CONFIG_ROOT = path.join(os.homedir(), '.config', 'mittrcraft');
+const MITTRCRAFT_USER_THEMES_DIR = path.join(MITTRCRAFT_USER_CONFIG_ROOT, 'themes');
+const MITTRCRAFT_PROJECTS_CONFIG_DIR = path.join(MITTRCRAFT_USER_CONFIG_ROOT, 'projects');
 
 const MAX_THEME_JSON_BYTES = 512 * 1024;
 
@@ -265,7 +271,7 @@ const MAX_THEME_JSON_BYTES = 512 * 1024;
 const themeRuntime = createThemeRuntime({
   fsPromises,
   path,
-  themesDir: OPENCHAMBER_USER_THEMES_DIR,
+  themesDir: MITTRCRAFT_USER_THEMES_DIR,
   maxThemeJsonBytes: MAX_THEME_JSON_BYTES,
   logger: console,
 });
@@ -288,16 +294,17 @@ const maybeCacheSessionInfoFromEvent = (...args) => notificationTemplateRuntime.
 const buildTemplateVariables = (...args) => notificationTemplateRuntime.buildTemplateVariables(...args);
 const getCachedZenModels = (...args) => notificationTemplateRuntime.getCachedZenModels(...args);
 
-const OPENCHAMBER_DATA_DIR = process.env.OPENCHAMBER_DATA_DIR
-  ? path.resolve(process.env.OPENCHAMBER_DATA_DIR)
-  : path.join(os.homedir(), '.config', 'openchamber');
-const SETTINGS_FILE_PATH = path.join(OPENCHAMBER_DATA_DIR, 'settings.json');
-const PUSH_SUBSCRIPTIONS_FILE_PATH = path.join(OPENCHAMBER_DATA_DIR, 'push-subscriptions.json');
-const APNS_TOKENS_FILE_PATH = path.join(OPENCHAMBER_DATA_DIR, 'apns-tokens.json');
-const REMOTE_CLIENTS_FILE_PATH = path.join(OPENCHAMBER_DATA_DIR, 'remote-clients.json');
-const CLIENT_PAIRING_SESSIONS_FILE_PATH = path.join(OPENCHAMBER_DATA_DIR, 'client-pairing-sessions.json');
-const CLOUDFLARE_MANAGED_REMOTE_TUNNELS_FILE_PATH = path.join(OPENCHAMBER_DATA_DIR, 'cloudflare-managed-remote-tunnels.json');
-const CLOUDFLARE_LEGACY_NAMED_TUNNELS_FILE_PATH = path.join(OPENCHAMBER_DATA_DIR, 'cloudflare-named-tunnels.json');
+const MITTRCRAFT_DATA_DIR = process.env.MITTRCRAFT_DATA_DIR
+  ? path.resolve(process.env.MITTRCRAFT_DATA_DIR)
+  : path.join(os.homedir(), '.config', 'mittrcraft');
+
+const SETTINGS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'settings.json');
+const PUSH_SUBSCRIPTIONS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'push-subscriptions.json');
+const APNS_TOKENS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'apns-tokens.json');
+const REMOTE_CLIENTS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'remote-clients.json');
+const CLIENT_PAIRING_SESSIONS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'client-pairing-sessions.json');
+const CLOUDFLARE_MANAGED_REMOTE_TUNNELS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'cloudflare-managed-remote-tunnels.json');
+const CLOUDFLARE_LEGACY_NAMED_TUNNELS_FILE_PATH = path.join(MITTRCRAFT_DATA_DIR, 'cloudflare-named-tunnels.json');
 const CLOUDFLARE_MANAGED_REMOTE_TUNNELS_VERSION = 1;
 
 const managedTunnelConfigRuntime = createManagedTunnelConfigRuntime({
@@ -470,7 +477,7 @@ const getUpstreamStallTimeoutMs = () => (
 const projectConfigRuntime = createProjectConfigRuntime({
   fsPromises,
   path,
-  projectsDirPath: OPENCHAMBER_PROJECTS_CONFIG_DIR,
+  projectsDirPath: MITTRCRAFT_PROJECTS_CONFIG_DIR,
 });
 
 // HMR-persistent state via globalThis
@@ -479,7 +486,7 @@ const hmrStateRuntime = createHmrStateRuntime({
   globalThisLike: globalThis,
   os,
   processLike: process,
-  stateKey: '__openchamberHmrState',
+  stateKey: '__mittrcraftHmrState',
 });
 const hmrState = hmrStateRuntime.getOrCreateHmrState();
 hmrStateRuntime.ensureUserProvidedOpenCodePassword(hmrState);
@@ -571,19 +578,19 @@ const {
 });
 
 const ENV_SKIP_OPENCODE_START = process.env.OPENCODE_SKIP_START === 'true' ||
-                                    process.env.OPENCHAMBER_SKIP_OPENCODE_START === 'true';
+                                    process.env.MITTRCRAFT_SKIP_OPENCODE_START === 'true';
 const ENV_DESKTOP_NOTIFY = (() => {
-  if (process.env.OPENCHAMBER_DESKTOP_NOTIFY === 'true') {
+  if (process.env.MITTRCRAFT_DESKTOP_NOTIFY === 'true') {
     return true;
   }
 
-  if (process.env.OPENCHAMBER_RUNTIME === 'desktop') {
+  if (process.env.MITTRCRAFT_RUNTIME === 'desktop') {
     return true;
   }
 
   const argv0 = typeof process.argv?.[0] === 'string' ? process.argv[0] : '';
   const argv1 = typeof process.argv?.[1] === 'string' ? process.argv[1] : '';
-  return /openchamber-server/i.test(argv0) || /openchamber-server/i.test(argv1);
+  return /mittrcraft-server/i.test(argv0) || /mittrcraft-server/i.test(argv1);
 })();
 const openCodeAuthStateRuntime = createOpenCodeAuthStateRuntime({
   crypto,
@@ -627,11 +634,11 @@ const ensureOpenCodeApiPrefix = (...args) => openCodeNetworkRuntime.ensureOpenCo
 const scheduleOpenCodeApiDetection = (...args) => openCodeNetworkRuntime.scheduleOpenCodeApiDetection(...args);
 
 const ENV_CONFIGURED_API_PREFIX = normalizeApiPrefix(
-  process.env.OPENCODE_API_PREFIX || process.env.OPENCHAMBER_API_PREFIX || ''
+  process.env.OPENCODE_API_PREFIX || process.env.MITTRCRAFT_API_PREFIX || ''
 );
 
   if (ENV_CONFIGURED_API_PREFIX && ENV_CONFIGURED_API_PREFIX !== '') {
-  console.warn('Ignoring configured OpenCode API prefix; API runs at root.');
+  console.warn('Ignoring configured MittrCraft Engine API prefix; API runs at root.');
 }
 
 let cachedLoginShellEnvSnapshot;
@@ -670,7 +677,6 @@ const getLoginShellEnvSnapshot = (...args) => openCodeEnvRuntime.getLoginShellEn
 const ensureOpencodeCliEnv = (...args) => openCodeEnvRuntime.ensureOpencodeCliEnv(...args);
 const applyOpencodeBinaryFromSettings = (...args) => openCodeEnvRuntime.applyOpencodeBinaryFromSettings(...args);
 const resolveOpencodeCliPath = (...args) => openCodeEnvRuntime.resolveOpencodeCliPath(...args);
-const isBundledOpenCodeCliPath = (...args) => openCodeEnvRuntime.isBundledOpenCodeCliPath(...args);
 const isExecutable = (...args) => openCodeEnvRuntime.isExecutable(...args);
 const searchPathFor = (...args) => openCodeEnvRuntime.searchPathFor(...args);
 const resolveGitBinaryForSpawn = (...args) => openCodeEnvRuntime.resolveGitBinaryForSpawn(...args);
@@ -851,7 +857,7 @@ const processForwardedEventPayload = (payload, emitSyntheticEvent) => {
   }
 
   emitSyntheticEvent({
-    type: 'openchamber:session-status',
+    type: 'mittrcraft:session-status',
     properties: {
       sessionID: sessionId,
       status,
@@ -872,7 +878,7 @@ const processForwardedEventPayload = (payload, emitSyntheticEvent) => {
   });
 
   emitSyntheticEvent({
-    type: 'openchamber:session-activity',
+    type: 'mittrcraft:session-activity',
     properties: {
       sessionId,
       phase: status === 'busy' || status === 'retry' ? 'busy' : 'idle',
@@ -965,7 +971,7 @@ const bootstrapRuntime = createBootstrapRuntime({
   registerAuthAndAccessRoutes,
   registerTtsRoutes,
   registerNotificationRoutes,
-  registerOpenChamberRoutes,
+  registerMittrCraftRoutes,
   registerAgentToolRoutes: (app, options) => options.agentToolRuntime.registerRoutes(app, options.express),
   express,
 });
@@ -1093,7 +1099,7 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
     try {
       messageStreamRuntime?.rebindUpstream();
     } catch (error) {
-      console.warn('Failed to rebind message stream after OpenCode restart:', error?.message ?? error);
+      console.warn('Failed to rebind message stream after MittrCraft Engine restart:', error?.message ?? error);
     }
   },
   getManagedOpenCodeEnv: async () => {
@@ -1102,8 +1108,9 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
     // injected while at least one of them is on.
     const includeControl = settings?.agentControlToolEnabled !== false;
     const includeWeb = settings?.agentWebToolEnabled !== false;
-    const managedEnv = includeControl || includeWeb
-      ? await (agentToolRuntime?.prepareManagedOpenCodeEnv({ includeControl, includeWeb }) || {})
+    const includeComputer = settings?.agentComputerToolEnabled !== false;
+    const managedEnv = includeControl || includeWeb || includeComputer
+      ? await (agentToolRuntime?.prepareManagedOpenCodeEnv({ includeControl, includeWeb, includeComputer }) || {})
       : {};
     if (settings?.optimizeSystemPrompt !== true) return managedEnv;
 
@@ -1112,18 +1119,6 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
     return { ...managedEnv, ...systemPromptEnv };
   },
 });
-
-const getOpenCodeUpgradeCapability = () => {
-  const activeBinary = lastOpenCodeLaunchDiagnostics?.sourceBinary
-    || lastOpenCodeLaunchDiagnostics?.binary
-    || resolvedOpencodeBinary;
-  return resolveOpenCodeUpgradeCapability({
-    isExternal: isExternalOpenCode,
-    hasManagedProcess: Boolean(openCodeProcess),
-    activeBinary,
-    isBundledBinary: isBundledOpenCodeCliPath,
-  });
-};
 
 const restartOpenCode = (...args) => openCodeLifecycleRuntime.restartOpenCode(...args);
 const waitForOpenCodeReady = (...args) => openCodeLifecycleRuntime.waitForOpenCodeReady(...args);
@@ -1142,10 +1137,10 @@ const scheduledTasksRuntime = createScheduledTasksRuntime({
   waitForOpenCodeReady,
   setSessionAutoAccept: (sessionId, enabled, directory) => permissionAutoAcceptRuntime.setSessionPolicy(sessionId, enabled, directory),
   emitTaskRunEvent: (event) => {
-    for (const client of uiOpenChamberEventClients) {
+    for (const client of uiMittrCraftEventClients) {
       try {
         writeSseEvent(client, {
-          type: 'openchamber:scheduled-task-ran',
+          type: 'mittrcraft:scheduled-task-ran',
           properties: {
             projectId: event.projectID,
             taskId: event.taskID,
@@ -1155,17 +1150,17 @@ const scheduledTasksRuntime = createScheduledTasksRuntime({
           },
         });
       } catch {
-        uiOpenChamberEventClients.delete(client);
+        uiMittrCraftEventClients.delete(client);
       }
     }
   },
   logger: console,
 });
 const emitSessionCreatedEvent = (event) => {
-  for (const client of uiOpenChamberEventClients) {
+  for (const client of uiMittrCraftEventClients) {
     try {
       writeSseEvent(client, {
-        type: 'openchamber:session-created',
+        type: 'mittrcraft:session-created',
         properties: {
           sessionId: event.sessionID,
           directory: event.directory,
@@ -1177,7 +1172,7 @@ const emitSessionCreatedEvent = (event) => {
         },
       });
     } catch {
-      uiOpenChamberEventClients.delete(client);
+      uiMittrCraftEventClients.delete(client);
     }
   }
 };
@@ -1187,7 +1182,7 @@ const scheduledTaskService = createScheduledTaskService({
   projectConfigRuntime,
   scheduledTasksRuntime,
 });
-const openChamberSessionService = createOpenChamberSessionService({
+const mittrCraftSessionService = createMittrCraftSessionService({
   readSettingsFromDiskMigrated,
   sanitizeProjects,
   validateDirectoryPath,
@@ -1207,11 +1202,11 @@ const browserControlBroker = createBrowserControlBroker({
     // lets the broker say "not here" instead of timing out.
     const needsBrowserView = request.action !== 'browser.open';
     let delivered = 0;
-    for (const client of uiOpenChamberEventClients) {
-      if (needsBrowserView && client.openchamberBrowserCapable !== true) continue;
+    for (const client of uiMittrCraftEventClients) {
+      if (needsBrowserView && client.mittrcraftBrowserCapable !== true) continue;
       try {
         writeSseEvent(client, {
-          type: 'openchamber:browser-control-request',
+          type: 'mittrcraft:browser-control-request',
           properties: {
             requestId: request.requestId,
             action: request.action,
@@ -1220,22 +1215,33 @@ const browserControlBroker = createBrowserControlBroker({
         });
         delivered += 1;
       } catch {
-        uiOpenChamberEventClients.delete(client);
+        uiMittrCraftEventClients.delete(client);
       }
     }
     return delivered;
   },
 });
 
-const openChamberControlService = createOpenChamberControlService({
+const computerControl = createComputerControl();
+
+// Filled in once `main()` starts the Mittr shim, which is when brokerBaseUrl/ensureFreshSession
+// first exist. A getter (not the value itself) so this service's construction order does not
+// have to change to accommodate a dependency that shows up later.
+let jiraControl = null;
+const getJiraControl = () => jiraControl;
+
+const mittrCraftControlService = createMittrCraftControlService({
   readSettingsFromDiskMigrated,
   sanitizeProjects,
   buildOpenCodeUrl,
   getOpenCodeAuthHeaders,
   waitForOpenCodeReady,
-  sessionService: openChamberSessionService,
+  getJiraControl,
+  getPlaneControl: getJiraControl,
+  sessionService: mittrCraftSessionService,
   scheduledTaskService,
   browserControl: browserControlBroker,
+  computerControl,
 });
 
 const ensureGlobalWatcherStarted = async () => {
@@ -1317,20 +1323,84 @@ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
 
 const gracefulShutdown = (...args) => gracefulShutdownRuntime.gracefulShutdown(...args);
 
+// Stores the credential the engine presents to the shim. It is the
+// machine-local token: the engine may hold it forever because it grants nothing
+// outside this machine.
+//
+// The credential is written on its own, before any provider config exists,
+// because upsertProviderConfig refuses a provider that has neither an env
+// credential nor one already stored. It is also the safer half to write first:
+// a stored credential with no provider config is inert, while a provider config
+// with no credential is a provider that cannot authenticate.
+const storeMittrCredential = (shim) => {
+  const auth = readAuthFile();
+  auth.mittr = { type: 'api', key: shim.localToken };
+  writeAuthFile(auth);
+};
+
+// Registers exactly the models the catalog listed, under the opaque aliases
+// Mittr issued for them.
+//
+// An alias is not a readable name and is never written by hand here: it is
+// minted by Mittr from the provider and model behind it, and is the only string
+// the completions surface will resolve. Anything invented locally is refused.
+//
+// A provider with no models cannot be registered at all — the engine's own
+// validation requires at least one — so an empty catalog removes the provider
+// rather than leaving a hollow one that offers a model nobody can use.
+//
+// The engine reads its provider config at startup, so writing the config is
+// only half the job: without a reload a developer signs in, the catalog
+// arrives, and the model picker still says "no models found" — which is what
+// happened the first time this was driven end to end.
+//
+// The reload restarts the engine, so it is spent only when the set of aliases
+// actually changed — and "changed" is measured against the config already on
+// disk, not against anything remembered in memory. Otherwise every boot would
+// restart the engine to write back what was already there.
+const syncMittrModels = (shim) => async (models) => {
+  const wanted = Array.isArray(models) ? models.map((model) => model.alias).sort() : [];
+  const present = readProviderModelIds(MITTR_PROVIDER_ID, null);
+  const unchanged = wanted.length === present.length
+    && wanted.every((alias, index) => alias === present[index]);
+
+  if (wanted.length === 0) {
+    const removed = removeProviderConfig(MITTR_PROVIDER_ID, null, 'user');
+    if (removed) await refreshOpenCodeAfterConfigChange('Mittr catalog: no models offered');
+    return;
+  }
+
+  upsertProviderConfig(
+    MITTR_PROVIDER_ID,
+    {
+      name: 'Mittr',
+      options: { baseURL: shim.baseUrl },
+      models: Object.fromEntries(
+        models.map((model) => [model.alias, { name: model.label || model.alias }]),
+      ),
+    },
+    null,
+    'user',
+    { hasStoredAuth: true },
+  );
+
+  if (!unchanged) await refreshOpenCodeAfterConfigChange('Mittr catalog changed');
+};
+
 async function main(options = {}) {
   const port = Number.isFinite(options.port) && options.port >= 0 ? Math.trunc(options.port) : DEFAULT_PORT;
   const host = typeof options.host === 'string' && options.host.length > 0 ? options.host : undefined;
   const effectiveBindHost = host
-    || (typeof process.env.OPENCHAMBER_HOST === 'string' && process.env.OPENCHAMBER_HOST.trim().length > 0
-      ? process.env.OPENCHAMBER_HOST.trim()
+    || (typeof process.env.MITTRCRAFT_HOST === 'string' && process.env.MITTRCRAFT_HOST.trim().length > 0
+      ? process.env.MITTRCRAFT_HOST.trim()
       : '127.0.0.1');
   agentToolRuntime = createAgentToolRuntime({
     crypto,
     fsPromises,
     path,
-    dataDir: OPENCHAMBER_DATA_DIR,
+    dataDir: MITTRCRAFT_DATA_DIR,
     env: process.env,
-    executeAction: (...args) => openChamberControlService.execute(...args),
+    executeAction: (...args) => mittrCraftControlService.execute(...args),
     getActivePort: () => {
       const address = server?.address?.();
       return typeof address === 'object' && address ? address.port : null;
@@ -1339,7 +1409,7 @@ async function main(options = {}) {
   systemPromptRuntime = createSystemPromptRuntime({
     fsPromises,
     path,
-    dataDir: OPENCHAMBER_DATA_DIR,
+    dataDir: MITTRCRAFT_DATA_DIR,
   });
 
   // Pairing transports advertised to the create-device dialog. LAN reachability is
@@ -1420,7 +1490,7 @@ async function main(options = {}) {
   };
   const uiPassword = typeof options.uiPassword === 'string'
     ? options.uiPassword
-    : (typeof process.env.OPENCHAMBER_UI_PASSWORD === 'string' ? process.env.OPENCHAMBER_UI_PASSWORD : null);
+    : (typeof process.env.MITTRCRAFT_UI_PASSWORD === 'string' ? process.env.MITTRCRAFT_UI_PASSWORD : null);
   if (
     isNetworkExposedBindHost(effectiveBindHost)
     && !(typeof uiPassword === 'string' && uiPassword.trim().length > 0)
@@ -1429,7 +1499,7 @@ async function main(options = {}) {
     throw new Error(getUnauthenticatedLanErrorMessage(effectiveBindHost));
   }
   const tryCfTunnel = options.tryCfTunnel === true;
-  const apiOnly = options.apiOnly === true || isEnvFlagEnabled(process.env.OPENCHAMBER_API_ONLY);
+  const apiOnly = options.apiOnly === true || isEnvFlagEnabled(process.env.MITTRCRAFT_API_ONLY);
   const shouldUseCanonicalTunnelConfig = typeof options.tunnelMode === 'string'
     || typeof options.tunnelProvider === 'string'
     || options.tunnelConfigPath === null
@@ -1477,24 +1547,22 @@ async function main(options = {}) {
   const app = express();
   const serverStartedAt = new Date().toISOString();
   const packagedClientOrigins = new Set([
-    'openchamber-ui://app',
+    'mittrcraft-ui://app',
     'capacitor://localhost',
     'http://localhost',
     'https://localhost',
   ]);
   const isLocalDevClientOrigin = (origin) => /^https?:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin);
   app.set('trust proxy', true);
-  // Keep self-hosted instances out of search engines. The app shell is served
-  // publicly (it loads before prompting for the UI password), so without this
-  // even a password-protected instance gets crawled and indexed. Applies to
-  // every response; the robots.txt route makes the intent explicit for crawlers.
-  app.use((_req, res, next) => {
-    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-    next();
-  });
-  app.get('/robots.txt', (_req, res) => {
-    res.type('text/plain').send('User-agent: *\nDisallow: /\n');
-  });
+
+  // Before any route is mounted, including the ones a helper registers on its
+  // own. Express runs middleware in registration order, so a route added above
+  // this never reaches it: the Mittr shim was mounted first and every one of
+  // its routes answered without an `Access-Control-Allow-Origin` header. The
+  // preflight still passed -- OPTIONS falls through to this handler when no
+  // route claims it -- so the failure only appeared on the real request, and
+  // only in a packaged build, where the renderer's origin is
+  // `mittrcraft-ui://app` rather than the server's own.
   app.use((req, res, next) => {
     const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
     if (packagedClientOrigins.has(origin) || isLocalDevClientOrigin(origin)) {
@@ -1510,6 +1578,68 @@ async function main(options = {}) {
       }
     }
     next();
+  });
+
+  // The engine talks to this shim instead of to Mittr directly, so it can hold a
+  // credential that never changes while the Mittr session behind it rotates.
+  // A failure here leaves the rest of the server running without the Mittr
+  // provider rather than refusing to boot: a machine bound to a LAN address is a
+  // supported way to run this app, and it must keep working even though the shim
+  // cannot be offered there.
+  let mittrShim = null;
+  try {
+    mittrShim = startMittrShim({
+      app,
+      host: effectiveBindHost,
+      port,
+      dataDir: MITTRCRAFT_DATA_DIR,
+      // The API host, not the workspace host: the workspace only proxies
+      // `/api/*`, and none of the desktop endpoints live under that prefix.
+      // A packaged build passes the environment it was built against; nothing
+      // a person exports afterwards can move an installed application.
+      brokerBaseUrl: resolveBrokerBaseUrl({ packaged: options.brokerBaseUrl, env: process.env }),
+      secretStore: options.secretStore ?? undefined,
+      syncModels: (models) => syncMittrModels(mittrShim)(models),
+      // A build that named its own broker locks the upstream to it as well.
+      allowUpstreamOverride: !String(options.brokerBaseUrl ?? '').trim(),
+    });
+    storeMittrCredential(mittrShim);
+
+    // Same session, same broker as `/api/mittr/work` — the agent's `jira.get_issue` action
+    // reads through this, not a connection of its own.
+    jiraControl = createMittrWorkService({
+      brokerBaseUrl: mittrShim.brokerBaseUrl,
+      ensureFreshSession: mittrShim.ensureFreshSession,
+    });
+
+    // Before the network is touched: what the engine offers must come from the
+    // catalog, and an install carrying a model from an older build must lose it
+    // rather than keep offering something that no longer resolves.
+    void mittrShim.applyCachedCatalog().catch((error) => {
+      console.warn(`[mittr] could not apply the cached catalog: ${error?.message ?? error}`);
+    });
+
+    // A catalog fetched at startup keeps a signed-in developer's model list
+    // current across restarts. It is deliberately not awaited and its failure
+    // is not fatal: nobody is signed in on a first run, and a broker that is
+    // unreachable must not delay the server coming up.
+    void mittrShim.syncCatalog().catch((error) => {
+      console.warn(`[mittr] startup catalog sync failed: ${error?.message ?? error}`);
+    });
+  } catch (error) {
+    console.warn(`[mittr] provider unavailable: ${error?.message ?? error}`);
+  }
+
+  // Keep self-hosted instances out of search engines. The app shell is served
+  // publicly (it loads before prompting for the UI password), so without this
+  // even a password-protected instance gets crawled and indexed. Applies to
+  // every response; the robots.txt route makes the intent explicit for crawlers.
+  app.use((_req, res, next) => {
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    next();
+  });
+  app.get('/robots.txt', (_req, res) => {
+    res.type('text/plain').send('User-agent: *\nDisallow: /\n');
   });
   app.use(compression({
     filter: (req, res) => {
@@ -1533,8 +1663,8 @@ async function main(options = {}) {
 
   const bootstrapResult = bootstrapRuntime.setupBaseRoutes(app, {
     process,
-    openchamberVersion: OPENCHAMBER_VERSION,
-    runtimeName: process.env.OPENCHAMBER_RUNTIME || 'web',
+    mittrcraftVersion: MITTRCRAFT_VERSION,
+    runtimeName: process.env.MITTRCRAFT_RUNTIME || 'web',
     serverStartedAt,
     gracefulShutdown,
     getHealthSnapshot: () => {
@@ -1576,7 +1706,7 @@ async function main(options = {}) {
       return Number.isFinite(port) && port > 0 ? port : null;
     },
     getTunnelUrl: () => tunnelRuntimeContextHolder?.tunnelService?.getPublicUrl?.() ?? null,
-    verboseRequestLogs: OPENCHAMBER_VERBOSE_REQUEST_LOGS,
+    verboseRequestLogs: MITTRCRAFT_VERBOSE_REQUEST_LOGS,
     uiPassword,
     tunnelAuthController,
     remoteClientAuthRuntime,
@@ -1632,7 +1762,7 @@ async function main(options = {}) {
     path,
     server,
     __dirname,
-    openchamberDataDir: OPENCHAMBER_DATA_DIR,
+    mittrcraftDataDir: MITTRCRAFT_DATA_DIR,
     modelsDevApiUrl: MODELS_DEV_API_URL,
     modelsMetadataCacheTtl: MODELS_METADATA_CACHE_TTL,
     fetchFreeZenModels,
@@ -1668,7 +1798,7 @@ async function main(options = {}) {
     // the relay identity (serverId), so concurrent hosts evict each other at
     // the relay worker and devices land on a random local instance.
     hostLock: createRelayHostLock({
-      lockFilePath: path.join(OPENCHAMBER_DATA_DIR, 'relay-host.lock'),
+      lockFilePath: path.join(MITTRCRAFT_DATA_DIR, 'relay-host.lock'),
       fs,
       process,
     }),
@@ -1720,8 +1850,11 @@ async function main(options = {}) {
     spawn,
     resolveGitBinaryForSpawn,
     createFsSearchRuntime: createFsSearchRuntimeFactory,
-    openchamberDataDir: OPENCHAMBER_DATA_DIR,
-    openchamberUserConfigRoot: OPENCHAMBER_USER_CONFIG_ROOT,
+    mittrcraftDataDir: MITTRCRAFT_DATA_DIR,
+    mittrcraftUserConfigRoot: MITTRCRAFT_USER_CONFIG_ROOT,
+    uiAuthController,
+    brokerBaseUrl: mittrShim?.brokerBaseUrl,
+    ensureFreshSession: mittrShim?.ensureFreshSession,
     normalizeDirectoryPath,
     resolveProjectDirectory,
     resolveOptionalProjectDirectory,
@@ -1729,7 +1862,6 @@ async function main(options = {}) {
     readCustomThemesFromDisk,
     refreshOpenCodeAfterConfigChange,
     getOpenCodeResolutionSnapshot,
-    getOpenCodeUpgradeCapability,
     formatSettingsResponse,
     readSettingsFromDisk,
     readSettingsFromDiskMigrated,
@@ -1748,11 +1880,11 @@ async function main(options = {}) {
     projectConfigRuntime,
     scheduledTasksRuntime,
     scheduledTaskService,
-    openChamberSessionService,
-    openChamberControlService,
+    mittrCraftSessionService,
+    mittrCraftControlService,
     waitForOpenCodeReady,
     emitSessionCreatedEvent,
-    getOpenChamberEventClients: () => uiOpenChamberEventClients,
+    getMittrCraftEventClients: () => uiMittrCraftEventClients,
     writeSseEvent,
     permissionAutoAcceptRuntime,
   });
@@ -1805,7 +1937,7 @@ async function main(options = {}) {
     tunnelRuntimeContext,
     attachSignals,
     apiOnly,
-    dictationModelsDir: path.join(OPENCHAMBER_USER_CONFIG_ROOT, 'speech-models'),
+    dictationModelsDir: path.join(MITTRCRAFT_USER_CONFIG_ROOT, 'speech-models'),
   });
   terminalRuntime = startupPipelineResult.terminalRuntime;
   dictationRuntime = startupPipelineResult.dictationRuntime;
@@ -1822,7 +1954,7 @@ async function main(options = {}) {
   // device/session exists, stop it (and clear a stale enabled flag) otherwise.
   void relayService.reconcile();
 
-  // Relay demand can change outside our routes: `openchamber connect-url
+  // Relay demand can change outside our routes: `mittrcraft connect-url
   // --relay` writes a pending relay session straight to the on-disk store, and
   // pending sessions expire without any request hitting us. Poll reconcile so a
   // headless instance picks the relay up (or drops it) within a minute.

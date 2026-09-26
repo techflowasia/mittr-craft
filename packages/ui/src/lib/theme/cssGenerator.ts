@@ -51,6 +51,9 @@ export class CSSVariableGenerator {
     cssVars.push(...this.generateStatusColors(theme.colors.status));
     cssVars.push(...this.generatePullRequestColors(theme));
 
+    cssVars.push(...this.generateElevation(theme));
+    cssVars.push(...this.generateGradients(theme));
+
     cssVars.push(...this.generateSyntaxColors(theme.colors.syntax));
 
     cssVars.push(...this.generateComponentColors(theme.colors, theme));
@@ -263,6 +266,57 @@ const sidebarBaseRgb = hexToRgb(theme.colors.surface.muted);
     vars.push(`  --pr-merged: ${pr?.merged || (theme.metadata.variant === 'dark' ? '#8957e5' : '#8250df')};`);
     vars.push(`  --pr-closed: ${pr?.closed || theme.colors.status.error};`);
     return vars;
+  }
+
+  /**
+   * Elevation is the single shadow mechanism in the theme. The three steps are
+   * defined by job - on the page, lifted panel, floating - not by blur size.
+   * Themes that do not declare elevation fall back to a neutral ink set whose
+   * alpha depends on the variant, because a translucent shadow that reads
+   * clearly on a light ground is invisible on a dark one.
+   */
+  private generateElevation(theme: Theme): string[] {
+    const isDark = theme.metadata.variant === 'dark';
+    const ink = '9 20 36';
+    const elevation = theme.colors.elevation ?? {
+      level1: `0 1px 2px rgb(${ink} / ${isDark ? '.40' : '.06'})`,
+      level2: `0 4px 14px rgb(${ink} / ${isDark ? '.50' : '.10'})`,
+      level3: `0 16px 40px rgb(${ink} / ${isDark ? '.62' : '.18'})`,
+    };
+
+    return [
+      `  --elev-1: ${elevation.level1};`,
+      `  --elev-2: ${elevation.level2};`,
+      `  --elev-3: ${elevation.level3};`,
+    ];
+  }
+
+  /**
+   * Named gradients keep accent fills from reading flat. Undeclared gradients
+   * are derived from the theme's own primary ramp so every theme resolves the
+   * same token contract; `sheen` is a variant-dependent overlay only.
+   */
+  private generateGradients(theme: Theme): string[] {
+    const primary = theme.colors.primary;
+    const base = primary.base;
+    const light = primary.hover || this.lighten(base, 12);
+    const lighter = primary.emphasis || this.lighten(base, 24);
+    const deep = primary.active || this.darken(base, 12);
+    const isDark = theme.metadata.variant === 'dark';
+
+    const gradients = theme.colors.gradients ?? {
+      accent: `linear-gradient(140deg, ${light} 0%, ${base} 52%, ${deep} 100%)`,
+      accentHover: `linear-gradient(140deg, ${lighter} 0%, ${light} 52%, ${base} 100%)`,
+      brand: `linear-gradient(145deg, ${light} 0%, ${base} 100%)`,
+      sheen: `linear-gradient(180deg, ${isDark ? '#ffffff17' : '#ffffff14'}, #fff0 42%)`,
+    };
+
+    return [
+      `  --grad-accent: ${gradients.accent};`,
+      `  --grad-accent-hover: ${gradients.accentHover};`,
+      `  --grad-brand: ${gradients.brand};`,
+      `  --grad-sheen: ${gradients.sheen};`,
+    ];
   }
 
   private generateSyntaxColors(syntax: Theme['colors']['syntax']): string[] {

@@ -399,7 +399,7 @@ export const AgentPermissionsEditor: React.FC<AgentPermissionsEditorProps> = ({ 
                     className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground', !hasDetails && 'opacity-0')}
                   />
                   <span className={SETTINGS_FIELD_LABEL_CLASS}>{formatKeyLabel(key)}</span>
-                  <span className="typography-micro font-mono text-muted-foreground/70">{key}</span>
+                  <span className="typography-micro font-mono text-muted-foreground">{key}</span>
                   {state.action === null && effective !== null && (
                     <span className="typography-micro text-muted-foreground">
                       {t('settings.agents.page.permissionsEditor.effectiveHint', { action: actionLabel(effective) })}
@@ -465,7 +465,7 @@ export const AgentPermissionsEditor: React.FC<AgentPermissionsEditorProps> = ({ 
                       </div>
                       {runtimeRules.map((rule) => (
                         <div key={`${rule.pattern}-${rule.action}`} className="flex items-center gap-2">
-                          <span className="typography-micro min-w-0 flex-1 truncate font-mono text-muted-foreground/70">
+                          <span className="typography-micro min-w-0 flex-1 truncate font-mono text-muted-foreground">
                             {rule.pattern}
                           </span>
                           <span className="typography-micro text-muted-foreground">{actionLabel(rule.action)}</span>

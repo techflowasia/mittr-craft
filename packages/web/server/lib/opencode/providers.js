@@ -151,6 +151,21 @@ function validateCustomProviderConfig(providerId, config, options = {}) {
  * Persist (create or update) a custom provider block in OpenCode user/project/custom config.
  * Does not write secrets — API keys remain in auth.json via the OpenCode auth API.
  */
+/**
+ * The model ids a provider is configured with at user scope, sorted.
+ *
+ * Callers that regenerate a provider's models need to know whether anything
+ * actually changed, because applying a provider change restarts the engine.
+ * Reading the config belongs here rather than in the caller.
+ */
+function readProviderModelIds(providerId, workingDirectory) {
+  const layers = readConfigLayers(workingDirectory);
+  const userConfig = layers.userConfig;
+  const providers = isPlainObject(userConfig?.provider) ? userConfig.provider : {};
+  const models = isPlainObject(providers[providerId]?.models) ? providers[providerId].models : {};
+  return Object.keys(models).sort();
+}
+
 function upsertProviderConfig(providerId, config, workingDirectory, scope = 'user', options = {}) {
   const validated = validateCustomProviderConfig(providerId, config, options);
   if (!validated.ok) {
@@ -252,6 +267,7 @@ function removeProviderConfig(providerId, workingDirectory, scope = 'user') {
 
 export {
   getProviderSources,
+  readProviderModelIds,
   removeProviderConfig,
   upsertProviderConfig,
   validateCustomProviderConfig,

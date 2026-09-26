@@ -26,19 +26,19 @@ export const applyPersistedHomeDirectoryToWindow = (homeDirectory: string): void
   if (typeof window === 'undefined') {
     return;
   }
-  if (typeof window.__OPENCHAMBER_HOME__ === 'string' && window.__OPENCHAMBER_HOME__.length > 0) {
+  if (typeof window.__MITTRCRAFT_HOME__ === 'string' && window.__MITTRCRAFT_HOME__.length > 0) {
     return;
   }
 
   try {
-    window.__OPENCHAMBER_HOME__ = homeDirectory;
+    window.__MITTRCRAFT_HOME__ = homeDirectory;
   } catch {
     /* read-only contextBridge property — leave preload-seeded value */
   }
 };
 
-const SETTINGS_MIRROR_INDEX_KEY = 'openchamber.settingsMirror.v2.index';
-const SETTINGS_MIRROR_KEY_PREFIX = 'openchamber.settingsMirror.v2:';
+const SETTINGS_MIRROR_INDEX_KEY = 'mittrcraft.settingsMirror.v2.index';
+const SETTINGS_MIRROR_KEY_PREFIX = 'mittrcraft.settingsMirror.v2:';
 const MAX_SETTINGS_MIRROR_RUNTIMES = 5;
 
 export const getRuntimeSettingsMirrorStorageKey = (runtimeKey: string): string =>
@@ -70,7 +70,6 @@ const persistRuntimeSettingsMirror = (settings: DesktopSettings, runtimeKey: str
     openInAppId: settings.openInAppId,
     pwaAppName: settings.pwaAppName,
     mobileKeyboardMode: settings.mobileKeyboardMode,
-    openCodeUpdateToastDismissedVersion: settings.openCodeUpdateToastDismissedVersion,
     dictationEnabled: settings.dictationEnabled,
     sttProvider: settings.sttProvider,
     sttServerUrl: settings.sttServerUrl,
@@ -160,24 +159,14 @@ const persistToLocalStorage = (settings: DesktopSettings) => {
   if (typeof settings.pwaAppName === 'string') {
     const normalized = settings.pwaAppName.trim().replace(/\s+/g, ' ').slice(0, 64);
     if (normalized.length > 0) {
-      localStorage.setItem('openchamber.pwaName', normalized);
+      localStorage.setItem('mittrcraft.pwaName', normalized);
     } else {
-      localStorage.removeItem('openchamber.pwaName');
+      localStorage.removeItem('mittrcraft.pwaName');
     }
   } else {
-    localStorage.removeItem('openchamber.pwaName');
+    localStorage.removeItem('mittrcraft.pwaName');
   }
   setStoredMobileKeyboardMode(settings.mobileKeyboardMode);
-  if (typeof settings.openCodeUpdateToastDismissedVersion === 'string') {
-    const version = settings.openCodeUpdateToastDismissedVersion.trim();
-    if (version) {
-      localStorage.setItem('opencode-update-toast-dismissed-version', version);
-    } else {
-      localStorage.removeItem('opencode-update-toast-dismissed-version');
-    }
-  } else {
-    localStorage.removeItem('opencode-update-toast-dismissed-version');
-  }
   if (typeof settings.dictationEnabled === 'boolean') {
     localStorage.setItem('dictationEnabled', String(settings.dictationEnabled));
   } else {
@@ -198,7 +187,7 @@ const dispatchSettingsSynced = (settings: DesktopSettings): void => {
   if (typeof window === 'undefined') {
     return;
   }
-  window.dispatchEvent(new CustomEvent<DesktopSettings>('openchamber:settings-synced', { detail: settings }));
+  window.dispatchEvent(new CustomEvent<DesktopSettings>('mittrcraft:settings-synced', { detail: settings }));
 };
 
 type SettingsSaveState = 'idle' | 'saving' | 'error';
@@ -243,7 +232,7 @@ const dispatchSettingsSaveState = (state: 'saving' | 'saved' | 'error'): void =>
   if (typeof window === 'undefined') {
     return;
   }
-  window.dispatchEvent(new CustomEvent<'saving' | 'saved' | 'error'>('openchamber:settings-save-state', { detail: state }));
+  window.dispatchEvent(new CustomEvent<'saving' | 'saved' | 'error'>('mittrcraft:settings-save-state', { detail: state }));
 };
 
 type PersistApi = {
@@ -551,9 +540,9 @@ const materializeAuthoritativeUiSettings = (settings: DesktopSettings): DesktopS
     summaryLength: defaults.summaryLength,
     maxLastMessageLength: defaults.maxLastMessageLength,
     inputSpellcheckEnabled: defaults.inputSpellcheckEnabled,
-    showOpenCodeUpdateNotifications: defaults.showOpenCodeUpdateNotifications,
     agentControlToolEnabled: defaults.agentControlToolEnabled,
     agentWebToolEnabled: defaults.agentWebToolEnabled,
+    agentComputerToolEnabled: defaults.agentComputerToolEnabled,
     showToolFileIcons: defaults.showToolFileIcons,
     codeBlockLineWrap: defaults.codeBlockLineWrap,
     showTurnChangedFiles: defaults.showTurnChangedFiles,
@@ -719,12 +708,6 @@ const applyDesktopUiPreferences = (settings: DesktopSettings) => {
     store.setInputSpellcheckEnabled(settings.inputSpellcheckEnabled);
   }
   if (
-    typeof settings.showOpenCodeUpdateNotifications === 'boolean'
-    && settings.showOpenCodeUpdateNotifications !== store.showOpenCodeUpdateNotifications
-  ) {
-    store.setShowOpenCodeUpdateNotifications(settings.showOpenCodeUpdateNotifications);
-  }
-  if (
     typeof settings.agentControlToolEnabled === 'boolean'
     && settings.agentControlToolEnabled !== store.agentControlToolEnabled
   ) {
@@ -735,6 +718,12 @@ const applyDesktopUiPreferences = (settings: DesktopSettings) => {
     && settings.agentWebToolEnabled !== store.agentWebToolEnabled
   ) {
     store.setAgentWebToolEnabled(settings.agentWebToolEnabled);
+  }
+  if (
+    typeof settings.agentComputerToolEnabled === 'boolean'
+    && settings.agentComputerToolEnabled !== store.agentComputerToolEnabled
+  ) {
+    store.setAgentComputerToolEnabled(settings.agentComputerToolEnabled);
   }
   if (typeof settings.showToolFileIcons === 'boolean' && settings.showToolFileIcons !== store.showToolFileIcons) {
     store.setShowToolFileIcons(settings.showToolFileIcons);
@@ -1376,17 +1365,14 @@ const sanitizeWebSettings = (payload: unknown): DesktopSettings | null => {
   if (typeof candidate.inputSpellcheckEnabled === 'boolean') {
     result.inputSpellcheckEnabled = candidate.inputSpellcheckEnabled;
   }
-  if (typeof candidate.showOpenCodeUpdateNotifications === 'boolean') {
-    result.showOpenCodeUpdateNotifications = candidate.showOpenCodeUpdateNotifications;
-  }
   if (typeof candidate.agentControlToolEnabled === 'boolean') {
     result.agentControlToolEnabled = candidate.agentControlToolEnabled;
   }
   if (typeof candidate.agentWebToolEnabled === 'boolean') {
     result.agentWebToolEnabled = candidate.agentWebToolEnabled;
   }
-  if (typeof candidate.openCodeUpdateToastDismissedVersion === 'string') {
-    result.openCodeUpdateToastDismissedVersion = candidate.openCodeUpdateToastDismissedVersion.trim().slice(0, 128);
+  if (typeof candidate.agentComputerToolEnabled === 'boolean') {
+    result.agentComputerToolEnabled = candidate.agentComputerToolEnabled;
   }
   if (typeof candidate.showToolFileIcons === 'boolean') {
     result.showToolFileIcons = candidate.showToolFileIcons;
@@ -1772,7 +1758,7 @@ export const syncDesktopSettings = async (): Promise<void> => {
     // `autoSaveEnabled` is new to the settings backend. Until the server has a
     // value, materialize would invent the client default (true) and overwrite a
     // deliberate legacy "off" preference migrated from
-    // `openchamber:files:auto-save-enabled`. Prefer the hydrated store value and
+    // `mittrcraft:files:auto-save-enabled`. Prefer the hydrated store value and
     // seed the backend once so later omitted→default authority is correct.
     const shouldSeedAutoSaveEnabled = typeof settings.autoSaveEnabled !== 'boolean';
     const authoritativeSettings = materializeAuthoritativeUiSettings(settings);

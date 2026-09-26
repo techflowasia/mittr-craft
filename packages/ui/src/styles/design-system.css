@@ -23,14 +23,37 @@
     --oc-glass-tooltip-opacity: 62%;
     --oc-glass-saturation: 1.24;
 
-    /* Semantic typography defaults (must match SEMANTIC_TYPOGRAPHY) */
-    --text-markdown: 0.9375rem;
-    --text-code: 0.8125rem;
-    --text-ui-header: 0.9375rem;
-    --text-ui-label: 0.8750rem;
-    --text-meta: 0.875rem;
-    --text-micro: 0.875rem;
-    --text-settings-page-title: 1.125rem;
+    /* ---------------------------------------------------------------------
+       Type scale — six steps, global (a theme changes colour, not type size).
+       Each step is a real step: no two steps share a value, so a name always
+       means one rung on the ladder.
+
+       display 28px · title 20px · heading 17px · body 15px · meta 13px · micro 12px
+       --------------------------------------------------------------------- */
+    --text-display: 1.75rem; /* 28px — hero/empty-state headline */
+    --text-title: 1.25rem; /* 20px — page and detail-pane titles */
+    --text-heading: 1.0625rem; /* 17px — section headings */
+    --text-body: 0.9375rem; /* 15px — running text, default UI text */
+    --text-meta: 0.8125rem; /* 13px — timestamps, status, helper text */
+    --text-micro: 0.75rem; /* 12px — badges, shortcuts, tooltips, captions */
+
+    /* Line heights. Body is 1.6 deliberately: this UI is English-only, so it
+       does not need the extra leading a mark-stacking script would require. */
+    --lh-tight: 1.4;
+    --lh-body: 1.6;
+
+    /* Semantic typography defaults, expressed as steps of the scale above.
+       These names are consumed app-wide; they are remapped, never removed.
+       NOTE: `SEMANTIC_TYPOGRAPHY` in `packages/ui/src/lib/typography.ts` also
+       emits these same custom properties at runtime (via typographyWatcher and
+       the theme cssGenerator) from an unlayered <style>, which outranks this
+       layered block. Until that table is updated to the values below, these
+       declarations are the authored intent but not the rendered result. */
+    --text-markdown: var(--text-body);
+    --text-code: var(--text-meta);
+    --text-ui-header: var(--text-body);
+    --text-ui-label: var(--text-meta);
+    --text-settings-page-title: var(--text-title);
 
     /* Default Light Theme */
     --background: oklch(0.97 0.02 85); /* Warm sand background */
@@ -52,7 +75,19 @@
     --border: oklch(0.85 0.02 70); /* Warm border */
     --input: oklch(0.88 0.02 75); /* Input background */
     --ring: oklch(0.65 0.2 55); /* Focus ring color */
-    --radius: 0.5625rem;
+    /* Bare alias = the default component radius. Kept pointed at `lg`, the rung
+       it already sat on, so it tracks the scale instead of drifting off it. */
+    --radius: var(--radius-lg);
+
+    /* Elevation fallbacks. A theme may override --elev-1/2/3; these keep the
+       app correct for one that specifies none. Neutral cool-black rgb triples
+       are used rather than theme colour tokens: a shadow is an optical effect
+       of the ground plane, not a themed surface, and no semantic token carries
+       a shadow-appropriate value. This is the documented exception to the
+       no-hardcoded-colour rule. */
+    --elev-1: 0 1px 2px rgb(9 20 36 / 0.06);
+    --elev-2: 0 4px 14px rgb(9 20 36 / 0.1);
+    --elev-3: 0 16px 40px rgb(9 20 36 / 0.18);
     --chart-1: oklch(0.58 0.15 230); /* Blue */
     --chart-2: oklch(0.58 0.15 145); /* Oasis green */
     --chart-3: oklch(0.65 0.2 55); /* Orange */
@@ -74,6 +109,13 @@
     --oc-glass-popover-opacity: 52%;
     --oc-glass-tooltip-opacity: 64%;
     --oc-glass-saturation: 1.16;
+
+    /* Same three elevation steps, much higher alpha: a translucent shadow
+       barely registers against a dark ground. */
+    --elev-1: 0 1px 2px rgb(9 20 36 / 0.4);
+    --elev-2: 0 4px 14px rgb(9 20 36 / 0.5);
+    --elev-3: 0 16px 40px rgb(9 20 36 / 0.62);
+
     /* Default Dark Theme - using OKLCH color space */
     --background: oklch(0.16 0.01 30); /* #151313 */
     --foreground: oklch(0.85 0.02 90); /* #cdccc3 */
@@ -280,20 +322,29 @@
 }
 
 @theme inline {
+  /* Corner radius — global, not per-theme. A theme changes colour; it does not
+     change how round a button is. Roughly double the previous scale, which read
+     as sharp-cornered next to the softer target shape language. */
   --radius-none: 0;
-  --radius-sm: 0.25rem; /* 4px */
-  --radius-md: 0.4375rem; /* 7px */
-  --radius-lg: 0.5625rem; /* 9px */
-  --radius-xl: 0.75rem; /* 12px */
+  --radius-sm: 0.375rem; /* 6px */
+  --radius-md: 0.625rem; /* 10px */
+  --radius-lg: 0.875rem; /* 14px */
+  --radius-xl: 1.125rem; /* 18px */
   --radius-full: 9999px;
 
-  /* Semantic spacing aliases (4/8px grid) */
+  /* Semantic spacing aliases — strict 4pt scale.
+     Aliased to --spacing-* rather than literal rem so they keep honouring the
+     app's --padding-scale density control.
+     Established here for adoption; component padding is intentionally NOT
+     rewritten onto these in this change. */
   --space-1: var(--spacing-1); /* 4px */
   --space-2: var(--spacing-2); /* 8px */
   --space-3: var(--spacing-3); /* 12px */
   --space-4: var(--spacing-4); /* 16px */
+  --space-5: var(--spacing-5); /* 20px */
   --space-6: var(--spacing-6); /* 24px */
   --space-8: var(--spacing-8); /* 32px */
+  --space-10: var(--spacing-10); /* 40px */
 
   /* Elevation / stacking */
   --z-base: 0;

@@ -253,13 +253,13 @@ export const McpSidebar: React.FC<McpSidebarProps> = ({ onItemSelect }) => {
                             : t('settings.mcp.sidebar.serverType.remoteTitle')}
                           >
                             {server.type === 'local' ? (
-                              <Icon name="server" className="h-3 w-3 text-muted-foreground/60 flex-shrink-0" />
+                              <Icon name="server" className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                             ) : (
-                              <Icon name="global" className="h-3 w-3 text-muted-foreground/60 flex-shrink-0" />
+                              <Icon name="global" className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                             )}
                           </span>
                         </div>
-                        <div className="typography-micro text-muted-foreground/60 truncate leading-tight pl-4">
+                        <div className="typography-micro text-muted-foreground truncate leading-tight pl-4">
                           {server.type === 'local'
                             ? (server as { command?: string[] }).command?.join(' ') ?? ''
                             : (server as { url?: string }).url ?? ''}
@@ -316,13 +316,13 @@ export const McpSidebar: React.FC<McpSidebarProps> = ({ onItemSelect }) => {
                             : t('settings.mcp.sidebar.serverType.remoteTitle')}
                           >
                             {server.type === 'local' ? (
-                              <Icon name="server" className="h-3 w-3 text-muted-foreground/60 flex-shrink-0" />
+                              <Icon name="server" className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                             ) : (
-                              <Icon name="global" className="h-3 w-3 text-muted-foreground/60 flex-shrink-0" />
+                              <Icon name="global" className="h-3 w-3 text-muted-foreground flex-shrink-0" />
                             )}
                           </span>
                         </div>
-                        <div className="typography-micro text-muted-foreground/60 truncate leading-tight pl-4">
+                        <div className="typography-micro text-muted-foreground truncate leading-tight pl-4">
                           {server.type === 'local'
                             ? (server as { command?: string[] }).command?.join(' ') ?? ''
                             : (server as { url?: string }).url ?? ''}

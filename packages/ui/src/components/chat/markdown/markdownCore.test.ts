@@ -49,7 +49,7 @@ describe('Markdown images', () => {
       '![image syntax](packages/vscode/extension.jpg)',
     ].join('\n\n'), 'label');
 
-    expect(html).toContain('data-openchamber-markdown-image-label="true"');
+    expect(html).toContain('data-mittrcraft-markdown-image-label="true"');
     expect(html).toContain('extension.jpg');
     expect(html).not.toContain('image syntax');
     expect(html).not.toContain('<img');
@@ -64,7 +64,7 @@ describe('Markdown images', () => {
 
     expect(html).toContain('<a href="https://example.test/image.png"');
     expect(html).toContain('<img src="https://example.test/image.png" alt="remote image">');
-    expect(html).not.toContain('data-openchamber-markdown-image-label');
+    expect(html).not.toContain('data-mittrcraft-markdown-image-label');
   });
 
   test('collects image syntax across mixed Markdown and ignores links and code', () => {
@@ -184,6 +184,6 @@ describe('Markdown images', () => {
     const html = renderMarkdownSync('![tool image](https://example.test/image.png)');
 
     expect(html).toContain('<img src="https://example.test/image.png"');
-    expect(html).not.toContain('data-openchamber-markdown-image');
+    expect(html).not.toContain('data-mittrcraft-markdown-image');
   });
 });

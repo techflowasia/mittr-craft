@@ -124,7 +124,7 @@ export function ArchiveView(): React.ReactNode {
         )}
       >
         <span className="min-w-0 flex-1 truncate">{label}</span>
-        <span className="flex-shrink-0 typography-micro text-muted-foreground/70">{count}</span>
+        <span className="flex-shrink-0 typography-micro text-muted-foreground">{count}</span>
       </button>
       {sessionsForDelete ? (
         <Tooltip>
@@ -223,11 +223,11 @@ export function ArchiveView(): React.ReactNode {
                       {session.title || t('sessions.sidebar.session.untitled')}
                     </span>
                     {normalizedQuery && directoryLabel ? (
-                      <span className="max-w-40 flex-shrink-0 truncate text-[0.72rem] text-muted-foreground/70" title={sessionDirectory}>
+                      <span className="max-w-40 flex-shrink-0 truncate text-[0.72rem] text-muted-foreground" title={sessionDirectory}>
                         {directoryLabel}
                       </span>
                     ) : null}
-                    <span className="flex-shrink-0 text-[0.72rem] text-muted-foreground/75">
+                    <span className="flex-shrink-0 text-[0.72rem] text-muted-foreground">
                       {formatSessionDateLabel(session.time?.archived ?? session.time?.updated ?? session.time?.created ?? Date.now())}
                     </span>
                     <button
@@ -259,7 +259,7 @@ export function ArchiveView(): React.ReactNode {
                 <button
                   type="button"
                   onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
-                  className="mt-1 flex items-center justify-start rounded-md px-2 py-1 text-left text-xs text-muted-foreground/70 leading-tight hover:text-foreground hover:underline"
+                  className="mt-1 flex items-center justify-start rounded-md px-2 py-1 text-left text-xs text-muted-foreground leading-tight hover:text-foreground hover:underline"
                 >
                   {t('sessions.sidebar.group.showMore')}
                 </button>

@@ -263,7 +263,7 @@ const SessionFolderItemBase = <TSessionNode,>({
                   {displayName ?? folder.name}
                 </TooltipContent>
               </Tooltip>
-              <span className="typography-micro text-muted-foreground/70 flex-shrink-0">
+              <span className="typography-micro text-muted-foreground flex-shrink-0">
                 • {sessions.length}
               </span>
               {collapsedActivityState ? (
@@ -350,7 +350,7 @@ const SessionFolderItemBase = <TSessionNode,>({
               renderSessionNode(node, 0, groupDirectory ?? null, projectId ?? null, archivedBucket, undefined, 'project', getRenderExtras?.(node)),
             )
           ) : !subFolderItems ? (
-            <div className="py-1 pl-1.5 text-left typography-micro text-muted-foreground/70">
+            <div className="py-1 pl-1.5 text-left typography-micro text-muted-foreground">
               {t('sessions.sidebar.folderItem.emptyFolder')}
             </div>
           ) : null}

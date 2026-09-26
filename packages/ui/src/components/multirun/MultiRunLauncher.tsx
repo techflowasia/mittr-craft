@@ -13,8 +13,8 @@ import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useMultiRunStore } from '@/stores/useMultiRunStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useProjectsStore } from '@/stores/useProjectsStore';
-import { getWorktreeSetupCommands } from '@/lib/openchamberConfig';
-import type { ProjectRef } from '@/lib/openchamberConfig';
+import { getWorktreeSetupCommands } from '@/lib/mittrcraftConfig';
+import type { ProjectRef } from '@/lib/mittrcraftConfig';
 import type { CreateMultiRunParams, MultiRunGroup } from '@/types/multirun';
 import { ModelMultiSelect, generateInstanceId, type ModelSelectionWithId } from './ModelMultiSelect';
 import { BranchSelector, useBranchOptions } from './BranchSelector';
@@ -58,7 +58,7 @@ interface MultiRunLauncherProps {
 const InfoTip: React.FC<{ children: React.ReactNode }> = ({ children }) => (
   <Tooltip>
     <TooltipTrigger asChild>
-      <button type="button" tabIndex={-1} className="inline-flex items-center justify-center text-muted-foreground/50 hover:text-muted-foreground transition-colors">
+      <button type="button" tabIndex={-1} className="inline-flex items-center justify-center text-muted-foreground hover:text-muted-foreground transition-colors">
         <Icon name="information" className="h-3.5 w-3.5" />
       </button>
     </TooltipTrigger>
@@ -195,7 +195,7 @@ export const MultiRunLauncher: React.FC<MultiRunLauncherProps> = ({
 
   const macosMajorVersion = React.useMemo(() => {
     if (typeof window === 'undefined') return null;
-    const injected = (window as unknown as { __OPENCHAMBER_MACOS_MAJOR__?: unknown }).__OPENCHAMBER_MACOS_MAJOR__;
+    const injected = (window as unknown as { __MITTRCRAFT_MACOS_MAJOR__?: unknown }).__MITTRCRAFT_MACOS_MAJOR__;
     if (typeof injected === 'number' && Number.isFinite(injected) && injected > 0) return injected;
     if (typeof navigator === 'undefined') return null;
     const match = (navigator.userAgent || '').match(/Mac OS X (\d+)[._](\d+)/);
@@ -540,14 +540,14 @@ export const MultiRunLauncher: React.FC<MultiRunLauncherProps> = ({
                   </span>
                 )}
                 <Icon name="arrow-down-s" className={cn(
-                  'h-3.5 w-3.5 text-muted-foreground/50 transition-transform duration-200 ml-auto',
+                  'h-3.5 w-3.5 text-muted-foreground transition-transform duration-200 ml-auto',
                   isSetupCommandsOpen && 'rotate-180',
                 )} />
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <div className="pt-2 space-y-1.5">
                   {isLoadingSetupCommands ? (
-                    <p className="typography-meta text-muted-foreground/70 px-2">{t('multirun.launcher.setupCommands.loading')}</p>
+                    <p className="typography-meta text-muted-foreground px-2">{t('multirun.launcher.setupCommands.loading')}</p>
                   ) : (
                     <>
                       {setupCommands.map((command, index) => (

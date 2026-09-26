@@ -1,13 +1,14 @@
 import * as fs from 'fs';
+import { engineConfigDir } from './engine-home';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { BUILT_IN_SKILL_LOCATION, type DiscoveredSkill, type SkillScope, type SkillSource } from './opencodeConfig';
 import type { BridgeContext } from './bridge';
 
-const SETTINGS_KEY = 'openchamber.settings';
-const OPENCHAMBER_SHARED_SETTINGS_PATH = path.join(os.homedir(), '.config', 'openchamber', 'settings.json');
-const OPENCHAMBER_MAGIC_PROMPTS_PATH = path.join(os.homedir(), '.config', 'openchamber', 'magic-prompts.json');
+const SETTINGS_KEY = 'mittrcraft.settings';
+const MITTRCRAFT_SHARED_SETTINGS_PATH = path.join(os.homedir(), '.config', 'mittrcraft', 'settings.json');
+const MITTRCRAFT_MAGIC_PROMPTS_PATH = path.join(os.homedir(), '.config', 'mittrcraft', 'magic-prompts.json');
 const MAGIC_PROMPTS_FILE_VERSION = 1;
 const MAGIC_PROMPT_ID_PATTERN = /^[a-z0-9._-]{1,160}$/;
 const MAGIC_PROMPT_TEXT_MAX_LENGTH = 200_000;
@@ -76,7 +77,7 @@ const inferSkillScopeAndSourceFromLocation = (location: string, workingDirectory
 
   const home = os.homedir();
   const userRoots = [
-    path.join(home, '.config', 'opencode'),
+    path.join(engineConfigDir()),
     path.join(home, '.opencode'),
     path.join(home, '.claude', 'skills'),
     path.join(home, '.agents', 'skills'),
@@ -161,7 +162,7 @@ export const fetchOpenCodeSkillsFromApi = async (
 
 const readSharedSettingsFromDisk = (): Record<string, unknown> => {
   try {
-    const raw = fs.readFileSync(OPENCHAMBER_SHARED_SETTINGS_PATH, 'utf8');
+    const raw = fs.readFileSync(MITTRCRAFT_SHARED_SETTINGS_PATH, 'utf8');
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed as Record<string, unknown>;
@@ -174,14 +175,14 @@ const readSharedSettingsFromDisk = (): Record<string, unknown> => {
 
 const writeSharedSettingsToDisk = async (changes: Record<string, unknown>): Promise<void> => {
   try {
-    await fs.promises.mkdir(path.dirname(OPENCHAMBER_SHARED_SETTINGS_PATH), { recursive: true });
+    await fs.promises.mkdir(path.dirname(MITTRCRAFT_SHARED_SETTINGS_PATH), { recursive: true });
     const current = readSharedSettingsFromDisk();
     const next: Record<string, unknown> = { ...current, ...changes };
     // Atomic write: tmp file + rename. Readers never see a partial/truncated
     // JSON that would fail to parse and silently get coerced to {}.
-    const tmp = `${OPENCHAMBER_SHARED_SETTINGS_PATH}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const tmp = `${MITTRCRAFT_SHARED_SETTINGS_PATH}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     await fs.promises.writeFile(tmp, JSON.stringify(next, null, 2), 'utf8');
-    await fs.promises.rename(tmp, OPENCHAMBER_SHARED_SETTINGS_PATH);
+    await fs.promises.rename(tmp, MITTRCRAFT_SHARED_SETTINGS_PATH);
   } catch {
     // ignore
   }
@@ -207,7 +208,7 @@ const sanitizeMagicPromptOverrides = (input: unknown): Record<string, string> =>
 
 const readMagicPromptFile = (): { version: number; overrides: Record<string, string> } => {
   try {
-    const raw = fs.readFileSync(OPENCHAMBER_MAGIC_PROMPTS_PATH, 'utf8');
+    const raw = fs.readFileSync(MITTRCRAFT_MAGIC_PROMPTS_PATH, 'utf8');
     const parsed = JSON.parse(raw) as { overrides?: unknown };
     return {
       version: MAGIC_PROMPTS_FILE_VERSION,
@@ -222,8 +223,8 @@ const readMagicPromptFile = (): { version: number; overrides: Record<string, str
 };
 
 const writeMagicPromptFile = async (state: { version: number; overrides: Record<string, string> }): Promise<void> => {
-  await fs.promises.mkdir(path.dirname(OPENCHAMBER_MAGIC_PROMPTS_PATH), { recursive: true });
-  await fs.promises.writeFile(OPENCHAMBER_MAGIC_PROMPTS_PATH, JSON.stringify(state, null, 2), 'utf8');
+  await fs.promises.mkdir(path.dirname(MITTRCRAFT_MAGIC_PROMPTS_PATH), { recursive: true });
+  await fs.promises.writeFile(MITTRCRAFT_MAGIC_PROMPTS_PATH, JSON.stringify(state, null, 2), 'utf8');
 };
 
 const stripDerived = (source: Record<string, unknown>): Record<string, unknown> => {

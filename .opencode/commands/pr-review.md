@@ -1,5 +1,5 @@
 ---
-description: Review an OpenChamber pull request interactively with repository-aware correctness and contribution analysis
+description: Review a MittrCraft pull request interactively with repository-aware correctness and contribution analysis
 ---
 
 Review this pull request: $ARGUMENTS

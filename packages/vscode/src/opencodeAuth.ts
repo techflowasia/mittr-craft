@@ -1,8 +1,9 @@
 import fs from 'node:fs';
+import { engineDataDir } from './engine-home';
 import path from 'node:path';
 import os from 'node:os';
 
-const OPENCODE_DATA_DIR = path.join(os.homedir(), '.local', 'share', 'opencode');
+const OPENCODE_DATA_DIR = path.join(engineDataDir());
 const AUTH_FILE = path.join(OPENCODE_DATA_DIR, 'auth.json');
 
 export type AuthEntry = Record<string, unknown>;
@@ -33,7 +34,7 @@ const writeAuthFile = (auth: AuthFile): void => {
     if (process.platform !== 'win32') fs.chmodSync(OPENCODE_DATA_DIR, 0o700);
 
     if (fs.existsSync(AUTH_FILE)) {
-      const backupFile = `${AUTH_FILE}.openchamber.backup`;
+      const backupFile = `${AUTH_FILE}.mittrcraft.backup`;
       fs.copyFileSync(AUTH_FILE, backupFile);
       if (process.platform !== 'win32') fs.chmodSync(backupFile, 0o600);
     }

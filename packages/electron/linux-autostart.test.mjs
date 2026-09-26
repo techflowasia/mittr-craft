@@ -16,7 +16,7 @@ test('prefers APPIMAGE path for Linux autostart Exec', () => {
   assert.equal(
     resolveLinuxLaunchExecutable({
       env: { APPIMAGE: '/home/user/MittrCraft.AppImage' },
-      execPath: '/tmp/.mount_OpenChXXXX/openchamber',
+      execPath: '/tmp/.mount_OpenChXXXX/mittrcraft',
     }),
     '/home/user/MittrCraft.AppImage',
   );
@@ -33,7 +33,7 @@ test('builds a background autostart desktop entry', () => {
 });
 
 test('writes and removes the XDG autostart file', async () => {
-  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-autostart-'));
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'mittrcraft-autostart-'));
   const env = { XDG_CONFIG_HOME: path.join(homeDir, 'config') };
   const filePath = resolveLinuxAutostartFilePath({ env, homeDir });
 

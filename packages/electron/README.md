@@ -1,18 +1,18 @@
-# OpenChamber Desktop
+# MittrCraft Desktop
 
-Electron desktop runtime for OpenChamber on macOS, Windows, and Linux.
+Electron desktop runtime for MittrCraft on macOS, Windows, and Linux.
 
-This package owns the native shell: windows, menus, deep links, native notifications, auto-updates, host switching, SSH connections, tunnel helpers, and packaged desktop builds. The web UI and OpenChamber server logic still live in `packages/web` and shared React UI lives in `packages/ui`.
+This package owns the native shell: windows, menus, deep links, native notifications, auto-updates, host switching, SSH connections, tunnel helpers, and packaged desktop builds. The web UI and MittrCraft server logic still live in `packages/web` and shared React UI lives in `packages/ui`.
 
 ## How It Runs
 
-Desktop starts the OpenChamber web server in the same Electron main process. There is no separate sidecar subprocess for the OpenChamber server.
+Desktop starts the MittrCraft web server in the same Electron main process. There is no separate sidecar subprocess for the MittrCraft server.
 
-`main.mjs` imports `@openchamber/web/server/index.js` and calls `startWebUiServer()`. The Electron window then loads the UI from the local server in development, or from packaged `resources/web-dist` assets in packaged builds.
+`main.mjs` imports `@mittrcraft/web/server/index.js` and calls `startWebUiServer()`. The Electron window then loads the UI from the local server in development, or from packaged `resources/web-dist` assets in packaged builds.
 
 Same-origin session-chat iframes complete an authenticated parent-frame handshake before creating their SDK client. The parent supplies its active in-memory endpoint and credentials; when relay is active it also supplies the public relay descriptor without any pairing grant, because Electron preload and IPC are unavailable inside the iframe. The iframe establishes its own transport and rebinds its SDK before rendering. Additional windows retain their own per-window runtime bootstrap instead of being overwritten by the main window. Credentials are never placed in iframe URLs, and other child pages do not receive this runtime state.
 
-The preload bridge exposes desktop-only APIs to the web UI through `window.__OPENCHAMBER_DESKTOP__`. Privileged commands are checked in `main.mjs`, not only in the UI.
+The preload bridge exposes desktop-only APIs to the web UI through `window.__MITTRCRAFT_DESKTOP__`. Privileged commands are checked in `main.mjs`, not only in the UI.
 
 ## Main Files
 
@@ -80,6 +80,32 @@ That runs, in order:
 
 Build output goes to `packages/electron/dist`.
 
+### Choosing which Mittr the build talks to
+
+`MITTRCRAFT_BROKER_URL` is read at **build** time and baked into
+`dist-bundle/main.mjs` by `bundle:main`. The shell hands it to the web server,
+which uses it in preference to anything in the environment.
+
+```bash
+MITTRCRAFT_BROKER_URL=https://api-dev.mittr.asia bun run electron:build
+```
+
+Left unset, the build carries nothing and the server falls back to its own
+default, production.
+
+Two reasons it is a build input rather than something the application reads at
+startup. A packaged build has no `.env` for anyone to edit, so a person handed
+the application must not have to configure it. And the origin named here is
+where a signed-in developer's Mittr session is sent, so an installed
+application must not be repointable by an environment variable somebody
+happened to export.
+
+The value must be an https origin with no path — a path would be silently
+dropped when endpoints are resolved against it, so a build pointed at a
+prefixed host would look configured and reach the wrong place. Loopback may use
+http, so the whole path can be exercised against a local instance. Anything
+else fails the build's first request rather than falling back.
+
 macOS builds produce `dmg` and `zip` artifacts. Windows builds produce an NSIS installer. Linux builds produce an AppImage for the native x64 or arm64 host.
 
 ## Platform Notes
@@ -88,7 +114,7 @@ macOS packaging needs Xcode/build tools for notarized builds and icon asset comp
 
 Windows packaging needs NSIS support through `electron-builder`. If no Windows signing env is set, `package.mjs` disables code signing and builds an unsigned installer. Windows updates use `latest.yml` for x64 and the `latest-arm64.yml` channel for ARM64 so each installation resolves an architecture-matching installer.
 
-Linux AppImages must be built natively. Set `OPENCHAMBER_TARGET_ARCH=x64` or `OPENCHAMBER_TARGET_ARCH=arm64` when packaging; the build rejects a target that does not match the Linux host. The same target selects the bundled OpenCode CLI, native Electron rebuild, and Electron Builder architecture. Linux identity is stable across architectures: executable `openchamber`, desktop file `openchamber.desktop`, icon `openchamber`, and `StartupWMClass=openchamber`.
+Linux AppImages must be built natively. Set `MITTRCRAFT_TARGET_ARCH=x64` or `MITTRCRAFT_TARGET_ARCH=arm64` when packaging; the build rejects a target that does not match the Linux host. The same target selects the bundled OpenCode CLI, native Electron rebuild, and Electron Builder architecture. Linux identity is stable across architectures: executable `mittrcraft`, desktop file `mittrcraft.desktop`, icon `mittrcraft`, and `StartupWMClass=mittrcraft`.
 
 After packaging, run `bun run --cwd packages/electron verify:linux-appimage`. The verifier extracts the final AppImage and checks its ELF architecture, desktop identity, Electron executable, pinned OpenCode CLI version and architecture, and all packaged native `.node` modules.
 
@@ -115,7 +141,7 @@ Packaged Desktop builds include the official OpenCode CLI that matches the pinne
 Managed local Desktop startup prefers OpenCode binaries in this order:
 
 1. `settings.opencodeBinary`.
-2. Environment overrides: `OPENCODE_BINARY`, `OPENCODE_PATH`, `OPENCHAMBER_OPENCODE_PATH`, or `OPENCHAMBER_OPENCODE_BIN`.
+2. Environment overrides: `OPENCODE_BINARY`, `OPENCODE_PATH`, `MITTRCRAFT_OPENCODE_PATH`, or `MITTRCRAFT_OPENCODE_BIN`.
 3. The bundled Desktop CLI in `process.resourcesPath/opencode-cli`.
 4. System installs discovered from PATH.
 5. Known npm/Bun/Homebrew/Scoop/Chocolatey and other standard install locations.
@@ -127,17 +153,18 @@ Use an explicit override when testing a different OpenCode CLI build or when a u
 
 | Variable | Use |
 |----------|-----|
-| `OPENCHAMBER_ELECTRON_DEV=1` | Marks the runtime as desktop development mode |
-| `OPENCHAMBER_ELECTRON_USE_BUNDLED_UI=1` | Uses staged web assets instead of the HMR dev server |
-| `OPENCHAMBER_SKIP_LOCAL_SERVER=1` | Skips the in-process local OpenChamber server and uses the configured default remote instance; Desktop imports this from the user's login-shell environment, and packaged/bundled UI remains available for connection recovery |
-| `OPENCHAMBER_HMR_UI_PORT` | Preferred Vite UI port for desktop dev, default `5173` |
-| `OPENCHAMBER_HMR_API_PORT` | Preferred API port for desktop dev, default `3901` |
-| `OPENCHAMBER_RUNTIME=desktop` | Set by Electron before starting the web server |
-| `OPENCHAMBER_OPENCODE_CLI_VERSION` | Optional packaging override for the bundled OpenCode CLI version; defaults to the pinned root `@opencode-ai/sdk` version |
-| `OPENCHAMBER_TARGET_ARCH` | Explicit desktop package architecture (`x64` or `arm64`); Linux requires it to match the native host |
-| `OPENCHAMBER_DESKTOP_NOTIFY=true` | Enables desktop notification flow in the web server |
-| `OPENCHAMBER_SKIP_API_COMPRESSION=true` | Defaulted by Desktop to reduce local CPU overhead |
-| `OPENCHAMBER_STARTUP_PERF=1` | Enables privacy-safe startup phase timings in Desktop/server logs; disabled by default |
+| `MITTRCRAFT_ELECTRON_DEV=1` | Marks the runtime as desktop development mode |
+| `MITTRCRAFT_ELECTRON_USE_BUNDLED_UI=1` | Uses staged web assets instead of the HMR dev server |
+| `MITTRCRAFT_SKIP_LOCAL_SERVER=1` | Skips the in-process local MittrCraft server and uses the configured default remote instance; Desktop imports this from the user's login-shell environment, and packaged/bundled UI remains available for connection recovery |
+| `MITTRCRAFT_HMR_UI_PORT` | Preferred Vite UI port for desktop dev, default `5173` |
+| `MITTRCRAFT_HMR_API_PORT` | Preferred API port for desktop dev, default `3901` |
+| `MITTRCRAFT_RUNTIME=desktop` | Set by Electron before starting the web server |
+| `MITTRCRAFT_BROKER_URL` | **Build-time**, not runtime: which Mittr the packaged build talks to. See Packaging. A packaged build ignores it at startup |
+| `MITTRCRAFT_OPENCODE_CLI_VERSION` | Optional packaging override for the bundled OpenCode CLI version; defaults to the pinned root `@opencode-ai/sdk` version |
+| `MITTRCRAFT_TARGET_ARCH` | Explicit desktop package architecture (`x64` or `arm64`); Linux requires it to match the native host |
+| `MITTRCRAFT_DESKTOP_NOTIFY=true` | Enables desktop notification flow in the web server |
+| `MITTRCRAFT_SKIP_API_COMPRESSION=true` | Defaulted by Desktop to reduce local CPU overhead |
+| `MITTRCRAFT_STARTUP_PERF=1` | Enables privacy-safe startup phase timings in Desktop/server logs; disabled by default |
 | `OPENCODE_HOST` / `OPENCODE_PORT` / `OPENCODE_SKIP_START` | Connect Desktop to an external OpenCode server instead of starting one locally |
 
 ## Native Features Owned Here
@@ -153,7 +180,7 @@ Use an explicit override when testing a different OpenCode CLI build or when a u
 - SSH uses OpenSSH ControlMaster on macOS/Linux. Windows uses independent hidden OpenSSH processes for setup commands and each long-lived forward because Win32 OpenSSH does not support ControlMaster reliably.
 - Tunnel lifecycle integration through the web server runtime.
 - Auto-update checks, downloads, and restart/apply flow.
-- The browser panel's own session (`persist:openchamber-browser`): its storage is
+- The browser panel's own session (`persist:mittrcraft-browser`): its storage is
   cleared only through the scoped clear-data command, and camera, microphone,
   location, and device-picker requests from pages shown there are denied. Electron
   grants permission requests by default when no handler is set, and the panel
@@ -168,21 +195,21 @@ Renderer code should call the desktop bridge exposed by `preload.mjs`. Do not im
 Add new native capabilities in this order:
 
 1. Add or update the `preload.mjs` bridge only if a new renderer-facing shape is needed.
-2. Add the real command handling in `main.mjs` under `openchamber:invoke`.
+2. Add the real command handling in `main.mjs` under `mittrcraft:invoke`.
 3. Gate privileged commands in main process logic so remote pages cannot access local filesystem or shell capabilities.
 4. Keep shared UI runtime contracts in `packages/ui` and server/runtime APIs in `packages/web` when the behavior is not inherently native.
 
 ## Logs And Data
 
-Electron uses `electron-log`. In development, console logs are also visible in the terminal. In packaged apps, logs are written through the platform log path for the `OpenChamber` app name.
+Electron uses `electron-log`. In development, console logs are also visible in the terminal. In packaged apps, logs are written through the platform log path for the `MittrCraft` app name.
 
-Development builds use a separate user data directory named `OpenChamber Dev`, so dev state does not overwrite normal packaged app state.
+Development builds use a separate user data directory named `MittrCraft Dev`, so dev state does not overwrite normal packaged app state.
 
 ## Things To Be Careful With
 
 - Keep desktop-specific code in this package. Do not move OpenCode feature backend logic into Electron.
 - Use hidden Windows process launches for background helpers. Avoid visible console flashes.
-- Keep `@openchamber/web`, `bun-pty`, `node-pty`, and native modules external in `bundle-main.mjs`; bundling them can break Electron startup.
+- Keep `@mittrcraft/web`, `bun-pty`, `node-pty`, and native modules external in `bundle-main.mjs`; bundling them can break Electron startup.
 - Rebuild native modules after dependency or Electron version changes.
 - Test both HMR dev mode and bundled UI mode when changing startup, preload, routing, or packaged asset behavior.
 

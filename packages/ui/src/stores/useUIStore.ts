@@ -10,10 +10,11 @@ import { getStoredMobileKeyboardMode, type MobileKeyboardMode } from '@/lib/mobi
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import type { TerminalShell } from '@/lib/api/types';
 import { useFilesViewTabsStore } from './useFilesViewTabsStore';
-import { isWindowsArm64 } from '@/lib/platform';
 import { isVSCodeRuntime } from '@/lib/desktop';
 
 export type MainTab = 'chat' | 'plan' | 'git' | 'diff' | 'terminal' | 'files' | 'context' | 'diagram';
+/** Which edge the session sidebar sits on. */
+export type SidebarSide = 'left' | 'right';
 export type PendingDiffScope = 'working' | 'staged' | 'turn';
 export type ContextPanelMode = 'diff' | 'walkthrough' | 'file' | 'context' | 'plan' | 'chat' | 'browser' | 'git' | 'pr' | 'notes' | 'terminal';
 export type MermaidRenderingMode = 'svg' | 'ascii';
@@ -601,6 +602,12 @@ interface UIStore {
   multiRunLauncherPrefillPrompt: string;
   isSidebarOpen: boolean;
   sidebarWidth: number;
+  /**
+   * Which edge the session sidebar sits on. Every surface reads this one
+   * value, so a person who moves it once finds it moved everywhere rather
+   * than per window.
+   */
+  sidebarSide: SidebarSide;
   hasManuallyResizedLeftSidebar: boolean;
   contextPanelByDirectory: Record<string, ContextPanelDirectoryState>;
   contextRailOrder: string[];
@@ -654,6 +661,7 @@ interface UIStore {
   openCodeStatusText: string;
   isSessionCreateDialogOpen: boolean;
   isScheduledTasksDialogOpen: boolean;
+  isMyWorkDialogOpen: boolean;
   isArchivePageOpen: boolean;
   worktreesPageProjectId: string | null;
   isSettingsDialogOpen: boolean;
@@ -704,6 +712,17 @@ interface UIStore {
 
   favoriteModels: Array<{ providerID: string; modelID: string }>;
   hiddenModels: Array<{ providerID: string; modelID: string }>;
+  /**
+   * Whether providers Mittr did not grant appear in the model picker.
+   *
+   * Off to begin with: what an administrator sent is the roster this tool is
+   * for, and the engine's own catalog otherwise arrives alongside it offering
+   * models nobody approved and no audit record covers. A developer can turn it
+   * on -- adding a provider is theirs to do -- but it is a decision they make,
+   * not a default they have to notice and undo.
+   */
+  showExternalModels: boolean;
+  setShowExternalModels: (value: boolean) => void;
   providerOrder: string[];
   collapsedModelProviders: string[];
   recentModels: Array<{ providerID: string; modelID: string }>;
@@ -746,9 +765,9 @@ interface UIStore {
 
   showTerminalQuickKeysOnDesktop: boolean;
   persistChatDraft: boolean;
-  showOpenCodeUpdateNotifications: boolean;
   agentControlToolEnabled: boolean;
   agentWebToolEnabled: boolean;
+  agentComputerToolEnabled: boolean;
   inputSpellcheckEnabled: boolean;
   wideChatLayoutEnabled: boolean;
   codeBlockLineWrap: boolean;
@@ -777,6 +796,7 @@ interface UIStore {
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
+  setSidebarSide: (side: SidebarSide) => void;
   setContextRailOrder: (order: string[]) => void;
   toggleContextEditorTree: () => void;
   setContextEditorTreeWidth: (width: number) => void;
@@ -831,6 +851,7 @@ interface UIStore {
   setOpenCodeStatusText: (text: string) => void;
   setSessionCreateDialogOpen: (open: boolean) => void;
   setScheduledTasksDialogOpen: (open: boolean) => void;
+  setMyWorkDialogOpen: (open: boolean) => void;
   setArchivePageOpen: (open: boolean) => void;
   setWorktreesPageProjectId: (projectId: string | null) => void;
   /** Close every full-page surface (Scheduled, Archive, Worktrees, Multi-run). */
@@ -920,9 +941,9 @@ interface UIStore {
   setSummaryLength: (value: number) => void;
   setMaxLastMessageLength: (value: number) => void;
   setPersistChatDraft: (value: boolean) => void;
-  setShowOpenCodeUpdateNotifications: (value: boolean) => void;
   setAgentControlToolEnabled: (value: boolean) => void;
   setAgentWebToolEnabled: (value: boolean) => void;
+  setAgentComputerToolEnabled: (value: boolean) => void;
   setInputSpellcheckEnabled: (value: boolean) => void;
   setWideChatLayoutEnabled: (value: boolean) => void;
   setCodeBlockLineWrap: (value: boolean) => void;
@@ -966,6 +987,7 @@ export const useUIStore = create<UIStore>()(
         multiRunLauncherPrefillPrompt: '',
         isSidebarOpen: true,
         sidebarWidth: LEFT_SIDEBAR_MIN_WIDTH,
+        sidebarSide: 'left',
         hasManuallyResizedLeftSidebar: false,
         contextPanelByDirectory: {},
         contextRailOrder: [],
@@ -999,6 +1021,7 @@ export const useUIStore = create<UIStore>()(
         openCodeStatusText: '',
         isSessionCreateDialogOpen: false,
         isScheduledTasksDialogOpen: false,
+        isMyWorkDialogOpen: false,
         isArchivePageOpen: false,
         worktreesPageProjectId: null,
         isSettingsDialogOpen: false,
@@ -1042,6 +1065,8 @@ export const useUIStore = create<UIStore>()(
         mobileKeyboardMode: getStoredMobileKeyboardMode(),
         favoriteModels: [],
         hiddenModels: [],
+        showExternalModels: false,
+        setShowExternalModels: (value: boolean) => set({ showExternalModels: value === true }),
         providerOrder: [],
         collapsedModelProviders: [],
         recentModels: [],
@@ -1079,9 +1104,9 @@ export const useUIStore = create<UIStore>()(
 
         showTerminalQuickKeysOnDesktop: false,
         persistChatDraft: true,
-        showOpenCodeUpdateNotifications: !isWindowsArm64(),
         agentControlToolEnabled: true,
         agentWebToolEnabled: true,
+        agentComputerToolEnabled: true,
         inputSpellcheckEnabled: false,
         wideChatLayoutEnabled: false,
         codeBlockLineWrap: true,
@@ -1153,6 +1178,7 @@ export const useUIStore = create<UIStore>()(
         setSidebarWidth: (width) => {
           set({ sidebarWidth: width, hasManuallyResizedLeftSidebar: true });
         },
+        setSidebarSide: (side) => set({ sidebarSide: side }),
 
         setContextRailOrder: (order) => {
           const sanitized = Array.isArray(order)
@@ -1709,29 +1735,36 @@ export const useUIStore = create<UIStore>()(
 
         setScheduledTasksDialogOpen: (open) => {
           set(open
-            ? { isScheduledTasksDialogOpen: true, isArchivePageOpen: false, worktreesPageProjectId: null, isMultiRunLauncherOpen: false }
+            ? { isScheduledTasksDialogOpen: true, isMyWorkDialogOpen: false, isArchivePageOpen: false, worktreesPageProjectId: null, isMultiRunLauncherOpen: false }
             : { isScheduledTasksDialogOpen: false });
+        },
+
+        setMyWorkDialogOpen: (open) => {
+          set(open
+            ? { isMyWorkDialogOpen: true, isScheduledTasksDialogOpen: false, isArchivePageOpen: false, worktreesPageProjectId: null, isMultiRunLauncherOpen: false }
+            : { isMyWorkDialogOpen: false });
         },
 
         setArchivePageOpen: (open) => {
           set(open
-            ? { isArchivePageOpen: true, isScheduledTasksDialogOpen: false, worktreesPageProjectId: null, isMultiRunLauncherOpen: false }
+            ? { isArchivePageOpen: true, isScheduledTasksDialogOpen: false, isMyWorkDialogOpen: false, worktreesPageProjectId: null, isMultiRunLauncherOpen: false }
             : { isArchivePageOpen: false });
         },
 
         setWorktreesPageProjectId: (projectId) => {
           set(projectId
-            ? { worktreesPageProjectId: projectId, isScheduledTasksDialogOpen: false, isArchivePageOpen: false, isMultiRunLauncherOpen: false }
+            ? { worktreesPageProjectId: projectId, isScheduledTasksDialogOpen: false, isMyWorkDialogOpen: false, isArchivePageOpen: false, isMultiRunLauncherOpen: false }
             : { worktreesPageProjectId: null });
         },
 
         closeMainSurfaces: () => {
           const state = get();
-          if (!state.isScheduledTasksDialogOpen && !state.isArchivePageOpen && !state.worktreesPageProjectId && !state.isMultiRunLauncherOpen) {
+          if (!state.isScheduledTasksDialogOpen && !state.isMyWorkDialogOpen && !state.isArchivePageOpen && !state.worktreesPageProjectId && !state.isMultiRunLauncherOpen) {
             return;
           }
           set({
             isScheduledTasksDialogOpen: false,
+            isMyWorkDialogOpen: false,
             isArchivePageOpen: false,
             worktreesPageProjectId: null,
             isMultiRunLauncherOpen: false,
@@ -2218,7 +2251,7 @@ export const useUIStore = create<UIStore>()(
           set((state) => ({
             isMultiRunLauncherOpen: open,
             multiRunLauncherPrefillPrompt: open ? state.multiRunLauncherPrefillPrompt : '',
-            ...(open ? { isScheduledTasksDialogOpen: false, isArchivePageOpen: false, worktreesPageProjectId: null } : {}),
+            ...(open ? { isScheduledTasksDialogOpen: false, isMyWorkDialogOpen: false, isArchivePageOpen: false, worktreesPageProjectId: null } : {}),
           }));
         },
 
@@ -2228,6 +2261,7 @@ export const useUIStore = create<UIStore>()(
             multiRunLauncherPrefillPrompt: '',
             isSessionSwitcherOpen: false,
             isScheduledTasksDialogOpen: false,
+            isMyWorkDialogOpen: false,
             isArchivePageOpen: false,
             worktreesPageProjectId: null,
           });
@@ -2239,6 +2273,7 @@ export const useUIStore = create<UIStore>()(
             multiRunLauncherPrefillPrompt: prompt,
             isSessionSwitcherOpen: false,
             isScheduledTasksDialogOpen: false,
+            isMyWorkDialogOpen: false,
             isArchivePageOpen: false,
             worktreesPageProjectId: null,
           });
@@ -2297,14 +2332,14 @@ export const useUIStore = create<UIStore>()(
         setPersistChatDraft: (value) => {
           set({ persistChatDraft: value });
         },
-        setShowOpenCodeUpdateNotifications: (value) => {
-          set({ showOpenCodeUpdateNotifications: value });
-        },
         setAgentControlToolEnabled: (value) => {
           set({ agentControlToolEnabled: value });
         },
         setAgentWebToolEnabled: (value) => {
           set({ agentWebToolEnabled: value });
+        },
+        setAgentComputerToolEnabled: (value) => {
+          set({ agentComputerToolEnabled: value });
         },
         setInputSpellcheckEnabled: (value) => {
           set({ inputSpellcheckEnabled: value });
@@ -2477,10 +2512,10 @@ export const useUIStore = create<UIStore>()(
               let legacyEnabled = true;
               try {
                 if (typeof localStorage !== 'undefined') {
-                  const legacy = localStorage.getItem('openchamber:files:auto-save-enabled');
+                  const legacy = localStorage.getItem('mittrcraft:files:auto-save-enabled');
                   if (legacy !== null) {
                     legacyEnabled = legacy !== 'false';
-                    localStorage.removeItem('openchamber:files:auto-save-enabled');
+                    localStorage.removeItem('mittrcraft:files:auto-save-enabled');
                   }
                 }
               } catch {
@@ -2615,6 +2650,7 @@ export const useUIStore = create<UIStore>()(
           theme: state.theme,
           isSidebarOpen: state.isSidebarOpen,
           sidebarWidth: state.sidebarWidth,
+          sidebarSide: state.sidebarSide,
           contextPanelByDirectory: state.contextPanelByDirectory,
           contextRailOrder: state.contextRailOrder,
           contextEditorTreeVisible: state.contextEditorTreeVisible,
@@ -2663,6 +2699,7 @@ export const useUIStore = create<UIStore>()(
           cornerRadius: state.cornerRadius,
           favoriteModels: state.favoriteModels,
           hiddenModels: state.hiddenModels,
+          showExternalModels: state.showExternalModels,
           providerOrder: state.providerOrder,
           collapsedModelProviders: state.collapsedModelProviders,
           recentModels: state.recentModels,
@@ -2686,9 +2723,9 @@ export const useUIStore = create<UIStore>()(
           summaryLength: state.summaryLength,
           maxLastMessageLength: state.maxLastMessageLength,
           persistChatDraft: state.persistChatDraft,
-          showOpenCodeUpdateNotifications: state.showOpenCodeUpdateNotifications,
           agentControlToolEnabled: state.agentControlToolEnabled,
           agentWebToolEnabled: state.agentWebToolEnabled,
+          agentComputerToolEnabled: state.agentComputerToolEnabled,
           inputSpellcheckEnabled: state.inputSpellcheckEnabled,
           wideChatLayoutEnabled: state.wideChatLayoutEnabled,
           codeBlockLineWrap: state.codeBlockLineWrap,

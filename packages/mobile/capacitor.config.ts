@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.openchamber.app',
+  appId: 'com.mittrcraft.app',
   appName: 'MittrCraft',
   webDir: 'dist',
   server: {

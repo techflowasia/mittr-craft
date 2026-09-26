@@ -2,14 +2,14 @@ import { parse as parseJsonc } from 'jsonc-parser';
 import { pathToFileURL } from 'node:url';
 
 const PROVIDER_PROMPT_BOUNDARY = 'You are powered by the model named';
-const MINIMAL_IDENTITY = 'You are OpenCode, a coding agent.';
+const MINIMAL_IDENTITY = 'You are MittrCraft, a coding agent.';
 
 const createPluginSource = () => String.raw`
 const PROVIDER_PROMPT_BOUNDARY = ${JSON.stringify(PROVIDER_PROMPT_BOUNDARY)}
 const MINIMAL_IDENTITY = ${JSON.stringify(MINIMAL_IDENTITY)}
 const optimizedSessions = new Map()
 
-export const OpenChamberSystemPromptPlugin = async () => ({
+export const MittrCraftSystemPromptPlugin = async () => ({
   "chat.message": async (input, output) => {
     if (!input.sessionID) return
     const agent = output?.message?.agent ?? input.agent
@@ -54,7 +54,7 @@ const mergePluginConfig = (rawConfig, pluginUrl) => {
 
 export const createSystemPromptRuntime = ({ fsPromises, path, dataDir }) => {
   const pluginDirectory = path.join(dataDir, 'system-prompt');
-  const pluginPath = path.join(pluginDirectory, 'openchamber-system-prompt-plugin.js');
+  const pluginPath = path.join(pluginDirectory, 'mittrcraft-system-prompt-plugin.js');
 
   const prepareManagedOpenCodeEnv = async (rawConfig) => {
     await fsPromises.mkdir(pluginDirectory, { recursive: true });

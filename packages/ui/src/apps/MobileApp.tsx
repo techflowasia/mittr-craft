@@ -1,11 +1,10 @@
 import React from 'react';
 
-import { AboutSettings } from '@/components/sections/openchamber/AboutSettings';
-import { OpenCodeUpdateToast } from '@/components/update/OpenCodeUpdateToast';
+import { AboutSettings } from '@/components/sections/mittrcraft/AboutSettings';
 import { MobileAppUpdateToast } from '@/components/update/MobileAppUpdateToast';
 import { ConfigUpdateOverlay } from '@/components/ui/ConfigUpdateOverlay';
 import { Button } from '@/components/ui/button';
-import { OpenChamberLogo } from '@/components/ui/OpenChamberLogo';
+import { MittrCraftLogo } from '@/components/ui/MittrCraftLogo';
 import { ChatView } from '@/components/views/ChatView';
 import { PlanView } from '@/components/views/PlanView';
 import { SettingsView } from '@/components/views/SettingsView';
@@ -177,10 +176,22 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
     setWorkspaceOpen(true);
   }, []);
 
-  const leftResize = useIpadSidebarResize('left', 'openchamber.ipad.leftSidebarWidth', IPAD_LEFT_SIDEBAR_WIDTH);
+  // Where the sessions sidebar lives. The workspace panel is NOT flipped with
+  // it: it stays welded to the right of the chat, and the sessions sidebar takes
+  // the outermost edge of whichever side it is on — so on `'right'` the row
+  // reads chat | workspace | sessions and the two panels never contend for the
+  // same edge.
+  const sidebarSide = useUIStore((state) => state.sidebarSide);
+  const sessionsSidebarOnRight = sidebarSide === 'right';
+  // Side and storage key are deliberately independent: the stored width belongs
+  // to the sessions sidebar, not to a screen edge, so it travels with the panel
+  // when the setting flips. Inheriting `rightSidebarWidth` instead would hand it
+  // an unrelated panel's width. The key keeps its historical `left` name so no
+  // existing user loses the width they set.
+  const leftResize = useIpadSidebarResize(sidebarSide, 'mittrcraft.ipad.leftSidebarWidth', IPAD_LEFT_SIDEBAR_WIDTH);
   const rightResize = useIpadSidebarResize(
     'right',
-    'openchamber.ipad.rightSidebarWidth',
+    'mittrcraft.ipad.rightSidebarWidth',
     IPAD_RIGHT_SIDEBAR_WIDTH,
     IPAD_WORKSPACE_SIDEBAR_MAX_WIDTH,
   );
@@ -199,13 +210,18 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
   React.useEffect(() => {
     if (typeof document === 'undefined') return;
     const root = document.documentElement;
-    root.style.setProperty('--oc-chat-inset-left', `${sidebarWidth}px`);
-    root.style.setProperty('--oc-chat-inset-right', `${workspacePanelWidth}px`);
+    // Both panels sit to the right of the chat once the sessions sidebar flips,
+    // so the insets have to add up rather than stay one per edge.
+    root.style.setProperty('--oc-chat-inset-left', `${sessionsSidebarOnRight ? 0 : sidebarWidth}px`);
+    root.style.setProperty(
+      '--oc-chat-inset-right',
+      `${workspacePanelWidth + (sessionsSidebarOnRight ? sidebarWidth : 0)}px`,
+    );
     return () => {
       root.style.removeProperty('--oc-chat-inset-left');
       root.style.removeProperty('--oc-chat-inset-right');
     };
-  }, [sidebarWidth, workspacePanelWidth]);
+  }, [sessionsSidebarOnRight, sidebarWidth, workspacePanelWidth]);
 
   // Wide chat layout: the shared chat columns key off this root class, but only
   // the desktop App set it — so on a tablet, where the chat column is finally
@@ -242,7 +258,7 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
     [openChangesSurface, openFilesSurface, openSettingsSurface],
   );
 
-  // Expose the shell's panel-opening actions to the deep-link layer so openchamber:// URLs
+  // Expose the shell's panel-opening actions to the deep-link layer so mittrcraft:// URLs
   // (and notification taps / widgets) can navigate to these surfaces. Session and
   // new-session intents resolve directly against the store, so they aren't wired here.
   const deepLinkHandlers = React.useMemo(
@@ -383,10 +399,15 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
               // rows are opaque bg-background (the swipe actions live under
               // them), so a tinted sidebar would show through as row-shaped
               // bands. Same surface as the phone drawer.
-              'relative flex h-full shrink-0 flex-col overflow-hidden border-r border-border/70 bg-background will-change-[width] motion-reduce:transition-none',
-              !sidebarOpen && 'border-r-0',
+              'relative flex h-full shrink-0 flex-col overflow-hidden border-border/70 bg-background will-change-[width] motion-reduce:transition-none',
+              // The border is always the edge facing the chat.
+              sessionsSidebarOnRight ? 'border-l' : 'border-r',
+              !sidebarOpen && (sessionsSidebarOnRight ? 'border-l-0' : 'border-r-0'),
             )}
             style={{
+              // Ordered last so it lands outboard of the workspace panel; left
+              // stays at the source order it has always had.
+              order: sessionsSidebarOnRight ? 1 : undefined,
               width: sidebarOpen ? leftResize.width : 0,
               minWidth: sidebarOpen ? leftResize.width : 0,
               maxWidth: sidebarOpen ? leftResize.width : 0,
@@ -426,8 +447,10 @@ const MobileShell: React.FC<{ onActiveConnectionDeleted: () => void }> = ({ onAc
                 and the handle has to sit above every one of them. */}
             {sidebarOpen ? (
               <IpadSidebarResizeHandle
-                side="left"
+                side={sidebarSide}
                 isResizing={leftResize.isResizing}
+                // Side-neutral text under a key whose id still says "left";
+                // see the note in components/layout/Sidebar.tsx.
                 ariaLabel={t('sidebar.resize.leftPanelAria')}
                 handleProps={leftResize.handleProps}
               />
@@ -741,7 +764,7 @@ export function MobileApp({ apis }: MobileAppProps) {
     const now = Date.now();
     if (now - lastNativeResumeSyncEventAtRef.current >= NATIVE_RESUME_SYNC_EVENT_THROTTLE_MS) {
       lastNativeResumeSyncEventAtRef.current = now;
-      window.dispatchEvent(new Event('openchamber:system-resume'));
+      window.dispatchEvent(new Event('mittrcraft:system-resume'));
     }
   }, [agentsCount, apis.github, initializeApp, loadAgents, loadProviders, providersCount, refreshGitHubAuthStatus]);
 
@@ -1122,7 +1145,7 @@ export function MobileApp({ apis }: MobileAppProps) {
   // (document.hasFocus() is unreliable) and leaked while the app was open; the in-app SSE
   // notification dispatch is no-op'd for native in renderMobileApp.
   useNativePushRegistration({ enabled: isNativeMobileApp && isConnected });
-  // Single native deep-link entry point: notification taps AND the openchamber:// URL
+  // Single native deep-link entry point: notification taps AND the mittrcraft:// URL
   // scheme (widgets, Live Activities, external links). Registered unconditionally so a
   // cold-launch tap/open isn't lost on the connect/splash screen; intents stash until
   // the app is ready (connected + initialized) and shell handlers are registered.
@@ -1141,7 +1164,7 @@ export function MobileApp({ apis }: MobileAppProps) {
   if (!fontsReady) {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-background text-foreground">
-        <OpenChamberLogo width={120} height={120} isAnimated />
+        <MittrCraftLogo width={120} height={120} isAnimated />
       </main>
     );
   }
@@ -1159,7 +1182,7 @@ export function MobileApp({ apis }: MobileAppProps) {
       return (
         <main className="flex min-h-dvh items-center justify-center bg-background px-6 text-center text-foreground">
           <div className="flex max-w-sm flex-col items-center gap-4">
-            <OpenChamberLogo width={120} height={120} isAnimated={!showConnectionRecovery} />
+            <MittrCraftLogo width={120} height={120} isAnimated={!showConnectionRecovery} />
             {showConnectionRecovery ? (
               <>
                 <div className="space-y-2">
@@ -1190,7 +1213,7 @@ export function MobileApp({ apis }: MobileAppProps) {
     if (autoConnectPhase !== 'done') {
       return (
         <main className="relative flex min-h-dvh items-center justify-center bg-background text-foreground">
-          <OpenChamberLogo width={120} height={120} isAnimated />
+          <MittrCraftLogo width={120} height={120} isAnimated />
           {/* Absolutely positioned below the (still perfectly centered) logo so
               the text never pushes it up. 50% + half the 120px logo + a gap. */}
           {autoConnectLabel ? (
@@ -1222,7 +1245,7 @@ export function MobileApp({ apis }: MobileAppProps) {
     if (!showConnectionRecovery) {
       return (
         <main className="flex min-h-dvh items-center justify-center bg-background text-foreground">
-          <OpenChamberLogo width={120} height={120} isAnimated />
+          <MittrCraftLogo width={120} height={120} isAnimated />
         </main>
       );
     }
@@ -1248,11 +1271,10 @@ export function MobileApp({ apis }: MobileAppProps) {
                   shell (and sync) still mounts and warms up underneath. */}
               {isNativeMobileApp && lastSessionRestorePending ? (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-background">
-                  <OpenChamberLogo width={120} height={120} isAnimated />
+                  <MittrCraftLogo width={120} height={120} isAnimated />
                 </div>
               ) : null}
               <SyncAppEffects embeddedBackgroundWorkEnabled={isInitialized} />
-              <OpenCodeUpdateToast />
               <MobileAppUpdateToast />
               <MobileShell onActiveConnectionDeleted={() => {
                 switchRuntimeEndpoint({ apiBaseUrl: '', clientToken: null, runtimeKey: 'mobile-disconnected' });

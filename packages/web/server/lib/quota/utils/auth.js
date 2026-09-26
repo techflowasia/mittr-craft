@@ -1,9 +1,10 @@
 import fs from 'fs';
+import { engineConfigDir, engineDataDir } from '../../opencode/home.js';
 import path from 'path';
 import os from 'os';
 
-const OPENCODE_CONFIG_DIR = path.join(os.homedir(), '.config', 'opencode');
-const OPENCODE_DATA_DIR = path.join(os.homedir(), '.local', 'share', 'opencode');
+const OPENCODE_CONFIG_DIR = path.join(engineConfigDir());
+const OPENCODE_DATA_DIR = path.join(engineDataDir());
 
 export const ANTIGRAVITY_ACCOUNTS_PATHS = [
   path.join(OPENCODE_CONFIG_DIR, 'antigravity-accounts.json'),

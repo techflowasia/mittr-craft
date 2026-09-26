@@ -23,11 +23,11 @@ const localPortByTarget = new Map<string, number>();
 const originByLocalPort = new Map<number, string>();
 
 const isDesktopRuntime = (): boolean => (
-  typeof window !== 'undefined' && Boolean(window.__OPENCHAMBER_ELECTRON__)
+  typeof window !== 'undefined' && Boolean(window.__MITTRCRAFT_ELECTRON__)
 );
 
 /**
- * True when the app is talking to an MittrCraft on another machine. A local
+ * True when the app is talking to a MittrCraft on another machine. A local
  * runtime resolves loopback URLs correctly on its own and must not be tunneled,
  * which would only add a hop.
  */
@@ -35,7 +35,7 @@ const isRemoteRuntime = (baseUrl: string): boolean => {
   if (!baseUrl) return false;
   try {
     const parsed = new URL(baseUrl, typeof window !== 'undefined' ? window.location.href : undefined);
-    const localOrigin = typeof window !== 'undefined' ? window.__OPENCHAMBER_LOCAL_ORIGIN__ : '';
+    const localOrigin = typeof window !== 'undefined' ? window.__MITTRCRAFT_LOCAL_ORIGIN__ : '';
     if (localOrigin && parsed.origin === localOrigin) return false;
     return !isLoopbackUrl(parsed.toString());
   } catch {

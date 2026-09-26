@@ -6,7 +6,7 @@ import path from 'path';
 import { parseMdFile, writeMdFile } from './shared.js';
 import { updateAgent } from './agents.js';
 
-const FIXTURE_DIR = path.join(os.tmpdir(), `openchamber-shared-test-${process.pid}`);
+const FIXTURE_DIR = path.join(os.tmpdir(), `mittrcraft-shared-test-${process.pid}`);
 
 const STANDARD_MD = [
   '---',

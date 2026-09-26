@@ -7,7 +7,6 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { ConfigUpdateOverlay } from '@/components/ui/ConfigUpdateOverlay';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
-import { OpenCodeUpdateToast } from '@/components/update/OpenCodeUpdateToast';
 import { VSCodeLayout } from '@/components/layout/VSCodeLayout';
 import { usePushVisibilityBeacon } from '@/hooks/usePushVisibilityBeacon';
 import { useRouter } from '@/hooks/useRouter';
@@ -28,7 +27,7 @@ type VSCodePanelType = 'chat' | 'agentManager';
 
 declare global {
   interface Window {
-    __OPENCHAMBER_PANEL_TYPE__?: VSCodePanelType;
+    __MITTRCRAFT_PANEL_TYPE__?: VSCodePanelType;
   }
 }
 
@@ -44,7 +43,7 @@ export function VSCodeApp({ apis }: VSCodeAppProps) {
   const refreshGitHubAuthStatus = useGitHubAuthStore((state) => state.refreshStatus);
   const setPlanModeEnabled = useFeatureFlagsStore((state) => state.setPlanModeEnabled);
   const panelType = typeof window !== 'undefined'
-    ? window.__OPENCHAMBER_PANEL_TYPE__
+    ? window.__MITTRCRAFT_PANEL_TYPE__
     : 'chat';
 
   React.useEffect(() => {
@@ -108,7 +107,6 @@ export function VSCodeApp({ apis }: VSCodeAppProps) {
               <div className="h-full text-foreground bg-background">
                 <SyncAppEffects embeddedBackgroundWorkEnabled={true} />
                 <AgentManagerView />
-                <OpenCodeUpdateToast />
                 <Toaster position="top-center" />
               </div>
             </TooltipProvider>
@@ -127,7 +125,6 @@ export function VSCodeApp({ apis }: VSCodeAppProps) {
               <div className="h-full text-foreground bg-background">
                 <SyncAppEffects embeddedBackgroundWorkEnabled={true} />
                 <VSCodeLayout />
-                <OpenCodeUpdateToast />
                 <Toaster position="top-center" />
                 <ConfigUpdateOverlay />
               </div>

@@ -8,7 +8,7 @@ import { invokeDesktop, isDesktopShell, isVSCodeRuntime } from '@/lib/desktop';
 import { syncDesktopSettings, initializeAppearancePreferences } from '@/lib/persistence';
 import { applyPersistedDirectoryPreferences } from '@/lib/directoryPersistence';
 import { DesktopHostSwitcherInline } from '@/components/desktop/DesktopHostSwitcher';
-import { OpenChamberLogo } from '@/components/ui/OpenChamberLogo';
+import { MittrCraftLogo } from '@/components/ui/MittrCraftLogo';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
@@ -44,13 +44,13 @@ const STATUS_CHECK_ENDPOINT = '/auth/session';
 // answers (200/401/429) are never retried.
 const TRANSIENT_RETRY_MAX_ATTEMPTS = 4;
 const TRANSIENT_RETRY_BASE_DELAY_MS = 1_500;
-const TRUST_DEVICE_STORAGE_KEY = 'openchamber.uiAuth.trustDevice';
+const TRUST_DEVICE_STORAGE_KEY = 'mittrcraft.uiAuth.trustDevice';
 const LOCAL_DESKTOP_CLIENT_KIND = 'desktop-local';
 const LOCAL_DESKTOP_CLIENT_DEDUPE_KEY = 'desktop-local';
 
 const readLocalOrigin = (): string => {
   if (typeof window === 'undefined') return '';
-  const injected = (window as typeof window & { __OPENCHAMBER_LOCAL_ORIGIN__?: string }).__OPENCHAMBER_LOCAL_ORIGIN__;
+  const injected = (window as typeof window & { __MITTRCRAFT_LOCAL_ORIGIN__?: string }).__MITTRCRAFT_LOCAL_ORIGIN__;
   return typeof injected === 'string' ? injected.trim() : '';
 };
 
@@ -294,7 +294,7 @@ const AuthShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
 const LoadingScreen: React.FC = () => (
   <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
-    <OpenChamberLogo width={120} height={120} />
+    <MittrCraftLogo width={120} height={120} />
   </div>
 );
 
@@ -1062,7 +1062,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
               {adEnabled && adMode === 'ldap' && (
                 <div className="space-y-2">
                   <div className="relative">
-                    <Icon name="user" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
+                    <Icon name="user" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="ad-username"
                       ref={adUsernameInputRef}
@@ -1080,7 +1080,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="relative flex-1">
-                      <Icon name="lock" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
+                      <Icon name="lock" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
                         id="ad-password"
                         type="password"
@@ -1133,9 +1133,9 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
               )}
               {passwordEnabled && <div className="flex items-center gap-2">
                 <div className="relative flex-1">
-                  <Icon name="lock" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
+                  <Icon name="lock" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
-                    id="openchamber-ui-password"
+                    id="mittrcraft-ui-password"
                     ref={passwordInputRef}
                     type="password"
                     autoComplete="current-password"

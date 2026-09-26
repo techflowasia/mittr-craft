@@ -489,6 +489,7 @@ export const Header: React.FC<HeaderProps> = ({
   const setSessionSwitcherOpen = useUIStore((state) => state.setSessionSwitcherOpen);
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
   const isSidebarOpen = useUIStore((state) => state.isSidebarOpen);
+  const isSidebarRight = useUIStore((state) => state.sidebarSide) === 'right';
   const openContextOverview = useUIStore((state) => state.openContextOverview);
   const openContextPlan = useUIStore((state) => state.openContextPlan);
   const closeContextPanel = useUIStore((state) => state.closeContextPanel);
@@ -582,7 +583,7 @@ export const Header: React.FC<HeaderProps> = ({
       return null;
     }
 
-    const injected = (window as unknown as { __OPENCHAMBER_MACOS_MAJOR__?: unknown }).__OPENCHAMBER_MACOS_MAJOR__;
+    const injected = (window as unknown as { __MITTRCRAFT_MACOS_MAJOR__?: unknown }).__MITTRCRAFT_MACOS_MAJOR__;
     if (typeof injected === 'number' && Number.isFinite(injected) && injected > 0) {
       return injected;
     }
@@ -740,7 +741,7 @@ export const Header: React.FC<HeaderProps> = ({
     try {
       // Status-only poll: must not count as usage on the remote server's install id.
       const params = new URLSearchParams({ appType: 'web', instanceMode: 'remote', reportUsage: 'false' });
-      const response = await runtimeFetch(`/api/openchamber/update-check?${params.toString()}`, {
+      const response = await runtimeFetch(`/api/mittrcraft/update-check?${params.toString()}`, {
         method: 'GET',
         headers: { Accept: 'application/json' },
       });
@@ -1552,17 +1553,29 @@ export const Header: React.FC<HeaderProps> = ({
     document.documentElement.style.setProperty('--oc-titlebar-left-inset', titlebarLeftInset);
   }, [titlebarLeftInset]);
 
-  // Space reserved on the header's left for the persistent overlay when the
-  // sidebar is collapsed (the overlay sits over the header then). Split into two
-  // spacers so the strip stays a window drag area while the buttons stay
-  // clickable: a drag region for the window-controls inset (traffic lights) and
-  // a no-drag carve under the control cluster. Both animate so the session title
-  // slides in/out in lockstep with the sidebar. When the sidebar is open the
-  // overlay is over the sidebar, so the header only keeps normal content padding.
-  const headerInsetSpacerWidth = isSidebarOpen ? '0.75rem' : 'var(--oc-titlebar-left-inset, 0.75rem)';
-  const headerControlsSpacerWidth = isSidebarOpen
-    ? '0px'
-    : 'calc(var(--oc-titlebar-controls-width, 5.5rem) + 0.5rem)';
+  // Space reserved on the header's left for the persistent TitlebarLeftControls
+  // overlay whenever that overlay sits over the header. The overlay is pinned to
+  // the window's top-left corner on every platform and for both sidebar sides
+  // (see TitlebarLeftControls for why it does not follow the sidebar), so the
+  // header owns that corner unless the sidebar is open *and* docked left — when
+  // the sidebar is docked right the header starts at the window's left edge and
+  // must reserve the footprint whether the sidebar is open or not.
+  //
+  // Reserving is not cosmetic: without the no-drag carve the header's drag
+  // region would sit under the overlay's buttons and swallow their clicks, and
+  // without the inset the macOS traffic lights would overlap header content.
+  //
+  // Split into two spacers so the strip stays a window drag area while the
+  // buttons stay clickable: a drag region for the window-controls inset (traffic
+  // lights) and a no-drag carve under the control cluster. Both animate so the
+  // session title slides in/out in lockstep with the sidebar.
+  const headerOwnsTitlebarControls = !isSidebarOpen || isSidebarRight;
+  const headerInsetSpacerWidth = headerOwnsTitlebarControls
+    ? 'var(--oc-titlebar-left-inset, 0.75rem)'
+    : '0.75rem';
+  const headerControlsSpacerWidth = headerOwnsTitlebarControls
+    ? 'calc(var(--oc-titlebar-controls-width, 5.5rem) + 0.5rem)'
+    : '0px';
 
   useEffect(() => {
     if (!isDesktopApp || !isMacPlatform) {
@@ -1590,11 +1603,11 @@ export const Header: React.FC<HeaderProps> = ({
     };
 
     void syncFullscreenState();
-    window.addEventListener('openchamber:window-resized', onResize);
+    window.addEventListener('mittrcraft:window-resized', onResize);
 
     return () => {
       disposed = true;
-      window.removeEventListener('openchamber:window-resized', onResize);
+      window.removeEventListener('mittrcraft:window-resized', onResize);
     };
   }, [isDesktopApp, isMacPlatform]);
 
@@ -1933,7 +1946,7 @@ export const Header: React.FC<HeaderProps> = ({
               {activeSurfaceHeader.title}
             </span>
             {activeSurfaceHeader.subtitle ? (
-              <span className="truncate typography-micro text-[10.5px] font-normal leading-tight text-muted-foreground/75 max-w-full">
+              <span className="truncate typography-micro text-[10.5px] font-normal leading-tight text-muted-foreground max-w-full">
                 {activeSurfaceHeader.subtitle}
               </span>
             ) : null}
@@ -1998,7 +2011,7 @@ export const Header: React.FC<HeaderProps> = ({
                 </span>
               )}
               {showHeaderMetaRow ? (
-                <span className="flex min-w-0 max-w-full items-center gap-1.5 truncate typography-micro text-[10.5px] font-normal leading-tight text-muted-foreground/75">
+                <span className="flex min-w-0 max-w-full items-center gap-1.5 truncate typography-micro text-[10.5px] font-normal leading-tight text-muted-foreground">
                   {activeProjectLabel ? <span className="truncate">{activeProjectLabel}</span> : null}
                   {currentBranchLabel ? (
                     <span className="inline-flex min-w-0 items-center gap-0.5">
@@ -2009,7 +2022,7 @@ export const Header: React.FC<HeaderProps> = ({
                   {!isNewSessionDraftOpen && worktreeBadgeKind ? (
                     <span className={cn(
                       "inline-flex min-w-0 items-center gap-0.5",
-                      worktreeBadgeKind === 'attention' || worktreeBadgeKind === 'invalid' || worktreeBadgeKind === 'missing' ? 'text-status-warning' : 'text-muted-foreground/60'
+                      worktreeBadgeKind === 'attention' || worktreeBadgeKind === 'invalid' || worktreeBadgeKind === 'missing' ? 'text-status-warning' : 'text-muted-foreground'
                     )}>
                       <Icon name="alert" className="h-3 w-3 flex-shrink-0" />
                       <span className="truncate">{worktreeBadge}</span>
@@ -2137,7 +2150,7 @@ export const Header: React.FC<HeaderProps> = ({
                     'mr-1',
                     // On is the resting state and carries no chrome; off is the
                     // one worth signalling, so it dims instead of filling.
-                    workStatusToggleActive ? 'text-foreground' : 'text-muted-foreground/50',
+                    workStatusToggleActive ? 'text-foreground' : 'text-muted-foreground',
                   )}
                 >
                   <Icon name="list-indefinite" className="h-[18px] w-[18px]" />

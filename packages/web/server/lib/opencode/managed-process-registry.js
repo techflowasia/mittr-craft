@@ -41,9 +41,9 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const resolveRegistryDir = () => {
-  const override = process.env.OPENCHAMBER_MANAGED_PROCESS_REGISTRY;
+  const override = process.env.MITTRCRAFT_MANAGED_PROCESS_REGISTRY;
   if (override && override.trim()) return override.trim();
-  return path.join(os.homedir(), '.config', 'openchamber', 'managed-opencode');
+  return path.join(os.homedir(), '.config', 'mittrcraft', 'managed-opencode');
 };
 
 const entryFilePath = (pid) => path.join(resolveRegistryDir(), `${pid}.json`);

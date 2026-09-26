@@ -13,11 +13,11 @@ const DEFAULT_STORE_VERSION = 1;
 const DEFAULT_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_RP_NAME = 'MittrCraft';
 
-const OPENCHAMBER_DATA_DIR = process.env.OPENCHAMBER_DATA_DIR
-  ? path.resolve(process.env.OPENCHAMBER_DATA_DIR)
-  : path.join(os.homedir(), '.config', 'openchamber');
+const MITTRCRAFT_DATA_DIR = process.env.MITTRCRAFT_DATA_DIR
+  ? path.resolve(process.env.MITTRCRAFT_DATA_DIR)
+  : path.join(os.homedir(), '.config', 'mittrcraft');
 
-const PASSKEY_STORE_FILE = path.join(OPENCHAMBER_DATA_DIR, 'ui-passkeys.json');
+const PASSKEY_STORE_FILE = path.join(MITTRCRAFT_DATA_DIR, 'ui-passkeys.json');
 
 const createUserId = () => crypto.randomBytes(32).toString('base64url');
 
@@ -330,7 +330,7 @@ export const createUiPasskeys = ({
       rpName,
       rpID,
       userID,
-      userName: 'openchamber-ui',
+      userName: 'mittrcraft-ui',
       userDisplayName: 'MittrCraft UI',
       attestationType: 'none',
       excludeCredentials: getPasskeysForRpId(store, rpID).map((passkey) => ({

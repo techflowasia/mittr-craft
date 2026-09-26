@@ -58,7 +58,7 @@ function parseArgs(argv = process.argv.slice(2)) {
   const options = {
     port: DEFAULT_PORT,
     host: undefined,
-    uiPassword: process.env.OPENCHAMBER_UI_PASSWORD || undefined,
+    uiPassword: process.env.MITTRCRAFT_UI_PASSWORD || undefined,
     json: false,
     all: false,
     follow: true,
@@ -506,10 +506,10 @@ function parseArgs(argv = process.argv.slice(2)) {
         // may still pass this when starting a remote server.
         break;
       case 'try-cf-tunnel':
-        removedFlagErrors.push('`--try-cf-tunnel` was removed. Use: openchamber tunnel start --provider cloudflare --mode quick');
+        removedFlagErrors.push('`--try-cf-tunnel` was removed. Use: mittrcraft tunnel start --provider cloudflare --mode quick');
         break;
       case 'tunnel-qr':
-        removedFlagErrors.push('`--tunnel-qr` was removed. Use: openchamber tunnel start ... --qr');
+        removedFlagErrors.push('`--tunnel-qr` was removed. Use: mittrcraft tunnel start ... --qr');
         break;
       case 'tunnel-password-url':
         removedFlagErrors.push('`--tunnel-password-url` was removed. Use UI password auth directly after tunnel start.');
@@ -520,7 +520,7 @@ function parseArgs(argv = process.argv.slice(2)) {
       case 'tunnel-token':
       case 'tunnel-hostname':
       case 'tunnel':
-        removedFlagErrors.push(`\`--${name}\` was removed from top-level serve flow. Use: openchamber tunnel start ...`);
+        removedFlagErrors.push(`\`--${name}\` was removed from top-level serve flow. Use: mittrcraft tunnel start ...`);
         break;
       default:
         if (!long && name.length === 1) {
@@ -568,7 +568,7 @@ function showHelp() {
  MittrCraft - Web interface for the OpenCode AI coding agent
 
 USAGE:
-  openchamber [COMMAND] [OPTIONS]
+  mittrcraft [COMMAND] [OPTIONS]
 
 COMMANDS:
   serve          Start the web server (daemon default)
@@ -601,26 +601,26 @@ OPTIONS:
   -v, --version           Show version
 
 ENVIRONMENT:
-  OPENCHAMBER_HOST             Bind address (e.g. 0.0.0.0 for all interfaces)
-  OPENCHAMBER_UI_PASSWORD      Alternative to --ui-password flag
-  OPENCHAMBER_API_ONLY         Set to true/1 to start API routes only
-  OPENCHAMBER_DATA_DIR         Override MittrCraft data directory
+  MITTRCRAFT_HOST             Bind address (e.g. 0.0.0.0 for all interfaces)
+  MITTRCRAFT_UI_PASSWORD      Alternative to --ui-password flag
+  MITTRCRAFT_API_ONLY         Set to true/1 to start API routes only
+  MITTRCRAFT_DATA_DIR         Override MittrCraft data directory
   OPENCODE_HOST               External OpenCode server base URL, e.g. http://hostname:4096
   OPENCODE_PORT               Port of external OpenCode server to connect to
   OPENCODE_SKIP_START          Skip starting OpenCode, use external server
-  OPENCHAMBER_OPENCODE_HOSTNAME  Bind hostname for managed OpenCode server (default: 127.0.0.1)
+  MITTRCRAFT_OPENCODE_HOSTNAME  Bind hostname for managed OpenCode server (default: 127.0.0.1)
 
 EXAMPLES:
-  openchamber                    # Start in daemon mode on default port 3000 (or free port)
-  openchamber --port 8080        # Start on port 8080 (daemon)
-  openchamber --lan --port 3002  # Start on LAN at 0.0.0.0:3002
-  openchamber serve --foreground # Start in foreground (for systemd Type=simple)
-  openchamber connect-url --port 3000 --qr
-  openchamber connect-url --server https://openchamber.example.com
-  openchamber control           # Show control-plane commands for agents/scripts
-  openchamber startup enable     # Start MittrCraft at user login
-  openchamber tunnel help        # Show tunnel lifecycle help
-  openchamber logs               # Follow logs for latest running instance
+  mittrcraft                    # Start in daemon mode on default port 3000 (or free port)
+  mittrcraft --port 8080        # Start on port 8080 (daemon)
+  mittrcraft --lan --port 3002  # Start on LAN at 0.0.0.0:3002
+  mittrcraft serve --foreground # Start in foreground (for systemd Type=simple)
+  mittrcraft connect-url --port 3000 --qr
+  mittrcraft connect-url --server https://mittrcraft.example.com
+  mittrcraft control           # Show control-plane commands for agents/scripts
+  mittrcraft startup enable     # Start MittrCraft at user login
+  mittrcraft tunnel help        # Show tunnel lifecycle help
+  mittrcraft logs               # Follow logs for latest running instance
 `);
 }
 
@@ -629,7 +629,7 @@ function showControlHelp() {
  MittrCraft Control Commands
 
 USAGE:
-  openchamber <COMMAND> [OPTIONS]
+  mittrcraft <COMMAND> [OPTIONS]
 
 COMMANDS:
   status                         Show running MittrCraft runtimes
@@ -641,12 +641,12 @@ COMMANDS:
   logs                           Tail logs for CLI-managed runtimes
 
 DETAILED HELP:
-  openchamber session --help     Show session creation, status, and message options
-  openchamber models --help      Show model defaults and favorites help
-  openchamber projects --help    Show project list help
-  openchamber schedule --help    Show scheduled task actions and schedule options
-  openchamber tunnel help        Show tunnel lifecycle/status commands
-  openchamber status --help      Show runtime status options
+  mittrcraft session --help     Show session creation, status, and message options
+  mittrcraft models --help      Show model defaults and favorites help
+  mittrcraft projects --help    Show project list help
+  mittrcraft schedule --help    Show scheduled task actions and schedule options
+  mittrcraft tunnel help        Show tunnel lifecycle/status commands
+  mittrcraft status --help      Show runtime status options
 
 COMMON OPTIONS:
   --json                         Output machine-readable JSON
@@ -655,11 +655,11 @@ COMMON OPTIONS:
   --ui-password <password>       Authenticate to a password-protected runtime
 
 EXAMPLES:
-  openchamber status
-  openchamber models
-  openchamber projects
-  openchamber session --help
-  openchamber schedule --help
+  mittrcraft status
+  mittrcraft models
+  mittrcraft projects
+  mittrcraft session --help
+  mittrcraft schedule --help
 `);
 }
 
@@ -668,7 +668,7 @@ function showStartupHelp() {
  MittrCraft Startup Commands
 
 USAGE:
-  openchamber startup <SUBCOMMAND> [OPTIONS]
+  mittrcraft startup <SUBCOMMAND> [OPTIONS]
 
 SUBCOMMANDS:
   status      Show startup integration status
@@ -685,10 +685,10 @@ OPTIONS:
   -q, --quiet             Suppress non-essential output
 
 EXAMPLES:
-  openchamber startup enable
-  openchamber startup enable --port 3000
-  openchamber startup enable --port 3000 --api-only --host 0.0.0.0
-  openchamber startup status --json
+  mittrcraft startup enable
+  mittrcraft startup enable --port 3000
+  mittrcraft startup enable --port 3000 --api-only --host 0.0.0.0
+  mittrcraft startup status --json
 `);
 }
 
@@ -697,10 +697,10 @@ function showConnectUrlHelp() {
  MittrCraft Connect URL
 
 USAGE:
-  openchamber connect-url [OPTIONS]
+  mittrcraft connect-url [OPTIONS]
 
 DESCRIPTION:
-  Generate an openchamber:// connection link for adding this server to another
+  Generate an mittrcraft:// connection link for adding this server to another
   MittrCraft app. If no server is running on the selected port, it starts one.
 
 OPTIONS:
@@ -714,7 +714,7 @@ OPTIONS:
                           so the link works away from the local network. The
                           device prefers the direct connection when reachable;
                           the instance brings the relay up on its own. Set
-                          OPENCHAMBER_RELAY_URL to use a self-hosted relay.
+                          MITTRCRAFT_RELAY_URL to use a self-hosted relay.
   --name <label>          Label saved with the remote client token
   --ui-password <value>   Protect browser access when UI routes are enabled
   --api-only              Start in headless/API-only mode when starting
@@ -724,10 +724,10 @@ OPTIONS:
   -h, --help              Show this help
 
 EXAMPLES:
-  openchamber connect-url --port 3000 --qr
-  openchamber connect-url --port 3000 --api-only --lan --server http://workstation.local:3000 --qr
-  openchamber connect-url --server https://openchamber.example.com --name Workstation
-  openchamber connect-url --relay --name "My laptop"
+  mittrcraft connect-url --port 3000 --qr
+  mittrcraft connect-url --port 3000 --api-only --lan --server http://workstation.local:3000 --qr
+  mittrcraft connect-url --server https://mittrcraft.example.com --name Workstation
+  mittrcraft connect-url --relay --name "My laptop"
 `);
 }
 
@@ -736,7 +736,7 @@ function showTunnelHelp() {
  Tunnel Lifecycle Commands
 
 USAGE:
-  openchamber tunnel <SUBCOMMAND> [OPTIONS]
+  mittrcraft tunnel <SUBCOMMAND> [OPTIONS]
 
 SUBCOMMANDS:
   help        Show this tunnel help
@@ -784,31 +784,31 @@ BEHAVIOR NOTES:
   - Connect links are one-time; generating a new link revokes the previous unused link.
 
 PROFILE USAGE:
-  openchamber tunnel profile list [--provider <id>] [--json]
-  openchamber tunnel profile show --name <name> [--provider <id>] [--json]
-  openchamber tunnel profile add --provider <id> --mode managed-remote --name <name> --hostname <host> --token <token> [--force] [--json]
-  openchamber tunnel profile add --provider <id> --mode managed-remote --name <name> --hostname <host> --token-file <path> [--force] [--json]
-  openchamber tunnel profile remove --name <name> [--provider <id>] [--json]
+  mittrcraft tunnel profile list [--provider <id>] [--json]
+  mittrcraft tunnel profile show --name <name> [--provider <id>] [--json]
+  mittrcraft tunnel profile add --provider <id> --mode managed-remote --name <name> --hostname <host> --token <token> [--force] [--json]
+  mittrcraft tunnel profile add --provider <id> --mode managed-remote --name <name> --hostname <host> --token-file <path> [--force] [--json]
+  mittrcraft tunnel profile remove --name <name> [--provider <id>] [--json]
 
 SHELL COMPLETION:
-  openchamber tunnel completion bash   Generate Bash completion script
-  openchamber tunnel completion zsh    Generate Zsh completion script
-  openchamber tunnel completion fish   Generate Fish completion script
+  mittrcraft tunnel completion bash   Generate Bash completion script
+  mittrcraft tunnel completion zsh    Generate Zsh completion script
+  mittrcraft tunnel completion fish   Generate Fish completion script
 
 EXAMPLES:
-  openchamber tunnel providers
-  openchamber tunnel ready --provider cloudflare
-  openchamber tunnel doctor --provider cloudflare
-  openchamber tunnel status
-  openchamber tunnel start --qr
-  openchamber tunnel start --profile prod-main
-  openchamber tunnel start --provider cloudflare --mode managed-remote --token-file ~/.secrets/cf-token --hostname app.example.com
-  openchamber tunnel start --provider cloudflare --mode managed-local --config ~/.cloudflared/config.yml
-  openchamber tunnel start --dry-run --provider cloudflare --mode managed-remote --token-file ~/.secrets/cf-token --hostname app.example.com
-  echo "$TOKEN" | openchamber tunnel profile add --provider cloudflare --mode managed-remote --name prod-main --hostname app.example.com --token-stdin
-  openchamber tunnel profile list --provider cloudflare
-  openchamber tunnel profile list --json --show-secrets
-  openchamber tunnel stop --port 3000
+  mittrcraft tunnel providers
+  mittrcraft tunnel ready --provider cloudflare
+  mittrcraft tunnel doctor --provider cloudflare
+  mittrcraft tunnel status
+  mittrcraft tunnel start --qr
+  mittrcraft tunnel start --profile prod-main
+  mittrcraft tunnel start --provider cloudflare --mode managed-remote --token-file ~/.secrets/cf-token --hostname app.example.com
+  mittrcraft tunnel start --provider cloudflare --mode managed-local --config ~/.cloudflared/config.yml
+  mittrcraft tunnel start --dry-run --provider cloudflare --mode managed-remote --token-file ~/.secrets/cf-token --hostname app.example.com
+  echo "$TOKEN" | mittrcraft tunnel profile add --provider cloudflare --mode managed-remote --name prod-main --hostname app.example.com --token-stdin
+  mittrcraft tunnel profile list --provider cloudflare
+  mittrcraft tunnel profile list --json --show-secrets
+  mittrcraft tunnel stop --port 3000
 `);
 }
 
@@ -816,9 +816,9 @@ function generateCompletionScript(shell) {
   const normalized = typeof shell === 'string' ? shell.trim().toLowerCase() : '';
 
   if (normalized === 'bash') {
-    return `# Bash completion for openchamber tunnel
-# Add to ~/.bashrc: eval "$(openchamber tunnel completion bash)"
-_openchamber_tunnel() {
+    return `# Bash completion for mittrcraft tunnel
+# Add to ~/.bashrc: eval "$(mittrcraft tunnel completion bash)"
+_mittrcraft_tunnel() {
   local cur prev commands tunnel_commands profile_commands common_flags start_flags
   COMPREPLY=()
   cur="\${COMP_WORDS[COMP_CWORD]}"
@@ -859,16 +859,16 @@ _openchamber_tunnel() {
   COMPREPLY=( $(compgen -W "\${common_flags}" -- "\${cur}") )
   return 0
 }
-complete -F _openchamber_tunnel openchamber
+complete -F _mittrcraft_tunnel mittrcraft
 `;
   }
 
   if (normalized === 'zsh') {
-    return `#compdef openchamber
-# Zsh completion for openchamber tunnel
-# Add to ~/.zshrc: eval "$(openchamber tunnel completion zsh)"
+    return `#compdef mittrcraft
+# Zsh completion for mittrcraft tunnel
+# Add to ~/.zshrc: eval "$(mittrcraft tunnel completion zsh)"
 
-_openchamber() {
+_mittrcraft() {
   local -a commands tunnel_commands profile_commands
 
   commands=(
@@ -928,44 +928,44 @@ _openchamber() {
   esac
 }
 
-compdef _openchamber openchamber
+compdef _mittrcraft mittrcraft
 `;
   }
 
   if (normalized === 'fish') {
-    return `# Fish completion for openchamber tunnel
-# Save to ~/.config/fish/completions/openchamber.fish
+    return `# Fish completion for mittrcraft tunnel
+# Save to ~/.config/fish/completions/mittrcraft.fish
 
-complete -c openchamber -n '__fish_use_subcommand' -a 'serve' -d 'Start the web server'
-complete -c openchamber -n '__fish_seen_subcommand_from serve' -l foreground -d 'Run in foreground (for systemd/process managers)'
-complete -c openchamber -n '__fish_seen_subcommand_from serve' -l no-daemon -d 'Run in foreground (alias for --foreground)'
-complete -c openchamber -n '__fish_use_subcommand' -a 'stop' -d 'Stop running instance(s)'
-complete -c openchamber -n '__fish_use_subcommand' -a 'restart' -d 'Stop and start the server'
-complete -c openchamber -n '__fish_use_subcommand' -a 'status' -d 'Show server status'
-complete -c openchamber -n '__fish_use_subcommand' -a 'tunnel' -d 'Tunnel lifecycle commands'
-complete -c openchamber -n '__fish_use_subcommand' -a 'logs' -d 'Tail logs'
-complete -c openchamber -n '__fish_use_subcommand' -a 'update' -d 'Check for updates'
+complete -c mittrcraft -n '__fish_use_subcommand' -a 'serve' -d 'Start the web server'
+complete -c mittrcraft -n '__fish_seen_subcommand_from serve' -l foreground -d 'Run in foreground (for systemd/process managers)'
+complete -c mittrcraft -n '__fish_seen_subcommand_from serve' -l no-daemon -d 'Run in foreground (alias for --foreground)'
+complete -c mittrcraft -n '__fish_use_subcommand' -a 'stop' -d 'Stop running instance(s)'
+complete -c mittrcraft -n '__fish_use_subcommand' -a 'restart' -d 'Stop and start the server'
+complete -c mittrcraft -n '__fish_use_subcommand' -a 'status' -d 'Show server status'
+complete -c mittrcraft -n '__fish_use_subcommand' -a 'tunnel' -d 'Tunnel lifecycle commands'
+complete -c mittrcraft -n '__fish_use_subcommand' -a 'logs' -d 'Tail logs'
+complete -c mittrcraft -n '__fish_use_subcommand' -a 'update' -d 'Check for updates'
 
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'help' -d 'Show tunnel help'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'providers' -d 'Show providers'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'ready' -d 'Check readiness'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'doctor' -d 'Run diagnostics'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'status' -d 'Show tunnel status'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'start' -d 'Start a tunnel'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'stop' -d 'Stop tunnel'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'profile' -d 'Manage profiles'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'completion' -d 'Generate completions'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'help' -d 'Show tunnel help'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'providers' -d 'Show providers'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'ready' -d 'Check readiness'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'doctor' -d 'Run diagnostics'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'status' -d 'Show tunnel status'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'start' -d 'Start a tunnel'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'stop' -d 'Stop tunnel'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'profile' -d 'Manage profiles'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and not __fish_seen_subcommand_from help providers ready doctor status start stop profile completion' -a 'completion' -d 'Generate completions'
 
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l provider -d 'Provider id'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l mode -d 'Tunnel mode'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l profile -d 'Profile name'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l config -d 'Config path'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l token -d 'Token'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l token-file -d 'Token file path'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l token-stdin -d 'Read token from stdin'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l hostname -d 'Hostname'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l dry-run -d 'Validate without applying'
-complete -c openchamber -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l qr -d 'Show QR code'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l provider -d 'Provider id'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l mode -d 'Tunnel mode'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l profile -d 'Profile name'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l config -d 'Config path'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l token -d 'Token'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l token-file -d 'Token file path'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l token-stdin -d 'Read token from stdin'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l hostname -d 'Hostname'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l dry-run -d 'Validate without applying'
+complete -c mittrcraft -n '__fish_seen_subcommand_from tunnel; and __fish_seen_subcommand_from start' -l qr -d 'Show QR code'
 `;
   }
 

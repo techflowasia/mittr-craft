@@ -5,7 +5,7 @@ export type RuntimeIdentity = {
   runtimeKey: string;
 };
 
-export const SESSION_AUTH_REQUIRED_EVENT = 'openchamber:session-auth-required';
+export const SESSION_AUTH_REQUIRED_EVENT = 'mittrcraft:session-auth-required';
 
 export const requestSessionLogin = (): void => {
   if (typeof window === 'undefined') return;
