@@ -46,14 +46,14 @@ describe('voice tool schemas', () => {
 
   it('uses the parameter schemas the coding agent’s tools use', () => {
     const tools = byName(buildVoiceTools({ chromeAvailable: true, computerAvailable: true }));
-    for (const [name, schema] of Object.entries(CONTROL_PARAMETER_PROPERTIES)) {
+    for (const [name, schema] of Object.entries(CONTROL_PARAMETER_PROPERTIES).filter(([name]) => name !== 'wait' && name !== 'timeout')) {
       expect(tools.mittrcraft.parameters.properties[name]).toEqual(schema);
     }
     expect(tools.mittrcraft_web.parameters.properties.viewport).toEqual(WEB_PARAMETER_PROPERTIES.viewport);
     expect(tools.mittrcraft_web.parameters.properties.goal).toEqual(CHROME_PARAMETER_PROPERTIES.goal);
     expect(tools.mittrcraft_web.parameters.properties.app).toBeDefined();
-    expect(Object.keys(tools.mittrcraft_voice.parameters.properties).sort()).toEqual(['action', 'directory', 'sessionId']);
-    expect(tools.mittrcraft_voice.parameters.required).toEqual(['action', 'sessionId']);
+    expect(Object.keys(tools.mittrcraft_voice.parameters.properties).sort()).toEqual(['action', 'directory', 'host', 'sessionId']);
+    expect(tools.mittrcraft_voice.parameters.required).toEqual(['action']);
   });
 
   it('fits the platform’s size limits', () => {
@@ -62,5 +62,33 @@ describe('voice tool schemas', () => {
       expect(tool.description.length).toBeLessThanOrEqual(4000);
       expect(JSON.stringify(tool.parameters).length).toBeLessThanOrEqual(30000);
     }
+  });
+
+  it('never offers wait or timeout, which would let one call block the turn', () => {
+    const tools = byName(buildVoiceTools({ chromeAvailable: true, computerAvailable: true }));
+    expect(tools.mittrcraft.parameters.properties.wait).toBeUndefined();
+    expect(tools.mittrcraft.parameters.properties.timeout).toBeUndefined();
+  });
+
+  it('follows the agent tool switches', () => {
+    const all = { chromeAvailable: true, computerAvailable: true };
+    const noChrome = byName(buildVoiceTools({ ...all, settings: { agentChromeToolEnabled: false } }));
+    expect(actionEnum(noChrome.mittrcraft_web)).toEqual([...MITTRCRAFT_WEB_ACTIONS, ...MITTRCRAFT_COMPUTER_ACTIONS]);
+    expect(actionEnum(noChrome.mittrcraft_voice)).toEqual(['session.stop', 'session.read_reply']);
+    const noComputer = byName(buildVoiceTools({ ...all, settings: { agentComputerToolEnabled: false } }));
+    expect(actionEnum(noComputer.mittrcraft_web)).toEqual([...MITTRCRAFT_WEB_ACTIONS, ...MITTRCRAFT_CHROME_ACTIONS]);
+    const noWeb = byName(buildVoiceTools({ ...all, settings: { agentWebToolEnabled: false } }));
+    expect(actionEnum(noWeb.mittrcraft_web)).toEqual([...MITTRCRAFT_CHROME_ACTIONS, ...MITTRCRAFT_COMPUTER_ACTIONS]);
+    const noControl = byName(buildVoiceTools({ ...all, settings: { agentControlToolEnabled: false } }));
+    expect(noControl.mittrcraft).toBeUndefined();
+    expect(actionEnum(noControl.mittrcraft_voice)).toEqual(['chrome.allow_site']);
+    const nothing = buildVoiceTools({ settings: { agentControlToolEnabled: false, agentWebToolEnabled: false } });
+    expect(nothing).toEqual([]);
+  });
+
+  it('offers chrome.allow_site only where Chrome can run', () => {
+    const tools = byName(buildVoiceTools({ chromeAvailable: false, computerAvailable: false }));
+    expect(actionEnum(tools.mittrcraft_voice)).toEqual(['session.stop', 'session.read_reply']);
+    expect(tools.mittrcraft_voice.parameters.properties.host).toBeUndefined();
   });
 });

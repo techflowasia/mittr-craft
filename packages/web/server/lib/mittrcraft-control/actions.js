@@ -54,6 +54,7 @@ const MITTRCRAFT_PLANE_ACTIONS = Object.freeze(
 export const MITTRCRAFT_VOICE_ACTION_DEFINITIONS = Object.freeze([
   { action: 'session.stop', title: 'Stop a session', description: 'Stop the running session sessionId; directory defaults to the current session' },
   { action: 'session.read_reply', title: "Read a session's latest answer", description: 'Latest assistant answer of sessionId as plain speakable text, capped in length' },
+  { action: 'chrome.allow_site', title: 'Allow a site for this conversation', description: 'Allow host (from a site_approval_required result) in Chrome for this conversation only, after the person clearly said yes; never saved' },
 ]);
 
 export const MITTRCRAFT_VOICE_ACTIONS = Object.freeze(

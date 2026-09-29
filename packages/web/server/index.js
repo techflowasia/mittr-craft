@@ -1853,7 +1853,6 @@ async function main(options = {}) {
 
   registerBrowserControlRoutes(app, { express, broker: browserControlBroker });
   registerVoiceAssistantRoutes(app, {
-    express,
     controlService: mittrCraftControlService,
     readSettingsFromDiskMigrated,
     brokerBaseUrl: mittrShim?.brokerBaseUrl,

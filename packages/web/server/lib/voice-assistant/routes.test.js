@@ -6,10 +6,10 @@ import { registerVoiceAssistantRoutes } from './routes.js';
 
 const createApp = (runTurn, extra = {}) => {
   const app = express();
+  app.use(express.json({ limit: '50mb' }));
   registerVoiceAssistantRoutes(app, {
-    express,
     runTurn,
-    controlService: { execute: vi.fn() },
+    controlService: { execute: vi.fn(), endChromeConversation: vi.fn(), isChromeHostAllowed: vi.fn(async () => false) },
     readSettingsFromDiskMigrated: vi.fn(async () => ({})),
     brokerBaseUrl: 'https://api.example/',
     ensureFreshSession: vi.fn(async () => ({ accessToken: 't' })),
@@ -37,7 +37,8 @@ describe('POST /api/voice/turn', () => {
     const [input] = runTurn.mock.calls[0];
     expect(input).toMatchObject({ said: 'hello', history: [{ role: 'assistant', text: 'hi' }], locale: 'en', directory: '/repo', sessionId: 'ses_1' });
     expect(input.signal).toBeInstanceOf(AbortSignal);
-    expect(input.deps.tools.map(({ name }) => name)).toEqual(['mittrcraft', 'mittrcraft_web', 'mittrcraft_voice']);
+    expect(input.deps.buildTools({}).map(({ name }) => name)).toEqual(['mittrcraft', 'mittrcraft_web', 'mittrcraft_voice']);
+    expect(input.deps.buildTools({ agentControlToolEnabled: false }).map(({ name }) => name)).toEqual(['mittrcraft_web']);
   });
 
   it.each([
@@ -50,6 +51,7 @@ describe('POST /api/voice/turn', () => {
     [{ ...valid, directory: 5 }],
     [{ ...valid, sessionId: {} }],
     [{ ...valid, queuedPrompts: -1 }],
+    [{ ...valid, history: [{ role: 'user', text: 'x'.repeat(20_001) }] }],
   ])('rejects a malformed body %#', async (body) => {
     const runTurn = vi.fn();
     const response = await request(createApp(runTurn)).post('/api/voice/turn').send(body).expect(400);
@@ -98,5 +100,22 @@ describe('POST /api/voice/turn', () => {
     expect(response.text).toBe('data: {"type":"error","code":"upstream_failed"}\n\n');
     expect(errorSpy.mock.calls.flat().join(' ')).not.toContain('hello');
     errorSpy.mockRestore();
+  });
+
+  it('ends the conversation: clears the voice site grants and the pending site question', async () => {
+    const endChromeConversation = vi.fn();
+    const conversations = [];
+    const runTurn = vi.fn(async ({ deps, emit }) => {
+      conversations.push(deps.conversation);
+      deps.conversation.pendingApprovalHost = 'example.com';
+      emit({ type: 'done' });
+    });
+    const app = createApp(runTurn, { controlService: { execute: vi.fn(), endChromeConversation, isChromeHostAllowed: vi.fn() } });
+    await request(app).post('/api/voice/turn').send(valid).expect(200);
+    await request(app).post('/api/voice/turn').send(valid).expect(200);
+    expect(conversations[1]).toBe(conversations[0]);
+    await request(app).post('/api/voice/end').send({}).expect(204);
+    expect(endChromeConversation).toHaveBeenCalledWith('voice');
+    expect(conversations[0].pendingApprovalHost).toBeNull();
   });
 });

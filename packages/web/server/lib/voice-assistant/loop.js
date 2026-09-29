@@ -10,6 +10,21 @@ const PLATFORM_ERROR_CODES = new Set(['not_configured', 'upstream_failed', 'upst
 const BUSY_STATUSES = new Set(['busy', 'retry']);
 const IMAGE_FIELDS = new Set(['imageBase64', 'imageMime']);
 const TRUNCATION_MARK = '…[truncated]';
+const OMITTED_RESULT = '[result omitted]';
+const STEP_CALLS_MAX = 20;
+const READ_ACTIONS = new Set([
+  'session.read_reply', 'session.messages', 'session.status', 'session.list',
+  'chrome.read', 'chrome.snapshot', 'chrome.screenshot', 'chrome.do',
+  'browser.snapshot', 'browser.inspect', 'browser.capture',
+  'computer.screenshot', 'jira.get_issue', 'plane.get_issue',
+]);
+const REFUSED_AFTER_READ = new Set([
+  'session.stop', 'session.send', 'session.create', 'session.fork',
+  'schedule.create', 'schedule.run', 'schedule.delete', 'schedule.toggle',
+  'chrome.allow_site',
+]);
+const VOICE_STRIPPED_INPUTS = ['wait', 'timeout'];
+const TIMED_OUT = Symbol('timed out');
 
 const REASON_BY_STATUS = new Map([
   [400, 'invalid_request'],
@@ -29,24 +44,39 @@ const CLOSING = {
 
 class TurnAborted extends Error {}
 
-const readStepCap = async (readSettings) => {
-  let settings = null;
+const readSettingsSafely = async (readSettings) => {
   try {
-    settings = await readSettings();
+    return (await readSettings()) ?? {};
   } catch {
-    settings = null;
+    return {};
   }
+};
+
+const stepCapFrom = (settings) => {
   const value = settings?.voiceStepCap;
   return Number.isInteger(value) && value >= VOICE_STEP_CAP.min && value <= VOICE_STEP_CAP.max ? value : VOICE_STEP_CAP.fallback;
 };
 
+const spokenLanguage = (said) => (/[\u0E00-\u0E7F]/.test(said) ? 'th' : 'en');
+
+const messageSize = (message) => message.content.length
+  + (message.toolCalls ?? []).reduce((total, call) => total + call.arguments.length, 0);
+
 const fitMessages = (history, turn) => {
-  const kept = [...history];
-  const size = (messages) => messages.reduce((total, message) => total + message.content.length, 0);
-  const turnSize = size(turn);
-  while (kept.length > 0 && (kept.length + turn.length > MESSAGES_MAX_COUNT || size(kept) + turnSize > MESSAGES_MAX_CHARS)) {
-    kept.shift();
+  const total = (messages) => messages.reduce((sum, message) => sum + messageSize(message), 0);
+  let historySize = total(history);
+  let turnSize = total(turn);
+  for (const message of turn) {
+    if (historySize + turnSize <= MESSAGES_MAX_CHARS) break;
+    if (message.role !== 'tool' || message.content.length <= OMITTED_RESULT.length) continue;
+    turnSize -= message.content.length - OMITTED_RESULT.length;
+    message.content = OMITTED_RESULT;
   }
+  const kept = [...history];
+  while (kept.length > 0 && (kept.length + turn.length > MESSAGES_MAX_COUNT || historySize + turnSize > MESSAGES_MAX_CHARS)) {
+    historySize -= messageSize(kept.shift());
+  }
+  if (turn.length > MESSAGES_MAX_COUNT || historySize + turnSize > MESSAGES_MAX_CHARS) return null;
   return [...kept, ...turn];
 };
 
@@ -73,7 +103,9 @@ const parseArguments = (raw) => {
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
   const { action, parameters, ...flattened } = parsed;
-  const nested = parameters && typeof parameters === 'object' && !Array.isArray(parameters) ? parameters : {};
+  const nested = parameters && typeof parameters === 'object' && !Array.isArray(parameters)
+    ? Object.fromEntries(Object.entries(parameters).filter(([name]) => name !== 'action'))
+    : {};
   return { action: typeof action === 'string' ? action : '', input: { ...flattened, ...nested } };
 };
 
@@ -126,8 +158,10 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
     readSettings,
     buildContext,
     describeSession,
-    tools,
+    buildTools,
     chromePage,
+    conversation = { pendingApprovalHost: null },
+    toolTimeoutMs = STEP_TIMEOUT_MS,
     logger = console,
   } = deps;
   const turnSignal = signal ?? new AbortController().signal;
@@ -137,18 +171,17 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
     if (!turnSignal.aborted) emit(event);
   };
   const guard = (work) => Promise.race([work, aborted]);
+  const freshSession = async () => (
+    brokerBaseUrl && typeof ensureFreshSession === 'function' ? ensureFreshSession().catch(() => null) : null
+  );
+  const refusal = (action, reasonCode, error) => ({ ok: false, action, result: { error, reasonCode } });
 
-  const session = brokerBaseUrl && typeof ensureFreshSession === 'function' ? await ensureFreshSession().catch(() => null) : null;
-  if (!session?.accessToken) {
-    send({ type: 'error', code: 'not_signed_in' });
-    return;
-  }
-
-  const allowed = Object.fromEntries(tools.map((tool) => [tool.name, tool.parameters?.properties?.action?.enum ?? []]));
-  const conversation = history.map((entry) => ({ role: entry.role, content: entry.text }));
+  const conversationMessages = history.map((entry) => ({ role: entry.role, content: entry.text }));
   const turn = [{ role: 'user', content: said }];
+  let readSeen = false;
+  const assistantSpokeBefore = history.some((entry) => entry.role === 'assistant' && entry.text.trim().length > 0);
 
-  const step = async (context) => {
+  const step = async ({ session, context, messages, tools }) => {
     const timeout = AbortSignal.timeout(STEP_TIMEOUT_MS);
     let response;
     try {
@@ -159,7 +192,7 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
           accept: 'text/event-stream',
           Authorization: `Bearer ${session.accessToken}`,
         },
-        body: JSON.stringify({ locale, context, messages: fitMessages(conversation, turn), tools }),
+        body: JSON.stringify({ locale, context, messages, tools }),
         signal: AbortSignal.any([turnSignal, timeout]),
       });
     } catch {
@@ -199,7 +232,7 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
     return { text, toolCalls };
   };
 
-  const dispatch = async (action, input) => {
+  const dispatch = async (action, input, toolSignal) => {
     if (action === 'session.send') {
       const target = await describeSession(input.sessionId, input.directory || directory);
       if (!target || target.status === 'unknown') {
@@ -210,32 +243,112 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
         return { ok: true, result: { queued: true, sessionId: target.id, note: 'The session is busy; the prompt will run after its current answer' } };
       }
     }
-    const data = await controlService.execute(action, input, directory, { signal: turnSignal, sessionId: VOICE_CHROME_SESSION_ID });
-    return { ok: true, result: data };
+    const running = controlService.execute(action, input, directory, { signal: toolSignal, sessionId: VOICE_CHROME_SESSION_ID });
+    if (action.startsWith('chrome.')) {
+      running.then(() => chromePage?.note(action, true), () => chromePage?.note(action, false));
+    }
+    return { ok: true, result: await running };
   };
 
-  const runTool = async (call) => {
+  const failure = (action, error) => {
+    const result = errorResult(error);
+    if (result.reasonCode !== 'site_approval_required' || typeof error?.host !== 'string') return { ok: false, action, result };
+    const host = error.host.toLowerCase();
+    conversation.pendingApprovalHost = host;
+    return {
+      ok: false,
+      action,
+      result: {
+        ...result,
+        host,
+        ask: `Ask the person: "allow ${host} for this conversation?" Call chrome.allow_site with host ${host} only after they clearly say yes; otherwise leave the site alone.`,
+      },
+    };
+  };
+
+  const runTool = async (call, allowed) => {
     const parsed = parseArguments(call.arguments);
-    const permitted = parsed && Object.hasOwn(allowed, call.name) && allowed[call.name].includes(parsed.action);
-    if (!permitted) {
-      return { ok: false, action: null, result: { error: `${call.name} does not offer action ${parsed?.action || 'missing'}`, reasonCode: 'unsupported_action' } };
+    const action = parsed?.action || null;
+    if (!parsed || !Object.hasOwn(allowed, call.name) || !allowed[call.name].includes(action)) {
+      return refusal(null, 'unsupported_action', `${call.name} does not offer action ${action || 'missing'} here`);
     }
-    send({ type: 'action', kind: 'running', label: VOICE_ACTION_TITLES[parsed.action] ?? parsed.action });
+    const input = { ...parsed.input };
+    for (const name of VOICE_STRIPPED_INPUTS) delete input[name];
+    if (REFUSED_AFTER_READ.has(action) && readSeen) {
+      return refusal(action, 'refused_after_read', `${action} is not run after something was read in the same turn; ask the person again and wait for their answer`);
+    }
+    if (action === 'session.stop' && !assistantSpokeBefore) {
+      return refusal(action, 'confirm_first', 'Ask the person to confirm stopping the session and wait for their answer before calling session.stop');
+    }
+    if (action === 'chrome.allow_site') {
+      const host = typeof input.host === 'string' ? input.host.trim().toLowerCase() : '';
+      if (!conversation.pendingApprovalHost || host !== conversation.pendingApprovalHost) {
+        return refusal(action, 'not_requested', 'Only the site Chrome last asked about in this conversation can be allowed');
+      }
+    }
+    if (READ_ACTIONS.has(action)) readSeen = true;
+    send({ type: 'action', kind: 'running', label: VOICE_ACTION_TITLES[action] ?? action });
+
+    const toolController = new AbortController();
+    const toolSignal = AbortSignal.any([turnSignal, toolController.signal]);
+    let timer = null;
+    const deadline = new Promise((resolve) => {
+      timer = setTimeout(() => {
+        toolController.abort();
+        resolve(TIMED_OUT);
+      }, toolTimeoutMs);
+    });
     try {
-      const outcome = await guard(dispatch(parsed.action, parsed.input));
-      return { ...outcome, action: parsed.action };
+      const outcome = await Promise.race([dispatch(action, input, toolSignal), deadline, aborted]);
+      if (outcome === TIMED_OUT) {
+        return refusal(action, 'tool_timeout', `${VOICE_ACTION_TITLES[action] ?? action} took longer than ${Math.round(toolTimeoutMs / 1000)} seconds and was stopped`);
+      }
+      if (action === 'chrome.allow_site' && outcome.ok) conversation.pendingApprovalHost = null;
+      return { ...outcome, action };
     } catch (error) {
       if (error instanceof TurnAborted || turnSignal.aborted) throw new TurnAborted();
-      return { ok: false, action: parsed.action, result: errorResult(error) };
+      return failure(action, error);
+    } finally {
+      clearTimeout(timer);
     }
+  };
+
+  const close = (steps, lastLabel) => {
+    const language = spokenLanguage(said);
+    send({ type: 'text-delta', text: CLOSING[language]({ steps, label: lastLabel ?? '-' }) });
+    send({ type: 'done' });
   };
 
   try {
-    const cap = await guard(readStepCap(readSettings));
+    let session = await guard(freshSession());
+    if (!session?.accessToken) {
+      send({ type: 'error', code: 'not_signed_in' });
+      return;
+    }
+    const settings = await guard(readSettingsSafely(readSettings));
+    const cap = stepCapFrom(settings);
+    const tools = buildTools(settings);
+    if (tools.length === 0) {
+      send({ type: 'error', code: 'not_configured' });
+      return;
+    }
+    const allowed = Object.fromEntries(tools.map((tool) => [tool.name, tool.parameters?.properties?.action?.enum ?? []]));
     let lastLabel = null;
     for (let stepNumber = 1; stepNumber <= cap; stepNumber += 1) {
+      if (stepNumber > 1) {
+        session = await guard(freshSession());
+        if (!session?.accessToken) {
+          send({ type: 'error', code: 'not_signed_in' });
+          return;
+        }
+      }
+      const messages = fitMessages(conversationMessages, turn);
+      if (!messages) {
+        close(stepNumber - 1, lastLabel);
+        return;
+      }
       const context = await guard(buildContext({ directory, sessionId }));
-      const outcome = await guard(step(context));
+      const outcome = await guard(step({ session, context, messages, tools }));
       if (outcome.error) {
         send({ type: 'error', code: outcome.error });
         return;
@@ -245,17 +358,16 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
         return;
       }
       turn.push({ role: 'assistant', content: outcome.text, toolCalls: outcome.toolCalls });
-      for (const call of outcome.toolCalls) {
-        const { ok, action, result } = await runTool(call);
-        if (action && action.startsWith('chrome.')) chromePage?.note(action, ok);
-        if (action) lastLabel = VOICE_ACTION_TITLES[action];
+      for (const [index, call] of outcome.toolCalls.entries()) {
+        const { ok, action, result } = index < STEP_CALLS_MAX
+          ? await runTool(call, allowed)
+          : refusal(null, 'too_many_calls', `Only ${STEP_CALLS_MAX} actions run per step; ask for the rest again`);
+        if (action) lastLabel = VOICE_ACTION_TITLES[action] ?? action;
         turn.push({ role: 'tool', toolCallId: call.id, name: call.name, content: serializeResult(result) });
         send({ type: 'tool-result', id: call.id, ok });
       }
     }
-    const closing = (CLOSING[locale] ?? CLOSING.en)({ steps: cap, label: lastLabel ?? '-' });
-    send({ type: 'text-delta', text: closing });
-    send({ type: 'done' });
+    close(cap, lastLabel);
   } catch (error) {
     if (error instanceof TurnAborted || turnSignal.aborted) return;
     throw error;
