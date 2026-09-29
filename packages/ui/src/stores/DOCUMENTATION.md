@@ -293,6 +293,21 @@ This is currently acceptable as a narrow bootstrap fallback.
 
 Do not widen it into a polling or broad refresh system.
 
+## Voice Providers In `useConfigStore`
+
+- `voiceProvider` (read aloud) and `sttProvider` (dictation) accept `'mittr'`,
+  which goes through the local server's Mittr speech routes and holds no key
+  or URL. The helpers live in `src/lib/voice/mittrVoice.ts`.
+- `'mittr'` is only the starting value when nothing was saved: a `null`
+  localStorage value for `voiceProvider`, and, for `sttProvider`, an
+  authoritative desktop settings snapshot without `sttProvider`
+  (`materializeAuthoritativeUiSettings`). Any saved or legacy value
+  (`server` → `openai-compatible`, `browser`/`wasm` → `local`) is kept.
+- `voiceStepCap` (1–20, default 8) and `voiceReplyMaxChars` (1000–30000,
+  default 8000) are desktop settings: setters clamp and save through
+  `updateDesktopSettings`; `applyDesktopUiPreferences` brings server values in
+  and an omitted value falls back to its default.
+
 ## When Editing These Stores
 
 Before changing store shape or selectors, ask:

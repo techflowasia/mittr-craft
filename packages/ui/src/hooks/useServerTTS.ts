@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { parseMittrVoiceReadiness } from '@/lib/voice/mittrVoice';
 
 interface ServerTTSStatusCache {
   available: boolean;
@@ -27,7 +28,7 @@ interface ServerTTSStatusCache {
 
 interface UseServerTTSOptions {
   enabled?: boolean;
-  availabilityMode?: 'auto' | 'openai' | 'openai-compatible';
+  availabilityMode?: 'auto' | 'openai' | 'openai-compatible' | 'mittr';
 }
 
 const SERVER_TTS_STATUS_TTL_MS = 30000;
@@ -67,6 +68,33 @@ async function getServerTTSStatus(): Promise<boolean> {
   return serverTTSStatusRequest;
 }
 
+let mittrSpeakCache: ServerTTSStatusCache | null = null;
+let mittrSpeakRequest: Promise<boolean> | null = null;
+
+async function getMittrSpeakReady(): Promise<boolean> {
+  if (mittrSpeakCache && Date.now() - mittrSpeakCache.checkedAt < SERVER_TTS_STATUS_TTL_MS) {
+    return mittrSpeakCache.available;
+  }
+  if (mittrSpeakRequest) {
+    return mittrSpeakRequest;
+  }
+  mittrSpeakRequest = (async () => {
+    try {
+      const response = await runtimeFetch('/api/voice/readiness');
+      const readiness = response.ok ? parseMittrVoiceReadiness(await response.json().catch(() => null)) : null;
+      const available = readiness?.speak === true;
+      mittrSpeakCache = { available, checkedAt: Date.now() };
+      return available;
+    } catch {
+      mittrSpeakCache = null;
+      return false;
+    } finally {
+      mittrSpeakRequest = null;
+    }
+  })();
+  return mittrSpeakRequest;
+}
+
 export interface UseServerTTSReturn {
   /** Whether TTS is currently playing */
   isPlaying: boolean;
@@ -99,7 +127,7 @@ interface SpeakOptions {
   instructions?: string;
   /** Summarize long text before speaking (defaults to true) */
   summarize?: boolean;
-  /** Provider ID for summarization model */
+  /** Server speech provider; `mittr` synthesizes through the Mittr platform */
   providerId?: string;
   /** Model ID for summarization */
   modelId?: string;
@@ -135,9 +163,7 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   
-  // Get current model and API settings from config store.
-  const currentProviderId = useConfigStore((state) => state.currentProviderId);
-  const currentModelId = useConfigStore((state) => state.currentModelId);
+  // Get API settings from config store.
   const openaiApiKey = useConfigStore((state) => state.openaiApiKey);
   const openaiCompatibleUrl = useConfigStore((state) => state.openaiCompatibleUrl);
   const openaiCompatibleApiKey = useConfigStore((state) => state.openaiCompatibleApiKey);
@@ -147,6 +173,12 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
     if (!enabled) {
       setIsAvailable(false);
       return false;
+    }
+
+    if (availabilityMode === 'mittr') {
+      const ready = await getMittrSpeakReady();
+      setIsAvailable(ready);
+      return ready;
     }
 
     const hasClientKey = Boolean(openaiApiKey && openaiApiKey.trim().length > 0);
@@ -275,9 +307,8 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
           speed: options?.speed || 0.9,
           instructions: options?.instructions,
           summarize: false,
-          // Use provided provider/model, or fall back to current chat model
-          providerId: options?.providerId || currentProviderId || undefined,
-          modelId: options?.modelId || currentModelId || undefined,
+          providerId: options?.providerId || undefined,
+          modelId: options?.modelId || undefined,
           // Send API key from settings if available
           apiKey: options?.baseURL ? (openaiCompatibleApiKey || undefined) : (openaiApiKey || undefined),
           // Send custom base URL for OpenAI-compatible servers
@@ -344,7 +375,7 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
       options?.onError?.(errorMsg);
       setIsPlaying(false);
     }
-  }, [stop, currentProviderId, currentModelId, openaiApiKey, openaiCompatibleApiKey]);
+  }, [stop, openaiApiKey, openaiCompatibleApiKey]);
 
   // Cleanup on unmount
   useEffect(() => {

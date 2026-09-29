@@ -22,6 +22,17 @@ import { markStartupTrace, measureStartupTrace } from "@/lib/startupTrace";
 import { normalizePath } from "@/lib/pathNormalization";
 import { getSyncConfig, subscribeToSyncConfigChanges } from "@/sync/sync-refs";
 import { getRuntimeKey } from "@/lib/runtime-switch";
+import {
+    DEFAULT_VOICE_REPLY_MAX_CHARS,
+    DEFAULT_VOICE_STEP_CAP,
+    clampVoiceReplyMaxChars,
+    clampVoiceStepCap,
+    normalizeSttProvider,
+    resolveInitialSttProvider,
+    resolveInitialVoiceProvider,
+    type SttProvider,
+    type VoiceProvider,
+} from "@/lib/voice/mittrVoice";
 
 const MODELS_DEV_API_URL = "https://models.dev/api.json";
 const MODELS_DEV_PROXY_URL = "/api/mittrcraft/models-metadata";
@@ -36,21 +47,6 @@ const GIT_UTILITY_PROVIDER_ID = "zen";
 const GIT_UTILITY_PREFERRED_MODEL_ID = "big-pickle";
 const PROVIDER_CONFIG_REFRESH_CONCURRENCY = 4;
 
-const normalizeSttProvider = (value: unknown): 'local' | 'openai-compatible' | undefined => {
-    if (value === 'local' || value === 'openai-compatible') {
-        return value;
-    }
-    // Legacy providers: 'server' used an OpenAI-compatible endpoint;
-    // 'browser' and 'wasm' map to the local default.
-    if (value === 'server') {
-        return 'openai-compatible';
-    }
-    if (value === 'browser' || value === 'wasm') {
-        return 'local';
-    }
-    return undefined;
-};
-
 interface MittrCraftDefaults {
     defaultModel?: string;
     defaultVariant?: string;
@@ -60,7 +56,7 @@ interface MittrCraftDefaults {
     defaultFileViewerPreview?: boolean;
     zenModel?: string;
     messageStreamTransport?: 'auto' | 'ws' | 'sse';
-    sttProvider?: 'local' | 'openai-compatible';
+    sttProvider?: SttProvider;
     sttServerUrl?: string;
     sttModel?: string;
     sttLocalModel?: string;
@@ -1033,8 +1029,8 @@ interface ConfigStore {
     settingsZenModel: string | undefined;
     settingsMessageStreamTransport: 'auto' | 'ws' | 'sse';
     // Voice provider preference ('browser', 'openai', 'openai-compatible', or 'say' for macOS)
-    voiceProvider: 'browser' | 'local' | 'openai' | 'openai-compatible' | 'say';
-    setVoiceProvider: (provider: 'browser' | 'local' | 'openai' | 'openai-compatible' | 'say') => void;
+    voiceProvider: VoiceProvider;
+    setVoiceProvider: (provider: VoiceProvider) => void;
     // TTS settings
     speechRate: number;
     speechPitch: number;
@@ -1050,7 +1046,7 @@ interface ConfigStore {
     openaiCompatibleTtsModel: string;
     // STT (dictation) settings
     dictationEnabled: boolean;
-    sttProvider: 'local' | 'openai-compatible';
+    sttProvider: SttProvider;
     sttServerUrl: string;
     sttApiKey: string;
     sttModel: string;
@@ -1076,7 +1072,11 @@ interface ConfigStore {
     setOpenaiCompatibleVoice: (voice: string) => void;
     setOpenaiCompatibleTtsModel: (model: string) => void;
     setDictationEnabled: (enabled: boolean) => void;
-    setSttProvider: (provider: 'local' | 'openai-compatible') => void;
+    setSttProvider: (provider: SttProvider) => void;
+    voiceStepCap: number;
+    voiceReplyMaxChars: number;
+    setVoiceStepCap: (value: number) => void;
+    setVoiceReplyMaxChars: (value: number) => void;
     setSttServerUrl: (url: string) => void;
     setSttApiKey: (apiKey: string) => void;
     setSttModel: (model: string) => void;
@@ -1175,8 +1175,7 @@ export const useConfigStore = create<ConfigStore>()(
                 // Voice provider preference - load from localStorage or default to 'browser'
                 voiceProvider: (() => {
                     if (typeof window !== 'undefined') {
-                        const saved = localStorage.getItem('voiceProvider');
-                        if (saved === 'openai' || saved === 'browser' || saved === 'local' || saved === 'say' || saved === 'openai-compatible') return saved;
+                        return resolveInitialVoiceProvider(localStorage.getItem('voiceProvider'));
                     }
                     return 'browser';
                 })(),
@@ -1297,14 +1296,12 @@ export const useConfigStore = create<ConfigStore>()(
                 // STT provider: 'local' (server-side sherpa-onnx) or 'openai-compatible'
                 sttProvider: (() => {
                     if (typeof window !== 'undefined') {
-                        const saved = localStorage.getItem('sttProvider');
-                        if (saved === 'local' || saved === 'openai-compatible') return saved;
-                        // Migrate legacy providers: 'server' used an OpenAI-compatible
-                        // endpoint; 'browser' and 'wasm' map to the local default.
-                        if (saved === 'server') return 'openai-compatible' as const;
+                        return resolveInitialSttProvider(localStorage.getItem('sttProvider'));
                     }
                     return 'local' as const;
                 })(),
+                voiceStepCap: DEFAULT_VOICE_STEP_CAP,
+                voiceReplyMaxChars: DEFAULT_VOICE_REPLY_MAX_CHARS,
                 sttServerUrl: (() => {
                     if (typeof window !== 'undefined') {
                         const saved = localStorage.getItem('sttServerUrl');
@@ -2830,7 +2827,7 @@ export const useConfigStore = create<ConfigStore>()(
                     });
                 },
 
-                setVoiceProvider: (provider: 'browser' | 'local' | 'openai' | 'openai-compatible' | 'say') => {
+                setVoiceProvider: (provider: VoiceProvider) => {
                     set({ voiceProvider: provider });
                     if (typeof window !== 'undefined') {
                         localStorage.setItem('voiceProvider', provider);
@@ -2932,12 +2929,24 @@ export const useConfigStore = create<ConfigStore>()(
                     updateDesktopSettings({ dictationEnabled: enabled }).catch(() => {});
                 },
 
-                setSttProvider: (provider: 'local' | 'openai-compatible') => {
+                setSttProvider: (provider: SttProvider) => {
                     set({ sttProvider: provider });
                     if (typeof window !== 'undefined') {
                         localStorage.setItem('sttProvider', provider);
                     }
                     updateDesktopSettings({ sttProvider: provider }).catch(() => {});
+                },
+
+                setVoiceStepCap: (value: number) => {
+                    const voiceStepCap = clampVoiceStepCap(value);
+                    set({ voiceStepCap });
+                    updateDesktopSettings({ voiceStepCap }).catch(() => {});
+                },
+
+                setVoiceReplyMaxChars: (value: number) => {
+                    const voiceReplyMaxChars = clampVoiceReplyMaxChars(value);
+                    set({ voiceReplyMaxChars });
+                    updateDesktopSettings({ voiceReplyMaxChars }).catch(() => {});
                 },
 
                 setSttServerUrl: (url: string) => {

@@ -21,6 +21,14 @@ import { isTerminalShell } from '@/lib/terminalShell';
 import { getRuntimeKey, subscribeRuntimeEndpointChanged, subscribeRuntimeEndpointWillChange } from '@/lib/runtime-switch';
 import { DEFAULT_DARK_THEME_ID, DEFAULT_LIGHT_THEME_ID } from '@/lib/theme/themes';
 import { DEFAULT_OPEN_IN_APP_ID } from '@/lib/openInApps';
+import {
+  DEFAULT_VOICE_REPLY_MAX_CHARS,
+  DEFAULT_VOICE_STEP_CAP,
+  VOICE_REPLY_MAX_CHARS_MAX,
+  VOICE_REPLY_MAX_CHARS_MIN,
+  VOICE_STEP_CAP_MAX,
+  VOICE_STEP_CAP_MIN,
+} from '@/lib/voice/mittrVoice';
 
 export const applyPersistedHomeDirectoryToWindow = (homeDirectory: string): void => {
   if (typeof window === 'undefined') {
@@ -172,7 +180,7 @@ const persistToLocalStorage = (settings: DesktopSettings) => {
   } else {
     localStorage.removeItem('dictationEnabled');
   }
-  if (settings.sttProvider === 'local' || settings.sttProvider === 'openai-compatible') {
+  if (settings.sttProvider === 'local' || settings.sttProvider === 'openai-compatible' || settings.sttProvider === 'mittr') {
     localStorage.setItem('sttProvider', settings.sttProvider);
   } else {
     localStorage.removeItem('sttProvider');
@@ -592,11 +600,13 @@ const materializeAuthoritativeUiSettings = (settings: DesktopSettings): DesktopS
     directoryShowHidden: true,
     filesViewShowGitignored: false,
     dictationEnabled: true,
-    sttProvider: 'local',
+    sttProvider: 'mittr',
     sttServerUrl: 'http://localhost:8001/v1',
     sttModel: 'deepdml/faster-whisper-large-v3-turbo-ct2',
     sttLocalModel: 'parakeet-tdt-0.6b-v2-int8',
     sttLanguage: '',
+    voiceStepCap: DEFAULT_VOICE_STEP_CAP,
+    voiceReplyMaxChars: DEFAULT_VOICE_REPLY_MAX_CHARS,
     ...settings,
   };
 };
@@ -940,8 +950,14 @@ const applyDesktopUiPreferences = (settings: DesktopSettings) => {
     if (typeof settings.dictationEnabled === 'boolean' && settings.dictationEnabled !== configStore.dictationEnabled) {
       nextConfigState.dictationEnabled = settings.dictationEnabled;
     }
-    if ((settings.sttProvider === 'local' || settings.sttProvider === 'openai-compatible') && settings.sttProvider !== configStore.sttProvider) {
+    if ((settings.sttProvider === 'local' || settings.sttProvider === 'openai-compatible' || settings.sttProvider === 'mittr') && settings.sttProvider !== configStore.sttProvider) {
       nextConfigState.sttProvider = settings.sttProvider;
+    }
+    if (typeof settings.voiceStepCap === 'number' && settings.voiceStepCap !== configStore.voiceStepCap) {
+      nextConfigState.voiceStepCap = settings.voiceStepCap;
+    }
+    if (typeof settings.voiceReplyMaxChars === 'number' && settings.voiceReplyMaxChars !== configStore.voiceReplyMaxChars) {
+      nextConfigState.voiceReplyMaxChars = settings.voiceReplyMaxChars;
     }
     if (typeof settings.sttServerUrl === 'string' && settings.sttServerUrl !== configStore.sttServerUrl) {
       nextConfigState.sttServerUrl = settings.sttServerUrl;
@@ -1616,7 +1632,7 @@ const sanitizeWebSettings = (payload: unknown): DesktopSettings | null => {
   if (typeof candidate.dictationEnabled === 'boolean') {
     result.dictationEnabled = candidate.dictationEnabled;
   }
-  if (candidate.sttProvider === 'local' || candidate.sttProvider === 'openai-compatible') {
+  if (candidate.sttProvider === 'local' || candidate.sttProvider === 'openai-compatible' || candidate.sttProvider === 'mittr') {
     result.sttProvider = candidate.sttProvider;
   } else if (candidate.sttProvider === 'server') {
     // Legacy provider migration: 'server' was the OpenAI-compatible endpoint.
@@ -1635,6 +1651,22 @@ const sanitizeWebSettings = (payload: unknown): DesktopSettings | null => {
   }
   if (typeof candidate.sttLanguage === 'string') {
     result.sttLanguage = candidate.sttLanguage.trim();
+  }
+  if (
+    typeof candidate.voiceStepCap === 'number'
+    && Number.isInteger(candidate.voiceStepCap)
+    && candidate.voiceStepCap >= VOICE_STEP_CAP_MIN
+    && candidate.voiceStepCap <= VOICE_STEP_CAP_MAX
+  ) {
+    result.voiceStepCap = candidate.voiceStepCap;
+  }
+  if (
+    typeof candidate.voiceReplyMaxChars === 'number'
+    && Number.isInteger(candidate.voiceReplyMaxChars)
+    && candidate.voiceReplyMaxChars >= VOICE_REPLY_MAX_CHARS_MIN
+    && candidate.voiceReplyMaxChars <= VOICE_REPLY_MAX_CHARS_MAX
+  ) {
+    result.voiceReplyMaxChars = candidate.voiceReplyMaxChars;
   }
 
   return result;

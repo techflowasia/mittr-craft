@@ -69,13 +69,13 @@ export function useMessageTTS(): UseMessageTTSReturn {
     const showMessageTTSButtons = useConfigStore((state) => state.showMessageTTSButtons);
     const ttsInputMode = useConfigStore((state) => state.ttsInputMode);
 
-    const isServerProvider = voiceProvider === 'openai' || voiceProvider === 'openai-compatible';
+    const isServerProvider = voiceProvider === 'openai' || voiceProvider === 'openai-compatible' || voiceProvider === 'mittr';
     const shouldCheckOpenAIAvailability = showMessageTTSButtons && isServerProvider;
     const shouldCheckSayAvailability = showMessageTTSButtons && voiceProvider === 'say';
 
     const { speak: speakServerTTS, stop: stopServerTTS, isAvailable: isServerTTSAvailable } = useServerTTS({
         enabled: shouldCheckOpenAIAvailability,
-        availabilityMode: voiceProvider === 'openai-compatible' ? 'openai-compatible' : 'openai',
+        availabilityMode: voiceProvider === 'mittr' ? 'mittr' : voiceProvider === 'openai-compatible' ? 'openai-compatible' : 'openai',
     });
     const { speak: speakSayTTS, stop: stopSayTTS, isAvailable: isSayTTSAvailable } = useSayTTS({
         enabled: shouldCheckSayAvailability,
@@ -118,7 +118,17 @@ export function useMessageTTS(): UseMessageTTSReturn {
             const sanitizedText = sanitizeForTTS(sourceText);
             const textToSpeak = shouldUseRaw ? sourceText : sanitizedText;
             
-            if (isServerProvider && isServerTTSAvailable) {
+            if (voiceProvider === 'mittr' && isServerTTSAvailable) {
+                await speakServerTTS(textToSpeak, {
+                    providerId: 'mittr',
+                    speed: speechRate,
+                    pitch: speechPitch,
+                    volume: speechVolume,
+                    summarize: false,
+                    onEnd: () => setIsPlaying(false),
+                    onError: () => setIsPlaying(false),
+                });
+            } else if (isServerProvider && isServerTTSAvailable) {
                 const voice = voiceProvider === 'openai-compatible' ? openaiCompatibleVoice : openaiVoice;
                 const baseURL = voiceProvider === 'openai-compatible' ? openaiCompatibleUrl : undefined;
                 const model = voiceProvider === 'openai-compatible' ? openaiCompatibleTtsModel : undefined;
