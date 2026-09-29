@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { cn } from '@/lib/utils';
+import { bindEscapeToEnd } from '@/lib/voice-assistant/keys';
 import { startConversationListening } from '@/lib/voice-assistant/listen';
 import { createNarrationWatch, spokenText, type NarrationWatch, type SessionError } from '@/lib/voice-assistant/narration';
 import { createAudioPlayer } from '@/lib/voice-assistant/player';
@@ -55,15 +56,6 @@ export function TalkButton({ readiness, phase, onToggle, buttonRef, className }:
       )}
     </Button>
   );
-}
-
-export function bindEscapeToEnd(target: EventTarget, end: () => void): () => void {
-  const onKey = (event: Event) => {
-    if ((event as KeyboardEvent).key !== 'Escape' || event.defaultPrevented) return;
-    end();
-  };
-  target.addEventListener('keydown', onKey);
-  return () => target.removeEventListener('keydown', onKey);
 }
 
 const voiceApi = createVoiceApi((input, init) => runtimeFetch(input, init));
