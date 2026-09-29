@@ -79,12 +79,13 @@ Existing route. Reply is always browser-decodable: raw PCM from the platform is 
 
 ### `POST /api/voice/turn` (SSE)
 
-Body `{ said: string; history: { role: 'user' | 'assistant'; text: string }[]; locale: 'th' | 'en'; directory?: string; sessionId?: string }`.
+Body `{ said: string; history: { role: 'user' | 'assistant'; text: string }[]; locale: 'th' | 'en'; directory?: string; sessionId?: string; queuedPrompts?: number }` (`queuedPrompts`: integer 0–1000, the renderer's queued prompt count for the open session; omitted means unknown).
 
 Events: the platform events above, plus
 
 - `{ "type": "action", "kind": "running", "label": string }` before each tool runs (label is human-readable, no arguments)
 - `{ "type": "tool-result", "id": string, "ok": boolean }` after it
+- `{ "type": "queue", "sessionId": string, "directory": string, "text": string }` when the assistant sent a prompt to a busy session: nothing was dispatched; the renderer that owns the turn adds it with `useMessageQueueStore.getState().addToQueue(createMessageQueueTarget(sessionId, directory), { content: text, sendConfig })` (sendConfig captured at queue time like the composer), and `useQueuedMessageAutoSend` sends it when the session goes idle. It travels on the turn stream, not the shared event stream, so several windows never queue it twice.
 
 `{ "type": "error", "code": "not_signed_in" }` when there is no Mittr session.
 
