@@ -43,7 +43,7 @@ describe('dictation service with the Mittr provider', () => {
       transcribe: vi.fn(),
     };
     const result = await withClient(client).createSttSession({ provider: 'mittr' });
-    expect(result).toMatchObject({ retryable: true, reasonCode: 'not_signed_in' });
+    expect(result).toMatchObject({ retryable: false, reasonCode: 'not_signed_in' });
     expect(typeof result.error).toBe('string');
   });
 

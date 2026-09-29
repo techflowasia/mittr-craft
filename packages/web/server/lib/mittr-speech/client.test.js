@@ -120,6 +120,28 @@ describe('createMittrSpeechClient', () => {
       expect(fetchImpl.mock.calls[1][1].headers.Authorization).toBe('Bearer token-2');
     });
 
+    it('does not keep a refused session', async () => {
+      const { client, fetchImpl } = clientWith(() => json({ message: 'unauthorized' }, 401));
+      expect((await client.readiness()).reason).toBe('not_signed_in');
+      expect((await client.readiness()).reason).toBe('not_signed_in');
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    it('says not_configured when the platform has no speech routes', async () => {
+      const { client } = clientWith(() => new Response('Not Found', { status: 404 }));
+      expect(await client.readiness()).toMatchObject({ signedIn: true, reason: 'not_configured' });
+    });
+
+    it('says not_configured for a bare 503', async () => {
+      const { client } = clientWith(() => new Response('Service Unavailable', { status: 503 }));
+      expect(await client.readiness()).toMatchObject({ signedIn: true, reason: 'not_configured' });
+    });
+
+    it('says unreachable for other platform failures', async () => {
+      const { client } = clientWith(() => new Response('Bad Gateway', { status: 502 }));
+      expect(await client.readiness()).toMatchObject({ reason: 'unreachable' });
+    });
+
     it('does not keep an unreachable answer', async () => {
       let fail = true;
       const { client, fetchImpl } = clientWith(() => {
@@ -219,6 +241,22 @@ describe('createMittrSpeechClient', () => {
     it('maps not_configured from the platform', async () => {
       const { client } = clientWith(() => json({ code: 'not_configured' }, 503));
       await expect(client.synthesize('hello')).rejects.toMatchObject({
+        reasonCode: 'not_configured',
+        statusCode: 503,
+      });
+    });
+
+    it('maps a platform without speech routes to not_configured', async () => {
+      const { client } = clientWith(() => new Response('Not Found', { status: 404 }));
+      await expect(client.synthesize('hello')).rejects.toMatchObject({
+        reasonCode: 'not_configured',
+        statusCode: 503,
+      });
+    });
+
+    it('maps a bare 503 to not_configured', async () => {
+      const { client } = clientWith(() => new Response('Service Unavailable', { status: 503 }));
+      await expect(client.transcribe(Buffer.alloc(4))).rejects.toMatchObject({
         reasonCode: 'not_configured',
         statusCode: 503,
       });

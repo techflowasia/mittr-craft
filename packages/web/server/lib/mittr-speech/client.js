@@ -21,6 +21,8 @@ const createSpeechError = (reasonCode, statusCode = STATUS_BY_REASON[reasonCode]
 
 const isSessionRefused = (status) => status === 401 || status === 403;
 
+const isSpeechMissing = (status, code) => status === 404 || (status === 503 && !code);
+
 const notReady = { listen: false, speak: false, voice: false };
 
 export const createMittrSpeechClient = ({
@@ -59,8 +61,9 @@ export const createMittrSpeechClient = ({
     if (response.ok) return response;
     if (isSessionRefused(response.status)) throw createSpeechError('not_signed_in');
     const body = await response.json().catch(() => null);
-    const code = typeof body?.code === 'string' && body.code ? body.code : 'upstream_failed';
-    throw createSpeechError(code, response.status);
+    const platformCode = typeof body?.code === 'string' && body.code ? body.code : null;
+    if (isSpeechMissing(response.status, platformCode)) throw createSpeechError('not_configured');
+    throw createSpeechError(platformCode ?? 'upstream_failed', response.status);
   };
 
   const readFromPlatform = async (accessToken) => {
@@ -79,7 +82,10 @@ export const createMittrSpeechClient = ({
     }
     const body = await response.json().catch(() => null);
     if (!response.ok || !body || typeof body !== 'object') {
-      const reason = body?.code === 'not_configured' ? 'not_configured' : 'unreachable';
+      const platformCode = typeof body?.code === 'string' && body.code ? body.code : null;
+      const reason = platformCode === 'not_configured' || isSpeechMissing(response.status, platformCode)
+        ? 'not_configured'
+        : 'unreachable';
       return { cacheable: reason === 'not_configured', value: { signedIn: true, ready: notReady, reason } };
     }
     const ready = {

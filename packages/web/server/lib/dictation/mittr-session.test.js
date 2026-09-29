@@ -68,7 +68,31 @@ describe('MittrTranscriptionSession', () => {
     session.appendPcm16(Buffer.from([1, 0]));
     const error = nextEvent(session, 'error');
     session.commit();
-    await expect(error).resolves.toBe(failure);
+    await expect(error).resolves.toMatchObject({ reasonCode: 'upstream_failed' });
+  });
+
+  it('turns an expired session into the sign-in message and stops retrying', async () => {
+    const { session } = await connected(async () => {
+      throw Object.assign(new Error('Mittr speech failed: not_signed_in'), { reasonCode: 'not_signed_in', statusCode: 401 });
+    });
+    session.appendPcm16(Buffer.from([1, 0]));
+    const error = nextEvent(session, 'error');
+    session.commit();
+    await expect(error).resolves.toMatchObject({
+      message: 'Sign in to Mittr to use dictation',
+      reasonCode: 'not_signed_in',
+      retryable: false,
+    });
+  });
+
+  it('keeps a platform failure retryable with its reason', async () => {
+    const { session } = await connected(async () => {
+      throw Object.assign(new Error('Mittr speech failed: upstream_timeout'), { reasonCode: 'upstream_timeout', statusCode: 504 });
+    });
+    session.appendPcm16(Buffer.from([1, 0]));
+    const error = nextEvent(session, 'error');
+    session.commit();
+    await expect(error).resolves.toMatchObject({ reasonCode: 'upstream_timeout', retryable: true });
   });
 
   it('errors when audio arrives before connect', () => {

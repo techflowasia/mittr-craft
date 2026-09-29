@@ -8,7 +8,9 @@ const MITTR_PCM_DEFAULT_RATE = 24000;
 
 const fitMittrText = (text) => {
   if (text.length <= MITTR_SYNTHESIZE_MAX_CHARS) return text;
-  const head = text.slice(0, MITTR_SYNTHESIZE_MAX_CHARS);
+  const lastKept = text.charCodeAt(MITTR_SYNTHESIZE_MAX_CHARS - 1);
+  const safeEnd = lastKept >= 0xd800 && lastKept <= 0xdbff ? MITTR_SYNTHESIZE_MAX_CHARS - 1 : MITTR_SYNTHESIZE_MAX_CHARS;
+  const head = text.slice(0, safeEnd);
   const boundary = head.search(/\s\S*$/);
   return (boundary > 0 ? head.slice(0, boundary) : head).trimEnd();
 };
@@ -46,7 +48,9 @@ const speakWithMittr = async (req, res, getMittrSpeechClient) => {
       if (readPcmChannels(contentType) !== 1) {
         return res.status(502).json({ error: 'The Mittr platform returned audio this app cannot play', reasonCode: 'upstream_failed' });
       }
-      payload = pcm16ToWav(audio, parsePcmRateFromFormat(contentType, MITTR_PCM_DEFAULT_RATE));
+      const samples = Buffer.from(audio.subarray(0, audio.length & ~1));
+      if (mediaType === 'audio/l16') samples.swap16();
+      payload = pcm16ToWav(samples, parsePcmRateFromFormat(contentType, MITTR_PCM_DEFAULT_RATE));
       payloadType = 'audio/wav';
     }
     res.setHeader('Content-Type', payloadType);

@@ -23,8 +23,9 @@ gates the app. Used by Mittr dictation (`../dictation`), Mittr read aloud
 
 - `not_signed_in`: no Mittr session, or the platform refused it (401/403).
   Nothing is sent to the platform without a session.
-- `not_configured`: the platform answered `{ code: 'not_configured' }`, or at
-  least one of listen/speak/voice is not pinned.
+- `not_configured`: the platform answered `{ code: 'not_configured' }`, a
+  bare `503` without a code, or `404` (a platform without the speech routes),
+  or at least one of listen/speak/voice is not pinned.
 - `unreachable`: the request did not reach the platform.
 - Any other platform `{ code }` (`upstream_failed`, `upstream_timeout`,
   `audio_too_large`, `bad_request`) is passed through as `reasonCode` with the

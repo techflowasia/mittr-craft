@@ -5,6 +5,23 @@ import { pcm16ToWav } from './audio.js';
 
 const MITTR_SAMPLE_RATE = 16000;
 
+export const MITTR_LISTEN_ERRORS = {
+  not_signed_in: 'Sign in to Mittr to use dictation',
+  not_configured: 'Your Mittr admin has not set up speech models yet',
+  unreachable: 'The Mittr platform cannot be reached right now',
+};
+
+const NOT_RETRYABLE = new Set(['not_signed_in', 'not_configured']);
+
+const toListenError = (err) => {
+  const reasonCode = typeof err?.reasonCode === 'string' ? err.reasonCode : undefined;
+  const message = MITTR_LISTEN_ERRORS[reasonCode] ?? (err instanceof Error ? err.message : String(err));
+  return Object.assign(new Error(message), {
+    ...(reasonCode ? { reasonCode } : {}),
+    retryable: !NOT_RETRYABLE.has(reasonCode),
+  });
+};
+
 export class MittrTranscriptionSession extends EventEmitter {
   constructor({ client }) {
     super();
@@ -58,7 +75,7 @@ export class MittrTranscriptionSession extends EventEmitter {
         });
       } catch (err) {
         if (signal.aborted) return;
-        this.emit('error', err instanceof Error ? err : new Error(String(err)));
+        this.emit('error', toListenError(err));
       }
     })();
   }

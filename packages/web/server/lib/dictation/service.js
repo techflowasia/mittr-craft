@@ -13,7 +13,7 @@ import { rm } from 'fs/promises';
 
 import { DictationWorkerClient, WorkerBackedTranscriptionSession } from './local/worker-client.js';
 import { OpenAICompatibleTranscriptionSession } from './openai-compatible-session.js';
-import { MittrTranscriptionSession } from './mittr-session.js';
+import { MITTR_LISTEN_ERRORS, MittrTranscriptionSession } from './mittr-session.js';
 import {
   DEFAULT_LOCAL_STT_MODEL,
   DEFAULT_LOCAL_TTS_MODEL,
@@ -31,12 +31,6 @@ import { ensureLocalSttModel, isLocalSttModelInstalled } from './local/model-dow
 const resolveProvider = (value) => (
   value === 'openai-compatible' || value === 'mittr' ? value : 'local'
 );
-
-const MITTR_LISTEN_ERRORS = {
-  not_signed_in: 'Sign in to Mittr to use dictation',
-  not_configured: 'Your Mittr admin has not set up speech models yet',
-  unreachable: 'The Mittr platform cannot be reached right now',
-};
 
 export function createDictationService({ modelsDir, getMittrSpeechClient = () => null }) {
   const workerClient = new DictationWorkerClient();
@@ -114,7 +108,7 @@ export function createDictationService({ modelsDir, getMittrSpeechClient = () =>
       if (!available) {
         return {
           error: MITTR_LISTEN_ERRORS[reasonCode] || MITTR_LISTEN_ERRORS.not_configured,
-          retryable: reasonCode !== 'not_configured',
+          retryable: reasonCode === 'unreachable',
           reasonCode,
         };
       }

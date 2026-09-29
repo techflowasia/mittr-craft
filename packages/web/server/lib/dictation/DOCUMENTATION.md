@@ -39,6 +39,10 @@ same status/download/delete routes.
     `reasonCode` `not_signed_in` / `not_configured` / `unreachable` (no broker
     on this install). `getStatus({ provider: 'mittr' })` reports the same
     reason. Closing the session aborts a transcription still in flight.
+    A segment that fails mid-stream (for example the session expired) ends
+    the stream with the same message and `reasonCode`; `not_signed_in` and
+    `not_configured` are not retryable. The stream manager carries a session
+    error's `reasonCode` and `retryable` into the `error` frame.
 - `local/` — worker process + client (IPC, idle shutdown TTL), sherpa
   recognizer engine and realtime session (throttled re-decode for partials),
   model catalog and downloader. The native `sherpa-onnx-node` addon is only

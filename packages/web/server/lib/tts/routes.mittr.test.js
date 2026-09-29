@@ -54,6 +54,33 @@ describe('POST /api/tts/speak with the Mittr provider', () => {
     expect(response.body.readUInt32LE(24)).toBe(16000);
   });
 
+  it('turns big-endian audio/l16 into little-endian WAV', async () => {
+    const l16 = Buffer.from([0x01, 0x02, 0x03, 0x04]);
+    const client = { synthesize: vi.fn(async () => audioReply(l16, 'audio/L16;rate=16000;channels=1')) };
+    const response = await speak(createApp(client), { text: 'hi' });
+    expect(response.headers['content-type']).toBe('audio/wav');
+    expect(response.body.readUInt32LE(24)).toBe(16000);
+    expect(response.body.subarray(44)).toEqual(Buffer.from([0x02, 0x01, 0x04, 0x03]));
+  });
+
+  it('drops a trailing odd byte of PCM', async () => {
+    const pcm = Buffer.from([1, 0, 2, 0, 9]);
+    const client = { synthesize: vi.fn(async () => audioReply(pcm, 'audio/pcm;rate=24000;channels=1')) };
+    const response = await speak(createApp(client), { text: 'hi' });
+    expect(response.body.readUInt32LE(40)).toBe(4);
+    expect(response.body.subarray(44)).toEqual(Buffer.from([1, 0, 2, 0]));
+  });
+
+  it('never splits a surrogate pair when cutting long text', async () => {
+    const client = { synthesize: vi.fn(async () => audioReply(Buffer.from([1, 0]), 'audio/mpeg')) };
+    const long = `${'a'.repeat(3999)}😀${'b'.repeat(100)}`;
+    await speak(createApp(client), { text: long });
+    const sent = client.synthesize.mock.calls[0][0];
+    expect(sent.length).toBeLessThanOrEqual(4000);
+    const last = sent.charCodeAt(sent.length - 1);
+    expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+  });
+
   it('passes other audio types through unchanged', async () => {
     const mp3 = Buffer.from([0xff, 0xfb, 0x90, 0x44, 0x00]);
     const client = { synthesize: vi.fn(async () => audioReply(mp3, 'audio/mpeg')) };
