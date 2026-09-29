@@ -69,7 +69,7 @@ Errors are `{ code }` bodies with the codes Studio uses (`not_configured`, `audi
 
 ### 4.1 Division of work
 
-- **Platform thinks.** `POST /desktop/voice/step` (`@AllowDesktopSession`) is stateless. Input: `{ messages, locale }` where `messages` is the conversation so far, including the app's tool results in OpenAI tool-message form. It prepends the desktop voice prompt, calls the model pinned to `voice`, and streams back text deltas and tool calls (SSE: `text-delta`, `tool-call {id, name, arguments}`, `done`, `error {code}`). It never executes a tool. Tool schemas are sent by the platform, from a list it owns and versions, so prompt and tool descriptions stay in one place.
+- **Platform thinks.** `POST /desktop/voice/step` (`@AllowDesktopSession`) is stateless. Input: `{ messages, locale }` where `messages` is the conversation so far, including the app's tool results in OpenAI tool-message form. It prepends the desktop voice prompt, calls the model pinned to `voice`, and streams back text deltas and tool calls (SSE: `text-delta`, `tool-call {id, name, arguments}`, `done`, `error {code}`). It never executes a tool. Tool schemas come from the app's existing agent-tool schema builders (one source with the coding agent); the platform accepts only allowlisted tool names and keeps the prompt.
 - **App acts.** The MittrCraft server runs the loop: send `step` → for each tool call, run it through `createMittrCraftControlService()` (the same contract the agent uses) → append the result → next `step`, until a step ends without tool calls. A turn is capped at a fixed number of steps; the cap is a setting, not a constant in code.
 
 ### 4.2 Tools
