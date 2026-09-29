@@ -28,7 +28,10 @@ import {
   VOICE_REPLY_MAX_CHARS_MIN,
   VOICE_STEP_CAP_MAX,
   VOICE_STEP_CAP_MIN,
+  resolveUnsavedSttProvider,
+  type SttProvider,
 } from '@/lib/voice/mittrVoice';
+import { isVSCodeRuntime } from '@/stores/utils/vscodeRuntime';
 
 export const applyPersistedHomeDirectoryToWindow = (homeDirectory: string): void => {
   if (typeof window === 'undefined') {
@@ -609,6 +612,28 @@ const materializeAuthoritativeUiSettings = (settings: DesktopSettings): DesktopS
     voiceReplyMaxChars: DEFAULT_VOICE_REPLY_MAX_CHARS,
     ...settings,
   };
+};
+
+const hasInstalledLocalSttModel = async (): Promise<boolean | null> => {
+  try {
+    const response = await runtimeFetch('/api/dictation/status', { query: { provider: 'local' } });
+    if (!response.ok) return null;
+    const data = (await response.json().catch(() => null)) as { models?: unknown } | null;
+    if (!Array.isArray(data?.models)) return null;
+    return data.models.some((model) => (model as { installed?: unknown } | null)?.installed === true);
+  } catch {
+    return null;
+  }
+};
+
+const decideUnsavedSttProvider = async (settings: DesktopSettings, vscode: boolean): Promise<SttProvider | null> => {
+  const localModelSaved = typeof settings.sttLocalModel === 'string' && settings.sttLocalModel.trim().length > 0;
+  if (vscode || localModelSaved) {
+    return resolveUnsavedSttProvider({ vscode, localModelSaved });
+  }
+  const localModelInstalled = await hasInstalledLocalSttModel();
+  if (localModelInstalled === null) return null;
+  return resolveUnsavedSttProvider({ vscode, localModelInstalled });
 };
 
 const applyDesktopUiPreferences = (settings: DesktopSettings) => {
@@ -1827,6 +1852,7 @@ export const syncDesktopSettings = async (): Promise<void> => {
     // `mittrcraft:files:auto-save-enabled`. Prefer the hydrated store value and
     // seed the backend once so later omitted→default authority is correct.
     const shouldSeedAutoSaveEnabled = typeof settings.autoSaveEnabled !== 'boolean';
+    const shouldSeedSttProvider = settings.sttProvider === undefined;
     const authoritativeSettings = materializeAuthoritativeUiSettings(settings);
     try {
       persistToLocalStorage(settings);
@@ -1837,6 +1863,16 @@ export const syncDesktopSettings = async (): Promise<void> => {
     if (!isSettingsRuntimeContextCurrent(context)) return;
     if (shouldSeedAutoSaveEnabled) {
       authoritativeSettings.autoSaveEnabled = useUIStore.getState().autoSaveEnabled;
+    }
+    const vscode = isVSCodeRuntime(getRegisteredRuntimeAPIs());
+    const seededSttProvider = shouldSeedSttProvider ? await decideUnsavedSttProvider(settings, vscode) : null;
+    if (!isSettingsRuntimeContextCurrent(context)) return;
+    if (shouldSeedSttProvider) {
+      if (seededSttProvider) {
+        authoritativeSettings.sttProvider = seededSttProvider;
+      } else {
+        delete authoritativeSettings.sttProvider;
+      }
     }
     if (settings.draftStarters === undefined) {
       useUIStore.setState({ globalDraftStarters: null });
@@ -1856,6 +1892,9 @@ export const syncDesktopSettings = async (): Promise<void> => {
     }
     if (shouldSeedAutoSaveEnabled) {
       migrationPatch.autoSaveEnabled = authoritativeSettings.autoSaveEnabled;
+    }
+    if (seededSttProvider && !vscode) {
+      migrationPatch.sttProvider = seededSttProvider;
     }
     if (Object.keys(migrationPatch).length > 0) {
       await updateDesktopSettings(migrationPatch);

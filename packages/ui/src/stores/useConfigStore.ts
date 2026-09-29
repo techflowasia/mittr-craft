@@ -33,6 +33,7 @@ import {
     type SttProvider,
     type VoiceProvider,
 } from "@/lib/voice/mittrVoice";
+import { isVSCodeRuntime } from "@/stores/utils/vscodeRuntime";
 
 const MODELS_DEV_API_URL = "https://models.dev/api.json";
 const MODELS_DEV_PROXY_URL = "/api/mittrcraft/models-metadata";
@@ -1175,7 +1176,9 @@ export const useConfigStore = create<ConfigStore>()(
                 // Voice provider preference - load from localStorage or default to 'browser'
                 voiceProvider: (() => {
                     if (typeof window !== 'undefined') {
-                        return resolveInitialVoiceProvider(localStorage.getItem('voiceProvider'));
+                        return resolveInitialVoiceProvider(localStorage.getItem('voiceProvider'), {
+                            vscode: isVSCodeRuntime(getRegisteredRuntimeAPIs()),
+                        });
                     }
                     return 'browser';
                 })(),
@@ -1296,7 +1299,10 @@ export const useConfigStore = create<ConfigStore>()(
                 // STT provider: 'local' (server-side sherpa-onnx) or 'openai-compatible'
                 sttProvider: (() => {
                     if (typeof window !== 'undefined') {
-                        return resolveInitialSttProvider(localStorage.getItem('sttProvider'));
+                        return resolveInitialSttProvider(localStorage.getItem('sttProvider'), {
+                            vscode: isVSCodeRuntime(getRegisteredRuntimeAPIs()),
+                            localModelSaved: Boolean(localStorage.getItem('sttLocalModel')),
+                        });
                     }
                     return 'local' as const;
                 })(),

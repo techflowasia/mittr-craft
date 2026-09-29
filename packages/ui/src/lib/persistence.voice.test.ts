@@ -52,6 +52,21 @@ if (typeof window === 'undefined') {
 }
 (window as unknown as { __zustand_config_store__: typeof configStore }).__zustand_config_store__ = configStore;
 
+type StatusReply = { models: Array<{ id: string; installed: boolean }> } | 'fail';
+let statusReply: StatusReply = { models: [{ id: 'parakeet', installed: false }] };
+let statusCalls = 0;
+const realFetch = globalThis.fetch;
+globalThis.fetch = (async (input: RequestInfo | URL) => {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+  if (url.includes('/api/dictation/status')) {
+    statusCalls += 1;
+    if (statusReply === 'fail') throw new TypeError('fetch failed');
+    return new Response(JSON.stringify(statusReply), { headers: { 'content-type': 'application/json' } });
+  }
+  return new Response('{}', { status: 404 });
+}) as typeof fetch;
+
+let saved: Array<Partial<SettingsPayload>> = [];
 let runtimeCounter = 0;
 const syncWith = async (settings: SettingsPayload) => {
   runtimeCounter += 1;
@@ -63,7 +78,10 @@ const syncWith = async (settings: SettingsPayload) => {
         settings: { draftStartersCraftGoalAdded: true, draftStartersScheduleTaskAdded: true, autoSaveEnabled: true, ...settings },
         source: 'web',
       }),
-      save: async (changes: Partial<SettingsPayload>) => changes as SettingsPayload,
+      save: async (changes: Partial<SettingsPayload>) => {
+        saved.push(changes);
+        return changes as SettingsPayload;
+      },
     },
   } as unknown as RuntimeAPIs);
   await syncDesktopSettings();
@@ -71,6 +89,9 @@ const syncWith = async (settings: SettingsPayload) => {
 
 beforeEach(() => {
   localStorage.clear();
+  saved = [];
+  statusCalls = 0;
+  statusReply = { models: [{ id: 'parakeet', installed: false }] };
   configState = {
     sttProvider: 'local',
     voiceStepCap: 8,
@@ -84,14 +105,43 @@ beforeEach(() => {
 });
 
 afterAll(() => {
+  globalThis.fetch = realFetch;
   registerRuntimeAPIs(null);
 });
 
 describe('voice settings from the desktop settings', () => {
-  test('nothing saved means Mittr dictation', async () => {
+  test('a fresh install with nothing saved and no local model gets Mittr, and it is saved', async () => {
     await syncWith({});
     expect(configState.sttProvider).toBe('mittr');
-    expect(localStorage.getItem('sttProvider')).toBeNull();
+    expect(saved.some((changes) => changes.sttProvider === 'mittr')).toBe(true);
+  });
+
+  test('an install with a downloaded local model keeps local dictation', async () => {
+    statusReply = { models: [{ id: 'parakeet', installed: true }] };
+    await syncWith({});
+    expect(configState.sttProvider).toBe('local');
+    expect(saved.some((changes) => changes.sttProvider === 'local')).toBe(true);
+  });
+
+  test('an install with a stored local model keeps local dictation without asking the server', async () => {
+    await syncWith({ sttLocalModel: 'whisper-base-int8' });
+    expect(configState.sttProvider).toBe('local');
+    expect(statusCalls).toBe(0);
+  });
+
+  test('when the local model check fails nothing changes and nothing is saved', async () => {
+    statusReply = 'fail';
+    configState.sttProvider = 'local';
+    await syncWith({});
+    expect(configState.sttProvider).toBe('local');
+    expect(saved.some((changes) => 'sttProvider' in changes)).toBe(false);
+  });
+
+  test('a saved choice is never re-decided', async () => {
+    statusReply = { models: [{ id: 'parakeet', installed: true }] };
+    await syncWith({ sttProvider: 'mittr' });
+    expect(configState.sttProvider).toBe('mittr');
+    expect(statusCalls).toBe(0);
   });
 
   test('a saved dictation choice is kept', async () => {

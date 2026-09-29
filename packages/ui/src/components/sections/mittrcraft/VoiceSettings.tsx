@@ -1098,7 +1098,7 @@ export const VoiceSettings: React.FC = () => {
                                             onClick={previewMittrVoice}
                                             title={t('settings.voice.page.actions.preview')}
                                             aria-label={t('settings.voice.page.actions.preview')}
-                                            disabled={!isMittrPreviewPlaying && mittrReasonFor(mittrReadiness, 'speak') !== null}
+                                            disabled={!isMittrPreviewPlaying && mittrReadiness?.speak !== true}
                                         >
                                             {isMittrPreviewPlaying ? <Icon name="stop" className="w-3.5 h-3.5" /> : <Icon name="play" className="w-3.5 h-3.5" />}
                                         </Button>

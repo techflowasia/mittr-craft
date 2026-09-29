@@ -36,13 +36,22 @@ export const normalizeSttProvider = (value: unknown): SttProvider | undefined =>
   return undefined;
 };
 
-export const resolveInitialVoiceProvider = (saved: string | null): VoiceProvider => {
-  if (saved === null) return 'mittr';
+type InstallFacts = {
+  vscode: boolean;
+  localModelSaved?: boolean;
+  localModelInstalled?: boolean;
+};
+
+export const resolveUnsavedSttProvider = ({ vscode, localModelSaved, localModelInstalled }: InstallFacts): SttProvider =>
+  vscode || localModelSaved || localModelInstalled ? 'local' : 'mittr';
+
+export const resolveInitialVoiceProvider = (saved: string | null, { vscode }: InstallFacts): VoiceProvider => {
+  if (saved === null) return vscode ? 'browser' : 'mittr';
   return isVoiceProvider(saved) ? saved : 'browser';
 };
 
-export const resolveInitialSttProvider = (saved: string | null): SttProvider => {
-  if (saved === null) return 'mittr';
+export const resolveInitialSttProvider = (saved: string | null, facts: InstallFacts): SttProvider => {
+  if (saved === null) return resolveUnsavedSttProvider(facts);
   return normalizeSttProvider(saved) ?? 'local';
 };
 
@@ -76,4 +85,78 @@ export const mittrReasonFor = (
 ): MittrVoiceReason | null => {
   if (!readiness || readiness[part]) return null;
   return readiness.reason ?? 'not_configured';
+};
+
+export const MITTR_SPEECH_CHUNK_CHARS = 600;
+
+const splitLongPiece = (piece: string, maxChars: number): string[] => {
+  const out: string[] = [];
+  let current = '';
+  for (const word of piece.split(/(\s+)/)) {
+    if (current.length + word.length <= maxChars) {
+      current += word;
+      continue;
+    }
+    if (current.trim()) out.push(current.trim());
+    current = '';
+    const codePoints = Array.from(word);
+    while (codePoints.length > maxChars) {
+      out.push(codePoints.splice(0, maxChars).join(''));
+    }
+    current = codePoints.join('');
+  }
+  if (current.trim()) out.push(current.trim());
+  return out;
+};
+
+export const splitForMittrSpeech = (text: string, maxChars = MITTR_SPEECH_CHUNK_CHARS): string[] => {
+  const sentences = text
+    .split(/(?<=[.!?。！？])\s+|\n+/u)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean)
+    .flatMap((sentence) => (sentence.length > maxChars ? splitLongPiece(sentence, maxChars) : [sentence]));
+  const chunks: string[] = [];
+  let current = '';
+  for (const sentence of sentences) {
+    if (!current) {
+      current = sentence;
+    } else if (current.length + 1 + sentence.length <= maxChars) {
+      current = `${current} ${sentence}`;
+    } else {
+      chunks.push(current);
+      current = sentence;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks;
+};
+
+type SpeakWithMittrOptions = {
+  text: string;
+  readSpeakReadiness: () => Promise<MittrVoiceReadiness | null>;
+  speakChunk: (chunk: string) => Promise<void>;
+  isCancelled: () => boolean;
+};
+
+export type SpeakWithMittrResult =
+  | { status: 'spoken' }
+  | { status: 'cancelled' }
+  | { status: 'unavailable'; reason: MittrVoiceReason };
+
+export const speakWithMittr = async ({
+  text,
+  readSpeakReadiness,
+  speakChunk,
+  isCancelled,
+}: SpeakWithMittrOptions): Promise<SpeakWithMittrResult> => {
+  const readiness = await readSpeakReadiness();
+  if (isCancelled()) return { status: 'cancelled' };
+  if (!readiness?.speak) {
+    return { status: 'unavailable', reason: readiness?.reason ?? 'unreachable' };
+  }
+  for (const chunk of splitForMittrSpeech(text)) {
+    if (isCancelled()) return { status: 'cancelled' };
+    await speakChunk(chunk);
+  }
+  return isCancelled() ? { status: 'cancelled' } : { status: 'spoken' };
 };

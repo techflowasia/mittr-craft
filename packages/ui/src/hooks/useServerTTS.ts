@@ -19,7 +19,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { runtimeFetch } from '@/lib/runtime-fetch';
-import { parseMittrVoiceReadiness } from '@/lib/voice/mittrVoice';
 
 interface ServerTTSStatusCache {
   available: boolean;
@@ -28,7 +27,7 @@ interface ServerTTSStatusCache {
 
 interface UseServerTTSOptions {
   enabled?: boolean;
-  availabilityMode?: 'auto' | 'openai' | 'openai-compatible' | 'mittr';
+  availabilityMode?: 'auto' | 'openai' | 'openai-compatible';
 }
 
 const SERVER_TTS_STATUS_TTL_MS = 30000;
@@ -66,33 +65,6 @@ async function getServerTTSStatus(): Promise<boolean> {
   })();
 
   return serverTTSStatusRequest;
-}
-
-let mittrSpeakCache: ServerTTSStatusCache | null = null;
-let mittrSpeakRequest: Promise<boolean> | null = null;
-
-async function getMittrSpeakReady(): Promise<boolean> {
-  if (mittrSpeakCache && Date.now() - mittrSpeakCache.checkedAt < SERVER_TTS_STATUS_TTL_MS) {
-    return mittrSpeakCache.available;
-  }
-  if (mittrSpeakRequest) {
-    return mittrSpeakRequest;
-  }
-  mittrSpeakRequest = (async () => {
-    try {
-      const response = await runtimeFetch('/api/voice/readiness');
-      const readiness = response.ok ? parseMittrVoiceReadiness(await response.json().catch(() => null)) : null;
-      const available = readiness?.speak === true;
-      mittrSpeakCache = { available, checkedAt: Date.now() };
-      return available;
-    } catch {
-      mittrSpeakCache = null;
-      return false;
-    } finally {
-      mittrSpeakRequest = null;
-    }
-  })();
-  return mittrSpeakRequest;
 }
 
 export interface UseServerTTSReturn {
@@ -173,12 +145,6 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
     if (!enabled) {
       setIsAvailable(false);
       return false;
-    }
-
-    if (availabilityMode === 'mittr') {
-      const ready = await getMittrSpeakReady();
-      setIsAvailable(ready);
-      return ready;
     }
 
     const hasClientKey = Boolean(openaiApiKey && openaiApiKey.trim().length > 0);
@@ -319,7 +285,7 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(errorData.error || `HTTP ${response.status}`);
+        throw new Error(errorData.reasonCode || errorData.error || `HTTP ${response.status}`);
       }
 
       // Get audio data from response

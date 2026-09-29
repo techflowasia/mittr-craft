@@ -5,7 +5,7 @@
  * Uses the configured voice provider (browser, OpenAI, or macOS Say).
  */
 
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useServerTTS } from './useServerTTS';
 import { useSayTTS } from './useSayTTS';
@@ -13,6 +13,8 @@ import { useLocalTTS } from './useLocalTTS';
 import { browserVoiceService } from '@/lib/voice/browserVoiceService';
 import { sanitizeForTTS } from '@/lib/voice/summarize';
 import { requestSmallModel } from '@/lib/smallModelRequest';
+import { speakWithMittr } from '@/lib/voice/mittrVoice';
+import { readMittrVoiceReadiness } from './useMittrVoiceReadiness';
 
 // Below this length the reply is comfortable to listen to as-is; summarizing
 // would only add latency.
@@ -50,10 +52,15 @@ export interface UseMessageTTSReturn {
     play: (text: string) => Promise<void>;
     /** Stop playback */
     stop: () => void;
+    /** Why the last Mittr read-aloud could not play (a reason code or message) */
+    error: string | null;
 }
 
 export function useMessageTTS(): UseMessageTTSReturn {
     const [isPlaying, setIsPlaying] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const mittrRunRef = useRef(0);
+    const releaseMittrChunkRef = useRef<(() => void) | null>(null);
     
     const voiceProvider = useConfigStore((state) => state.voiceProvider);
     const speechRate = useConfigStore((state) => state.speechRate);
@@ -70,12 +77,12 @@ export function useMessageTTS(): UseMessageTTSReturn {
     const ttsInputMode = useConfigStore((state) => state.ttsInputMode);
 
     const isServerProvider = voiceProvider === 'openai' || voiceProvider === 'openai-compatible' || voiceProvider === 'mittr';
-    const shouldCheckOpenAIAvailability = showMessageTTSButtons && isServerProvider;
+    const shouldCheckOpenAIAvailability = showMessageTTSButtons && isServerProvider && voiceProvider !== 'mittr';
     const shouldCheckSayAvailability = showMessageTTSButtons && voiceProvider === 'say';
 
     const { speak: speakServerTTS, stop: stopServerTTS, isAvailable: isServerTTSAvailable } = useServerTTS({
         enabled: shouldCheckOpenAIAvailability,
-        availabilityMode: voiceProvider === 'mittr' ? 'mittr' : voiceProvider === 'openai-compatible' ? 'openai-compatible' : 'openai',
+        availabilityMode: voiceProvider === 'openai-compatible' ? 'openai-compatible' : 'openai',
     });
     const { speak: speakSayTTS, stop: stopSayTTS, isAvailable: isSayTTSAvailable } = useSayTTS({
         enabled: shouldCheckSayAvailability,
@@ -83,6 +90,9 @@ export function useMessageTTS(): UseMessageTTSReturn {
     const { speak: speakLocalTTS, stop: stopLocalTTS } = useLocalTTS();
     
     const stop = useCallback(() => {
+        mittrRunRef.current += 1;
+        releaseMittrChunkRef.current?.();
+        releaseMittrChunkRef.current = null;
         setIsPlaying(false);
         stopServerTTS();
         stopSayTTS();
@@ -97,6 +107,8 @@ export function useMessageTTS(): UseMessageTTSReturn {
         stop();
         
         setIsPlaying(true);
+        setError(null);
+        const mittrRun = mittrRunRef.current;
         
         try {
             // Summarized mode: replace long replies with a short spoken-prose
@@ -118,16 +130,30 @@ export function useMessageTTS(): UseMessageTTSReturn {
             const sanitizedText = sanitizeForTTS(sourceText);
             const textToSpeak = shouldUseRaw ? sourceText : sanitizedText;
             
-            if (voiceProvider === 'mittr' && isServerTTSAvailable) {
-                await speakServerTTS(textToSpeak, {
-                    providerId: 'mittr',
-                    speed: speechRate,
-                    pitch: speechPitch,
-                    volume: speechVolume,
-                    summarize: false,
-                    onEnd: () => setIsPlaying(false),
-                    onError: () => setIsPlaying(false),
+            if (voiceProvider === 'mittr') {
+                const isCancelled = () => mittrRunRef.current !== mittrRun;
+                const result = await speakWithMittr({
+                    text: textToSpeak,
+                    readSpeakReadiness: readMittrVoiceReadiness,
+                    isCancelled,
+                    speakChunk: (chunk) => new Promise<void>((resolve, reject) => {
+                        releaseMittrChunkRef.current = resolve;
+                        void speakServerTTS(chunk, {
+                            providerId: 'mittr',
+                            pitch: speechPitch,
+                            volume: speechVolume,
+                            summarize: false,
+                            onEnd: () => resolve(),
+                            onError: (message) => reject(new Error(message)),
+                        });
+                    }),
                 });
+                if (!isCancelled()) {
+                    if (result.status === 'unavailable') {
+                        setError(result.reason);
+                    }
+                    setIsPlaying(false);
+                }
             } else if (isServerProvider && isServerTTSAvailable) {
                 const voice = voiceProvider === 'openai-compatible' ? openaiCompatibleVoice : openaiVoice;
                 const baseURL = voiceProvider === 'openai-compatible' ? openaiCompatibleUrl : undefined;
@@ -176,6 +202,9 @@ export function useMessageTTS(): UseMessageTTSReturn {
             }
         } catch (err) {
             console.error('[useMessageTTS] Playback error:', err);
+            if (voiceProvider === 'mittr' && mittrRunRef.current === mittrRun) {
+                setError(err instanceof Error ? err.message : String(err));
+            }
             setIsPlaying(false);
         }
     }, [
@@ -204,5 +233,6 @@ export function useMessageTTS(): UseMessageTTSReturn {
         isPlaying,
         play,
         stop,
+        error,
     };
 }
