@@ -714,6 +714,41 @@ export const createMittrCraftControlService = (dependencies) => {
     return finish('step_limit', { reason: `stopped after ${limit} steps` });
   };
 
+  const conversationGrants = new Map();
+
+  const isChromeHostAllowed = async (sessionId, host) => (
+    conversationGrants.get(sessionId)?.has(host) === true
+    || (chromeApprovals ? await chromeApprovals.isApproved(sessionId, host) : false)
+  );
+
+  const allowChromeSite = (input, options = {}) => {
+    const sessionId = asNonEmptyString(options.sessionId);
+    if (!sessionId) throw new MittrCraftControlError('chrome.allow_site needs the calling conversation', 400);
+    if (!chromeControl || chromeControl.available !== true || !chromeApprovals) {
+      throw new MittrCraftControlError('The Chrome tool is not bundled in this build of MittrCraft', 503);
+    }
+    const host = required(input.host, 'host').toLowerCase();
+    let parsed = null;
+    try {
+      parsed = new URL(`http://${host}`);
+    } catch {
+      parsed = null;
+    }
+    if (!parsed || parsed.hostname !== host || !/^[a-z0-9.-]+$/.test(host)) {
+      throw new MittrCraftControlError('host must be a plain site name such as example.com', 400);
+    }
+    if (!conversationGrants.has(sessionId)) conversationGrants.set(sessionId, new Set());
+    conversationGrants.get(sessionId).add(host);
+    return { allowed: true, host, scope: 'conversation' };
+  };
+
+  const endChromeConversation = (sessionId) => {
+    const id = asNonEmptyString(sessionId);
+    if (!id) return;
+    conversationGrants.delete(id);
+    chromeApprovals?.forgetSession(id);
+  };
+
   const chromeAction = async (action, input, contextDirectory, options = {}) => {
     const sessionId = asNonEmptyString(options.sessionId);
     if (!sessionId) throw new MittrCraftControlError('The Chrome tool needs the calling session', 400);
@@ -739,7 +774,7 @@ export const createMittrCraftControlService = (dependencies) => {
     }
 
     const ensureApproved = async (host) => {
-      if (await chromeApprovals.isApproved(sessionId, host)) return;
+      if (await isChromeHostAllowed(sessionId, host)) return;
       if (options.approvalAnswered === true) {
         const reply = await chromeApprovals.awaitDecision(sessionId, host, options.signal);
         if (reply === 'once' || reply === 'always') return;
@@ -765,7 +800,7 @@ export const createMittrCraftControlService = (dependencies) => {
       }
       const host = parsed?.hostname.toLowerCase() || landed;
       const web = parsed?.protocol === 'http:' || parsed?.protocol === 'https:';
-      if (web && await chromeApprovals.isApproved(sessionId, host)) return;
+      if (web && await isChromeHostAllowed(sessionId, host)) return;
       throw new MittrCraftControlError(
         `The page moved to ${host}, which the user has not allowed; nothing from it is returned. Call chrome.open with that page's URL to ask the user`,
         409,
@@ -835,6 +870,7 @@ export const createMittrCraftControlService = (dependencies) => {
   const removeChromeHost = async (host) => {
     const normalized = asNonEmptyString(host)?.toLowerCase();
     if (!normalized) throw new MittrCraftControlError('host is required', 400);
+    for (const grants of conversationGrants.values()) grants.delete(normalized);
     if (!chromeApprovals) return [];
     return chromeApprovals.removeHost(normalized);
   };
@@ -861,6 +897,7 @@ export const createMittrCraftControlService = (dependencies) => {
         }
         return computerAction(action, input, contextDirectory);
       }
+      if (action === 'chrome.allow_site') return allowChromeSite(input, options);
       if (action.startsWith('chrome.')) {
         if (!chromeControl || chromeControl.available !== true || !chromeApprovals) {
           throw new MittrCraftControlError('The Chrome tool is not bundled in this build of MittrCraft', 503);
@@ -975,5 +1012,5 @@ export const createMittrCraftControlService = (dependencies) => {
     }
   };
 
-  return { execute, chromeProfiles, removeChromeHost };
+  return { execute, chromeProfiles, removeChromeHost, isChromeHostAllowed, endChromeConversation };
 };

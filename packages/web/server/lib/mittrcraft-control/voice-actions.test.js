@@ -38,7 +38,7 @@ const createService = ({ settings = {}, messages = [] } = {}) => {
 
 describe('voice-only session actions', () => {
   it('are allowed by the control contract but never offered to the coding agent or the web tool', () => {
-    expect(MITTRCRAFT_VOICE_ACTIONS).toEqual(['session.stop', 'session.read_reply']);
+    expect(MITTRCRAFT_VOICE_ACTIONS).toEqual(['session.stop', 'session.read_reply', 'chrome.allow_site']);
     for (const action of MITTRCRAFT_VOICE_ACTIONS) {
       expect(MITTRCRAFT_ALL_ACTIONS).toContain(action);
       expect(MITTRCRAFT_AGENT_TOOL_ACTIONS).not.toContain(action);
