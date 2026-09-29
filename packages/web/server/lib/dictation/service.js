@@ -13,6 +13,7 @@ import { rm } from 'fs/promises';
 
 import { DictationWorkerClient, WorkerBackedTranscriptionSession } from './local/worker-client.js';
 import { OpenAICompatibleTranscriptionSession } from './openai-compatible-session.js';
+import { MittrTranscriptionSession } from './mittr-session.js';
 import {
   DEFAULT_LOCAL_STT_MODEL,
   DEFAULT_LOCAL_TTS_MODEL,
@@ -27,7 +28,17 @@ import {
 } from './local/model-catalog.js';
 import { ensureLocalSttModel, isLocalSttModelInstalled } from './local/model-downloader.js';
 
-export function createDictationService({ modelsDir }) {
+const resolveProvider = (value) => (
+  value === 'openai-compatible' || value === 'mittr' ? value : 'local'
+);
+
+const MITTR_LISTEN_ERRORS = {
+  not_signed_in: 'Sign in to Mittr to use dictation',
+  not_configured: 'Your Mittr admin has not set up speech models yet',
+  unreachable: 'The Mittr platform cannot be reached right now',
+};
+
+export function createDictationService({ modelsDir, getMittrSpeechClient = () => null }) {
   const workerClient = new DictationWorkerClient();
   /** modelId -> 'downloading' | 'error' */
   const downloadStates = new Map();
@@ -83,8 +94,34 @@ export function createDictationService({ modelsDir }) {
    * @param {{ provider?: string, language?: string, localModel?: string,
    *           openaiCompatible?: { baseUrl?: string, model?: string, apiKey?: string } }} options
    */
+  const readMittrListenReadiness = async () => {
+    const client = getMittrSpeechClient();
+    if (!client) {
+      return { client: null, available: false, reasonCode: 'unreachable' };
+    }
+    const readiness = await client.readiness();
+    if (readiness.ready?.listen) {
+      return { client, available: true };
+    }
+    return { client, available: false, reasonCode: readiness.reason || 'not_configured' };
+  };
+
   const createSttSession = async (options = {}) => {
-    const provider = options.provider === 'openai-compatible' ? 'openai-compatible' : 'local';
+    const provider = resolveProvider(options.provider);
+
+    if (provider === 'mittr') {
+      const { client, available, reasonCode } = await readMittrListenReadiness();
+      if (!available) {
+        return {
+          error: MITTR_LISTEN_ERRORS[reasonCode] || MITTR_LISTEN_ERRORS.not_configured,
+          retryable: reasonCode !== 'not_configured',
+          reasonCode,
+        };
+      }
+      const session = new MittrTranscriptionSession({ client });
+      await session.connect();
+      return { session };
+    }
 
     if (provider === 'openai-compatible') {
       const config = options.openaiCompatible || {};
@@ -159,7 +196,7 @@ export function createDictationService({ modelsDir }) {
    * @param {{ provider?: string, localModel?: string }} [options]
    */
   const getStatus = async (options = {}) => {
-    const provider = options.provider === 'openai-compatible' ? 'openai-compatible' : 'local';
+    const provider = resolveProvider(options.provider);
     const modelId = resolveLocalModelId(options.localModel);
 
     const describeModel = async (id, catalog) => ({
@@ -180,6 +217,11 @@ export function createDictationService({ modelsDir }) {
 
     if (provider === 'openai-compatible') {
       return { provider, available: true, models, ttsModels };
+    }
+
+    if (provider === 'mittr') {
+      const { available, reasonCode } = await readMittrListenReadiness();
+      return { provider, available, ...(available ? {} : { reasonCode }), models, ttsModels };
     }
 
     const model = models.find((entry) => entry.id === modelId) || null;

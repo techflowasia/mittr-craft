@@ -32,6 +32,13 @@ same status/download/delete routes.
   - `openai-compatible`: buffered per-segment transcription against any
     OpenAI-compatible `/v1/audio/transcriptions` endpoint
     (`openai-compatible-session.js`, reuses `../tts/stt.js`).
+  - `mittr`: buffered per-segment transcription through the Mittr platform
+    (`mittr-session.js`, 16 kHz WAV per committed segment, sent with
+    `../mittr-speech/client.js`). The session opens only when platform
+    readiness says `listen` is ready; otherwise the stream fails with
+    `reasonCode` `not_signed_in` / `not_configured` / `unreachable` (no broker
+    on this install). `getStatus({ provider: 'mittr' })` reports the same
+    reason. Closing the session aborts a transcription still in flight.
 - `local/` — worker process + client (IPC, idle shutdown TTL), sherpa
   recognizer engine and realtime session (throttled re-decode for partials),
   model catalog and downloader. The native `sherpa-onnx-node` addon is only
@@ -50,8 +57,11 @@ Server → client: `ready`, `ack {ackSeq}`, `partial {text}`,
 `error {error, retryable, reasonCode?}`, `pong`.
 
 `options` in `start` carries the client-selected provider config:
-`{ provider: 'local' | 'openai-compatible', language?, localModel?,
+`{ provider: 'local' | 'openai-compatible' | 'mittr', language?, localModel?,
 openaiCompatible?: { baseUrl, model, apiKey } }`.
+
+`createDictationRuntime` takes `getMittrSpeechClient` (wired in
+`server/index.js` after the Mittr shim starts) and hands it to the service.
 
 ## Invariants
 

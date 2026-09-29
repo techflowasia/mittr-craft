@@ -57,6 +57,20 @@ Generates speech and returns as Buffer for caching purposes.
 - Returns: Buffer containing MP3 audio data.
 - Throws: Error if API key not configured or text is empty.
 
+## Mittr read aloud
+
+`POST /api/tts/speak` with `providerId: 'mittr'` synthesizes through the Mittr
+platform (`../mittr-speech/client.js`, wired as `getMittrSpeechClient` from
+`server/index.js`). Text is trimmed and cut at a word boundary to the
+platform's 4000-character limit. The reply is always browser-decodable: raw
+`audio/pcm;rate=R;channels=1` (or `audio/l16`) is returned as `audio/wav`
+with rate `R` (24000 when absent); any other `audio/*` passes through; a
+non-audio or multi-channel PCM reply is `502 upstream_failed`. Failures answer
+`{ error, reasonCode }` with the platform status (`401 not_signed_in` without
+a Mittr session, `503 unreachable` without a broker). No other request field
+selects Mittr, and the chat model's provider is never sent as `providerId`.
+Text is never logged.
+
 ## Response contracts
 
 ### `summarizeText`
