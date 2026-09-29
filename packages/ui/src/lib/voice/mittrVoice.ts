@@ -87,7 +87,7 @@ export const mittrReasonFor = (
   return readiness.reason ?? 'not_configured';
 };
 
-export const MITTR_SPEECH_CHUNK_CHARS = 600;
+const MITTR_SPEECH_CHUNK_CHARS = 600;
 
 const splitLongPiece = (piece: string, maxChars: number): string[] => {
   const out: string[] = [];
@@ -138,7 +138,7 @@ type SpeakWithMittrOptions = {
   isCancelled: () => boolean;
 };
 
-export type SpeakWithMittrResult =
+type SpeakWithMittrResult =
   | { status: 'spoken' }
   | { status: 'cancelled' }
   | { status: 'unavailable'; reason: MittrVoiceReason };
