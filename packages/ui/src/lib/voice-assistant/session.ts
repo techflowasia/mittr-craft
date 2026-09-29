@@ -45,6 +45,7 @@ export interface VoiceSessionDeps {
   createPlayer: () => { player: AudioPlayer; close: () => void };
   context: () => VoiceTurnContext;
   onQueue: (event: VoiceQueueEvent) => void;
+  onEnd: () => void;
 }
 
 export interface VoiceSessionStart {
@@ -72,7 +73,13 @@ const FAILURE_SPOKEN: Record<VoiceTurnFailure, SpokenKey> = {
   bad_request: 'unavailable',
 };
 
-type Heard = string | null;
+type Heard = string | { failure: VoiceTurnFailure };
+
+type Narration = { text: string; tag?: string };
+
+const SUPERSEDES: Record<string, readonly string[]> = { error: ['done'], stopped: ['done'] };
+
+const TRANSCRIBE_FAILURES = new Set<string>(['not_signed_in', 'not_configured', 'upstream_timeout']);
 
 type Exchange = {
   controller: AbortController;
@@ -168,7 +175,8 @@ export class VoiceSession {
   private carry: Carry | null = null;
   private lifetime: AbortController | null = null;
   private history: VoiceHistoryEntry[] = [];
-  private pending: string[] = [];
+  private pending: Narration[] = [];
+  private queued = new Set<string>();
   private lineId = 0;
 
   constructor(private readonly deps: VoiceSessionDeps) {}
@@ -187,6 +195,7 @@ export class VoiceSession {
     const generation = ++this.generation;
     this.history = [];
     this.pending = [];
+    this.queued = new Set();
     this.carry = null;
     this.lifetime?.abort();
     this.lifetime = new AbortController();
@@ -253,12 +262,16 @@ export class VoiceSession {
     this.audio = null;
     this.history = [];
     this.pending = [];
+    this.queued = new Set();
     this.set({ ...IDLE });
+    this.deps.onEnd();
   }
 
-  narrate(text: string): void {
+  narrate(text: string, tag?: string): void {
     if (this.snapshot.phase === 'idle') return;
-    this.pending.push(text);
+    const replaced = tag ? SUPERSEDES[tag] : undefined;
+    if (replaced) this.pending = this.pending.filter((item) => !item.tag || !replaced.includes(item.tag));
+    this.pending.push({ text, tag });
     this.flushNarration();
   }
 
@@ -362,7 +375,7 @@ export class VoiceSession {
     if (!exchange) return;
     exchange.replied = true;
     const queue = this.queueFor(exchange);
-    for (const text of texts) {
+    for (const { text } of texts) {
       this.addLine({ role: 'assistant', text });
       this.remember({ role: 'assistant', text });
       queue.add(text);
@@ -378,7 +391,11 @@ export class VoiceSession {
     const signal = this.lifetime?.signal;
     return this.deps.transcribe(encodeWav(samples), signal).then(
       (text) => text.trim(),
-      (error: unknown) => (error instanceof TranscribeError && error.code === 'empty_transcript' ? '' : null),
+      (error: unknown): Heard => {
+        const code = error instanceof TranscribeError ? error.code : '';
+        if (code === 'empty_transcript') return '';
+        return { failure: TRANSCRIBE_FAILURES.has(code) ? (code as VoiceTurnFailure) : 'upstream_failed' };
+      },
     );
   }
 
@@ -393,11 +410,13 @@ export class VoiceSession {
     this.set({ phase: 'thinking' });
     const heard = await Promise.all(exchange.parts);
     if (signal.aborted) return;
-    if (heard.some((part) => part === null)) {
-      await this.apologise(exchange, 'unavailable');
+    const failed = heard.find((part): part is { failure: VoiceTurnFailure } => typeof part !== 'string');
+    if (failed) {
+      if (failed.failure === 'not_signed_in') this.set({ error: 'voice.talk.error.notSignedIn' });
+      await this.apologise(exchange, FAILURE_SPOKEN[failed.failure]);
       return;
     }
-    const said = heard.filter(Boolean).join(' ');
+    const said = (heard as string[]).filter(Boolean).join(' ');
     if (!said) {
       this.finish(exchange);
       return;
@@ -427,7 +446,12 @@ export class VoiceSession {
         } else if (event.type === 'tool-result') {
           this.set({ running: null });
         } else if (event.type === 'queue') {
-          this.deps.onQueue({ sessionId: event.sessionId, directory: event.directory, text: event.text });
+          const key = `${event.sessionId}\n${event.text}`;
+          if (!this.queued.has(key)) {
+            this.queued.add(key);
+            this.deps.onQueue({ sessionId: event.sessionId, directory: event.directory, text: event.text });
+          }
+          this.remember({ role: 'assistant', text: `Queued to run after the current answer: ${event.text}` });
         } else if (event.type === 'error') {
           failure = event.code;
           break;

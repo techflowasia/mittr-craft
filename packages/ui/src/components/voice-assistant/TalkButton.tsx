@@ -10,7 +10,7 @@ import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { cn } from '@/lib/utils';
 import { startConversationListening } from '@/lib/voice-assistant/listen';
-import { createNarrationWatch, spokenText, type NarrationWatch } from '@/lib/voice-assistant/narration';
+import { createNarrationWatch, spokenText, type NarrationWatch, type SessionError } from '@/lib/voice-assistant/narration';
 import { createAudioPlayer } from '@/lib/voice-assistant/player';
 import { queueSpokenPrompt, queuedPromptCount } from '@/lib/voice-assistant/queue';
 import { VoiceSession, type VoicePhase } from '@/lib/voice-assistant/session';
@@ -43,7 +43,6 @@ export function TalkButton({ readiness, phase, onToggle, buttonRef, className }:
       variant={open ? 'default' : 'outline'}
       size="icon"
       aria-label={label}
-      aria-pressed={open}
       aria-busy={phase === 'starting'}
       title={label}
       onClick={onToggle}
@@ -56,6 +55,15 @@ export function TalkButton({ readiness, phase, onToggle, buttonRef, className }:
       )}
     </Button>
   );
+}
+
+export function bindEscapeToEnd(target: EventTarget, end: () => void): () => void {
+  const onKey = (event: Event) => {
+    if ((event as KeyboardEvent).key !== 'Escape' || event.defaultPrevented) return;
+    end();
+  };
+  target.addEventListener('keydown', onKey);
+  return () => target.removeEventListener('keydown', onKey);
 }
 
 const voiceApi = createVoiceApi((input, init) => runtimeFetch(input, init));
@@ -111,15 +119,23 @@ function useVoiceReadiness(): [VoiceReadiness | null, () => void] {
   return [readiness, refresh];
 }
 
-function latestErrorAt(sessionId: string | null) {
-  return (state: ReturnType<typeof useNotificationStore.getState>): number | null => {
-    if (!sessionId) return null;
+function latestErrorKey(sessionId: string | null) {
+  return (state: ReturnType<typeof useNotificationStore.getState>): string => {
+    if (!sessionId) return '';
     for (let i = state.list.length - 1; i >= 0; i -= 1) {
       const entry = state.list[i];
-      if (entry?.session === sessionId && entry.type === 'error') return entry.time;
+      if (entry?.session !== sessionId || entry.type !== 'error') continue;
+      const name = (entry.error as { name?: unknown } | undefined)?.name;
+      return `${entry.time}:${name === 'MessageAbortedError' ? 'aborted' : 'failed'}`;
     }
-    return null;
+    return '';
   };
+}
+
+function parseErrorKey(key: string): SessionError | null {
+  if (!key) return null;
+  const [at, kind] = key.split(':');
+  return { at: Number(at), aborted: kind === 'aborted' };
 }
 
 function Narrator({ session }: { session: VoiceSession }) {
@@ -127,7 +143,7 @@ function Narrator({ session }: { session: VoiceSession }) {
   const directory = useSessionUIStore((state) => state.currentSessionDirectory) ?? undefined;
   const status = useSessionStatus(sessionId ?? '', directory);
   const permissions = useSessionPermissions(sessionId ?? '', directory);
-  const errorAt = useNotificationStore(React.useMemo(() => latestErrorAt(sessionId), [sessionId]));
+  const errorKey = useNotificationStore(React.useMemo(() => latestErrorKey(sessionId), [sessionId]));
   const watch = React.useRef<NarrationWatch | null>(null);
   if (!watch.current) watch.current = createNarrationWatch();
 
@@ -139,10 +155,10 @@ function Narrator({ session }: { session: VoiceSession }) {
       sessionId,
       busy,
       permissionIds: permissionKey ? permissionKey.split('\n') : [],
-      errorAt,
+      error: parseErrorKey(errorKey),
     });
-    for (const event of events) session.narrate(spokenText(event));
-  }, [session, sessionId, busy, permissionKey, errorAt]);
+    for (const event of events) session.narrate(spokenText(event), event);
+  }, [session, sessionId, busy, permissionKey, errorKey]);
 
   return null;
 }
@@ -160,6 +176,9 @@ export function VoiceAssistant() {
         context: openSession,
         onQueue: (event) => {
           queueSpokenPrompt(event);
+        },
+        onEnd: () => {
+          void voiceApi.end();
         },
       }),
   );
@@ -183,6 +202,11 @@ export function VoiceAssistant() {
     talk.current?.focus();
   }, [session]);
 
+  React.useEffect(() => {
+    if (!open) return;
+    return bindEscapeToEnd(window, end);
+  }, [open, end]);
+
   const toggle = React.useCallback(() => {
     if (open) {
       end();
@@ -195,7 +219,7 @@ export function VoiceAssistant() {
   if (!ready && !open) return null;
 
   return (
-    <div className="pointer-events-none fixed bottom-24 right-4 z-40 flex flex-col items-end gap-2">
+    <div className="pointer-events-none fixed bottom-48 right-4 z-40 flex flex-col items-end gap-2">
       {open ? (
         <>
           <Narrator session={session} />

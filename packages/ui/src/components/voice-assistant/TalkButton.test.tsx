@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { TalkButton } from './TalkButton';
+import { TalkButton, bindEscapeToEnd } from './TalkButton';
 import { I18nProvider } from '@/lib/i18n';
 import type { VoiceReadiness } from '@/lib/voice-assistant/turn';
 
@@ -20,7 +20,7 @@ describe('TalkButton', () => {
     const html = render(ready);
     expect(html).toContain('<button');
     expect(html).toContain('aria-label="Talk"');
-    expect(html).toContain('aria-pressed="false"');
+    expect(html).not.toContain('aria-pressed');
   });
 
   test('is hidden when readiness is unknown', () => {
@@ -40,10 +40,40 @@ describe('TalkButton', () => {
   test('while a conversation is open it becomes the End control', () => {
     const html = render(ready, 'listening');
     expect(html).toContain('aria-label="End conversation"');
-    expect(html).toContain('aria-pressed="true"');
+    expect(html).not.toContain('aria-pressed');
   });
 
   test('says it is busy while the microphone starts', () => {
     expect(render(ready, 'starting')).toContain('aria-busy="true"');
+  });
+});
+
+describe('bindEscapeToEnd', () => {
+  const key = (value: string) => Object.assign(new Event('keydown'), { key: value });
+
+  test('Escape anywhere ends the conversation, other keys do not, and unbinding stops it', () => {
+    const target = new EventTarget();
+    let ended = 0;
+    const unbind = bindEscapeToEnd(target, () => {
+      ended += 1;
+    });
+    target.dispatchEvent(key('Enter'));
+    target.dispatchEvent(key('Escape'));
+    expect(ended).toBe(1);
+    unbind();
+    target.dispatchEvent(key('Escape'));
+    expect(ended).toBe(1);
+  });
+
+  test('an Escape another control already handled is left alone', () => {
+    const target = new EventTarget();
+    let ended = 0;
+    bindEscapeToEnd(target, () => {
+      ended += 1;
+    });
+    const handled = Object.assign(new Event('keydown', { cancelable: true }), { key: 'Escape' });
+    handled.preventDefault();
+    target.dispatchEvent(handled);
+    expect(ended).toBe(0);
   });
 });

@@ -1,6 +1,6 @@
 import type { SpokenLanguage } from './turn';
 
-export type NarrationEvent = 'done' | 'permission' | 'error';
+export type NarrationEvent = 'done' | 'permission' | 'error' | 'stopped';
 
 export type SpokenKey = NarrationEvent | 'unavailable' | 'timeout' | 'notConfigured' | 'notSignedIn';
 
@@ -9,6 +9,7 @@ const SPOKEN: Record<SpokenLanguage, Record<SpokenKey, string>> = {
     done: 'The work is done. Want a summary?',
     permission: 'A permission request is waiting on screen.',
     error: 'The work stopped with a problem; details are on screen.',
+    stopped: 'The work has stopped.',
     unavailable: "Sorry, I can't answer right now.",
     timeout: 'Sorry, that took too long. Please try again.',
     notConfigured: 'The voice assistant is not set up on the Mittr platform yet.',
@@ -18,6 +19,7 @@ const SPOKEN: Record<SpokenLanguage, Record<SpokenKey, string>> = {
     done: 'งานเสร็จแล้ว อยากให้สรุปให้ฟังไหม',
     permission: 'มีคำขออนุญาตรออยู่บนหน้าจอ',
     error: 'งานหยุดเพราะมีปัญหา รายละเอียดอยู่บนหน้าจอ',
+    stopped: 'งานหยุดแล้ว',
     unavailable: 'ขอโทษ ตอนนี้ยังตอบไม่ได้',
     timeout: 'ขอโทษ ใช้เวลานานเกินไป ลองใหม่อีกครั้งนะ',
     notConfigured: 'ผู้ช่วยเสียงยังไม่ได้ตั้งค่าบนแพลตฟอร์ม Mittr',
@@ -50,11 +52,16 @@ export function spokenText(key: SpokenKey, language: SpokenLanguage = lastLangua
   return SPOKEN[language][key];
 }
 
+export interface SessionError {
+  at: number;
+  aborted: boolean;
+}
+
 export interface SessionObservation {
   sessionId: string | null;
   busy: boolean;
   permissionIds: readonly string[];
-  errorAt: number | null;
+  error: SessionError | null;
 }
 
 export interface NarrationWatch {
@@ -65,33 +72,35 @@ export function createNarrationWatch(): NarrationWatch {
   let current: string | null = null;
   let busy = false;
   let errorAt: number | null = null;
+  let erroredThisRun = false;
   let permissions = new Set<string>();
 
   const baseline = (view: SessionObservation) => {
     current = view.sessionId;
     busy = view.busy;
-    errorAt = view.errorAt;
+    errorAt = view.error?.at ?? null;
+    erroredThisRun = false;
     permissions = new Set(view.permissionIds);
   };
 
   return {
     observe(view) {
-      if (!view.sessionId) {
-        baseline(view);
-        return [];
-      }
-      if (view.sessionId !== current) {
+      if (!view.sessionId || view.sessionId !== current) {
         baseline(view);
         return [];
       }
       const out: NarrationEvent[] = [];
       if (view.permissionIds.some((id) => !permissions.has(id))) out.push('permission');
       permissions = new Set(view.permissionIds);
-      const failed = view.errorAt !== null && (errorAt === null || view.errorAt > errorAt);
-      if (failed) out.push('error');
-      else if (busy && !view.busy) out.push('done');
+      if (!busy && view.busy) erroredThisRun = false;
+      const error = view.error;
+      if (error && (errorAt === null || error.at > errorAt)) {
+        out.push(error.aborted ? 'stopped' : 'error');
+        erroredThisRun = true;
+        errorAt = error.at;
+      }
+      if (busy && !view.busy && !erroredThisRun) out.push('done');
       busy = view.busy;
-      errorAt = view.errorAt;
       return out;
     },
   };

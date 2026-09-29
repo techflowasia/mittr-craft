@@ -123,6 +123,7 @@ function harness(overrides: Partial<VoiceSessionDeps> = {}) {
     createPlayer: () => ({ player: audio.player, close }),
     context: () => ({}),
     onQueue: () => {},
+    onEnd: () => {},
     ...overrides,
   };
   const session = new VoiceSession(deps);
@@ -664,5 +665,121 @@ describe("VoiceSession end", () => {
     await starting;
     expect(calls(destroy).length).toBe(1);
     expect(h.session.getSnapshot().phase).toBe("idle");
+  });
+});
+
+describe("VoiceSession review fixes", () => {
+  for (const [code, key] of [
+    ["not_signed_in", "notSignedIn"],
+    ["not_configured", "notConfigured"],
+    ["upstream_timeout", "timeout"],
+  ] as const) {
+    test(`a transcription refused as ${code} is spoken as ${key}`, async () => {
+      const h = harness({
+        transcribe: mock(async () => {
+          throw new TranscribeError(code);
+        }),
+      });
+      await started(h);
+      await say(h);
+      await flush();
+      expect(h.turns).toHaveLength(0);
+      expect(h.synthCalls.map((c) => c.text)).toEqual([spokenText(key, "en")]);
+      expect(h.session.getSnapshot().error).toBe(code === "not_signed_in" ? "voice.talk.error.notSignedIn" : null);
+    });
+  }
+
+  test("a second narration waits while the first is still being synthesized", async () => {
+    const h = harness();
+    const first = deferred<{ contentType: string; body: ReadableStream<Uint8Array> }>();
+    let count = 0;
+    h.deps.synthesize = mock(async (text: string, signal: AbortSignal) => {
+      h.synthCalls.push({ text, signal });
+      count += 1;
+      if (count === 1) return first.promise;
+      return { contentType: "audio/wav", body: new Response(text).body! };
+    });
+    const session = new VoiceSession(h.deps);
+    await session.start({ silenceMs: 900 });
+    session.narrate("A permission request is waiting on screen.");
+    await flush();
+    session.narrate("The work is done. Want a summary?");
+    await flush();
+    expect(h.synthCalls.map((c) => c.text)).toEqual(["A permission request is waiting on screen."]);
+    expect(h.synthCalls[0].signal.aborted).toBe(false);
+    expect(h.audio.player.stopCalls).toBe(0);
+    first.resolve({ contentType: "audio/wav", body: new Response("A permission request is waiting on screen.").body! });
+    await flush();
+    h.audio.finish();
+    await flush();
+    await flush();
+    expect(h.synthCalls.map((c) => c.text)).toEqual([
+      "A permission request is waiting on screen.",
+      "The work is done. Want a summary?",
+    ]);
+  });
+
+  test("an error narration replaces a done that is still waiting to be spoken", async () => {
+    const h = harness();
+    await started(h);
+    await say(h);
+    h.session.narrate(spokenText("done", "en"), "done");
+    h.session.narrate(spokenText("error", "en"), "error");
+    h.channels[0].push({ type: "done" });
+    await flush();
+    await flush();
+    await flush();
+    expect(h.synthCalls.map((c) => c.text)).toEqual([spokenText("error", "en")]);
+  });
+
+  test("the same queued prompt is queued once per conversation and noted in the history", async () => {
+    const queued: unknown[] = [];
+    const h = harness({ onQueue: (event) => { queued.push(event); } });
+    await started(h);
+    const event = { type: "queue", sessionId: "s1", directory: "/repo", text: "run the tests" } as const;
+    await say(h);
+    h.channels[0].push(event);
+    h.mic().onSpeechStart();
+    h.mic().onSpeechConfirmed();
+    await say(h);
+    h.channels[1].push(event);
+    h.channels[1].push({ type: "done" });
+    await flush();
+    await flush();
+    h.audio.finish();
+    await flush();
+    await say(h);
+    expect(queued).toHaveLength(1);
+    const notes = h.turns[2].request.history.filter((entry) => entry.role === "assistant" && entry.text.includes("run the tests"));
+    expect(notes.length).toBeGreaterThan(0);
+  });
+
+  test("only what the person said is ever a user history entry", async () => {
+    const h = harness();
+    await started(h);
+    h.session.narrate("The work is done. Want a summary?");
+    await flush();
+    h.audio.finish();
+    await flush();
+    await say(h);
+    h.channels[0].push({ type: "error", code: "upstream_failed" });
+    await flush();
+    await flush();
+    h.audio.finish();
+    await flush();
+    await say(h);
+    const users = h.turns[1].request.history.filter((entry) => entry.role === "user").map((entry) => entry.text);
+    expect(users).toEqual(["how is it going"]);
+  });
+
+  test("ending the conversation tells the server once", async () => {
+    let ended = 0;
+    const h = harness({ onEnd: () => { ended += 1; } });
+    h.session.end();
+    expect(ended).toBe(0);
+    await started(h);
+    h.session.end();
+    h.session.end();
+    expect(ended).toBe(1);
   });
 });

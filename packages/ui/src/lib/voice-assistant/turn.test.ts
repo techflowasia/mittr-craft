@@ -185,12 +185,36 @@ describe('transcribe', () => {
   });
 });
 
+describe('end', () => {
+  test('tells the local server the conversation ended, once, with no body', async () => {
+    const fake = fetchReturning(new Response(null, { status: 204 }));
+    await createVoiceApi(fake.impl).end();
+    expect(fake.calls).toHaveLength(1);
+    expect(fake.calls[0][0]).toBe('/api/voice/end');
+    expect(fake.calls[0][1]?.method).toBe('POST');
+    expect(fake.calls[0][1]?.body).toBe(undefined);
+  });
+
+  test('never throws when the server cannot be reached', async () => {
+    const api = createVoiceApi(async () => {
+      throw new Error('offline');
+    });
+    expect(await api.end()).toBe(undefined);
+  });
+});
+
 describe('readiness', () => {
   test('reads the local readiness route', async () => {
     const body = { listen: true, speak: true, voice: true, signedIn: true, voiceSilenceMs: 900, reason: null };
     const fake = fetchReturning(new Response(JSON.stringify(body)));
     expect(await createVoiceApi(fake.impl).readiness()).toEqual(body);
     expect(fake.calls[0][0]).toBe('/api/voice/readiness');
+  });
+
+  test('a missing voice silence falls back to 900 ms', async () => {
+    const body = { listen: true, speak: true, voice: true, signedIn: true, voiceSilenceMs: null, reason: null };
+    const ready = await createVoiceApi(fetchReturning(new Response(JSON.stringify(body))).impl).readiness();
+    expect(ready?.voiceSilenceMs).toBe(900);
   });
 
   test('is null when the route fails or answers something else', async () => {

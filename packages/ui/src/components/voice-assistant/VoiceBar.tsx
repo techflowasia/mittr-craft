@@ -38,15 +38,16 @@ export function VoiceBar({ snapshot, onEnd, onSignIn, className }: VoiceBarProps
 
   if (snapshot.phase === 'idle') return null;
   const phase = snapshot.phase;
+  const last = lines.at(-1);
+  const finished =
+    last && ((phase === 'listening' && !snapshot.hearing) || (phase === 'thinking' && last.role === 'user')) ? last : null;
+  const announcement = finished
+    ? `${t(finished.role === 'user' ? 'voice.talk.you' : 'voice.talk.assistant')}: ${finished.text}`
+    : '';
 
   return (
     <section
       aria-label={t('voice.talk.label')}
-      onKeyDown={(event) => {
-        if (event.key !== 'Escape') return;
-        event.stopPropagation();
-        onEnd();
-      }}
       className={cn(
         'flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2 rounded-xl border border-border/60 bg-[var(--surface-elevated)] p-3 text-foreground shadow-lg',
         className,
@@ -85,11 +86,14 @@ export function VoiceBar({ snapshot, onEnd, onSignIn, className }: VoiceBarProps
           ) : null}
         </div>
       ) : null}
+      <p data-voice-announce="true" aria-live="polite" aria-atomic="true" className="sr-only">
+        {announcement}
+      </p>
       {lines.length ? (
         <ol
           ref={list}
           role="log"
-          aria-live="polite"
+          aria-live="off"
           className="flex max-h-56 flex-col gap-1.5 overflow-y-auto pr-1"
         >
           {lines.map((line) => (

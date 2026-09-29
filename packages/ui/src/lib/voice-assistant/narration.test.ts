@@ -15,7 +15,7 @@ const view = (patch: Partial<SessionObservation> = {}): SessionObservation => ({
   sessionId: 's1',
   busy: false,
   permissionIds: [],
-  errorAt: null,
+  error: null,
   ...patch,
 });
 
@@ -39,8 +39,9 @@ describe('spoken language', () => {
     expect(spokenText('done')).toBe('The work is done. Want a summary?');
     expect(spokenText('permission')).toBe('A permission request is waiting on screen.');
     expect(spokenText('error')).toBe('The work stopped with a problem; details are on screen.');
+    expect(spokenText('stopped')).toBe('The work has stopped.');
     noteUtterance('งานเสร็จหรือยัง');
-    for (const key of ['done', 'permission', 'error'] as const) {
+    for (const key of ['done', 'permission', 'error', 'stopped'] as const) {
       expect(/\p{Script=Thai}/u.test(spokenText(key))).toBe(true);
       expect(spokenText(key)).not.toBe(spokenText(key, 'en'));
     }
@@ -50,7 +51,7 @@ describe('spoken language', () => {
 describe('createNarrationWatch', () => {
   test('the first look at a session is a baseline and says nothing', () => {
     const watch = createNarrationWatch();
-    expect(watch.observe(view({ busy: true, permissionIds: ['p1'], errorAt: 5 }))).toEqual([]);
+    expect(watch.observe(view({ busy: true, permissionIds: ['p1'], error: { at: 5, aborted: false } }))).toEqual([]);
   });
 
   test('busy to idle says the work is done, once', () => {
@@ -72,15 +73,36 @@ describe('createNarrationWatch', () => {
   test('an error replaces the done that comes with it', () => {
     const watch = createNarrationWatch();
     watch.observe(view({ busy: true }));
-    expect(watch.observe(view({ busy: false, errorAt: 100 }))).toEqual(['error']);
-    expect(watch.observe(view({ busy: false, errorAt: 100 }))).toEqual([]);
+    expect(watch.observe(view({ busy: false, error: { at: 100, aborted: false } }))).toEqual(['error']);
+    expect(watch.observe(view({ busy: false, error: { at: 100, aborted: false } }))).toEqual([]);
   });
 
   test('an error seen before the watch started is not announced', () => {
     const watch = createNarrationWatch();
-    watch.observe(view({ errorAt: 50 }));
-    expect(watch.observe(view({ errorAt: 50 }))).toEqual([]);
-    expect(watch.observe(view({ errorAt: 60 }))).toEqual(['error']);
+    watch.observe(view({ error: { at: 50, aborted: false } }));
+    expect(watch.observe(view({ error: { at: 50, aborted: false } }))).toEqual([]);
+    expect(watch.observe(view({ error: { at: 60, aborted: false } }))).toEqual(['error']);
+  });
+
+  test('stopping the work is narrated as stopped, never as a failure or done', () => {
+    const watch = createNarrationWatch();
+    watch.observe(view({ busy: true }));
+    expect(watch.observe(view({ busy: false, error: { at: 100, aborted: true } }))).toEqual(['stopped']);
+  });
+
+  test('an error seen before the idle of the same run still suppresses done', () => {
+    const watch = createNarrationWatch();
+    watch.observe(view({ busy: true }));
+    expect(watch.observe(view({ busy: true, error: { at: 100, aborted: false } }))).toEqual(['error']);
+    expect(watch.observe(view({ busy: false, error: { at: 100, aborted: false } }))).toEqual([]);
+  });
+
+  test('a new run after an error says done again', () => {
+    const watch = createNarrationWatch();
+    watch.observe(view({ busy: true }));
+    watch.observe(view({ busy: false, error: { at: 100, aborted: false } }));
+    expect(watch.observe(view({ busy: true, error: { at: 100, aborted: false } }))).toEqual([]);
+    expect(watch.observe(view({ busy: false, error: { at: 100, aborted: false } }))).toEqual(['done']);
   });
 
   test('switching sessions rebaselines without speaking', () => {

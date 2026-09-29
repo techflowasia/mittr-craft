@@ -1,5 +1,6 @@
 import { createMessageQueueTarget, useMessageQueueStore, type QueuedMessage } from '@/stores/messageQueueStore';
 import { useConfigStore } from '@/stores/useConfigStore';
+import { useSessionUIStore } from '@/sync/session-ui-store';
 import type { VoiceQueueEvent } from './turn';
 
 type SendConfig = QueuedMessage['sendConfig'];
@@ -18,11 +19,18 @@ export function currentSendConfig(): SendConfig {
     : undefined;
 }
 
-export function queueSpokenPrompt(event: VoiceQueueEvent, readSendConfig: () => SendConfig = currentSendConfig): boolean {
+export interface QueueOptions {
+  readSendConfig?: () => SendConfig;
+  viewedSessionId?: string | null;
+}
+
+export function queueSpokenPrompt(event: VoiceQueueEvent, options: QueueOptions = {}): boolean {
   const content = event.text.trim();
   const target = createMessageQueueTarget(event.sessionId, event.directory);
   if (!target || !content) return false;
-  useMessageQueueStore.getState().addToQueue(target, { content, sendConfig: readSendConfig() });
+  const viewed = options.viewedSessionId !== undefined ? options.viewedSessionId : useSessionUIStore.getState().currentSessionId;
+  const sendConfig = viewed === event.sessionId ? (options.readSendConfig ?? currentSendConfig)() : undefined;
+  useMessageQueueStore.getState().addToQueue(target, { content, sendConfig });
   return true;
 }
 

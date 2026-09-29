@@ -120,7 +120,9 @@ function parse(block: string): VoiceTurnEvent | null {
   }
 }
 
-function isReadiness(value: unknown): value is VoiceReadiness {
+export const DEFAULT_VOICE_SILENCE_MS = 900;
+
+function isReadiness(value: unknown): value is Omit<VoiceReadiness, 'voiceSilenceMs'> & { voiceSilenceMs: number | null | undefined } {
   if (!value || typeof value !== 'object') return false;
   const body = value as Record<string, unknown>;
   return (
@@ -128,9 +130,9 @@ function isReadiness(value: unknown): value is VoiceReadiness {
     typeof body.speak === 'boolean' &&
     typeof body.voice === 'boolean' &&
     typeof body.signedIn === 'boolean' &&
-    typeof body.voiceSilenceMs === 'number' &&
-    Number.isFinite(body.voiceSilenceMs) &&
-    body.voiceSilenceMs > 0 &&
+    (body.voiceSilenceMs === null ||
+      body.voiceSilenceMs === undefined ||
+      (typeof body.voiceSilenceMs === 'number' && Number.isFinite(body.voiceSilenceMs) && body.voiceSilenceMs > 0)) &&
     (body.reason === null || (typeof body.reason === 'string' && REASONS.has(body.reason)))
   );
 }
@@ -141,6 +143,7 @@ export function isTalkReady(readiness: VoiceReadiness | null | undefined): readi
 
 export interface VoiceApi {
   readiness(): Promise<VoiceReadiness | null>;
+  end(): Promise<void>;
   transcribe: TranscribeSpeech;
   synthesize: SynthesizeSpeech;
   turn: StreamVoiceTurn;
@@ -157,9 +160,18 @@ export function createVoiceApi(fetchImpl: VoiceFetch): VoiceApi {
         const res = await call('/api/voice/readiness', { method: 'GET' });
         if (!res.ok) return null;
         const body: unknown = await res.json().catch(() => null);
-        return isReadiness(body) ? body : null;
+        if (!isReadiness(body)) return null;
+        return { ...body, voiceSilenceMs: body.voiceSilenceMs ?? DEFAULT_VOICE_SILENCE_MS };
       } catch {
         return null;
+      }
+    },
+
+    async end() {
+      try {
+        await call('/api/voice/end', { method: 'POST' });
+      } catch {
+        return;
       }
     },
 

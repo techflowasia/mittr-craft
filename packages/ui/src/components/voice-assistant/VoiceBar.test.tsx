@@ -54,6 +54,7 @@ describe('VoiceBar', () => {
       }),
     );
     expect(html).toContain('role="log"');
+    expect(html).not.toContain('role="log" aria-live="polite"');
     expect(html).toContain('You');
     expect(html).toContain('open chrome');
     expect(html).toContain('Assistant');
@@ -69,5 +70,25 @@ describe('VoiceBar', () => {
     expect(html).toContain('Sign in to Mittr to talk to the assistant.');
     expect(html).toContain('role="alert"');
     expect(html).toContain('Sign in');
+  });
+});
+
+describe('VoiceBar announcements', () => {
+  const lines = [
+    { id: 1, role: 'user' as const, text: 'open chrome' },
+    { id: 2, role: 'assistant' as const, text: 'Opening Chr' },
+  ];
+  const announced = (html: string) => /data-voice-announce="true"[^>]*>([^<]*)</.exec(html)?.[1] ?? '';
+
+  test('a reply still arriving is not announced word by word', () => {
+    expect(announced(render(snapshot({ phase: 'speaking', transcript: lines })))).toBe('');
+  });
+
+  test('a finished reply is announced once the assistant is listening again', () => {
+    expect(announced(render(snapshot({ phase: 'listening', transcript: lines })))).toBe('Assistant: Opening Chr');
+  });
+
+  test('what the person said is announced while the assistant thinks', () => {
+    expect(announced(render(snapshot({ phase: 'thinking', transcript: [lines[0]] })))).toBe('You: open chrome');
   });
 });
