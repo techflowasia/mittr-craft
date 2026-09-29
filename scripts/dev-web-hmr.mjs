@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
+import { VAD_OUT_DIR, copyVadAssets, resolveVadSources } from './copy-vad-assets.mjs';
 import { existsSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -111,6 +112,7 @@ function clearViteCache() {
 }
 
 clearViteCache();
+copyVadAssets({ ...resolveVadSources(), outDir: VAD_OUT_DIR });
 
 const api = run('api', 'bun', ['run', '--cwd', 'packages/web', 'dev:server:watch'], {
   MITTRCRAFT_PORT: backendPort,
