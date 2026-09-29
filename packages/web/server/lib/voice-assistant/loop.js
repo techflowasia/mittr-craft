@@ -13,7 +13,7 @@ const TRUNCATION_MARK = '…[truncated]';
 const OMITTED_RESULT = '[result omitted]';
 const STEP_CALLS_MAX = 20;
 const READ_ACTIONS = new Set([
-  'session.read_reply', 'session.messages', 'session.status', 'session.list',
+  'session.read_reply', 'session.messages',
   'chrome.read', 'chrome.snapshot', 'chrome.screenshot', 'chrome.do',
   'browser.snapshot', 'browser.inspect', 'browser.capture',
   'computer.screenshot', 'jira.get_issue', 'plane.get_issue',
@@ -269,7 +269,7 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
   const runTool = async (call, allowed) => {
     const parsed = parseArguments(call.arguments);
     const action = parsed?.action || null;
-    if (!parsed || !Object.hasOwn(allowed, call.name) || !allowed[call.name].includes(action)) {
+    if (!parsed || !Object.hasOwn(allowed, call.name) || !Object.values(allowed).some((actions) => actions.includes(action))) {
       return refusal(null, 'unsupported_action', `${call.name} does not offer action ${action || 'missing'} here`);
     }
     const input = { ...parsed.input };

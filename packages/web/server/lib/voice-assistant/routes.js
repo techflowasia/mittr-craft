@@ -70,6 +70,10 @@ export const registerVoiceAssistantRoutes = (app, dependencies) => {
     describeSession: sessionLookup.describe,
     readChromePage: chromePage.read,
     isBrowserMounted,
+    listSessions: async (directory) => {
+      const listed = await controlService.execute('session.list', { withStatus: true }, directory ?? undefined);
+      return (listed?.sessions ?? []).map((session) => ({ id: session?.id, title: session?.title, status: session?.status?.type }));
+    },
   });
   app.post('/api/voice/end', (_req, res) => {
     conversation.pendingApprovalHost = null;

@@ -58,8 +58,8 @@ Events (`data: <json>\n\n`):
 
 Guards (the app applies the same lists locally, so a call refused by either side never runs). The action is the exact top-level `action` field of `arguments`.
 
-- Read actions: `session.read_reply`, `session.messages`, `session.status`, `session.list`, `chrome.read`, `chrome.snapshot`, `chrome.screenshot`, `chrome.do`, `browser.snapshot`, `browser.inspect`, `browser.capture`, `computer.screenshot`, `jira.get_issue`, `plane.get_issue`.
-- Refused after any read since the last `user` message, including a read in the same batch: `session.stop`, `session.send`, `session.create`, `session.fork`, `schedule.create`, `schedule.run`, `schedule.delete`, `schedule.toggle`, `chrome.allow_site`. Page interaction after a read stays allowed.
+- Read actions: `session.read_reply`, `session.messages`, `chrome.read`, `chrome.snapshot`, `chrome.screenshot`, `chrome.do`, `browser.snapshot`, `browser.inspect`, `browser.capture`, `computer.screenshot`, `jira.get_issue`, `plane.get_issue`.
+- Refused after any read since the last `user` message, including a read in the same batch: `session.stop`, `session.send`, `session.create`, `session.fork`, `schedule.create`, `schedule.run`, `schedule.delete`, `schedule.toggle`, `chrome.allow_site`. Page interaction after a read stays allowed. `session.list` and `session.status` are lookups in the app's own index, not reads: finding a session by name and then sending to it in one turn is allowed.
 - `session.stop` is refused unless an assistant message with non-empty text comes before the last `user` message (the assistant asked first).
 - A refused call is dropped, never forwarded; a short spoken refusal is streamed as `text-delta` before any `tool-call` (Thai when the last user message has Thai script, otherwise the request's `locale`).
 

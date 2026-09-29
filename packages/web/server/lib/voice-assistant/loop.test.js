@@ -131,12 +131,41 @@ describe('runVoiceTurn', () => {
     expect(deps.chromePage.note).toHaveBeenCalledWith('chrome.open', false);
   });
 
-  it('refuses an action the named tool does not offer', async () => {
+  it('runs an offered action even when the model files it under another voice tool', async () => {
+    const execute = vi.fn(async () => ({ text: 'done' }));
+    const deps = createDeps({
+      execute,
+      steps: [
+        [toolCall('c1', 'mittrcraft', { action: 'session.read_reply', sessionId: 'ses_1' }), { type: 'done' }],
+        [{ type: 'done' }],
+      ],
+    });
+    const events = await run(deps);
+    expect(execute).toHaveBeenCalledWith('session.read_reply', { sessionId: 'ses_1' }, '/repo', expect.anything());
+    expect(events).toContainEqual({ type: 'tool-result', id: 'c1', ok: true });
+  });
+
+  it('still applies the stop guard to a stop filed under another voice tool', async () => {
     const execute = vi.fn();
     const deps = createDeps({
       execute,
       steps: [
         [toolCall('c1', 'mittrcraft', { action: 'session.stop', sessionId: 'ses_1' }), { type: 'done' }],
+        [{ type: 'done' }],
+      ],
+    });
+    const events = await run(deps, { history: [{ role: 'user', text: 'hi' }] });
+    expect(execute).not.toHaveBeenCalled();
+    expect(events).toContainEqual({ type: 'tool-result', id: 'c1', ok: false });
+    expect(JSON.parse(stepBody(deps, 1).messages.at(-1).content).reasonCode).toBe('confirm_first');
+  });
+
+  it('refuses a call on a tool name that was not offered', async () => {
+    const execute = vi.fn();
+    const deps = createDeps({
+      execute,
+      steps: [
+        [toolCall('c1', 'mittrcraft_admin', { action: 'session.list' }), { type: 'done' }],
         [{ type: 'done' }],
       ],
     });
@@ -543,15 +572,15 @@ describe('runVoiceTurn', () => {
     const execute = vi.fn(async () => ({}));
     const deps = createDeps({
       execute,
-      steps: [[toolCall('r', 'mittrcraft', { action: 'session.status', sessionId: 'ses_1' }), toolCall('w', tool, args), { type: 'done' }], [{ type: 'done' }]],
+      steps: [[toolCall('r', 'mittrcraft_voice', { action: 'session.read_reply', sessionId: 'ses_1' }), toolCall('w', tool, args), { type: 'done' }], [{ type: 'done' }]],
     });
     await run(deps);
-    expect(execute.mock.calls.map(([called]) => called)).toEqual(['session.status']);
+    expect(execute.mock.calls.map(([called]) => called)).toEqual(['session.read_reply']);
     expect(JSON.parse(stepBody(deps, 1).messages.at(-1).content).reasonCode).toBe('refused_after_read');
   });
 
   it.each([
-    'session.list', 'chrome.screenshot', 'chrome.do', 'browser.inspect', 'browser.capture', 'computer.screenshot',
+    'session.messages', 'chrome.screenshot', 'chrome.do', 'browser.inspect', 'browser.capture', 'computer.screenshot',
   ])('treats %s as a read', async (readAction) => {
     const execute = vi.fn(async () => ({}));
     const tool = readAction.startsWith('session.') ? 'mittrcraft' : 'mittrcraft_web';
@@ -561,6 +590,17 @@ describe('runVoiceTurn', () => {
     });
     await run(deps);
     expect(execute.mock.calls.map(([called]) => called)).toEqual([readAction]);
+  });
+
+  it.each(['session.list', 'session.status'])('lets %s be followed by a send to the session it found', async (lookup) => {
+    const execute = vi.fn(async () => ({}));
+    const deps = createDeps({
+      execute,
+      describeSession: async () => ({ id: 'ses_2', directory: '/repo', status: 'idle' }),
+      steps: [[toolCall('l', 'mittrcraft', { action: lookup, sessionId: 'ses_2' }), toolCall('w', 'mittrcraft', { action: 'session.send', sessionId: 'ses_2', prompt: 'add a section' }), { type: 'done' }], [{ type: 'done' }]],
+    });
+    await run(deps);
+    expect(execute.mock.calls.map(([called]) => called)).toEqual([lookup, 'session.send']);
   });
 
   it('still lets the person act on the page after reading it', async () => {

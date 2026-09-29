@@ -83,7 +83,7 @@ The voice tool list is the agent-exposed `mittrcraft-control` actions (the same 
 
 ### 4.3 Context sent with each turn
 
-The app adds one system-context message (built fresh each turn) describing where the person is: current project and directory, the open session (title, status, todo progress, pending permission request, queued prompt count), whether a Chrome page is open (title and URL only) and whether the in-app browser is mounted. As in Studio, results are not in the context: to say what a page, answer or card contains, the assistant must call the tool that reads it.
+The app adds one system-context message (built fresh each turn) describing where the person is: current project and directory, the open session (title, status, todo progress, pending permission request, queued prompt count), up to ten other sessions of that directory (id, title, status) so a session named by voice can be matched to its id, whether a Chrome page is open (title and URL only) and whether the in-app browser is mounted. As in Studio, results are not in the context: to say what a page, answer or card contains, the assistant must call the tool that reads it.
 
 ### 4.4 Rules carried over from Studio (prompt + platform checks)
 
