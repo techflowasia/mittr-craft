@@ -115,6 +115,8 @@ import { createChromeControl } from './lib/mittrcraft-control/chrome-control.js'
 import { createChromeApprovals } from './lib/mittrcraft-control/chrome-approvals.js';
 import { createMittrWorkService } from './lib/mittr-work/service.js';
 import { createMittrBrowserStepper } from './lib/mittr-browser-step/service.js';
+import { createMittrSpeechClient } from './lib/mittr-speech/client.js';
+import { registerVoiceSpeechRoutes } from './lib/voice-speech/routes.js';
 import { createMittrGoalJudge } from './lib/mittr-goal-judge/service.js';
 import webPush from 'web-push';
 
@@ -978,7 +980,7 @@ const bootstrapRuntime = createBootstrapRuntime({
   registerServerStatusRoutes,
   registerCommonRequestMiddleware,
   registerAuthAndAccessRoutes,
-  registerTtsRoutes,
+  registerTtsRoutes: (app, options) => registerTtsRoutes(app, { ...options, getMittrSpeechClient }),
   registerNotificationRoutes,
   registerMittrCraftRoutes,
   registerAgentToolRoutes: (app, options) => options.agentToolRuntime.registerRoutes(app, options.express),
@@ -1020,7 +1022,7 @@ const tunnelWiringRuntime = createTunnelWiringRuntime({
 });
 const startupPipelineRuntime = createStartupPipelineRuntime({
   createTerminalRuntime,
-  createDictationRuntime,
+  createDictationRuntime: (options) => createDictationRuntime({ ...options, getMittrSpeechClient }),
   createMessageStreamWsRuntime,
   createServerStartupRuntime,
 });
@@ -1244,6 +1246,8 @@ let jiraControl = null;
 const getJiraControl = () => jiraControl;
 let browserStepper = null;
 const getBrowserStepper = () => browserStepper;
+let mittrSpeechClient = null;
+const getMittrSpeechClient = () => mittrSpeechClient;
 
 const mittrCraftControlService = createMittrCraftControlService({
   readSettingsFromDiskMigrated,
@@ -1635,6 +1639,10 @@ async function main(options = {}) {
       brokerBaseUrl: mittrShim.brokerBaseUrl,
       ensureFreshSession: mittrShim.ensureFreshSession,
     });
+    mittrSpeechClient = createMittrSpeechClient({
+      brokerBaseUrl: mittrShim.brokerBaseUrl,
+      ensureFreshSession: mittrShim.ensureFreshSession,
+    });
     mittrGoalJudge = createMittrGoalJudge({
       brokerBaseUrl: mittrShim.brokerBaseUrl,
       ensureFreshSession: mittrShim.ensureFreshSession,
@@ -1864,6 +1872,7 @@ async function main(options = {}) {
     computerControl,
     isBrowserMounted: () => [...uiMittrCraftEventClients].some((client) => client.mittrcraftBrowserCapable === true),
   });
+  registerVoiceSpeechRoutes(app, { express, getMittrSpeechClient });
 
   // One scanner backs both discovery and the tunnel allowlist, so a port the
   // user can see is exactly a port the tunnel will dial.

@@ -916,7 +916,9 @@ const AssistantMessageActionButtons = React.memo(({
         if (isTTSPlaying) {
             return t('chat.messageBody.tts.stopSpeaking');
         }
-        const providerLabel = voiceProvider === 'browser'
+        const providerLabel = voiceProvider === 'mittr'
+            ? 'Mittr'
+            : voiceProvider === 'browser'
             ? 'Browser'
             : voiceProvider === 'openai'
                 ? 'OpenAI'

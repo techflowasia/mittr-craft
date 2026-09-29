@@ -127,7 +127,8 @@ export class DictationStreamManager {
 
     stt.on('error', (err) => {
       const message = err?.message || String(err);
-      this.failAndCleanupStream(dictationId, message, true);
+      const reasonCode = typeof err?.reasonCode === 'string' ? err.reasonCode : undefined;
+      this.failAndCleanupStream(dictationId, message, err?.retryable !== false, reasonCode);
     });
 
     this.streams.set(dictationId, {
@@ -289,8 +290,8 @@ export class DictationStreamManager {
     });
   }
 
-  failAndCleanupStream(dictationId, error, retryable) {
-    this.failStream(dictationId, error, retryable);
+  failAndCleanupStream(dictationId, error, retryable, reasonCode) {
+    this.failStream(dictationId, error, retryable, reasonCode);
     this.cleanupStream(dictationId);
   }
 

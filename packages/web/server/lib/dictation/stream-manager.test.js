@@ -166,6 +166,33 @@ describe('DictationStreamManager', () => {
     expect(error.payload.retryable).toBe(true);
   });
 
+  it('carries the reason and retryability of a session error mid-stream', async () => {
+    const session = new FakeSttSession();
+    const { manager, messages } = createManager(session);
+    await manager.handleStart('d1', FORMAT, {});
+    session.emit('error', Object.assign(new Error('Sign in to Mittr to use dictation'), {
+      reasonCode: 'not_signed_in',
+      retryable: false,
+    }));
+    const error = messages.find((m) => m.type === 'error');
+    expect(error.payload).toMatchObject({
+      error: 'Sign in to Mittr to use dictation',
+      reasonCode: 'not_signed_in',
+      retryable: false,
+    });
+    expect(session.closed).toBe(true);
+  });
+
+  it('keeps a plain session error retryable without a reason', async () => {
+    const session = new FakeSttSession();
+    const { manager, messages } = createManager(session);
+    await manager.handleStart('d1', FORMAT, {});
+    session.emit('error', new Error('boom'));
+    const error = messages.find((m) => m.type === 'error');
+    expect(error.payload.retryable).toBe(true);
+    expect(error.payload.reasonCode).toBe(undefined);
+  });
+
   it('emits partials as segment transcripts arrive', async () => {
     let segment = 0;
     const session = new FakeSttSession({

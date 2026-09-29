@@ -293,6 +293,30 @@ This is currently acceptable as a narrow bootstrap fallback.
 
 Do not widen it into a polling or broad refresh system.
 
+## Voice Providers In `useConfigStore`
+
+- `voiceProvider` (read aloud) and `sttProvider` (dictation) accept `'mittr'`,
+  which goes through the local server's Mittr speech routes and holds no key
+  or URL. The helpers live in `src/lib/voice/mittrVoice.ts`.
+- `'mittr'` is only the starting value on a fresh desktop/web install: a
+  `null` localStorage value for `voiceProvider`, and for `sttProvider` a
+  settings snapshot without `sttProvider` on an install with no stored
+  `sttLocalModel` and no downloaded local model (`/api/dictation/status`).
+  An install with either counts as having chosen `local`. The decision is
+  saved once through `updateDesktopSettings`; if the local-model check fails,
+  nothing changes and nothing is saved. Any saved or legacy value
+  (`server` → `openai-compatible`, `browser`/`wasm` → `local`) is kept.
+- The VS Code webview has no Mittr bridge and never starts on `mittr`
+  (`browser` read aloud, `local` dictation).
+- Mittr read aloud (`useMessageTTS`) checks readiness before speaking, speaks
+  sentence chunks in order (stop cancels the rest), and reports the reason in
+  `error` instead of falling back to another voice. Readiness is read through
+  `hooks/useMittrVoiceReadiness.ts`, which keeps only ready answers.
+- `voiceStepCap` (1–20, default 8) and `voiceReplyMaxChars` (1000–30000,
+  default 8000) are desktop settings: setters clamp and save through
+  `updateDesktopSettings`; `applyDesktopUiPreferences` brings server values in
+  and an omitted value falls back to its default.
+
 ## When Editing These Stores
 
 Before changing store shape or selectors, ask:
