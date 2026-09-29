@@ -72,3 +72,13 @@ other.
   failure is reported as `stopped` with its reason, not thrown, so the steps
   that did happen are never lost. Values typed into fields come only from the
   goal; the platform asks instead of inventing one.
+
+## Voice-only actions
+
+`MITTRCRAFT_VOICE_ACTION_DEFINITIONS` (`actions.js`) are in the control contract but never in the coding agent's tools or the web tool; only the voice assistant (`../voice-assistant`) offers them, in its `mittrcraft_voice` tool.
+
+- `session.stop` aborts one session in its directory and returns `{ stopped, sessionId, directory }`.
+- `session.read_reply` returns the newest assistant answer as speakable text (`sanitizeForTTS`), capped by the `voiceReplyMaxChars` setting, with `truncated`; `text: null` when there is none.
+- `chrome.allow_site { host }` grants one plain lowercase host to the calling Chrome session (`options.sessionId`) for that conversation only. The grant is never persisted as "always"; `ensureApproved` and `ensureStillApproved` both honour it, removing the site in settings removes it, and `endChromeConversation(sessionId)` clears every grant of that session. `isChromeHostAllowed(sessionId, host)` tells the voice context whether a page may be named.
+
+The voice loop and the platform refuse `session.stop`, `session.send/create/fork`, `schedule.create/run/delete/toggle` and `chrome.allow_site` after a read in the same turn; see `docs/specs/2026-09-29-mittr-voice-wire.md`.
