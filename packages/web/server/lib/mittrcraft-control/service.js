@@ -7,6 +7,7 @@ import { MittrCraftControlError, asControlError } from './error.js';
 import { MITTRCRAFT_ALL_ACTIONS } from './actions.js';
 import { writeScreenshot } from './screenshots.js';
 import { chromeSessionName } from './chrome-control.js';
+import { sanitizeForTTS } from '../text/summarization.js';
 
 const APP_NAME_PATTERN = /^[\w .()&-]{1,80}$/;
 
@@ -15,6 +16,13 @@ const MAX_WAIT_TIMEOUT_SECONDS = 86_400;
 const WAIT_POLL_INTERVAL_MS = 500;
 // One service, both capabilities: which tool asked is the caller's concern.
 const CONTROL_ACTIONS = new Set(MITTRCRAFT_ALL_ACTIONS);
+const VOICE_REPLY_MAX_CHARS = Object.freeze({ fallback: 8000, min: 1000, max: 30000 });
+
+const voiceReplyMaxChars = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return VOICE_REPLY_MAX_CHARS.fallback;
+  return Math.min(VOICE_REPLY_MAX_CHARS.max, Math.max(VOICE_REPLY_MAX_CHARS.min, Math.round(n)));
+};
 const SCHEDULE_TASK_ID_ACTIONS = new Set([
   'schedule.run',
   'schedule.delete',
@@ -934,6 +942,18 @@ export const createMittrCraftControlService = (dependencies) => {
         if (!directory) throw new MittrCraftControlError('directory is required', 400);
         if (action === 'session.status') {
           return { sessionId: sessionID, directory, sessionStatus: await sessionStatus(client, sessionID, directory) };
+        }
+        if (action === 'session.stop') {
+          await client.session.abort({ sessionID, directory });
+          return { stopped: true, sessionId: sessionID, directory };
+        }
+        if (action === 'session.read_reply') {
+          const [latest] = await sessionMessages(client, sessionID, directory, 'assistant', 1);
+          if (!latest) return { sessionId: sessionID, directory, text: null, truncated: false };
+          const settings = await readSettingsFromDiskMigrated();
+          const cap = voiceReplyMaxChars(settings?.voiceReplyMaxChars);
+          const spoken = sanitizeForTTS(latest.text);
+          return { sessionId: sessionID, directory, text: spoken.slice(0, cap), truncated: spoken.length > cap };
         }
         if (action === 'session.messages') {
           if (input.timeout !== undefined && input.wait !== true) throw new MittrCraftControlError('timeout requires wait', 400);

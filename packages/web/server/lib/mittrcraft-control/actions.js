@@ -51,6 +51,15 @@ const MITTRCRAFT_PLANE_ACTIONS = Object.freeze(
   MITTRCRAFT_PLANE_ACTION_DEFINITIONS.map(({ action }) => action),
 );
 
+export const MITTRCRAFT_VOICE_ACTION_DEFINITIONS = Object.freeze([
+  { action: 'session.stop', title: 'Stop a session', description: 'Stop the running session sessionId; directory defaults to the current session' },
+  { action: 'session.read_reply', title: "Read a session's latest answer", description: 'Latest assistant answer of sessionId as plain speakable text, capped in length' },
+]);
+
+export const MITTRCRAFT_VOICE_ACTIONS = Object.freeze(
+  MITTRCRAFT_VOICE_ACTION_DEFINITIONS.map(({ action }) => action),
+);
+
 export const MITTRCRAFT_AGENT_TOOL_ACTION_DEFINITIONS = Object.freeze([
   ...MITTRCRAFT_CONTROL_ACTION_DEFINITIONS.filter(({ agentExposed }) => agentExposed !== false),
   ...MITTRCRAFT_JIRA_ACTION_DEFINITIONS,
@@ -126,4 +135,5 @@ export const MITTRCRAFT_ALL_ACTIONS = Object.freeze([
   ...MITTRCRAFT_WEB_ACTIONS,
   ...MITTRCRAFT_COMPUTER_ACTIONS,
   ...MITTRCRAFT_CHROME_ACTIONS,
+  ...MITTRCRAFT_VOICE_ACTIONS,
 ]);

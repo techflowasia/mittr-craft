@@ -1,3 +1,4 @@
+import { voiceI18n } from './voice.i18n';
 import { thirdPartyIntegrationI18n } from './third-party-integrations.i18n';
 export const settingsDict = {
   'settings.providers.page.openCodeGo.title': 'MittrCraft Engine Go usage tracking',
@@ -2147,4 +2148,5 @@ export const settingsDict = {
   'settings.mittrcraft.visual.option.followUpBehavior.steer.label': 'Steer',
   'settings.mittrcraft.visual.option.followUpBehavior.queue.label': 'Queue',
   ...thirdPartyIntegrationI18n.en,
+  ...voiceI18n.en,
 } as const;
