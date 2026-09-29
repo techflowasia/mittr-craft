@@ -403,6 +403,7 @@ export class VoiceSession {
       return;
     }
     const language = noteUtterance(said);
+    if (this.snapshot.error) this.set({ error: null });
     if (exchange.userLine === null) exchange.userLine = this.addLine({ role: 'user', text: said });
     else this.updateLine(exchange.userLine, said);
     const history = this.history;

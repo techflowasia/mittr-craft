@@ -146,7 +146,9 @@ export interface VoiceApi {
   turn: StreamVoiceTurn;
 }
 
-export function createVoiceApi(fetchImpl: typeof fetch): VoiceApi {
+export type VoiceFetch = (input: string, init?: RequestInit) => Promise<Response>;
+
+export function createVoiceApi(fetchImpl: VoiceFetch): VoiceApi {
   const call = (path: string, init?: RequestInit) => fetchImpl(path, init);
 
   return {
