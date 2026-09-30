@@ -20,7 +20,19 @@ week's usage.
     `createQuotaStreamRewriter` are used by `../mittr/shim-routes.js`.
   - `quotaFieldsOf(error)` adds `resetsAt` to a local error reply when the
     error is a quota refusal.
-- `service.js` / `routes.js` — `GET /api/mittr/quota/me`.
+- `answered-by.js` — which answers came from a backup model.
+  - `readAnsweredBy(value)` reads the platform's top-level
+    `answered_by: { substituted: true, requestedLabel, answeredLabel, answeredKey, reason, notice, caveats? }`
+    from a chat completion body or its JSON text and returns
+    `{ requestedLabel, answeredLabel, reason }`, or `null` when nothing was
+    substituted, a label is empty or `reason` is not `quota`, `failed` or `silent`.
+  - `createAnsweredByWatcher(onAnsweredBy)` reads a forwarded stream until the
+    first `data:` line that parses to an object with `choices` and stops there.
+    It only reads; the bytes the engine receives are unchanged.
+  - `createAnsweredByLog()` keeps, in memory, the last 10 substitutions of the
+    last 100 sessions. A restart forgets them.
+- `service.js` / `routes.js` — `GET /api/mittr/quota/me` and
+  `GET /api/mittr/answered-by`.
 
 ## Chat: why the shim rewrites the status
 
@@ -69,7 +81,30 @@ reads `GET {brokerBaseUrl}/api/quota/me` with the desktop session.
 - `502 upstream_failed` — any other failure or an unreadable body. A failed
   read is never answered as an empty week.
 
-## In the app
+## Chat: telling the person a backup model answered
+
+When the model a person chose is out of weekly quota (or failed, or said
+nothing), the platform answers with a backup model and adds a top-level
+`answered_by` to the first stream chunk or to the non-stream body. The engine
+ignores unknown top-level fields, so the app cannot read it from engine
+messages; the shim remembers it instead.
+
+The engine sends `X-Session-Id` (and `x-session-affinity`) with the session id
+on every request to a provider whose id does not start with `opencode`, which
+includes `mittr`. The shim keys each substitution by that id and stores
+`{ at, model, reason, requestedLabel, answeredLabel }`, where `at` is when the
+shim received the request and `model` is the alias the engine asked for. A
+request without a session header is not recorded.
+
+`GET /api/mittr/answered-by?sessionId=` answers `{ now, answers }`: `now` is
+the server's clock, the same host clock the engine stamps message times with.
+`400` when `sessionId` is missing. Registered by `../mittr/index.js`, so an
+install without the shim answers `404`.
+
+The app ties an answer to the assistant message with the same `modelID` whose
+`time.created <= at <= time.completed`: the engine creates the assistant
+message before it sends the request and completes it after the stream ends.
+
 
 `packages/ui/src/lib/mittr-quota/quota-me-store.ts` is the one reader of this
 route in the renderer: callers that open together share one request, and an
@@ -82,3 +117,10 @@ answer is reused for 30 seconds unless the person reloads. It feeds:
 - The chat model picker, which reads `agentStatus` when it opens and marks each
   Mittr agent: `out` is not selectable, `substitute` names the backup model,
   `near` shows the share left, `ok` shows nothing.
+
+`packages/ui/src/lib/mittr-quota/answered-by-store.ts` reads
+`/api/mittr/answered-by` when a Mittr assistant message has completed, once
+per session for messages that complete together, and not again while the
+last answer's `now` is at or after that message's `time.completed`. A failed
+read keeps what was known. `components/chat/message/AnsweredByNotice.tsx`
+shows a muted line under the substituted message.

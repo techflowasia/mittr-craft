@@ -18,3 +18,18 @@ export const registerMittrQuotaRoutes = (app, dependencies) => {
     }
   });
 };
+
+export const registerMittrAnsweredByRoutes = (app, { answeredByLog, now = Date.now }) => {
+  app.get('/api/mittr/answered-by', (req, res) => {
+    const sessionId = typeof req.query?.sessionId === 'string' ? req.query.sessionId.trim() : '';
+    if (!sessionId) {
+      return res.status(400).json({ error: 'sessionId is required', reasonCode: 'invalid_request' });
+    }
+    return res.json({
+      now: now(),
+      answers: answeredByLog.list(sessionId).map(({ at, model, reason, requestedLabel, answeredLabel }) => ({
+        at, model, reason, requestedLabel, answeredLabel,
+      })),
+    });
+  });
+};

@@ -7,6 +7,7 @@ import {
   readQuotaExhausted,
   toEngineRefusal,
 } from '../mittr-quota/exhausted.js';
+import { createAnsweredByWatcher, readAnsweredBy, sessionIdOf } from '../mittr-quota/answered-by.js';
 
 const reportMarkup = (result, model) => {
   if (result.kind === 'tool-calls-lost') {
@@ -29,7 +30,14 @@ const bearerOf = (header) => {
   return value.startsWith('Bearer ') ? value.slice('Bearer '.length).trim() : '';
 };
 
-export function registerMittrShimRoutes(app, { upstream, localToken, ensureFreshSession, fetchImpl = fetch }) {
+export function registerMittrShimRoutes(app, {
+  upstream,
+  localToken,
+  ensureFreshSession,
+  answeredByLog = null,
+  now = Date.now,
+  fetchImpl = fetch,
+}) {
   const requireLocalToken = (req, res, next) => {
     if (bearerOf(req.headers.authorization) !== localToken) {
       return res.status(401).json({ error: 'Unauthorized' });
@@ -42,6 +50,14 @@ export function registerMittrShimRoutes(app, { upstream, localToken, ensureFresh
     requireLocalToken,
     express.json({ limit: '32mb' }),
     async (req, res) => {
+      const startedAt = now();
+      const sessionId = sessionIdOf(req.headers);
+      const model = typeof req.body?.model === 'string' ? req.body.model : null;
+      const rememberAnsweredBy = (answeredBy) => {
+        if (!answeredByLog || !sessionId || !model) return;
+        answeredByLog.record(sessionId, { at: startedAt, model, ...answeredBy });
+      };
+
       const session = await ensureFreshSession();
       if (!session) {
         // The engine cannot prompt anybody, so this message has to be legible
@@ -98,6 +114,11 @@ export function registerMittrShimRoutes(app, { upstream, localToken, ensureFresh
           }
         }
 
+        if (upstreamResponse.ok) {
+          const answeredBy = readAnsweredBy(text);
+          if (answeredBy) rememberAnsweredBy(answeredBy);
+        }
+
         try {
           const message = JSON.parse(text)?.choices?.[0]?.message;
           reportMarkup(
@@ -130,10 +151,12 @@ export function registerMittrShimRoutes(app, { upstream, localToken, ensureFresh
       // retries. The watcher only reads what goes past.
       const watcher = createStreamMarkupWatcher();
       const quotaFrames = createQuotaStreamRewriter();
+      const answeredByWatcher = createAnsweredByWatcher(rememberAnsweredBy);
       const forward = (bytes) => {
         if (bytes.length === 0) return;
         res.write(bytes);
         watcher.observe(bytes);
+        answeredByWatcher.observe(bytes);
       };
       try {
         for await (const chunk of upstreamResponse.body) {
@@ -143,6 +166,7 @@ export function registerMittrShimRoutes(app, { upstream, localToken, ensureFresh
         console.error('[mittr] upstream stream failed:', error?.message ?? error);
       }
       forward(quotaFrames.end());
+      answeredByWatcher.finish();
       reportMarkup(watcher.finish(), req.body?.model);
       return res.end();
     }

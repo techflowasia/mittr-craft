@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { registerMittrShimRoutes } from './shim-routes.js';
+import { createAnsweredByLog } from '../mittr-quota/answered-by.js';
 
 const createApp = (fetchImpl, session = { accessToken: 'at-1' }) => {
   const app = express();
@@ -308,5 +309,78 @@ describe('mittr shim weekly quota', () => {
     const refusal = JSON.parse(frames[1].slice('data: '.length));
     expect(JSON.parse(refusal.error.message).error).toMatchObject({ code: 'insufficient_quota', resets_at: RESETS_AT });
     expect(frames[2]).toBe('data: [DONE]');
+  });
+});
+
+describe('mittr shim answered by a substitute', () => {
+  const ANSWERED_BY = {
+    substituted: true,
+    requestedLabel: 'MITTR 1.0',
+    answeredLabel: 'MittrCraft 1.0',
+    answeredKey: 'mittr-craft-1-0',
+    reason: 'quota',
+    notice: 'โควตา MITTR 1.0 สัปดาห์นี้หมดแล้ว',
+  };
+
+  const createLoggedApp = (fetchImpl) => {
+    const answeredByLog = createAnsweredByLog();
+    const app = express();
+    registerMittrShimRoutes(app, {
+      upstream: { baseUrl: 'https://upstream.test/v1' },
+      localToken: 'mc_local_abc',
+      ensureFreshSession: async () => ({ accessToken: 'at-1' }),
+      answeredByLog,
+      now: () => 5000,
+      fetchImpl,
+    });
+    return { app, answeredByLog };
+  };
+
+  const postFor = (app, sessionId, body) => post(app, body).set('x-session-id', sessionId);
+
+  const remembered = {
+    at: 5000,
+    model: 'mittr-1',
+    requestedLabel: 'MITTR 1.0',
+    answeredLabel: 'MittrCraft 1.0',
+    reason: 'quota',
+  };
+
+  it('remembers a substitute on a streamed answer and forwards every byte unchanged', async () => {
+    const chunks = [
+      ': keep-alive\n\n',
+      `data: ${JSON.stringify({ choices: [{ delta: { content: 'he' } }], answered_by: ANSWERED_BY })}\n\n`,
+      'data: {"choices":[{"delta":{"content":"llo"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    const { app, answeredByLog } = createLoggedApp(vi.fn().mockResolvedValue(sseResponse(chunks)));
+    const res = await postFor(app, 'ses_1', { model: 'mittr-1', messages: [], stream: true }).expect(200);
+    expect(res.text).toBe(chunks.join(''));
+    expect(answeredByLog.list('ses_1')).toEqual([remembered]);
+  });
+
+  it('remembers a substitute on a non-streamed answer and returns the body unchanged', async () => {
+    const body = { choices: [{ message: { content: 'hello' } }], answered_by: ANSWERED_BY };
+    const { app, answeredByLog } = createLoggedApp(vi.fn().mockResolvedValue(jsonResponse(body)));
+    const res = await postFor(app, 'ses_2', { model: 'mittr-1', messages: [] }).expect(200);
+    expect(JSON.parse(res.text)).toEqual(body);
+    expect(answeredByLog.list('ses_2')).toEqual([remembered]);
+  });
+
+  it('remembers nothing when the chosen model answered itself', async () => {
+    const { app, answeredByLog } = createLoggedApp(vi.fn().mockResolvedValue(sseResponse([
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ])));
+    await postFor(app, 'ses_3', { model: 'mittr-1', messages: [], stream: true }).expect(200);
+    expect(answeredByLog.list('ses_3')).toEqual([]);
+  });
+
+  it('remembers nothing when the engine named no session', async () => {
+    const body = { choices: [{ message: { content: 'hello' } }], answered_by: ANSWERED_BY };
+    const { app, answeredByLog } = createLoggedApp(vi.fn().mockResolvedValue(jsonResponse(body)));
+    const record = vi.spyOn(answeredByLog, 'record');
+    await post(app, { model: 'mittr-1', messages: [] }).expect(200);
+    expect(record).not.toHaveBeenCalled();
   });
 });
