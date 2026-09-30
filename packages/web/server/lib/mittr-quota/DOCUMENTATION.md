@@ -53,8 +53,14 @@ until its newline arrives.
 `GET /api/mittr/quota/me`, behind the same local auth as every `/api` route,
 reads `GET {brokerBaseUrl}/api/quota/me` with the desktop session.
 
-- `200` — `{ weekStart, resetsAt, lines: [{ modelKey, kind, label, used, limit, source }] }`.
-  Lines that do not parse are dropped; the week itself must parse.
+- `200` — `{ weekStart, resetsAt, lines: [{ modelKey, kind, label, labelKey?, used, limit, source, agents? }], agentStatus? }`.
+  Lines that do not parse are dropped; the week itself must parse. A system
+  model has `label: ''` and a `labelKey` (`quota.role.*`, `quota.model.other`,
+  `quota.fallback.label`) the app translates. `agents` names the Mittr agents
+  a chat model serves. `agentStatus` is keyed by agent key, which is the
+  catalog alias of the model the app offers for that agent:
+  `{ modelKey, left, limit, resetsAt, state: 'ok' | 'near' | 'substitute' | 'out', percentLeft?, substituteLabel? }`;
+  an entry that does not parse is dropped.
 - `401 not_signed_in` — no session, or the platform refused it.
 - `404 not_available` — the platform has no quota route.
 - `503 not_configured` — this install has no broker (the app hides the

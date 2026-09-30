@@ -44,6 +44,30 @@ describe('GET /api/mittr/quota/me', () => {
     expect(response.body.lines).toEqual(QUOTA.lines);
   });
 
+  it('keeps role names, the agents behind a model and each agent status', async () => {
+    const body = {
+      ...QUOTA,
+      lines: [
+        { modelKey: 'm:abc', kind: 'chat', label: '', labelKey: 'quota.role.decision', used: 10, limit: 100, source: 'default', agents: [{ key: 'assistant', label: 'General Assistant' }, { key: 'bad' }] },
+        { modelKey: 'm:def', kind: 'chat', label: '', labelKey: '<script>', used: 1, limit: 100, source: 'default' },
+      ],
+      agentStatus: {
+        assistant: { modelKey: 'm:abc', left: 90, limit: 100, resetsAt: QUOTA.resetsAt, state: 'near', percentLeft: 9 },
+        writer: { modelKey: 'm:def', left: 0, limit: 100, resetsAt: QUOTA.resetsAt, state: 'substitute', substituteLabel: 'MITTR 1.0 fast' },
+        broken: { modelKey: 'm:def', state: 'gone' },
+      },
+    };
+    const response = await request(createApp({ fetchImpl: vi.fn(async () => json(body)) }).app).get('/api/mittr/quota/me');
+    expect(response.body.lines).toEqual([
+      { modelKey: 'm:abc', kind: 'chat', label: '', labelKey: 'quota.role.decision', used: 10, limit: 100, source: 'default', agents: [{ key: 'assistant', label: 'General Assistant' }] },
+      { modelKey: 'm:def', kind: 'chat', label: '', used: 1, limit: 100, source: 'default' },
+    ]);
+    expect(response.body.agentStatus).toEqual({
+      assistant: body.agentStatus.assistant,
+      writer: body.agentStatus.writer,
+    });
+  });
+
   it('answers not_signed_in without a session and without calling the platform', async () => {
     const { app, fetchImpl } = createApp({ session: null });
     const response = await request(app).get('/api/mittr/quota/me');
