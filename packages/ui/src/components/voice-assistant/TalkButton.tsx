@@ -5,7 +5,9 @@ import {
   SIGN_IN_COMPLETED_EVENT,
   SIGN_IN_START_ENDPOINT,
 } from '@/components/mittr/mittrSignInGateState';
-import { useI18n } from '@/lib/i18n';
+import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
+import { speechBlockedUntil, useSpeechQuotaBlock, useSpeechQuotaStore } from '@/lib/mittr-quota/speech-quota-store';
+import { formatResetTime } from '@/lib/mittr-quota/week';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { cn } from '@/lib/utils';
 import { bindEscapeToEnd } from '@/lib/voice-assistant/keys';
@@ -21,6 +23,7 @@ import { useNotificationStore } from '@/sync/notification-store';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSessionPermissions, useSessionStatus } from '@/sync/sync-context';
 import { VoiceBar } from './VoiceBar';
+import { VoiceQuotaText } from './VoiceQuotaText';
 
 const READINESS_REFRESH_MS = 60_000;
 
@@ -31,12 +34,36 @@ export interface TalkButtonProps {
   buttonRef?: React.Ref<HTMLButtonElement>;
   className?: string;
   iconClassName?: string;
+  voiceInputBlockedUntil?: string | null;
 }
 
-export function TalkButton({ readiness, phase, onToggle, buttonRef, className, iconClassName }: TalkButtonProps) {
+export function TalkButton({
+  readiness,
+  phase,
+  onToggle,
+  buttonRef,
+  className,
+  iconClassName,
+  voiceInputBlockedUntil = null,
+}: TalkButtonProps) {
   const { t } = useI18n();
   const open = phase !== 'idle';
   if (!open && !isTalkReady(readiness)) return null;
+  if (!open && voiceInputBlockedUntil) {
+    const blocked = t('quota.stt.exhausted', { when: formatResetTime(voiceInputBlockedUntil, getCurrentIntlLocale()) });
+    return (
+      <button
+        ref={buttonRef}
+        type="button"
+        disabled
+        aria-label={blocked}
+        title={blocked}
+        className={cn(className, 'cursor-not-allowed opacity-50')}
+      >
+        <Icon name="voiceprint" aria-hidden="true" className={cn(iconClassName, 'text-current')} />
+      </button>
+    );
+  }
   const label = t(open ? 'voice.talk.end' : 'voice.talk.start');
   return (
     <button
@@ -67,11 +94,13 @@ export function ComposerTalkButton({ className, iconClassName }: { className?: s
   const readiness = useTalkStore((state) => state.readiness);
   const phase = useTalkStore((state) => state.phase);
   const toggle = useTalkStore((state) => state.toggle);
+  const voiceInputBlockedUntil = useSpeechQuotaBlock('stt');
   return (
     <TalkButton
       readiness={readiness}
       phase={phase}
       onToggle={toggle}
+      voiceInputBlockedUntil={voiceInputBlockedUntil}
       buttonRef={registerTalkButton}
       className={className}
       iconClassName={iconClassName}
@@ -193,6 +222,9 @@ export function VoiceAssistant() {
         onEnd: () => {
           void voiceApi.end();
         },
+        onQuota: (kind, resetsAt) => {
+          useSpeechQuotaStore.getState().block(kind, resetsAt);
+        },
       }),
   );
   const snapshot = React.useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
@@ -224,7 +256,7 @@ export function VoiceAssistant() {
       end();
       return;
     }
-    if (!readiness) return;
+    if (!readiness || speechBlockedUntil('stt')) return;
     void session.start({ silenceMs: readiness.voiceSilenceMs });
   }, [end, open, readiness, session]);
 
@@ -252,6 +284,11 @@ export function VoiceAssistant() {
       {!open && snapshot.error ? (
         <p role="alert" className="pointer-events-auto max-w-[16rem] rounded-md bg-[var(--surface-elevated)] px-2 py-1 typography-micro text-[var(--status-error)] shadow-sm">
           <ErrorText error={snapshot.error} />
+        </p>
+      ) : null}
+      {!open && !snapshot.error && snapshot.quota ? (
+        <p role="alert" className="pointer-events-auto max-w-[16rem] rounded-md bg-[var(--surface-elevated)] px-2 py-1 typography-micro text-[var(--status-warning)] shadow-sm">
+          <VoiceQuotaText notice={snapshot.quota} />
         </p>
       ) : null}
     </div>

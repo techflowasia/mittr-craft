@@ -12,6 +12,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { dictationClient, type DictationStartOptions } from '@/lib/dictation/dictation-client';
 import { DictationStreamSender } from '@/lib/dictation/dictation-stream-sender';
 import { useDictationAudioSource } from '@/lib/dictation/use-dictation-audio-source';
+import { LLM_QUOTA_EXHAUSTED } from '@/lib/mittr-quota/exhausted';
+import { useSpeechQuotaStore } from '@/lib/mittr-quota/speech-quota-store';
 import { useConfigStore } from '@/stores/useConfigStore';
 
 export type DictationStatus = 'idle' | 'recording' | 'uploading' | 'failed';
@@ -120,8 +122,11 @@ export function useDictation(options: UseDictationOptions = {}): UseDictationRes
     const reportError = useCallback((err: unknown) => {
         const normalized = toError(err);
         setError(normalized.message);
-        const reason = (normalized as Error & { reasonCode?: string }).reasonCode;
+        const { reasonCode: reason, resetsAt } = normalized as Error & { reasonCode?: string; resetsAt?: string };
         setErrorReason(typeof reason === 'string' ? reason : null);
+        if (reason === LLM_QUOTA_EXHAUSTED) {
+            useSpeechQuotaStore.getState().block('stt', typeof resetsAt === 'string' ? resetsAt : null);
+        }
         onErrorRef.current?.(normalized);
     }, []);
 

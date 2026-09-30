@@ -1,4 +1,5 @@
 import type { I18nKey } from '@/lib/i18n';
+import { nextWeeklyReset } from '@/lib/mittr-quota/week';
 import {
   ListenError,
   encodeWav,
@@ -10,6 +11,7 @@ import type { AudioPlayer } from './player';
 import { createSentenceSplitter } from './sentences';
 import {
   HISTORY_LIMIT,
+  SynthesizeError,
   TranscribeError,
   type StreamVoiceTurn,
   type SynthesizeSpeech,
@@ -23,12 +25,15 @@ export type VoicePhase = 'idle' | 'starting' | 'listening' | 'thinking' | 'speak
 
 export type TranscriptLine = { id: number; role: 'user' | 'assistant'; text: string };
 
+export type VoiceQuotaNotice = { kind: 'stt' | 'tts' | 'chat'; resetsAt: string };
+
 export interface VoiceSnapshot {
   phase: VoicePhase;
   hearing: boolean;
   transcript: readonly TranscriptLine[];
   running: string | null;
   error: I18nKey | null;
+  quota: VoiceQuotaNotice | null;
 }
 
 export interface VoiceTurnContext {
@@ -46,6 +51,7 @@ export interface VoiceSessionDeps {
   context: () => VoiceTurnContext;
   onQueue: (event: VoiceQueueEvent) => void;
   onEnd: () => void;
+  onQuota?: (kind: 'stt' | 'tts', resetsAt: string) => void;
 }
 
 export interface VoiceSessionStart {
@@ -58,6 +64,7 @@ const IDLE: VoiceSnapshot = {
   transcript: [],
   running: null,
   error: null,
+  quota: null,
 };
 
 const MIC_MESSAGE: Record<string, I18nKey> = {
@@ -71,9 +78,12 @@ const FAILURE_SPOKEN: Record<VoiceTurnFailure, SpokenKey> = {
   upstream_timeout: 'timeout',
   upstream_failed: 'unavailable',
   bad_request: 'unavailable',
+  llm_quota_exhausted: 'unavailable',
 };
 
-type Heard = string | { failure: VoiceTurnFailure };
+const QUOTA = 'llm_quota_exhausted';
+
+type Heard = string | { failure: VoiceTurnFailure; resetsAt?: string | null };
 
 type Narration = { text: string; tag?: string };
 
@@ -179,8 +189,17 @@ export class VoiceSession {
   private pending: Narration[] = [];
   private queued = new Set<string>();
   private lineId = 0;
+  private speechMuted = false;
 
   constructor(private readonly deps: VoiceSessionDeps) {}
+
+  private readonly speak: SynthesizeSpeech = (text, signal) => {
+    if (this.speechMuted) return Promise.reject(new SynthesizeError(QUOTA));
+    return this.deps.synthesize(text, signal).catch((error: unknown) => {
+      if (error instanceof SynthesizeError && error.code === QUOTA) this.muteSpeech(error.resetsAt);
+      throw error;
+    });
+  };
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -198,6 +217,7 @@ export class VoiceSession {
     this.pending = [];
     this.queued = new Set();
     this.carry = null;
+    this.speechMuted = false;
     this.lifetime?.abort();
     this.lifetime = new AbortController();
     this.set({ ...IDLE, phase: 'starting' });
@@ -264,8 +284,24 @@ export class VoiceSession {
     this.history = [];
     this.pending = [];
     this.queued = new Set();
+    this.speechMuted = false;
     this.set({ ...IDLE });
     this.deps.onEnd();
+  }
+
+  private muteSpeech(resetsAt: string | null): void {
+    if (this.speechMuted) return;
+    this.speechMuted = true;
+    const until = resetsAt ?? nextWeeklyReset(Date.now());
+    this.deps.onQuota?.('tts', until);
+    this.set({ quota: { kind: 'tts', resetsAt: until } });
+  }
+
+  private closeForQuota(kind: 'stt' | 'chat', resetsAt: string | null | undefined): void {
+    const until = resetsAt ?? nextWeeklyReset(Date.now());
+    if (kind === 'stt') this.deps.onQuota?.('stt', until);
+    this.end();
+    this.set({ quota: { kind, resetsAt: until } });
   }
 
   narrate(text: string, tag?: string): void {
@@ -358,7 +394,7 @@ export class VoiceSession {
   }
 
   private queueFor(exchange: Exchange) {
-    return speakQueue(this.audio!.player, this.deps.synthesize, exchange.controller.signal, () => {
+    return speakQueue(this.audio!.player, this.speak, exchange.controller.signal, () => {
       if (this.exchange === exchange && this.snapshot.phase !== 'speaking') this.set({ phase: 'speaking' });
     });
   }
@@ -396,6 +432,7 @@ export class VoiceSession {
       (error: unknown): Heard => {
         const code = error instanceof TranscribeError ? error.code : '';
         if (code === 'empty_transcript') return '';
+        if (code === QUOTA) return { failure: QUOTA, resetsAt: (error as TranscribeError).resetsAt };
         return { failure: TRANSCRIBE_FAILURES.has(code) ? (code as VoiceTurnFailure) : 'upstream_failed' };
       },
     );
@@ -412,8 +449,12 @@ export class VoiceSession {
     this.set({ phase: 'thinking' });
     const heard = await Promise.all(exchange.parts);
     if (signal.aborted) return;
-    const failed = heard.find((part): part is { failure: VoiceTurnFailure } => typeof part !== 'string');
+    const failed = heard.find((part): part is Exclude<Heard, string> => typeof part !== 'string');
     if (failed) {
+      if (failed.failure === QUOTA) {
+        this.closeForQuota('stt', failed.resetsAt);
+        return;
+      }
       if (failed.failure === 'not_signed_in') this.set({ error: 'voice.talk.error.notSignedIn' });
       await this.apologise(exchange, FAILURE_SPOKEN[failed.failure]);
       return;
@@ -433,6 +474,7 @@ export class VoiceSession {
     const splitter = createSentenceSplitter();
     let lineId: number | null = null;
     let failure: VoiceTurnFailure | null = null;
+    let failureResetsAt: string | null | undefined;
     try {
       for await (const event of this.deps.turn({ said, history, locale: language, ...this.deps.context() }, signal)) {
         if (signal.aborted) return;
@@ -458,6 +500,7 @@ export class VoiceSession {
           exchange.closing = true;
         } else if (event.type === 'error') {
           failure = event.code;
+          failureResetsAt = event.resetsAt;
           break;
         } else break;
       }
@@ -482,6 +525,10 @@ export class VoiceSession {
     queue.close();
     await queue.done;
     if (signal.aborted) return;
+    if (failure === QUOTA) {
+      this.closeForQuota('chat', failureResetsAt);
+      return;
+    }
     if (exchange.closing) {
       this.end();
       return;

@@ -15,7 +15,8 @@ export type VoiceTurnFailure =
   | 'not_configured'
   | 'upstream_failed'
   | 'upstream_timeout'
-  | 'bad_request';
+  | 'bad_request'
+  | 'llm_quota_exhausted';
 
 export type VoiceTurnEvent =
   | { type: 'text-delta'; text: string }
@@ -24,7 +25,7 @@ export type VoiceTurnEvent =
   | ({ type: 'queue' } & VoiceQueueEvent)
   | { type: 'end' }
   | { type: 'done' }
-  | { type: 'error'; code: VoiceTurnFailure };
+  | { type: 'error'; code: VoiceTurnFailure; resetsAt?: string | null };
 
 export interface VoiceQueueEvent {
   sessionId: string;
@@ -61,11 +62,27 @@ export interface VoiceReadiness {
 }
 
 export class TranscribeError extends Error {
-  constructor(readonly code: string) {
+  constructor(
+    readonly code: string,
+    readonly resetsAt: string | null = null,
+  ) {
     super(code);
     this.name = 'TranscribeError';
   }
 }
+
+export class SynthesizeError extends Error {
+  constructor(
+    readonly code: string,
+    readonly resetsAt: string | null = null,
+  ) {
+    super(code);
+    this.name = 'SynthesizeError';
+  }
+}
+
+const readResetsAt = (value: unknown): string | null =>
+  typeof value === 'string' && !Number.isNaN(Date.parse(value)) ? value : null;
 
 const FAILURES = new Set<VoiceTurnFailure>([
   'not_signed_in',
@@ -73,6 +90,7 @@ const FAILURES = new Set<VoiceTurnFailure>([
   'upstream_failed',
   'upstream_timeout',
   'bad_request',
+  'llm_quota_exhausted',
 ]);
 
 const REASONS = new Set(['not_signed_in', 'not_configured', 'unreachable']);
@@ -93,7 +111,12 @@ function toEvent(raw: unknown): VoiceTurnEvent | null {
   if (event.type === 'text-delta' && typeof event.text === 'string') return { type: 'text-delta', text: event.text };
   if (event.type === 'done') return { type: 'done' };
   if (event.type === 'end') return { type: 'end' };
-  if (event.type === 'error') return { type: 'error', code: failure(event.code) };
+  if (event.type === 'error') {
+    const code = failure(event.code);
+    return code === 'llm_quota_exhausted'
+      ? { type: 'error', code, resetsAt: readResetsAt(event.resetsAt) }
+      : { type: 'error', code };
+  }
   if (event.type === 'action' && event.kind === 'running' && typeof event.label === 'string')
     return { type: 'action', kind: 'running', label: event.label };
   if (event.type === 'tool-result' && typeof event.id === 'string' && typeof event.ok === 'boolean')
@@ -181,9 +204,12 @@ export function createVoiceApi(fetchImpl: VoiceFetch): VoiceApi {
       const form = new FormData();
       form.append('audio', wav, 'speech.wav');
       const res = await call('/api/voice/transcribe', { method: 'POST', body: form, signal });
-      const body = (await res.json().catch(() => null)) as { text?: unknown; reasonCode?: unknown } | null;
+      const body = (await res.json().catch(() => null)) as { text?: unknown; reasonCode?: unknown; resetsAt?: unknown } | null;
       if (res.ok && body && typeof body.text === 'string') return body.text;
-      throw new TranscribeError(typeof body?.reasonCode === 'string' ? body.reasonCode : 'upstream_failed');
+      throw new TranscribeError(
+        typeof body?.reasonCode === 'string' ? body.reasonCode : 'upstream_failed',
+        readResetsAt(body?.resetsAt),
+      );
     },
 
     async synthesize(text, signal) {
@@ -194,9 +220,16 @@ export function createVoiceApi(fetchImpl: VoiceFetch): VoiceApi {
         signal,
       });
       const contentType = res.headers.get('content-type') ?? '';
+      if (!res.ok && /json/i.test(contentType)) {
+        const body = (await res.json().catch(() => null)) as { reasonCode?: unknown; resetsAt?: unknown } | null;
+        throw new SynthesizeError(
+          typeof body?.reasonCode === 'string' ? body.reasonCode : 'synthesize_failed',
+          readResetsAt(body?.resetsAt),
+        );
+      }
       if (!res.ok || !res.body || !/^audio\//i.test(contentType)) {
         void res.body?.cancel().catch(() => {});
-        throw new Error('synthesize_failed');
+        throw new SynthesizeError('synthesize_failed');
       }
       return { contentType, body: res.body };
     },
@@ -227,8 +260,9 @@ export function createVoiceApi(fetchImpl: VoiceFetch): VoiceApi {
         return;
       }
       if (!res.ok || !res.body) {
-        const body = (await res.json().catch(() => null)) as { code?: unknown; reasonCode?: unknown } | null;
-        yield { type: 'error', code: failure(body?.code ?? body?.reasonCode) };
+        const body = (await res.json().catch(() => null)) as { code?: unknown; reasonCode?: unknown; resetsAt?: unknown } | null;
+        const event = toEvent({ type: 'error', code: body?.code ?? body?.reasonCode, resetsAt: body?.resetsAt });
+        yield event ?? { type: 'error', code: 'upstream_failed' };
         return;
       }
       const reader = res.body.getReader();

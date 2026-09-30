@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { ListenError } from "./listen";
 import { resetSpokenLanguage, spokenText } from "./narration";
-import { TranscribeError } from "./turn";
+import { SynthesizeError, TranscribeError } from "./turn";
 import type {
   ConversationListenOptions,
   StartConversationListening,
@@ -813,5 +813,90 @@ describe("VoiceSession review fixes", () => {
     h.session.end();
     h.session.end();
     expect(ended).toBe(1);
+  });
+});
+
+describe("VoiceSession weekly quota", () => {
+  const RESETS_AT = "2026-10-04T17:00:00.000Z";
+
+  test("voice input out of quota ends the conversation, releases the mic and says until when", async () => {
+    const onQuota = mock<NonNullable<VoiceSessionDeps["onQuota"]>>(() => {});
+    const onEnd = mock();
+    const h = harness({
+      onQuota,
+      onEnd,
+      transcribe: mock(async () => {
+        throw new TranscribeError("llm_quota_exhausted", RESETS_AT);
+      }),
+    });
+    await started(h);
+    await say(h);
+    await flush();
+    expect(h.turns).toHaveLength(0);
+    expect(h.synthCalls).toHaveLength(0);
+    expect(calls(h.destroy).length).toBe(1);
+    expect(calls(onEnd).length).toBe(1);
+    expect(calls(onQuota)).toEqual([["stt", RESETS_AT]]);
+    expect(h.session.getSnapshot().phase).toBe("idle");
+    expect(h.session.getSnapshot().quota).toEqual({ kind: "stt", resetsAt: RESETS_AT });
+  });
+
+  test("spoken replies out of quota show the answer as text and stop asking for speech", async () => {
+    const onQuota = mock<NonNullable<VoiceSessionDeps["onQuota"]>>(() => {});
+    const synthesize = mock(async () => {
+      throw new SynthesizeError("llm_quota_exhausted", RESETS_AT);
+    });
+    const h = harness({ onQuota, synthesize });
+    await started(h);
+    await say(h);
+    h.channels[0].push({ type: "text-delta", text: "It is going well. The team is on step two." });
+    h.channels[0].push({ type: "done" });
+    await flush();
+    await flush();
+    await flush();
+    expect(h.session.getSnapshot().phase).toBe("listening");
+    expect(line(h.session.getSnapshot().transcript.at(-1))).toEqual({
+      role: "assistant",
+      text: "It is going well. The team is on step two.",
+    });
+    expect(h.session.getSnapshot().quota).toEqual({ kind: "tts", resetsAt: RESETS_AT });
+    expect(calls(onQuota)).toEqual([["tts", RESETS_AT]]);
+    const asked = calls(synthesize).length;
+    await say(h);
+    h.channels[1].push({ type: "text-delta", text: "Still here." });
+    h.channels[1].push({ type: "done" });
+    await flush();
+    await flush();
+    expect(calls(synthesize).length).toBe(asked);
+    expect(h.session.getSnapshot().phase).toBe("listening");
+    expect(line(h.session.getSnapshot().transcript.at(-1))).toEqual({ role: "assistant", text: "Still here." });
+  });
+
+  test("a voice step out of chat quota apologises once and ends the conversation", async () => {
+    const h = harness();
+    await started(h);
+    await say(h);
+    h.channels[0].push({ type: "error", code: "llm_quota_exhausted", resetsAt: RESETS_AT });
+    await flush();
+    await flush();
+    expect(h.synthCalls.map((c) => c.text)).toEqual([spokenText("unavailable", "en")]);
+    h.audio.finish();
+    await flush();
+    expect(h.session.getSnapshot().phase).toBe("idle");
+    expect(h.session.getSnapshot().quota).toEqual({ kind: "chat", resetsAt: RESETS_AT });
+    expect(calls(h.destroy).length).toBe(1);
+  });
+
+  test("a new conversation starts without the old notice", async () => {
+    const h = harness({
+      transcribe: mock(async () => {
+        throw new TranscribeError("llm_quota_exhausted", RESETS_AT);
+      }),
+    });
+    await started(h);
+    await say(h);
+    await flush();
+    await started(h);
+    expect(h.session.getSnapshot().quota).toBeNull();
   });
 });

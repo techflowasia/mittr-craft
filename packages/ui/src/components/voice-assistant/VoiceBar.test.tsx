@@ -12,6 +12,7 @@ const snapshot = (patch: Partial<VoiceSnapshot> = {}): VoiceSnapshot => ({
   transcript: [],
   running: null,
   error: null,
+  quota: null,
   ...patch,
 });
 
@@ -90,5 +91,10 @@ describe('VoiceBar announcements', () => {
 
   test('what the person said is announced while the assistant thinks', () => {
     expect(announced(render(snapshot({ phase: 'thinking', transcript: [lines[0]] })))).toBe('You: open chrome');
+  });
+
+  test('says spoken replies are out of quota and that answers come as text', () => {
+    const html = render(snapshot({ quota: { kind: 'tts', resetsAt: '2026-10-04T17:00:00.000Z' } }));
+    expect(html).toContain('Spoken replies are out of quota this week — answering in text');
   });
 });

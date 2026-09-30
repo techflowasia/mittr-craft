@@ -8,10 +8,14 @@ import type { VoiceReadiness } from '@/lib/voice-assistant/turn';
 
 const ready: VoiceReadiness = { listen: true, speak: true, voice: true, signedIn: true, voiceSilenceMs: 900, reason: null };
 
-const render = (readiness: VoiceReadiness | null, phase: 'idle' | 'starting' | 'listening' = 'idle') =>
+const render = (
+  readiness: VoiceReadiness | null,
+  phase: 'idle' | 'starting' | 'listening' = 'idle',
+  voiceInputBlockedUntil: string | null = null,
+) =>
   renderToStaticMarkup(
     <I18nProvider>
-      <TalkButton readiness={readiness} phase={phase} onToggle={() => {}} />
+      <TalkButton readiness={readiness} phase={phase} onToggle={() => {}} voiceInputBlockedUntil={voiceInputBlockedUntil} />
     </I18nProvider>,
   );
 
@@ -51,5 +55,18 @@ describe('TalkButton', () => {
 
   test('says it is busy while the microphone starts', () => {
     expect(render(ready, 'starting')).toContain('aria-busy="true"');
+  });
+
+  test('is disabled and says until when while voice input is out of quota', () => {
+    const html = render(ready, 'idle', '2026-10-04T17:00:00.000Z');
+    expect(html).toContain('disabled=""');
+    expect(html).toContain('Voice input is out of quota until');
+    expect(html).toContain('Oct');
+  });
+
+  test('still lets an open conversation be ended while voice input is out of quota', () => {
+    const html = render(ready, 'listening', '2026-10-04T17:00:00.000Z');
+    expect(html).toContain('aria-label="End conversation"');
+    expect(html).not.toContain('disabled=""');
   });
 });

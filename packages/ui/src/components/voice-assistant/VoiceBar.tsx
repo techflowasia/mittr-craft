@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { useI18n, type I18nKey } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import type { VoicePhase, VoiceSnapshot } from '@/lib/voice-assistant/session';
+import { VoiceQuotaText } from './VoiceQuotaText';
 
 const STATE: Record<Exclude<VoicePhase, 'idle'>, I18nKey> = {
   starting: 'voice.talk.listening',
@@ -85,6 +86,11 @@ export function VoiceBar({ snapshot, onEnd, onSignIn, className }: VoiceBarProps
             </Button>
           ) : null}
         </div>
+      ) : null}
+      {snapshot.quota ? (
+        <p role="status" className="typography-meta text-[var(--status-warning)]">
+          <VoiceQuotaText notice={snapshot.quota} />
+        </p>
       ) : null}
       <p data-voice-announce="true" aria-live="polite" aria-atomic="true" className="sr-only">
         {announcement}

@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import {
   HISTORY_LIMIT,
   TEXT_LIMIT,
+  SynthesizeError,
   TranscribeError,
   createVoiceApi,
   isTalkReady,
@@ -188,6 +189,49 @@ describe('transcribe', () => {
     const failure = await api.transcribe(new Blob([]), signal()).catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(TranscribeError);
     expect((failure as TranscribeError).code).toBe('empty_transcript');
+  });
+});
+
+describe('weekly quota', () => {
+  const RESETS_AT = '2026-10-04T17:00:00.000Z';
+  const refusal = () =>
+    new Response(JSON.stringify({ error: 'Mittr speech failed', reasonCode: 'llm_quota_exhausted', resetsAt: RESETS_AT }), {
+      status: 429,
+      headers: { 'content-type': 'application/json' },
+    });
+
+  test('a refused transcription carries the reset time', async () => {
+    const failure = await createVoiceApi(fetchReturning(refusal()).impl)
+      .transcribe(new Blob([]), signal())
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(TranscribeError);
+    const { code, resetsAt } = failure as TranscribeError;
+    expect({ code, resetsAt }).toEqual({ code: 'llm_quota_exhausted', resetsAt: RESETS_AT });
+  });
+
+  test('a refused spoken reply carries the reset time', async () => {
+    const failure = await createVoiceApi(fetchReturning(refusal()).impl)
+      .synthesize('Hi.', signal())
+      .catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(SynthesizeError);
+    const { code, resetsAt } = failure as SynthesizeError;
+    expect({ code, resetsAt }).toEqual({ code: 'llm_quota_exhausted', resetsAt: RESETS_AT });
+  });
+
+  test('a refused voice step ends the turn with the quota error', async () => {
+    const streamed = await collect(
+      createVoiceApi(fetchReturning(sse([line({ type: 'error', code: 'llm_quota_exhausted', resetsAt: RESETS_AT })])).impl).turn(
+        { said: 'hi', history: [], locale: 'en' },
+        signal(),
+      ),
+    );
+    expect(streamed).toEqual([{ type: 'error', code: 'llm_quota_exhausted', resetsAt: RESETS_AT }]);
+    const refused = await collect(
+      createVoiceApi(
+        fetchReturning(new Response(JSON.stringify({ code: 'llm_quota_exhausted', resetsAt: RESETS_AT }), { status: 429 })).impl,
+      ).turn({ said: 'hi', history: [], locale: 'en' }, signal()),
+    );
+    expect(refused).toEqual([{ type: 'error', code: 'llm_quota_exhausted', resetsAt: RESETS_AT }]);
   });
 });
 
