@@ -385,7 +385,7 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
   },
   {
     id: 'sessions.mittrQuota',
-    page: 'sessions',
+    page: 'usage',
     titleKey: 'quota.me.title',
     descriptionKey: 'quota.me.info',
     keywords: ['quota', 'weekly', 'limit', 'usage', 'tokens', 'mittr'],

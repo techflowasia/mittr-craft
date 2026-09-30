@@ -21,6 +21,25 @@ describe('parseQuotaMe', () => {
     expect(parsed?.lines.map((line) => line.modelKey)).toEqual(['mittr-2', 'asr']);
   });
 
+  test('keeps role names, the agents behind a model and each agent status it can read', () => {
+    const parsed = parseQuotaMe({
+      ...QUOTA,
+      lines: [
+        { modelKey: 'm:abc', kind: 'chat', label: '', labelKey: 'quota.role.rerank', used: 1, limit: 10, agents: [{ key: 'assistant', label: 'General Assistant' }, { key: 'x' }] },
+        { modelKey: 'm:def', kind: 'chat', label: '', labelKey: 'quota.unknown', used: 1, limit: 10 },
+      ],
+      agentStatus: {
+        assistant: { modelKey: 'm:abc', left: 0, limit: 10, resetsAt: QUOTA.resetsAt, state: 'out' },
+        writer: { modelKey: 'm:def', left: 9, limit: 10, resetsAt: QUOTA.resetsAt, state: 'substitute', substituteLabel: 'MITTR 1.0 fast' },
+        broken: { modelKey: 'm:def', state: 'gone' },
+      },
+    });
+    expect(parsed?.lines[0]).toEqual({ modelKey: 'm:abc', kind: 'chat', label: '', labelKey: 'quota.role.rerank', used: 1, limit: 10, agents: [{ key: 'assistant', label: 'General Assistant' }] });
+    expect(parsed?.lines[1]).toEqual({ modelKey: 'm:def', kind: 'chat', label: '', used: 1, limit: 10 });
+    expect(Object.keys(parsed?.agentStatus ?? {})).toEqual(['assistant', 'writer']);
+    expect(parsed?.agentStatus?.writer.substituteLabel).toBe('MITTR 1.0 fast');
+  });
+
   test('refuses a body that is not a week', () => {
     expect(parseQuotaMe({ lines: [] })).toBeNull();
     expect(parseQuotaMe(null)).toBeNull();

@@ -13,7 +13,6 @@ import { OpenCodeCliSettings } from './OpenCodeCliSettings';
 import { MittrCraftToolsSettings } from './MittrCraftToolsSettings';
 import { DesktopNetworkSettings } from './DesktopNetworkSettings';
 import { KeyboardShortcutsSettings } from './KeyboardShortcutsSettings';
-import { MittrQuotaSettings } from './MittrQuotaSettings';
 import { SettingsPageLayout } from '@/components/sections/shared/SettingsPageLayout';
 import { useDeviceInfo } from '@/lib/device';
 import { isDesktopLocalOriginActive, isDesktopShell, isVSCodeRuntime, isWebRuntime } from '@/lib/desktop';
@@ -222,7 +221,6 @@ const SessionsSectionContent: React.FC = () => {
         <>
             <DefaultsSettings />
             <SessionRetentionSettings />
-            {!isVSCodeRuntime() && <MittrQuotaSettings />}
         </>
     );
 };

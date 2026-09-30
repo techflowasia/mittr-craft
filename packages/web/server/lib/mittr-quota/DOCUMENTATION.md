@@ -63,8 +63,22 @@ reads `GET {brokerBaseUrl}/api/quota/me` with the desktop session.
   an entry that does not parse is dropped.
 - `401 not_signed_in` — no session, or the platform refused it.
 - `404 not_available` — the platform has no quota route.
-- `503 not_configured` — this install has no broker (the app hides the
-  panel); `502 unreachable` — the request did not reach the platform;
+- `503 not_configured` — this install has no broker (the app leaves Mittr
+  out of Settings → Usage); `502 unreachable` — the request did not reach the platform;
   `504 upstream_timeout`.
 - `502 upstream_failed` — any other failure or an unreadable body. A failed
   read is never answered as an empty week.
+
+## In the app
+
+`packages/ui/src/lib/mittr-quota/quota-me-store.ts` is the one reader of this
+route in the renderer: callers that open together share one request, and an
+answer is reused for 30 seconds unless the person reloads. It feeds:
+
+- Settings → Usage, where Mittr is the first entry and the one the page opens
+  on (`components/sections/usage/MittrUsagePage.tsx`). Lines are grouped by
+  kind, used lines first; each says what is left of the limit, what was used,
+  and which agents use it.
+- The chat model picker, which reads `agentStatus` when it opens and marks each
+  Mittr agent: `out` is not selectable, `substitute` names the backup model,
+  `near` shows the share left, `ok` shows nothing.

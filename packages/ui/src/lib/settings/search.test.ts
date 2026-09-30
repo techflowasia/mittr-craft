@@ -16,6 +16,17 @@ const runtimeCtx = {
 };
 
 describe('settings search', () => {
+  test('finds this week\'s Mittr quota on the Usage page, not in Sessions', () => {
+    const results = buildSettingsSearchResults({
+      query: 'weekly quota',
+      runtimeCtx,
+      t,
+      getPageTitle: (page) => page,
+    });
+    const quota = results.find((result) => result.id === 'sessions.mittrQuota');
+    expect(quota?.page).toBe('usage');
+  });
+
   test('finds the Claude Code third-party integration', () => {
     const results = buildSettingsSearchResults({
       query: 'claude',
