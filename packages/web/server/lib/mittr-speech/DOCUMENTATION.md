@@ -32,6 +32,8 @@ gates the app. Used by Mittr dictation (`../dictation`), Mittr read aloud
   platform's HTTP status as `statusCode`.
 
 Errors thrown by `transcribe`/`synthesize` carry `reasonCode` and `statusCode`.
+A weekly quota refusal (`llm_quota_exhausted`, HTTP 429) also carries
+`quotaKind` (`stt` / `tts`) and `resetsAt` (ISO, `null` when unreadable).
 A caller abort rethrows the abort error unchanged.
 
 ## Invariants

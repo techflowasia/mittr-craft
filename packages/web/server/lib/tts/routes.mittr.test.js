@@ -105,6 +105,14 @@ describe('POST /api/tts/speak with the Mittr provider', () => {
     expect(response.body).toMatchObject({ reasonCode: 'not_configured' });
   });
 
+  it('answers the weekly quota refusal with its reset time', async () => {
+    const quota = Object.assign(speechError('llm_quota_exhausted', 429), { quotaKind: 'tts', resetsAt: '2026-10-04T17:00:00.000Z' });
+    const client = { synthesize: vi.fn(async () => { throw quota; }) };
+    const response = await request(createApp(client)).post('/api/tts/speak').send({ providerId: 'mittr', text: 'hello' });
+    expect(response.status).toBe(429);
+    expect(response.body).toMatchObject({ reasonCode: 'llm_quota_exhausted', resetsAt: '2026-10-04T17:00:00.000Z' });
+  });
+
   it('says unreachable when this install has no platform', async () => {
     const response = await request(createApp(null)).post('/api/tts/speak').send({ providerId: 'mittr', text: 'hello' });
     expect(response.status).toBe(503);

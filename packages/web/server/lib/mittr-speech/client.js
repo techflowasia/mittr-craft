@@ -1,3 +1,5 @@
+import { readQuotaExhausted } from '../mittr-quota/exhausted.js';
+
 const READINESS_TTL_MS = 30_000;
 const READINESS_TIMEOUT_MS = 10_000;
 const SPEECH_TIMEOUT_MS = 60_000;
@@ -18,6 +20,11 @@ const createSpeechError = (reasonCode, statusCode = STATUS_BY_REASON[reasonCode]
   error.statusCode = statusCode;
   return error;
 };
+
+const createQuotaError = (quota, statusCode) => Object.assign(createSpeechError('llm_quota_exhausted', statusCode), {
+  quotaKind: quota.kind,
+  resetsAt: quota.resetsAt,
+});
 
 const isSessionRefused = (status) => status === 401 || status === 403;
 
@@ -61,6 +68,8 @@ export const createMittrSpeechClient = ({
     if (response.ok) return response;
     if (isSessionRefused(response.status)) throw createSpeechError('not_signed_in');
     const body = await response.json().catch(() => null);
+    const quota = readQuotaExhausted(body);
+    if (quota) throw createQuotaError(quota, response.status);
     const platformCode = typeof body?.code === 'string' && body.code ? body.code : null;
     if (isSpeechMissing(response.status, platformCode)) throw createSpeechError('not_configured');
     throw createSpeechError(platformCode ?? 'upstream_failed', response.status);

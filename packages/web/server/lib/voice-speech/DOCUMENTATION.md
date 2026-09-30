@@ -14,7 +14,8 @@ turn one utterance into text. Both use the same local auth as every other
 - `POST /api/voice/transcribe`: multipart field `audio` (WAV, 16 kHz mono) →
   `{ text }`, or `{ error, reasonCode }` with the platform's status
   (`401` for `not_signed_in`, `503` for `unreachable` without a broker, `400`
-  `bad_request` when the audio field is missing).
+  `bad_request` when the audio field is missing, `429` `llm_quota_exhausted`
+  with `resetsAt` when voice input is out of weekly quota).
 
 ## Invariants
 

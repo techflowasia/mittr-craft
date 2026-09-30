@@ -1,3 +1,5 @@
+import { quotaFieldsOf } from '../mittr-quota/exhausted.js';
+
 const TRANSCRIBE_UPLOAD_LIMIT = '25mb';
 
 const unreachableReadiness = {
@@ -72,7 +74,7 @@ export function registerVoiceSpeechRoutes(app, { express, getMittrSpeechClient }
         if (abort.signal.aborted || res.headersSent) return;
         const reasonCode = typeof error?.reasonCode === 'string' ? error.reasonCode : 'upstream_failed';
         const status = Number.isInteger(error?.statusCode) ? error.statusCode : 502;
-        res.status(status).json({ error: error instanceof Error ? error.message : 'Transcription failed', reasonCode });
+        res.status(status).json({ error: error instanceof Error ? error.message : 'Transcription failed', reasonCode, ...quotaFieldsOf(error) });
       }
     },
   );

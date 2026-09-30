@@ -183,6 +183,23 @@ describe('DictationStreamManager', () => {
     expect(session.closed).toBe(true);
   });
 
+  it('passes the quota reset time on to the client', async () => {
+    const session = new FakeSttSession();
+    const { manager, messages } = createManager(session);
+    await manager.handleStart('d1', FORMAT, {});
+    session.emit('error', Object.assign(new Error('Voice input is out of quota this week'), {
+      reasonCode: 'llm_quota_exhausted',
+      retryable: false,
+      resetsAt: '2026-10-04T17:00:00.000Z',
+    }));
+    const error = messages.find((m) => m.type === 'error');
+    expect(error.payload).toMatchObject({
+      reasonCode: 'llm_quota_exhausted',
+      retryable: false,
+      resetsAt: '2026-10-04T17:00:00.000Z',
+    });
+  });
+
   it('keeps a plain session error retryable without a reason', async () => {
     const session = new FakeSttSession();
     const { manager, messages } = createManager(session);

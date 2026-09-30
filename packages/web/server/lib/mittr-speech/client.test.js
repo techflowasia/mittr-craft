@@ -271,3 +271,34 @@ describe('createMittrSpeechClient', () => {
     });
   });
 });
+
+describe('weekly quota', () => {
+  const quotaBody = (kind) => ({
+    code: 'llm_quota_exhausted',
+    modelKey: 'speech-1',
+    kind,
+    label: 'Voice',
+    resetsAt: '2026-10-04T17:00:00.000Z',
+    message: 'โควตาหมด',
+  });
+
+  it('carries the reset time when voice input is out of quota', async () => {
+    const { client } = clientWith(() => json(quotaBody('stt'), 429));
+    await expect(client.transcribe(Buffer.alloc(4))).rejects.toMatchObject({
+      reasonCode: 'llm_quota_exhausted',
+      statusCode: 429,
+      quotaKind: 'stt',
+      resetsAt: '2026-10-04T17:00:00.000Z',
+    });
+  });
+
+  it('carries the reset time when spoken replies are out of quota', async () => {
+    const { client } = clientWith(() => json(quotaBody('tts'), 429));
+    await expect(client.synthesize('hello')).rejects.toMatchObject({
+      reasonCode: 'llm_quota_exhausted',
+      statusCode: 429,
+      quotaKind: 'tts',
+      resetsAt: '2026-10-04T17:00:00.000Z',
+    });
+  });
+});

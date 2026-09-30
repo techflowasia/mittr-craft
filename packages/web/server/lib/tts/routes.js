@@ -2,6 +2,7 @@ import express from 'express';
 import { normalizeCustomOpenAIBaseURL } from './base-url.js';
 import { summarizeText, sanitizeForTTS, sanitizeForNote } from '../text/summarization.js';
 import { parsePcmRateFromFormat, pcm16ToWav } from '../dictation/audio.js';
+import { quotaFieldsOf } from '../mittr-quota/exhausted.js';
 
 const MITTR_SYNTHESIZE_MAX_CHARS = 4000;
 const MITTR_PCM_DEFAULT_RATE = 24000;
@@ -62,7 +63,7 @@ const speakWithMittr = async (req, res, getMittrSpeechClient) => {
     if (abort.signal.aborted || res.headersSent) return undefined;
     const reasonCode = typeof error?.reasonCode === 'string' ? error.reasonCode : 'upstream_failed';
     const status = Number.isInteger(error?.statusCode) ? error.statusCode : 502;
-    return res.status(status).json({ error: error instanceof Error ? error.message : 'Speech failed', reasonCode });
+    return res.status(status).json({ error: error instanceof Error ? error.message : 'Speech failed', reasonCode, ...quotaFieldsOf(error) });
   }
 };
 

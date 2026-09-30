@@ -42,7 +42,10 @@ same status/download/delete routes.
     A segment that fails mid-stream (for example the session expired) ends
     the stream with the same message and `reasonCode`; `not_signed_in` and
     `not_configured` are not retryable. The stream manager carries a session
-    error's `reasonCode` and `retryable` into the `error` frame.
+    error's `reasonCode` and `retryable` into the `error` frame. A weekly
+    quota refusal is `reasonCode: 'llm_quota_exhausted'`, not retryable, and
+    its `error` frame also carries `resetsAt` (ISO) so the client can keep the
+    mic off until then.
 - `local/` — worker process + client (IPC, idle shutdown TTL), sherpa
   recognizer engine and realtime session (throttled re-decode for partials),
   model catalog and downloader. The native `sherpa-onnx-node` addon is only
@@ -58,7 +61,7 @@ Client → server: `start {dictationId, format, options}`,
 
 Server → client: `ready`, `ack {ackSeq}`, `partial {text}`,
 `finish_accepted {timeoutMs}`, `final {text}`,
-`error {error, retryable, reasonCode?}`, `pong`.
+`error {error, retryable, reasonCode?, resetsAt?}`, `pong`.
 
 `options` in `start` carries the client-selected provider config:
 `{ provider: 'local' | 'openai-compatible' | 'mittr', language?, localModel?,

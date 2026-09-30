@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 
 import { pcm16ToWav } from './audio.js';
+import { quotaFieldsOf } from '../mittr-quota/exhausted.js';
 
 const MITTR_SAMPLE_RATE = 16000;
 
@@ -9,9 +10,10 @@ export const MITTR_LISTEN_ERRORS = {
   not_signed_in: 'Sign in to Mittr to use dictation',
   not_configured: 'Your Mittr admin has not set up speech models yet',
   unreachable: 'The Mittr platform cannot be reached right now',
+  llm_quota_exhausted: 'Voice input is out of quota this week',
 };
 
-const NOT_RETRYABLE = new Set(['not_signed_in', 'not_configured']);
+const NOT_RETRYABLE = new Set(['not_signed_in', 'not_configured', 'llm_quota_exhausted']);
 
 const toListenError = (err) => {
   const reasonCode = typeof err?.reasonCode === 'string' ? err.reasonCode : undefined;
@@ -19,6 +21,7 @@ const toListenError = (err) => {
   return Object.assign(new Error(message), {
     ...(reasonCode ? { reasonCode } : {}),
     retryable: !NOT_RETRYABLE.has(reasonCode),
+    ...quotaFieldsOf(err),
   });
 };
 

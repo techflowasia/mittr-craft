@@ -318,6 +318,18 @@ describe('runVoiceTurn', () => {
     expect(await run(bad)).toEqual([{ type: 'error', code: 'bad_request' }]);
   });
 
+  it('ends the turn with the weekly quota refusal and its reset time', async () => {
+    const body = { code: 'llm_quota_exhausted', modelKey: 'm', kind: 'chat', label: 'MITTR 2.0', resetsAt: '2026-10-04T17:00:00.000Z', message: 'โควตาหมด' };
+    const refused = createDeps({ steps: [() => new Response(JSON.stringify(body), { status: 429 })] });
+    expect(await run(refused)).toEqual([{ type: 'error', code: 'llm_quota_exhausted', resetsAt: '2026-10-04T17:00:00.000Z' }]);
+    const streamed = createDeps({ steps: [[{ type: 'text-delta', text: 'กำลัง' }, body]] });
+    expect(await run(streamed)).toEqual([
+      { type: 'text-delta', text: 'กำลัง' },
+      { type: 'error', code: 'llm_quota_exhausted', resetsAt: '2026-10-04T17:00:00.000Z' },
+    ]);
+    expect(refused.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the conversation inside the platform’s limits by dropping the oldest history', async () => {
     const deps = createDeps({ steps: [[{ type: 'done' }]] });
     const history = Array.from({ length: 80 }, (_, index) => ({ role: index % 2 ? 'assistant' : 'user', text: `line ${index} ${'x'.repeat(4000)}` }));

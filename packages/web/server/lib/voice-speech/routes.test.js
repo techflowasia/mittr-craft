@@ -83,6 +83,16 @@ describe('POST /api/voice/transcribe', () => {
     expect(typeof response.body.error).toBe('string');
   });
 
+  it('answers the weekly quota refusal with its reset time', async () => {
+    const quota = Object.assign(speechError('llm_quota_exhausted', 429), { quotaKind: 'stt', resetsAt: '2026-10-04T17:00:00.000Z' });
+    const client = { transcribe: vi.fn(async () => { throw quota; }) };
+    const response = await request(createApp(client))
+      .post('/api/voice/transcribe')
+      .attach('audio', wav, { filename: 'speech.wav', contentType: 'audio/wav' });
+    expect(response.status).toBe(429);
+    expect(response.body).toMatchObject({ reasonCode: 'llm_quota_exhausted', resetsAt: '2026-10-04T17:00:00.000Z' });
+  });
+
   it('answers 401 not_signed_in without a session', async () => {
     const client = { transcribe: vi.fn(async () => { throw speechError('not_signed_in', 401); }) };
     const response = await request(createApp(client))

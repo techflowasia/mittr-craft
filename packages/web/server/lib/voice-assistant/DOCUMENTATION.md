@@ -75,6 +75,9 @@ All refusals are tool results; nothing refused is executed.
 
 ## Invariants
 
+- A weekly quota refusal from the step, as a `429` or as a streamed frame,
+  ends the turn with `error llm_quota_exhausted` carrying `resetsAt`; the
+  shape is read by `../mittr-quota/exhausted.js`.
 - No Mittr session (or no broker) emits `error not_signed_in` before any
   context lookup or platform call. The session is refreshed before every step;
   losing it mid-turn ends the turn with the same error.

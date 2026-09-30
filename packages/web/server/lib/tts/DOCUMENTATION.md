@@ -68,7 +68,8 @@ with rate `R` (24000 when absent), a trailing odd byte dropped and
 big-endian `audio/l16` swapped to little-endian; any other `audio/*` passes through; a
 non-audio or multi-channel PCM reply is `502 upstream_failed`. Failures answer
 `{ error, reasonCode }` with the platform status (`401 not_signed_in` without
-a Mittr session, `503 unreachable` without a broker). No other request field
+a Mittr session, `503 unreachable` without a broker, `429 llm_quota_exhausted`
+with `resetsAt` when spoken replies are out of weekly quota). No other request field
 selects Mittr, and the chat model's provider is never sent as `providerId`.
 Text is never logged.
 

@@ -1,5 +1,6 @@
 import { VOICE_CHROME_SESSION_ID } from './context.js';
 import { VOICE_ACTION_TITLES, VOICE_END_TITLE, VOICE_END_TOOL_NAME } from './tools.js';
+import { LLM_QUOTA_EXHAUSTED, readQuotaExhausted } from '../mittr-quota/exhausted.js';
 
 const VOICE_STEP_CAP = Object.freeze({ fallback: 8, min: 1, max: 20 });
 const VOICE_TOOL_RESULT_MAX_CHARS = 20_000;
@@ -141,11 +142,15 @@ async function* readSse(body) {
   if (tail) yield tail;
 }
 
-const stepErrorCode = async (response) => {
-  if (response.status === 401 || response.status === 403) return 'not_signed_in';
+const quotaRefusal = (quota) => ({ error: LLM_QUOTA_EXHAUSTED, resetsAt: quota.resetsAt });
+
+const stepRefusal = async (response) => {
+  if (response.status === 401 || response.status === 403) return { error: 'not_signed_in' };
   const body = await response.json().catch(() => null);
-  if (typeof body?.code === 'string' && PLATFORM_ERROR_CODES.has(body.code)) return body.code;
-  return response.status === 400 ? 'bad_request' : 'upstream_failed';
+  const quota = readQuotaExhausted(body);
+  if (quota) return quotaRefusal(quota);
+  if (typeof body?.code === 'string' && PLATFORM_ERROR_CODES.has(body.code)) return { error: body.code };
+  return { error: response.status === 400 ? 'bad_request' : 'upstream_failed' };
 };
 
 const untilAborted = (signal) => new Promise((_resolve, reject) => {
@@ -205,15 +210,17 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
       return { error: timeout.aborted ? 'upstream_timeout' : 'upstream_failed' };
     }
     if (!response.ok) {
-      const code = await stepErrorCode(response);
+      const refusal = await stepRefusal(response);
       logger.warn(`[voice] step request failed with HTTP ${response.status}`);
-      return { error: code };
+      return refusal;
     }
     let text = '';
     const toolCalls = [];
     let finished = false;
     try {
       for await (const event of readSse(response.body)) {
+        const quota = readQuotaExhausted(event);
+        if (quota) return quotaRefusal(quota);
         if (event.type === 'text-delta' && typeof event.text === 'string') {
           text += event.text;
           send({ type: 'text-delta', text: event.text });
@@ -365,7 +372,7 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
       const context = await guard(buildContext({ directory, sessionId }));
       const outcome = await guard(step({ session, context, messages, tools }));
       if (outcome.error) {
-        send({ type: 'error', code: outcome.error });
+        send({ type: 'error', code: outcome.error, ...(outcome.error === LLM_QUOTA_EXHAUSTED ? { resetsAt: outcome.resetsAt } : {}) });
         return;
       }
       if (outcome.toolCalls.length === 0) {

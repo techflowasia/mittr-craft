@@ -95,6 +95,25 @@ describe('MittrTranscriptionSession', () => {
     await expect(error).resolves.toMatchObject({ reasonCode: 'upstream_timeout', retryable: true });
   });
 
+  it('stops retrying when voice input is out of quota and keeps the reset time', async () => {
+    const { session } = await connected(async () => {
+      throw Object.assign(new Error('Mittr speech failed: llm_quota_exhausted'), {
+        reasonCode: 'llm_quota_exhausted',
+        statusCode: 429,
+        resetsAt: '2026-10-04T17:00:00.000Z',
+      });
+    });
+    session.appendPcm16(Buffer.from([1, 0]));
+    const error = nextEvent(session, 'error');
+    session.commit();
+    await expect(error).resolves.toMatchObject({
+      message: 'Voice input is out of quota this week',
+      reasonCode: 'llm_quota_exhausted',
+      retryable: false,
+      resetsAt: '2026-10-04T17:00:00.000Z',
+    });
+  });
+
   it('errors when audio arrives before connect', () => {
     const session = new MittrTranscriptionSession({ client: { transcribe: vi.fn() } });
     const onError = vi.fn();

@@ -15,6 +15,7 @@
  */
 
 import { Pcm16MonoResampler, parsePcmRateFromFormat, pcm16lePeakAbs } from './audio.js';
+import { quotaFieldsOf } from '../mittr-quota/exhausted.js';
 
 const DEFAULT_FINAL_TIMEOUT_MS = 10000;
 const DEFAULT_AUTO_COMMIT_SECONDS = 15;
@@ -128,7 +129,7 @@ export class DictationStreamManager {
     stt.on('error', (err) => {
       const message = err?.message || String(err);
       const reasonCode = typeof err?.reasonCode === 'string' ? err.reasonCode : undefined;
-      this.failAndCleanupStream(dictationId, message, err?.retryable !== false, reasonCode);
+      this.failAndCleanupStream(dictationId, message, err?.retryable !== false, reasonCode, quotaFieldsOf(err));
     });
 
     this.streams.set(dictationId, {
@@ -278,7 +279,7 @@ export class DictationStreamManager {
     this.emit({ type: 'ack', payload: { dictationId, ackSeq } });
   }
 
-  failStream(dictationId, error, retryable, reasonCode) {
+  failStream(dictationId, error, retryable, reasonCode, extra = {}) {
     this.emit({
       type: 'error',
       payload: {
@@ -286,12 +287,13 @@ export class DictationStreamManager {
         error,
         retryable,
         ...(reasonCode ? { reasonCode } : {}),
+        ...extra,
       },
     });
   }
 
-  failAndCleanupStream(dictationId, error, retryable, reasonCode) {
-    this.failStream(dictationId, error, retryable, reasonCode);
+  failAndCleanupStream(dictationId, error, retryable, reasonCode, extra = {}) {
+    this.failStream(dictationId, error, retryable, reasonCode, extra);
     this.cleanupStream(dictationId);
   }
 
