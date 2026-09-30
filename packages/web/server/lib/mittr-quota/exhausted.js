@@ -18,19 +18,12 @@ const readTime = (value) => {
   return value;
 };
 
-const readText = (value) => (typeof value === 'string' && value ? value : null);
-
 export const readQuotaExhausted = (value) => {
   const body = parseMaybeJson(value);
   if (!body || typeof body !== 'object') return null;
 
   if (body.code === LLM_QUOTA_EXHAUSTED) {
-    return {
-      kind: KINDS.has(body.kind) ? body.kind : 'chat',
-      resetsAt: readTime(body.resetsAt),
-      message: readText(body.message),
-      model: readText(body.label),
-    };
+    return { kind: KINDS.has(body.kind) ? body.kind : 'chat', resetsAt: readTime(body.resetsAt) };
   }
 
   const error = body.error;
@@ -39,21 +32,22 @@ export const readQuotaExhausted = (value) => {
   const named = error.code === LLM_QUOTA_EXHAUSTED || error.reason === LLM_QUOTA_EXHAUSTED;
   const quotaShaped = error.type === INSUFFICIENT_QUOTA || error.code === INSUFFICIENT_QUOTA;
   if (!named && !(quotaShaped && resetsAt)) return null;
-  return {
-    kind: 'chat',
-    resetsAt,
-    message: readText(error.message),
-    model: readText(error.model),
-  };
+  return { kind: 'chat', resetsAt };
 };
+
+const ENGINE_MESSAGE = 'Weekly model quota used up';
+
+const toWholeSeconds = (resetsAt) => (
+  resetsAt ? new Date(Math.floor(Date.parse(resetsAt) / 1000) * 1000).toISOString() : null
+);
 
 export const toEngineRefusal = (quota) => ({
   error: {
     type: INSUFFICIENT_QUOTA,
     code: LLM_QUOTA_EXHAUSTED,
-    message: quota.message ?? 'Weekly model quota used up',
-    resets_at: quota.resetsAt,
-    model: quota.model,
+    message: ENGINE_MESSAGE,
+    kind: quota.kind,
+    resets_at: toWholeSeconds(quota.resetsAt),
   },
 });
 
@@ -67,9 +61,8 @@ const toStreamRefusal = (quota) => ({
         type: INSUFFICIENT_QUOTA,
         code: INSUFFICIENT_QUOTA,
         reason: LLM_QUOTA_EXHAUSTED,
-        message: quota.message ?? 'Weekly model quota used up',
-        resets_at: quota.resetsAt,
-        model: quota.model,
+        kind: quota.kind,
+        resets_at: toWholeSeconds(quota.resetsAt),
       },
     }),
   },

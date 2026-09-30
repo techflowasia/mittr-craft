@@ -27,23 +27,26 @@ const envelope = {
   },
 };
 
+// Copied from the engine, opencode v1.18.18 packages/opencode/src/session/retry.ts:33-40
+// (RETRYABLE_MESSAGE_PATTERNS). retryable() retries a non-retryable APIError whose
+// message or responseBody matches any of these.
+const ENGINE_RETRYABLE_MESSAGE_PATTERNS = [
+  /429|500|502|503|504|524/i,
+  /rate increased too quickly|rate limit|rate-limit|rate_limit|too many requests/i,
+  /overloaded|service unavailable|service_unavailable|service-unavailable|internal error|internal_error|internal server error|server error|server_error|server-error|provider returned error|provider_returned_error|provider-returned-error/i,
+  /terminated|fetch failed|failed to fetch|network error|upstream connect|connection error|connection refused|connection lost|socket connection was closed|socket hang up|reset before headers|getaddrinfo|enotfound|eai_again|econnrefused|econnreset|etimedout/i,
+  /^timeout$|\b(?:request|response|connection|network|stream|read) (?:timeout|timed out|time out)\b/i,
+  /try your request again|retry your request|resource exhausted|resource_exhausted/i,
+];
+const engineWouldRetry = (value) => ENGINE_RETRYABLE_MESSAGE_PATTERNS.some((pattern) => pattern.test(value));
+
 describe('readQuotaExhausted', () => {
   it('reads the flat platform body', () => {
-    expect(readQuotaExhausted(flat)).toEqual({
-      kind: 'stt',
-      resetsAt: RESETS_AT,
-      message: 'โควตาหมด',
-      model: 'Voice input',
-    });
+    expect(readQuotaExhausted(flat)).toEqual({ kind: 'stt', resetsAt: RESETS_AT });
   });
 
   it('reads the chat completions envelope', () => {
-    expect(readQuotaExhausted(envelope)).toEqual({
-      kind: 'chat',
-      resetsAt: RESETS_AT,
-      message: 'โควตาหมด',
-      model: 'MITTR 2.0',
-    });
+    expect(readQuotaExhausted(envelope)).toEqual({ kind: 'chat', resetsAt: RESETS_AT });
   });
 
   it('reads a JSON string of either shape', () => {
@@ -73,16 +76,34 @@ describe('toEngineRefusal', () => {
     expect(QUOTA_REFUSAL_STATUS).toBe(402);
   });
 
-  it('keeps the envelope the engine and the app both parse', () => {
-    expect(toEngineRefusal(readQuotaExhausted(flat))).toEqual({
+  it('keeps only what the app reads', () => {
+    expect(toEngineRefusal(readQuotaExhausted(envelope))).toEqual({
       error: {
         type: 'insufficient_quota',
         code: 'llm_quota_exhausted',
-        message: 'โควตาหมด',
+        message: 'Weekly model quota used up',
+        kind: 'chat',
         resets_at: RESETS_AT,
-        model: 'Voice input',
       },
     });
+  });
+
+  it('gives the engine nothing its retry patterns match, whatever the label, message or reset time', () => {
+    for (const label of ['GPT-5 (500K)', 'Model 429', 'Overloaded 503 timeout']) {
+      const upstream = {
+        error: {
+          type: 'insufficient_quota',
+          code: 'llm_quota_exhausted',
+          message: `โควตา ${label} หมด 500 โทเคน rate limit`,
+          resets_at: '2026-10-04T17:00:00.524Z',
+          model: label,
+        },
+      };
+      const refusal = toEngineRefusal(readQuotaExhausted(upstream));
+      expect(engineWouldRetry(refusal.error.message)).toBe(false);
+      expect(engineWouldRetry(JSON.stringify(refusal))).toBe(false);
+      expect(refusal.error.resets_at).toBe('2026-10-04T17:00:00.000Z');
+    }
   });
 });
 
@@ -117,12 +138,20 @@ describe('createQuotaStreamRewriter', () => {
         type: 'insufficient_quota',
         code: 'insufficient_quota',
         reason: 'llm_quota_exhausted',
-        message: 'โควตาหมด',
+        kind: 'chat',
         resets_at: RESETS_AT,
-        model: 'MITTR 2.0',
       },
     });
+    expect(engineWouldRetry(payload.error.message)).toBe(false);
     expect(text).toContain('data: [DONE]\n\n');
+  });
+
+  it('keeps a streamed label with retry-looking digits away from the engine', () => {
+    const rewriter = createQuotaStreamRewriter();
+    const loud = { error: { ...envelope.error, model: 'GPT-5 (500K)', message: 'Model 429 quota' } };
+    const text = decode([rewriter.push(encode(`data: ${JSON.stringify(loud)}\n\n`)), rewriter.end()]);
+    const message = JSON.parse(text.split('\n')[0].slice('data: '.length)).error.message;
+    expect(engineWouldRetry(message)).toBe(false);
   });
 
   it('rewrites the flat body when the platform streams it', () => {

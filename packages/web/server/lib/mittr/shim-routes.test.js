@@ -257,11 +257,20 @@ describe('mittr shim weekly quota', () => {
       model: 'MITTR 2.0',
     },
   };
+  const engineRefusal = {
+    error: {
+      type: 'insufficient_quota',
+      code: 'llm_quota_exhausted',
+      message: 'Weekly model quota used up',
+      kind: 'chat',
+      resets_at: RESETS_AT,
+    },
+  };
 
-  it('turns a quota 429 into a status the engine does not retry, keeping the envelope', async () => {
+  it('turns a quota 429 into a status the engine does not retry, keeping what the app reads', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(quotaEnvelope, 429));
     const res = await post(createApp(fetchImpl), { model: 'pm_9f2c1d4e7b', messages: [] }).expect(402);
-    expect(JSON.parse(res.text)).toEqual(quotaEnvelope);
+    expect(JSON.parse(res.text)).toEqual(engineRefusal);
   });
 
   it('does the same when the engine asked for a stream', async () => {
@@ -276,7 +285,7 @@ describe('mittr shim weekly quota', () => {
       code: 'llm_quota_exhausted', modelKey: 'm', kind: 'chat', label: 'MITTR 2.0', resetsAt: RESETS_AT, message: 'โควตาหมด',
     }, 429));
     const res = await post(createApp(fetchImpl), { model: 'pm_9f2c1d4e7b', messages: [] }).expect(402);
-    expect(JSON.parse(res.text)).toEqual(quotaEnvelope);
+    expect(JSON.parse(res.text)).toEqual(engineRefusal);
   });
 
   it('leaves an ordinary rate limit as a 429 the engine may retry', async () => {
