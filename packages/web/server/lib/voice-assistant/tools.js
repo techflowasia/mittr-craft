@@ -42,6 +42,15 @@ const switchesFrom = ({ chromeAvailable, computerAvailable, settings }) => ({
   computer: computerAvailable === true && settings?.agentComputerToolEnabled !== false,
 });
 
+const END_TOOL = Object.freeze({
+  name: 'mittrcraft_end',
+  description: 'End this voice conversation, as if the person pressed End. Call it only when the person wants to stop talking with you altogether and asks for nothing else in the same sentence (bye, that is all, end the conversation, จบการสนทนา, เลิกคุย, บ๊ายบาย), with a one-sentence goodbye in the same reply. If they also ask for something, do that instead and keep talking.',
+  parameters: { type: 'object', properties: {}, additionalProperties: false },
+});
+
+export const VOICE_END_TOOL_NAME = END_TOOL.name;
+export const VOICE_END_TITLE = 'End the conversation';
+
 const voiceToolDefinitions = (on) => ({
   mittrcraft: on.control ? MITTRCRAFT_AGENT_TOOL_ACTION_DEFINITIONS : [],
   mittrcraft_web: [
@@ -109,5 +118,6 @@ export const buildVoiceTools = ({ chromeAvailable = false, computerAvailable = f
       },
     }),
   ];
-  return tools.filter((tool) => tool.parameters.properties.action.enum.length > 0);
+  const offered = tools.filter((tool) => tool.parameters.properties.action.enum.length > 0);
+  return offered.length > 0 ? [...offered, END_TOOL] : offered;
 };

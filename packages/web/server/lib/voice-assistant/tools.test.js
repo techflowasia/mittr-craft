@@ -15,12 +15,12 @@ import {
 import { VOICE_ACTION_TITLES, buildVoiceTools } from './tools.js';
 
 const byName = (tools) => Object.fromEntries(tools.map((tool) => [tool.name, tool]));
-const actionEnum = (tool) => tool.parameters.properties.action.enum;
+const actionEnum = (tool) => tool.parameters.properties.action?.enum ?? [];
 
 describe('voice tool schemas', () => {
   it('offers the agent control actions, every web capability on this build, and the voice-only actions', () => {
     const tools = byName(buildVoiceTools({ chromeAvailable: true, computerAvailable: true }));
-    expect(Object.keys(tools)).toEqual(['mittrcraft', 'mittrcraft_web', 'mittrcraft_voice']);
+    expect(Object.keys(tools)).toEqual(['mittrcraft', 'mittrcraft_web', 'mittrcraft_voice', 'mittrcraft_end']);
     expect(actionEnum(tools.mittrcraft)).toEqual([...MITTRCRAFT_AGENT_TOOL_ACTIONS]);
     expect(actionEnum(tools.mittrcraft_web)).toEqual([...MITTRCRAFT_WEB_ACTIONS, ...MITTRCRAFT_CHROME_ACTIONS, ...MITTRCRAFT_COMPUTER_ACTIONS]);
     expect(actionEnum(tools.mittrcraft_voice)).toEqual([...MITTRCRAFT_VOICE_ACTIONS]);
@@ -35,6 +35,14 @@ describe('voice tool schemas', () => {
     for (const tool of buildVoiceTools({ chromeAvailable: true, computerAvailable: true })) {
       for (const action of actionEnum(tool)) expect(VOICE_ACTION_TITLES[action]).toEqual(expect.any(String));
     }
+  });
+
+  it('always offers a separate end tool with no arguments while anything else is offered', () => {
+    const onlyWeb = byName(buildVoiceTools({ settings: { agentControlToolEnabled: false } }));
+    expect(Object.keys(onlyWeb)).toEqual(['mittrcraft_web', 'mittrcraft_end']);
+    expect(onlyWeb.mittrcraft_end.parameters).toEqual({ type: 'object', properties: {}, additionalProperties: false });
+    expect(onlyWeb.mittrcraft_end.description).toMatch(/nothing else/);
+    expect(MITTRCRAFT_VOICE_ACTIONS).not.toContain('conversation.end');
   });
 
   it('keeps the voice-only actions out of every other tool', () => {

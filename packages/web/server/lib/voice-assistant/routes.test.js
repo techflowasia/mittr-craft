@@ -37,8 +37,8 @@ describe('POST /api/voice/turn', () => {
     const [input] = runTurn.mock.calls[0];
     expect(input).toMatchObject({ said: 'hello', history: [{ role: 'assistant', text: 'hi' }], locale: 'en', directory: '/repo', sessionId: 'ses_1' });
     expect(input.signal).toBeInstanceOf(AbortSignal);
-    expect(input.deps.buildTools({}).map(({ name }) => name)).toEqual(['mittrcraft', 'mittrcraft_web', 'mittrcraft_voice']);
-    expect(input.deps.buildTools({ agentControlToolEnabled: false }).map(({ name }) => name)).toEqual(['mittrcraft_web']);
+    expect(input.deps.buildTools({}).map(({ name }) => name)).toEqual(['mittrcraft', 'mittrcraft_web', 'mittrcraft_voice', 'mittrcraft_end']);
+    expect(input.deps.buildTools({ agentControlToolEnabled: false }).map(({ name }) => name)).toEqual(['mittrcraft_web', 'mittrcraft_end']);
   });
 
   it.each([

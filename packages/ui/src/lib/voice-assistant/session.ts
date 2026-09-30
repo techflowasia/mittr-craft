@@ -89,6 +89,7 @@ type Exchange = {
   parts: Promise<Heard>[];
   userLine: number | null;
   said: string | null;
+  closing: boolean;
 };
 
 type Carry = { parts: Promise<Heard>[]; userLine: number | null };
@@ -343,6 +344,7 @@ export class VoiceSession {
       parts: [],
       userLine: null,
       said: null,
+      closing: false,
     };
     this.exchange = exchange;
     return exchange;
@@ -452,6 +454,8 @@ export class VoiceSession {
             this.deps.onQueue({ sessionId: event.sessionId, directory: event.directory, text: event.text });
           }
           this.remember({ role: 'assistant', text: `Queued to run after the current answer: ${event.text}` });
+        } else if (event.type === 'end') {
+          exchange.closing = true;
         } else if (event.type === 'error') {
           failure = event.code;
           break;
@@ -478,6 +482,10 @@ export class VoiceSession {
     queue.close();
     await queue.done;
     if (signal.aborted) return;
+    if (exchange.closing) {
+      this.end();
+      return;
+    }
     this.finish(exchange);
   }
 

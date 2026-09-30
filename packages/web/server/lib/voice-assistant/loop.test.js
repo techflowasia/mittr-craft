@@ -403,7 +403,7 @@ describe('runVoiceTurn', () => {
     });
     const events = await run(deps);
     const { tools } = stepBody(deps, 0);
-    expect(tools.map(({ name }) => name)).toEqual(['mittrcraft_web']);
+    expect(tools.map(({ name }) => name)).toEqual(['mittrcraft_web', 'mittrcraft_end']);
     expect(tools[0].parameters.properties.action.enum.some((action) => action.startsWith('chrome.'))).toBe(false);
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute.mock.calls[0][0]).toBe('browser.open');
@@ -545,6 +545,27 @@ describe('runVoiceTurn', () => {
     expect(execute).toHaveBeenCalledWith('chrome.allow_site', { host: 'www.youtube.com' }, '/repo', expect.objectContaining({ sessionId: 'voice' }));
     expect(events).toContainEqual({ type: 'tool-result', id: 'a', ok: true });
     expect(deps.conversation.chromeAllowed).toBe(true);
+  });
+
+  it('ends the conversation in the same step as the goodbye, without asking the model again', async () => {
+    const execute = vi.fn(async () => ({}));
+    const deps = createDeps({
+      execute,
+      steps: [[{ type: 'text-delta', text: 'บ๊ายบายครับ' }, toolCall('e', 'mittrcraft_end', {}), { type: 'done' }]],
+    });
+    const events = await run(deps, { said: 'จบการสนทนา' });
+    expect(execute).not.toHaveBeenCalled();
+    expect(deps.fetchImpl).toHaveBeenCalledTimes(1);
+    expect(events.filter((event) => event.type === 'text-delta').map((event) => event.text)).toEqual(['บ๊ายบายครับ']);
+    expect(events).toContainEqual({ type: 'end' });
+    expect(events.at(-1)).toEqual({ type: 'done' });
+  });
+
+  it('says a goodbye itself when the model ended without one', async () => {
+    const deps = createDeps({ steps: [[toolCall('e', 'mittrcraft_end', {}), { type: 'done' }]] });
+    const events = await run(deps, { said: 'that is all, bye' });
+    expect(events.filter((event) => event.type === 'text-delta').map((event) => event.text)).toEqual(['Talk to you later.']);
+    expect(events.at(-1)).toEqual({ type: 'done' });
   });
 
   it('answers a repeated allow as already allowed once Chrome was allowed in the conversation', async () => {

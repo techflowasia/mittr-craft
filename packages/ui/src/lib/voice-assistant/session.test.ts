@@ -291,6 +291,38 @@ describe("VoiceSession turn loop", () => {
     expect(h.synthCalls.map((c) => c.text)).toEqual(["It will run after the current answer."]);
   });
 
+  test("an end event closes the conversation after the goodbye has played", async () => {
+    let ended = 0;
+    const h = harness({ onEnd: () => { ended += 1; } });
+    await started(h);
+    await say(h);
+    h.channels[0].push({ type: "end" });
+    h.channels[0].push({ type: "text-delta", text: "Goodbye." });
+    h.channels[0].push({ type: "done" });
+    await flush();
+    await flush();
+    expect(h.audio.played).toEqual(["Goodbye."]);
+    expect(h.session.getSnapshot().phase).toBe("speaking");
+    expect(ended).toBe(0);
+    h.audio.finish();
+    await flush();
+    expect(h.session.getSnapshot().phase).toBe("idle");
+    expect(ended).toBe(1);
+  });
+
+  test("an end event with nothing to say closes the conversation at once", async () => {
+    let ended = 0;
+    const h = harness({ onEnd: () => { ended += 1; } });
+    await started(h);
+    await say(h);
+    h.channels[0].push({ type: "end" });
+    h.channels[0].push({ type: "done" });
+    await flush();
+    await flush();
+    expect(h.session.getSnapshot().phase).toBe("idle");
+    expect(ended).toBe(1);
+  });
+
   test("the queued prompt count of the open session goes with the turn", async () => {
     const h = harness({ context: () => ({ sessionId: "s1", directory: "/repo", queuedPrompts: 3 }) });
     await started(h);

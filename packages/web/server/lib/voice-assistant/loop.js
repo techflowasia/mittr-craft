@@ -1,5 +1,5 @@
 import { VOICE_CHROME_SESSION_ID } from './context.js';
-import { VOICE_ACTION_TITLES } from './tools.js';
+import { VOICE_ACTION_TITLES, VOICE_END_TITLE, VOICE_END_TOOL_NAME } from './tools.js';
 
 const VOICE_STEP_CAP = Object.freeze({ fallback: 8, min: 1, max: 20 });
 const VOICE_TOOL_RESULT_MAX_CHARS = 20_000;
@@ -40,6 +40,11 @@ const REASON_BY_STATUS = new Map([
 const CLOSING = {
   th: ({ steps, label }) => `หยุดไว้ก่อนหลังทำไป ${steps} ขั้น ขั้นล่าสุดคือ ${label} ถ้าจะให้ทำต่อ บอกได้เลย`,
   en: ({ steps, label }) => `I stopped after ${steps} steps; the last one was: ${label}. Tell me if you want me to carry on.`,
+};
+
+const GOODBYE = {
+  th: 'แล้วคุยกันใหม่นะครับ',
+  en: 'Talk to you later.',
 };
 
 class TurnAborted extends Error {}
@@ -267,6 +272,10 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
   };
 
   const runTool = async (call, allowed) => {
+    if (call.name === VOICE_END_TOOL_NAME && Object.hasOwn(allowed, call.name)) {
+      send({ type: 'end' });
+      return { ok: true, action: VOICE_END_TOOL_NAME, result: { ending: true } };
+    }
     const parsed = parseArguments(call.arguments);
     const action = parsed?.action || null;
     if (!parsed || !Object.hasOwn(allowed, call.name) || !Object.values(allowed).some((actions) => actions.includes(action))) {
@@ -364,13 +373,20 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
         return;
       }
       turn.push({ role: 'assistant', content: outcome.text, toolCalls: outcome.toolCalls });
+      let ending = false;
       for (const [index, call] of outcome.toolCalls.entries()) {
         const { ok, action, result } = index < STEP_CALLS_MAX
           ? await runTool(call, allowed)
           : refusal(null, 'too_many_calls', `Only ${STEP_CALLS_MAX} actions run per step; ask for the rest again`);
-        if (action) lastLabel = VOICE_ACTION_TITLES[action] ?? action;
+        if (action === VOICE_END_TOOL_NAME && ok) ending = true;
+        if (action) lastLabel = action === VOICE_END_TOOL_NAME ? VOICE_END_TITLE : (VOICE_ACTION_TITLES[action] ?? action);
         turn.push({ role: 'tool', toolCallId: call.id, name: call.name, content: serializeResult(result) });
         send({ type: 'tool-result', id: call.id, ok });
+      }
+      if (ending) {
+        if (!outcome.text.trim()) send({ type: 'text-delta', text: GOODBYE[spokenLanguage(said)] });
+        send({ type: 'done' });
+        return;
       }
     }
     close(cap, lastLabel);

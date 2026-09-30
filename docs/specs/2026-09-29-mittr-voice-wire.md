@@ -32,14 +32,14 @@ Body:
   locale: 'th' | 'en';
   context: string;                 // ≤ 8000 chars, built by the app each turn
   messages: VoiceMessage[];        // ≤ 60 messages, ≤ 200000 chars in total
-  tools: VoiceTool[];              // 1–3 tools
+  tools: VoiceTool[];              // 1–4 tools
 }
 type VoiceMessage =
   | { role: 'user'; content: string }
   | { role: 'assistant'; content: string; toolCalls?: { id: string; name: string; arguments: string }[] }
   | { role: 'tool'; toolCallId: string; name: string; content: string };
 type VoiceTool = {
-  name: 'mittrcraft' | 'mittrcraft_web' | 'mittrcraft_voice';
+  name: 'mittrcraft' | 'mittrcraft_web' | 'mittrcraft_voice' | 'mittrcraft_end';
   description: string;            // ≤ 4000 chars
   parameters: object;             // JSON Schema, ≤ 30000 chars serialized
 };
@@ -54,7 +54,7 @@ Events (`data: <json>\n\n`):
 - `{ "type": "done" }`
 - `{ "type": "error", "code": "not_configured" | "upstream_failed" | "upstream_timeout" | "bad_request" }`
 
-`bad_request` (an SSE error event after 200, like Studio) also covers: a tool name outside the three allowed names, duplicate tool names, `messages: []`, more than 20 `toolCalls` in one assistant message, and a `tool` message whose `toolCallId` has no earlier assistant tool call.
+`bad_request` (an SSE error event after 200, like Studio) also covers: a tool name outside the four allowed names, duplicate tool names, `messages: []`, more than 20 `toolCalls` in one assistant message, and a `tool` message whose `toolCallId` has no earlier assistant tool call.
 
 Guards (the app applies the same lists locally, so a call refused by either side never runs). The action is the exact top-level `action` field of `arguments`.
 
@@ -62,6 +62,8 @@ Guards (the app applies the same lists locally, so a call refused by either side
 - Refused after any read since the last `user` message, including a read in the same batch: `session.stop`, `session.send`, `session.create`, `session.fork`, `schedule.create`, `schedule.run`, `schedule.delete`, `schedule.toggle`, `chrome.allow_site`. Page interaction after a read stays allowed. `session.list` and `session.status` are lookups in the app's own index, not reads: finding a session by name and then sending to it in one turn is allowed.
 - `session.stop` is refused unless an assistant message with non-empty text comes before the last `user` message (the assistant asked first).
 - A refused call is dropped, never forwarded; a short spoken refusal is streamed as `text-delta` before any `tool-call` (Thai when the last user message has Thai script, otherwise the request's `locale`).
+
+Ending: `mittrcraft_end` takes no arguments. On the first step of a turn (last message is `user`) and only when `mittrcraft_end` is offered, the platform asks the decision `voice.end` (`end` | `continue`, answered by the fast decision model, in parallel with the voice model). `end` with no other tool call from the model adds a `mittrcraft_end` tool call; `continue` drops a `mittrcraft_end` call the model made; no answer leaves the model's calls as they are.
 
 The context is placed in the instructions between `<<<CONTEXT` and `CONTEXT>>>` as data written by pages, agents and the app, never instructions.
 
@@ -94,6 +96,7 @@ Events: the platform events above, plus
 
 - `{ "type": "action", "kind": "running", "label": string }` before each tool runs (human-readable title, no arguments)
 - `{ "type": "tool-result", "id": string, "ok": boolean }` after it (also for refused calls, which never run)
+- `{ "type": "end" }` when a `mittrcraft_end` call arrives (the loop handles it itself; it is not a control action); the turn then ends without another step, with a short goodbye if the model said none: the renderer lets the goodbye in the same turn play, then ends the conversation as if End was pressed.
 - `{ "type": "queue", "sessionId": string, "directory": string, "text": string }` when `session.send` targets a busy/retry session: nothing is dispatched; the renderer that owns the turn adds `text` with `useMessageQueueStore.getState().addToQueue(createMessageQueueTarget(sessionId, directory), { content: text, sendConfig })` (sendConfig only when it is the viewed session), and the model is told `{ queued: true }`. It travels on the turn stream, never the shared event stream.
 
 `{ "type": "error", "code": "not_signed_in" }` when there is no Mittr session (checked before any call and before every step). `{ "type": "error", "code": "not_configured" }` when every voice tool is switched off.

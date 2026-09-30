@@ -126,6 +126,12 @@ describe('turn', () => {
     expect('queuedPrompts' in JSON.parse(String(fake.calls[1][1]?.body))).toBe(false);
   });
 
+  test('reads an end event', async () => {
+    const fake = fetchReturning(sse([line({ type: 'end' }), line({ type: 'text-delta', text: 'Bye.' }), line({ type: 'done' })]));
+    const events = await collect(createVoiceApi(fake.impl).turn({ said: 'bye', history: [], locale: 'en' }, signal()));
+    expect(events).toEqual([{ type: 'end' }, { type: 'text-delta', text: 'Bye.' }, { type: 'done' }]);
+  });
+
   test('a refused request yields its error code from the body', async () => {
     const api = createVoiceApi(
       fetchReturning(new Response(JSON.stringify({ code: 'not_signed_in' }), { status: 401 })).impl,

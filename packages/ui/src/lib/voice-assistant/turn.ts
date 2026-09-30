@@ -22,6 +22,7 @@ export type VoiceTurnEvent =
   | { type: 'action'; kind: 'running'; label: string }
   | { type: 'tool-result'; id: string; ok: boolean }
   | ({ type: 'queue' } & VoiceQueueEvent)
+  | { type: 'end' }
   | { type: 'done' }
   | { type: 'error'; code: VoiceTurnFailure };
 
@@ -91,6 +92,7 @@ function toEvent(raw: unknown): VoiceTurnEvent | null {
   const event = raw as Record<string, unknown>;
   if (event.type === 'text-delta' && typeof event.text === 'string') return { type: 'text-delta', text: event.text };
   if (event.type === 'done') return { type: 'done' };
+  if (event.type === 'end') return { type: 'end' };
   if (event.type === 'error') return { type: 'error', code: failure(event.code) };
   if (event.type === 'action' && event.kind === 'running' && typeof event.label === 'string')
     return { type: 'action', kind: 'running', label: event.label };
