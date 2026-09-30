@@ -43,6 +43,8 @@ const en = {
   'quota.exhausted': 'Your model quota for this week is used up · resets {when}',
   'quota.exhaustedNoReset': 'Your model quota for this week is used up',
   'quota.retry': 'Try again',
+  'quota.answeredBy.outOfQuota': 'Answered by “{to}” — “{from}” is out of quota this week',
+  'quota.answeredBy.couldNotAnswer': 'Answered by “{to}” — “{from}” could not answer',
   'quota.tts.exhausted': 'Spoken replies are out of quota this week — answering in text',
   'quota.stt.exhausted': 'Voice input is out of quota until {when}',
 } as const;
@@ -92,6 +94,8 @@ const th: Record<keyof typeof en, string> = {
   'quota.exhausted': 'โควตาโมเดลของคุณสัปดาห์นี้หมดแล้ว · ได้คืน {when}',
   'quota.exhaustedNoReset': 'โควตาโมเดลของคุณสัปดาห์นี้หมดแล้ว',
   'quota.retry': 'ลองอีกครั้ง',
+  'quota.answeredBy.outOfQuota': 'ตอบด้วย “{to}” — โควตา “{from}” สัปดาห์นี้หมดแล้ว',
+  'quota.answeredBy.couldNotAnswer': 'ตอบด้วย “{to}” — “{from}” ตอบไม่ได้',
   'quota.tts.exhausted': 'โควตาตอบด้วยเสียงสัปดาห์นี้หมดแล้ว — ตอบเป็นข้อความแทน',
   'quota.stt.exhausted': 'โควตาพูดเป็นข้อความหมดแล้ว ใช้ได้อีกครั้ง {when}',
 };

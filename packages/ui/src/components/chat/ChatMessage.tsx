@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import type { AnimationHandlers, ContentChangeReason } from '@/hooks/useChatAutoFollow';
 import MessageBody from './message/MessageBody';
 import { QuotaRetryButton } from './message/QuotaRetryButton';
+import { AnsweredByNotice } from './message/AnsweredByNotice';
 import type { AgentMentionInfo } from './message/types';
 import type { StreamPhase, ToolPopupContent } from './message/types';
 import { deriveMessageRole } from './message/messageRole';
@@ -1198,7 +1199,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                                 footerVariant={headerVariant}
                                 isDarkTheme={isDarkTheme}
                             />
-
+                            <AnsweredByNotice assistant={message.info} />
                         </div>
                     )}
                 </div>
