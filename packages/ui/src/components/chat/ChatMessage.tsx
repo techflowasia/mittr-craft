@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 
 import type { AnimationHandlers, ContentChangeReason } from '@/hooks/useChatAutoFollow';
 import MessageBody from './message/MessageBody';
+import { QuotaRetryButton } from './message/QuotaRetryButton';
 import type { AgentMentionInfo } from './message/types';
 import type { StreamPhase, ToolPopupContent } from './message/types';
 import { deriveMessageRole } from './message/messageRole';
@@ -34,7 +35,6 @@ import type { ReviewTransferDirection } from '@/lib/reviewFlow';
 import { toast } from 'sonner';
 import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
 import { quotaExhaustedFromMessageError } from '@/lib/mittr-quota/exhausted';
-import { resendQuotaPrompt } from '@/lib/mittr-quota/resend';
 import { formatResetTime } from '@/lib/mittr-quota/week';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { getContextObligatoryMessages } from '@/lib/contextObligatoryMessages';
@@ -746,17 +746,10 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
     const assistantErrorText = assistantError?.text;
     const assistantErrorVariant = assistantError?.variant;
 
-    const assistantErrorAction = React.useMemo(() => {
-        if (!quotaExhausted) {
-            return undefined;
-        }
-        return {
-            label: t('quota.retry'),
-            onClick: () => {
-                void resendQuotaPrompt(message.info);
-            },
-        };
-    }, [message.info, quotaExhausted, t]);
+    const assistantErrorAction = React.useMemo(
+        () => (quotaExhausted ? <QuotaRetryButton assistant={message.info} /> : undefined),
+        [message.info, quotaExhausted],
+    );
 
     const messageTextContent = React.useMemo(() => {
         if (isUser) {
