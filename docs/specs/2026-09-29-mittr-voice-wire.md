@@ -106,7 +106,7 @@ No body. `204`. Ends the voice conversation: clears the `voice` Chrome session's
 
 ### Voice-only control action `chrome.allow_site { host }`
 
-In `mittrcraft_voice` only (when Chrome is available and its switch is on). Grants `host` to the `voice` Chrome session for this conversation only, never persisted as "always". The loop runs it only for the host of the last `site_approval_required` result in the conversation, and never after a read in the same turn.
+In `mittrcraft_voice` only (when Chrome is available and its switch is on). One spoken yes allows Chrome on every site for the `voice` Chrome session until the conversation ends, never persisted. The model asks once, at the first `site_approval_required` result, and passes that result's `host`; the loop runs it only for that host and never after a read in the same turn. Reply `{ allowed: true, scope: 'conversation', sites: 'all' }`.
 
 ## Spoken narration language
 

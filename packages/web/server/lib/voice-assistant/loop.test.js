@@ -515,13 +515,13 @@ describe('runVoiceTurn', () => {
     await run(deps);
     const result = JSON.parse(stepBody(deps, 1).messages.at(-1).content);
     expect(result).toMatchObject({ reasonCode: 'site_approval_required', host: 'example.com' });
-    expect(result.ask).toContain('allow example.com for this conversation?');
+    expect(result.ask).toContain('may I use Chrome for this conversation?');
     expect(result.ask).toContain('chrome.allow_site');
     expect(deps.conversation.pendingApprovalHost).toBe('example.com');
   });
 
   it('allows the requested site in a later turn after a spoken yes', async () => {
-    const execute = vi.fn(async () => ({ allowed: true, host: 'example.com', scope: 'conversation' }));
+    const execute = vi.fn(async () => ({ allowed: true, scope: 'conversation', sites: 'all' }));
     const deps = createDeps({
       execute,
       steps: [[toolCall('a', 'mittrcraft_voice', { action: 'chrome.allow_site', host: 'Example.com' }), { type: 'done' }], [{ type: 'done' }]],
@@ -531,6 +531,20 @@ describe('runVoiceTurn', () => {
     expect(execute).toHaveBeenCalledWith('chrome.allow_site', { host: 'Example.com' }, '/repo', expect.objectContaining({ sessionId: 'voice' }));
     expect(events).toContainEqual({ type: 'tool-result', id: 'a', ok: true });
     expect(deps.conversation.pendingApprovalHost).toBeNull();
+    expect(deps.conversation.chromeAllowed).toBe(true);
+  });
+
+  it('answers a repeated allow as already allowed once Chrome was allowed in the conversation', async () => {
+    const execute = vi.fn(async () => ({}));
+    const deps = createDeps({
+      execute,
+      steps: [[toolCall('a', 'mittrcraft_voice', { action: 'chrome.allow_site', host: 'wikipedia.org' }), { type: 'done' }], [{ type: 'done' }]],
+    });
+    deps.conversation.chromeAllowed = true;
+    const events = await run(deps);
+    expect(execute).not.toHaveBeenCalled();
+    expect(events).toContainEqual({ type: 'tool-result', id: 'a', ok: true });
+    expect(JSON.parse(stepBody(deps, 1).messages.at(-1).content)).toMatchObject({ allowed: true, sites: 'all' });
   });
 
   it.each([

@@ -16,7 +16,7 @@ import {
   WEB_TOOL_DESCRIPTION,
 } from '../agent-tool/runtime.js';
 
-const VOICE_TOOL_DESCRIPTION = 'Voice-only actions. session.stop stops a running MittrCraft session and needs a spoken yes from the person first. session.read_reply returns the latest assistant answer of sessionId as plain speakable text; prefer it over session.messages to tell the person what an agent produced. chrome.allow_site allows the host named by a site_approval_required result in Chrome for this conversation only; call it only after you asked the person and they clearly said yes.';
+const VOICE_TOOL_DESCRIPTION = 'Voice-only actions. session.stop stops a running MittrCraft session and needs a spoken yes from the person first. session.read_reply returns the latest assistant answer of sessionId as plain speakable text; prefer it over session.messages to tell the person what an agent produced. chrome.allow_site allows Chrome on every site for the rest of this conversation; call it with the host of the first site_approval_required result, only after you asked the person once whether you may use Chrome in this conversation and they clearly said yes. After that, never ask about Chrome or a site again in this conversation.';
 const VOICE_OMITTED_PARAMETERS = new Set(['wait', 'timeout']);
 const HOST_PARAMETER = { host: { type: 'string', description: 'Site host from the site_approval_required result, such as example.com' } };
 

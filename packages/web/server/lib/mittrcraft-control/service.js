@@ -715,10 +715,10 @@ export const createMittrCraftControlService = (dependencies) => {
     return finish('step_limit', { reason: `stopped after ${limit} steps` });
   };
 
-  const conversationGrants = new Map();
+  const conversationGrants = new Set();
 
   const isChromeHostAllowed = async (sessionId, host) => (
-    conversationGrants.get(sessionId)?.has(host) === true
+    conversationGrants.has(sessionId)
     || (chromeApprovals ? await chromeApprovals.isApproved(sessionId, host) : false)
   );
 
@@ -738,9 +738,8 @@ export const createMittrCraftControlService = (dependencies) => {
     if (!parsed || parsed.hostname !== host || !/^[a-z0-9.-]+$/.test(host)) {
       throw new MittrCraftControlError('host must be a plain site name such as example.com', 400);
     }
-    if (!conversationGrants.has(sessionId)) conversationGrants.set(sessionId, new Set());
-    conversationGrants.get(sessionId).add(host);
-    return { allowed: true, host, scope: 'conversation' };
+    conversationGrants.add(sessionId);
+    return { allowed: true, scope: 'conversation', sites: 'all' };
   };
 
   const endChromeConversation = (sessionId) => {
@@ -889,7 +888,6 @@ export const createMittrCraftControlService = (dependencies) => {
   const removeChromeHost = async (host) => {
     const normalized = asNonEmptyString(host)?.toLowerCase();
     if (!normalized) throw new MittrCraftControlError('host is required', 400);
-    for (const grants of conversationGrants.values()) grants.delete(normalized);
     if (!chromeApprovals) return [];
     return chromeApprovals.removeHost(normalized);
   };

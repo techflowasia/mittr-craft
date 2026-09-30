@@ -36,15 +36,16 @@ describe('chrome.allow_site', () => {
     expect(MITTRCRAFT_CHROME_ACTIONS).not.toContain('chrome.allow_site');
   });
 
-  it('allows the host for the calling conversation only and never persists it', async () => {
+  it('allows Chrome on every site for the calling conversation only and never persists it', async () => {
     const { service, persistSettings, stored } = createService();
     await expect(service.execute('chrome.open', { url: 'https://example.com/' }, '/repo', voice))
       .rejects.toMatchObject({ code: 'site_approval_required', host: 'example.com' });
     await expect(service.execute('chrome.allow_site', { host: 'Example.com' }, '/repo', voice))
-      .resolves.toEqual({ allowed: true, host: 'example.com', scope: 'conversation' });
+      .resolves.toEqual({ allowed: true, scope: 'conversation', sites: 'all' });
     await expect(service.execute('chrome.open', { url: 'https://example.com/' }, '/repo', voice))
       .resolves.toMatchObject({ url: 'https://example.com/' });
     expect(await service.isChromeHostAllowed('voice', 'example.com')).toBe(true);
+    expect(await service.isChromeHostAllowed('voice', 'www.youtube.com')).toBe(true);
     expect(await service.isChromeHostAllowed('ses_other', 'example.com')).toBe(false);
     expect(persistSettings).not.toHaveBeenCalled();
     expect(stored().agentChromeApprovedHosts).toEqual([]);
@@ -57,13 +58,6 @@ describe('chrome.allow_site', () => {
     expect(await service.isChromeHostAllowed('voice', 'example.com')).toBe(false);
     await expect(service.execute('chrome.open', { url: 'https://example.com/' }, '/repo', voice))
       .rejects.toMatchObject({ code: 'site_approval_required' });
-  });
-
-  it('is withdrawn when the person removes the site in settings', async () => {
-    const { service } = createService();
-    await service.execute('chrome.allow_site', { host: 'example.com' }, '/repo', voice);
-    await service.removeChromeHost('example.com');
-    expect(await service.isChromeHostAllowed('voice', 'example.com')).toBe(false);
   });
 
   it('needs a calling conversation and a plain host', async () => {

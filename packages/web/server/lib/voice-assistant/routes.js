@@ -60,7 +60,7 @@ export const registerVoiceAssistantRoutes = (app, dependencies) => {
     readSettings: readSettingsFromDiskMigrated,
     isHostAllowed: (sessionId, host) => controlService.isChromeHostAllowed(sessionId, host),
   });
-  const conversation = { pendingApprovalHost: null };
+  const conversation = { pendingApprovalHost: null, chromeAllowed: false };
   const availability = {
     chromeAvailable: chromeControl?.available === true,
     computerAvailable: computerControl?.available === true,
@@ -77,6 +77,7 @@ export const registerVoiceAssistantRoutes = (app, dependencies) => {
   });
   app.post('/api/voice/end', (_req, res) => {
     conversation.pendingApprovalHost = null;
+    conversation.chromeAllowed = false;
     controlService.endChromeConversation?.(VOICE_CHROME_SESSION_ID);
     return res.status(204).end();
   });

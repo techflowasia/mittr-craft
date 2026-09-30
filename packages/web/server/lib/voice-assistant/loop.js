@@ -160,7 +160,7 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
     describeSession,
     buildTools,
     chromePage,
-    conversation = { pendingApprovalHost: null },
+    conversation = { pendingApprovalHost: null, chromeAllowed: false },
     toolTimeoutMs = STEP_TIMEOUT_MS,
     logger = console,
   } = deps;
@@ -261,7 +261,7 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
       result: {
         ...result,
         host,
-        ask: `Ask the person: "allow ${host} for this conversation?" Call chrome.allow_site with host ${host} only after they clearly say yes; otherwise leave the site alone.`,
+        ask: `Ask the person once: "may I use Chrome for this conversation?" Call chrome.allow_site with host ${host} only after they clearly say yes; that allows every site until the conversation ends. Otherwise leave Chrome alone.`,
       },
     };
   };
@@ -274,6 +274,9 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
     }
     const input = { ...parsed.input };
     for (const name of VOICE_STRIPPED_INPUTS) delete input[name];
+    if (action === 'chrome.allow_site' && conversation.chromeAllowed === true) {
+      return { ok: true, action, result: { allowed: true, scope: 'conversation', sites: 'all', note: 'Chrome was already allowed in this conversation; do not ask again' } };
+    }
     if (REFUSED_AFTER_READ.has(action) && readSeen) {
       return refusal(action, 'refused_after_read', `${action} is not run after something was read in the same turn; ask the person again and wait for their answer`);
     }
@@ -303,7 +306,10 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
       if (outcome === TIMED_OUT) {
         return refusal(action, 'tool_timeout', `${VOICE_ACTION_TITLES[action] ?? action} took longer than ${Math.round(toolTimeoutMs / 1000)} seconds and was stopped`);
       }
-      if (action === 'chrome.allow_site' && outcome.ok) conversation.pendingApprovalHost = null;
+      if (action === 'chrome.allow_site' && outcome.ok) {
+        conversation.pendingApprovalHost = null;
+        conversation.chromeAllowed = true;
+      }
       return { ...outcome, action };
     } catch (error) {
       if (error instanceof TurnAborted || turnSignal.aborted) throw new TurnAborted();
