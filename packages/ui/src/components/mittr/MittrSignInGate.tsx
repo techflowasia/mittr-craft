@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
 import { AuditNotice } from './AuditNotice';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { useSpeechQuotaStore } from '@/lib/mittr-quota/speech-quota-store';
 import {
   gateStateFromStatus,
   parseAuthorizeUrl,
@@ -30,7 +31,7 @@ export function MittrSignInGate({ children }: { children: React.ReactNode }) {
     } catch {
       // Unreachable is not signed in. Showing the sign-in surface is something
       // the developer can act on; pretending the session is good is not.
-      setStatus({ signedIn: false, displayName: '' });
+      setStatus({ signedIn: false, userId: '', displayName: '' });
     }
   }, []);
 
@@ -67,6 +68,10 @@ export function MittrSignInGate({ children }: { children: React.ReactNode }) {
       setFailed(true);
     }
   }, []);
+
+  React.useEffect(() => {
+    if (status) useSpeechQuotaStore.getState().setOwner(status.signedIn ? status.userId : null);
+  }, [status]);
 
   const state = gateStateFromStatus(status);
   if (state === 'signed-in') return <>{children}</>;

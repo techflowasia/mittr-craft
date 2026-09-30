@@ -1,23 +1,43 @@
 import React from 'react';
 import { create } from 'zustand';
 
+import type { QuotaUsageLine } from './quota-me';
 import { isStillBlocked, nextWeeklyReset } from './week';
 
 export type SpeechQuotaKind = 'stt' | 'tts';
 
 interface SpeechQuotaState {
+  owner: string | null;
   stt: string | null;
   tts: string | null;
+  setOwner: (owner: string | null) => void;
   block: (kind: SpeechQuotaKind, resetsAt: string | null, now?: number) => string;
+  clear: (kind: SpeechQuotaKind) => void;
+  reconcile: (lines: readonly QuotaUsageLine[]) => void;
 }
 
-export const useSpeechQuotaStore = create<SpeechQuotaState>((set) => ({
+const SPEECH_KINDS: readonly SpeechQuotaKind[] = ['stt', 'tts'];
+
+export const useSpeechQuotaStore = create<SpeechQuotaState>((set, get) => ({
+  owner: null,
   stt: null,
   tts: null,
+  setOwner: (owner) => {
+    if (owner === get().owner) return;
+    set({ owner, stt: null, tts: null });
+  },
   block: (kind, resetsAt, now = Date.now()) => {
     const until = resetsAt ?? nextWeeklyReset(now);
     set({ [kind]: until } as Pick<SpeechQuotaState, SpeechQuotaKind>);
     return until;
+  },
+  clear: (kind) => {
+    if (get()[kind] !== null) set({ [kind]: null } as Pick<SpeechQuotaState, SpeechQuotaKind>);
+  },
+  reconcile: (lines) => {
+    for (const kind of SPEECH_KINDS) {
+      if (lines.some((line) => line.kind === kind && line.used < line.limit)) get().clear(kind);
+    }
   },
 }));
 

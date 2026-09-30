@@ -2,6 +2,7 @@ export type MittrGateState = 'checking' | 'signed-out' | 'signed-in';
 
 export type MittrSignInStatus = {
   signedIn: boolean;
+  userId: string;
   displayName: string;
 };
 
@@ -10,10 +11,12 @@ export type MittrSignInStatus = {
  * it rather than trusting its shape.
  */
 export const parseSignInStatus = (payload: unknown): MittrSignInStatus => {
-  if (!payload || typeof payload !== 'object') return { signedIn: false, displayName: '' };
+  if (!payload || typeof payload !== 'object') return { signedIn: false, userId: '', displayName: '' };
   const record = payload as Record<string, unknown>;
+  const signedIn = record.signedIn === true;
   return {
-    signedIn: record.signedIn === true,
+    signedIn,
+    userId: signedIn && typeof record.userId === 'string' ? record.userId : '',
     displayName: typeof record.displayName === 'string' ? record.displayName : '',
   };
 };

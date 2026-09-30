@@ -211,9 +211,17 @@ export function VoiceAssistant() {
     () =>
       new VoiceSession({
         listen: startConversationListening,
-        transcribe: voiceApi.transcribe,
+        transcribe: async (wav, signal) => {
+          const text = await voiceApi.transcribe(wav, signal);
+          useSpeechQuotaStore.getState().clear('stt');
+          return text;
+        },
         turn: voiceApi.turn,
-        synthesize: voiceApi.synthesize,
+        synthesize: async (text, signal) => {
+          const audio = await voiceApi.synthesize(text, signal);
+          useSpeechQuotaStore.getState().clear('tts');
+          return audio;
+        },
         createPlayer: browserPlayer,
         context: openSession,
         onQueue: (event) => {

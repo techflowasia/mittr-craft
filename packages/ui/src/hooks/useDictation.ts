@@ -16,6 +16,14 @@ import { LLM_QUOTA_EXHAUSTED } from '@/lib/mittr-quota/exhausted';
 import { useSpeechQuotaStore } from '@/lib/mittr-quota/speech-quota-store';
 import { useConfigStore } from '@/stores/useConfigStore';
 
+export const noteDictationFailure = (error: Error): string | null => {
+    const { reasonCode, resetsAt } = error as Error & { reasonCode?: unknown; resetsAt?: unknown };
+    if (reasonCode === LLM_QUOTA_EXHAUSTED) {
+        useSpeechQuotaStore.getState().block('stt', typeof resetsAt === 'string' ? resetsAt : null);
+    }
+    return typeof reasonCode === 'string' ? reasonCode : null;
+};
+
 export type DictationStatus = 'idle' | 'recording' | 'uploading' | 'failed';
 
 export interface UseDictationOptions {
@@ -122,11 +130,7 @@ export function useDictation(options: UseDictationOptions = {}): UseDictationRes
     const reportError = useCallback((err: unknown) => {
         const normalized = toError(err);
         setError(normalized.message);
-        const { reasonCode: reason, resetsAt } = normalized as Error & { reasonCode?: string; resetsAt?: string };
-        setErrorReason(typeof reason === 'string' ? reason : null);
-        if (reason === LLM_QUOTA_EXHAUSTED) {
-            useSpeechQuotaStore.getState().block('stt', typeof resetsAt === 'string' ? resetsAt : null);
-        }
+        setErrorReason(noteDictationFailure(normalized));
         onErrorRef.current?.(normalized);
     }, []);
 
@@ -187,6 +191,9 @@ export function useDictation(options: UseDictationOptions = {}): UseDictationRes
             setStatus('idle');
             const transcriptText = text.trim().length > 0 ? text.trim() : latestPartialRef.current.trim();
             clearStreamingState();
+            if (useConfigStore.getState().sttProvider === 'mittr') {
+                useSpeechQuotaStore.getState().clear('stt');
+            }
             if (!transcriptText) {
                 return null;
             }

@@ -48,6 +48,11 @@ describe('mittr auth routes', () => {
     await request(app).get('/api/mittr/auth/status').expect(200, { signedIn: false });
   });
 
+  it('names the signed-in user so per-user state can follow a change of account', async () => {
+    const { app } = build({ store: memoryStore(session()) });
+    await request(app).get('/api/mittr/auth/status').expect(200, { signedIn: true, userId: 'u1', displayName: 'Chaiwat' });
+  });
+
   it('returns an authorize url carrying a challenge and the redirect, and no state', async () => {
     const { app } = build();
     const res = await request(app).post('/api/mittr/auth/start').expect(200);
