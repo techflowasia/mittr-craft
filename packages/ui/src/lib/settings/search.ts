@@ -384,6 +384,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     keywords: ['walkthrough', 'diff', 'review', 'changes', 'structured output', 'model', 'override'],
   },
   {
+    id: 'sessions.mittrQuota',
+    page: 'sessions',
+    titleKey: 'quota.me.title',
+    descriptionKey: 'quota.me.info',
+    keywords: ['quota', 'weekly', 'limit', 'usage', 'tokens', 'mittr'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
     id: 'sessions.auto-cleanup',
     page: 'sessions',
     titleKey: 'settings.mittrcraft.sessionRetention.field.enableAutoCleanup',
