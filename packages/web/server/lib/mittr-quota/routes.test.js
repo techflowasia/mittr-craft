@@ -58,10 +58,10 @@ describe('GET /api/mittr/quota/me', () => {
     expect(response.body).toMatchObject({ reasonCode: 'not_signed_in' });
   });
 
-  it('answers unreachable when there is no platform or it cannot be reached', async () => {
+  it('answers not_configured when this install has no platform, and unreachable when it cannot be reached', async () => {
     const none = await request(createApp({ brokerBaseUrl: '' }).app).get('/api/mittr/quota/me');
     expect(none.status).toBe(503);
-    expect(none.body).toMatchObject({ reasonCode: 'unreachable' });
+    expect(none.body).toMatchObject({ reasonCode: 'not_configured' });
     const down = await request(createApp({ fetchImpl: vi.fn(async () => { throw new Error('ECONNREFUSED'); }) }).app).get('/api/mittr/quota/me');
     expect(down.status).toBe(502);
     expect(down.body).toMatchObject({ reasonCode: 'unreachable' });

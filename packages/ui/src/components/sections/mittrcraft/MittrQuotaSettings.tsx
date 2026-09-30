@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { getCurrentIntlLocale, useI18n, type I18nKey } from '@/lib/i18n';
 import type { QuotaKind } from '@/lib/mittr-quota/exhausted';
 import { fetchQuotaMe, usedPercent, type QuotaMeResult } from '@/lib/mittr-quota/quota-me';
+import { useSpeechQuotaStore } from '@/lib/mittr-quota/speech-quota-store';
 import { formatResetTime } from '@/lib/mittr-quota/week';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { cn } from '@/lib/utils';
@@ -109,7 +110,9 @@ export const MittrQuotaSettings: React.FC<{ load?: (signal: AbortSignal) => Prom
     const controller = new AbortController();
     load(controller.signal).then(
       (result) => {
-        if (!controller.signal.aborted) setState(result);
+        if (controller.signal.aborted) return;
+        if (result.status === 'ok') useSpeechQuotaStore.getState().reconcile(result.quota.lines);
+        setState(result);
       },
       () => {
         if (!controller.signal.aborted) setState({ status: 'failed' });

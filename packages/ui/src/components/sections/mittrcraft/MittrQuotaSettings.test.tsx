@@ -43,8 +43,8 @@ describe('QuotaMeView', () => {
     expect(html).toContain('aria-valuenow="100"');
   });
 
-  test('says when no weekly limit applies', () => {
-    expect(render({ status: 'ok', quota: { ...week, lines: [] } })).toContain('No weekly limits apply to you.');
+  test('says no model is available when the week has no lines', () => {
+    expect(render({ status: 'ok', quota: { ...week, lines: [] } })).toContain('No model is available to you this week — ask your Mittr admin');
   });
 
   test('tells signed out, offline and failed apart instead of showing an empty week', () => {

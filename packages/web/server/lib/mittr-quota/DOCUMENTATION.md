@@ -26,15 +26,23 @@ week's usage.
 
 The engine retries a `429` five times with growing waits, because the AI SDK
 marks every `429` retryable. A weekly quota does not come back in seconds, so
-the shim answers the engine with `402` and the same envelope: the engine
-stops at once, and the assistant message keeps the envelope as its
+the shim answers the engine with `402` and
+`{ error: { type: 'insufficient_quota', code: 'llm_quota_exhausted', message: 'Weekly model quota used up', kind, resets_at } }`:
+the engine stops at once, and the assistant message keeps that body as its
 `responseBody`, which the app reads to show the reset time and a Try again
 button. An ordinary rate-limit `429` is forwarded unchanged.
+
+The engine also retries a non-retryable error whose message or response body
+matches its patterns (`/429|500|502|503|504|524/` among others, in the
+engine's `session/retry.ts`). So nothing an admin or the platform wrote — the
+model label, the platform's message — reaches the engine: the message is
+fixed, and `resets_at` is cut to whole seconds so its only digit runs are the
+year and `000`.
 
 When the refusal arrives after the stream started, the platform sends one
 `data:` frame holding the envelope, then `[DONE]`. The shim rewrites only that
 line: the frame's `error.message` becomes a JSON string of
-`{ type: 'error', error: { code: 'insufficient_quota', reason: 'llm_quota_exhausted', resets_at, ... } }`.
+`{ type: 'error', error: { type: 'insufficient_quota', code: 'insufficient_quota', reason: 'llm_quota_exhausted', kind, resets_at } }`.
 The engine parses that string into a non-retryable error that keeps the
 reset time; left as plain text it would surface without one. Every other
 line passes through unchanged, and only an unfinished trailing line is held
@@ -49,7 +57,8 @@ reads `GET {brokerBaseUrl}/api/quota/me` with the desktop session.
   Lines that do not parse are dropped; the week itself must parse.
 - `401 not_signed_in` — no session, or the platform refused it.
 - `404 not_available` — the platform has no quota route.
-- `503 unreachable` — this install has no broker; `502 unreachable` — the
-  request did not reach the platform; `504 upstream_timeout`.
+- `503 not_configured` — this install has no broker (the app hides the
+  panel); `502 unreachable` — the request did not reach the platform;
+  `504 upstream_timeout`.
 - `502 upstream_failed` — any other failure or an unreadable body. A failed
   read is never answered as an empty week.

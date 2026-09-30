@@ -40,12 +40,13 @@ describe('fetchQuotaMe', () => {
 
   test('tells a signed-out person apart from an offline platform and a broken answer', async () => {
     expect(await fetchQuotaMe(async () => json({ reasonCode: 'not_signed_in' }, 401))).toEqual({ status: 'not_signed_in' });
-    expect(await fetchQuotaMe(async () => json({ reasonCode: 'unreachable' }, 503))).toEqual({ status: 'unreachable' });
     expect(await fetchQuotaMe(async () => json({ reasonCode: 'unreachable' }, 502))).toEqual({ status: 'unreachable' });
     expect(await fetchQuotaMe(async () => { throw new TypeError('Failed to fetch'); })).toEqual({ status: 'unreachable' });
     expect(await fetchQuotaMe(async () => json({ reasonCode: 'upstream_failed' }, 502))).toEqual({ status: 'failed' });
     expect(await fetchQuotaMe(async () => json({ nope: true }))).toEqual({ status: 'failed' });
     expect(await fetchQuotaMe(async () => json({ reasonCode: 'not_available' }, 404))).toEqual({ status: 'not_available' });
+    expect(await fetchQuotaMe(async () => json({ reasonCode: 'not_configured' }, 503))).toEqual({ status: 'not_available' });
+    expect(await fetchQuotaMe(async () => new Response('', { status: 503 }))).toEqual({ status: 'unreachable' });
   });
 });
 

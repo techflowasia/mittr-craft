@@ -56,12 +56,13 @@ export async function fetchQuotaMe(fetchImpl: QuotaFetch, signal?: AbortSignal):
     if (signal?.aborted) throw error;
     return { status: 'unreachable' };
   }
-  if (response.status === 401) return { status: 'not_signed_in' };
-  if (response.status === 404) return { status: 'not_available' };
-  if (response.status === 503 || response.status === 504) return { status: 'unreachable' };
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { reasonCode?: unknown } | null;
-    return body?.reasonCode === 'unreachable' ? { status: 'unreachable' } : { status: 'failed' };
+    const reasonCode = body?.reasonCode;
+    if (response.status === 401) return { status: 'not_signed_in' };
+    if (response.status === 404 || reasonCode === 'not_configured') return { status: 'not_available' };
+    if (reasonCode === 'unreachable' || response.status === 503 || response.status === 504) return { status: 'unreachable' };
+    return { status: 'failed' };
   }
   const quota = parseQuotaMe(await response.json().catch(() => null));
   return quota ? { status: 'ok', quota } : { status: 'failed' };

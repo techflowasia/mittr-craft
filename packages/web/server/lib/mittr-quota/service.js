@@ -40,7 +40,7 @@ export const createMittrQuotaService = ({ brokerBaseUrl, ensureFreshSession, fet
   const configured = Boolean(brokerBaseUrl && typeof ensureFreshSession === 'function');
 
   const readMine = async () => {
-    if (!configured) throw createQuotaReadError('unreachable', 503);
+    if (!configured) throw createQuotaReadError('not_configured', 503);
     const session = await ensureFreshSession();
     if (!session?.accessToken) throw createQuotaReadError('not_signed_in');
 
