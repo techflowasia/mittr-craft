@@ -15,6 +15,7 @@ import React from 'react';
 
 import { SessionGoalButton, SessionGoalObjectiveCounter } from '@/components/chat/SessionGoalButton';
 import { ComposerDictation } from '@/components/dictation/ComposerDictation';
+import { ComposerTalkButton } from '@/components/voice-assistant/TalkButton';
 import { Icon } from '@/components/icon/Icon';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
@@ -171,6 +172,7 @@ export function ComposerFooter(props: ComposerFooterProps) {
                                 >
                                     <Icon name="mic" className={cn(iconSizeClass, 'text-current')} />
                                 </button>
+                                <ComposerTalkButton className={footerIconButtonClass} iconClassName={iconSizeClass} />
                                 <ComposerActionButtons
                                     isMobile={isMobile}
                                     footerIconButtonClass={footerIconButtonClass}
@@ -238,6 +240,7 @@ export function ComposerFooter(props: ComposerFooterProps) {
                             onInsertAndSend={onDictationInsertAndSend}
                             onContentHeightChange={onDictationContentHeightChange}
                         />
+                        <ComposerTalkButton className={footerIconButtonClass} iconClassName={iconSizeClass} />
                         <ComposerActionButtons
                             isMobile={isMobile}
                             footerIconButtonClass={footerIconButtonClass}

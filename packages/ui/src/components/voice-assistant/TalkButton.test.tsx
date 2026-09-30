@@ -43,6 +43,12 @@ describe('TalkButton', () => {
     expect(html).not.toContain('aria-pressed');
   });
 
+  test('uses the sound-wave icon, not the dictation microphone', () => {
+    const html = render(ready);
+    expect(html).toContain('voiceprint');
+    expect(html).not.toContain('#oc-icon-mic"');
+  });
+
   test('says it is busy while the microphone starts', () => {
     expect(render(ready, 'starting')).toContain('aria-busy="true"');
   });

@@ -5,7 +5,6 @@ import {
   SIGN_IN_COMPLETED_EVENT,
   SIGN_IN_START_ENDPOINT,
 } from '@/components/mittr/mittrSignInGateState';
-import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { cn } from '@/lib/utils';
@@ -15,6 +14,7 @@ import { createNarrationWatch, spokenText, type NarrationWatch, type SessionErro
 import { createAudioPlayer } from '@/lib/voice-assistant/player';
 import { queueSpokenPrompt, queuedPromptCount } from '@/lib/voice-assistant/queue';
 import { VoiceSession, type VoicePhase } from '@/lib/voice-assistant/session';
+import { useTalkStore } from '@/lib/voice-assistant/talk-store';
 import { createVoiceApi, isTalkReady, type VoiceReadiness } from '@/lib/voice-assistant/turn';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useNotificationStore } from '@/sync/notification-store';
@@ -30,31 +30,52 @@ export interface TalkButtonProps {
   onToggle: () => void;
   buttonRef?: React.Ref<HTMLButtonElement>;
   className?: string;
+  iconClassName?: string;
 }
 
-export function TalkButton({ readiness, phase, onToggle, buttonRef, className }: TalkButtonProps) {
+export function TalkButton({ readiness, phase, onToggle, buttonRef, className, iconClassName }: TalkButtonProps) {
   const { t } = useI18n();
   const open = phase !== 'idle';
   if (!open && !isTalkReady(readiness)) return null;
   const label = t(open ? 'voice.talk.end' : 'voice.talk.start');
   return (
-    <Button
+    <button
       ref={buttonRef}
       type="button"
-      variant={open ? 'default' : 'outline'}
-      size="icon"
       aria-label={label}
       aria-busy={phase === 'starting'}
       title={label}
+      onMouseDown={(event) => event.preventDefault()}
       onClick={onToggle}
-      className={cn('rounded-full shadow-md', className)}
+      className={cn(className, open && 'text-primary')}
     >
       {phase === 'starting' ? (
-        <Icon name="loader-4" aria-hidden="true" className="motion-safe:animate-spin" />
+        <Icon name="loader-4" aria-hidden="true" className={cn(iconClassName, 'motion-safe:animate-spin')} />
       ) : (
-        <Icon name="mic" aria-hidden="true" />
+        <Icon name="voiceprint" aria-hidden="true" className={cn(iconClassName, 'text-current')} />
       )}
-    </Button>
+    </button>
+  );
+}
+
+const registerTalkButton = (element: HTMLButtonElement | null) => {
+  if (element) useTalkStore.setState({ button: element });
+  else if (useTalkStore.getState().button?.isConnected === false) useTalkStore.setState({ button: null });
+};
+
+export function ComposerTalkButton({ className, iconClassName }: { className?: string; iconClassName?: string }) {
+  const readiness = useTalkStore((state) => state.readiness);
+  const phase = useTalkStore((state) => state.phase);
+  const toggle = useTalkStore((state) => state.toggle);
+  return (
+    <TalkButton
+      readiness={readiness}
+      phase={phase}
+      onToggle={toggle}
+      buttonRef={registerTalkButton}
+      className={className}
+      iconClassName={iconClassName}
+    />
   );
 }
 
@@ -175,7 +196,6 @@ export function VoiceAssistant() {
       }),
   );
   const snapshot = React.useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
-  const talk = React.useRef<HTMLButtonElement | null>(null);
   const open = snapshot.phase !== 'idle';
 
   React.useEffect(() => {
@@ -191,7 +211,7 @@ export function VoiceAssistant() {
 
   const end = React.useCallback(() => {
     session.end();
-    talk.current?.focus();
+    useTalkStore.getState().button?.focus();
   }, [session]);
 
   React.useEffect(() => {
@@ -207,6 +227,10 @@ export function VoiceAssistant() {
     if (!readiness) return;
     void session.start({ silenceMs: readiness.voiceSilenceMs });
   }, [end, open, readiness, session]);
+
+  React.useEffect(() => {
+    useTalkStore.setState({ readiness, phase: snapshot.phase, toggle });
+  }, [readiness, snapshot.phase, toggle]);
 
   if (!ready && !open) return null;
 
@@ -230,13 +254,6 @@ export function VoiceAssistant() {
           <ErrorText error={snapshot.error} />
         </p>
       ) : null}
-      <TalkButton
-        readiness={readiness}
-        phase={snapshot.phase}
-        onToggle={toggle}
-        buttonRef={talk}
-        className="pointer-events-auto"
-      />
     </div>
   );
 }
