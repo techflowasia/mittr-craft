@@ -245,3 +245,59 @@ describe('mittr shim refusals', () => {
     }
   });
 });
+
+describe('mittr shim weekly quota', () => {
+  const RESETS_AT = '2026-10-04T17:00:00.000Z';
+  const quotaEnvelope = {
+    error: {
+      type: 'insufficient_quota',
+      code: 'llm_quota_exhausted',
+      message: 'โควตาหมด',
+      resets_at: RESETS_AT,
+      model: 'MITTR 2.0',
+    },
+  };
+
+  it('turns a quota 429 into a status the engine does not retry, keeping the envelope', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(quotaEnvelope, 429));
+    const res = await post(createApp(fetchImpl), { model: 'pm_9f2c1d4e7b', messages: [] }).expect(402);
+    expect(JSON.parse(res.text)).toEqual(quotaEnvelope);
+  });
+
+  it('does the same when the engine asked for a stream', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(quotaEnvelope, 429));
+    const res = await post(createApp(fetchImpl), { model: 'pm_9f2c1d4e7b', messages: [], stream: true }).expect(402);
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+    expect(JSON.parse(res.text).error.resets_at).toBe(RESETS_AT);
+  });
+
+  it('recognises the flat platform body too', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({
+      code: 'llm_quota_exhausted', modelKey: 'm', kind: 'chat', label: 'MITTR 2.0', resetsAt: RESETS_AT, message: 'โควตาหมด',
+    }, 429));
+    const res = await post(createApp(fetchImpl), { model: 'pm_9f2c1d4e7b', messages: [] }).expect(402);
+    expect(JSON.parse(res.text)).toEqual(quotaEnvelope);
+  });
+
+  it('leaves an ordinary rate limit as a 429 the engine may retry', async () => {
+    const body = { error: { type: 'rate_limit_exceeded', code: 'rate_limit', message: 'slow down' } };
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(body, 429));
+    const res = await post(createApp(fetchImpl), { model: 'pm_9f2c1d4e7b', messages: [], stream: true }).expect(429);
+    expect(JSON.parse(res.text)).toEqual(body);
+  });
+
+  it('rewrites a quota frame that arrives after the stream started', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(sseResponse([
+      'data: {"choices":[{"delta":{"content":"he"}}]}\n\n',
+      `data: ${JSON.stringify(quotaEnvelope).slice(0, 20)}`,
+      `${JSON.stringify(quotaEnvelope).slice(20)}\n\n`,
+      'data: [DONE]\n\n',
+    ]));
+    const res = await post(createApp(fetchImpl), { model: 'pm_9f2c1d4e7b', messages: [], stream: true }).expect(200);
+    const frames = res.text.split('\n\n').filter(Boolean);
+    expect(frames[0]).toBe('data: {"choices":[{"delta":{"content":"he"}}]}');
+    const refusal = JSON.parse(frames[1].slice('data: '.length));
+    expect(JSON.parse(refusal.error.message).error).toMatchObject({ code: 'insufficient_quota', resets_at: RESETS_AT });
+    expect(frames[2]).toBe('data: [DONE]');
+  });
+});

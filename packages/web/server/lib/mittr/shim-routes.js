@@ -1,6 +1,12 @@
 import express from 'express';
 import { createStreamMarkupWatcher, describeMarkup } from './response-markup.js';
 import { describeModelRefusal } from './model-refusal.js';
+import {
+  QUOTA_REFUSAL_STATUS,
+  createQuotaStreamRewriter,
+  readQuotaExhausted,
+  toEngineRefusal,
+} from '../mittr-quota/exhausted.js';
 
 const reportMarkup = (result, model) => {
   if (result.kind === 'tool-calls-lost') {
@@ -61,10 +67,17 @@ export function registerMittrShimRoutes(app, { upstream, localToken, ensureFresh
       }
 
       const contentType = upstreamResponse.headers.get('content-type') ?? 'application/json';
-      const isStream = Boolean(req.body?.stream) && upstreamResponse.body;
+      const isStream = Boolean(req.body?.stream) && upstreamResponse.body && upstreamResponse.ok;
 
       if (!isStream) {
         const text = await upstreamResponse.text();
+
+        if (!upstreamResponse.ok) {
+          const quota = readQuotaExhausted(text);
+          if (quota) {
+            return res.status(QUOTA_REFUSAL_STATUS).json(toEngineRefusal(quota));
+          }
+        }
 
         // A refusal reaches the developer as whatever the engine makes of the
         // body, which is not enough to tell "ask an admin" from "your catalog
@@ -112,18 +125,24 @@ export function registerMittrShimRoutes(app, { upstream, localToken, ensureFresh
       res.setHeader('x-accel-buffering', 'no');
       res.flushHeaders?.();
 
-      // The stream is forwarded untouched. The watcher only reads what goes
-      // past and holds a marker's worth of tail, so nothing is buffered and
-      // nothing is rewritten.
+      // The stream is forwarded a line at a time. The one rewrite is a weekly
+      // quota frame, turned into an error the engine stops on rather than
+      // retries. The watcher only reads what goes past.
       const watcher = createStreamMarkupWatcher();
+      const quotaFrames = createQuotaStreamRewriter();
+      const forward = (bytes) => {
+        if (bytes.length === 0) return;
+        res.write(bytes);
+        watcher.observe(bytes);
+      };
       try {
         for await (const chunk of upstreamResponse.body) {
-          res.write(chunk);
-          watcher.observe(chunk);
+          forward(quotaFrames.push(chunk));
         }
       } catch (error) {
         console.error('[mittr] upstream stream failed:', error?.message ?? error);
       }
+      forward(quotaFrames.end());
       reportMarkup(watcher.finish(), req.body?.model);
       return res.end();
     }
