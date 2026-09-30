@@ -4,12 +4,9 @@ import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/lib/i18n';
 import { resendQuotaPrompt, useQuotaRetryPending } from '@/lib/mittr-quota/resend';
+import { isLatestInSession } from '@/lib/mittr-quota/retry';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSessionMessages } from '@/sync/sync-context';
-
-export function isLatestInSession(messages: readonly { id: string }[], messageId: string): boolean {
-    return messages.length > 0 && messages[messages.length - 1].id === messageId;
-}
 
 export function QuotaRetryButtonView({ pending, onRetry }: { pending: boolean; onRetry: () => void }) {
     const { t } = useI18n();

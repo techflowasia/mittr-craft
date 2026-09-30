@@ -4,7 +4,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { I18nProvider } from '@/lib/i18n';
 import { AssistantErrorNotice } from './AssistantErrorNotice';
-import { QuotaRetryButtonView, isLatestInSession } from './QuotaRetryButton';
+import { isLatestInSession } from '@/lib/mittr-quota/retry';
+import { QuotaRetryButtonView } from './QuotaRetryButton';
 
 const render = (node: React.ReactNode) => renderToStaticMarkup(<I18nProvider>{node}</I18nProvider>);
 

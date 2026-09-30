@@ -106,3 +106,7 @@ export async function resendAfterQuota(assistant: Message, deps: QuotaRetryDeps)
   await deps.send(prompt);
   return true;
 }
+
+export function isLatestInSession(messages: readonly { id: string }[], messageId: string): boolean {
+  return messages.length > 0 && messages[messages.length - 1].id === messageId;
+}
