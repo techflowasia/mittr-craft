@@ -36,6 +36,30 @@ export type ModelPickerEntry = {
   modelID: string;
 };
 
+export type ModelPickerEntryStatus = {
+  blocked: boolean;
+  pill: string;
+  title: string;
+  tone: 'near' | 'neutral';
+};
+
+export const ModelPickerStatusPill: React.FC<{ status: ModelPickerEntryStatus }> = ({ status }) => (
+  <>
+    <span
+      data-model-status={status.tone}
+      className={cn(
+        'flex-shrink-0 whitespace-nowrap rounded-full px-1.5 typography-micro font-medium tabular-nums',
+        status.tone === 'near'
+          ? 'bg-[var(--status-warning-background)] text-foreground'
+          : 'bg-[var(--surface-muted)] text-muted-foreground',
+      )}
+    >
+      {status.pill}
+    </span>
+    <span className="sr-only">{status.title}</span>
+  </>
+);
+
 type ModelPickerFavoriteEntry = ModelPickerEntry;
 
 type HiddenModel = { providerID: string; modelID: string };
@@ -347,6 +371,7 @@ interface ModelPickerListProps {
    * provider (e.g. structured output). Applied on top of `allowedProviderIds`.
    */
   isModelAllowed?: (providerID: string, modelID: string) => boolean;
+  entryStatus?: (entry: ModelPickerEntry) => ModelPickerEntryStatus | null;
   includeNotSelected?: boolean;
   onSelectNone?: () => void;
   selectionCount?: (entry: ModelPickerEntry) => number;
@@ -388,6 +413,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
   hiddenModels = [],
   allowedProviderIds,
   isModelAllowed,
+  entryStatus,
   includeNotSelected = false,
   onSelectNone,
   selectionCount,
@@ -630,14 +656,14 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
     if (event.key === 'Enter') {
       event.preventDefault();
       const selected = flatModelList[selectionStore.getSnapshot()];
-      if (selected && !disabled) onSelect(selected);
+      if (selected && !disabled && !entryStatus?.(selected)?.blocked) onSelect(selected);
       return;
     }
     if (event.key === 'Escape') {
       event.preventDefault();
       onEscape?.();
     }
-  }, [disabled, flatModelList, moveSelection, onActiveKeyDown, onEscape, onSelect, onVariantKey, selectionStore]);
+  }, [disabled, entryStatus, flatModelList, moveSelection, onActiveKeyDown, onEscape, onSelect, onVariantKey, selectionStore]);
 
   const headerClassName = cn(
     'typography-micro font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2 px-2 py-1.5',
@@ -653,6 +679,8 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
     const count = selectionCount?.(entry) ?? 0;
     const isSelected = selectedModel?.providerID === entry.providerID && selectedModel.modelID === entry.modelID;
     const favorite = isFavorite?.(entry) ?? false;
+    const status = entryStatus?.(entry) ?? null;
+    const blocked = disabled || Boolean(status?.blocked);
 
     const handleMouseActivity = (event: React.MouseEvent) => {
       const nextPosition = { x: event.clientX, y: event.clientY };
@@ -674,11 +702,12 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
               ref={(el) => { itemRefs.current[rowIndex] = el; }}
               role="option"
               aria-selected={isSelected}
-              aria-disabled={disabled || undefined}
+              aria-disabled={blocked || undefined}
               tabIndex={-1}
-              onClick={() => { if (!disabled) onSelect(entry); }}
+              title={status?.title}
+              onClick={() => { if (!blocked) onSelect(entry); }}
               onKeyDown={(event) => {
-                if (disabled) return;
+                if (blocked) return;
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault();
                   onSelect(entry);
@@ -690,6 +719,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
                 'w-full text-left px-2 py-1.5 rounded-md typography-meta flex items-center gap-2 cursor-pointer',
                 !disabled && (isHighlighted ? 'bg-interactive-selection' : 'hover:bg-interactive-hover/50'),
                 disabled && 'cursor-not-allowed opacity-60',
+                !disabled && status?.blocked && 'cursor-not-allowed text-muted-foreground',
                 rowClassName,
               )}
             >
@@ -702,6 +732,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
                 {showProviderLogo ? <ProviderLogo providerId={entry.providerID} className="h-3.5 w-3.5 flex-shrink-0" /> : null}
                 <span className="font-medium truncate">{getModelDisplayName(entry.model)}</span>
                 {contextTokens ? <span className="typography-micro text-muted-foreground flex-shrink-0">{contextTokens}</span> : null}
+                {status ? <ModelPickerStatusPill status={status} /> : null}
               </div>
               {count > 0 ? <span className="typography-micro text-muted-foreground flex-shrink-0">x{count}</span> : null}
               {renderRowEnd?.(entry, { isHighlighted, isSelected })}
