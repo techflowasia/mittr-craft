@@ -1264,6 +1264,7 @@ const mittrCraftControlService = createMittrCraftControlService({
   computerControl,
   chromeControl,
   chromeApprovals,
+  persistSettings,
 });
 
 const ensureGlobalWatcherStarted = async () => {

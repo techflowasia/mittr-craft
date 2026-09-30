@@ -161,6 +161,7 @@ export const createMittrCraftControlService = (dependencies) => {
     computerControl = null,
     chromeControl = null,
     chromeApprovals = null,
+    persistSettings = null,
     // A function, not a value: brokerBaseUrl/ensureFreshSession only exist once the Mittr
     // shim has started, which happens after this service is constructed. Reading through a
     // getter means the wiring in index.js can fill this in later without this file caring
@@ -770,7 +771,17 @@ export const createMittrCraftControlService = (dependencies) => {
       throw new MittrCraftControlError('Google Chrome is not installed on this Mac; ask the user to install it', 503);
     }
     if (!profile) {
-      throw new MittrCraftControlError('No Chrome profile is chosen yet; ask the user to choose a Chrome profile in Settings → MittrCraft tools', 409);
+      const available = await chromeControl.profiles().catch(() => []);
+      const only = available.length === 1 ? asNonEmptyString(available[0]?.directory) : null;
+      if (!only) {
+        throw new MittrCraftControlError(
+          'No Chrome profile is chosen yet; ask the user to choose one in Settings → General → MittrCraft Tools → Chrome profile',
+          409,
+          { code: 'chrome_profile_required' },
+        );
+      }
+      runOptions.profile = only;
+      if (typeof persistSettings === 'function') await persistSettings({ agentChromeProfile: only }).catch(() => undefined);
     }
 
     const ensureApproved = async (host) => {
