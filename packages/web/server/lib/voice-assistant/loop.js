@@ -284,10 +284,10 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
       return refusal(action, 'confirm_first', 'Ask the person to confirm stopping the session and wait for their answer before calling session.stop');
     }
     if (action === 'chrome.allow_site') {
-      const host = typeof input.host === 'string' ? input.host.trim().toLowerCase() : '';
-      if (!conversation.pendingApprovalHost || host !== conversation.pendingApprovalHost) {
-        return refusal(action, 'not_requested', 'Only the site Chrome last asked about in this conversation can be allowed');
+      if (!conversation.pendingApprovalHost) {
+        return refusal(action, 'not_requested', 'Chrome has not asked for permission in this conversation, so there is nothing to allow');
       }
+      input.host = conversation.pendingApprovalHost;
     }
     if (READ_ACTIONS.has(action)) readSeen = true;
     send({ type: 'action', kind: 'running', label: VOICE_ACTION_TITLES[action] ?? action });

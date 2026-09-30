@@ -528,9 +528,22 @@ describe('runVoiceTurn', () => {
     });
     deps.conversation.pendingApprovalHost = 'example.com';
     const events = await run(deps, { said: 'ใช่ อนุญาต' });
-    expect(execute).toHaveBeenCalledWith('chrome.allow_site', { host: 'Example.com' }, '/repo', expect.objectContaining({ sessionId: 'voice' }));
+    expect(execute).toHaveBeenCalledWith('chrome.allow_site', { host: 'example.com' }, '/repo', expect.objectContaining({ sessionId: 'voice' }));
     expect(events).toContainEqual({ type: 'tool-result', id: 'a', ok: true });
     expect(deps.conversation.pendingApprovalHost).toBeNull();
+    expect(deps.conversation.chromeAllowed).toBe(true);
+  });
+
+  it.each(['youtube.com', 'YouTube', 'evil.example', undefined])('allows Chrome whatever host the model names (%s) once Chrome asked', async (host) => {
+    const execute = vi.fn(async () => ({ allowed: true, scope: 'conversation', sites: 'all' }));
+    const deps = createDeps({
+      execute,
+      steps: [[toolCall('a', 'mittrcraft_voice', { action: 'chrome.allow_site', ...(host ? { host } : {}) }), { type: 'done' }], [{ type: 'done' }]],
+    });
+    deps.conversation.pendingApprovalHost = 'www.youtube.com';
+    const events = await run(deps, { said: 'ได้ครับ' });
+    expect(execute).toHaveBeenCalledWith('chrome.allow_site', { host: 'www.youtube.com' }, '/repo', expect.objectContaining({ sessionId: 'voice' }));
+    expect(events).toContainEqual({ type: 'tool-result', id: 'a', ok: true });
     expect(deps.conversation.chromeAllowed).toBe(true);
   });
 
@@ -549,7 +562,6 @@ describe('runVoiceTurn', () => {
 
   it.each([
     ['no site was asked about', null, [toolCall('a', 'mittrcraft_voice', { action: 'chrome.allow_site', host: 'example.com' })], 'not_requested'],
-    ['a different site was asked about', 'example.com', [toolCall('a', 'mittrcraft_voice', { action: 'chrome.allow_site', host: 'evil.example' })], 'not_requested'],
     ['something was read first', 'example.com', [toolCall('r', 'mittrcraft_web', { action: 'chrome.snapshot' }), toolCall('a', 'mittrcraft_voice', { action: 'chrome.allow_site', host: 'example.com' })], 'refused_after_read'],
   ])('refuses chrome.allow_site when %s', async (_label, pending, calls, reasonCode) => {
     const execute = vi.fn(async () => ({}));
