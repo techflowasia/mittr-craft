@@ -55,7 +55,7 @@ import { createHmrStateRuntime } from './lib/opencode/hmr-state-runtime.js';
 import { startMittrShim } from './lib/mittr/index.js';
 import { MITTR_PROVIDER_ID } from './lib/mittr/catalog-routes.js';
 import { resolveBrokerBaseUrl } from './lib/mittr/broker-target.js';
-import { upsertProviderConfig, removeProviderConfig, readProviderModelIds } from './lib/opencode/providers.js';
+import { upsertProviderConfig, removeProviderConfig, readProviderModelIds, syncProviderDefaultModel } from './lib/opencode/providers.js';
 import { readAuthFile, writeAuthFile } from './lib/opencode/auth.js';
 import { createOpenCodeNetworkRuntime } from './lib/opencode/network-runtime.js';
 import { createOpenCodeAuthStateRuntime } from './lib/opencode/auth-state-runtime.js';
@@ -1390,7 +1390,8 @@ const syncMittrModels = (shim) => async (models) => {
 
   if (wanted.length === 0) {
     const removed = removeProviderConfig(MITTR_PROVIDER_ID, null, 'user');
-    if (removed) await refreshOpenCodeAfterConfigChange('Mittr catalog: no models offered');
+    const released = syncProviderDefaultModel(MITTR_PROVIDER_ID, [], null);
+    if (removed || released) await refreshOpenCodeAfterConfigChange('Mittr catalog: no models offered');
     return;
   }
 
@@ -1408,7 +1409,8 @@ const syncMittrModels = (shim) => async (models) => {
     { hasStoredAuth: true },
   );
 
-  if (!unchanged) await refreshOpenCodeAfterConfigChange('Mittr catalog changed');
+  const adopted = syncProviderDefaultModel(MITTR_PROVIDER_ID, models.map((model) => model.alias), null);
+  if (!unchanged || adopted) await refreshOpenCodeAfterConfigChange('Mittr catalog changed');
 };
 
 async function main(options = {}) {
