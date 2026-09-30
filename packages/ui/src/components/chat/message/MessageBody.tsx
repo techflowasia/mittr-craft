@@ -433,6 +433,7 @@ interface MessageBodyProps {
     onFork?: () => void;
     errorMessage?: string;
     errorVariant?: 'error' | 'info';
+    errorAction?: { label: string; onClick: () => void };
     userActionsMode?: 'inline' | 'external-content' | 'external-actions';
     stickyUserHeaderEnabled?: boolean;
     reviewTransferDirection?: ReviewTransferDirection | null;
@@ -1094,6 +1095,7 @@ const AssistantMessageBody = React.memo(({
     turnGroupingContext,
     errorMessage,
     errorVariant = 'error',
+    errorAction,
     reviewTransferDirection = null,
     contextPinned,
     contextPinPending,
@@ -2237,6 +2239,12 @@ const AssistantMessageBody = React.memo(({
                                             enableFileReferences={false}
                                         />
                                     </div>
+                                    {errorAction ? (
+                                        <Button type="button" variant="outline" size="xs" className="shrink-0" onClick={errorAction.onClick}>
+                                            <Icon name="refresh" aria-hidden="true" />
+                                            {errorAction.label}
+                                        </Button>
+                                    ) : null}
                                 </div>
                             </div>
                         </FadeInOnReveal>

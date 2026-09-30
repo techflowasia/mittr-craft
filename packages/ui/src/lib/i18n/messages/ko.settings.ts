@@ -1,4 +1,5 @@
 import { voiceI18n } from './voice.i18n';
+import { quotaI18n } from './quota.i18n';
 import { thirdPartyIntegrationI18n } from './third-party-integrations.i18n';
 export const settingsDict = {
   'settings.providers.page.openCodeGo.title': 'MittrCraft Engine Go 사용량 추적',
@@ -2159,4 +2160,5 @@ export const settingsDict = {
   'settings.mittrcraft.visual.option.followUpBehavior.queue.label': 'Queue',
   ...thirdPartyIntegrationI18n.ko,
   ...voiceI18n.ko,
+  ...quotaI18n.ko,
 } as const;

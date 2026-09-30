@@ -32,7 +32,10 @@ import { streamPerfCount } from '@/stores/utils/streamDebug';
 import { areOptionalRenderRelevantMessagesEqual, areRenderRelevantMessagesEqual, areRelevantTurnGroupingContextsEqual } from './message/renderCompare';
 import type { ReviewTransferDirection } from '@/lib/reviewFlow';
 import { toast } from 'sonner';
-import { useI18n } from '@/lib/i18n';
+import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
+import { quotaExhaustedFromMessageError } from '@/lib/mittr-quota/exhausted';
+import { resendQuotaPrompt } from '@/lib/mittr-quota/resend';
+import { formatResetTime } from '@/lib/mittr-quota/week';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { getContextObligatoryMessages } from '@/lib/contextObligatoryMessages';
 import { setContextObligatoryMessage } from '@/sync/session-actions';
@@ -684,9 +687,24 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
 
     // Summary body removed — flat rendering means text is always inline.
 
+    const quotaExhausted = React.useMemo(() => {
+        if (isUser) {
+            return null;
+        }
+        return quotaExhaustedFromMessageError((message.info as { error?: unknown } | undefined)?.error);
+    }, [isUser, message.info]);
+
     const assistantError = React.useMemo(() => {
         if (isUser) {
             return undefined;
+        }
+        if (quotaExhausted) {
+            return {
+                text: quotaExhausted.resetsAt
+                    ? t('quota.exhausted', { when: formatResetTime(quotaExhausted.resetsAt, getCurrentIntlLocale()) })
+                    : t('quota.exhaustedNoReset'),
+                variant: 'error' as const,
+            };
         }
         const errorInfo = (message.info as { error?: unknown } | undefined)?.error as
             | { data?: { message?: unknown }; message?: unknown; name?: unknown }
@@ -723,10 +741,22 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
             text: `Opencode failed to send message with error:\n\`${detail}\``,
             variant: 'error' as const,
         };
-    }, [isUser, message.info]);
+    }, [isUser, message.info, quotaExhausted, t]);
 
     const assistantErrorText = assistantError?.text;
     const assistantErrorVariant = assistantError?.variant;
+
+    const assistantErrorAction = React.useMemo(() => {
+        if (!quotaExhausted) {
+            return undefined;
+        }
+        return {
+            label: t('quota.retry'),
+            onClick: () => {
+                void resendQuotaPrompt(message.info);
+            },
+        };
+    }, [message.info, quotaExhausted, t]);
 
     const messageTextContent = React.useMemo(() => {
         if (isUser) {
@@ -1085,6 +1115,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                                                 onToggleContextPin={canPinIntoContext && messageCreatedAt ? handleToggleContextPin : undefined}
                                                 errorMessage={assistantErrorText}
                                                 errorVariant={assistantErrorVariant}
+                                                errorAction={assistantErrorAction}
                                                 userActionsMode={useExternalUserActionsRow ? 'external-content' : 'inline'}
                                                 stickyUserHeaderEnabled={stickyUserHeader}
                                             />
@@ -1122,6 +1153,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                                                 onToggleContextPin={canPinIntoContext && messageCreatedAt ? handleToggleContextPin : undefined}
                                                 errorMessage={assistantErrorText}
                                                 errorVariant={assistantErrorVariant}
+                                                errorAction={assistantErrorAction}
                                                 userActionsMode="external-actions"
                                                 stickyUserHeaderEnabled={stickyUserHeader}
                                             />
@@ -1165,6 +1197,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                                 turnGroupingContext={turnGroupingContext}
                                 errorMessage={assistantErrorText}
                                 errorVariant={assistantErrorVariant}
+                                errorAction={assistantErrorAction}
                                 reviewTransferDirection={reviewTransferDirection}
                                 footerProviderID={headerProviderID}
                                 footerModelName={headerModelName}
