@@ -43,6 +43,28 @@ describe('chrome actions', () => {
     expect(run).toHaveBeenCalledWith(['open', 'https://plane.techflow.asia/x'], expect.objectContaining({ sessionName: 'mc-ses_1', profile: 'Default' }));
   });
 
+  it('shows the Chrome window when the caller asks for it even if the setting hides it', async () => {
+    const { service, run } = createService({ settings: { agentChromeHeaded: false } });
+    await service.execute('chrome.open', { url: 'https://plane.techflow.asia/x' }, '/repo', { ...opts, headed: true });
+    expect(run).toHaveBeenCalledWith(['open', 'https://plane.techflow.asia/x'], expect.objectContaining({ headed: true }));
+  });
+
+  it('restarts a Chrome session that was left hidden before showing it', async () => {
+    const { service, run } = createService({ settings: { agentChromeHeaded: false } });
+    await service.execute('chrome.open', { url: 'https://plane.techflow.asia/a' }, '/repo', { ...opts, headed: true });
+    const commands = run.mock.calls.map(([command, options]) => `${command[0]}:${options.headed}`);
+    expect(commands.slice(0, 2)).toEqual(['close:true', 'open:true']);
+    run.mockClear();
+    await service.execute('chrome.open', { url: 'https://plane.techflow.asia/b' }, '/repo', { ...opts, headed: true });
+    expect(run.mock.calls.map(([command]) => command[0])).not.toContain('close');
+  });
+
+  it('follows the setting when the caller does not ask', async () => {
+    const { service, run } = createService({ settings: { agentChromeHeaded: false } });
+    await service.execute('chrome.open', { url: 'https://plane.techflow.asia/x' }, '/repo', opts);
+    expect(run).toHaveBeenCalledWith(['open', 'https://plane.techflow.asia/x'], expect.objectContaining({ headed: false }));
+  });
+
   it('asks for approval on a host that is not on the list', async () => {
     const { service, run } = createService();
     await expect(service.execute('chrome.open', { url: 'https://github.com/' }, '/repo', opts))

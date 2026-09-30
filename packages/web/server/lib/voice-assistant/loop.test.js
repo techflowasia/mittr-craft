@@ -75,7 +75,7 @@ describe('runVoiceTurn', () => {
       { type: 'text-delta', text: 'ราคา 990 บาท' },
       { type: 'done' },
     ]);
-    expect(execute).toHaveBeenCalledWith('chrome.open', { url: 'https://example.com' }, '/repo', expect.objectContaining({ signal: expect.any(AbortSignal), sessionId: 'voice' }));
+    expect(execute).toHaveBeenCalledWith('chrome.open', { url: 'https://example.com' }, '/repo', expect.objectContaining({ signal: expect.any(AbortSignal), sessionId: 'voice', headed: true }));
     expect(deps.chromePage.note).toHaveBeenCalledWith('chrome.open', true);
 
     const [url, init] = deps.fetchImpl.mock.calls[0];

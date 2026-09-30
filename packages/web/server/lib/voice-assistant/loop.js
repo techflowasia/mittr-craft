@@ -243,7 +243,7 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
         return { ok: true, result: { queued: true, sessionId: target.id, note: 'The session is busy; the prompt will run after its current answer' } };
       }
     }
-    const running = controlService.execute(action, input, directory, { signal: toolSignal, sessionId: VOICE_CHROME_SESSION_ID });
+    const running = controlService.execute(action, input, directory, { signal: toolSignal, sessionId: VOICE_CHROME_SESSION_ID, headed: true });
     if (action.startsWith('chrome.')) {
       running.then(() => chromePage?.note(action, true), () => chromePage?.note(action, false));
     }

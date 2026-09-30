@@ -750,6 +750,8 @@ export const createMittrCraftControlService = (dependencies) => {
     chromeApprovals?.forgetSession(id);
   };
 
+  const chromeModes = new Map();
+
   const chromeAction = async (action, input, contextDirectory, options = {}) => {
     const sessionId = asNonEmptyString(options.sessionId);
     if (!sessionId) throw new MittrCraftControlError('The Chrome tool needs the calling session', 400);
@@ -758,15 +760,21 @@ export const createMittrCraftControlService = (dependencies) => {
     const runOptions = {
       sessionName: chromeSessionName(sessionId),
       profile: profile ?? 'Default',
-      headed: settings.agentChromeHeaded === true,
+      headed: options.headed === true || settings.agentChromeHeaded === true,
       signal: options.signal,
     };
 
     if (action === 'chrome.close') {
       chromeApprovals.forgetSession(sessionId);
+      chromeModes.delete(runOptions.sessionName);
       await chromeControl.run(['close'], runOptions).catch(() => undefined);
       return { closed: true };
     }
+    const launchedHeaded = chromeModes.get(runOptions.sessionName);
+    if (launchedHeaded === undefined ? runOptions.headed : launchedHeaded !== runOptions.headed) {
+      await chromeControl.run(['close'], runOptions).catch(() => undefined);
+    }
+    chromeModes.set(runOptions.sessionName, runOptions.headed);
     if (!chromeControl.chromeInstalled()) {
       throw new MittrCraftControlError('Google Chrome is not installed on this Mac; ask the user to install it', 503);
     }
