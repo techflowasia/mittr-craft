@@ -227,6 +227,7 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
         } else if (event.type === 'tool-call' && typeof event.id === 'string' && typeof event.name === 'string') {
           toolCalls.push({ id: event.id, name: event.name, arguments: typeof event.arguments === 'string' ? event.arguments : '{}' });
         } else if (event.type === 'error') {
+          if (event.code === LLM_QUOTA_EXHAUSTED) return quotaRefusal(event);
           return { error: PLATFORM_ERROR_CODES.has(event.code) ? event.code : 'upstream_failed' };
         } else if (event.type === 'done') {
           finished = true;

@@ -328,6 +328,12 @@ describe('runVoiceTurn', () => {
       { type: 'error', code: 'llm_quota_exhausted', resetsAt: '2026-10-04T17:00:00.000Z' },
     ]);
     expect(refused.fetchImpl).toHaveBeenCalledTimes(1);
+    const platformEvent = createDeps({
+      steps: [[{ type: 'error', code: 'llm_quota_exhausted', resetsAt: '2026-10-04T17:00:00.000Z', model: 'Voice' }]],
+    });
+    expect(await run(platformEvent)).toEqual([
+      { type: 'error', code: 'llm_quota_exhausted', resetsAt: '2026-10-04T17:00:00.000Z' },
+    ]);
   });
 
   it('keeps the conversation inside the platform’s limits by dropping the oldest history', async () => {
