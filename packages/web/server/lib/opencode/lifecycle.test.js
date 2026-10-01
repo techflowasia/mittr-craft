@@ -351,6 +351,39 @@ describe('OpenCode lifecycle', () => {
     expect(onOpenCodeRestarted).not.toHaveBeenCalled();
   });
 
+  it('a restart that arrives during the first start closes the first engine instead of leaving it running', async () => {
+    globalThis.fetch = vi.fn(async () => ({ ok: true, json: async () => ({ healthy: true }) }));
+    const first = createMockChild();
+    first.pid = 2147483601;
+    const second = createMockChild();
+    second.pid = 2147483602;
+    let announceFirst = () => {};
+    spawnMock
+      .mockImplementationOnce(() => {
+        announceFirst = () => first.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n');
+        return first;
+      })
+      .mockImplementationOnce(() => {
+        queueMicrotask(() => second.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45679\n'));
+        return second;
+      });
+    const runtime = createRuntime(
+      { reapManagedOrphanedProcesses: vi.fn(async () => ({ reaped: 0 })) },
+      {},
+      { ENV_EFFECTIVE_PORT: null, ENV_CONFIGURED_OPENCODE_PORT: null },
+    );
+
+    const boot = runtime.bootstrapOpenCodeAtStartup();
+    await vi.waitFor(() => expect(spawnMock).toHaveBeenCalledTimes(1));
+    const restart = runtime.restartOpenCode();
+    announceFirst();
+    await Promise.all([boot, restart]);
+
+    expect(spawnMock).toHaveBeenCalledTimes(2);
+    expect(first.kill).toHaveBeenCalled();
+    expect(second.kill).not.toHaveBeenCalled();
+  });
+
   it('launches managed OpenCode with the managed PATH', async () => {
     delete process.env.OPENCODE_BINARY;
     const child = createMockChild();
