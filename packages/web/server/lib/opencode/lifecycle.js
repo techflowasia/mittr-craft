@@ -624,6 +624,13 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     throw lastError;
   };
 
+  let engineLaunchQueue = Promise.resolve();
+  const runEngineLaunchExclusive = (task) => {
+    const run = engineLaunchQueue.then(task);
+    engineLaunchQueue = run.then(() => undefined, () => undefined);
+    return run;
+  };
+
   const restartOpenCode = async () => {
     if (state.isShuttingDown) return;
     if (state.currentRestartPromise) {
@@ -631,7 +638,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       return;
     }
 
-    state.currentRestartPromise = (async () => {
+    state.currentRestartPromise = runEngineLaunchExclusive(async () => {
       state.isRestartingOpenCode = true;
       state.isOpenCodeReady = false;
       state.openCodeNotReadySince = Date.now();
@@ -714,7 +721,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       } catch (error) {
         console.warn('Failed to rebind event stream after MittrCraft Engine restart:', error?.message ?? error);
       }
-    })();
+    });
 
     try {
       await state.currentRestartPromise;
@@ -921,8 +928,10 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
         }
 
         state.lastOpenCodeError = null;
-        state.openCodeProcess = await startOpenCode();
-        syncToHmrState();
+        await runEngineLaunchExclusive(async () => {
+          state.openCodeProcess = await startOpenCode();
+          syncToHmrState();
+        });
       }
       await waitForOpenCodePort();
       try {
