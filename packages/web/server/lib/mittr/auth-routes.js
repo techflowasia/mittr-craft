@@ -49,7 +49,7 @@ export function registerMittrAuthRoutes(app, {
   let refreshing = null;
 
   const statusOf = (session) => (session
-    ? { signedIn: true, displayName: session.subject.displayName }
+    ? { signedIn: true, userId: session.subject.userId, displayName: session.subject.displayName }
     : { signedIn: false });
 
   app.post('/api/mittr/auth/start', (_req, res) => {

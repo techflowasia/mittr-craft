@@ -7,8 +7,8 @@ import {
 
 describe('parseSignInStatus', () => {
   test('reads a signed-in status', () => {
-    expect(parseSignInStatus({ signedIn: true, displayName: 'Chaiwat' }))
-      .toEqual({ signedIn: true, displayName: 'Chaiwat' });
+    expect(parseSignInStatus({ signedIn: true, userId: 'u1', displayName: 'Chaiwat' }))
+      .toEqual({ signedIn: true, userId: 'u1', displayName: 'Chaiwat' });
   });
 
   test('treats anything that is not exactly true as signed out', () => {
@@ -16,6 +16,10 @@ describe('parseSignInStatus', () => {
     expect(parseSignInStatus({ signedIn: 1 }).signedIn).toBe(false);
     expect(parseSignInStatus({}).signedIn).toBe(false);
     expect(parseSignInStatus(null).signedIn).toBe(false);
+  });
+
+  test('keeps no user id for a signed-out status', () => {
+    expect(parseSignInStatus({ signedIn: false, userId: 'u1' }).userId).toBe('');
   });
 
   test('tolerates a missing display name', () => {
@@ -29,8 +33,8 @@ describe('gateStateFromStatus', () => {
   });
 
   test('opens the application only for a signed-in status', () => {
-    expect(gateStateFromStatus({ signedIn: true, displayName: '' })).toBe('signed-in');
-    expect(gateStateFromStatus({ signedIn: false, displayName: '' })).toBe('signed-out');
+    expect(gateStateFromStatus({ signedIn: true, userId: 'u1', displayName: '' })).toBe('signed-in');
+    expect(gateStateFromStatus({ signedIn: false, userId: '', displayName: '' })).toBe('signed-out');
   });
 });
 

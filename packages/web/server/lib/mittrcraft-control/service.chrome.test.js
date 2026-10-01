@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createMittrCraftControlService } from './service.js';
 import { createChromeApprovals } from './chrome-approvals.js';
 
-const createService = ({ settings = {}, pageUrl = 'https://plane.techflow.asia/', runImpl, stepper = null } = {}) => {
+const createService = ({ settings = {}, pageUrl = 'https://plane.techflow.asia/', runImpl, stepper = null, profiles = [{ directory: 'Default', name: 'Your Chrome' }] } = {}) => {
   let stored = { agentChromeProfile: 'Default', agentChromeApprovedHosts: ['plane.techflow.asia'], ...settings };
   const page = { url: pageUrl };
   const run = vi.fn(runImpl ?? (async (command) => {
@@ -12,7 +12,7 @@ const createService = ({ settings = {}, pageUrl = 'https://plane.techflow.asia/'
     if (command[0] === 'snapshot') return { origin: pageUrl, snapshot: '- link "Home" [ref=e1]', refs: { e1: {} } };
     return {};
   }));
-  const chromeControl = { available: true, chromeInstalled: () => true, run, profiles: vi.fn(async () => [{ directory: 'Default', name: 'Your Chrome' }]) };
+  const chromeControl = { available: true, chromeInstalled: () => true, run, profiles: vi.fn(async () => profiles) };
   const persistSettings = vi.fn(async (changes) => { stored = { ...stored, ...changes }; });
   const chromeApprovals = createChromeApprovals({ readSettings: async () => stored, persistSettings });
   const service = createMittrCraftControlService({
@@ -25,6 +25,7 @@ const createService = ({ settings = {}, pageUrl = 'https://plane.techflow.asia/'
     scheduledTaskService: {},
     chromeControl,
     chromeApprovals,
+    persistSettings,
     getBrowserStepper: () => stepper,
   });
   const ask = (host, id = 'per_1') => chromeApprovals.handleEvent({ type: 'permission.asked', properties: { id, sessionID: 'ses_1', permission: 'mittrcraft_chrome', patterns: [host], always: [host], metadata: {} } });
@@ -40,6 +41,28 @@ describe('chrome actions', () => {
     await expect(service.execute('chrome.open', { url: 'https://plane.techflow.asia/x' }, '/repo', opts))
       .resolves.toMatchObject({ url: 'https://plane.techflow.asia/x' });
     expect(run).toHaveBeenCalledWith(['open', 'https://plane.techflow.asia/x'], expect.objectContaining({ sessionName: 'mc-ses_1', profile: 'Default' }));
+  });
+
+  it('shows the Chrome window when the caller asks for it even if the setting hides it', async () => {
+    const { service, run } = createService({ settings: { agentChromeHeaded: false } });
+    await service.execute('chrome.open', { url: 'https://plane.techflow.asia/x' }, '/repo', { ...opts, headed: true });
+    expect(run).toHaveBeenCalledWith(['open', 'https://plane.techflow.asia/x'], expect.objectContaining({ headed: true }));
+  });
+
+  it('restarts a Chrome session that was left hidden before showing it', async () => {
+    const { service, run } = createService({ settings: { agentChromeHeaded: false } });
+    await service.execute('chrome.open', { url: 'https://plane.techflow.asia/a' }, '/repo', { ...opts, headed: true });
+    const commands = run.mock.calls.map(([command, options]) => `${command[0]}:${options.headed}`);
+    expect(commands.slice(0, 2)).toEqual(['close:true', 'open:true']);
+    run.mockClear();
+    await service.execute('chrome.open', { url: 'https://plane.techflow.asia/b' }, '/repo', { ...opts, headed: true });
+    expect(run.mock.calls.map(([command]) => command[0])).not.toContain('close');
+  });
+
+  it('follows the setting when the caller does not ask', async () => {
+    const { service, run } = createService({ settings: { agentChromeHeaded: false } });
+    await service.execute('chrome.open', { url: 'https://plane.techflow.asia/x' }, '/repo', opts);
+    expect(run).toHaveBeenCalledWith(['open', 'https://plane.techflow.asia/x'], expect.objectContaining({ headed: false }));
   });
 
   it('asks for approval on a host that is not on the list', async () => {
@@ -116,10 +139,25 @@ describe('chrome actions', () => {
     await expect(service.execute('chrome.snapshot', {}, '/repo', opts)).rejects.toThrow(/chrome\.open/);
   });
 
-  it('refuses until a profile is chosen', async () => {
-    const { service } = createService({ settings: { agentChromeProfile: '' } });
+  it('uses and remembers the only Chrome profile when none is chosen', async () => {
+    const { service, run, stored } = createService({ settings: { agentChromeProfile: '' }, profiles: [{ directory: 'Profile 1', name: 'Work' }] });
+    await service.execute('chrome.open', { url: 'https://plane.techflow.asia/' }, '/repo', opts);
+    expect(run).toHaveBeenCalledWith(['open', 'https://plane.techflow.asia/'], expect.objectContaining({ profile: 'Profile 1' }));
+    expect(stored().agentChromeProfile).toBe('Profile 1');
+  });
+
+  it('asks the person to choose when several Chrome profiles exist, with the exact place to do it', async () => {
+    const { service, run } = createService({ settings: { agentChromeProfile: '' }, profiles: [{ directory: 'Default', name: 'Me' }, { directory: 'Profile 1', name: 'Work' }] });
     await expect(service.execute('chrome.open', { url: 'https://plane.techflow.asia/' }, '/repo', opts))
-      .rejects.toThrow(/choose a Chrome profile/i);
+      .rejects.toMatchObject({ statusCode: 409, code: 'chrome_profile_required', message: expect.stringContaining('Settings → General → MittrCraft Tools → Chrome profile') });
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('refuses when Chrome has no profile to use', async () => {
+    const { service, stored } = createService({ settings: { agentChromeProfile: '' }, profiles: [] });
+    await expect(service.execute('chrome.open', { url: 'https://plane.techflow.asia/' }, '/repo', opts))
+      .rejects.toMatchObject({ code: 'chrome_profile_required' });
+    expect(stored().agentChromeProfile).toBe('');
   });
 
   it('needs the calling session', async () => {

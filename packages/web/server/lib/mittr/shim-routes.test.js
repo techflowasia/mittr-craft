@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { registerMittrShimRoutes } from './shim-routes.js';
+import { createAnsweredByLog } from '../mittr-quota/answered-by.js';
 
 const createApp = (fetchImpl, session = { accessToken: 'at-1' }) => {
   const app = express();
@@ -243,5 +244,143 @@ describe('mittr shim refusals', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe('mittr shim weekly quota', () => {
+  const RESETS_AT = '2026-10-04T17:00:00.000Z';
+  const quotaEnvelope = {
+    error: {
+      type: 'insufficient_quota',
+      code: 'llm_quota_exhausted',
+      message: 'โควตาหมด',
+      resets_at: RESETS_AT,
+      model: 'MITTR 2.0',
+    },
+  };
+  const engineRefusal = {
+    error: {
+      type: 'insufficient_quota',
+      code: 'llm_quota_exhausted',
+      message: 'Weekly model quota used up',
+      kind: 'chat',
+      resets_at: RESETS_AT,
+    },
+  };
+
+  it('turns a quota 429 into a status the engine does not retry, keeping what the app reads', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(quotaEnvelope, 429));
+    const res = await post(createApp(fetchImpl), { model: 'pm_9f2c1d4e7b', messages: [] }).expect(402);
+    expect(JSON.parse(res.text)).toEqual(engineRefusal);
+  });
+
+  it('does the same when the engine asked for a stream', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(quotaEnvelope, 429));
+    const res = await post(createApp(fetchImpl), { model: 'pm_9f2c1d4e7b', messages: [], stream: true }).expect(402);
+    expect(res.headers['content-type']).toMatch(/application\/json/);
+    expect(JSON.parse(res.text).error.resets_at).toBe(RESETS_AT);
+  });
+
+  it('recognises the flat platform body too', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({
+      code: 'llm_quota_exhausted', modelKey: 'm', kind: 'chat', label: 'MITTR 2.0', resetsAt: RESETS_AT, message: 'โควตาหมด',
+    }, 429));
+    const res = await post(createApp(fetchImpl), { model: 'pm_9f2c1d4e7b', messages: [] }).expect(402);
+    expect(JSON.parse(res.text)).toEqual(engineRefusal);
+  });
+
+  it('leaves an ordinary rate limit as a 429 the engine may retry', async () => {
+    const body = { error: { type: 'rate_limit_exceeded', code: 'rate_limit', message: 'slow down' } };
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(body, 429));
+    const res = await post(createApp(fetchImpl), { model: 'pm_9f2c1d4e7b', messages: [], stream: true }).expect(429);
+    expect(JSON.parse(res.text)).toEqual(body);
+  });
+
+  it('rewrites a quota frame that arrives after the stream started', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(sseResponse([
+      'data: {"choices":[{"delta":{"content":"he"}}]}\n\n',
+      `data: ${JSON.stringify(quotaEnvelope).slice(0, 20)}`,
+      `${JSON.stringify(quotaEnvelope).slice(20)}\n\n`,
+      'data: [DONE]\n\n',
+    ]));
+    const res = await post(createApp(fetchImpl), { model: 'pm_9f2c1d4e7b', messages: [], stream: true }).expect(200);
+    const frames = res.text.split('\n\n').filter(Boolean);
+    expect(frames[0]).toBe('data: {"choices":[{"delta":{"content":"he"}}]}');
+    const refusal = JSON.parse(frames[1].slice('data: '.length));
+    expect(JSON.parse(refusal.error.message).error).toMatchObject({ code: 'insufficient_quota', resets_at: RESETS_AT });
+    expect(frames[2]).toBe('data: [DONE]');
+  });
+});
+
+describe('mittr shim answered by a substitute', () => {
+  const ANSWERED_BY = {
+    substituted: true,
+    requestedLabel: 'MITTR 1.0',
+    answeredLabel: 'MittrCraft 1.0',
+    answeredKey: 'mittr-craft-1-0',
+    reason: 'quota',
+    notice: 'โควตา MITTR 1.0 สัปดาห์นี้หมดแล้ว',
+  };
+
+  const createLoggedApp = (fetchImpl) => {
+    const answeredByLog = createAnsweredByLog();
+    const app = express();
+    registerMittrShimRoutes(app, {
+      upstream: { baseUrl: 'https://upstream.test/v1' },
+      localToken: 'mc_local_abc',
+      ensureFreshSession: async () => ({ accessToken: 'at-1' }),
+      answeredByLog,
+      now: () => 5000,
+      fetchImpl,
+    });
+    return { app, answeredByLog };
+  };
+
+  const postFor = (app, sessionId, body) => post(app, body).set('x-session-id', sessionId);
+
+  const remembered = {
+    at: 5000,
+    model: 'mittr-1',
+    requestedLabel: 'MITTR 1.0',
+    answeredLabel: 'MittrCraft 1.0',
+    reason: 'quota',
+  };
+
+  it('remembers a substitute on a streamed answer and forwards every byte unchanged', async () => {
+    const chunks = [
+      ': keep-alive\n\n',
+      `data: ${JSON.stringify({ choices: [{ delta: { content: 'he' } }], answered_by: ANSWERED_BY })}\n\n`,
+      'data: {"choices":[{"delta":{"content":"llo"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    const { app, answeredByLog } = createLoggedApp(vi.fn().mockResolvedValue(sseResponse(chunks)));
+    const res = await postFor(app, 'ses_1', { model: 'mittr-1', messages: [], stream: true }).expect(200);
+    expect(res.text).toBe(chunks.join(''));
+    expect(answeredByLog.list('ses_1')).toEqual([remembered]);
+  });
+
+  it('remembers a substitute on a non-streamed answer and returns the body unchanged', async () => {
+    const body = { choices: [{ message: { content: 'hello' } }], answered_by: ANSWERED_BY };
+    const { app, answeredByLog } = createLoggedApp(vi.fn().mockResolvedValue(jsonResponse(body)));
+    const res = await postFor(app, 'ses_2', { model: 'mittr-1', messages: [] }).expect(200);
+    expect(JSON.parse(res.text)).toEqual(body);
+    expect(answeredByLog.list('ses_2')).toEqual([remembered]);
+  });
+
+  it('remembers nothing when the chosen model answered itself', async () => {
+    const { app, answeredByLog } = createLoggedApp(vi.fn().mockResolvedValue(sseResponse([
+      'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ])));
+    await postFor(app, 'ses_3', { model: 'mittr-1', messages: [], stream: true }).expect(200);
+    expect(answeredByLog.list('ses_3')).toEqual([]);
+  });
+
+  it('remembers nothing when the engine named no session', async () => {
+    const body = { choices: [{ message: { content: 'hello' } }], answered_by: ANSWERED_BY };
+    const { app, answeredByLog } = createLoggedApp(vi.fn().mockResolvedValue(jsonResponse(body)));
+    const record = vi.spyOn(answeredByLog, 'record');
+    await post(app, { model: 'mittr-1', messages: [] }).expect(200);
+    expect(record).not.toHaveBeenCalled();
   });
 });

@@ -843,7 +843,7 @@ export const createSettingsHelpers = (dependencies) => {
     }
     if (typeof candidate.sttProvider === 'string') {
       const provider = candidate.sttProvider.trim();
-      if (provider === 'local' || provider === 'openai-compatible') {
+      if (provider === 'local' || provider === 'openai-compatible' || provider === 'mittr') {
         result.sttProvider = provider;
       } else if (provider === 'server') {
         // Legacy provider migration: 'server' was the OpenAI-compatible endpoint.
@@ -869,6 +869,12 @@ export const createSettingsHelpers = (dependencies) => {
       if (trimmed.length <= STT_MODEL_MAX_LENGTH) {
         result.sttLocalModel = trimmed;
       }
+    }
+    if (Number.isInteger(candidate.voiceStepCap) && candidate.voiceStepCap >= 1 && candidate.voiceStepCap <= 20) {
+      result.voiceStepCap = candidate.voiceStepCap;
+    }
+    if (Number.isInteger(candidate.voiceReplyMaxChars) && candidate.voiceReplyMaxChars >= 1000 && candidate.voiceReplyMaxChars <= 30000) {
+      result.voiceReplyMaxChars = candidate.voiceReplyMaxChars;
     }
     if (typeof candidate.sttLanguage === 'string') {
       const trimmed = candidate.sttLanguage.trim();

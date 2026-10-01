@@ -8,6 +8,7 @@ import {
   validateCustomProviderConfig,
   getProviderSources,
   removeProviderConfig,
+  syncProviderDefaultModel,
 } from './providers.js';
 
 let projectDir;
@@ -257,5 +258,42 @@ describe('custom provider config persistence', () => {
         process.env.OPENCODE_CONFIG = previousEnv;
       }
     }
+  });
+});
+
+describe('provider default model', () => {
+  let dir;
+  const configPath = () => path.join(dir, 'opencode.json');
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-default-model-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('a fresh config starts on the first offered model of the provider', () => {
+    writeJson(configPath(), { provider: {} });
+    expect(syncProviderDefaultModel('mittr', ['assistant', 'writer'], dir, 'project')).toBe(true);
+    expect(readJson(configPath()).model).toBe('mittr/assistant');
+    expect(syncProviderDefaultModel('mittr', ['assistant', 'writer'], dir, 'project')).toBe(false);
+  });
+
+  test('a default the person chose elsewhere is left alone', () => {
+    writeJson(configPath(), { model: 'opencode/big-pickle' });
+    expect(syncProviderDefaultModel('mittr', ['assistant'], dir, 'project')).toBe(false);
+    expect(syncProviderDefaultModel('mittr', [], dir, 'project')).toBe(false);
+    expect(readJson(configPath()).model).toBe('opencode/big-pickle');
+  });
+
+  test('a provider default that is no longer offered moves to one that is, and is cleared when none are', () => {
+    writeJson(configPath(), { model: 'mittr/retired' });
+    expect(syncProviderDefaultModel('mittr', ['assistant'], dir, 'project')).toBe(true);
+    expect(readJson(configPath()).model).toBe('mittr/assistant');
+    writeJson(configPath(), { model: 'mittr/writer' });
+    expect(syncProviderDefaultModel('mittr', ['assistant', 'writer'], dir, 'project')).toBe(false);
+    expect(syncProviderDefaultModel('mittr', [], dir, 'project')).toBe(true);
+    expect(readJson(configPath())).not.toHaveProperty('model');
   });
 });

@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import { engineConfigDir, engineDataDir } from './engine-home';
 import path from 'node:path';
-import os from 'node:os';
 import { fetchOpenCodeGoUsage } from './opencodeGoQuota';
 import { deleteLegacyOpenCodeGoCredential, readCredential } from './quotaCredentials';
 import { getProviderAuth, updateProviderAuth } from './opencodeAuth';

@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { WorkerHighlightedCode } from '@/components/code/WorkerHighlightedCode';
 import { isEmptyTextPart, extractTextContent } from './partUtils';
 import { FadeInOnReveal } from './FadeInOnReveal';
+import { AssistantErrorNotice } from './AssistantErrorNotice';
 import { Button } from '@/components/ui/button';
 import { SaveProjectPlanDialog } from '@/components/session/SaveProjectPlanDialog';
 import { ForkSessionDialog, type ForkSessionExecution } from '@/components/session/ForkSessionDialog';
@@ -21,7 +22,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { ArrowsMerge } from '@/components/icons/ArrowsMerge';
 import type { ContentChangeReason } from '@/hooks/useChatAutoFollow';
 
-import { MarkdownImageGallery, SimpleMarkdownRenderer } from '../MarkdownRenderer';
+import { MarkdownImageGallery } from '../MarkdownRenderer';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useUIStore } from '@/stores/useUIStore';
 import { flattenAssistantTextParts, suggestPlanTitleFromText } from '@/lib/messages/messageText';
@@ -433,6 +434,7 @@ interface MessageBodyProps {
     onFork?: () => void;
     errorMessage?: string;
     errorVariant?: 'error' | 'info';
+    errorAction?: React.ReactNode;
     userActionsMode?: 'inline' | 'external-content' | 'external-actions';
     stickyUserHeaderEnabled?: boolean;
     reviewTransferDirection?: ReviewTransferDirection | null;
@@ -916,7 +918,9 @@ const AssistantMessageActionButtons = React.memo(({
         if (isTTSPlaying) {
             return t('chat.messageBody.tts.stopSpeaking');
         }
-        const providerLabel = voiceProvider === 'browser'
+        const providerLabel = voiceProvider === 'mittr'
+            ? 'Mittr'
+            : voiceProvider === 'browser'
             ? 'Browser'
             : voiceProvider === 'openai'
                 ? 'OpenAI'
@@ -1092,6 +1096,7 @@ const AssistantMessageBody = React.memo(({
     turnGroupingContext,
     errorMessage,
     errorVariant = 'error',
+    errorAction,
     reviewTransferDirection = null,
     contextPinned,
     contextPinPending,
@@ -1704,7 +1709,6 @@ const AssistantMessageBody = React.memo(({
 
     const shouldDeferSortedInlineText = isSortedRenderMode && !hasStopFinish;
     const showErrorMessage = Boolean(errorMessage);
-    const errorIconName = errorVariant === 'info' ? 'information' : 'error-warning';
     const shouldShowMessageActions = hasCopyableText;
     const shouldShowTurnFooter = isLastAssistantInTurn && hasTextContent && (hasStopFinish || Boolean(errorMessage));
     const shouldRenderActionsInActivity = isSortedRenderMode;
@@ -2216,27 +2220,12 @@ const AssistantMessageBody = React.memo(({
                     {renderedParts}
                     {showErrorMessage && (
                         <FadeInOnReveal key="assistant-error">
-                            <div className={cn(
-                                'group/assistant-text relative mt-3 p-3 rounded-lg border break-words max-w-full',
-                                errorVariant === 'info'
-                                    ? 'bg-[var(--status-info-background)] border-[var(--status-info-border)]'
-                                    : 'bg-[var(--status-error-background)] border-[var(--status-error-border)]',
-                            )}>
-                                <div className="flex items-center gap-2">
-                                    <Icon name={errorIconName} className={cn(
-                                        'h-4 w-4 shrink-0',
-                                        errorVariant === 'info' ? 'text-[var(--status-info)]' : 'text-[var(--status-error)]',
-                                    )} />
-                                    <div className="min-w-0 flex-1 break-words">
-                                        <SimpleMarkdownRenderer
-                                            content={errorMessage ?? ''}
-                                            onShowPopup={onShowPopup}
-                                            className="[&_.markdown-content>*:first-child]:mt-0 [&_.markdown-content>*:last-child]:mb-0"
-                                            enableFileReferences={false}
-                                        />
-                                    </div>
-                                </div>
-                            </div>
+                            <AssistantErrorNotice
+                                message={errorMessage ?? ''}
+                                variant={errorVariant}
+                                action={errorAction}
+                                onShowPopup={onShowPopup}
+                            />
                         </FadeInOnReveal>
                     )}
                 </div>

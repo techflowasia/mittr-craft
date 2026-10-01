@@ -10,7 +10,10 @@
 import React from 'react';
 
 import { Icon } from '@/components/icon/Icon';
-import { useI18n } from '@/lib/i18n';
+import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
+import { LLM_QUOTA_EXHAUSTED } from '@/lib/mittr-quota/exhausted';
+import { useSpeechQuotaBlock } from '@/lib/mittr-quota/speech-quota-store';
+import { formatResetTime } from '@/lib/mittr-quota/week';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { cn } from '@/lib/utils';
 import { runtimeFetch } from '@/lib/runtime-fetch';
@@ -133,6 +136,16 @@ export const ComposerDictation: React.FC<ComposerDictationProps> = ({
     const { t } = useI18n();
     const { currentTheme } = useThemeSystem();
     const dictationEnabled = useConfigStore((state) => state.dictationEnabled);
+    const sttProvider = useConfigStore((state) => state.sttProvider);
+    const quotaBlockedUntil = useSpeechQuotaBlock('stt');
+    const voiceInputBlockedUntil = sttProvider === 'mittr' ? quotaBlockedUntil : null;
+    const voiceInputBlockedText = voiceInputBlockedUntil
+        ? t('quota.stt.exhausted', { when: formatResetTime(voiceInputBlockedUntil, getCurrentIntlLocale()) })
+        : null;
+    const voiceInputBlockedRef = React.useRef(false);
+    React.useEffect(() => {
+        voiceInputBlockedRef.current = Boolean(voiceInputBlockedUntil);
+    }, [voiceInputBlockedUntil]);
     const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
     const dictationShortcut = formatShortcutForDisplay(getEffectiveShortcutCombo('toggle_dictation', shortcutOverrides));
     // The dictation server (WebSocket + STT worker) lives in the MittrCraft
@@ -195,6 +208,9 @@ export const ComposerDictation: React.FC<ComposerDictationProps> = ({
     React.useEffect(() => {
         const onToggle = () => {
             if (statusRef.current === 'idle') {
+                if (voiceInputBlockedRef.current) {
+                    return;
+                }
                 void startDictation();
             } else if (statusRef.current === 'recording') {
                 pendingActionRef.current = 'insert';
@@ -350,9 +366,9 @@ export const ComposerDictation: React.FC<ComposerDictationProps> = ({
                     onClick={() => {
                         void startDictation();
                     }}
-                    disabled={disabled || isActive}
-                    title={dictationShortcut ? `${t('chat.dictation.start')} (${dictationShortcut})` : t('chat.dictation.start')}
-                    aria-label={t('chat.dictation.start')}
+                    disabled={disabled || isActive || Boolean(voiceInputBlockedText)}
+                    title={voiceInputBlockedText ?? (dictationShortcut ? `${t('chat.dictation.start')} (${dictationShortcut})` : t('chat.dictation.start'))}
+                    aria-label={voiceInputBlockedText ?? t('chat.dictation.start')}
                 >
                     <Icon name="mic" className={cn(iconSizeClass, 'text-current')} />
                 </button>
@@ -410,7 +426,7 @@ export const ComposerDictation: React.FC<ComposerDictationProps> = ({
                             )}
                             {status === 'failed' ? (
                                 <p className="typography-meta mt-1" style={{ color: currentTheme.colors.status.error }}>
-                                    {error || t('chat.dictation.failed')}
+                                    {(errorReason === LLM_QUOTA_EXHAUSTED && voiceInputBlockedText) || error || t('chat.dictation.failed')}
                                 </p>
                             ) : null}
                             {status === 'recording' && error && !isModelDownloading ? (
@@ -507,16 +523,18 @@ export const ComposerDictation: React.FC<ComposerDictationProps> = ({
                                     >
                                         <Icon name="close" className={iconSizeClass} />
                                     </button>
-                                    <button
-                                        type="button"
-                                        {...keepKeyboardFocusProps}
-                                        className={footerIconButtonClass}
-                                        onClick={retry}
-                                        title={t('chat.dictation.retry')}
-                                        aria-label={t('chat.dictation.retry')}
-                                    >
-                                        <Icon name="refresh" className={iconSizeClass} />
-                                    </button>
+                                    {errorReason === LLM_QUOTA_EXHAUSTED ? null : (
+                                        <button
+                                            type="button"
+                                            {...keepKeyboardFocusProps}
+                                            className={footerIconButtonClass}
+                                            onClick={retry}
+                                            title={t('chat.dictation.retry')}
+                                            aria-label={t('chat.dictation.retry')}
+                                        >
+                                            <Icon name="refresh" className={iconSizeClass} />
+                                        </button>
+                                    )}
                                     {partialTranscript.trim() ? (
                                         <button
                                             type="button"

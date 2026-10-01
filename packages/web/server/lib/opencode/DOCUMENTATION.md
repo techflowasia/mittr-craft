@@ -63,6 +63,8 @@ This module provides OpenCode server integration utilities for the web server ru
 - `upsertProviderConfig(providerId, config, workingDirectory, scope?, options?)`: Validates and writes a custom OpenAI-compatible provider block (`npm`, `name`, `options.baseURL`, `models`, optional `env`/`headers`) into the user/project/custom config layer. Does not store API keys. Requires `config.env` or `options.hasStoredAuth` (auth already written via OpenCode `auth.set`). Edit flows must pass the provider's effective existing layer (`custom` > `project` > `user`) so updates do not create a global user override.
 - `validateCustomProviderConfig(providerId, config, options?)`: Structural validation for custom provider payloads (id format, http(s) base URL, models, credentials via `env` or `hasStoredAuth`).
 - `removeProviderConfig(providerId, workingDirectory, scope?)`: Removes a provider block from the selected config layer.
+- `readProviderModelIds(providerId, workingDirectory)`: The model ids a provider has at user scope, sorted.
+- `syncProviderDefaultModel(providerId, modelIds, workingDirectory, scope?)`: Keeps the layer's `model` (the engine default) on this provider only where the provider owns it. An unset `model` becomes `provider/<first offered id>`; a `provider/…` default that is no longer offered moves to the first offered id, or is removed when none are offered; a default on any other provider is never touched. Returns whether it wrote. The Mittr catalog sync uses it so a signed-in fresh install starts on the first Mittr agent.
 
 ## Public exports (shared.js)
 - `OPENCODE_CONFIG_DIR`, `AGENT_DIR`, `COMMAND_DIR`, `SKILL_DIR`, `CONFIG_FILE`: Path constants. `OPENCODE_CONFIG` is resolved at call time for the custom config layer path.

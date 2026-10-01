@@ -20,6 +20,9 @@ import { McpSidebar } from '@/components/sections/mcp/McpSidebar';
 import { McpPage } from '@/components/sections/mcp/McpPage';
 import { PluginsSidebar, PluginsPage } from '@/components/sections/plugins';
 import { usePluginsStore } from '@/stores/usePluginsStore';
+import { useQuotaStore } from '@/stores/useQuotaStore';
+import { firstThirdPartyUsage } from '@/components/sections/usage/mittrUsage';
+import { MITTR_PROVIDER_ID } from '@/lib/mittr-quota/quota-me-store';
 import { SkillsSidebar } from '@/components/sections/skills/SkillsSidebar';
 import { SkillsPage } from '@/components/sections/skills/SkillsPage';
 import { ProjectsSidebar } from '@/components/sections/projects/ProjectsSidebar';
@@ -453,6 +456,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
       store.setSkillDraft({ name, scope: 'user', source: 'opencode', description: '', instructions: '' });
       store.setSelectedSkill(name);
       return result.id === 'skills.create' ? 'skills.basic-information' : result.id;
+    }
+
+    if (result.id === 'sessions.mittrQuota') {
+      useQuotaStore.getState().setSelectedProvider(MITTR_PROVIDER_ID);
+    }
+
+    if (result.id === 'usage.work-status-panel' || result.id === 'usage.model-quotas') {
+      const quota = useQuotaStore.getState();
+      if (!quota.selectedProviderId || quota.selectedProviderId === MITTR_PROVIDER_ID) {
+        quota.setSelectedProvider(firstThirdPartyUsage(quota.results));
+      }
     }
 
     if (result.id === 'providers.connect') {

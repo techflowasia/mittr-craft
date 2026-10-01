@@ -8,6 +8,7 @@ import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import { getDefaultModels } from '@/lib/quota/model-families';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import type { MittrProviderId } from '@/lib/mittr-quota/quota-me-store';
 
 const QUOTA_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 let quotaAutoRefreshConsumers = 0;
@@ -22,7 +23,7 @@ interface QuotaSettingsState {
 
 interface QuotaStore extends QuotaSettingsState {
   results: ProviderResult[];
-  selectedProviderId: QuotaProviderId | null;
+  selectedProviderId: QuotaProviderId | MittrProviderId | null;
   isLoading: boolean;
   isFetchingProvider: Record<string, boolean>;
   lastUpdated: number | null;
@@ -32,7 +33,7 @@ interface QuotaStore extends QuotaSettingsState {
   fetchAllQuotas: () => Promise<void>;
   fetchQuotas: (providerIds: QuotaProviderId[]) => Promise<void>;
   fetchProviderQuota: (providerId: QuotaProviderId) => Promise<void>;
-  setSelectedProvider: (providerId: QuotaProviderId | null) => void;
+  setSelectedProvider: (providerId: QuotaProviderId | MittrProviderId | null) => void;
   setDisplayMode: (mode: 'usage' | 'remaining') => void;
   setDropdownProviderIds: (providerIds: QuotaProviderId[]) => void;
   setSelectedModels: (providerId: string, modelNames: string[]) => void;

@@ -1,3 +1,5 @@
+import { voiceI18n } from './voice.i18n';
+import { quotaI18n } from './quota.i18n';
 import { thirdPartyIntegrationI18n } from './third-party-integrations.i18n';
 export const settingsDict = {
   'settings.providers.page.openCodeGo.title': 'MittrCraft Engine Go Nutzungsverfolgung',
@@ -2148,4 +2150,6 @@ export const settingsDict = {
   'settings.mittrcraft.visual.option.themeMode.dark.description': 'Immer dunkles Erscheinungsbild verwenden',
   'chat.message.userText.collapseAria': 'Benutzernachricht einklappen',
   ...thirdPartyIntegrationI18n.de,
+  ...voiceI18n.de,
+  ...quotaI18n.de,
 };

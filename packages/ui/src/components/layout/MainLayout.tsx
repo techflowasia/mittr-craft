@@ -21,6 +21,7 @@ import { DiffWorkerProvider } from '@/contexts/DiffWorkerProvider';
 import { MultiRunLauncher } from '@/components/multirun';
 import { TerminalView } from '@/components/views/TerminalView';
 import { DrawerProvider } from '@/contexts/DrawerContext';
+import { VoiceAssistant } from '@/components/voice-assistant/TalkButton';
 
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
@@ -386,6 +387,7 @@ export const MainLayout: React.FC = () => {
                 <HelpDialog />
                 <OpenCodeStatusDialog />
                 <SessionDialogs />
+                <ErrorBoundary><VoiceAssistant /></ErrorBoundary>
 
                 {isMobile ? (
                 <DrawerProvider value={{

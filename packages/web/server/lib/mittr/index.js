@@ -12,6 +12,8 @@ import { createEnablementStore } from './local-enablement.js';
 import { reconcileMcp } from './mcp-reconciler.js';
 import { reconcileSkills, skillsChanged } from './skill-reconciler.js';
 import { resolveRepositoryIdentity } from './repository-identity.js';
+import { createAnsweredByLog } from '../mittr-quota/answered-by.js';
+import { registerMittrAnsweredByRoutes } from '../mittr-quota/routes.js';
 
 /**
  * Used when the host offers no OS-backed secret storage — a standalone server or
@@ -79,7 +81,9 @@ export function startMittrShim({
     onSignIn: () => catalog.sync?.(),
   });
 
-  registerMittrShimRoutes(app, { upstream, localToken, ensureFreshSession });
+  const answeredByLog = createAnsweredByLog();
+  registerMittrShimRoutes(app, { upstream, localToken, ensureFreshSession, answeredByLog });
+  registerMittrAnsweredByRoutes(app, { answeredByLog });
 
   const cache = createCatalogCache({ filePath: path.join(dataDir, 'mittr-catalog.json') });
   const enablement = createEnablementStore({ filePath: path.join(dataDir, 'mittr-enablement.json') });

@@ -70,3 +70,5 @@ workspaces/
 .worktrees/
 test-results/
 artifacts/
+
+packages/web/public/vad/

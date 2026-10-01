@@ -32,6 +32,20 @@ same status/download/delete routes.
   - `openai-compatible`: buffered per-segment transcription against any
     OpenAI-compatible `/v1/audio/transcriptions` endpoint
     (`openai-compatible-session.js`, reuses `../tts/stt.js`).
+  - `mittr`: buffered per-segment transcription through the Mittr platform
+    (`mittr-session.js`, 16 kHz WAV per committed segment, sent with
+    `../mittr-speech/client.js`). The session opens only when platform
+    readiness says `listen` is ready; otherwise the stream fails with
+    `reasonCode` `not_signed_in` / `not_configured` / `unreachable` (no broker
+    on this install). `getStatus({ provider: 'mittr' })` reports the same
+    reason. Closing the session aborts a transcription still in flight.
+    A segment that fails mid-stream (for example the session expired) ends
+    the stream with the same message and `reasonCode`; `not_signed_in` and
+    `not_configured` are not retryable. The stream manager carries a session
+    error's `reasonCode` and `retryable` into the `error` frame. A weekly
+    quota refusal is `reasonCode: 'llm_quota_exhausted'`, not retryable, and
+    its `error` frame also carries `resetsAt` (ISO) so the client can keep the
+    mic off until then.
 - `local/` — worker process + client (IPC, idle shutdown TTL), sherpa
   recognizer engine and realtime session (throttled re-decode for partials),
   model catalog and downloader. The native `sherpa-onnx-node` addon is only
@@ -47,11 +61,14 @@ Client → server: `start {dictationId, format, options}`,
 
 Server → client: `ready`, `ack {ackSeq}`, `partial {text}`,
 `finish_accepted {timeoutMs}`, `final {text}`,
-`error {error, retryable, reasonCode?}`, `pong`.
+`error {error, retryable, reasonCode?, resetsAt?}`, `pong`.
 
 `options` in `start` carries the client-selected provider config:
-`{ provider: 'local' | 'openai-compatible', language?, localModel?,
+`{ provider: 'local' | 'openai-compatible' | 'mittr', language?, localModel?,
 openaiCompatible?: { baseUrl, model, apiKey } }`.
+
+`createDictationRuntime` takes `getMittrSpeechClient` (wired in
+`server/index.js` after the Mittr shim starts) and hands it to the service.
 
 ## Invariants
 

@@ -6,12 +6,14 @@ interface UsageProgressBarProps {
   percent: number | null;
   tonePercent?: number | null;
   className?: string;
+  label?: string;
 }
 
 export const UsageProgressBar: React.FC<UsageProgressBarProps> = ({
   percent,
   tonePercent,
   className,
+  label,
 }) => {
   const clamped = clampPercent(percent) ?? 0;
   const tone = resolveUsageTone(tonePercent ?? percent);
@@ -28,6 +30,7 @@ export const UsageProgressBar: React.FC<UsageProgressBarProps> = ({
         className="h-full transition-all duration-300"
         style={{ ...fillStyle, width: `${clamped}%` }}
         role="progressbar"
+        aria-label={label}
         aria-valuenow={clamped}
         aria-valuemin={0}
         aria-valuemax={100}

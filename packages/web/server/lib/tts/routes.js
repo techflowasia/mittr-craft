@@ -1,8 +1,73 @@
 import express from 'express';
 import { normalizeCustomOpenAIBaseURL } from './base-url.js';
 import { summarizeText, sanitizeForTTS, sanitizeForNote } from '../text/summarization.js';
+import { parsePcmRateFromFormat, pcm16ToWav } from '../dictation/audio.js';
+import { quotaFieldsOf } from '../mittr-quota/exhausted.js';
 
-export function registerTtsRoutes(app, { sayTTSCapability }) {
+const MITTR_SYNTHESIZE_MAX_CHARS = 4000;
+const MITTR_PCM_DEFAULT_RATE = 24000;
+
+const fitMittrText = (text) => {
+  if (text.length <= MITTR_SYNTHESIZE_MAX_CHARS) return text;
+  const lastKept = text.charCodeAt(MITTR_SYNTHESIZE_MAX_CHARS - 1);
+  const safeEnd = lastKept >= 0xd800 && lastKept <= 0xdbff ? MITTR_SYNTHESIZE_MAX_CHARS - 1 : MITTR_SYNTHESIZE_MAX_CHARS;
+  const head = text.slice(0, safeEnd);
+  const boundary = head.search(/\s\S*$/);
+  return (boundary > 0 ? head.slice(0, boundary) : head).trimEnd();
+};
+
+const readPcmChannels = (contentType) => {
+  const match = /(?:^|[;,\s])channels\s*=\s*(\d+)/i.exec(contentType);
+  return match ? Number.parseInt(match[1], 10) : 1;
+};
+
+const speakWithMittr = async (req, res, getMittrSpeechClient) => {
+  const client = getMittrSpeechClient();
+  if (!client) {
+    return res.status(503).json({ error: 'The Mittr platform cannot be reached right now', reasonCode: 'unreachable' });
+  }
+  const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+  if (!text) {
+    return res.status(400).json({ error: 'Text is required' });
+  }
+
+  const abort = new AbortController();
+  res.on('close', () => {
+    if (!res.writableFinished) abort.abort();
+  });
+
+  try {
+    const { body, contentType } = await client.synthesize(fitMittrText(text), abort.signal);
+    const mediaType = contentType.split(';')[0].trim().toLowerCase();
+    if (!mediaType.startsWith('audio/')) {
+      return res.status(502).json({ error: 'The Mittr platform returned no audio', reasonCode: 'upstream_failed' });
+    }
+    const audio = Buffer.from(await new Response(body).arrayBuffer());
+    let payload = audio;
+    let payloadType = contentType;
+    if (mediaType === 'audio/pcm' || mediaType === 'audio/l16') {
+      if (readPcmChannels(contentType) !== 1) {
+        return res.status(502).json({ error: 'The Mittr platform returned audio this app cannot play', reasonCode: 'upstream_failed' });
+      }
+      const samples = Buffer.from(audio.subarray(0, audio.length & ~1));
+      if (mediaType === 'audio/l16') samples.swap16();
+      payload = pcm16ToWav(samples, parsePcmRateFromFormat(contentType, MITTR_PCM_DEFAULT_RATE));
+      payloadType = 'audio/wav';
+    }
+    res.setHeader('Content-Type', payloadType);
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Length', payload.length);
+    return res.send(payload);
+  } catch (error) {
+    if (abort.signal.aborted || res.headersSent) return undefined;
+    const reasonCode = typeof error?.reasonCode === 'string' ? error.reasonCode : 'upstream_failed';
+    const status = Number.isInteger(error?.statusCode) ? error.statusCode : 502;
+    return res.status(status).json({ error: error instanceof Error ? error.message : 'Speech failed', reasonCode, ...quotaFieldsOf(error) });
+  }
+};
+
+export function registerTtsRoutes(app, { sayTTSCapability, getMittrSpeechClient = () => null }) {
   let ttsModulePromise = null;
   const getTtsModule = async () => {
     if (!ttsModulePromise) {
@@ -44,7 +109,10 @@ export function registerTtsRoutes(app, { sayTTSCapability }) {
   // Server-side TTS endpoint - streams audio from OpenAI TTS API
   app.post('/api/tts/speak', async (req, res) => {
     try {
-      const { text, voice = 'nova', model = 'gpt-4o-mini-tts', speed = 0.9, instructions, providerId, modelId, apiKey, baseURL } = req.body || {};
+      if (req.body?.providerId === 'mittr') {
+        return speakWithMittr(req, res, getMittrSpeechClient);
+      }
+      const { text, voice = 'nova', model = 'gpt-4o-mini-tts', speed = 0.9, instructions, apiKey, baseURL } = req.body || {};
 
       const normalizedBaseURLResult = normalizeCustomOpenAIBaseURL(baseURL);
       if (normalizedBaseURLResult.error) {

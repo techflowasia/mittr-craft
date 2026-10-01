@@ -17,6 +17,9 @@ import { useI18n } from '@/lib/i18n';
 import { formatTimeForPreference } from '@/lib/timeFormat';
 import { useUIStore, type TimeFormatPreference } from '@/stores/useUIStore';
 import { SettingsPageLayout } from '@/components/sections/shared/SettingsPageLayout';
+import { MITTR_PROVIDER_ID, useQuotaMeStore } from '@/lib/mittr-quota/quota-me-store';
+import { isMittrUsageOffered, resolveUsageSelection } from './mittrUsage';
+import { MittrUsagePage } from './MittrUsagePage';
 import {
   SettingsSection,
   SettingsCheckboxRow,
@@ -40,7 +43,9 @@ export const UsagePage: React.FC = () => {
   const { t } = useI18n();
   const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
   const results = useQuotaStore((state) => state.results);
-  const selectedProviderId = useQuotaStore((state) => state.selectedProviderId);
+  const selection = useQuotaStore((state) => state.selectedProviderId);
+  const selectedProviderId = selection === MITTR_PROVIDER_ID ? null : selection;
+  const mittrOffered = isMittrUsageOffered(useQuotaMeStore((state) => state.state));
   const setSelectedProvider = useQuotaStore((state) => state.setSelectedProvider);
   const loadSettings = useQuotaStore((state) => state.loadSettings);
   const fetchAllQuotas = useQuotaStore((state) => state.fetchAllQuotas);
@@ -61,15 +66,9 @@ export const UsagePage: React.FC = () => {
   }, [loadSettings, fetchAllQuotas]);
 
   React.useEffect(() => {
-    if (selectedProviderId) {
-      return;
-    }
-    if (results.length === 0) {
-      return;
-    }
-    const firstConfigured = results.find((entry) => entry.configured)?.providerId;
-    setSelectedProvider(firstConfigured ?? QUOTA_PROVIDERS[0]?.id ?? null);
-  }, [results, selectedProviderId, setSelectedProvider]);
+    const next = resolveUsageSelection(selection, mittrOffered, results);
+    if (next !== selection) setSelectedProvider(next);
+  }, [mittrOffered, results, selection, setSelectedProvider]);
 
   const selectedResult = results.find((entry) => entry.providerId === selectedProviderId) ?? null;
 
@@ -146,6 +145,10 @@ export const UsagePage: React.FC = () => {
   }, [selectedProviderId, selectedModels, toggleModelSelected]);
 
   const providerSelectedModels = selectedProviderId ? (selectedModels[selectedProviderId] ?? []) : [];
+
+  if (selection === MITTR_PROVIDER_ID) {
+    return <MittrUsagePage />;
+  }
 
   if (!selectedProviderId) {
     return (

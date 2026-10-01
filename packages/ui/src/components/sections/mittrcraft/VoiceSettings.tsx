@@ -24,6 +24,7 @@ import {
     SETTINGS_CONTROL_CLUSTER_CLASS,
     SETTINGS_FIELD_LABEL_CLASS,
     SETTINGS_HELPER_CLASS,
+    SETTINGS_NUMBER_STEPPER_ROW_CLASS,
 } from '@/components/sections/shared/SettingsSection';
 import { SettingsInfoHint } from '@/components/sections/shared/SettingsInfoHint';
 import { browserVoiceService } from '@/lib/voice/browserVoiceService';
@@ -32,6 +33,15 @@ import { runtimeFetch } from '@/lib/runtime-fetch';
 import { useI18n } from '@/lib/i18n';
 import { useLocalTTS } from '@/hooks/useLocalTTS';
 import { disposePreviewAudio } from './voicePreviewAudio';
+import { MittrVoiceProviderNote } from './MittrVoiceProviderNote';
+import { useMittrVoiceReadiness } from '@/hooks/useMittrVoiceReadiness';
+import {
+    mittrReasonFor,
+    VOICE_REPLY_MAX_CHARS_MAX,
+    VOICE_REPLY_MAX_CHARS_MIN,
+    VOICE_STEP_CAP_MAX,
+    VOICE_STEP_CAP_MIN,
+} from '@/lib/voice/mittrVoice';
 
 const LOCAL_STT_MODELS = [
     {
@@ -471,6 +481,13 @@ export const VoiceSettings: React.FC = () => {
     const setShowMessageTTSButtons = useConfigStore((state) => state.setShowMessageTTSButtons);
     const dictationEnabled = useConfigStore((state) => state.dictationEnabled);
     const setDictationEnabled = useConfigStore((state) => state.setDictationEnabled);
+    const voiceStepCap = useConfigStore((state) => state.voiceStepCap);
+    const setVoiceStepCap = useConfigStore((state) => state.setVoiceStepCap);
+    const voiceReplyMaxChars = useConfigStore((state) => state.voiceReplyMaxChars);
+    const setVoiceReplyMaxChars = useConfigStore((state) => state.setVoiceReplyMaxChars);
+    const mittrReadiness = useMittrVoiceReadiness(
+        (showMessageTTSButtons && voiceProvider === 'mittr') || (dictationEnabled && sttProvider === 'mittr'),
+    );
 
     const [isSayAvailable, setIsSayAvailable] = useState(false);
     const [sayVoices, setSayVoices] = useState<Array<{ name: string; locale: string }>>([]);
@@ -717,6 +734,64 @@ export const VoiceSettings: React.FC = () => {
         };
     }, [openaiPreviewAudio]);
 
+    const [isMittrPreviewPlaying, setIsMittrPreviewPlaying] = useState(false);
+    const [mittrPreviewAudio, setMittrPreviewAudio] = useState<HTMLAudioElement | null>(null);
+
+    const previewMittrVoice = useCallback(async () => {
+        if (mittrPreviewAudio) {
+            disposePreviewAudio(mittrPreviewAudio);
+            setMittrPreviewAudio(null);
+            setIsMittrPreviewPlaying(false);
+            return;
+        }
+
+        setIsMittrPreviewPlaying(true);
+        let audio: HTMLAudioElement | null = null;
+        try {
+            const response = await runtimeFetch('/api/tts/speak', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    text: t('settings.voice.page.preview.voiceLine', { voiceName: 'Mittr' }),
+                    providerId: 'mittr',
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            audio = new Audio(url);
+
+            audio.onended = () => {
+                disposePreviewAudio(audio);
+                setMittrPreviewAudio(null);
+                setIsMittrPreviewPlaying(false);
+            };
+
+            audio.onerror = () => {
+                disposePreviewAudio(audio);
+                setMittrPreviewAudio(null);
+                setIsMittrPreviewPlaying(false);
+            };
+
+            setMittrPreviewAudio(audio);
+            await audio.play();
+        } catch {
+            disposePreviewAudio(audio);
+            setMittrPreviewAudio(null);
+            setIsMittrPreviewPlaying(false);
+        }
+    }, [mittrPreviewAudio, t]);
+
+    useEffect(() => {
+        return () => {
+            disposePreviewAudio(mittrPreviewAudio);
+        };
+    }, [mittrPreviewAudio]);
+
     const previewCompatibleVoice = useCallback(async () => {
         if (compatiblePreviewAudio) {
             disposePreviewAudio(compatiblePreviewAudio);
@@ -802,6 +877,7 @@ export const VoiceSettings: React.FC = () => {
                             title={t('settings.voice.page.field.provider')}
                             info={(
                                 <ul className="space-y-1">
+                                    <li><strong>{t('settings.voice.mittr.provider')}</strong> {t('settings.voice.mittr.description')}</li>
                                     <li><strong>{t('settings.voice.page.provider.browser')}</strong> {t('settings.voice.page.tooltip.browser')}</li>
                                     <li><strong>{t('settings.voice.page.provider.local')}</strong> {t('settings.voice.page.tooltip.localTts')}</li>
                                     <li><strong>{t('settings.voice.page.provider.openai')}</strong> {t('settings.voice.page.tooltip.openai')}</li>
@@ -816,6 +892,7 @@ export const VoiceSettings: React.FC = () => {
                                 aria-label={t('settings.voice.page.field.provider')}
                                 className="w-full gap-1.5 sm:gap-2"
                                 options={[
+                                    { value: 'mittr', label: t('settings.voice.mittr.provider') },
                                     { value: 'browser', label: t('settings.voice.page.provider.browser') },
                                     { value: 'local', label: t('settings.voice.page.provider.local') },
                                     { value: 'openai', label: t('settings.voice.page.provider.openai') },
@@ -834,6 +911,10 @@ export const VoiceSettings: React.FC = () => {
                                 ]}
                             />
                         </SettingsControlGroup>
+
+                            {voiceProvider === 'mittr' && (
+                                <MittrVoiceProviderNote reason={mittrReasonFor(mittrReadiness, 'speak')} />
+                            )}
 
                             {/* OpenAI API Key */}
                             {voiceProvider === 'openai' && (
@@ -1010,6 +1091,19 @@ export const VoiceSettings: React.FC = () => {
                                         <span className={SETTINGS_HELPER_CLASS}>{t('settings.voice.page.field.configuredAbove')}</span>
                                     )}
 
+                                    {voiceProvider === 'mittr' && (
+                                        <Button
+                                            size="xs"
+                                            variant="ghost"
+                                            onClick={previewMittrVoice}
+                                            title={t('settings.voice.page.actions.preview')}
+                                            aria-label={t('settings.voice.page.actions.preview')}
+                                            disabled={!isMittrPreviewPlaying && mittrReadiness?.speak !== true}
+                                        >
+                                            {isMittrPreviewPlaying ? <Icon name="stop" className="w-3.5 h-3.5" /> : <Icon name="play" className="w-3.5 h-3.5" />}
+                                        </Button>
+                                    )}
+
                                     {voiceProvider === 'say' && isSayAvailable && sayVoices.length > 0 && (
                                         <>
                                             <Select value={sayVoice} onValueChange={setSayVoice}>
@@ -1107,6 +1201,7 @@ export const VoiceSettings: React.FC = () => {
                             title={t('settings.voice.page.field.provider')}
                             info={(
                                 <ul className="space-y-1">
+                                    <li><strong>{t('settings.voice.mittr.provider')}</strong> {t('settings.voice.mittr.description')}</li>
                                     <li><strong>{t('settings.voice.page.provider.local')}</strong> {t('settings.voice.page.tooltip.sttLocal')}</li>
                                     <li><strong>{t('settings.voice.page.provider.server')}</strong> {t('settings.voice.page.tooltip.sttServer')}</li>
                                 </ul>
@@ -1118,11 +1213,16 @@ export const VoiceSettings: React.FC = () => {
                                 aria-label={t('settings.voice.page.field.provider')}
                                 className="w-full gap-1.5 sm:gap-2"
                                 options={[
+                                    { value: 'mittr', label: t('settings.voice.mittr.provider') },
                                     { value: 'local', label: t('settings.voice.page.provider.local') },
                                     { value: 'openai-compatible', label: t('settings.voice.page.provider.server') },
                                 ]}
                             />
                         </SettingsControlGroup>
+
+                        {sttProvider === 'mittr' && (
+                            <MittrVoiceProviderNote reason={mittrReasonFor(mittrReadiness, 'listen')} />
+                        )}
 
                         {sttProvider === 'local' && (
                             <div className="space-y-1.5">
@@ -1214,6 +1314,42 @@ export const VoiceSettings: React.FC = () => {
                         )}
                     </>
                 )}
+            </SettingsSection>
+
+            <SettingsSection
+                settingsItem="voice.assistant"
+                title={t('voice.talk.label')}
+                contentClassName="space-y-4"
+            >
+                <SettingsFieldRow
+                    label={t('settings.voice.assistant.stepCap')}
+                    info={t('settings.voice.assistant.stepCapHint')}
+                >
+                    <div className={SETTINGS_NUMBER_STEPPER_ROW_CLASS}>
+                        <NumberInput
+                            value={voiceStepCap}
+                            onValueChange={setVoiceStepCap}
+                            min={VOICE_STEP_CAP_MIN}
+                            max={VOICE_STEP_CAP_MAX}
+                            step={1}
+                            aria-label={t('settings.voice.assistant.stepCap')}
+                            className="w-16 tabular-nums"
+                        />
+                    </div>
+                </SettingsFieldRow>
+                <SettingsFieldRow label={t('settings.voice.assistant.replyMaxChars')}>
+                    <div className={SETTINGS_NUMBER_STEPPER_ROW_CLASS}>
+                        <NumberInput
+                            value={voiceReplyMaxChars}
+                            onValueChange={setVoiceReplyMaxChars}
+                            min={VOICE_REPLY_MAX_CHARS_MIN}
+                            max={VOICE_REPLY_MAX_CHARS_MAX}
+                            step={500}
+                            aria-label={t('settings.voice.assistant.replyMaxChars')}
+                            className="w-20 tabular-nums"
+                        />
+                    </div>
+                </SettingsFieldRow>
             </SettingsSection>
         </>
     );

@@ -7,6 +7,7 @@ import { MittrCraftControlError, asControlError } from './error.js';
 import { MITTRCRAFT_ALL_ACTIONS } from './actions.js';
 import { writeScreenshot } from './screenshots.js';
 import { chromeSessionName } from './chrome-control.js';
+import { sanitizeForTTS } from '../text/summarization.js';
 
 const APP_NAME_PATTERN = /^[\w .()&-]{1,80}$/;
 
@@ -15,6 +16,13 @@ const MAX_WAIT_TIMEOUT_SECONDS = 86_400;
 const WAIT_POLL_INTERVAL_MS = 500;
 // One service, both capabilities: which tool asked is the caller's concern.
 const CONTROL_ACTIONS = new Set(MITTRCRAFT_ALL_ACTIONS);
+const VOICE_REPLY_MAX_CHARS = Object.freeze({ fallback: 8000, min: 1000, max: 30000 });
+
+const voiceReplyMaxChars = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return VOICE_REPLY_MAX_CHARS.fallback;
+  return Math.min(VOICE_REPLY_MAX_CHARS.max, Math.max(VOICE_REPLY_MAX_CHARS.min, Math.round(n)));
+};
 const SCHEDULE_TASK_ID_ACTIONS = new Set([
   'schedule.run',
   'schedule.delete',
@@ -153,6 +161,7 @@ export const createMittrCraftControlService = (dependencies) => {
     computerControl = null,
     chromeControl = null,
     chromeApprovals = null,
+    persistSettings = null,
     // A function, not a value: brokerBaseUrl/ensureFreshSession only exist once the Mittr
     // shim has started, which happens after this service is constructed. Reading through a
     // getter means the wiring in index.js can fill this in later without this file caring
@@ -706,6 +715,42 @@ export const createMittrCraftControlService = (dependencies) => {
     return finish('step_limit', { reason: `stopped after ${limit} steps` });
   };
 
+  const conversationGrants = new Set();
+
+  const isChromeHostAllowed = async (sessionId, host) => (
+    conversationGrants.has(sessionId)
+    || (chromeApprovals ? await chromeApprovals.isApproved(sessionId, host) : false)
+  );
+
+  const allowChromeSite = (input, options = {}) => {
+    const sessionId = asNonEmptyString(options.sessionId);
+    if (!sessionId) throw new MittrCraftControlError('chrome.allow_site needs the calling conversation', 400);
+    if (!chromeControl || chromeControl.available !== true || !chromeApprovals) {
+      throw new MittrCraftControlError('The Chrome tool is not bundled in this build of MittrCraft', 503);
+    }
+    const host = required(input.host, 'host').toLowerCase();
+    let parsed = null;
+    try {
+      parsed = new URL(`http://${host}`);
+    } catch {
+      parsed = null;
+    }
+    if (!parsed || parsed.hostname !== host || !/^[a-z0-9.-]+$/.test(host)) {
+      throw new MittrCraftControlError('host must be a plain site name such as example.com', 400);
+    }
+    conversationGrants.add(sessionId);
+    return { allowed: true, scope: 'conversation', sites: 'all' };
+  };
+
+  const endChromeConversation = (sessionId) => {
+    const id = asNonEmptyString(sessionId);
+    if (!id) return;
+    conversationGrants.delete(id);
+    chromeApprovals?.forgetSession(id);
+  };
+
+  const chromeModes = new Map();
+
   const chromeAction = async (action, input, contextDirectory, options = {}) => {
     const sessionId = asNonEmptyString(options.sessionId);
     if (!sessionId) throw new MittrCraftControlError('The Chrome tool needs the calling session', 400);
@@ -714,24 +759,40 @@ export const createMittrCraftControlService = (dependencies) => {
     const runOptions = {
       sessionName: chromeSessionName(sessionId),
       profile: profile ?? 'Default',
-      headed: settings.agentChromeHeaded === true,
+      headed: options.headed === true || settings.agentChromeHeaded === true,
       signal: options.signal,
     };
 
     if (action === 'chrome.close') {
       chromeApprovals.forgetSession(sessionId);
+      chromeModes.delete(runOptions.sessionName);
       await chromeControl.run(['close'], runOptions).catch(() => undefined);
       return { closed: true };
     }
+    const launchedHeaded = chromeModes.get(runOptions.sessionName);
+    if (launchedHeaded === undefined ? runOptions.headed : launchedHeaded !== runOptions.headed) {
+      await chromeControl.run(['close'], runOptions).catch(() => undefined);
+    }
+    chromeModes.set(runOptions.sessionName, runOptions.headed);
     if (!chromeControl.chromeInstalled()) {
       throw new MittrCraftControlError('Google Chrome is not installed on this Mac; ask the user to install it', 503);
     }
     if (!profile) {
-      throw new MittrCraftControlError('No Chrome profile is chosen yet; ask the user to choose a Chrome profile in Settings → MittrCraft tools', 409);
+      const available = await chromeControl.profiles().catch(() => []);
+      const only = available.length === 1 ? asNonEmptyString(available[0]?.directory) : null;
+      if (!only) {
+        throw new MittrCraftControlError(
+          'No Chrome profile is chosen yet; ask the user to choose one in Settings → General → MittrCraft Tools → Chrome profile',
+          409,
+          { code: 'chrome_profile_required' },
+        );
+      }
+      runOptions.profile = only;
+      if (typeof persistSettings === 'function') await persistSettings({ agentChromeProfile: only }).catch(() => undefined);
     }
 
     const ensureApproved = async (host) => {
-      if (await chromeApprovals.isApproved(sessionId, host)) return;
+      if (await isChromeHostAllowed(sessionId, host)) return;
       if (options.approvalAnswered === true) {
         const reply = await chromeApprovals.awaitDecision(sessionId, host, options.signal);
         if (reply === 'once' || reply === 'always') return;
@@ -757,7 +818,7 @@ export const createMittrCraftControlService = (dependencies) => {
       }
       const host = parsed?.hostname.toLowerCase() || landed;
       const web = parsed?.protocol === 'http:' || parsed?.protocol === 'https:';
-      if (web && await chromeApprovals.isApproved(sessionId, host)) return;
+      if (web && await isChromeHostAllowed(sessionId, host)) return;
       throw new MittrCraftControlError(
         `The page moved to ${host}, which the user has not allowed; nothing from it is returned. Call chrome.open with that page's URL to ask the user`,
         409,
@@ -853,6 +914,7 @@ export const createMittrCraftControlService = (dependencies) => {
         }
         return computerAction(action, input, contextDirectory);
       }
+      if (action === 'chrome.allow_site') return allowChromeSite(input, options);
       if (action.startsWith('chrome.')) {
         if (!chromeControl || chromeControl.available !== true || !chromeApprovals) {
           throw new MittrCraftControlError('The Chrome tool is not bundled in this build of MittrCraft', 503);
@@ -935,6 +997,18 @@ export const createMittrCraftControlService = (dependencies) => {
         if (action === 'session.status') {
           return { sessionId: sessionID, directory, sessionStatus: await sessionStatus(client, sessionID, directory) };
         }
+        if (action === 'session.stop') {
+          await client.session.abort({ sessionID, directory });
+          return { stopped: true, sessionId: sessionID, directory };
+        }
+        if (action === 'session.read_reply') {
+          const [latest] = await sessionMessages(client, sessionID, directory, 'assistant', 1);
+          if (!latest) return { sessionId: sessionID, directory, text: null, truncated: false };
+          const settings = await readSettingsFromDiskMigrated();
+          const cap = voiceReplyMaxChars(settings?.voiceReplyMaxChars);
+          const spoken = sanitizeForTTS(latest.text);
+          return { sessionId: sessionID, directory, text: spoken.slice(0, cap), truncated: spoken.length > cap };
+        }
         if (action === 'session.messages') {
           if (input.timeout !== undefined && input.wait !== true) throw new MittrCraftControlError('timeout requires wait', 400);
           const role = input.lastAssistant === true ? 'assistant' : (asNonEmptyString(input.role) || 'all');
@@ -955,5 +1029,5 @@ export const createMittrCraftControlService = (dependencies) => {
     }
   };
 
-  return { execute, chromeProfiles, removeChromeHost };
+  return { execute, chromeProfiles, removeChromeHost, isChromeHostAllowed, endChromeConversation };
 };

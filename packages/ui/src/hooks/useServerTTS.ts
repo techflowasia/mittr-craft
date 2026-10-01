@@ -99,7 +99,7 @@ interface SpeakOptions {
   instructions?: string;
   /** Summarize long text before speaking (defaults to true) */
   summarize?: boolean;
-  /** Provider ID for summarization model */
+  /** Server speech provider; `mittr` synthesizes through the Mittr platform */
   providerId?: string;
   /** Model ID for summarization */
   modelId?: string;
@@ -135,9 +135,7 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   
-  // Get current model and API settings from config store.
-  const currentProviderId = useConfigStore((state) => state.currentProviderId);
-  const currentModelId = useConfigStore((state) => state.currentModelId);
+  // Get API settings from config store.
   const openaiApiKey = useConfigStore((state) => state.openaiApiKey);
   const openaiCompatibleUrl = useConfigStore((state) => state.openaiCompatibleUrl);
   const openaiCompatibleApiKey = useConfigStore((state) => state.openaiCompatibleApiKey);
@@ -275,9 +273,8 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
           speed: options?.speed || 0.9,
           instructions: options?.instructions,
           summarize: false,
-          // Use provided provider/model, or fall back to current chat model
-          providerId: options?.providerId || currentProviderId || undefined,
-          modelId: options?.modelId || currentModelId || undefined,
+          providerId: options?.providerId || undefined,
+          modelId: options?.modelId || undefined,
           // Send API key from settings if available
           apiKey: options?.baseURL ? (openaiCompatibleApiKey || undefined) : (openaiApiKey || undefined),
           // Send custom base URL for OpenAI-compatible servers
@@ -288,7 +285,7 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
-        throw new Error(errorData.error || `HTTP ${response.status}`);
+        throw new Error(errorData.reasonCode || errorData.error || `HTTP ${response.status}`);
       }
 
       // Get audio data from response
@@ -344,7 +341,7 @@ export function useServerTTS(options: UseServerTTSOptions = {}): UseServerTTSRet
       options?.onError?.(errorMsg);
       setIsPlaying(false);
     }
-  }, [stop, currentProviderId, currentModelId, openaiApiKey, openaiCompatibleApiKey]);
+  }, [stop, openaiApiKey, openaiCompatibleApiKey]);
 
   // Cleanup on unmount
   useEffect(() => {

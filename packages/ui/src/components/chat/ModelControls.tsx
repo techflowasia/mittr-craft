@@ -18,7 +18,8 @@ import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Icon } from "@/components/icon/Icon";
 import type { IconName } from "@/components/icon/icons";
-import { ModelPickerList, type ModelPickerEntry, type ModelPickerProvider } from '@/components/model-picker/ModelPickerList';
+import { ModelPickerList, ModelPickerStatusPill, type ModelPickerEntry, type ModelPickerProvider } from '@/components/model-picker/ModelPickerList';
+import { useMittrAgentEntryStatus } from '@/components/model-picker/mittrAgentStatus';
 import { useIsVSCodeRuntime } from '@/hooks/useRuntimeAPIs';
 import { isDesktopShell } from '@/lib/desktop';
 import { getAgentColor } from '@/lib/agentColors';
@@ -427,6 +428,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     // Use global state for model selector (allows Ctrl+M shortcut)
     const agentMenuOpen = isModelSelectorOpen;
     const setAgentMenuOpen = setModelSelectorOpen;
+    const mittrEntryStatus = useMittrAgentEntryStatus(agentMenuOpen || activeMobilePanel === 'model');
     const openAddProviderSettings = React.useCallback(() => {
         setSelectedProvider(ADD_PROVIDER_ID);
         setSettingsPage('providers');
@@ -1668,6 +1670,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                 new Map([...capabilityIcons, ...modalityIcons].map((icon) => [icon.key, icon])).values()
             );
             const contextText = metadata?.limit?.context ? `${formatTokens(metadata.limit.context)} ctx` : null;
+            const quotaStatus = mittrEntryStatus({ model, providerID: providerId, modelID: modelId });
 
             return (
                 <div
@@ -1681,9 +1684,12 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                         <button
                             type="button"
                             onClick={() => handleMobileModelApply(providerId, modelId, resolvedVariant)}
+                            disabled={quotaStatus?.blocked}
+                            title={quotaStatus?.title}
                             className={cn(
                                 'flex flex-1 min-w-0 items-start gap-2 text-left',
-                                'focus:outline-none focus-visible:ring-1 focus-visible:ring-primary rounded-lg'
+                                'focus:outline-none focus-visible:ring-1 focus-visible:ring-primary rounded-lg',
+                                quotaStatus?.blocked && 'cursor-not-allowed text-muted-foreground'
                             )}
                         >
                             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -1691,9 +1697,10 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                     {showProviderLogo ? (
                                         <ProviderLogo providerId={providerId} className="size-3.5 flex-shrink-0" />
                                     ) : null}
-                                    <span className="typography-meta font-medium text-foreground truncate">
+                                    <span className={cn('typography-meta font-medium truncate', quotaStatus?.blocked ? 'text-muted-foreground' : 'text-foreground')}>
                                         {getModelDisplayName(model)}
                                     </span>
+                                    {quotaStatus ? <ModelPickerStatusPill status={quotaStatus} /> : null}
                                     {isSelected ? <Icon name="check" className="size-4 flex-shrink-0 text-primary" /> : null}
                                 </div>
                                 {contextText || indicatorIcons.length > 0 ? (
@@ -2358,6 +2365,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                 labels={modelPickerLabels}
                                 selectedModel={currentProviderId && currentModelId ? { providerID: currentProviderId, modelID: currentModelId } : null}
                                 hiddenModels={hiddenModels}
+                                entryStatus={mittrEntryStatus}
                                 onActiveKeyDown={handleModelPickerKeyDown}
                                 onActiveEntryChange={(entry) => { activeModelPickerEntryRef.current = entry; }}
                                 onVariantKey={handleThinkingVariantKey}

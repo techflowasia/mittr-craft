@@ -12,7 +12,7 @@ import { openRuntimeWebSocket } from '@/lib/relay/runtime-socket';
 import { type RelayTunnelWebSocket } from '@/lib/relay/tunnel-client';
 
 export interface DictationStartOptions {
-    provider?: 'local' | 'openai-compatible';
+    provider?: 'local' | 'openai-compatible' | 'mittr';
     language?: string;
     localModel?: string;
     openaiCompatible?: {
@@ -31,19 +31,24 @@ interface DictationServerMessage {
     error?: string;
     retryable?: boolean;
     reasonCode?: string;
+    resetsAt?: string;
 }
 
 interface DictationStreamError extends Error {
     retryable: boolean;
     reasonCode?: string;
+    resetsAt?: string;
 }
 
-const createStreamError = (message: string, retryable: boolean, reasonCode?: string): DictationStreamError => {
+const createStreamError = (message: string, retryable: boolean, reasonCode?: string, resetsAt?: string): DictationStreamError => {
     const error = new Error(message) as DictationStreamError;
     error.name = 'DictationStreamError';
     error.retryable = retryable;
     if (reasonCode) {
         error.reasonCode = reasonCode;
+    }
+    if (typeof resetsAt === 'string') {
+        error.resetsAt = resetsAt;
     }
     return error;
 };
@@ -343,6 +348,7 @@ export class DictationClient {
                     message.error || 'Dictation failed',
                     message.retryable !== false,
                     message.reasonCode,
+                    message.resetsAt,
                 );
                 const pendingStart = this.pendingStarts.get(dictationId);
                 if (pendingStart) {

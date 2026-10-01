@@ -55,7 +55,7 @@ import { createHmrStateRuntime } from './lib/opencode/hmr-state-runtime.js';
 import { startMittrShim } from './lib/mittr/index.js';
 import { MITTR_PROVIDER_ID } from './lib/mittr/catalog-routes.js';
 import { resolveBrokerBaseUrl } from './lib/mittr/broker-target.js';
-import { upsertProviderConfig, removeProviderConfig, readProviderModelIds } from './lib/opencode/providers.js';
+import { upsertProviderConfig, removeProviderConfig, readProviderModelIds, syncProviderDefaultModel } from './lib/opencode/providers.js';
 import { readAuthFile, writeAuthFile } from './lib/opencode/auth.js';
 import { createOpenCodeNetworkRuntime } from './lib/opencode/network-runtime.js';
 import { createOpenCodeAuthStateRuntime } from './lib/opencode/auth-state-runtime.js';
@@ -105,6 +105,7 @@ import { createBrowserControlBroker } from './lib/browser-control/broker.js';
 import { createDevServerScanner } from './lib/dev-servers/routes.js';
 import { createDevTunnelRuntime } from './lib/dev-tunnel/runtime.js';
 import { registerBrowserControlRoutes } from './lib/browser-control/routes.js';
+import { registerVoiceAssistantRoutes } from './lib/voice-assistant/routes.js';
 import { createSystemPromptRuntime } from './lib/system-prompt/runtime.js';
 import { createMittrCraftSessionService } from './lib/mittrcraft-sessions/routes.js';
 import { createScheduledTaskService } from './lib/scheduled-tasks/service.js';
@@ -114,6 +115,8 @@ import { createChromeControl } from './lib/mittrcraft-control/chrome-control.js'
 import { createChromeApprovals } from './lib/mittrcraft-control/chrome-approvals.js';
 import { createMittrWorkService } from './lib/mittr-work/service.js';
 import { createMittrBrowserStepper } from './lib/mittr-browser-step/service.js';
+import { createMittrSpeechClient } from './lib/mittr-speech/client.js';
+import { registerVoiceSpeechRoutes } from './lib/voice-speech/routes.js';
 import { createMittrGoalJudge } from './lib/mittr-goal-judge/service.js';
 import webPush from 'web-push';
 
@@ -977,7 +980,7 @@ const bootstrapRuntime = createBootstrapRuntime({
   registerServerStatusRoutes,
   registerCommonRequestMiddleware,
   registerAuthAndAccessRoutes,
-  registerTtsRoutes,
+  registerTtsRoutes: (app, options) => registerTtsRoutes(app, { ...options, getMittrSpeechClient }),
   registerNotificationRoutes,
   registerMittrCraftRoutes,
   registerAgentToolRoutes: (app, options) => options.agentToolRuntime.registerRoutes(app, options.express),
@@ -1019,7 +1022,7 @@ const tunnelWiringRuntime = createTunnelWiringRuntime({
 });
 const startupPipelineRuntime = createStartupPipelineRuntime({
   createTerminalRuntime,
-  createDictationRuntime,
+  createDictationRuntime: (options) => createDictationRuntime({ ...options, getMittrSpeechClient }),
   createMessageStreamWsRuntime,
   createServerStartupRuntime,
 });
@@ -1243,6 +1246,8 @@ let jiraControl = null;
 const getJiraControl = () => jiraControl;
 let browserStepper = null;
 const getBrowserStepper = () => browserStepper;
+let mittrSpeechClient = null;
+const getMittrSpeechClient = () => mittrSpeechClient;
 
 const mittrCraftControlService = createMittrCraftControlService({
   readSettingsFromDiskMigrated,
@@ -1259,6 +1264,7 @@ const mittrCraftControlService = createMittrCraftControlService({
   computerControl,
   chromeControl,
   chromeApprovals,
+  persistSettings,
 });
 
 const ensureGlobalWatcherStarted = async () => {
@@ -1384,7 +1390,8 @@ const syncMittrModels = (shim) => async (models) => {
 
   if (wanted.length === 0) {
     const removed = removeProviderConfig(MITTR_PROVIDER_ID, null, 'user');
-    if (removed) await refreshOpenCodeAfterConfigChange('Mittr catalog: no models offered');
+    const released = syncProviderDefaultModel(MITTR_PROVIDER_ID, [], null);
+    if (removed || released) await refreshOpenCodeAfterConfigChange('Mittr catalog: no models offered');
     return;
   }
 
@@ -1402,7 +1409,8 @@ const syncMittrModels = (shim) => async (models) => {
     { hasStoredAuth: true },
   );
 
-  if (!unchanged) await refreshOpenCodeAfterConfigChange('Mittr catalog changed');
+  const adopted = syncProviderDefaultModel(MITTR_PROVIDER_ID, models.map((model) => model.alias), null);
+  if (!unchanged || adopted) await refreshOpenCodeAfterConfigChange('Mittr catalog changed');
 };
 
 async function main(options = {}) {
@@ -1634,6 +1642,10 @@ async function main(options = {}) {
       brokerBaseUrl: mittrShim.brokerBaseUrl,
       ensureFreshSession: mittrShim.ensureFreshSession,
     });
+    mittrSpeechClient = createMittrSpeechClient({
+      brokerBaseUrl: mittrShim.brokerBaseUrl,
+      ensureFreshSession: mittrShim.ensureFreshSession,
+    });
     mittrGoalJudge = createMittrGoalJudge({
       brokerBaseUrl: mittrShim.brokerBaseUrl,
       ensureFreshSession: mittrShim.ensureFreshSession,
@@ -1851,6 +1863,19 @@ async function main(options = {}) {
   relayService.registerRoutes(app);
 
   registerBrowserControlRoutes(app, { express, broker: browserControlBroker });
+  registerVoiceAssistantRoutes(app, {
+    controlService: mittrCraftControlService,
+    readSettingsFromDiskMigrated,
+    brokerBaseUrl: mittrShim?.brokerBaseUrl,
+    ensureFreshSession: mittrShim?.ensureFreshSession,
+    buildOpenCodeUrl,
+    getOpenCodeAuthHeaders,
+    waitForOpenCodeReady,
+    chromeControl,
+    computerControl,
+    isBrowserMounted: () => [...uiMittrCraftEventClients].some((client) => client.mittrcraftBrowserCapable === true),
+  });
+  registerVoiceSpeechRoutes(app, { express, getMittrSpeechClient });
 
   // One scanner backs both discovery and the tunnel allowlist, so a port the
   // user can see is exactly a port the tunnel will dial.

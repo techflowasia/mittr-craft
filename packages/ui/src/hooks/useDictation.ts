@@ -12,7 +12,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { dictationClient, type DictationStartOptions } from '@/lib/dictation/dictation-client';
 import { DictationStreamSender } from '@/lib/dictation/dictation-stream-sender';
 import { useDictationAudioSource } from '@/lib/dictation/use-dictation-audio-source';
+import { LLM_QUOTA_EXHAUSTED } from '@/lib/mittr-quota/exhausted';
+import { useSpeechQuotaStore } from '@/lib/mittr-quota/speech-quota-store';
 import { useConfigStore } from '@/stores/useConfigStore';
+
+export const noteDictationFailure = (error: Error): string | null => {
+    const { reasonCode, resetsAt } = error as Error & { reasonCode?: unknown; resetsAt?: unknown };
+    if (reasonCode === LLM_QUOTA_EXHAUSTED) {
+        useSpeechQuotaStore.getState().block('stt', typeof resetsAt === 'string' ? resetsAt : null);
+    }
+    return typeof reasonCode === 'string' ? reasonCode : null;
+};
 
 export type DictationStatus = 'idle' | 'recording' | 'uploading' | 'failed';
 
@@ -47,6 +57,9 @@ const toError = (value: unknown): Error =>
 const getDictationStartOptions = (): DictationStartOptions => {
     const state = useConfigStore.getState();
     const language = state.sttLanguage?.trim();
+    if (state.sttProvider === 'mittr') {
+        return { provider: 'mittr' };
+    }
     if (state.sttProvider === 'openai-compatible') {
         return {
             provider: 'openai-compatible',
@@ -117,8 +130,7 @@ export function useDictation(options: UseDictationOptions = {}): UseDictationRes
     const reportError = useCallback((err: unknown) => {
         const normalized = toError(err);
         setError(normalized.message);
-        const reason = (normalized as Error & { reasonCode?: string }).reasonCode;
-        setErrorReason(typeof reason === 'string' ? reason : null);
+        setErrorReason(noteDictationFailure(normalized));
         onErrorRef.current?.(normalized);
     }, []);
 
@@ -179,6 +191,9 @@ export function useDictation(options: UseDictationOptions = {}): UseDictationRes
             setStatus('idle');
             const transcriptText = text.trim().length > 0 ? text.trim() : latestPartialRef.current.trim();
             clearStreamingState();
+            if (useConfigStore.getState().sttProvider === 'mittr') {
+                useSpeechQuotaStore.getState().clear('stt');
+            }
             if (!transcriptText) {
                 return null;
             }

@@ -16,6 +16,7 @@ import { registerScheduledTaskRoutes } from '../scheduled-tasks/routes.js';
 import { registerMittrCraftSessionRoutes } from '../mittrcraft-sessions/routes.js';
 import { registerMittrCraftControlRoutes } from '../mittrcraft-control/routes.js';
 import { registerMittrWorkRoutes } from '../mittr-work/routes.js';
+import { registerMittrQuotaRoutes } from '../mittr-quota/routes.js';
 import { registerMittrIntegrationsRoutes } from '../mittr-integrations/routes.js';
 import { registerMarkdownImageGrantRoutes } from '../markdown-image-grants/routes.js';
 import { registerSkillRoutes } from './skill-routes.js';
@@ -187,6 +188,11 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     });
 
     registerMittrIntegrationsRoutes(app, {
+      brokerBaseUrl,
+      ensureFreshSession,
+    });
+
+    registerMittrQuotaRoutes(app, {
       brokerBaseUrl,
       ensureFreshSession,
     });

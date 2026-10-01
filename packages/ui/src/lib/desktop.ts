@@ -215,11 +215,13 @@ export type DesktopSettings = {
   responseStylePreset?: 'concise' | 'detailed' | 'mentor' | 'pushback' | 'noFiller' | 'matchEnergy' | 'warmPeer' | 'custom';
   responseStyleCustomInstructions?: string;
   dictationEnabled?: boolean;
-  sttProvider?: 'local' | 'openai-compatible';
+  sttProvider?: 'local' | 'openai-compatible' | 'mittr';
   sttServerUrl?: string;
   sttModel?: string;
   sttLocalModel?: string;
   sttLanguage?: string;
+  voiceStepCap?: number;
+  voiceReplyMaxChars?: number;
   // Global draft welcome starters (pinned commands/skills), persisted to settings.json
   draftStarters?: DraftStarterRef[];
   draftStartersVisible?: boolean;

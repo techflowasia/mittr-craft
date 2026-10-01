@@ -265,10 +265,40 @@ function removeProviderConfig(providerId, workingDirectory, scope = 'user') {
   return true;
 }
 
+function syncProviderDefaultModel(providerId, modelIds, workingDirectory, scope = 'user') {
+  if (scope !== 'user' && scope !== 'project') {
+    throw new Error('Invalid scope');
+  }
+  const layers = readConfigLayers(workingDirectory);
+  const targetPath = scope === 'project'
+    ? (layers.paths.projectPath || layers.paths.userPath)
+    : layers.paths.userPath;
+  const targetConfig = getConfigForPath(layers, targetPath);
+  const prefix = `${providerId}/`;
+  const current = typeof targetConfig.model === 'string' ? targetConfig.model.trim() : '';
+  const offered = Array.isArray(modelIds) ? modelIds.filter((id) => typeof id === 'string' && id) : [];
+  const ownsCurrent = current.startsWith(prefix);
+
+  let next = current;
+  if (offered.length === 0) {
+    if (!ownsCurrent) return false;
+    next = '';
+  } else if (!current || (ownsCurrent && !offered.includes(current.slice(prefix.length)))) {
+    next = `${prefix}${offered[0]}`;
+  }
+  if (next === current) return false;
+
+  if (next) targetConfig.model = next;
+  else delete targetConfig.model;
+  writeConfig(targetConfig, targetPath || CONFIG_FILE);
+  return true;
+}
+
 export {
   getProviderSources,
   readProviderModelIds,
   removeProviderConfig,
+  syncProviderDefaultModel,
   upsertProviderConfig,
   validateCustomProviderConfig,
 };
