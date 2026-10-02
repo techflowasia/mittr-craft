@@ -3,10 +3,11 @@ import { engineDataDir } from './home.js';
 import path from 'path';
 import os from 'os';
 
-const OPENCODE_DATA_DIR = path.join(engineDataDir());
-const AUTH_FILE = path.join(OPENCODE_DATA_DIR, 'auth.json');
+const dataDir = () => engineDataDir();
+const authFile = () => path.join(dataDir(), 'auth.json');
 
 function readAuthFile() {
+  const AUTH_FILE = authFile();
   if (!fs.existsSync(AUTH_FILE)) {
     return {};
   }
@@ -24,6 +25,8 @@ function readAuthFile() {
 }
 
 function writeAuthFile(auth) {
+  const OPENCODE_DATA_DIR = dataDir();
+  const AUTH_FILE = authFile();
   try {
     if (!fs.existsSync(OPENCODE_DATA_DIR)) {
       fs.mkdirSync(OPENCODE_DATA_DIR, { recursive: true, mode: 0o700 });
@@ -80,6 +83,5 @@ export {
   removeProviderAuth,
   getProviderAuth,
   listProviderAuths,
-  AUTH_FILE,
-  OPENCODE_DATA_DIR
+  authFile,
 };

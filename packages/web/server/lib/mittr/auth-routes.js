@@ -35,6 +35,7 @@ export function registerMittrAuthRoutes(app, {
   // than left to the client, so a person who signs in has models to choose from
   // without a second deliberate step they have no reason to know about.
   onSignIn = null,
+  onAccountChange = null,
   redirectUri = authRedirectUri(),
 }) {
   const url = (endpoint) => new URL(endpoint, brokerBaseUrl).toString();
@@ -47,6 +48,15 @@ export function registerMittrAuthRoutes(app, {
   // refresh token as it answers, so a second concurrent call would present a
   // token that is already dead and sign the developer out mid-task.
   let refreshing = null;
+
+  const announceAccountChange = async () => {
+    if (!onAccountChange) return;
+    try {
+      await onAccountChange();
+    } catch (error) {
+      console.warn('[mittr] switching account failed:', error?.message ?? error);
+    }
+  };
 
   const statusOf = (session) => (session
     ? { signedIn: true, userId: session.subject.userId, displayName: session.subject.displayName }
@@ -103,9 +113,12 @@ export function registerMittrAuthRoutes(app, {
       return res.status(502).json({ error: 'Mittr returned an unusable session' });
     }
 
+    const before = sessionStore.read()?.subject.userId ?? null;
     sessionStore.write(session);
 
-    if (onSignIn) {
+    if (onAccountChange && before !== session.subject.userId) {
+      await announceAccountChange();
+    } else if (onSignIn) {
       // Sign-in has already succeeded by this point. A catalog that cannot be
       // fetched is a smaller failure than a sign-in that reports itself failed,
       // so this never changes the answer.
@@ -121,9 +134,25 @@ export function registerMittrAuthRoutes(app, {
 
   app.get('/api/mittr/auth/status', (_req, res) => res.json(statusOf(sessionStore.read())));
 
-  app.delete('/api/mittr/auth/session', (_req, res) => {
+  app.delete('/api/mittr/auth/session', async (_req, res) => {
     sessionStore.clear();
-    return res.json({ signedIn: false });
+    const next = sessionStore.read();
+    if (next) await announceAccountChange();
+    return res.json(statusOf(next));
+  });
+
+  app.get('/api/mittr/auth/accounts', (_req, res) => res.json({ accounts: sessionStore.list?.() ?? [] }));
+
+  app.post('/api/mittr/auth/accounts/activate', readJson('4kb'), async (req, res) => {
+    const userId = typeof req.body?.userId === 'string' ? req.body.userId : '';
+    if (sessionStore.read()?.subject.userId === userId) return res.json(statusOf(sessionStore.read()));
+    try {
+      sessionStore.activate(userId);
+    } catch {
+      return res.status(404).json({ error: 'That account is not signed in on this machine' });
+    }
+    await announceAccountChange();
+    return res.json(statusOf(sessionStore.read()));
   });
 
   /**
@@ -146,14 +175,18 @@ export function registerMittrAuthRoutes(app, {
           });
 
           if (response.status === 401) {
-            sessionStore.clear();
-            return null;
+            const wasActive = sessionStore.read()?.subject.userId === session.subject.userId;
+            if (sessionStore.signOut) sessionStore.signOut(session.subject.userId);
+            else sessionStore.clear();
+            if (wasActive && sessionStore.read()) void announceAccountChange();
+            return wasActive ? sessionStore.read() : null;
           }
           if (!response.ok) return sessionStore.read();
 
           const refreshed = parseSession(await response.json());
-          sessionStore.write(refreshed);
-          return refreshed;
+          sessionStore.write(refreshed, { activate: false });
+          const current = sessionStore.read();
+          return current?.subject.userId === refreshed.subject.userId ? refreshed : current;
         } catch {
           // A network failure is not a rejected token. Keeping the session lets
           // the caller report "cannot reach Mittr" instead of silently signing

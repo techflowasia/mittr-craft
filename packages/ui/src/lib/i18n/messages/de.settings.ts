@@ -1,5 +1,6 @@
 import { voiceI18n } from './voice.i18n';
 import { quotaI18n } from './quota.i18n';
+import { mittrAccountsI18n } from './mittr-accounts.i18n';
 import { thirdPartyIntegrationI18n } from './third-party-integrations.i18n';
 export const settingsDict = {
   'settings.providers.page.openCodeGo.title': 'MittrCraft Engine Go Nutzungsverfolgung',
@@ -2152,4 +2153,5 @@ export const settingsDict = {
   ...thirdPartyIntegrationI18n.de,
   ...voiceI18n.de,
   ...quotaI18n.de,
+  ...mittrAccountsI18n.de,
 };
