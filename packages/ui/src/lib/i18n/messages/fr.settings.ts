@@ -1,5 +1,6 @@
 import { voiceI18n } from './voice.i18n';
 import { quotaI18n } from './quota.i18n';
+import { planeWorkspacesI18n } from './plane-workspaces.i18n';
 import { thirdPartyIntegrationI18n } from './third-party-integrations.i18n';
 export const settingsDict = {
   'settings.providers.page.openCodeGo.title': 'Suivi de l’utilisation d’MittrCraft Engine Go',
@@ -2161,4 +2162,5 @@ export const settingsDict = {
   ...thirdPartyIntegrationI18n.fr,
   ...voiceI18n.fr,
   ...quotaI18n.fr,
+  ...planeWorkspacesI18n.fr,
 } as const;

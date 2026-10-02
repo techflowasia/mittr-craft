@@ -1,5 +1,6 @@
 import { voiceI18n } from './voice.i18n';
 import { quotaI18n } from './quota.i18n';
+import { planeWorkspacesI18n } from './plane-workspaces.i18n';
 import { thirdPartyIntegrationI18n } from './third-party-integrations.i18n';
 export const settingsDict = {
   'settings.providers.page.openCodeGo.title': 'MittrCraft Engine Go 使用量追跡',
@@ -2161,4 +2162,5 @@ export const settingsDict = {
   ...thirdPartyIntegrationI18n.ja,
   ...voiceI18n.ja,
   ...quotaI18n.ja,
+  ...planeWorkspacesI18n.ja,
 } as const;

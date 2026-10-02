@@ -19,13 +19,14 @@ import * as sessionActions from '@/sync/session-actions';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { parseModelIdentifier } from '@/lib/modelIdentifier';
 import {
-  countBySource,
   groupItems,
   groupStartsOpen,
-  scopeBySource,
+  lanesOf,
+  scopeByLane,
   stateRankColor,
+  type Lane,
+  type LaneFilter,
   type Source,
-  type SourceFilter,
 } from './myWorkGrouping';
 
 const SOURCE_FILTER_STORAGE_KEY = 'mittrcraft.myWork.source';
@@ -47,10 +48,7 @@ const writeStorage = (key: string, value: string): void => {
   }
 };
 
-const getStoredSourceFilter = (): SourceFilter => {
-  const stored = readStorage(SOURCE_FILTER_STORAGE_KEY);
-  return stored === 'jira' || stored === 'plane' ? stored : 'all';
-};
+const getStoredSourceFilter = (): LaneFilter => readStorage(SOURCE_FILTER_STORAGE_KEY) || 'all';
 
 const getStoredGroupOpen = (key: string, fallback: boolean): boolean => {
   const stored = readStorage(GROUP_OPEN_STORAGE_PREFIX + key);
@@ -89,7 +87,7 @@ export function MyWorkDialog() {
   const [errorMessage, setErrorMessage] = React.useState<string | null>(null);
   const [query, setQuery] = React.useState('');
   const [startingItemId, setStartingItemId] = React.useState<string | null>(null);
-  const [sourceFilter, setSourceFilter] = React.useState<SourceFilter>(() => getStoredSourceFilter());
+  const [storedFilter, setStoredFilter] = React.useState<LaneFilter>(() => getStoredSourceFilter());
 
   const reload = React.useCallback(async () => {
     setLoading(true);
@@ -115,8 +113,8 @@ export function MyWorkDialog() {
     if (!open) setQuery('');
   }, [open]);
 
-  const selectSourceFilter = React.useCallback((value: SourceFilter) => {
-    setSourceFilter(value);
+  const selectSourceFilter = React.useCallback((value: LaneFilter) => {
+    setStoredFilter(value);
     writeStorage(SOURCE_FILTER_STORAGE_KEY, value);
   }, []);
 
@@ -126,9 +124,21 @@ export function MyWorkDialog() {
     return items.filter((item) => item.title.toLowerCase().includes(needle));
   }, [items, query]);
 
-  const sourceCounts = React.useMemo(() => countBySource(filtered), [filtered]);
+  const lanes = React.useMemo(() => lanesOf(items), [items]);
+  const laneCounts = React.useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const lane of lanesOf(filtered)) counts.set(lane.key, lane.count);
+    return counts;
+  }, [filtered]);
+  const planeLaneCount = React.useMemo(() => lanes.filter((lane) => lane.source === 'plane').length, [lanes]);
 
-  const scopedItems = React.useMemo(() => scopeBySource(filtered, sourceFilter), [filtered, sourceFilter]);
+  const sourceFilter = React.useMemo<LaneFilter>(() => {
+    if (storedFilter === 'all' || storedFilter === 'jira' || storedFilter === 'plane') return storedFilter;
+    if (loading || lanes.some((lane) => lane.key === storedFilter)) return storedFilter;
+    return 'all';
+  }, [lanes, loading, storedFilter]);
+
+  const scopedItems = React.useMemo(() => scopeByLane(filtered, sourceFilter), [filtered, sourceFilter]);
 
   const groups = React.useMemo(() => groupItems(scopedItems), [scopedItems]);
 
@@ -229,7 +239,16 @@ export function MyWorkDialog() {
     }
   }, [resolveDefaultAgentName, resolveDefaultModelSelection, resolveDefaultVariant, setOpen, startingItemId, t]);
 
-  const sourceLabel = (source: Source) => (source === 'jira' ? t('sessions.myWork.dialog.source.jira') : t('sessions.myWork.dialog.source.plane'));
+  const laneLabel = (lane: Pick<Lane, 'source' | 'workspace'>) => {
+    if (lane.source === 'jira') return t('sessions.myWork.dialog.source.jira');
+    if (lane.workspace && planeLaneCount > 1) return lane.workspace;
+    return t('sessions.myWork.dialog.source.plane');
+  };
+  const laneAccessibleLabel = (lane: Pick<Lane, 'source' | 'workspace'>) => (
+    lane.source === 'plane' && lane.workspace && planeLaneCount > 1
+      ? t('sessions.myWork.dialog.source.planeWorkspace', { workspace: lane.workspace })
+      : laneLabel(lane)
+  );
   const sourceIcon = (source: Source) => (source === 'jira' ? 'task' : 'stack');
 
   const body = (
@@ -250,31 +269,30 @@ export function MyWorkDialog() {
         </Button>
       </div>
 
-      <div className="flex items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
         <Button
           variant="chip"
           size="sm"
           aria-pressed={sourceFilter === 'all'}
           onClick={() => selectSourceFilter('all')}
         >
-          {t('sessions.myWork.dialog.source.filter.all')} {sourceCounts.all}
+          {t('sessions.myWork.dialog.source.filter.all')} {filtered.length}
         </Button>
-        <Button
-          variant="chip"
-          size="sm"
-          aria-pressed={sourceFilter === 'jira'}
-          onClick={() => selectSourceFilter('jira')}
-        >
-          {t('sessions.myWork.dialog.source.jira')} {sourceCounts.jira}
-        </Button>
-        <Button
-          variant="chip"
-          size="sm"
-          aria-pressed={sourceFilter === 'plane'}
-          onClick={() => selectSourceFilter('plane')}
-        >
-          {t('sessions.myWork.dialog.source.plane')} {sourceCounts.plane}
-        </Button>
+        {lanes.map((lane) => (
+          <Button
+            key={lane.key}
+            variant="chip"
+            size="sm"
+            aria-pressed={sourceFilter === lane.key || sourceFilter === lane.source}
+            aria-label={`${laneAccessibleLabel(lane)} ${laneCounts.get(lane.key) ?? 0}`}
+            onClick={() => selectSourceFilter(lane.key)}
+          >
+            {lane.source === 'plane' && planeLaneCount > 1 ? (
+              <Icon name="stack" className="h-3.5 w-3.5" aria-hidden="true" />
+            ) : null}
+            {laneLabel(lane)} {laneCounts.get(lane.key) ?? 0}
+          </Button>
+        ))}
       </div>
 
       {loading ? (
@@ -304,18 +322,18 @@ export function MyWorkDialog() {
       ) : (
         <div className="space-y-6">
           {groups.map((group) => (
-            <div key={group.source} className="space-y-2">
-              {sourceFilter === 'all' ? (
+            <div key={group.key} className="space-y-2">
+              {groups.length > 1 ? (
                 <div className="flex items-center gap-2">
-                  <Icon name={sourceIcon(group.source)} className="h-4 w-4 text-muted-foreground" />
-                  <span className="typography-ui-header font-semibold text-foreground">{sourceLabel(group.source)}</span>
+                  <Icon name={sourceIcon(group.source)} className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                  <span className="typography-ui-header font-semibold text-foreground">{laneLabel(group)}</span>
                   <span className="typography-micro text-muted-foreground">
                     {t('sessions.myWork.dialog.source.count', { count: group.items.length })}
                   </span>
                 </div>
               ) : null}
               {group.states.map((stateGroup) => {
-                const groupKey = `${group.source}:${stateGroup.state}`;
+                const groupKey = `${group.key}:${stateGroup.state}`;
                 const defaultOpen = groupStartsOpen(stateGroup.rank);
                 const color = stateRankColor(stateGroup.rank);
                 return (

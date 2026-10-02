@@ -10,8 +10,16 @@ export type MittrJiraConfig = {
 export type MittrPlaneConfig = {
   baseUrl: string;
   workspaceSlug: string;
+  workspaceSlugs?: string[];
   hasApiKey: boolean;
   configured: boolean;
+};
+
+export type MittrPlaneWorkspaceTest = {
+  slug: string;
+  ok: boolean;
+  count: number;
+  error?: string;
 };
 
 export type MittrIntegrationsConfig = {
@@ -25,6 +33,7 @@ export type MittrTestResult = {
   displayName?: string;
   email?: string;
   count?: number;
+  workspaces?: MittrPlaneWorkspaceTest[];
 };
 
 const parseErrorMessage = async (response: Response, fallback: string): Promise<string> => {
@@ -48,7 +57,7 @@ export const fetchMittrIntegrations = async (): Promise<MittrIntegrationsConfig>
 };
 
 export const saveMittrIntegrations = async (
-  input: { jira?: Partial<{ baseUrl: string; email: string; token: string }>; plane?: Partial<{ baseUrl: string; workspaceSlug: string; apiKey: string }> },
+  input: { jira?: Partial<{ baseUrl: string; email: string; token: string }>; plane?: Partial<{ baseUrl: string; workspaceSlug: string; workspaceSlugs: string[]; apiKey: string }> },
 ): Promise<MittrIntegrationsConfig> => {
   const response = await runtimeFetch('/api/mittr/integrations', {
     method: 'PUT',
