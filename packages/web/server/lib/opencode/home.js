@@ -33,7 +33,16 @@ const legacyBase = {
   cache: path.join(os.homedir(), '.cache'),
 };
 
-const ownedBase = () => {
+let accountHome = null;
+
+export const setEngineAccount = (home) => {
+  if (home !== null && !/^[0-9a-f]{16}$/.test(String(home))) {
+    throw new Error('An engine account home must be an account key');
+  }
+  accountHome = home;
+};
+
+const sharedBase = () => {
   const override = String(process.env.MITTRCRAFT_ENGINE_HOME ?? '').trim();
   if (override) {
     const root = path.resolve(override);
@@ -44,6 +53,16 @@ const ownedBase = () => {
     data: path.join(os.homedir(), '.local', 'share', 'mittrcraft', 'engine'),
     state: path.join(os.homedir(), '.local', 'state', 'mittrcraft', 'engine'),
     cache: path.join(os.homedir(), '.cache', 'mittrcraft', 'engine'),
+  };
+};
+
+const ownedBase = () => {
+  const base = sharedBase();
+  if (!accountHome) return base;
+  return {
+    ...base,
+    data: path.join(base.data, 'accounts', accountHome),
+    state: path.join(base.state, 'accounts', accountHome),
   };
 };
 
@@ -88,6 +107,7 @@ export const engineHomeEnv = () => {
  * refusing to start.
  */
 export const migrateEngineHome = ({ fsImpl = fs, log = console } = {}) => {
+  if (accountHome) return { migrated: false, reason: 'account-home' };
   const target = engineDataDir();
   const source = legacyEngineDataDir();
   if (target === source) return { migrated: false, reason: 'same-directory' };

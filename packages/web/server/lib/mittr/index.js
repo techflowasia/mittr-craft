@@ -2,7 +2,8 @@ import path from 'node:path';
 import { resolveUpstream } from './upstream-config.js';
 import { assertLoopbackHost } from './loopback-guard.js';
 import { ensureLocalToken } from './local-token.js';
-import { createSessionStore } from './session.js';
+import { createAccountStore } from './account-store.js';
+import { setEngineAccount } from '../opencode/home.js';
 import { registerMittrAuthRoutes } from './auth-routes.js';
 import { registerMittrShimRoutes } from './shim-routes.js';
 import { registerMittrCatalogRoutes } from './catalog-routes.js';
@@ -52,6 +53,7 @@ export function startMittrShim({
   brokerBaseUrl,
   syncModels,
   refreshEngine = async () => {},
+  onEngineAccountChange = async () => {},
   // False in a packaged build, whose origin was decided when it was built.
   allowUpstreamOverride = true,
   secretStore = createPlaintextSecretStore(),
@@ -64,10 +66,9 @@ export function startMittrShim({
   });
   const localToken = ensureLocalToken({ tokenPath: path.join(dataDir, 'mittr-shim-token') });
 
-  const sessionStore = createSessionStore({
-    filePath: path.join(dataDir, 'mittr-session'),
-    ...secretStore,
-  });
+  const sessionStore = createAccountStore({ dataDir, ...secretStore });
+  let engineHome = sessionStore.activeHome();
+  setEngineAccount(engineHome);
 
   // The catalog routes are registered after the auth routes but the sign-in
   // handler needs to reach them, so the sync is handed over through a holder
@@ -79,13 +80,22 @@ export function startMittrShim({
     sessionStore,
     fetchImpl: (...args) => fetch(...args),
     onSignIn: () => catalog.sync?.(),
+    onAccountChange: () => switchAccount(),
   });
 
   const answeredByLog = createAnsweredByLog();
   registerMittrShimRoutes(app, { upstream, localToken, ensureFreshSession, answeredByLog });
   registerMittrAnsweredByRoutes(app, { answeredByLog });
 
-  const cache = createCatalogCache({ filePath: path.join(dataDir, 'mittr-catalog.json') });
+  const catalogCacheOf = (home) => createCatalogCache({
+    filePath: home
+      ? path.join(dataDir, 'mittr-accounts', `${home}.catalog.json`)
+      : path.join(dataDir, 'mittr-catalog.json'),
+  });
+  const cache = {
+    read: () => catalogCacheOf(sessionStore.activeHome()).read(),
+    write: (value) => catalogCacheOf(sessionStore.activeHome()).write(value),
+  };
   const enablement = createEnablementStore({ filePath: path.join(dataDir, 'mittr-enablement.json') });
 
   // The engine's MCP writers and the git service are both loaded on demand. The
@@ -144,6 +154,19 @@ export function startMittrShim({
     const cached = cache.read();
     await syncModels(cached?.models?.configured ? cached.models.items : []);
   };
+
+  async function switchAccount() {
+    const home = sessionStore.activeHome();
+    const moved = home !== engineHome;
+    setEngineAccount(home);
+    engineHome = home;
+    await onEngineAccountChange();
+    await applyCachedCatalog();
+    if (moved) await refreshEngine('Mittr account switched');
+    void catalog.sync?.().catch((error) => {
+      console.warn(`[mittr] catalog sync after switching account failed: ${error?.message ?? error}`);
+    });
+  }
 
   return {
     localToken,

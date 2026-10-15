@@ -20,6 +20,7 @@ import {
   logoutSidebarUserProfile,
   type SidebarUserProfile,
 } from './sidebarUserProfile';
+import { MittrAccountMenu } from './MittrAccountMenu';
 
 type Props = {
   onOpenSettings: () => void;
@@ -142,6 +143,7 @@ export function SidebarFooter({
     <div className="flex shrink-0 items-center justify-start gap-1 px-2.5 py-2">
       {showRuntimeButtons ? (
         <>
+          <MittrAccountMenu />
           {profile ? (
             <DropdownMenu>
               <Tooltip>

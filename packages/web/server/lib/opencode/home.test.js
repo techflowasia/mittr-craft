@@ -118,3 +118,31 @@ describe('migrateEngineHome', () => {
     expect(migrateEngineHome({ fsImpl, log: quiet })).toEqual({ migrated: false, reason: 'copy-failed' });
   });
 });
+
+describe('engine home per Mittr account', () => {
+  it('keeps the first account in the existing home and gives another account its own history and state', async () => {
+    const { setEngineAccount } = await import('./home.js');
+    withEnv('/tmp/engine-root', () => {
+      setEngineAccount(null);
+      expect(engineDataDir()).toBe(path.join('/tmp/engine-root', 'opencode'));
+      const first = engineHomeEnv();
+
+      setEngineAccount('0123456789abcdef');
+      const second = engineHomeEnv();
+      expect(engineDataDir()).toBe(path.join('/tmp/engine-root', 'accounts', '0123456789abcdef', 'opencode'));
+      expect(second.XDG_DATA_HOME).toBe(path.join('/tmp/engine-root', 'accounts', '0123456789abcdef'));
+      expect(second.XDG_STATE_HOME).toBe(path.join('/tmp/engine-root', 'accounts', '0123456789abcdef'));
+      expect(second.XDG_CONFIG_HOME).toBe(first.XDG_CONFIG_HOME);
+      expect(engineConfigDir()).toBe(path.join('/tmp/engine-root', 'opencode'));
+
+      setEngineAccount(null);
+      expect(engineHomeEnv()).toEqual(first);
+    });
+  });
+
+  it('refuses a home that is not an account key, so nothing can steer the engine outside its root', async () => {
+    const { setEngineAccount } = await import('./home.js');
+    expect(() => setEngineAccount('../../etc')).toThrow();
+    setEngineAccount(null);
+  });
+});
