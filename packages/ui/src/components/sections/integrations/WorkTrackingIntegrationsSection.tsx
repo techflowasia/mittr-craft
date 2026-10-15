@@ -12,15 +12,34 @@ import {
   testMittrJira,
   testMittrPlane,
   type MittrIntegrationsConfig,
+  type MittrPlaneConfig,
+  type MittrPlaneWorkspaceTest,
 } from '@/lib/mittrIntegrationsApi';
 
 const KEEP_PLACEHOLDER = '••••••••••••';
 
 type JiraForm = { baseUrl: string; email: string; token: string };
-type PlaneForm = { baseUrl: string; workspaceSlug: string; apiKey: string };
+type PlaneForm = { baseUrl: string; workspaceSlugs: string[]; apiKey: string };
 
 const emptyJira: JiraForm = { baseUrl: '', email: '', token: '' };
-const emptyPlane: PlaneForm = { baseUrl: '', workspaceSlug: '', apiKey: '' };
+const emptyPlane: PlaneForm = { baseUrl: '', workspaceSlugs: [], apiKey: '' };
+
+const slugsOf = (plane: MittrPlaneConfig): string[] => {
+  if (plane.workspaceSlugs?.length) return plane.workspaceSlugs;
+  return plane.workspaceSlug ? [plane.workspaceSlug] : [];
+};
+
+const planeFormOf = (plane: MittrPlaneConfig): PlaneForm => ({
+  baseUrl: plane.baseUrl,
+  workspaceSlugs: slugsOf(plane),
+  apiKey: '',
+});
+
+const slugFromInput = (value: string): string => {
+  const text = value.trim();
+  const fromUrl = /^https?:\/\/[^/]+\/([^/?#]+)/i.exec(text);
+  return (fromUrl?.[1] ?? text).replace(/^\/+|\/+$/g, '');
+};
 
 function Badge({ connected }: { connected: boolean }) {
   const { t } = useI18n();
@@ -50,13 +69,16 @@ export const WorkTrackingIntegrationsSection: React.FC = () => {
   const [savingPlane, setSavingPlane] = React.useState(false);
   const [testingJira, setTestingJira] = React.useState(false);
   const [testingPlane, setTestingPlane] = React.useState(false);
+  const [newWorkspace, setNewWorkspace] = React.useState('');
+  const [workspaceError, setWorkspaceError] = React.useState<string | null>(null);
+  const [workspaceTests, setWorkspaceTests] = React.useState<Record<string, MittrPlaneWorkspaceTest>>({});
 
   const load = React.useCallback(async () => {
     try {
       const cfg = await fetchMittrIntegrations();
       setConfig(cfg);
       setJira({ baseUrl: cfg.jira.baseUrl, email: cfg.jira.email, token: '' });
-      setPlane({ baseUrl: cfg.plane.baseUrl, workspaceSlug: cfg.plane.workspaceSlug, apiKey: '' });
+      setPlane(planeFormOf(cfg.plane));
       setLoadError(null);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : t('settings.integrations.workTracking.errors.loadFailed'));
@@ -93,12 +115,13 @@ export const WorkTrackingIntegrationsSection: React.FC = () => {
       const cfg = await saveMittrIntegrations({
         plane: {
           baseUrl: plane.baseUrl,
-          workspaceSlug: plane.workspaceSlug,
+          workspaceSlug: plane.workspaceSlugs[0] ?? '',
+          workspaceSlugs: plane.workspaceSlugs,
           ...(plane.apiKey ? { apiKey: plane.apiKey } : {}),
         },
       });
       setConfig(cfg);
-      setPlane({ baseUrl: cfg.plane.baseUrl, workspaceSlug: cfg.plane.workspaceSlug, apiKey: '' });
+      setPlane(planeFormOf(cfg.plane));
       toast.success(t('settings.integrations.workTracking.toast.saved'));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : t('settings.integrations.workTracking.toast.saveFailed'));
@@ -125,8 +148,13 @@ export const WorkTrackingIntegrationsSection: React.FC = () => {
     setTestingPlane(true);
     try {
       const result = await testMittrPlane();
+      setWorkspaceTests(Object.fromEntries((result.workspaces ?? []).map((entry) => [entry.slug, entry])));
       if (result.ok) {
-        toast.success(t('settings.integrations.workTracking.toast.testOkCount', { count: result.count ?? 0 }));
+        toast.success(
+          result.workspaces && result.workspaces.length > 1
+            ? t('settings.integrations.workTracking.toast.testOkWorkspaces', { count: result.count ?? 0, workspaces: result.workspaces.length })
+            : t('settings.integrations.workTracking.toast.testOkCount', { count: result.count ?? 0 }),
+        );
       } else {
         toast.error(result.error ?? t('settings.integrations.workTracking.toast.testFailed'));
       }
@@ -134,6 +162,24 @@ export const WorkTrackingIntegrationsSection: React.FC = () => {
       setTestingPlane(false);
     }
   }, [t]);
+
+  const savedSlugs = React.useMemo(() => (config ? slugsOf(config.plane) : []), [config]);
+
+  const addWorkspace = React.useCallback(() => {
+    const slug = slugFromInput(newWorkspace);
+    if (!slug) return;
+    if (plane.workspaceSlugs.includes(slug)) {
+      setWorkspaceError(t('settings.integrations.workTracking.plane.duplicateWorkspace', { slug }));
+      return;
+    }
+    setPlane({ ...plane, workspaceSlugs: [...plane.workspaceSlugs, slug] });
+    setNewWorkspace('');
+    setWorkspaceError(null);
+  }, [newWorkspace, plane, t]);
+
+  const removeWorkspace = React.useCallback((slug: string) => {
+    setPlane({ ...plane, workspaceSlugs: plane.workspaceSlugs.filter((entry) => entry !== slug) });
+  }, [plane]);
 
   return (
     <SettingsSection
@@ -212,17 +258,9 @@ export const WorkTrackingIntegrationsSection: React.FC = () => {
               placeholder="https://plane.your-company.com"
             />
           </label>
-          <label className="space-y-1.5">
-            <span className="typography-micro text-muted-foreground">{t('settings.integrations.workTracking.plane.workspaceSlug')}</span>
-            <Input
-              value={plane.workspaceSlug}
-              onChange={(e) => setPlane({ ...plane, workspaceSlug: e.target.value })}
-              placeholder="your-workspace"
-            />
-          </label>
           <label className="space-y-1.5 @lg:col-span-2">
             <span className="typography-micro text-muted-foreground">
-              {t('settings.integrations.workTracking.plane.apiKey')}{' '}
+              {t('settings.integrations.workTracking.plane.token')}{' '}
               {config?.plane.hasApiKey ? (
                 <span className="text-muted-foreground/70">{t('settings.integrations.workTracking.hasSavedValue')}</span>
               ) : null}
@@ -235,6 +273,87 @@ export const WorkTrackingIntegrationsSection: React.FC = () => {
             />
           </label>
         </div>
+        <fieldset className="space-y-2">
+          <legend className="typography-micro text-muted-foreground">{t('settings.integrations.workTracking.plane.workspaces')}</legend>
+          <p className="typography-micro text-muted-foreground/80">{t('settings.integrations.workTracking.plane.workspacesHint')}</p>
+          {plane.workspaceSlugs.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-border px-3 py-2 typography-micro text-muted-foreground">
+              {t('settings.integrations.workTracking.plane.noWorkspaces')}
+            </p>
+          ) : (
+            <ul className="divide-y divide-[var(--interactive-border)] rounded-lg border border-[var(--interactive-border)]">
+              {plane.workspaceSlugs.map((slug) => {
+                const test = workspaceTests[slug];
+                const unsaved = !savedSlugs.includes(slug);
+                return (
+                  <li key={slug} className="flex min-h-10 items-center gap-2 px-3 py-1.5">
+                    <Icon name="stack" className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                    <span className="min-w-0 flex-1 truncate typography-ui-label font-mono text-foreground" title={slug}>{slug}</span>
+                    {unsaved ? (
+                      <span className="shrink-0 typography-micro text-muted-foreground">{t('settings.integrations.workTracking.plane.unsaved')}</span>
+                    ) : test ? (
+                      <span
+                        className={cn(
+                          'flex min-w-0 shrink items-center gap-1 typography-micro',
+                          test.ok ? 'text-[var(--status-success)]' : 'text-[var(--status-error)]',
+                        )}
+                        title={test.error}
+                      >
+                        <Icon name={test.ok ? 'checkbox-circle' : 'error-warning'} className="size-3.5 shrink-0" aria-hidden="true" />
+                        <span className="truncate">
+                          {test.ok
+                            ? t('settings.integrations.workTracking.plane.workspaceOk', { count: test.count })
+                            : t('settings.integrations.workTracking.plane.workspaceFailed', { error: test.error ?? '' })}
+                        </span>
+                      </span>
+                    ) : null}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="shrink-0"
+                      aria-label={t('settings.integrations.workTracking.plane.removeWorkspace', { slug })}
+                      title={t('settings.integrations.workTracking.plane.removeWorkspace', { slug })}
+                      onClick={() => removeWorkspace(slug)}
+                    >
+                      <Icon name="close" className="size-3.5" aria-hidden="true" />
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <div className="flex items-start gap-2">
+            <label className="min-w-0 flex-1 space-y-1">
+              <span className="sr-only">{t('settings.integrations.workTracking.plane.newWorkspace')}</span>
+              <Input
+                value={newWorkspace}
+                onChange={(e) => {
+                  setNewWorkspace(e.target.value);
+                  setWorkspaceError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addWorkspace();
+                  }
+                }}
+                placeholder="your-workspace"
+                aria-invalid={workspaceError ? true : undefined}
+                aria-describedby={workspaceError ? 'plane-workspace-error' : undefined}
+              />
+              {workspaceError ? (
+                <span id="plane-workspace-error" role="alert" className="block typography-micro text-[var(--status-error)]">
+                  {workspaceError}
+                </span>
+              ) : null}
+            </label>
+            <Button type="button" size="sm" variant="outline" onClick={addWorkspace} disabled={!newWorkspace.trim()}>
+              <Icon name="add" className="size-3.5" aria-hidden="true" />
+              {t('settings.integrations.workTracking.plane.addWorkspace')}
+            </Button>
+          </div>
+        </fieldset>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" size="sm" onClick={() => void handleSavePlane()} disabled={savingPlane}>
             {savingPlane ? <Icon name="loader-4" className="size-3.5 animate-spin" /> : null}

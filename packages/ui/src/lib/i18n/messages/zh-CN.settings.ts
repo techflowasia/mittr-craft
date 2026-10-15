@@ -1,6 +1,7 @@
 import { voiceI18n } from './voice.i18n';
 import { quotaI18n } from './quota.i18n';
 import { mittrAccountsI18n } from './mittr-accounts.i18n';
+import { planeWorkspacesI18n } from './plane-workspaces.i18n';
 import { thirdPartyIntegrationI18n } from './third-party-integrations.i18n';
 export const settingsDict = {
   'settings.providers.page.openCodeGo.title': 'MittrCraft Engine Go 用量跟踪',
@@ -2163,4 +2164,5 @@ export const settingsDict = {
   ...voiceI18n['zh-CN'],
   ...quotaI18n['zh-CN'],
   ...mittrAccountsI18n['zh-CN'],
+  ...planeWorkspacesI18n['zh-CN'],
 } as const;
