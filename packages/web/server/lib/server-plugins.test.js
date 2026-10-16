@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import fsPromises from 'fs/promises';
 
-import { loadServerPlugins, readServerPluginSpecifiers } from './server-plugins.js';
+import { loadServerPlugins, mergeEngineConfig, readServerPluginSpecifiers } from './server-plugins.js';
 
 const roots = [];
 
@@ -68,6 +68,103 @@ describe('server plugins', () => {
 
     const plugins = await loadServerPlugins({ specifiers: [], context: context() });
     expect(await plugins.engineEnv()).toEqual({});
+    expect(await plugins.managedConfig()).toEqual({});
+    await plugins.dispose();
+  });
+
+  it('managedConfig merges fragments in order', async () => {
+    const specifiers = await writePlugins(
+      `export default () => ({ managedConfig: () => ({
+        providers: { a: { name: 'A' } },
+        plugins: ['/p1'],
+        experimental: { policies: [{ action: 'provider.use', resource: '*', effect: 'deny' }] },
+      }) });`,
+      'export default () => ({});',
+      `export default () => ({ managedConfig: async () => ({
+        providers: { a: { models: { m: {} } } },
+        plugins: ['/p2'],
+        experimental: { policies: [{ action: 'provider.use', resource: 'a', effect: 'allow' }] },
+      }) });`,
+    );
+
+    const plugins = await loadServerPlugins({ specifiers, context: context() });
+
+    expect(await plugins.managedConfig()).toEqual({
+      providers: { a: { name: 'A', models: { m: {} } } },
+      plugins: ['/p1', '/p2'],
+      experimental: {
+        policies: [
+          { action: 'provider.use', resource: '*', effect: 'deny' },
+          { action: 'provider.use', resource: 'a', effect: 'allow' },
+        ],
+      },
+    });
+  });
+
+  it('mergeEngineConfig lets the later fragment win on scalars and other arrays', () => {
+    expect(mergeEngineConfig(
+      { model: 'a/m', share: 'auto', instructions: ['one'], experimental: { flag: true } },
+      { model: 'b/m', instructions: ['two'], experimental: { policies: [] } },
+    )).toEqual({ model: 'b/m', share: 'auto', instructions: ['two'], experimental: { flag: true, policies: [] } });
+  });
+
+  it('dispose runs every plugin\'s dispose in reverse order', async () => {
+    const specifiers = await writePlugins(
+      "export default ({ calls }) => ({ dispose: () => { calls.push('p1'); } });",
+      'export default () => ({});',
+      "export default ({ calls }) => ({ dispose: async () => { calls.push('p2'); } });",
+    );
+    const calls = [];
+
+    const plugins = await loadServerPlugins({ specifiers, context: { ...context(), calls } });
+    await plugins.dispose();
+
+    expect(calls).toEqual(['p2', 'p1']);
+  });
+
+  it('a failing dispose does not skip the plugins before it', async () => {
+    const specifiers = await writePlugins(
+      "export default ({ calls }) => ({ dispose: () => { calls.push('p1'); } });",
+      'export default () => ({ dispose: () => { throw new Error("stuck"); } });',
+    );
+    const calls = [];
+    const warnings = [];
+    const logger = { warn: (...args) => warnings.push(args.join(' ')) };
+
+    const plugins = await loadServerPlugins({ specifiers, context: { ...context(), logger, calls } });
+    await plugins.dispose();
+
+    expect(calls).toEqual(['p1']);
+    expect(warnings).toEqual([expect.stringContaining('stuck')]);
+  });
+
+  it('context is handed through unchanged', async () => {
+    const [specifier] = await writePlugins(
+      `export default (context) => { context.seen.push(context); return {}; };`,
+    );
+    const seen = [];
+    const handed = {
+      ...context(),
+      seen,
+      express: { json: () => {} },
+      server: { port: () => null },
+      opencode: { url: (route = '') => `http://127.0.0.1:1${route}`, onReady: () => () => {} },
+      mergeEngineConfig,
+    };
+
+    await loadServerPlugins({ specifiers: [specifier], context: handed });
+
+    const [received] = seen;
+    expect(received).toBe(handed);
+    for (const handle of [
+      received.opencode.url,
+      received.express.json,
+      received.server.port,
+      received.opencode.onReady,
+      received.mergeEngineConfig,
+    ]) {
+      expect(handle).toBeTypeOf('function');
+    }
   });
 
   it('reads the plugin paths from OPENCHAMBER_SERVER_PLUGINS', () => {

@@ -96,6 +96,15 @@ const git = (cwd, ...args) => {
   return result.stdout.trim();
 };
 
+// The context literal index.js hands every server plugin, from the loader
+// call to the first statement after it.
+const pluginContext = (server) => {
+  const start = server.indexOf('serverPlugins = await loadServerPlugins(');
+  const end = server.indexOf('guestSurfaceRuntime = createGuestSurfaceRuntime(', start);
+  assert.ok(start >= 0 && end > start, 'index.js no longer loads server plugins before the guest surface runtime');
+  return server.slice(start, end);
+};
+
 const checks = {
   'managed-opencode-env': () => {
     const lifecycle = source('packages/web/server/lib/opencode/lifecycle.js');
@@ -123,13 +132,88 @@ const checks = {
     fs.writeFileSync(second, 'export default () => ({ engineEnv: async () => ({ A: "2" }) });');
     const plugins = await loadServerPlugins({ specifiers: [first, second], context: { app: {}, dataDir: '/data', logger: console } });
     assert.deepEqual(await plugins.engineEnv(), { A: '2', SEEN: '/data' });
+    assert.deepEqual(await plugins.managedConfig(), {});
+    await plugins.dispose();
 
     const server = source('packages/web/server/index.js');
-    has(server, /serverPlugins = await loadServerPlugins\(\{\s*specifiers: readServerPluginSpecifiers\(process\.env\),\s*context: \{ app, dataDir: OPENCHAMBER_DATA_DIR, logger: console \},/);
-    assert.ok(server.indexOf('serverPlugins = await loadServerPlugins(') < server.indexOf('guestSurfaceRuntime = createGuestSurfaceRuntime('), 'server plugins no longer load before the startup pipeline');
+    const context = pluginContext(server);
+    has(context, /^serverPlugins = await loadServerPlugins\(\{\s*specifiers: readServerPluginSpecifiers\(process\.env\),\s*context: \{\s*app,\s*express,\s*dataDir: OPENCHAMBER_DATA_DIR,\s*logger: console,/);
+    for (const entry of [
+      /settings: \{ read: \(\) => readSettingsFromDiskMigrated\(\) \},/,
+      /subscribe: \(listener\) => globalMessageStreamHub\.subscribeEvent\(listener\),/,
+      /url: \(route = '\/'\) => buildOpenCodeUrl\(route\),/,
+      /authHeaders: \(\) => getOpenCodeAuthHeaders\(\),/,
+      /restart: async \(reason\) => \{ await restartOpenCode\(reason\); \},/,
+      /refresh: async \(reason\) => \{ await refreshOpenCodeAfterConfigChange\(reason\); \},/,
+      /waitReady: \(\) => waitForOpenCodeReady\(\),/,
+      /defaultDirectory: \(\) => openCodeLifecycleRuntime\.getDefaultOpenCodeDirectory\(\),/,
+      /userConfig: \{\s*path: OPENCODE_USER_CONFIG_FILE,\s*read: \(\) => readOpenCodeConfigFile\(OPENCODE_USER_CONFIG_FILE\),\s*write: \(config\) => writeOpenCodeConfig\(config, OPENCODE_USER_CONFIG_FILE\),\s*\},/,
+      /git: \{ remoteUrl: \(directory\) => getRemoteUrl\(directory, 'origin'\) \},/,
+      /managedConfig: \{ refresh: \(\) => managedConfigRuntime\.refreshManagedConfigFile\(\) \},/,
+      /host: options\.pluginHost \?\? null,/,
+      /requestScope: \(req\) => tunnelAuthController\.classifyRequestScope\(req\),/,
+      /onShutdown: \(handler\) => \{\s*serverPluginShutdownHandlers\.push\(handler\);\s*\},/,
+    ]) has(context, entry, `the server plugin context no longer has ${entry}`);
+    has(server, /import \{\s*CONFIG_FILE as OPENCODE_USER_CONFIG_FILE,\s*readConfigFile as readOpenCodeConfigFile,\s*writeConfig as writeOpenCodeConfig,\s*\} from '\.\/lib\/opencode\/shared\.js';/);
+    has(server, /import \{ getRemoteUrl, resolvePrimaryWorktreeRoot \} from '\.\/lib\/git\/service\.js';/);
+    has(source('packages/web/server/lib/git/service.js'), /export async function getRemoteUrl\(directory, remoteName = 'origin'\) \{\s*const git = await createGit\(directory\);\s*try \{\s*const url = await git\.remote\(\['get-url', '--', remoteName\]\);/);
+    has(source('packages/web/server/lib/opencode/tunnel-auth.js'), /const classifyRequestScope = \(req\) => \{/);
+    has(server, /stopAllGuestServices: async \(\) => \{\s*try \{\s*await stopServerPlugins\(\);\s*\} finally \{\s*await stopAllGuestServices\(\);\s*\}\s*\},/, 'server plugins no longer stop inside the graceful shutdown');
+    const shutdown = source('packages/web/server/lib/opencode/shutdown-runtime.js');
+    assert.ok(shutdown.indexOf('stopAllGuestServices,\n    ];') >= 0 && shutdown.indexOf('stopAllGuestServices,\n    ];') < shutdown.indexOf("console.log('Stopping OpenCode process...')"), 'graceful shutdown no longer stops guest services before OpenCode');
+    has(server, /await serverPlugins\?\.dispose\(\);/);
 
     const pluginSource = source('packages/mittr-server/src/plugin.js');
     has(pluginSource, /export default async function setup\(\{ dataDir, logger \}\)/, 'our plugin no longer takes the context the loader passes');
+  },
+
+  'plugin-context-express': () => {
+    const server = source('packages/web/server/index.js');
+    has(server, /^import express from 'express';$/m);
+    has(pluginContext(server), /context: \{\s*app,\s*express,/, 'the plugin context no longer carries the server\'s express module');
+  },
+
+  'plugin-context-server-port': () => {
+    const server = source('packages/web/server/index.js');
+    has(server, /^let server = null;$/m);
+    has(server, /server = http\.createServer\(app\);/);
+    has(pluginContext(server), /server: \{\s*port: \(\) => \{\s*const address = server\?\.address\?\.\(\);\s*return address && Number\.isInteger\(address\.port\) \? address\.port : null;\s*\},\s*\},/, 'the plugin context no longer reports the bound port as getActivePort does');
+  },
+
+  'engine-on-ready': () => {
+    const lifecycle = source('packages/web/server/lib/opencode/lifecycle.js');
+    has(lifecycle, /onEngineReady = \(\) => \{\},/, 'lifecycle no longer takes onEngineReady with a no-op default');
+    has(lifecycle, /const serverInstance = await startOpenCodeOnce\(attempt\);\s*notifyEngineReady\(\);\s*return serverInstance;/, 'a managed start no longer notifies once it is ready');
+    has(lifecycle, /state\.openCodeProcess = await startOpenCode\(\);/, 'a managed restart no longer goes through startOpenCode');
+
+    const server = source('packages/web/server/index.js');
+    has(server, /onEngineReady: notifyEngineReadyListeners,\s*\}\);/, 'index.js no longer fans the lifecycle\'s ready call out to plugins');
+    has(pluginContext(server), /onReady: \(listener\) => \{\s*engineReadyListeners\.add\(listener\);\s*return \(\) => engineReadyListeners\.delete\(listener\);\s*\},/);
+  },
+
+  'plugin-ui-event-broadcast': () => {
+    const server = source('packages/web/server/index.js');
+    has(server, /const broadcastOpenChamberUiEvent = createGlobalUiEventBroadcaster\(\{\s*sseClients: uiOpenChamberEventClients,/);
+    has(pluginContext(server), /broadcast: \(type, payload\) => broadcastOpenChamberUiEvent\(\{ type, properties: payload \}\),/, 'a plugin event no longer goes out on the OpenChamber UI event stream');
+  },
+
+  'merge-engine-config': async () => {
+    const { mergeEngineConfig } = await importUpstream('packages/web/server/lib/server-plugins.js');
+    assert.deepEqual(
+      mergeEngineConfig(
+        { model: 'a', providers: { x: { name: 'X' } }, plugins: ['/1'], experimental: { policies: [{ resource: '*', effect: 'deny' }] } },
+        { model: 'b', providers: { x: { models: {} } }, plugins: ['/2'], experimental: { policies: [{ resource: 'x', effect: 'allow' }] } },
+      ),
+      {
+        model: 'b',
+        providers: { x: { name: 'X', models: {} } },
+        plugins: ['/1', '/2'],
+        experimental: { policies: [{ resource: '*', effect: 'deny' }, { resource: 'x', effect: 'allow' }] },
+      },
+    );
+    const server = source('packages/web/server/index.js');
+    has(server, /import \{ loadServerPlugins, mergeEngineConfig, readServerPluginSpecifiers \} from '\.\/lib\/server-plugins\.js';/);
+    has(pluginContext(server), /^\s*mergeEngineConfig,$/m, 'the plugin context no longer carries mergeEngineConfig');
   },
 
   'product-runtime-server-plugins': (t) => {

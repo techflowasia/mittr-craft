@@ -127,12 +127,12 @@ import { createSpaceArchive } from './lib/spaces/space-archive.js';
 import { readIdleStopSetting, startIdleStop } from './lib/spaces/idle-stop.js';
 import { SPACE_IDLE_EXIT_CODE } from './lib/spaces/layout.js';
 import { createSwitchController, registerSpaceRoutes } from './lib/spaces/routes.js';
-import { resolvePrimaryWorktreeRoot } from './lib/git/service.js';
+import { getRemoteUrl, resolvePrimaryWorktreeRoot } from './lib/git/service.js';
 import { createWorktreeBootstrapStore } from './lib/git/worktree-bootstrap-storage.js';
 import { createRemoteClientAuthRuntime } from './lib/client-auth/remote-clients.js';
 import { createClientPairingRuntime } from './lib/client-auth/pairing.js';
 import { attachRealtimeProxy } from './lib/realtime-proxy.js';
-import { loadServerPlugins, readServerPluginSpecifiers } from './lib/server-plugins.js';
+import { loadServerPlugins, mergeEngineConfig, readServerPluginSpecifiers } from './lib/server-plugins.js';
 import { createRelayService, relayBlockedByEnterprise } from './lib/relay/service.js';
 import { createRelayHostLock } from './lib/relay/host-lock.js';
 import { createAgentToolRuntime } from './lib/agent-tool/runtime.js';
@@ -142,6 +142,11 @@ import { createDevServerScanner } from './lib/dev-servers/routes.js';
 import { createDevTunnelRuntime } from './lib/dev-tunnel/runtime.js';
 import { registerBrowserControlRoutes } from './lib/browser-control/routes.js';
 import { createManagedConfigRuntime } from './lib/opencode/managed-config-file.js';
+import {
+  CONFIG_FILE as OPENCODE_USER_CONFIG_FILE,
+  readConfigFile as readOpenCodeConfigFile,
+  writeConfig as writeOpenCodeConfig,
+} from './lib/opencode/shared.js';
 import { createOpenChamberSessionService } from './lib/openchamber-sessions/routes.js';
 import { createSessionMetadataStore, createOpenCodeSessionMetadata } from './lib/openchamber-sessions/session-metadata-store.js';
 import { createOpenCodeClient } from './lib/openchamber-sessions/opencode-client.js';
@@ -683,6 +688,31 @@ let serverPlugins = null;
 // server: a version probe or an upgrade run without it would read and write
 // the engine's default folders. Empty without plugins.
 const getServerPluginEngineEnv = async () => (serverPlugins ? serverPlugins.engineEnv() : {});
+// What server plugins asked to run after each managed OpenCode start and on
+// shutdown, through their context.
+const engineReadyListeners = new Set();
+const serverPluginShutdownHandlers = [];
+const notifyEngineReadyListeners = () => {
+  for (const listener of engineReadyListeners) {
+    try {
+      listener();
+    } catch (error) {
+      console.warn('A server plugin OpenCode ready listener failed:', error instanceof Error ? error.message : error);
+    }
+  }
+};
+// Before OpenCode stops: shutdown handlers last registered first, then each
+// plugin's own dispose. One that fails does not keep the rest from stopping.
+const stopServerPlugins = async () => {
+  for (const handler of serverPluginShutdownHandlers.splice(0).reverse()) {
+    try {
+      await handler();
+    } catch (error) {
+      console.warn('A server plugin shutdown handler failed:', error instanceof Error ? error.message : error);
+    }
+  }
+  await serverPlugins?.dispose();
+};
 // The isolated-spaces host: the place, the manager and the dispatcher. Null while the feature's
 // switch is off, and then nothing of the feature runs, see docs/isolated-spaces/DESIGN.md.
 let spacesHost = null;
@@ -1476,6 +1506,7 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
     ...(managedConfigRuntime ? await managedConfigRuntime.buildManagedChildEnv() : {}),
     ...(await getServerPluginEngineEnv()),
   }),
+  onEngineReady: notifyEngineReadyListeners,
 });
 
 // Quota lookups, voice keys and routing read provider credentials from the
@@ -1839,7 +1870,14 @@ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
   tunnelAuthController,
   scheduledTasksRuntime,
   beginGuestServiceShutdown,
-  stopAllGuestServices,
+  // Server plugins stop with the host's other services, before OpenCode does.
+  stopAllGuestServices: async () => {
+    try {
+      await stopServerPlugins();
+    } finally {
+      await stopAllGuestServices();
+    }
+  },
   getGuestSurfaceRuntime: () => guestSurfaceRuntime,
   getRealtimeProxyRuntime: () => realtimeProxyRuntime,
   getDictationRuntime: () => dictationRuntime,
@@ -2467,7 +2505,48 @@ async function main(options = {}) {
   // carries the plugins' engine variables. A failure here fails the start.
   serverPlugins = await loadServerPlugins({
     specifiers: readServerPluginSpecifiers(process.env),
-    context: { app, dataDir: OPENCHAMBER_DATA_DIR, logger: console },
+    context: {
+      app,
+      express,
+      dataDir: OPENCHAMBER_DATA_DIR,
+      logger: console,
+      server: {
+        port: () => {
+          const address = server?.address?.();
+          return address && Number.isInteger(address.port) ? address.port : null;
+        },
+      },
+      settings: { read: () => readSettingsFromDiskMigrated() },
+      events: {
+        broadcast: (type, payload) => broadcastOpenChamberUiEvent({ type, properties: payload }),
+        subscribe: (listener) => globalMessageStreamHub.subscribeEvent(listener),
+      },
+      opencode: {
+        url: (route = '/') => buildOpenCodeUrl(route),
+        authHeaders: () => getOpenCodeAuthHeaders(),
+        restart: async (reason) => { await restartOpenCode(reason); },
+        refresh: async (reason) => { await refreshOpenCodeAfterConfigChange(reason); },
+        waitReady: () => waitForOpenCodeReady(),
+        defaultDirectory: () => openCodeLifecycleRuntime.getDefaultOpenCodeDirectory(),
+        onReady: (listener) => {
+          engineReadyListeners.add(listener);
+          return () => engineReadyListeners.delete(listener);
+        },
+        userConfig: {
+          path: OPENCODE_USER_CONFIG_FILE,
+          read: () => readOpenCodeConfigFile(OPENCODE_USER_CONFIG_FILE),
+          write: (config) => writeOpenCodeConfig(config, OPENCODE_USER_CONFIG_FILE),
+        },
+      },
+      git: { remoteUrl: (directory) => getRemoteUrl(directory, 'origin') },
+      managedConfig: { refresh: () => managedConfigRuntime.refreshManagedConfigFile() },
+      mergeEngineConfig,
+      host: options.pluginHost ?? null,
+      requestScope: (req) => tunnelAuthController.classifyRequestScope(req),
+      onShutdown: (handler) => {
+        serverPluginShutdownHandlers.push(handler);
+      },
+    },
   });
 
   // After bootstrap: the upgrade gate needs the real UI auth controller.

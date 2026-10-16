@@ -654,6 +654,58 @@ describe('OpenCode lifecycle', () => {
     expect(onOpenCodeRestarted).not.toHaveBeenCalled();
   });
 
+  it('onEngineReady fires after the first start and after each restart', async () => {
+    const onEngineReady = vi.fn();
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    globalThis.fetch = vi.fn(async () => ({ ok: false }));
+    const runtime = createRuntime({ onEngineReady });
+
+    runtime.testState.openCodeProcess = await runtime.startOpenCode();
+    expect(onEngineReady).toHaveBeenCalledTimes(1);
+    try {
+      await runtime.restartOpenCode();
+      expect(onEngineReady).toHaveBeenCalledTimes(2);
+    } finally {
+      await runtime.testState.openCodeProcess.close();
+    }
+  });
+
+  it('onEngineReady does not fire after a failed start', async () => {
+    const onEngineReady = vi.fn();
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      queueMicrotask(() => child.emit('exit', null, 'SIGTERM'));
+      return child;
+    });
+    const runtime = createRuntime({ onEngineReady });
+
+    await expect(runtime.startOpenCode()).rejects.toThrow();
+
+    expect(onEngineReady).not.toHaveBeenCalled();
+  });
+
+  it('a throwing onEngineReady listener does not fail the start', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    globalThis.fetch = vi.fn(async () => ({ ok: false }));
+    const runtime = createRuntime({ onEngineReady: () => { throw new Error('listener broke'); } });
+
+    const server = await runtime.startOpenCode();
+
+    expect(server.url).toBeTruthy();
+    expect(warn).toHaveBeenCalledWith(expect.any(String), 'listener broke');
+    await server.close();
+    warn.mockRestore();
+  });
+
   it('launches managed OpenCode with the managed PATH', async () => {
     delete process.env.OPENCODE_BINARY;
     const child = createMockChild();

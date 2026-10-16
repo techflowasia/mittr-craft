@@ -140,6 +140,9 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     reapManagedOrphanedProcesses = reapOrphanedProcesses,
     getWarmupDirectories = async () => [],
     onOpenCodeRestarted = null,
+    // Called after each managed OpenCode start that reached ready, the first
+    // one and every restart's.
+    onEngineReady = () => {},
     managedStartupTimeoutMs = 30_000,
     now = Date.now,
     topUpV1SessionMigration = topUpV1Migration,
@@ -846,12 +849,23 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     }
   };
 
+  // A listener that throws must not turn a started OpenCode into a failed start.
+  const notifyEngineReady = () => {
+    try {
+      onEngineReady();
+    } catch (error) {
+      console.warn('An OpenCode ready listener failed:', error instanceof Error ? error.message : error);
+    }
+  };
+
   const startOpenCode = async () => {
     managedPreflight = null;
     let lastError = null;
     for (let attempt = 1; attempt <= START_OPEN_CODE_MAX_ATTEMPTS; attempt += 1) {
       try {
-        return await startOpenCodeOnce(attempt);
+        const serverInstance = await startOpenCodeOnce(attempt);
+        notifyEngineReady();
+        return serverInstance;
       } catch (error) {
         lastError = error;
         if (state.isShuttingDown || error instanceof UnsupportedOpenCodeVersionError || error?.code === 'OPENCODE_BINARY_INVALID') {

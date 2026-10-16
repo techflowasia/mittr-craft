@@ -30,6 +30,31 @@ export const UPSTREAM_CONTRACT = [
     why: 'OPENCHAMBER_SERVER_PLUGINS names plugins the server loads before OpenCode starts',
   },
   {
+    id: 'plugin-context-express',
+    files: ['packages/web/server/index.js'],
+    why: 'server plugins get the express module the server itself runs on, since our package cannot import it',
+  },
+  {
+    id: 'plugin-context-server-port',
+    files: ['packages/web/server/index.js'],
+    why: "the plugin context reports the server's bound port, null before listen",
+  },
+  {
+    id: 'engine-on-ready',
+    files: ['packages/web/server/lib/opencode/lifecycle.js', 'packages/web/server/index.js'],
+    why: 'plugins hear about each managed OpenCode start and restart that reached ready',
+  },
+  {
+    id: 'plugin-ui-event-broadcast',
+    files: ['packages/web/server/index.js'],
+    why: 'a plugin event goes out on the OpenChamber-owned UI event stream as { type, properties }',
+  },
+  {
+    id: 'merge-engine-config',
+    files: ['packages/web/server/lib/server-plugins.js', 'packages/web/server/index.js'],
+    why: 'one merge rule for engine config fragments, exported and handed to plugins on the context',
+  },
+  {
     id: 'product-runtime-server-plugins',
     files: ['packages/electron/product-runtime.mjs', 'packages/electron/early-startup.mjs'],
     why: 'product.json serverPlugins and env reach the server through the desktop shell',
