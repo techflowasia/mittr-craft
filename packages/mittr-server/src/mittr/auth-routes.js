@@ -21,6 +21,8 @@ const PLATFORM_TIMEOUT_MS = 15_000;
 
 const CANNOT_STORE = 'Cannot store the Mittr sign-in on this machine';
 
+const UNREACHABLE = 'Cannot reach Mittr';
+
 export const ACCOUNTS_DAMAGED = 'Your Mittr account list on this computer is damaged. Choose Repair to set it aside and sign in again.';
 
 const statusOf = (session) => (session
@@ -90,9 +92,20 @@ export function registerMittrAuthRoutes(app, {
 
   const failure = (status, error) => ({ status, body: { error } });
 
+  // How the last sign-in from the browser ended, until the next one starts:
+  // the deep link has no window to answer, so the gate reads it from status.
+  let lastFailure = null;
+
   const signIn = async (callbackUrl) => {
     const refusal = currentRefusal();
     if (refusal) return failure(503, refusal);
+    const result = await finishSignIn(callbackUrl);
+    if (result.status === 200) lastFailure = null;
+    else lastFailure = result.body.error === UNREACHABLE ? 'unreachable' : 'failed';
+    return result;
+  };
+
+  const finishSignIn = async (callbackUrl) => {
     let code;
     try {
       ({ code } = verifyCallback(pending, callbackUrl, { now, scheme }));
@@ -116,7 +129,7 @@ export function registerMittrAuthRoutes(app, {
       });
     } catch (error) {
       logger.error('[mittr] sign-in exchange failed:', error?.message ?? error);
-      return failure(502, 'Cannot reach Mittr');
+      return failure(502, UNREACHABLE);
     }
 
     if (!response.ok) return failure(response.status, 'Mittr rejected the sign-in');
@@ -156,6 +169,7 @@ export function registerMittrAuthRoutes(app, {
 
   app.post('/api/mittr/auth/start', refuseWhenUnsafe, (_req, res) => {
     pending = createTransaction({ now });
+    lastFailure = null;
     const authorizeUrl = new URL(ENDPOINT.start, broker.baseUrl);
     authorizeUrl.searchParams.set('code_challenge', pending.challenge);
     authorizeUrl.searchParams.set('redirect_uri', redirectUri);
@@ -171,7 +185,10 @@ export function registerMittrAuthRoutes(app, {
 
   app.get('/api/mittr/auth/status', (_req, res) => {
     const status = statusOf(store.read());
-    return res.json(store.damaged() ? { ...status, accountsDamaged: true } : status);
+    if (signInRefusal) status.keychainMissing = true;
+    if (store.damaged()) status.accountsDamaged = true;
+    if (lastFailure) status.signInFailed = lastFailure;
+    return res.json(status);
   });
 
   app.post('/api/mittr/auth/accounts/repair', async (_req, res) => {

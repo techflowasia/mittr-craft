@@ -81,9 +81,19 @@ test('deep-link auth handler completes sign-in and asks for the signed-in event'
   assert.deepEqual(fetchImpl.calls.map((entry) => entry.body.code), ['c1']);
   assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: true, userId: 'u-a', displayName: 'A' });
 
-  await assert.rejects(deepLinks.registrations[0].handle({ type: 'auth', raw: 'mittrcraft-dev://auth/callback?code=c2' }), /No sign-in is in progress/);
   await mittr.dispose();
   assert.equal(deepLinks.unregistered(), 1);
+});
+
+test('a deep-link sign-in that fails is logged and asks for the failed event, so the window can show it', async (t) => {
+  const deepLinks = deepLinkHost();
+  const { call, logger } = await setUp(t, { host: { secretStore: sealingStore(), deepLinks } });
+
+  const result = await deepLinks.registrations[0].handle({ type: 'auth', raw: 'mittrcraft-dev://auth/callback?code=c2' });
+
+  assert.deepEqual(result, { emit: 'mittrcraft:sign-in-failed' });
+  assert.deepEqual(logger.warnings, ['[mittr] sign-in from the browser did not finish: No sign-in is in progress']);
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false, signInFailed: 'failed' });
 });
 
 test('a desktop without a keychain refuses sign-in and leaves the stored tokens alone', async (t) => {
@@ -106,7 +116,7 @@ test('a desktop without a keychain refuses sign-in and leaves the stored tokens 
   assert.deepEqual(await call('POST', '/api/mittr/auth/start'), refusal);
   assert.deepEqual(await call('POST', '/api/mittr/auth/callback', { url: 'mittrcraft-dev://auth/callback?code=c1' }), refusal);
   assert.deepEqual(await call('DELETE', '/api/mittr/auth/session'), refusal);
-  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false, keychainMissing: true });
   assert.equal(fetchImpl.calls.length, 0);
   assert.deepEqual(logger.warnings, []);
   assert.deepEqual(snapshot(), before);

@@ -141,7 +141,45 @@ test('an unreachable platform and an unusable answer are told apart', async (t) 
     status: 502,
     body: { error: 'Mittr returned an unusable session' },
   });
-  assert.deepEqual((await odd.call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
+  assert.deepEqual((await odd.call('GET', '/api/mittr/auth/status')).body, { signedIn: false, signInFailed: 'failed' });
+});
+
+test('a sign-in that did not finish is in the status until the next attempt', async (t) => {
+  let reachable = false;
+  const fetchImpl = fakeFetch(() => {
+    if (!reachable) throw new Error('ECONNREFUSED');
+    return json(sessionFor('u-a', 'A'));
+  });
+  const { call } = await harness(t, { fetchImpl });
+  const status = async () => (await call('GET', '/api/mittr/auth/status')).body;
+
+  await startSignIn(call);
+  await call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=c1` });
+  assert.deepEqual(await status(), { signedIn: false, signInFailed: 'unreachable' });
+
+  await startSignIn(call);
+  assert.deepEqual(await status(), { signedIn: false });
+
+  await call('POST', '/api/mittr/auth/callback', { url: 'mittrcraft://auth/callback?code=c2' });
+  assert.deepEqual(await status(), { signedIn: false, signInFailed: 'failed' });
+
+  reachable = true;
+  await startSignIn(call);
+  await call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=c4` });
+  assert.deepEqual(await status(), { signedIn: true, userId: 'u-a', displayName: 'A' });
+});
+
+test('a refusal is not a failed sign-in: the status says what stands in the way instead', async (t) => {
+  const { auth, call, dataDir } = await harness(t);
+  fs.mkdirSync(path.join(dataDir, 'mittr-accounts'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'mittr-accounts', 'index.json'), '{');
+  await call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=c1` });
+  await assert.rejects(auth.completeSignIn(`${DEV_CALLBACK}?code=c1`), { status: 503 });
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false, accountsDamaged: true });
+
+  const locked = await harness(t, { signInRefusal: 'no keychain' });
+  await locked.call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=c1` });
+  assert.deepEqual((await locked.call('GET', '/api/mittr/auth/status')).body, { signedIn: false, keychainMissing: true });
 });
 
 test('signing in as another user is an account change', async (t) => {

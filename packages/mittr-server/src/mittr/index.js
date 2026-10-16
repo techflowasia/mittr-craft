@@ -5,6 +5,7 @@ import { chooseSecretStore } from './secret-store.js';
 import { deepLinkScheme } from './sign-in.js';
 
 const SIGNED_IN_EVENT = 'mittrcraft:signed-in';
+const SIGN_IN_FAILED_EVENT = 'mittrcraft:sign-in-failed';
 
 /**
  * Mittr on the server: sign-in through the platform's desktop flow, the
@@ -34,9 +35,16 @@ export function setupMittr(context, { env = process.env, fetchImpl = (...args) =
 
   const unregisterDeepLink = host?.deepLinks?.register({
     host: 'auth',
+    // Either way the window is brought forward and re-reads status, so a
+    // sign-in that failed in the browser is shown, not only logged.
     handle: async (link) => {
-      await completeSignIn(link.raw);
-      return { emit: SIGNED_IN_EVENT };
+      try {
+        await completeSignIn(link.raw);
+        return { emit: SIGNED_IN_EVENT };
+      } catch (error) {
+        logger.warn('[mittr] sign-in from the browser did not finish:', error?.message ?? error);
+        return { emit: SIGN_IN_FAILED_EVENT };
+      }
     },
   }) ?? null;
 
