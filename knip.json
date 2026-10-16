@@ -84,6 +84,15 @@
         "scripts/**/*.ts"
       ]
     },
+    "packages/mittr-opencode": {
+      "entry": [
+        "src/identity-plugin.js",
+        "src/**/*.test.js"
+      ],
+      "project": [
+        "src/**/*.js"
+      ]
+    },
     "packages/mittr-ui": {
       "entry": [
         "src/product-ui-plugin.tsx",

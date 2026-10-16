@@ -13,6 +13,10 @@
     {
       "hook": "knip",
       "why": "Knip does not follow the product UI plugin's test files either, so the mittr-ui workspace names its spec files as entries too and the dead-code report stays identical to the base."
+    },
+    {
+      "hook": "knip",
+      "why": "The engine plugin package is a new workspace, so dead-code analysis has to see it as one, with the plugin source and its tests as entries."
     }
   ],
   "packages/electron/deep-link-registry.mjs": [
