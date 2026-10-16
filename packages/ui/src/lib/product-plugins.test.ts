@@ -1,0 +1,115 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import { dict as enDict } from './i18n/messages/en';
+import { dict as esDict } from './i18n/messages/es';
+import { formatMessage, resetI18nDictionaryCacheForTests, useI18nStore, type I18nDictionary } from './i18n/store';
+import {
+  getProductLogo,
+  overlayDictionary,
+  registerProductUiPlugin,
+  resetProductUiPluginsForTests,
+} from './product-plugins';
+
+const ABOUT_KEY = 'aboutDialog.openChamberVersionLabel';
+const AND_KEY = 'aboutDialog.openCodeVersionLabel';
+const MISSING_KEY = 'does.not.exist' as keyof I18nDictionary;
+
+afterEach(() => {
+  resetProductUiPluginsForTests();
+  resetI18nDictionaryCacheForTests();
+  useI18nStore.setState({ locale: 'en', dictionary: enDict, loadingLocale: null });
+});
+
+const waitForLocale = async (locale: 'es') => {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const state = useI18nStore.getState();
+    if (state.locale === locale && state.loadingLocale === null) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  throw new Error(`Timed out waiting for ${locale}`);
+};
+
+describe('product UI plugins', () => {
+  test('overlay wins over upstream value', () => {
+    registerProductUiPlugin({
+      id: 'test',
+      substitutions: [['OpenChamber', 'Acme']],
+      dictionaries: { en: { [ABOUT_KEY]: 'Custom {version}' } },
+    });
+
+    expect(overlayDictionary('en', enDict)[ABOUT_KEY]).toBe('Custom {version}');
+  });
+
+  test('substitution rewrites a value not overlaid', () => {
+    registerProductUiPlugin({
+      id: 'test',
+      substitutions: [['OpenChamber', 'Acme'], ['OpenCode', 'Acme Engine']],
+    });
+
+    const overlaid = overlayDictionary('en', enDict);
+    expect(overlaid[ABOUT_KEY]).toBe('Acme version {version}');
+    expect(overlaid[AND_KEY]).toBe('Acme Engine version {version}');
+  });
+
+  test('substitution is whole-word and case-sensitive', () => {
+    registerProductUiPlugin({ id: 'test', substitutions: [['Open', 'Closed']] });
+
+    const source = { ...enDict, [ABOUT_KEY]: 'Open OpenChamber openchamber Opening' };
+    expect(overlayDictionary('en', source)[ABOUT_KEY]).toBe('Closed OpenChamber openchamber Opening');
+  });
+
+  test('English seen before registration is overlaid after registration', () => {
+    const before = formatMessage(useI18nStore.getState().dictionary, ABOUT_KEY, { version: '1' });
+    expect(before).toBe('OpenChamber version 1');
+
+    registerProductUiPlugin({ id: 'test', substitutions: [['OpenChamber', 'Acme']] });
+
+    const after = formatMessage(useI18nStore.getState().dictionary, ABOUT_KEY, { version: '1' });
+    expect(after).toBe('Acme version 1');
+  });
+
+  test('formatMessage fallback to English is overlaid', () => {
+    expect(formatMessage({} as I18nDictionary, ABOUT_KEY, { version: '1' })).toBe('OpenChamber version 1');
+
+    registerProductUiPlugin({ id: 'test', substitutions: [['OpenChamber', 'Acme']] });
+
+    expect(formatMessage({} as I18nDictionary, ABOUT_KEY, { version: '1' })).toBe('Acme version 1');
+    expect(formatMessage({} as I18nDictionary, MISSING_KEY)).toBe('does.not.exist');
+  });
+
+  test('no plugins leaves dictionaries identical', () => {
+    expect(overlayDictionary('en', enDict)).toBe(enDict);
+    expect(getProductLogo()).toBeUndefined();
+  });
+
+  test('the logo of the registered plugin is returned', () => {
+    const Logo = () => null;
+    registerProductUiPlugin({ id: 'test', logo: Logo });
+
+    expect(getProductLogo()).toBe(Logo);
+  });
+
+  test('registering the same id again replaces the plugin', () => {
+    registerProductUiPlugin({ id: 'test', substitutions: [['OpenChamber', 'First']] });
+    registerProductUiPlugin({ id: 'test', substitutions: [['OpenChamber', 'Second']] });
+
+    expect(overlayDictionary('en', enDict)[ABOUT_KEY]).toBe('Second version {version}');
+  });
+
+  test('a lazily loaded locale is overlaid whether the plugin registered before or after it loaded', async () => {
+    registerProductUiPlugin({ id: 'test', substitutions: [['OpenChamber', 'Acme']] });
+    useI18nStore.getState().setLocale('es');
+    await waitForLocale('es');
+
+    const expected = esDict[ABOUT_KEY].replace(/\bOpenChamber\b/g, 'Acme');
+    expect(expected).not.toBe(esDict[ABOUT_KEY]);
+    expect(useI18nStore.getState().dictionary[ABOUT_KEY]).toBe(expected);
+
+    resetProductUiPluginsForTests();
+    expect(useI18nStore.getState().dictionary[ABOUT_KEY]).toBe(esDict[ABOUT_KEY]);
+
+    registerProductUiPlugin({ id: 'test', substitutions: [['OpenChamber', 'Acme']] });
+    expect(useI18nStore.getState().dictionary[ABOUT_KEY]).toBe(expected);
+  });
+});

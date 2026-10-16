@@ -18,6 +18,8 @@ import { initializeLocale, I18nProvider } from './lib/i18n'
 import type { RuntimeAPIs } from './lib/api/types'
 import { installRuntimeEndpointReset } from './apps/runtimeEndpointReset'
 
+import.meta.glob('../../*/src/product-ui-plugin.{ts,tsx}', { eager: true })
+
 declare global {
   interface Window {
     __OPENCHAMBER_RUNTIME_APIS__?: RuntimeAPIs;

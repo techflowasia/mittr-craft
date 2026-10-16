@@ -16,6 +16,8 @@ import { startModelPrefsAutoSave } from '@/lib/modelPrefsAutoSave';
 import { startTypographyWatcher } from '@/lib/typographyWatcher';
 import { ElectronMiniChatApp } from './ElectronMiniChatApp';
 
+import.meta.glob('../../../*/src/product-ui-plugin.{ts,tsx}', { eager: true });
+
 const initializeSharedPreferences = () => {
   initializeLocale();
 
