@@ -25,6 +25,13 @@ const REFETCHABLE = ['speech-models'];
 const flavorOf = (dataDir) => (path.basename(dataDir) === DEV_DATA_DIR ? 'dev' : 'prod');
 
 export const setupMittrServer = async ({ dataDir, logger, env, homeDir }) => {
+  // Without its own engine root a Dev build would resolve prod's engine
+  // folders, and back up, migrate and run on the installed app's database.
+  if (flavorOf(dataDir) === 'dev' && !String(env.MITTRCRAFT_ENGINE_HOME ?? '').trim()) {
+    throw new Error(
+      `MittrCraft Dev (data dir ${dataDir}) needs MITTRCRAFT_ENGINE_HOME; refusing to start on the prod engine folders`,
+    );
+  }
   const bases = engineBases({ homeDir, env });
 
   const backup = await backupOnce({
@@ -33,10 +40,11 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir }) => {
     exclude: REFETCHABLE.map((entry) => path.join(dataDir, entry)),
   });
   for (const where of backup.where) logger.log(`[mittr] backed up before the first OpenCode 2 start: ${where}`);
+  for (const kept of backup.kept) logger.log(`[mittr] kept the existing backup from before OpenCode 2: ${kept}`);
 
   try {
-    const settings = await migrateSettingsOnce({ dataDir, flavor: flavorOf(dataDir), upstreamKeys: UPSTREAM_SETTINGS_KEYS });
-    if (settings.renamed.length > 0 || settings.moved.length > 0 || settings.portReset) {
+    const settings = await migrateSettingsOnce({ dataDir, upstreamKeys: UPSTREAM_SETTINGS_KEYS });
+    if (settings.renamed.length > 0 || settings.moved.length > 0) {
       logger.log('[mittr] settings brought to upstream names:', JSON.stringify(settings));
     }
   } catch (error) {

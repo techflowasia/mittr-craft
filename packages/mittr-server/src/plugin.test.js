@@ -94,7 +94,7 @@ test('setup backs up the prod layout once, migrates settings and serves the engi
   assert.equal(again.lines.some((line) => line.includes('pre-2x-backup')), false);
 });
 
-test('setup on the Dev layout backs up the data dir and moves the saved prod port', async (t) => {
+test('setup on the Dev layout backs up the data dir once, with the engine inside it', async (t) => {
   const home = tempHome(t);
   const dataDir = path.join(home, '.config', 'mittrcraft-dev');
   const engineHome = path.join(dataDir, 'engine');
@@ -113,11 +113,28 @@ test('setup on the Dev layout backs up the data dir and moves the saved prod por
     'sessions',
   );
   assert.equal(fs.existsSync(`${engineHome}.pre-2x-backup`), false);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'settings.json'), 'utf8')).desktopLocalPort, 57133);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'settings.json'), 'utf8')).desktopLocalPort, 57123);
   const env = await plugin.engineEnv();
   for (const key of ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME']) {
     assert.equal(env[key], engineHome, key);
   }
+});
+
+test('setup refuses a Dev data dir without its own engine root', async (t) => {
+  const home = tempHome(t);
+  const dataDir = path.join(home, '.config', 'mittrcraft-dev');
+  writeFile(path.join(dataDir, 'settings.json'), JSON.stringify({ voiceStepCap: 1 }));
+  writeFile(path.join(home, '.local', 'share', 'mittrcraft', 'engine', 'opencode', 'opencode.db'), 'prod sessions');
+
+  for (const env of [{}, { MITTRCRAFT_ENGINE_HOME: '  ' }]) {
+    await assert.rejects(
+      setupMittrServer({ dataDir, logger: recordingLogger(), env, homeDir: home }),
+      /MITTRCRAFT_ENGINE_HOME/,
+    );
+  }
+  assert.deepEqual(fs.readdirSync(path.join(home, '.local', 'share', 'mittrcraft')), ['engine']);
+  assert.deepEqual(fs.readdirSync(path.join(home, '.config')), ['mittrcraft-dev']);
+  assert.deepEqual(fs.readdirSync(dataDir), ['settings.json']);
 });
 
 test('setup rejects when backup copy fails', async (t) => {

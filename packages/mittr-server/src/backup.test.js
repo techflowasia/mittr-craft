@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 
 import { backupOnce } from './backup.js';
 
@@ -37,7 +38,7 @@ test('backupOnce copies once then skips', async (t) => {
 
   const first = await backupOnce({ dirs: [data, state, path.join(root, 'missing')], marker });
 
-  assert.deepEqual(first, { made: true, where: [`${data}.pre-2x-backup`, `${state}.pre-2x-backup`] });
+  assert.deepEqual(first, { made: true, where: [`${data}.pre-2x-backup`, `${state}.pre-2x-backup`], kept: [] });
   assert.equal(read(path.join(`${data}.pre-2x-backup`, 'opencode', 'opencode.db')), 'sessions');
   assert.equal(
     read(path.join(`${state}.pre-2x-backup`, 'accounts', '0123456789abcdef', 'opencode', 'kv.json')),
@@ -53,19 +54,86 @@ test('backupOnce copies once then skips', async (t) => {
   writeFile(path.join(data, 'opencode', 'opencode.db'), 'migrated by 2.x');
   const second = await backupOnce({ dirs: [data, state], marker });
 
-  assert.deepEqual(second, { made: false, where: [] });
+  assert.deepEqual(second, { made: false, where: [], kept: [] });
   assert.equal(read(path.join(`${data}.pre-2x-backup`, 'opencode', 'opencode.db')), 'sessions');
 });
 
-test('backupOnce replaces a partial backup left by an earlier failed attempt', async (t) => {
+test('backupOnce replaces a partial copy left by an earlier failed attempt', async (t) => {
   const root = tempRoot(t);
   const data = path.join(root, 'data');
   writeFile(path.join(data, 'opencode.db'), 'sessions');
-  writeFile(path.join(`${data}.pre-2x-backup`, 'half-copied'), 'partial');
+  writeFile(path.join(`${data}.pre-2x-backup.partial`, 'half-copied'), 'partial');
 
-  await backupOnce({ dirs: [data], marker: path.join(root, 'marker') });
+  const result = await backupOnce({ dirs: [data], marker: path.join(root, 'marker') });
 
+  assert.deepEqual(result, { made: true, where: [`${data}.pre-2x-backup`], kept: [] });
   assert.deepEqual(fs.readdirSync(`${data}.pre-2x-backup`), ['opencode.db']);
+  assert.equal(fs.existsSync(`${data}.pre-2x-backup.partial`), false);
+});
+
+test('existing complete backup without marker is kept untouched', async (t) => {
+  const root = tempRoot(t);
+  const data = path.join(root, 'data');
+  const backupFile = path.join(`${data}.pre-2x-backup`, 'opencode', 'opencode.db');
+  writeFile(path.join(data, 'opencode', 'opencode.db'), 'migrated by 2.x');
+  writeFile(backupFile, '1.x sessions');
+  const before = fs.statSync(backupFile).mtimeMs;
+  const marker = path.join(root, 'marker');
+
+  const result = await backupOnce({ dirs: [data], marker });
+
+  assert.deepEqual(result, { made: true, where: [], kept: [`${data}.pre-2x-backup`] });
+  assert.equal(read(backupFile), '1.x sessions');
+  assert.equal(fs.statSync(backupFile).mtimeMs, before);
+  assert.deepEqual(fs.readdirSync(`${data}.pre-2x-backup`), ['opencode']);
+  assert.equal(fs.existsSync(marker), true);
+});
+
+test('a retry after a failure skips dirs already backed up', async (t) => {
+  const root = tempRoot(t);
+  const data = path.join(root, 'data');
+  const parent = path.join(root, 'share');
+  const engine = path.join(parent, 'engine');
+  const marker = path.join(root, 'marker');
+  writeFile(path.join(data, 'opencode.db'), 'first');
+  writeFile(path.join(engine, 'opencode.db'), 'engine');
+  fs.chmodSync(parent, 0o555);
+
+  await assert.rejects(backupOnce({ dirs: [data, engine], marker }), /engine\.pre-2x-backup/);
+  assert.equal(read(path.join(`${data}.pre-2x-backup`, 'opencode.db')), 'first');
+  assert.equal(fs.existsSync(marker), false);
+
+  fs.chmodSync(parent, 0o755);
+  writeFile(path.join(data, 'opencode.db'), 'changed since');
+  const retry = await backupOnce({ dirs: [data, engine], marker });
+
+  assert.deepEqual(retry, { made: true, where: [`${engine}.pre-2x-backup`], kept: [`${data}.pre-2x-backup`] });
+  assert.equal(read(path.join(`${data}.pre-2x-backup`, 'opencode.db')), 'first');
+  assert.equal(read(path.join(`${engine}.pre-2x-backup`, 'opencode.db')), 'engine');
+  assert.equal(fs.existsSync(marker), true);
+});
+
+test('only .partial paths are ever removed', async (t) => {
+  const root = tempRoot(t);
+  const kept = path.join(root, 'kept');
+  const fresh = path.join(root, 'fresh');
+  const failing = path.join(root, 'share', 'failing');
+  writeFile(path.join(kept, 'a'), 'a');
+  writeFile(path.join(`${kept}.pre-2x-backup`, 'a'), 'old a');
+  writeFile(path.join(fresh, 'b'), 'b');
+  writeFile(path.join(`${fresh}.pre-2x-backup.partial`, 'stale'), 'stale');
+  writeFile(path.join(failing, 'c'), 'c');
+  fs.chmodSync(path.join(root, 'share'), 0o555);
+  const rm = mock.method(fsPromises, 'rm');
+  t.after(() => rm.mock.restore());
+
+  await assert.rejects(backupOnce({ dirs: [kept, fresh, failing], marker: path.join(root, 'marker') }));
+
+  const removed = rm.mock.calls.map((call) => call.arguments[0]);
+  assert.ok(removed.length > 0);
+  for (const target of removed) assert.ok(target.endsWith('.pre-2x-backup.partial'), target);
+  assert.equal(read(path.join(`${kept}.pre-2x-backup`, 'a')), 'old a');
+  assert.equal(read(path.join(`${fresh}.pre-2x-backup`, 'b')), 'b');
 });
 
 test('backupOnce copies a folder nested in another listed folder only once', async (t) => {

@@ -23,7 +23,7 @@ const withRawSettings = (t, raw) => {
 
 const readSettings = (dataDir) => JSON.parse(fs.readFileSync(path.join(dataDir, 'settings.json'), 'utf8'));
 
-test('migrateSettingsOnce renames known keys, parks unknown ones under mittr, resets dev port 57123, and runs once', async (t) => {
+test('migrateSettingsOnce renames known keys, parks unknown ones under mittr, and runs once', async (t) => {
   const dataDir = withDataDir(t, {
     themeId: 'mittr-light',
     projects: [{ id: 'p1', path: '/work/p1' }],
@@ -35,14 +35,14 @@ test('migrateSettingsOnce renames known keys, parks unknown ones under mittr, re
     typographySizes: { body: 14 },
   });
 
-  const first = await migrateSettingsOnce({ dataDir, flavor: 'dev', upstreamKeys: UPSTREAM_KEYS });
+  const first = await migrateSettingsOnce({ dataDir, upstreamKeys: UPSTREAM_KEYS });
 
   assert.deepEqual(first.renamed, ['mittrcraftWidgetMode', 'MittrCraftBanner']);
   assert.deepEqual(first.moved, ['mittrcraftOnlyOurs', 'agentChromeToolEnabled', 'typographySizes']);
   assert.deepEqual(readSettings(dataDir), {
     themeId: 'mittr-light',
     projects: [{ id: 'p1', path: '/work/p1' }],
-    desktopLocalPort: 57133,
+    desktopLocalPort: 57123,
     openchamberWidgetMode: 'compact',
     OpenChamberBanner: false,
     mittr: {
@@ -56,20 +56,16 @@ test('migrateSettingsOnce renames known keys, parks unknown ones under mittr, re
     path.join(dataDir, 'settings.json'),
     JSON.stringify({ desktopLocalPort: 57123, newMittrKey: true }),
   );
-  const second = await migrateSettingsOnce({ dataDir, flavor: 'dev', upstreamKeys: UPSTREAM_KEYS });
+  const second = await migrateSettingsOnce({ dataDir, upstreamKeys: UPSTREAM_KEYS });
 
-  assert.deepEqual(second, { renamed: [], moved: [], portReset: false });
+  assert.deepEqual(second, { renamed: [], moved: [] });
   assert.deepEqual(readSettings(dataDir), { desktopLocalPort: 57123, newMittrKey: true });
 });
 
-test('migrateSettingsOnce keeps a prod port and any other dev port', async (t) => {
-  const prod = withDataDir(t, { desktopLocalPort: 57123 });
-  await migrateSettingsOnce({ dataDir: prod, flavor: 'prod', upstreamKeys: UPSTREAM_KEYS });
-  assert.equal(readSettings(prod).desktopLocalPort, 57123);
-
-  const dev = withDataDir(t, { desktopLocalPort: 60000 });
-  await migrateSettingsOnce({ dataDir: dev, flavor: 'dev', upstreamKeys: UPSTREAM_KEYS });
-  assert.equal(readSettings(dev).desktopLocalPort, 60000);
+test('migrateSettingsOnce leaves the saved desktop port alone', async (t) => {
+  const dataDir = withDataDir(t, { desktopLocalPort: 57123, voiceStepCap: 4 });
+  await migrateSettingsOnce({ dataDir, upstreamKeys: UPSTREAM_KEYS });
+  assert.deepEqual(readSettings(dataDir), { desktopLocalPort: 57123, mittr: { voiceStepCap: 4 } });
 });
 
 test('migrateSettingsOnce lets the renamed 1.x value win over the upstream name', async (t) => {
@@ -78,38 +74,38 @@ test('migrateSettingsOnce lets the renamed 1.x value win over the upstream name'
     { mittrcraftWidgetMode: 'ours', openchamberWidgetMode: 'upstream' },
   ]) {
     const dataDir = withDataDir(t, settings);
-    await migrateSettingsOnce({ dataDir, flavor: 'prod', upstreamKeys: UPSTREAM_KEYS });
+    await migrateSettingsOnce({ dataDir, upstreamKeys: UPSTREAM_KEYS });
     assert.deepEqual(readSettings(dataDir), { openchamberWidgetMode: 'ours' });
   }
 });
 
 test('migrateSettingsOnce adds to an existing mittr section', async (t) => {
   const dataDir = withDataDir(t, { mittr: { kept: 'yes' }, voiceStepCap: 4 });
-  await migrateSettingsOnce({ dataDir, flavor: 'prod', upstreamKeys: UPSTREAM_KEYS });
+  await migrateSettingsOnce({ dataDir, upstreamKeys: UPSTREAM_KEYS });
   assert.deepEqual(readSettings(dataDir), { mittr: { kept: 'yes', voiceStepCap: 4 } });
 });
 
 test('migrateSettingsOnce marks a data dir without settings as done', async (t) => {
   const dataDir = withDataDir(t);
   assert.deepEqual(
-    await migrateSettingsOnce({ dataDir, flavor: 'dev', upstreamKeys: UPSTREAM_KEYS }),
-    { renamed: [], moved: [], portReset: false },
+    await migrateSettingsOnce({ dataDir, upstreamKeys: UPSTREAM_KEYS }),
+    { renamed: [], moved: [] },
   );
   assert.equal(fs.existsSync(path.join(dataDir, 'settings.json')), false);
 
   fs.writeFileSync(path.join(dataDir, 'settings.json'), JSON.stringify({ voiceStepCap: 4 }));
-  await migrateSettingsOnce({ dataDir, flavor: 'dev', upstreamKeys: UPSTREAM_KEYS });
+  await migrateSettingsOnce({ dataDir, upstreamKeys: UPSTREAM_KEYS });
   assert.deepEqual(readSettings(dataDir), { voiceStepCap: 4 });
 });
 
 test('migrateSettingsOnce rejects an unreadable settings file, leaves it as it is and retries later', async (t) => {
   for (const raw of ['{"themeId": ', '[1, 2]', 'null']) {
     const dataDir = withRawSettings(t, raw);
-    await assert.rejects(migrateSettingsOnce({ dataDir, flavor: 'dev', upstreamKeys: UPSTREAM_KEYS }));
+    await assert.rejects(migrateSettingsOnce({ dataDir, upstreamKeys: UPSTREAM_KEYS }));
     assert.equal(fs.readFileSync(path.join(dataDir, 'settings.json'), 'utf8'), raw);
 
     fs.writeFileSync(path.join(dataDir, 'settings.json'), JSON.stringify({ voiceStepCap: 4 }));
-    await migrateSettingsOnce({ dataDir, flavor: 'dev', upstreamKeys: UPSTREAM_KEYS });
+    await migrateSettingsOnce({ dataDir, upstreamKeys: UPSTREAM_KEYS });
     assert.deepEqual(readSettings(dataDir), { mittr: { voiceStepCap: 4 } });
   }
 });

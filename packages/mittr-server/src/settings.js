@@ -30,8 +30,6 @@ export const UPSTREAM_SETTINGS_KEYS = Object.freeze(
 const SETTINGS_FILE = 'settings.json';
 const MARKER_FILE = '.pre-2x-settings-done';
 const PARKED = 'mittr';
-const PROD_PORT = 57123;
-const DEV_PORT = 57133;
 
 // 1.x renamed upstream's names to its own; reversing the spelling gives the
 // name upstream reads.
@@ -82,7 +80,7 @@ const writeSettings = async (file, settings) => {
   }
 };
 
-const convert = (settings, { flavor, upstreamKeys }) => {
+const convert = (settings, upstreamKeys) => {
   const next = {};
   const parked = isPlainObject(settings[PARKED]) ? { ...settings[PARKED] } : {};
   // The value 1.x actually used wins over one already under the upstream name.
@@ -106,13 +104,7 @@ const convert = (settings, { flavor, upstreamKeys }) => {
   }
   Object.assign(next, renames);
   if (Object.keys(parked).length > 0) next[PARKED] = parked;
-
-  // A Dev install that saved the prod port would fight the installed app for
-  // it. Electron reads this before the server starts, so it applies from the
-  // next launch.
-  const portReset = flavor === 'dev' && next.desktopLocalPort === PROD_PORT;
-  if (portReset) next.desktopLocalPort = DEV_PORT;
-  return { next, renamed, moved, portReset };
+  return { next, renamed, moved };
 };
 
 /**
@@ -122,19 +114,19 @@ const convert = (settings, { flavor, upstreamKeys }) => {
  * upstream leaves it alone. Rejects without marking when the file cannot be
  * read or written, so the next start tries again.
  */
-export const migrateSettingsOnce = async ({ dataDir, flavor, upstreamKeys }) => {
+export const migrateSettingsOnce = async ({ dataDir, upstreamKeys }) => {
   const marker = path.join(dataDir, MARKER_FILE);
-  const nothing = { renamed: [], moved: [], portReset: false };
+  const nothing = { renamed: [], moved: [] };
   if (await exists(marker)) return nothing;
 
   const file = path.join(dataDir, SETTINGS_FILE);
   const settings = await readSettings(file);
-  const result = settings ? convert(settings, { flavor, upstreamKeys }) : null;
-  if (result && (result.renamed.length > 0 || result.moved.length > 0 || result.portReset)) {
+  const result = settings ? convert(settings, upstreamKeys) : null;
+  if (result && (result.renamed.length > 0 || result.moved.length > 0)) {
     await writeSettings(file, result.next);
   }
 
   await fs.mkdir(dataDir, { recursive: true });
   await fs.writeFile(marker, `${new Date().toISOString()}\n`);
-  return result ? { renamed: result.renamed, moved: result.moved, portReset: result.portReset } : nothing;
+  return result ? { renamed: result.renamed, moved: result.moved } : nothing;
 };
