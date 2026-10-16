@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Scans a built MittrCraft app for upstream product names a person could see.
+ * Scans a built MittrCraft app for upstream product names, and links to
+ * upstream's project and community, that a person could see.
  *
  *   node scripts/mittr/brand-leak-scan.mjs <path to .app> [--json]
  *
@@ -47,7 +48,19 @@ import { resolveBunExecutable } from '../lib/bun-executable.mjs';
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const defaultAllowlist = path.join(repoRoot, 'brand', 'leak-allowlist.json');
 
-export const NEEDLES = ['OpenChamber', 'OpenCode', 'openchamber://'];
+// Upstream's names, its deep-link scheme, and the addresses of its project and
+// community: a link to its repository, chat, social account or site points a
+// person at the upstream product as surely as its name does.
+export const NEEDLES = [
+  'OpenChamber',
+  'OpenCode',
+  'openchamber://',
+  'github.com/openchamber',
+  'discord.gg/',
+  'x.com/openchamber',
+  '@openchamber_dev',
+  'openchamber.dev',
+];
 
 const SCRIPT_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
 const TEXT_EXTENSIONS = new Set(['.html', '.css', '.json', '.webmanifest', '.svg', '.txt', '.plist', '.xml']);
@@ -61,18 +74,19 @@ const allowlistSchema = z.array(z.object({
   reason: z.string().min(1),
 }).strict());
 
-/** Every needle occurrence in `text`, as `[start, end)` offsets. */
-export const findNeedles = (text) => {
-  const found = [];
-  for (const needle of NEEDLES) {
-    for (let index = text.indexOf(needle); index !== -1; index = text.indexOf(needle, index + needle.length)) {
-      found.push({ start: index, end: index + needle.length });
-    }
-  }
-  return found.sort((a, b) => a.start - b.start);
-};
+// A host name ends where the name does: `openchamber.deviceSeeded` is a
+// storage key, not the site.
+const HOST_NEEDLES = new Set(['openchamber.dev']);
+const NEEDLE_PATTERN = new RegExp(NEEDLES
+  .map((needle) => needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + (HOST_NEEDLES.has(needle) ? '(?![A-Za-z0-9])' : ''))
+  .join('|'), 'g');
 
-const hasNeedle = (text) => NEEDLES.some((needle) => text.includes(needle));
+/** Every needle occurrence in `text`, as `[start, end)` offsets. */
+export const findNeedles = (text) => [...text.matchAll(NEEDLE_PATTERN)]
+  .map((match) => ({ start: match.index, end: match.index + match[0].length }));
+
+const NEEDLE_TEST = new RegExp(NEEDLE_PATTERN.source);
+const hasNeedle = (text) => NEEDLE_TEST.test(text);
 
 const isStringNode = (node) => ts.isStringLiteral(node)
   || ts.isNoSubstitutionTemplateLiteral(node)

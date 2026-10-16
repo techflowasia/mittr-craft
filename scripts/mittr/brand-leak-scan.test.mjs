@@ -22,6 +22,27 @@ test('a name inside a string literal is a hit; identifiers, comments and console
   assert.deepEqual(hits.map((hit) => hit.line), [2, 4]);
 });
 
+test('links to upstream project, chat, social account and site are hits; our own links are not', () => {
+  const source = [
+    'const a = "https://github.com/openchamber/openchamber";',
+    'const b = "https://discord.gg/ZYRSdnwwKA";',
+    'const c = { href: "https://x.com/openchamber_dev", children: "@openchamber_dev" };',
+    'const d = `https://docs.openchamber.dev/guide/${page}`;',
+    'const e = "https://openchamber.dev";',
+    'const f = "https://github.com/techflowasia/mittr-craft";',
+    'const g = "openchamber.deviceSeeded.v1:";',
+  ].join('\n');
+  const hits = scanSource({ file: 'web-dist/assets/a.js', source });
+  assert.deepEqual(hits.map((hit) => [hit.line, hit.text.slice(hit.start, hit.end)]), [
+    [1, 'github.com/openchamber'],
+    [2, 'discord.gg/'],
+    [3, 'x.com/openchamber'],
+    [3, '@openchamber_dev'],
+    [4, 'openchamber.dev'],
+    [5, 'openchamber.dev'],
+  ]);
+});
+
 test('markup comments do not count, markup text does', () => {
   const source = [
     '<!-- OpenChamber logo -->',

@@ -266,5 +266,71 @@
     "file": "app.asar/node_modules/@openchamber/web/server/lib/spaces/places/fake-docker.js",
     "snippet": "\"isOpenCodeReady\":true",
     "reason": "JSON field name in the fake Docker used by tests; an id."
+  },
+  {
+    "file": "app.asar/dist-bundle/*.mjs",
+    "key": "bugReport",
+    "snippet": "https://github.com/openchamber/openchamber/issues/new",
+    "reason": "Built-in default link (UPSTREAM_PRODUCT); product.json sets every link to null, so the menu shows none."
+  },
+  {
+    "file": "app.asar/dist-bundle/*.mjs",
+    "key": "ideas",
+    "snippet": "https://github.com/openchamber/openchamber/discussions/categories/ideas",
+    "reason": "Built-in default link (UPSTREAM_PRODUCT); product.json sets every link to null, so the menu shows none."
+  },
+  {
+    "file": "app.asar/dist-bundle/*.mjs",
+    "key": "discord",
+    "snippet": "https://discord.gg/ZYRSdnwwKA",
+    "reason": "Built-in default link (UPSTREAM_PRODUCT); product.json sets every link to null, so the menu shows none."
+  },
+  {
+    "file": "web-dist/assets/runtimeEndpointReset-*.js",
+    "snippet": "=\"https://github.com/openchamber/openchamber/releases\";",
+    "reason": "Release-notes address of the app update dialog, which opens only when an app update is available; this build has no update channel, so it never opens."
+  },
+  {
+    "file": "web-dist/assets/SettingsView-*.js",
+    "key": "homepage",
+    "snippet": "https://github.com/openchamber/opencode-",
+    "reason": "Home of a third-party engine plugin, hosted under upstream's GitHub organisation; the plugin's Docs button opens it. Kept pending the owner's ruling: it is where the plugin lives."
+  },
+  {
+    "file": "web-dist/assets/SettingsView-*.js",
+    "key": "gitUrl",
+    "snippet": "https://github.com/openchamber/openchamber-excalidraw",
+    "reason": "Install source of the Excalidraw extension, hosted under upstream's GitHub organisation; installing it fetches from there. Never shown as text."
+  },
+  {
+    "file": "web-dist/assets/SettingsView-*.js",
+    "key": "homepage",
+    "snippet": "https://github.com/openchamber/openchamber-excalidraw",
+    "reason": "Home of the Excalidraw extension, hosted under upstream's GitHub organisation; the extension's Docs button opens it. Kept pending the owner's ruling: it is where the extension lives."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/linear/auth.js",
+    "snippet": "https://api.openchamber.dev/v1/oauth/linear",
+    "reason": "Address of the Linear sign-in service the server calls; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/notifications/apns-runtime.js",
+    "snippet": "https://api.openchamber.dev/v1/push/send",
+    "reason": "Address of the push relay the server calls; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/package-manager.js",
+    "snippet": "https://api.openchamber.dev/v1/update/check",
+    "reason": "Address of the update service the server calls; never shown, and this build has no update channel."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/package-manager.js",
+    "snippet": "GITHUB_RELEASES_URL = 'https://github.com/openchamber/openchamber/releases'",
+    "reason": "Release-notes address returned with an available update; this build has no update channel, so none is ever shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/relay/service.js",
+    "snippet": "wss://relay.openchamber.dev/ws",
+    "reason": "Address of the relay service the server connects to for phone pairing; never shown."
   }
 ]
