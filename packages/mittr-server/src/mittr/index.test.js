@@ -607,33 +607,59 @@ test('the background key retry is tried only once, and dispose cancels it', asyn
   assert.equal(engineCalls(fetchImpl).length, 3);
 });
 
+// The server's order: it renders every plugin's config, then writes the file,
+// and the write is what fails.
+const failingWrites = (engine) => {
+  const refresh = engine.context.managedConfig.refresh;
+  const failures = { next: 0 };
+  engine.context.managedConfig.refresh = async () => {
+    if (failures.next === 0) return refresh();
+    failures.next -= 1;
+    engine.refreshes.push(Date.now());
+    await engine.contribute();
+    throw new Error('disk full');
+  };
+  return failures;
+};
+const renderedAliasesOf = (engine) => Object.keys(engine.rendered.at(-1)?.providers?.mittr?.models ?? {});
+
 test('the same model list again does not rewrite the engine config, and a write that failed is tried again', async (t) => {
   const engine = fakeEngineContext();
-  const refresh = engine.context.managedConfig.refresh;
-  let failNext = false;
-  engine.context.managedConfig.refresh = async () => {
-    if (failNext) {
-      failNext = false;
-      throw new Error('disk full');
-    }
-    return refresh();
-  };
+  const failures = failingWrites(engine);
   const { mittr } = await setUp(t, { engine, fetchImpl: engineAndBroker() });
 
   await mittr.applyModels(MODELS);
   await mittr.applyModels(MODELS);
   assert.equal(engine.refreshes.length, 1);
 
-  failNext = true;
+  failures.next = 1;
   await assert.rejects(mittr.applyModels([MODELS[0]]), /disk full/);
   await mittr.applyModels([MODELS[0]]);
+  assert.equal(engine.refreshes.length, 3);
+  assert.deepEqual(renderedAliasesOf(engine), ['a1']);
+});
+
+test('a list whose config was rendered but not written is written by the next apply of the same list', async (t) => {
+  const engine = fakeEngineContext();
+  const failures = failingWrites(engine);
+  const { mittr, logger } = await setUp(t, { engine, fetchImpl: engineAndBroker() });
+
+  failures.next = 1;
+  await assert.rejects(mittr.applyModels(MODELS), /disk full/);
+  assert.equal(engine.rendered.length, 0);
+
+  await mittr.applyModels(MODELS);
   assert.equal(engine.refreshes.length, 2);
+  assert.deepEqual(renderedAliasesOf(engine), ['a1', 'a2']);
+  await mittr.applyModels(MODELS);
+  assert.equal(engine.refreshes.length, 2);
+  assert.deepEqual(logger.warnings, []);
 });
 
 test('overlapping applies leave the engine config on the last list, and a later apply of an older list still writes it', async (t) => {
   const engine = fakeEngineContext();
   const { mittr } = await setUp(t, { engine, fetchImpl: engineAndBroker() });
-  const renderedAliases = () => Object.keys(engine.rendered.at(-1)?.providers?.mittr?.models ?? {});
+  const renderedAliases = () => renderedAliasesOf(engine);
 
   const gate = deferred();
   engine.refreshGate = gate.promise;
@@ -659,8 +685,12 @@ test('an apply before the engine config is first built triggers no refresh, and 
   assert.equal(engine.refreshes.length, 0);
 
   assert.deepEqual(Object.keys((await mittr.managedConfig()).providers.mittr.models), ['a1', 'a2']);
+  // The build's own write is not reported back, so the first apply after it
+  // writes once more; from then on the same list is not written again.
   await mittr.applyModels(MODELS);
-  assert.equal(engine.refreshes.length, 0);
-  await mittr.applyModels([MODELS[0]]);
   assert.equal(engine.refreshes.length, 1);
+  await mittr.applyModels(MODELS);
+  assert.equal(engine.refreshes.length, 1);
+  await mittr.applyModels([MODELS[0]]);
+  assert.equal(engine.refreshes.length, 2);
 });

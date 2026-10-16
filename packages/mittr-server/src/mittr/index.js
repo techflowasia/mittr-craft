@@ -149,17 +149,19 @@ export function setupMittr(context, {
 
   // The port is unknown before listen and may be random, so the URL is built
   // on each write. Without it there is no provider, but the lock stays.
-  // What the last build or refresh of the engine config actually carried.
   // Until the first build there is no config to refresh: before it, the
   // server may still answer a refresh with no fragment from this plugin at
-  // all, which would write a config without the lock.
+  // all, which would write a config without the lock. `pendingRendered` is
+  // the list the latest build or refresh put in the config it is about to
+  // write; the server writes the file only after asking, so it counts as
+  // written only once that refresh has finished.
   let configBuilt = false;
-  let renderedModels = null;
+  let pendingRendered = null;
   const managedConfig = async () => {
     const rendered = models;
     const settings = await mittrSettings.read();
     configBuilt = true;
-    renderedModels = JSON.stringify(rendered);
+    pendingRendered = JSON.stringify(rendered);
     return [
       server.port() === null ? {} : mittrProviderFragment({ shimBaseUrl: shimBaseUrl(server.port()), models: rendered }),
       policiesFragment(settings),
@@ -204,19 +206,28 @@ export function setupMittr(context, {
 
   // One list at a time: the server's refresh reads the models late and is not
   // serialised, so two overlapping applies could leave the config on the
-  // older list. The config is rewritten only when it does not already carry
-  // this list, since the engine reloads on every write; the comparison is
-  // with what was actually rendered, so a refresh that failed or wrote
-  // another list is made again by the next apply.
+  // older list. The config is rewritten only when the file is known to carry
+  // another list, since the engine reloads on every write. Known means a
+  // refresh finished: one that rendered and then failed to write leaves
+  // `writtenModels` as it was, so the next apply writes again. The first
+  // build's write is not reported back, so the first apply after it writes
+  // once more.
   let applying = Promise.resolve();
+  let writtenModels = null;
   const writeModels = async (items) => {
     models = modelListOf(items);
-    if (configBuilt && JSON.stringify(models) !== renderedModels) await context.managedConfig.refresh();
+    if (!configBuilt || JSON.stringify(models) === writtenModels) return;
+    await context.managedConfig.refresh();
+    writtenModels = pendingRendered;
   };
   const applyModels = async (items) => {
     const written = applying.then(() => writeModels(items));
     applying = written.catch(() => {});
     await written;
+    // Outside the chain on purpose: the key does not depend on the list, two
+    // stores that overlap both converge on this run's key (one that loses a
+    // race fails and is retried), and a slow one, which waits out the
+    // engine's 404s, must not hold up the next list.
     if (await storeCredential() === 'failed') retryCredentialOnce();
   };
 
