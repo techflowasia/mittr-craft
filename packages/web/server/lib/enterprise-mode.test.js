@@ -248,6 +248,21 @@ describe('enterprise policy', () => {
       );
       expect(isEnterpriseMode(options)).toBe(true);
     });
+
+    it('policy path follows OPENCHAMBER_POLICY_FILE', () => {
+      const productPolicy = '/Library/Application Support/Product/policy.json';
+      const env = { OPENCHAMBER_POLICY_FILE: productPolicy, ProgramData: 'D:\\Elsewhere' };
+      for (const platform of ['darwin', 'linux', 'win32']) {
+        expect(policyFilePaths({ platform, env })).toEqual([productPolicy]);
+      }
+      expect(isEnterpriseMode(machine({ [productPolicy]: '{"enterpriseMode": true}' }, { platform: 'darwin', env }))).toBe(true);
+      expect(isEnterpriseMode(machine(
+        { '/Library/Application Support/OpenChamber/policy.json': '{"enterpriseMode": true}' },
+        { platform: 'darwin', env },
+      ))).toBe(false);
+      expect(policyFilePaths({ platform: 'darwin', env: { OPENCHAMBER_POLICY_FILE: '  ' } }))
+        .toEqual(['/Library/Application Support/OpenChamber/policy.json']);
+    });
   });
 
   describe('provider-connect requests', () => {
