@@ -86,7 +86,8 @@
     },
     "packages/mittr-ui": {
       "entry": [
-        "src/product-ui-plugin.tsx"
+        "src/product-ui-plugin.tsx",
+        "src/**/*.{test,spec}.ts"
       ],
       "project": [
         "src/**/*.{ts,tsx}"

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "type-check": "tsc --noEmit",
+    "test": "node ../../scripts/run-isolated-tests.mjs src",
     "lint": "eslint \"./src/**/*.{ts,tsx}\" --config ../../eslint.config.js"
   }
 }
