@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -65,7 +66,9 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
   const baseEngineEnv = () => engineEnv({ bases, accountHome: activeAccountHome(dataDir, { logger }), rule: ENGINE_DB_RULE });
   if (!context) return { engineEnv: baseEngineEnv };
 
-  const mittr = setupMittr(context, { env });
+  // A second account keeps its engine data and state under `accounts/<home>`.
+  const accountHomeExists = (home) => [bases.data, bases.state].some((base) => fs.existsSync(path.join(base, 'accounts', home)));
+  const mittr = setupMittr(context, { env, accountHomeExists });
   return {
     engineEnv: async () => ({ ...baseEngineEnv(), ...(await mittr.engineEnv()) }),
     managedConfig: mittr.managedConfig,

@@ -7,7 +7,7 @@ import test from 'node:test';
 import express from 'express';
 
 import { createAccountStore } from './account-store.js';
-import { REFRESH_MARGIN_MS, registerMittrAuthRoutes } from './auth-routes.js';
+import { ACCOUNTS_DAMAGED, REFRESH_MARGIN_MS, registerMittrAuthRoutes } from './auth-routes.js';
 import { decrypt, deferred, encrypt, fakeFetch, json, serve, tempDataDir } from './test-helpers.js';
 
 const NOW = 1_800_000_000_000;
@@ -379,13 +379,13 @@ test('the exchange and the refresh give up after 15 seconds', async (t) => {
   assert.deepEqual(timeouts.mock.calls.map((entry) => entry.arguments), [[15_000], [15_000]]);
 });
 
-test('a sign-in that cannot be stored is answered, and the index is left as it is', async (t) => {
+test('a sign-in that cannot be stored is answered', async (t) => {
   const fetchImpl = fakeFetch(() => json(sessionFor('u-a', 'A')));
-  const { call, dataDir } = await harness(t, { fetchImpl });
+  const { call, store } = await harness(t, { fetchImpl });
   t.mock.method(console, 'error', () => {});
-  const indexFile = path.join(dataDir, 'mittr-accounts', 'index.json');
-  fs.mkdirSync(path.dirname(indexFile), { recursive: true });
-  fs.writeFileSync(indexFile, '{"active": "u-x", "accou');
+  const cannotWrite = () => { throw new Error('ENOSPC: no space left on device'); };
+  store.write = cannotWrite;
+  store.clear = cannotWrite;
   await startSignIn(call);
 
   assert.deepEqual(await call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=c1` }), {
@@ -396,5 +396,73 @@ test('a sign-in that cannot be stored is answered, and the index is left as it i
     status: 500,
     body: { error: 'Cannot store the Mittr sign-in on this machine' },
   });
-  assert.equal(fs.readFileSync(indexFile, 'utf8'), '{"active": "u-x", "accou');
+});
+
+const damageIndex = (dataDir, text = '{"active": "u-a", "accou') => {
+  const indexFile = path.join(dataDir, 'mittr-accounts', 'index.json');
+  fs.mkdirSync(path.dirname(indexFile), { recursive: true });
+  fs.writeFileSync(indexFile, text);
+  return indexFile;
+};
+
+test('an unreadable account list refuses sign-in up front, before any browser trip or exchange', async (t) => {
+  const { call, fetchImpl, dataDir } = await harness(t, { sessions: [sessionFor('u-a', 'A')] });
+  t.mock.method(console, 'error', () => {});
+  const indexFile = damageIndex(dataDir);
+  const damaged = { status: 503, body: { error: ACCOUNTS_DAMAGED } };
+
+  assert.deepEqual(await call('POST', '/api/mittr/auth/start'), damaged);
+  assert.deepEqual(await call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=c1` }), damaged);
+  assert.deepEqual(await call('DELETE', '/api/mittr/auth/session'), damaged);
+  assert.deepEqual(await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' }), damaged);
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false, accountsDamaged: true });
+  assert.equal(fetchImpl.calls.length, 0);
+  assert.equal(fs.readFileSync(indexFile, 'utf8'), '{"active": "u-a", "accou');
+  assert.equal(ACCOUNTS_DAMAGED, 'Your Mittr account list on this computer is damaged. Choose Repair to set it aside and sign in again.');
+});
+
+test('repair sets the damaged list aside, and sign-in works again', async (t) => {
+  const changes = [];
+  const fetchImpl = fakeFetch(() => json(sessionFor('u-b', 'B')));
+  const { call, dataDir } = await harness(t, { fetchImpl, onAccountChange: (next) => changes.push(next) });
+  t.mock.method(console, 'error', () => {});
+  t.mock.method(console, 'warn', () => {});
+  damageIndex(dataDir);
+
+  assert.deepEqual(await call('POST', '/api/mittr/auth/accounts/repair'), { status: 200, body: { repaired: true } });
+
+  const setAside = fs.readdirSync(path.join(dataDir, 'mittr-accounts')).filter((name) => name.startsWith('index.json.unreadable-'));
+  assert.equal(setAside.length, 1);
+  assert.equal(fs.readFileSync(path.join(dataDir, 'mittr-accounts', setAside[0]), 'utf8'), '{"active": "u-a", "accou');
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
+  await startSignIn(call);
+  assert.deepEqual(await call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=c1` }), {
+    status: 200,
+    body: { signedIn: true, userId: 'u-b', displayName: 'B' },
+  });
+  assert.deepEqual(await call('POST', '/api/mittr/auth/accounts/repair'), { status: 200, body: { repaired: false } });
+  assert.deepEqual(changes, [null, 'u-b']);
+});
+
+test('a sign-out that lands while the refreshed body is read still wins', async (t) => {
+  const release = deferred();
+  const fetchImpl = fakeFetch(() => ({
+    ok: true,
+    status: 200,
+    json: async () => {
+      await release.promise;
+      return sessionFor('u-a', 'A', { accessToken: 'at-2', refreshToken: 'r2' });
+    },
+  }));
+  const { auth, store } = await harness(t, { fetchImpl, sessions: [sessionFor('u-a', 'A', { expiresAt: NOW + 1_000 })] });
+
+  const refreshing = auth.ensureFreshSession();
+  await new Promise(setImmediate);
+  assert.equal(fetchImpl.calls.length, 1);
+  store.clear();
+  release.resolve();
+
+  assert.equal(await refreshing, null);
+  assert.equal(store.readOf('u-a'), null);
+  assert.deepEqual(store.list(), []);
 });

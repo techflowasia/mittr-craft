@@ -231,3 +231,117 @@ test('writes go through a temporary file and leave none behind', (t) => {
   for (const [from, to] of renames) assert.notEqual(from, to);
   assert.deepEqual(fs.readdirSync(accountsDir(dataDir)).sort(), [`${homeOf('u1')}.session`, 'index.json']);
 });
+
+const writeIndexFile = (dataDir, text) => {
+  fs.mkdirSync(accountsDir(dataDir), { recursive: true });
+  fs.writeFileSync(path.join(accountsDir(dataDir), 'index.json'), text);
+};
+const silentLogger = () => {
+  const lines = [];
+  const record = (...args) => lines.push(args.join(' '));
+  return { lines, log: record, warn: record, error: record };
+};
+
+test('valid JSON of the wrong shape is damaged, never an empty index to write over', (t) => {
+  const shapes = [
+    'null',
+    '[]',
+    '{}',
+    '{"active": null, "accounts": {}}',
+    '{"active": "u1", "accounts": [{"userId": "u1", "displayName": "A", "home": "../escape", "signedIn": true}]}',
+    '{"active": "u1", "accounts": [{"displayName": "A", "home": null, "signedIn": true}]}',
+    '{"active": 7, "accounts": []}',
+  ];
+  for (const shape of shapes) {
+    const dataDir = tempDataDir(t);
+    writeIndexFile(dataDir, shape);
+    const store = createAccountStore({ dataDir, encrypt, decrypt, logger: silentLogger() });
+    assert.equal(store.damaged(), true, shape);
+    assert.throws(() => store.write(sessionFor('u2', 'B')), /account index cannot be read/, shape);
+    assert.equal(fs.readFileSync(path.join(accountsDir(dataDir), 'index.json'), 'utf8'), shape);
+  }
+});
+
+test('a missing or well-formed index is not damaged', (t) => {
+  const dataDir = tempDataDir(t);
+  const store = storeIn(dataDir);
+  assert.equal(store().damaged(), false);
+  store().write(sessionFor('u1', 'A'));
+  assert.equal(store().damaged(), false);
+});
+
+test('repair sets the damaged index aside, deletes nothing and rebuilds the accounts it can prove', (t) => {
+  const dataDir = tempDataDir(t);
+  const store = storeIn(dataDir);
+  store().write(sessionFor('u1', 'A'));
+  store().write(sessionFor('u2', 'B'));
+  store().write(sessionFor('u3', 'C'));
+  fs.writeFileSync(path.join(accountsDir(dataDir), `${homeOf('u3')}.catalog.json`), '{}');
+  const damagedText = '{"active": "u2", "accou';
+  writeIndexFile(dataDir, damagedText);
+  const logger = silentLogger();
+  const homesOnDisk = new Set([homeOf('u2')]);
+  const repaired = createAccountStore({
+    dataDir,
+    encrypt,
+    decrypt,
+    logger,
+    now: () => Date.UTC(2026, 9, 17, 8, 30, 0),
+    accountHomeExists: (home) => homesOnDisk.has(home),
+  });
+
+  assert.deepEqual(repaired.repair(), { repaired: true });
+
+  const setAside = path.join(accountsDir(dataDir), 'index.json.unreadable-2026-10-17T08-30-00-000Z');
+  assert.equal(fs.readFileSync(setAside, 'utf8'), damagedText);
+  assert.equal(repaired.damaged(), false);
+  const index = JSON.parse(fs.readFileSync(path.join(accountsDir(dataDir), 'index.json'), 'utf8'));
+  assert.deepEqual(index, {
+    active: null,
+    accounts: [
+      { userId: 'u1', displayName: 'A', home: null, signedIn: true },
+      { userId: 'u2', displayName: 'B', home: homeOf('u2'), signedIn: true },
+      { userId: 'u3', displayName: 'C', home: homeOf('u3'), signedIn: true },
+    ],
+  });
+  assert.ok(logger.lines.some((line) => line.includes(setAside)), 'the set-aside path is logged');
+  assert.deepEqual(repaired.repair(), { repaired: false });
+});
+
+test('repair gives no account the shared history when it cannot tell which one had it', (t) => {
+  for (const accountHomeExists of [undefined, () => false]) {
+    const dataDir = tempDataDir(t);
+    const store = storeIn(dataDir);
+    store().write(sessionFor('u1', 'A'));
+    store().write(sessionFor('u2', 'B'));
+    writeIndexFile(dataDir, 'not json');
+    const repaired = createAccountStore({ dataDir, encrypt, decrypt, logger: silentLogger(), accountHomeExists });
+    repaired.repair();
+    const homes = JSON.parse(fs.readFileSync(path.join(accountsDir(dataDir), 'index.json'), 'utf8')).accounts.map((entry) => entry.home);
+    assert.deepEqual(homes.sort(), [homeOf('u1'), homeOf('u2')].sort());
+  }
+});
+
+test('repair skips a session it cannot open or whose name does not match its account', (t) => {
+  const dataDir = tempDataDir(t);
+  storeIn(dataDir)().write(sessionFor('u1', 'A'));
+  fs.writeFileSync(path.join(accountsDir(dataDir), `${homeOf('u9')}.session`), encrypt(JSON.stringify(sessionFor('u8', 'H'))));
+  fs.writeFileSync(path.join(accountsDir(dataDir), `${homeOf('u7')}.session`), 'not sealed');
+  writeIndexFile(dataDir, 'not json');
+  const repaired = createAccountStore({ dataDir, encrypt, decrypt, logger: silentLogger(), accountHomeExists: () => false });
+  repaired.repair();
+  assert.deepEqual(repaired.list(), [{ userId: 'u1', displayName: 'A', active: false }]);
+  assert.equal(fs.existsSync(path.join(accountsDir(dataDir), `${homeOf('u9')}.session`)), true);
+});
+
+test('stale temporary files from an interrupted write are swept when the store opens', (t) => {
+  const dataDir = tempDataDir(t);
+  storeIn(dataDir)().write(sessionFor('u1', 'A'));
+  const stale = path.join(accountsDir(dataDir), 'index.json.4242-0a1b2c3d.tmp');
+  const unrelated = path.join(accountsDir(dataDir), 'notes.tmp');
+  fs.writeFileSync(stale, '{');
+  fs.writeFileSync(unrelated, 'keep');
+  storeIn(dataDir)();
+  assert.equal(fs.existsSync(stale), false);
+  assert.equal(fs.existsSync(unrelated), true);
+});

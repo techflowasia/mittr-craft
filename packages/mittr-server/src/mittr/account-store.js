@@ -24,13 +24,25 @@ const emptyIndex = () => ({ active: null, accounts: [] });
 
 export const accountIndexPath = (dataDir) => path.join(dataDir, ACCOUNTS_DIR, INDEX_FILE);
 
+const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+// The shape 1.x and this store write. Anything else is a damaged index: safe
+// to read as no accounts, never safe to write over.
+const isWellFormedIndex = (value) => isPlainObject(value)
+  && (value.active === null || typeof value.active === 'string')
+  && Array.isArray(value.accounts)
+  && value.accounts.every((entry) => isPlainObject(entry)
+    && typeof entry.userId === 'string' && entry.userId !== ''
+    && (entry.home === null || (typeof entry.home === 'string' && ACCOUNT_HOME.test(entry.home))));
+
 /**
  * The one parser of `index.json`. Throws on text that is not JSON; any other
  * malformed shape reads as no accounts, and `active` is kept only when it
- * names a signed-in account.
+ * names a signed-in account. With `strict`, a malformed shape throws too.
  */
-export const parseAccountIndex = (raw) => {
+export const parseAccountIndex = (raw, { strict = false } = {}) => {
   const value = JSON.parse(raw);
+  if (strict && !isWellFormedIndex(value)) throw new Error('the account index does not have the expected shape');
   if (!value || typeof value !== 'object' || !Array.isArray(value.accounts)) return emptyIndex();
   const accounts = value.accounts
     .filter((entry) => entry && typeof entry.userId === 'string' && entry.userId)
@@ -44,7 +56,20 @@ export const parseAccountIndex = (raw) => {
   return { active, accounts };
 };
 
-export function createAccountStore({ dataDir, encrypt, decrypt, fs = nodeFs, logger = console }) {
+const TEMPORARY_FILE = /\.\d+-[0-9a-f]{8}\.tmp$/;
+const SESSION_FILE = /^([0-9a-f]{16})\.session$/;
+
+export function createAccountStore({
+  dataDir,
+  encrypt,
+  decrypt,
+  fs = nodeFs,
+  logger = console,
+  now = Date.now,
+  // Whether the engine already keeps folders for this account home. Repair
+  // uses it to tell which rebuilt account had the shared history.
+  accountHomeExists = null,
+}) {
   const root = path.join(dataDir, ACCOUNTS_DIR);
   const indexPath = accountIndexPath(dataDir);
   const sessionPath = (userId) => path.join(root, `${keyOf(userId)}.session`);
@@ -73,7 +98,7 @@ export function createAccountStore({ dataDir, encrypt, decrypt, fs = nodeFs, log
       if (error?.code === 'ENOENT') return emptyIndex();
       throw error;
     }
-    return parseAccountIndex(raw);
+    return parseAccountIndex(raw, { strict: true });
   };
 
   const readIndex = () => {
@@ -153,7 +178,81 @@ export function createAccountStore({ dataDir, encrypt, decrypt, fs = nodeFs, log
     }
   };
 
+  // What an interrupted write left behind; never a file this store finished.
+  const sweepTemporaryFiles = () => {
+    let names;
+    try {
+      names = fs.readdirSync(root);
+    } catch {
+      return;
+    }
+    for (const name of names.filter((entry) => TEMPORARY_FILE.test(entry))) {
+      try {
+        fs.rmSync(path.join(root, name), { force: true });
+      } catch {
+        // Tried again next start.
+      }
+    }
+  };
+
+  sweepTemporaryFiles();
   carryLegacySession();
+
+  let reportedDamage = false;
+  const damaged = () => {
+    try {
+      loadIndex();
+      reportedDamage = false;
+      return false;
+    } catch (error) {
+      if (!reportedDamage) {
+        reportedDamage = true;
+        logger.error(`[mittr] the account index at ${indexPath} cannot be read:`, error?.message ?? error);
+      }
+      return true;
+    }
+  };
+
+  // Accounts a sealed session proves: the file name must be the key of the
+  // account inside it. An account whose engine home already exists, or that
+  // has a catalog of its own, gets that home; the shared history (home null)
+  // goes to the one remaining account only when exactly one remains and the
+  // engine folders could be checked. Otherwise nobody gets it.
+  const rebuildIndex = () => {
+    const proven = [];
+    for (const name of fs.readdirSync(root)) {
+      const key = SESSION_FILE.exec(name)?.[1];
+      if (!key) continue;
+      try {
+        const session = parseSession(JSON.parse(decrypt(fs.readFileSync(path.join(root, name)))));
+        if (keyOf(session.subject.userId) === key) proven.push({ ...session.subject, key });
+      } catch {
+        // Not provable; its file stays where it is.
+      }
+    }
+    const hasOwnHome = (key) => fs.existsSync(path.join(root, `${key}.catalog.json`)) || Boolean(accountHomeExists?.(key));
+    const withoutHome = proven.filter((account) => !hasOwnHome(account.key));
+    const sharedOwner = accountHomeExists && withoutHome.length === 1 ? withoutHome[0].key : null;
+    const accounts = proven
+      .map((account) => ({ userId: account.userId, displayName: account.displayName, home: account.key === sharedOwner ? null : account.key, signedIn: true }))
+      .sort((a, b) => (a.home === null ? -1 : b.home === null ? 1 : a.userId.localeCompare(b.userId)));
+    return { active: null, accounts };
+  };
+
+  // User-initiated: moves a damaged index aside (nothing is deleted) and
+  // writes one rebuilt from the sessions on disk, so sign-in works again.
+  const repair = () => {
+    if (!fs.existsSync(indexPath) || !damaged()) return { repaired: false };
+    const stamp = new Date(now()).toISOString().replace(/[:.]/g, '-');
+    let setAside = `${indexPath}.unreadable-${stamp}`;
+    for (let attempt = 1; fs.existsSync(setAside); attempt += 1) setAside = `${indexPath}.unreadable-${stamp}-${attempt}`;
+    fs.renameSync(indexPath, setAside);
+    reportedDamage = false;
+    const rebuilt = rebuildIndex();
+    if (rebuilt.accounts.length > 0) writeIndex(rebuilt);
+    logger.warn(`[mittr] set the unreadable account index aside at ${setAside}; rebuilt ${rebuilt.accounts.length} account(s) from their sessions`);
+    return { repaired: true };
+  };
 
   const read = () => {
     const index = readIndex();
@@ -207,5 +306,5 @@ export function createAccountStore({ dataDir, encrypt, decrypt, fs = nodeFs, log
     return index.accounts.find((entry) => entry.userId === index.active)?.home ?? null;
   };
 
-  return { read, readOf, write, clear, activate, signOut, list, activeHome };
+  return { read, readOf, write, clear, activate, signOut, list, activeHome, damaged, repair };
 }

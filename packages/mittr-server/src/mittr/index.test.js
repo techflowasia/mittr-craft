@@ -20,7 +20,8 @@ const sealingStore = () => ({
 
 const recordingLogger = () => {
   const warnings = [];
-  return { warnings, log: () => {}, warn: (...args) => warnings.push(args.join(' ')), error: () => {} };
+  const errors = [];
+  return { warnings, errors, log: () => {}, warn: (...args) => warnings.push(args.join(' ')), error: (...args) => errors.push(args.join(' ')) };
 };
 
 const deepLinkHost = () => {
@@ -124,4 +125,19 @@ test('setup hands the server plugin an engine env, a config fragment and a bound
   assert.deepEqual(await mittr.engineEnv(), {});
   assert.deepEqual(await mittr.managedConfig(), {});
   await mittr.dispose();
+});
+
+test('a damaged account list is logged with its path through the server logger, never sent to the client', async (t) => {
+  const { call, dataDir, logger } = await setUp(t);
+  const indexFile = path.join(dataDir, 'mittr-accounts', 'index.json');
+  fs.mkdirSync(path.dirname(indexFile), { recursive: true });
+  fs.writeFileSync(indexFile, '[]');
+
+  const status = await call('GET', '/api/mittr/auth/status');
+  const start = await call('POST', '/api/mittr/auth/start');
+
+  assert.deepEqual(status.body, { signedIn: false, accountsDamaged: true });
+  assert.equal(start.status, 503);
+  assert.equal(JSON.stringify([status.body, start.body]).includes(dataDir), false);
+  assert.ok(logger.errors.some((line) => line.includes(indexFile)), logger.errors.join('\n'));
 });

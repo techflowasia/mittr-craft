@@ -21,6 +21,8 @@ const PLATFORM_TIMEOUT_MS = 15_000;
 
 const CANNOT_STORE = 'Cannot store the Mittr sign-in on this machine';
 
+export const ACCOUNTS_DAMAGED = 'Your Mittr account list on this computer is damaged. Choose Repair to set it aside and sign in again.';
+
 const statusOf = (session) => (session
   ? { signedIn: true, userId: session.subject.userId, displayName: session.subject.displayName }
   : { signedIn: false });
@@ -57,7 +59,14 @@ export function registerMittrAuthRoutes(app, {
     return res.status(error.status ?? 400).json({ error: 'Invalid request body' });
   });
 
-  const refuseWhenUnsafe = (_req, res, next) => (signInRefusal ? res.status(503).json({ error: signInRefusal }) : next());
+  // Refused before any browser trip or exchange: no keychain on this host, or
+  // an account list that cannot be written without losing who had which home.
+  const currentRefusal = () => signInRefusal ?? (store.damaged() ? ACCOUNTS_DAMAGED : null);
+
+  const refuseWhenUnsafe = (_req, res, next) => {
+    const refusal = currentRefusal();
+    return refusal ? res.status(503).json({ error: refusal }) : next();
+  };
 
   // One pending sign-in at a time. Starting a second replaces the first, so a
   // callback for an abandoned attempt can never be redeemed later.
@@ -82,7 +91,8 @@ export function registerMittrAuthRoutes(app, {
   const failure = (status, error) => ({ status, body: { error } });
 
   const signIn = async (callbackUrl) => {
-    if (signInRefusal) return failure(503, signInRefusal);
+    const refusal = currentRefusal();
+    if (refusal) return failure(503, refusal);
     let code;
     try {
       ({ code } = verifyCallback(pending, callbackUrl, { now, scheme }));
@@ -159,7 +169,23 @@ export function registerMittrAuthRoutes(app, {
     return res.status(status).json(body);
   });
 
-  app.get('/api/mittr/auth/status', (_req, res) => res.json(statusOf(store.read())));
+  app.get('/api/mittr/auth/status', (_req, res) => {
+    const status = statusOf(store.read());
+    return res.json(store.damaged() ? { ...status, accountsDamaged: true } : status);
+  });
+
+  app.post('/api/mittr/auth/accounts/repair', async (_req, res) => {
+    if (signInRefusal) return res.status(503).json({ error: signInRefusal });
+    let result;
+    try {
+      result = store.repair();
+    } catch (error) {
+      logger.error('[mittr] could not set the account list aside:', error?.message ?? error);
+      return res.status(500).json({ error: CANNOT_STORE });
+    }
+    if (result.repaired) await announceAccountChange(activeUserId());
+    return res.json({ repaired: result.repaired });
+  });
 
   app.delete('/api/mittr/auth/session', refuseWhenUnsafe, async (_req, res) => {
     try {

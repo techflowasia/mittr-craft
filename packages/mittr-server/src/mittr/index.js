@@ -15,12 +15,12 @@ const SIGNED_IN_EVENT = 'mittrcraft:signed-in';
  * Returns what the server plugin merges: an engine env, a config fragment and
  * a dispose that does no network I/O, so it can never hold up shutdown.
  */
-export function setupMittr(context, { env = process.env, fetchImpl = (...args) => fetch(...args) } = {}) {
+export function setupMittr(context, { env = process.env, fetchImpl = (...args) => fetch(...args), accountHomeExists = null } = {}) {
   const { app, express, dataDir, logger = console, host = null } = context;
   const broker = resolveBroker(env);
   const scheme = deepLinkScheme(env);
   const { encrypt, decrypt, refusal } = chooseSecretStore({ host, logger });
-  const store = createAccountStore({ dataDir, encrypt, decrypt });
+  const store = createAccountStore({ dataDir, encrypt, decrypt, logger, accountHomeExists });
 
   const { completeSignIn } = registerMittrAuthRoutes(app, {
     express,
