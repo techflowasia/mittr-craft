@@ -56,7 +56,7 @@ import { isSplashColor, redactHostsConfigForRemote } from './remote-page-policy.
 import { isPackagedUiRuntimeRequest } from './packaged-ui-routing.mjs';
 import { probeDirectHostWithRetry } from './host-probe-policy.mjs';
 import { probeElectronHostWithDeadline } from './electron-host-probe.mjs';
-import { assertUpdaterCapability } from './updater-capability.mjs';
+import { assertUpdaterCapability, updateCheckWithoutFeed } from './updater-capability.mjs';
 import { checkForDesktopUpdate } from './updater-check.mjs';
 import { resolveUpdaterChannel } from './updater-channel.mjs';
 import { createContextMenuLabels, menuLabel, normalizeMenuLocale, roleMenuItem } from './menu-locales.mjs';
@@ -4436,9 +4436,8 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     case 'desktop_check_for_updates': {
       // A build without an update feed has no update to find, which is an
       // answer, not a failure for the renderer to show.
-      if (!PRODUCT.updaterFeed) {
-        return { available: false, currentVersion: APP_VERSION, version: null, body: null, date: null };
-      }
+      const withoutFeed = updateCheckWithoutFeed({ updaterFeed: PRODUCT.updaterFeed, currentVersion: APP_VERSION });
+      if (withoutFeed) return withoutFeed;
       assertDesktopUpdaterCapability();
       const currentVersion = APP_VERSION;
       const { available, updateInfo, updateResult, nextVersion, pendingUpdate } = await checkForDesktopUpdate({

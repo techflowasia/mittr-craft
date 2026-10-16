@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { assertUpdaterCapability } from './updater-capability.mjs';
+import { assertUpdaterCapability, updateCheckWithoutFeed } from './updater-capability.mjs';
 
 test('preserves updater behavior outside packaged Linux', () => {
   assert.doesNotThrow(() => assertUpdaterCapability({ platform: 'darwin', packaged: true }));
@@ -63,4 +63,20 @@ test('updater stays available for a product that declares a feed', () => {
     packaged: true,
     updaterFeed: { provider: 'generic', url: 'https://updates.example.test/' },
   }));
+});
+
+test('a check without a feed answers that updates are off, not that the app is up to date', () => {
+  assert.deepEqual(updateCheckWithoutFeed({ updaterFeed: null, currentVersion: '2.1.1+mittr.1' }), {
+    available: false,
+    updatesDisabled: true,
+    currentVersion: '2.1.1+mittr.1',
+    version: null,
+    body: null,
+    date: null,
+  });
+});
+
+test('a check with a feed runs as before', () => {
+  assert.equal(updateCheckWithoutFeed({ currentVersion: '2.1.1' }), null);
+  assert.equal(updateCheckWithoutFeed({ updaterFeed: { provider: 'generic', url: 'https://updates.example.test/' }, currentVersion: '2.1.1' }), null);
 });

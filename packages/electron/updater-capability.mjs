@@ -36,3 +36,10 @@ export const assertUpdaterCapability = ({
     );
   }
 };
+
+// What an update check answers in a build with no update feed: no update, and
+// that updates are off, so a caller can say so rather than "up to date".
+// Null when the build has a feed and the check should run.
+export const updateCheckWithoutFeed = ({ updaterFeed = UPSTREAM_PRODUCT.updaterFeed, currentVersion }) => (
+  updaterFeed ? null : { available: false, updatesDisabled: true, currentVersion, version: null, body: null, date: null }
+);
