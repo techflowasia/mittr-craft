@@ -215,6 +215,10 @@
     {
       "hook": "lifecycle",
       "why": "The first start stored its process only once it had spawned, so a restart that arrived meanwhile (a config change right after the server began listening) found nothing to close and spawned a second engine, leaving one of the two running with no owner; starts and restarts now take turns."
+    },
+    {
+      "hook": "lifecycle",
+      "why": "A restart that arrived during the orphan reap, before the first start had joined the launch queue, still left bootstrap to spawn a second engine once the restart had started one, so bootstrap now skips its start when a restart already started the engine, and still replaces a process left over from a hot reload."
     }
   ],
   "packages/web/server/lib/opencode/managed-config-file.js": [

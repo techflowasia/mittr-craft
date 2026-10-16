@@ -892,6 +892,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   // start waits for it and closes it instead of launching a second process.
   // A rejected launch does not hold up the next one.
   let engineLaunchQueue = Promise.resolve();
+  let processStartedByRestart = null;
   const runEngineLaunchExclusive = (task) => {
     const run = engineLaunchQueue.then(task);
     engineLaunchQueue = run.then(() => undefined, () => undefined);
@@ -974,6 +975,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
 
       state.lastOpenCodeError = null;
       state.openCodeProcess = await startOpenCode();
+      processStartedByRestart = state.openCodeProcess;
       syncToHmrState();
 
       if (state.expressApp) {
@@ -1212,6 +1214,9 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
 
         state.lastOpenCodeError = null;
         await runEngineLaunchExclusive(async () => {
+          // A restart that ran before this start got its turn already started
+          // one; a process left over from before a hot reload is replaced.
+          if (state.openCodeProcess && state.openCodeProcess === processStartedByRestart) return;
           state.openCodeProcess = await startOpenCode();
           syncToHmrState();
         });

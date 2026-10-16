@@ -767,6 +767,84 @@ describe('OpenCode lifecycle', () => {
     }
   });
 
+  it('a restart requested before the first start joins the queue gives exactly one spawn', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+    }));
+    const children = [];
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      child.pid = 2147483620 + children.length;
+      children.push(child);
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    let releaseReap;
+    const reapReleased = new Promise((resolve) => { releaseReap = resolve; });
+    let reapEntered;
+    const reapStarted = new Promise((resolve) => { reapEntered = resolve; });
+    const reapManagedOrphanedProcesses = vi.fn(async () => {
+      reapEntered();
+      await reapReleased;
+      return { reaped: 0 };
+    });
+    const { checkOpenCodeBinary, firstCheckEntered, releaseFirstCheck } = holdFirstBinaryCheck();
+    const onEngineReady = vi.fn();
+    const runtime = createRuntime(
+      { reapManagedOrphanedProcesses, checkOpenCodeBinary, onEngineReady },
+      {},
+      { ENV_EFFECTIVE_PORT: null, ENV_CONFIGURED_OPENCODE_PORT: null },
+    );
+
+    const boot = runtime.bootstrapOpenCodeAtStartup();
+    await reapStarted;
+    const restart = runtime.restartOpenCode('catalog');
+    await firstCheckEntered;
+    releaseReap();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirstCheck();
+    await Promise.all([boot, restart]);
+
+    const live = children.filter((child) => child.kill.mock.calls.length === 0);
+    try {
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(live).toEqual([children[0]]);
+      expect(runtime.testState.openCodeProcess.pid).toBe(children[0].pid);
+      expect(onEngineReady).toHaveBeenCalledTimes(1);
+    } finally {
+      live.forEach((child) => child.kill());
+    }
+  });
+
+  it('the first start still replaces a stale process carried over from a hot reload', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+    }));
+    const child = createMockChild();
+    spawnMock.mockImplementation(() => {
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    const stale = { pid: null, exitCode: 1, signalCode: null, close: vi.fn(async () => {}) };
+    const runtime = createRuntime(
+      { reapManagedOrphanedProcesses: vi.fn(async () => ({ reaped: 0 })) },
+      { openCodeProcess: stale },
+      { ENV_EFFECTIVE_PORT: null, ENV_CONFIGURED_OPENCODE_PORT: null },
+    );
+
+    await runtime.bootstrapOpenCodeAtStartup();
+
+    try {
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(runtime.testState.openCodeProcess).not.toBe(stale);
+      expect(runtime.testState.openCodeProcess.pid).toBe(child.pid);
+    } finally {
+      child.kill();
+    }
+  });
+
   it('a failed first start does not block a later restart', async () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
