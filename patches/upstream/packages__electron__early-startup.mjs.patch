@@ -1,0 +1,57 @@
+diff --git a/packages/electron/early-startup.mjs b/packages/electron/early-startup.mjs
+index 4e3169acf..21689d86e 100644
+--- a/packages/electron/early-startup.mjs
++++ b/packages/electron/early-startup.mjs
+@@ -18,6 +18,8 @@
+  * window and a later main window cannot drift apart.
+  */
+ 
++import { PRODUCT } from './product-runtime.mjs';
++import { readSplashSvg } from './product.mjs';
+ import { app, BrowserWindow, nativeTheme, protocol, screen } from 'electron';
+ import fs from 'node:fs';
+ import os from 'node:os';
+@@ -31,11 +33,12 @@ import { clearAppImageArgv0FromProcessEnv } from '@openchamber/web/server/lib/in
+ const __dirname = path.dirname(fileURLToPath(import.meta.url));
+ export const isDev = process.env.OPENCHAMBER_ELECTRON_DEV === '1' || !app.isPackaged;
+ 
+-export const DEEP_LINK_PROTOCOL = 'openchamber';
++export { PRODUCT };
++export const DEEP_LINK_PROTOCOL = PRODUCT.deepLinkProtocol;
+ export const UI_PROTOCOL = 'openchamber-ui';
+-const PACKAGED_APP_USER_MODEL_ID = 'dev.openchamber.desktop';
+-const DEV_APP_USER_MODEL_ID = 'dev.openchamber.desktop.dev';
+-export const APP_USER_MODEL_ID = app.isPackaged ? PACKAGED_APP_USER_MODEL_ID : DEV_APP_USER_MODEL_ID;
++export const APP_USER_MODEL_ID = app.isPackaged
++  ? PRODUCT.appUserModelId.packaged
++  : PRODUCT.appUserModelId.dev;
+ export const BACKGROUND_START_ARG = '--background';
+ 
+ export const getLoginItemOptions = () => {
+@@ -237,6 +240,8 @@ const buildStartupSplashHtml = () => {
+   const splashFgLight = readSplashColor(settings, 'fgLight', SPLASH_DEFAULTS.fgLight);
+   const splashBgDark = readSplashColor(settings, 'bgDark', SPLASH_DEFAULTS.bgDark);
+   const splashFgDark = readSplashColor(settings, 'fgDark', SPLASH_DEFAULTS.fgDark);
++  // A product may draw its own logo here; it uses the same --splash-* colours.
++  const productSplashSvg = readSplashSvg(PRODUCT);
+ 
+   return `<!doctype html>
+   <html>
+@@ -291,7 +296,7 @@ const buildStartupSplashHtml = () => {
+   </head>
+   <body>
+     <div class="stack">
+-      <svg width="120" height="120" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OpenChamber loading icon">
++      ${productSplashSvg ?? `<svg width="120" height="120" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OpenChamber loading icon">
+         <path d="M50 50 L8.432 26 L8.432 74 L50 98 Z" fill="var(--splash-face-fill)" stroke="var(--splash-stroke)" stroke-width="2" stroke-linejoin="round"/>
+         <path d="M50 50 L39.608 44 L39.608 56 L50 62 Z" fill="var(--splash-cell-fill)" opacity="0.2"/>
+         <path d="M39.608 44 L29.216 38 L29.216 50 L39.608 56 Z" fill="var(--splash-cell-fill)" opacity="0.45"/>
+@@ -331,7 +336,7 @@ const buildStartupSplashHtml = () => {
+           <path fill-rule="evenodd" clip-rule="evenodd" d="M-16 -20 L16 -20 L16 20 L-16 20 Z M-8 -12 L-8 12 L8 12 L8 -12 Z" fill="var(--splash-logo-fill)"/>
+           <path d="M-8 -4 L8 -4 L8 12 L-8 12 Z" fill="var(--splash-logo-fill)" fill-opacity="0.4"/>
+         </g>
+-      </svg>
++      </svg>`}
+     </div>
+   </body>
+   </html>`;

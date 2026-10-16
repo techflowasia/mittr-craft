@@ -1,0 +1,59 @@
+diff --git a/packages/web/server/lib/opencode/v1-migration-topup.test.js b/packages/web/server/lib/opencode/v1-migration-topup.test.js
+index 3f6c6fb9c..075036e59 100644
+--- a/packages/web/server/lib/opencode/v1-migration-topup.test.js
++++ b/packages/web/server/lib/opencode/v1-migration-topup.test.js
+@@ -272,3 +272,54 @@ describe.skipIf(!sqlite)('topUpV1Migration', () => {
+     expect(run()).toEqual({ status: 'skipped', missing: 0, revisited: 0, reason: 'nothing-missing' });
+   });
+ });
++
++describe.skipIf(!sqlite)('topUpV1Migration database location', () => {
++  const quiet = { log: () => {}, warn: () => {} };
++
++  const checkedPaths = (env) => {
++    const touched = [];
++    const fileSystem = {
++      existsSync: (target) => {
++        touched.push(target);
++        return false;
++      },
++    };
++    expect(topUpV1Migration({ env, fileSystem, logger: quiet })).toEqual({
++      status: 'skipped',
++      missing: 0,
++      revisited: 0,
++      reason: 'no-database',
++    });
++    return touched;
++  };
++
++  it('topUp resolves the data dir from the engine env', () => {
++    expect(checkedPaths({ XDG_DATA_HOME: '/tmp/x' })).toEqual(['/tmp/x/opencode/opencode.db']);
++    expect(checkedPaths({ XDG_DATA_HOME: '/tmp/x', OPENCODE_DB: 'opencode.db' })).toEqual([
++      '/tmp/x/opencode/opencode.db',
++    ]);
++    expect(checkedPaths({ XDG_DATA_HOME: '/tmp/x', OPENCODE_DB: 'opencode-dev.db' })).toEqual([
++      '/tmp/x/opencode/opencode-dev.db',
++    ]);
++  });
++
++  it('keeps the default data dir and an absolute OPENCODE_DB', () => {
++    expect(checkedPaths({})).toEqual([path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db')]);
++    expect(checkedPaths({ XDG_DATA_HOME: '/tmp/x', OPENCODE_DB: '/srv/db/opencode.db' })).toEqual([
++      '/srv/db/opencode.db',
++    ]);
++  });
++
++  it('schedules the import in the database the engine env names', () => {
++    const dataHome = path.join(dir, 'engine-data');
++    fs.mkdirSync(path.join(dataHome, 'opencode'), { recursive: true });
++    dbPath = path.join(dataHome, 'opencode', 'opencode.db');
++    createDatabase();
++    seed({ v1: ['ses_c'] });
++
++    expect(
++      topUpV1Migration({ env: { XDG_DATA_HOME: dataHome, OPENCODE_DB: 'opencode.db' }, logger: quiet, now: () => 2_000_000 }),
++    ).toEqual({ status: 'scheduled', missing: 1, revisited: 0 });
++    expect(readMigrationRow().state).toEqual({ phase: 'sessions', cursor: computeResumeCursor('ses_c') });
++  });
++});

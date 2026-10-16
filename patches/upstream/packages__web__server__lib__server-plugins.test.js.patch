@@ -1,0 +1,92 @@
+diff --git a/packages/web/server/lib/server-plugins.test.js b/packages/web/server/lib/server-plugins.test.js
+new file mode 100644
+index 000000000..98645733d
+--- /dev/null
++++ b/packages/web/server/lib/server-plugins.test.js
+@@ -0,0 +1,86 @@
++import { afterEach, describe, expect, it } from 'vitest';
++import os from 'os';
++import path from 'path';
++import fsPromises from 'fs/promises';
++
++import { loadServerPlugins, readServerPluginSpecifiers } from './server-plugins.js';
++
++const roots = [];
++
++afterEach(async () => {
++  await Promise.all(roots.splice(0).map((root) => fsPromises.rm(root, { recursive: true, force: true })));
++});
++
++/** Writes each `source` as its own ESM module and returns their absolute paths. */
++const writePlugins = async (...sources) => {
++  const root = await fsPromises.mkdtemp(path.join(os.tmpdir(), 'oc-server-plugins-'));
++  roots.push(root);
++  return Promise.all(sources.map(async (source, index) => {
++    const file = path.join(root, `plugin-${index}.mjs`);
++    await fsPromises.writeFile(file, source);
++    return file;
++  }));
++};
++
++const context = () => ({ app: { name: 'app' }, dataDir: '/data', logger: console });
++
++describe('server plugins', () => {
++  it('loads plugins in order and merges engineEnv, later wins', async () => {
++    const specifiers = await writePlugins(
++      `export default async ({ dataDir, logger }) => {
++        logger.info('first', dataDir);
++        return { engineEnv: () => ({ SHARED: 'first', FIRST_ONLY: '1' }) };
++      };`,
++      'export default async () => ({});',
++      `export default async ({ app, logger }) => {
++        logger.info('third', app.name);
++        return { engineEnv: async () => ({ SHARED: 'third', THIRD_ONLY: '3' }) };
++      };`,
++    );
++    const calls = [];
++    const logger = { info: (...args) => calls.push(args) };
++
++    const plugins = await loadServerPlugins({ specifiers, context: { ...context(), logger } });
++
++    expect(calls).toEqual([['first', '/data'], ['third', 'app']]);
++    expect(await plugins.engineEnv()).toEqual({ SHARED: 'third', FIRST_ONLY: '1', THIRD_ONLY: '3' });
++  });
++
++  it('server start fails when a plugin setup rejects', async () => {
++    const specifiers = await writePlugins(
++      'export default async () => { throw new Error("setup failed"); };',
++    );
++
++    await expect(loadServerPlugins({ specifiers, context: context() })).rejects.toThrow('setup failed');
++  });
++
++  it('rejects a module without a default export function', async () => {
++    const [specifier] = await writePlugins('export const notDefault = 1;');
++
++    await expect(loadServerPlugins({ specifiers: [specifier], context: context() }))
++      .rejects.toThrow(`${specifier} must export a default function`);
++  });
++
++  it('no OPENCHAMBER_SERVER_PLUGINS means no plugins', async () => {
++    expect(readServerPluginSpecifiers({})).toEqual([]);
++    expect(readServerPluginSpecifiers({ OPENCHAMBER_SERVER_PLUGINS: '' })).toEqual([]);
++    expect(readServerPluginSpecifiers({ OPENCHAMBER_SERVER_PLUGINS: '  ' })).toEqual([]);
++
++    const plugins = await loadServerPlugins({ specifiers: [], context: context() });
++    expect(await plugins.engineEnv()).toEqual({});
++  });
++
++  it('reads the plugin paths from OPENCHAMBER_SERVER_PLUGINS', () => {
++    const env = { OPENCHAMBER_SERVER_PLUGINS: JSON.stringify(['/opt/app/a.mjs', '/opt/app/b.mjs']) };
++    expect(readServerPluginSpecifiers(env)).toEqual(['/opt/app/a.mjs', '/opt/app/b.mjs']);
++  });
++
++  it('names OPENCHAMBER_SERVER_PLUGINS when its value cannot be used', () => {
++    expect(() => readServerPluginSpecifiers({ OPENCHAMBER_SERVER_PLUGINS: '[not json' }))
++      .toThrow(/^OPENCHAMBER_SERVER_PLUGINS is not valid JSON/);
++    expect(() => readServerPluginSpecifiers({ OPENCHAMBER_SERVER_PLUGINS: '"/opt/app/a.mjs"' }))
++      .toThrow('OPENCHAMBER_SERVER_PLUGINS must be a JSON array of absolute file paths');
++    expect(() => readServerPluginSpecifiers({ OPENCHAMBER_SERVER_PLUGINS: '["relative/a.mjs"]' }))
++      .toThrow('OPENCHAMBER_SERVER_PLUGINS must be a JSON array of absolute file paths');
++  });
++});

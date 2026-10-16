@@ -1,0 +1,209 @@
+diff --git a/packages/electron/main.mjs b/packages/electron/main.mjs
+index 76f77f5bd..4950cd8f0 100644
+--- a/packages/electron/main.mjs
++++ b/packages/electron/main.mjs
+@@ -22,6 +22,7 @@ import {
+   DEEP_LINK_PROTOCOL,
+   MIN_WINDOW_HEIGHT,
+   MIN_WINDOW_WIDTH,
++  PRODUCT,
+   UI_PROTOCOL,
+   buildMainWindowOptions,
+   buildRendererAdditionalArguments,
+@@ -55,10 +56,11 @@ import { isSplashColor, redactHostsConfigForRemote } from './remote-page-policy.
+ import { isPackagedUiRuntimeRequest } from './packaged-ui-routing.mjs';
+ import { probeDirectHostWithRetry } from './host-probe-policy.mjs';
+ import { probeElectronHostWithDeadline } from './electron-host-probe.mjs';
+-import { assertUpdaterCapability } from './updater-capability.mjs';
++import { assertUpdaterCapability, updateCheckWithoutFeed } from './updater-capability.mjs';
+ import { checkForDesktopUpdate } from './updater-check.mjs';
+ import { resolveUpdaterChannel } from './updater-channel.mjs';
+ import { createContextMenuLabels, menuLabel, normalizeMenuLocale, roleMenuItem } from './menu-locales.mjs';
++import { UPSTREAM_PRODUCT } from './product.mjs';
+ import { resolveUpdaterFeed } from './updater-feed.mjs';
+ import {
+   buildLinuxInstalledApps,
+@@ -214,7 +216,7 @@ const readAppMetadata = () => {
+ const APP_METADATA = readAppMetadata();
+ const APP_VERSION = APP_METADATA.version;
+ 
+-const DEFAULT_DESKTOP_PORT = 57123;
++const DEFAULT_DESKTOP_PORT = PRODUCT.desktopPort;
+ const LOOPBACK_BIND_HOST = '127.0.0.1';
+ const LAN_BIND_HOST = '0.0.0.0';
+ const MINI_CHAT_WINDOW_WIDTH = 520;
+@@ -230,9 +232,9 @@ const LOCAL_DESKTOP_CLIENT_DEDUPE_KEY = 'desktop-local';
+ // connecting to someone else's server).
+ const REMOTE_DESKTOP_CLIENT_KIND = 'desktop';
+ const ENV_OVERRIDE_HOST_ID = '__env';
+-const GITHUB_BUG_REPORT_URL = 'https://github.com/openchamber/openchamber/issues/new?template=bug_report.yml';
+-const GITHUB_IDEAS_URL = 'https://github.com/openchamber/openchamber/discussions/categories/ideas';
+-const DISCORD_INVITE_URL = 'https://discord.gg/ZYRSdnwwKA';
++const GITHUB_BUG_REPORT_URL = PRODUCT.links.bugReport;
++const GITHUB_IDEAS_URL = PRODUCT.links.ideas;
++const DISCORD_INVITE_URL = PRODUCT.links.discord;
+ const INSTALLED_APPS_CACHE_TTL_SECS = 60 * 60 * 24;
+ const INSTALLED_APPS_CACHE_FILE = 'discovered-apps.json';
+ // Bump when discovery results change shape or matching semantics change, so cached
+@@ -1214,7 +1216,7 @@ const maybeShowNativeNotification = (rawInput) => {
+ 
+   const title = typeof payload.title === 'string' && payload.title.trim()
+     ? payload.title.trim()
+-    : 'OpenChamber';
++    : PRODUCT.appName;
+   const body = typeof payload.body === 'string' ? payload.body : '';
+   const sessionId = typeof payload.sessionId === 'string' && payload.sessionId.trim()
+     ? payload.sessionId.trim()
+@@ -1812,7 +1814,7 @@ const parseConnectPairingDeepLinkPayload = (raw) => {
+     return {
+       pairingId,
+       secret,
+-      label: typeof payload.label === 'string' && payload.label.trim() ? payload.label.trim() : 'OpenChamber',
++      label: typeof payload.label === 'string' && payload.label.trim() ? payload.label.trim() : PRODUCT.appName,
+       fingerprint: typeof payload.fingerprint === 'string' && payload.fingerprint.trim() ? payload.fingerprint.trim() : '',
+       expiresAt: expiresAt || null,
+       candidates: candidates.sort((left, right) => left.priority - right.priority),
+@@ -2967,6 +2969,11 @@ const compareSemver = (left, right) => {
+   return 0;
+ };
+ 
++const assertDesktopUpdaterCapability = () => assertUpdaterCapability({
++  packaged: app.isPackaged,
++  updaterFeed: PRODUCT.updaterFeed,
++});
++
+ const setupAutoUpdater = () => {
+   if (!app.isPackaged) {
+     return;
+@@ -2980,7 +2987,10 @@ const setupAutoUpdater = () => {
+ 
+   const testBuild = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
+     && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
+-  const feed = resolveUpdaterFeed({ testBuild });
++  const feed = resolveUpdaterFeed({ testBuild, productionFeed: PRODUCT.updaterFeed });
++  if (!feed) {
++    return;
++  }
+   const updaterChannel = feed.provider === 'github'
+     ? resolveUpdaterChannel({ platform: process.platform, architecture: process.arch })
+     : null;
+@@ -4424,7 +4434,11 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
+     }
+ 
+     case 'desktop_check_for_updates': {
+-      assertUpdaterCapability({ packaged: app.isPackaged });
++      // A build without an update feed has no update to find, which is an
++      // answer, not a failure for the renderer to show.
++      const withoutFeed = updateCheckWithoutFeed({ updaterFeed: PRODUCT.updaterFeed, currentVersion: APP_VERSION });
++      if (withoutFeed) return withoutFeed;
++      assertDesktopUpdaterCapability();
+       const currentVersion = APP_VERSION;
+       const { available, updateInfo, updateResult, nextVersion, pendingUpdate } = await checkForDesktopUpdate({
+         autoUpdater,
+@@ -4448,7 +4462,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
+     }
+ 
+     case 'desktop_download_and_install_update':
+-      assertUpdaterCapability({ packaged: app.isPackaged });
++      assertDesktopUpdaterCapability();
+       if (!state.pendingUpdate) {
+         throw new Error('No pending update');
+       }
+@@ -4505,7 +4519,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
+ 
+     case 'desktop_restart': {
+       const applyUpdate = Boolean(state.pendingUpdate?.downloaded && app.isPackaged);
+-      if (applyUpdate) assertUpdaterCapability({ packaged: app.isPackaged });
++      if (applyUpdate) assertDesktopUpdaterCapability();
+       log.info(`[electron] desktop_restart applyUpdate=${applyUpdate} packaged=${app.isPackaged}`);
+       if (applyUpdate && process.platform === 'darwin' && typeof app.isInApplicationsFolder === 'function') {
+         try {
+@@ -4753,9 +4767,28 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
+   }
+ };
+ 
++// A link the product sets to `null` leaves out its menu item, and a group left
++// with no items leaves out its separator.
++const helpLinkItems = (t) => {
++  const linkItem = (key, url) => (url ? [{ label: t(key), click: () => shell.openExternal(url) }] : []);
++  return [
++    [...linkItem('reportABug', GITHUB_BUG_REPORT_URL), ...linkItem('discussAnIdea', GITHUB_IDEAS_URL)],
++    linkItem('joinDiscord', DISCORD_INVITE_URL),
++  ].filter((group) => group.length > 0).flatMap((group) => [{ type: 'separator' }, ...group]);
++};
++
++// A build without an update feed leaves out the menu item that checks for one.
++const updateMenuItems = (t) => (PRODUCT.updaterFeed
++  ? [{ label: t('checkForUpdates'), click: () => dispatchCheckForUpdates() }]
++  : []);
++
++// The menu tables name the app the way upstream ships it; a product with
++// another name shows its own name in those labels.
++const productMenuLabel = (locale, key) => menuLabel(locale, key).replaceAll(UPSTREAM_PRODUCT.appName, PRODUCT.appName);
++
+ const buildMacMenu = (locale = 'en') => {
+   const dispatchAction = (action) => dispatchMenuAction(action);
+-  const t = (key) => menuLabel(locale, key);
++  const t = (key) => productMenuLabel(locale, key);
+   const roleItem = (role, key) => roleMenuItem(locale, role, key);
+   const handleCopyAction = () => {
+     BrowserWindow.getFocusedWindow()?.webContents.copy();
+@@ -4767,10 +4800,7 @@ const buildMacMenu = (locale = 'en') => {
+       label: t('app.name'),
+       submenu: [
+         { label: t('about'), click: () => dispatchAction('about') },
+-        {
+-          label: t('checkForUpdates'),
+-          click: () => dispatchCheckForUpdates(),
+-        },
++        ...updateMenuItems(t),
+         { type: 'separator' },
+         { label: t('settings'), accelerator: 'Cmd+,', click: () => dispatchAction('settings') },
+         { label: t('reloadWebview'), click: () => reloadMenuTargetWindow() },
+@@ -4855,11 +4885,7 @@ const buildMacMenu = (locale = 'en') => {
+         { label: t('toggleDeveloperTools'), accelerator: 'Cmd+Alt+I', click: () => openDevToolsForMenuTarget() },
+         { type: 'separator' },
+         { label: t('clearCache'), click: () => void handleInvoke(null, 'desktop_clear_cache') },
+-        { type: 'separator' },
+-        { label: t('reportABug'), click: () => shell.openExternal(GITHUB_BUG_REPORT_URL) },
+-        { label: t('discussAnIdea'), click: () => shell.openExternal(GITHUB_IDEAS_URL) },
+-        { type: 'separator' },
+-        { label: t('joinDiscord'), click: () => shell.openExternal(DISCORD_INVITE_URL) },
++        ...helpLinkItems(t),
+       ],
+     },
+   ]);
+@@ -4867,7 +4893,7 @@ const buildMacMenu = (locale = 'en') => {
+ 
+ const buildAutoHiddenMenu = (locale = 'en') => {
+   const dispatchAction = (action) => dispatchMenuAction(action);
+-  const t = (key) => menuLabel(locale, key);
++  const t = (key) => productMenuLabel(locale, key);
+   const roleItem = (role, key) => roleMenuItem(locale, role, key);
+   const handleCopyAction = () => {
+     BrowserWindow.getFocusedWindow()?.webContents.copy();
+@@ -4879,10 +4905,7 @@ const buildAutoHiddenMenu = (locale = 'en') => {
+       label: t('app.name'),
+       submenu: [
+         { label: t('about'), click: () => dispatchAction('about') },
+-        {
+-          label: t('checkForUpdates'),
+-          click: () => dispatchCheckForUpdates(),
+-        },
++        ...updateMenuItems(t),
+         { type: 'separator' },
+         { label: t('settings'), accelerator: 'Ctrl+,', click: () => dispatchAction('settings') },
+         { label: t('reloadWebview'), click: () => reloadMenuTargetWindow() },
+@@ -4974,11 +4997,7 @@ const buildAutoHiddenMenu = (locale = 'en') => {
+         { label: t('showDiagnostics'), accelerator: 'Ctrl+Shift+L', click: () => dispatchAction('download-logs') },
+         { type: 'separator' },
+         { label: t('clearCache'), click: () => void handleInvoke(null, 'desktop_clear_cache') },
+-        { type: 'separator' },
+-        { label: t('reportABug'), click: () => shell.openExternal(GITHUB_BUG_REPORT_URL) },
+-        { label: t('discussAnIdea'), click: () => shell.openExternal(GITHUB_IDEAS_URL) },
+-        { type: 'separator' },
+-        { label: t('joinDiscord'), click: () => shell.openExternal(DISCORD_INVITE_URL) },
++        ...helpLinkItems(t),
+       ],
+     },
+   ]);

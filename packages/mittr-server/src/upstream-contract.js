@@ -1,0 +1,155 @@
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/**
+ * What our layer relies on in upstream OpenChamber, one entry per thing that
+ * could change under us without a merge conflict: a symbol, an environment
+ * variable, a file we pin or a path the build packs. `upstream-contract.test.js`
+ * holds one check per entry and fails when an entry and its check drift
+ * apart, so an entry added here needs its check there.
+ *
+ * Run after every upstream merge (`scripts/mittr/upstream-update.mjs`). A
+ * failure names what moved; read the upstream change before touching the
+ * recorded value.
+ */
+
+export const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+
+export const ENGLISH_SNAPSHOT_FILE = 'packages/mittr-ui/src/strings/en.upstream-snapshot.json';
+
+export const UPSTREAM_CONTRACT = [
+  {
+    id: 'managed-opencode-env',
+    files: ['packages/web/server/lib/opencode/lifecycle.js', 'packages/web/server/index.js'],
+    why: 'the server plugin engine env reaches every OpenCode start and CLI call through getManagedOpenCodeEnv',
+  },
+  {
+    id: 'server-plugins-env',
+    files: ['packages/web/server/lib/server-plugins.js', 'packages/web/server/index.js'],
+    why: 'OPENCHAMBER_SERVER_PLUGINS names plugins the server loads before OpenCode starts',
+  },
+  {
+    id: 'product-runtime-server-plugins',
+    files: ['packages/electron/product-runtime.mjs', 'packages/electron/early-startup.mjs'],
+    why: 'product.json serverPlugins and env reach the server through the desktop shell',
+  },
+  {
+    id: 'policy-file-env',
+    files: ['packages/web/server/lib/enterprise-mode.js'],
+    why: 'OPENCHAMBER_POLICY_FILE replaces the OpenChamber policy path',
+  },
+  {
+    id: 'managed-process-registry-env',
+    files: ['packages/web/server/lib/opencode/managed-process-registry.js'],
+    why: 'OPENCHAMBER_MANAGED_PROCESS_REGISTRY moves the managed process registry out of ~/.config/openchamber',
+  },
+  {
+    id: 'product-json-keys',
+    files: ['packages/electron/product.mjs'],
+    why: 'every product.json key we ship is one the desktop shell reads',
+    keys: [
+      'appName',
+      'linuxDesktopName',
+      'deepLinkProtocol',
+      'appUserModelId',
+      'desktopPort',
+      'links',
+      'updaterFeed',
+      'splashSvg',
+      'env',
+      'ensureDirs',
+      'serverPlugins',
+    ],
+  },
+  {
+    id: 'i18n-overlay',
+    files: ['packages/ui/src/lib/i18n/store.ts', 'packages/ui/src/lib/product-plugins.ts'],
+    why: 'every dictionary the UI shows goes through overlayDictionary',
+  },
+  {
+    id: 'ui-plugin-glob',
+    files: ['packages/ui/src/main.tsx', 'packages/ui/src/apps/renderElectronMiniChatApp.tsx'],
+    why: 'both UI entry points import our product UI plugin through import.meta.glob',
+    line: {
+      'packages/ui/src/main.tsx': "import.meta.glob('../../*/src/product-ui-plugin.{ts,tsx}', { eager: true })",
+      'packages/ui/src/apps/renderElectronMiniChatApp.tsx': "import.meta.glob('../../../*/src/product-ui-plugin.{ts,tsx}', { eager: true })",
+    },
+  },
+  {
+    id: 'english-overrides',
+    files: ['packages/ui/src/lib/i18n/messages/en.ts', 'packages/mittr-ui/src/strings/en.ts', ENGLISH_SNAPSHOT_FILE],
+    why: 'each English override still replaces the upstream text it was written against',
+  },
+  {
+    id: 'after-pack-hook',
+    files: ['packages/electron/scripts/after-pack.cjs'],
+    why: 'the after-pack hook our build drops (afterPack: null) is the one we reviewed',
+    file: 'packages/electron/scripts/after-pack.cjs',
+    sha256: '197686364dd6bf7eea9c62728252c54c984a472833c4bcf9b12fd80c7f4b6c67',
+  },
+  {
+    id: 'staged-server-packing',
+    files: ['packages/electron/package.json', 'packages/electron/scripts/rebuild-native.mjs', 'scripts/mittr/build-desktop.mjs'],
+    why: 'the staged server copy keeps git helpers and built-in extensions unpacked and leaves no native module behind',
+    asarUnpack: [
+      'node_modules/@openchamber/web/server/built-in-extensions/**/*',
+      'node_modules/@openchamber/web/server/lib/git/credential-helper.js',
+      'node_modules/@openchamber/web/server/lib/git/ssh-wrapper.js',
+      'node_modules/@openchamber/web/server/lib/git/repository-credential-helper.js',
+    ],
+    nativeModules: ['node-pty', 'bun-pty'],
+  },
+];
+
+// The dictionaries are TypeScript with extensionless imports, which only Bun
+// loads directly, so they are read in a Bun child process.
+const ENGLISH_PROBE = `
+  const { dict } = await import(process.env.UPSTREAM_EN);
+  const { strings } = await import(process.env.OVERRIDES_EN);
+  const upstream = Object.fromEntries(Object.keys(strings).filter((key) => key in dict).map((key) => [key, dict[key]]));
+  console.log(JSON.stringify({ overrides: strings, upstream }));
+`;
+
+/** Our English overrides and, for each key upstream still has, upstream's English text. */
+export const readEnglishOverrides = ({ root = repoRoot, bun = process.env.BUN_EXECUTABLE || 'bun' } = {}) => {
+  const result = spawnSync(bun, ['-e', ENGLISH_PROBE], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      UPSTREAM_EN: path.join(root, 'packages/ui/src/lib/i18n/messages/en.ts'),
+      OVERRIDES_EN: path.join(root, 'packages/mittr-ui/src/strings/en.ts'),
+    },
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`reading the English dictionaries failed: ${result.stderr}`);
+  return JSON.parse(result.stdout);
+};
+
+/** The snapshot to commit: upstream's English text for every key we override. */
+export const englishSnapshot = ({ overrides, upstream }) => Object.fromEntries(
+  Object.keys(overrides).filter((key) => key in upstream).map((key) => [key, upstream[key]]),
+);
+
+/**
+ * One line per override to re-check: upstream reworded the text it replaces,
+ * dropped the key, or the snapshot and the overrides list different keys.
+ */
+export const compareEnglishSnapshot = (snapshot, { overrides, upstream }) => {
+  const problems = [];
+  for (const key of Object.keys(overrides)) {
+    const inSnapshot = Object.hasOwn(snapshot, key);
+    if (!Object.hasOwn(upstream, key)) {
+      problems.push(`${key}: no longer exists upstream${inSnapshot ? ` (was ${JSON.stringify(snapshot[key])})` : ''}`);
+    } else if (!inSnapshot) {
+      problems.push(`${key}: overridden but not in the snapshot (upstream ${JSON.stringify(upstream[key])})`);
+    } else if (snapshot[key] !== upstream[key]) {
+      problems.push(`${key}: upstream English changed from ${JSON.stringify(snapshot[key])} to ${JSON.stringify(upstream[key])}`);
+    }
+  }
+  for (const key of Object.keys(snapshot)) {
+    if (!Object.hasOwn(overrides, key)) problems.push(`${key}: in the snapshot but no longer overridden`);
+  }
+  return problems;
+};

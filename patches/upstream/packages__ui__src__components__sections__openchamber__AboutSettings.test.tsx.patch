@@ -1,0 +1,104 @@
+diff --git a/packages/ui/src/components/sections/openchamber/AboutSettings.test.tsx b/packages/ui/src/components/sections/openchamber/AboutSettings.test.tsx
+new file mode 100644
+index 000000000..4ced5dfcb
+--- /dev/null
++++ b/packages/ui/src/components/sections/openchamber/AboutSettings.test.tsx
+@@ -0,0 +1,98 @@
++import { afterAll, describe, expect, test } from 'bun:test';
++import React, { act } from 'react';
++import { createRoot } from 'react-dom/client';
++import { Window } from 'happy-dom';
++
++const browser = new Window({ url: 'http://localhost/' });
++Object.assign(globalThis, {
++  window: browser, document: browser.document, navigator: browser.navigator,
++  localStorage: browser.localStorage, sessionStorage: browser.sessionStorage,
++  Node: browser.Node, Element: browser.Element, HTMLElement: browser.HTMLElement,
++  HTMLButtonElement: browser.HTMLButtonElement, Event: browser.Event, MouseEvent: browser.MouseEvent,
++  getComputedStyle: browser.getComputedStyle.bind(browser),
++  requestAnimationFrame: browser.requestAnimationFrame.bind(browser),
++  cancelAnimationFrame: browser.cancelAnimationFrame.bind(browser),
++  IS_REACT_ACT_ENVIRONMENT: true,
++});
++
++const realFetch = globalThis.fetch;
++const engineChecks: string[] = [];
++globalThis.fetch = async (input: RequestInfo | URL) => {
++  const url = String(input);
++  if (url.includes('/api/opencode/upgrade')) engineChecks.push(url);
++  return new Response('{}', { status: 503, headers: { 'Content-Type': 'application/json' } });
++};
++
++const { AboutSettings } = await import('./AboutSettings');
++const { useUpdateStore } = await import('@/stores/useUpdateStore');
++const { I18nProvider } = await import('@/lib/i18n');
++
++afterAll(() => {
++  globalThis.fetch = realFetch;
++  browser.close();
++});
++
++const render = async () => {
++  const container = document.createElement('div');
++  document.body.append(container);
++  const root = createRoot(container);
++  await act(async () => root.render(<I18nProvider><AboutSettings /></I18nProvider>));
++  return {
++    container,
++    buttons: () => [...container.querySelectorAll('button')].map((button) => button.textContent?.trim() ?? ''),
++    unmount: async () => {
++      await act(async () => root.unmount());
++      container.remove();
++    },
++  };
++};
++
++// What the desktop shell answers an update check with when the build has no
++// update channel. The extra field is not part of UpdateInfo, which is why it
++// is a plain object rather than a typed literal.
++const noChannelAnswer = { available: false, currentVersion: '2.1.1', updatesDisabled: true };
++
++describe('About page update controls', () => {
++  test('a build with no update channel shows the engine check and never "up to date"', async () => {
++    useUpdateStore.setState({
++      runtimeType: 'desktop',
++      available: false,
++      checking: false,
++      error: null,
++      info: noChannelAnswer,
++    });
++    const page = await render();
++    try {
++      expect(page.buttons()).toContain('Check updates');
++      expect(page.buttons()).not.toContain('Check for updates');
++      expect(page.container.textContent).not.toContain('Up to date');
++
++      const before = engineChecks.length;
++      const engineButton = [...page.container.querySelectorAll('button')].find((button) => button.textContent?.trim() === 'Check updates');
++      await act(async () => {
++        engineButton?.click();
++      });
++      expect(engineChecks.length).toBe(before + 1);
++      expect(useUpdateStore.getState().checking).toBe(false);
++    } finally {
++      await page.unmount();
++    }
++  });
++
++  test('a build with an update channel keeps the app check', async () => {
++    useUpdateStore.setState({
++      runtimeType: 'desktop',
++      available: false,
++      checking: false,
++      error: null,
++      info: { available: false, currentVersion: '2.1.1' },
++    });
++    const page = await render();
++    try {
++      expect(page.buttons()).toContain('Check for updates');
++      expect(page.container.textContent).toContain('Up to date');
++    } finally {
++      await page.unmount();
++    }
++  });
++});

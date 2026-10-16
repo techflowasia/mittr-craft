@@ -1,0 +1,20 @@
+diff --git a/knip.json b/knip.json
+index 73dfa83d3..eebfe74b6 100644
+--- a/knip.json
++++ b/knip.json
+@@ -84,6 +84,15 @@
+         "scripts/**/*.ts"
+       ]
+     },
++    "packages/mittr-ui": {
++      "entry": [
++        "src/product-ui-plugin.tsx",
++        "src/**/*.{test,spec}.ts"
++      ],
++      "project": [
++        "src/**/*.{ts,tsx}"
++      ]
++    },
+     "packages/mobile": {
+       "entry": [
+         "scripts/**/*.{js,cjs,mjs,ts}"

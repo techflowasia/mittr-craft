@@ -1,0 +1,20 @@
+diff --git a/packages/web/server/lib/enterprise-mode.js b/packages/web/server/lib/enterprise-mode.js
+index e8cb83a4a..70031699c 100644
+--- a/packages/web/server/lib/enterprise-mode.js
++++ b/packages/web/server/lib/enterprise-mode.js
+@@ -79,8 +79,15 @@ const WINDOWS_PROGRAM_DATA = 'C:\\ProgramData';
+  * a setting) would let them point it at an empty file. On Windows the
+  * `ProgramData` variable is consulted only after the fixed location, so
+  * redirecting it cannot hide a policy the administrator placed there.
++ *
++ * The one exception is `OPENCHAMBER_POLICY_FILE`, for a build shipped under
++ * another name whose administrators place the policy in that product's own
++ * folder. It replaces the fixed paths, and is meant to be set by that build's
++ * launcher over whatever the user's environment holds.
+  */
+ export const policyFilePaths = ({ platform = process.platform, env = process.env } = {}) => {
++  const productPolicyFile = (env.OPENCHAMBER_POLICY_FILE ?? '').trim();
++  if (productPolicyFile) return [productPolicyFile];
+   if (platform === 'darwin') return ['/Library/Application Support/OpenChamber/policy.json'];
+   if (platform === 'win32') {
+     const fixed = path.win32.join(WINDOWS_PROGRAM_DATA, 'OpenChamber', 'policy.json');

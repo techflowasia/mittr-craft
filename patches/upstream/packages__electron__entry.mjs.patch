@@ -1,0 +1,33 @@
+diff --git a/packages/electron/entry.mjs b/packages/electron/entry.mjs
+index 586a9f932..1238f2d22 100644
+--- a/packages/electron/entry.mjs
++++ b/packages/electron/entry.mjs
+@@ -11,8 +11,10 @@
+ import { app, protocol } from 'electron';
+ import path from 'node:path';
+ import { shouldIgnoreLoopbackConnectionLimit } from './startup-url-selection.mjs';
++import { resolveAppNames } from './product.mjs';
+ import {
+   APP_USER_MODEL_ID,
++  PRODUCT,
+   UI_PROTOCOL,
+   createEarlyWindow,
+   deferAppEventsUntilMainLoads,
+@@ -27,12 +29,13 @@ recordEarlyStartupMark('electron.entry');
+ 
+ // Set the product name early so electron-log derives its log directory as
+ // ~/Library/Logs/OpenChamber/ (not ~/Library/Logs/@openchamber/electron/).
+-app.setName('OpenChamber');
++const { appName, linuxDesktopName, devUserDataName } = resolveAppNames(PRODUCT, { isDev });
++app.setName(appName);
+ if (process.platform === 'linux') {
+-  app.setDesktopName('openchamber.desktop');
++  app.setDesktopName(linuxDesktopName);
+ }
+-if (isDev) {
+-  app.setPath('userData', path.join(app.getPath('appData'), 'OpenChamber Dev'));
++if (devUserDataName) {
++  app.setPath('userData', path.join(app.getPath('appData'), devUserDataName));
+ }
+ // Test hook for scripts/profile-startup.mjs: a packaged launch that must not
+ // share the single-instance lock or the Chromium profile with the installed

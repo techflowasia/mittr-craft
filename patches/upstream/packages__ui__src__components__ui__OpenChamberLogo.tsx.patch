@@ -1,0 +1,36 @@
+diff --git a/packages/ui/src/components/ui/OpenChamberLogo.tsx b/packages/ui/src/components/ui/OpenChamberLogo.tsx
+index f49241581..b3d5b3fef 100644
+--- a/packages/ui/src/components/ui/OpenChamberLogo.tsx
++++ b/packages/ui/src/components/ui/OpenChamberLogo.tsx
+@@ -1,6 +1,7 @@
+ import React, { useMemo } from 'react';
+ import { useOptionalThemeSystem } from '@/contexts/useThemeSystem';
+ import { useI18n } from '@/lib/i18n';
++import { getProductLogo } from '@/lib/product-plugins';
+ 
+ const LEFT_FACE_CELL_OPACITIES = [
+   0.2, 0.45, 0.15, 0.55,
+@@ -79,7 +80,7 @@ const generateFaceGrid = (
+   return cells;
+ };
+ 
+-export const OpenChamberLogo: React.FC<OpenChamberLogoProps> = ({
++const DefaultOpenChamberLogo: React.FC<OpenChamberLogoProps> = ({
+   className = '',
+   width = 70,
+   height = 70,
+@@ -286,3 +287,14 @@ export const OpenChamberLogo: React.FC<OpenChamberLogoProps> = ({
+     </svg>
+   );
+ };
++
++// A product plugin may replace the mark. The choice sits in this wrapper rather
++// than as an early return above the hooks, so the default mark keeps a stable
++// hook order.
++export const OpenChamberLogo: React.FC<OpenChamberLogoProps> = (props) => {
++  const Override = getProductLogo();
++  if (Override) {
++    return <Override {...props} />;
++  }
++  return <DefaultOpenChamberLogo {...props} />;
++};

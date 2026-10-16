@@ -1,0 +1,102 @@
+diff --git a/packages/ui/src/components/sections/openchamber/AboutSettings.tsx b/packages/ui/src/components/sections/openchamber/AboutSettings.tsx
+index 885fd7965..bc69d1a42 100644
+--- a/packages/ui/src/components/sections/openchamber/AboutSettings.tsx
++++ b/packages/ui/src/components/sections/openchamber/AboutSettings.tsx
+@@ -146,6 +146,15 @@ function useNativeAppVersion(enabled: boolean): string | null {
+   return version;
+ }
+ 
++/**
++ * A build that ships with no update channel answers update checks with
++ * `updatesDisabled`. There is no app update to look for, so the page offers
++ * the engine check alone instead of reporting the app as up to date.
++ */
++const hasNoUpdateChannel = (info: UpdateInfo | null): boolean => (
++  info !== null && 'updatesDisabled' in info && info.updatesDisabled === true
++);
++
+ type AboutSettingsProps = {
+   initialUpdateDialogOpen?: boolean;
+ };
+@@ -193,6 +202,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+       runtimeType: updateStore.runtimeType,
+     };
+ 
++  const noUpdateChannel = hasNoUpdateChannel(update.info);
+   const currentVersion = openChamberVersion || update.info?.currentVersion || 'unknown';
+   const openCode = useOpenCodeUpgrade(t('opencodeUpdate.toast.failed.description'));
+   const openCodeVersion = openCode.status?.currentVersion ?? null;
+@@ -333,7 +343,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+       const timer = setTimeout(() => {
+         setShowChecking(false);
+         // Show toast if check completed with no update available
+-        if (didInitiateCheck.current && !update.available && !update.error) {
++        if (didInitiateCheck.current && !update.available && !update.error && !noUpdateChannel) {
+           toast.success(isNativeApp
+             ? t('settings.openchamber.about.toast.serverLatestVersion')
+             : t('settings.openchamber.about.toast.latestVersion'));
+@@ -342,7 +352,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+       }, MIN_CHECKING_DURATION);
+       return () => clearTimeout(timer);
+     }
+-  }, [t, isNativeApp, update.checking, showChecking, update.available, update.error]);
++  }, [t, isNativeApp, update.checking, showChecking, update.available, update.error, noUpdateChannel]);
+ 
+   const isChecking = update.checking || showChecking;
+ 
+@@ -370,7 +380,19 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+         </div>
+ 
+         <div className="flex justify-center">
+-          {!update.available && !update.error && (
++          {noUpdateChannel && (
++            <Button
++              type="button"
++              variant="outline"
++              size="sm"
++              onClick={() => void openCode.refresh()}
++              className="h-10 w-auto justify-center gap-2 rounded-xl px-4"
++            >
++              <Icon name="refresh" className="size-4" />
++              {t('settings.openchamber.about.actions.checkUpdates')}
++            </Button>
++          )}
++          {!noUpdateChannel && !update.available && !update.error && (
+             <Button
+               type="button"
+               variant="outline"
+@@ -501,17 +523,26 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+               </Button>
+             )}
+ 
+-            {!update.checking && !update.available && !update.error && (
++            {!noUpdateChannel && !update.checking && !update.available && !update.error && (
+               <span className="typography-meta text-muted-foreground">{t('settings.openchamber.about.state.upToDate')}</span>
+             )}
+ 
+-            <Button size="sm"
+-              variant="outline"
+-              onClick={checkAll}
+-              disabled={update.checking}
+-            >
+-              {t('settings.openchamber.about.actions.checkForUpdates')}
+-            </Button>
++            {noUpdateChannel ? (
++              <Button size="sm"
++                variant="outline"
++                onClick={() => void openCode.refresh()}
++              >
++                {t('settings.openchamber.about.actions.checkUpdates')}
++              </Button>
++            ) : (
++              <Button size="sm"
++                variant="outline"
++                onClick={checkAll}
++                disabled={update.checking}
++              >
++                {t('settings.openchamber.about.actions.checkForUpdates')}
++              </Button>
++            )}
+           </div>
+         </div>
+         

@@ -1,0 +1,13 @@
+diff --git a/packages/ui/src/apps/renderElectronMiniChatApp.tsx b/packages/ui/src/apps/renderElectronMiniChatApp.tsx
+index eae6cb51c..14d5fdf26 100644
+--- a/packages/ui/src/apps/renderElectronMiniChatApp.tsx
++++ b/packages/ui/src/apps/renderElectronMiniChatApp.tsx
+@@ -16,6 +16,8 @@ import { startModelPrefsAutoSave } from '@/lib/modelPrefsAutoSave';
+ import { startTypographyWatcher } from '@/lib/typographyWatcher';
+ import { ElectronMiniChatApp } from './ElectronMiniChatApp';
+ 
++import.meta.glob('../../../*/src/product-ui-plugin.{ts,tsx}', { eager: true });
++
+ const initializeSharedPreferences = () => {
+   initializeLocale();
+ 

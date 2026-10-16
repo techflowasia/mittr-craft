@@ -1,0 +1,107 @@
+diff --git a/packages/ui/src/lib/product-plugins.ts b/packages/ui/src/lib/product-plugins.ts
+new file mode 100644
+index 000000000..88ae7e19e
+--- /dev/null
++++ b/packages/ui/src/lib/product-plugins.ts
+@@ -0,0 +1,101 @@
++import type React from 'react';
++
++import type { Locale } from './i18n/runtime';
++import type { I18nDictionary } from './i18n/store';
++
++// A product plugin lets a build that bundles this UI rebrand it without
++// editing UI source: it can overlay translation strings, rewrite words across
++// every string it did not overlay, and replace the logo. Plugins are collected
++// at build time by the entry points and register themselves on import. With no
++// plugin registered every function here is a pass-through.
++
++export type ProductUiPlugin = {
++  id: string;
++  dictionaries?: Partial<Record<Locale, Partial<I18nDictionary>>>;
++  substitutions?: ReadonlyArray<readonly [from: string, to: string]>;
++  logo?: React.ComponentType<React.SVGProps<SVGSVGElement> & { className?: string }>;
++};
++
++type Substitution = { pattern: RegExp; to: string };
++
++let plugins: ProductUiPlugin[] = [];
++let substitutions: Substitution[] = [];
++const overlaid = new Map<Locale, { source: I18nDictionary; result: I18nDictionary }>();
++const listeners = new Set<() => void>();
++
++const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
++
++const compileSubstitutions = (): Substitution[] =>
++  plugins.flatMap((plugin) => (plugin.substitutions ?? []).map(([from, to]) => ({
++    pattern: new RegExp(`\\b${escapeRegExp(from)}\\b`, 'g'),
++    to,
++  })));
++
++const changed = (): void => {
++  substitutions = compileSubstitutions();
++  overlaid.clear();
++  listeners.forEach((listener) => listener());
++};
++
++export function registerProductUiPlugin(plugin: ProductUiPlugin): void {
++  plugins = [...plugins.filter((existing) => existing.id !== plugin.id), plugin];
++  changed();
++}
++
++export function resetProductUiPluginsForTests(): void {
++  plugins = [];
++  changed();
++}
++
++// The English dictionary and the lazily loaded locales are read by the i18n
++// store before or after a plugin registers, depending on module evaluation
++// order. The store therefore keeps raw dictionaries, reads them through
++// `overlayDictionary`, and refreshes its live state from this subscription.
++export function subscribeProductUiPlugins(listener: () => void): () => void {
++  listeners.add(listener);
++  return () => {
++    listeners.delete(listener);
++  };
++}
++
++export function overlayDictionary(locale: Locale, dict: I18nDictionary): I18nDictionary {
++  if (plugins.length === 0) {
++    return dict;
++  }
++
++  const cached = overlaid.get(locale);
++  if (cached && cached.source === dict) {
++    return cached.result;
++  }
++
++  const overrides: Partial<I18nDictionary> = {};
++  for (const plugin of plugins) {
++    Object.assign(overrides, plugin.dictionaries?.[locale]);
++  }
++
++  const result = { ...dict };
++  // SAFETY: `result` is a copy of `dict`, so its own keys are exactly the I18nKey set.
++  for (const key of Object.keys(result) as Array<keyof I18nDictionary>) {
++    if (Object.hasOwn(overrides, key)) {
++      continue;
++    }
++    result[key] = substitutions.reduce(
++      (value, { pattern, to }) => value.replace(pattern, () => to),
++      result[key],
++    );
++  }
++  Object.assign(result, overrides);
++
++  overlaid.set(locale, { source: dict, result });
++  return result;
++}
++
++export function getProductLogo(): ProductUiPlugin['logo'] | undefined {
++  for (let index = plugins.length - 1; index >= 0; index -= 1) {
++    const logo = plugins[index].logo;
++    if (logo) {
++      return logo;
++    }
++  }
++  return undefined;
++}
