@@ -23,7 +23,7 @@ globalThis.fetch = async (input: RequestInfo | URL) => {
   return new Response('{}', { status: 503, headers: { 'Content-Type': 'application/json' } });
 };
 
-const { AboutSettings } = await import('./AboutSettings');
+const { AboutSettings, LinkIfSet } = await import('./AboutSettings');
 const { useUpdateStore } = await import('@/stores/useUpdateStore');
 const { I18nProvider } = await import('@/lib/i18n');
 
@@ -94,5 +94,33 @@ describe('About page update controls', () => {
     } finally {
       await page.unmount();
     }
+  });
+});
+
+describe('About page links', () => {
+  const renderLinks = async (element: React.ReactElement) => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    await act(async () => root.render(element));
+    const anchors = [...container.querySelectorAll('a')].map((anchor) => ({
+      href: anchor.getAttribute('href'),
+      target: anchor.getAttribute('target'),
+      rel: anchor.getAttribute('rel'),
+      text: anchor.textContent,
+    }));
+    await act(async () => root.unmount());
+    container.remove();
+    return anchors;
+  };
+
+  test('a link with an address opens it in a new window', async () => {
+    expect(await renderLinks(<LinkIfSet href="https://example.com/project">Project</LinkIfSet>)).toEqual([
+      { href: 'https://example.com/project', target: '_blank', rel: 'noopener noreferrer', text: 'Project' },
+    ]);
+  });
+
+  test('a link whose address a build blanked is not drawn', async () => {
+    expect(await renderLinks(<div><LinkIfSet href="">Project</LinkIfSet><LinkIfSet>Chat</LinkIfSet></div>)).toEqual([]);
   });
 });

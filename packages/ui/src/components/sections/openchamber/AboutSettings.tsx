@@ -25,6 +25,14 @@ const GITHUB_URL = 'https://github.com/openchamber/openchamber';
 const DISCORD_URL = 'https://discord.gg/ZYRSdnwwKA';
 const X_URL = 'https://x.com/openchamber_dev';
 
+/**
+ * A build may leave one of the links above out by blanking its address. A
+ * link with no address is not drawn, rather than drawn pointing nowhere.
+ */
+export const LinkIfSet: React.FC<React.AnchorHTMLAttributes<HTMLAnchorElement>> = ({ href, ...props }) => (
+  href ? <a href={href} target="_blank" rel="noopener noreferrer" {...props} /> : null
+);
+
 const MIN_CHECKING_DURATION = 800; // ms
 
 type ConnectedServerUpdate = {
@@ -438,36 +446,30 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
 
         <div className="flex flex-col items-center gap-3 text-center">
           <div className="flex items-center justify-center gap-5">
-            <a
+            <LinkIfSet
               href={GITHUB_URL}
-              target="_blank"
-              rel="noopener noreferrer"
               className="flex items-center gap-1.5 typography-ui-label text-muted-foreground transition-colors hover:text-foreground"
             >
               <Icon name="github-fill" className="size-5" />
               <span>GitHub</span>
-            </a>
+            </LinkIfSet>
 
-            <a
+            <LinkIfSet
               href={DISCORD_URL}
-              target="_blank"
-              rel="noopener noreferrer"
               className="flex items-center gap-1.5 typography-ui-label text-muted-foreground transition-colors hover:text-foreground"
             >
               <Icon name="discord-fill" className="size-5" />
               <span>Discord</span>
-            </a>
+            </LinkIfSet>
           </div>
 
-          <a
+          <LinkIfSet
             href={X_URL}
-            target="_blank"
-            rel="noopener noreferrer"
             className="flex items-center gap-1.5 typography-ui-label text-muted-foreground transition-colors hover:text-foreground"
           >
             <Icon name="twitter-xfill" className="size-5" />
             <span>@openchamber_dev</span>
-          </a>
+          </LinkIfSet>
         </div>
 
         <p className="text-center typography-ui text-muted-foreground/60">
@@ -566,25 +568,21 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
         </div>
 
         <div className="flex items-center gap-4 px-4 py-4">
-          <a
+          <LinkIfSet
             href={GITHUB_URL}
-            target="_blank"
-            rel="noopener noreferrer"
             className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground typography-meta transition-colors"
           >
             <Icon name="github-fill" className="h-4 w-4" />
             <span>GitHub</span>
-          </a>
+          </LinkIfSet>
 
-            <a
+            <LinkIfSet
               href={X_URL}
-            target="_blank"
-            rel="noopener noreferrer"
             className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground typography-meta transition-colors"
           >
             <Icon name="twitter-xfill" className="h-4 w-4" />
               <span>@openchamber_dev</span>
-            </a>
+            </LinkIfSet>
         </div>
       </div>
 
