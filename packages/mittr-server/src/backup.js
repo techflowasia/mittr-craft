@@ -1,3 +1,4 @@
+import { constants as fsConstants } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -55,12 +56,43 @@ const outermost = (dirs) => {
   return unique.filter((dir) => !unique.some((other) => isInside(dir, other)));
 };
 
-// A socket or pipe cannot be copied and holds no data; an older backup is not
-// part of the folder it sits in.
-const isCopyable = async (source) => {
-  if (source.endsWith(BACKUP_SUFFIX) || source.endsWith(PARTIAL_SUFFIX)) return false;
-  const stat = await fs.lstat(source);
-  return stat.isFile() || stat.isDirectory() || stat.isSymbolicLink();
+const isGone = (error) => error?.code === 'ENOENT';
+
+// Copies one entry and everything under it, entry by entry, keeping modes and
+// timestamps. The folders are live: an app or engine that is still running may
+// delete a lock or temporary file between the listing and the copy, so a
+// source entry that is gone by the time it is read is left out. Any other
+// error fails the copy. A socket or pipe cannot be copied and holds no data;
+// an older backup is not part of the folder it sits in.
+const copyEntry = async (source, target, skip) => {
+  if (skip.has(source) || source.endsWith(BACKUP_SUFFIX) || source.endsWith(PARTIAL_SUFFIX)) return;
+  let stat;
+  try {
+    stat = await fs.lstat(source);
+  } catch (error) {
+    if (isGone(error)) return;
+    throw error;
+  }
+  try {
+    if (stat.isDirectory()) {
+      const names = await fs.readdir(source);
+      await fs.mkdir(target);
+      for (const name of names) await copyEntry(path.join(source, name), path.join(target, name), skip);
+      await fs.chmod(target, stat.mode);
+      await fs.utimes(target, stat.atime, stat.mtime);
+    } else if (stat.isFile()) {
+      await fs.copyFile(source, target, fsConstants.COPYFILE_EXCL);
+      await fs.utimes(target, stat.atime, stat.mtime);
+    } else if (stat.isSymbolicLink()) {
+      await fs.symlink(await fs.readlink(source), target);
+    }
+  } catch (error) {
+    if (isGone(error) && !(await isTaken(source))) {
+      await fs.rm(target, { recursive: true, force: true });
+      return;
+    }
+    throw error;
+  }
 };
 
 const copyOne = async (dir, target, excluded) => {
@@ -71,13 +103,7 @@ const copyOne = async (dir, target, excluded) => {
     const skip = new Set(
       excluded.filter((entry) => isInside(entry, dir)).map((entry) => path.join(source, path.relative(dir, entry))),
     );
-    await fs.cp(source, partial, {
-      recursive: true,
-      preserveTimestamps: true,
-      errorOnExist: true,
-      force: false,
-      filter: async (entry) => !skip.has(entry) && isCopyable(entry),
-    });
+    await copyEntry(source, partial, skip);
     await fs.rename(partial, target);
   } catch (error) {
     await removePartial(partial).catch(() => {});

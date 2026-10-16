@@ -182,3 +182,54 @@ test('backupOnce rejects and writes no marker when a copy fails', async (t) => {
   assert.equal(fs.existsSync(marker), false);
   assert.equal(read(path.join(data, 'opencode.db')), 'sessions');
 });
+
+// The app or engine may still be running while the backup copies its folder:
+// a lock file listed with the folder can be gone by the time it is copied.
+test('a file that vanishes during the copy is left out and the rest is backed up', async (t) => {
+  const root = tempRoot(t);
+  const dataDir = path.join(root, 'app');
+  writeFile(path.join(dataDir, 'settings.json'), '{}');
+  writeFile(path.join(dataDir, 'source-control-auth.json.lock'), '');
+  writeFile(path.join(dataDir, 'sessions', 'one.json'), 'one');
+  writeFile(path.join(dataDir, 'sessions', 'two.json.lock'), '');
+  const originalCopyFile = fsPromises.copyFile;
+  const originalLstat = fsPromises.lstat;
+  const copyFile = mock.method(fsPromises, 'copyFile', async (source, target, mode) => {
+    if (source.endsWith('source-control-auth.json.lock')) await fsPromises.unlink(source);
+    return originalCopyFile(source, target, mode);
+  });
+  const lstat = mock.method(fsPromises, 'lstat', async (target) => {
+    if (target.endsWith('two.json.lock')) await fsPromises.unlink(target);
+    return originalLstat(target);
+  });
+  t.after(() => {
+    copyFile.mock.restore();
+    lstat.mock.restore();
+  });
+
+  const result = await backupOnce({ dirs: [dataDir], marker: path.join(dataDir, 'marker') });
+
+  const backup = `${dataDir}.pre-2x-backup`;
+  assert.deepEqual(result.where, [backup]);
+  assert.deepEqual(fs.readdirSync(backup).sort(), ['sessions', 'settings.json']);
+  assert.deepEqual(fs.readdirSync(path.join(backup, 'sessions')), ['one.json']);
+  assert.equal(read(path.join(backup, 'sessions', 'one.json')), 'one');
+  assert.equal(fs.statSync(path.join(backup, 'sessions', 'one.json')).mtime.getTime(), OLD_TIME.getTime());
+  assert.equal(fs.existsSync(path.join(dataDir, 'marker')), true);
+});
+
+test('any other error while copying a file still fails the backup', async (t) => {
+  const root = tempRoot(t);
+  const dataDir = path.join(root, 'app');
+  const marker = path.join(root, 'marker');
+  writeFile(path.join(dataDir, 'opencode.db'), 'sessions');
+  const copyFile = mock.method(fsPromises, 'copyFile', async () => {
+    throw Object.assign(new Error('EIO: i/o error, copyfile'), { code: 'EIO' });
+  });
+  t.after(() => copyFile.mock.restore());
+
+  await assert.rejects(backupOnce({ dirs: [dataDir], marker }), /EIO/);
+  assert.equal(fs.existsSync(marker), false);
+  assert.equal(fs.existsSync(`${dataDir}.pre-2x-backup`), false);
+  assert.equal(fs.existsSync(`${dataDir}.pre-2x-backup.partial`), false);
+});
