@@ -24,8 +24,11 @@
  * 3. record the commit in `brand/UPSTREAM`, run the upstream touch check and
  *    commit the base and its patches;
  * 4. `bun install` (committing a re-resolved `bun.lock`), the upstream
- *    contract tests, then the root type-check, lint and tests, and our own
- *    package and `scripts/mittr` tests, which the root tests do not run;
+ *    contract tests, then the root type-check and lint, upstream's tests one
+ *    stage at a time against the recorded baseline (`test-baseline.mjs`,
+ *    which fails only on a failure `brand/test-baseline.json` does not list),
+ *    and our own package and `scripts/mittr` tests, which the root tests do
+ *    not run;
  * 5. the visible-string check, then the Dev build and the brand-leak scan;
  * 6. a summary with the upstream touch count and the walk checklist.
  *
@@ -234,7 +237,7 @@ const buildSteps = (ctx) => {
         gate('checks', node, ['--test', 'packages/mittr-server/src/upstream-contract.test.js']),
         gate('checks', bun, ['run', 'type-check']),
         gate('checks', bun, ['run', 'lint']),
-        gate('checks', bun, ['run', 'test']),
+        gate('checks', node, ['scripts/mittr/test-baseline.mjs']),
         ...mittrTestPackages(cwd).map((name) => gate('checks', bun, ['run', '--cwd', `packages/${name}`, 'test'])),
         gate('checks', node, ['scripts/run-isolated-tests.mjs', 'scripts/mittr']),
       ],
@@ -377,7 +380,8 @@ const USAGE = `Usage: node scripts/mittr/upstream-update.mjs <upstream-commit> [
 
 Merges an upstream OpenChamber commit into upstream-update/<short-sha>, branched
 from --from, then runs the touch check, install, contract tests, type-check,
-lint, tests, the visible-string check, the Dev build and the brand-leak scan.
+lint, tests against the recorded baseline, the visible-string check, the Dev
+build and the brand-leak scan.
 It never pushes and never merges with -X ours/theirs.
 
 Options (also as --option=value):

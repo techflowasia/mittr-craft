@@ -131,7 +131,7 @@ test('dry run prints the whole plan and changes nothing', (t) => {
   assert.match(text, new RegExp(`upstream-update/${repo.short}`));
   assert.match(text, /git merge --no-ff --no-edit/);
   assert.doesNotMatch(text, /git push|-X (ours|theirs)/);
-  for (const expected of ['bun install', 'upstream-contract.test.js', 'bun run type-check', 'bun run lint', 'bun run test', 'bun run --cwd packages/mittr-x test', 'run-isolated-tests.mjs scripts/mittr']) {
+  for (const expected of ['bun install', 'upstream-contract.test.js', 'bun run type-check', 'bun run lint', 'test-baseline.mjs', 'bun run --cwd packages/mittr-x test', 'run-isolated-tests.mjs scripts/mittr']) {
     assert.ok(text.includes(expected), `plan lacks ${expected}`);
   }
   assert.ok(!text.includes('packages/mittr-y'), 'a package without tests is not run');
@@ -160,7 +160,7 @@ test('a clean update merges on its own branch, records the base, runs every gate
     'upstream-contract.test.js',
     'bun run type-check',
     'bun run lint',
-    'bun run test',
+    'test-baseline.mjs',
     'bun run --cwd packages/mittr-x test',
     'run-isolated-tests.mjs scripts/mittr',
     'build-desktop.mjs --check-strings --flavor dev',
