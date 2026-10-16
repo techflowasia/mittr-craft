@@ -4,6 +4,7 @@
  * steps plus the files under `brand/`.
  *
  *   node scripts/mittr/build-desktop.mjs --flavor dev|prod
+ *   node scripts/mittr/build-desktop.mjs --check-strings [--flavor dev|prod]
  *
  * It runs upstream's `package` chain one step at a time so the visible-string
  * replacement can sit between the last build step and electron-builder, and it
@@ -20,6 +21,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -100,33 +102,103 @@ export const mergeBuilderConfig = (base, overlay) => {
   return mergeLevel(base, overlay, []);
 };
 
+// Before step 5 writes a file it keeps the text it found under
+// `.product/pristine`, with the hash of what it wrote. A later check reads the
+// kept text for a file that is still exactly what the build wrote, so it can
+// run against a tree that has already been patched.
+const PRISTINE_DIR = '.product/pristine';
+const PRISTINE_MANIFEST = 'manifest.json';
+
+const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
+
+const readPristineManifest = (rootDir) => {
+  const file = path.join(rootDir, PRISTINE_DIR, PRISTINE_MANIFEST);
+  return fs.existsSync(file) ? readJson(file) : {};
+};
+
+const assertInBuildOutput = (file) => {
+  if (!VISIBLE_STRING_ROOTS.some((root) => file.startsWith(root)) || file.split('/').includes('..')) {
+    throw new Error(`visible-strings entry ${JSON.stringify(file)} must start with one of ${VISIBLE_STRING_ROOTS.join(', ')}`);
+  }
+};
+
 /**
- * Replaces each `{ file, from, to, count }` entry's exact `from` with `to` in
- * the files its glob matches under `rootDir`. An entry whose match count is
- * not exactly `count` fails the build: upstream moved, reworded or repeated the
- * string, and shipping its text unnoticed (or a replacement in a place nobody
- * looked at) is the failure this list exists to prevent.
+ * Works out every `{ file, from, to, count }` entry in order, in memory, so a
+ * later entry sees the text earlier ones produced, and writes nothing. Each
+ * result has the count found and the files it matched; an entry whose count
+ * is off is not applied, and every such entry is in `mismatches`.
+ *
+ * `sources` maps an entry path prefix to another folder to read instead, such
+ * as the server source for its staged copy when only checking.
+ */
+export const planVisibleStrings = ({ entries, rootDir, sources = {} }) => {
+  const manifest = readPristineManifest(rootDir);
+  const texts = new Map();
+  const originals = new Map();
+  const read = (absolute) => {
+    if (!texts.has(absolute)) {
+      const relative = path.relative(rootDir, absolute).split(path.sep).join('/');
+      const pristine = path.join(rootDir, PRISTINE_DIR, relative);
+      const live = fs.readFileSync(absolute, 'utf8');
+      const text = manifest[relative] === sha256(live) && fs.existsSync(pristine) ? fs.readFileSync(pristine, 'utf8') : live;
+      texts.set(absolute, text);
+      originals.set(absolute, text);
+    }
+    return texts.get(absolute);
+  };
+
+  const results = visibleStringsSchema.parse(entries).map((entry) => {
+    assertInBuildOutput(entry.file);
+    const alias = Object.keys(sources).find((prefix) => entry.file.startsWith(prefix));
+    const cwd = alias ? sources[alias] : rootDir;
+    const pattern = alias ? entry.file.slice(alias.length) : entry.file;
+    const counted = fs.globSync(pattern, { cwd })
+      .map((relative) => path.join(cwd, relative))
+      .filter((target) => fs.statSync(target).isFile())
+      .map((target) => ({ target, count: read(target).split(entry.from).length - 1 }))
+      .filter(({ count }) => count > 0);
+    const found = counted.reduce((total, { count }) => total + count, 0);
+    if (found === entry.count) {
+      for (const { target } of counted) texts.set(target, texts.get(target).split(entry.from).join(entry.to));
+    }
+    const shown = (target) => `${alias ?? ''}${path.relative(cwd, target).split(path.sep).join('/')}`;
+    return { entry, found, files: counted.map(({ target, count }) => `${shown(target)}×${count}`) };
+  });
+
+  const changed = [...texts].filter(([target, text]) => text !== originals.get(target));
+  return { results, mismatches: results.filter(({ entry, found }) => found !== entry.count), changed, originals };
+};
+
+export const describeMismatches = (mismatches) => mismatches
+  .map(({ entry, found, files }) => `  ${JSON.stringify(entry.from)} in ${entry.file}: expected ${entry.count}, found ${found}${files.length > 0 ? ` (${files.join(', ')})` : ''}`)
+  .join('\n');
+
+/**
+ * Replaces each entry's exact `from` with `to` in the files its glob matches
+ * under `rootDir`. Any entry whose match count is not exactly `count` fails
+ * the build before anything is written, and the error lists every such entry:
+ * upstream moved, reworded or repeated the string, and shipping its text
+ * unnoticed (or a replacement in a place nobody looked at) is the failure this
+ * list exists to prevent.
  */
 export const applyVisibleStrings = ({ entries, rootDir }) => {
-  const applied = [];
-  for (const entry of visibleStringsSchema.parse(entries)) {
-    const { file, from, to } = entry;
-    if (!VISIBLE_STRING_ROOTS.some((root) => file.startsWith(root)) || file.split('/').includes('..')) {
-      throw new Error(`visible-strings entry ${JSON.stringify(file)} must start with one of ${VISIBLE_STRING_ROOTS.join(', ')}`);
-    }
-    const matches = fs.globSync(file, { cwd: rootDir })
-      .map((relative) => path.join(rootDir, relative))
-      .filter((target) => fs.statSync(target).isFile())
-      .map((target) => ({ target, parts: fs.readFileSync(target, 'utf8').split(from) }))
-      .filter(({ parts }) => parts.length > 1);
-    const found = matches.reduce((total, { parts }) => total + parts.length - 1, 0);
-    if (found !== entry.count) {
-      throw new Error(`visible-strings entry ${JSON.stringify(entry)} expected ${entry.count} matches, found ${found}`);
-    }
-    for (const { target, parts } of matches) fs.writeFileSync(target, parts.join(to));
-    applied.push({ file, from, count: found });
+  const { results, mismatches, changed, originals } = planVisibleStrings({ entries, rootDir });
+  if (mismatches.length > 0) {
+    throw new Error(`visible strings: ${mismatches.length} of ${results.length} entries do not match\n${describeMismatches(mismatches)}`);
   }
-  return applied;
+  const manifest = readPristineManifest(rootDir);
+  for (const [target, text] of changed) {
+    const relative = path.relative(rootDir, target).split(path.sep).join('/');
+    const pristine = path.join(rootDir, PRISTINE_DIR, relative);
+    fs.mkdirSync(path.dirname(pristine), { recursive: true });
+    fs.writeFileSync(pristine, originals.get(target));
+    fs.writeFileSync(target, text);
+    manifest[relative] = sha256(text);
+  }
+  if (changed.length > 0) {
+    fs.writeFileSync(path.join(rootDir, PRISTINE_DIR, PRISTINE_MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
+  }
+  return results.map(({ entry, found }) => ({ file: entry.file, from: entry.from, count: found }));
 };
 
 /**
@@ -214,7 +286,36 @@ const findDmg = ({ productName, startedAt }) => {
     .find((file) => fs.statSync(file).mtimeMs >= startedAt) ?? null;
 };
 
+/**
+ * `--check-strings [--flavor dev|prod]`: checks every visible-string entry,
+ * for one flavor or both, against what is built now (`resources/web-dist` and
+ * `dist-bundle`, as they were before the last build patched them) and the
+ * server source, writes nothing, and lists every entry whose count is off.
+ */
+const checkStrings = (argv) => {
+  const flavors = argv.some((arg) => arg.startsWith('--flavor')) ? [parseFlavor(argv)] : FLAVORS;
+  let failed = false;
+  for (const flavor of flavors) {
+    const { results, mismatches } = planVisibleStrings({
+      entries: readVisibleStrings(flavor),
+      rootDir: electronDir,
+      sources: { [`${STAGED_SERVER}/`]: webServerSource },
+    });
+    if (mismatches.length === 0) {
+      console.log(`[mittr] ${flavor}: all ${results.length} visible-string entries match`);
+      continue;
+    }
+    failed = true;
+    console.error(`[mittr] ${flavor}: ${mismatches.length} of ${results.length} visible-string entries do not match\n${describeMismatches(mismatches)}`);
+  }
+  return failed ? 1 : 0;
+};
+
 const main = async () => {
+  if (process.argv.includes('--check-strings')) {
+    process.exitCode = checkStrings(process.argv.slice(2));
+    return;
+  }
   const flavor = parseFlavor(process.argv.slice(2));
   const startedAt = Date.now();
   const bun = resolveBunExecutable();

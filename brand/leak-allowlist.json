@@ -103,6 +103,11 @@
     "reason": "Upstream English value of the phase-2 Console key above; the English override replaces it, and other locales substitute the name."
   },
   {
+    "file": "web-dist/assets/*.js",
+    "snippet": "openchamber://connect",
+    "reason": "Pairing payload (the link the desktop builds and imports, and the placeholders that show it): wire contract to mobile clients until phase 5."
+  },
+  {
     "file": "web-dist/assets/renderMobileApp-*.js",
     "snippet": "OpenChamber Mobile",
     "reason": "phase-5 surface: client label sent by the mobile app."

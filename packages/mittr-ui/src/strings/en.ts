@@ -48,6 +48,7 @@ export const strings: Partial<I18nDictionary> = {
   'settings.view.nav.group.opencode': 'Engine',
   'settings.openchamber.about.field.openCodeVersion': 'Engine version',
   'settings.openchamber.about.actions.updateOpenCodeToVersion': 'Update the engine to {version}',
+  'settings.openchamber.about.actions.checkUpdates': 'Check for engine updates',
   'settings.openchamber.about.openCode.installedVersion': 'Engine {version} installed. Reload the engine to start using it.',
   'settings.openchamber.about.openCode.installed': 'Engine update installed. Reload the engine to start using it.',
   'settings.openchamber.about.native.serverOpenCodeVersion': 'Server engine: {version}',

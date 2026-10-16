@@ -19,36 +19,6 @@
   },
   {
     "file": "resources/web-dist/assets/*.js",
-    "from": "`openchamber://connect?${",
-    "to": "`mittrcraft://connect?${",
-    "count": 1
-  },
-  {
-    "file": "resources/web-dist/assets/*.js",
-    "from": "protocol!==\"openchamber:\"",
-    "to": "protocol!==\"mittrcraft:\"",
-    "count": 1
-  },
-  {
-    "file": "resources/web-dist/assets/*.js",
-    "from": "/^openchamber:\\/\\/connect\\/?$/i",
-    "to": "/^mittrcraft:\\/\\/connect\\/?$/i",
-    "count": 1
-  },
-  {
-    "file": "resources/web-dist/assets/*.js",
-    "from": "\"openchamber://connect?...\"",
-    "to": "\"mittrcraft://connect?...\"",
-    "count": 12
-  },
-  {
-    "file": "resources/web-dist/assets/*.js",
-    "from": "openchamber://connect 連結",
-    "to": "mittrcraft://connect 連結",
-    "count": 1
-  },
-  {
-    "file": "resources/web-dist/assets/*.js",
     "from": "\"shell\",\"openchamber\",\"openchamber-ui\"",
     "to": "\"shell\",\"openchamber\",\"mittrcraft\",\"openchamber-ui\"",
     "count": 1

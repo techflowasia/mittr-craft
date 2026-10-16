@@ -5,7 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { applyVisibleStrings, mergeBuilderConfig, readVisibleStrings, stagedServerFiles } from './build-desktop.mjs';
+import { applyVisibleStrings, mergeBuilderConfig, planVisibleStrings, readVisibleStrings, stagedServerFiles } from './build-desktop.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const readJson = (relative) => JSON.parse(fs.readFileSync(path.join(repoRoot, relative), 'utf8'));
@@ -69,7 +69,7 @@ test('an entry that matches nothing fails the build', () => {
   withBuildOutput({ 'dist-bundle/main.mjs': 'nothing here' }, (root) => {
     assert.throws(
       () => applyVisibleStrings({ entries: [{ file: 'dist-bundle/*.mjs', from: 'OpenChamber', to: 'MittrCraft', count: 1 }], rootDir: root }),
-      /expected 1 matches, found 0/,
+      /"OpenChamber" in dist-bundle\/\*\.mjs: expected 1, found 0/,
     );
   });
 });
@@ -78,7 +78,7 @@ test('a match count other than the expected one fails the build and writes nothi
   withBuildOutput({ 'dist-bundle/main.mjs': 'OpenChamber and OpenChamber' }, (root) => {
     assert.throws(
       () => applyVisibleStrings({ entries: [{ file: 'dist-bundle/*.mjs', from: 'OpenChamber', to: 'MittrCraft', count: 1 }], rootDir: root }),
-      /"from":"OpenChamber".*expected 1 matches, found 2/,
+      /"OpenChamber" in dist-bundle\/\*\.mjs: expected 1, found 2 \(dist-bundle\/main\.mjs×2\)/,
     );
     assert.equal(fs.readFileSync(path.join(root, 'dist-bundle/main.mjs'), 'utf8'), 'OpenChamber and OpenChamber');
   });
@@ -167,4 +167,62 @@ test('the staged server is packed in place of the workspace copy, except the fil
   assert.deepEqual([mapped.from, mapped.to], ['.product/web/server', 'node_modules/@openchamber/web/server']);
   assert.ok(mapped.filter.includes('!lib/git/credential-helper.js'));
   assert.ok(entries.includes('!node_modules/@openchamber/web/{dist,public}{,/**}'));
+});
+
+// The pairing link the desktop builds, the desktop import that reads it back
+// and the mobile gates, as they appear in the built UI. They are a wire
+// contract with mobile clients and keep upstream's scheme until phase 5.
+const PAIRING_CONTRACT = [
+  '`openchamber://connect?${t.toString()}`',
+  'if(n.protocol!=="openchamber:"||n.hostname!=="connect")return null',
+  '!/^openchamber:\\/\\/connect\\/?$/i.test(n.slice(0,t))',
+  'if(/^openchamber:\\/\\//i.test(e)){const s=Ia(e);return s?{pairing:s}:null}',
+];
+
+test('no brand replacement touches the pairing link, its desktop import or the mobile gates', () => {
+  for (const flavor of ['dev', 'prod']) {
+    for (const entry of readVisibleStrings(flavor)) {
+      for (const fragment of PAIRING_CONTRACT) {
+        assert.ok(!fragment.includes(entry.from), `${flavor}: ${JSON.stringify(entry.from)} would rewrite ${fragment}`);
+      }
+      assert.doesNotMatch(entry.from, /:\/\/connect|:\\\/\\\/connect|protocol!==/, `${flavor}: ${entry.from}`);
+    }
+  }
+});
+
+test('every entry whose count is off is reported in one error, and nothing is written', () => {
+  withBuildOutput({ 'dist-bundle/main.mjs': 'Quit OpenChamber', 'resources/web-dist/assets/a.js': '"OpenCode" "OpenCode"' }, (root) => {
+    const entries = [
+      { file: 'dist-bundle/*.mjs', from: 'Quit OpenChamber', to: 'Quit MittrCraft', count: 1 },
+      { file: 'dist-bundle/*.mjs', from: 'About OpenChamber', to: 'About MittrCraft', count: 1 },
+      { file: 'resources/web-dist/assets/*.js', from: '"OpenCode"', to: '"Engine"', count: 1 },
+    ];
+    assert.throws(() => applyVisibleStrings({ entries, rootDir: root }), (error) => {
+      assert.match(error.message, /2 of 3 entries do not match/);
+      assert.match(error.message, /"About OpenChamber" in dist-bundle\/\*\.mjs: expected 1, found 0/);
+      assert.match(error.message, /"\\"OpenCode\\"" in resources\/web-dist\/assets\/\*\.js: expected 1, found 2 \(resources\/web-dist\/assets\/a\.js×2\)/);
+      return true;
+    });
+    assert.equal(fs.readFileSync(path.join(root, 'dist-bundle/main.mjs'), 'utf8'), 'Quit OpenChamber');
+  });
+});
+
+test('a check after a build reads the text the build replaced, and server entries can read the source', () => {
+  withBuildOutput({ 'dist-bundle/main.mjs': 'Quit OpenChamber', 'server-source/lib/a.js': "'OpenCode is restarting'" }, (root) => {
+    const entries = [
+      { file: 'dist-bundle/*.mjs', from: 'Quit OpenChamber', to: 'Quit MittrCraft', count: 1 },
+      { file: '.product/web/server/lib/*.js', from: "'OpenCode is restarting'", to: "'The engine is restarting'", count: 1 },
+    ];
+    applyVisibleStrings({ entries: entries.slice(0, 1), rootDir: root });
+    assert.equal(fs.readFileSync(path.join(root, 'dist-bundle/main.mjs'), 'utf8'), 'Quit MittrCraft');
+
+    const sources = { '.product/web/server/': path.join(root, 'server-source') };
+    const checked = planVisibleStrings({ entries, rootDir: root, sources });
+    assert.deepEqual(checked.mismatches, []);
+    assert.deepEqual(checked.results.map(({ found, files }) => [found, files]), [[1, ['dist-bundle/main.mjs×1']], [1, ['.product/web/server/lib/a.js×1']]]);
+    assert.equal(fs.readFileSync(path.join(root, 'server-source/lib/a.js'), 'utf8'), "'OpenCode is restarting'");
+
+    fs.writeFileSync(path.join(root, 'dist-bundle/main.mjs'), 'rebuilt without the string');
+    assert.equal(planVisibleStrings({ entries: entries.slice(0, 1), rootDir: root }).mismatches.length, 1);
+  });
 });
