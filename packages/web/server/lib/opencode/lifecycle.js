@@ -726,7 +726,10 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
 
     await applyOpencodeBinaryFromSettings({ strict: true });
     const resolvedBinary = ensureOpencodeCliEnv();
-    const preflight = checkOpenCodeBinary(resolveManagedOpenCodeLaunchSpec(resolvedBinary));
+    const managedOpenCodeEnv = await getManagedOpenCodeEnv();
+    const preflight = checkOpenCodeBinary(resolveManagedOpenCodeLaunchSpec(resolvedBinary), {
+      env: { ...process.env, ...managedOpenCodeEnv },
+    });
     managedPreflight = preflight.then(() => true, () => false);
     await preflight;
     recordStartupPerformance('opencode.binary.ready', {
@@ -745,7 +748,6 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     const shellEnv = typeof getManagedOpenCodeShellEnvSnapshot === 'function'
       ? getManagedOpenCodeShellEnvSnapshot() || {}
       : {};
-    const managedOpenCodeEnv = await getManagedOpenCodeEnv();
     recordStartupPerformance('opencode.environment.ready', {
       attempt,
       durationMs: performance.now() - phaseStartedAt,

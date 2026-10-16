@@ -673,6 +673,10 @@ let isExternalOpenCode = false;
 let exitOnShutdown = true;
 let uiAuthController = null;
 let serverPlugins = null;
+// What server plugins add to every OpenCode CLI call, not only the managed
+// server: a version probe or an upgrade run without it would read and write
+// the engine's default folders. Empty without plugins.
+const getServerPluginEngineEnv = async () => (serverPlugins ? serverPlugins.engineEnv() : {});
 // The isolated-spaces host: the place, the manager and the dispatcher. Null while the feature's
 // switch is off, and then nothing of the feature runs, see docs/isolated-spaces/DESIGN.md.
 let spacesHost = null;
@@ -1464,7 +1468,7 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
   },
   getManagedOpenCodeEnv: async () => ({
     ...(managedConfigRuntime ? await managedConfigRuntime.buildManagedChildEnv() : {}),
-    ...(serverPlugins ? await serverPlugins.engineEnv() : {}),
+    ...(await getServerPluginEngineEnv()),
   }),
 });
 
@@ -1486,7 +1490,9 @@ const getOpenCodeCompatibility = async () => {
   }
   const binary = ensureOpencodeCliEnv();
   const installation = isBundledOpenCodeCliPath(binary) ? 'bundled' : 'managed';
-  const version = await readOpenCodeCliVersion(resolveManagedOpenCodeLaunchSpec(binary)).catch(() => null);
+  const version = await readOpenCodeCliVersion(resolveManagedOpenCodeLaunchSpec(binary), {
+    env: { ...process.env, ...(await getServerPluginEngineEnv()) },
+  }).catch(() => null);
   // A CLI pinned by the administrator is theirs to replace, never ours.
   const pinnedByPolicy = Boolean(readEnterprisePolicy().opencodeBinary);
   return describeOpenCodeCompatibility(version, installation, supportsOpenCodeV2Install() && !pinnedByPolicy, binary || null);
@@ -2398,15 +2404,15 @@ async function main(options = {}) {
     getOpenCodeCompatibility,
     installOpenCodeV2: async () => {
       const binary = await installOpenCodeV2({
-        env: { ...getLoginShellEnvSnapshot(), ...process.env, PATH: buildManagedOpenCodePath() },
+        env: { ...getLoginShellEnvSnapshot(), ...process.env, ...(await getServerPluginEngineEnv()), PATH: buildManagedOpenCodePath() },
       });
       await persistSettings({ opencodeBinary: binary });
       await refreshOpenCodeAfterConfigChange('OpenCode v2 installation');
       await waitForOpenCodeReady();
     },
-    upgradeOpenCodeCli: () => runOpenCodeCliUpgrade(
+    upgradeOpenCodeCli: async () => runOpenCodeCliUpgrade(
       resolveManagedOpenCodeLaunchSpec(lastOpenCodeLaunchDiagnostics?.sourceBinary || resolvedOpencodeBinary),
-      { env: { ...getLoginShellEnvSnapshot(), ...process.env, PATH: buildManagedOpenCodePath() }, cwd: os.homedir() },
+      { env: { ...getLoginShellEnvSnapshot(), ...process.env, ...(await getServerPluginEngineEnv()), PATH: buildManagedOpenCodePath() }, cwd: os.homedir() },
     ),
     formatSettingsResponse,
     readSettingsFromDisk,

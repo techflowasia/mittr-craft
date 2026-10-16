@@ -994,6 +994,30 @@ describe('OpenCode lifecycle', () => {
     expect(options.env.OPENCODE_DB).toBe(env.OPENCODE_DB);
   });
 
+  it('checks the binary with the same engine env the managed OpenCode starts with', async () => {
+    const checkOpenCodeBinary = vi.fn(async () => '2.0.19');
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    globalThis.fetch = vi.fn(async () => ({ ok: false }));
+
+    const runtime = createRuntime({
+      checkOpenCodeBinary,
+      getManagedOpenCodeEnv: vi.fn(async () => ({ XDG_DATA_HOME: '/engine/share', XDG_CACHE_HOME: '/engine/cache' })),
+    });
+    await runtime.startOpenCode();
+
+    const [[, { env }]] = checkOpenCodeBinary.mock.calls;
+    const [, , options] = spawnMock.mock.calls[0];
+    expect(env.XDG_DATA_HOME).toBe('/engine/share');
+    expect(env.XDG_CACHE_HOME).toBe('/engine/cache');
+    expect(env.PATH).toBe(process.env.PATH);
+    expect(options.env.XDG_DATA_HOME).toBe(env.XDG_DATA_HOME);
+    expect(options.env.XDG_CACHE_HOME).toBe(env.XDG_CACHE_HOME);
+  });
+
 });
 
 describe('killProcessOnPort on Windows', () => {
