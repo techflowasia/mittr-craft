@@ -84,6 +84,14 @@
         "scripts/**/*.ts"
       ]
     },
+    "packages/mittr-ui": {
+      "entry": [
+        "src/product-ui-plugin.tsx"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}"
+      ]
+    },
     "packages/mobile": {
       "entry": [
         "scripts/**/*.{js,cjs,mjs,ts}"
