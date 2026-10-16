@@ -250,6 +250,11 @@ export const UPSTREAM_CONTRACT = [
     files: ['node_modules/@opencode/schema/dist/config/experimental.js', 'node_modules/@opencode/schema/dist/config/policy.js'],
     why: 'the engine config takes experimental.policies, an ordered list of { action: "provider.use", resource, effect: "allow" | "deny" }, which is how the provider lock is written',
   },
+  {
+    id: 'engine-identity-hook',
+    files: ['packages/electron/package.json'],
+    why: "the bundled engine is OpenCode 2.0.22, whose session context hook hands plugins the system prompt as o.system text parts opening with its harness sentence; the identity plugin rewrites that sentence, so a new engine version needs probe P3 (scripts/mittr/probe-engine-v2.mjs) run again before this pin moves",
+  },
 ];
 
 // The dictionaries are TypeScript with extensionless imports, which only Bun

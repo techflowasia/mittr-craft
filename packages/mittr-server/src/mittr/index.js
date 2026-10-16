@@ -7,6 +7,7 @@ import { catalogCachePath, createCatalogCache } from './catalog-cache.js';
 import { registerMittrCatalogRoutes } from './catalog-routes.js';
 import { syncDefaultModel } from './default-model.js';
 import { ensureMittrCredential, forgetMittrCredential } from './engine-credential.js';
+import { identityFragment, materializeIdentityPlugin } from './identity.js';
 import { ensureLocalToken } from './local-token.js';
 import { createMittrSettings } from './mittr-settings.js';
 import { MITTR_PROVIDER_ID, policiesFragment } from './policies.js';
@@ -54,6 +55,9 @@ const NO_ACCOUNT_CATALOG = {
  * The models come from the active account's Mittr catalog. Setup applies the
  * cached one at once and then syncs without waiting; a sign-in syncs; an
  * account change applies that account's cache, then syncs.
+ *
+ * The same config loads the identity plugin, so the model calls itself
+ * MittrCraft, never the engine's own name.
  *
  * The engine's default model follows the same lists, in the user's OpenCode
  * config, once the models are in the engine config: a fresh install starts on
@@ -167,6 +171,19 @@ export function setupMittr(context, {
   const mittrSettings = createMittrSettings({ dataDir, logger });
   let models = [];
 
+  // The engine introduces itself as MittrCraft through a plugin written on
+  // every build, before the config names it. A plugin that cannot be written
+  // costs only the name: the lock and the models still go out, and the next
+  // build tries again.
+  const identityConfig = async () => {
+    try {
+      return identityFragment(await materializeIdentityPlugin({ dataDir }));
+    } catch (error) {
+      logger.warn('[mittr] could not write the identity plugin; trying again on the next config write:', error?.message ?? error);
+      return {};
+    }
+  };
+
   // The port is unknown before listen and may be random, so the URL is built
   // on each write. Without it there is no provider, but the lock stays.
   // Until the first build there is no config to refresh: before it, the
@@ -180,9 +197,11 @@ export function setupMittr(context, {
   const managedConfig = async () => {
     const rendered = models;
     const settings = await mittrSettings.read();
+    const identity = await identityConfig();
     configBuilt = true;
     pendingRendered = JSON.stringify(rendered);
     return [
+      identity,
       server.port() === null ? {} : mittrProviderFragment({ shimBaseUrl: shimBaseUrl(server.port()), models: rendered }),
       policiesFragment(settings),
     ].reduce((merged, fragment) => mergeEngineConfig(merged, fragment), {});

@@ -189,6 +189,7 @@ test('setup with the server context mounts Mittr sign-in and keeps the engine en
   assert.equal((await plugin.engineEnv()).XDG_DATA_HOME, path.join(home, '.local', 'share', 'mittrcraft', 'engine'));
   assert.equal((await plugin.engineEnv()).NO_PROXY.split(',').includes('127.0.0.1'), true);
   assert.deepEqual(await plugin.managedConfig(), {
+    plugins: [path.join(dataDir, 'engine-plugins', 'mittrcraft-identity')],
     experimental: {
       policies: [
         { action: 'provider.use', resource: '*', effect: 'deny' },

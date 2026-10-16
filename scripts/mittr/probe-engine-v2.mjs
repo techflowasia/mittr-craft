@@ -30,6 +30,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { identityLine, identityPluginSource } from '../../packages/mittr-opencode/src/identity-plugin.js';
 import { policiesFor } from '../../packages/mittr-server/src/mittr/policies.js';
 
 export const quotaRefusal = ({ kind, resetsAt }) => ({
@@ -58,42 +59,23 @@ export const USER_ALLOW_POLICIES = [
 export const refusedByPolicy = (attempt) => !attempt.answered
   && (attempt.events ?? []).some((e) => e.error?.type === 'provider.no-route');
 
-const IDENTITY_PLUGIN_ID = 'mittrcraft.identity';
-export const HARNESS_SENTENCE = 'You are an AI agent running in OpenCode, a coding agent harness.';
-export const harnessReplacement = (productName) => `You are ${productName}, an AI coding agent.`;
+// What P3 expects the engine to send in place of its opening sentence; kept
+// apart from the plugin on purpose, so the probe checks the plugin.
+const HARNESS_SENTENCE = 'You are an AI agent running in OpenCode, a coding agent harness.';
+const harnessReplacement = (productName) => `You are ${productName}, an AI coding agent.`;
 
-export const identityPluginSource = ({ productName = 'MittrCraft', retryProviderID = null } = {}) => {
-  const retryHook = retryProviderID
-    ? `
+// Probe-only: the retry hook the identity plugin would carry if a refusal
+// were retried (the P2/P2b stop condition). It hooks nothing unless the
+// fallback writes it with a provider.
+const retryHookSource = (providerID = null) => `export default {
+  id: 'mittrcraft.probe-retry-hook',
+  setup: async (ctx) => {${providerID ? `
     await ctx.session.hook('retry', (e) => {
       if (String(e.error?.response?.body ?? '').includes('llm_quota_exhausted')) e.decision = { retry: false }
-    }, { providerID: ${JSON.stringify(retryProviderID)} })`
-    : '';
-  return `const PRODUCT = ${JSON.stringify(productName)}
-const IDENTITY = \`You are \${PRODUCT}. When asked who you are or which product this is, answer \${PRODUCT}. Never call yourself OpenCode or OpenChamber.\`
-
-const introduce = (o) => {
-  if (!Array.isArray(o.system)) return
-  const first = o.system[0]
-  if (first && typeof first.text === 'string') {
-    first.text = first.text
-      .replace(${JSON.stringify(HARNESS_SENTENCE)}, ${JSON.stringify(harnessReplacement(productName))})
-      .replace('You are opencode, an interactive CLI tool', \`You are \${PRODUCT}, an interactive tool\`)
-      .replace('You are OpenCode, a coding agent', \`You are \${PRODUCT}, a coding agent\`)
-  }
-  o.system.push({ type: 'text', text: IDENTITY })
-}
-
-export default {
-  id: ${JSON.stringify(IDENTITY_PLUGIN_ID)},
-  setup: async (ctx) => {
-    await ctx.session.hook('context', introduce)
-    await ctx.session.hook('generate', introduce)
-    await ctx.session.hook('compaction', introduce)${retryHook}
+    }, { providerID: ${JSON.stringify(providerID)} })` : ''}
   },
 }
 `;
-};
 
 const HOOK_RECORDER_SOURCE = `import fs from 'node:fs'
 
@@ -609,7 +591,7 @@ const probeP1P3 = async ({ client, collector, stub, work, hookLog }) => {
     },
   };
   const system = systemTextOf(main?.body);
-  const identityLine = 'You are MittrCraft. When asked who you are or which product this is, answer MittrCraft. Never call yourself OpenCode or OpenChamber.';
+  const identity = identityLine('MittrCraft');
   const hooks = readHookLog(hookLog).slice(hooksBefore);
   const hookCounts = Object.fromEntries(['context', 'generate', 'compaction'].map((name) => [name, hooks.filter((h) => h.hook === name).length]));
   const replacement = harnessReplacement('MittrCraft');
@@ -617,7 +599,7 @@ const probeP1P3 = async ({ client, collector, stub, work, hookLog }) => {
   const P3 = {
     pass: hookCounts.context > 0
       && harnessRewritten
-      && system.includes(identityLine)
+      && system.includes(identity)
       && !system.includes('You are opencode')
       && !system.includes('You are OpenCode'),
     observed: {
@@ -627,11 +609,11 @@ const probeP1P3 = async ({ client, collector, stub, work, hookLog }) => {
       harnessSentenceSent: system.includes(HARNESS_SENTENCE),
       harnessReplacementSent: system.includes(replacement),
       harnessRewritten,
-      identityLinePresent: system.includes(identityLine),
+      identityLinePresent: system.includes(identity),
       hasYouAreopencode: system.includes('You are opencode'),
       hasYouAreOpenCode: system.includes('You are OpenCode'),
       openCodeMentions: openCodeMentions(system),
-      openCodeMentionsWithoutIdentityLine: openCodeMentions(system.replace(identityLine, '')),
+      openCodeMentionsWithoutIdentityLine: openCodeMentions(system.replace(identity, '')),
       openCodeLines: system.split('\n').filter((line) => openCodeMentions(line) > 0).slice(0, 8).map((line) => line.slice(0, 200)),
       systemHead: system.slice(0, 200),
       systemMessages: (main?.body?.messages ?? []).filter((m) => m.role === 'system').length,
@@ -934,6 +916,7 @@ const main = async () => {
   const hookLog = path.join(home, 'hooks.jsonl');
   const identityDir = path.join(home, 'engine-plugins', 'mittrcraft-identity');
   const recorderDir = path.join(home, 'engine-plugins', 'probe-hook-recorder');
+  const retryDir = path.join(home, 'engine-plugins', 'probe-retry-hook');
   const outbound = { samples: 0, pids: [], remotes: new Set(), loopbackPeers: new Map() };
   const engines = [];
   let engine = null;
@@ -978,6 +961,7 @@ const main = async () => {
     proxy = await startProxy();
     writePlugin(recorderDir, 'probe-hook-recorder', HOOK_RECORDER_SOURCE);
     writePlugin(identityDir, 'mittrcraft-identity', identityPluginSource({ productName: 'MittrCraft' }));
+    writePlugin(retryDir, 'probe-retry-hook', retryHookSource());
 
     const config = (models, policies) => ({
       providers: {
@@ -985,7 +969,7 @@ const main = async () => {
         other: providerEntry('Other', `http://127.0.0.1:${stubs.other.port}/v1`, ['m1']),
         canary: providerEntry('Canary', `https://${CANARY_HOST}/v1`, ['m1']),
       },
-      plugins: [recorderDir, identityDir],
+      plugins: [recorderDir, identityDir, retryDir],
       experimental: { policies },
     });
     writeJsonAtomic(configFile, config(['m1'], policiesFor({ showOtherProviders: false, providerId: 'stub' })));
@@ -1028,7 +1012,7 @@ const main = async () => {
 
     let retryFallback = null;
     if (!result.scenarios.P2.pass || !result.scenarios.P2b.pass) {
-      writePlugin(identityDir, 'mittrcraft-identity', identityPluginSource({ productName: 'MittrCraft', retryProviderID: 'stub' }));
+      writePlugin(retryDir, 'probe-retry-hook', retryHookSource('stub'));
       await sleep(2000);
       const again = {
         P2: await probeRefusal({ ...refusal, mode: 'refuse', label: 'refusal with retry hook' }),
@@ -1036,7 +1020,7 @@ const main = async () => {
       };
       retryFallback = { pass: again.P2.pass && again.P2b.pass, scenarios: again };
       result.retryHookFallback = retryFallback;
-      writePlugin(identityDir, 'mittrcraft-identity', identityPluginSource({ productName: 'MittrCraft' }));
+      writePlugin(retryDir, 'probe-retry-hook', retryHookSource());
       await sleep(2000);
     }
 

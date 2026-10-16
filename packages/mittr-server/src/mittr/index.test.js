@@ -149,10 +149,12 @@ const LOCKED = [
   { action: 'provider.use', resource: 'mittr', effect: 'allow' },
 ];
 
+const identityDirOf = (dataDir) => path.join(dataDir, 'engine-plugins', 'mittrcraft-identity');
+
 test('setup hands the server plugin an engine env, a config fragment and a bounded dispose', async (t) => {
-  const { mittr, engine } = await setUp(t);
+  const { mittr, engine, dataDir } = await setUp(t);
   assert.deepEqual(await mittr.engineEnv(), { NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost' });
-  assert.deepEqual(await mittr.managedConfig(), { experimental: { policies: LOCKED } });
+  assert.deepEqual(await mittr.managedConfig(), { plugins: [identityDirOf(dataDir)], experimental: { policies: LOCKED } });
   await mittr.dispose();
   assert.equal(engine.readyListeners.size, 0);
 });
@@ -293,8 +295,30 @@ const engineAndBroker = (answer) => fakeEngineFetch({ answer, other: () => json(
 
 test('the lock is in the config from the first build, before any model or port', async (t) => {
   const engine = fakeEngineContext({ port: null });
-  const { mittr } = await setUp(t, { engine });
-  assert.deepEqual(await mittr.managedConfig(), { experimental: { policies: LOCKED } });
+  const { mittr, dataDir } = await setUp(t, { engine });
+  assert.deepEqual(await mittr.managedConfig(), { plugins: [identityDirOf(dataDir)], experimental: { policies: LOCKED } });
+});
+
+test('the identity plugin is on disk before the config names it', async (t) => {
+  const { mittr, dataDir } = await setUp(t, { built: false });
+  const config = await mittr.managedConfig();
+  assert.deepEqual(config.plugins, [identityDirOf(dataDir)]);
+  const source = fs.readFileSync(path.join(identityDirOf(dataDir), 'index.js'), 'utf8');
+  assert.ok(source.includes("'mittrcraft.identity'") || source.includes('"mittrcraft.identity"'), source.slice(0, 200));
+});
+
+test('an identity plugin that cannot be written leaves the lock and the models in the config', async (t) => {
+  const dataDir = tempDataDir(t);
+  fs.writeFileSync(path.join(dataDir, 'engine-plugins'), 'not a folder');
+  const engine = fakeEngineContext({ port: 4100 });
+  const { mittr, logger } = await setUp(t, { dataDir, engine, fetchImpl: engineAndBroker() });
+  await mittr.applyModels(MODELS);
+
+  const config = await mittr.managedConfig();
+  assert.equal(config.plugins, undefined);
+  assert.deepEqual(config.experimental.policies, LOCKED);
+  assert.deepEqual(Object.keys(config.providers.mittr.models), ['a1', 'a2']);
+  assert.ok(logger.warnings.some((line) => line.startsWith('[mittr] could not write the identity plugin')), logger.warnings.join('\n'));
 });
 
 test('the stored switch ON still denies the hosted opencode provider', async (t) => {
@@ -302,6 +326,7 @@ test('the stored switch ON still denies the hosted opencode provider', async (t)
   fs.writeFileSync(path.join(dataDir, 'mittr-settings.json'), JSON.stringify({ showOtherProviders: true }));
   const { mittr } = await setUp(t, { dataDir });
   assert.deepEqual(await mittr.managedConfig(), {
+    plugins: [identityDirOf(dataDir)],
     experimental: { policies: [{ action: 'provider.use', resource: 'opencode', effect: 'deny' }] },
   });
 });

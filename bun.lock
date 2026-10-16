@@ -111,6 +111,10 @@
         "node-abi": "^4.33.0",
       },
     },
+    "packages/mittr-opencode": {
+      "name": "@mittrcraft/opencode",
+      "version": "0.0.0",
+    },
     "packages/mittr-server": {
       "name": "@mittrcraft/server",
       "version": "0.0.0",
@@ -1060,6 +1064,8 @@
     "@malept/flatpak-bundler": ["@malept/flatpak-bundler@0.4.0", "", { "dependencies": { "debug": "^4.1.1", "fs-extra": "^9.0.0", "lodash": "^4.17.15", "tmp-promise": "^3.0.2" } }, "sha512-9QOtNffcOF/c1seMCDnjckb3R9WHcG34tky+FHpNKKCW0wc/scYLwMtO+ptyGUfMW0/b/n4qRiALlaFHc9Oj7Q=="],
 
     "@marijn/find-cluster-break": ["@marijn/find-cluster-break@1.0.2", "", {}, "sha512-l0h88YhZFyKdXIFNfSWpyjStDjGHwZ/U7iobcK1cQQD8sejsONdQtTVU+1wVN1PBw40PiiHB1vA5S7VTfQiP9g=="],
+
+    "@mittrcraft/opencode": ["@mittrcraft/opencode@workspace:packages/mittr-opencode"],
 
     "@mittrcraft/server": ["@mittrcraft/server@workspace:packages/mittr-server"],
 

@@ -24,9 +24,10 @@ Every claim marked *read from the binary* comes from reading the 2.0.22 executab
 - **Providers.** Two loopback stubs that speak the OpenAI API, `stub` and `other`, each on its own `127.0.0.1:<random>` port. Each stub records every request's headers and body.
   - A third provider, `canary`, points at `https://egress-canary.invalid/v1`. It is used once, as the proxy control.
   - No real provider, endpoint or key was used.
-- **Managed config** (`OPENCODE_CONFIG`). It sets `providers.{stub,other,canary}`, each with `package: "aisdk:@ai-sdk/openai-compatible"`, `settings.baseURL` and models `{m1: {modelID, name, capabilities: {tools: true}}}`. It also sets `plugins: [<hook recorder>, <identity plugin>]` and `experimental.policies: [{provider.use, *, deny}, {provider.use, stub, allow}]`.
-- **Plugins.** Both are directory plugins (`package.json` with `type: module` and `exports: ./index.js`):
-  - `identity` is the probe's inline copy of Task 14's `identityPluginSource()`. Task 14 replaces it with an import. Since this fix round, the copy also rewrites the 2.0.22 harness sentence (R50).
+- **Managed config** (`OPENCODE_CONFIG`). It sets `providers.{stub,other,canary}`, each with `package: "aisdk:@ai-sdk/openai-compatible"`, `settings.baseURL` and models `{m1: {modelID, name, capabilities: {tools: true}}}`. It also sets `plugins: [<hook recorder>, <identity plugin>, <retry hook>]` and `experimental.policies: [{provider.use, *, deny}, {provider.use, stub, allow}]`.
+- **Plugins.** All are directory plugins (`package.json` with `type: module` and `exports: ./index.js`):
+  - `identity` is the shipped source: since Task 14 the probe imports `identityPluginSource()` from `packages/mittr-opencode/src/identity-plugin.js`. It rewrites the 2.0.22 harness sentence (R50) and the two older opening sentences, and adds the identity line. A re-run with it on 2026-10-17 passed every scenario, P3 included: `context` fired once, the harness sentence was gone, `You are MittrCraft, an AI coding agent.` and the identity line were sent, and the 10 remaining OpenCode mentions were all built-in tool and skill text.
+  - `retry hook` is probe-only and hooks nothing unless the P2/P2b fallback writes it with a provider. It used to be part of the inline identity copy.
   - `hook recorder` is probe-only. It appends each `context`/`generate`/`compaction` call, and the first 120 characters of `system[0]` it saw, to a file in the temp `HOME`.
 - **Sessions** are driven through `@opencode/client` 2.0.22, with `x-opencode-directory` set to a work dir in the temp `HOME`. Each stub request is matched to its session by `x-opencode-session-id`.
 

@@ -43,6 +43,21 @@
     "reason": "Server log line."
   },
   {
+    "file": "app.asar/product-plugins/mittr-server.mjs",
+    "snippet": "You are an AI agent running in OpenCode, a coding agent harness.",
+    "reason": "Model-facing prompt text, never shown: the engine's own opening sentence, which the identity plugin finds and replaces with MittrCraft's."
+  },
+  {
+    "file": "app.asar/product-plugins/mittr-server.mjs",
+    "snippet": "You are OpenCode, a coding agent",
+    "reason": "Model-facing prompt text, never shown: an older engine opening sentence, which the identity plugin finds and replaces with MittrCraft's."
+  },
+  {
+    "file": "app.asar/product-plugins/mittr-server.mjs",
+    "snippet": "Never call yourself OpenCode or OpenChamber",
+    "reason": "Model-facing prompt text, never shown: the identity line the plugin adds to the system prompt, naming the two names the model must not use."
+  },
+  {
     "file": "web-dist/assets/*.js",
     "snippet": "substitutions:[[\"OpenChamber\",\"MittrCraft\"],[\"OpenCode\",\"MittrCraft\"]]",
     "reason": "The product UI plugin's own rename rules; data, never shown."

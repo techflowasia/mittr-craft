@@ -766,6 +766,11 @@ const checks = {
     has(policy, /resource: Schema\.String,/);
     has(policy, /export const Effect = Schema\.Literals\(\["allow", "deny"\]\);/);
   },
+
+  'engine-identity-hook': () => {
+    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
+    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P3 again, then update the identity plugin and this pin');
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {

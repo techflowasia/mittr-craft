@@ -3,9 +3,6 @@ import { test } from 'node:test';
 
 import {
   failuresOf,
-  HARNESS_SENTENCE,
-  harnessReplacement,
-  identityPluginSource,
   loopbackPeersFromLsof,
   nonLoopbackFromLog,
   nonLoopbackFromLsof,
@@ -46,19 +43,6 @@ test('outbound parsers keep only non-loopback peers', () => {
 
 test('openCodeMentions counts the name, not paths', () => {
   assert.equal(openCodeMentions('You are an AI agent running in OpenCode. Read .opencode/agents and ~/opencode/x. opencode tools.'), 2);
-});
-
-test('the identity source rewrites the 2.0.22 harness sentence', async () => {
-  const plugin = (await import(`data:text/javascript,${encodeURIComponent(identityPluginSource({ productName: 'MittrCraft' }))}`)).default;
-  const hooks = {};
-  await plugin.setup({ session: { hook: async (name, fn) => { hooks[name] = fn; } } });
-  const o = { system: [{ type: 'text', text: `${HARNESS_SENTENCE} Use .opencode/agents.` }] };
-  hooks.context(o);
-  assert.deepEqual(Object.keys(hooks), ['context', 'generate', 'compaction']);
-  assert.ok(o.system[0].text.startsWith(harnessReplacement('MittrCraft')));
-  assert.ok(o.system[0].text.includes('.opencode/agents'));
-  assert.equal(o.system.length, 2);
-  assert.match(o.system[1].text, /answer MittrCraft/);
 });
 
 test('stop conditions map to the plan', () => {
