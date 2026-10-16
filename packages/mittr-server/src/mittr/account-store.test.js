@@ -27,7 +27,8 @@ const tempDataDir = (t) => {
   return dir;
 };
 
-const storeIn = (dataDir) => () => createAccountStore({ dataDir, encrypt, decrypt });
+// A machine with no shared engine history yet, as on a fresh install.
+const storeIn = (dataDir, options = {}) => () => createAccountStore({ dataDir, encrypt, decrypt, sharedHistoryExists: () => false, ...options });
 const homeOf = (userId) => crypto.createHash('sha256').update(userId).digest('hex').slice(0, 16);
 const accountsDir = (dataDir) => path.join(dataDir, 'mittr-accounts');
 
@@ -270,24 +271,22 @@ test('a missing or well-formed index is not damaged', (t) => {
   assert.equal(store().damaged(), false);
 });
 
-test('repair sets the damaged index aside, deletes nothing and rebuilds the accounts it can prove', (t) => {
+test('repair sets the damaged index aside, deletes nothing and rebuilds the accounts it can prove, each on its own home', (t) => {
   const dataDir = tempDataDir(t);
   const store = storeIn(dataDir);
   store().write(sessionFor('u1', 'A'));
   store().write(sessionFor('u2', 'B'));
   store().write(sessionFor('u3', 'C'));
-  fs.writeFileSync(path.join(accountsDir(dataDir), `${homeOf('u3')}.catalog.json`), '{}');
   const damagedText = '{"active": "u2", "accou';
   writeIndexFile(dataDir, damagedText);
   const logger = silentLogger();
-  const homesOnDisk = new Set([homeOf('u2')]);
   const repaired = createAccountStore({
     dataDir,
     encrypt,
     decrypt,
     logger,
     now: () => Date.UTC(2026, 9, 17, 8, 30, 0),
-    accountHomeExists: (home) => homesOnDisk.has(home),
+    sharedHistoryExists: () => true,
   });
 
   assert.deepEqual(repaired.repair(), { repaired: true });
@@ -295,11 +294,10 @@ test('repair sets the damaged index aside, deletes nothing and rebuilds the acco
   const setAside = path.join(accountsDir(dataDir), 'index.json.unreadable-2026-10-17T08-30-00-000Z');
   assert.equal(fs.readFileSync(setAside, 'utf8'), damagedText);
   assert.equal(repaired.damaged(), false);
-  const index = JSON.parse(fs.readFileSync(path.join(accountsDir(dataDir), 'index.json'), 'utf8'));
-  assert.deepEqual(index, {
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(accountsDir(dataDir), 'index.json'), 'utf8')), {
     active: null,
     accounts: [
-      { userId: 'u1', displayName: 'A', home: null, signedIn: true },
+      { userId: 'u1', displayName: 'A', home: homeOf('u1'), signedIn: true },
       { userId: 'u2', displayName: 'B', home: homeOf('u2'), signedIn: true },
       { userId: 'u3', displayName: 'C', home: homeOf('u3'), signedIn: true },
     ],
@@ -308,30 +306,102 @@ test('repair sets the damaged index aside, deletes nothing and rebuilds the acco
   assert.deepEqual(repaired.repair(), { repaired: false });
 });
 
-test('repair gives no account the shared history when it cannot tell which one had it', (t) => {
-  for (const accountHomeExists of [undefined, () => false]) {
-    const dataDir = tempDataDir(t);
-    const store = storeIn(dataDir);
-    store().write(sessionFor('u1', 'A'));
-    store().write(sessionFor('u2', 'B'));
-    writeIndexFile(dataDir, 'not json');
-    const repaired = createAccountStore({ dataDir, encrypt, decrypt, logger: silentLogger(), accountHomeExists });
-    repaired.repair();
-    const homes = JSON.parse(fs.readFileSync(path.join(accountsDir(dataDir), 'index.json'), 'utf8')).accounts.map((entry) => entry.home);
-    assert.deepEqual(homes.sort(), [homeOf('u1'), homeOf('u2')].sort());
-  }
-});
-
 test('repair skips a session it cannot open or whose name does not match its account', (t) => {
   const dataDir = tempDataDir(t);
   storeIn(dataDir)().write(sessionFor('u1', 'A'));
   fs.writeFileSync(path.join(accountsDir(dataDir), `${homeOf('u9')}.session`), encrypt(JSON.stringify(sessionFor('u8', 'H'))));
   fs.writeFileSync(path.join(accountsDir(dataDir), `${homeOf('u7')}.session`), 'not sealed');
   writeIndexFile(dataDir, 'not json');
-  const repaired = createAccountStore({ dataDir, encrypt, decrypt, logger: silentLogger(), accountHomeExists: () => false });
+  const repaired = createAccountStore({ dataDir, encrypt, decrypt, logger: silentLogger(), sharedHistoryExists: () => true });
   repaired.repair();
   assert.deepEqual(repaired.list(), [{ userId: 'u1', displayName: 'A', active: false }]);
   assert.equal(fs.existsSync(path.join(accountsDir(dataDir), `${homeOf('u9')}.session`)), true);
+});
+
+test('a repair whose write fails puts the damaged index back, so it can be tried again', (t) => {
+  const dataDir = tempDataDir(t);
+  storeIn(dataDir)().write(sessionFor('u1', 'A'));
+  const damagedText = '{"active": "u1", "accou';
+  writeIndexFile(dataDir, damagedText);
+  const failingFs = {
+    ...fs,
+    writeFileSync: (file, ...rest) => {
+      if (path.basename(String(file)).startsWith('index.json.')) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+      return fs.writeFileSync(file, ...rest);
+    },
+  };
+  const store = createAccountStore({ dataDir, encrypt, decrypt, fs: failingFs, logger: silentLogger(), sharedHistoryExists: () => true });
+
+  assert.throws(() => store.repair(), /ENOSPC/);
+
+  assert.equal(fs.readFileSync(path.join(accountsDir(dataDir), 'index.json'), 'utf8'), damagedText);
+  assert.deepEqual(fs.readdirSync(accountsDir(dataDir)).filter((name) => name.startsWith('index.json')), ['index.json']);
+  assert.equal(store.damaged(), true);
+});
+
+test('with shared engine history on disk, a new account on an empty index gets its own home', (t) => {
+  const dataDir = tempDataDir(t);
+  const store = storeIn(dataDir, { sharedHistoryExists: () => true });
+  store().write(sessionFor('u1', 'A'));
+  assert.equal(store().activeHome(), homeOf('u1'));
+});
+
+test('with no shared engine history yet, the first account gets the shared home', (t) => {
+  const dataDir = tempDataDir(t);
+  const store = storeIn(dataDir, { sharedHistoryExists: () => false });
+  store().write(sessionFor('u1', 'A'));
+  assert.equal(store().activeHome(), null);
+  store().write(sessionFor('u2', 'B'));
+  assert.equal(store().activeHome(), homeOf('u2'));
+});
+
+test('the 1.x single session keeps the shared history even when it exists', (t) => {
+  const dataDir = tempDataDir(t);
+  fs.writeFileSync(path.join(dataDir, 'mittr-session'), encrypt(JSON.stringify(sessionFor('u1', 'A'))));
+  const store = storeIn(dataDir, { sharedHistoryExists: () => true });
+  assert.equal(store().read().subject.userId, 'u1');
+  assert.equal(store().activeHome(), null);
+});
+
+test('a truncated index, repaired, then a new sign-in: the newcomer never gets the shared history', (t) => {
+  const dataDir = tempDataDir(t);
+  const options = { sharedHistoryExists: () => true, logger: silentLogger() };
+  fs.writeFileSync(path.join(dataDir, 'mittr-session'), encrypt(JSON.stringify(sessionFor('u-z', 'Z'))));
+  const store = storeIn(dataDir, options);
+  assert.equal(store().activeHome(), null);
+  fs.unlinkSync(path.join(accountsDir(dataDir), `${homeOf('u-z')}.session`));
+  writeIndexFile(dataDir, '{"active": "u-z", "accounts": [{"userId": "u-z", "ho');
+
+  assert.deepEqual(store().repair(), { repaired: true });
+  store().write(sessionFor('u-y', 'Y'));
+
+  assert.equal(store().read().subject.userId, 'u-y');
+  assert.equal(store().activeHome(), homeOf('u-y'));
+});
+
+test('an index deleted outright does not hand the shared history to whoever signs in next', (t) => {
+  const dataDir = tempDataDir(t);
+  const store = storeIn(dataDir, { sharedHistoryExists: () => true });
+  fs.writeFileSync(path.join(dataDir, 'mittr-session'), encrypt(JSON.stringify(sessionFor('u-z', 'Z'))));
+  store();
+  fs.rmSync(accountsDir(dataDir), { recursive: true });
+  store().write(sessionFor('u-y', 'Y'));
+  assert.equal(store().activeHome(), homeOf('u-y'));
+});
+
+test('residual case: the shared-history owner signed out, the one left is repaired onto its own home', (t) => {
+  const dataDir = tempDataDir(t);
+  const store = storeIn(dataDir, { sharedHistoryExists: () => true, logger: silentLogger() });
+  fs.writeFileSync(path.join(dataDir, 'mittr-session'), encrypt(JSON.stringify(sessionFor('u1', 'A'))));
+  store().write(sessionFor('u2', 'B'));
+  store().signOut('u1');
+  writeIndexFile(dataDir, 'not json');
+
+  store().repair();
+
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(accountsDir(dataDir), 'index.json'), 'utf8')).accounts, [
+    { userId: 'u2', displayName: 'B', home: homeOf('u2'), signedIn: true },
+  ]);
 });
 
 test('stale temporary files from an interrupted write are swept when the store opens', (t) => {

@@ -66,9 +66,9 @@ export function createAccountStore({
   fs = nodeFs,
   logger = console,
   now = Date.now,
-  // Whether the engine already keeps folders for this account home. Repair
-  // uses it to tell which rebuilt account had the shared history.
-  accountHomeExists = null,
+  // Whether the shared engine folders already hold history. Unknown counts
+  // as yes, so a new account is never handed somebody else's history.
+  sharedHistoryExists = () => true,
 }) {
   const root = path.join(dataDir, ACCOUNTS_DIR);
   const indexPath = accountIndexPath(dataDir);
@@ -132,7 +132,17 @@ export function createAccountStore({
     }
   };
 
-  const upsert = (index, session, activate = true) => {
+  // The shared engine history (`home: null`) goes to a new account only when
+  // nothing can be mixed: the 1.x single session that already owned it, or a
+  // machine whose shared folders hold no history yet, and never to a second
+  // holder. Otherwise the account gets its own home and any old shared
+  // history is left orphaned, not shared.
+  const homeForNewAccount = (index, userId, { legacy }) => {
+    const sharedIsFree = !index.accounts.some((entry) => entry.home === null);
+    return sharedIsFree && (legacy || !sharedHistoryExists()) ? null : keyOf(userId);
+  };
+
+  const upsert = (index, session, activate = true, { legacy = false } = {}) => {
     const parsed = parseSession(session);
     const { userId, displayName } = parsed.subject;
     writePrivate(sessionPath(userId), encrypt(JSON.stringify(parsed)));
@@ -144,7 +154,7 @@ export function createAccountStore({
       index.accounts.push({
         userId,
         displayName,
-        home: index.accounts.length === 0 ? null : keyOf(userId),
+        home: homeForNewAccount(index, userId, { legacy }),
         signedIn: true,
       });
     }
@@ -166,7 +176,7 @@ export function createAccountStore({
     if (index.accounts.length === 0) {
       try {
         const session = parseSession(JSON.parse(decrypt(fs.readFileSync(legacyPath))));
-        writeIndex(upsert(index, session));
+        writeIndex(upsert(index, session, true, { legacy: true }));
       } catch {
         return;
       }
@@ -214,28 +224,21 @@ export function createAccountStore({
   };
 
   // Accounts a sealed session proves: the file name must be the key of the
-  // account inside it. An account whose engine home already exists, or that
-  // has a catalog of its own, gets that home; the shared history (home null)
-  // goes to the one remaining account only when exactly one remains and the
-  // engine folders could be checked. Otherwise nobody gets it.
+  // account inside it. Each gets its own home; which one held the shared
+  // history cannot be proven, so none is given it.
   const rebuildIndex = () => {
-    const proven = [];
+    const accounts = [];
     for (const name of fs.readdirSync(root)) {
       const key = SESSION_FILE.exec(name)?.[1];
       if (!key) continue;
       try {
-        const session = parseSession(JSON.parse(decrypt(fs.readFileSync(path.join(root, name)))));
-        if (keyOf(session.subject.userId) === key) proven.push({ ...session.subject, key });
+        const { subject } = parseSession(JSON.parse(decrypt(fs.readFileSync(path.join(root, name)))));
+        if (keyOf(subject.userId) === key) accounts.push({ userId: subject.userId, displayName: subject.displayName, home: key, signedIn: true });
       } catch {
         // Not provable; its file stays where it is.
       }
     }
-    const hasOwnHome = (key) => fs.existsSync(path.join(root, `${key}.catalog.json`)) || Boolean(accountHomeExists?.(key));
-    const withoutHome = proven.filter((account) => !hasOwnHome(account.key));
-    const sharedOwner = accountHomeExists && withoutHome.length === 1 ? withoutHome[0].key : null;
-    const accounts = proven
-      .map((account) => ({ userId: account.userId, displayName: account.displayName, home: account.key === sharedOwner ? null : account.key, signedIn: true }))
-      .sort((a, b) => (a.home === null ? -1 : b.home === null ? 1 : a.userId.localeCompare(b.userId)));
+    accounts.sort((a, b) => a.userId.localeCompare(b.userId));
     return { active: null, accounts };
   };
 
@@ -243,13 +246,21 @@ export function createAccountStore({
   // writes one rebuilt from the sessions on disk, so sign-in works again.
   const repair = () => {
     if (!fs.existsSync(indexPath) || !damaged()) return { repaired: false };
+    const rebuilt = rebuildIndex();
     const stamp = new Date(now()).toISOString().replace(/[:.]/g, '-');
     let setAside = `${indexPath}.unreadable-${stamp}`;
     for (let attempt = 1; fs.existsSync(setAside); attempt += 1) setAside = `${indexPath}.unreadable-${stamp}-${attempt}`;
     fs.renameSync(indexPath, setAside);
+    try {
+      writeIndex(rebuilt);
+    } catch (error) {
+      // No index at all would let the next sign-in start a fresh list; the
+      // damaged one goes back so the damage stays visible and repair can be
+      // tried again.
+      fs.renameSync(setAside, indexPath);
+      throw error;
+    }
     reportedDamage = false;
-    const rebuilt = rebuildIndex();
-    if (rebuilt.accounts.length > 0) writeIndex(rebuilt);
     logger.warn(`[mittr] set the unreadable account index aside at ${setAside}; rebuilt ${rebuilt.accounts.length} account(s) from their sessions`);
     return { repaired: true };
   };

@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 /**
@@ -59,3 +60,20 @@ export const engineEnv = ({ bases, accountHome, rule }) => {
   if (rule.opencodeDb) env.OPENCODE_DB = rule.opencodeDb;
   return env;
 };
+
+const SESSION_DATABASE = /^opencode.*\.db$/;
+
+const holdsSessionDatabase = (dir) => {
+  try {
+    return fs.readdirSync(dir).some((name) => SESSION_DATABASE.test(name));
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Whether the shared engine folders already hold a session database: the
+ * history the first account of 1.x kept. Account homes under `accounts/` do
+ * not count.
+ */
+export const sharedHistoryExists = (bases) => holdsSessionDatabase(bases.data) || holdsSessionDatabase(path.join(bases.data, 'opencode'));

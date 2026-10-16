@@ -22,9 +22,9 @@ const sessionFor = (userId, displayName, over = {}) => ({
   ...over,
 });
 
-const harness = async (t, { fetchImpl = fakeFetch(), sessions = [], signInRefusal, onSignIn, onAccountChange } = {}) => {
+const harness = async (t, { fetchImpl = fakeFetch(), sessions = [], signInRefusal, onSignIn, onAccountChange, storeOptions = {} } = {}) => {
   const dataDir = tempDataDir(t);
-  const store = createAccountStore({ dataDir, encrypt, decrypt });
+  const store = createAccountStore({ dataDir, encrypt, decrypt, sharedHistoryExists: () => false, ...storeOptions });
   for (const session of sessions) store.write(session);
   const clock = { now: NOW };
   const app = express();
@@ -465,4 +465,24 @@ test('a sign-out that lands while the refreshed body is read still wins', async 
   assert.equal(await refreshing, null);
   assert.equal(store.readOf('u-a'), null);
   assert.deepEqual(store.list(), []);
+});
+
+test('a repair that cannot write answers so, and the list still reads as damaged', async (t) => {
+  const failingFs = {
+    ...fs,
+    writeFileSync: (file, ...rest) => {
+      if (path.basename(String(file)).startsWith('index.json.')) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+      return fs.writeFileSync(file, ...rest);
+    },
+  };
+  const { call, dataDir } = await harness(t, { storeOptions: { fs: failingFs, logger: { error: () => {}, warn: () => {}, log: () => {} } } });
+  t.mock.method(console, 'error', () => {});
+  const indexFile = damageIndex(dataDir);
+
+  assert.deepEqual(await call('POST', '/api/mittr/auth/accounts/repair'), {
+    status: 500,
+    body: { error: 'Cannot store the Mittr sign-in on this machine' },
+  });
+  assert.equal(fs.readFileSync(indexFile, 'utf8'), '{"active": "u-a", "accou');
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false, accountsDamaged: true });
 });

@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
-import { ENGINE_DB_RULE, engineBases, engineEnv } from './engine-home.js';
+import { ENGINE_DB_RULE, engineBases, engineEnv, sharedHistoryExists } from './engine-home.js';
 
 const HOME = '/Users/someone';
 const ACCOUNT = '0123456789abcdef';
@@ -106,4 +109,24 @@ test('the prod product neutralises a MITTRCRAFT_ENGINE_HOME from the shell or th
 
   assert.equal(launched.MITTRCRAFT_ENGINE_HOME, '');
   assert.deepEqual(engineBases({ homeDir: HOME, env: launched }), PROD_BASES);
+});
+
+test('shared history exists only when the shared data base holds a session database', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'engine-history-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const bases = { config: root, data: path.join(root, 'data'), state: path.join(root, 'state'), cache: root };
+
+  assert.equal(sharedHistoryExists(bases), false);
+  fs.mkdirSync(path.join(bases.data, 'accounts', ACCOUNT, 'opencode'), { recursive: true });
+  fs.writeFileSync(path.join(bases.data, 'accounts', ACCOUNT, 'opencode', 'opencode.db'), '');
+  fs.writeFileSync(path.join(bases.data, 'opencode-notes.txt'), '');
+  assert.equal(sharedHistoryExists(bases), false, 'an account home or another file is not shared history');
+
+  fs.mkdirSync(path.join(bases.data, 'opencode'), { recursive: true });
+  fs.writeFileSync(path.join(bases.data, 'opencode', 'opencode.db'), '');
+  assert.equal(sharedHistoryExists(bases), true);
+
+  fs.rmSync(path.join(bases.data, 'opencode', 'opencode.db'));
+  fs.writeFileSync(path.join(bases.data, 'opencode-local.db'), '');
+  assert.equal(sharedHistoryExists(bases), true);
 });
