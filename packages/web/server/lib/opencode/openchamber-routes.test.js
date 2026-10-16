@@ -119,6 +119,31 @@ describe('OpenChamber desktop host update route', () => {
     expect(packageManager.checkForUpdates).not.toHaveBeenCalled();
   });
 
+  it('answers with no update channel and asks no update service when the check is switched off', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      for (const runtime of ['desktop', 'web']) {
+        const { app } = createApp({ environment: { OPENCHAMBER_RUNTIME: runtime, OPENCHAMBER_UPDATE_CHECK_DISABLED: '1' } });
+        await request(app).get('/api/openchamber/update-check?appType=desktop-electron&currentVersion=2.1.1&installId=abc').expect(200, {
+          available: false, updatesDisabled: true, currentVersion: '2.1.1', version: null, body: null, date: null,
+        });
+      }
+      expect(packageManager.checkForUpdates).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('checks for updates as before when the switch is absent or off', async () => {
+    packageManager.checkForUpdates.mockResolvedValue({ available: false, currentVersion: '2.1.1' });
+    for (const environment of [{}, { OPENCHAMBER_UPDATE_CHECK_DISABLED: '0' }]) {
+      const { app } = createApp({ environment });
+      await request(app).get('/api/openchamber/update-check?appType=desktop-electron').expect(200, { available: false, currentVersion: '2.1.1' });
+    }
+    expect(packageManager.checkForUpdates).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects native checks without a bridge and preserves explicit non-web checks', async () => {
     const { app } = createApp({ environment: { OPENCHAMBER_RUNTIME: 'desktop' } });
     await request(app).get('/api/openchamber/update-check?appType=web').expect(503, {

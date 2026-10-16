@@ -59,6 +59,11 @@ const buildWindowsUpdateScript = ({ logPreamble, updateCmd, restartCmd }) => [
   '',
 ].join('\r\n');
 
+const isUpdateCheckDisabled = (env) => {
+  const value = typeof env?.OPENCHAMBER_UPDATE_CHECK_DISABLED === 'string' ? env.OPENCHAMBER_UPDATE_CHECK_DISABLED.trim().toLowerCase() : '';
+  return value === '1' || value === 'true';
+};
+
 export const registerOpenChamberRoutes = (app, dependencies) => {
   const {
     fs,
@@ -163,6 +168,17 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
           ...await desktopUpdater.check(),
           packageManager: 'electron',
           updateOwner: 'electron-updater',
+        };
+      } else if (isUpdateCheckDisabled(process.env)) {
+        // A build that ships without an update service answers as a build
+        // with no update channel does, and the check never leaves the machine.
+        updateInfo = {
+          available: false,
+          updatesDisabled: true,
+          currentVersion: updateRequest.currentVersion ?? null,
+          version: null,
+          body: null,
+          date: null,
         };
       } else {
         const { checkForUpdates } = await import('../package-manager.js');
