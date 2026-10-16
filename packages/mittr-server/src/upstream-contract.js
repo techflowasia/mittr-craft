@@ -30,6 +30,11 @@ export const UPSTREAM_CONTRACT = [
     why: 'OPENCHAMBER_SERVER_PLUGINS names plugins the server loads before OpenCode starts',
   },
   {
+    id: 'managed-config-contributions',
+    files: ['packages/web/server/lib/opencode/managed-config-file.js', 'packages/web/server/index.js'],
+    why: 'the config fragment server plugins return reaches the managed config file, or OPENCODE_CONFIG_CONTENT when the user owns OPENCODE_CONFIG',
+  },
+  {
     id: 'plugin-context-express',
     files: ['packages/web/server/index.js'],
     why: 'server plugins get the express module the server itself runs on, since our package cannot import it',

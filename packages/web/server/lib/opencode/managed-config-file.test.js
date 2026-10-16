@@ -11,7 +11,7 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => fs.rm(directory, { recursive: true, force: true })));
 });
 
-const createHarness = async ({ settings = {}, env = {}, memoryAvailable = true } = {}) => {
+const createHarness = async ({ settings = {}, env = {}, memoryAvailable = true, contributeConfig } = {}) => {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-managed-config-'));
   temporaryDirectories.push(dataDir);
   const agentToolRuntime = {
@@ -35,6 +35,7 @@ const createHarness = async ({ settings = {}, env = {}, memoryAvailable = true }
     agentToolRuntime,
     readSettings: () => current.settings,
     isAgentMemoryAvailable: () => memoryAvailable,
+    contributeConfig,
   });
   const readConfigFile = async () => JSON.parse(await fs.readFile(path.join(dataDir, MANAGED_CONFIG_FILE_NAME), 'utf8'));
   return { dataDir, runtime, agentToolRuntime, current, readConfigFile };
@@ -159,6 +160,81 @@ describe('managed OpenCode config file', () => {
     });
     await expect(fs.stat(path.join(dataDir, MANAGED_CONFIG_FILE_NAME))).rejects.toThrow();
     expect(await runtime.refreshManagedConfigFile()).toEqual({ updated: false, reason: 'external-config' });
+  });
+
+  it('contributions are written beside upstream plugins', async () => {
+    const { dataDir, runtime, readConfigFile } = await createHarness({
+      contributeConfig: async () => ({ providers: { x: { name: 'X' } }, plugins: ['/mine'] }),
+    });
+
+    await runtime.buildManagedChildEnv();
+
+    expect(await readConfigFile()).toEqual({
+      providers: { x: { name: 'X' } },
+      plugins: ['-opencode.browser', path.join(dataDir, 'agent-tool', 'openchamber-agent-tool'), '/mine'],
+    });
+  });
+
+  it('a refresh writes the contributions as they are now', async () => {
+    const current = { config: { providers: { x: { name: 'X' } } } };
+    const { runtime, readConfigFile } = await createHarness({ contributeConfig: () => current.config });
+    await runtime.buildManagedChildEnv();
+
+    current.config = { providers: { x: { name: 'X' } }, experimental: { policies: [] } };
+    expect(await runtime.refreshManagedConfigFile()).toEqual({ updated: true });
+
+    expect((await readConfigFile()).experimental).toEqual({ policies: [] });
+  });
+
+  it('no contributor writes the upstream file byte-identically', async () => {
+    const { dataDir, runtime } = await createHarness();
+
+    await runtime.buildManagedChildEnv();
+
+    const pluginDirectory = path.join(dataDir, 'agent-tool', 'openchamber-agent-tool');
+    expect(await fs.readFile(path.join(dataDir, MANAGED_CONFIG_FILE_NAME), 'utf8'))
+      .toBe(`${JSON.stringify({ plugins: ['-opencode.browser', pluginDirectory] }, null, 2)}\n`);
+  });
+
+  it('a contributor that fails stops the engine start instead of dropping its config', async () => {
+    const { runtime } = await createHarness({
+      contributeConfig: async () => { throw new Error('contribution unavailable'); },
+    });
+
+    await expect(runtime.buildManagedChildEnv()).rejects.toThrow('contribution unavailable');
+  });
+
+  it('contributions reach OPENCODE_CONFIG_CONTENT when OPENCODE_CONFIG is set', async () => {
+    const { dataDir, runtime } = await createHarness({
+      env: {
+        OPENCODE_CONFIG: '/home/user/opencode.json',
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          model: 'test/model',
+          plugins: ['/theirs'],
+          experimental: { policies: [{ action: 'provider.use', resource: '*', effect: 'allow' }] },
+        }),
+      },
+      contributeConfig: async () => ({
+        providers: { x: { name: 'X' } },
+        plugins: ['/mine'],
+        experimental: { policies: [{ action: 'provider.use', resource: '*', effect: 'deny' }] },
+      }),
+    });
+
+    const childEnv = await runtime.buildManagedChildEnv();
+
+    expect(childEnv.OPENCODE_CONFIG).toBeUndefined();
+    expect(JSON.parse(childEnv.OPENCODE_CONFIG_CONTENT)).toEqual({
+      model: 'test/model',
+      providers: { x: { name: 'X' } },
+      plugins: ['/theirs', '-opencode.browser', path.join(dataDir, 'agent-tool', 'openchamber-agent-tool'), '/mine'],
+      experimental: {
+        policies: [
+          { action: 'provider.use', resource: '*', effect: 'allow' },
+          { action: 'provider.use', resource: '*', effect: 'deny' },
+        ],
+      },
+    });
   });
 
   it('leaves no temp file behind and never publishes a partial list', async () => {

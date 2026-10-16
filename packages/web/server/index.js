@@ -1920,6 +1920,8 @@ async function main(options = {}) {
     agentToolRuntime,
     readSettings: () => readSettingsFromDiskMigrated(),
     isAgentMemoryAvailable: isAgentMemoryFeatureAvailable,
+    // Read on each write; plugins load later in startup, before OpenCode starts.
+    contributeConfig: () => (serverPlugins ? serverPlugins.managedConfig() : {}),
   });
 
   // Pairing transports advertised to the create-device dialog. LAN reachability is

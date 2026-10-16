@@ -1,3 +1,4 @@
+import { mergeEngineConfig } from '../server-plugins.js';
 import { appendManagedPlugin } from './managed-plugin-config.js';
 
 export const MANAGED_CONFIG_FILE_NAME = 'opencode.managed.json';
@@ -23,15 +24,18 @@ const DISABLED_BUILTIN_PLUGINS = ['-opencode.browser'];
  * process — where `OPENCODE_CONFIG_CONTENT` (an environment variable) could
  * only ever change across a restart.
  *
- * The file is OpenChamber-owned and holds nothing but `plugins`: the built-in
- * plugins OpenChamber disables, then its own plugin directories. It sits above
- * the user's global `opencode.json` and below their project config, so it never
- * shadows a project-level choice.
+ * The file is OpenChamber-owned. It holds `plugins`: the built-in plugins
+ * OpenChamber disables, then its own plugin directories, then any plugins a
+ * server plugin contributes. A server plugin's config fragment
+ * (`contributeConfig`, see `server-plugins.js`) supplies every other key. It
+ * sits above the user's global `opencode.json` and below their project config,
+ * so it never shadows a project-level choice.
  *
  * When the user's own environment already sets `OPENCODE_CONFIG`, that file is
- * theirs: OpenChamber does not hijack it and falls back to merging its plugins
- * into `OPENCODE_CONFIG_CONTENT`, which keeps the old restart requirement for
- * managed-tool toggles.
+ * theirs: OpenChamber does not hijack it and falls back to merging its plugins,
+ * and the contributed fragment, into `OPENCODE_CONFIG_CONTENT`, which keeps the
+ * old restart requirement for managed-tool toggles. A contribution that cannot
+ * be read or merged fails the start rather than run OpenCode without it.
  *
  * @param {object} dependencies
  * @param {typeof import('node:fs/promises')} dependencies.fsPromises
@@ -41,6 +45,7 @@ const DISABLED_BUILTIN_PLUGINS = ['-opencode.browser'];
  * @param {object|null} [dependencies.agentToolRuntime]
  * @param {() => Promise<object|null>} dependencies.readSettings
  * @param {() => boolean} dependencies.isAgentMemoryAvailable
+ * @param {() => object | Promise<object>} [dependencies.contributeConfig] config fragment server plugins add
  */
 export const createManagedConfigRuntime = ({
   fsPromises,
@@ -50,6 +55,7 @@ export const createManagedConfigRuntime = ({
   agentToolRuntime = null,
   readSettings,
   isAgentMemoryAvailable,
+  contributeConfig = async () => ({}),
 }) => {
   const filePath = path.join(dataDir, MANAGED_CONFIG_FILE_NAME);
 
@@ -57,8 +63,13 @@ export const createManagedConfigRuntime = ({
   const ownsConfigFile = () => (env.OPENCODE_CONFIG ?? '').trim().length === 0;
 
   const writeConfigFile = async (pluginDirectories) => {
+    const contributed = await contributeConfig();
     await fsPromises.mkdir(dataDir, { recursive: true });
-    const text = `${JSON.stringify({ plugins: [...DISABLED_BUILTIN_PLUGINS, ...pluginDirectories] }, null, 2)}\n`;
+    const config = {
+      ...contributed,
+      plugins: [...DISABLED_BUILTIN_PLUGINS, ...pluginDirectories, ...(contributed.plugins ?? [])],
+    };
+    const text = `${JSON.stringify(config, null, 2)}\n`;
     // Temp + rename: OpenCode reacts to the write immediately, and a partial
     // read would make it drop every managed plugin until the next change.
     const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
@@ -103,9 +114,14 @@ export const createManagedConfigRuntime = ({
       await writeConfigFile(directories);
       return { ...childEnv, OPENCODE_CONFIG: filePath };
     }
+    const { plugins: contributedPlugins = [], ...contributed } = await contributeConfig();
     let content = env.OPENCODE_CONFIG_CONTENT;
     for (const directory of [...DISABLED_BUILTIN_PLUGINS, ...directories]) {
       content = appendManagedPlugin(content, directory, 'managed plugin');
+    }
+    content = JSON.stringify(mergeEngineConfig(JSON.parse(content), contributed));
+    for (const plugin of contributedPlugins) {
+      content = appendManagedPlugin(content, plugin, 'contributed plugin');
     }
     return { ...childEnv, OPENCODE_CONFIG_CONTENT: content };
   };

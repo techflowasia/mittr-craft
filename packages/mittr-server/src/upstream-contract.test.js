@@ -167,6 +167,45 @@ const checks = {
     has(pluginSource, /export default async function setup\(\{ dataDir, logger \}\)/, 'our plugin no longer takes the context the loader passes');
   },
 
+  'managed-config-contributions': async (t) => {
+    const { createManagedConfigRuntime, MANAGED_CONFIG_FILE_NAME } = await importUpstream('packages/web/server/lib/opencode/managed-config-file.js');
+    const contribution = {
+      providers: { contract: { name: 'Contract' } },
+      plugins: ['/contract/plugin'],
+      experimental: { policies: [{ action: 'provider.use', resource: '*', effect: 'deny' }] },
+    };
+    const runtime = (env) => {
+      const dataDir = tempDir(t, 'contract-managed-');
+      return {
+        dataDir,
+        managed: createManagedConfigRuntime({
+          fsPromises: fs.promises,
+          path,
+          dataDir,
+          env,
+          readSettings: async () => ({}),
+          isAgentMemoryAvailable: () => false,
+          contributeConfig: async () => contribution,
+        }),
+      };
+    };
+
+    const owned = runtime({});
+    assert.equal((await owned.managed.buildManagedChildEnv()).OPENCODE_CONFIG, path.join(owned.dataDir, MANAGED_CONFIG_FILE_NAME));
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(owned.dataDir, MANAGED_CONFIG_FILE_NAME), 'utf8')), {
+      ...contribution,
+      plugins: ['-opencode.browser', '/contract/plugin'],
+    });
+
+    const userOwned = runtime({ OPENCODE_CONFIG: '/user/opencode.json', OPENCODE_CONFIG_CONTENT: '{"model":"user/model"}' });
+    const content = JSON.parse((await userOwned.managed.buildManagedChildEnv()).OPENCODE_CONFIG_CONTENT);
+    assert.deepEqual(content, { model: 'user/model', ...contribution, plugins: ['-opencode.browser', '/contract/plugin'] });
+
+    has(source('packages/web/server/lib/opencode/managed-config-file.js'), /import \{ mergeEngineConfig \} from '\.\.\/server-plugins\.js';/, 'the managed config no longer merges with the same rule');
+    const server = source('packages/web/server/index.js');
+    has(server, /managedConfigRuntime = createManagedConfigRuntime\(\{[^}]*contributeConfig: \(\) => \(serverPlugins \? serverPlugins\.managedConfig\(\) : \{\}\),\s*\}\);/, 'index.js no longer hands the managed config runtime what server plugins contribute');
+  },
+
   'plugin-context-express': () => {
     const server = source('packages/web/server/index.js');
     has(server, /^import express from 'express';$/m);

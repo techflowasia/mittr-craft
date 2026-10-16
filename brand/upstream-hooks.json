@@ -159,6 +159,10 @@
     {
       "hook": "server-plugins",
       "why": "A build's server plugin needed more of the server than the app, data dir and logger (the express module, the bound port, settings, UI events, the managed OpenCode and its readiness, git, request scope and shutdown) and had no way to add engine config, so a downstream build would have had to edit upstream's server for each provider, policy or plugin it adds."
+    },
+    {
+      "hook": "managed-config",
+      "why": "A downstream build adds providers, policies and plugins to the managed OpenCode by returning a config fragment from its server plugin, which the managed config writer puts beside OpenChamber's own plugins (or into OPENCODE_CONFIG_CONTENT when the user owns OPENCODE_CONFIG), instead of editing upstream's writer."
     }
   ],
   "packages/web/server/lib/enterprise-mode.js": [
@@ -191,6 +195,12 @@
     {
       "hook": "server-plugins",
       "why": "A build's server plugin needed more of the server than the app, data dir and logger (the express module, the bound port, settings, UI events, the managed OpenCode and its readiness, git, request scope and shutdown) and had no way to add engine config, so a downstream build would have had to edit upstream's server for each provider, policy or plugin it adds."
+    }
+  ],
+  "packages/web/server/lib/opencode/managed-config-file.js": [
+    {
+      "hook": "managed-config",
+      "why": "A downstream build adds providers, policies and plugins to the managed OpenCode by returning a config fragment from its server plugin, which the managed config writer puts beside OpenChamber's own plugins (or into OPENCODE_CONFIG_CONTENT when the user owns OPENCODE_CONFIG), instead of editing upstream's writer."
     }
   ],
   "packages/web/server/lib/opencode/openchamber-routes.js": [
