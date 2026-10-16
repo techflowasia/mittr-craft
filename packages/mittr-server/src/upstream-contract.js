@@ -35,6 +35,11 @@ export const UPSTREAM_CONTRACT = [
     why: 'product.json serverPlugins and env reach the server through the desktop shell',
   },
   {
+    id: 'server-app-version',
+    files: ['packages/electron/product-runtime.mjs', 'packages/electron/product.mjs', 'packages/web/server/index.js'],
+    why: 'product.json serverReportsAppVersion has the server report the packaged app version, which About shows',
+  },
+  {
     id: 'policy-file-env',
     files: ['packages/web/server/lib/enterprise-mode.js'],
     why: 'OPENCHAMBER_POLICY_FILE replaces the OpenChamber policy path',
@@ -60,6 +65,7 @@ export const UPSTREAM_CONTRACT = [
       'env',
       'ensureDirs',
       'serverPlugins',
+      'serverReportsAppVersion',
     ],
   },
   {

@@ -40,7 +40,7 @@ const runProductRuntime = (t, product) => {
     registerHooks({
       resolve(specifier, context, nextResolve) {
         if (specifier !== 'electron') return nextResolve(specifier, context);
-        const stub = 'export const app = { getAppPath: () => process.env.CONTRACT_APP_PATH };';
+        const stub = 'export const app = { getAppPath: () => process.env.CONTRACT_APP_PATH, getVersion: () => "9.8.7+contract.1" };';
         return { url: 'data:text/javascript,' + encodeURIComponent(stub), shortCircuit: true };
       },
     });
@@ -49,12 +49,14 @@ const runProductRuntime = (t, product) => {
     const { policyFilePaths } = await import(process.env.CONTRACT_ENTERPRISE_URL);
     console.log(JSON.stringify({
       serverPluginsEnv: process.env.OPENCHAMBER_SERVER_PLUGINS ?? null,
+      hostAppVersion: process.env.OPENCHAMBER_HOST_APP_VERSION ?? null,
       specifiers: readServerPluginSpecifiers(process.env),
       policyFiles: policyFilePaths({ platform: 'darwin', env: process.env }),
     }));
   `;
   const childEnv = { ...process.env };
   delete childEnv.OPENCHAMBER_SERVER_PLUGINS;
+  delete childEnv.OPENCHAMBER_HOST_APP_VERSION;
   delete childEnv.OPENCHAMBER_POLICY_FILE;
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
     encoding: 'utf8',
@@ -121,6 +123,15 @@ const checks = {
     assert.deepEqual(without.specifiers, []);
 
     has(source('packages/electron/early-startup.mjs'), /^import \{ PRODUCT \} from '\.\/product-runtime\.mjs';$/m, 'early startup no longer resolves the product first');
+  },
+
+  'server-app-version': (t) => {
+    assert.equal(runProductRuntime(t, { serverReportsAppVersion: true }).hostAppVersion, '9.8.7+contract.1');
+    assert.equal(runProductRuntime(t, {}).hostAppVersion, null);
+    has(source('packages/web/server/index.js'), /const OPENCHAMBER_VERSION = \(\(\) => \{\s*(\/\/.*\n\s*)*const hostAppVersion = process\.env\.OPENCHAMBER_HOST_APP_VERSION\?\.trim\(\);\s*if \(hostAppVersion\) \{\s*return hostAppVersion;/, 'the server no longer reports the version the shell hands it');
+    for (const flavor of ['dev', 'prod']) {
+      assert.equal(JSON.parse(source(`brand/product.${flavor}.json`)).serverReportsAppVersion, true, flavor);
+    }
   },
 
   'policy-file-env': async () => {
