@@ -17,9 +17,13 @@ const GIT_ENV = {
 };
 
 // The script runs git with the process environment; the fixture's identity
-// and empty global config must reach it too.
+// and empty global config must reach it too, and no other GIT_* variable may:
+// run from a git hook, GIT_DIR or GIT_INDEX_FILE would point every fixture
+// command at the real repository.
 const withGitEnv = (t) => {
-  const saved = Object.fromEntries(Object.keys(GIT_ENV).map((key) => [key, process.env[key]]));
+  const names = new Set([...Object.keys(GIT_ENV), ...Object.keys(process.env).filter((name) => name.startsWith('GIT_'))]);
+  const saved = Object.fromEntries([...names].map((key) => [key, process.env[key]]));
+  for (const name of names) delete process.env[name];
   Object.assign(process.env, GIT_ENV);
   t.after(() => {
     for (const [key, value] of Object.entries(saved)) {
@@ -301,4 +305,31 @@ test('without brand/UPSTREAM on the base branch, the dry run and the real run bo
   const result = runUpstreamUpdate({ cwd: repo.dir, commit: 'origin/main', from: 'old-line', run: () => 0, log: stopped.log });
   assert.equal(result.status, 'stopped');
   assert.match(stopped.text(), /until phase 5.*--from rebase\/upstream-2\.1\.1/s);
+});
+
+test('after develop adopts the line, a conflict names only the hooks on this line, not the 1.x history', (t) => {
+  const repo = fixture(t, { conflicting: true });
+  // 1.x grew from an upstream release older than the base; here it shares no
+  // history with the base at all, which is the same for the walk.
+  repo.git('switch', '-q', '--orphan', 'old-develop');
+  // The same text the hook has: the adoption merge is then the same as both
+  // parents for this file, and a plain path-limited walk follows the 1.x side.
+  repo.commit('feat: rename the greeting everywhere', { 'packages/web/a.js': 'greeting = product.greeting ?? "hello"\n' });
+  repo.git('merge', '-q', '-s', 'ours', '--no-commit', '--allow-unrelated-histories', 'develop');
+  repo.git('read-tree', '-m', '-u', 'develop');
+  repo.git('commit', '-q', '-m', 'chore: adopt the upstream-based line');
+  repo.git('branch', '-q', '-f', 'develop', 'HEAD');
+  repo.git('switch', '-q', 'develop');
+  repo.git('branch', '-q', '-D', 'old-develop');
+  assert.match(repo.git('log', '--no-merges', '--format=%s', `${repo.base}..HEAD`, '--', 'packages/web/a.js'), /rename the greeting/);
+  assert.match(repo.git('status', '--porcelain'), /^$/);
+
+  const output = capture();
+  const result = runUpstreamUpdate({ cwd: repo.dir, commit: 'origin/main', run: recordingRunner(repo.dir).run, log: output.log });
+
+  assert.equal(result.status, 'stopped');
+  assert.equal(result.step, 'merge');
+  const text = output.text();
+  assert.match(text, /hook\(greeting\): take the greeting from the product/);
+  assert.ok(!text.includes('rename the greeting everywhere'), text);
 });

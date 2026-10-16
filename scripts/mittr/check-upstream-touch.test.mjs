@@ -7,8 +7,10 @@ import { test } from 'node:test';
 
 import { checkUpstreamTouch, formatTouchReport, parseTouchArgs, patchPathFor, patchPathsFor, upstreamPathOf } from './check-upstream-touch.mjs';
 
+// No GIT_* variable from the caller: run from a git hook, GIT_DIR or
+// GIT_INDEX_FILE would point every fixture command at the real repository.
 const GIT_ENV = {
-  ...process.env,
+  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_'))),
   GIT_AUTHOR_NAME: 'Fixture',
   GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
   GIT_COMMITTER_NAME: 'Fixture',
@@ -165,4 +167,33 @@ test('a commit that touches only the lockfile needs no hook subject', (t) => {
   const result = checkUpstreamTouch({ cwd: repo.dir, write: false, acknowledged: { [repo.offender]: 'reviewed' } });
 
   assert.deepEqual(result.violations, []);
+});
+
+test('after develop adopts the line with an ours-merge, the 1.x history on its other side is not checked', (t) => {
+  const repo = fixtureRepo(t);
+  repo.commit('release v0.9.0', { 'packages/web/a.js': 'a 0.9\n', 'packages/web/b.js': 'b\n' });
+  repo.git('switch', '-q', '-c', 'develop');
+  repo.commit('feat: rename the product everywhere', { 'packages/web/a.js': 'a 0.9 renamed\n', 'packages/web/b.js': 'b renamed\n' });
+  repo.commit('fix: a 1.x change', { 'packages/web/c.js': 'c from 1.x\n' });
+
+  repo.git('switch', '-q', 'main');
+  const base = repo.commit('release v1.0.0', { 'packages/web/a.js': 'a 1.0\n' });
+  repo.git('switch', '-q', '-c', 'rebase');
+  repo.commit('chore(brand): record upstream base', { 'brand/UPSTREAM': `${base}\n` });
+  repo.commit('hook(a): let a be configured', { 'packages/web/a.js': 'a 1.0 with hook\n' });
+  const onLine = checkUpstreamTouch({ cwd: repo.dir, write: false });
+
+  repo.git('switch', '-q', 'develop');
+  repo.git('merge', '-q', '-s', 'ours', '--no-commit', 'rebase');
+  repo.git('read-tree', '-m', '-u', 'rebase');
+  repo.git('commit', '-q', '-m', 'chore: adopt the upstream-based line');
+  assert.equal(repo.git('rev-parse', 'HEAD^{tree}'), repo.git('rev-parse', 'rebase^{tree}'));
+  assert.match(repo.git('log', '--no-merges', '--format=%s', `${base}..HEAD`), /rename the product everywhere/);
+
+  const adopted = checkUpstreamTouch({ cwd: repo.dir, write: false });
+
+  assert.deepEqual(adopted.violations, []);
+  assert.deepEqual(adopted.counted, onLine.counted);
+  assert.deepEqual(adopted.counted, ['packages/web/a.js']);
+  assert.equal(adopted.ok, true);
 });

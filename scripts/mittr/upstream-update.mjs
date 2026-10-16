@@ -83,9 +83,13 @@ const defaultRun = ({ command, args, cwd }) => {
 
 const firstParagraph = (body) => body.trim().split(/\n\s*\n/)[0]?.replace(/\s*\n\s*/g, ' ') ?? '';
 
-/** Our commits since the old base that touched `file`, hooks first, each with the reason in its body. */
+/**
+ * Our commits since the old base that touched `file`, hooks first, each with
+ * the reason in its body. Only commits that descend from the base: the 1.x
+ * history develop's adoption merge keeps reachable is not ours on this line.
+ */
 const ownersOf = (git, oldBase, file) => {
-  const log = git('log', '--no-merges', '--format=%H%x1f%s%x1f%b%x1e', `${oldBase}..HEAD`, '--', file);
+  const log = git('log', '--no-merges', '--ancestry-path', '--format=%H%x1f%s%x1f%b%x1e', `${oldBase}..HEAD`, '--', file);
   const commits = log.split('\x1e').map((record) => record.trim()).filter(Boolean).map((record) => {
     const [commit, subject, body = ''] = record.split('\x1f');
     return { commit, subject, reason: firstParagraph(body) };

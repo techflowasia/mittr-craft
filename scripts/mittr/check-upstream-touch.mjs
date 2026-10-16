@@ -17,9 +17,13 @@
  *
  * Every commit since the base that touches an upstream file must have a
  * `hook(<name>): ` subject, except one that touches only `bun.lock`. Merge
- * commits are skipped: they bring upstream in. A commit that broke the rule
- * before this check existed is listed in `ACKNOWLEDGED_COMMITS` with why,
- * reported on every run and not rewritten.
+ * commits are skipped: they bring upstream in. Only commits that descend from
+ * the base count (`--ancestry-path`): when develop adopts this line with a
+ * merge whose tree is ours, the 1.x history on its other side is not ours to
+ * check, and commits made before the last upstream merge were checked when
+ * they were made. A commit that broke the rule before this check existed is
+ * listed in `ACKNOWLEDGED_COMMITS` with why, reported on every run and not
+ * rewritten.
  *
  * Unless `--no-write`, it writes `patches/upstream/<upstream path>.patch` for
  * each touched upstream file except the lockfile, mirroring the tree so a
@@ -96,7 +100,7 @@ const touchedSinceBase = (git, base, isUpstream) => {
 };
 
 const commitsSinceBase = (git, base, isUpstream) => {
-  const log = git('log', '--no-merges', '--reverse', '-z', '--format=%H%x1f%s', `${base}..HEAD`);
+  const log = git('log', '--no-merges', '--ancestry-path', '--reverse', '-z', '--format=%H%x1f%s', `${base}..HEAD`);
   return nulFields(log).map((record) => {
     const [commit, subject] = record.split('\x1f');
     const files = nulFields(git('diff-tree', '--root', '--no-commit-id', '--no-renames', '--name-only', '-r', '-z', commit))
