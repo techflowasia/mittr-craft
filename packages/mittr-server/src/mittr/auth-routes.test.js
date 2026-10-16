@@ -169,6 +169,51 @@ test('a sign-in that did not finish is in the status until the next attempt', as
   assert.deepEqual(await status(), { signedIn: true, userId: 'u-a', displayName: 'A' });
 });
 
+const twoAccountHarness = async (t) => {
+  let reachable = true;
+  const fetchImpl = fakeFetch(({ body }) => {
+    if (!reachable) throw new Error('ECONNREFUSED');
+    return body.code === 'cb' ? json(sessionFor('u-b', 'B')) : json(sessionFor('u-a', 'A'));
+  });
+  const h = await harness(t, { fetchImpl });
+  const signInWith = async (code) => {
+    await startSignIn(h.call);
+    return h.call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=${code}` });
+  };
+  const failOnce = async () => {
+    reachable = false;
+    await signInWith('cx');
+    reachable = true;
+  };
+  const status = async () => (await h.call('GET', '/api/mittr/auth/status')).body;
+  await signInWith('ca');
+  await signInWith('cb');
+  return { ...h, failOnce, status };
+};
+
+test('a failed sign-in is never reported while signed in', async (t) => {
+  const { failOnce, status } = await twoAccountHarness(t);
+  await failOnce();
+  assert.deepEqual(await status(), { signedIn: true, userId: 'u-b', displayName: 'B' });
+});
+
+test('switching account clears an earlier failed sign-in', async (t) => {
+  const { call, store, failOnce, status } = await twoAccountHarness(t);
+  await failOnce();
+  assert.equal((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' })).status, 200);
+  store.signOut('u-a');
+  store.signOut('u-b');
+  assert.deepEqual(await status(), { signedIn: false });
+});
+
+test('signing out clears an earlier failed sign-in', async (t) => {
+  const { call, failOnce, status } = await twoAccountHarness(t);
+  await failOnce();
+  await call('DELETE', '/api/mittr/auth/session');
+  await call('DELETE', '/api/mittr/auth/session');
+  assert.deepEqual(await status(), { signedIn: false });
+});
+
 test('a refusal is not a failed sign-in: the status says what stands in the way instead', async (t) => {
   const { auth, call, dataDir } = await harness(t);
   fs.mkdirSync(path.join(dataDir, 'mittr-accounts'), { recursive: true });

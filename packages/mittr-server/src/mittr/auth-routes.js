@@ -187,7 +187,7 @@ export function registerMittrAuthRoutes(app, {
     const status = statusOf(store.read());
     if (signInRefusal) status.keychainMissing = true;
     if (store.damaged()) status.accountsDamaged = true;
-    if (lastFailure) status.signInFailed = lastFailure;
+    if (lastFailure && !status.signedIn) status.signInFailed = lastFailure;
     return res.json(status);
   });
 
@@ -211,6 +211,7 @@ export function registerMittrAuthRoutes(app, {
       logger.error('[mittr] could not sign out:', error?.message ?? error);
       return res.status(500).json({ error: CANNOT_STORE });
     }
+    lastFailure = null;
     const next = store.read();
     await announceAccountChange(next?.subject.userId ?? null);
     return res.json(statusOf(next));
@@ -228,6 +229,7 @@ export function registerMittrAuthRoutes(app, {
       logger.error('[mittr] could not switch account:', error?.message ?? error);
       return res.status(500).json({ error: CANNOT_STORE });
     }
+    lastFailure = null;
     await announceAccountChange(userId);
     return res.json(statusOf(store.read()));
   });
