@@ -222,6 +222,34 @@ export const UPSTREAM_CONTRACT = [
     files: ['node_modules/@opencode/client/package.json'],
     why: 'GET /api/credential answers { data: [{ id, integrationID, value }] } and DELETE /api/credential/{id} answers 204; the Mittr keys of earlier runs are removed that way',
   },
+  {
+    id: 'model-controls-product-picker',
+    files: [
+      'packages/ui/src/components/chat/ModelControls.tsx',
+      'packages/ui/src/components/model-picker/ModelPickerList.tsx',
+      'packages/ui/src/lib/product-plugins.ts',
+    ],
+    why: "ModelControls calls useProductModelPicker once, with the picker's open state, and lets only the providers it shows into the desktop list (isModelAllowed, which ModelPickerList applies to favorites, recents and providers) and into the mobile sheet",
+  },
+  {
+    id: 'providers-page-slot',
+    files: [
+      'packages/ui/src/components/sections/providers/ProviderGrid.tsx',
+      'packages/ui/src/components/sections/providers/ProvidersPage.tsx',
+      'packages/ui/src/lib/product-plugins.ts',
+    ],
+    why: "the providers page opens on the provider grid, which renders the providers-page slot once, inside its page layout above the provider cards; the provider switch lives there",
+  },
+  {
+    id: 'provider-switch-ui',
+    files: ['packages/ui/src/components/ui/switch.tsx', 'packages/ui/src/components/sections/shared/SettingsSection.tsx'],
+    why: 'the provider switch is drawn with Switch (checked, onCheckedChange, disabled, loading) in a SettingsFieldRow with a visible description',
+  },
+  {
+    id: 'policy-schema',
+    files: ['node_modules/@opencode/schema/dist/config/experimental.js', 'node_modules/@opencode/schema/dist/config/policy.js'],
+    why: 'the engine config takes experimental.policies, an ordered list of { action: "provider.use", resource, effect: "allow" | "deny" }, which is how the provider lock is written',
+  },
 ];
 
 // The dictionaries are TypeScript with extensionless imports, which only Bun

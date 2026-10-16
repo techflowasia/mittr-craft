@@ -81,7 +81,7 @@ export const deferred = () => {
  * The user's OpenCode config lives in `userConfigFile`; each write is recorded
  * in `userConfigWrites` with the number of refreshes made before it. Setting
  * `userConfigError` makes reads throw, as upstream does for a file it cannot
- * parse.
+ * parse. UI events the plugin broadcasts are recorded in `broadcasts`.
  */
 export const USER_CONFIG_DIR = '/engine-config/opencode';
 
@@ -91,6 +91,7 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
   const rendered = [];
   const restarts = [];
   const userConfigWrites = [];
+  const broadcasts = [];
   const engine = {
     port: enginePort,
     url: (route = '/') => {
@@ -131,8 +132,10 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
         },
       },
       mergeEngineConfig,
+      events: { broadcast: (type, payload) => broadcasts.push({ type, payload }) },
     },
     server,
+    broadcasts,
     engine,
     refreshes,
     rendered,

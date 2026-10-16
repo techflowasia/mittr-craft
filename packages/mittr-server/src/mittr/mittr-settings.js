@@ -11,6 +11,11 @@ const DEFAULTS = Object.freeze({ showOtherProviders: false });
  * Reading fails closed: a missing file, one that cannot be read or parsed, or
  * a value that is not exactly `true` all read as the defaults, which keep the
  * engine locked to Mittr. A damaged file is reported once.
+ *
+ * `update(patch)` takes an explicit true or false and returns what it stored.
+ * Updates run one at a time, each on what the one before it stored, and each
+ * writes a private (0600) temp file and renames it over the old one, so a
+ * reader never sees half a file. A damaged file is replaced.
  */
 export function createMittrSettings({ dataDir, logger = console }) {
   const filePath = path.join(dataDir, SETTINGS_FILE);
@@ -30,5 +35,32 @@ export function createMittrSettings({ dataDir, logger = console }) {
     return { showOtherProviders: stored?.showOtherProviders === true };
   };
 
-  return { read };
+  const write = async (settings) => {
+    await fs.mkdir(dataDir, { recursive: true });
+    const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+    try {
+      await fs.writeFile(tmp, `${JSON.stringify(settings, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+      await fs.rename(tmp, filePath);
+    } catch (error) {
+      await fs.rm(tmp, { force: true }).catch(() => {});
+      throw error;
+    }
+  };
+
+  let updating = Promise.resolve();
+  const update = (patch) => {
+    const updated = updating.then(async () => {
+      const showOtherProviders = patch?.showOtherProviders;
+      if (showOtherProviders !== true && showOtherProviders !== false) {
+        throw new TypeError('showOtherProviders must be true or false');
+      }
+      const next = { ...(await read()), showOtherProviders };
+      await write(next);
+      return { ...next };
+    });
+    updating = updated.catch(() => {});
+    return updated;
+  };
+
+  return { read, update };
 }

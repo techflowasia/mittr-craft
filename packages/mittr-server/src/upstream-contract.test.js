@@ -716,6 +716,56 @@ const checks = {
     assert.deepEqual(Object.keys(Credential.Entry.fields).sort(), ['active', 'id', 'integrationID', 'label', 'value']);
     assert.deepEqual(Object.keys(Credential.Key.fields).sort(), ['configuration', 'key', 'metadata', 'type']);
   },
+
+  'model-controls-product-picker': () => {
+    const controls = source('packages/ui/src/components/chat/ModelControls.tsx');
+    has(controls, /^import \{ useProductModelPicker \} from '@\/lib\/product-plugins';$/m, 'ModelControls no longer imports useProductModelPicker');
+    assert.equal(lineCount(controls, 'useProductModelPicker('), 1, 'ModelControls must call useProductModelPicker exactly once');
+    has(controls, /const productModelPicker = useProductModelPicker\(agentMenuOpen \|\| activeMobilePanel === 'model'\);/, 'the picker decorations no longer follow whether the desktop list or the mobile sheet is open');
+    has(controls, /const isProductModelAllowed = React\.useCallback\(\s*\(providerID: string\) => productModelPicker\.isProviderShown\(providerID\),/);
+    assert.equal(lineCount(controls, '<ModelPickerList'), 1, 'ModelControls renders another ModelPickerList');
+    const list = controls.slice(controls.indexOf('<ModelPickerList'), controls.indexOf('/>', controls.indexOf('maxHeightClassName=', controls.indexOf('<ModelPickerList'))));
+    assert.ok(list.includes('isModelAllowed={isProductModelAllowed}'), 'the desktop picker list no longer gets isModelAllowed from the product picker');
+    assert.equal(lineCount(controls, 'isProductModelAllowed('), 3, 'the mobile sheet no longer filters its providers, favorites and recents');
+
+    const picker = source('packages/ui/src/components/model-picker/ModelPickerList.tsx');
+    has(picker, /isModelAllowed\?: \(providerID: string, modelID: string\) => boolean;/);
+    assert.equal(lineCount(picker, 'if (isModelAllowed && !isModelAllowed('), 3, 'ModelPickerList no longer applies isModelAllowed to favorites, recents and providers');
+
+    has(source('packages/ui/src/lib/product-plugins.ts'), /^export function useProductModelPicker\(open: boolean\): ModelPickerDecorations \{/m);
+  },
+
+  'providers-page-slot': () => {
+    const grid = source('packages/ui/src/components/sections/providers/ProviderGrid.tsx');
+    has(grid, /^import \{ ProductSlot \} from '@\/lib\/product-plugins';$/m, 'ProviderGrid no longer imports ProductSlot');
+    assert.equal(lineCount(grid, '<ProductSlot '), 1, 'ProviderGrid renders ProductSlot more than once, or not at all');
+    const view = grid.slice(grid.indexOf('export const ProviderGrid'));
+    const layout = view.indexOf('<SettingsPageLayout');
+    const slot = view.indexOf('<ProductSlot name="providers-page" />');
+    const cards = view.indexOf('<div className={SETTINGS_CARD_GRID_CLASS}>');
+    assert.ok(layout >= 0 && slot > layout && cards > slot, 'the providers-page slot is no longer inside the page layout, above the provider cards');
+    has(source('packages/ui/src/components/sections/providers/ProvidersPage.tsx'), /if \(!selectedProvider\) \{\s*return \(\s*<ProviderGrid/, 'the providers page no longer opens on the provider grid');
+    has(source('packages/ui/src/lib/product-plugins.ts'), /'providers-page': Record<never, never>;/);
+  },
+
+  'provider-switch-ui': () => {
+    const control = source('packages/ui/src/components/ui/switch.tsx');
+    has(control, /^export \{ Switch \};$/m);
+    has(control, /import \{ Switch as BaseSwitch \} from '@base-ui\/react\/switch';/, 'Switch is no longer the base-ui switch, whose checked and onCheckedChange we pass');
+    has(control, /loading\?: boolean;/);
+    has(control, /aria-busy=\{loading \|\| undefined\}/);
+    const section = source('packages/ui/src/components/sections/shared/SettingsSection.tsx');
+    has(section, /^export const SettingsFieldRow: React\.FC<SettingsFieldRowProps> = \(\{/m);
+    has(section, /interface SettingsFieldRowProps \{\s*label: React\.ReactNode;\s*description\?: React\.ReactNode;/);
+  },
+
+  'policy-schema': () => {
+    has(source('node_modules/@opencode/schema/dist/config/experimental.js'), /policies: ConfigPolicy\.Info\.pipe\(Schema\.Array, optional\)/, 'experimental.policies is no longer a list of policies');
+    const policy = source('node_modules/@opencode/schema/dist/config/policy.js');
+    has(policy, /action: Schema\.Literals\(\[[^\]]*"provider\.use"[^\]]*\]\)/, 'a policy action can no longer be provider.use');
+    has(policy, /resource: Schema\.String,/);
+    has(policy, /export const Effect = Schema\.Literals\(\["allow", "deny"\]\);/);
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {

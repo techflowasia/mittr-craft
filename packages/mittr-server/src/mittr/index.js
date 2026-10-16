@@ -11,6 +11,7 @@ import { ensureLocalToken } from './local-token.js';
 import { createMittrSettings } from './mittr-settings.js';
 import { MITTR_PROVIDER_ID, policiesFragment } from './policies.js';
 import { loopbackProxyExemption, mittrProviderFragment, shimBaseUrl } from './provider-config.js';
+import { registerProviderLockRoutes } from './provider-lock-routes.js';
 import { chooseSecretStore } from './secret-store.js';
 import { registerMittrShim } from './shim-routes.js';
 import { deepLinkScheme } from './sign-in.js';
@@ -47,6 +48,9 @@ const NO_ACCOUNT_CATALOG = {
  * the engine never holds the Mittr token). The same config carries the
  * provider lock from the very first build.
  *
+ * The lock follows the person's provider switch (R37/R40), off by default
+ * and kept in `mittr-settings.json`; changing it rewrites the managed config.
+ *
  * The models come from the active account's Mittr catalog. Setup applies the
  * cached one at once and then syncs without waiting; a sign-in syncs; an
  * account change applies that account's cache, then syncs.
@@ -68,7 +72,7 @@ export function setupMittr(context, {
   credentialRetryMs = CREDENTIAL_RETRY_MS,
   engineConfigDir = null,
 } = {}) {
-  const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig } = context;
+  const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig, events } = context;
   const broker = resolveBroker(env);
   const scheme = deepLinkScheme(env);
   const { encrypt, decrypt, refusal } = chooseSecretStore({ host, logger });
@@ -271,6 +275,27 @@ export function setupMittr(context, {
     // engine's 404s, must not hold up the next list.
     if (await storeCredential() === 'failed') retryCredentialOnce();
   };
+
+  // The provider switch goes through the same queue: its write renders the
+  // current list too, so it counts as that list written, and a list being
+  // written is never overtaken by a config rendered before it. Before the
+  // first build there is nothing to rewrite; the build reads the stored switch.
+  const rewriteProviderLock = () => {
+    const written = applying.then(async () => {
+      if (!configBuilt) return;
+      await context.managedConfig.refresh();
+      writtenModels = pendingRendered;
+    });
+    applying = written.catch(() => {});
+    return written;
+  };
+  registerProviderLockRoutes(app, {
+    express,
+    mittrSettings,
+    managedConfig: { refresh: rewriteProviderLock },
+    events,
+    logger,
+  });
 
   // Sets the engine's models; a failure is logged and waits for the next
   // sync or start, never thrown into a route or the server.

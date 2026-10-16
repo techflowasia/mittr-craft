@@ -794,3 +794,56 @@ test('an apply before the engine config is first built triggers no refresh, and 
   await mittr.applyModels([MODELS[0]]);
   assert.equal(engine.refreshes.length, 2);
 });
+
+const OTHERS_SHOWN = [{ action: 'provider.use', resource: 'opencode', effect: 'deny' }];
+
+test('the provider switch rewrites the engine config with the new lock and keeps the models', async (t) => {
+  const engine = fakeEngineContext();
+  const { mittr, call, dataDir } = await setUp(t, { engine, fetchImpl: engineAndBroker() });
+  await mittr.applyModels(MODELS);
+  assert.equal(engine.refreshes.length, 1);
+
+  assert.deepEqual(await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: true }), { status: 200, body: { showOtherProviders: true } });
+  assert.equal(engine.refreshes.length, 2);
+  assert.deepEqual(engine.rendered.at(-1).experimental.policies, OTHERS_SHOWN);
+  assert.deepEqual(renderedAliasesOf(engine), ['a1', 'a2']);
+  assert.deepEqual(engine.broadcasts, [{ type: 'mittr.provider-lock.changed', payload: { showOtherProviders: true } }]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dataDir, 'mittr-settings.json'), 'utf8')), { showOtherProviders: true });
+  assert.deepEqual(engine.restarts, [], 'the engine reloads its config without a restart');
+
+  // The switch's write carried the same list, so the list is not written again.
+  await mittr.applyModels(MODELS);
+  assert.equal(engine.refreshes.length, 2);
+
+  assert.equal((await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: false })).status, 200);
+  assert.deepEqual(engine.rendered.at(-1).experimental.policies, LOCKED);
+  assert.deepEqual((await call('GET', '/api/mittr/provider-lock')).body, { showOtherProviders: false });
+});
+
+test('a switch change waits for a model list being written, so neither write is lost', async (t) => {
+  const engine = fakeEngineContext();
+  const { mittr, call } = await setUp(t, { engine, fetchImpl: engineAndBroker() });
+
+  const gate = deferred();
+  engine.refreshGate = gate.promise;
+  const applied = mittr.applyModels(MODELS);
+  const switched = call('PUT', '/api/mittr/provider-lock', { showOtherProviders: true });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(engine.refreshes.length, 1);
+  engine.refreshGate = null;
+  gate.resolve();
+  await applied;
+  assert.equal((await switched).status, 200);
+
+  assert.equal(engine.refreshes.length, 2);
+  assert.deepEqual(engine.rendered.at(-1).experimental.policies, OTHERS_SHOWN);
+  assert.deepEqual(renderedAliasesOf(engine), ['a1', 'a2']);
+});
+
+test('a switch change before the engine config is first built writes nothing, and the first build carries it', async (t) => {
+  const engine = fakeEngineContext();
+  const { mittr, call } = await setUp(t, { engine, built: false });
+  assert.equal((await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: true })).status, 200);
+  assert.equal(engine.refreshes.length, 0);
+  assert.deepEqual((await mittr.managedConfig()).experimental.policies, OTHERS_SHOWN);
+});
