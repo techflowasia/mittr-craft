@@ -225,11 +225,24 @@ const checks = {
     const { asarUnpack, nativeModules } = item('staged-server-packing');
     const upstreamBuild = JSON.parse(source('packages/electron/package.json')).build;
     assert.deepEqual(upstreamBuild.asarUnpack, asarUnpack, 'upstream changed what it keeps out of the asar');
-    for (const pattern of asarUnpack) {
-      const relative = pattern.replace('node_modules/@openchamber/web/', 'packages/web/').replace(/\/\*\*\/\*$/, '');
-      assert.ok(fs.existsSync(path.join(repoRoot, relative)), `${relative} is gone`);
+    const workspacePath = (pattern) => pattern.replace('node_modules/@openchamber/web/', 'packages/web/').replace(/\/\*\*\/\*$/, '');
+    const [generated, helpers] = [asarUnpack.filter((pattern) => pattern.endsWith('/**/*')), asarUnpack.filter((pattern) => !pattern.endsWith('/**/*'))];
+    for (const pattern of helpers) {
+      assert.ok(fs.existsSync(path.join(repoRoot, workspacePath(pattern))), `${workspacePath(pattern)} is gone`);
     }
-    assert.ok(fs.existsSync(path.join(repoRoot, 'packages/web/server/built-in-extensions/registry.json')));
+
+    // The built-in extensions folder is build output (gitignored), so the
+    // contract reads its source and the step that writes it, never the output.
+    assert.deepEqual(generated.map(workspacePath), ['packages/web/server/built-in-extensions']);
+    const sourceRegistry = JSON.parse(source('packages/extensions/registry.json'));
+    assert.equal(sourceRegistry.version, 1);
+    assert.ok(Array.isArray(sourceRegistry.extensions), 'packages/extensions/registry.json lists no extensions array');
+    const { DEFAULT_BUILTIN_ROOT } = await importUpstream('packages/web/server/lib/guests/builtins.js');
+    assert.equal(path.relative(repoRoot, DEFAULT_BUILTIN_ROOT), 'packages/web/server/built-in-extensions', 'the server reads built-in extensions from another folder');
+    const builder = source('scripts/build-builtin-extensions.mjs');
+    has(builder, /import \{[^}]*\bDEFAULT_BUILTIN_ROOT\b[^}]*\} from '\.\.\/packages\/web\/server\/lib\/guests\/builtins\.js';/, 'the extension build no longer takes its out dir from the server');
+    has(builder, /sourceRoot = path\.join\(repoRoot, 'packages\/extensions'\), outDir = DEFAULT_BUILTIN_ROOT/, 'the extension build no longer writes the source registry to the folder we keep unpacked');
+    has(JSON.parse(source('packages/web/package.json')).scripts.build, /build-builtin-extensions\.mjs/, 'the web build no longer builds the built-in extensions before packing');
 
     const { stagedServerFiles } = await import(pathToFileURL(path.join(repoRoot, 'scripts/mittr/build-desktop.mjs')).href);
     const files = stagedServerFiles(upstreamBuild.asarUnpack);

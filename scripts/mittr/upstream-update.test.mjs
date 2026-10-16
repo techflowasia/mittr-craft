@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { runUpstreamUpdate } from './upstream-update.mjs';
+import { main, parseUpdateArgs, runUpstreamUpdate } from './upstream-update.mjs';
 
 const GIT_ENV = {
   GIT_AUTHOR_NAME: 'Fixture',
@@ -147,7 +147,7 @@ test('a clean update merges on its own branch, records the base, runs every gate
   assert.equal(repo.git('show', 'HEAD:brand/UPSTREAM'), repo.next);
   assert.equal(repo.git('merge-base', '--is-ancestor', repo.next, 'HEAD'), '');
   assert.equal(repo.git('config', '--get', 'rerere.enabled'), 'true');
-  assert.ok(fs.existsSync(path.join(repo.dir, 'patches/upstream/packages__web__a.js.patch')));
+  assert.ok(fs.existsSync(path.join(repo.dir, 'patches/upstream/packages/web/a.js.patch')));
   assert.equal(repo.git('status', '--porcelain', '--untracked-files=no'), '');
   assert.equal(repo.remoteRefs(), repo.initialRemoteRefs);
 
@@ -243,4 +243,62 @@ test('refuses to start over uncommitted changes, from a branch without a recorde
   const exists = runUpstreamUpdate({ cwd: repo.dir, commit: 'origin/main', run: () => 0, log: () => {} });
   assert.equal(exists.status, 'stopped');
   assert.equal(repo.git('rev-parse', '--abbrev-ref', 'HEAD'), 'develop');
+});
+
+test('the command line takes only the options it knows, in both --flag value and --flag=value form', () => {
+  assert.deepEqual(parseUpdateArgs(['origin/main']), {
+    commit: 'origin/main', from: 'develop', remote: 'origin', fetch: true, dryRun: false, resume: false, help: false,
+  });
+  assert.deepEqual(
+    parseUpdateArgs(['--from=rebase/upstream-2.1.1', 'abc123', '--remote', 'mirror', '--no-fetch', '--dry-run']),
+    { commit: 'abc123', from: 'rebase/upstream-2.1.1', remote: 'mirror', fetch: false, dryRun: true, resume: false, help: false },
+  );
+  assert.equal(parseUpdateArgs(['abc', '--continue']).resume, true);
+  assert.equal(parseUpdateArgs(['--help']).help, true);
+  assert.equal(parseUpdateArgs(['-h']).help, true);
+
+  assert.throws(() => parseUpdateArgs(['origin/main', '--dryrun']), /unknown option --dryrun/);
+  assert.throws(() => parseUpdateArgs(['origin/main', '--dry-run=yes']), /--dry-run takes no value/);
+  assert.throws(() => parseUpdateArgs(['origin/main', '--from']), /--from needs a value/);
+  assert.throws(() => parseUpdateArgs(['origin/main', '--from=']), /--from needs a value/);
+  assert.throws(() => parseUpdateArgs(['origin/main', '--from', '--dry-run']), /--from needs a value/);
+  assert.throws(() => parseUpdateArgs(['a', 'b']), /one upstream commit/);
+  assert.throws(() => parseUpdateArgs([]), /no upstream commit/);
+  assert.throws(() => parseUpdateArgs(['a', '--dry-run', '--continue']), /--dry-run and --continue/);
+});
+
+test('a mistyped option stops before anything runs, and --help only prints', (t) => {
+  const repo = fixture(t);
+  const before = repo.git('for-each-ref', '--format=%(refname) %(objectname)');
+  const output = capture();
+  const errors = capture();
+  const runner = recordingRunner(repo.dir);
+
+  const typo = main(['origin/main', '--dryrun'], { cwd: repo.dir, run: runner.run, log: output.log, error: errors.log });
+  assert.equal(typo, 1);
+  assert.match(errors.text(), /unknown option --dryrun/);
+  assert.match(errors.text(), /--help/);
+
+  const help = main(['--help'], { cwd: repo.dir, run: runner.run, log: output.log, error: errors.log });
+  assert.equal(help, 0);
+  assert.match(output.text(), /Usage: node scripts\/mittr\/upstream-update\.mjs/);
+  assert.match(output.text(), /--from rebase\/upstream-2\.1\.1/);
+
+  assert.deepEqual(runner.calls, []);
+  assert.equal(repo.git('for-each-ref', '--format=%(refname) %(objectname)'), before);
+  assert.equal(repo.git('rev-parse', '--abbrev-ref', 'HEAD'), 'develop');
+  assert.throws(() => repo.git('config', '--get', 'rerere.enabled'));
+});
+
+test('without brand/UPSTREAM on the base branch, the dry run and the real run both name the rebased line', (t) => {
+  const repo = fixture(t);
+  repo.git('branch', 'old-line', repo.base);
+  const planned = capture();
+  runUpstreamUpdate({ cwd: repo.dir, commit: 'origin/main', from: 'old-line', dryRun: true, run: () => 0, log: planned.log });
+  assert.match(planned.text(), /until phase 5.*--from rebase\/upstream-2\.1\.1/s);
+
+  const stopped = capture();
+  const result = runUpstreamUpdate({ cwd: repo.dir, commit: 'origin/main', from: 'old-line', run: () => 0, log: stopped.log });
+  assert.equal(result.status, 'stopped');
+  assert.match(stopped.text(), /until phase 5.*--from rebase\/upstream-2\.1\.1/s);
 });

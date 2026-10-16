@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { checkUpstreamTouch, formatTouchReport, patchFileName } from './check-upstream-touch.mjs';
+import { checkUpstreamTouch, formatTouchReport, parseTouchArgs, patchPathFor, patchPathsFor, upstreamPathOf } from './check-upstream-touch.mjs';
 
 const GIT_ENV = {
   ...process.env,
@@ -100,23 +100,46 @@ test('more files than the cap fails', (t) => {
   assert.match(formatTouchReport(result), /3 of 2.*over the cap/s);
 });
 
-test('writes one readable patch per touched upstream file except the lockfile, and drops stale ones', (t) => {
+const listPatches = (root) => fs.readdirSync(root, { recursive: true })
+  .filter((entry) => entry.endsWith('.patch'))
+  .map((entry) => entry.split(path.sep).join('/'))
+  .sort();
+
+test('writes one readable patch per touched upstream file except the lockfile, mirroring the tree, and drops stale ones', (t) => {
   const repo = ourHistory(t);
-  repo.write('patches/upstream/packages__web__gone.js.patch', 'stale\n');
+  repo.write('patches/upstream/packages/old/gone.js.patch', 'stale\n');
+  repo.write('patches/upstream/packages__web__a.js.patch', 'old flat name\n');
 
   const result = checkUpstreamTouch({ cwd: repo.dir });
-  const written = fs.readdirSync(path.join(repo.dir, 'patches/upstream')).sort();
+  const root = path.join(repo.dir, 'patches/upstream');
 
-  assert.deepEqual(written, [
-    'docs__upstream.md.patch',
-    'packages__web__a.js.patch',
-    'packages__web__a.test.js.patch',
-    'packages__web__new.js.patch',
+  assert.deepEqual(listPatches(root), [
+    'docs/upstream.md.patch',
+    'packages/web/a.js.patch',
+    'packages/web/a.test.js.patch',
+    'packages/web/new.js.patch',
   ]);
-  assert.deepEqual(result.patches.removed, ['packages__web__gone.js.patch']);
-  const patch = fs.readFileSync(path.join(repo.dir, 'patches/upstream', patchFileName('packages/web/a.js')), 'utf8');
+  assert.deepEqual(result.patches.removed, ['packages/old/gone.js.patch', 'packages__web__a.js.patch']);
+  assert.equal(fs.existsSync(path.join(root, 'packages/old')), false);
+  const patch = fs.readFileSync(path.join(root, patchPathFor('packages/web/a.js')), 'utf8');
   assert.match(patch, /^diff --git a\/packages\/web\/a\.js b\/packages\/web\/a\.js/);
   assert.match(patch, /^\+a with hook$/m);
+});
+
+test('patch paths round-trip to the upstream path and never collide', () => {
+  const files = ['a/b__c', 'a__b/c', 'packages/ui/src/__tests__/x.test.ts', 'packages/ui/src/__tests__', 'x.patch', 'x'];
+  for (const file of files) assert.equal(upstreamPathOf(patchPathFor(file)), file);
+  assert.equal(new Set(patchPathsFor(['a/b__c', 'a__b/c'])).size, 2);
+  assert.throws(() => patchPathsFor(['foo', 'foo.patch/bar.js']), /foo\.patch/);
+});
+
+test('the command line takes only the options it knows', () => {
+  assert.deepEqual(parseTouchArgs([]), { write: true, help: false });
+  assert.deepEqual(parseTouchArgs(['--no-write']), { write: false, help: false });
+  assert.deepEqual(parseTouchArgs(['--help']), { write: true, help: true });
+  assert.throws(() => parseTouchArgs(['--nowrite']), /unknown option --nowrite/);
+  assert.throws(() => parseTouchArgs(['--no-write=yes']), /takes no value/);
+  assert.throws(() => parseTouchArgs(['extra']), /no arguments/);
 });
 
 test('after an upstream merge only our changes count, and upstream commits and the merge are not ours to name', (t) => {

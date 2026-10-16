@@ -6,6 +6,14 @@
  *   node scripts/mittr/upstream-update.mjs <upstream-commit> [--from develop] [--remote origin] [--no-fetch]
  *   node scripts/mittr/upstream-update.mjs <upstream-commit> --dry-run
  *   node scripts/mittr/upstream-update.mjs <upstream-commit> --continue
+ *   node scripts/mittr/upstream-update.mjs --help
+ *
+ * Options also take the `--from=<branch>` form. An option it does not know is
+ * an error, so a mistyped `--dry-run` can never start a real run.
+ *
+ * `--from` must be a branch on the upstream-based line, one that carries
+ * `brand/UPSTREAM`. Until phase 5, develop has no `brand/UPSTREAM` (it is still
+ * the 1.x line), so pass `--from rebase/upstream-2.1.1`.
  *
  * Upstream is mirrored as `<remote>/main`; release commits read "release vX.Y.Z".
  * The steps:
@@ -36,6 +44,8 @@ import { resolveBunExecutable } from '../lib/bun-executable.mjs';
 import { checkUpstreamTouch, formatTouchReport } from './check-upstream-touch.mjs';
 
 const BRANCH_PREFIX = 'upstream-update/';
+const REBASED_LINE = 'rebase/upstream-2.1.1';
+const NO_BASE_HINT = `until phase 5, develop has no brand/UPSTREAM; pass --from ${REBASED_LINE}`;
 const LOCKFILE = 'bun.lock';
 const HOOK_SUBJECT = /^hook\([^)]+\): /;
 
@@ -299,7 +309,7 @@ export const runUpstreamUpdate = ({
       log(`[mittr] dry run: the plan for upstream ${ctx.short}; nothing below runs now`);
       if (fetch) log(`0. git fetch ${remote}, then resolve ${commit}`);
       if (!git.ok('cat-file', '-e', `${from}:brand/UPSTREAM`)) {
-        log(`    note: ${from} has no brand/UPSTREAM, so a real run stops here; pass --from <the branch that carries it>`);
+        log(`    note: ${from} has no brand/UPSTREAM, so a real run stops here; ${NO_BASE_HINT}`);
       }
       for (const step of buildSteps(ctx)) {
         log(step.title);
@@ -320,7 +330,7 @@ export const runUpstreamUpdate = ({
       resolve();
       if (!git.ok('rev-parse', '--verify', `${from}^{commit}`)) throw new Stop('start', `${from} does not exist here`, 'pass --from <branch>');
       if (!git.ok('cat-file', '-e', `${from}:brand/UPSTREAM`)) {
-        throw new Stop('start', `${from} has no brand/UPSTREAM, so it is not on the upstream-based line`, 'pass --from <the branch that carries it>');
+        throw new Stop('start', `${from} has no brand/UPSTREAM, so it is not on the upstream-based line`, NO_BASE_HINT);
       }
       if (git.ok('rev-parse', '--verify', '--quiet', `refs/heads/${ctx.branch}`)) {
         throw new Stop('start', `${ctx.branch} already exists`, `switch to it and run with --continue, or delete it to start over`);
@@ -359,28 +369,81 @@ export const runUpstreamUpdate = ({
   }
 };
 
-const parseArgs = (argv) => {
-  const valueOf = (flag, fallback) => {
-    const index = argv.indexOf(flag);
-    return index === -1 ? fallback : argv[index + 1];
-  };
-  const flagsWithValues = new Set(['--from', '--remote']);
-  const positional = argv.filter((arg, index) => !arg.startsWith('--') && !flagsWithValues.has(argv[index - 1]));
-  return {
-    commit: positional[0],
-    from: valueOf('--from', 'develop'),
-    remote: valueOf('--remote', 'origin'),
-    fetch: !argv.includes('--no-fetch'),
-    dryRun: argv.includes('--dry-run'),
-    resume: argv.includes('--continue'),
-  };
+const USAGE = `Usage: node scripts/mittr/upstream-update.mjs <upstream-commit> [options]
+
+Merges an upstream OpenChamber commit into upstream-update/<short-sha>, branched
+from --from, then runs the touch check, install, contract tests, type-check,
+lint, tests, the visible-string check, the Dev build and the brand-leak scan.
+It never pushes and never merges with -X ours/theirs.
+
+Options (also as --option=value):
+  --from <branch>    branch to start from (default: develop). Until phase 5,
+                     develop has no brand/UPSTREAM: pass --from ${REBASED_LINE}
+  --remote <name>    remote that mirrors upstream (default: origin)
+  --no-fetch         do not fetch the remote first
+  --dry-run          print the plan; run nothing
+  --continue         after fixing and committing on the update branch, run
+                     again from recording the base
+  -h, --help         print this and exit`;
+
+const VALUE_OPTIONS = { '--from': 'from', '--remote': 'remote' };
+const FLAG_OPTIONS = { '--no-fetch': ['fetch', false], '--dry-run': ['dryRun', true], '--continue': ['resume', true], '--help': ['help', true], '-h': ['help', true] };
+
+/** Only the options this command knows; anything else is an error, never ignored. */
+export const parseUpdateArgs = (argv) => {
+  const options = { commit: undefined, from: 'develop', remote: 'origin', fetch: true, dryRun: false, resume: false, help: false };
+  const positional = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (!arg.startsWith('-')) {
+      positional.push(arg);
+      continue;
+    }
+    const equals = arg.indexOf('=');
+    const name = equals === -1 ? arg : arg.slice(0, equals);
+    if (Object.hasOwn(FLAG_OPTIONS, name)) {
+      if (equals !== -1) throw new Error(`${name} takes no value`);
+      const [key, value] = FLAG_OPTIONS[name];
+      options[key] = value;
+    } else if (Object.hasOwn(VALUE_OPTIONS, name)) {
+      const value = equals === -1 ? argv[(index += 1)] : arg.slice(equals + 1);
+      if (!value || value.startsWith('-')) throw new Error(`${name} needs a value`);
+      options[VALUE_OPTIONS[name]] = value;
+    } else {
+      throw new Error(`unknown option ${name}`);
+    }
+  }
+  if (options.help) return options;
+  if (positional.length === 0) throw new Error('no upstream commit given');
+  if (positional.length > 1) throw new Error(`expected one upstream commit, got ${positional.join(' ')}`);
+  if (options.dryRun && options.resume) throw new Error('--dry-run and --continue cannot be combined');
+  return { ...options, commit: positional[0] };
+};
+
+/** The command line: returns the exit code. */
+export const main = (argv, { cwd, run, log = console.log, error = console.error } = {}) => {
+  let options;
+  try {
+    options = parseUpdateArgs(argv);
+  } catch (problem) {
+    error(`[mittr] ${problem.message}; see --help`);
+    return 1;
+  }
+  if (options.help) {
+    log(USAGE);
+    return 0;
+  }
+  const { help: _help, ...update } = options;
+  const request = { cwd, log, ...update };
+  if (run) request.run = run;
+  const result = runUpstreamUpdate(request);
+  return result.status === 'stopped' ? 1 : 0;
 };
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   try {
-    const result = runUpstreamUpdate({ cwd: repoRoot, ...parseArgs(process.argv.slice(2)) });
-    process.exitCode = result.status === 'stopped' ? 1 : 0;
+    process.exitCode = main(process.argv.slice(2), { cwd: repoRoot });
   } catch (error) {
     console.error(`[mittr] ${error.stderr || error.message}`);
     process.exitCode = 1;

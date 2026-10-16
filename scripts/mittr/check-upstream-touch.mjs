@@ -3,7 +3,7 @@
  * Lists every upstream file that differs from the upstream commit in
  * `brand/UPSTREAM` and holds the line on how many there are.
  *
- *   node scripts/mittr/check-upstream-touch.mjs [--no-write]
+ *   node scripts/mittr/check-upstream-touch.mjs [--no-write] [--help]
  *
  * Paths we own are `packages/mittr-*`, `brand`, `scripts/mittr`, `patches` and
  * `docs`, except files upstream itself has there. Everything else is upstream.
@@ -21,9 +21,10 @@
  * before this check existed is listed in `ACKNOWLEDGED_COMMITS` with why,
  * reported on every run and not rewritten.
  *
- * Unless `--no-write`, it writes `patches/upstream/<path with / as __>.patch`
- * for each touched upstream file except the lockfile, a readable record that
- * nothing applies, and removes patches for files no longer touched.
+ * Unless `--no-write`, it writes `patches/upstream/<upstream path>.patch` for
+ * each touched upstream file except the lockfile, mirroring the tree so a
+ * patch name maps back to exactly one path. It is a readable record that
+ * nothing applies; patches for files no longer touched are removed.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -47,7 +48,29 @@ export const ACKNOWLEDGED_COMMITS = {
 
 const isOwned = (file) => OWNED_PACKAGE.test(file) || OWNED_PREFIXES.some((prefix) => file.startsWith(prefix));
 
-export const patchFileName = (file) => `${file.replaceAll('/', '__')}.patch`;
+const PATCH_SUFFIX = '.patch';
+
+/** Where a file's patch lives under `patches/upstream`, and back. */
+export const patchPathFor = (file) => `${file}${PATCH_SUFFIX}`;
+export const upstreamPathOf = (patchPath) => patchPath.slice(0, -PATCH_SUFFIX.length);
+
+/**
+ * The patch paths for `files`. Mirroring cannot map two paths to one patch,
+ * but a patch file could sit where another patch needs a folder (upstream
+ * files `x` and `x.patch/y`); that is refused rather than overwritten.
+ */
+export const patchPathsFor = (files) => {
+  const paths = files.map(patchPathFor);
+  const taken = new Set(paths);
+  for (const patchPath of paths) {
+    const parts = patchPath.split('/');
+    for (let depth = 1; depth < parts.length; depth += 1) {
+      const folder = parts.slice(0, depth).join('/');
+      if (taken.has(folder)) throw new Error(`patch ${folder} would have to be a folder for ${patchPath}`);
+    }
+  }
+  return paths;
+};
 
 const gitIn = (cwd) => (...args) => execFileSync(
   'git',
@@ -82,16 +105,29 @@ const commitsSinceBase = (git, base, isUpstream) => {
   });
 };
 
+const removeEmptyFolders = (dir, root) => {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) removeEmptyFolders(path.join(dir, entry.name), root);
+  }
+  if (dir !== root && fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
+};
+
 const writePatches = ({ cwd, git, base, files }) => {
   const dir = path.join(cwd, PATCH_DIR);
+  const wanted = new Set(patchPathsFor(files));
   fs.mkdirSync(dir, { recursive: true });
-  const wanted = new Map(files.map((file) => [patchFileName(file), file]));
-  for (const [name, file] of wanted) {
-    fs.writeFileSync(path.join(dir, name), git('diff', '--no-color', '--no-ext-diff', '--no-renames', base, 'HEAD', '--', file));
+  const removed = fs.readdirSync(dir, { recursive: true })
+    .map((entry) => entry.split(path.sep).join('/'))
+    .filter((entry) => entry.endsWith(PATCH_SUFFIX) && !wanted.has(entry) && fs.statSync(path.join(dir, entry)).isFile())
+    .sort();
+  for (const entry of removed) fs.rmSync(path.join(dir, entry));
+  removeEmptyFolders(dir, dir);
+  for (const patchPath of wanted) {
+    const target = path.join(dir, patchPath);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, git('diff', '--no-color', '--no-ext-diff', '--no-renames', base, 'HEAD', '--', upstreamPathOf(patchPath)));
   }
-  const removed = fs.readdirSync(dir).filter((name) => name.endsWith('.patch') && !wanted.has(name)).sort();
-  for (const name of removed) fs.rmSync(path.join(dir, name));
-  return { written: [...wanted.keys()].sort(), removed };
+  return { written: [...wanted].sort(), removed };
 };
 
 export const checkUpstreamTouch = ({
@@ -173,10 +209,35 @@ export const formatTouchReport = (result) => {
   return lines.filter((line) => line !== '').join('\n');
 };
 
+const USAGE = `Usage: node scripts/mittr/check-upstream-touch.mjs [--no-write] [--help]
+
+Lists the upstream files that differ from brand/UPSTREAM, fails above ${UPSTREAM_TOUCH_CAP}
+or on a commit that touches one without a hook( subject, and writes
+patches/upstream/<path>.patch for each (not with --no-write).`;
+
+/** Only the options this command knows; anything else is an error, never ignored. */
+export const parseTouchArgs = (argv) => {
+  const options = { write: true, help: false };
+  for (const arg of argv) {
+    const name = arg.split('=')[0];
+    if (!arg.startsWith('-')) throw new Error(`takes no arguments, got ${arg}`);
+    if (name !== '--no-write' && name !== '--help' && name !== '-h') throw new Error(`unknown option ${name}`);
+    if (arg.includes('=')) throw new Error(`${name} takes no value`);
+    if (name === '--no-write') options.write = false;
+    else options.help = true;
+  }
+  return options;
+};
+
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   try {
+    const options = parseTouchArgs(process.argv.slice(2));
+    if (options.help) {
+      console.log(USAGE);
+      process.exit(0);
+    }
     const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-    const result = checkUpstreamTouch({ cwd: repoRoot, write: !process.argv.includes('--no-write') });
+    const result = checkUpstreamTouch({ cwd: repoRoot, write: options.write });
     console.log(formatTouchReport(result));
     process.exitCode = result.ok ? 0 : 1;
   } catch (error) {
