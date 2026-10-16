@@ -116,6 +116,19 @@ const readPristineManifest = (rootDir) => {
   return fs.existsSync(file) ? readJson(file) : {};
 };
 
+// A `{{id}}` in an entry's `from` stands for one minified identifier, which
+// the bundler renames whenever the chunk around it changes. Everything else in
+// `from` is matched exactly, and the count rule still holds.
+const ID_TOKEN = '{{id}}';
+const matcherFor = (from) => {
+  if (!from.includes(ID_TOKEN)) {
+    return { count: (text) => text.split(from).length - 1, replace: (text, to) => text.split(from).join(to) };
+  }
+  const source = from.split(ID_TOKEN).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[A-Za-z_$][\\w$]*');
+  const pattern = new RegExp(source, 'g');
+  return { count: (text) => text.match(pattern)?.length ?? 0, replace: (text, to) => text.replace(pattern, () => to) };
+};
+
 const assertInBuildOutput = (file) => {
   if (!VISIBLE_STRING_ROOTS.some((root) => file.startsWith(root)) || file.split('/').includes('..')) {
     throw new Error(`visible-strings entry ${JSON.stringify(file)} must start with one of ${VISIBLE_STRING_ROOTS.join(', ')}`);
@@ -152,14 +165,15 @@ export const planVisibleStrings = ({ entries, rootDir, sources = {} }) => {
     const alias = Object.keys(sources).find((prefix) => entry.file.startsWith(prefix));
     const cwd = alias ? sources[alias] : rootDir;
     const pattern = alias ? entry.file.slice(alias.length) : entry.file;
+    const matcher = matcherFor(entry.from);
     const counted = fs.globSync(pattern, { cwd })
       .map((relative) => path.join(cwd, relative))
       .filter((target) => fs.statSync(target).isFile())
-      .map((target) => ({ target, count: read(target).split(entry.from).length - 1 }))
+      .map((target) => ({ target, count: matcher.count(read(target)) }))
       .filter(({ count }) => count > 0);
     const found = counted.reduce((total, { count }) => total + count, 0);
     if (found === entry.count) {
-      for (const { target } of counted) texts.set(target, texts.get(target).split(entry.from).join(entry.to));
+      for (const { target } of counted) texts.set(target, matcher.replace(texts.get(target), entry.to));
     }
     const shown = (target) => `${alias ?? ''}${path.relative(cwd, target).split(path.sep).join('/')}`;
     return { entry, found, files: counted.map(({ target, count }) => `${shown(target)}×${count}`) };

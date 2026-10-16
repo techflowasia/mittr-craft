@@ -1717,7 +1717,7 @@
   },
   {
     "file": "resources/web-dist/assets/*.js",
-    "from": ",\" \",s.jsx(On,{onClick:()=>{Is(yv)},children:a(\"settings.classification.page.docsLink\")})]",
+    "from": ",\" \",{{id}}.jsx({{id}},{onClick:()=>{{{id}}({{id}})},children:{{id}}(\"settings.classification.page.docsLink\")})]",
     "to": "]",
     "count": 1
   },

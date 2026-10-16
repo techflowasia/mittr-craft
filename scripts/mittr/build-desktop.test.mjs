@@ -124,7 +124,7 @@ const LEFT_OUT_LINKS = new Map([
   ],
   ['("walkthrough.help.guide"),onClick:()=>{', '="https://docs.openchamber.dev/walkthrough/",'],
   [
-    '," ",s.jsx(On,{onClick:()=>{Is(yv)},children:a("settings.classification.page.docsLink")})]',
+    '," ",{{id}}.jsx({{id}},{onClick:()=>{{{id}}({{id}})},children:{{id}}("settings.classification.page.docsLink")})]',
     '="https://docs.openchamber.dev/classification-providers/",',
   ],
 ]);
@@ -142,6 +142,17 @@ test('every visible-strings entry replaces an upstream name or link and keeps no
     }
     assert.notDeepEqual(findNeedles(entry.from), [], entry.from);
   }
+});
+
+test('{{id}} in an entry stands for one minified identifier, and the count still holds', () => {
+  const entry = { file: 'dist-bundle/*.mjs', from: 'go(),{{id}}.open({{id}})]', to: ']', count: 2 };
+  withBuildOutput({ 'dist-bundle/main.mjs': '[go(),s.open(jv)];[go(),$a.open(b2)];[go(),s.open(x.y)];' }, (root) => {
+    applyVisibleStrings({ entries: [entry], rootDir: root });
+    assert.equal(fs.readFileSync(path.join(root, 'dist-bundle/main.mjs'), 'utf8'), '[];[];[go(),s.open(x.y)];');
+  });
+  withBuildOutput({ 'dist-bundle/main.mjs': '[go(),s.open(jv)];' }, (root) => {
+    assert.throws(() => applyVisibleStrings({ entries: [entry], rootDir: root }), /expected 2, found 1/);
+  });
 });
 
 test('a flavor file applies after the shared visible strings and may build on them', () => {
