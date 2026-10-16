@@ -73,6 +73,29 @@ const runProductRuntime = (t, product) => {
   return { appPath, home, ...JSON.parse(result.stdout.trim().split('\n').at(-1)) };
 };
 
+// Runs a module script in a child process whose HOME is a fresh temp home and
+// whose data dir sits inside it, with no GIT_* variable from the caller, so a
+// check can see whether upstream reaches for ~/.config/openchamber.
+const runInTempHome = (t, script, env = {}) => {
+  const home = tempDir(t, 'contract-home-');
+  const dataDir = path.join(home, 'data');
+  fs.mkdirSync(dataDir);
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    encoding: 'utf8',
+    env: { ...inherited, HOME: home, OPENCHAMBER_DATA_DIR: dataDir, ...env },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return { home, dataDir, output: JSON.parse(result.stdout.trim().split('\n').at(-1)), legacyDir: path.join(home, '.config', 'openchamber') };
+};
+
+const git = (cwd, ...args) => {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+};
+
 const checks = {
   'managed-opencode-env': () => {
     const lifecycle = source('packages/web/server/lib/opencode/lifecycle.js');
@@ -177,6 +200,66 @@ const checks = {
       const product = JSON.parse(source(`brand/product.${flavor}.json`));
       has(product.env.OPENCHAMBER_MANAGED_PROCESS_REGISTRY, /^~\/\.config\/mittrcraft(-dev)?\/managed-opencode$/);
     }
+  },
+
+  'git-identities-legacy-path': (t) => {
+    const storage = source('packages/web/server/lib/git/identity-storage.js');
+    has(storage, /const legacyDataDir = \(\) => path\.join\(os\.homedir\(\), '\.config', 'openchamber'\);/);
+    has(storage, /const current = readFile\(filePath, true\);\s*if \(current\) \{/, 'upstream no longer reads its own file before the legacy one');
+    const script = `
+      const { getProfiles } = await import(process.env.CONTRACT_IDENTITIES_URL);
+      console.log(JSON.stringify(getProfiles()));
+    `;
+    const env = { CONTRACT_IDENTITIES_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/git/identity-storage.js')).href };
+
+    const missing = runInTempHome(t, script, env);
+    assert.deepEqual(missing.output, []);
+    assert.equal(fs.existsSync(missing.legacyDir), true, 'a missing store no longer sends upstream to ~/.config/openchamber; review git-identities.js');
+
+    const seededScript = `
+      const { ensureGitIdentityStore } = await import(process.env.CONTRACT_OURS_URL);
+      await ensureGitIdentityStore({ dataDir: process.env.OPENCHAMBER_DATA_DIR, homeDir: process.env.HOME });
+      ${script}
+    `;
+    const seeded = runInTempHome(t, seededScript, {
+      ...env,
+      CONTRACT_OURS_URL: pathToFileURL(path.join(repoRoot, 'packages/mittr-server/src/git-identities.js')).href,
+    });
+    assert.deepEqual(seeded.output, []);
+    assert.equal(fs.existsSync(seeded.legacyDir), false, 'upstream reached ~/.config/openchamber although the store exists');
+  },
+
+  'integrate-tmp-root': (t) => {
+    const repo = tempDir(t, 'contract-integrate-');
+    git(repo, 'init', '-q', '-b', 'main');
+    git(repo, 'config', 'user.name', 'Contract');
+    git(repo, 'config', 'user.email', 'contract@example.test');
+    git(repo, 'config', 'commit.gpgsign', 'false');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'base');
+    git(repo, 'checkout', '-q', '-b', 'feature');
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'b\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-q', '-m', 'feature');
+    const commit = git(repo, 'rev-parse', 'HEAD');
+
+    const script = `
+      const { integrateWorktreeCommits } = await import(process.env.CONTRACT_SERVICE_URL);
+      const result = await integrateWorktreeCommits({
+        repoRoot: process.env.CONTRACT_REPO, sourceBranch: 'feature', targetBranch: 'main', commits: [process.env.CONTRACT_COMMIT],
+      });
+      console.log(JSON.stringify(result));
+    `;
+    const run = runInTempHome(t, script, {
+      CONTRACT_SERVICE_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/git/service.js')).href,
+      CONTRACT_REPO: repo,
+      CONTRACT_COMMIT: commit,
+    });
+    assert.deepEqual(run.output, { kind: 'success', moved: 1 });
+    assert.equal(git(repo, 'show', 'main:b.txt'), 'b');
+    assert.equal(fs.existsSync(path.join(run.dataDir, 'tmp')), true, 'the integrate worktree no longer goes under the data dir');
+    assert.equal(fs.existsSync(run.legacyDir), false, 'the integrate worktree went under ~/.config/openchamber');
   },
 
   'product-json-keys': async () => {

@@ -4,15 +4,17 @@ import path from 'node:path';
 import { activeAccountHome } from './accounts.js';
 import { backupOnce } from './backup.js';
 import { ENGINE_DB_RULE, engineBases, engineEnv } from './engine-home.js';
+import { ensureGitIdentityStore } from './git-identities.js';
 import { MITTR_SETTINGS_KEYS, UPSTREAM_SETTINGS_KEYS, migrateSettingsOnce } from './settings.js';
 
 /**
  * MittrCraft's server plugin, loaded through `OPENCHAMBER_SERVER_PLUGINS`.
  *
  * Before the first OpenCode 2 start it copies the engine folders and the data
- * dir aside once, then brings `settings.json` to upstream's names. It then
- * hands the server the engine environment on every engine start, read fresh
- * each time so an account switch takes effect on the next restart.
+ * dir aside once, then brings `settings.json` to upstream's names and gives
+ * the data dir its own git identity store. It then hands the server the
+ * engine environment on every engine start, read fresh each time so an
+ * account switch takes effect on the next restart.
  */
 
 const BACKUP_MARKER = '.pre-2x-backup-done';
@@ -54,6 +56,9 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir }) => {
   } catch (error) {
     logger.warn('[mittr] could not migrate settings; trying again next start:', error?.message ?? error);
   }
+
+  const identities = await ensureGitIdentityStore({ dataDir, homeDir, logger });
+  if (identities.seededFrom) logger.log(`[mittr] git identities copied from ${identities.seededFrom}`);
 
   return {
     engineEnv: () => engineEnv({ bases, accountHome: activeAccountHome(dataDir, { logger }), rule: ENGINE_DB_RULE }),

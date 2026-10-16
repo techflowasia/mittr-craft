@@ -55,6 +55,16 @@ export const UPSTREAM_CONTRACT = [
     why: 'OPENCHAMBER_MANAGED_PROCESS_REGISTRY moves the managed process registry out of ~/.config/openchamber',
   },
   {
+    id: 'git-identities-legacy-path',
+    files: ['packages/web/server/lib/git/identity-storage.js', 'packages/mittr-server/src/git-identities.js'],
+    why: 'upstream reads and locks ~/.config/openchamber only while <dataDir>/git-identities.json is missing, which our setup creates',
+  },
+  {
+    id: 'integrate-tmp-root',
+    files: ['packages/web/server/lib/git/service.js'],
+    why: 'the integrate temp worktree follows OPENCHAMBER_DATA_DIR instead of ~/.config/openchamber',
+  },
+  {
     id: 'product-json-keys',
     files: ['packages/electron/product.mjs'],
     why: 'every product.json key we ship is one the desktop shell reads',
