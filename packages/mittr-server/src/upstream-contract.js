@@ -130,6 +130,11 @@ export const UPSTREAM_CONTRACT = [
     why: 'routes a server plugin mounts under /api, Mittr sign-in among them, sit behind the API auth the server installs before it loads plugins',
   },
   {
+    id: 'non-api-json-body',
+    files: ['packages/web/server/lib/opencode/core-routes.js', 'packages/web/server/index.js'],
+    why: 'the server parses JSON bodies outside /api before plugin routes run, and needs no UI session there, so the Mittr shim gets the engine request parsed',
+  },
+  {
     id: 'product-deep-link-scheme',
     files: ['packages/electron/early-startup.mjs', 'packages/electron/main.mjs', 'brand/product.dev.json', 'brand/product.prod.json'],
     why: 'the sign-in callback the server accepts is on the same URL scheme the desktop shell registers from the product',

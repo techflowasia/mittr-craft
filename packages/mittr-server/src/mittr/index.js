@@ -1,17 +1,23 @@
+import path from 'node:path';
+
 import { createAccountStore } from './account-store.js';
 import { registerMittrAuthRoutes } from './auth-routes.js';
 import { resolveBroker } from './broker.js';
+import { ensureLocalToken } from './local-token.js';
 import { chooseSecretStore } from './secret-store.js';
+import { registerMittrShim } from './shim-routes.js';
 import { deepLinkScheme } from './sign-in.js';
 
 const SIGNED_IN_EVENT = 'mittrcraft:signed-in';
 const SIGN_IN_FAILED_EVENT = 'mittrcraft:sign-in-failed';
+const SHIM_TOKEN_FILE = 'mittr-shim-token';
 
 /**
  * Mittr on the server: sign-in through the platform's desktop flow, the
- * account store, and the session refresh later parts (the shim, the catalog)
- * build on. On the desktop the shell's `mittrcraft[-dev]://auth/callback`
- * deep link finishes a sign-in the same way the callback route does.
+ * account store, the session refresh, and the loopback shim the engine sends
+ * its model calls to. On the desktop the shell's
+ * `mittrcraft[-dev]://auth/callback` deep link finishes a sign-in the same
+ * way the callback route does.
  *
  * Returns what the server plugin merges: an engine env, a config fragment and
  * a dispose that does no network I/O, so it can never hold up shutdown.
@@ -23,7 +29,7 @@ export function setupMittr(context, { env = process.env, fetchImpl = (...args) =
   const { encrypt, decrypt, refusal } = chooseSecretStore({ host, logger });
   const store = createAccountStore({ dataDir, encrypt, decrypt, logger, sharedHistoryExists });
 
-  const { completeSignIn } = registerMittrAuthRoutes(app, {
+  const { ensureFreshSession, completeSignIn } = registerMittrAuthRoutes(app, {
     express,
     broker,
     store,
@@ -31,6 +37,17 @@ export function setupMittr(context, { env = process.env, fetchImpl = (...args) =
     fetchImpl,
     signInRefusal: refusal,
     logger,
+  });
+
+  // A new key every run: one that leaked from an earlier run opens nothing.
+  const localToken = ensureLocalToken({ tokenPath: path.join(dataDir, SHIM_TOKEN_FILE), rotate: true });
+  registerMittrShim(app, {
+    upstreamV1: broker.upstreamV1,
+    localToken,
+    ensureFreshSession,
+    fetchImpl,
+    logger,
+    env,
   });
 
   const unregisterDeepLink = host?.deepLinks?.register({
