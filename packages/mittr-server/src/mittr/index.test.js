@@ -47,11 +47,15 @@ const serverLikeApp = () => {
   return app;
 };
 
-const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext(), sharedHistoryExists } = {}) => {
+// `built` stands for the engine's first config build, which the server makes
+// before it first starts the engine.
+const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext(), sharedHistoryExists, built = true } = {}) => {
   const app = serverLikeApp();
   const logger = recordingLogger();
   const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context }, { env, fetchImpl, sharedHistoryExists });
   t.after(() => mittr.dispose());
+  engine.contribute = mittr.managedConfig;
+  if (built) await mittr.managedConfig();
   return { mittr, dataDir, logger, fetchImpl, engine, call: await serve(t, app) };
 };
 
@@ -624,4 +628,39 @@ test('the same model list again does not rewrite the engine config, and a write 
   await assert.rejects(mittr.applyModels([MODELS[0]]), /disk full/);
   await mittr.applyModels([MODELS[0]]);
   assert.equal(engine.refreshes.length, 2);
+});
+
+test('overlapping applies leave the engine config on the last list, and a later apply of an older list still writes it', async (t) => {
+  const engine = fakeEngineContext();
+  const { mittr } = await setUp(t, { engine, fetchImpl: engineAndBroker() });
+  const renderedAliases = () => Object.keys(engine.rendered.at(-1)?.providers?.mittr?.models ?? {});
+
+  const gate = deferred();
+  engine.refreshGate = gate.promise;
+  const first = mittr.applyModels(MODELS);
+  const second = mittr.applyModels([]);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(engine.refreshes.length, 1);
+  engine.refreshGate = null;
+  gate.resolve();
+  await Promise.all([first, second]);
+  assert.equal(engine.refreshes.length, 2);
+  assert.deepEqual(renderedAliases(), []);
+
+  await mittr.applyModels(MODELS);
+  assert.equal(engine.refreshes.length, 3);
+  assert.deepEqual(renderedAliases(), ['a1', 'a2']);
+});
+
+test('an apply before the engine config is first built triggers no refresh, and the first build carries it', async (t) => {
+  const engine = fakeEngineContext();
+  const { mittr } = await setUp(t, { engine, fetchImpl: engineAndBroker(), built: false });
+  await mittr.applyModels(MODELS);
+  assert.equal(engine.refreshes.length, 0);
+
+  assert.deepEqual(Object.keys((await mittr.managedConfig()).providers.mittr.models), ['a1', 'a2']);
+  await mittr.applyModels(MODELS);
+  assert.equal(engine.refreshes.length, 0);
+  await mittr.applyModels([MODELS[0]]);
+  assert.equal(engine.refreshes.length, 1);
 });

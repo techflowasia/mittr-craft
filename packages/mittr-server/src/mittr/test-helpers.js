@@ -72,10 +72,16 @@ export const deferred = () => {
  * The parts of the server's plugin context that reach the engine: the bound
  * port, a managed OpenCode whose ready listeners the test fires, the
  * managed-config refresh and upstream's own merge rule.
+ *
+ * A refresh renders through `contribute` once connected, as the server does
+ * through every plugin's `managedConfig()`, and records each result in
+ * `rendered`. Setting `refreshGate` to a promise holds refreshes open until it
+ * settles, the way a slow disk would.
  */
 export const fakeEngineContext = ({ port = 4100, enginePort = 4096 } = {}) => {
   const readyListeners = new Set();
   const refreshes = [];
+  const rendered = [];
   const restarts = [];
   const engine = {
     port: enginePort,
@@ -93,20 +99,31 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096 } = {}) => {
     refresh: async (reason) => { restarts.push(reason); },
   };
   const server = { port };
-  return {
+  const fake = {
     context: {
       server: { port: () => server.port },
       opencode: engine,
-      managedConfig: { refresh: async () => { refreshes.push(Date.now()); return { updated: true }; } },
+      managedConfig: {
+        refresh: async () => {
+          refreshes.push(Date.now());
+          await fake.refreshGate;
+          if (fake.contribute) rendered.push(await fake.contribute());
+          return { updated: true };
+        },
+      },
       mergeEngineConfig,
     },
     server,
     engine,
     refreshes,
+    rendered,
     restarts,
     readyListeners,
+    contribute: null,
+    refreshGate: null,
     fireReady: () => { for (const listener of readyListeners) listener(); },
   };
+  return fake;
 };
 
 /** Waits until `predicate()` holds (or resolves to true), failing after `timeoutMs`. */

@@ -149,12 +149,22 @@ export function setupMittr(context, {
 
   // The port is unknown before listen and may be random, so the URL is built
   // on each write. Without it there is no provider, but the lock stays.
-  const providerFragment = () => {
-    const port = server.port();
-    return port === null ? {} : mittrProviderFragment({ shimBaseUrl: shimBaseUrl(port), models });
+  // What the last build or refresh of the engine config actually carried.
+  // Until the first build there is no config to refresh: before it, the
+  // server may still answer a refresh with no fragment from this plugin at
+  // all, which would write a config without the lock.
+  let configBuilt = false;
+  let renderedModels = null;
+  const managedConfig = async () => {
+    const rendered = models;
+    const settings = await mittrSettings.read();
+    configBuilt = true;
+    renderedModels = JSON.stringify(rendered);
+    return [
+      server.port() === null ? {} : mittrProviderFragment({ shimBaseUrl: shimBaseUrl(server.port()), models: rendered }),
+      policiesFragment(settings),
+    ].reduce((merged, fragment) => mergeEngineConfig(merged, fragment), {});
   };
-  const managedConfig = async () =>
-    [providerFragment(), policiesFragment(await mittrSettings.read())].reduce((merged, fragment) => mergeEngineConfig(merged, fragment), {});
 
   // Never throws: it runs from the engine's ready listener, and a failure
   // waits for the next ready or the next model change. Before the engine's
@@ -192,17 +202,21 @@ export function setupMittr(context, {
     void storeCredential();
   });
 
-  // The config is rewritten only when the list differs from the one last
-  // written: the engine reloads on every write, and most syncs bring back the
-  // same list. A write that failed is tried again by the next apply.
-  let writtenModels = JSON.stringify(models);
-  const applyModels = async (items) => {
+  // One list at a time: the server's refresh reads the models late and is not
+  // serialised, so two overlapping applies could leave the config on the
+  // older list. The config is rewritten only when it does not already carry
+  // this list, since the engine reloads on every write; the comparison is
+  // with what was actually rendered, so a refresh that failed or wrote
+  // another list is made again by the next apply.
+  let applying = Promise.resolve();
+  const writeModels = async (items) => {
     models = modelListOf(items);
-    const next = JSON.stringify(models);
-    if (next !== writtenModels) {
-      await context.managedConfig.refresh();
-      writtenModels = next;
-    }
+    if (configBuilt && JSON.stringify(models) !== renderedModels) await context.managedConfig.refresh();
+  };
+  const applyModels = async (items) => {
+    const written = applying.then(() => writeModels(items));
+    applying = written.catch(() => {});
+    await written;
     if (await storeCredential() === 'failed') retryCredentialOnce();
   };
 
@@ -218,11 +232,8 @@ export function setupMittr(context, {
 
   // The last list first, so an offline start still shows the account's
   // models; then the platform's current one, without holding up the start.
-  // Setup runs before the engine's first start, which builds its config from
-  // these, so there is no config file to refresh yet: refreshing here would
-  // run before the server holds this plugin's config fragment at all.
+  // The engine's first config build reads these.
   models = modelListOf(cachedModels());
-  writtenModels = JSON.stringify(models);
   void syncCatalog();
 
   return {

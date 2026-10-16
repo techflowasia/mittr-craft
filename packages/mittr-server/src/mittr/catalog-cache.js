@@ -6,6 +6,13 @@ import { CATALOG_COLLECTIONS } from './catalog.js';
 
 const ACCOUNT_HOME = /^[0-9a-f]{16}$/;
 const PRIVATE = 0o600;
+const NOT_A_CATALOG = 'unexpected shape';
+
+const reasonOf = (error) => {
+  if (error instanceof SyntaxError) return 'not valid JSON';
+  if (error?.message === NOT_A_CATALOG) return NOT_A_CATALOG;
+  return `cannot be read${error?.code ? ` (${error.code})` : ''}`;
+};
 
 /**
  * Where an account's last catalog is kept, as 1.22 named it: the account on
@@ -42,10 +49,11 @@ export function createCatalogCache({ filePath, logger = console, fs = nodeFs }) 
     let value;
     try {
       value = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      if (!isCachedCatalog(value)) throw new Error('it does not have the expected shape');
+      if (!isCachedCatalog(value)) throw new Error(NOT_A_CATALOG);
     } catch (error) {
       if (error?.code === 'ENOENT') return null;
-      if (!warned) logger.warn(`[mittr] ignoring the Mittr catalog cache at ${filePath}:`, error?.message ?? error);
+      // A fixed reason, never the parser's message, which can quote the file.
+      if (!warned) logger.warn(`[mittr] ignoring the Mittr catalog cache at ${filePath}: ${reasonOf(error)}`);
       warned = true;
       return null;
     }

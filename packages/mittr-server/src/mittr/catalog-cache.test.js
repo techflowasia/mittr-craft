@@ -71,6 +71,28 @@ test('corrupt cache is ignored with one warning', (t) => {
   }
   assert.equal(logger.warnings.length, 1);
   assert.ok(logger.warnings[0].includes(filePath), logger.warnings[0]);
+  assert.ok(logger.warnings[0].endsWith(': not valid JSON'), logger.warnings[0]);
+});
+
+test('the warning for an unusable cache names a fixed reason, never the file content', (t) => {
+  const dataDir = tempDataDir(t);
+  const foreignLogger = recordingLogger();
+  const foreignFile = path.join(dataDir, 'foreign.json');
+  fs.writeFileSync(foreignFile, JSON.stringify({ bundleVersion: 7, models: 'secret-agent-roster' }));
+  assert.equal(createCatalogCache({ filePath: foreignFile, logger: foreignLogger }).read(), null);
+  assert.ok(foreignLogger.warnings[0].endsWith(': unexpected shape'), foreignLogger.warnings[0]);
+
+  const jsonLogger = recordingLogger();
+  const jsonFile = path.join(dataDir, 'broken.json');
+  fs.writeFileSync(jsonFile, '{"models": secret-agent-roster');
+  assert.equal(createCatalogCache({ filePath: jsonFile, logger: jsonLogger }).read(), null);
+  assert.equal(jsonLogger.warnings[0].includes('secret-agent-roster'), false);
+
+  const dirLogger = recordingLogger();
+  const dirPath = path.join(dataDir, 'a-directory.json');
+  fs.mkdirSync(dirPath);
+  assert.equal(createCatalogCache({ filePath: dirPath, logger: dirLogger }).read(), null);
+  assert.match(dirLogger.warnings[0], /: cannot be read \(EISDIR\)$/);
 });
 
 test('a failed write leaves the last catalog whole and throws', (t) => {
