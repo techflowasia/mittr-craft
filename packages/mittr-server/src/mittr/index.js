@@ -29,6 +29,7 @@ export function setupMittr(context, { env = process.env, fetchImpl = (...args) =
   const { encrypt, decrypt, refusal } = chooseSecretStore({ host, logger });
   const store = createAccountStore({ dataDir, encrypt, decrypt, logger, sharedHistoryExists });
 
+  let shim = null;
   const { ensureFreshSession, completeSignIn } = registerMittrAuthRoutes(app, {
     express,
     broker,
@@ -36,12 +37,17 @@ export function setupMittr(context, { env = process.env, fetchImpl = (...args) =
     scheme,
     fetchImpl,
     signInRefusal: refusal,
+    // A sign-out or a switch ends every answer still streaming on the
+    // account that was active, whether or not the engine restarts.
+    onAccountChange: () => {
+      shim?.abortInFlight();
+    },
     logger,
   });
 
   // A new key every run: one that leaked from an earlier run opens nothing.
   const localToken = ensureLocalToken({ tokenPath: path.join(dataDir, SHIM_TOKEN_FILE), rotate: true });
-  registerMittrShim(app, {
+  shim = registerMittrShim(app, {
     upstreamV1: broker.upstreamV1,
     localToken,
     ensureFreshSession,

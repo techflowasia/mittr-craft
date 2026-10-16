@@ -15,7 +15,7 @@ test('anything else is not', () => {
 
 test('a request a tunnel or proxy relayed is recognised by its forwarding headers', () => {
   assert.equal(cameThroughProxy({ 'content-type': 'application/json', 'x-opencode-session-id': 'ses_1' }), false);
-  for (const header of ['forwarded', 'x-forwarded-for', 'x-real-ip', 'cf-connecting-ip', 'x-openchamber-relay-connection']) {
+  for (const header of ['forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'via', 'x-real-ip', 'x-client-ip', 'true-client-ip', 'cf-connecting-ip', 'tailscale-user-login', 'x-openchamber-relay-connection']) {
     assert.equal(cameThroughProxy({ [header]: '203.0.113.9' }), true, header);
   }
 });

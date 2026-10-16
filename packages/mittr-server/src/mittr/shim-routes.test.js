@@ -4,7 +4,9 @@ import test from 'node:test';
 
 import express from 'express';
 
-import { SHIM_PREFIX, registerMittrShim, sessionIdOf } from './shim-routes.js';
+import { EventEmitter } from 'node:events';
+
+import { SHIM_PREFIX, drained, registerMittrShim, sessionIdOf } from './shim-routes.js';
 import { deferred, listen } from './test-helpers.js';
 
 const LOCAL_TOKEN = `mc_local_${'ab'.repeat(32)}`;
@@ -70,7 +72,7 @@ const shim = async (t, {
     next();
   });
   app.use(express.json({ limit: '50mb' }));
-  registerMittrShim(app, { upstreamV1, localToken: LOCAL_TOKEN, ensureFreshSession, ...options });
+  const handle = registerMittrShim(app, { upstreamV1, localToken: LOCAL_TOKEN, ensureFreshSession, ...options });
   const base = await listen(t, app);
   const request = (route, { method = 'POST', body = REQUEST, headers = {}, token = LOCAL_TOKEN, signal } = {}) => {
     const sent = new Headers();
@@ -84,7 +86,7 @@ const shim = async (t, {
       signal,
     });
   };
-  return { peer, request };
+  return { peer, request, handle };
 };
 
 const readAll = async (response) => Buffer.from(await response.arrayBuffer()).toString('utf8');
@@ -224,6 +226,8 @@ test('upstream unreachable', async (t) => {
   const response = await request('/chat/completions');
   assert.equal(response.status, 502);
   assert.deepEqual(await response.json(), { error: 'Cannot reach Mittr' });
+  // A network blip may pass: the engine keeps its own retry here.
+  assert.equal(response.headers.get('x-should-retry'), null);
 });
 
 test('an upstream that does not answer in time is given up on', async (t) => {
@@ -231,6 +235,7 @@ test('an upstream that does not answer in time is given up on', async (t) => {
   const { request } = await shim(t, { upstreamV1: upstream.v1, upstreamTimeoutMs: 150 });
   const response = await request('/chat/completions');
   assert.equal(response.status, 504);
+  assert.equal(response.headers.get('x-should-retry'), 'false');
   assert.deepEqual(await response.json(), { error: 'Mittr did not answer in time' });
 });
 
@@ -317,6 +322,7 @@ test('a model list that cannot be read is an error, never an empty list', async 
   const { request } = await shim(t, { logger: recordingLogger(), listModels: () => { throw new Error('cache unreadable'); } });
   const response = await request('/models', { method: 'GET' });
   assert.equal(response.status, 503);
+  assert.equal(response.headers.get('x-should-retry'), 'false');
 });
 
 test('a path the shim does not serve is answered here, behind the same guard', async (t) => {
@@ -327,13 +333,20 @@ test('a path the shim does not serve is answered here, behind the same guard', a
 
 test('the session header reaches onAnswer', async (t) => {
   const frames = [frame({ content: 'Hel' }), frame({ content: 'lo' }), DONE];
-  const upstream = await platform(t, answerStream(frames));
+  const clock = { now: 1_800_000_000_000 };
+  // Time moves on while Mittr answers; the events keep the time the request came in.
+  const upstream = await platform(t, (req, res) => {
+    clock.now += 5_000;
+    return answerStream(frames)(req, res);
+  });
   const events = [];
-  const { request } = await shim(t, { upstreamV1: upstream.v1, onAnswer: (event) => events.push(event) });
+  const { request } = await shim(t, { upstreamV1: upstream.v1, now: () => clock.now, onAnswer: (event) => events.push(event) });
 
   await readAll(await request('/chat/completions', { headers: { 'x-opencode-session-id': 'ses_1', 'x-session-id': 'ses_other' } }));
   assert.ok(events.length >= 2);
   assert.ok(events.every((event) => event.sessionId === 'ses_1'));
+  // The asked alias and when the request came in, for matching the answer to the engine's message.
+  assert.ok(events.every((event) => event.model === 'gpt-a' && event.startedAt === 1_800_000_000_000), JSON.stringify(events.map(({ model, startedAt }) => ({ model, startedAt }))));
   assert.equal(events.at(-1).done, true);
   assert.ok(events.slice(0, -1).every((event) => event.done === false));
   assert.equal(Buffer.concat(events.slice(0, -1).map((event) => Buffer.from(event.chunk))).toString('utf8'), frames.join(''));
@@ -342,6 +355,63 @@ test('the session header reaches onAnswer', async (t) => {
   await readAll(await request('/chat/completions', { headers: { 'x-session-id': 'ses_2' } }));
   assert.ok(events.every((event) => event.sessionId === 'ses_2'));
   assert.equal(events.at(-1).done, true);
+
+  events.length = 0;
+  await readAll(await request('/chat/completions', { body: { ...REQUEST, model: 'gpt-a\nforged line' } }));
+  assert.ok(events.length >= 2);
+  assert.ok(events.every((event) => event.model === null && event.sessionId === null));
+});
+
+// How the engine's side of a stream ends within two seconds: cut, ended as if
+// complete, or still open. A regression then fails instead of hanging.
+const streamOutcome = async (reader) => Promise.race([
+  (async () => {
+    try {
+      for (let next = await reader.read(); !next.done; next = await reader.read());
+      return 'ended';
+    } catch {
+      return 'cut';
+    }
+  })(),
+  new Promise((resolve) => { setTimeout(() => resolve('still open'), 2_000); }),
+]);
+
+test('abortInFlight cuts an answer still streaming, and the upstream request with it', async (t) => {
+  const upstreamClosed = deferred();
+  const upstream = await platform(t, (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write(frame({ content: 'Hel' }));
+    res.on('close', () => upstreamClosed.resolve('closed'));
+  });
+  const logger = recordingLogger();
+  const { request, handle } = await shim(t, { upstreamV1: upstream.v1, logger });
+  assert.equal(handle.abortInFlight(), 0);
+
+  const response = await request('/chat/completions');
+  const reader = response.body.getReader();
+  await reader.read();
+  assert.equal(handle.abortInFlight(), 1);
+  assert.equal(await streamOutcome(reader), 'cut');
+  assert.equal(await Promise.race([upstreamClosed.promise, pause(2_000).then(() => 'still open')]), 'closed');
+  assert.equal(handle.abortInFlight(), 0);
+  assert.deepEqual(logger.lines.warn, ['[mittr] shim ended 1 answer(s): the Mittr account changed']);
+
+  // Finished answers are not held: a later cut finds nothing.
+  const { request: again, handle: second } = await shim(t, { upstreamV1: (await platform(t, answerStream([DONE]))).v1 });
+  await readAll(await again('/chat/completions'));
+  assert.equal(second.abortInFlight(), 0);
+});
+
+test('waiting for the engine to drain ends when the engine has already gone', async () => {
+  const gone = Object.assign(new EventEmitter(), { destroyed: true, writableEnded: false });
+  await drained(gone);
+  const ended = Object.assign(new EventEmitter(), { destroyed: false, writableEnded: true });
+  await drained(ended);
+  const open = Object.assign(new EventEmitter(), { destroyed: false, writableEnded: false });
+  const waiting = drained(open);
+  open.emit('close');
+  await waiting;
+  assert.equal(open.listenerCount('drain') + open.listenerCount('close'), 0);
 });
 
 test('a complete answer reaches onAnswer as one chunk, and a refusal not at all', async (t) => {

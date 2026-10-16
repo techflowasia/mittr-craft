@@ -228,3 +228,49 @@ test('a sign-out while a refresh is in flight answers the engine 401 and calls n
   assert.equal(fetchImpl.calls.some((request) => request.url.endsWith('/chat/completions')), false);
   assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
 });
+
+// How the engine's side of a stream ends within two seconds: cut, ended as if
+// complete, or still open. A regression then fails instead of hanging.
+const streamOutcome = async (reader) => Promise.race([
+  (async () => {
+    try {
+      for (let next = await reader.read(); !next.done; next = await reader.read());
+      return 'ended';
+    } catch {
+      return 'cut';
+    }
+  })(),
+  new Promise((resolve) => { setTimeout(() => resolve('still open'), 2_000); }),
+]);
+
+// A Mittr answer that sends one part and then waits, until its request is aborted.
+const heldStream = () => {
+  const aborted = deferred();
+  const respond = (signal) => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n'));
+      signal?.addEventListener('abort', () => {
+        aborted.resolve('aborted');
+        controller.error(new Error('aborted'));
+      });
+    },
+  }), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  return { respond, aborted: aborted.promise };
+};
+
+test('signing out ends an answer still streaming on that account', async (t) => {
+  const held = heldStream();
+  const fetchImpl = fakeFetch((request) => (request.url.endsWith('/chat/completions') ? held.respond(request.signal) : json(session)));
+  const { call, dataDir, logger } = await setUp(t, { fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+
+  const response = await askShim(call, shimKey(dataDir), { model: 'gpt-a', stream: true, messages: [] });
+  assert.equal(response.status, 200);
+  const reader = response.body.getReader();
+  await reader.read();
+
+  assert.equal((await call('DELETE', '/api/mittr/auth/session')).status, 200);
+  assert.equal(await streamOutcome(reader), 'cut');
+  assert.equal(await Promise.race([held.aborted, new Promise((resolve) => { setTimeout(() => resolve('still streaming'), 2_000); })]), 'aborted');
+  assert.ok(logger.warnings.includes('[mittr] shim ended 1 answer(s): the Mittr account changed'), logger.warnings.join('\n'));
+});

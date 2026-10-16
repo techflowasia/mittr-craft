@@ -11,6 +11,10 @@ const UNREACHABLE = 'Cannot reach Mittr';
 const TIMED_OUT = 'Mittr did not answer in time';
 const NO_MODEL_LIST = 'The Mittr model list is not available';
 
+// On an answer the shim itself gives up on, where asking again at once cannot
+// help: the engine would otherwise retry it several times over.
+const NO_RETRY = { 'x-should-retry': 'false' };
+
 // The longest Mittr may stay silent: before it answers, or between two parts
 // of a streamed answer. A model can think for a long time, so it is generous,
 // but a platform that never answers must not hold a turn open for good.
@@ -21,6 +25,7 @@ const UPSTREAM_TIMEOUT_MS = 300_000;
 const PASSED_RESPONSE_HEADERS = ['retry-after', 'retry-after-ms', 'x-should-retry', 'x-request-id'];
 
 const SESSION_ID = /^[\w.:-]{1,128}$/;
+const MODEL_ALIAS = /^[^\s\u0000-\u001f\u007f]{1,200}$/;
 const NO_BYTES = new Uint8Array(0);
 
 /**
@@ -63,8 +68,15 @@ const silenceLimit = (timeoutMs) => {
   };
 };
 
-/** Resolves once the engine has taken what is buffered, or has gone. */
-const drained = (res) => new Promise((resolve) => {
+/** The model alias the engine asked for, or null when it is not a plain alias. */
+const requestedModelOf = (body) => (typeof body?.model === 'string' && MODEL_ALIAS.test(body.model) ? body.model : null);
+
+/** Resolves once the engine has taken what is buffered, or has gone (even before this was called). */
+export const drained = (res) => new Promise((resolve) => {
+  if (res.destroyed || res.writableEnded) {
+    resolve();
+    return;
+  }
   const done = () => {
     res.off('drain', done);
     res.off('close', done);
@@ -83,6 +95,13 @@ const drained = (res) => new Promise((resolve) => {
  *
  * The routes sit outside `/api`: the engine has no UI session. The server
  * parses JSON for every path outside `/api` before plugin routes run.
+ *
+ * `onAnswer({ sessionId, model, startedAt, chunk, done })` hears each part of
+ * every successful answer, then once more with `done: true`. `model` is the
+ * alias the engine asked for (or null) and `startedAt` when the request came
+ * in, so a listener can match the answer to the engine's message.
+ *
+ * Returns `{ abortInFlight }`, which cuts every answer still streaming.
  */
 export function registerMittrShim(app, {
   upstreamV1,
@@ -93,8 +112,12 @@ export function registerMittrShim(app, {
   fetchImpl = (...args) => fetch(...args),
   logger = console,
   env = process.env,
+  now = Date.now,
   upstreamTimeoutMs = UPSTREAM_TIMEOUT_MS,
 }) {
+  // Answers on their way from Mittr with a signed-in account's token.
+  const inFlight = new Set();
+
   const expectedKey = digest(localToken);
   const presentsKey = (header) => {
     const presented = bearerOf(header);
@@ -145,12 +168,16 @@ export function registerMittrShim(app, {
 
   const chatCompletions = async (req, res) => {
     if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) return res.status(400).json({ error: 'Invalid request body' });
+    const startedAt = now();
     const sessionId = sessionIdOf(req.headers);
-    const model = JSON.stringify(typeof req.body.model === 'string' ? req.body.model.slice(0, 200) : null);
+    const requestedModel = requestedModelOf(req.body);
+    const model = JSON.stringify(requestedModel);
     const limit = silenceLimit(upstreamTimeoutMs);
-    const tellAnswer = answerListener();
+    const listener = answerListener();
+    const tellAnswer = (event) => listener({ ...event, sessionId, model: requestedModel, startedAt });
     let engineGone = false;
     res.on('close', () => {
+      inFlight.delete(res);
       if (res.writableFinished) return;
       engineGone = true;
       limit.abort();
@@ -164,6 +191,7 @@ export function registerMittrShim(app, {
     }
     if (engineGone) return undefined;
     if (!session?.accessToken) return res.status(401).json({ error: NOT_SIGNED_IN });
+    inFlight.add(res);
 
     let upstream;
     limit.arm();
@@ -180,7 +208,7 @@ export function registerMittrShim(app, {
       limit.stop();
       logCall(limit.timedOut() ? 'timeout' : 'failed', sessionId);
       if (engineGone) return undefined;
-      if (limit.timedOut()) return res.status(504).json({ error: TIMED_OUT });
+      if (limit.timedOut()) return res.status(504).set(NO_RETRY).json({ error: TIMED_OUT });
       logger.error('[mittr] shim could not reach Mittr:', error?.message ?? error);
       return res.status(502).json({ error: UNREACHABLE });
     }
@@ -194,13 +222,13 @@ export function registerMittrShim(app, {
       } catch (error) {
         if (engineGone) return undefined;
         logger.error('[mittr] shim lost the answer from Mittr:', error?.message ?? error);
-        return limit.timedOut() ? res.status(504).json({ error: TIMED_OUT }) : res.status(502).json({ error: UNREACHABLE });
+        return limit.timedOut() ? res.status(504).set(NO_RETRY).json({ error: TIMED_OUT }) : res.status(502).json({ error: UNREACHABLE });
       } finally {
         limit.stop();
       }
       if (upstream.ok) {
-        tellAnswer({ sessionId, chunk: bytes, done: false });
-        tellAnswer({ sessionId, chunk: NO_BYTES, done: true });
+        tellAnswer({ chunk: bytes, done: false });
+        tellAnswer({ chunk: NO_BYTES, done: true });
         try {
           const message = JSON.parse(Buffer.from(bytes).toString('utf8'))?.choices?.[0]?.message;
           reportMarkup(describeMarkup({ content: message?.content, hasToolCalls: Array.isArray(message?.tool_calls) && message.tool_calls.length > 0 }), model);
@@ -226,7 +254,8 @@ export function registerMittrShim(app, {
       limit.arm();
       for await (const chunk of upstream.body) {
         watcher.observe(chunk);
-        tellAnswer({ sessionId, chunk, done: false });
+        tellAnswer({ chunk, done: false });
+        if (engineGone) return undefined;
         if (!res.write(chunk)) await drained(res);
         if (engineGone) return undefined;
         limit.arm();
@@ -241,7 +270,7 @@ export function registerMittrShim(app, {
     } finally {
       limit.stop();
     }
-    tellAnswer({ sessionId, chunk: NO_BYTES, done: true });
+    tellAnswer({ chunk: NO_BYTES, done: true });
     reportMarkup(watcher.finish(), model);
     return res.end();
   };
@@ -253,7 +282,7 @@ export function registerMittrShim(app, {
     } catch (error) {
       // An empty list would read as "you have no models", which is not what happened.
       logger.error('[mittr] shim could not read the model list:', error?.message ?? error);
-      return res.status(503).json({ error: NO_MODEL_LIST });
+      return res.status(503).set(NO_RETRY).json({ error: NO_MODEL_LIST });
     }
     return res.json({ object: 'list', data: list.map(({ alias }) => ({ id: alias, object: 'model' })) });
   };
@@ -262,4 +291,19 @@ export function registerMittrShim(app, {
   app.post(`${SHIM_PREFIX}/chat/completions`, chatCompletions);
   app.get(`${SHIM_PREFIX}/models`, models);
   app.use(SHIM_PREFIX, (_req, res) => res.status(404).json({ error: 'Not found' }));
+
+  return {
+    /**
+     * Cuts every answer still coming from Mittr. Called when the active
+     * account changes or signs out, so nothing keeps streaming on a token
+     * that is no longer the person's choice.
+     */
+    abortInFlight() {
+      const cut = [...inFlight];
+      inFlight.clear();
+      for (const res of cut) res.destroy();
+      if (cut.length > 0) logger.warn(`[mittr] shim ended ${cut.length} answer(s): the Mittr account changed`);
+      return cut.length;
+    },
+  };
 }
