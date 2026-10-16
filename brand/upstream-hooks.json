@@ -147,6 +147,12 @@
       "why": "The About page links to the project's repository, chat and social account from constants in the component, so a build that ships without those links had no way to leave them out short of editing the page."
     }
   ],
+  "packages/ui/src/components/sections/providers/ProviderGrid.tsx": [
+    {
+      "hook": "providers-page",
+      "why": "The providers page had no place for a product's own provider setting, so a build that adds one (a switch for showing other providers) would have had to edit the page; a slot inside the page layout, above the provider cards, renders nothing when no plugin fills it."
+    }
+  ],
   "packages/ui/src/components/ui/OpenChamberLogo.tsx": [
     {
       "hook": "ui",

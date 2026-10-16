@@ -5,6 +5,7 @@ import { SettingsProjectSelector } from '@/components/sections/shared/SettingsPr
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
 import { Icon } from '@/components/icon/Icon';
 import { useI18n } from '@/lib/i18n';
+import { ProductSlot } from '@/lib/product-plugins';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { rankByQuery } from '@/lib/search/fuzzySearch';
 import type { Model, Provider } from '@/lib/opencode/model';
@@ -224,6 +225,7 @@ export const ProviderGrid: React.FC<ProviderGridProps> = ({ providers, integrati
       headerEnd={<SettingsProjectSelector className="w-full min-w-0 @xl:w-56" />}
     >
       {locked ? <EnterpriseProvidersNotice directory={directory} integrations={integrations} /> : null}
+      <ProductSlot name="providers-page" />
       {providers.length > 0 ? (
         <SettingsCardSearch value={query} onChange={setQuery} placeholder={t('settings.providers.grid.searchPlaceholder')} />
       ) : null}
