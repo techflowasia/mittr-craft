@@ -65,7 +65,7 @@ const ourHistory = (t) => {
 
 test('lists every upstream file we touched, counts the source and config ones, and reports a non-hook commit', (t) => {
   const repo = ourHistory(t);
-  const result = checkUpstreamTouch({ cwd: repo.dir, write: false });
+  const result = checkUpstreamTouch({ cwd: repo.dir, write: false, hooks: null });
 
   assert.equal(result.base, repo.base);
   assert.deepEqual(result.counted, ['bun.lock', 'docs/upstream.md', 'packages/web/a.js']);
@@ -79,7 +79,7 @@ test('lists every upstream file we touched, counts the source and config ones, a
   assert.equal(result.ok, false);
 
   const report = formatTouchReport(result);
-  assert.match(report, /upstream files touched: 3 of 24/);
+  assert.match(report, /upstream files touched: 3 of 40/);
   assert.match(report, /bun\.lock .*re-resolve with `bun install`/);
   assert.match(report, /docs\(mittr\): reword an upstream doc/);
 });
@@ -196,4 +196,96 @@ test('after develop adopts the line with an ours-merge, the 1.x history on its o
   assert.deepEqual(adopted.counted, onLine.counted);
   assert.deepEqual(adopted.counted, ['packages/web/a.js']);
   assert.equal(adopted.ok, true);
+});
+
+const touchAs = (t, files) => {
+  const repo = fixtureRepo(t);
+  const base = repo.commit('release v1.0.0', { 'packages/web/a.js': 'a\n', 'packages/web/b.js': 'b\n' });
+  repo.commit('chore(brand): record upstream base', { 'brand/UPSTREAM': `${base}\n` });
+  repo.commit('hook(b): let b be configured', files);
+  return repo;
+};
+
+test('40 counted files pass and 41 fail', (t) => {
+  const repo = fixtureRepo(t);
+  const names = (count) => Array.from({ length: count }, (_, index) => `packages/web/f${String(index).padStart(2, '0')}.js`);
+  const base = repo.commit('release v1.0.0', Object.fromEntries(names(41).map((name) => [name, 'x\n'])));
+  repo.commit('chore(brand): record upstream base', { 'brand/UPSTREAM': `${base}\n` });
+  repo.commit('hook(many): touch forty', Object.fromEntries(names(40).map((name) => [name, 'y\n'])));
+
+  const forty = checkUpstreamTouch({ cwd: repo.dir, write: false, hooks: null });
+  assert.equal(forty.counted.length, 40);
+  assert.equal(forty.cap, 40);
+  assert.equal(forty.ok, true);
+
+  repo.commit('hook(one-more): touch the forty-first', { [names(41)[40]]: 'y\n' });
+  const fortyOne = checkUpstreamTouch({ cwd: repo.dir, write: false, hooks: null });
+  assert.equal(fortyOne.counted.length, 41);
+  assert.equal(fortyOne.ok, false);
+});
+
+test('a counted file missing from the hook list fails', (t) => {
+  const repo = touchAs(t, { 'packages/web/b.js': 'b with hook\n' });
+  const result = checkUpstreamTouch({ cwd: repo.dir, write: false, hooks: {} });
+
+  assert.deepEqual(result.unlisted, ['packages/web/b.js']);
+  assert.deepEqual(result.stale, []);
+  assert.equal(result.ok, false);
+});
+
+test('a new hook file needs an entry too', (t) => {
+  const repo = touchAs(t, { 'packages/web/new-hook.js': 'generic\n' });
+  const result = checkUpstreamTouch({ cwd: repo.dir, write: false, hooks: {} });
+
+  assert.deepEqual(result.added, ['packages/web/new-hook.js']);
+  assert.deepEqual(result.unlisted, ['packages/web/new-hook.js']);
+  assert.equal(result.ok, false);
+});
+
+test('a listed file no longer touched is reported stale', (t) => {
+  const repo = touchAs(t, { 'packages/web/b.js': 'b with hook\n' });
+  const hooks = {
+    'packages/web/b.js': [{ hook: 'b', why: 'let b be configured' }],
+    'packages/web/gone.js': [{ hook: 'x', why: 'y' }],
+  };
+  const result = checkUpstreamTouch({ cwd: repo.dir, write: false, hooks });
+
+  assert.deepEqual(result.unlisted, []);
+  assert.deepEqual(result.stale, ['packages/web/gone.js']);
+  assert.equal(result.ok, false);
+});
+
+test("the report names each file's hooks and reasons", (t) => {
+  const repo = touchAs(t, { 'packages/web/b.js': 'b with hook\n' });
+  const hooks = { 'packages/web/b.js': [{ hook: 'a', why: 'let a be configured' }, { hook: 'c', why: 'let c run once' }] };
+  const result = checkUpstreamTouch({ cwd: repo.dir, write: false, hooks });
+  const report = formatTouchReport(result);
+
+  assert.equal(result.ok, true);
+  assert.match(report, /packages\/web\/b\.js — hook\(a\): let a be configured/);
+  assert.match(report, /hook\(c\): let c run once/);
+  assert.match(report, /upstream files touched: 1 of 40/);
+});
+
+test('no hook list skips the list checks', (t) => {
+  const repo = touchAs(t, { 'packages/web/b.js': 'b with hook\n', 'packages/web/new-hook.js': 'generic\n' });
+  const result = checkUpstreamTouch({ cwd: repo.dir, write: false, hooks: null });
+
+  assert.deepEqual(result.unlisted, []);
+  assert.deepEqual(result.stale, []);
+  assert.equal(result.ok, true);
+  assert.match(formatTouchReport(result), /no hook list/);
+});
+
+test('the hook list is read from brand/upstream-hooks.json when it exists, and skipped when it does not', (t) => {
+  const repo = touchAs(t, { 'packages/web/b.js': 'b with hook\n' });
+  assert.equal(checkUpstreamTouch({ cwd: repo.dir, write: false }).hooks, null);
+
+  repo.write('brand/upstream-hooks.json', JSON.stringify({ 'packages/web/b.js': [{ hook: 'b', why: 'let b be configured' }] }));
+  const result = checkUpstreamTouch({ cwd: repo.dir, write: false });
+  assert.deepEqual(result.unlisted, []);
+  assert.equal(result.ok, true);
+
+  repo.write('brand/upstream-hooks.json', JSON.stringify({ 'packages/web/b.js': [{ hook: 'b' }] }));
+  assert.throws(() => checkUpstreamTouch({ cwd: repo.dir, write: false }), /packages\/web\/b\.js/);
 });

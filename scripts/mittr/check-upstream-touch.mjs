@@ -8,12 +8,19 @@
  * Paths we own are `packages/mittr-*`, `brand`, `scripts/mittr`, `patches` and
  * `docs`, except files upstream itself has there. Everything else is upstream.
  * Of the upstream files we touched:
- * - edited (or deleted) source and config files count toward the cap of 24,
+ * - edited (or deleted) source and config files count toward the cap of 40,
  *   `bun.lock` included, which is never hand-merged but re-resolved with
  *   `bun install`;
  * - new upstream-side files are generic hook modules: listed, reviewed as
  *   hooks, not counted;
  * - test files that accompany a hook are listed and not counted.
+ *
+ * `brand/upstream-hooks.json` is the reviewed list of why: for every counted
+ * file and every new hook file, one `{ hook, why }` element per hook commit.
+ * A counted or added file with no entry is `unlisted`, an entry for a file no
+ * longer touched is `stale`, and either fails the check. A repository without
+ * the file skips both checks (fixtures, `upstream-update.mjs`); the command
+ * line insists on it.
  *
  * Every commit since the base that touches an upstream file must have a
  * `hook(<name>): ` subject, except one that touches only `bun.lock`. Merge
@@ -36,7 +43,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const UPSTREAM_TOUCH_CAP = 24;
+export const UPSTREAM_TOUCH_CAP = 40;
+export const HOOKS_FILE = 'brand/upstream-hooks.json';
 
 const OWNED_PREFIXES = ['brand/', 'scripts/mittr/', 'patches/', 'docs/'];
 const OWNED_PACKAGE = /^packages\/mittr-[^/]+\//;
@@ -81,6 +89,19 @@ const gitIn = (cwd) => (...args) => execFileSync(
   ['-c', 'core.quotepath=off', '-c', 'diff.noprefix=false', '-c', 'diff.mnemonicPrefix=false', ...args],
   { cwd, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 },
 );
+
+const readHooks = (cwd) => {
+  const file = path.join(cwd, HOOKS_FILE);
+  if (!fs.existsSync(file)) return null;
+  const hooks = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (hooks === null || typeof hooks !== 'object' || Array.isArray(hooks)) throw new Error(`${HOOKS_FILE} must map each upstream path to a list of hooks`);
+  for (const [name, entries] of Object.entries(hooks)) {
+    const valid = Array.isArray(entries) && entries.length > 0
+      && entries.every((entry) => entry && typeof entry.hook === 'string' && entry.hook !== '' && typeof entry.why === 'string' && entry.why !== '');
+    if (!valid) throw new Error(`${HOOKS_FILE}: ${name} needs a non-empty list of { hook, why }`);
+  }
+  return hooks;
+};
 
 const nulFields = (output) => output.split('\0').filter((field) => field !== '');
 
@@ -139,6 +160,7 @@ export const checkUpstreamTouch = ({
   write = true,
   cap = UPSTREAM_TOUCH_CAP,
   acknowledged = ACKNOWLEDGED_COMMITS,
+  hooks = readHooks(cwd),
 } = {}) => {
   const git = gitIn(cwd);
   const base = readBase(cwd, git);
@@ -168,37 +190,67 @@ export const checkUpstreamTouch = ({
     ? writePatches({ cwd, git, base, files: touched.map(({ file }) => file).filter((file) => !LOCKFILES.has(file)) })
     : null;
 
+  counted.sort();
+  added.sort();
+  const unlisted = hooks === null ? [] : [...counted, ...added].filter((file) => !Object.hasOwn(hooks, file)).sort();
+  const touchedForHooks = new Set([...counted, ...added]);
+  const stale = hooks === null ? [] : Object.keys(hooks).filter((file) => !touchedForHooks.has(file)).sort();
+
   return {
     base,
     baseSubject: git('log', '-1', '--format=%s', base).trim(),
     cap,
-    counted: counted.sort(),
-    added: added.sort(),
+    counted,
+    added,
     tests: tests.sort(),
     violations,
     acknowledged: acknowledgedCommits,
+    hooks,
+    unlisted,
+    stale,
     patches,
-    ok: counted.length <= cap && violations.length === 0,
+    ok: counted.length <= cap && violations.length === 0 && unlisted.length === 0 && stale.length === 0,
   };
 };
 
 const short = (commit) => commit.slice(0, 9);
 const list = (items) => items.map((item) => `  ${item}`).join('\n');
 
+const withHooks = (file, label, hooks) => {
+  const entries = hooks?.[file];
+  if (!entries) return hooks ? [`${label} — no hook listed`] : [label];
+  return entries.map(({ hook, why }, index) => (index === 0 ? `${label} — hook(${hook}): ${why}` : `    hook(${hook}): ${why}`));
+};
+
+const describeFiles = (files, hooks) => list(files.flatMap((file) => withHooks(
+  file,
+  LOCKFILES.has(file) ? `${file} (re-resolve with \`bun install\` on merge, never hand-merge)` : file,
+  hooks,
+)));
+
 export const formatTouchReport = (result) => {
   const overCap = result.counted.length > result.cap;
   const lines = [
     `[mittr] upstream base ${short(result.base)} (${result.baseSubject})`,
     `[mittr] upstream files touched: ${result.counted.length} of ${result.cap}${overCap ? ' — over the cap; bring the reason to the owner' : ''}`,
-    list(result.counted.map((file) => (LOCKFILES.has(file) ? `${file} (re-resolve with \`bun install\` on merge, never hand-merge)` : file))),
+    describeFiles(result.counted, result.hooks),
     `[mittr] new upstream-side hook files, reviewed as hooks and not counted: ${result.added.length}`,
-    list(result.added),
+    describeFiles(result.added, result.hooks),
     `[mittr] upstream test files that accompany hooks, not counted: ${result.tests.length}`,
     list(result.tests),
   ];
   if (result.acknowledged.length > 0) {
     lines.push(`[mittr] acknowledged non-hook commits, reviewed and not rewritten: ${result.acknowledged.length}`);
     lines.push(list(result.acknowledged.map(({ commit, subject, files, reason }) => `${short(commit)} ${subject} [${files.join(', ')}]: ${reason}`)));
+  }
+  if (result.hooks === null) lines.push(`[mittr] no hook list: ${HOOKS_FILE} not read, so unlisted and stale files are not checked`);
+  if (result.unlisted.length > 0) {
+    lines.push(`[mittr] touched files with no entry in ${HOOKS_FILE}: ${result.unlisted.length}`);
+    lines.push(list(result.unlisted));
+  }
+  if (result.stale.length > 0) {
+    lines.push(`[mittr] entries in ${HOOKS_FILE} for files no longer touched: ${result.stale.length}`);
+    lines.push(list(result.stale));
   }
   if (result.violations.length === 0) {
     lines.push(`[mittr] every ${result.acknowledged.length > 0 ? 'other ' : ''}commit that touches an upstream file is a hook( commit`);
@@ -216,7 +268,8 @@ export const formatTouchReport = (result) => {
 const USAGE = `Usage: node scripts/mittr/check-upstream-touch.mjs [--no-write] [--help]
 
 Lists the upstream files that differ from brand/UPSTREAM, fails above ${UPSTREAM_TOUCH_CAP}
-or on a commit that touches one without a hook( subject, and writes
+on a commit that touches one without a hook( subject, or on a touched file
+with no entry in ${HOOKS_FILE} (and on an entry for a file no longer touched), and writes
 patches/upstream/<path>.patch for each (not with --no-write).`;
 
 /** Only the options this command knows; anything else is an error, never ignored. */
@@ -241,6 +294,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
       process.exit(0);
     }
     const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+    if (!fs.existsSync(path.join(repoRoot, HOOKS_FILE))) throw new Error(`${HOOKS_FILE} is missing`);
     const result = checkUpstreamTouch({ cwd: repoRoot, write: options.write });
     console.log(formatTouchReport(result));
     process.exitCode = result.ok ? 0 : 1;

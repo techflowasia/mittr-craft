@@ -1,0 +1,206 @@
+{
+  "bun.lock": [
+    {
+      "hook": "lockfile",
+      "why": "Re-resolved with bun install for the workspace packages we add, and never hand-merged."
+    }
+  ],
+  "knip.json": [
+    {
+      "hook": "knip",
+      "why": "Knip does not follow import.meta.glob, so the file the entry points load by glob reported as unused."
+    },
+    {
+      "hook": "knip",
+      "why": "Knip does not follow the product UI plugin's test files either, so the mittr-ui workspace names its spec files as entries too and the dead-code report stays identical to the base."
+    }
+  ],
+  "packages/electron/early-startup.mjs": [
+    {
+      "hook": "electron",
+      "why": "A rebranded build has to change the app name, deep-link scheme, user-model id, default desktop port, help links and update feed without patching each constant by hand."
+    },
+    {
+      "hook": "splash",
+      "why": "The startup splash is a page the desktop shell writes itself before any UI loads, with the default logo as inline SVG markup, so a rebranded build had no way to show its own mark there short of rewriting that markup in the built bundle."
+    }
+  ],
+  "packages/electron/entry.mjs": [
+    {
+      "hook": "electron",
+      "why": "A rebranded build has to change the app name, deep-link scheme, user-model id, default desktop port, help links and update feed without patching each constant by hand."
+    }
+  ],
+  "packages/electron/main.mjs": [
+    {
+      "hook": "electron",
+      "why": "A rebranded build has to change the app name, deep-link scheme, user-model id, default desktop port, help links and update feed without patching each constant by hand."
+    },
+    {
+      "hook": "menu",
+      "why": "The native menus take their labels from per-locale tables that spell the app's name inside them (\"About OpenChamber\", \"Über OpenChamber\", the application menu title and so on, in every language), so a product with its own name showed upstream's name in the menu bar."
+    },
+    {
+      "hook": "updater",
+      "why": "A product without an update feed still showed \"Check for updates\" in the application menu, and the renderer's own update checks (the About page, the periodic poll) asked the main process, which refused with \"Updates are not available in this build.\" and put that error on screen."
+    },
+    {
+      "hook": "updater-ui",
+      "why": "A build with no update feed answered update checks with \"no update available\", so the About page, and remote clients asking through the server, reported the app as up to date although nothing was ever checked."
+    }
+  ],
+  "packages/electron/product-runtime.mjs": [
+    {
+      "hook": "product",
+      "why": "A build can now ship a product.json next to package.json and have the desktop shell read its name, deep-link scheme, ports, links, updater feed, environment, directories and server plugins from it, instead of someone editing the literals scattered through the Electron sources."
+    },
+    {
+      "hook": "server-version",
+      "why": "A product that versions its app apart from the server it packs showed the server package's version in the About dialog, so the server can now report the app's version instead."
+    }
+  ],
+  "packages/electron/product.mjs": [
+    {
+      "hook": "product",
+      "why": "A build can now ship a product.json next to package.json and have the desktop shell read its name, deep-link scheme, ports, links, updater feed, environment, directories and server plugins from it, instead of someone editing the literals scattered through the Electron sources."
+    },
+    {
+      "hook": "electron",
+      "why": "A rebranded build has to change the app name, deep-link scheme, user-model id, default desktop port, help links and update feed without patching each constant by hand."
+    },
+    {
+      "hook": "splash",
+      "why": "The startup splash is a page the desktop shell writes itself before any UI loads, with the default logo as inline SVG markup, so a rebranded build had no way to show its own mark there short of rewriting that markup in the built bundle."
+    },
+    {
+      "hook": "server-version",
+      "why": "A product that versions its app apart from the server it packs showed the server package's version in the About dialog, so the server can now report the app's version instead."
+    },
+    {
+      "hook": "product",
+      "why": "The comment saying product values win over the environment had drifted above resolveAppNames, where it describes nothing, and left applyProductEnv, the function that overwrites the environment, without it."
+    }
+  ],
+  "packages/electron/updater-capability.mjs": [
+    {
+      "hook": "electron",
+      "why": "A rebranded build has to change the app name, deep-link scheme, user-model id, default desktop port, help links and update feed without patching each constant by hand."
+    },
+    {
+      "hook": "updater-ui",
+      "why": "A build with no update feed answered update checks with \"no update available\", so the About page, and remote clients asking through the server, reported the app as up to date although nothing was ever checked."
+    }
+  ],
+  "packages/electron/updater-feed.mjs": [
+    {
+      "hook": "electron",
+      "why": "A rebranded build has to change the app name, deep-link scheme, user-model id, default desktop port, help links and update feed without patching each constant by hand."
+    }
+  ],
+  "packages/ui/src/apps/renderElectronMiniChatApp.tsx": [
+    {
+      "hook": "ui",
+      "why": "A build that bundles this UI needs a way to rename the product and swap the mark without editing UI source on every upstream release."
+    }
+  ],
+  "packages/ui/src/components/sections/openchamber/AboutSettings.tsx": [
+    {
+      "hook": "updater-ui",
+      "why": "A build with no update feed answered update checks with \"no update available\", so the About page, and remote clients asking through the server, reported the app as up to date although nothing was ever checked."
+    },
+    {
+      "hook": "about-settings",
+      "why": "The About page links to the project's repository, chat and social account from constants in the component, so a build that ships without those links had no way to leave them out short of editing the page."
+    }
+  ],
+  "packages/ui/src/components/ui/OpenChamberLogo.tsx": [
+    {
+      "hook": "ui",
+      "why": "A build that bundles this UI needs a way to rename the product and swap the mark without editing UI source on every upstream release."
+    }
+  ],
+  "packages/ui/src/lib/i18n/store.ts": [
+    {
+      "hook": "ui",
+      "why": "A build that bundles this UI needs a way to rename the product and swap the mark without editing UI source on every upstream release."
+    }
+  ],
+  "packages/ui/src/lib/product-plugins.ts": [
+    {
+      "hook": "ui",
+      "why": "A build that bundles this UI needs a way to rename the product and swap the mark without editing UI source on every upstream release."
+    }
+  ],
+  "packages/ui/src/main.tsx": [
+    {
+      "hook": "ui",
+      "why": "A build that bundles this UI needs a way to rename the product and swap the mark without editing UI source on every upstream release."
+    }
+  ],
+  "packages/ui/src/stores/useUpdateStore.ts": [
+    {
+      "hook": "updater-ui",
+      "why": "A browser or remote client asks the server it is connected to for updates, and the store rebuilds that answer from a fixed list of fields, which dropped `updatesDisabled`."
+    }
+  ],
+  "packages/web/server/index.js": [
+    {
+      "hook": "server",
+      "why": "A build shipped under another name needs server-side behaviour of its own, such as extra variables for the managed OpenCode or a route of its own, without patching the server for each one."
+    },
+    {
+      "hook": "engine-env",
+      "why": "Server plugins hand the managed OpenCode an environment that moves its config, data, state and cache folders, but the binary preflight, the compatibility version read, the v2 install and the CLI upgrade still ran the binary with the plain process environment, so each of them created and wrote the engine's default folders (its log among them) next to the ones the server actually uses."
+    },
+    {
+      "hook": "server-version",
+      "why": "A product that versions its app apart from the server it packs showed the server package's version in the About dialog, so the server can now report the app's version instead."
+    }
+  ],
+  "packages/web/server/lib/enterprise-mode.js": [
+    {
+      "hook": "enterprise",
+      "why": "A build shipped under another name has administrators who place its policy in that product's own folder, not OpenChamber's."
+    }
+  ],
+  "packages/web/server/lib/fs/routes.js": [
+    {
+      "hook": "fs",
+      "why": "GET /api/fs/home resolved the legacy chats root under a fixed ~/.config/openchamber, so a server with its own OPENCHAMBER_DATA_DIR still reached into the default install's folder."
+    }
+  ],
+  "packages/web/server/lib/git/service.js": [
+    {
+      "hook": "git-integrate",
+      "why": "Moving commits between worktrees checks the target branch out in a temporary worktree under a fixed ~/.config/openchamber/tmp, even when OPENCHAMBER_DATA_DIR puts the rest of the server's state elsewhere."
+    }
+  ],
+  "packages/web/server/lib/opencode/lifecycle.js": [
+    {
+      "hook": "opencode",
+      "why": "The V1 session top-up rewrites the migration cursor in OpenCode's database before the managed OpenCode starts, and it always looked for that database at ~/.local/share/opencode/opencode.db."
+    },
+    {
+      "hook": "engine-env",
+      "why": "Server plugins hand the managed OpenCode an environment that moves its config, data, state and cache folders, but the binary preflight, the compatibility version read, the v2 install and the CLI upgrade still ran the binary with the plain process environment, so each of them created and wrote the engine's default folders (its log among them) next to the ones the server actually uses."
+    }
+  ],
+  "packages/web/server/lib/opencode/openchamber-routes.js": [
+    {
+      "hook": "update-check",
+      "why": "A build that ships no updates through the update service had no way to stop the server's update check, which posts the platform, version and a persistent install id."
+    }
+  ],
+  "packages/web/server/lib/opencode/v1-migration-topup.js": [
+    {
+      "hook": "opencode",
+      "why": "The V1 session top-up rewrites the migration cursor in OpenCode's database before the managed OpenCode starts, and it always looked for that database at ~/.local/share/opencode/opencode.db."
+    }
+  ],
+  "packages/web/server/lib/server-plugins.js": [
+    {
+      "hook": "server",
+      "why": "A build shipped under another name needs server-side behaviour of its own, such as extra variables for the managed OpenCode or a route of its own, without patching the server for each one."
+    }
+  ]
+}
