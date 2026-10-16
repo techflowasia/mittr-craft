@@ -1,13 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { UPSTREAM_PRODUCT } from './product.mjs';
 
 export const assertUpdaterCapability = ({
   platform = process.platform,
   packaged,
+  updaterFeed = UPSTREAM_PRODUCT.updaterFeed,
   appImagePath = process.env.APPIMAGE,
   access = fs.accessSync,
   stat = fs.statSync,
 } = {}) => {
+  if (!updaterFeed) throw new Error('Updates are not available in this build.');
   if (platform !== 'linux' || !packaged) return;
 
   if (!appImagePath) {

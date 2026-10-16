@@ -47,3 +47,20 @@ test('accepts a writable packaged AppImage', () => {
     access: () => {},
   }));
 });
+
+test('updater is unavailable when product.updaterFeed is null', () => {
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    assert.throws(
+      () => assertUpdaterCapability({ platform, packaged: true, updaterFeed: null }),
+      /not available in this build/,
+    );
+  }
+});
+
+test('updater stays available for a product that declares a feed', () => {
+  assert.doesNotThrow(() => assertUpdaterCapability({
+    platform: 'darwin',
+    packaged: true,
+    updaterFeed: { provider: 'generic', url: 'https://updates.example.test/' },
+  }));
+});

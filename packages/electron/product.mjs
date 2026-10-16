@@ -97,6 +97,16 @@ export function readProduct({ appPath, fs = nodeFs, homeDir = os.homedir() }) {
 // Product values win over anything already in the environment, including a
 // personal OPENCODE_CONFIG_DIR, so a rebranded build never reads another
 // install's data.
+// `devUserDataName` keeps a development run's Chromium profile apart from the
+// installed app's; it is only set for a development run.
+export function resolveAppNames(product, { isDev }) {
+  return {
+    appName: product.appName,
+    linuxDesktopName: product.linuxDesktopName,
+    devUserDataName: isDev ? `${product.appName} Dev` : null,
+  };
+}
+
 export function applyProductEnv(product, env = process.env) {
   const keys = Object.keys(product.env ?? {});
   for (const key of keys) env[key] = product.env[key];

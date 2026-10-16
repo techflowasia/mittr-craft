@@ -72,3 +72,16 @@ test('invalid URLs fall back to the production feed even with both test gates', 
     }), PRODUCTION_UPDATER_FEED);
   }
 });
+
+test('a product without an updater feed resolves to no feed', () => {
+  assert.equal(resolveUpdaterFeed({ productionFeed: null }), null);
+  assert.equal(
+    resolveUpdaterFeed({ productionFeed: null, environment: overrideEnvironment }),
+    null,
+  );
+});
+
+test('a product feed replaces the default production feed', () => {
+  const productionFeed = { provider: 'generic', url: 'https://updates.example.test/' };
+  assert.equal(resolveUpdaterFeed({ productionFeed }), productionFeed);
+});

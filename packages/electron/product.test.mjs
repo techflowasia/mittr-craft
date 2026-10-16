@@ -9,6 +9,7 @@ import {
   applyProductEnv,
   ensureProductDirs,
   readProduct,
+  resolveAppNames,
 } from './product.mjs';
 
 const HOME = '/home/someone';
@@ -157,4 +158,26 @@ test('ensureProductDirs pre-creates projects/themes/speech-models', () => {
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('app name comes from product', () => {
+  const product = readProduct({
+    appPath: APP_PATH,
+    fs: productFile({ appName: 'MittrCraft', linuxDesktopName: 'mittrcraft.desktop' }),
+    homeDir: HOME,
+  });
+  assert.deepEqual(resolveAppNames(product, { isDev: true }), {
+    appName: 'MittrCraft',
+    linuxDesktopName: 'mittrcraft.desktop',
+    devUserDataName: 'MittrCraft Dev',
+  });
+  assert.equal(resolveAppNames(product, { isDev: false }).devUserDataName, null);
+});
+
+test('app names without a product.json equal the upstream literals', () => {
+  assert.deepEqual(resolveAppNames(UPSTREAM_PRODUCT, { isDev: true }), {
+    appName: 'OpenChamber',
+    linuxDesktopName: 'openchamber.desktop',
+    devUserDataName: 'OpenChamber Dev',
+  });
 });
