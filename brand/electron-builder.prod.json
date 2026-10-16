@@ -1,0 +1,72 @@
+{
+  "appId": "dev.mittrcraft.desktop",
+  "productName": "MittrCraft",
+  "extraMetadata": {
+    "version": "2.1.1+mittr.1"
+  },
+  "protocols": [
+    {
+      "name": "MittrCraft",
+      "schemes": [
+        "mittrcraft"
+      ]
+    }
+  ],
+  "files": [
+    "product-plugins/**",
+    {
+      "from": ".product",
+      "to": ".",
+      "filter": [
+        "product.json"
+      ]
+    }
+  ],
+  "extraResources": [
+    {
+      "from": "../../brand/icons/icon.ico",
+      "to": "icons/icon.ico"
+    },
+    {
+      "from": "../../brand/icons/icon.png",
+      "to": "icons/icon.png"
+    },
+    {
+      "from": "../../brand/icons/tray",
+      "to": "icons/tray"
+    },
+    {
+      "from": "resources/icons/tray/status",
+      "to": "icons/tray/status"
+    }
+  ],
+  "afterPack": null,
+  "mac": {
+    "icon": "../../brand/icons/icon.icns",
+    "extendInfo": {
+      "CFBundleIconName": null,
+      "NSLocalNetworkUsageDescription": "MittrCraft needs access to devices and services on your local network."
+    }
+  },
+  "win": {
+    "icon": "../../brand/icons/icon.ico"
+  },
+  "linux": {
+    "icon": "../../brand/icons/app-icon.svg",
+    "executableName": "mittrcraft",
+    "desktop": {
+      "entry": {
+        "Name": "MittrCraft",
+        "Comment": "Desktop runtime for MittrCraft",
+        "Icon": "mittrcraft",
+        "StartupWMClass": "mittrcraft"
+      }
+    }
+  },
+  "nsis": {
+    "installerIcon": "../../brand/icons/icon.ico",
+    "uninstallerIcon": "../../brand/icons/icon.ico",
+    "installerHeaderIcon": "../../brand/icons/icon.ico"
+  },
+  "publish": null
+}

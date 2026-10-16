@@ -1,0 +1,31 @@
+{
+  "appName": "MittrCraft Dev",
+  "linuxDesktopName": "mittrcraft-dev.desktop",
+  "deepLinkProtocol": "mittrcraft-dev",
+  "appUserModelId": {
+    "packaged": "dev.mittrcraft.desktop.dev",
+    "dev": "dev.mittrcraft.desktop.dev"
+  },
+  "desktopPort": 57133,
+  "links": {
+    "bugReport": null,
+    "ideas": null,
+    "discord": null
+  },
+  "updaterFeed": null,
+  "env": {
+    "OPENCHAMBER_DATA_DIR": "~/.config/mittrcraft-dev",
+    "OPENCODE_CONFIG_DIR": "~/.config/mittrcraft-dev/engine/opencode",
+    "OPENCHAMBER_POLICY_FILE": "/Library/Application Support/MittrCraft Dev/policy.json",
+    "OPENCHAMBER_MANAGED_PROCESS_REGISTRY": "~/.config/mittrcraft-dev/managed-opencode",
+    "MITTRCRAFT_ENGINE_HOME": "~/.config/mittrcraft-dev/engine"
+  },
+  "ensureDirs": [
+    "~/.config/mittrcraft-dev/projects",
+    "~/.config/mittrcraft-dev/themes",
+    "~/.config/mittrcraft-dev/speech-models"
+  ],
+  "serverPlugins": [
+    "product-plugins/mittr-server.mjs"
+  ]
+}
