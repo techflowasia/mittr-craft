@@ -547,6 +547,32 @@ const checks = {
     }
   },
 
+  'desktop-bridge-listen': () => {
+    const preload = source('packages/electron/preload.mjs');
+    has(preload, /^ {2}listen: async \(event, handler\) => addListener\(event, handler\),$/m, 'the desktop bridge no longer exposes listen(event, handler)');
+    has(preload, /contextBridge\.exposeInMainWorld\('__OPENCHAMBER_DESKTOP__', desktopBridge\);/, 'the desktop bridge is no longer __OPENCHAMBER_DESKTOP__');
+    has(preload, /ipcRenderer\.on\('openchamber:emit', \(_evt, payload\) => \{[\s\S]{0,400}dispatchNativeEvent\(event, payload\.detail\);/, 'preload no longer hands openchamber:emit to its listeners');
+    has(preload, /listener\(\{ payload: detail \}\);/, 'a listener is no longer called for its event');
+
+    const main = source('packages/electron/main.mjs');
+    has(main, /browserWindow\.webContents\.send\('openchamber:emit', \{ event, detail \}\);/, 'main no longer sends openchamber:emit');
+    has(main, /const deepLinkRegistry = createDeepLinkRegistry\(\{\n  onEmit: \(event\) => \{[\s\S]{0,400}emitToAllWindows\(event, \{\}\);\n  \},/, 'the event a deep-link handler asks for no longer reaches every window');
+  },
+
+  'sign-in-gate-ui': () => {
+    has(source('packages/ui/src/lib/runtime-fetch.ts'), /^export const runtimeFetch = async \(rawInput: string \| URL \| Request, init: RuntimeFetchOptions = \{\}\): Promise<Response> =>/m);
+    has(source('packages/ui/src/lib/url.ts'), /^export const openExternalUrl = \(url: string\): Promise<boolean> =>\n  isExternalHttpUrl\(url\) \? openValidatedExternalUrl\(url\) : Promise\.resolve\(false\);$/m, 'openExternalUrl no longer opens only web addresses');
+    const button = source('packages/ui/src/components/ui/button.tsx');
+    has(button, /^export \{ Button \}$/m);
+    for (const size of ['default', 'lg']) has(button, new RegExp(`^\\s+${size}: "`, 'm'), `Button lost the ${size} size`);
+    for (const file of ['packages/ui/src/main.tsx', 'packages/ui/src/apps/renderElectronMiniChatApp.tsx']) {
+      const text = source(file);
+      const provider = text.indexOf('<I18nProvider>');
+      const root = text.indexOf('<ProductRoot');
+      assert.ok(provider >= 0 && root > provider && text.indexOf('</I18nProvider>') > root, `${file} no longer renders ProductRoot inside I18nProvider`);
+    }
+  },
+
   'english-overrides': () => {
     const snapshot = JSON.parse(source(ENGLISH_SNAPSHOT_FILE));
     const problems = compareEnglishSnapshot(snapshot, readEnglishOverrides());

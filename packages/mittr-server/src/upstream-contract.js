@@ -163,6 +163,22 @@ export const UPSTREAM_CONTRACT = [
     },
   },
   {
+    id: 'desktop-bridge-listen',
+    files: ['packages/electron/preload.mjs', 'packages/electron/main.mjs'],
+    why: 'the sign-in gate hears the signed-in and sign-in-failed events a deep-link handler asks for through __OPENCHAMBER_DESKTOP__.listen, which main delivers on openchamber:emit',
+  },
+  {
+    id: 'sign-in-gate-ui',
+    files: [
+      'packages/ui/src/lib/runtime-fetch.ts',
+      'packages/ui/src/lib/url.ts',
+      'packages/ui/src/components/ui/button.tsx',
+      'packages/ui/src/main.tsx',
+      'packages/ui/src/apps/renderElectronMiniChatApp.tsx',
+    ],
+    why: 'the sign-in gate reads the auth routes through runtimeFetch, opens the authorize URL with openExternalUrl, draws its actions with Button, and renders inside I18nProvider on both surfaces',
+  },
+  {
     id: 'english-overrides',
     files: ['packages/ui/src/lib/i18n/messages/en.ts', 'packages/mittr-ui/src/strings/en.ts', ENGLISH_SNAPSHOT_FILE],
     why: 'each English override still replaces the upstream text it was written against',
