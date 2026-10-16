@@ -218,6 +218,36 @@ describe('product UI plugin root and slots', () => {
     expect(decorations.entryStatus(ENTRY)).toBeNull();
   });
 
+  test('a model-picker plugin registered after the picker rendered is ignored, not a crash', () => {
+    const before = readModelPicker(true);
+    let called = false;
+    registerProductUiPlugin({
+      id: 'late',
+      modelPicker: {
+        useDecorations: () => {
+          called = true;
+          return { isProviderShown: () => false, entryStatus: () => ({ pill: 'late', tone: 'near', blocked: true }) };
+        },
+      },
+    });
+
+    const after = readModelPicker(true);
+
+    expect(called).toBe(false);
+    expect(after).toBe(before);
+    expect(after.isProviderShown('openai')).toBe(true);
+    expect(after.entryStatus(ENTRY)).toBeNull();
+  });
+
+  test('a model-picker plugin registered before the picker rendered is used', () => {
+    registerProductUiPlugin({
+      id: 'early',
+      modelPicker: { useDecorations: () => ({ isProviderShown: () => false, entryStatus: () => null }) },
+    });
+
+    expect(readModelPicker(true).isProviderShown('openai')).toBe(false);
+  });
+
   test("two plugins' decorations compose into one hook", () => {
     const opened: string[] = [];
     registerProductUiPlugin({

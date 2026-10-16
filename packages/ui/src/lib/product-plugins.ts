@@ -60,7 +60,9 @@ const usePassThroughDecorations: UseModelPickerDecorations = () => passThroughDe
 
 let plugins: ProductUiPlugin[] = [];
 let substitutions: Substitution[] = [];
+let pickerHooks: UseModelPickerDecorations[] = [];
 let useComposedDecorations: UseModelPickerDecorations = usePassThroughDecorations;
+let pickerHookInUse = false;
 const overlaid = new Map<Locale, { source: I18nDictionary; result: I18nDictionary }>();
 const listeners = new Set<() => void>();
 
@@ -87,19 +89,31 @@ const combineDecorationHooks = (
   return useCombinedDecorations;
 };
 
-// The model picker calls one hook. Composing every plugin's hook into it here,
-// once per registration, keeps the number and order of hooks fixed per render.
-const composeDecorationHooks = (): UseModelPickerDecorations => {
-  const hooks = plugins.flatMap((plugin) => (plugin.modelPicker ? [plugin.modelPicker.useDecorations] : []));
-  if (hooks.length === 0) {
-    return usePassThroughDecorations;
+const sameHooks = (left: UseModelPickerDecorations[], right: UseModelPickerDecorations[]): boolean =>
+  left.length === right.length && left.every((hook, index) => hook === right[index]);
+
+// The model picker calls one hook, composed here from every plugin's hook, so
+// the number and order of hooks stay fixed per render. Once the picker has
+// called it, swapping it would change that number under a mounted picker, so a
+// picker plugin registered later is ignored until the next load.
+const updateDecorationHooks = (): void => {
+  const next = plugins.flatMap((plugin) => (plugin.modelPicker ? [plugin.modelPicker.useDecorations] : []));
+  if (sameHooks(next, pickerHooks)) {
+    return;
   }
-  return hooks.reduce(combineDecorationHooks);
+  if (pickerHookInUse) {
+    if (typeof console !== 'undefined' && import.meta.env?.DEV) {
+      console.warn('[product-plugins] a model-picker plugin registered after the picker rendered; its decorations are ignored until reload');
+    }
+    return;
+  }
+  pickerHooks = next;
+  useComposedDecorations = next.length === 0 ? usePassThroughDecorations : next.reduce(combineDecorationHooks);
 };
 
 const changed = (): void => {
   substitutions = compileSubstitutions();
-  useComposedDecorations = composeDecorationHooks();
+  updateDecorationHooks();
   overlaid.clear();
   listeners.forEach((listener) => listener());
 };
@@ -111,6 +125,7 @@ export function registerProductUiPlugin(plugin: ProductUiPlugin): void {
 
 export function resetProductUiPluginsForTests(): void {
   plugins = [];
+  pickerHookInUse = false;
   changed();
 }
 
@@ -169,8 +184,10 @@ export function getProductLogo(): ProductUiPlugin['logo'] | undefined {
 
 const getPluginsSnapshot = (): ProductUiPlugin[] => plugins;
 
-// Plugins normally register before the first render, but one registered later
-// still reaches every mounted root and slot through this subscription.
+// Plugins normally register before the first render. One registered later
+// still reaches every mounted root and slot through this subscription: a slot
+// it fills renders in place, but a rootWrapper it adds changes the elements
+// above the app, so React remounts the app.
 const useProductUiPlugins = (): ProductUiPlugin[] =>
   React.useSyncExternalStore(subscribeProductUiPlugins, getPluginsSnapshot, getPluginsSnapshot);
 
@@ -196,6 +213,7 @@ export function ProductSlot<K extends ProductSlotName>({ name, ...props }: { nam
 }
 
 export function useProductModelPicker(open: boolean): ModelPickerDecorations {
+  pickerHookInUse = true;
   return useComposedDecorations(open);
 }
 

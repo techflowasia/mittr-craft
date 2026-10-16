@@ -161,6 +161,10 @@
     {
       "hook": "ui-plugins",
       "why": "A product plugin could only rename the product and swap the logo, so a build that needs its own sign-in screen, account menu, model-picker marks or composer actions would have had to edit each upstream component; a root wrapper and named slots that render nothing when no plugin fills them let it add those at one-line call sites."
+    },
+    {
+      "hook": "ui-plugins",
+      "why": "A model-picker plugin registered after the picker had rendered swapped the one hook the picker calls for a composition with more hooks, which React rejects with a hooks-order error, so once the picker has used it the hook stays fixed and a late picker plugin is ignored until reload."
     }
   ],
   "packages/ui/src/main.tsx": [
