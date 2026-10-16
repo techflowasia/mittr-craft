@@ -19,6 +19,7 @@
     "OPENCODE_CONFIG_DIR": "~/.config/mittrcraft-dev/engine/opencode",
     "OPENCHAMBER_POLICY_FILE": "/Library/Application Support/MittrCraft Dev/policy.json",
     "OPENCHAMBER_MANAGED_PROCESS_REGISTRY": "~/.config/mittrcraft-dev/managed-opencode",
+    "OPENCHAMBER_UPDATE_CHECK_DISABLED": "1",
     "MITTRCRAFT_ENGINE_HOME": "~/.config/mittrcraft-dev/engine"
   },
   "ensureDirs": [

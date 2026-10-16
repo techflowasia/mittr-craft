@@ -134,6 +134,14 @@ const checks = {
     }
   },
 
+  'update-check-disabled-env': () => {
+    const routes = source('packages/web/server/lib/opencode/openchamber-routes.js');
+    has(routes, /\} else if \(isUpdateCheckDisabled\(process\.env\)\) \{[\s\S]{0,400}updatesDisabled: true,[\s\S]{0,300}\} else \{\s*const \{ checkForUpdates \} = await import\('\.\.\/package-manager\.js'\);/, 'the update check no longer stops before calling the update service when switched off');
+    for (const flavor of ['dev', 'prod']) {
+      assert.equal(JSON.parse(source(`brand/product.${flavor}.json`)).env.OPENCHAMBER_UPDATE_CHECK_DISABLED, '1', flavor);
+    }
+  },
+
   'policy-file-env': async () => {
     const { policyFilePaths } = await importUpstream('packages/web/server/lib/enterprise-mode.js');
     assert.deepEqual(policyFilePaths({ platform: 'darwin', env: { OPENCHAMBER_POLICY_FILE: '/x/policy.json' } }), ['/x/policy.json']);

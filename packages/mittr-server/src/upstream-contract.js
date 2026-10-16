@@ -40,6 +40,11 @@ export const UPSTREAM_CONTRACT = [
     why: 'product.json serverReportsAppVersion has the server report the packaged app version, which About shows',
   },
   {
+    id: 'update-check-disabled-env',
+    files: ['packages/web/server/lib/opencode/openchamber-routes.js'],
+    why: 'OPENCHAMBER_UPDATE_CHECK_DISABLED keeps the update and usage check from calling upstream',
+  },
+  {
     id: 'policy-file-env',
     files: ['packages/web/server/lib/enterprise-mode.js'],
     why: 'OPENCHAMBER_POLICY_FILE replaces the OpenChamber policy path',

@@ -321,12 +321,12 @@
   {
     "file": "app.asar/node_modules/@openchamber/web/server/lib/package-manager.js",
     "snippet": "https://api.openchamber.dev/v1/update/check",
-    "reason": "Address of the update service the server calls; never shown, and this build has no update channel."
+    "reason": "Address of upstream's update and usage service. The product env sets OPENCHAMBER_UPDATE_CHECK_DISABLED=1, so the update-check route answers updatesDisabled and the server never calls it; never shown."
   },
   {
     "file": "app.asar/node_modules/@openchamber/web/server/lib/package-manager.js",
     "snippet": "GITHUB_RELEASES_URL = 'https://github.com/openchamber/openchamber/releases'",
-    "reason": "Release-notes address returned with an available update; this build has no update channel, so none is ever shown."
+    "reason": "Release-notes address returned with an available update; the update check is switched off by OPENCHAMBER_UPDATE_CHECK_DISABLED=1, so none is ever returned or shown."
   },
   {
     "file": "app.asar/node_modules/@openchamber/web/server/lib/relay/service.js",
