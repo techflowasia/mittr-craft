@@ -17,6 +17,7 @@ import { startModelPrefsAutoSave } from './lib/modelPrefsAutoSave'
 import { initializeLocale, I18nProvider } from './lib/i18n'
 import type { RuntimeAPIs } from './lib/api/types'
 import { installRuntimeEndpointReset } from './apps/runtimeEndpointReset'
+import { ProductRoot } from './lib/product-plugins'
 
 import.meta.glob('../../*/src/product-ui-plugin.{ts,tsx}', { eager: true })
 
@@ -70,7 +71,9 @@ createRoot(rootElement).render(
       <ThemeSystemProvider>
         <ThemeProvider>
           <SessionAuthGate>
-            <App apis={runtimeAPIs} />
+            <ProductRoot surface="main">
+              <App apis={runtimeAPIs} />
+            </ProductRoot>
           </SessionAuthGate>
         </ThemeProvider>
       </ThemeSystemProvider>

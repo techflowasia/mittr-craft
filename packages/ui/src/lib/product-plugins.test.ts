@@ -1,12 +1,21 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { createElement, type ReactNode } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { dict as enDict } from './i18n/messages/en';
 import { dict as esDict } from './i18n/messages/es';
 import { formatMessage, resetI18nDictionaryCacheForTests, useI18nStore, type I18nDictionary } from './i18n/store';
 import {
   getProductLogo,
   overlayDictionary,
+  ProductRoot,
+  ProductSlot,
   registerProductUiPlugin,
   resetProductUiPluginsForTests,
+  translateProductMessageError,
+  useProductModelPicker,
+  type ModelPickerDecorations,
+  type ProductSlotComponent,
+  type ProductSlotProps,
 } from './product-plugins';
 
 const ABOUT_KEY = 'aboutDialog.openChamberVersionLabel';
@@ -111,5 +120,149 @@ describe('product UI plugins', () => {
 
     registerProductUiPlugin({ id: 'test', substitutions: [['OpenChamber', 'Acme']] });
     expect(useI18nStore.getState().dictionary[ABOUT_KEY]).toBe(expected);
+  });
+});
+
+const ENTRY = { providerID: 'openai', modelID: 'gpt-x', name: 'GPT X' };
+
+const readModelPicker = (open: boolean): ModelPickerDecorations => {
+  let decorations: ModelPickerDecorations | undefined;
+  const Probe = () => {
+    decorations = useProductModelPicker(open);
+    return null;
+  };
+  renderToStaticMarkup(createElement(Probe));
+  if (!decorations) {
+    throw new Error('the probe did not render');
+  }
+  return decorations;
+};
+
+describe('product UI plugin root and slots', () => {
+  test('no plugin leaves the tree unchanged', () => {
+    const markup = renderToStaticMarkup(createElement(ProductRoot, { surface: 'main', children: createElement('b', null, 'x') }));
+
+    expect(markup).toBe('<b>x</b>');
+  });
+
+  test('wrappers nest in registration order', () => {
+    const surfaces: string[] = [];
+    registerProductUiPlugin({
+      id: 'p1',
+      rootWrapper: ({ children, surface }) => {
+        surfaces.push(surface);
+        return createElement('i', { 'data-p1': '' }, children);
+      },
+    });
+    registerProductUiPlugin({
+      id: 'p2',
+      rootWrapper: ({ children }) => createElement('u', { 'data-p2': '' }, children),
+    });
+
+    const markup = renderToStaticMarkup(createElement(ProductRoot, { surface: 'mini-chat', children: createElement('b', null, 'x') }));
+
+    expect(markup).toBe('<i data-p1=""><u data-p2=""><b>x</b></u></i>');
+    expect(surfaces).toEqual(['mini-chat']);
+  });
+
+  test("a slot renders every plugin's component with its props", () => {
+    const seen: boolean[] = [];
+    const methods = (label: string): ProductSlotComponent<'session-auth-methods'> => ({ isTunnelLocked }) => {
+      seen.push(isTunnelLocked);
+      return createElement('span', null, label);
+    };
+    registerProductUiPlugin({ id: 'p1', slots: { 'session-auth-methods': methods('one') } });
+    registerProductUiPlugin({ id: 'p2', slots: { 'session-auth-methods': methods('two') } });
+
+    const markup = renderToStaticMarkup(createElement(ProductSlot, { name: 'session-auth-methods', isTunnelLocked: true }));
+
+    expect(markup).toBe('<span>one</span><span>two</span>');
+    expect(seen).toEqual([true, true]);
+  });
+
+  test('one plugin fills a slot with several components in order', () => {
+    const message: ProductSlotProps['assistant-message-footer']['message'] = {
+      info: { id: 'msg_1' } as ProductSlotProps['assistant-message-footer']['message']['info'],
+      parts: [],
+    };
+    const footer = (label: string) => (props: ProductSlotProps['assistant-message-footer']) =>
+      createElement('em', null, `${label}:${props.message.info.id}:${String(props.isLatestTurn)}`);
+    registerProductUiPlugin({ id: 'p1', slots: { 'assistant-message-footer': [footer('A'), footer('B')] } });
+
+    const markup = renderToStaticMarkup(createElement(ProductSlot, { name: 'assistant-message-footer', message, isLatestTurn: false }));
+
+    expect(markup).toBe('<em>A:msg_1:false</em><em>B:msg_1:false</em>');
+  });
+
+  test('an empty slot renders nothing', () => {
+    registerProductUiPlugin({ id: 'p1', slots: { 'about-dialog': () => createElement('span', null, 'about') } });
+
+    expect(renderToStaticMarkup(createElement(ProductSlot, { name: 'sidebar-footer' }))).toBe('');
+    resetProductUiPluginsForTests();
+    expect(renderToStaticMarkup(createElement(ProductSlot, { name: 'about-dialog' }))).toBe('');
+  });
+
+  test('a slot reads the plugins registered when it renders', () => {
+    const tree = (): ReactNode => createElement(ProductSlot, { name: 'providers-page' });
+    expect(renderToStaticMarkup(tree())).toBe('');
+
+    registerProductUiPlugin({ id: 'late', slots: { 'providers-page': () => createElement('p', null, 'late') } });
+
+    expect(renderToStaticMarkup(tree())).toBe('<p>late</p>');
+  });
+
+  test('model picker decorations default to pass-through', () => {
+    const decorations = readModelPicker(true);
+
+    expect(decorations.isProviderShown('openai')).toBe(true);
+    expect(decorations.entryStatus(ENTRY)).toBeNull();
+  });
+
+  test("two plugins' decorations compose into one hook", () => {
+    const opened: string[] = [];
+    registerProductUiPlugin({
+      id: 'p1',
+      modelPicker: {
+        useDecorations: (open) => {
+          opened.push(`p1:${open}`);
+          return {
+            isProviderShown: (providerId) => providerId !== 'mistral',
+            entryStatus: (entry) => (entry.modelID === 'gpt-x' ? null : { pill: 'p1', tone: 'neutral', blocked: false }),
+          };
+        },
+      },
+    });
+    registerProductUiPlugin({
+      id: 'p2',
+      modelPicker: {
+        useDecorations: (open) => {
+          opened.push(`p2:${open}`);
+          return {
+            isProviderShown: (providerId) => providerId !== 'google',
+            entryStatus: () => ({ pill: 'p2', title: 'Near the limit', tone: 'near', blocked: true }),
+          };
+        },
+      },
+    });
+
+    const decorations = readModelPicker(false);
+
+    expect(opened).toEqual(['p1:false', 'p2:false']);
+    expect(decorations.isProviderShown('openai')).toBe(true);
+    expect(decorations.isProviderShown('mistral')).toBe(false);
+    expect(decorations.isProviderShown('google')).toBe(false);
+    expect(decorations.entryStatus(ENTRY)).toEqual({ pill: 'p2', title: 'Near the limit', tone: 'near', blocked: true });
+    expect(decorations.entryStatus({ ...ENTRY, modelID: 'other' })).toEqual({ pill: 'p1', tone: 'neutral', blocked: false });
+  });
+
+  test('message error translation takes the first answer', () => {
+    const error = { type: 'provider.quota', message: 'quota', status: 402, responseBody: '{}' };
+    expect(translateProductMessageError(error)).toBeNull();
+
+    registerProductUiPlugin({ id: 'p1', messageError: () => null });
+    registerProductUiPlugin({ id: 'p2', messageError: (seen) => `second:${seen.status}` });
+    registerProductUiPlugin({ id: 'p3', messageError: () => 'third' });
+
+    expect(translateProductMessageError(error)).toBe('second:402');
   });
 });

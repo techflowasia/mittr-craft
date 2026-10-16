@@ -531,6 +531,22 @@ const checks = {
     }
   },
 
+  'ui-root-wrapper': () => {
+    const { entries } = item('ui-root-wrapper');
+    for (const [file, { surface: name, app }] of Object.entries(entries)) {
+      const text = source(file);
+      has(text, /^import \{ ProductRoot \} from '(\.\/lib|@\/lib)\/product-plugins';?$/m, `${file} no longer imports ProductRoot`);
+      const wrapped = new RegExp(`<SessionAuthGate>\\s*<ProductRoot surface="${name}">\\s*${app.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*</ProductRoot>\\s*</SessionAuthGate>`);
+      has(text, wrapped, `${file} no longer renders the app inside <ProductRoot surface="${name}"> within SessionAuthGate`);
+      assert.equal(lineCount(text, '<ProductRoot'), 1, `${file} renders ProductRoot more than once`);
+    }
+
+    const plugins = source('packages/ui/src/lib/product-plugins.ts');
+    for (const name of ['ProductRoot', 'ProductSlot', 'useProductModelPicker', 'translateProductMessageError']) {
+      has(plugins, new RegExp(`^export function ${name}\\b`, 'm'), `product-plugins no longer exports ${name}`);
+    }
+  },
+
   'english-overrides': () => {
     const snapshot = JSON.parse(source(ENGLISH_SNAPSHOT_FILE));
     const problems = compareEnglishSnapshot(snapshot, readEnglishOverrides());

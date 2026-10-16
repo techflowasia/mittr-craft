@@ -125,6 +125,10 @@
     {
       "hook": "ui",
       "why": "A build that bundles this UI needs a way to rename the product and swap the mark without editing UI source on every upstream release."
+    },
+    {
+      "hook": "ui-plugins",
+      "why": "A product plugin could only rename the product and swap the logo, so a build that needs its own sign-in screen, account menu, model-picker marks or composer actions would have had to edit each upstream component; a root wrapper and named slots that render nothing when no plugin fills them let it add those at one-line call sites."
     }
   ],
   "packages/ui/src/components/sections/openchamber/AboutSettings.tsx": [
@@ -153,12 +157,20 @@
     {
       "hook": "ui",
       "why": "A build that bundles this UI needs a way to rename the product and swap the mark without editing UI source on every upstream release."
+    },
+    {
+      "hook": "ui-plugins",
+      "why": "A product plugin could only rename the product and swap the logo, so a build that needs its own sign-in screen, account menu, model-picker marks or composer actions would have had to edit each upstream component; a root wrapper and named slots that render nothing when no plugin fills them let it add those at one-line call sites."
     }
   ],
   "packages/ui/src/main.tsx": [
     {
       "hook": "ui",
       "why": "A build that bundles this UI needs a way to rename the product and swap the mark without editing UI source on every upstream release."
+    },
+    {
+      "hook": "ui-plugins",
+      "why": "A product plugin could only rename the product and swap the logo, so a build that needs its own sign-in screen, account menu, model-picker marks or composer actions would have had to edit each upstream component; a root wrapper and named slots that render nothing when no plugin fills them let it add those at one-line call sites."
     }
   ],
   "packages/ui/src/stores/useUpdateStore.ts": [

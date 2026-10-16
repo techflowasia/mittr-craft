@@ -1,25 +1,66 @@
-import type React from 'react';
+import React from 'react';
 
 import type { Locale } from './i18n/runtime';
 import type { I18nDictionary } from './i18n/store';
+import type { Message, Part } from './opencode/model';
 
 // A product plugin lets a build that bundles this UI rebrand it without
 // editing UI source: it can overlay translation strings, rewrite words across
-// every string it did not overlay, and replace the logo. Plugins are collected
-// at build time by the entry points and register themselves on import. With no
-// plugin registered every function here is a pass-through.
+// every string it did not overlay, and replace the logo. It can also wrap the
+// app root, render into named slots, decorate the model picker and reword
+// message errors. Plugins are collected at build time by the entry points and
+// register themselves on import. With no plugin registered every function here
+// is a pass-through and every slot renders nothing.
+
+type ProductSurface = 'main' | 'mini-chat';
+
+export type ProductSlotProps = {
+  'sidebar-footer': Record<never, never>;
+  'about-dialog': Record<never, never>;
+  'about-settings': Record<never, never>;
+  'providers-page': Record<never, never>;
+  'session-auth-methods': { isTunnelLocked: boolean };
+  'assistant-message-footer': { message: { info: Message; parts: Part[] }; isLatestTurn: boolean };
+};
+
+export type ProductSlotName = keyof ProductSlotProps;
+
+export type ProductSlotComponent<K extends ProductSlotName> = React.ComponentType<ProductSlotProps[K]>;
+
+export type ModelEntryStatus = { pill: string; title?: string; tone: 'neutral' | 'near'; blocked: boolean };
+
+export type ModelPickerDecorations = {
+  isProviderShown(providerId: string): boolean;
+  entryStatus(entry: { providerID: string; modelID: string; name: string }): ModelEntryStatus | null;
+};
+
+type UseModelPickerDecorations = (open: boolean) => ModelPickerDecorations;
+
+type ProductMessageError = { type: string; message: string; status?: number; responseBody?: string };
 
 export type ProductUiPlugin = {
   id: string;
   dictionaries?: Partial<Record<Locale, Partial<I18nDictionary>>>;
   substitutions?: ReadonlyArray<readonly [from: string, to: string]>;
   logo?: React.ComponentType<React.SVGProps<SVGSVGElement> & { className?: string }>;
+  rootWrapper?: React.ComponentType<{ children: React.ReactNode; surface: ProductSurface }>;
+  slots?: { [K in ProductSlotName]?: ProductSlotComponent<K> | ProductSlotComponent<K>[] };
+  modelPicker?: { useDecorations: UseModelPickerDecorations };
+  messageError?: (error: ProductMessageError) => string | null;
 };
 
 type Substitution = { pattern: RegExp; to: string };
 
+const passThroughDecorations: ModelPickerDecorations = {
+  isProviderShown: () => true,
+  entryStatus: () => null,
+};
+
+const usePassThroughDecorations: UseModelPickerDecorations = () => passThroughDecorations;
+
 let plugins: ProductUiPlugin[] = [];
 let substitutions: Substitution[] = [];
+let useComposedDecorations: UseModelPickerDecorations = usePassThroughDecorations;
 const overlaid = new Map<Locale, { source: I18nDictionary; result: I18nDictionary }>();
 const listeners = new Set<() => void>();
 
@@ -31,8 +72,34 @@ const compileSubstitutions = (): Substitution[] =>
     to,
   })));
 
+const combineDecorationHooks = (
+  useFirst: UseModelPickerDecorations,
+  useSecond: UseModelPickerDecorations,
+): UseModelPickerDecorations => {
+  function useCombinedDecorations(open: boolean): ModelPickerDecorations {
+    const first = useFirst(open);
+    const second = useSecond(open);
+    return React.useMemo(() => ({
+      isProviderShown: (providerId) => first.isProviderShown(providerId) && second.isProviderShown(providerId),
+      entryStatus: (entry) => first.entryStatus(entry) ?? second.entryStatus(entry),
+    }), [first, second]);
+  }
+  return useCombinedDecorations;
+};
+
+// The model picker calls one hook. Composing every plugin's hook into it here,
+// once per registration, keeps the number and order of hooks fixed per render.
+const composeDecorationHooks = (): UseModelPickerDecorations => {
+  const hooks = plugins.flatMap((plugin) => (plugin.modelPicker ? [plugin.modelPicker.useDecorations] : []));
+  if (hooks.length === 0) {
+    return usePassThroughDecorations;
+  }
+  return hooks.reduce(combineDecorationHooks);
+};
+
 const changed = (): void => {
   substitutions = compileSubstitutions();
+  useComposedDecorations = composeDecorationHooks();
   overlaid.clear();
   listeners.forEach((listener) => listener());
 };
@@ -98,4 +165,46 @@ export function getProductLogo(): ProductUiPlugin['logo'] | undefined {
     }
   }
   return undefined;
+}
+
+const getPluginsSnapshot = (): ProductUiPlugin[] => plugins;
+
+// Plugins normally register before the first render, but one registered later
+// still reaches every mounted root and slot through this subscription.
+const useProductUiPlugins = (): ProductUiPlugin[] =>
+  React.useSyncExternalStore(subscribeProductUiPlugins, getPluginsSnapshot, getPluginsSnapshot);
+
+export function ProductRoot({ surface, children }: { surface: ProductSurface; children: React.ReactNode }): React.ReactNode {
+  const current = useProductUiPlugins();
+  return current.reduceRight<React.ReactNode>(
+    (inner, plugin) => (plugin.rootWrapper ? React.createElement(plugin.rootWrapper, { surface, children: inner }) : inner),
+    children,
+  );
+}
+
+export function ProductSlot<K extends ProductSlotName>({ name, ...props }: { name: K } & ProductSlotProps[K]): React.ReactNode {
+  const current = useProductUiPlugins();
+  const elements = current.flatMap((plugin) => {
+    const filled = plugin.slots?.[name];
+    const components = filled === undefined ? [] : Array.isArray(filled) ? filled : [filled];
+    return components.map((component, index) => React.createElement(
+      component,
+      { ...props, key: `${plugin.id}:${index}` },
+    ));
+  });
+  return elements.length === 0 ? null : elements;
+}
+
+export function useProductModelPicker(open: boolean): ModelPickerDecorations {
+  return useComposedDecorations(open);
+}
+
+export function translateProductMessageError(error: ProductMessageError): string | null {
+  for (const plugin of plugins) {
+    const translated = plugin.messageError?.(error) ?? null;
+    if (translated !== null) {
+      return translated;
+    }
+  }
+  return null;
 }

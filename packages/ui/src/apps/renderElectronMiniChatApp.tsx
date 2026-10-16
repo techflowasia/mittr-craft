@@ -11,6 +11,7 @@ import type { RuntimeAPIs } from '@/lib/api/types';
 import { startAppearanceAutoSave } from '@/lib/appearanceAutoSave';
 import { applyPersistedDirectoryPreferences } from '@/lib/directoryPersistence';
 import { initializeLocale, I18nProvider } from '@/lib/i18n';
+import { ProductRoot } from '@/lib/product-plugins';
 import { initializeAppearancePreferences, syncDesktopSettings } from '@/lib/persistence';
 import { startModelPrefsAutoSave } from '@/lib/modelPrefsAutoSave';
 import { startTypographyWatcher } from '@/lib/typographyWatcher';
@@ -51,7 +52,9 @@ export function renderElectronMiniChatApp(apis: RuntimeAPIs) {
         <ThemeSystemProvider>
           <ThemeProvider>
             <SessionAuthGate>
-              <ElectronMiniChatApp apis={apis} />
+              <ProductRoot surface="mini-chat">
+                <ElectronMiniChatApp apis={apis} />
+              </ProductRoot>
             </SessionAuthGate>
           </ThemeProvider>
         </ThemeSystemProvider>

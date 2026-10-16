@@ -154,6 +154,15 @@ export const UPSTREAM_CONTRACT = [
     },
   },
   {
+    id: 'ui-root-wrapper',
+    files: ['packages/ui/src/main.tsx', 'packages/ui/src/apps/renderElectronMiniChatApp.tsx', 'packages/ui/src/lib/product-plugins.ts'],
+    why: 'both UI entry points render the app inside ProductRoot, within SessionAuthGate, so our root wrapper and slots reach every surface',
+    entries: {
+      'packages/ui/src/main.tsx': { surface: 'main', app: '<App apis={runtimeAPIs} />' },
+      'packages/ui/src/apps/renderElectronMiniChatApp.tsx': { surface: 'mini-chat', app: '<ElectronMiniChatApp apis={apis} />' },
+    },
+  },
+  {
     id: 'english-overrides',
     files: ['packages/ui/src/lib/i18n/messages/en.ts', 'packages/mittr-ui/src/strings/en.ts', ENGLISH_SNAPSHOT_FILE],
     why: 'each English override still replaces the upstream text it was written against',
