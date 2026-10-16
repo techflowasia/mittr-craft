@@ -47,10 +47,10 @@ const serverLikeApp = () => {
   return app;
 };
 
-const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext() } = {}) => {
+const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext(), sharedHistoryExists } = {}) => {
   const app = serverLikeApp();
   const logger = recordingLogger();
-  const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context }, { env, fetchImpl });
+  const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context }, { env, fetchImpl, sharedHistoryExists });
   t.after(() => mittr.dispose());
   return { mittr, dataDir, logger, fetchImpl, engine, call: await serve(t, app) };
 };
@@ -88,7 +88,7 @@ test('deep-link auth handler completes sign-in and asks for the signed-in event'
   const result = await deepLinks.registrations[0].handle({ type: 'auth', value: 'callback', raw: 'mittrcraft-dev://auth/callback?code=c1' });
 
   assert.deepEqual(result, { emit: 'mittrcraft:signed-in' });
-  assert.deepEqual(fetchImpl.calls.map((entry) => entry.body.code), ['c1']);
+  assert.deepEqual(fetchImpl.calls.filter((entry) => entry.url.endsWith('/auth/desktop/exchange')).map((entry) => entry.body.code), ['c1']);
   assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: true, userId: 'u-a', displayName: 'A' });
 
   await mittr.dispose();
@@ -411,4 +411,217 @@ test('models set before the engine is first ready wait for that ready, with no w
 
   engine.fireReady();
   await until(() => engineCalls(fetchImpl).length === 1);
+});
+
+const CATALOG_A = { bundleVersion: 7, subject: { userId: 'u-a' }, models: [{ alias: 'a1', label: 'Writer' }, { alias: 'a2', label: 'Reader' }] };
+const CATALOG_B = { bundleVersion: 4, subject: { userId: 'u-b' }, models: [{ alias: 'b1', label: 'Planner' }] };
+const sessionB = { accessToken: 'at-b', refreshToken: 'rb', expiresAt: NOW + 3_600_000, subject: { userId: 'u-b', displayName: 'B' } };
+
+const isCatalogCall = (request) => request.url.endsWith('/desktop/catalog');
+const catalogCalls = (fetchImpl) => fetchImpl.calls.filter(isCatalogCall);
+
+// Mittr as the platform answers it: each sign-in exchange hands out the next
+// session, and the catalog follows the token it is asked with.
+const platform = ({ sessions = [session], catalogs = { 'at-1': CATALOG_A, 'at-b': CATALOG_B }, catalog = null } = {}) => {
+  let exchanges = 0;
+  return fakeEngineFetch({
+    other: (request) => {
+      if (isCatalogCall(request)) {
+        if (catalog) return catalog(request);
+        return json(catalogs[request.headers.authorization.slice('Bearer '.length)]);
+      }
+      if (request.url.endsWith('/auth/desktop/exchange')) {
+        exchanges += 1;
+        return json(sessions[Math.min(exchanges, sessions.length) - 1]);
+      }
+      return json(session);
+    },
+  });
+};
+
+const mittrModelsOf = async (mittr) => Object.keys((await mittr.managedConfig()).providers?.mittr?.models ?? {});
+const listShimModels = async (call, dataDir) => fetch(`${call.base}/mittr-shim/v1/models`, { headers: { authorization: `Bearer ${shimKey(dataDir)}` } });
+const catalogFiles = (dataDir) => fs.readdirSync(path.join(dataDir, 'mittr-accounts')).filter((name) => name.endsWith('.catalog.json'));
+
+test('a completed sign-in syncs the catalog into the account\'s own cache and the engine\'s models', async (t) => {
+  const fetchImpl = platform();
+  const { mittr, call, dataDir } = await setUp(t, { fetchImpl });
+  assert.equal(catalogCalls(fetchImpl).length, 0);
+
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  await until(() => fs.existsSync(path.join(dataDir, 'mittr-accounts')) && catalogFiles(dataDir).length === 1);
+  await until(async () => (await mittrModelsOf(mittr)).length === 2);
+  assert.deepEqual(await mittrModelsOf(mittr), ['a1', 'a2']);
+  assert.equal(catalogCalls(fetchImpl)[0].headers.authorization, 'Bearer at-1');
+
+  // Signing in again as the same person syncs again.
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 2);
+});
+
+test('offline start applies the cached catalog', async (t) => {
+  const dataDir = tempDataDir(t);
+  const first = await setUp(t, { dataDir, fetchImpl: platform() });
+  assert.equal((await signIn(first.call)).status, 200);
+  await until(() => fs.existsSync(path.join(dataDir, 'mittr-accounts')) && catalogFiles(dataDir).length === 1);
+  await first.mittr.dispose();
+
+  const offline = deferred();
+  const fetchImpl = platform({ catalog: () => offline.promise.then(() => { throw new Error('ECONNREFUSED'); }) });
+  const { mittr, call, logger, engine } = await setUp(t, { dataDir, fetchImpl });
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  assert.deepEqual(await mittrModelsOf(mittr), ['a1', 'a2']);
+  // The engine has not started yet: its first config build reads these.
+  assert.equal(engine.refreshes.length, 0);
+
+  offline.resolve();
+  await until(() => logger.errors.some((line) => line.includes('catalog sync failed')));
+  assert.deepEqual(await mittrModelsOf(mittr), ['a1', 'a2']);
+  const again = await call('POST', '/api/mittr/catalog/sync');
+  assert.deepEqual(again, { status: 502, body: { error: 'Cannot reach Mittr' } });
+});
+
+test('an account switch applies that account\'s cache, then syncs', async (t) => {
+  let held = null;
+  const catalogs = { 'at-1': CATALOG_A, 'at-b': CATALOG_B };
+  const fetchImpl = platform({
+    sessions: [session, sessionB],
+    catalog: (request) => {
+      const answer = json(catalogs[request.headers.authorization.slice('Bearer '.length)]);
+      return held ? held.promise.then(() => answer) : answer;
+    },
+  });
+  const { mittr, call } = await setUp(t, { fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 2);
+  await until(async () => (await mittrModelsOf(mittr)).join() === 'b1');
+
+  held = deferred();
+  assert.equal((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' })).status, 200);
+  assert.deepEqual(await mittrModelsOf(mittr), ['a1', 'a2']);
+  await until(() => catalogCalls(fetchImpl).length === 3);
+  assert.equal(catalogCalls(fetchImpl).at(-1).headers.authorization, 'Bearer at-1');
+  held.resolve();
+});
+
+test('the shim lists the active account\'s cached models', async (t) => {
+  const fetchImpl = platform({ sessions: [session, sessionB] });
+  const { call, dataDir } = await setUp(t, { fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  await until(() => fs.existsSync(path.join(dataDir, 'mittr-accounts')) && catalogFiles(dataDir).length === 1);
+
+  const listed = await listShimModels(call, dataDir);
+  assert.equal(listed.status, 200);
+  assert.deepEqual((await listed.json()).data.map((model) => model.id), ['a1', 'a2']);
+
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogFiles(dataDir).length === 2);
+  assert.deepEqual((await (await listShimModels(call, dataDir)).json()).data.map((model) => model.id), ['b1']);
+});
+
+test('with no catalog to read, the shim says the model list is unavailable instead of listing none', async (t) => {
+  const fetchImpl = platform({ catalog: () => new Response('down', { status: 503 }) });
+  const { call, dataDir } = await setUp(t, { fetchImpl });
+  assert.equal((await listShimModels(call, dataDir)).status, 503);
+
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  const unavailable = await listShimModels(call, dataDir);
+  assert.equal(unavailable.status, 503);
+  assert.deepEqual(await unavailable.json(), { error: 'The Mittr model list is not available' });
+});
+
+test('signing out of the last account takes the Mittr models out of the engine config', async (t) => {
+  const fetchImpl = platform();
+  // The account on the shared history keeps its catalog at the shared path,
+  // which outlives the sign-out.
+  const { mittr, call, dataDir } = await setUp(t, { fetchImpl, sharedHistoryExists: () => false });
+  assert.equal((await signIn(call)).status, 200);
+  await until(async () => (await mittrModelsOf(mittr)).length === 2);
+  assert.equal(fs.existsSync(path.join(dataDir, 'mittr-catalog.json')), true);
+
+  assert.equal((await call('DELETE', '/api/mittr/auth/session')).status, 200);
+  assert.deepEqual(await mittrModelsOf(mittr), []);
+  assert.deepEqual((await call('GET', '/api/mittr/catalog')).body.bundleVersion, null);
+});
+
+test('a failing config refresh while applying models is logged, never thrown into the server', async (t) => {
+  const engine = fakeEngineContext();
+  engine.context.managedConfig.refresh = async () => { throw new Error('disk full'); };
+  const fetchImpl = platform();
+  const { call, logger } = await setUp(t, { engine, fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => logger.warnings.some((line) => line.includes('could not apply the Mittr models') && line.includes('disk full')));
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body.signedIn, true);
+});
+
+test('a key the engine refused while models were applied is tried once more in the background', async (t) => {
+  const engine = fakeEngineContext();
+  let refusals = 1;
+  const fetchImpl = engineAndBroker((request) => {
+    if (request.url.endsWith('/connect/key') && refusals > 0) {
+      refusals -= 1;
+      return new Response('boom', { status: 500 });
+    }
+    return null;
+  });
+  const app = serverLikeApp();
+  const logger = recordingLogger();
+  const mittr = setupMittr({ app, express, dataDir: tempDataDir(t), logger, host: null, ...engine.context }, { env: DEV_ENV, fetchImpl, credentialRetryMs: 20 });
+  t.after(() => mittr.dispose());
+
+  engine.fireReady();
+  await mittr.applyModels(MODELS);
+  assert.equal(engineCalls(fetchImpl).length, 1);
+  assert.equal(logger.warnings.length, 1);
+  await until(() => logger.lines.some((line) => line.includes('has its Mittr key')));
+  assert.equal(engineCalls(fetchImpl).length, 2);
+});
+
+test('the background key retry is tried only once, and dispose cancels it', async (t) => {
+  const engine = fakeEngineContext();
+  const fetchImpl = engineAndBroker((request) => (request.url.endsWith('/connect/key') ? new Response('boom', { status: 500 }) : null));
+  const app = serverLikeApp();
+  const logger = recordingLogger();
+  const mittr = setupMittr({ app, express, dataDir: tempDataDir(t), logger, host: null, ...engine.context }, { env: DEV_ENV, fetchImpl, credentialRetryMs: 20 });
+  t.after(() => mittr.dispose());
+
+  engine.fireReady();
+  await mittr.applyModels(MODELS);
+  await until(() => engineCalls(fetchImpl).length === 2);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(engineCalls(fetchImpl).length, 2);
+
+  await mittr.applyModels(MODELS);
+  assert.equal(engineCalls(fetchImpl).length, 3);
+  await mittr.dispose();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(engineCalls(fetchImpl).length, 3);
+});
+
+test('the same model list again does not rewrite the engine config, and a write that failed is tried again', async (t) => {
+  const engine = fakeEngineContext();
+  const refresh = engine.context.managedConfig.refresh;
+  let failNext = false;
+  engine.context.managedConfig.refresh = async () => {
+    if (failNext) {
+      failNext = false;
+      throw new Error('disk full');
+    }
+    return refresh();
+  };
+  const { mittr } = await setUp(t, { engine, fetchImpl: engineAndBroker() });
+
+  await mittr.applyModels(MODELS);
+  await mittr.applyModels(MODELS);
+  assert.equal(engine.refreshes.length, 1);
+
+  failNext = true;
+  await assert.rejects(mittr.applyModels([MODELS[0]]), /disk full/);
+  await mittr.applyModels([MODELS[0]]);
+  assert.equal(engine.refreshes.length, 2);
 });

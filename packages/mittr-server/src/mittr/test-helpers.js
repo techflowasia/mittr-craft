@@ -109,10 +109,10 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096 } = {}) => {
   };
 };
 
-/** Waits until `predicate()` holds, failing after `timeoutMs`. */
+/** Waits until `predicate()` holds (or resolves to true), failing after `timeoutMs`. */
 export const until = async (predicate, timeoutMs = 2000) => {
   const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() > deadline) throw new Error('timed out waiting');
     await new Promise((resolve) => setTimeout(resolve, 5));
   }

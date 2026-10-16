@@ -3,6 +3,8 @@ import path from 'node:path';
 import { createAccountStore } from './account-store.js';
 import { registerMittrAuthRoutes } from './auth-routes.js';
 import { resolveBroker } from './broker.js';
+import { catalogCachePath, createCatalogCache } from './catalog-cache.js';
+import { registerMittrCatalogRoutes } from './catalog-routes.js';
 import { ensureMittrCredential, forgetMittrCredential } from './engine-credential.js';
 import { ensureLocalToken } from './local-token.js';
 import { createMittrSettings } from './mittr-settings.js';
@@ -16,6 +18,22 @@ const SIGNED_IN_EVENT = 'mittrcraft:signed-in';
 const SIGN_IN_FAILED_EVENT = 'mittrcraft:sign-in-failed';
 const SHIM_TOKEN_FILE = 'mittr-shim-token';
 
+const modelListOf = (items) => items.map(({ alias, label }) => ({ alias, label }));
+
+// After the engine refused the key while models were being applied, one more
+// try this much later, so the picker does not sit on models that answer 401
+// until the engine happens to restart.
+const CREDENTIAL_RETRY_MS = 5_000;
+
+// With nobody signed in there is no roster to show, whatever a past account
+// left on disk.
+const NO_ACCOUNT_CATALOG = {
+  read: () => null,
+  write: () => {
+    throw new Error('No Mittr account is active');
+  },
+};
+
 /**
  * Mittr on the server: sign-in through the platform's desktop flow, the
  * account store, the session refresh, and the loopback shim the engine sends
@@ -28,18 +46,41 @@ const SHIM_TOKEN_FILE = 'mittr-shim-token';
  * the engine never holds the Mittr token). The same config carries the
  * provider lock from the very first build.
  *
+ * The models come from the active account's Mittr catalog. Setup applies the
+ * cached one at once and then syncs without waiting; a sign-in syncs; an
+ * account change applies that account's cache, then syncs.
+ *
  * Returns what the server plugin merges: an engine env, a config fragment and
  * a dispose that does no network I/O, so it can never hold up shutdown, plus
  * `applyModels(items)`, which sets the account's models.
  */
-export function setupMittr(context, { env = process.env, fetchImpl = (...args) => fetch(...args), sharedHistoryExists = () => true } = {}) {
+export function setupMittr(context, {
+  env = process.env,
+  fetchImpl = (...args) => fetch(...args),
+  sharedHistoryExists = () => true,
+  credentialRetryMs = CREDENTIAL_RETRY_MS,
+} = {}) {
   const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig } = context;
   const broker = resolveBroker(env);
   const scheme = deepLinkScheme(env);
   const { encrypt, decrypt, refusal } = chooseSecretStore({ host, logger });
   const store = createAccountStore({ dataDir, encrypt, decrypt, logger, sharedHistoryExists });
 
+  // One cache per account file, resolved on every use: an account switch
+  // moves every reader and the next sync's write to the new account's file.
+  const catalogCaches = new Map();
+  const activeCatalogCache = () => {
+    if (!store.list().some((account) => account.active)) return NO_ACCOUNT_CATALOG;
+    const filePath = catalogCachePath(dataDir, store.activeHome());
+    if (!catalogCaches.has(filePath)) catalogCaches.set(filePath, createCatalogCache({ filePath, logger }));
+    return catalogCaches.get(filePath);
+  };
+  const cachedModels = () => activeCatalogCache().read()?.models?.items ?? [];
+
+  // Both are defined below and first called once setup has returned.
   let shim = null;
+  const syncCatalog = () => catalog.sync();
+
   const { ensureFreshSession, completeSignIn } = registerMittrAuthRoutes(app, {
     express,
     broker,
@@ -47,10 +88,16 @@ export function setupMittr(context, { env = process.env, fetchImpl = (...args) =
     scheme,
     fetchImpl,
     signInRefusal: refusal,
+    onSignIn: () => {
+      void syncCatalog();
+    },
     // A sign-out or a switch ends every answer still streaming on the
-    // account that was active, whether or not the engine restarts.
-    onAccountChange: () => {
+    // account that was active, whether or not the engine restarts. The
+    // account now active brings its own models.
+    onAccountChange: async () => {
       shim?.abortInFlight();
+      await onModels(cachedModels());
+      void syncCatalog();
     },
     logger,
   });
@@ -61,9 +108,25 @@ export function setupMittr(context, { env = process.env, fetchImpl = (...args) =
     upstreamV1: broker.upstreamV1,
     localToken,
     ensureFreshSession,
+    // Never an empty list for a catalog that cannot be read: the shim then
+    // says the list is unavailable instead of "you have no models".
+    listModels: () => {
+      const current = activeCatalogCache().read();
+      if (!current) throw new Error('no Mittr catalog is cached for the active account');
+      return modelListOf(current.models.items);
+    },
     fetchImpl,
     logger,
     env,
+  });
+
+  const catalog = registerMittrCatalogRoutes(app, {
+    broker,
+    ensureFreshSession,
+    cache: activeCatalogCache,
+    onModels: (items) => onModels(items),
+    fetchImpl,
+    logger,
   });
 
   const unregisterDeepLink = host?.deepLinks?.register({
@@ -98,14 +161,27 @@ export function setupMittr(context, { env = process.env, fetchImpl = (...args) =
   // first ready there is nobody to give the key to; that ready gives it.
   let engineStarted = false;
   const storeCredential = async () => {
-    if (models.length === 0 || !engineStarted) return;
+    if (models.length === 0 || !engineStarted) return 'skipped';
     try {
-      if (await ensureMittrCredential({ opencode, key: localToken, fetchImpl }) === 'stored') {
-        logger.log('[mittr] the engine has its Mittr key for this run');
-      }
+      const outcome = await ensureMittrCredential({ opencode, key: localToken, fetchImpl });
+      if (outcome === 'stored') logger.log('[mittr] the engine has its Mittr key for this run');
+      return outcome;
     } catch (error) {
-      logger.warn('[mittr] could not give the engine its Mittr key; trying again when it is next ready:', error?.message ?? error);
+      logger.warn('[mittr] could not give the engine its Mittr key; trying again later:', error?.message ?? error);
+      return 'failed';
     }
+  };
+
+  // One more try, once: an engine that keeps refusing waits for its next ready.
+  let credentialRetry = null;
+  let disposed = false;
+  const retryCredentialOnce = () => {
+    if (credentialRetry || disposed) return;
+    credentialRetry = setTimeout(() => {
+      credentialRetry = null;
+      void storeCredential();
+    }, credentialRetryMs);
+    credentialRetry.unref?.();
   };
 
   // Each ready is a new engine, maybe on the same port and another account's
@@ -116,17 +192,47 @@ export function setupMittr(context, { env = process.env, fetchImpl = (...args) =
     void storeCredential();
   });
 
+  // The config is rewritten only when the list differs from the one last
+  // written: the engine reloads on every write, and most syncs bring back the
+  // same list. A write that failed is tried again by the next apply.
+  let writtenModels = JSON.stringify(models);
   const applyModels = async (items) => {
-    models = items.map(({ alias, label }) => ({ alias, label }));
-    await context.managedConfig.refresh();
-    await storeCredential();
+    models = modelListOf(items);
+    const next = JSON.stringify(models);
+    if (next !== writtenModels) {
+      await context.managedConfig.refresh();
+      writtenModels = next;
+    }
+    if (await storeCredential() === 'failed') retryCredentialOnce();
   };
+
+  // Sets the engine's models; a failure is logged and waits for the next
+  // sync or start, never thrown into a route or the server.
+  const onModels = async (items) => {
+    try {
+      await applyModels(items);
+    } catch (error) {
+      logger.warn('[mittr] could not apply the Mittr models:', error?.message ?? error);
+    }
+  };
+
+  // The last list first, so an offline start still shows the account's
+  // models; then the platform's current one, without holding up the start.
+  // Setup runs before the engine's first start, which builds its config from
+  // these, so there is no config file to refresh yet: refreshing here would
+  // run before the server holds this plugin's config fragment at all.
+  models = modelListOf(cachedModels());
+  writtenModels = JSON.stringify(models);
+  void syncCatalog();
 
   return {
     engineEnv: () => loopbackProxyExemption(env),
     managedConfig,
     applyModels,
     dispose: async () => {
+      disposed = true;
+      clearTimeout(credentialRetry);
+      credentialRetry = null;
       unsubscribeReady();
       unregisterDeepLink?.();
     },
