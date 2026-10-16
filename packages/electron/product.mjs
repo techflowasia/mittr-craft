@@ -34,6 +34,7 @@ export const UPSTREAM_PRODUCT = deepFreeze({
   updaterFeed: { provider: 'github', owner: 'openchamber', repo: 'openchamber' },
   splashSvg: null,
   env: {},
+  envDefaults: {},
   ensureDirs: [],
   serverPlugins: [],
   serverReportsAppVersion: false,
@@ -88,9 +89,11 @@ export function readProduct({ appPath, fs = nodeFs, homeDir = os.homedir() }) {
   const override = readProductFile(appPath, fs);
   const product = override ? mergeProduct(UPSTREAM_PRODUCT, override) : clone(UPSTREAM_PRODUCT);
 
-  product.env = Object.fromEntries(
-    Object.entries(product.env ?? {}).map(([key, value]) => [key, expandHome(value, homeDir)]),
+  const expandEnv = (env) => Object.fromEntries(
+    Object.entries(env ?? {}).map(([key, value]) => [key, expandHome(value, homeDir)]),
   );
+  product.env = expandEnv(product.env);
+  product.envDefaults = expandEnv(product.envDefaults);
   product.ensureDirs = (product.ensureDirs ?? []).map((dir) => expandHome(dir, homeDir));
   product.serverPlugins = (product.serverPlugins ?? []).map((entry) => path.resolve(appPath, entry));
   product.splashSvg = product.splashSvg ? path.resolve(appPath, product.splashSvg) : null;
@@ -119,10 +122,14 @@ export function resolveAppNames(product, { isDev }) {
   };
 }
 
-// Product values win over anything already in the environment, including a
-// personal OPENCODE_CONFIG_DIR, so a rebranded build never reads another
-// install's data.
+// `envDefaults` fill only variables the launch left unset or blank, so a
+// development run can still point one elsewhere. Product `env` values then win
+// over anything already in the environment, including a personal
+// OPENCODE_CONFIG_DIR, so a rebranded build never reads another install's data.
 export function applyProductEnv(product, env = process.env) {
+  for (const [key, value] of Object.entries(product.envDefaults ?? {})) {
+    if (!String(env[key] ?? '').trim()) env[key] = value;
+  }
   const keys = Object.keys(product.env ?? {});
   for (const key of keys) env[key] = product.env[key];
   return keys;

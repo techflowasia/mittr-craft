@@ -89,6 +89,10 @@
     {
       "hook": "product",
       "why": "The comment saying product values win over the environment had drifted above resolveAppNames, where it describes nothing, and left applyProductEnv, the function that overwrites the environment, without it."
+    },
+    {
+      "hook": "product",
+      "why": "A product could only force environment values over the launch environment, so a value a development run should be able to point elsewhere (a service URL, say) had no default a launch could still override; envDefaults fill only variables the launch left unset or blank."
     }
   ],
   "packages/electron/secret-store.mjs": [

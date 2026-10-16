@@ -20,7 +20,11 @@
     "OPENCHAMBER_POLICY_FILE": "/Library/Application Support/MittrCraft Dev/policy.json",
     "OPENCHAMBER_MANAGED_PROCESS_REGISTRY": "~/.config/mittrcraft-dev/managed-opencode",
     "OPENCHAMBER_UPDATE_CHECK_DISABLED": "1",
-    "MITTRCRAFT_ENGINE_HOME": "~/.config/mittrcraft-dev/engine"
+    "MITTRCRAFT_ENGINE_HOME": "~/.config/mittrcraft-dev/engine",
+    "MITTRCRAFT_DEEP_LINK_SCHEME": "mittrcraft-dev"
+  },
+  "envDefaults": {
+    "MITTRCRAFT_BROKER_URL": "https://api-dev.mittr.asia"
   },
   "ensureDirs": [
     "~/.config/mittrcraft-dev/projects",

@@ -118,6 +118,7 @@ export const UPSTREAM_CONTRACT = [
       'updaterFeed',
       'splashSvg',
       'env',
+      'envDefaults',
       'ensureDirs',
       'serverPlugins',
       'serverReportsAppVersion',

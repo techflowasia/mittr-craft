@@ -48,6 +48,7 @@ test('UPSTREAM_PRODUCT is frozen and equals the upstream literals', () => {
     updaterFeed: { provider: 'github', owner: 'openchamber', repo: 'openchamber' },
     splashSvg: null,
     env: {},
+    envDefaults: {},
     ensureDirs: [],
     serverPlugins: [],
     serverReportsAppVersion: false,
@@ -168,6 +169,42 @@ test('applyProductEnv with no env leaves the environment alone', () => {
   const env = { A: '1' };
   assert.deepEqual(applyProductEnv(UPSTREAM_PRODUCT, env), []);
   assert.deepEqual(env, { A: '1' });
+});
+
+test('envDefaults fill only unset keys', () => {
+  const product = { env: {}, envDefaults: { MITTRCRAFT_BROKER_URL: 'https://api-dev.mittr.asia' } };
+
+  const launched = { MITTRCRAFT_BROKER_URL: 'http://127.0.0.1:3000' };
+  applyProductEnv(product, launched);
+  assert.equal(launched.MITTRCRAFT_BROKER_URL, 'http://127.0.0.1:3000');
+
+  const empty = {};
+  applyProductEnv(product, empty);
+  assert.equal(empty.MITTRCRAFT_BROKER_URL, 'https://api-dev.mittr.asia');
+
+  const blank = { MITTRCRAFT_BROKER_URL: '  ' };
+  applyProductEnv(product, blank);
+  assert.equal(blank.MITTRCRAFT_BROKER_URL, 'https://api-dev.mittr.asia');
+});
+
+test('a product env value still wins over a launch value when the product also has defaults', () => {
+  const env = { A: 'launch', B: 'launch' };
+  applyProductEnv({ env: { A: 'product' }, envDefaults: { A: 'default', B: 'default', C: '~/c' } }, env);
+  assert.deepEqual(env, { A: 'product', B: 'launch', C: '~/c' });
+});
+
+test('readProduct expands ~/ in envDefaults', () => {
+  const product = readProduct({ appPath: APP_PATH, fs: productFile({ envDefaults: { A: '~/a' } }), homeDir: HOME });
+  assert.deepEqual(product.envDefaults, { A: path.join(HOME, 'a') });
+});
+
+test('prod broker ignores a launch override', () => {
+  const brand = fs.readFileSync(path.resolve(import.meta.dirname, '../../brand/product.prod.json'), 'utf8');
+  const product = readProduct({ appPath: APP_PATH, fs: fakeFs({ [path.join(APP_PATH, 'product.json')]: brand }), homeDir: HOME });
+  const env = { MITTRCRAFT_BROKER_URL: 'https://example.invalid' };
+  applyProductEnv(product, env);
+  assert.equal(env.MITTRCRAFT_BROKER_URL, 'https://api.mittr.asia');
+  assert.equal(env.MITTRCRAFT_BROKER_FIXED, '1');
 });
 
 test('the server reports its own version unless the product asks for the app version', () => {
