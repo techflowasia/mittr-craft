@@ -211,6 +211,10 @@
     {
       "hook": "server-plugins",
       "why": "A build's server plugin needed more of the server than the app, data dir and logger (the express module, the bound port, settings, UI events, the managed OpenCode and its readiness, git, request scope and shutdown) and had no way to add engine config, so a downstream build would have had to edit upstream's server for each provider, policy or plugin it adds."
+    },
+    {
+      "hook": "lifecycle",
+      "why": "The first start stored its process only once it had spawned, so a restart that arrived meanwhile (a config change right after the server began listening) found nothing to close and spawned a second engine, leaving one of the two running with no owner; starts and restarts now take turns."
     }
   ],
   "packages/web/server/lib/opencode/managed-config-file.js": [

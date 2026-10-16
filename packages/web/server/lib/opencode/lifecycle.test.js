@@ -706,6 +706,115 @@ describe('OpenCode lifecycle', () => {
     warn.mockRestore();
   });
 
+  // Holds the first start in its binary check, before it has spawned anything,
+  // until the test lets it go: the window in which a restart used to find no
+  // process to close.
+  const holdFirstBinaryCheck = () => {
+    let entered;
+    let release;
+    const firstCheckEntered = new Promise((resolve) => { entered = resolve; });
+    const firstCheckReleased = new Promise((resolve) => { release = resolve; });
+    let checks = 0;
+    const checkOpenCodeBinary = async () => {
+      checks += 1;
+      if (checks === 1) {
+        entered();
+        await firstCheckReleased;
+      }
+      return '2.0.20';
+    };
+    return { checkOpenCodeBinary, firstCheckEntered, releaseFirstCheck: () => release() };
+  };
+
+  it('a restart requested during the first start leaves exactly one live process', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+    }));
+    const children = [];
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      child.pid = 2147483600 + children.length;
+      children.push(child);
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    const { checkOpenCodeBinary, firstCheckEntered, releaseFirstCheck } = holdFirstBinaryCheck();
+    const onEngineReady = vi.fn();
+    const runtime = createRuntime(
+      { reapManagedOrphanedProcesses: vi.fn(async () => ({ reaped: 0 })), checkOpenCodeBinary, onEngineReady },
+      {},
+      { ENV_EFFECTIVE_PORT: null, ENV_CONFIGURED_OPENCODE_PORT: null },
+    );
+
+    const boot = runtime.bootstrapOpenCodeAtStartup();
+    await firstCheckEntered;
+    const restart = runtime.restartOpenCode('catalog');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirstCheck();
+    await Promise.all([boot, restart]);
+
+    const live = children.filter((child) => child.kill.mock.calls.length === 0);
+    try {
+      expect(spawnMock).toHaveBeenCalledTimes(2);
+      expect(live).toHaveLength(1);
+      expect(children.filter((child) => child.kill.mock.calls.length > 0)).toEqual([children[0]]);
+      expect(live).toEqual([children[1]]);
+      expect(runtime.testState.openCodeProcess.pid).toBe(children[1].pid);
+      expect(onEngineReady).toHaveBeenCalledTimes(2);
+    } finally {
+      live.forEach((child) => child.kill());
+    }
+  });
+
+  it('a failed first start does not block a later restart', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+    }));
+    const children = [];
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      child.pid = 2147483610 + children.length;
+      children.push(child);
+      if (children.length <= 2) {
+        queueMicrotask(() => {
+          child.exitCode = 1;
+          child.emit('exit', 1, null);
+        });
+      } else {
+        queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      }
+      return child;
+    });
+    const { checkOpenCodeBinary, firstCheckEntered, releaseFirstCheck } = holdFirstBinaryCheck();
+    const runtime = createRuntime(
+      { reapManagedOrphanedProcesses: vi.fn(async () => ({ reaped: 0 })), checkOpenCodeBinary },
+      {},
+      { ENV_EFFECTIVE_PORT: null, ENV_CONFIGURED_OPENCODE_PORT: null },
+    );
+
+    const boot = runtime.bootstrapOpenCodeAtStartup();
+    await firstCheckEntered;
+    const restart = runtime.restartOpenCode('catalog');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirstCheck();
+    await Promise.all([boot, restart]);
+
+    const live = children.filter((child) => child.exitCode === null && child.kill.mock.calls.length === 0);
+    try {
+      expect(spawnMock).toHaveBeenCalledTimes(3);
+      expect(live).toEqual([children[2]]);
+      expect(runtime.testState.openCodeProcess.pid).toBe(children[2].pid);
+    } finally {
+      live.forEach((child) => child.kill());
+      error.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   it('launches managed OpenCode with the managed PATH', async () => {
     delete process.env.OPENCODE_BINARY;
     const child = createMockChild();
