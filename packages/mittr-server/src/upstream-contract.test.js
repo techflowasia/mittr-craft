@@ -197,9 +197,18 @@ const checks = {
       plugins: ['-opencode.browser', '/contract/plugin'],
     });
 
-    const userOwned = runtime({ OPENCODE_CONFIG: '/user/opencode.json', OPENCODE_CONFIG_CONTENT: '{"model":"user/model"}' });
-    const content = JSON.parse((await userOwned.managed.buildManagedChildEnv()).OPENCODE_CONFIG_CONTENT);
-    assert.deepEqual(content, { model: 'user/model', ...contribution, plugins: ['-opencode.browser', '/contract/plugin'] });
+    // OpenCode lets OPENCODE_CONFIG outrank project config and
+    // OPENCODE_CONFIG_CONTENT for policies (P7 in the engine proof), so the
+    // contribution keeps that layer and the user's config moves below it.
+    const userDir = tempDir(t, 'contract-user-config-');
+    const userFile = path.join(userDir, 'opencode.json');
+    const userPolicy = { action: 'provider.use', resource: '*', effect: 'allow' };
+    fs.writeFileSync(userFile, JSON.stringify({ model: 'file/model', experimental: { policies: [userPolicy] } }));
+    const userOwned = runtime({ OPENCODE_CONFIG: userFile, OPENCODE_CONFIG_CONTENT: '{"model":"user/model"}' });
+    const userEnv = await userOwned.managed.buildManagedChildEnv();
+    assert.equal(userEnv.OPENCODE_CONFIG, path.join(userOwned.dataDir, MANAGED_CONFIG_FILE_NAME), 'a contribution no longer takes OPENCODE_CONFIG from the user');
+    assert.deepEqual(JSON.parse(fs.readFileSync(userEnv.OPENCODE_CONFIG, 'utf8')), { ...contribution, plugins: ['-opencode.browser', '/contract/plugin'] });
+    assert.deepEqual(JSON.parse(userEnv.OPENCODE_CONFIG_CONTENT), { model: 'user/model', experimental: { policies: [userPolicy] } });
 
     has(source('packages/web/server/lib/opencode/managed-config-file.js'), /import \{ mergeEngineConfig \} from '\.\.\/server-plugins\.js';/, 'the managed config no longer merges with the same rule');
     const server = source('packages/web/server/index.js');

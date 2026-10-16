@@ -32,7 +32,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'managed-config-contributions',
     files: ['packages/web/server/lib/opencode/managed-config-file.js', 'packages/web/server/index.js'],
-    why: 'the config fragment server plugins return reaches the managed config file, or OPENCODE_CONFIG_CONTENT when the user owns OPENCODE_CONFIG',
+    why: 'the config fragment server plugins return is written to the managed OPENCODE_CONFIG file, even when the user set OPENCODE_CONFIG, so project and user config cannot outrank its policies',
   },
   {
     id: 'plugin-context-express',

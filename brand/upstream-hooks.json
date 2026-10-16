@@ -201,6 +201,10 @@
     {
       "hook": "managed-config",
       "why": "A downstream build adds providers, policies and plugins to the managed OpenCode by returning a config fragment from its server plugin, which the managed config writer puts beside OpenChamber's own plugins (or into OPENCODE_CONFIG_CONTENT when the user owns OPENCODE_CONFIG), instead of editing upstream's writer."
+    },
+    {
+      "hook": "managed-config",
+      "why": "OpenCode lets a policy in OPENCODE_CONFIG outrank project config and OPENCODE_CONFIG_CONTENT, but a user's own OPENCODE_CONFIG file outranked a contribution merged into OPENCODE_CONFIG_CONTENT, so a contributed config now keeps the OPENCODE_CONFIG layer and the user's file and content move into OPENCODE_CONFIG_CONTENT."
     }
   ],
   "packages/web/server/lib/opencode/openchamber-routes.js": [

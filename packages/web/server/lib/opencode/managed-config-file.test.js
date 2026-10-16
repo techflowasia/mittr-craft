@@ -204,14 +204,21 @@ describe('managed OpenCode config file', () => {
     await expect(runtime.buildManagedChildEnv()).rejects.toThrow('contribution unavailable');
   });
 
-  it('contributions reach OPENCODE_CONFIG_CONTENT when OPENCODE_CONFIG is set', async () => {
-    const { dataDir, runtime } = await createHarness({
+  // OpenCode reads policies from its config layers lowest first and lets the
+  // last match decide, so OPENCODE_CONFIG_CONTENT is the weakest place for a
+  // policy and the user's own OPENCODE_CONFIG file outranks it.
+  it('a contributor takes OPENCODE_CONFIG from the user and moves their config into OPENCODE_CONFIG_CONTENT', async () => {
+    const userDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-user-config-'));
+    temporaryDirectories.push(userDir);
+    const userFile = path.join(userDir, 'opencode.jsonc');
+    const userText = '{\n  // theirs\n  "model": "file/model",\n  "plugins": ["/theirs"],\n  "experimental": { "policies": [{ "action": "provider.use", "resource": "*", "effect": "allow" }] },\n}\n';
+    await fs.writeFile(userFile, userText);
+    const { dataDir, runtime, readConfigFile } = await createHarness({
       env: {
-        OPENCODE_CONFIG: '/home/user/opencode.json',
+        OPENCODE_CONFIG: userFile,
         OPENCODE_CONFIG_CONTENT: JSON.stringify({
-          model: 'test/model',
-          plugins: ['/theirs'],
-          experimental: { policies: [{ action: 'provider.use', resource: '*', effect: 'allow' }] },
+          model: 'content/model',
+          experimental: { policies: [{ action: 'provider.use', resource: 'other', effect: 'allow' }] },
         }),
       },
       contributeConfig: async () => ({
@@ -223,18 +230,46 @@ describe('managed OpenCode config file', () => {
 
     const childEnv = await runtime.buildManagedChildEnv();
 
-    expect(childEnv.OPENCODE_CONFIG).toBeUndefined();
-    expect(JSON.parse(childEnv.OPENCODE_CONFIG_CONTENT)).toEqual({
-      model: 'test/model',
+    expect(childEnv.OPENCODE_CONFIG).toBe(path.join(dataDir, MANAGED_CONFIG_FILE_NAME));
+    expect(await readConfigFile()).toEqual({
       providers: { x: { name: 'X' } },
-      plugins: ['/theirs', '-opencode.browser', path.join(dataDir, 'agent-tool', 'openchamber-agent-tool'), '/mine'],
+      plugins: ['-opencode.browser', path.join(dataDir, 'agent-tool', 'openchamber-agent-tool'), '/mine'],
+      experimental: { policies: [{ action: 'provider.use', resource: '*', effect: 'deny' }] },
+    });
+    expect(JSON.parse(childEnv.OPENCODE_CONFIG_CONTENT)).toEqual({
+      model: 'content/model',
+      plugins: ['/theirs'],
       experimental: {
         policies: [
           { action: 'provider.use', resource: '*', effect: 'allow' },
-          { action: 'provider.use', resource: '*', effect: 'deny' },
+          { action: 'provider.use', resource: 'other', effect: 'allow' },
         ],
       },
     });
+    expect(await fs.readFile(userFile, 'utf8')).toBe(userText);
+    expect(await runtime.refreshManagedConfigFile()).toEqual({ updated: true });
+  });
+
+  it('a missing user OPENCODE_CONFIG file counts as empty once a contributor takes the layer', async () => {
+    const { runtime } = await createHarness({
+      env: { OPENCODE_CONFIG: path.join(os.tmpdir(), 'openchamber-no-such-config', 'opencode.json') },
+      contributeConfig: async () => ({ providers: { x: { name: 'X' } } }),
+    });
+
+    expect(JSON.parse((await runtime.buildManagedChildEnv()).OPENCODE_CONFIG_CONTENT)).toEqual({});
+  });
+
+  it('an unreadable user OPENCODE_CONFIG file stops the start once a contributor takes the layer', async () => {
+    const userDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-user-config-'));
+    temporaryDirectories.push(userDir);
+    const userFile = path.join(userDir, 'opencode.json');
+    await fs.writeFile(userFile, '{ "model": ');
+    const { runtime } = await createHarness({
+      env: { OPENCODE_CONFIG: userFile },
+      contributeConfig: async () => ({ providers: { x: { name: 'X' } } }),
+    });
+
+    await expect(runtime.buildManagedChildEnv()).rejects.toThrow(userFile);
   });
 
   it('leaves no temp file behind and never publishes a partial list', async () => {

@@ -1,3 +1,5 @@
+import { parse as parseJsonc } from 'jsonc-parser';
+
 import { mergeEngineConfig } from '../server-plugins.js';
 import { appendManagedPlugin } from './managed-plugin-config.js';
 
@@ -32,10 +34,21 @@ const DISABLED_BUILTIN_PLUGINS = ['-opencode.browser'];
  * so it never shadows a project-level choice.
  *
  * When the user's own environment already sets `OPENCODE_CONFIG`, that file is
- * theirs: OpenChamber does not hijack it and falls back to merging its plugins,
- * and the contributed fragment, into `OPENCODE_CONFIG_CONTENT`, which keeps the
- * old restart requirement for managed-tool toggles. A contribution that cannot
- * be read or merged fails the start rather than run OpenCode without it.
+ * theirs: OpenChamber does not hijack it and falls back to merging its plugins
+ * into `OPENCODE_CONFIG_CONTENT`, which keeps the old restart requirement for
+ * managed-tool toggles.
+ *
+ * A server plugin's fragment is the exception. OpenCode 2.0.22 lists
+ * `experimental.policies` from `OPENCODE_CONFIG_CONTENT` first, then project
+ * config, `OPENCODE_CONFIG`, global and well-known config, and lets the last
+ * matching rule decide. A policy in `OPENCODE_CONFIG_CONTENT` therefore loses
+ * to any project or user file, while one in `OPENCODE_CONFIG` outranks project
+ * config. With a contribution, the managed file stays the `OPENCODE_CONFIG`
+ * layer, and the user's own `OPENCODE_CONFIG` file, then their
+ * `OPENCODE_CONFIG_CONTENT`, move into `OPENCODE_CONFIG_CONTENT`.
+ * Their file is then read once per start, and `{file:…}` references in it
+ * resolve from OpenCode's working directory. A contribution or a user config
+ * that cannot be read fails the start rather than run OpenCode without it.
  *
  * @param {object} dependencies
  * @param {typeof import('node:fs/promises')} dependencies.fsPromises
@@ -61,9 +74,32 @@ export const createManagedConfigRuntime = ({
 
   /** The user owns `OPENCODE_CONFIG` when their environment already set it. */
   const ownsConfigFile = () => (env.OPENCODE_CONFIG ?? '').trim().length === 0;
+  // Whether the running child reads the managed file: set by each start.
+  let publishesConfigFile = ownsConfigFile();
 
-  const writeConfigFile = async (pluginDirectories) => {
-    const contributed = await contributeConfig();
+  const parseUserConfig = (text, source) => {
+    const errors = [];
+    const parsed = text.trim() ? parseJsonc(text, errors, { allowTrailingComma: true }) : {};
+    if (errors.length > 0 || parsed === null || parsed === undefined || Object.getPrototypeOf(parsed) !== Object.prototype) {
+      throw new Error(`${source} must contain a valid JSON object before OpenChamber can move it under a server plugin's config`);
+    }
+    return parsed;
+  };
+
+  /** The user's `OPENCODE_CONFIG` file, then their `OPENCODE_CONFIG_CONTENT`, as one config. */
+  const readUserConfig = async () => {
+    const userFile = path.resolve(env.OPENCODE_CONFIG.trim());
+    const fileText = await fsPromises.readFile(userFile, 'utf8').catch((error) => {
+      if (error?.code === 'ENOENT') return '';
+      throw error;
+    });
+    return mergeEngineConfig(
+      parseUserConfig(fileText, `OPENCODE_CONFIG (${userFile})`),
+      parseUserConfig(env.OPENCODE_CONFIG_CONTENT ?? '', 'OPENCODE_CONFIG_CONTENT'),
+    );
+  };
+
+  const writeConfigFile = async (pluginDirectories, contributed) => {
     await fsPromises.mkdir(dataDir, { recursive: true });
     const config = {
       ...contributed,
@@ -110,18 +146,22 @@ export const createManagedConfigRuntime = ({
   const buildManagedChildEnv = async () => {
     const directories = await materializeEnabledPlugins();
     const childEnv = agentToolRuntime ? agentToolRuntime.createChildEnv() : {};
+    const contributed = await contributeConfig();
     if (ownsConfigFile()) {
-      await writeConfigFile(directories);
+      await writeConfigFile(directories, contributed);
+      publishesConfigFile = true;
       return { ...childEnv, OPENCODE_CONFIG: filePath };
     }
-    const { plugins: contributedPlugins = [], ...contributed } = await contributeConfig();
+    if (Object.keys(contributed).length > 0) {
+      const userConfig = await readUserConfig();
+      await writeConfigFile(directories, contributed);
+      publishesConfigFile = true;
+      return { ...childEnv, OPENCODE_CONFIG: filePath, OPENCODE_CONFIG_CONTENT: JSON.stringify(userConfig) };
+    }
+    publishesConfigFile = false;
     let content = env.OPENCODE_CONFIG_CONTENT;
     for (const directory of [...DISABLED_BUILTIN_PLUGINS, ...directories]) {
       content = appendManagedPlugin(content, directory, 'managed plugin');
-    }
-    content = JSON.stringify(mergeEngineConfig(JSON.parse(content), contributed));
-    for (const plugin of contributedPlugins) {
-      content = appendManagedPlugin(content, plugin, 'contributed plugin');
     }
     return { ...childEnv, OPENCODE_CONFIG_CONTENT: content };
   };
@@ -129,13 +169,14 @@ export const createManagedConfigRuntime = ({
   /**
    * Rewrite the managed config file after a managed-plugin setting changed, so
    * the running OpenCode picks the new plugin list up. A no-op when the user
-   * owns `OPENCODE_CONFIG`; those installs still need a restart.
+   * owns `OPENCODE_CONFIG` and no server plugin contributes; those installs
+   * still need a restart.
    *
    * @returns {Promise<{updated: boolean, reason?: string}>}
    */
   const refreshManagedConfigFile = async () => {
-    if (!ownsConfigFile()) return { updated: false, reason: 'external-config' };
-    await writeConfigFile(await materializeEnabledPlugins());
+    if (!publishesConfigFile) return { updated: false, reason: 'external-config' };
+    await writeConfigFile(await materializeEnabledPlugins(), await contributeConfig());
     return { updated: true };
   };
 
