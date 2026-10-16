@@ -1,5 +1,5 @@
 import { canReuseManagedOpenCodePreflight } from './opencode-readiness.mjs';
-import { app, BrowserWindow, dialog, ipcMain, Menu, MessageChannelMain, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, session, shell, webContents } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, Menu, MessageChannelMain, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, session, shell, webContents } from 'electron';
 import contextMenu from 'electron-context-menu';
 import log from 'electron-log/main.js';
 import dgram from 'node:dgram';
@@ -14,6 +14,8 @@ import updaterPkg from 'electron-updater';
 import { ElectronSshManager } from './ssh-manager.mjs';
 import { replaceFileWithRetry } from './windows-file-replace.mjs';
 import { createTrayController } from './tray.mjs';
+import { createSafeStorageSecretStore } from './secret-store.mjs';
+import { createDeepLinkRegistry } from './deep-link-registry.mjs';
 import { resolveManagedOpenCodeCwd } from './opencode-cwd.mjs';
 import { stopEmbeddedServer } from './server-shutdown.mjs';
 import { resolveStartupUrlProbePlan } from './startup-url-selection.mjs';
@@ -1376,6 +1378,10 @@ const spawnLocalServer = async () => {
       : undefined,
     onDesktopNotification: (payload) => maybeShowNativeNotification(payload),
     getIsWindowFocused: isAnyWindowFocused,
+    pluginHost: {
+      secretStore: createSafeStorageSecretStore({ safeStorage }),
+      deepLinks: { register: deepLinkRegistry.register },
+    },
     getDesktopRuntimeConfig: () => ({
       apiBaseUrl: state.apiBaseUrl || '',
       requestHeaders: sanitizeRuntimeRequestHeaders(state.requestHeaders || {}),
@@ -1727,6 +1733,21 @@ const setTaskbarProgress = (value) => {
 };
 
 const pendingDeepLinks = [];
+
+const deepLinkRegistry = createDeepLinkRegistry({
+  onEmit: (event) => {
+    const target = state.mainWindow && !state.mainWindow.isDestroyed()
+      ? state.mainWindow
+      : BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
+    if (target) {
+      if (target.isMinimized()) target.restore();
+      target.show();
+      target.focus();
+    }
+    emitToAllWindows(event, {});
+  },
+  onError: (error, link) => log.warn('[electron] deep-link handler failed:', link.type, error),
+});
 const PENDING_SESSION_LINK_FALLBACK_MS = 10_000;
 
 // Hands the main window's renderer the session links that arrived before it
@@ -1968,8 +1989,9 @@ const confirmConnectDeepLink = async (payload) => {
   }
 };
 
-const dispatchDeepLink = (link) => {
+const dispatchDeepLink = async (link) => {
   if (!link) return;
+  if (await deepLinkRegistry.dispatch(link)) return;
   log.info('[electron] dispatching deep-link', { type: link.type, valueLen: link.value?.length || 0 });
   if (link.type === 'connect') {
     const pairingPayload = parseConnectPairingDeepLinkPayload(link.raw);
@@ -2050,7 +2072,7 @@ const flushPendingDeepLinks = ({ includeSessions }) => {
       kept.push(link);
       continue;
     }
-    dispatchDeepLink(link);
+    void dispatchDeepLink(link);
   }
   pendingDeepLinks.push(...kept);
 };
@@ -2065,7 +2087,7 @@ const handleDeepLinks = (urls) => {
     const parsed = parseDeepLink(raw);
     if (!parsed) continue;
     if (isMainWindowReadyForDeepLink()) {
-      dispatchDeepLink(parsed);
+      void dispatchDeepLink(parsed);
     } else {
       pendingDeepLinks.push(parsed);
     }

@@ -15,6 +15,12 @@
       "why": "Knip does not follow the product UI plugin's test files either, so the mittr-ui workspace names its spec files as entries too and the dead-code report stays identical to the base."
     }
   ],
+  "packages/electron/deep-link-registry.mjs": [
+    {
+      "hook": "electron-host",
+      "why": "A plugin needs to receive deep links on its own hosts, so this registry lets it claim a host (never one the app owns), and the app's dispatcher offers it every link before its own handling."
+    }
+  ],
   "packages/electron/early-startup.mjs": [
     {
       "hook": "electron",
@@ -47,6 +53,10 @@
     {
       "hook": "updater-ui",
       "why": "A build with no update feed answered update checks with \"no update available\", so the About page, and remote clients asking through the server, reported the app as up to date although nothing was ever checked."
+    },
+    {
+      "hook": "electron-host",
+      "why": "An in-process server plugin needs keychain-backed secrets and its own deep-link hosts, and the desktop shell offered neither, so it now passes plugins a safeStorage secret store and a deep-link handler registry that the dispatcher consults first, without a plugin editing the app's dispatcher."
     }
   ],
   "packages/electron/product-runtime.mjs": [
@@ -79,6 +89,12 @@
     {
       "hook": "product",
       "why": "The comment saying product values win over the environment had drifted above resolveAppNames, where it describes nothing, and left applyProductEnv, the function that overwrites the environment, without it."
+    }
+  ],
+  "packages/electron/secret-store.mjs": [
+    {
+      "hook": "electron-host",
+      "why": "A plugin needs to keep tokens sealed by the operating system's keychain, so this wraps Electron safeStorage as a two-method encrypt and decrypt store that is absent when the system offers no encryption."
     }
   ],
   "packages/electron/updater-capability.mjs": [

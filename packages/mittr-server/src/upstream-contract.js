@@ -60,6 +60,16 @@ export const UPSTREAM_CONTRACT = [
     why: 'one merge rule for engine config fragments, exported and handed to plugins on the context',
   },
   {
+    id: 'deep-link-registry-call-site',
+    files: ['packages/electron/main.mjs', 'packages/electron/deep-link-registry.mjs'],
+    why: "registered deep-link hosts are offered each link first, in the dispatcher's first statement, and the app keeps connect, focus, session and host",
+  },
+  {
+    id: 'plugin-host-option',
+    files: ['packages/electron/main.mjs', 'packages/electron/secret-store.mjs', 'packages/web/server/index.js'],
+    why: 'the desktop shell passes pluginHost (a safeStorage secret store and the deep-link register) to startWebUiServer, which hands it to plugins as context.host',
+  },
+  {
     id: 'product-runtime-server-plugins',
     files: ['packages/electron/product-runtime.mjs', 'packages/electron/early-startup.mjs'],
     why: 'product.json serverPlugins and env reach the server through the desktop shell',

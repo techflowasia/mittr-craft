@@ -264,6 +264,30 @@ const checks = {
     has(pluginContext(server), /^\s*mergeEngineConfig,$/m, 'the plugin context no longer carries mergeEngineConfig');
   },
 
+  'deep-link-registry-call-site': () => {
+    const main = source('packages/electron/main.mjs');
+    has(main, /const dispatchDeepLink = async \(link\) => \{\n  if \(!link\) return;\n  if \(await deepLinkRegistry\.dispatch\(link\)\) return;\n/, 'dispatchDeepLink is no longer async with the registry as its first statement after the null guard');
+    assert.equal(main.match(/dispatchDeepLink\(/g).length, 2, 'dispatchDeepLink gained or lost a caller');
+    assert.equal(main.match(/void dispatchDeepLink\(/g).length, 2, 'a caller of dispatchDeepLink no longer discards the promise explicitly');
+    assert.equal(main.match(/deepLinkRegistry\.dispatch\(/g).length, 1, 'the registry has more than one call site');
+    for (const host of ['connect', 'focus', 'session', 'host']) {
+      has(main, new RegExp(`link\\.type === '${host}'`), `upstream no longer dispatches the ${host} deep-link host, so the registry's reserved list is stale`);
+    }
+    has(main, /const deepLinkRegistry = createDeepLinkRegistry\(\{/);
+    has(main, /import \{ createDeepLinkRegistry \} from '\.\/deep-link-registry\.mjs';/);
+  },
+
+  'plugin-host-option': () => {
+    const main = source('packages/electron/main.mjs');
+    has(main, /import \{[^}]*\bsafeStorage\b[^}]*\} from 'electron';/, 'main.mjs no longer imports safeStorage from electron');
+    has(main, /import \{ createSafeStorageSecretStore \} from '\.\/secret-store\.mjs';/);
+    const start = main.indexOf('await startWebUiServer({');
+    assert.ok(start >= 0, 'main.mjs no longer calls startWebUiServer with an options object');
+    const call = main.slice(start, main.indexOf('\n  });', start));
+    has(call, /pluginHost: \{\s*secretStore: createSafeStorageSecretStore\(\{ safeStorage \}\),\s*deepLinks: \{ register: deepLinkRegistry\.register \},\s*\},/, 'startWebUiServer no longer receives pluginHost');
+    has(source('packages/web/server/index.js'), /host: options\.pluginHost \?\? null,/, 'the plugin context no longer reads options.pluginHost into host');
+  },
+
   'product-runtime-server-plugins': (t) => {
     const withPlugins = runProductRuntime(t, {
       serverPlugins: ['product-plugins/one.mjs'],
