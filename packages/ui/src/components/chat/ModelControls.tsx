@@ -41,6 +41,7 @@ import { useSession, useSessionMessages, useSessionRenderable } from '@/sync/syn
 import { useSync } from '@/sync/use-sync';
 import { useUIStore } from '@/stores/useUIStore';
 import { useModelLists } from '@/hooks/useModelLists';
+import { useProductModelPicker } from '@/lib/product-plugins';
 import { useIsTextTruncated } from '@/hooks/useIsTextTruncated';
 import { formatEffortLabel, getCycledPrimaryAgentName, isPrimaryMode, type MobileControlsPanel } from './mobileControlsUtils';
 import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
@@ -499,6 +500,11 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     });
     // Use global state for model selector (allows Ctrl+M shortcut)
     const agentMenuOpen = isModelSelectorOpen;
+    const productModelPicker = useProductModelPicker(agentMenuOpen || activeMobilePanel === 'model');
+    const isProductModelAllowed = React.useCallback(
+        (providerID: string) => productModelPicker.isProviderShown(providerID),
+        [productModelPicker],
+    );
     const setAgentMenuOpen = selection ? setLocalModelSelectorOpen : setModelSelectorOpen;
     const openAddProviderSettings = React.useCallback(() => {
         requestProviderConnect(true);
@@ -613,6 +619,9 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
     const visibleProviders = React.useMemo(() => {
         const result: typeof providers = [];
         for (const provider of providers) {
+            if (!isProductModelAllowed(String(provider.id))) {
+                continue;
+            }
             const providerModels = Array.isArray(provider.models) ? provider.models : [];
             const visibleModels = providerModels.filter((model: ProviderModel) => {
                 const modelId = typeof model?.id === 'string' ? model.id : '';
@@ -625,7 +634,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             }
         }
         return result;
-    }, [providers, hiddenModels]);
+    }, [providers, hiddenModels, isProductModelAllowed]);
 
     const matchesModelSearch = React.useCallback(
         (candidate: string, query: string) => matchesRankQuery([candidate], query),
@@ -1802,6 +1811,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
 
         const normalizedQuery = mobileModelQuery.trim();
         const filteredFavorites = favoriteModelsList.filter(({ model, providerID }) => {
+            if (!isProductModelAllowed(providerID)) return false;
             const provider = providers.find((entry) => entry.id === providerID);
             const providerName = provider?.name || providerID;
             const modelName = getModelDisplayName(model);
@@ -1811,6 +1821,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
         });
 
         const filteredRecents = recentModelsList.filter(({ model, providerID }) => {
+            if (!isProductModelAllowed(providerID)) return false;
             const provider = providers.find((entry) => entry.id === providerID);
             const providerName = provider?.name || providerID;
             const modelName = getModelDisplayName(model);
@@ -2635,6 +2646,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                     },
                                 } : null}
                                 hiddenModels={hiddenModels}
+                                isModelAllowed={isProductModelAllowed}
                                 onActiveKeyDown={handleModelPickerKeyDown}
                                 onActiveEntryChange={(entry) => { activeModelPickerEntryRef.current = entry; }}
                                 onVariantKey={handleThinkingVariantKey}

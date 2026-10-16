@@ -131,6 +131,12 @@
       "why": "A product plugin could only rename the product and swap the logo, so a build that needs its own sign-in screen, account menu, model-picker marks or composer actions would have had to edit each upstream component; a root wrapper and named slots that render nothing when no plugin fills them let it add those at one-line call sites."
     }
   ],
+  "packages/ui/src/components/chat/ModelControls.tsx": [
+    {
+      "hook": "model-controls",
+      "why": "A product plugin's model-picker decorations reached no picker, so a build that offers only its own provider's models (unless the person opts in to others) had no way to keep the rest out of the composer's model list on desktop and in the mobile sheet short of editing the composer."
+    }
+  ],
   "packages/ui/src/components/sections/openchamber/AboutSettings.tsx": [
     {
       "hook": "updater-ui",
