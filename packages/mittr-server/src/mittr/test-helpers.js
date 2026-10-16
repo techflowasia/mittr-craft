@@ -22,7 +22,7 @@ export const json = (body, status = 200) => new Response(JSON.stringify(body), {
 export const fakeFetch = (respond = () => json({})) => {
   const calls = [];
   const impl = async (url, init = {}) => {
-    const call = { url: String(url), method: init.method, body: init.body ? JSON.parse(init.body) : undefined };
+    const call = { url: String(url), method: init.method, body: init.body ? JSON.parse(init.body) : undefined, signal: init.signal };
     calls.push(call);
     return respond(call, calls.length);
   };
@@ -45,4 +45,11 @@ export const serve = async (t, app) => {
     });
     return { status: response.status, body: await response.json() };
   };
+};
+
+/** A promise and the function that settles it, for holding a fetch mid-flight. */
+export const deferred = () => {
+  let resolve;
+  const promise = new Promise((settle) => { resolve = settle; });
+  return { promise, resolve };
 };

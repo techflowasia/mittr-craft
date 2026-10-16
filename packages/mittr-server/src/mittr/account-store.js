@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import nodeFs from 'node:fs';
 import path from 'node:path';
 
@@ -44,22 +44,54 @@ export const parseAccountIndex = (raw) => {
   return { active, accounts };
 };
 
-export function createAccountStore({ dataDir, encrypt, decrypt, fs = nodeFs }) {
+export function createAccountStore({ dataDir, encrypt, decrypt, fs = nodeFs, logger = console }) {
   const root = path.join(dataDir, ACCOUNTS_DIR);
   const indexPath = accountIndexPath(dataDir);
   const sessionPath = (userId) => path.join(root, `${keyOf(userId)}.session`);
 
+  // Written beside the target and renamed over it, so a crash mid-write
+  // leaves the old file whole rather than a truncated one.
   const writePrivate = (filePath, content) => {
     fs.mkdirSync(root, { recursive: true });
-    fs.writeFileSync(filePath, content, { mode: 0o600 });
-    if (process.platform !== 'win32') fs.chmodSync(filePath, 0o600);
+    const temporary = `${filePath}.${process.pid}-${randomBytes(4).toString('hex')}.tmp`;
+    try {
+      fs.writeFileSync(temporary, content, { mode: 0o600 });
+      if (process.platform !== 'win32') fs.chmodSync(temporary, 0o600);
+      fs.renameSync(temporary, filePath);
+    } catch (error) {
+      fs.rmSync(temporary, { force: true });
+      throw error;
+    }
+  };
+
+  // Missing means no accounts yet; anything else that cannot be read throws.
+  const loadIndex = () => {
+    let raw;
+    try {
+      raw = fs.readFileSync(indexPath, 'utf8');
+    } catch (error) {
+      if (error?.code === 'ENOENT') return emptyIndex();
+      throw error;
+    }
+    return parseAccountIndex(raw);
   };
 
   const readIndex = () => {
     try {
-      return parseAccountIndex(fs.readFileSync(indexPath, 'utf8'));
+      return loadIndex();
     } catch {
       return emptyIndex();
+    }
+  };
+
+  // An index that exists but cannot be read is never written over: a fresh
+  // one would give the next account the first account's engine history.
+  const indexForWrite = () => {
+    try {
+      return loadIndex();
+    } catch (error) {
+      logger.error(`[mittr] the account index at ${indexPath} cannot be read; leaving it as it is:`, error?.message ?? error);
+      throw new Error('The Mittr account index cannot be read');
     }
   };
 
@@ -100,7 +132,12 @@ export function createAccountStore({ dataDir, encrypt, decrypt, fs = nodeFs }) {
   const carryLegacySession = () => {
     const legacyPath = path.join(dataDir, LEGACY_SESSION_FILE);
     if (!fs.existsSync(legacyPath)) return;
-    const index = readIndex();
+    let index;
+    try {
+      index = indexForWrite();
+    } catch {
+      return;
+    }
     if (index.accounts.length === 0) {
       try {
         const session = parseSession(JSON.parse(decrypt(fs.readFileSync(legacyPath))));
@@ -123,12 +160,18 @@ export function createAccountStore({ dataDir, encrypt, decrypt, fs = nodeFs }) {
     return index.active ? readSessionOf(index.active) : null;
   };
 
+  // The session of an account that is signed in, active or not.
+  const readOf = (userId) => {
+    const entry = readIndex().accounts.find((candidate) => candidate.userId === userId);
+    return entry?.signedIn ? readSessionOf(userId) : null;
+  };
+
   const write = (session, { activate = true } = {}) => {
-    writeIndex(upsert(readIndex(), session, activate));
+    writeIndex(upsert(indexForWrite(), session, activate));
   };
 
   const signOut = (userId) => {
-    const index = readIndex();
+    const index = indexForWrite();
     const entry = index.accounts.find((candidate) => candidate.userId === userId);
     if (!entry) return;
     entry.signedIn = false;
@@ -140,12 +183,12 @@ export function createAccountStore({ dataDir, encrypt, decrypt, fs = nodeFs }) {
   };
 
   const clear = () => {
-    const index = readIndex();
+    const index = indexForWrite();
     if (index.active) signOut(index.active);
   };
 
   const activate = (userId) => {
-    const index = readIndex();
+    const index = indexForWrite();
     const entry = index.accounts.find((candidate) => candidate.userId === userId);
     if (!entry || !entry.signedIn) throw new Error('That account is not signed in on this machine');
     index.active = userId;
@@ -164,5 +207,5 @@ export function createAccountStore({ dataDir, encrypt, decrypt, fs = nodeFs }) {
     return index.accounts.find((entry) => entry.userId === index.active)?.home ?? null;
   };
 
-  return { read, write, clear, activate, signOut, list, activeHome };
+  return { read, readOf, write, clear, activate, signOut, list, activeHome };
 }

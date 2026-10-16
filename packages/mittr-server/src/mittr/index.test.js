@@ -101,7 +101,7 @@ test('a desktop without a keychain refuses sign-in and leaves the stored tokens 
   setupMittr({ app, express, dataDir, logger, host: { secretStore: null, deepLinks: deepLinkHost() } }, { env: DEV_ENV, fetchImpl });
   const call = await serve(t, app);
 
-  const refusal = { status: 503, body: { error: 'This Mac has no keychain available for MittrCraft to store your sign-in safely' } };
+  const refusal = { status: 503, body: { error: "MittrCraft can't find a secure keychain on this computer to keep your sign-in safe." } };
   assert.deepEqual(await call('POST', '/api/mittr/auth/start'), refusal);
   assert.deepEqual(await call('POST', '/api/mittr/auth/callback', { url: 'mittrcraft-dev://auth/callback?code=c1' }), refusal);
   assert.deepEqual(await call('DELETE', '/api/mittr/auth/session'), refusal);

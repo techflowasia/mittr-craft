@@ -29,7 +29,7 @@ test('a desktop without a keychain refuses instead of falling back to plain text
   const logger = recordingLogger();
   const chosen = chooseSecretStore({ host: { secretStore: null }, logger });
   assert.equal(chosen.refusal, NO_KEYCHAIN);
-  assert.equal(NO_KEYCHAIN, 'This Mac has no keychain available for MittrCraft to store your sign-in safely');
+  assert.equal(NO_KEYCHAIN, "MittrCraft can't find a secure keychain on this computer to keep your sign-in safe.");
   assert.throws(() => chosen.encrypt('r1'), { message: NO_KEYCHAIN });
   assert.throws(() => chosen.decrypt(Buffer.from('x')), { message: NO_KEYCHAIN });
   assert.deepEqual(logger.warnings, []);

@@ -125,6 +125,11 @@ export const UPSTREAM_CONTRACT = [
     ],
   },
   {
+    id: 'plugin-routes-behind-api-auth',
+    files: ['packages/web/server/index.js', 'packages/web/server/lib/opencode/bootstrap-runtime.js', 'packages/web/server/lib/opencode/core-routes.js'],
+    why: 'routes a server plugin mounts under /api, Mittr sign-in among them, sit behind the API auth the server installs before it loads plugins',
+  },
+  {
     id: 'product-deep-link-scheme',
     files: ['packages/electron/early-startup.mjs', 'packages/electron/main.mjs', 'brand/product.dev.json', 'brand/product.prod.json'],
     why: 'the sign-in callback the server accepts is on the same URL scheme the desktop shell registers from the product',

@@ -15,6 +15,12 @@ export const REFRESH_MARGIN_MS = 60_000;
 
 const BODY_LIMIT = '8kb';
 
+// A platform that stops answering must not hold a sign-in, or every model call
+// waiting on a refresh, open for good.
+const PLATFORM_TIMEOUT_MS = 15_000;
+
+const CANNOT_STORE = 'Cannot store the Mittr sign-in on this machine';
+
 const statusOf = (session) => (session
   ? { signedIn: true, userId: session.subject.userId, displayName: session.subject.displayName }
   : { signedIn: false });
@@ -96,6 +102,7 @@ export function registerMittrAuthRoutes(app, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ code, code_verifier: verifier, redirect_uri: redirectUri }),
+        signal: AbortSignal.timeout(PLATFORM_TIMEOUT_MS),
       });
     } catch (error) {
       logger.error('[mittr] sign-in exchange failed:', error?.message ?? error);
@@ -115,7 +122,12 @@ export function registerMittrAuthRoutes(app, {
     }
 
     const before = activeUserId();
-    store.write(session);
+    try {
+      store.write(session);
+    } catch (error) {
+      logger.error('[mittr] could not store the sign-in:', error?.message ?? error);
+      return failure(500, CANNOT_STORE);
+    }
 
     if (before !== session.subject.userId) {
       await announceAccountChange(session.subject.userId);
@@ -150,7 +162,12 @@ export function registerMittrAuthRoutes(app, {
   app.get('/api/mittr/auth/status', (_req, res) => res.json(statusOf(store.read())));
 
   app.delete('/api/mittr/auth/session', refuseWhenUnsafe, async (_req, res) => {
-    store.clear();
+    try {
+      store.clear();
+    } catch (error) {
+      logger.error('[mittr] could not sign out:', error?.message ?? error);
+      return res.status(500).json({ error: CANNOT_STORE });
+    }
     const next = store.read();
     await announceAccountChange(next?.subject.userId ?? null);
     return res.json(statusOf(next));
@@ -161,10 +178,12 @@ export function registerMittrAuthRoutes(app, {
   app.post('/api/mittr/auth/accounts/activate', refuseWhenUnsafe, readJson, async (req, res) => {
     const userId = typeof req.body?.userId === 'string' ? req.body.userId : '';
     if (activeUserId() === userId) return res.json(statusOf(store.read()));
+    if (!store.list().some((account) => account.userId === userId)) return res.status(404).json({ error: 'That account is not signed in on this machine' });
     try {
       store.activate(userId);
-    } catch {
-      return res.status(404).json({ error: 'That account is not signed in on this machine' });
+    } catch (error) {
+      logger.error('[mittr] could not switch account:', error?.message ?? error);
+      return res.status(500).json({ error: CANNOT_STORE });
     }
     await announceAccountChange(userId);
     return res.json(statusOf(store.read()));
@@ -172,12 +191,18 @@ export function registerMittrAuthRoutes(app, {
 
   const refresh = async (session) => {
     const { userId } = session.subject;
+    // A sign-out, or a sign-out and a fresh sign-in, may land while the
+    // request is out. The answer then belongs to a session that is gone, and
+    // acting on it would bring the account back or sign the new session out.
+    const stillCurrent = () => store.readOf(userId)?.refreshToken === session.refreshToken;
     try {
       const response = await fetchImpl(endpoint(ENDPOINT.refresh), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ refresh_token: session.refreshToken }),
+        signal: AbortSignal.timeout(PLATFORM_TIMEOUT_MS),
       });
+      if (!stillCurrent()) return store.read();
 
       if (response.status === 401) {
         // Only the account this refresh was for: the active one may have
@@ -192,6 +217,7 @@ export function registerMittrAuthRoutes(app, {
       if (!response.ok) return store.read();
 
       const refreshed = parseSession(await response.json());
+      if (!stillCurrent()) return store.read();
       store.write(refreshed, { activate: false });
       const current = store.read();
       return current?.subject.userId === refreshed.subject.userId ? refreshed : current;

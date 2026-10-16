@@ -8,7 +8,7 @@ import express from 'express';
 
 import { createAccountStore } from './account-store.js';
 import { REFRESH_MARGIN_MS, registerMittrAuthRoutes } from './auth-routes.js';
-import { decrypt, encrypt, fakeFetch, json, serve, tempDataDir } from './test-helpers.js';
+import { decrypt, deferred, encrypt, fakeFetch, json, serve, tempDataDir } from './test-helpers.js';
 
 const NOW = 1_800_000_000_000;
 const BROKER = { baseUrl: 'https://api-dev.mittr.asia', upstreamV1: 'https://api-dev.mittr.asia/v1', fixed: false };
@@ -304,7 +304,7 @@ test('an account change that fails is logged, not answered as a failure', async 
 });
 
 test('a refused sign-in changes nothing on disk', async (t) => {
-  const refusal = 'This Mac has no keychain available for MittrCraft to store your sign-in safely';
+  const refusal = "MittrCraft can't find a secure keychain on this computer to keep your sign-in safe.";
   const { call, fetchImpl, dataDir } = await harness(t, { sessions: [sessionFor('u-a', 'A')], signInRefusal: refusal });
   const before = fs.readdirSync(path.join(dataDir, 'mittr-accounts')).map((name) => [name, fs.readFileSync(path.join(dataDir, 'mittr-accounts', name), 'utf8')]);
 
@@ -325,4 +325,76 @@ test('a body larger than 8 kB is refused', async (t) => {
   const { call } = await harness(t);
   await startSignIn(call);
   assert.equal((await call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=${'x'.repeat(9_000)}` })).status, 413);
+});
+
+test('a sign-out during a refresh in flight wins over the refresh', async (t) => {
+  const release = deferred();
+  const fetchImpl = fakeFetch(async () => {
+    await release.promise;
+    return json(sessionFor('u-a', 'A', { accessToken: 'at-2', refreshToken: 'r2' }));
+  });
+  const { auth, store, call } = await harness(t, { fetchImpl, sessions: [sessionFor('u-a', 'A', { expiresAt: NOW + 1_000 })] });
+
+  const refreshing = auth.ensureFreshSession();
+  await new Promise(setImmediate);
+  store.clear();
+  release.resolve();
+
+  assert.equal(await refreshing, null);
+  assert.equal(fetchImpl.calls.length, 1);
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
+  assert.deepEqual(store.list(), []);
+  assert.equal(store.readOf('u-a'), null);
+});
+
+test('a stale refusal does not sign out a fresh sign-in of the same account', async (t) => {
+  const release = deferred();
+  const fetchImpl = fakeFetch(async () => {
+    await release.promise;
+    return json({ error: 'invalid_grant' }, 401);
+  });
+  const { auth, store, call } = await harness(t, { fetchImpl, sessions: [sessionFor('u-a', 'A', { expiresAt: NOW + 1_000 })] });
+
+  const refreshing = auth.ensureFreshSession();
+  await new Promise(setImmediate);
+  store.signOut('u-a');
+  store.write(sessionFor('u-a', 'A', { accessToken: 'at-fresh', refreshToken: 'r-fresh' }));
+  release.resolve();
+
+  assert.equal((await refreshing).accessToken, 'at-fresh');
+  assert.equal(store.read().refreshToken, 'r-fresh');
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: true, userId: 'u-a', displayName: 'A' });
+});
+
+test('the exchange and the refresh give up after 15 seconds', async (t) => {
+  const timeouts = t.mock.method(AbortSignal, 'timeout');
+  const fetchImpl = fakeFetch(() => json(sessionFor('u-a', 'A', { expiresAt: NOW + 1_000 })));
+  const { auth, call } = await harness(t, { fetchImpl });
+  await startSignIn(call);
+  await call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=c1` });
+  await auth.ensureFreshSession();
+
+  assert.deepEqual(fetchImpl.calls.map((entry) => new URL(entry.url).pathname), ['/auth/desktop/exchange', '/auth/desktop/refresh']);
+  for (const entry of fetchImpl.calls) assert.ok(entry.signal instanceof AbortSignal, entry.url);
+  assert.deepEqual(timeouts.mock.calls.map((entry) => entry.arguments), [[15_000], [15_000]]);
+});
+
+test('a sign-in that cannot be stored is answered, and the index is left as it is', async (t) => {
+  const fetchImpl = fakeFetch(() => json(sessionFor('u-a', 'A')));
+  const { call, dataDir } = await harness(t, { fetchImpl });
+  t.mock.method(console, 'error', () => {});
+  const indexFile = path.join(dataDir, 'mittr-accounts', 'index.json');
+  fs.mkdirSync(path.dirname(indexFile), { recursive: true });
+  fs.writeFileSync(indexFile, '{"active": "u-x", "accou');
+  await startSignIn(call);
+
+  assert.deepEqual(await call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=c1` }), {
+    status: 500,
+    body: { error: 'Cannot store the Mittr sign-in on this machine' },
+  });
+  assert.deepEqual(await call('DELETE', '/api/mittr/auth/session'), {
+    status: 500,
+    body: { error: 'Cannot store the Mittr sign-in on this machine' },
+  });
+  assert.equal(fs.readFileSync(indexFile, 'utf8'), '{"active": "u-x", "accou');
 });

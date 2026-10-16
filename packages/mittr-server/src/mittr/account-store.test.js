@@ -188,3 +188,46 @@ test('phase-1 accounts reader agrees with the store', (t) => {
   store().signOut('u1');
   assert.equal(activeAccountHome(dataDir, { logger: { warn: () => {} } }), store().activeHome());
 });
+
+test('readOf answers only a signed-in account', (t) => {
+  const store = storeIn(tempDataDir(t));
+  store().write(sessionFor('u1', 'A'));
+  store().write(sessionFor('u2', 'B'));
+  assert.equal(store().readOf('u1').accessToken, 'at-u1');
+  store().signOut('u1');
+  assert.equal(store().readOf('u1'), null);
+  assert.equal(store().readOf('nobody'), null);
+});
+
+test('an index that exists but cannot be parsed is never overwritten', (t) => {
+  const dataDir = tempDataDir(t);
+  fs.mkdirSync(accountsDir(dataDir), { recursive: true });
+  const indexFile = path.join(accountsDir(dataDir), 'index.json');
+  const truncated = '{"active": "u1", "accounts": [{"userId": "u1", "home": null, "signedIn": tr';
+  fs.writeFileSync(indexFile, truncated);
+  fs.writeFileSync(path.join(dataDir, 'mittr-session'), encrypt(JSON.stringify(sessionFor('u2', 'B'))));
+  const errors = [];
+  const store = createAccountStore({ dataDir, encrypt, decrypt, logger: { error: (...args) => errors.push(args.join(' ')), warn: () => {} } });
+
+  assert.throws(() => store.write(sessionFor('u2', 'B')), /account index cannot be read/);
+  assert.throws(() => store.activate('u1'), /account index cannot be read/);
+  assert.throws(() => store.signOut('u1'), /account index cannot be read/);
+  assert.throws(() => store.clear(), /account index cannot be read/);
+
+  assert.equal(fs.readFileSync(indexFile, 'utf8'), truncated);
+  assert.deepEqual(fs.readdirSync(accountsDir(dataDir)), ['index.json']);
+  assert.equal(fs.existsSync(path.join(dataDir, 'mittr-session')), true);
+  assert.ok(errors.length >= 4);
+  assert.equal(store.read(), null);
+  assert.deepEqual(store.list(), []);
+});
+
+test('writes go through a temporary file and leave none behind', (t) => {
+  const dataDir = tempDataDir(t);
+  const renames = [];
+  const recordingFs = { ...fs, renameSync: (from, to) => { renames.push([path.basename(from), path.basename(to)]); fs.renameSync(from, to); } };
+  createAccountStore({ dataDir, encrypt, decrypt, fs: recordingFs }).write(sessionFor('u1', 'A'));
+  assert.deepEqual(renames.map(([, to]) => to), [`${homeOf('u1')}.session`, 'index.json']);
+  for (const [from, to] of renames) assert.notEqual(from, to);
+  assert.deepEqual(fs.readdirSync(accountsDir(dataDir)).sort(), [`${homeOf('u1')}.session`, 'index.json']);
+});

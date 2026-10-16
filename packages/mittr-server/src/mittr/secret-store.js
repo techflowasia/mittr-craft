@@ -1,4 +1,4 @@
-export const NO_KEYCHAIN = 'This Mac has no keychain available for MittrCraft to store your sign-in safely';
+export const NO_KEYCHAIN = "MittrCraft can't find a secure keychain on this computer to keep your sign-in safe.";
 
 /**
  * For a runtime with no desktop host (hosted web, the CLI): the tokens sit on

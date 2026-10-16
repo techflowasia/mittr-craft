@@ -434,6 +434,59 @@ const checks = {
     }
   },
 
+  'plugin-routes-behind-api-auth': (t) => {
+    const server = source('packages/web/server/index.js');
+    const baseRoutes = server.indexOf('const bootstrapResult = bootstrapRuntime.setupBaseRoutes(app, {');
+    const plugins = server.indexOf('serverPlugins = await loadServerPlugins(');
+    assert.ok(baseRoutes >= 0 && plugins > baseRoutes, 'the server no longer sets up its base routes, API auth among them, before it loads plugins');
+    has(source('packages/web/server/lib/opencode/bootstrap-runtime.js'), /registerAuthAndAccessRoutes\(app, \{/, 'the base routes no longer include auth and access');
+    const core = source('packages/web/server/lib/opencode/core-routes.js');
+    const access = core.slice(core.indexOf('export const registerAuthAndAccessRoutes = '), core.indexOf('export const registerSettingsUtilityRoutes = '));
+    has(access, /app\.use\('\/api', async \(req, res, next\) => \{\s*try \{\s*await requireApiAuth\(req, res, next\);/, 'auth and access no longer guard every /api request');
+
+    // On the real server, one fresh process per case (the server module
+    // holds one server per process): a plugin's /api route answers without a
+    // UI password and is refused without a session when one is set.
+    const dir = tempDir(t, 'contract-api-auth-');
+    const plugin = path.join(dir, 'probe-plugin.mjs');
+    fs.writeFileSync(plugin, "export default (context) => { context.app.get('/api/contract-probe', (_req, res) => res.json({ reached: true })); };");
+    const script = `
+      const { startWebUiServer } = await import(process.env.CONTRACT_SERVER_URL);
+      const handle = await startWebUiServer({ port: 0, host: '127.0.0.1', attachSignals: false, exitOnShutdown: false, uiPassword: process.env.CONTRACT_UI_PASSWORD });
+      const response = await fetch('http://127.0.0.1:' + handle.httpServer.address().port + '/api/contract-probe');
+      await handle.stop({ exitProcess: false });
+      console.log(JSON.stringify(response.status));
+      process.exit(0);
+    `;
+    const probeStatus = (uiPassword) => {
+      const home = tempDir(t, 'contract-home-');
+      const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(GIT_|OPENCODE_|OPENCHAMBER_|XDG_)/.test(name)));
+      const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+        encoding: 'utf8',
+        timeout: 60_000,
+        env: {
+          ...inherited,
+          HOME: home,
+          XDG_CONFIG_HOME: path.join(home, '.config'),
+          XDG_DATA_HOME: path.join(home, '.local', 'share'),
+          XDG_STATE_HOME: path.join(home, '.local', 'state'),
+          XDG_CACHE_HOME: path.join(home, '.cache'),
+          OPENCHAMBER_DATA_DIR: path.join(home, 'data'),
+          OPENCODE_SKIP_START: 'true',
+          OPENCODE_PORT: '9',
+          OPENCHAMBER_UPDATE_CHECK_DISABLED: '1',
+          OPENCHAMBER_SERVER_PLUGINS: JSON.stringify([plugin]),
+          CONTRACT_UI_PASSWORD: uiPassword,
+          CONTRACT_SERVER_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/index.js')).href,
+        },
+      });
+      assert.equal(result.status, 0, result.stderr || String(result.error ?? result.signal));
+      return JSON.parse(result.stdout.trim().split('\n').at(-1));
+    };
+    assert.equal(probeStatus(''), 200, 'the probe route is not reachable on an open server');
+    assert.equal(probeStatus('contract-password'), 401, 'a plugin /api route answered without a UI session');
+  },
+
   'product-deep-link-scheme': () => {
     for (const flavor of ['dev', 'prod']) {
       const product = JSON.parse(source(`brand/product.${flavor}.json`));
