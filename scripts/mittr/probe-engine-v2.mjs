@@ -30,14 +30,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-// R52: the hosted `opencode` provider stays denied with the switch ON.
-export const policiesFor = ({ showOtherProviders, providerId }) =>
-  showOtherProviders
-    ? [{ action: 'provider.use', resource: 'opencode', effect: 'deny' }]
-    : [
-        { action: 'provider.use', resource: '*', effect: 'deny' },
-        { action: 'provider.use', resource: providerId, effect: 'allow' },
-      ];
+import { policiesFor } from '../../packages/mittr-server/src/mittr/policies.js';
 
 export const quotaRefusal = ({ kind, resetsAt }) => ({
   status: 402,

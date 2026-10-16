@@ -10,21 +10,10 @@ import {
   nonLoopbackFromLog,
   nonLoopbackFromLsof,
   openCodeMentions,
-  policiesFor,
   quotaRefusal,
   refusedByPolicy,
   stopConditionFor,
 } from './probe-engine-v2.mjs';
-
-test('policiesFor locks to one provider', () => {
-  assert.deepEqual(policiesFor({ showOtherProviders: false, providerId: 'mittr' }), [
-    { action: 'provider.use', resource: '*', effect: 'deny' },
-    { action: 'provider.use', resource: 'mittr', effect: 'allow' },
-  ]);
-  assert.deepEqual(policiesFor({ showOtherProviders: true, providerId: 'mittr' }), [
-    { action: 'provider.use', resource: 'opencode', effect: 'deny' },
-  ]);
-});
 
 test('refusedByPolicy needs an unanswered turn that failed with provider.no-route', () => {
   const noRoute = { type: 'session.execution.failed', error: { type: 'provider.no-route' } };

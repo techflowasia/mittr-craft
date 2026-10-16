@@ -207,6 +207,16 @@ export const UPSTREAM_CONTRACT = [
     ],
     nativeModules: ['node-pty', 'bun-pty'],
   },
+  {
+    id: 'engine-integration-connect-key',
+    files: ['node_modules/@opencode/client/package.json'],
+    why: 'the engine stores a provider key through POST /api/integration/{id}/connect/key with a { key } body and answers 204, or 404 until a config-defined provider is picked up; the Mittr credential is stored that way',
+  },
+  {
+    id: 'engine-credential-list-remove',
+    files: ['node_modules/@opencode/client/package.json'],
+    why: 'GET /api/credential answers { data: [{ id, integrationID, value }] } and DELETE /api/credential/{id} answers 204; the Mittr keys of earlier runs are removed that way',
+  },
 ];
 
 // The dictionaries are TypeScript with extensionless imports, which only Bun

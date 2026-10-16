@@ -3,7 +3,11 @@ import path from 'node:path';
 import { createAccountStore } from './account-store.js';
 import { registerMittrAuthRoutes } from './auth-routes.js';
 import { resolveBroker } from './broker.js';
+import { ensureMittrCredential, forgetMittrCredential } from './engine-credential.js';
 import { ensureLocalToken } from './local-token.js';
+import { createMittrSettings } from './mittr-settings.js';
+import { policiesFragment } from './policies.js';
+import { loopbackProxyExemption, mittrProviderFragment, shimBaseUrl } from './provider-config.js';
 import { chooseSecretStore } from './secret-store.js';
 import { registerMittrShim } from './shim-routes.js';
 import { deepLinkScheme } from './sign-in.js';
@@ -19,11 +23,17 @@ const SHIM_TOKEN_FILE = 'mittr-shim-token';
  * `mittrcraft[-dev]://auth/callback` deep link finishes a sign-in the same
  * way the callback route does.
  *
+ * Mittr reaches the engine as the `mittr` provider in the managed config,
+ * pointed at the shim, with the shim's per-run key as its credential (R55:
+ * the engine never holds the Mittr token). The same config carries the
+ * provider lock from the very first build.
+ *
  * Returns what the server plugin merges: an engine env, a config fragment and
- * a dispose that does no network I/O, so it can never hold up shutdown.
+ * a dispose that does no network I/O, so it can never hold up shutdown, plus
+ * `applyModels(items)`, which sets the account's models.
  */
 export function setupMittr(context, { env = process.env, fetchImpl = (...args) => fetch(...args), sharedHistoryExists = () => true } = {}) {
-  const { app, express, dataDir, logger = console, host = null } = context;
+  const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig } = context;
   const broker = resolveBroker(env);
   const scheme = deepLinkScheme(env);
   const { encrypt, decrypt, refusal } = chooseSecretStore({ host, logger });
@@ -71,10 +81,53 @@ export function setupMittr(context, { env = process.env, fetchImpl = (...args) =
     },
   }) ?? null;
 
+  const mittrSettings = createMittrSettings({ dataDir, logger });
+  let models = [];
+
+  // The port is unknown before listen and may be random, so the URL is built
+  // on each write. Without it there is no provider, but the lock stays.
+  const providerFragment = () => {
+    const port = server.port();
+    return port === null ? {} : mittrProviderFragment({ shimBaseUrl: shimBaseUrl(port), models });
+  };
+  const managedConfig = async () =>
+    [providerFragment(), policiesFragment(await mittrSettings.read())].reduce((merged, fragment) => mergeEngineConfig(merged, fragment), {});
+
+  // Never throws: it runs from the engine's ready listener, and a failure
+  // waits for the next ready or the next model change. Before the engine's
+  // first ready there is nobody to give the key to; that ready gives it.
+  let engineStarted = false;
+  const storeCredential = async () => {
+    if (models.length === 0 || !engineStarted) return;
+    try {
+      if (await ensureMittrCredential({ opencode, key: localToken, fetchImpl }) === 'stored') {
+        logger.log('[mittr] the engine has its Mittr key for this run');
+      }
+    } catch (error) {
+      logger.warn('[mittr] could not give the engine its Mittr key; trying again when it is next ready:', error?.message ?? error);
+    }
+  };
+
+  // Each ready is a new engine, maybe on the same port and another account's
+  // database, and the key is new each run, so it is stored again.
+  const unsubscribeReady = opencode.onReady(() => {
+    engineStarted = true;
+    forgetMittrCredential(opencode);
+    void storeCredential();
+  });
+
+  const applyModels = async (items) => {
+    models = items.map(({ alias, label }) => ({ alias, label }));
+    await context.managedConfig.refresh();
+    await storeCredential();
+  };
+
   return {
-    engineEnv: () => ({}),
-    managedConfig: () => ({}),
+    engineEnv: () => loopbackProxyExemption(env),
+    managedConfig,
+    applyModels,
     dispose: async () => {
+      unsubscribeReady();
       unregisterDeepLink?.();
     },
   };

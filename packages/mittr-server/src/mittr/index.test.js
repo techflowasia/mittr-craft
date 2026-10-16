@@ -6,7 +6,7 @@ import test from 'node:test';
 import express from 'express';
 
 import { setupMittr } from './index.js';
-import { deferred, fakeFetch, json, serve, tempDataDir } from './test-helpers.js';
+import { deferred, fakeEngineContext, fakeEngineFetch, fakeFetch, json, serve, tempDataDir, until } from './test-helpers.js';
 
 const NOW = Date.now();
 const DEV_ENV = { MITTRCRAFT_BROKER_URL: 'https://api-dev.mittr.asia', MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft-dev' };
@@ -19,9 +19,10 @@ const sealingStore = () => ({
 });
 
 const recordingLogger = () => {
+  const lines = [];
   const warnings = [];
   const errors = [];
-  return { warnings, errors, log: () => {}, warn: (...args) => warnings.push(args.join(' ')), error: (...args) => errors.push(args.join(' ')) };
+  return { lines, warnings, errors, log: (...args) => lines.push(args.join(' ')), warn: (...args) => warnings.push(args.join(' ')), error: (...args) => errors.push(args.join(' ')) };
 };
 
 const deepLinkHost = () => {
@@ -46,11 +47,12 @@ const serverLikeApp = () => {
   return app;
 };
 
-const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t) } = {}) => {
+const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext() } = {}) => {
   const app = serverLikeApp();
   const logger = recordingLogger();
-  const mittr = setupMittr({ app, express, dataDir, logger, host }, { env, fetchImpl });
-  return { mittr, dataDir, logger, fetchImpl, call: await serve(t, app) };
+  const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context }, { env, fetchImpl });
+  t.after(() => mittr.dispose());
+  return { mittr, dataDir, logger, fetchImpl, engine, call: await serve(t, app) };
 };
 
 const signIn = async (call) => {
@@ -109,7 +111,7 @@ test('a desktop without a keychain refuses sign-in and leaves the stored tokens 
   const dataDir = tempDataDir(t);
   const sealed = sealingStore();
   const keyed = express();
-  setupMittr({ app: keyed, express, dataDir, logger: recordingLogger(), host: { secretStore: sealed, deepLinks } }, { env: DEV_ENV, fetchImpl: fakeFetch(() => json(session)) });
+  setupMittr({ app: keyed, express, dataDir, logger: recordingLogger(), host: { secretStore: sealed, deepLinks }, ...fakeEngineContext().context }, { env: DEV_ENV, fetchImpl: fakeFetch(() => json(session)) });
   assert.equal((await signIn(await serve(t, keyed))).status, 200);
   const snapshot = () => fs.readdirSync(path.join(dataDir, 'mittr-accounts')).map((name) => [name, fs.readFileSync(path.join(dataDir, 'mittr-accounts', name), 'utf8')]);
   const before = snapshot();
@@ -117,7 +119,7 @@ test('a desktop without a keychain refuses sign-in and leaves the stored tokens 
   const app = express();
   const logger = recordingLogger();
   const fetchImpl = fakeFetch(() => json(session));
-  setupMittr({ app, express, dataDir, logger, host: { secretStore: null, deepLinks: deepLinkHost() } }, { env: DEV_ENV, fetchImpl });
+  setupMittr({ app, express, dataDir, logger, host: { secretStore: null, deepLinks: deepLinkHost() }, ...fakeEngineContext().context }, { env: DEV_ENV, fetchImpl });
   const call = await serve(t, app);
 
   const refusal = { status: 503, body: { error: "MittrCraft can't find a secure keychain on this computer to keep your sign-in safe." } };
@@ -138,11 +140,17 @@ test('without a desktop host tokens are kept in a private plain file, with one w
   if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(dataDir, 'mittr-accounts', file)).mode & 0o777, 0o600);
 });
 
+const LOCKED = [
+  { action: 'provider.use', resource: '*', effect: 'deny' },
+  { action: 'provider.use', resource: 'mittr', effect: 'allow' },
+];
+
 test('setup hands the server plugin an engine env, a config fragment and a bounded dispose', async (t) => {
-  const { mittr } = await setUp(t);
-  assert.deepEqual(await mittr.engineEnv(), {});
-  assert.deepEqual(await mittr.managedConfig(), {});
+  const { mittr, engine } = await setUp(t);
+  assert.deepEqual(await mittr.engineEnv(), { NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost' });
+  assert.deepEqual(await mittr.managedConfig(), { experimental: { policies: LOCKED } });
   await mittr.dispose();
+  assert.equal(engine.readyListeners.size, 0);
 });
 
 test('a damaged account list is logged with its path through the server logger, never sent to the client', async (t) => {
@@ -273,4 +281,134 @@ test('signing out ends an answer still streaming on that account', async (t) => 
   assert.equal(await streamOutcome(reader), 'cut');
   assert.equal(await Promise.race([held.aborted, new Promise((resolve) => { setTimeout(() => resolve('still streaming'), 2_000); })]), 'aborted');
   assert.ok(logger.warnings.includes('[mittr] shim ended 1 answer(s): the Mittr account changed'), logger.warnings.join('\n'));
+});
+
+const MODELS = [{ alias: 'a1', label: 'Writer' }, { alias: 'a2', label: '' }];
+const engineCalls = (fetchImpl) => fetchImpl.calls.filter((call) => call.url.includes('/api/integration/'));
+const engineAndBroker = (answer) => fakeEngineFetch({ answer, other: () => json(session) });
+
+test('the lock is in the config from the first build, before any model or port', async (t) => {
+  const engine = fakeEngineContext({ port: null });
+  const { mittr } = await setUp(t, { engine });
+  assert.deepEqual(await mittr.managedConfig(), { experimental: { policies: LOCKED } });
+});
+
+test('the stored switch ON still denies the hosted opencode provider', async (t) => {
+  const dataDir = tempDataDir(t);
+  fs.writeFileSync(path.join(dataDir, 'mittr-settings.json'), JSON.stringify({ showOtherProviders: true }));
+  const { mittr } = await setUp(t, { dataDir });
+  assert.deepEqual(await mittr.managedConfig(), {
+    experimental: { policies: [{ action: 'provider.use', resource: 'opencode', effect: 'deny' }] },
+  });
+});
+
+test('the shim URL follows the bound server port', async (t) => {
+  const engine = fakeEngineContext({ port: 4100 });
+  const { mittr } = await setUp(t, { engine, fetchImpl: engineAndBroker() });
+  await mittr.applyModels(MODELS);
+
+  const config = await mittr.managedConfig();
+  assert.equal(config.providers.mittr.settings.baseURL, 'http://127.0.0.1:4100/mittr-shim/v1');
+  assert.deepEqual(Object.keys(config.providers.mittr.models), ['a1', 'a2']);
+  assert.deepEqual(config.experimental.policies, LOCKED);
+
+  engine.server.port = null;
+  const unbound = await mittr.managedConfig();
+  assert.equal(unbound.providers?.mittr, undefined);
+  assert.deepEqual(unbound.experimental.policies, LOCKED);
+});
+
+test('new models rewrite the managed config, then hand the engine the shim key, never the Mittr token', async (t) => {
+  const engine = fakeEngineContext();
+  const fetchImpl = engineAndBroker();
+  const { mittr, dataDir } = await setUp(t, { engine, fetchImpl });
+  engine.fireReady();
+  await mittr.applyModels(MODELS);
+
+  assert.equal(engine.refreshes.length, 1);
+  const [post] = engineCalls(fetchImpl);
+  assert.equal(post.url, 'http://127.0.0.1:4096/api/integration/mittr/connect/key');
+  assert.deepEqual(post.body, { key: shimKey(dataDir) });
+  assert.equal(JSON.stringify(post).includes('at-1'), false);
+  assert.deepEqual(engine.restarts, []);
+});
+
+test('with no models the engine is not asked to store a key', async (t) => {
+  const fetchImpl = engineAndBroker();
+  const { engine } = await setUp(t, { fetchImpl });
+  engine.fireReady();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(engineCalls(fetchImpl).length, 0);
+});
+
+test('credential runs on every ready', async (t) => {
+  const engine = fakeEngineContext({ enginePort: 4096 });
+  const fetchImpl = engineAndBroker();
+  const { mittr, logger } = await setUp(t, { engine, fetchImpl });
+  engine.fireReady();
+  await mittr.applyModels(MODELS);
+  assert.equal(engineCalls(fetchImpl).length, 1);
+
+  const storedLines = () => logger.lines.filter((line) => line.includes('has its Mittr key')).length;
+  await until(() => storedLines() === 1);
+
+  engine.engine.port = 4200;
+  engine.fireReady();
+  await until(() => storedLines() === 2);
+  engine.engine.port = 4300;
+  engine.fireReady();
+  await until(() => storedLines() === 3);
+  assert.deepEqual(engineCalls(fetchImpl).map((call) => new URL(call.url).port), ['4096', '4200', '4300']);
+
+  // A restart on a fixed port is a new engine too, and may run on another account's database.
+  engine.fireReady();
+  await until(() => storedLines() === 4);
+  assert.equal(engineCalls(fetchImpl).length, 4);
+  assert.deepEqual(engine.restarts, []);
+});
+
+test('credential failure is reported, not thrown, and retried on next ready', async (t) => {
+  const engine = fakeEngineContext();
+  let refuse = true;
+  const fetchImpl = engineAndBroker((call) => (refuse && call.url.endsWith('/connect/key') ? new Response('boom', { status: 500 }) : null));
+  const { mittr, logger, dataDir } = await setUp(t, { engine, fetchImpl });
+
+  engine.fireReady();
+  await mittr.applyModels(MODELS);
+  assert.equal(engineCalls(fetchImpl).length, 1);
+  assert.equal(logger.warnings.length, 1);
+  assert.match(logger.warnings[0], /\[mittr\].*500/);
+  assert.equal(logger.warnings[0].includes(shimKey(dataDir)), false);
+
+  refuse = false;
+  engine.fireReady();
+  await until(() => engineCalls(fetchImpl).length === 2);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(logger.warnings.length, 1);
+});
+
+test('a ready while the engine port is unknown is logged and does not throw into the server', async (t) => {
+  const engine = fakeEngineContext();
+  const fetchImpl = engineAndBroker();
+  const { mittr, logger } = await setUp(t, { engine, fetchImpl });
+  engine.fireReady();
+  await mittr.applyModels(MODELS);
+  engine.engine.port = null;
+  assert.doesNotThrow(() => engine.fireReady());
+  await until(() => logger.warnings.length === 1);
+  assert.match(logger.warnings[0], /port/);
+  assert.equal(engineCalls(fetchImpl).length, 1);
+});
+
+test('models set before the engine is first ready wait for that ready, with no warning', async (t) => {
+  const engine = fakeEngineContext();
+  const fetchImpl = engineAndBroker();
+  const { mittr, logger } = await setUp(t, { engine, fetchImpl });
+  await mittr.applyModels(MODELS);
+  assert.equal(engine.refreshes.length, 1);
+  assert.equal(engineCalls(fetchImpl).length, 0);
+  assert.deepEqual(logger.warnings, []);
+
+  engine.fireReady();
+  await until(() => engineCalls(fetchImpl).length === 1);
 });

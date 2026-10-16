@@ -656,6 +656,24 @@ const checks = {
     has(source('packages/electron/main.mjs'), /process\.env\.OPENCHAMBER_DIST_DIR = resolveWebDistDir\(\);/);
     has(source('packages/web/server/lib/opencode/static-routes-runtime.js'), /process\.env\.OPENCHAMBER_DIST_DIR/);
   },
+
+  'engine-integration-connect-key': () => {
+    const dist = path.join(repoRoot, 'node_modules/@opencode/client/dist/chunks');
+    const chunks = fs.readdirSync(dist).filter((name) => name.endsWith('.js')).map((name) => fs.readFileSync(path.join(dist, name), 'utf8'));
+    const route = /connect: \{\s*key: \(input, requestOptions\) => request\(\{\s*method: "POST",\s*path: `\/api\/integration\/\$\{encodeURIComponent\(input\.integrationID\)\}\/connect\/key`,\s*query: \{ location: input\["location"\] \},\s*body: \{ key: input\["key"\], answer: input\["answer"\], label: input\["label"\] \},\s*successStatus: 204,\s*declaredStatuses: \[400, 401, 404\],/;
+    assert.equal(chunks.filter((text) => route.test(text)).length, 1, 'the generated client no longer posts { key } to /api/integration/{id}/connect/key with 204 and a declared 404');
+  },
+
+  'engine-credential-list-remove': async () => {
+    const dist = path.join(repoRoot, 'node_modules/@opencode/client/dist/chunks');
+    const chunks = fs.readdirSync(dist).filter((name) => name.endsWith('.js')).map((name) => fs.readFileSync(path.join(dist, name), 'utf8'));
+    const list = /credential: \{\s*list: \(requestOptions\) => request\(\{ method: "GET", path: `\/api\/credential`, successStatus: 200,[^}]*\}, requestOptions\)\.then\(\(value\) => value\.data\),/;
+    const remove = /remove: \(input, requestOptions\) => request\(\{\s*method: "DELETE",\s*path: `\/api\/credential\/\$\{encodeURIComponent\(input\.credentialID\)\}`,\s*successStatus: 204,/;
+    assert.equal(chunks.filter((text) => list.test(text) && remove.test(text)).length, 1, 'the generated client no longer lists credentials under data or removes one with DELETE /api/credential/{id}');
+    const { Credential } = await import(pathToFileURL(path.join(repoRoot, 'node_modules/@opencode/schema/dist/credential.js')).href);
+    assert.deepEqual(Object.keys(Credential.Entry.fields).sort(), ['active', 'id', 'integrationID', 'label', 'value']);
+    assert.deepEqual(Object.keys(Credential.Key.fields).sort(), ['configuration', 'key', 'metadata', 'type']);
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {

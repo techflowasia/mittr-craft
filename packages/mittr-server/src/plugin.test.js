@@ -6,7 +6,7 @@ import test from 'node:test';
 
 import express from 'express';
 
-import { serve } from './mittr/test-helpers.js';
+import { fakeEngineContext, serve } from './mittr/test-helpers.js';
 import setup, { setupMittrServer } from './plugin.js';
 
 const ACCOUNT = '0123456789abcdef';
@@ -179,7 +179,7 @@ test('setup with the server context mounts Mittr sign-in and keeps the engine en
     logger,
     env: { MITTRCRAFT_BROKER_URL: 'https://api.mittr.asia', MITTRCRAFT_BROKER_FIXED: '1', MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft' },
     homeDir: home,
-    context: { app, express, dataDir, logger, host: null },
+    context: { app, express, dataDir, logger, host: null, ...fakeEngineContext({ port: null }).context },
   });
 
   const { status, body } = await (await serve(t, app))('POST', '/api/mittr/auth/start');
@@ -187,7 +187,15 @@ test('setup with the server context mounts Mittr sign-in and keeps the engine en
   assert.ok(body.authorizeUrl.startsWith('https://api.mittr.asia/auth/desktop/start?code_challenge='), body.authorizeUrl);
   assert.ok(body.authorizeUrl.includes('redirect_uri=mittrcraft%3A%2F%2Fauth%2Fcallback'), body.authorizeUrl);
   assert.equal((await plugin.engineEnv()).XDG_DATA_HOME, path.join(home, '.local', 'share', 'mittrcraft', 'engine'));
-  assert.deepEqual(await plugin.managedConfig(), {});
+  assert.equal((await plugin.engineEnv()).NO_PROXY.split(',').includes('127.0.0.1'), true);
+  assert.deepEqual(await plugin.managedConfig(), {
+    experimental: {
+      policies: [
+        { action: 'provider.use', resource: '*', effect: 'deny' },
+        { action: 'provider.use', resource: 'mittr', effect: 'allow' },
+      ],
+    },
+  });
   await plugin.dispose();
 });
 
