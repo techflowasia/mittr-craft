@@ -115,6 +115,10 @@
       "name": "@mittrcraft/server",
       "version": "0.0.0",
     },
+    "packages/mittr-ui": {
+      "name": "@mittrcraft/ui-plugin",
+      "version": "0.0.0",
+    },
     "packages/mobile": {
       "name": "@openchamber/mobile",
       "version": "1.13.2",
@@ -1055,6 +1059,8 @@
     "@marijn/find-cluster-break": ["@marijn/find-cluster-break@1.0.2", "", {}, "sha512-l0h88YhZFyKdXIFNfSWpyjStDjGHwZ/U7iobcK1cQQD8sejsONdQtTVU+1wVN1PBw40PiiHB1vA5S7VTfQiP9g=="],
 
     "@mittrcraft/server": ["@mittrcraft/server@workspace:packages/mittr-server"],
+
+    "@mittrcraft/ui-plugin": ["@mittrcraft/ui-plugin@workspace:packages/mittr-ui"],
 
     "@msgpackr-extract/msgpackr-extract-darwin-arm64": ["@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4", "", { "os": "darwin", "cpu": "arm64" }, "sha512-LCkGo6JDfaBhgST7UpPWgNgLINpcpabaHfyz5OBx75nUYxBsaEPxjnyNjWpeb/xBup/682QnBfRBy2/LvPutZQ=="],
 

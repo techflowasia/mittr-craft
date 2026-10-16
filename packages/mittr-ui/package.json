@@ -1,0 +1,10 @@
+{
+  "name": "@mittrcraft/ui-plugin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "lint": "eslint \"./src/**/*.{ts,tsx}\" --config ../../eslint.config.js"
+  }
+}
