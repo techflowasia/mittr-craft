@@ -5,9 +5,10 @@
  *   node scripts/mittr/brand-leak-scan.mjs <path to .app> [--json]
  *
  * It reads the app's Info.plist files, the staged web UI under
- * `Contents/Resources/web-dist`, and the app's own files at the root of
- * `app.asar` (`dist-bundle/*.mjs`, the preload, the product plugins and the
- * package manifest), extracted to a temporary directory. In JavaScript only
+ * `Contents/Resources/web-dist` (the UI the desktop window and its loopback
+ * server both serve), and from `app.asar` the app's own files at its root
+ * (`dist-bundle/*.mjs`, the preload, the product plugins, the package
+ * manifest) and the web server's code, extracted to a temporary directory. In JavaScript only
  * string literals count, so identifiers, imports and comments do not, and
  * neither does text passed to `console.*`; other text files are read line by
  * line, without markup comments.
@@ -265,15 +266,18 @@ const walk = (dir, prefix) => fs.readdirSync(dir, { withFileTypes: true }).flatM
 
 const isScannable = (file) => SCRIPT_EXTENSIONS.has(path.extname(file)) || TEXT_EXTENSIONS.has(path.extname(file));
 
-// The app's own files at the asar root; `node_modules` holds the server and
-// third-party packages, which this scan does not cover.
-const isAppRootFile = (file) => !file.startsWith('node_modules/') && isScannable(file);
+// The app's own files at the asar root, and the web server, whose messages
+// reach the UI as errors, statuses and pages. Other packages in
+// `node_modules` are third-party code; tests are not run by the app.
+const SERVER_PREFIX = 'node_modules/@openchamber/web/server/';
+const isScannedAsarFile = (file) => isScannable(file) && !/\.test\.[cm]?js$/.test(file)
+  && (!file.startsWith('node_modules/') || file.startsWith(SERVER_PREFIX));
 
 /** Extracts the app's own asar files into `targetDir` and lists them. */
 export const extractAppFiles = ({ archive, targetDir, asar = loadAsar() }) => {
   const files = asar.listPackage(archive, { isPack: false })
     .map((entry) => entry.replace(/^[/\\]+/, '').split(path.sep).join('/'))
-    .filter(isAppRootFile)
+    .filter(isScannedAsarFile)
     .filter((file) => {
       try {
         return !asar.statFile(archive, file).files;

@@ -102,7 +102,7 @@ const writeFiles = (root, files) => {
 
 const leftoverExtracts = () => new Set(fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('mittr-leak-scan-')));
 
-test('scanApp reads the plist, the web UI and the app files in app.asar, and leaves nothing behind', async () => {
+test('scanApp reads the plist, the web UI, the app files and the web server in app.asar, and leaves nothing behind', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-leak-fixture-'));
   try {
     const appPath = path.join(root, 'Fixture.app');
@@ -117,6 +117,8 @@ test('scanApp reads the plist, the web UI and the app files in app.asar, and lea
     writeFiles(asarSource, {
       'dist-bundle/main.mjs': 'export const product = { appName: "OpenChamber" };',
       'node_modules/dep/index.js': 'module.exports = "OpenCode";',
+      'node_modules/@openchamber/web/server/lib/routes.js': 'res.json({ error: "OpenCode is restarting" });',
+      'node_modules/@openchamber/web/server/lib/routes.test.js': 'expect("OpenCode is restarting");',
     });
     await loadAsar().createPackage(asarSource, path.join(resources, 'app.asar'));
 
@@ -127,8 +129,11 @@ test('scanApp reads the plist, the web UI and the app files in app.asar, and lea
       translations: NO_TRANSLATIONS,
     });
 
-    assert.equal(result.fileCount, 4);
-    assert.deepEqual(result.leaks.map((hit) => `${hit.file}:${hit.line}:${hit.text}`), ['web-dist/assets/main-Ab12Cd34.js:1:Quit OpenChamber?']);
+    assert.equal(result.fileCount, 5);
+    assert.deepEqual(result.leaks.map((hit) => `${hit.file}:${hit.line}:${hit.text}`), [
+      'web-dist/assets/main-Ab12Cd34.js:1:Quit OpenChamber?',
+      'app.asar/node_modules/@openchamber/web/server/lib/routes.js:1:OpenCode is restarting',
+    ]);
     assert.deepEqual(result.allowlisted.map((hit) => hit.file), ['app.asar/dist-bundle/main.mjs']);
     assert.deepEqual(result.unusedAllowlist, []);
     assert.deepEqual([...leftoverExtracts()].filter((name) => !before.has(name)), []);

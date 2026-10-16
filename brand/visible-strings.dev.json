@@ -1,0 +1,62 @@
+[
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"openchamber://session/\"",
+    "to": "\"mittrcraft-dev://session/\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "protocol===\"openchamber:\"",
+    "to": "protocol===\"mittrcraft-dev:\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "schemas:{\"openchamber:\":",
+    "to": "schemas:{\"mittrcraft-dev:\":",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`openchamber://connect?${",
+    "to": "`mittrcraft-dev://connect?${",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "protocol!==\"openchamber:\"",
+    "to": "protocol!==\"mittrcraft-dev:\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "/^openchamber:\\/\\/connect\\/?$/i",
+    "to": "/^mittrcraft-dev:\\/\\/connect\\/?$/i",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"openchamber://connect?...\"",
+    "to": "\"mittrcraft-dev://connect?...\"",
+    "count": 12
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "openchamber://connect 連結",
+    "to": "mittrcraft-dev://connect 連結",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"shell\",\"openchamber\",\"openchamber-ui\"",
+    "to": "\"shell\",\"openchamber\",\"mittrcraft-dev\",\"openchamber-ui\"",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/linear/routes.js",
+    "from": "openchamber://focus/linear-auth",
+    "to": "mittrcraft-dev://focus/linear-auth",
+    "count": 2
+  }
+]

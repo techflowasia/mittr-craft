@@ -35,12 +35,18 @@ const electronDir = path.join(repoRoot, 'packages', 'electron');
 const stagingDir = path.join(electronDir, '.product');
 const pluginsDir = path.join(electronDir, 'product-plugins');
 const serverPluginEntry = path.join(repoRoot, 'packages', 'mittr-server', 'src', 'plugin.js');
+const webServerSource = path.join(repoRoot, 'packages', 'web', 'server');
 
 const FLAVORS = ['dev', 'prod'];
 
+// The web server is packed straight from its workspace source, so its
+// visible strings are replaced in a staged copy that is packed in its place.
+const STAGED_SERVER = '.product/web/server';
+const PACKED_WEB = 'node_modules/@openchamber/web';
+
 // Build output the visible-string replacement may touch, relative to
 // `packages/electron`.
-const VISIBLE_STRING_ROOTS = ['resources/web-dist/', 'dist-bundle/'];
+const VISIBLE_STRING_ROOTS = ['resources/web-dist/', 'dist-bundle/', `${STAGED_SERVER}/`];
 
 // File-set arrays: an overlay entry whose `to` matches an upstream entry's
 // replaces it; every other overlay entry is appended.
@@ -123,7 +129,45 @@ export const applyVisibleStrings = ({ entries, rootDir }) => {
   return applied;
 };
 
+/**
+ * The builder `files` entries that pack the staged server copy in place of
+ * the workspace one. Files upstream unpacks from the asar (helpers run by git,
+ * built-in extensions) keep coming from the workspace: an `asarUnpack` pattern
+ * matches the source path, which a mapped copy does not have. The web UI copy
+ * and source HTML inside the package are left out: the desktop serves the UI
+ * from `resources/web-dist`, for its own window and the loopback server alike.
+ */
+export const stagedServerFiles = (asarUnpack = []) => {
+  const serverPrefix = `${PACKED_WEB}/server/`;
+  const unpacked = asarUnpack.filter((pattern) => pattern.startsWith(serverPrefix));
+  return [
+    `!${PACKED_WEB}/server{,/**}`,
+    ...unpacked,
+    `!${PACKED_WEB}/{dist,public}{,/**}`,
+    `!${PACKED_WEB}/*.html`,
+    {
+      from: STAGED_SERVER,
+      to: `${PACKED_WEB}/server`,
+      filter: ['**/*', ...unpacked.map((pattern) => `!${pattern.slice(serverPrefix.length)}`)],
+    },
+  ];
+};
+
 const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
+
+/**
+ * The shared `visible-strings.json` entries, then the flavor's own
+ * `visible-strings.<flavor>.json` when there is one: replacements whose text
+ * differs per flavor, such as the deep-link scheme. A flavor entry may match
+ * text a shared entry already wrote.
+ */
+export const readVisibleStrings = (flavor, dir = brandDir) => {
+  const flavorFile = path.join(dir, `visible-strings.${flavor}.json`);
+  return [
+    ...visibleStringsSchema.parse(readJson(path.join(dir, 'visible-strings.json'))),
+    ...(fs.existsSync(flavorFile) ? visibleStringsSchema.parse(readJson(flavorFile)) : []),
+  ];
+};
 
 const parseFlavor = (argv) => {
   const index = argv.indexOf('--flavor');
@@ -178,11 +222,12 @@ const main = async () => {
   const productSource = path.join(brandDir, `product.${flavor}.json`);
   const productOverride = readJson(productSource);
   const builderOverlay = readJson(path.join(brandDir, `electron-builder.${flavor}.json`));
-  const visibleStrings = visibleStringsSchema.parse(readJson(path.join(brandDir, 'visible-strings.json')));
+  const visibleStrings = readVisibleStrings(flavor);
 
   const { readProduct } = await import(pathToFileURL(path.join(electronDir, 'product.mjs')).href);
   const upstreamBuild = readJson(path.join(electronDir, 'package.json')).build;
-  const builderConfig = mergeBuilderConfig(upstreamBuild, builderOverlay);
+  const merged = mergeBuilderConfig(upstreamBuild, builderOverlay);
+  const builderConfig = { ...merged, files: [...merged.files, ...stagedServerFiles(merged.asarUnpack)] };
   assertConsistent({ product: productOverride, builderConfig });
 
   console.log(`[mittr] building ${builderConfig.productName} (${builderConfig.appId}) ${builderConfig.extraMetadata?.version ?? ''}`);
@@ -199,13 +244,14 @@ const main = async () => {
     '--outfile', path.join(pluginsDir, 'mittr-server.mjs'),
   ], repoRoot);
 
-  step('3/7 product file');
+  step('3/7 product files and server copy');
   fs.rmSync(stagingDir, { recursive: true, force: true });
   fs.mkdirSync(stagingDir, { recursive: true });
   fs.copyFileSync(productSource, path.join(stagingDir, 'product.json'));
   if (productOverride.splashSvg) {
     fs.copyFileSync(path.join(brandDir, productOverride.splashSvg), path.join(stagingDir, productOverride.splashSvg));
   }
+  fs.cpSync(webServerSource, path.join(electronDir, STAGED_SERVER), { recursive: true });
   const product = readProduct({ appPath: stagingDir });
   for (const entry of productOverride.serverPlugins ?? []) {
     if (!fs.existsSync(path.join(electronDir, entry))) throw new Error(`server plugin ${entry} was not built`);

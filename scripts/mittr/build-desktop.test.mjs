@@ -5,7 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { applyVisibleStrings, mergeBuilderConfig } from './build-desktop.mjs';
+import { applyVisibleStrings, mergeBuilderConfig, readVisibleStrings, stagedServerFiles } from './build-desktop.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const readJson = (relative) => JSON.parse(fs.readFileSync(path.join(repoRoot, relative), 'utf8'));
@@ -119,4 +119,52 @@ test('every visible-strings entry replaces an upstream name and keeps none', () 
     assert.match(entry.from, /OpenChamber|OpenCode|openchamber:\/\//, entry.from);
     assert.doesNotMatch(entry.to, /OpenChamber|OpenCode/, entry.to);
   }
+});
+
+test('a flavor file applies after the shared visible strings and may build on them', () => {
+  const brand = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-brand-'));
+  try {
+    fs.writeFileSync(path.join(brand, 'visible-strings.json'), JSON.stringify([
+      { file: 'dist-bundle/*.mjs', from: 'Open OpenChamber', to: 'Open MittrCraft', count: 1 },
+    ]));
+    fs.writeFileSync(path.join(brand, 'visible-strings.dev.json'), JSON.stringify([
+      { file: 'dist-bundle/*.mjs', from: 'openchamber://', to: 'mittrcraft-dev://', count: 1 },
+    ]));
+    assert.deepEqual(readVisibleStrings('prod', brand).map((entry) => entry.to), ['Open MittrCraft']);
+    const dev = readVisibleStrings('dev', brand);
+    assert.deepEqual(dev.map((entry) => entry.to), ['Open MittrCraft', 'mittrcraft-dev://']);
+    withBuildOutput({ 'dist-bundle/main.mjs': '"Open OpenChamber" at openchamber://session/1' }, (root) => {
+      applyVisibleStrings({ entries: dev, rootDir: root });
+      assert.equal(fs.readFileSync(path.join(root, 'dist-bundle/main.mjs'), 'utf8'), '"Open MittrCraft" at mittrcraft-dev://session/1');
+    });
+  } finally {
+    fs.rmSync(brand, { recursive: true, force: true });
+  }
+});
+
+test('each flavor points the links it emits at its own scheme and still blocks upstream\'s', () => {
+  for (const flavor of ['dev', 'prod']) {
+    const { deepLinkProtocol } = readJson(`brand/product.${flavor}.json`);
+    const entries = readJson(`brand/visible-strings.${flavor}.json`);
+    assert.ok(entries.length > 0, flavor);
+    for (const entry of entries) {
+      assert.match(entry.from, /openchamber(:|")/, `${flavor}: ${entry.from}`);
+      assert.ok(entry.to.includes(`${deepLinkProtocol}:`) || entry.to.includes(`"${deepLinkProtocol}"`), `${flavor}: ${entry.to}`);
+    }
+    const blocked = entries.find((entry) => entry.from.includes('"openchamber-ui"'));
+    assert.ok(blocked.to.includes('"openchamber"') && blocked.to.includes(`"${deepLinkProtocol}"`), flavor);
+  }
+});
+
+test('the staged server is packed in place of the workspace copy, except the files upstream unpacks', () => {
+  const upstream = readJson('packages/electron/package.json').build;
+  const entries = stagedServerFiles(upstream.asarUnpack);
+  const serverUnpacked = upstream.asarUnpack.filter((pattern) => pattern.startsWith('node_modules/@openchamber/web/server/'));
+  assert.ok(serverUnpacked.length > 0);
+  assert.equal(entries[0], '!node_modules/@openchamber/web/server{,/**}');
+  for (const pattern of serverUnpacked) assert.ok(entries.includes(pattern), pattern);
+  const mapped = entries.at(-1);
+  assert.deepEqual([mapped.from, mapped.to], ['.product/web/server', 'node_modules/@openchamber/web/server']);
+  assert.ok(mapped.filter.includes('!lib/git/credential-helper.js'));
+  assert.ok(entries.includes('!node_modules/@openchamber/web/{dist,public}{,/**}'));
 });

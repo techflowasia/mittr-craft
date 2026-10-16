@@ -103,16 +103,6 @@
     "reason": "Upstream English value of the phase-2 Console key above; the English override replaces it, and other locales substitute the name."
   },
   {
-    "file": "web-dist/assets/*.js",
-    "snippet": "openchamber://connect",
-    "reason": "Deep-link scheme (pairing links): the UI builds and parses upstream's scheme, a contract shared with the mobile app and the desktop shell; renaming it needs a scheme hook in the UI (follow-up, see the Task 9 report)."
-  },
-  {
-    "file": "web-dist/assets/*.js",
-    "snippet": "openchamber://session/",
-    "reason": "Deep-link scheme (copied session links): the UI builds and parses upstream's scheme, while the shell registers the product's; renaming it needs a scheme hook in the UI (follow-up, see the Task 9 report)."
-  },
-  {
     "file": "web-dist/assets/renderMobileApp-*.js",
     "snippet": "OpenChamber Mobile",
     "reason": "phase-5 surface: client label sent by the mobile app."
@@ -121,5 +111,155 @@
     "file": "web-dist/mobile.html",
     "snippet": "<title>OpenChamber Mobile</title>",
     "reason": "phase-5 surface: the mobile web shell."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/index.js",
+    "snippet": "[OpenChamberDesktopNotify] ",
+    "reason": "Prefix of the line protocol the server writes to stdout for the desktop shell; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/index.js",
+    "snippet": "X-OpenCode-Directory,X-OpenCode-Directory-Encoding,Ngrok-Skip-Browser-Warning,X-OpenChamber-Surface",
+    "reason": "HTTP header names in the CORS allow list; protocol ids."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/index.js",
+    "snippet": "refreshOpenCodeAfterConfigChange('OpenCode v2 installation')",
+    "reason": "Reason passed to a console log line (\"Refreshing OpenCode after ...\")."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/agent-tool/runtime.js",
+    "snippet": "// OpenCode 2 puts a plugin tool behind",
+    "reason": "Comment inside the plugin source the server writes for the engine; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/agent-tool/runtime.js",
+    "snippet": "// field: OpenCode rejects that",
+    "reason": "Comment inside the plugin source the server writes for the engine; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/agent-tool/runtime.js",
+    "snippet": "// OpenCode 2 no longer hands a tool its",
+    "reason": "Comment inside the plugin source the server writes for the engine; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/agent-tool/runtime.js",
+    "snippet": "instead and OpenChamber resolves the",
+    "reason": "Comment inside the plugin source the server writes for the engine; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/agent-tool/runtime.js",
+    "snippet": "// aborted, so the OpenChamber side stops",
+    "reason": "Comment inside the plugin source the server writes for the engine; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/enterprise-mode.js",
+    "snippet": "/Library/Application Support/OpenChamber/policy.json",
+    "reason": "Default policy file path; the product file sets OPENCHAMBER_POLICY_FILE, which replaces it."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/enterprise-mode.js",
+    "snippet": "WINDOWS_PROGRAM_DATA, 'OpenChamber', 'policy.json'",
+    "reason": "Default Windows policy file path; the product file sets OPENCHAMBER_POLICY_FILE, which replaces it."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/enterprise-mode.js",
+    "snippet": "programData, 'OpenChamber', 'policy.json'",
+    "reason": "Default Windows policy file path; the product file sets OPENCHAMBER_POLICY_FILE, which replaces it."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/openchamber-control/error.js",
+    "snippet": "'OpenChamberControlError'",
+    "reason": "Error class name; an id."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/compatibility.js",
+    "snippet": "'UnsupportedOpenCodeVersionError'",
+    "reason": "Error class name; an id."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/managed-process-registry.js",
+    "snippet": "[lifecycle] reaped orphaned OpenCode pid ",
+    "reason": "Server log line."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/openchamber-routes.js",
+    "snippet": "restarting OpenChamber...",
+    "reason": "Shell script and log text of the web server self-update; the desktop updates through its own updater, which is off."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/openchamber-routes.js",
+    "snippet": "Service manager will restart OpenChamber.",
+    "reason": "Shell script and log text of the web server self-update; the desktop updates through its own updater, which is off."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/openchamber-routes.js",
+    "snippet": "=== OpenChamber update ",
+    "reason": "Log text of the web server self-update; the desktop updates through its own updater, which is off."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/settings-registry.json",
+    "snippet": "\"showOpenCodeUpdateNotifications\"",
+    "reason": "Settings key (an id in settings.json), never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/static-routes-runtime.js",
+    "snippet": "aria-label=\"OpenChamber logo\"",
+    "reason": "Headless-mode page, served only when no UI build exists; the desktop always serves the UI from resources/web-dist."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/static-routes-runtime.js",
+    "snippet": "<h1>OpenChamber is running in headless mode</h1>",
+    "reason": "Headless-mode page, served only when no UI build exists; the desktop always serves the UI from resources/web-dist."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/static-routes-runtime.js",
+    "snippet": "Open it from the OpenChamber desktop or mobile app",
+    "reason": "Headless-mode page, served only when no UI build exists; the desktop always serves the UI from resources/web-dist."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/v1-migration-topup.js",
+    "snippet": "[OpenCode] ",
+    "reason": "Server log lines of the session migration top-up, which start with this tag."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/v1-migration-topup.js",
+    "snippet": " OpenCode 1.x session(s) are missing from the v2 database",
+    "reason": "Server log line (session migration top-up)."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/v1-migration-topup.js",
+    "snippet": "would make OpenCode rewrite ",
+    "reason": "Server log line (session migration top-up)."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/v1-migration-topup.js",
+    "snippet": " OpenCode 1.x session(s) changed since the last v2 import",
+    "reason": "Server log line (session migration top-up)."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/v1-migration-topup.js",
+    "snippet": "OpenCode will re-import ",
+    "reason": "Server log line (session migration top-up)."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/quota/providers/*.js",
+    "snippet": "OpenChamber quota provider",
+    "reason": "User-Agent header sent to the quota provider; not shown to a person."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/quota/providers/xai.js",
+    "snippet": "'User-Agent': 'OpenChamber'",
+    "reason": "User-Agent header sent to the quota provider; not shown to a person."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/spaces/places/docker-live-support.js",
+    "snippet": "not control, OpenCode inside a space",
+    "reason": "Comment inside a script the live Docker test support runs; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/spaces/places/fake-docker.js",
+    "snippet": "\"isOpenCodeReady\":true",
+    "reason": "JSON field name in the fake Docker used by tests; an id."
   }
 ]
