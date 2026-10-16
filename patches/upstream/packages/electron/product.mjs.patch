@@ -1,9 +1,9 @@
 diff --git a/packages/electron/product.mjs b/packages/electron/product.mjs
 new file mode 100644
-index 000000000..762ab8e59
+index 000000000..85e762b1c
 --- /dev/null
 +++ b/packages/electron/product.mjs
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,141 @@
 +// Product identity for the desktop shell. A build that ships a `product.json`
 +// next to `package.json` (the same idea VSCodium uses) overrides these values;
 +// without one, every value equals the literal this app has always used.
@@ -42,6 +42,7 @@ index 000000000..762ab8e59
 +  env: {},
 +  ensureDirs: [],
 +  serverPlugins: [],
++  serverReportsAppVersion: false,
 +});
 +
 +const PRODUCT_FILE = 'product.json';
@@ -131,6 +132,14 @@ index 000000000..762ab8e59
 +  const keys = Object.keys(product.env ?? {});
 +  for (const key of keys) env[key] = product.env[key];
 +  return keys;
++}
++
++// The in-process server reports its own package's version, which is the
++// app's version when the two ship together. A product that versions the app
++// apart from the server it packs has the server report the app's version
++// instead, so every surface that shows a version shows the one installed.
++export function serverVersionEnv(product, appVersion) {
++  return product.serverReportsAppVersion && appVersion ? { OPENCHAMBER_HOST_APP_VERSION: appVersion } : {};
 +}
 +
 +export function ensureProductDirs(product, fs = nodeFs) {

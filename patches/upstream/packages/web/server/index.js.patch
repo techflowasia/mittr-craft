@@ -1,5 +1,5 @@
 diff --git a/packages/web/server/index.js b/packages/web/server/index.js
-index 62398fa3a..74593c022 100644
+index 62398fa3a..74ccb2827 100644
 --- a/packages/web/server/index.js
 +++ b/packages/web/server/index.js
 @@ -132,6 +132,7 @@ import { createWorktreeBootstrapStore } from './lib/git/worktree-bootstrap-stora
@@ -10,7 +10,20 @@ index 62398fa3a..74593c022 100644
  import { createRelayService, relayBlockedByEnterprise } from './lib/relay/service.js';
  import { createRelayHostLock } from './lib/relay/host-lock.js';
  import { createAgentToolRuntime } from './lib/agent-tool/runtime.js';
-@@ -671,6 +672,11 @@ let openCodeNotReadySince = 0;
+@@ -230,6 +231,12 @@ function shouldSkipCompression(req, res) {
+ }
+ 
+ const OPENCHAMBER_VERSION = (() => {
++  // An app that runs this server in its own process and ships under its own
++  // version names that version here.
++  const hostAppVersion = process.env.OPENCHAMBER_HOST_APP_VERSION?.trim();
++  if (hostAppVersion) {
++    return hostAppVersion;
++  }
+   try {
+     const packagePath = path.resolve(__dirname, '..', 'package.json');
+     const raw = fs.readFileSync(packagePath, 'utf8');
+@@ -671,6 +678,11 @@ let openCodeNotReadySince = 0;
  let isExternalOpenCode = false;
  let exitOnShutdown = true;
  let uiAuthController = null;
@@ -22,7 +35,7 @@ index 62398fa3a..74593c022 100644
  // The isolated-spaces host: the place, the manager and the dispatcher. Null while the feature's
  // switch is off, and then nothing of the feature runs, see docs/isolated-spaces/DESIGN.md.
  let spacesHost = null;
-@@ -1460,7 +1466,10 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
+@@ -1460,7 +1472,10 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
        console.warn('Failed to reconcile sessions after OpenCode restart:', error?.message ?? error);
      }
    },
@@ -34,7 +47,7 @@ index 62398fa3a..74593c022 100644
  });
  
  // Quota lookups, voice keys and routing read provider credentials from the
-@@ -1481,7 +1490,9 @@ const getOpenCodeCompatibility = async () => {
+@@ -1481,7 +1496,9 @@ const getOpenCodeCompatibility = async () => {
    }
    const binary = ensureOpencodeCliEnv();
    const installation = isBundledOpenCodeCliPath(binary) ? 'bundled' : 'managed';
@@ -45,7 +58,7 @@ index 62398fa3a..74593c022 100644
    // A CLI pinned by the administrator is theirs to replace, never ours.
    const pinnedByPolicy = Boolean(readEnterprisePolicy().opencodeBinary);
    return describeOpenCodeCompatibility(version, installation, supportsOpenCodeV2Install() && !pinnedByPolicy, binary || null);
-@@ -2393,15 +2404,15 @@ async function main(options = {}) {
+@@ -2393,15 +2410,15 @@ async function main(options = {}) {
      getOpenCodeCompatibility,
      installOpenCodeV2: async () => {
        const binary = await installOpenCodeV2({
@@ -64,7 +77,7 @@ index 62398fa3a..74593c022 100644
      ),
      formatSettingsResponse,
      readSettingsFromDisk,
-@@ -2444,6 +2455,15 @@ async function main(options = {}) {
+@@ -2444,6 +2461,15 @@ async function main(options = {}) {
      routingRuntime,
    });
  

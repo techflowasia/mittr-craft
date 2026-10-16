@@ -1,9 +1,9 @@
 diff --git a/packages/electron/product.test.mjs b/packages/electron/product.test.mjs
 new file mode 100644
-index 000000000..8ed52011e
+index 000000000..0bb1e2ac6
 --- /dev/null
 +++ b/packages/electron/product.test.mjs
-@@ -0,0 +1,203 @@
+@@ -0,0 +1,214 @@
 +import assert from 'node:assert/strict';
 +import fs from 'node:fs';
 +import os from 'node:os';
@@ -17,6 +17,7 @@ index 000000000..8ed52011e
 +  readProduct,
 +  readSplashSvg,
 +  resolveAppNames,
++  serverVersionEnv,
 +} from './product.mjs';
 +
 +const HOME = '/home/someone';
@@ -55,6 +56,7 @@ index 000000000..8ed52011e
 +    env: {},
 +    ensureDirs: [],
 +    serverPlugins: [],
++    serverReportsAppVersion: false,
 +  });
 +});
 +
@@ -172,6 +174,15 @@ index 000000000..8ed52011e
 +  const env = { A: '1' };
 +  assert.deepEqual(applyProductEnv(UPSTREAM_PRODUCT, env), []);
 +  assert.deepEqual(env, { A: '1' });
++});
++
++test('the server reports its own version unless the product asks for the app version', () => {
++  const upstream = readProduct({ appPath: APP_PATH, fs: fakeFs({}), homeDir: HOME });
++  assert.deepEqual(serverVersionEnv(upstream, '2.1.1'), {});
++
++  const product = readProduct({ appPath: APP_PATH, fs: productFile({ serverReportsAppVersion: true }), homeDir: HOME });
++  assert.deepEqual(serverVersionEnv(product, '2.1.1+build.1'), { OPENCHAMBER_HOST_APP_VERSION: '2.1.1+build.1' });
++  assert.deepEqual(serverVersionEnv(product, ''), {});
 +});
 +
 +test('ensureProductDirs pre-creates projects/themes/speech-models', () => {

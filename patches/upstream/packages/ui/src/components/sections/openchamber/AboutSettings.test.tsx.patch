@@ -1,9 +1,9 @@
 diff --git a/packages/ui/src/components/sections/openchamber/AboutSettings.test.tsx b/packages/ui/src/components/sections/openchamber/AboutSettings.test.tsx
 new file mode 100644
-index 000000000..4ced5dfcb
+index 000000000..17cd090e0
 --- /dev/null
 +++ b/packages/ui/src/components/sections/openchamber/AboutSettings.test.tsx
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,126 @@
 +import { afterAll, describe, expect, test } from 'bun:test';
 +import React, { act } from 'react';
 +import { createRoot } from 'react-dom/client';
@@ -29,7 +29,7 @@ index 000000000..4ced5dfcb
 +  return new Response('{}', { status: 503, headers: { 'Content-Type': 'application/json' } });
 +};
 +
-+const { AboutSettings } = await import('./AboutSettings');
++const { AboutSettings, LinkIfSet } = await import('./AboutSettings');
 +const { useUpdateStore } = await import('@/stores/useUpdateStore');
 +const { I18nProvider } = await import('@/lib/i18n');
 +
@@ -100,5 +100,33 @@ index 000000000..4ced5dfcb
 +    } finally {
 +      await page.unmount();
 +    }
++  });
++});
++
++describe('About page links', () => {
++  const renderLinks = async (element: React.ReactElement) => {
++    const container = document.createElement('div');
++    document.body.append(container);
++    const root = createRoot(container);
++    await act(async () => root.render(element));
++    const anchors = [...container.querySelectorAll('a')].map((anchor) => ({
++      href: anchor.getAttribute('href'),
++      target: anchor.getAttribute('target'),
++      rel: anchor.getAttribute('rel'),
++      text: anchor.textContent,
++    }));
++    await act(async () => root.unmount());
++    container.remove();
++    return anchors;
++  };
++
++  test('a link with an address opens it in a new window', async () => {
++    expect(await renderLinks(<LinkIfSet href="https://example.com/project">Project</LinkIfSet>)).toEqual([
++      { href: 'https://example.com/project', target: '_blank', rel: 'noopener noreferrer', text: 'Project' },
++    ]);
++  });
++
++  test('a link whose address a build blanked is not drawn', async () => {
++    expect(await renderLinks(<div><LinkIfSet href="">Project</LinkIfSet><LinkIfSet>Chat</LinkIfSet></div>)).toEqual([]);
 +  });
 +});

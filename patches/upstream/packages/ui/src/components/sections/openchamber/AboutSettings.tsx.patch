@@ -1,8 +1,23 @@
 diff --git a/packages/ui/src/components/sections/openchamber/AboutSettings.tsx b/packages/ui/src/components/sections/openchamber/AboutSettings.tsx
-index 885fd7965..bc69d1a42 100644
+index 885fd7965..269d2fbcc 100644
 --- a/packages/ui/src/components/sections/openchamber/AboutSettings.tsx
 +++ b/packages/ui/src/components/sections/openchamber/AboutSettings.tsx
-@@ -146,6 +146,15 @@ function useNativeAppVersion(enabled: boolean): string | null {
+@@ -25,6 +25,14 @@ const GITHUB_URL = 'https://github.com/openchamber/openchamber';
+ const DISCORD_URL = 'https://discord.gg/ZYRSdnwwKA';
+ const X_URL = 'https://x.com/openchamber_dev';
+ 
++/**
++ * A build may leave one of the links above out by blanking its address. A
++ * link with no address is not drawn, rather than drawn pointing nowhere.
++ */
++export const LinkIfSet: React.FC<React.AnchorHTMLAttributes<HTMLAnchorElement>> = ({ href, ...props }) => (
++  href ? <a href={href} target="_blank" rel="noopener noreferrer" {...props} /> : null
++);
++
+ const MIN_CHECKING_DURATION = 800; // ms
+ 
+ type ConnectedServerUpdate = {
+@@ -146,6 +154,15 @@ function useNativeAppVersion(enabled: boolean): string | null {
    return version;
  }
  
@@ -18,7 +33,7 @@ index 885fd7965..bc69d1a42 100644
  type AboutSettingsProps = {
    initialUpdateDialogOpen?: boolean;
  };
-@@ -193,6 +202,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+@@ -193,6 +210,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
        runtimeType: updateStore.runtimeType,
      };
  
@@ -26,7 +41,7 @@ index 885fd7965..bc69d1a42 100644
    const currentVersion = openChamberVersion || update.info?.currentVersion || 'unknown';
    const openCode = useOpenCodeUpgrade(t('opencodeUpdate.toast.failed.description'));
    const openCodeVersion = openCode.status?.currentVersion ?? null;
-@@ -333,7 +343,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+@@ -333,7 +351,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
        const timer = setTimeout(() => {
          setShowChecking(false);
          // Show toast if check completed with no update available
@@ -35,7 +50,7 @@ index 885fd7965..bc69d1a42 100644
            toast.success(isNativeApp
              ? t('settings.openchamber.about.toast.serverLatestVersion')
              : t('settings.openchamber.about.toast.latestVersion'));
-@@ -342,7 +352,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+@@ -342,7 +360,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
        }, MIN_CHECKING_DURATION);
        return () => clearTimeout(timer);
      }
@@ -44,7 +59,7 @@ index 885fd7965..bc69d1a42 100644
  
    const isChecking = update.checking || showChecking;
  
-@@ -370,7 +380,19 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+@@ -370,7 +388,19 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
          </div>
  
          <div className="flex justify-center">
@@ -65,7 +80,50 @@ index 885fd7965..bc69d1a42 100644
              <Button
                type="button"
                variant="outline"
-@@ -501,17 +523,26 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+@@ -416,36 +446,30 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+ 
+         <div className="flex flex-col items-center gap-3 text-center">
+           <div className="flex items-center justify-center gap-5">
+-            <a
++            <LinkIfSet
+               href={GITHUB_URL}
+-              target="_blank"
+-              rel="noopener noreferrer"
+               className="flex items-center gap-1.5 typography-ui-label text-muted-foreground transition-colors hover:text-foreground"
+             >
+               <Icon name="github-fill" className="size-5" />
+               <span>GitHub</span>
+-            </a>
++            </LinkIfSet>
+ 
+-            <a
++            <LinkIfSet
+               href={DISCORD_URL}
+-              target="_blank"
+-              rel="noopener noreferrer"
+               className="flex items-center gap-1.5 typography-ui-label text-muted-foreground transition-colors hover:text-foreground"
+             >
+               <Icon name="discord-fill" className="size-5" />
+               <span>Discord</span>
+-            </a>
++            </LinkIfSet>
+           </div>
+ 
+-          <a
++          <LinkIfSet
+             href={X_URL}
+-            target="_blank"
+-            rel="noopener noreferrer"
+             className="flex items-center gap-1.5 typography-ui-label text-muted-foreground transition-colors hover:text-foreground"
+           >
+             <Icon name="twitter-xfill" className="size-5" />
+             <span>@openchamber_dev</span>
+-          </a>
++          </LinkIfSet>
+         </div>
+ 
+         <p className="text-center typography-ui text-muted-foreground/60">
+@@ -501,17 +525,26 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
                </Button>
              )}
  
@@ -100,3 +158,33 @@ index 885fd7965..bc69d1a42 100644
            </div>
          </div>
          
+@@ -535,25 +568,21 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+         </div>
+ 
+         <div className="flex items-center gap-4 px-4 py-4">
+-          <a
++          <LinkIfSet
+             href={GITHUB_URL}
+-            target="_blank"
+-            rel="noopener noreferrer"
+             className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground typography-meta transition-colors"
+           >
+             <Icon name="github-fill" className="h-4 w-4" />
+             <span>GitHub</span>
+-          </a>
++          </LinkIfSet>
+ 
+-            <a
++            <LinkIfSet
+               href={X_URL}
+-            target="_blank"
+-            rel="noopener noreferrer"
+             className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground typography-meta transition-colors"
+           >
+             <Icon name="twitter-xfill" className="h-4 w-4" />
+               <span>@openchamber_dev</span>
+-            </a>
++            </LinkIfSet>
+         </div>
+       </div>
+ 
