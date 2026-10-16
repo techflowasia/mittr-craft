@@ -1,19 +1,30 @@
 #!/usr/bin/env bun
 /**
  * Proves what the bundled OpenCode 2.x engine does with a MittrCraft 1.x
- * engine data directory, without touching that directory.
+ * engine data directory, without changing that directory.
  *
- * The source is only ever opened read-only. Each `opencode*.db` is copied with
- * `VACUUM INTO`, which reads one consistent snapshot even while a running
- * MittrCraft holds the database open in WAL mode, so `-wal`/`-shm` are never
- * copied or checkpointed. The engine then runs against the copies under a
- * temporary HOME with every XDG base pointing inside it, on a random port with
- * a random password, and is killed afterwards.
+ * What each copy mode does to the source:
+ *
+ * - default (raw copy): each `opencode*.db` is copied byte for byte together
+ *   with its `-wal` and `-shm`, keeping their mtimes. The source files are
+ *   only read as plain files; SQLite never opens them, so nothing in the
+ *   source dir is written, `-shm` included. Each trio's size and mtime are
+ *   read before and after the copy and the copy is retried when a running
+ *   MittrCraft wrote in between, so the three files agree with each other.
+ * - `--snapshot`: each source db is opened by SQLite read-only and copied with
+ *   `VACUUM INTO`, one consistent snapshot even mid-write. A read-only open of
+ *   a WAL database still maps the source `-shm` and can update it (and its
+ *   mtime); the `.db` and `-wal` are not written.
+ *
+ * Everything after the copy (counting, the engine run) uses only the copies,
+ * under a temporary HOME with every XDG base pointing inside it, on a random
+ * port with a random password. The engine is killed afterwards.
  *
  * Usage (bun is required for `bun:sqlite`):
  *
  *   bun scripts/mittr/prove-session-carryover.mjs --source <engine data dir>
- *     [--db <name>]             start the engine with OPENCODE_DB=<name>
+ *     [--snapshot]              copy with read-only open + VACUUM INTO (see above)
+ *     [--db <name>]             start the engine with OPENCODE_DB=<name>, a plain file name
  *     [--copy-as <from>:<to>]   copy <from> to <to> in the temp copy before the start
  *     [--account-dir <dir>]     an `accounts/<16-hex>` dir; its `opencode` dir is
  *                               copied too and the engine runs with data and
@@ -48,6 +59,13 @@ const pageSchema = z.object({
 });
 const idSchema = z.object({ id: z.string() });
 
+/** A file name inside the engine data dir: no separators, no `.`/`..`, no `:memory:`. */
+const assertPlainFileName = (flag, value) => {
+  if (!/^[A-Za-z0-9._-]+$/.test(value) || value === '.' || value === '..') {
+    throw new Error(`${flag} must be a plain file name in the engine data dir, got ${JSON.stringify(value)}`);
+  }
+};
+
 const parseArgs = (argv) => {
   const args = { samples: 3, keep: false, timeoutMs: 30 * 60 * 1000 };
   for (let i = 0; i < argv.length; i += 1) {
@@ -68,9 +86,18 @@ const parseArgs = (argv) => {
     else if (flag === '--timeout-ms') args.timeoutMs = Number(value());
     else if (flag === '--keep') args.keep = true;
     else if (flag === '--one-root') args.oneRoot = true;
+    else if (flag === '--snapshot') args.snapshot = true;
     else throw new Error(`Unknown argument: ${flag}`);
   }
   if (!args.source) throw new Error('--source <engine data dir> is required');
+  if (args.db !== undefined) assertPlainFileName('--db', args.db);
+  if (args.copyAs !== undefined) {
+    const [from, to, ...rest] = args.copyAs.split(':');
+    if (rest.length > 0) throw new Error('--copy-as takes <from>:<to>');
+    assertPlainFileName('--copy-as', from ?? '');
+    assertPlainFileName('--copy-as', to ?? '');
+    args.copyAs = { from, to };
+  }
   return args;
 };
 
@@ -81,10 +108,40 @@ const listDatabases = (dir) =>
 
 const openReadOnly = (file) => new Database(file, { readonly: true });
 
+const statKey = (file) => {
+  try {
+    const stat = fs.statSync(file);
+    return `${stat.size}:${stat.mtimeMs}`;
+  } catch {
+    return 'missing';
+  }
+};
+
 /**
- * A consistent copy of a live WAL database: the source is opened read-only and
- * `VACUUM INTO` writes one snapshot. The copy keeps the source's mtime so a
- * later mtime change can only come from the engine.
+ * Byte copy of a db with its `-wal` and `-shm`, mtimes kept. The source is
+ * read as plain files only. When a writer changed any of the three during the
+ * copy, the copy is taken again.
+ */
+const rawCopyDatabase = (source, destination) => {
+  const trio = ['', '-wal', '-shm'];
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const before = trio.map((suffix) => statKey(source + suffix));
+    for (const suffix of trio) {
+      fs.rmSync(destination + suffix, { force: true });
+      if (!fs.existsSync(source + suffix)) continue;
+      fs.copyFileSync(source + suffix, destination + suffix);
+      const { atime, mtime } = fs.statSync(source + suffix);
+      fs.utimesSync(destination + suffix, atime, mtime);
+    }
+    const after = trio.map((suffix) => statKey(source + suffix));
+    if (before.join('|') === after.join('|')) return { attempts: attempt };
+  }
+  throw new Error(`${source} kept changing while it was copied; try again or use --snapshot`);
+};
+
+/**
+ * `--snapshot`: the source is opened read-only and `VACUUM INTO` writes one
+ * consistent snapshot. This can touch the source `-shm` (see the header).
  */
 const snapshotDatabase = (source, destination) => {
   const db = openReadOnly(source);
@@ -95,14 +152,16 @@ const snapshotDatabase = (source, destination) => {
   }
   const { atime, mtime } = fs.statSync(source);
   fs.utimesSync(destination, atime, mtime);
+  return { attempts: 1 };
 };
 
-const copyEngineDir = (sourceDir, targetDir) => {
+const copyEngineDir = (sourceDir, targetDir, snapshot) => {
   fs.mkdirSync(targetDir, { recursive: true });
   const copied = [];
   for (const name of listDatabases(sourceDir)) {
-    snapshotDatabase(path.join(sourceDir, name), path.join(targetDir, name));
-    copied.push(name);
+    const copy = snapshot ? snapshotDatabase : rawCopyDatabase;
+    const { attempts } = copy(path.join(sourceDir, name), path.join(targetDir, name));
+    copied.push(attempts > 1 ? `${name} (${attempts} attempts)` : name);
   }
   return copied;
 };
@@ -360,6 +419,75 @@ const pickSamples = (dbFile, wanted) => {
   }
 };
 
+/**
+ * Per session, the 1.x messages by role against the 2.x entries by type.
+ * OpenCode's V1 transform turns a compaction pair (a user message carrying a
+ * `compaction` part, and the assistant `summary: true` reply to it) into one
+ * `compaction` entry, so for a session with k pairs the expected 2.x counts are
+ * user - k and assistant - k. `system` and `synthetic` entries are added by
+ * 2.x and not compared. Any other difference is reported as unexplained.
+ */
+const compareRoles = (dbFile) => {
+  const db = openReadOnly(dbFile);
+  try {
+    const tables = tablesOf(db);
+    if (!['message', 'part', 'session_message'].every((table) => tables.has(table))) return null;
+    const sessions = new Map();
+    const entry = (id) => {
+      if (!sessions.has(id)) sessions.set(id, { v1: { user: 0, assistant: 0, compactionUser: 0, summaryAssistant: 0 }, v2: {} });
+      return sessions.get(id);
+    };
+    for (const row of db.query("SELECT session_id AS id, json_extract(data, '$.role') AS role, COUNT(*) AS n FROM message GROUP BY 1, 2").all()) {
+      entry(row.id).v1[row.role] = (entry(row.id).v1[row.role] ?? 0) + row.n;
+    }
+    for (const row of db.query("SELECT m.session_id AS id, COUNT(DISTINCT m.id) AS n FROM message m JOIN part p ON p.message_id = m.id WHERE json_extract(m.data, '$.role') = 'user' AND json_extract(p.data, '$.type') = 'compaction' GROUP BY 1").all()) {
+      entry(row.id).v1.compactionUser = row.n;
+    }
+    for (const row of db.query("SELECT session_id AS id, COUNT(*) AS n FROM message WHERE json_extract(data, '$.role') = 'assistant' AND json_extract(data, '$.summary') = 1 GROUP BY 1").all()) {
+      entry(row.id).v1.summaryAssistant = row.n;
+    }
+    for (const row of db.query('SELECT session_id AS id, type, COUNT(*) AS n FROM session_message GROUP BY 1, 2').all()) {
+      entry(row.id).v2[row.type] = row.n;
+    }
+    const totals = { v1User: 0, v1Assistant: 0, v1CompactionPairs: 0, v2User: 0, v2Assistant: 0, v2Compaction: 0, v2System: 0, v2Synthetic: 0 };
+    const differing = [];
+    for (const [id, { v1, v2 }] of sessions) {
+      const pairs = Math.min(v1.compactionUser, v1.summaryAssistant);
+      totals.v1User += v1.user;
+      totals.v1Assistant += v1.assistant;
+      totals.v1CompactionPairs += pairs;
+      totals.v2User += v2.user ?? 0;
+      totals.v2Assistant += v2.assistant ?? 0;
+      totals.v2Compaction += v2.compaction ?? 0;
+      totals.v2System += v2.system ?? 0;
+      totals.v2Synthetic += v2.synthetic ?? 0;
+      if ((v2.user ?? 0) === v1.user && (v2.assistant ?? 0) === v1.assistant) continue;
+      const explained =
+        pairs > 0 &&
+        v1.compactionUser === v1.summaryAssistant &&
+        (v2.compaction ?? 0) === pairs &&
+        (v2.user ?? 0) === v1.user - pairs &&
+        (v2.assistant ?? 0) === v1.assistant - pairs;
+      const summaryChars = {
+        v1: db.query("SELECT COALESCE(SUM(LENGTH(json_extract(p.data, '$.text'))), 0) AS n FROM part p JOIN message m ON m.id = p.message_id WHERE m.session_id = ? AND json_extract(m.data, '$.summary') = 1 AND json_extract(p.data, '$.type') = 'text'").get(id).n,
+        v2: db.query("SELECT COALESCE(SUM(LENGTH(json_extract(data, '$.summary'))), 0) AS n FROM session_message WHERE session_id = ? AND type = 'compaction'").get(id).n,
+      };
+      differing.push({
+        id,
+        summaryChars,
+        v1: { user: v1.user, assistant: v1.assistant, compactionUser: v1.compactionUser, summaryAssistant: v1.summaryAssistant },
+        v2,
+        reason: explained && summaryChars.v1 === summaryChars.v2
+          ? `compaction pair x${pairs}: 1 user + 1 summary assistant -> 1 compaction entry each, summary text ${summaryChars.v1} -> ${summaryChars.v2} chars`
+          : 'UNEXPLAINED',
+      });
+    }
+    return { sessionsCompared: sessions.size, totals, differing, unexplained: differing.filter((item) => item.reason === 'UNEXPLAINED').length };
+  } finally {
+    db.close();
+  }
+};
+
 const readLogLines = (dirs, pattern) => {
   const hits = [];
   for (const dir of dirs) {
@@ -400,6 +528,9 @@ const main = async () => {
   if (!fs.existsSync(engineBinary)) throw new Error(`engine not found: ${engineBinary} (run: bun run --cwd packages/electron prepare:opencode-cli)`);
   const engineVersion = spawnSync(engineBinary, ['--version'], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: os.tmpdir() } }).stdout.trim();
 
+  const copyMethod = args.snapshot
+    ? 'snapshot: SQLite read-only open + VACUUM INTO (can touch source -shm)'
+    : 'raw copy of db + -wal + -shm, mtimes kept; SQLite never opens the source';
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-session-proof-'));
   const devRoot = path.join(tempHome, '.config', 'mittrcraft-dev', 'engine');
   const shared = args.oneRoot ? { config: devRoot, data: devRoot, state: devRoot, cache: devRoot } : {
@@ -409,19 +540,20 @@ const main = async () => {
     cache: path.join(tempHome, '.cache', 'mittrcraft', 'engine'),
   };
   let bases = shared;
-  const copied = { shared: copyEngineDir(source, path.join(shared.data, 'opencode')) };
+  const copied = { shared: copyEngineDir(source, path.join(shared.data, 'opencode'), args.snapshot) };
   if (args.accountDir) {
     const accountHome = path.basename(path.resolve(args.accountDir));
     bases = { ...shared, data: path.join(shared.data, 'accounts', accountHome), state: path.join(shared.state, 'accounts', accountHome) };
-    copied.account = copyEngineDir(path.join(path.resolve(args.accountDir), 'opencode'), path.join(bases.data, 'opencode'));
+    copied.account = copyEngineDir(path.join(path.resolve(args.accountDir), 'opencode'), path.join(bases.data, 'opencode'), args.snapshot);
   }
   for (const dir of Object.values(bases)) fs.mkdirSync(dir, { recursive: true });
   const dataDir = path.join(bases.data, 'opencode');
 
   if (args.copyAs) {
-    const [from, to] = args.copyAs.split(':');
-    if (!from || !to) throw new Error('--copy-as takes <from>:<to>');
-    fs.copyFileSync(path.join(dataDir, from), path.join(dataDir, to));
+    const { from, to } = args.copyAs;
+    for (const suffix of ['', '-wal', '-shm']) {
+      if (fs.existsSync(path.join(dataDir, from + suffix))) fs.copyFileSync(path.join(dataDir, from + suffix), path.join(dataDir, to + suffix));
+    }
   }
 
   const before = inspectDir(dataDir);
@@ -430,15 +562,15 @@ const main = async () => {
   const logFile = path.join(tempHome, 'engine.log');
 
   console.log(`engine      ${engineVersion} (${engineBinary})`);
-  console.log(`source      ${source} (read-only; copied with VACUUM INTO: ${copied.shared.join(', ') || 'none'})`);
+  console.log(`source      ${source} (${copyMethod}: ${copied.shared.join(', ') || 'none'})`);
   if (args.accountDir) console.log(`account     ${path.resolve(args.accountDir)} (copied: ${copied.account.join(', ') || 'none'})`);
   console.log(`temp HOME   ${tempHome}`);
   console.log(`engine data ${dataDir} (${args.oneRoot ? 'one root, as Dev' : 'four XDG bases, as prod'})`);
-  console.log(`env         ${args.db ? `OPENCODE_DB=${args.db}` : 'OPENCODE_DB unset'}${args.copyAs ? `, pre-start copy ${args.copyAs}` : ''}`);
+  console.log(`env         ${args.db ? `OPENCODE_DB=${args.db}` : 'OPENCODE_DB unset'}${args.copyAs ? `, pre-start copy ${args.copyAs.from} -> ${args.copyAs.to}` : ''}`);
   printTable('BEFORE (copies, as 1.x left them)', before);
 
   let engine;
-  const result = { engineVersion, source, layout: args.oneRoot ? 'one root (Dev)' : 'four XDG bases (prod)', accountDir: args.accountDir ?? null, opencodeDb: args.db ?? null, copyAs: args.copyAs ?? null, copyMethod: 'read-only open + VACUUM INTO', before: withoutIds(before) };
+  const result = { engineVersion, source, layout: args.oneRoot ? 'one root (Dev)' : 'four XDG bases (prod)', accountDir: args.accountDir ?? null, opencodeDb: args.db ?? null, copyAs: args.copyAs ?? null, copyMethod, before: withoutIds(before) };
   try {
     const deadline = Date.now() + args.timeoutMs;
     const startedAt = Date.now();
@@ -487,6 +619,7 @@ const main = async () => {
   const after = inspectDir(dataDir);
   result.after = withoutIds(after);
   result.mtimeChanged = after.filter((entry) => before.find((old) => old.file === entry.file)?.mtime !== entry.mtime).map((entry) => entry.file);
+  if (result.migration) result.roles = compareRoles(path.join(dataDir, result.migration.file));
   result.overlap = overlap(before, result.migration?.file ?? expectedFile);
   result.logDbLines = readLogLines([path.join(dataDir, 'log')], /\.db\b|migrat/i).slice(0, 20);
   const engineLog = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8') : '';
@@ -499,6 +632,12 @@ const main = async () => {
   if (result.api) console.log(`API /api/session   ${result.api.listed} listed (${result.api.distinct} distinct); parentID=null: ${JSON.stringify(result.apiRootQuery)}`);
   if (result.apiPerProject) console.log(`API per project    ${result.apiPerProject.distinctUnion} distinct across ${result.apiPerProject.projects} projects`);
   console.log(`only in other files ${result.overlap.onlyInOtherFiles} session(s) of ${result.overlap.distinctSessionsAllFiles} distinct across all files ${JSON.stringify(result.overlap.perOtherFile)}`);
+  if (result.roles) {
+    const t = result.roles.totals;
+    console.log(`roles              ${result.roles.sessionsCompared} sessions; 1.x user ${t.v1User}, assistant ${t.v1Assistant}, compaction pairs ${t.v1CompactionPairs} -> 2.x user ${t.v2User}, assistant ${t.v2Assistant}, compaction ${t.v2Compaction} (+ system ${t.v2System}, synthetic ${t.v2Synthetic})`);
+    console.log(`roles differing    ${result.roles.differing.length} session(s), unexplained ${result.roles.unexplained}`);
+    for (const item of result.roles.differing) console.log(`  ${item.id}: 1.x ${JSON.stringify(item.v1)} -> 2.x ${JSON.stringify(item.v2)}: ${item.reason}`);
+  }
   for (const sample of result.samples ?? []) {
     console.log(`sample ${sample.id} (${sample.why}): v1 message ${sample.v1Messages}, part ${sample.v1Parts} -> session_message ${sample.v2SessionMessages} ${JSON.stringify(sample.v2Types)}, API ${sample.apiMessages}`);
   }
@@ -508,7 +647,7 @@ const main = async () => {
   if (args.json) fs.writeFileSync(path.resolve(args.json), `${JSON.stringify(result, null, 2)}\n`);
   if (args.keep) console.log(`\nkept ${tempHome}`);
   else fs.rmSync(tempHome, { recursive: true, force: true });
-  if (result.error) process.exitCode = 1;
+  if (result.error || result.roles?.unexplained) process.exitCode = 1;
 };
 
 main().catch((error) => {

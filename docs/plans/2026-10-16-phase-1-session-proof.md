@@ -6,7 +6,10 @@ Date: 2026-10-16. Script: `scripts/mittr/prove-session-carryover.mjs`.
 
 - Engine: the binary `bun run --cwd packages/electron prepare:opencode-cli` stages from upstream v2.1.1. It reports `opencode v2.0.22`. That matches `opencodeCli.version` and the `@opencode/client` pins in this base. The plan says 2.0.23, but upstream 2.1.1 pins 2.0.22. Every number below is from 2.0.22.
 - 1.x engine today: MittrCraft 1.22, bundled OpenCode `1.18.18`.
-- Sources, read-only: each `opencode*.db` was opened with `bun:sqlite` `{ readonly: true }` and copied with `VACUUM INTO` into a temp `HOME` under `$TMPDIR`. That gives one consistent snapshot, including WAL frames, while the installed app keeps the database open. The copy keeps the source mtime. No `-wal`/`-shm` was copied, and the source `.db` and `-wal` files kept their size and mtime. Opening read-only does update the mtime of an idle source's `-shm`. That file is SQLite's shared-memory WAL index, not data.
+- Sources, untouched: by default the script copies each `opencode*.db` byte for byte together with its `-wal` and `-shm` into a temp `HOME` under `$TMPDIR`, and keeps their mtimes. SQLite never opens a source file. The script reads each trio's size and mtime before and after the copy and retries if the running app wrote in between. Every count and the engine run use only the copies.
+  - The numbers below are from this mode.
+  - `stat` (size and mtime) of all 18 real `opencode*.db*` files was identical before and after the runs, and `shasum` of every file except the 574 MB prod `opencode.db` was identical too.
+  - An earlier run used `VACUUM INTO` from a read-only SQLite open of the source. That changed the mtime of the idle sources' `-shm`, so it is now only the opt-in `--snapshot` mode.
 - Each run started `opencode serve` against the copy:
   - all four XDG bases inside the temp `HOME`;
   - prod layout: four bases; Dev layout: one root (`--one-root`);
@@ -29,7 +32,7 @@ Yes. With `OPENCODE_DB` unset, it opens `<XDG_DATA_HOME>/opencode/opencode.db` a
 
 - it copies `session` into `session_v2` and `message`/`part` into `session_message`;
 - it writes `{"phase":"completed"}` before `/api/info` answers;
-- it takes 1.5 s on the 574 MB prod copy;
+- it takes about 2 s on the 574 MB prod copy;
 - it leaves the 1.x tables untouched (`session`/`message` counts are unchanged afterwards);
 - it never opens or changes the other two files.
 
@@ -63,11 +66,16 @@ On the account dir:
 
 The global session list needed no per-project fan-out: one paged `GET /api/session` returned every session, children included.
 
-Message carry-over, whole database (1.x `message.data.role` vs 2.x `session_message.type`):
+Message carry-over, per session. The script compares each session's 1.x messages by `role` with its 2.x `session_message` entries by `type`. 2.x adds `system` and `synthetic` entries, which are not compared.
 
-- prod: 278 user + 3147 assistant became 277 `user` + 1 `compaction` + 3146 `assistant`. The one compaction pair folds into the `compaction` entry. 2.x adds 105 `system` and 4 `synthetic`.
-- Dev: 22 user + 146 assistant became 22 + 146.
-- No session has fewer user/assistant entries than it had. The engine logged no `Skipped V1 migration row`.
+- Dev: all 17 sessions with messages match. 22 user + 146 assistant became 22 `user` + 146 `assistant`. 2.x added 14 `system` and 9 `synthetic`.
+- prod: 233 of the 234 sessions with messages match exactly. Totals went from 278 user + 3147 assistant to 277 `user` + 3146 `assistant` + 1 `compaction`. 2.x added 105 `system` and 4 `synthetic`.
+- The one prod session that differs is `ses_f38c2c4baffeHsM3apJk7BDiaX`.
+  - 1.x: 8 user and 921 assistant messages. One user message carries a `compaction` part; one assistant message is its `summary: true` reply.
+  - 2.x: 7 `user`, 920 `assistant` and 1 `compaction`. OpenCode's V1 transform turns that pair into the single `compaction` entry.
+  - The entry's `summary` holds the reply's text in full: 6988 characters in 1.x, 6988 in 2.x.
+  - The script reports it as "compaction pair x1" and finds 0 unexplained differences.
+- No message is dropped.
 
 Three samples per layout (1.x `message` → 2.x `session_message` → API `/api/session/{id}/message`, paged):
 
