@@ -92,17 +92,13 @@ const fixture = (t, { conflicting = false } = {}) => {
   return { dir, git, write, commit, base, next, short: next.slice(0, 9), develop: git('rev-parse', 'develop'), remoteRefs, initialRemoteRefs: remoteRefs() };
 };
 
-// Stands in for every non-git command: records it, fails the ones asked to,
-// and lays down the app a Dev build would produce.
-const recordingRunner = (dir, { failOn } = {}) => {
+// Stands in for every non-git command: records it and fails the ones asked to.
+const recordingRunner = (_dir, { failOn } = {}) => {
   const calls = [];
   const run = ({ command, args }) => {
     const line = [path.basename(command), ...args].join(' ');
     calls.push(line);
     if (failOn && line.includes(failOn)) return 1;
-    if (args.includes('--flavor') && !args.includes('--check-strings')) {
-      fs.mkdirSync(path.join(dir, 'packages/electron/dist/mac-arm64/Fixture Dev.app'), { recursive: true });
-    }
     return 0;
   };
   return { calls, run };
@@ -165,12 +161,11 @@ test('a clean update merges on its own branch, records the base, runs every gate
     'run-isolated-tests.mjs scripts/mittr',
     'build-desktop.mjs --check-strings --flavor dev',
     'build-desktop.mjs --flavor dev',
-    'brand-leak-scan.mjs',
   ];
   const positions = order.map((needle) => runner.calls.findIndex((call) => call.includes(needle)));
   assert.ok(positions.every((position) => position >= 0), `missing: ${order.filter((_, index) => positions[index] < 0)}\n${runner.calls.join('\n')}`);
   assert.deepEqual([...positions].sort((a, b) => a - b), positions);
-  assert.ok(runner.calls.at(-1).includes('Fixture Dev.app'));
+  assert.ok(runner.calls.at(-1).endsWith('build-desktop.mjs --flavor dev'), 'the Dev build, which runs the leak scan, is the last gate');
 
   assert.match(output.text(), /upstream files touched: 2 of 24/);
   assert.match(output.text(), /walk/i);
@@ -213,7 +208,7 @@ test('after the conflict is resolved and committed, --continue runs the rest', (
 
   assert.equal(result.status, 'done', output.text());
   assert.equal(repo.git('show', 'HEAD:brand/UPSTREAM'), repo.next);
-  assert.ok(runner.calls.some((call) => call.includes('brand-leak-scan.mjs')));
+  assert.ok(runner.calls.some((call) => call.endsWith('build-desktop.mjs --flavor dev')));
 });
 
 test('a failing gate stops with the next action and still reports the touch count', (t) => {

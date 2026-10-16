@@ -29,7 +29,8 @@
  *    which fails only on a failure `brand/test-baseline.json` does not list),
  *    and our own package and `scripts/mittr` tests, which the root tests do
  *    not run;
- * 5. the visible-string check, then the Dev build and the brand-leak scan;
+ * 5. the visible-string check, then the Dev build, which ends with the
+ *    brand-leak scan of the packed app;
  * 6. a summary with the upstream touch count and the walk checklist.
  *
  * It stops at the first failure and says what to do next. After fixing and
@@ -130,20 +131,10 @@ const mittrTestPackages = (cwd) => {
     .sort();
 };
 
-const devAppPath = (cwd) => {
-  const { productName } = JSON.parse(fs.readFileSync(path.join(cwd, 'brand', 'electron-builder.dev.json'), 'utf8'));
-  const distDir = path.join(cwd, 'packages', 'electron', 'dist');
-  if (!fs.existsSync(distDir)) return null;
-  const found = fs.readdirSync(distDir)
-    .map((entry) => path.join(distDir, entry, `${productName}.app`))
-    .find((candidate) => fs.existsSync(candidate));
-  return found ?? null;
-};
-
 const WALK_CHECKLIST = [
   'Open the Dev build with a temporary HOME holding a copy of real 1.22 data: same session count before and after, open three old sessions, every account still there.',
   'Walk every sidebar item, every Settings page and every exit (switch account, sign out, quit and reopen), and open a second window.',
-  'About shows the expected version and no update check; the brand-leak scan above is clean.',
+  'About shows the expected version and no update check; the brand-leak scan at the end of the build is clean.',
   'Only then ask the owner before pushing the update branch and opening its pull request into develop.',
 ];
 
@@ -244,18 +235,10 @@ const buildSteps = (ctx) => {
     },
     {
       id: 'build',
-      title: '5. visible strings, Dev build and brand-leak scan',
+      title: '5. visible strings, then the Dev build and its brand-leak scan',
       commands: [
         gate('build', node, ['scripts/mittr/build-desktop.mjs', '--check-strings', '--flavor', 'dev']),
         gate('build', node, ['scripts/mittr/build-desktop.mjs', '--flavor', 'dev']),
-        {
-          show: 'node scripts/mittr/brand-leak-scan.mjs "<built Dev app>"',
-          exec: () => {
-            const app = devAppPath(cwd);
-            if (!app) throw new Stop('build', 'the Dev build produced no app under packages/electron/dist', 'check the build output');
-            gate('build', node, ['scripts/mittr/brand-leak-scan.mjs', app]).exec();
-          },
-        },
       ],
     },
   ];
