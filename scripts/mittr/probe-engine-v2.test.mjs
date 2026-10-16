@@ -1,7 +1,19 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { loopbackPeersFromLsof, nonLoopbackFromLog, nonLoopbackFromLsof, policiesFor, quotaRefusal } from './probe-engine-v2.mjs';
+import {
+  failuresOf,
+  HARNESS_SENTENCE,
+  harnessReplacement,
+  identityPluginSource,
+  loopbackPeersFromLsof,
+  nonLoopbackFromLog,
+  nonLoopbackFromLsof,
+  openCodeMentions,
+  policiesFor,
+  quotaRefusal,
+  stopConditionFor,
+} from './probe-engine-v2.mjs';
 
 test('policiesFor locks to one provider', () => {
   assert.deepEqual(policiesFor({ showOtherProviders: false, providerId: 'mittr' }), [
@@ -31,4 +43,39 @@ test('outbound parsers keep only non-loopback peers', () => {
   assert.deepEqual(nonLoopbackFromLsof(lsof), ['104.18.2.3:443']);
   assert.deepEqual(loopbackPeersFromLsof(lsof), ['50001->11434', '50003->8080']);
   assert.deepEqual(nonLoopbackFromLog('GET http://127.0.0.1:4096/v1 then https://models.dev/api.json and http://localhost:1'), ['models.dev']);
+});
+
+test('openCodeMentions counts the name, not paths', () => {
+  assert.equal(openCodeMentions('You are an AI agent running in OpenCode. Read .opencode/agents and ~/opencode/x. opencode tools.'), 2);
+});
+
+test('the identity source rewrites the 2.0.22 harness sentence', async () => {
+  const plugin = (await import(`data:text/javascript,${encodeURIComponent(identityPluginSource({ productName: 'MittrCraft' }))}`)).default;
+  const hooks = {};
+  await plugin.setup({ session: { hook: async (name, fn) => { hooks[name] = fn; } } });
+  const o = { system: [{ type: 'text', text: `${HARNESS_SENTENCE} Use .opencode/agents.` }] };
+  hooks.context(o);
+  assert.deepEqual(Object.keys(hooks), ['context', 'generate', 'compaction']);
+  assert.ok(o.system[0].text.startsWith(harnessReplacement('MittrCraft')));
+  assert.ok(o.system[0].text.includes('.opencode/agents'));
+  assert.equal(o.system.length, 2);
+  assert.match(o.system[1].text, /answer MittrCraft/);
+});
+
+test('stop conditions map to the plan', () => {
+  assert.deepEqual(stopConditionFor('P4', { pass: true }), { action: 'none', stop: false });
+  assert.equal(stopConditionFor('P4', { pass: false }).stop, true);
+  assert.equal(stopConditionFor('P3', { pass: false }).stop, true);
+  assert.equal(stopConditionFor('P2', { pass: false, fallbackPass: true }).stop, false);
+  assert.equal(stopConditionFor('P2b', { pass: false, fallbackPass: false }).stop, true);
+  assert.equal(stopConditionFor('P5', { pass: false }).stop, false);
+  assert.equal(stopConditionFor('P6', { pass: false }).stop, false);
+});
+
+test('failuresOf flags missing verdicts and egress', () => {
+  const outbound = { nonLoopbackRemotes: [], nonLoopbackHostsInLog: [], proxyNonLoopback: ['models.dev:443'] };
+  const failures = failuresOf({ scenarios: { P1: { pass: true } }, outbound });
+  assert.ok(failures.includes('P2: no verdict'));
+  assert.ok(failures.includes('outbound: proxy models.dev:443'));
+  assert.ok(failuresOf({ fatal: 'x', scenarios: {}, outbound }).includes('fatal'));
 });

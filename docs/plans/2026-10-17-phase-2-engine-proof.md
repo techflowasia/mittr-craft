@@ -1,74 +1,85 @@
 # Phase 2: what OpenCode 2.0.22 does with our provider, policy, plugin and refusal
 
-Date: 2026-10-17. Script: `scripts/mittr/probe-engine-v2.mjs`. Every scenario passed, so no stop condition from the plan was hit.
+Date: 2026-10-17. Script: `scripts/mittr/probe-engine-v2.mjs`. The probe's output from the run below is next to this note, in `2026-10-17-phase-2-engine-proof.json`. Every scenario and both controls passed. No stop condition was hit, and the probe exited 0.
+
+Every claim marked *read from the binary* comes from reading the 2.0.22 executable. The probe does not record those claims. Everything else is in the JSON.
 
 ## What was run
 
-`node scripts/mittr/probe-engine-v2.mjs --json $TMPDIR/probe.json`, run six times with the same verdicts. The numbers below are from the fifth run; the sixth gave the same verdicts and the same outbound record.
+`node scripts/mittr/probe-engine-v2.mjs --json $TMPDIR/probe.json`. The run took 91 s, most of it the four 20 s refusal and retry windows.
 
-- Engine: `packages/electron/resources/opencode-cli/opencode`, as staged by `prepare:opencode-cli`. It reports `opencode v2.0.22`.
-- Isolation:
-  - a fresh temp `HOME` under `$TMPDIR`, with `TMPDIR`, all four `XDG_*` bases and `OPENCODE_CONFIG` inside it;
-  - no inherited shell env;
-  - `OPENCODE_DISABLE_MODELS_FETCH=1` and `OPENCODE_DISABLE_AUTOUPDATE=1`;
-  - a random free port (never 57123 or 57133) and a random `OPENCODE_SERVER_PASSWORD`.
-
-  The engine runs in its own process group, which is killed at the end. The temp `HOME` is deleted on exit. No engine of this worktree was left running.
-- Providers: two loopback stubs that speak the OpenAI API, `stub` and `other`, each on its own `127.0.0.1:<random>` port. Each stub records every request's headers and body. No real provider, endpoint or key was used.
-- Managed config (`OPENCODE_CONFIG`):
-
-  ```json
-  {
-    "providers": {
-      "stub": { "name": "Stub", "package": "aisdk:@ai-sdk/openai-compatible",
-                "settings": { "baseURL": "http://127.0.0.1:<stub>/v1" },
-                "models": { "m1": { "modelID": "m1", "name": "m1", "capabilities": { "tools": true } } } },
-      "other": { "...": "the same, pointing at the other stub" }
-    },
-    "plugins": ["<home>/engine-plugins/mittrcraft-identity"],
-    "experimental": { "policies": [
-      { "action": "provider.use", "resource": "*", "effect": "deny" },
-      { "action": "provider.use", "resource": "stub", "effect": "allow" } ] }
-  }
-  ```
-- Identity plugin: a directory plugin (`package.json` with `type: module` and `exports: ./index.js`) carrying the probe's inline copy of Task 14's `identityPluginSource()`. Task 14 replaces the copy with an import.
-- Sessions are driven through `@opencode/client` 2.0.22 with `x-opencode-directory` set to a work dir in the temp `HOME`.
-- The run takes about 50 s, most of it the two 20 s refusal windows.
+- **Engine.** `packages/electron/resources/opencode-cli/opencode`, as staged by `prepare:opencode-cli`. It reports `opencode v2.0.22`.
+- **Isolation.**
+  - A fresh temp `HOME` under `$TMPDIR`, with `TMPDIR`, all four `XDG_*` bases and `OPENCODE_CONFIG` inside it. No inherited shell env.
+  - `OPENCODE_DISABLE_MODELS_FETCH=1` and `OPENCODE_DISABLE_AUTOUPDATE=1`.
+  - A random free port (never 57123 or 57133) and a random `OPENCODE_SERVER_PASSWORD`.
+  - The engine runs in its own process group. The probe signals the whole group on every exit path: a failed start, normal completion, `SIGINT`/`SIGTERM`/`SIGHUP`, or an uncaught error. It then deletes the temp `HOME`. No engine of this worktree and no temp `HOME` was left after the run.
+- **Egress recording.**
+  - `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` (and their lowercase forms) point at a loopback proxy inside the probe. `NO_PROXY` lists the loopback addresses only.
+  - The proxy records every request and `CONNECT`. It forwards loopback targets and answers 403 to everything else, so nothing it sees leaves the machine.
+  - The engine's pid is sampled with `lsof -a -p <engine pids> -i` every 250 ms, from the moment it is spawned.
+  - The engine log runs at `--log-level debug`.
+- **Providers.** Two loopback stubs that speak the OpenAI API, `stub` and `other`, each on its own `127.0.0.1:<random>` port. Each stub records every request's headers and body.
+  - A third provider, `canary`, points at `https://egress-canary.invalid/v1`. It is used once, as the proxy control.
+  - No real provider, endpoint or key was used.
+- **Managed config** (`OPENCODE_CONFIG`). It sets `providers.{stub,other,canary}`, each with `package: "aisdk:@ai-sdk/openai-compatible"`, `settings.baseURL` and models `{m1: {modelID, name, capabilities: {tools: true}}}`. It also sets `plugins: [<hook recorder>, <identity plugin>]` and `experimental.policies: [{provider.use, *, deny}, {provider.use, stub, allow}]`.
+- **Plugins.** Both are directory plugins (`package.json` with `type: module` and `exports: ./index.js`):
+  - `identity` is the probe's inline copy of Task 14's `identityPluginSource()`. Task 14 replaces it with an import. Since this fix round, the copy also rewrites the 2.0.22 harness sentence (R50).
+  - `hook recorder` is probe-only. It appends each `context`/`generate`/`compaction` call, and the first 120 characters of `system[0]` it saw, to a file in the temp `HOME`.
+- **Sessions** are driven through `@opencode/client` 2.0.22, with `x-opencode-directory` set to a work dir in the temp `HOME`. Each stub request is matched to its session by `x-opencode-session-id`.
 
 ## Results
 
 | | Verdict | What the engine did |
 |---|---|---|
-| P1 headers | PASS | Every provider request carries `x-opencode-session-id: <session id>`. `x-session-id`, `x-session-affinity` and `x-opencode-session` carry the same session id. |
-| P2 refusal | PASS | 1 stub request in 20 s. Idle 5 ms after the 402. No `retry` status. The assistant message has `error.type = provider.quota`, `error.status = 402`, and `error.response.body` holds our JSON with `llm_quota_exhausted`. |
-| P2b mid-stream refusal | PASS | 1 stub request in 20 s. Idle 6 ms after the frame. No `retry` status. Same `provider.quota` error, but `error.status = 200` (the HTTP status of the stream). |
-| P3 identity | PASS | The plugin loads, and `ctx.session.hook('context'…)` can rewrite `system`. The stub received `You are MittrCraft…`, and neither `You are opencode` nor `You are OpenCode`. See the concern below: the prompt still names OpenCode elsewhere. |
-| P4 policy | PASS | With deny `*` / allow `stub`, a session on `other/m1` fails with `provider.no-route` ("Model unavailable: other/m1"). The `other` stub saw 0 requests, and `stub/m1` answers. After a restart with `policies: []`, both answer. |
-| P5 hot reload | PASS | Adding `m2` to the managed file: `GET /api/model` listed `stub/m2` after 259 ms, with no restart. Rewriting policies to `[]`: the `other` prompt answered 1.7 s after the write (the first try right after the write still got `no-route`). |
-| P6 credential | PASS | `POST /api/integration/stub/connect/key {key:'k-123'}` succeeded. The next stub request had `authorization: Bearer k-123`. After an engine restart on the same XDG bases, it still did. |
+| P1 headers | PASS | The provider request carried `x-opencode-session-id` and `x-session-id`, both equal to the session id. So did `x-session-affinity` and `x-opencode-session`. |
+| P2 refusal | PASS | 1 stub request in 20 s. Idle 4 ms after the 402. No `retry` status. The assistant `error` has `type: provider.quota`, `status: 402`, and `response.body` holding our JSON with `llm_quota_exhausted`. |
+| P2b mid-stream refusal | PASS | 1 stub request in 20 s. Idle 5 ms after the frame. No `retry` status. Same `provider.quota` error and body, but `status: 200`, the HTTP status of the stream. |
+| P2c header only | PASS | A 429 with a plain rate-limit body and `x-should-retry: false`: 1 request, idle 4 ms after, no retry (`provider.rate-limit`, 429). The header alone stops a retry the engine would otherwise make. |
+| P2 control | PASS | The same 429 without the header: 4 requests at 0, 2.0, 6.7 and 15.2 s, with `session.retry.scheduled` attempts 2 to 5. So the probe does see retries when they happen, and the single requests above are real. The probe then interrupts the session. |
+| P3 identity | PASS | Details below. |
+| P4 policy | PASS | Lock on, a session on `other/m1` fails with `provider.no-route` ("Model unavailable: other/m1"). The `other` stub saw 0 requests, and `stub/m1` answered. After a restart with `policies: []`, both answered. |
+| P5 hot reload | PASS | Model `m2` added: `GET /api/model` listed `stub/m2` 287 ms after the write, with no restart. Policies set to `[]`: the `other` prompt answered 1.74 s after the write, on the 2nd try (the first still got `no-route`). |
+| P6 credential | PASS | `POST /api/integration/stub/connect/key {key:'k-123'}` succeeded. The keyed turn answered, and its request carried `authorization: Bearer k-123`. After an engine restart on the same XDG bases, the turn answered and the request still carried it. |
+| Proxy control | PASS | The one `canary` prompt reached the proxy as `CONNECT egress-canary.invalid:443`, and was refused (the turn ends `provider.auth`, 403). So the engine's outbound HTTPS goes through `HTTPS_PROXY`, and the proxy record covers it. |
+
+### P3 in detail
+- **Hook firing.** `context` fired once for the turn; `generate` and `compaction` fired 0 times. The recorder saw `system[0]` open with the original sentence: "You are an AI agent running in OpenCode, a coding agent harness."
+- **Canary rewrite.** The stub received `You are MittrCraft, an AI coding agent.` in place of that sentence, and the original sentence was gone. A directory plugin can rewrite the harness opening line in place through `ctx.session.hook('context', …)`, so R50 is achievable in Task 14 without the shim fallback.
+- **Identity line.** It was present. Neither "You are opencode" nor "You are OpenCode" was sent.
+- **Remaining mentions.** The system message (one message, `content` a string) names OpenCode 11 times, or 10 without our identity line ("Never call yourself OpenCode"). Those 10 are all built-in tool and skill text, which R50 keeps:
+  - the `opencode` tool namespace ("Tools for managing OpenCode itself");
+  - the built-in `OpenCode` skill;
+  - the built-in skill for reporting an opencode issue.
+- **Other variants.** The binary also carries "You are opencode, an interactive CLI tool…" and "You are OpenCode, a coding agent…" (*read from the binary*). This run used an openai-compatible model and got neither. Which models get those was not traced. The identity copy keeps both rewrites.
 
 ### Details later tasks build on
-
-- **P1, Task 9:** `sessionIdOf` reads `x-opencode-session-id`, as planned, with `x-session-id` as the fallback. Both carried the session id. Sub-agent sessions add `x-opencode-parent-session-id` and `x-parent-session-id` (read from the binary, not exercised). The engine also sends `user-agent: opencode/latest/2.0.22/cli`, `x-opencode-client: cli`, `x-opencode-project: <project hash>`, `traceparent` and `b3`.
-- **P2/P2b, Tasks 18 and 22:** no retry hook is needed. The 2.0.22 classifier reads `x-should-retry` first (`"false"` means no retry), and it maps the `insufficient_quota` error type to `QuotaExceeded`, which it never retries. The mid-stream frame takes the same path without any header. A refused turn costs exactly one call. Code that recognises the refusal keys on `error.type === 'provider.quota'` plus `llm_quota_exhausted` in `error.response.body`. It does not key on `status === 402`, because a mid-stream refusal reports 200.
-- **P2, the session events seen:** `session.step.failed` and then `session.execution.failed`, both with the `provider.quota` error. The turn ends there, so the session is idle.
-- **P3, Task 14:** the hook path works. `ctx.session.hook('context'|'generate'|'compaction', fn)` is offered to directory plugins, and `fn` may mutate `o.system` in place: it can rewrite `o.system[0].text` and push `{type:'text', text}`. The engine joins the system parts into one `system` message whose `content` is a string. No fallback is needed. The plugin is reloaded on every write of the managed file ("loading plugin" in the engine log).
-- **P4, Task 13:** the lock does more than refuse the call. With the lock on, `GET /api/model` lists only `stub/m1`. With `policies: []` it lists every configured and discovered model (see the C12 section). A locked session is created, and its first turn then fails with `provider.no-route`. No request reaches the denied provider.
-- **P5, Tasks 10 and 13:** no `context.opencode.refresh(reason)` is needed after a managed-config write. Providers apply in about 0.25 s and policies within 2 s. For reference, a full restart took 256 ms to readiness and about 1.6 s of wall time, including stopping the old engine.
-- **P6, Task 10:** the credential API works and persists. It is stored in the engine database (`<XDG_DATA_HOME>/opencode/opencode.db`), and `GET /api/credential` lists it as `{id: 'cred_…', integrationID: 'stub'}`. A configured provider shows up as an integration whose only method is `key`. The `{env:MITTRCRAFT_SHIM_TOKEN}` fallback is not needed.
-- Without a key, the stub received no `authorization` header at all.
-- `GET /api/model` read about 0.5 s after readiness returned an empty list once. It was complete 130 ms later. The engine fills a location lazily, so an empty model list at startup is not authoritative. Task 10's picker must not read it as "no Mittr models".
+- **Task 9.** `sessionIdOf` reads `x-opencode-session-id`, with `x-session-id` as the fallback. Both equal the session id.
+  - The engine also sends `user-agent: opencode/latest/2.0.22/cli`, `x-opencode-client: cli`, `x-opencode-project: <project hash>`, `traceparent` and `b3`.
+  - Sub-agent turns add `x-opencode-parent-session-id` and `x-parent-session-id` (*read from the binary*, not exercised).
+- **Tasks 18 and 22.**
+  - No retry hook is needed, and a refused turn costs exactly one call.
+  - Recognise a refusal by `error.type === 'provider.quota'` plus `llm_quota_exhausted` in `error.response.body`, never by `status === 402`, because a mid-stream refusal reports 200.
+  - The events on refusal are `session.step.failed` and then `session.execution.failed`, both carrying that error.
+  - *Read from the binary:* the classifier reads `x-should-retry` first, and maps the `insufficient_quota` error type to `QuotaExceeded`, which it never retries.
+- **Task 13.** The lock also hides the denied providers' models: lock on, `GET /api/model` lists only `stub/m1`. A locked session can still be created; its first turn fails with `provider.no-route`, and no request reaches the denied provider.
+- **Tasks 10 and 13.** No `context.opencode.refresh(reason)` is needed after a managed-config write. Providers apply in about 0.3 s and policies within 2 s. The engine also reloads every configured plugin on each write ("loading plugin" in the log).
+  - For comparison, a full restart took 1.36 s from the stop signal until the probe was connected to the new engine. That includes a fixed 0.5 s pause the probe takes after connecting. The new engine itself was ready 260 ms after spawn.
+- **Task 10, credential.** The credential API works and persists. It is stored in the engine database (`<XDG_DATA_HOME>/opencode/opencode.db`). `GET /api/credential` lists it as `{id: 'cred_…', integrationID: 'stub'}`, and a configured provider shows as an integration whose only method is `key`. The `{env:MITTRCRAFT_SHIM_TOKEN}` fallback is not needed.
+- Without a key, the stub received no `authorization` header.
+- **Tasks 11 and 12.** `GET /api/model`, read about 0.5 s after readiness, returned `[]` once, and the full list 119 ms later. The engine fills a location lazily, so an empty list at startup is not authoritative.
 
 ## Outbound connections
 
-The engine opened no non-loopback connection with `OPENCODE_DISABLE_MODELS_FETCH=1` and `OPENCODE_DISABLE_AUTOUPDATE=1`:
+With `OPENCODE_DISABLE_MODELS_FETCH=1` and `OPENCODE_DISABLE_AUTOUPDATE=1`, the engine made no attempt to reach a non-loopback host, apart from the deliberate canary:
 
-- 88 `lsof -a -p <engine pids> -i` samples, every 500 ms, covered the engine and its one child. They showed no non-loopback peer.
-- The engine log (`--log-level debug`) names no non-loopback host.
+- **Proxy.** It recorded 1 attempt in the whole run: the canary `CONNECT`. The proxy control shows the engine's HTTPS goes through it, so a short-lived outbound HTTPS connection would have been recorded too.
+- **`lsof`.** 299 samples, 250 ms apart from spawn to stop, covered the engine and its one child. They showed no non-loopback peer.
+- **Log.** The debug log names no non-loopback host other than the canary.
 
-`lsof` sampling can miss a connection that opens and closes between two samples. The log check covers that gap only for requests the engine logs.
+What this does not cover: traffic that ignores the proxy variables, such as a raw socket or a DNS lookup made directly, is visible only to the `lsof` samples. Those can miss a connection that opens and closes between two samples.
 
-One loopback peer that is not ours: the engine connected to `127.0.0.1:11434`, 6 connections in all. On this machine that port is the owner's running Ollama. The engine auto-discovers a local Ollama, and it lists that Ollama's models (`ollama/gemma4:12b`, `ollama/qwen3.5:9b`) when the lock is off. This is not third-party egress, but it is a read of a local service. **For the owner:** 3 of the 6 connections opened while the lock was on, so a Mittr-locked app still probes a local Ollama.
+One loopback peer that is not ours: 6 connections to `127.0.0.1:11434`, the owner's running Ollama, 3 of them while the lock was on. The engine auto-discovers a local Ollama, and lists its models (`ollama/gemma4:12b`, `ollama/qwen3.5:9b`) when the lock is off. R51 accepts this as loopback-only, and notes it for the owner.
 
 ## Owner question (C12)
 
@@ -76,21 +87,6 @@ Shall `engineEnv()` set `OPENCODE_DISABLE_MODELS_FETCH=1` while the provider swi
 
 - A Mittr-only picker needs no public model catalog (R30/R39).
 - The phase-1 gate saw the engine fetch `models.dev` without this switch.
-- With it, this probe saw no non-loopback connection, and the Mittr provider, policies, plugin and credential all worked.
+- With it, this probe saw no outbound attempt, and the Mittr provider, policies, plugin and credential all worked.
 
-Related, for the owner's decision on the switch ON (R37/R40): with `policies: []`, the model list includes the built-in `opencode/*` free models (`opencode/big-pickle`, `opencode/nemotron-3-ultra-free`, and others). Those are served by OpenCode's hosted service. Choosing one sends prompts to a third party. The integration list also offers `opencode` ("OpenCode Console"), with `key`, `env` and `oauth`.
-
-## Concern for Task 14: the prompt still names OpenCode
-
-P3 passes on the criteria the plan set. But for a model on `aisdk:@ai-sdk/openai-compatible`, 2.0.22 does not use either of the two sentences Task 14 rewrites. Its system prompt starts:
-
-> You are an AI agent running in OpenCode, a coding agent harness.
-
-The appended identity sentence was present. The same system message still names OpenCode 12 times:
-
-- that opening line;
-- the built-in `opencode` tool namespace ("Tools for managing OpenCode itself");
-- the built-in `OpenCode` skill;
-- the built-in skill for reporting an opencode issue with the GitHub CLI.
-
-The binary carries all three opening sentences. Which models get which sentence was not traced. So the model is told it is MittrCraft, and it is also told it runs in OpenCode. Whether Task 14 should also rewrite the opening line, or hide the built-in `opencode` tools and skills, is a product call. It is left to the controller and the owner, not decided here.
+Related: with `policies: []`, the model list includes the built-in `opencode/*` free models, which OpenCode's hosted service serves, and the integrations offer `opencode` ("OpenCode Console": `key`, `env`, `oauth`). R52 keeps that provider denied even with the switch ON.
