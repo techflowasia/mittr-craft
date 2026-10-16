@@ -42,6 +42,10 @@
     {
       "from": "resources/icons/tray/status",
       "to": "icons/tray/status"
+    },
+    {
+      "from": "../../LICENSE",
+      "to": "LICENSE.openchamber.txt"
     }
   ],
   "afterPack": null,

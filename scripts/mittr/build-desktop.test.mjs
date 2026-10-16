@@ -6,7 +6,16 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { findNeedles } from './brand-leak-scan.mjs';
-import { applyVisibleStrings, mergeBuilderConfig, planVisibleStrings, readVisibleStrings, stagedServerFiles } from './build-desktop.mjs';
+import {
+  LICENCE_RESOURCE,
+  applyVisibleStrings,
+  findPackedApp,
+  mergeBuilderConfig,
+  planVisibleStrings,
+  readVisibleStrings,
+  stagedServerFiles,
+  verifyPackedApp,
+} from './build-desktop.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const readJson = (relative) => JSON.parse(fs.readFileSync(path.join(repoRoot, relative), 'utf8'));
@@ -264,4 +273,38 @@ test('a check after a build reads the text the build replaced, and server entrie
     fs.writeFileSync(path.join(root, 'dist-bundle/main.mjs'), 'rebuilt without the string');
     assert.equal(planVisibleStrings({ entries: entries.slice(0, 1), rootDir: root }).mismatches.length, 1);
   });
+});
+
+test('both flavors pack upstream\'s MIT licence without touching an upstream file', () => {
+  const upstream = readJson('packages/electron/package.json').build;
+  assert.match(fs.readFileSync(path.join(repoRoot, 'LICENSE'), 'utf8'), /^MIT License/);
+  for (const flavor of ['dev', 'prod']) {
+    const merged = mergeBuilderConfig(upstream, readJson(`brand/electron-builder.${flavor}.json`));
+    const entry = merged.extraResources.find((item) => item.to === LICENCE_RESOURCE);
+    assert.deepEqual(entry, { from: '../../LICENSE', to: LICENCE_RESOURCE }, flavor);
+    assert.equal(path.resolve(repoRoot, 'packages/electron', entry.from), path.join(repoRoot, 'LICENSE'));
+  }
+});
+
+const fakeApp = (t, { licence = true } = {}) => {
+  const dist = fs.mkdtempSync(path.join(os.tmpdir(), 'packed-app-'));
+  t.after(() => fs.rmSync(dist, { recursive: true, force: true }));
+  const appPath = path.join(dist, 'mac-arm64', 'Fixture Dev.app');
+  fs.mkdirSync(path.join(appPath, 'Contents', 'Resources'), { recursive: true });
+  if (licence) fs.writeFileSync(path.join(appPath, 'Contents', 'Resources', LICENCE_RESOURCE), 'MIT License\n');
+  return { dist, appPath };
+};
+
+test('the build ends by checking the packed licence and running the brand-leak scan, and fails on a leak', (t) => {
+  const { dist, appPath } = fakeApp(t);
+  assert.equal(findPackedApp({ productName: 'Fixture Dev', distDir: dist }), appPath);
+  assert.equal(findPackedApp({ productName: 'Other', distDir: dist }), null);
+
+  const scanned = [];
+  verifyPackedApp({ appPath, scan: (target) => { scanned.push(target); return 0; } });
+  assert.deepEqual(scanned, [appPath]);
+
+  assert.throws(() => verifyPackedApp({ appPath, scan: () => 1 }), /brand-leak scan .* failed \(exit 1\)/);
+  const bare = fakeApp(t, { licence: false });
+  assert.throws(() => verifyPackedApp({ appPath: bare.appPath, scan: () => 0 }), /no LICENSE\.openchamber\.txt/);
 });

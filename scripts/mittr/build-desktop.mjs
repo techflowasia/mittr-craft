@@ -13,6 +13,10 @@
  * (packed at the app root) and `packages/electron/product-plugins/mittr-server.mjs`.
  * All are build output and are never committed.
  *
+ * The packed app carries upstream's MIT licence as
+ * `Contents/Resources/LICENSE.openchamber.txt`, and the build ends with the
+ * brand-leak scan on the packed app: a leak fails the build.
+ *
  * electron-builder's `--config` replaces the `build` block in
  * `packages/electron/package.json` instead of merging with it, so the brand
  * config is an overlay applied here: upstream's block with only our keys
@@ -325,6 +329,35 @@ const checkStrings = (argv) => {
   return failed ? 1 : 0;
 };
 
+export const LICENCE_RESOURCE = 'LICENSE.openchamber.txt';
+
+/** The `.app` this build packed for `productName`, the newest one under `distDir`. */
+export const findPackedApp = ({ productName, distDir, startedAt = 0 }) => {
+  if (!fs.existsSync(distDir)) return null;
+  return fs.readdirSync(distDir)
+    .map((entry) => path.join(distDir, entry, `${productName}.app`))
+    .filter((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).mtimeMs >= startedAt)
+    .sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs)[0] ?? null;
+};
+
+/**
+ * Checks the packed app before the build counts as done: upstream's licence
+ * is in its resources, and the brand-leak scan exits 0. `scan` runs the scan
+ * and returns its exit code.
+ */
+export const verifyPackedApp = ({ appPath, scan }) => {
+  const licence = path.join(appPath, 'Contents', 'Resources', LICENCE_RESOURCE);
+  if (!fs.existsSync(licence)) throw new Error(`the packed app has no ${LICENCE_RESOURCE}: ${licence}`);
+  const status = scan(appPath);
+  if (status !== 0) throw new Error(`the brand-leak scan of ${appPath} failed (exit ${status})`);
+};
+
+const runLeakScan = (appPath) => {
+  const result = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'mittr', 'brand-leak-scan.mjs'), appPath], { cwd: repoRoot, stdio: 'inherit' });
+  if (result.error) throw result.error;
+  return result.status ?? 1;
+};
+
 const main = async () => {
   if (process.argv.includes('--check-strings')) {
     process.exitCode = checkStrings(process.argv.slice(2));
@@ -347,10 +380,10 @@ const main = async () => {
 
   console.log(`[mittr] building ${builderConfig.productName} (${builderConfig.appId}) ${builderConfig.extraMetadata?.version ?? ''}`);
 
-  step('1/7 workspace build');
+  step('1/8 workspace build');
   run(bun, ['run', 'build'], repoRoot);
 
-  step('2/7 server plugin bundle');
+  step('2/8 server plugin bundle');
   fs.rmSync(pluginsDir, { recursive: true, force: true });
   run(bun, [
     'build', serverPluginEntry,
@@ -359,7 +392,7 @@ const main = async () => {
     '--outfile', path.join(pluginsDir, 'mittr-server.mjs'),
   ], repoRoot);
 
-  step('3/7 product files and server copy');
+  step('3/8 product files and server copy');
   fs.rmSync(stagingDir, { recursive: true, force: true });
   fs.mkdirSync(stagingDir, { recursive: true });
   fs.copyFileSync(productSource, path.join(stagingDir, 'product.json'));
@@ -373,7 +406,7 @@ const main = async () => {
   }
   console.log(`[mittr] product: ${product.appName}, scheme ${product.deepLinkProtocol}, port ${product.desktopPort}`);
 
-  step('4/7 upstream desktop build steps');
+  step('4/8 upstream desktop build steps');
   // Staging the engine runs `opencode --version`, which appends to the log
   // under the XDG data home; keep that out of the builder's own OpenCode.
   const engineProbeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-build-engine-'));
@@ -390,21 +423,29 @@ const main = async () => {
     fs.rmSync(engineProbeHome, { recursive: true, force: true });
   }
 
-  step('5/7 visible strings');
+  step('5/8 visible strings');
   for (const { file, from, count } of applyVisibleStrings({ entries: visibleStrings, rootDir: electronDir })) {
     console.log(`[mittr] ${count}x ${JSON.stringify(from)} in ${file}`);
   }
   if (visibleStrings.length === 0) console.log('[mittr] none listed');
 
-  step('6/7 package');
+  step('6/8 package');
   const configFile = path.join(stagingDir, 'electron-builder.json');
   fs.writeFileSync(configFile, `${JSON.stringify(builderConfig, null, 2)}\n`);
   run(process.execPath, [path.join('scripts', 'package.mjs'), '--config', configFile], electronDir);
 
-  step('7/7 result');
+  step('7/8 result');
   const dmg = findDmg({ productName: builderConfig.productName, startedAt });
   if (process.platform === 'darwin' && !dmg) throw new Error(`no ${builderConfig.productName} dmg was produced in packages/electron/dist`);
   console.log(dmg ?? `[mittr] no dmg on ${process.platform}; see packages/electron/dist`);
+
+  if (process.platform === 'darwin') {
+    step('8/8 licence and brand-leak scan');
+    const appPath = findPackedApp({ productName: builderConfig.productName, distDir: path.join(electronDir, 'dist'), startedAt });
+    if (!appPath) throw new Error(`no ${builderConfig.productName}.app was produced in packages/electron/dist`);
+    verifyPackedApp({ appPath, scan: runLeakScan });
+    console.log(`[mittr] ${LICENCE_RESOURCE} is packed and the brand-leak scan passed: ${appPath}`);
+  }
 };
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
