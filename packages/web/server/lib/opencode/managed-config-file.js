@@ -29,9 +29,10 @@ const DISABLED_BUILTIN_PLUGINS = ['-opencode.browser'];
  * The file is OpenChamber-owned. It holds `plugins`: the built-in plugins
  * OpenChamber disables, then its own plugin directories, then any plugins a
  * server plugin contributes. A server plugin's config fragment
- * (`contributeConfig`, see `server-plugins.js`) supplies every other key. It
- * sits above the user's global `opencode.json` and below their project config,
- * so it never shadows a project-level choice.
+ * (`contributeConfig`, see `server-plugins.js`) supplies every other key. Its
+ * ordinary keys sit above the user's global `opencode.json` and below their
+ * project config, so they never shadow a project-level choice. Policies are the
+ * exception: they outrank project config (see below).
  *
  * When the user's own environment already sets `OPENCODE_CONFIG`, that file is
  * theirs: OpenChamber does not hijack it and falls back to merging its plugins
