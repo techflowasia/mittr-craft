@@ -164,7 +164,7 @@ const checks = {
     has(server, /await serverPlugins\?\.dispose\(\);/);
 
     const pluginSource = source('packages/mittr-server/src/plugin.js');
-    has(pluginSource, /export default async function setup\(\{ dataDir, logger \}\)/, 'our plugin no longer takes the context the loader passes');
+    has(pluginSource, /export default async function setup\(context\)/, 'our plugin no longer takes the context the loader passes');
   },
 
   'managed-config-contributions': async (t) => {
@@ -432,6 +432,21 @@ const checks = {
     for (const key of recorded) {
       has(electron, new RegExp(`\\b(?:PRODUCT|product)\\.${key}\\b`), `nothing in the desktop shell reads product.${key}`);
     }
+  },
+
+  'product-deep-link-scheme': () => {
+    for (const flavor of ['dev', 'prod']) {
+      const product = JSON.parse(source(`brand/product.${flavor}.json`));
+      assert.equal(product.env.MITTRCRAFT_DEEP_LINK_SCHEME, product.deepLinkProtocol, flavor);
+    }
+    has(source('packages/electron/early-startup.mjs'), /^export const DEEP_LINK_PROTOCOL = PRODUCT\.deepLinkProtocol;$/m, 'the shell no longer takes its URL scheme from the product');
+    has(source('packages/electron/main.mjs'), /app\.setAsDefaultProtocolClient\(DEEP_LINK_PROTOCOL\);/, 'the shell no longer registers the product URL scheme');
+  },
+
+  'deep-link-raw': () => {
+    const main = source('packages/electron/main.mjs');
+    has(main, /const parseDeepLink = \(raw\) => \{[\s\S]{0,200}const trimmed = raw\.trim\(\);[\s\S]{0,500}return \{ type, value, raw: trimmed \};/, 'a parsed deep link no longer carries the URL it came from as raw');
+    has(main, /if \(await deepLinkRegistry\.dispatch\(link\)\) return;/, 'registered handlers no longer receive the parsed link');
   },
 
   'i18n-overlay': () => {

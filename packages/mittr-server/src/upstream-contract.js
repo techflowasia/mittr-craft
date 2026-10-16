@@ -125,6 +125,16 @@ export const UPSTREAM_CONTRACT = [
     ],
   },
   {
+    id: 'product-deep-link-scheme',
+    files: ['packages/electron/early-startup.mjs', 'packages/electron/main.mjs', 'brand/product.dev.json', 'brand/product.prod.json'],
+    why: 'the sign-in callback the server accepts is on the same URL scheme the desktop shell registers from the product',
+  },
+  {
+    id: 'deep-link-raw',
+    files: ['packages/electron/main.mjs'],
+    why: 'the auth deep-link handler finishes sign-in from the full callback URL the shell keeps on the parsed link as raw',
+  },
+  {
     id: 'i18n-overlay',
     files: ['packages/ui/src/lib/i18n/store.ts', 'packages/ui/src/lib/product-plugins.ts'],
     why: 'every dictionary the UI shows goes through overlayDictionary',

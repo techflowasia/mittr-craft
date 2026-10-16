@@ -4,6 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import express from 'express';
+
+import { serve } from './mittr/test-helpers.js';
 import setup, { setupMittrServer } from './plugin.js';
 
 const ACCOUNT = '0123456789abcdef';
@@ -164,6 +167,28 @@ test('setup goes on when settings cannot be migrated, and tries again next start
   assert.ok(plugin.engineEnv instanceof Function);
   assert.equal(logger.lines.some((line) => line.includes('settings')), true);
   assert.equal(fs.readFileSync(path.join(dataDir, 'settings.json'), 'utf8'), '{"broken": ');
+});
+
+test('setup with the server context mounts Mittr sign-in and keeps the engine env', async (t) => {
+  const home = tempHome(t);
+  const dataDir = prodLayout(home);
+  const app = express();
+  const logger = recordingLogger();
+  const plugin = await setupMittrServer({
+    dataDir,
+    logger,
+    env: { MITTRCRAFT_BROKER_URL: 'https://api.mittr.asia', MITTRCRAFT_BROKER_FIXED: '1', MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft' },
+    homeDir: home,
+    context: { app, express, dataDir, logger, host: null },
+  });
+
+  const { status, body } = await (await serve(t, app))('POST', '/api/mittr/auth/start');
+  assert.equal(status, 200);
+  assert.ok(body.authorizeUrl.startsWith('https://api.mittr.asia/auth/desktop/start?code_challenge='), body.authorizeUrl);
+  assert.ok(body.authorizeUrl.includes('redirect_uri=mittrcraft%3A%2F%2Fauth%2Fcallback'), body.authorizeUrl);
+  assert.equal((await plugin.engineEnv()).XDG_DATA_HOME, path.join(home, '.local', 'share', 'mittrcraft', 'engine'));
+  assert.deepEqual(await plugin.managedConfig(), {});
+  await plugin.dispose();
 });
 
 test('the default export is the server-plugin setup', () => {
