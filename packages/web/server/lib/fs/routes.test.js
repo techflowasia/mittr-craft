@@ -1919,6 +1919,27 @@ describe('fs managed chats root', () => {
     expect(recovered.body.chatsRoot).toBe('/home/user/.config/openchamber/chats');
   });
 
+  it('fs routes use OPENCHAMBER_DATA_DIR', async () => {
+    const resolved = [];
+    const { app, getRoute } = createRouteRegistry();
+    registerFsRoutes(app, {
+      os: { homedir: () => '/home/user' },
+      path: path.posix,
+      fsPromises: { realpath: async (directory) => { resolved.push(directory); return directory; } },
+      normalizeDirectoryPath: (p) => p,
+      resolveProjectDirectory: async () => ({ directory: '/repo' }),
+      openchamberUserConfigRoot: '/srv/product-data',
+      managedChatsRoot: '/srv/product-chats',
+    });
+
+    const res = createMockResponse();
+    await getRoute('GET', '/api/fs/home')(undefined, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.canonicalLegacyChatsRoot).toBe('/srv/product-data/chats');
+    expect(resolved.filter((directory) => directory.includes('.config/openchamber'))).toEqual([]);
+  });
+
   it('keeps an accessible relocated root available when legacy alias lookup fails', async () => {
     const { home } = registerWithChatsRoot({
       managedChatsRoot: '/srv/chat-alias',
