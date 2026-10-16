@@ -12,6 +12,7 @@ import {
   openCodeMentions,
   policiesFor,
   quotaRefusal,
+  refusedByPolicy,
   stopConditionFor,
 } from './probe-engine-v2.mjs';
 
@@ -20,7 +21,16 @@ test('policiesFor locks to one provider', () => {
     { action: 'provider.use', resource: '*', effect: 'deny' },
     { action: 'provider.use', resource: 'mittr', effect: 'allow' },
   ]);
-  assert.deepEqual(policiesFor({ showOtherProviders: true, providerId: 'mittr' }), []);
+  assert.deepEqual(policiesFor({ showOtherProviders: true, providerId: 'mittr' }), [
+    { action: 'provider.use', resource: 'opencode', effect: 'deny' },
+  ]);
+});
+
+test('refusedByPolicy needs an unanswered turn that failed with provider.no-route', () => {
+  const noRoute = { type: 'session.execution.failed', error: { type: 'provider.no-route' } };
+  assert.equal(refusedByPolicy({ answered: false, events: [{ type: 'session.created' }, noRoute] }), true);
+  assert.equal(refusedByPolicy({ answered: false, events: [{ type: 'session.execution.failed', error: { type: 'provider.auth' } }] }), false);
+  assert.equal(refusedByPolicy({ answered: true, events: [noRoute] }), false);
 });
 
 test('quotaRefusal carries the no-retry header', () => {
@@ -70,6 +80,7 @@ test('stop conditions map to the plan', () => {
   assert.equal(stopConditionFor('P2b', { pass: false, fallbackPass: false }).stop, true);
   assert.equal(stopConditionFor('P5', { pass: false }).stop, false);
   assert.equal(stopConditionFor('P6', { pass: false }).stop, false);
+  assert.equal(stopConditionFor('P7', { pass: false }).stop, true);
 });
 
 test('failuresOf flags missing verdicts and egress', () => {
@@ -78,4 +89,5 @@ test('failuresOf flags missing verdicts and egress', () => {
   assert.ok(failures.includes('P2: no verdict'));
   assert.ok(failures.includes('outbound: proxy models.dev:443'));
   assert.ok(failuresOf({ fatal: 'x', scenarios: {}, outbound }).includes('fatal'));
+  assert.deepEqual(failuresOf({ scenarios: { P7: { pass: true } }, outbound: { ...outbound, proxyNonLoopback: [] } }, ['P7']), []);
 });

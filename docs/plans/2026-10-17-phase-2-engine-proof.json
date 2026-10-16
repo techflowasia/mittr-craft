@@ -711,6 +711,1374 @@
           "message": "Provider request failed with HTTP 403"
         }
       }
+    },
+    "P7": {
+      "pass": true,
+      "engineObeys": {
+        "lockLastInOneList": true,
+        "lockFirstInOneList": false,
+        "lockInContentOverUserFile": false,
+        "lockInManagedFileOverGlobal": false
+      },
+      "lockedContent": {
+        "label": "switch OFF; the user sets OPENCODE_CONFIG and allows every provider in OPENCODE_CONFIG_CONTENT",
+        "layers": {
+          "OPENCODE_CONFIG": {
+            "file": "p7-data-1/opencode.managed.json",
+            "policies": [
+              {
+                "action": "provider.use",
+                "resource": "*",
+                "effect": "deny"
+              },
+              {
+                "action": "provider.use",
+                "resource": "stub",
+                "effect": "allow"
+              }
+            ]
+          },
+          "OPENCODE_CONFIG_CONTENT": [
+            {
+              "action": "provider.use",
+              "resource": "*",
+              "effect": "allow"
+            },
+            {
+              "action": "provider.use",
+              "resource": "other",
+              "effect": "allow"
+            },
+            {
+              "action": "provider.use",
+              "resource": "opencode",
+              "effect": "allow"
+            }
+          ],
+          "files": {
+            "user-opencode.json": null
+          }
+        },
+        "other": {
+          "providerID": "other",
+          "sessionID": "ses_eb9d09cfeffeP0gH2z338JHPty",
+          "answered": false,
+          "stubRequests": {
+            "stub": 0,
+            "other": 0
+          },
+          "promptError": null,
+          "idle": true,
+          "assistantError": null,
+          "messageError": null,
+          "events": [
+            {
+              "type": "session.created"
+            },
+            {
+              "type": "session.inbox.enqueued"
+            },
+            {
+              "type": "session.execution.started"
+            },
+            {
+              "type": "session.instructions.updated"
+            },
+            {
+              "type": "session.inbox.delivered"
+            },
+            {
+              "type": "session.execution.failed",
+              "error": {
+                "type": "provider.no-route",
+                "message": "Model unavailable: other/m1"
+              }
+            }
+          ],
+          "refusedByPolicy": true,
+          "egress": []
+        },
+        "stub": {
+          "providerID": "stub",
+          "sessionID": "ses_eb9d0984effeGQk53a67Ihm78U",
+          "answered": true,
+          "stubRequests": {
+            "stub": 1,
+            "other": 0
+          },
+          "promptError": null,
+          "idle": true,
+          "assistantError": null,
+          "messageError": null,
+          "events": [
+            {
+              "type": "session.created"
+            },
+            {
+              "type": "session.inbox.enqueued"
+            },
+            {
+              "type": "session.execution.started"
+            },
+            {
+              "type": "session.instructions.updated"
+            },
+            {
+              "type": "session.inbox.delivered"
+            },
+            {
+              "type": "session.step.started"
+            },
+            {
+              "type": "session.text.started"
+            },
+            {
+              "type": "session.text.delta"
+            },
+            {
+              "type": "session.text.ended"
+            },
+            {
+              "type": "session.step.streamed"
+            },
+            {
+              "type": "session.step.ended"
+            },
+            {
+              "type": "session.usage.updated"
+            },
+            {
+              "type": "session.execution.succeeded"
+            }
+          ],
+          "refusedByPolicy": false,
+          "egress": []
+        },
+        "opencode": {
+          "providerID": "opencode",
+          "sessionID": "ses_eb9d095ecffevka0CK6RQ4gfZT",
+          "answered": false,
+          "stubRequests": {
+            "stub": 0,
+            "other": 0
+          },
+          "promptError": null,
+          "idle": true,
+          "assistantError": null,
+          "messageError": null,
+          "events": [
+            {
+              "type": "session.created"
+            },
+            {
+              "type": "session.inbox.enqueued"
+            },
+            {
+              "type": "session.execution.started"
+            },
+            {
+              "type": "session.instructions.updated"
+            },
+            {
+              "type": "session.inbox.delivered"
+            },
+            {
+              "type": "session.execution.failed",
+              "error": {
+                "type": "provider.no-route",
+                "message": "Model unavailable: opencode/big-pickle"
+              }
+            }
+          ],
+          "refusedByPolicy": true,
+          "egress": []
+        },
+        "modelsListed": [
+          "stub/m1"
+        ]
+      },
+      "lockedFile": {
+        "label": "switch OFF; the user allows every provider in their own OPENCODE_CONFIG file",
+        "layers": {
+          "OPENCODE_CONFIG": {
+            "file": "p7-data-2/opencode.managed.json",
+            "policies": [
+              {
+                "action": "provider.use",
+                "resource": "*",
+                "effect": "deny"
+              },
+              {
+                "action": "provider.use",
+                "resource": "stub",
+                "effect": "allow"
+              }
+            ]
+          },
+          "OPENCODE_CONFIG_CONTENT": [
+            {
+              "action": "provider.use",
+              "resource": "*",
+              "effect": "allow"
+            },
+            {
+              "action": "provider.use",
+              "resource": "other",
+              "effect": "allow"
+            },
+            {
+              "action": "provider.use",
+              "resource": "opencode",
+              "effect": "allow"
+            }
+          ],
+          "files": {
+            "user-opencode.json": [
+              {
+                "action": "provider.use",
+                "resource": "*",
+                "effect": "allow"
+              },
+              {
+                "action": "provider.use",
+                "resource": "other",
+                "effect": "allow"
+              },
+              {
+                "action": "provider.use",
+                "resource": "opencode",
+                "effect": "allow"
+              }
+            ]
+          }
+        },
+        "other": {
+          "providerID": "other",
+          "sessionID": "ses_eb9d08e35ffeh30VKkGsV8zgH3",
+          "answered": false,
+          "stubRequests": {
+            "stub": 0,
+            "other": 0
+          },
+          "promptError": null,
+          "idle": true,
+          "assistantError": null,
+          "messageError": null,
+          "events": [
+            {
+              "type": "session.created"
+            },
+            {
+              "type": "session.inbox.enqueued"
+            },
+            {
+              "type": "session.execution.started"
+            },
+            {
+              "type": "session.instructions.updated"
+            },
+            {
+              "type": "session.inbox.delivered"
+            },
+            {
+              "type": "session.execution.failed",
+              "error": {
+                "type": "provider.no-route",
+                "message": "Model unavailable: other/m1"
+              }
+            }
+          ],
+          "refusedByPolicy": true,
+          "egress": []
+        },
+        "stub": {
+          "providerID": "stub",
+          "sessionID": "ses_eb9d08b18ffeTJl5UpNhImOuWF",
+          "answered": true,
+          "stubRequests": {
+            "stub": 1,
+            "other": 0
+          },
+          "promptError": null,
+          "idle": true,
+          "assistantError": null,
+          "messageError": null,
+          "events": [
+            {
+              "type": "session.created"
+            },
+            {
+              "type": "session.inbox.enqueued"
+            },
+            {
+              "type": "session.execution.started"
+            },
+            {
+              "type": "session.instructions.updated"
+            },
+            {
+              "type": "session.inbox.delivered"
+            },
+            {
+              "type": "session.step.started"
+            },
+            {
+              "type": "session.text.started"
+            },
+            {
+              "type": "session.text.delta"
+            },
+            {
+              "type": "session.text.ended"
+            },
+            {
+              "type": "session.step.streamed"
+            },
+            {
+              "type": "session.step.ended"
+            },
+            {
+              "type": "session.usage.updated"
+            },
+            {
+              "type": "session.execution.succeeded"
+            }
+          ],
+          "refusedByPolicy": false,
+          "egress": []
+        },
+        "opencode": {
+          "providerID": "opencode",
+          "sessionID": "ses_eb9d088a9ffekkDUevcp9wMFDq",
+          "answered": false,
+          "stubRequests": {
+            "stub": 0,
+            "other": 0
+          },
+          "promptError": null,
+          "idle": true,
+          "assistantError": null,
+          "messageError": null,
+          "events": [
+            {
+              "type": "session.created"
+            },
+            {
+              "type": "session.inbox.enqueued"
+            },
+            {
+              "type": "session.execution.started"
+            },
+            {
+              "type": "session.instructions.updated"
+            },
+            {
+              "type": "session.inbox.delivered"
+            },
+            {
+              "type": "session.execution.failed",
+              "error": {
+                "type": "provider.no-route",
+                "message": "Model unavailable: opencode/big-pickle"
+              }
+            }
+          ],
+          "refusedByPolicy": true,
+          "egress": []
+        },
+        "modelsListed": [
+          "stub/m1"
+        ]
+      },
+      "lockedRepo": {
+        "label": "switch OFF; the project opencode.json allows every provider",
+        "layers": {
+          "OPENCODE_CONFIG": {
+            "file": "p7-data-3/opencode.managed.json",
+            "policies": [
+              {
+                "action": "provider.use",
+                "resource": "*",
+                "effect": "deny"
+              },
+              {
+                "action": "provider.use",
+                "resource": "stub",
+                "effect": "allow"
+              }
+            ]
+          },
+          "OPENCODE_CONFIG_CONTENT": null,
+          "files": {
+            "work/opencode.json": [
+              {
+                "action": "provider.use",
+                "resource": "*",
+                "effect": "allow"
+              },
+              {
+                "action": "provider.use",
+                "resource": "other",
+                "effect": "allow"
+              },
+              {
+                "action": "provider.use",
+                "resource": "opencode",
+                "effect": "allow"
+              }
+            ]
+          }
+        },
+        "other": {
+          "providerID": "other",
+          "sessionID": "ses_eb9d080dfffeUHs0w5utSYw20i",
+          "answered": false,
+          "stubRequests": {
+            "stub": 0,
+            "other": 0
+          },
+          "promptError": null,
+          "idle": true,
+          "assistantError": null,
+          "messageError": null,
+          "events": [
+            {
+              "type": "session.created"
+            },
+            {
+              "type": "session.inbox.enqueued"
+            },
+            {
+              "type": "session.execution.started"
+            },
+            {
+              "type": "session.instructions.updated"
+            },
+            {
+              "type": "session.inbox.delivered"
+            },
+            {
+              "type": "session.execution.failed",
+              "error": {
+                "type": "provider.no-route",
+                "message": "Model unavailable: other/m1"
+              }
+            }
+          ],
+          "refusedByPolicy": true,
+          "egress": []
+        },
+        "stub": {
+          "providerID": "stub",
+          "sessionID": "ses_eb9d07ddbffeTCt7GSjrglC7Zi",
+          "answered": true,
+          "stubRequests": {
+            "stub": 1,
+            "other": 0
+          },
+          "promptError": null,
+          "idle": true,
+          "assistantError": null,
+          "messageError": null,
+          "events": [
+            {
+              "type": "session.created"
+            },
+            {
+              "type": "session.inbox.enqueued"
+            },
+            {
+              "type": "session.execution.started"
+            },
+            {
+              "type": "session.instructions.updated"
+            },
+            {
+              "type": "session.inbox.delivered"
+            },
+            {
+              "type": "session.step.started"
+            },
+            {
+              "type": "session.text.started"
+            },
+            {
+              "type": "session.text.delta"
+            },
+            {
+              "type": "session.text.ended"
+            },
+            {
+              "type": "session.step.streamed"
+            },
+            {
+              "type": "session.step.ended"
+            },
+            {
+              "type": "session.usage.updated"
+            },
+            {
+              "type": "session.execution.succeeded"
+            }
+          ],
+          "refusedByPolicy": false,
+          "egress": []
+        },
+        "opencode": {
+          "providerID": "opencode",
+          "sessionID": "ses_eb9d07b72ffeO8cC9Q5knucZt2",
+          "answered": false,
+          "stubRequests": {
+            "stub": 0,
+            "other": 0
+          },
+          "promptError": null,
+          "idle": true,
+          "assistantError": null,
+          "messageError": null,
+          "events": [
+            {
+              "type": "session.created"
+            },
+            {
+              "type": "session.inbox.enqueued"
+            },
+            {
+              "type": "session.execution.started"
+            },
+            {
+              "type": "session.instructions.updated"
+            },
+            {
+              "type": "session.inbox.delivered"
+            },
+            {
+              "type": "session.execution.failed",
+              "error": {
+                "type": "provider.no-route",
+                "message": "Model unavailable: opencode/big-pickle"
+              }
+            }
+          ],
+          "refusedByPolicy": true,
+          "egress": []
+        },
+        "modelsListed": [
+          "stub/m1"
+        ]
+      },
+      "openRepo": {
+        "label": "switch ON; the project opencode.json allows every provider",
+        "layers": {
+          "OPENCODE_CONFIG": {
+            "file": "p7-data-4/opencode.managed.json",
+            "policies": [
+              {
+                "action": "provider.use",
+                "resource": "opencode",
+                "effect": "deny"
+              }
+            ]
+          },
+          "OPENCODE_CONFIG_CONTENT": null,
+          "files": {
+            "work/opencode.json": [
+              {
+                "action": "provider.use",
+                "resource": "*",
+                "effect": "allow"
+              },
+              {
+                "action": "provider.use",
+                "resource": "other",
+                "effect": "allow"
+              },
+              {
+                "action": "provider.use",
+                "resource": "opencode",
+                "effect": "allow"
+              }
+            ]
+          }
+        },
+        "other": {
+          "providerID": "other",
+          "sessionID": "ses_eb9d073a2ffepmGxpDdkmUiVyN",
+          "answered": true,
+          "stubRequests": {
+            "stub": 0,
+            "other": 1
+          },
+          "promptError": null,
+          "idle": true,
+          "assistantError": null,
+          "messageError": null,
+          "events": [
+            {
+              "type": "session.created"
+            },
+            {
+              "type": "session.inbox.enqueued"
+            },
+            {
+              "type": "session.execution.started"
+            },
+            {
+              "type": "session.instructions.updated"
+            },
+            {
+              "type": "session.inbox.delivered"
+            },
+            {
+              "type": "session.step.started"
+            },
+            {
+              "type": "session.text.started"
+            },
+            {
+              "type": "session.text.delta"
+            },
+            {
+              "type": "session.text.ended"
+            },
+            {
+              "type": "session.step.streamed"
+            },
+            {
+              "type": "session.step.ended"
+            },
+            {
+              "type": "session.usage.updated"
+            },
+            {
+              "type": "session.execution.succeeded"
+            }
+          ],
+          "refusedByPolicy": false,
+          "egress": []
+        },
+        "stub": {
+          "providerID": "stub",
+          "sessionID": "ses_eb9d0709bffe1l3TaO0BnfzV3w",
+          "answered": true,
+          "stubRequests": {
+            "stub": 1,
+            "other": 0
+          },
+          "promptError": null,
+          "idle": true,
+          "assistantError": null,
+          "messageError": null,
+          "events": [
+            {
+              "type": "session.created"
+            },
+            {
+              "type": "session.inbox.enqueued"
+            },
+            {
+              "type": "session.execution.started"
+            },
+            {
+              "type": "session.instructions.updated"
+            },
+            {
+              "type": "session.inbox.delivered"
+            },
+            {
+              "type": "session.step.started"
+            },
+            {
+              "type": "session.text.started"
+            },
+            {
+              "type": "session.text.delta"
+            },
+            {
+              "type": "session.text.ended"
+            },
+            {
+              "type": "session.step.streamed"
+            },
+            {
+              "type": "session.step.ended"
+            },
+            {
+              "type": "session.usage.updated"
+            },
+            {
+              "type": "session.execution.succeeded"
+            }
+          ],
+          "refusedByPolicy": false,
+          "egress": []
+        },
+        "opencode": {
+          "providerID": "opencode",
+          "sessionID": "ses_eb9d06e36ffeW9DxRo16E5Czoz",
+          "answered": false,
+          "stubRequests": {
+            "stub": 0,
+            "other": 0
+          },
+          "promptError": null,
+          "idle": true,
+          "assistantError": null,
+          "messageError": null,
+          "events": [
+            {
+              "type": "session.created"
+            },
+            {
+              "type": "session.inbox.enqueued"
+            },
+            {
+              "type": "session.execution.started"
+            },
+            {
+              "type": "session.instructions.updated"
+            },
+            {
+              "type": "session.inbox.delivered"
+            },
+            {
+              "type": "session.execution.failed",
+              "error": {
+                "type": "provider.no-route",
+                "message": "Model unavailable: opencode/big-pickle"
+              }
+            }
+          ],
+          "refusedByPolicy": true,
+          "egress": []
+        },
+        "modelsListed": [
+          "ollama/gemma4:12b",
+          "ollama/qwen3.5:9b",
+          "other/m1",
+          "stub/m1"
+        ]
+      },
+      "open": {
+        "label": "switch ON; the user sets OPENCODE_CONFIG and allows every provider in OPENCODE_CONFIG_CONTENT",
+        "layers": {
+          "OPENCODE_CONFIG": {
+            "file": "p7-data-5/opencode.managed.json",
+            "policies": [
+              {
+                "action": "provider.use",
+                "resource": "opencode",
+                "effect": "deny"
+              }
+            ]
+          },
+          "OPENCODE_CONFIG_CONTENT": [
+            {
+              "action": "provider.use",
+              "resource": "*",
+              "effect": "allow"
+            },
+            {
+              "action": "provider.use",
+              "resource": "other",
+              "effect": "allow"
+            },
+            {
+              "action": "provider.use",
+              "resource": "opencode",
+              "effect": "allow"
+            }
+          ],
+          "files": {
+            "user-opencode.json": null
+          }
+        },
+        "other": {
+          "providerID": "other",
+          "sessionID": "ses_eb9d0666dffewAeghnUYVknM6F",
+          "answered": true,
+          "stubRequests": {
+            "stub": 0,
+            "other": 1
+          },
+          "promptError": null,
+          "idle": true,
+          "assistantError": null,
+          "messageError": null,
+          "events": [
+            {
+              "type": "session.created"
+            },
+            {
+              "type": "session.inbox.enqueued"
+            },
+            {
+              "type": "session.execution.started"
+            },
+            {
+              "type": "session.instructions.updated"
+            },
+            {
+              "type": "session.inbox.delivered"
+            },
+            {
+              "type": "session.step.started"
+            },
+            {
+              "type": "session.text.started"
+            },
+            {
+              "type": "session.text.delta"
+            },
+            {
+              "type": "session.text.ended"
+            },
+            {
+              "type": "session.step.streamed"
+            },
+            {
+              "type": "session.step.ended"
+            },
+            {
+              "type": "session.usage.updated"
+            },
+            {
+              "type": "session.execution.succeeded"
+            }
+          ],
+          "refusedByPolicy": false,
+          "egress": []
+        },
+        "stub": {
+          "providerID": "stub",
+          "sessionID": "ses_eb9d06376ffeI9spxb9DOply26",
+          "answered": true,
+          "stubRequests": {
+            "stub": 1,
+            "other": 0
+          },
+          "promptError": null,
+          "idle": true,
+          "assistantError": null,
+          "messageError": null,
+          "events": [
+            {
+              "type": "session.created"
+            },
+            {
+              "type": "session.inbox.enqueued"
+            },
+            {
+              "type": "session.execution.started"
+            },
+            {
+              "type": "session.instructions.updated"
+            },
+            {
+              "type": "session.inbox.delivered"
+            },
+            {
+              "type": "session.step.started"
+            },
+            {
+              "type": "session.text.started"
+            },
+            {
+              "type": "session.text.delta"
+            },
+            {
+              "type": "session.text.ended"
+            },
+            {
+              "type": "session.step.streamed"
+            },
+            {
+              "type": "session.step.ended"
+            },
+            {
+              "type": "session.usage.updated"
+            },
+            {
+              "type": "session.execution.succeeded"
+            }
+          ],
+          "refusedByPolicy": false,
+          "egress": []
+        },
+        "opencode": {
+          "providerID": "opencode",
+          "sessionID": "ses_eb9d060f1ffex0rgZWmBwFIErG",
+          "answered": false,
+          "stubRequests": {
+            "stub": 0,
+            "other": 0
+          },
+          "promptError": null,
+          "idle": true,
+          "assistantError": null,
+          "messageError": null,
+          "events": [
+            {
+              "type": "session.created"
+            },
+            {
+              "type": "session.inbox.enqueued"
+            },
+            {
+              "type": "session.execution.started"
+            },
+            {
+              "type": "session.instructions.updated"
+            },
+            {
+              "type": "session.inbox.delivered"
+            },
+            {
+              "type": "session.execution.failed",
+              "error": {
+                "type": "provider.no-route",
+                "message": "Model unavailable: opencode/big-pickle"
+              }
+            }
+          ],
+          "refusedByPolicy": true,
+          "egress": []
+        },
+        "modelsListed": [
+          "ollama/gemma4:12b",
+          "ollama/qwen3.5:9b",
+          "other/m1",
+          "stub/m1"
+        ]
+      },
+      "diagnostics": {
+        "lockLastInList": {
+          "label": "diagnostic: one list, the lock after the allows",
+          "layers": {
+            "OPENCODE_CONFIG": {
+              "file": "user-opencode.json",
+              "policies": null
+            },
+            "OPENCODE_CONFIG_CONTENT": [
+              {
+                "action": "provider.use",
+                "resource": "*",
+                "effect": "allow"
+              },
+              {
+                "action": "provider.use",
+                "resource": "other",
+                "effect": "allow"
+              },
+              {
+                "action": "provider.use",
+                "resource": "opencode",
+                "effect": "allow"
+              },
+              {
+                "action": "provider.use",
+                "resource": "*",
+                "effect": "deny"
+              },
+              {
+                "action": "provider.use",
+                "resource": "stub",
+                "effect": "allow"
+              }
+            ],
+            "files": {
+              "user-opencode.json": null
+            }
+          },
+          "other": {
+            "providerID": "other",
+            "sessionID": "ses_eb9d0593bffeJwx6DLiWCt4faN",
+            "answered": false,
+            "stubRequests": {
+              "stub": 0,
+              "other": 0
+            },
+            "promptError": null,
+            "idle": true,
+            "assistantError": null,
+            "messageError": null,
+            "events": [
+              {
+                "type": "session.created"
+              },
+              {
+                "type": "session.inbox.enqueued"
+              },
+              {
+                "type": "session.execution.started"
+              },
+              {
+                "type": "session.instructions.updated"
+              },
+              {
+                "type": "session.inbox.delivered"
+              },
+              {
+                "type": "session.execution.failed",
+                "error": {
+                  "type": "provider.no-route",
+                  "message": "Model unavailable: other/m1"
+                }
+              }
+            ],
+            "refusedByPolicy": true,
+            "egress": []
+          },
+          "modelsListed": [
+            "stub/m1"
+          ]
+        },
+        "lockFirstInList": {
+          "label": "diagnostic: one list, the lock before the allows",
+          "layers": {
+            "OPENCODE_CONFIG": {
+              "file": "user-opencode.json",
+              "policies": null
+            },
+            "OPENCODE_CONFIG_CONTENT": [
+              {
+                "action": "provider.use",
+                "resource": "*",
+                "effect": "deny"
+              },
+              {
+                "action": "provider.use",
+                "resource": "stub",
+                "effect": "allow"
+              },
+              {
+                "action": "provider.use",
+                "resource": "*",
+                "effect": "allow"
+              },
+              {
+                "action": "provider.use",
+                "resource": "other",
+                "effect": "allow"
+              },
+              {
+                "action": "provider.use",
+                "resource": "opencode",
+                "effect": "allow"
+              }
+            ],
+            "files": {
+              "user-opencode.json": null
+            }
+          },
+          "other": {
+            "providerID": "other",
+            "sessionID": "ses_eb9d050d4ffekC6glV5wJXbotC",
+            "answered": true,
+            "stubRequests": {
+              "stub": 0,
+              "other": 1
+            },
+            "promptError": null,
+            "idle": true,
+            "assistantError": null,
+            "messageError": null,
+            "events": [
+              {
+                "type": "session.created"
+              },
+              {
+                "type": "session.inbox.enqueued"
+              },
+              {
+                "type": "session.execution.started"
+              },
+              {
+                "type": "session.instructions.updated"
+              },
+              {
+                "type": "session.inbox.delivered"
+              },
+              {
+                "type": "session.step.started"
+              },
+              {
+                "type": "session.text.started"
+              },
+              {
+                "type": "session.text.delta"
+              },
+              {
+                "type": "session.text.ended"
+              },
+              {
+                "type": "session.step.streamed"
+              },
+              {
+                "type": "session.step.ended"
+              },
+              {
+                "type": "session.usage.updated"
+              },
+              {
+                "type": "session.execution.succeeded"
+              }
+            ],
+            "refusedByPolicy": false,
+            "egress": []
+          },
+          "modelsListed": [
+            "ollama/gemma4:12b",
+            "ollama/qwen3.5:9b",
+            "opencode/big-pickle",
+            "opencode/ling-3.0-flash-fin-free",
+            "opencode/longcat-2.5-preview-free",
+            "opencode/mimo-v2.6-flash-free",
+            "opencode/muse-spark-1.3-contributor-free",
+            "opencode/nemotron-3-ultra-free",
+            "opencode/nemotron-3.5-lightning-free",
+            "opencode/space-bunny-free",
+            "other/m1",
+            "stub/m1"
+          ]
+        },
+        "lockInContentUnderUserFile": {
+          "label": "diagnostic: the lock only in OPENCODE_CONFIG_CONTENT, the allows in the user OPENCODE_CONFIG file",
+          "layers": {
+            "OPENCODE_CONFIG": {
+              "file": "user-opencode.json",
+              "policies": [
+                {
+                  "action": "provider.use",
+                  "resource": "*",
+                  "effect": "allow"
+                },
+                {
+                  "action": "provider.use",
+                  "resource": "other",
+                  "effect": "allow"
+                },
+                {
+                  "action": "provider.use",
+                  "resource": "opencode",
+                  "effect": "allow"
+                }
+              ]
+            },
+            "OPENCODE_CONFIG_CONTENT": [
+              {
+                "action": "provider.use",
+                "resource": "*",
+                "effect": "deny"
+              },
+              {
+                "action": "provider.use",
+                "resource": "stub",
+                "effect": "allow"
+              }
+            ],
+            "files": {
+              "user-opencode.json": [
+                {
+                  "action": "provider.use",
+                  "resource": "*",
+                  "effect": "allow"
+                },
+                {
+                  "action": "provider.use",
+                  "resource": "other",
+                  "effect": "allow"
+                },
+                {
+                  "action": "provider.use",
+                  "resource": "opencode",
+                  "effect": "allow"
+                }
+              ]
+            }
+          },
+          "other": {
+            "providerID": "other",
+            "sessionID": "ses_eb9d04871ffeYNO4TwTGieGArA",
+            "answered": true,
+            "stubRequests": {
+              "stub": 0,
+              "other": 1
+            },
+            "promptError": null,
+            "idle": true,
+            "assistantError": null,
+            "messageError": null,
+            "events": [
+              {
+                "type": "session.created"
+              },
+              {
+                "type": "session.inbox.enqueued"
+              },
+              {
+                "type": "session.execution.started"
+              },
+              {
+                "type": "session.instructions.updated"
+              },
+              {
+                "type": "session.inbox.delivered"
+              },
+              {
+                "type": "session.step.started"
+              },
+              {
+                "type": "session.text.started"
+              },
+              {
+                "type": "session.text.delta"
+              },
+              {
+                "type": "session.text.ended"
+              },
+              {
+                "type": "session.step.streamed"
+              },
+              {
+                "type": "session.step.ended"
+              },
+              {
+                "type": "session.usage.updated"
+              },
+              {
+                "type": "session.execution.succeeded"
+              }
+            ],
+            "refusedByPolicy": false,
+            "egress": []
+          },
+          "modelsListed": [
+            "ollama/gemma4:12b",
+            "ollama/qwen3.5:9b",
+            "opencode/big-pickle",
+            "opencode/ling-3.0-flash-fin-free",
+            "opencode/longcat-2.5-preview-free",
+            "opencode/mimo-v2.6-flash-free",
+            "opencode/muse-spark-1.3-contributor-free",
+            "opencode/nemotron-3-ultra-free",
+            "opencode/nemotron-3.5-lightning-free",
+            "opencode/space-bunny-free",
+            "other/m1",
+            "stub/m1"
+          ]
+        },
+        "globalAllow": {
+          "label": "diagnostic: the managed lock against a global opencode.json that allows every provider",
+          "layers": {
+            "OPENCODE_CONFIG": {
+              "file": "p7-data-6/opencode.managed.json",
+              "policies": [
+                {
+                  "action": "provider.use",
+                  "resource": "*",
+                  "effect": "deny"
+                },
+                {
+                  "action": "provider.use",
+                  "resource": "stub",
+                  "effect": "allow"
+                }
+              ]
+            },
+            "OPENCODE_CONFIG_CONTENT": null,
+            "files": {
+              ".config/opencode/opencode.json": [
+                {
+                  "action": "provider.use",
+                  "resource": "*",
+                  "effect": "allow"
+                },
+                {
+                  "action": "provider.use",
+                  "resource": "other",
+                  "effect": "allow"
+                },
+                {
+                  "action": "provider.use",
+                  "resource": "opencode",
+                  "effect": "allow"
+                }
+              ]
+            }
+          },
+          "other": {
+            "providerID": "other",
+            "sessionID": "ses_eb9d03ff5ffe2xXXT4cmCRaamE",
+            "answered": true,
+            "stubRequests": {
+              "stub": 0,
+              "other": 1
+            },
+            "promptError": null,
+            "idle": true,
+            "assistantError": null,
+            "messageError": null,
+            "events": [
+              {
+                "type": "session.created"
+              },
+              {
+                "type": "session.inbox.enqueued"
+              },
+              {
+                "type": "session.execution.started"
+              },
+              {
+                "type": "session.instructions.updated"
+              },
+              {
+                "type": "session.inbox.delivered"
+              },
+              {
+                "type": "session.step.started"
+              },
+              {
+                "type": "session.text.started"
+              },
+              {
+                "type": "session.text.delta"
+              },
+              {
+                "type": "session.text.ended"
+              },
+              {
+                "type": "session.step.streamed"
+              },
+              {
+                "type": "session.step.ended"
+              },
+              {
+                "type": "session.usage.updated"
+              },
+              {
+                "type": "session.execution.succeeded"
+              }
+            ],
+            "refusedByPolicy": false,
+            "egress": []
+          },
+          "modelsListed": [
+            "ollama/gemma4:12b",
+            "ollama/qwen3.5:9b",
+            "opencode/big-pickle",
+            "opencode/ling-3.0-flash-fin-free",
+            "opencode/longcat-2.5-preview-free",
+            "opencode/mimo-v2.6-flash-free",
+            "opencode/muse-spark-1.3-contributor-free",
+            "opencode/nemotron-3-ultra-free",
+            "opencode/nemotron-3.5-lightning-free",
+            "opencode/space-bunny-free",
+            "other/m1",
+            "stub/m1"
+          ]
+        }
+      }
     }
   },
   "stopConditions": {
@@ -753,6 +2121,10 @@
     "proxy-control": {
       "action": "none",
       "stop": false
+    },
+    "P7": {
+      "action": "none",
+      "stop": false
     }
   },
   "outbound": {
@@ -786,5 +2158,34 @@
   },
   "finishedAt": "2026-10-16T18:54:14.808Z",
   "failures": [],
-  "blocked": false
+  "blocked": false,
+  "p7Run": {
+    "note": "P7 was added after the run above and recorded by its own run: node scripts/mittr/probe-engine-v2.mjs --json <out> --only P7",
+    "engineVersion": "opencode v2.0.22",
+    "startedAt": "2026-10-16T19:27:51.473Z",
+    "finishedAt": "2026-10-16T19:28:18.545Z",
+    "failures": [],
+    "blocked": false,
+    "outbound": {
+      "lsofSamples": 90,
+      "lsofIntervalMs": 250,
+      "pidsSeen": 9,
+      "nonLoopbackRemotes": [],
+      "otherLoopbackPeers": [
+        {
+          "port": 11434,
+          "connections": 27,
+          "whileLocked": 0
+        }
+      ],
+      "proxyAttempts": 0,
+      "proxyLoopbackAttempts": 0,
+      "proxyNonLoopback": [],
+      "nonLoopbackHostsInLog": []
+    },
+    "stubTotals": {
+      "stub": 5,
+      "other": 5
+    }
+  }
 }

@@ -19,6 +19,7 @@
  *
  *   node scripts/mittr/probe-engine-v2.mjs --json <out>
  *     [--keep]              keep the temp HOME for inspection
+ *     [--only P7]           run only the user-config policy scenario
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -29,9 +30,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+// R52: the hosted `opencode` provider stays denied with the switch ON.
 export const policiesFor = ({ showOtherProviders, providerId }) =>
   showOtherProviders
-    ? []
+    ? [{ action: 'provider.use', resource: 'opencode', effect: 'deny' }]
     : [
         { action: 'provider.use', resource: '*', effect: 'deny' },
         { action: 'provider.use', resource: providerId, effect: 'allow' },
@@ -50,6 +52,18 @@ export const quotaRefusal = ({ kind, resetsAt }) => ({
     },
   },
 });
+
+// What a user who owns OPENCODE_CONFIG might allow on their own (R45 probe):
+// every provider, the other stub by name, and the hosted provider by name.
+export const USER_ALLOW_POLICIES = [
+  { action: 'provider.use', resource: '*', effect: 'allow' },
+  { action: 'provider.use', resource: 'other', effect: 'allow' },
+  { action: 'provider.use', resource: 'opencode', effect: 'allow' },
+];
+
+/** A turn the engine refused by policy: no answer and a `provider.no-route` failure. */
+export const refusedByPolicy = (attempt) => !attempt.answered
+  && (attempt.events ?? []).some((e) => e.error?.type === 'provider.no-route');
 
 const IDENTITY_PLUGIN_ID = 'mittrcraft.identity';
 export const HARNESS_SENTENCE = 'You are an AI agent running in OpenCode, a coding agent harness.';
@@ -160,6 +174,7 @@ export const stopConditionFor = (scenario, { pass, fallbackPass = null }) => {
     case 'P3':
       return { action: 'stop and report: the harness opening line cannot be rewritten through the plugin hook', stop: true };
     case 'P4':
+    case 'P7':
       return { action: 'stop and report: data could reach a non-Mittr provider', stop: true };
     case 'P5':
       return { action: 'Tasks 10 and 13 call context.opencode.refresh(reason) after each managed-config write', stop: false };
@@ -175,7 +190,8 @@ const ENGINE = path.join(REPO, 'packages/electron/resources/opencode-cli/opencod
 const RESERVED_PORTS = new Set([57123, 57133]);
 const RESETS_AT = '2026-10-20T00:00:00+07:00';
 const CANARY_HOST = 'egress-canary.invalid';
-const SCENARIOS = ['P1', 'P2', 'P2b', 'P2c', 'P2-control', 'P3', 'P4', 'P5', 'P6', 'proxy-control'];
+const SCENARIOS = ['P1', 'P2', 'P2b', 'P2c', 'P2-control', 'P3', 'P4', 'P5', 'P6', 'P7', 'proxy-control'];
+const HOSTED_MODEL = 'big-pickle';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const freePort = () =>
@@ -413,7 +429,7 @@ const stopEngine = async (engine) => {
   engine.stopped = !groupAlive(engine.pid);
 };
 
-const startEngine = async ({ home, configFile, logFile, proxyPort, hookLog, onSpawn }) => {
+const startEngine = async ({ home, configFile, logFile, proxyPort, hookLog, onSpawn, extraEnv = {} }) => {
   const port = await freePort();
   const password = randomBytes(24).toString('hex');
   const work = path.join(home, 'work');
@@ -443,6 +459,7 @@ const startEngine = async ({ home, configFile, logFile, proxyPort, hookLog, onSp
     NO_PROXY: noProxy,
     no_proxy: noProxy,
     MITTR_PROBE_HOOK_LOG: hookLog,
+    ...extraEnv,
   };
   fs.mkdirSync(env.TMPDIR, { recursive: true });
   const log = fs.openSync(logFile, 'a');
@@ -676,10 +693,10 @@ const probeRefusal = async ({ client, collector, stub, work, mode, label, expect
   return { pass, observed };
 };
 
-const tryPrompt = async ({ client, collector, stubs, work, providerID }) => {
+const tryPrompt = async ({ client, collector, stubs, work, providerID, modelID = 'm1' }) => {
   for (const s of Object.values(stubs)) s.mode = 'ok';
   const mark = Date.now();
-  const { sessionID, createError } = await newSession(client, work, providerID, 'm1');
+  const { sessionID, createError } = await newSession(client, work, providerID, modelID);
   const counts = () => Object.fromEntries(Object.entries(stubs).map(([k, s]) => [k, s.since(mark).length]));
   if (!sessionID) return { providerID, answered: false, createError, stubRequests: counts() };
   const run = await promptAndSettle({ client, collector, sessionID, text: `probe via ${providerID}`, timeoutMs: 20_000 });
@@ -716,10 +733,10 @@ const readLogs = (home, logFile) => {
   return files.filter((f) => fs.existsSync(f)).map((f) => fs.readFileSync(f, 'utf8')).join('\n');
 };
 
-export const failuresOf = (result) => {
+export const failuresOf = (result, scenarios = SCENARIOS) => {
   const failures = [];
   if (result.fatal) failures.push('fatal');
-  for (const name of SCENARIOS) {
+  for (const name of scenarios) {
     if (!result.scenarios[name]) failures.push(`${name}: no verdict`);
     else if (!result.scenarios[name].pass) failures.push(`${name}: FAIL`);
   }
@@ -733,6 +750,172 @@ export const failuresOf = (result) => {
   return failures;
 };
 
+/**
+ * P7 (R45): providers and policies the user or a repository allows must not
+ * undo the Mittr lock. Every "attacker" layer allows every provider (`*`, the
+ * `other` stub and the hosted `opencode` by name) and defines `other`. Our
+ * provider, plugin and policies come from the real managed-config runtime, as
+ * the server builds them. Locked runs: a turn on `other` is refused before any
+ * request, `stub` answers, and `opencode` is refused with no egress (R52).
+ * Open runs (R40): `other` answers and `opencode` stays refused.
+ *
+ * Diagnostics record which rule the engine obeys and are not part of the
+ * verdict: the order inside one policy list, our lock placed only in
+ * OPENCODE_CONFIG_CONTENT under a user file, and a global config allow.
+ */
+const probeUserPolicy = async ({ home, stubs, proxy, identityDir, startWith }) => {
+  const { createManagedConfigRuntime } = await import(pathToFileURL(path.join(REPO, 'packages/web/server/lib/opencode/managed-config-file.js')).href);
+  const userFile = path.join(home, 'user-opencode.json');
+  const repoFile = path.join(home, 'work', 'opencode.json');
+  const globalFile = path.join(home, '.config', 'opencode', 'opencode.json');
+  const other = providerEntry('Other', `http://127.0.0.1:${stubs.other.port}/v1`, ['m1']);
+  const stub = providerEntry('Stub', `http://127.0.0.1:${stubs.stub.port}/v1`, ['m1']);
+  const allowAll = { providers: { other }, experimental: { policies: USER_ALLOW_POLICIES } };
+  const lock = policiesFor({ showOtherProviders: false, providerId: 'stub' });
+  const fragment = (showOtherProviders) => ({
+    providers: { stub },
+    plugins: [identityDir],
+    experimental: { policies: policiesFor({ showOtherProviders, providerId: 'stub' }) },
+  });
+  let dataDirs = 0;
+  const serverEnv = async ({ showOtherProviders, userEnv = {} }) => {
+    dataDirs += 1;
+    const runtime = createManagedConfigRuntime({
+      fsPromises: fs.promises,
+      path,
+      dataDir: path.join(home, `p7-data-${dataDirs}`),
+      env: userEnv,
+      readSettings: async () => ({}),
+      isAgentMemoryAvailable: () => false,
+      contributeConfig: async () => fragment(showOtherProviders),
+    });
+    const childEnv = await runtime.buildManagedChildEnv();
+    return { ...userEnv, ...childEnv };
+  };
+  const egressSince = (mark) => proxy.attempts.filter((a) => a.at >= mark && !a.loopback).map(({ kind, host, port }) => ({ kind, host, port }));
+  const readJson = (file) => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null);
+  const placeFiles = (files) => {
+    for (const file of [userFile, repoFile, globalFile]) fs.rmSync(file, { force: true });
+    for (const [file, value] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      writeJsonAtomic(file, value);
+    }
+  };
+
+  // The environment is built after the files are in place, as the server
+  // builds it at each start from what is on disk then.
+  const run = async ({ label, files = {}, buildEnv, prompts }) => {
+    placeFiles(files);
+    const env = await buildEnv();
+    const { client, collector, engine } = await startWith(env);
+    const observed = {
+      label,
+      layers: {
+        OPENCODE_CONFIG: env.OPENCODE_CONFIG ? { file: path.relative(home, env.OPENCODE_CONFIG), policies: readJson(env.OPENCODE_CONFIG)?.experimental?.policies ?? null } : null,
+        OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT ? JSON.parse(env.OPENCODE_CONFIG_CONTENT).experimental?.policies ?? null : null,
+        files: Object.fromEntries(Object.entries(files).map(([file, value]) => [path.relative(home, file), value.experimental?.policies ?? null])),
+      },
+    };
+    try {
+      for (const [providerID, modelID] of prompts) {
+        const mark = Date.now();
+        const attempt = await tryPrompt({ client, collector, stubs, work: engine.work, providerID, modelID });
+        observed[providerID] = { ...attempt, refusedByPolicy: refusedByPolicy(attempt), egress: egressSince(mark) };
+      }
+      observed.modelsListed = await modelIds(client, engine.work).catch((error) => `error: ${errorText(error)}`);
+    } finally {
+      await collector.stop();
+      await stopEngine(engine);
+      placeFiles({});
+    }
+    return observed;
+  };
+  const allPrompts = [['other', 'm1'], ['stub', 'm1'], ['opencode', HOSTED_MODEL]];
+  const userOwned = (content) => {
+    const env = { OPENCODE_CONFIG: userFile };
+    if (content) env.OPENCODE_CONFIG_CONTENT = JSON.stringify(content);
+    return env;
+  };
+
+  const lockedContent = await run({
+    label: 'switch OFF; the user sets OPENCODE_CONFIG and allows every provider in OPENCODE_CONFIG_CONTENT',
+    files: { [userFile]: { providers: { other } } },
+    buildEnv: () => serverEnv({ showOtherProviders: false, userEnv: userOwned({ experimental: { policies: USER_ALLOW_POLICIES } }) }),
+    prompts: allPrompts,
+  });
+  const lockedFile = await run({
+    label: 'switch OFF; the user allows every provider in their own OPENCODE_CONFIG file',
+    files: { [userFile]: allowAll },
+    buildEnv: () => serverEnv({ showOtherProviders: false, userEnv: userOwned(null) }),
+    prompts: allPrompts,
+  });
+  const lockedRepo = await run({
+    label: 'switch OFF; the project opencode.json allows every provider',
+    files: { [repoFile]: allowAll },
+    buildEnv: () => serverEnv({ showOtherProviders: false }),
+    prompts: allPrompts,
+  });
+  const openRepo = await run({
+    label: 'switch ON; the project opencode.json allows every provider',
+    files: { [repoFile]: allowAll },
+    buildEnv: () => serverEnv({ showOtherProviders: true }),
+    prompts: allPrompts,
+  });
+  const open = await run({
+    label: 'switch ON; the user sets OPENCODE_CONFIG and allows every provider in OPENCODE_CONFIG_CONTENT',
+    files: { [userFile]: { providers: { other } } },
+    buildEnv: () => serverEnv({ showOtherProviders: true, userEnv: userOwned({ experimental: { policies: USER_ALLOW_POLICIES } }) }),
+    prompts: allPrompts,
+  });
+
+  const oneList = (policies) => ({ OPENCODE_CONFIG: userFile, OPENCODE_CONFIG_CONTENT: JSON.stringify({ providers: { stub, other }, experimental: { policies } }) });
+  const lockLastInList = await run({
+    label: 'diagnostic: one list, the lock after the allows',
+    files: { [userFile]: {} },
+    buildEnv: async () => oneList([...USER_ALLOW_POLICIES, ...lock]),
+    prompts: [['other', 'm1']],
+  });
+  const lockFirstInList = await run({
+    label: 'diagnostic: one list, the lock before the allows',
+    files: { [userFile]: {} },
+    buildEnv: async () => oneList([...lock, ...USER_ALLOW_POLICIES]),
+    prompts: [['other', 'm1']],
+  });
+  const lockInContentUnderUserFile = await run({
+    label: 'diagnostic: the lock only in OPENCODE_CONFIG_CONTENT, the allows in the user OPENCODE_CONFIG file',
+    files: { [userFile]: allowAll },
+    buildEnv: async () => ({ OPENCODE_CONFIG: userFile, OPENCODE_CONFIG_CONTENT: JSON.stringify({ providers: { stub }, plugins: [identityDir], experimental: { policies: lock } }) }),
+    prompts: [['other', 'm1']],
+  });
+  const globalAllow = await run({
+    label: 'diagnostic: the managed lock against a global opencode.json that allows every provider',
+    files: { [globalFile]: allowAll },
+    buildEnv: () => serverEnv({ showOtherProviders: false }),
+    prompts: [['other', 'm1']],
+  });
+
+  const locked = (o) => o.other.refusedByPolicy && o.other.stubRequests.other === 0 && o.stub.answered;
+  const hostedDenied = (o) => o.opencode.refusedByPolicy && o.opencode.egress.length === 0;
+  const refusedOther = (o) => o.other.refusedByPolicy && o.other.stubRequests.other === 0;
+  const pass = [lockedContent, lockedFile, lockedRepo].every((o) => locked(o) && hostedDenied(o))
+    && [openRepo, open].every((o) => o.other.answered && o.stub.answered && hostedDenied(o));
+  return {
+    pass,
+    engineObeys: {
+      lockLastInOneList: refusedOther(lockLastInList),
+      lockFirstInOneList: refusedOther(lockFirstInList),
+      lockInContentOverUserFile: refusedOther(lockInContentUnderUserFile),
+      lockInManagedFileOverGlobal: refusedOther(globalAllow),
+    },
+    lockedContent,
+    lockedFile,
+    lockedRepo,
+    openRepo,
+    open,
+    diagnostics: { lockLastInList, lockFirstInList, lockInContentUnderUserFile, globalAllow },
+  };
+};
+
 const main = async () => {
   const args = process.argv.slice(2);
   const jsonIndex = args.indexOf('--json');
@@ -742,6 +925,13 @@ const main = async () => {
   }
   const out = path.resolve(args[jsonIndex + 1]);
   const keep = args.includes('--keep');
+  const onlyIndex = args.indexOf('--only');
+  const only = onlyIndex === -1 ? null : args[onlyIndex + 1];
+  if (only !== null && only !== 'P7') {
+    console.error('--only takes P7');
+    return 2;
+  }
+  const scenarios = only ? [only] : SCENARIOS;
   if (!fs.existsSync(ENGINE)) throw new Error(`engine binary missing: ${ENGINE} (run prepare:opencode-cli)`);
 
   const { OpenCode } = await import('@opencode/client');
@@ -808,9 +998,9 @@ const main = async () => {
     writeJsonAtomic(configFile, config(['m1'], policiesFor({ showOtherProviders: false, providerId: 'stub' })));
 
     stopSampler = startOutboundSampler(() => engine?.pid ?? null, outbound);
-    const connect = async () => {
+    const connect = async (extraEnv = {}) => {
       await startEngine({
-        home, configFile, logFile, proxyPort: proxy.port, hookLog,
+        home, configFile, logFile, proxyPort: proxy.port, hookLog, extraEnv,
         onSpawn: (spawned) => { engine = spawned; engines.push(spawned); },
       });
       const client = OpenCode.make({ baseUrl: engine.base, headers: engine.headers });
@@ -818,6 +1008,14 @@ const main = async () => {
       await sleep(500);
       return client;
     };
+    const userPolicy = () => probeUserPolicy({
+      home, stubs, proxy, identityDir,
+      startWith: async (extraEnv) => ({ client: await connect(extraEnv), collector, engine }),
+    });
+
+    if (only === 'P7') {
+      result.scenarios.P7 = await userPolicy();
+    } else {
 
     let client = await connect();
     result.firstStartReadyMs = engine.readyMs;
@@ -931,6 +1129,8 @@ const main = async () => {
 
     await collector.stop();
     await stopEngine(engine);
+    result.scenarios.P7 = await userPolicy();
+    }
     await stopSampler();
     const logText = readLogs(home, logFile);
     const peers = [...outbound.loopbackPeers]
@@ -960,19 +1160,19 @@ const main = async () => {
     await cleanup();
   }
 
-  for (const name of ['P1', 'P2', 'P2b', 'P3', 'P4', 'P5', 'P6']) {
+  for (const name of ['P1', 'P2', 'P2b', 'P3', 'P4', 'P5', 'P6', 'P7']) {
     if (!result.scenarios[name]) continue;
     result.stopConditions[name] = stopConditionFor(name, { pass: result.scenarios[name].pass, fallbackPass: result.retryHookFallback?.pass ?? null });
   }
   for (const name of ['P2c', 'P2-control', 'proxy-control']) {
     if (result.scenarios[name]) result.stopConditions[name] = stopConditionFor(name, { pass: result.scenarios[name].pass });
   }
-  result.failures = failuresOf(result);
+  result.failures = failuresOf(result, scenarios);
   result.blocked = Object.values(result.stopConditions).some((c) => c.stop);
   if (keep) result.keptHome = home;
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
-  const verdicts = Object.fromEntries(SCENARIOS.map((name) => [name, result.scenarios[name] ? (result.scenarios[name].pass ? 'PASS' : 'FAIL') : 'MISSING']));
+  const verdicts = Object.fromEntries(scenarios.map((name) => [name, result.scenarios[name] ? (result.scenarios[name].pass ? 'PASS' : 'FAIL') : 'MISSING']));
   console.log(JSON.stringify({ verdicts, blocked: result.blocked, failures: result.failures, outbound: result.outbound }, null, 2));
   console.log(`wrote ${out}`);
   return result.failures.length === 0 ? 0 : 1;

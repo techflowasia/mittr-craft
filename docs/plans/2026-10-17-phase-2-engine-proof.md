@@ -2,6 +2,8 @@
 
 Date: 2026-10-17. Script: `scripts/mittr/probe-engine-v2.mjs`. The probe's output from the run below is next to this note, in `2026-10-17-phase-2-engine-proof.json`. Every scenario and both controls passed. No stop condition was hit, and the probe exited 0.
 
+P7, the lock against a user's or a project's own config, was added later and recorded by its own run (`--only P7`). Its verdict is in the same JSON under `scenarios.P7`, and that run's metadata and egress record are under `p7Run`. See [P7](#p7-the-lock-against-user-and-project-config).
+
 Every claim marked *read from the binary* comes from reading the 2.0.22 executable. The probe does not record those claims. Everything else is in the JSON.
 
 ## What was run
@@ -41,6 +43,7 @@ Every claim marked *read from the binary* comes from reading the 2.0.22 executab
 | P4 policy | PASS | Lock on, a session on `other/m1` fails with `provider.no-route` ("Model unavailable: other/m1"). The `other` stub saw 0 requests, and `stub/m1` answered. After a restart with `policies: []`, both answered. |
 | P5 hot reload | PASS | Model `m2` added: `GET /api/model` listed `stub/m2` 287 ms after the write, with no restart. Policies set to `[]`: the `other` prompt answered 1.74 s after the write, on the 2nd try (the first still got `no-route`). |
 | P6 credential | PASS | `POST /api/integration/stub/connect/key {key:'k-123'}` succeeded. The keyed turn answered, and its request carried `authorization: Bearer k-123`. After an engine restart on the same XDG bases, the turn answered and the request still carried it. |
+| P7 user and project config | PASS | Lock on, a user `OPENCODE_CONFIG` file, the user's `OPENCODE_CONFIG_CONTENT` and a project `opencode.json` each allowed `*`, `other` and `opencode` by name. In each case `other/m1` failed with `provider.no-route` with 0 requests to its stub, and `stub/m1` answered. `opencode/big-pickle` was refused with no egress. With the switch ON, `other` answered and `opencode` stayed refused. This holds only with the managed file as the `OPENCODE_CONFIG` layer; details below. |
 | Proxy control | PASS | The one `canary` prompt reached the proxy as `CONNECT egress-canary.invalid:443`, and was refused (the turn ends `provider.auth`, 403). So the engine's outbound HTTPS goes through `HTTPS_PROXY`, and the proxy record covers it. |
 
 ### P3 in detail
@@ -53,6 +56,40 @@ Every claim marked *read from the binary* comes from reading the 2.0.22 executab
   - the built-in skill for reporting an opencode issue.
 - **Other variants.** The binary also carries "You are opencode, an interactive CLI tool…" and "You are OpenCode, a coding agent…" (*read from the binary*). This run used an openai-compatible model and got neither. Which models get those was not traced. The identity copy keeps both rewrites.
 
+### P7: the lock against user and project config
+
+**How the engine resolves policies** (*read from the binary*, then confirmed by the diagnostics below):
+- OpenCode 2.0.22 loads its config documents in this order: well-known (org) config, then the global `opencode.json`, then `OPENCODE_CONFIG`, then `opencode.json` in the project directories, then `.opencode/`, then `OPENCODE_CONFIG_CONTENT`. For ordinary keys, later documents win.
+- For `experimental.policies` it reverses that order. It lists the policies of `OPENCODE_CONFIG_CONTENT` first and well-known last, then appends any organization statements. A provider is allowed or denied by the **last** matching rule (`findLast`).
+- So, for policies: inside one list, a later rule wins. Across documents, the global file beats `OPENCODE_CONFIG`, which beats project config, which beats `OPENCODE_CONFIG_CONTENT`.
+
+**What that broke.** Task 3 first followed R45 as written: when the user set `OPENCODE_CONFIG`, our provider, plugin and policies were merged into `OPENCODE_CONFIG_CONTENT`. That is the weakest place for a policy. In the first P7 run, a user `OPENCODE_CONFIG` file that allowed every provider undid the lock: `other/m1` answered, and the `opencode/big-pickle` turn tried `CONNECT opencode.ai:443`, which the probe's proxy refused. A project `opencode.json` would beat `OPENCODE_CONFIG_CONTENT` the same way (*read from the binary*; not run as its own case).
+
+**The fix** (`hook(managed-config)`). When a server plugin contributes config, the managed file stays the `OPENCODE_CONFIG` layer even when the user set `OPENCODE_CONFIG`. The user's own file, then their `OPENCODE_CONFIG_CONTENT`, move into `OPENCODE_CONFIG_CONTENT`. Our policies then outrank the project config and every user layer except the global file. Without a contribution, upstream behaviour is unchanged.
+
+| Run | Allows placed in | Switch | `other/m1` | `stub/m1` | `opencode/big-pickle` |
+|---|---|---|---|---|---|
+| lockedContent | user `OPENCODE_CONFIG_CONTENT` | OFF | refused, 0 requests | answered | refused, no egress |
+| lockedFile | user `OPENCODE_CONFIG` file | OFF | refused, 0 requests | answered | refused, no egress |
+| lockedRepo | project `<work>/opencode.json` | OFF | refused, 0 requests | answered | refused, no egress |
+| openRepo | project `<work>/opencode.json` | ON | answered | answered | refused, no egress |
+| open | user `OPENCODE_CONFIG_CONTENT` | ON | answered | answered | refused, no egress |
+
+The two ON runs show that each layer holding the allows really loads. With the switch ON, the user file's provider (folded into `OPENCODE_CONFIG_CONTENT`) and the project's provider both answered. So the OFF refusals come from the lock, not from a missing provider. With the switch ON, our only policy is `deny opencode` (R52), and it still beat the user's `allow opencode`.
+
+Diagnostics (recorded under `engineObeys`, not part of the verdict):
+
+| Diagnostic | Result |
+|---|---|
+| One list: the user's allows, then `[deny *, allow stub]` | `other` refused: a later rule wins |
+| One list: `[deny *, allow stub]`, then the user's allows | `other` answered |
+| The lock only in `OPENCODE_CONFIG_CONTENT`, the allows in the user's `OPENCODE_CONFIG` file (the original R45 design) | `other` answered: the user file wins |
+| The lock in the managed `OPENCODE_CONFIG`, the allows in the global `opencode.json` | `other` answered: **the global file wins** |
+
+**Open gap.** A global `opencode.json` that allows other providers still undoes the lock, and so would well-known (org) config. In MittrCraft the global file is `$OPENCODE_CONFIG_DIR/opencode.json`, inside the app's own engine config folder, which upstream's settings UI also writes. The UI writes no `experimental.policies`, so only a hand edit can do this today. This needs a ruling: either keep the lock there too (mittr-server rewriting it through `context.opencode.userConfig`), or accept it as the user's own machine.
+
+The P7 run made no non-loopback attempt. The proxy saw nothing, `lsof` took 90 samples, and the log names no outside host. Its only loopback peer that is not ours was the local Ollama (R51).
+
 ### Details later tasks build on
 - **Task 9.** `sessionIdOf` reads `x-opencode-session-id`, with `x-session-id` as the fallback. Both equal the session id.
   - The engine also sends `user-agent: opencode/latest/2.0.22/cli`, `x-opencode-client: cli`, `x-opencode-project: <project hash>`, `traceparent` and `b3`.
@@ -62,6 +99,7 @@ Every claim marked *read from the binary* comes from reading the 2.0.22 executab
   - Recognise a refusal by `error.type === 'provider.quota'` plus `llm_quota_exhausted` in `error.response.body`, never by `status === 402`, because a mid-stream refusal reports 200.
   - The events on refusal are `session.step.failed` and then `session.execution.failed`, both carrying that error.
   - *Read from the binary:* the classifier reads `x-should-retry` first, and maps the `insufficient_quota` error type to `QuotaExceeded`, which it never retries.
+- **Tasks 10 and 13, policy placement.** The lock belongs in the managed `OPENCODE_CONFIG` file and nowhere else (P7). Inside that list, `[deny *, allow mittr]` keeps our allow last, and nothing may be appended after it. The R52 rule `deny opencode` holds with the switch ON as well.
 - **Task 13.** The lock also hides the denied providers' models: lock on, `GET /api/model` lists only `stub/m1`. A locked session can still be created; its first turn fails with `provider.no-route`, and no request reaches the denied provider.
 - **Tasks 10 and 13.** No `context.opencode.refresh(reason)` is needed after a managed-config write. Providers apply in about 0.3 s and policies within 2 s. The engine also reloads every configured plugin on each write ("loading plugin" in the log).
   - For comparison, a full restart took 1.36 s from the stop signal until the probe was connected to the new engine. That includes a fixed 0.5 s pause the probe takes after connecting. The new engine itself was ready 260 ms after spawn.
