@@ -969,6 +969,31 @@ describe('OpenCode lifecycle', () => {
     expect(calls).toEqual(['top-up', 'spawn']);
   });
 
+  it('hands the top-up the data dir the managed OpenCode starts with', async () => {
+    const topUpV1SessionMigration = vi.fn(() => ({ status: 'skipped', missing: 0, revisited: 0, reason: 'no-database' }));
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    globalThis.fetch = vi.fn(async () => ({ ok: false }));
+
+    const runtime = createRuntime({
+      topUpV1SessionMigration,
+      getManagedOpenCodeShellEnvSnapshot: vi.fn(() => ({ XDG_DATA_HOME: '/shell/share', SHELL_ONLY: 'yes' })),
+      getManagedOpenCodeEnv: vi.fn(async () => ({ XDG_DATA_HOME: '/engine/share', OPENCODE_DB: 'opencode.db' })),
+    });
+    await runtime.startOpenCode();
+
+    const [[{ env }]] = topUpV1SessionMigration.mock.calls;
+    const [, , options] = spawnMock.mock.calls[0];
+    expect(env.XDG_DATA_HOME).toBe('/engine/share');
+    expect(env.OPENCODE_DB).toBe('opencode.db');
+    expect(env.SHELL_ONLY).toBe('yes');
+    expect(options.env.XDG_DATA_HOME).toBe(env.XDG_DATA_HOME);
+    expect(options.env.OPENCODE_DB).toBe(env.OPENCODE_DB);
+  });
+
 });
 
 describe('killProcessOnPort on Windows', () => {

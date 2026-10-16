@@ -755,9 +755,10 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
 
     // Re-arm OpenCode's own V1 -> V2 session import for sessions a bundled
     // OpenCode 1.x created after the migration already completed. Only for the
-    // managed process, only while it is not running, and never fatal.
+    // managed process, only while it is not running, and never fatal. It reads
+    // the database the process is about to open, from the same environment.
     try {
-      const topUp = topUpV1SessionMigration();
+      const topUp = topUpV1SessionMigration({ env: { ...shellEnv, ...process.env, ...managedOpenCodeEnv } });
       if (topUp && topUp.status !== 'skipped') {
         console.log('[OpenCode] V1 session migration top-up:', topUp);
       }

@@ -47,16 +47,19 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { z } from 'zod';
 
-const OPENCODE_DATA_DIR = path.join(os.homedir(), '.local', 'share', 'opencode');
+const DEFAULT_DATA_HOME = path.join(os.homedir(), '.local', 'share');
 
 /**
- * Where OpenCode keeps its database: `OPENCODE_DB` when set (absolute or
+ * Where OpenCode keeps its database, read from the environment the managed
+ * OpenCode is started with: the data dir is `$XDG_DATA_HOME/opencode`, else
+ * `~/.local/share/opencode`; the file is `OPENCODE_DB` when set (absolute or
  * relative to the data dir), else `opencode.db` in the data dir.
  */
-const resolveOpenCodeDbPath = (env = process.env) => {
+const resolveOpenCodeDbPath = (env) => {
+  const dataDir = path.join(env.XDG_DATA_HOME || DEFAULT_DATA_HOME, 'opencode');
   const configured = (env.OPENCODE_DB ?? '').trim();
-  if (configured && configured !== ':memory:') return path.resolve(OPENCODE_DATA_DIR, configured);
-  return path.join(OPENCODE_DATA_DIR, 'opencode.db');
+  if (configured && configured !== ':memory:') return path.resolve(dataDir, configured);
+  return path.join(dataDir, 'opencode.db');
 };
 
 /** OpenCode's key for the migration state row in `kv`. */
@@ -233,15 +236,18 @@ const countRevisitedSessions = (db, cursor) =>
  * migration state under a running OpenCode would race its own loop, and an
  * external OpenCode is not OpenChamber's to steer.
  *
- * @param {{ dbPath?: string, fileSystem?: typeof fs, logger?: Pick<Console, 'log' | 'warn'>, now?: () => number }} [options]
- * `unsafe` names the one refusal, `revisited-sessions-have-v2-activity`: an
- * already-migrated session under the cursor was used in v2 since.
+ * @param {{ dbPath?: string, env?: NodeJS.ProcessEnv, fileSystem?: typeof fs, logger?: Pick<Console, 'log' | 'warn'>, now?: () => number }} [options]
+ * `env` is the environment the managed OpenCode will start with; the database
+ * is looked up there unless `dbPath` names it. `unsafe` names the one refusal,
+ * `revisited-sessions-have-v2-activity`: an already-migrated session under the
+ * cursor was used in v2 since.
  *
  * @returns {{ status: 'skipped' | 'scheduled' | 'unsafe' | 'unavailable', missing: number, revisited: number, reason?: string }}
  */
 export const topUpV1Migration = (options = {}) => {
   const {
-    dbPath = resolveOpenCodeDbPath(),
+    env = process.env,
+    dbPath = resolveOpenCodeDbPath(env),
     fileSystem = fs,
     logger = console,
     now = Date.now,
