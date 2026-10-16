@@ -4,9 +4,10 @@ import path from 'node:path';
 import registry from '../../web/server/lib/opencode/settings-registry.json' with { type: 'json' };
 
 /**
- * Every top-level `settings.json` key upstream reads: the settings registry,
- * plus the keys the desktop shell keeps outside it and the legacy keys
- * upstream's own settings code still reads and converts.
+ * Top-level `settings.json` keys upstream reads: the settings registry, plus
+ * the keys the desktop shell and server keep outside it, including legacy
+ * keys upstream still reads as a fallback. A 1.x key with a MittrCraft
+ * spelling of one of these is renamed to it.
  */
 export const UPSTREAM_SETTINGS_KEYS = Object.freeze(
   new Set([
@@ -15,6 +16,10 @@ export const UPSTREAM_SETTINGS_KEYS = Object.freeze(
     'desktopLocalClientToken',
     'desktopInitialHostChoiceCompleted',
     'themeMode',
+    'splashBgLight',
+    'splashFgLight',
+    'splashBgDark',
+    'splashFgDark',
     // packages/web/server/lib/opencode/settings-runtime.js and settings-helpers.js
     'approvedDirectories',
     'collapsedProjects',
@@ -24,6 +29,33 @@ export const UPSTREAM_SETTINGS_KEYS = Object.freeze(
     'namedTunnelPresetTokens',
     'namedTunnelSelectedPresetId',
     'showOpenCodeRestartConfirm',
+    // packages/web/server/lib/relay/signing-key.js and identity.js
+    'relaySigningKey',
+    'relayEncryptionKey',
+    // packages/web/server/lib/notifications/push-runtime.js and apns-runtime.js
+    'vapidKeys',
+    'publicOrigin',
+    'apnsConfig',
+  ]),
+);
+
+/**
+ * The keys MittrCraft 1.22 added to `settings.json` that upstream does not
+ * read: the agent Chrome and computer tools and the voice assistant limits.
+ * Taken from the 1.22 settings writers (`settings-helpers.js`,
+ * `mittrcraft-control/chrome-approvals.js` and `service.js`) less every key
+ * upstream 2.1.1 or the upstream release 1.x was built on mentions. Only
+ * these move under `mittr`; every other key stays where upstream may read it.
+ */
+export const MITTR_SETTINGS_KEYS = Object.freeze(
+  new Set([
+    'agentChromeApprovedHosts',
+    'agentChromeHeaded',
+    'agentChromeProfile',
+    'agentChromeToolEnabled',
+    'agentComputerToolEnabled',
+    'voiceReplyMaxChars',
+    'voiceStepCap',
   ]),
 );
 
@@ -80,29 +112,36 @@ const writeSettings = async (file, settings) => {
   }
 };
 
-const convert = (settings, upstreamKeys) => {
+const convert = (settings, { upstreamKeys, mittrKeys }) => {
   const next = {};
   const parked = isPlainObject(settings[PARKED]) ? { ...settings[PARKED] } : {};
-  // The value 1.x actually used wins over one already under the upstream name.
   const renames = {};
   const renamed = [];
   const moved = [];
   for (const [key, value] of Object.entries(settings)) {
     if (key === PARKED && isPlainObject(value)) continue;
-    if (upstreamKeys.has(key)) {
-      next[key] = value;
-      continue;
-    }
     const upstreamName = upstreamNameOf(key);
-    if (upstreamName !== key && upstreamKeys.has(upstreamName)) {
+    if (!upstreamKeys.has(key) && upstreamName !== key && upstreamKeys.has(upstreamName)) {
       renames[upstreamName] = value;
       renamed.push(key);
       continue;
     }
-    parked[key] = value;
-    moved.push(key);
+    if (mittrKeys.has(key) && !upstreamKeys.has(key)) {
+      parked[key] = value;
+      moved.push(key);
+      continue;
+    }
+    next[key] = value;
   }
-  Object.assign(next, renames);
+  // The value 1.x actually used wins; a value already under the upstream name
+  // is kept under `mittr` rather than dropped.
+  for (const [upstreamName, value] of Object.entries(renames)) {
+    if (Object.hasOwn(next, upstreamName)) {
+      parked[upstreamName] = next[upstreamName];
+      moved.push(upstreamName);
+    }
+    next[upstreamName] = value;
+  }
   if (Object.keys(parked).length > 0) next[PARKED] = parked;
   return { next, renamed, moved };
 };
@@ -110,18 +149,26 @@ const convert = (settings, upstreamKeys) => {
 /**
  * Brings a 1.x `settings.json` to the names upstream reads, once per data
  * dir. A key with a MittrCraft spelling of an upstream name gets the upstream
- * name; any other key upstream does not know moves under `mittr`, where
- * upstream leaves it alone. Rejects without marking when the file cannot be
- * read or written, so the next start tries again.
+ * name; a listed MittrCraft-only key moves under `mittr`, where upstream
+ * leaves it alone; every other key stays at the top level. Rejects without
+ * marking when the file cannot be read or written, so the next start tries
+ * again.
+ *
+ * Renamed keys never need the same rename in `preferences.json`: upstream
+ * seeds that file only with registry keys of `profile` scope, and no registry
+ * key has an OpenChamber spelling (pinned in `settings.test.js`).
+ *
+ * The write is atomic but does not take upstream's settings lock, which the
+ * plugin context does not expose; it runs once, during server setup.
  */
-export const migrateSettingsOnce = async ({ dataDir, upstreamKeys }) => {
+export const migrateSettingsOnce = async ({ dataDir, upstreamKeys, mittrKeys }) => {
   const marker = path.join(dataDir, MARKER_FILE);
   const nothing = { renamed: [], moved: [] };
   if (await exists(marker)) return nothing;
 
   const file = path.join(dataDir, SETTINGS_FILE);
   const settings = await readSettings(file);
-  const result = settings ? convert(settings, upstreamKeys) : null;
+  const result = settings ? convert(settings, { upstreamKeys, mittrKeys }) : null;
   if (result && (result.renamed.length > 0 || result.moved.length > 0)) {
     await writeSettings(file, result.next);
   }

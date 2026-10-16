@@ -4,7 +4,7 @@ import path from 'node:path';
 import { activeAccountHome } from './accounts.js';
 import { backupOnce } from './backup.js';
 import { ENGINE_DB_RULE, engineBases, engineEnv } from './engine-home.js';
-import { UPSTREAM_SETTINGS_KEYS, migrateSettingsOnce } from './settings.js';
+import { MITTR_SETTINGS_KEYS, UPSTREAM_SETTINGS_KEYS, migrateSettingsOnce } from './settings.js';
 
 /**
  * MittrCraft's server plugin, loaded through `OPENCHAMBER_SERVER_PLUGINS`.
@@ -43,7 +43,11 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir }) => {
   for (const kept of backup.kept) logger.log(`[mittr] kept the existing backup from before OpenCode 2: ${kept}`);
 
   try {
-    const settings = await migrateSettingsOnce({ dataDir, upstreamKeys: UPSTREAM_SETTINGS_KEYS });
+    const settings = await migrateSettingsOnce({
+      dataDir,
+      upstreamKeys: UPSTREAM_SETTINGS_KEYS,
+      mittrKeys: MITTR_SETTINGS_KEYS,
+    });
     if (settings.renamed.length > 0 || settings.moved.length > 0) {
       logger.log('[mittr] settings brought to upstream names:', JSON.stringify(settings));
     }
