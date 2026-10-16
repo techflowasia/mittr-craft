@@ -4434,6 +4434,11 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     case 'desktop_check_for_updates': {
+      // A build without an update feed has no update to find, which is an
+      // answer, not a failure for the renderer to show.
+      if (!PRODUCT.updaterFeed) {
+        return { available: false, currentVersion: APP_VERSION, version: null, body: null, date: null };
+      }
       assertDesktopUpdaterCapability();
       const currentVersion = APP_VERSION;
       const { available, updateInfo, updateResult, nextVersion, pendingUpdate } = await checkForDesktopUpdate({
@@ -4773,6 +4778,11 @@ const helpLinkItems = (t) => {
   ].filter((group) => group.length > 0).flatMap((group) => [{ type: 'separator' }, ...group]);
 };
 
+// A build without an update feed leaves out the menu item that checks for one.
+const updateMenuItems = (t) => (PRODUCT.updaterFeed
+  ? [{ label: t('checkForUpdates'), click: () => dispatchCheckForUpdates() }]
+  : []);
+
 // The menu tables name the app the way upstream ships it; a product with
 // another name shows its own name in those labels.
 const productMenuLabel = (locale, key) => menuLabel(locale, key).replaceAll(UPSTREAM_PRODUCT.appName, PRODUCT.appName);
@@ -4791,10 +4801,7 @@ const buildMacMenu = (locale = 'en') => {
       label: t('app.name'),
       submenu: [
         { label: t('about'), click: () => dispatchAction('about') },
-        {
-          label: t('checkForUpdates'),
-          click: () => dispatchCheckForUpdates(),
-        },
+        ...updateMenuItems(t),
         { type: 'separator' },
         { label: t('settings'), accelerator: 'Cmd+,', click: () => dispatchAction('settings') },
         { label: t('reloadWebview'), click: () => reloadMenuTargetWindow() },
@@ -4899,10 +4906,7 @@ const buildAutoHiddenMenu = (locale = 'en') => {
       label: t('app.name'),
       submenu: [
         { label: t('about'), click: () => dispatchAction('about') },
-        {
-          label: t('checkForUpdates'),
-          click: () => dispatchCheckForUpdates(),
-        },
+        ...updateMenuItems(t),
         { type: 'separator' },
         { label: t('settings'), accelerator: 'Ctrl+,', click: () => dispatchAction('settings') },
         { label: t('reloadWebview'), click: () => reloadMenuTargetWindow() },
