@@ -11,6 +11,7 @@ import {
   readProduct,
   readSplashSvg,
   resolveAppNames,
+  serverVersionEnv,
 } from './product.mjs';
 
 const HOME = '/home/someone';
@@ -49,6 +50,7 @@ test('UPSTREAM_PRODUCT is frozen and equals the upstream literals', () => {
     env: {},
     ensureDirs: [],
     serverPlugins: [],
+    serverReportsAppVersion: false,
   });
 });
 
@@ -166,6 +168,15 @@ test('applyProductEnv with no env leaves the environment alone', () => {
   const env = { A: '1' };
   assert.deepEqual(applyProductEnv(UPSTREAM_PRODUCT, env), []);
   assert.deepEqual(env, { A: '1' });
+});
+
+test('the server reports its own version unless the product asks for the app version', () => {
+  const upstream = readProduct({ appPath: APP_PATH, fs: fakeFs({}), homeDir: HOME });
+  assert.deepEqual(serverVersionEnv(upstream, '2.1.1'), {});
+
+  const product = readProduct({ appPath: APP_PATH, fs: productFile({ serverReportsAppVersion: true }), homeDir: HOME });
+  assert.deepEqual(serverVersionEnv(product, '2.1.1+build.1'), { OPENCHAMBER_HOST_APP_VERSION: '2.1.1+build.1' });
+  assert.deepEqual(serverVersionEnv(product, ''), {});
 });
 
 test('ensureProductDirs pre-creates projects/themes/speech-models', () => {

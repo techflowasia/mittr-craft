@@ -36,6 +36,7 @@ export const UPSTREAM_PRODUCT = deepFreeze({
   env: {},
   ensureDirs: [],
   serverPlugins: [],
+  serverReportsAppVersion: false,
 });
 
 const PRODUCT_FILE = 'product.json';
@@ -125,6 +126,14 @@ export function applyProductEnv(product, env = process.env) {
   const keys = Object.keys(product.env ?? {});
   for (const key of keys) env[key] = product.env[key];
   return keys;
+}
+
+// The in-process server reports its own package's version, which is the
+// app's version when the two ship together. A product that versions the app
+// apart from the server it packs has the server report the app's version
+// instead, so every surface that shows a version shows the one installed.
+export function serverVersionEnv(product, appVersion) {
+  return product.serverReportsAppVersion && appVersion ? { OPENCHAMBER_HOST_APP_VERSION: appVersion } : {};
 }
 
 export function ensureProductDirs(product, fs = nodeFs) {

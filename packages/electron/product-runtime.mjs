@@ -4,11 +4,12 @@
 
 import { app } from 'electron';
 
-import { applyProductEnv, ensureProductDirs, readProduct } from './product.mjs';
+import { applyProductEnv, ensureProductDirs, readProduct, serverVersionEnv } from './product.mjs';
 
 export const PRODUCT = readProduct({ appPath: app.getAppPath() });
 
 applyProductEnv(PRODUCT);
+Object.assign(process.env, serverVersionEnv(PRODUCT, app.getVersion()));
 if (PRODUCT.serverPlugins.length > 0) {
   process.env.OPENCHAMBER_SERVER_PLUGINS = JSON.stringify(PRODUCT.serverPlugins);
 }

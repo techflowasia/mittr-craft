@@ -231,6 +231,12 @@ function shouldSkipCompression(req, res) {
 }
 
 const OPENCHAMBER_VERSION = (() => {
+  // An app that runs this server in its own process and ships under its own
+  // version names that version here.
+  const hostAppVersion = process.env.OPENCHAMBER_HOST_APP_VERSION?.trim();
+  if (hostAppVersion) {
+    return hostAppVersion;
+  }
   try {
     const packagePath = path.resolve(__dirname, '..', 'package.json');
     const raw = fs.readFileSync(packagePath, 'utf8');
