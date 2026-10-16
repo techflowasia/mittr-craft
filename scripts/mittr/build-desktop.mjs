@@ -50,6 +50,7 @@ const visibleStringsSchema = z.array(z.object({
   file: z.string().min(1),
   from: z.string().min(1),
   to: z.string(),
+  count: z.number().int().positive(),
 }).strict());
 
 const isPlainObject = (value) => value?.constructor === Object;
@@ -94,10 +95,11 @@ export const mergeBuilderConfig = (base, overlay) => {
 };
 
 /**
- * Replaces each `{ file, from, to }` entry's exact `from` with `to` in the
- * files its glob matches under `rootDir`. An entry that matches nothing fails
- * the build: upstream moved or reworded the string, and shipping its text
- * unnoticed is the failure this list exists to prevent.
+ * Replaces each `{ file, from, to, count }` entry's exact `from` with `to` in
+ * the files its glob matches under `rootDir`. An entry whose match count is
+ * not exactly `count` fails the build: upstream moved, reworded or repeated the
+ * string, and shipping its text unnoticed (or a replacement in a place nobody
+ * looked at) is the failure this list exists to prevent.
  */
 export const applyVisibleStrings = ({ entries, rootDir }) => {
   const applied = [];
@@ -106,20 +108,17 @@ export const applyVisibleStrings = ({ entries, rootDir }) => {
     if (!VISIBLE_STRING_ROOTS.some((root) => file.startsWith(root)) || file.split('/').includes('..')) {
       throw new Error(`visible-strings entry ${JSON.stringify(file)} must start with one of ${VISIBLE_STRING_ROOTS.join(', ')}`);
     }
-    let count = 0;
-    for (const relative of fs.globSync(file, { cwd: rootDir })) {
-      const target = path.join(rootDir, relative);
-      if (!fs.statSync(target).isFile()) continue;
-      const text = fs.readFileSync(target, 'utf8');
-      const parts = text.split(from);
-      if (parts.length === 1) continue;
-      count += parts.length - 1;
-      fs.writeFileSync(target, parts.join(to));
+    const matches = fs.globSync(file, { cwd: rootDir })
+      .map((relative) => path.join(rootDir, relative))
+      .filter((target) => fs.statSync(target).isFile())
+      .map((target) => ({ target, parts: fs.readFileSync(target, 'utf8').split(from) }))
+      .filter(({ parts }) => parts.length > 1);
+    const found = matches.reduce((total, { parts }) => total + parts.length - 1, 0);
+    if (found !== entry.count) {
+      throw new Error(`visible-strings entry ${JSON.stringify(entry)} expected ${entry.count} matches, found ${found}`);
     }
-    if (count === 0) {
-      throw new Error(`visible-strings entry matched nothing: ${JSON.stringify(entry)}`);
-    }
-    applied.push({ file, from, count });
+    for (const { target, parts } of matches) fs.writeFileSync(target, parts.join(to));
+    applied.push({ file, from, count: found });
   }
   return applied;
 };

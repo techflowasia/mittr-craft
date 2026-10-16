@@ -57,7 +57,7 @@ const withBuildOutput = (files, run) => {
 test('visible strings replace every exact match in the globbed build output', () => {
   withBuildOutput({ 'dist-bundle/main.mjs': 'OpenChamber and OpenChamber', 'resources/web-dist/assets/a.js': 'x' }, (root) => {
     const applied = applyVisibleStrings({
-      entries: [{ file: 'dist-bundle/*.mjs', from: 'OpenChamber', to: 'MittrCraft' }],
+      entries: [{ file: 'dist-bundle/*.mjs', from: 'OpenChamber', to: 'MittrCraft', count: 2 }],
       rootDir: root,
     });
     assert.deepEqual(applied, [{ file: 'dist-bundle/*.mjs', from: 'OpenChamber', count: 2 }]);
@@ -68,16 +68,26 @@ test('visible strings replace every exact match in the globbed build output', ()
 test('an entry that matches nothing fails the build', () => {
   withBuildOutput({ 'dist-bundle/main.mjs': 'nothing here' }, (root) => {
     assert.throws(
-      () => applyVisibleStrings({ entries: [{ file: 'dist-bundle/*.mjs', from: 'OpenChamber', to: 'MittrCraft' }], rootDir: root }),
-      /matched nothing/,
+      () => applyVisibleStrings({ entries: [{ file: 'dist-bundle/*.mjs', from: 'OpenChamber', to: 'MittrCraft', count: 1 }], rootDir: root }),
+      /expected 1 matches, found 0/,
     );
+  });
+});
+
+test('a match count other than the expected one fails the build and writes nothing', () => {
+  withBuildOutput({ 'dist-bundle/main.mjs': 'OpenChamber and OpenChamber' }, (root) => {
+    assert.throws(
+      () => applyVisibleStrings({ entries: [{ file: 'dist-bundle/*.mjs', from: 'OpenChamber', to: 'MittrCraft', count: 1 }], rootDir: root }),
+      /"from":"OpenChamber".*expected 1 matches, found 2/,
+    );
+    assert.equal(fs.readFileSync(path.join(root, 'dist-bundle/main.mjs'), 'utf8'), 'OpenChamber and OpenChamber');
   });
 });
 
 test('an entry outside the build output is refused', () => {
   withBuildOutput({ 'main.mjs': 'OpenChamber' }, (root) => {
     assert.throws(
-      () => applyVisibleStrings({ entries: [{ file: 'main.mjs', from: 'OpenChamber', to: 'MittrCraft' }], rootDir: root }),
+      () => applyVisibleStrings({ entries: [{ file: 'main.mjs', from: 'OpenChamber', to: 'MittrCraft', count: 1 }], rootDir: root }),
       /must start with/,
     );
   });
