@@ -99,6 +99,10 @@
     {
       "hook": "electron-host",
       "why": "A plugin needs to keep tokens sealed by the operating system's keychain, so this wraps Electron safeStorage as a two-method encrypt and decrypt store that is absent when the system offers no encryption."
+    },
+    {
+      "hook": "electron-host",
+      "why": "On Linux without a keyring, safeStorage reports encryption as available while keeping its key in plain text (the basic_text backend), so the store handed plugins a seal that protected nothing; that backend now means no store."
     }
   ],
   "packages/electron/updater-capability.mjs": [

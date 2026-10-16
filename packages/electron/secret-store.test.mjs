@@ -36,3 +36,12 @@ test('encrypt refuses anything but a string, so a secret is never stringified by
   const store = createSafeStorageSecretStore({ safeStorage: fakeSafeStorage() });
   assert.throws(() => store.encrypt({ token: 'x' }), /string/);
 });
+
+test('a keyring that keeps its key in plain text means no store', () => {
+  const backend = (name) => ({ ...fakeSafeStorage(), getSelectedStorageBackend: () => name });
+  assert.equal(createSafeStorageSecretStore({ safeStorage: backend('basic_text') }), null);
+  assert.ok(createSafeStorageSecretStore({ safeStorage: backend('gnome_libsecret') }));
+  assert.ok(createSafeStorageSecretStore({ safeStorage: backend('unknown') }));
+  const throwing = { ...fakeSafeStorage(), getSelectedStorageBackend: () => { throw new Error('not on this platform'); } };
+  assert.ok(createSafeStorageSecretStore({ safeStorage: throwing }));
+});
