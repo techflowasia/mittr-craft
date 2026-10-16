@@ -151,8 +151,9 @@ function parseUpdateCheckResponse(data: {
   packageManager?: string;
   updateCommand?: string;
   installBlocked?: string;
+  updatesDisabled?: boolean;
 }): UpdateInfo {
-  return {
+  const info: UpdateInfo = {
     available: data.available ?? false,
     version: data.version,
     currentVersion: data.currentVersion ?? 'unknown',
@@ -167,6 +168,9 @@ function parseUpdateCheckResponse(data: {
     updateCommand: data.updateCommand,
     installBlocked: data.installBlocked === 'service-manager' ? 'service-manager' : undefined,
   };
+  // A server whose build has no update channel says so; keep that for the
+  // About page instead of reading the answer as "up to date".
+  return data.updatesDisabled === true ? Object.assign(info, { updatesDisabled: true }) : info;
 }
 
 async function checkForWebUpdates(runtime: ClientRuntime, currentVersion?: string): Promise<UpdateInfo | null> {
