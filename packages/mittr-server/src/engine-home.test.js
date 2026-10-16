@@ -16,6 +16,7 @@ const PROD_BASES = {
 test('engineBases matches 1.22 home.js for prod', () => {
   assert.deepEqual(engineBases({ homeDir: HOME, env: {} }), PROD_BASES);
   assert.deepEqual(engineBases({ homeDir: HOME, env: { MITTRCRAFT_ENGINE_HOME: '   ' } }), PROD_BASES);
+  assert.deepEqual(engineBases({ homeDir: HOME, env: { MITTRCRAFT_ENGINE_HOME: '' } }), PROD_BASES);
 });
 
 test('engineBases matches 1.22 home.js for MITTRCRAFT_ENGINE_HOME', () => {
@@ -78,4 +79,31 @@ test('engine env wins over a shell XDG_DATA_HOME', () => {
   assert.equal(merged.XDG_DATA_HOME, PROD_BASES.data);
   assert.equal(merged.XDG_STATE_HOME, PROD_BASES.state);
   assert.equal(merged.OPENCODE_DB, 'opencode.db');
+});
+
+// A login shell's variables fill only what is still unset (main.mjs), after
+// the product env is applied, so the prod product sets the root to blank: a
+// MITTRCRAFT_ENGINE_HOME from the person's shell or the launching process can
+// then never move prod's engine folders or what the backup copies.
+test('the prod product neutralises a MITTRCRAFT_ENGINE_HOME from the shell or the launching process', async () => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { applyProductEnv, readProduct } = await import('../../electron/product.mjs');
+  const brand = path.resolve(import.meta.dirname, '..', '..', '..', 'brand');
+  const productFs = {
+    ...fs,
+    readFileSync: (file, ...rest) => (path.basename(file) === 'product.json'
+      ? fs.readFileSync(path.join(brand, 'product.prod.json'), ...rest)
+      : fs.readFileSync(file, ...rest)),
+  };
+  const product = readProduct({ appPath: '/Applications/MittrCraft.app/Contents/Resources/app.asar', fs: productFs, homeDir: HOME });
+  assert.equal(product.env.MITTRCRAFT_ENGINE_HOME, '');
+
+  const launched = { MITTRCRAFT_ENGINE_HOME: '/elsewhere' };
+  applyProductEnv(product, launched);
+  const shell = { MITTRCRAFT_ENGINE_HOME: '/from/the/shell' };
+  for (const [key, value] of Object.entries(shell)) if (launched[key] === undefined) launched[key] = value;
+
+  assert.equal(launched.MITTRCRAFT_ENGINE_HOME, '');
+  assert.deepEqual(engineBases({ homeDir: HOME, env: launched }), PROD_BASES);
 });

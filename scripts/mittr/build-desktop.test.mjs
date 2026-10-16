@@ -107,7 +107,7 @@ test('Dev keeps its engine apart from the installed app', () => {
   const dev = readJson('brand/product.dev.json').env;
   const prod = readJson('brand/product.prod.json').env;
   assert.equal(dev.MITTRCRAFT_ENGINE_HOME, '~/.config/mittrcraft-dev/engine');
-  assert.equal(prod.MITTRCRAFT_ENGINE_HOME, undefined);
+  assert.equal(prod.MITTRCRAFT_ENGINE_HOME, '', 'prod sets the engine root to blank so no inherited value moves it');
   for (const key of ['OPENCHAMBER_DATA_DIR', 'OPENCODE_CONFIG_DIR', 'OPENCHAMBER_POLICY_FILE', 'OPENCHAMBER_MANAGED_PROCESS_REGISTRY']) {
     assert.notEqual(dev[key], prod[key], key);
   }
