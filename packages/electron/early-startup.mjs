@@ -19,6 +19,7 @@
  */
 
 import { PRODUCT } from './product-runtime.mjs';
+import { readSplashSvg } from './product.mjs';
 import { app, BrowserWindow, nativeTheme, protocol, screen } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -239,6 +240,8 @@ const buildStartupSplashHtml = () => {
   const splashFgLight = readSplashColor(settings, 'fgLight', SPLASH_DEFAULTS.fgLight);
   const splashBgDark = readSplashColor(settings, 'bgDark', SPLASH_DEFAULTS.bgDark);
   const splashFgDark = readSplashColor(settings, 'fgDark', SPLASH_DEFAULTS.fgDark);
+  // A product may draw its own logo here; it uses the same --splash-* colours.
+  const productSplashSvg = readSplashSvg(PRODUCT);
 
   return `<!doctype html>
   <html>
@@ -293,7 +296,7 @@ const buildStartupSplashHtml = () => {
   </head>
   <body>
     <div class="stack">
-      <svg width="120" height="120" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OpenChamber loading icon">
+      ${productSplashSvg ?? `<svg width="120" height="120" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OpenChamber loading icon">
         <path d="M50 50 L8.432 26 L8.432 74 L50 98 Z" fill="var(--splash-face-fill)" stroke="var(--splash-stroke)" stroke-width="2" stroke-linejoin="round"/>
         <path d="M50 50 L39.608 44 L39.608 56 L50 62 Z" fill="var(--splash-cell-fill)" opacity="0.2"/>
         <path d="M39.608 44 L29.216 38 L29.216 50 L39.608 56 Z" fill="var(--splash-cell-fill)" opacity="0.45"/>
@@ -333,7 +336,7 @@ const buildStartupSplashHtml = () => {
           <path fill-rule="evenodd" clip-rule="evenodd" d="M-16 -20 L16 -20 L16 20 L-16 20 Z M-8 -12 L-8 12 L8 12 L8 -12 Z" fill="var(--splash-logo-fill)"/>
           <path d="M-8 -4 L8 -4 L8 12 L-8 12 Z" fill="var(--splash-logo-fill)" fill-opacity="0.4"/>
         </g>
-      </svg>
+      </svg>`}
     </div>
   </body>
   </html>`;

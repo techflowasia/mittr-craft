@@ -32,6 +32,7 @@ export const UPSTREAM_PRODUCT = deepFreeze({
     discord: 'https://discord.gg/ZYRSdnwwKA',
   },
   updaterFeed: { provider: 'github', owner: 'openchamber', repo: 'openchamber' },
+  splashSvg: null,
   env: {},
   ensureDirs: [],
   serverPlugins: [],
@@ -91,7 +92,20 @@ export function readProduct({ appPath, fs = nodeFs, homeDir = os.homedir() }) {
   );
   product.ensureDirs = (product.ensureDirs ?? []).map((dir) => expandHome(dir, homeDir));
   product.serverPlugins = (product.serverPlugins ?? []).map((entry) => path.resolve(appPath, entry));
+  product.splashSvg = product.splashSvg ? path.resolve(appPath, product.splashSvg) : null;
   return product;
+}
+
+// The SVG markup a product draws on the startup splash in place of the default
+// logo, or null to keep the default. A file that cannot be read keeps the
+// default too: the splash must never stop the app from starting.
+export function readSplashSvg(product, fs = nodeFs) {
+  if (!product.splashSvg) return null;
+  try {
+    return fs.readFileSync(product.splashSvg, 'utf8');
+  } catch {
+    return null;
+  }
 }
 
 // Product values win over anything already in the environment, including a

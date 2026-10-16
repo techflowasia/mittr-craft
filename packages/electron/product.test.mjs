@@ -9,6 +9,7 @@ import {
   applyProductEnv,
   ensureProductDirs,
   readProduct,
+  readSplashSvg,
   resolveAppNames,
 } from './product.mjs';
 
@@ -44,6 +45,7 @@ test('UPSTREAM_PRODUCT is frozen and equals the upstream literals', () => {
       discord: 'https://discord.gg/ZYRSdnwwKA',
     },
     updaterFeed: { provider: 'github', owner: 'openchamber', repo: 'openchamber' },
+    splashSvg: null,
     env: {},
     ensureDirs: [],
     serverPlugins: [],
@@ -100,6 +102,24 @@ test('serverPlugins resolve against appPath', () => {
     homeDir: HOME,
   });
   assert.deepEqual(product.serverPlugins, [path.join(APP_PATH, 'plugins/one.js'), '/abs/two.js']);
+});
+
+test('splashSvg resolves against appPath and its markup replaces the default', () => {
+  const splashFile = path.join(APP_PATH, 'brand', 'splash.svg');
+  const files = {
+    [path.join(APP_PATH, 'product.json')]: JSON.stringify({ splashSvg: 'brand/splash.svg' }),
+    [splashFile]: '<svg role="img"></svg>',
+  };
+  const product = readProduct({ appPath: APP_PATH, fs: fakeFs(files), homeDir: HOME });
+  assert.equal(product.splashSvg, splashFile);
+  assert.equal(readSplashSvg(product, fakeFs(files)), '<svg role="img"></svg>');
+});
+
+test('without a splashSvg, or with one that cannot be read, the default splash stays', () => {
+  const upstream = readProduct({ appPath: APP_PATH, fs: fakeFs({}), homeDir: HOME });
+  assert.equal(readSplashSvg(upstream, fakeFs({})), null);
+  const missing = readProduct({ appPath: APP_PATH, fs: productFile({ splashSvg: 'gone.svg' }), homeDir: HOME });
+  assert.equal(readSplashSvg(missing, fakeFs({})), null);
 });
 
 test('null links and updaterFeed survive the merge', () => {
