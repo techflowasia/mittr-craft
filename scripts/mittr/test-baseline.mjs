@@ -12,8 +12,11 @@
  * output of the isolated runner (node and bun files) and of vitest.
  *
  * A failure the baseline lists passes; a listed failure that did not happen is
- * reported so the baseline can be trimmed, and is not an error. A stage that
- * fails without naming a test is an error.
+ * reported so the baseline can be trimmed, and is not an error. A stage with a
+ * failure outside the baseline runs once more, and only a failure that comes
+ * back counts: on this machine some web server tests fail now and then in a
+ * full run and pass alone, a different few each time. Those are reported as
+ * flaky. A stage that fails without naming a test is an error.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -77,6 +80,21 @@ const same = (left, right) => left.replace(/\s+/g, ' ').trim() === right.replace
  * Sorts one stage's failures against the baseline: `known` and `unexpected`
  * failures, and the baseline entries for this stage that did not fail.
  */
+const keyOf = ({ file, test }) => `${file}\0${test}`;
+
+/** The second run's result, keeping as new only what failed in both runs. */
+export const confirmStage = (first, second) => {
+  const again = new Set(second.unexpected.map(keyOf));
+  return {
+    ...second,
+    unexpected: first.unexpected.filter((failure) => again.has(keyOf(failure))),
+    flaky: [
+      ...first.unexpected.filter((failure) => !again.has(keyOf(failure))),
+      ...second.unexpected.filter((failure) => !first.unexpected.some((other) => keyOf(other) === keyOf(failure))),
+    ],
+  };
+};
+
 export const compareStage = ({ stage, status, failures, baseline }) => {
   const listed = baseline.filter((entry) => entry.stage === stage);
   const known = [];
@@ -94,17 +112,18 @@ export const compareStage = ({ stage, status, failures, baseline }) => {
     }
   }
   if (status !== 0 && failures.length === 0) unexpected.push({ file: null, test: null });
-  return { stage, known, unexpected, nowPassing: listed.filter((entry) => !matched.has(entry)) };
+  return { stage, known, unexpected, flaky: [], nowPassing: listed.filter((entry) => !matched.has(entry)) };
 };
 
 const describe = ({ file, test }) => (file === null ? 'the stage failed without naming a test' : `${file}${test ? ` > ${test}` : ' (no test named)'}`);
 
 export const formatBaselineReport = (results) => {
   const lines = [];
-  for (const { stage, known, unexpected, nowPassing } of results) {
+  for (const { stage, known, unexpected, flaky = [], nowPassing } of results) {
     const state = unexpected.length > 0 ? 'FAIL' : 'ok';
-    lines.push(`[mittr] tests ${stage}: ${state} (${known.length} known failure(s), ${unexpected.length} new)`);
+    lines.push(`[mittr] tests ${stage}: ${state} (${known.length} known failure(s), ${unexpected.length} new${flaky.length > 0 ? `, ${flaky.length} flaky` : ''})`);
     for (const failure of unexpected) lines.push(`  new failure: ${describe(failure)}`);
+    for (const failure of flaky) lines.push(`  flaky (failed in one of two runs): ${describe(failure)}`);
     for (const entry of nowPassing) lines.push(`  baseline entry did not fail this run (trim it from ${BASELINE_FILE} if it stays green): ${entry.file} > ${entry.test}`);
   }
   const ok = results.every(({ unexpected }) => unexpected.length === 0);
@@ -126,11 +145,15 @@ export const runTestBaseline = ({ cwd, only = [], exec = defaultExec, log = cons
   const { failures: baseline } = JSON.parse(fs.readFileSync(path.join(cwd, BASELINE_FILE), 'utf8'));
 
   const results = [];
-  for (const stage of stages.filter(({ name }) => only.length === 0 || only.includes(name))) {
-    log(`\n[mittr] tests ${stage.name}: ${stage.command}`);
+  const runStage = (stage, label) => {
+    log(`\n[mittr] tests ${stage.name}${label}: ${stage.command}`);
     const { status, output } = exec({ command: stage.command, cwd });
     log(output.trimEnd());
-    results.push(compareStage({ stage: stage.name, status, failures: status === 0 ? [] : parseFailures(output), baseline }));
+    return compareStage({ stage: stage.name, status, failures: status === 0 ? [] : parseFailures(output), baseline });
+  };
+  for (const stage of stages.filter(({ name }) => only.length === 0 || only.includes(name))) {
+    const first = runStage(stage, '');
+    results.push(first.unexpected.length === 0 ? first : confirmStage(first, runStage(stage, ' (again, to tell flaky failures apart)')));
   }
   log(`\n${formatBaselineReport(results)}`);
   return { ok: results.every(({ unexpected }) => unexpected.length === 0), results };

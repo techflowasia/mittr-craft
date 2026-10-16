@@ -124,10 +124,34 @@ test('runs every stage even after one fails, and fails only on a new failure', (
   assert.deepEqual(ran, ['scripts', 'web', 'ui']);
 
   outputs.ui = { status: 1, output: '===== src/new.test.ts (bun) =====\n(fail) brand new [1.00ms]\n' };
+  ran.length = 0;
   const lines = [];
   const result = runTestBaseline({ cwd: dir, exec, log: (line) => lines.push(line) });
   assert.equal(result.ok, false);
+  assert.deepEqual(ran, ['scripts', 'web', 'ui', 'ui']);
   assert.match(lines.join('\n'), /new failure: src\/new\.test\.ts > brand new/);
 
   assert.throws(() => runTestBaseline({ cwd: dir, only: ['nope'], exec, log: () => {} }), /no test stage named nope/);
+});
+
+test('a failure that does not come back when the stage runs again is reported as flaky, not fatal', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-baseline-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'bun run --cwd packages/web test' } }));
+  fs.mkdirSync(path.join(dir, 'brand'));
+  fs.writeFileSync(path.join(dir, 'brand', 'test-baseline.json'), JSON.stringify({ failures: [] }));
+  const runs = [
+    { status: 1, output: ' FAIL  a.test.js > sometimes\n FAIL  b.test.js > always\n' },
+    { status: 1, output: ' FAIL  b.test.js > always\n FAIL  c.test.js > other time\n' },
+  ];
+  const lines = [];
+  const result = runTestBaseline({ cwd: dir, exec: () => runs.shift(), log: (line) => lines.push(line) });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.results[0].unexpected, [{ file: 'b.test.js', test: 'always' }]);
+  assert.deepEqual(result.results[0].flaky.map(({ file }) => file), ['a.test.js', 'c.test.js']);
+  assert.match(lines.join('\n'), /flaky \(failed in one of two runs\): a\.test\.js > sometimes/);
+
+  runs.push({ status: 1, output: ' FAIL  a.test.js > sometimes\n' }, { status: 0, output: '' });
+  assert.equal(runTestBaseline({ cwd: dir, exec: () => runs.shift(), log: () => {} }).ok, true);
 });
