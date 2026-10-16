@@ -13,6 +13,7 @@
     "discord": null
   },
   "updaterFeed": null,
+  "splashSvg": "splash.svg",
   "env": {
     "OPENCHAMBER_DATA_DIR": "~/.config/mittrcraft-dev",
     "OPENCODE_CONFIG_DIR": "~/.config/mittrcraft-dev/engine/opencode",

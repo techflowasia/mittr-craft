@@ -8,9 +8,9 @@
  * It runs upstream's `package` chain one step at a time so the visible-string
  * replacement can sit between the last build step and electron-builder, and it
  * stages the product inputs where the packaged app reads them:
- * `packages/electron/.product/product.json` (packed as `product.json` at the
- * app root) and `packages/electron/product-plugins/mittr-server.mjs`. Both
- * are build output and are never committed.
+ * `packages/electron/.product/product.json` and the splash logo it names
+ * (packed at the app root) and `packages/electron/product-plugins/mittr-server.mjs`.
+ * All are build output and are never committed.
  *
  * electron-builder's `--config` replaces the `build` block in
  * `packages/electron/package.json` instead of merging with it, so the brand
@@ -149,10 +149,14 @@ const run = (command, args, cwd, env = process.env) => {
 // installer does not use.
 const assertConsistent = ({ product, builderConfig }) => {
   const schemes = (builderConfig.protocols ?? []).flatMap((entry) => entry.schemes ?? []);
+  const stagedFiles = (builderConfig.files ?? [])
+    .filter((entry) => isPlainObject(entry) && entry.from === '.product')
+    .flatMap((entry) => entry.filter ?? []);
   const problems = [
     builderConfig.productName !== product.appName && `productName ${builderConfig.productName} != appName ${product.appName}`,
     builderConfig.appId !== product.appUserModelId?.packaged && `appId ${builderConfig.appId} != appUserModelId.packaged ${product.appUserModelId?.packaged}`,
     !schemes.includes(product.deepLinkProtocol) && `protocols do not declare ${product.deepLinkProtocol}`,
+    product.splashSvg && !stagedFiles.includes(product.splashSvg) && `files do not pack the splash logo ${product.splashSvg}`,
   ].filter(Boolean);
   if (problems.length > 0) throw new Error(`brand files disagree: ${problems.join('; ')}`);
 };
@@ -199,6 +203,9 @@ const main = async () => {
   fs.rmSync(stagingDir, { recursive: true, force: true });
   fs.mkdirSync(stagingDir, { recursive: true });
   fs.copyFileSync(productSource, path.join(stagingDir, 'product.json'));
+  if (productOverride.splashSvg) {
+    fs.copyFileSync(path.join(brandDir, productOverride.splashSvg), path.join(stagingDir, productOverride.splashSvg));
+  }
   const product = readProduct({ appPath: stagingDir });
   for (const entry of productOverride.serverPlugins ?? []) {
     if (!fs.existsSync(path.join(electronDir, entry))) throw new Error(`server plugin ${entry} was not built`);

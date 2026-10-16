@@ -1,0 +1,125 @@
+[
+  {
+    "file": "app.asar/dist-bundle/*.mjs",
+    "key": "appName",
+    "snippet": "OpenChamber",
+    "reason": "Built-in default product name (UPSTREAM_PRODUCT); the packaged product.json replaces it before anything reads it."
+  },
+  {
+    "file": "app.asar/dist-bundle/main.mjs",
+    "key": "app.name",
+    "snippet": "OpenChamber",
+    "reason": "Native menu label table; the menu hook swaps upstream's app name for the product's as the menu is built."
+  },
+  {
+    "file": "app.asar/dist-bundle/main.mjs",
+    "key": "about",
+    "snippet": "OpenChamber",
+    "reason": "Native menu label table (\"About ...\" in every locale); the menu hook swaps upstream's app name for the product's as the menu is built."
+  },
+  {
+    "file": "app.asar/dist-bundle/early-startup.mjs",
+    "snippet": "aria-label=\"OpenChamber loading icon\"",
+    "reason": "Default splash logo, drawn only when the product names no splashSvg; product.json names one."
+  },
+  {
+    "file": "app.asar/product-plugins/mittr-server.mjs",
+    "snippet": "showOpenCodeRestartConfirm",
+    "reason": "Settings key (an id in settings.json), never shown."
+  },
+  {
+    "file": "app.asar/product-plugins/mittr-server.mjs",
+    "snippet": "[\"MittrCraft\", \"OpenChamber\"]",
+    "reason": "Name mapping the server plugin uses to carry 1.x settings over; data, never shown."
+  },
+  {
+    "file": "app.asar/product-plugins/mittr-server.mjs",
+    "snippet": "before the first OpenCode 2 start: ",
+    "reason": "Server log line."
+  },
+  {
+    "file": "app.asar/product-plugins/mittr-server.mjs",
+    "snippet": "kept the existing backup from before OpenCode 2: ",
+    "reason": "Server log line."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "substitutions:[[\"OpenChamber\",\"MittrCraft\"],[\"OpenCode\",\"MittrCraft\"]]",
+    "reason": "The product UI plugin's own rename rules; data, never shown."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "showOpenCodeUpdateNotifications",
+    "reason": "Settings key (an id in settings.json), never shown."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "Local OpenCode Unavailable",
+    "reason": "Fallback field of the desktop recovery config; the recovery screen renders its titleKey translation instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "OpenCode CLI could not be started or is not installed. Install OpenCode or connect to a remote server instead.",
+    "reason": "Fallback field of the desktop recovery config; the recovery screen renders its descriptionKey translation instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "\" is not running OpenChamber. Verify the address points to an OpenChamber server.",
+    "reason": "Fallback field of the desktop recovery config; the recovery screen renders its descriptionKey translation instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "The OpenChamber server at \"",
+    "reason": "Fallback field of the desktop recovery config; the recovery screen renders its descriptionKey translation instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "\" is not compatible with this app version. Update OpenChamber on the server, then try again.",
+    "reason": "Fallback field of the desktop recovery config; the recovery screen renders its descriptionKey translation instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "User / OpenCode",
+    "reason": "Fallback label of a skill location option; the skills pages render the option's translation key instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "Project / OpenCode",
+    "reason": "Fallback label of a skill location option; the skills pages render the option's translation key instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "Global OpenCode config location",
+    "reason": "Fallback description of a skill location option; the skills pages render the option's translation key instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "your OpenCode Console workspace",
+    "reason": "phase-2: names the third-party console that can hold provider rules; shown only on the Providers page in enterprise mode, which the phase-2 provider lock replaces."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "workspace, which OpenChamber can’t read.",
+    "reason": "Upstream English value of the phase-2 Console key above; the English override replaces it, and other locales substitute the name."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "openchamber://connect",
+    "reason": "Deep-link scheme (pairing links): the UI builds and parses upstream's scheme, a contract shared with the mobile app and the desktop shell; renaming it needs a scheme hook in the UI (follow-up, see the Task 9 report)."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "openchamber://session/",
+    "reason": "Deep-link scheme (copied session links): the UI builds and parses upstream's scheme, while the shell registers the product's; renaming it needs a scheme hook in the UI (follow-up, see the Task 9 report)."
+  },
+  {
+    "file": "web-dist/assets/renderMobileApp-*.js",
+    "snippet": "OpenChamber Mobile",
+    "reason": "phase-5 surface: client label sent by the mobile app."
+  },
+  {
+    "file": "web-dist/mobile.html",
+    "snippet": "<title>OpenChamber Mobile</title>",
+    "reason": "phase-5 surface: the mobile web shell."
+  }
+]

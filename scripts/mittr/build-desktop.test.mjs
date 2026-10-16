@@ -102,3 +102,21 @@ test('Dev keeps its engine apart from the installed app', () => {
     assert.notEqual(dev[key], prod[key], key);
   }
 });
+
+test('both flavors pack the splash logo their product file names', () => {
+  for (const flavor of ['dev', 'prod']) {
+    const { splashSvg } = readJson(`brand/product.${flavor}.json`);
+    assert.ok(fs.existsSync(path.join(repoRoot, 'brand', splashSvg)), `${flavor}: brand/${splashSvg}`);
+    const staged = readJson(`brand/electron-builder.${flavor}.json`).files
+      .filter((entry) => entry.from === '.product')
+      .flatMap((entry) => entry.filter);
+    assert.ok(staged.includes(splashSvg), flavor);
+  }
+});
+
+test('every visible-strings entry replaces an upstream name and keeps none', () => {
+  for (const entry of readJson('brand/visible-strings.json')) {
+    assert.match(entry.from, /OpenChamber|OpenCode|openchamber:\/\//, entry.from);
+    assert.doesNotMatch(entry.to, /OpenChamber|OpenCode/, entry.to);
+  }
+});

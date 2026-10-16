@@ -1,8 +1,11 @@
 {
   "appId": "dev.mittrcraft.desktop.dev",
   "productName": "MittrCraft Dev",
+  "copyright": "Copyright © 2026 MittrCraft",
   "extraMetadata": {
-    "version": "2.1.1+mittr.1"
+    "version": "2.1.1+mittr.1",
+    "description": "MittrCraft desktop app",
+    "author": "MittrCraft"
   },
   "protocols": [
     {
@@ -18,7 +21,8 @@
       "from": ".product",
       "to": ".",
       "filter": [
-        "product.json"
+        "product.json",
+        "splash.svg"
       ]
     }
   ],

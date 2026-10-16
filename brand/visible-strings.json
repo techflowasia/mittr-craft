@@ -1,1 +1,656 @@
-[]
+[
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"Updating OpenCode configuration...\"",
+    "to": "\"Updating the engine configuration...\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "Waiting for OpenCode… (attempt ",
+    "to": "Waiting for the engine… (attempt ",
+    "count": 3
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"OpenCode health check reported not ready\"",
+    "to": "\"The engine health check reported not ready\"",
+    "count": 3
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"OpenCode did not become ready in time\"",
+    "to": "\"The engine did not become ready in time\"",
+    "count": 3
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"OpenCode refresh failed. Please retry",
+    "to": "\"Engine refresh failed. Please retry",
+    "count": 3
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"Reloading OpenCode configuration…\"",
+    "to": "\"Reloading the engine configuration…\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "||\"Restart your connected OpenCode server to apply the changes.\"",
+    "to": "||\"Restart your connected engine server to apply the changes.\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"OpenCode process is not running\"",
+    "to": "\"The engine process is not running\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"The running turn was stopped before OpenCode could send the next message.\"",
+    "to": "\"The running turn was stopped before the engine could send the next message.\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`OpenCode request timed out after ",
+    "to": "`Engine request timed out after ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "Failed to update OpenCode working directory",
+    "to": "Failed to update the engine working directory",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"Failed to restart OpenCode\"",
+    "to": "\"Failed to restart the engine\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"Failed to collect OpenCode status\"",
+    "to": "\"Failed to collect engine status\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"Could not check OpenCode compatibility\"",
+    "to": "\"Could not check engine compatibility\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"OpenCode v2 installation failed\"",
+    "to": "\"Engine v2 installation failed\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"Could not determine OpenCode compatibility\"",
+    "to": "\"Could not determine engine compatibility\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"OpenCode recovery failed\"",
+    "to": "\"Engine recovery failed\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"OpenCode upgrade status check failed\"",
+    "to": "\"Engine upgrade status check failed\"",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`OpenChamber version: ",
+    "to": "`MittrCraft version: ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`OpenCode SDK base: ",
+    "to": "`Engine SDK base: ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`OpenCode runtime port: ",
+    "to": "`Engine runtime port: ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`OpenCode runtime running: ",
+    "to": "`Engine runtime running: ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`Secure OpenCode connection: ",
+    "to": "`Secure engine connection: ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`OpenCode auth source: ",
+    "to": "`Engine auth source: ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"OpenCode process:\"",
+    "to": "\"Engine process:\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`Recent OpenCode session errors: ",
+    "to": "`Recent engine session errors: ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`- OpenCode: ",
+    "to": "`- Engine: ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`- OpenChamber desktop: ",
+    "to": "`- MittrCraft desktop: ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"%APPDATA%\\\\OpenChamber\\\\logs\\\\main.log\"",
+    "to": "\"%APPDATA%\\\\MittrCraft\\\\logs\\\\main.log\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"~/Library/Logs/OpenChamber/main.log\"",
+    "to": "\"~/Library/Logs/MittrCraft/main.log\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"~/.config/OpenChamber/logs/main.log\"",
+    "to": "\"~/.config/MittrCraft/logs/main.log\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"OpenCode CLI resolution:\"",
+    "to": "\"Engine CLI resolution:\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"OpenCode API probes:",
+    "to": "\"Engine API probes:",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"OpenChamber Desktop\"",
+    "to": "\"MittrCraft Desktop\"",
+    "count": 7
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"Local OpenChamber\"",
+    "to": "\"Local MittrCraft\"",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`OpenChamber events returned ",
+    "to": "`MittrCraft events returned ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"Project is not registered in OpenChamber\"",
+    "to": "\"Project is not registered in MittrCraft\"",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"This OpenChamber surface has no Diff view.\"",
+    "to": "\"This MittrCraft surface has no Diff view.\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"This OpenChamber server has no walkthrough API\"",
+    "to": "\"This MittrCraft server has no walkthrough API\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "[Document text truncated by OpenChamber]",
+    "to": "[Document text truncated by MittrCraft]",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"OpenChamber - AI Coding Assistant\"",
+    "to": "\"MittrCraft - AI Coding Assistant\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "displayName:\"OpenChamber Web\"",
+    "to": "displayName:\"MittrCraft Web\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "displayName:\"OpenChamber Memory\"",
+    "to": "displayName:\"MittrCraft Memory\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "displayName:\"OpenChamber Notify\"",
+    "to": "displayName:\"MittrCraft Notify\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "displayName:\"OpenChamber\"",
+    "to": "displayName:\"MittrCraft\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "children:\"OpenChamber\"",
+    "to": "children:\"MittrCraft\"",
+    "count": 3
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "??\"OpenChamber\"",
+    "to": "??\"MittrCraft\"",
+    "count": 3
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "||\"OpenChamber\"",
+    "to": "||\"MittrCraft\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "=\"OpenChamber\",",
+    "to": "=\"MittrCraft\",",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "{provider:\"OpenCode Zen\"}",
+    "to": "{provider:\"Zen\"}",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "{id:\"opencode-go\",name:\"OpenCode Go\"}",
+    "to": "{id:\"opencode-go\",name:\"Go plan\"}",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "assistant message that OpenChamber will send",
+    "to": "assistant message that MittrCraft will send",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "Do not mention OpenChamber metadata",
+    "to": "Do not mention MittrCraft metadata",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "a saved prompt that OpenChamber runs automatically",
+    "to": "a saved prompt that MittrCraft runs automatically",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "add it in OpenChamber's scheduled tasks UI",
+    "to": "add it in MittrCraft's scheduled tasks UI",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "stored in OpenChamber project knowledge (it is edited through the OpenChamber UI)",
+    "to": "stored in MittrCraft project knowledge (it is edited through the MittrCraft UI)",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "name:\"OpenChamber\",variant:",
+    "to": "name:\"MittrCraft\",variant:",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "name:\"OpenCode\",description:\"The OpenCode CLI default theme",
+    "to": "name:\"Terminal\",description:\"The engine CLI default theme",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"The OpenChamber signature - ",
+    "to": "\"The MittrCraft signature - ",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "Vitesse syntax over OpenCode-deep neutrals",
+    "to": "Vitesse syntax over deep neutrals",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "IDE-inspired colors for OpenChamber - ",
+    "to": "IDE-inspired colors for MittrCraft - ",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"Artem Evsevev, adapted for OpenChamber\"",
+    "to": "\"Artem Evsevev, adapted for MittrCraft\"",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "author:\"OpenChamber\"",
+    "to": "author:\"MittrCraft\"",
+    "count": 4
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "author:\"OpenCode\"",
+    "to": "author:\"MittrCraft\"",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/sw.js",
+    "from": "||\"OpenChamber\"",
+    "to": "||\"MittrCraft\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/index.html",
+    "from": "const defaultAppName = 'OpenChamber';",
+    "to": "const defaultAppName = 'MittrCraft';",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/index.html",
+    "from": "const defaultShortName = 'OpenChamber';",
+    "to": "const defaultShortName = 'MittrCraft';",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/index.html",
+    "from": "description: 'Web interface companion for OpenCode AI coding agent',",
+    "to": "description: 'MittrCraft, a workspace for AI coding agents',",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/index.html",
+    "from": "<meta name=\"description\" content=\"Web interface companion for OpenCode AI coding agent\" />",
+    "to": "<meta name=\"description\" content=\"MittrCraft, a workspace for AI coding agents\" />",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/index.html",
+    "from": "<meta name=\"apple-mobile-web-app-title\" content=\"OpenChamber\" />",
+    "to": "<meta name=\"apple-mobile-web-app-title\" content=\"MittrCraft\" />",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/index.html",
+    "from": "<meta name=\"application-name\" content=\"OpenChamber\" />",
+    "to": "<meta name=\"application-name\" content=\"MittrCraft\" />",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/index.html",
+    "from": "<title>OpenChamber - AI Coding Assistant</title>",
+    "to": "<title>MittrCraft - AI Coding Assistant</title>",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/index.html",
+    "from": "role=\"img\" aria-label=\"OpenChamber loading icon\">",
+    "to": "aria-hidden=\"true\" style=\"display: none\">",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/mini-chat.html",
+    "from": "<title>OpenChamber Mini Chat</title>",
+    "to": "<title>MittrCraft Mini Chat</title>",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/site.webmanifest",
+    "from": "\"name\": \"OpenChamber\",",
+    "to": "\"name\": \"MittrCraft\",",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/site.webmanifest",
+    "from": "\"short_name\": \"OpenChamber\",",
+    "to": "\"short_name\": \"MittrCraft\",",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/site.webmanifest",
+    "from": "\"description\": \"OpenChamber desktop companion for the OpenCode AI coding agent\",",
+    "to": "\"description\": \"MittrCraft, a workspace for AI coding agents\",",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/early-startup.mjs",
+    "from": "title: \"OpenChamber\",",
+    "to": "title: \"MittrCraft\",",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"OpenChamber — no active sessions\"",
+    "to": "\"MittrCraft — no active sessions\"",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "`OpenChamber — ${sessionCount}",
+    "to": "`MittrCraft — ${sessionCount}",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "snapshot.instanceName.trim() : \"OpenChamber\"",
+    "to": "snapshot.instanceName.trim() : \"MittrCraft\"",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"Show OpenChamber\"",
+    "to": "\"Show MittrCraft\"",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"Quit OpenChamber\"",
+    "to": "\"Quit MittrCraft\"",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"Quit OpenChamber?\"",
+    "to": "\"Quit MittrCraft?\"",
+    "count": 2
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "`OpenChamber detected ${reasons",
+    "to": "`MittrCraft detected ${reasons",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"Connect to OpenChamber server?\"",
+    "to": "\"Connect to MittrCraft server?\"",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"OpenChamber Mini Chat\"",
+    "to": "\"MittrCraft Mini Chat\"",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"OpenChamber Desktop\"",
+    "to": "\"MittrCraft Desktop\"",
+    "count": 4
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"OpenChamber Desktop SSH\"",
+    "to": "\"MittrCraft Desktop SSH\"",
+    "count": 2
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "requires OpenChamber.app to be installed",
+    "to": "requires MittrCraft.app to be installed",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "Start OpenChamber from",
+    "to": "Start MittrCraft from",
+    "count": 2
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "  appName = \"OpenChamber\",",
+    "to": "  appName = \"MittrCraft\",",
+    "count": 2
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "waiting for forwarded OpenChamber health",
+    "to": "waiting for forwarded server health",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "`Configured OpenChamber UI password was rejected",
+    "to": "`Configured UI password was rejected",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"Failed to install OpenChamber on remote host\"",
+    "to": "\"Failed to install the server on the remote host\"",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "`Remote OpenChamber requires UI authentication and",
+    "to": "`The remote server requires UI authentication and",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"Remote OpenChamber requires UI authentication on /api/system/info; configure OpenChamber UI password\"",
+    "to": "\"The remote server requires UI authentication on /api/system/info; configure the UI password\"",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "`Remote OpenChamber probe failed",
+    "to": "`Remote server probe failed",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "`Could not list OpenChamber servers on the remote host",
+    "to": "`Could not list servers on the remote host",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "`it runs OpenChamber ${runningVersion}`",
+    "to": "`it runs version ${runningVersion}`",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"External mode requires a preferred remote OpenChamber port\"",
+    "to": "\"External mode requires a preferred remote server port\"",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"Probing external OpenChamber server\"",
+    "to": "\"Probing the external server\"",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"Checking remote OpenChamber installation\"",
+    "to": "\"Checking the remote installation\"",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "`Updating remote OpenChamber from ",
+    "to": "`Updating the remote server from ",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"Installing OpenChamber on remote host\"",
+    "to": "\"Installing the server on the remote host\"",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"OpenChamber was installed on the remote host but",
+    "to": "\"The server was installed on the remote host but",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"Detecting managed OpenChamber server\"",
+    "to": "\"Detecting the managed server\"",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"Starting managed OpenChamber server\"",
+    "to": "\"Starting the managed server\"",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "\"Managed OpenChamber server failed to become reachable\"",
+    "to": "\"The managed server failed to become reachable\"",
+    "count": 1
+  }
+]
