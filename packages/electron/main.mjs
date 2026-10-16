@@ -60,6 +60,7 @@ import { assertUpdaterCapability } from './updater-capability.mjs';
 import { checkForDesktopUpdate } from './updater-check.mjs';
 import { resolveUpdaterChannel } from './updater-channel.mjs';
 import { createContextMenuLabels, menuLabel, normalizeMenuLocale, roleMenuItem } from './menu-locales.mjs';
+import { UPSTREAM_PRODUCT } from './product.mjs';
 import { resolveUpdaterFeed } from './updater-feed.mjs';
 import {
   buildLinuxInstalledApps,
@@ -4772,9 +4773,13 @@ const helpLinkItems = (t) => {
   ].filter((group) => group.length > 0).flatMap((group) => [{ type: 'separator' }, ...group]);
 };
 
+// The menu tables name the app the way upstream ships it; a product with
+// another name shows its own name in those labels.
+const productMenuLabel = (locale, key) => menuLabel(locale, key).replaceAll(UPSTREAM_PRODUCT.appName, PRODUCT.appName);
+
 const buildMacMenu = (locale = 'en') => {
   const dispatchAction = (action) => dispatchMenuAction(action);
-  const t = (key) => menuLabel(locale, key);
+  const t = (key) => productMenuLabel(locale, key);
   const roleItem = (role, key) => roleMenuItem(locale, role, key);
   const handleCopyAction = () => {
     BrowserWindow.getFocusedWindow()?.webContents.copy();
@@ -4882,7 +4887,7 @@ const buildMacMenu = (locale = 'en') => {
 
 const buildAutoHiddenMenu = (locale = 'en') => {
   const dispatchAction = (action) => dispatchMenuAction(action);
-  const t = (key) => menuLabel(locale, key);
+  const t = (key) => productMenuLabel(locale, key);
   const roleItem = (role, key) => roleMenuItem(locale, role, key);
   const handleCopyAction = () => {
     BrowserWindow.getFocusedWindow()?.webContents.copy();
