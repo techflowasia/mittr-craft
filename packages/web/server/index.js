@@ -132,6 +132,7 @@ import { createWorktreeBootstrapStore } from './lib/git/worktree-bootstrap-stora
 import { createRemoteClientAuthRuntime } from './lib/client-auth/remote-clients.js';
 import { createClientPairingRuntime } from './lib/client-auth/pairing.js';
 import { attachRealtimeProxy } from './lib/realtime-proxy.js';
+import { loadServerPlugins, readServerPluginSpecifiers } from './lib/server-plugins.js';
 import { createRelayService, relayBlockedByEnterprise } from './lib/relay/service.js';
 import { createRelayHostLock } from './lib/relay/host-lock.js';
 import { createAgentToolRuntime } from './lib/agent-tool/runtime.js';
@@ -671,6 +672,7 @@ let openCodeNotReadySince = 0;
 let isExternalOpenCode = false;
 let exitOnShutdown = true;
 let uiAuthController = null;
+let serverPlugins = null;
 // The isolated-spaces host: the place, the manager and the dispatcher. Null while the feature's
 // switch is off, and then nothing of the feature runs, see docs/isolated-spaces/DESIGN.md.
 let spacesHost = null;
@@ -1460,7 +1462,10 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
       console.warn('Failed to reconcile sessions after OpenCode restart:', error?.message ?? error);
     }
   },
-  getManagedOpenCodeEnv: async () => (managedConfigRuntime ? managedConfigRuntime.buildManagedChildEnv() : {}),
+  getManagedOpenCodeEnv: async () => ({
+    ...(managedConfigRuntime ? await managedConfigRuntime.buildManagedChildEnv() : {}),
+    ...(serverPlugins ? await serverPlugins.engineEnv() : {}),
+  }),
 });
 
 // Quota lookups, voice keys and routing read provider credentials from the
@@ -2442,6 +2447,15 @@ async function main(options = {}) {
     worktreeBootstrapStore,
     messageQueueRuntime,
     routingRuntime,
+  });
+
+  // Behind the same CORS, auth and spaces middleware as the routes above, and
+  // after them so upstream's own routes win. Before the startup pipeline, which
+  // mounts the OpenCode proxy and starts OpenCode, so the first start already
+  // carries the plugins' engine variables. A failure here fails the start.
+  serverPlugins = await loadServerPlugins({
+    specifiers: readServerPluginSpecifiers(process.env),
+    context: { app, dataDir: OPENCHAMBER_DATA_DIR, logger: console },
   });
 
   // After bootstrap: the upgrade gate needs the real UI auth controller.
