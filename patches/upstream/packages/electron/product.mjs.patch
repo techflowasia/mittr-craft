@@ -1,6 +1,6 @@
 diff --git a/packages/electron/product.mjs b/packages/electron/product.mjs
 new file mode 100644
-index 000000000..85e762b1c
+index 000000000..a93705ea6
 --- /dev/null
 +++ b/packages/electron/product.mjs
 @@ -0,0 +1,141 @@
@@ -115,9 +115,6 @@ index 000000000..85e762b1c
 +  }
 +}
 +
-+// Product values win over anything already in the environment, including a
-+// personal OPENCODE_CONFIG_DIR, so a rebranded build never reads another
-+// install's data.
 +// `devUserDataName` keeps a development run's Chromium profile apart from the
 +// installed app's; it is only set for a development run.
 +export function resolveAppNames(product, { isDev }) {
@@ -128,6 +125,9 @@ index 000000000..85e762b1c
 +  };
 +}
 +
++// Product values win over anything already in the environment, including a
++// personal OPENCODE_CONFIG_DIR, so a rebranded build never reads another
++// install's data.
 +export function applyProductEnv(product, env = process.env) {
 +  const keys = Object.keys(product.env ?? {});
 +  for (const key of keys) env[key] = product.env[key];
