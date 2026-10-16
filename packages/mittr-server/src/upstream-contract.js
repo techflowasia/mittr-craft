@@ -208,6 +208,11 @@ export const UPSTREAM_CONTRACT = [
     nativeModules: ['node-pty', 'bun-pty'],
   },
   {
+    id: 'opencode-user-config-io',
+    files: ['packages/web/server/lib/opencode/shared.js', 'packages/web/server/index.js'],
+    why: "plugins get the user's OpenCode config as opencode.userConfig: CONFIG_FILE under OPENCODE_CONFIG_DIR (else XDG_CONFIG_HOME/opencode), read with readConfigFile (a missing file is {}, a broken one throws) and written with writeConfig (other keys and comments kept, a broken file never overwritten); the Mittr default model is kept there",
+  },
+  {
     id: 'engine-integration-connect-key',
     files: ['node_modules/@opencode/client/package.json'],
     why: 'the engine stores a provider key through POST /api/integration/{id}/connect/key with a { key } body and answers 204, or 404 until a config-defined provider is picked up; the Mittr credential is stored that way',

@@ -6,7 +6,7 @@ import test from 'node:test';
 import express from 'express';
 
 import { setupMittr } from './index.js';
-import { deferred, fakeEngineContext, fakeEngineFetch, fakeFetch, json, serve, tempDataDir, until } from './test-helpers.js';
+import { USER_CONFIG_DIR, deferred, fakeEngineContext, fakeEngineFetch, fakeFetch, json, serve, tempDataDir, until } from './test-helpers.js';
 
 const NOW = Date.now();
 const DEV_ENV = { MITTRCRAFT_BROKER_URL: 'https://api-dev.mittr.asia', MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft-dev' };
@@ -49,10 +49,10 @@ const serverLikeApp = () => {
 
 // `built` stands for the engine's first config build, which the server makes
 // before it first starts the engine.
-const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext(), sharedHistoryExists, built = true } = {}) => {
+const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext(), sharedHistoryExists, built = true, engineConfigDir = USER_CONFIG_DIR } = {}) => {
   const app = serverLikeApp();
   const logger = recordingLogger();
-  const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context }, { env, fetchImpl, sharedHistoryExists });
+  const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context }, { env, fetchImpl, sharedHistoryExists, engineConfigDir });
   t.after(() => mittr.dispose());
   engine.contribute = mittr.managedConfig;
   if (built) await mittr.managedConfig();
@@ -551,6 +551,106 @@ test('signing out of the last account takes the Mittr models out of the engine c
   assert.equal((await call('DELETE', '/api/mittr/auth/session')).status, 200);
   assert.deepEqual(await mittrModelsOf(mittr), []);
   assert.deepEqual((await call('GET', '/api/mittr/catalog')).body.bundleVersion, null);
+});
+
+const defaultModelOf = (engine) => engine.userConfigFile.model;
+
+test('a signed-in fresh install starts on the first Mittr agent, once the engine config carries the agents', async (t) => {
+  const fetchImpl = platform();
+  const { call, engine } = await setUp(t, { fetchImpl });
+  assert.deepEqual(engine.userConfigWrites, []);
+
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => defaultModelOf(engine) === 'mittr/a1');
+  assert.deepEqual(engine.userConfigWrites.map(({ config }) => config), [{ model: 'mittr/a1' }]);
+  // The refresh just before the write put the agents in the engine config.
+  const { afterRefreshes } = engine.userConfigWrites[0];
+  assert.deepEqual(Object.keys(engine.rendered[afterRefreshes - 1].providers.mittr.models), ['a1', 'a2']);
+
+  assert.equal((await call('POST', '/api/mittr/catalog/sync')).status, 200);
+  assert.equal(engine.userConfigWrites.length, 1);
+});
+
+test('a default the person chose is kept while it is offered, and one on another provider always', async (t) => {
+  for (const model of ['mittr/a2', 'openai/gpt-x']) {
+    const { call, engine } = await setUp(t, { fetchImpl: platform() });
+    assert.equal((await signIn(call)).status, 200);
+    await until(() => defaultModelOf(engine) === 'mittr/a1');
+    engine.userConfigFile.model = model;
+    const writes = engine.userConfigWrites.length;
+
+    assert.equal((await call('POST', '/api/mittr/catalog/sync')).status, 200);
+    assert.equal((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' })).status, 200);
+    assert.equal(engine.userConfigWrites.length, writes, model);
+    assert.equal(defaultModelOf(engine), model);
+  }
+});
+
+test('signing out takes the Mittr default out, so no default is claimed without Mittr models', async (t) => {
+  const { call, engine } = await setUp(t, { fetchImpl: platform() });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => defaultModelOf(engine) === 'mittr/a1');
+
+  assert.equal((await call('DELETE', '/api/mittr/auth/session')).status, 200);
+  assert.equal(Object.hasOwn(engine.userConfigFile, 'model'), false);
+});
+
+test('an account whose catalog has not arrived keeps the default until it does, and a cached switch moves it at once', async (t) => {
+  let held = null;
+  const fetchImpl = platform({
+    sessions: [session, sessionB],
+    catalog: (request) => {
+      const answer = json({ 'at-1': CATALOG_A, 'at-b': CATALOG_B }[request.headers.authorization.slice('Bearer '.length)]);
+      return held ? held.promise.then(() => answer) : answer;
+    },
+  });
+  const { call, engine, mittr } = await setUp(t, { fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => defaultModelOf(engine) === 'mittr/a1');
+  engine.userConfigFile.model = 'mittr/a2';
+
+  held = deferred();
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 2);
+  assert.deepEqual(await mittrModelsOf(mittr), []);
+  assert.equal(defaultModelOf(engine), 'mittr/a2');
+
+  const release = held;
+  held = null;
+  release.resolve();
+  await until(() => defaultModelOf(engine) === 'mittr/b1');
+
+  assert.equal((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' })).status, 200);
+  assert.equal(defaultModelOf(engine), 'mittr/a1');
+});
+
+test('a start with nobody signed in takes a Mittr default left behind out', async (t) => {
+  const engine = fakeEngineContext({ userConfigFile: { model: 'mittr/a1', theme: 'dark' } });
+  await setUp(t, { engine });
+  assert.deepEqual(engine.userConfigFile, { theme: 'dark' });
+});
+
+test('the default is left alone when the server\'s user config is not the file the engine reads', async (t) => {
+  const { call, engine, mittr, logger } = await setUp(t, { fetchImpl: platform(), engineConfigDir: '/elsewhere/opencode' });
+  assert.equal((await signIn(call)).status, 200);
+  await until(async () => (await mittrModelsOf(mittr)).length === 2);
+  assert.equal((await call('POST', '/api/mittr/catalog/sync')).status, 200);
+  assert.deepEqual(engine.userConfigWrites, []);
+  assert.deepEqual(logger.warnings.filter((line) => line.includes('default model')), [
+    `[mittr] the engine reads its config from /elsewhere/opencode, not ${USER_CONFIG_DIR}; the default model is left alone`,
+  ]);
+});
+
+test('a user config that cannot be read is logged, and the models still apply', async (t) => {
+  const engine = fakeEngineContext({ userConfigFile: { model: 'mittr/a1' } });
+  engine.userConfigError = new Error('Failed to read OpenCode configuration');
+  const { call, mittr, logger } = await setUp(t, { engine, fetchImpl: platform() });
+  assert.equal((await signIn(call)).status, 200);
+  await until(async () => (await mittrModelsOf(mittr)).length === 2);
+  assert.equal((await call('POST', '/api/mittr/catalog/sync')).status, 200);
+  assert.ok(logger.warnings.some((line) => line === '[mittr] could not set the default model: Failed to read OpenCode configuration'), logger.warnings.join('\n'));
+  assert.equal(logger.warnings.some((line) => line.includes('could not apply the Mittr models')), false);
+  assert.deepEqual(engine.userConfigWrites, []);
 });
 
 test('a failing config refresh while applying models is logged, never thrown into the server', async (t) => {

@@ -41,6 +41,16 @@ export const engineBases = ({ homeDir, env }) => {
 };
 
 /**
+ * The folder the engine reads its user config from. It inherits
+ * `OPENCODE_CONFIG_DIR` from the server; without it, OpenCode 2 uses
+ * `<XDG_CONFIG_HOME>/opencode`, and `engineEnv` sets that base for it.
+ */
+export const engineConfigDir = ({ bases, env }) => {
+  const own = String(env.OPENCODE_CONFIG_DIR ?? '').trim();
+  return own ? path.resolve(own) : path.join(bases.config, 'opencode');
+};
+
+/**
  * The variables that put the engine in those folders. Every base is set, not
  * only the ones holding credentials, so no part of the engine lands in a
  * personal OpenCode home. A second account keeps its data and state under

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { ENGINE_DB_RULE, engineBases, engineEnv, sharedHistoryExists } from './engine-home.js';
+import { ENGINE_DB_RULE, engineBases, engineConfigDir, engineEnv, sharedHistoryExists } from './engine-home.js';
 
 const HOME = '/Users/someone';
 const ACCOUNT = '0123456789abcdef';
@@ -37,6 +37,14 @@ test('engineBases ignores XDG variables the way 1.22 did', () => {
     engineBases({ homeDir: HOME, env: { XDG_DATA_HOME: '/elsewhere', XDG_CONFIG_HOME: '/elsewhere' } }),
     PROD_BASES,
   );
+});
+
+test('the engine reads its user config from OPENCODE_CONFIG_DIR, else from its own config base', () => {
+  assert.equal(engineConfigDir({ bases: PROD_BASES, env: {} }), '/Users/someone/.config/mittrcraft/engine/opencode');
+  assert.equal(engineConfigDir({ bases: PROD_BASES, env: { OPENCODE_CONFIG_DIR: '  ' } }), '/Users/someone/.config/mittrcraft/engine/opencode');
+  assert.equal(engineConfigDir({ bases: PROD_BASES, env: { OPENCODE_CONFIG_DIR: ' /x/engine/opencode/ ' } }), '/x/engine/opencode');
+  // A shell XDG_CONFIG_HOME does not reach the engine: its env sets its own.
+  assert.equal(engineConfigDir({ bases: PROD_BASES, env: { XDG_CONFIG_HOME: '/elsewhere' } }), '/Users/someone/.config/mittrcraft/engine/opencode');
 });
 
 test('engineEnv without an account uses the shared bases and pins the database file', () => {

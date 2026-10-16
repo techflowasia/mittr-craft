@@ -199,6 +199,33 @@ test('setup with the server context mounts Mittr sign-in and keeps the engine en
   await plugin.dispose();
 });
 
+test('setup hands Mittr the folder the engine reads its user config from', async (t) => {
+  const home = tempHome(t);
+  const dataDir = prodLayout(home);
+  const engineFile = path.join(home, '.config', 'mittrcraft', 'engine', 'opencode', 'opencode.json');
+  const run = async (userConfigPath) => {
+    const engine = fakeEngineContext({ port: null, userConfigFile: { model: 'mittr/a1' } });
+    engine.engine.userConfig.path = userConfigPath;
+    const logger = recordingLogger();
+    const plugin = await setupMittrServer({
+      dataDir,
+      logger,
+      env: { MITTRCRAFT_BROKER_URL: 'https://api.mittr.asia', MITTRCRAFT_BROKER_FIXED: '1', MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft' },
+      homeDir: home,
+      context: { app: express(), express, dataDir, logger, host: null, ...engine.context },
+    });
+    await plugin.dispose();
+    return { engine, logger };
+  };
+
+  // Nobody is signed in, so a Mittr default is taken out of the engine's file.
+  assert.deepEqual((await run(engineFile)).engine.userConfigFile, {});
+
+  const personal = await run(path.join(home, '.config', 'opencode', 'opencode.json'));
+  assert.deepEqual(personal.engine.userConfigWrites, []);
+  assert.ok(personal.logger.lines.some((line) => line.includes('the default model is left alone')));
+});
+
 test('the default export is the server-plugin setup', () => {
   assert.ok(setup instanceof Function);
 });

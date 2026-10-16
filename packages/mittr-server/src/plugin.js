@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import { activeAccountHome } from './accounts.js';
 import { backupOnce } from './backup.js';
-import { ENGINE_DB_RULE, engineBases, engineEnv, sharedHistoryExists } from './engine-home.js';
+import { ENGINE_DB_RULE, engineBases, engineConfigDir, engineEnv, sharedHistoryExists } from './engine-home.js';
 import { ensureGitIdentityStore } from './git-identities.js';
 import { setupMittr } from './mittr/index.js';
 import { MITTR_SETTINGS_KEYS, UPSTREAM_SETTINGS_KEYS, migrateSettingsOnce } from './settings.js';
@@ -65,7 +65,11 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
   const baseEngineEnv = () => engineEnv({ bases, accountHome: activeAccountHome(dataDir, { logger }), rule: ENGINE_DB_RULE });
   if (!context) return { engineEnv: baseEngineEnv };
 
-  const mittr = setupMittr(context, { env, sharedHistoryExists: () => sharedHistoryExists(bases) });
+  const mittr = setupMittr(context, {
+    env,
+    sharedHistoryExists: () => sharedHistoryExists(bases),
+    engineConfigDir: engineConfigDir({ bases, env }),
+  });
   return {
     engineEnv: async () => ({ ...baseEngineEnv(), ...(await mittr.engineEnv()) }),
     managedConfig: mittr.managedConfig,

@@ -77,12 +77,20 @@ export const deferred = () => {
  * through every plugin's `managedConfig()`, and records each result in
  * `rendered`. Setting `refreshGate` to a promise holds refreshes open until it
  * settles, the way a slow disk would.
+ *
+ * The user's OpenCode config lives in `userConfigFile`; each write is recorded
+ * in `userConfigWrites` with the number of refreshes made before it. Setting
+ * `userConfigError` makes reads throw, as upstream does for a file it cannot
+ * parse.
  */
-export const fakeEngineContext = ({ port = 4100, enginePort = 4096 } = {}) => {
+export const USER_CONFIG_DIR = '/engine-config/opencode';
+
+export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFile = {} } = {}) => {
   const readyListeners = new Set();
   const refreshes = [];
   const rendered = [];
   const restarts = [];
+  const userConfigWrites = [];
   const engine = {
     port: enginePort,
     url: (route = '/') => {
@@ -97,6 +105,17 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096 } = {}) => {
     },
     restart: async (reason) => { restarts.push(reason); },
     refresh: async (reason) => { restarts.push(reason); },
+    userConfig: {
+      path: path.join(USER_CONFIG_DIR, 'opencode.json'),
+      read: () => {
+        if (fake.userConfigError) throw fake.userConfigError;
+        return structuredClone(fake.userConfigFile);
+      },
+      write: (config) => {
+        userConfigWrites.push({ config: structuredClone(config), afterRefreshes: refreshes.length });
+        fake.userConfigFile = structuredClone(config);
+      },
+    },
   };
   const server = { port };
   const fake = {
@@ -121,6 +140,9 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096 } = {}) => {
     readyListeners,
     contribute: null,
     refreshGate: null,
+    userConfigFile: structuredClone(userConfigFile),
+    userConfigWrites,
+    userConfigError: null,
     fireReady: () => { for (const listener of readyListeners) listener(); },
   };
   return fake;

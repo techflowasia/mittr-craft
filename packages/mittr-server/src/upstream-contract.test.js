@@ -196,14 +196,12 @@ const checks = {
       /refresh: async \(reason\) => \{ await refreshOpenCodeAfterConfigChange\(reason\); \},/,
       /waitReady: \(\) => waitForOpenCodeReady\(\),/,
       /defaultDirectory: \(\) => openCodeLifecycleRuntime\.getDefaultOpenCodeDirectory\(\),/,
-      /userConfig: \{\s*path: OPENCODE_USER_CONFIG_FILE,\s*read: \(\) => readOpenCodeConfigFile\(OPENCODE_USER_CONFIG_FILE\),\s*write: \(config\) => writeOpenCodeConfig\(config, OPENCODE_USER_CONFIG_FILE\),\s*\},/,
       /git: \{ remoteUrl: \(directory\) => getRemoteUrl\(directory, 'origin'\) \},/,
       /managedConfig: \{ refresh: \(\) => managedConfigRuntime\.refreshManagedConfigFile\(\) \},/,
       /host: options\.pluginHost \?\? null,/,
       /requestScope: \(req\) => tunnelAuthController\.classifyRequestScope\(req\),/,
       /onShutdown: \(handler\) => \{\s*serverPluginShutdownHandlers\.push\(handler\);\s*\},/,
     ]) has(context, entry, `the server plugin context no longer has ${entry}`);
-    has(server, /import \{\s*CONFIG_FILE as OPENCODE_USER_CONFIG_FILE,\s*readConfigFile as readOpenCodeConfigFile,\s*writeConfig as writeOpenCodeConfig,\s*\} from '\.\/lib\/opencode\/shared\.js';/);
     has(server, /import \{ getRemoteUrl, resolvePrimaryWorktreeRoot \} from '\.\/lib\/git\/service\.js';/);
     has(source('packages/web/server/lib/git/service.js'), /export async function getRemoteUrl\(directory, remoteName = 'origin'\) \{\s*const git = await createGit\(directory\);\s*try \{\s*const url = await git\.remote\(\['get-url', '--', remoteName\]\);/);
     has(source('packages/web/server/lib/opencode/tunnel-auth.js'), /const classifyRequestScope = \(req\) => \{/);
@@ -655,6 +653,50 @@ const checks = {
 
     has(source('packages/electron/main.mjs'), /process\.env\.OPENCHAMBER_DIST_DIR = resolveWebDistDir\(\);/);
     has(source('packages/web/server/lib/opencode/static-routes-runtime.js'), /process\.env\.OPENCHAMBER_DIST_DIR/);
+  },
+
+  'opencode-user-config-io': async (t) => {
+    const configFileFor = (env) => {
+      const home = tempDir(t, 'contract-home-');
+      const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(OPENCODE_|XDG_)/.test(name)));
+      const result = spawnSync(process.execPath, ['--input-type=module', '-e', 'const { CONFIG_FILE } = await import(process.env.CONTRACT_SHARED_URL); console.log(JSON.stringify(CONFIG_FILE));'], {
+        encoding: 'utf8',
+        env: { ...inherited, HOME: home, ...env, CONTRACT_SHARED_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/opencode/shared.js')).href },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      return { home, file: JSON.parse(result.stdout.trim().split('\n').at(-1)) };
+    };
+    const dir = tempDir(t, 'contract-config-dir-');
+    assert.equal(configFileFor({ OPENCODE_CONFIG_DIR: ` ${dir} ` }).file, path.join(dir, 'opencode.json'), 'CONFIG_FILE no longer follows OPENCODE_CONFIG_DIR');
+    assert.equal(configFileFor({ XDG_CONFIG_HOME: dir }).file, path.join(dir, 'opencode', 'opencode.json'), 'CONFIG_FILE no longer falls back to XDG_CONFIG_HOME/opencode, the folder the engine gets');
+    const fallback = configFileFor({});
+    assert.equal(fallback.file, path.join(fallback.home, '.config', 'opencode', 'opencode.json'));
+
+    t.mock.method(console, 'log', () => {});
+    t.mock.method(console, 'warn', () => {});
+    t.mock.method(console, 'error', () => {});
+    const { readConfigFile, writeConfig } = await importUpstream('packages/web/server/lib/opencode/shared.js');
+    const file = path.join(tempDir(t, 'contract-user-config-'), 'opencode', 'opencode.json');
+    assert.deepEqual(readConfigFile(file), {}, 'a missing user config no longer reads as {}');
+    writeConfig({ model: 'mittr/a1' }, file);
+    assert.deepEqual(readConfigFile(file), { model: 'mittr/a1' }, 'writeConfig no longer creates the folder and the file');
+
+    fs.writeFileSync(file, '{\n  // the person\'s own note\n  "model": "mittr/a1",\n  "theme": "dark"\n}\n');
+    const config = readConfigFile(file);
+    delete config.model;
+    writeConfig(config, file);
+    assert.deepEqual(readConfigFile(file), { theme: 'dark' });
+    has(fs.readFileSync(file, 'utf8'), /\/\/ the person's own note/, 'writeConfig no longer keeps the comments in a config it edits');
+
+    const broken = '{ "model": "mittr/a1", ';
+    fs.writeFileSync(file, broken);
+    assert.throws(() => readConfigFile(file), 'a user config that cannot be parsed no longer throws on read');
+    assert.throws(() => writeConfig({ model: 'mittr/a2' }, file), 'writeConfig no longer refuses a config it cannot parse');
+    assert.equal(fs.readFileSync(file, 'utf8'), broken);
+
+    const server = source('packages/web/server/index.js');
+    has(server, /import \{\s*CONFIG_FILE as OPENCODE_USER_CONFIG_FILE,\s*readConfigFile as readOpenCodeConfigFile,\s*writeConfig as writeOpenCodeConfig,\s*\} from '\.\/lib\/opencode\/shared\.js';/);
+    has(pluginContext(server), /opencode: \{[^]*?userConfig: \{\s*path: OPENCODE_USER_CONFIG_FILE,\s*read: \(\) => readOpenCodeConfigFile\(OPENCODE_USER_CONFIG_FILE\),\s*write: \(config\) => writeOpenCodeConfig\(config, OPENCODE_USER_CONFIG_FILE\),\s*\},/, 'the plugin context no longer hands plugins the user config as opencode.userConfig');
   },
 
   'engine-integration-connect-key': () => {

@@ -5,10 +5,11 @@ import { registerMittrAuthRoutes } from './auth-routes.js';
 import { resolveBroker } from './broker.js';
 import { catalogCachePath, createCatalogCache } from './catalog-cache.js';
 import { registerMittrCatalogRoutes } from './catalog-routes.js';
+import { syncDefaultModel } from './default-model.js';
 import { ensureMittrCredential, forgetMittrCredential } from './engine-credential.js';
 import { ensureLocalToken } from './local-token.js';
 import { createMittrSettings } from './mittr-settings.js';
-import { policiesFragment } from './policies.js';
+import { MITTR_PROVIDER_ID, policiesFragment } from './policies.js';
 import { loopbackProxyExemption, mittrProviderFragment, shimBaseUrl } from './provider-config.js';
 import { chooseSecretStore } from './secret-store.js';
 import { registerMittrShim } from './shim-routes.js';
@@ -50,6 +51,12 @@ const NO_ACCOUNT_CATALOG = {
  * cached one at once and then syncs without waiting; a sign-in syncs; an
  * account change applies that account's cache, then syncs.
  *
+ * The engine's default model follows the same lists, in the user's OpenCode
+ * config, once the models are in the engine config: a fresh install starts on
+ * the first Mittr agent, and no Mittr default is left without Mittr models.
+ * It is written only when that config is the file the engine reads
+ * (`engineConfigDir`).
+ *
  * Returns what the server plugin merges: an engine env, a config fragment and
  * a dispose that does no network I/O, so it can never hold up shutdown, plus
  * `applyModels(items)`, which sets the account's models.
@@ -59,6 +66,7 @@ export function setupMittr(context, {
   fetchImpl = (...args) => fetch(...args),
   sharedHistoryExists = () => true,
   credentialRetryMs = CREDENTIAL_RETRY_MS,
+  engineConfigDir = null,
 } = {}) {
   const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig } = context;
   const broker = resolveBroker(env);
@@ -69,13 +77,20 @@ export function setupMittr(context, {
   // One cache per account file, resolved on every use: an account switch
   // moves every reader and the next sync's write to the new account's file.
   const catalogCaches = new Map();
+  const signedIn = () => store.list().some((account) => account.active);
   const activeCatalogCache = () => {
-    if (!store.list().some((account) => account.active)) return NO_ACCOUNT_CATALOG;
+    if (!signedIn()) return NO_ACCOUNT_CATALOG;
     const filePath = catalogCachePath(dataDir, store.activeHome());
     if (!catalogCaches.has(filePath)) catalogCaches.set(filePath, createCatalogCache({ filePath, logger }));
     return catalogCaches.get(filePath);
   };
-  const cachedModels = () => activeCatalogCache().read()?.models?.items ?? [];
+  // `known` is false for an account whose catalog has not arrived yet: its
+  // models are none for now, but that says nothing about which it will have.
+  const activeModelList = () => {
+    if (!signedIn()) return { items: [], known: true };
+    const cached = activeCatalogCache().read();
+    return { items: cached?.models?.items ?? [], known: cached?.models?.configured === true };
+  };
 
   // Both are defined below and first called once setup has returned.
   let shim = null;
@@ -96,7 +111,8 @@ export function setupMittr(context, {
     // account now active brings its own models.
     onAccountChange: async () => {
       shim?.abortInFlight();
-      await onModels(cachedModels());
+      const { items, known } = activeModelList();
+      await onModels(items, { listKnown: known });
       void syncCatalog();
     },
     logger,
@@ -124,7 +140,7 @@ export function setupMittr(context, {
     broker,
     ensureFreshSession,
     cache: activeCatalogCache,
-    onModels: (items) => onModels(items),
+    onModels: (items) => onModels(items, { listKnown: true }),
     fetchImpl,
     logger,
   });
@@ -204,6 +220,27 @@ export function setupMittr(context, {
     void storeCredential();
   });
 
+  // Only when the server's user config is the engine's: elsewhere it may be
+  // a personal OpenCode config, which is never ours to write.
+  const userConfig = opencode.userConfig ?? null;
+  const ownsEngineUserConfig = Boolean(engineConfigDir && userConfig)
+    && path.resolve(userConfig.path) === path.join(path.resolve(engineConfigDir), 'opencode.json');
+  if (engineConfigDir && userConfig && !ownsEngineUserConfig) {
+    logger.warn(`[mittr] the engine reads its config from ${path.resolve(engineConfigDir)}, not ${path.dirname(path.resolve(userConfig.path))}; the default model is left alone`);
+  }
+  // Never throws: a default that cannot be set leaves the models applied.
+  const followDefaultModel = (items) => {
+    if (!ownsEngineUserConfig) return;
+    try {
+      const modelIds = items.map((item) => item.alias);
+      if (syncDefaultModel({ userConfig, providerId: MITTR_PROVIDER_ID, modelIds })) {
+        logger.log(modelIds.length > 0 ? '[mittr] new sessions start on a Mittr agent' : '[mittr] no Mittr agent to start new sessions on');
+      }
+    } catch (error) {
+      logger.warn('[mittr] could not set the default model:', error?.message ?? error);
+    }
+  };
+
   // One list at a time: the server's refresh reads the models late and is not
   // serialised, so two overlapping applies could leave the config on the
   // older list. The config is rewritten only when the file is known to carry
@@ -211,17 +248,21 @@ export function setupMittr(context, {
   // refresh finished: one that rendered and then failed to write leaves
   // `writtenModels` as it was, so the next apply writes again. The first
   // build's write is not reported back, so the first apply after it writes
-  // once more.
+  // once more. The default model moves only after its list is in the engine
+  // config (or, before the first build, will be in it at the engine's start),
+  // and only for a list that is known.
   let applying = Promise.resolve();
   let writtenModels = null;
-  const writeModels = async (items) => {
+  const writeModels = async (items, listKnown) => {
     models = modelListOf(items);
-    if (!configBuilt || JSON.stringify(models) === writtenModels) return;
-    await context.managedConfig.refresh();
-    writtenModels = pendingRendered;
+    if (configBuilt && JSON.stringify(models) !== writtenModels) {
+      await context.managedConfig.refresh();
+      writtenModels = pendingRendered;
+    }
+    if (listKnown) followDefaultModel(models);
   };
-  const applyModels = async (items) => {
-    const written = applying.then(() => writeModels(items));
+  const applyModels = async (items, { listKnown = true } = {}) => {
+    const written = applying.then(() => writeModels(items, listKnown));
     applying = written.catch(() => {});
     await written;
     // Outside the chain on purpose: the key does not depend on the list, two
@@ -233,9 +274,9 @@ export function setupMittr(context, {
 
   // Sets the engine's models; a failure is logged and waits for the next
   // sync or start, never thrown into a route or the server.
-  const onModels = async (items) => {
+  const onModels = async (items, options) => {
     try {
-      await applyModels(items);
+      await applyModels(items, options);
     } catch (error) {
       logger.warn('[mittr] could not apply the Mittr models:', error?.message ?? error);
     }
@@ -243,8 +284,10 @@ export function setupMittr(context, {
 
   // The last list first, so an offline start still shows the account's
   // models; then the platform's current one, without holding up the start.
-  // The engine's first config build reads these.
-  models = modelListOf(cachedModels());
+  // The engine's first config build reads these, and its start the default.
+  const startList = activeModelList();
+  models = modelListOf(startList.items);
+  if (startList.known) followDefaultModel(models);
   void syncCatalog();
 
   return {
