@@ -2,7 +2,14 @@ import { describe, expect, test } from 'bun:test';
 
 import type { JsonValue } from '@openchamber/sdk';
 
-import { createSignInGateController, type GateFetch, type GateResponse } from './signInGateController';
+import {
+  createSignInGateController,
+  STATUS_TIMEOUT_MS,
+  TRANSACTION_TTL_MS,
+  type GateFetch,
+  type GateResponse,
+  type GateSchedule,
+} from './signInGateController';
 import {
   SIGN_IN_COMPLETED_EVENT,
   SIGN_IN_FAILED_EVENT,
@@ -50,17 +57,38 @@ const fakeDesktop = () => {
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+const fakeClock = () => {
+  let now = 0;
+  const timers = new Set<{ at: number; run: () => void }>();
+  const schedule: GateSchedule = (run, delayMs) => {
+    const timer = { at: now + delayMs, run };
+    timers.add(timer);
+    return () => { timers.delete(timer); };
+  };
+  const advance = (ms: number) => {
+    now += ms;
+    for (const timer of [...timers].sort((a, b) => a.at - b.at)) {
+      if (timer.at > now) continue;
+      timers.delete(timer);
+      timer.run();
+    }
+  };
+  return { schedule, advance, pending: () => timers.size };
+};
+
 const setUp = (routes: Record<string, Answer[]>, { withDesktop = true } = {}) => {
   const server = fakeFetch(routes);
   const desktop = fakeDesktop();
+  const clock = fakeClock();
   const opened: string[] = [];
   const controller = createSignInGateController({
     fetch: server.fetch,
     listen: withDesktop ? desktop.listen : undefined,
     onFocus: desktop.onFocus,
     openUrl: async (url) => { opened.push(url); return true; },
+    schedule: clock.schedule,
   });
-  return { controller, server, desktop, opened };
+  return { controller, server, desktop, opened, clock };
 };
 
 describe('sign-in gate controller', () => {
@@ -196,6 +224,64 @@ describe('sign-in gate controller', () => {
     releaseFirst(await answer({ signedIn: false })());
     await settle();
     expect(controller.state()).toBe('signed-in');
+    controller.dispose();
+  });
+
+  test('waiting for the browser ends when the sign-in transaction can no longer finish', async () => {
+    const { controller, clock } = setUp({
+      [SIGN_IN_STATUS_ENDPOINT]: [answer({ signedIn: false })],
+      [SIGN_IN_START_ENDPOINT]: [answer({ authorizeUrl: 'https://api-dev.mittr.asia/auth/desktop/start?code_challenge=x' })],
+    });
+    await settle();
+    await controller.signIn();
+    expect(controller.snapshot().waiting).toBe(true);
+    clock.advance(TRANSACTION_TTL_MS - 1);
+    expect(controller.snapshot().waiting).toBe(true);
+    clock.advance(1);
+    expect(controller.snapshot().waiting).toBe(false);
+    controller.dispose();
+  });
+
+  test('a new browser trip restarts the wait, and dispose cancels it', async () => {
+    const { controller, clock } = setUp({
+      [SIGN_IN_STATUS_ENDPOINT]: [answer({ signedIn: false })],
+      [SIGN_IN_START_ENDPOINT]: [answer({ authorizeUrl: 'https://api-dev.mittr.asia/auth/desktop/start?code_challenge=x' })],
+    });
+    await settle();
+    await controller.signIn();
+    clock.advance(TRANSACTION_TTL_MS - 10);
+    await controller.signIn();
+    clock.advance(10);
+    expect(controller.snapshot().waiting).toBe(true);
+    controller.dispose();
+    expect(clock.pending()).toBe(0);
+  });
+
+  test('a status check that hangs becomes a failed check the person can retry', async () => {
+    const signals: AbortSignal[] = [];
+    const clock = fakeClock();
+    const controller = createSignInGateController({
+      fetch: (_path, init) => {
+        if (init?.signal) signals.push(init.signal);
+        return new Promise<GateResponse>(() => {});
+      },
+      onFocus: () => () => {},
+      schedule: clock.schedule,
+    });
+    await settle();
+    expect(controller.snapshot().checkFailed).toBe(false);
+    clock.advance(STATUS_TIMEOUT_MS);
+    await settle();
+    expect(controller.snapshot().checkFailed).toBe(true);
+    expect(controller.snapshot().status).toBe(null);
+    expect(signals.map((signal) => signal.aborted)).toEqual([true]);
+    controller.dispose();
+  });
+
+  test('a status that answers in time leaves no timer behind', async () => {
+    const { controller, clock } = setUp({ [SIGN_IN_STATUS_ENDPOINT]: [answer({ signedIn: false })] });
+    await settle();
+    expect(clock.pending()).toBe(0);
     controller.dispose();
   });
 

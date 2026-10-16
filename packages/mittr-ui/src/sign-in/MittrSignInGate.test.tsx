@@ -5,7 +5,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nProvider } from '../../../ui/src/lib/i18n';
 import { mittrT } from '../strings/mittrT';
 import { MittrErrorBoundary } from '../MittrErrorBoundary';
-import { MittrSignInGateView, type MittrSignInGateViewProps } from './MittrSignInGate';
+import { MittrSignInGateBody, MittrSignInGateView, SignInGateFailed, type MittrSignInGateViewProps } from './MittrSignInGate';
+import type { GateSnapshot } from './signInGateState';
 
 const APP = <main data-testid="app">the app</main>;
 const noop = () => {};
@@ -94,11 +95,52 @@ describe('MittrSignInGateView', () => {
 });
 
 describe('MittrErrorBoundary', () => {
-  test('a failure in our UI falls back to what it wraps', () => {
+  test('a failure shows the fallback, and only then', () => {
     expect(MittrErrorBoundary.getDerivedStateFromError()).toEqual({ failed: true });
-    const boundary = new MittrErrorBoundary({ fallback: APP, children: <p>ours</p> });
+    const boundary = new MittrErrorBoundary({ fallback: <p>fallback</p>, children: <p>ours</p> });
     expect(renderToStaticMarkup(<>{boundary.render()}</>)).toBe('<p>ours</p>');
     boundary.state = { failed: true };
-    expect(renderToStaticMarkup(<>{boundary.render()}</>)).toBe('<main data-testid="app">the app</main>');
+    expect(renderToStaticMarkup(<>{boundary.render()}</>)).toBe('<p>fallback</p>');
+  });
+});
+
+describe('the gate fails closed', () => {
+  const IDLE_SNAPSHOT: GateSnapshot = { status: null, checkFailed: false, actionFailed: null, waiting: false, busy: false };
+  const SIGNED_OUT: GateSnapshot = { ...IDLE_SNAPSHOT, status: { signedIn: false } };
+
+  const expectReloadOnly = (html: string) => {
+    expect(html).toContain(escaped(mittrT('mittr.signIn.crashed')));
+    expect(buttons(html)).toEqual([mittrT('mittr.signIn.reload')]);
+    expect(html).toContain('role="alert"');
+    expect(html).not.toContain('the app');
+  };
+
+  test('the failure screen offers Reload and never the app, with no i18n context to lean on', () => {
+    expectReloadOnly(renderToStaticMarkup(<SignInGateFailed />));
+  });
+
+  test('a gate that could not start shows the failure screen, not the app', () => {
+    expectReloadOnly(renderToStaticMarkup(
+      <MittrSignInGateBody controller={null} snapshot={SIGNED_OUT} broken>{APP}</MittrSignInGateBody>,
+    ));
+  });
+
+  test('when the sign-in screen throws, the boundary falls back to the failure screen, not the app', () => {
+    const element = MittrSignInGateBody({ controller: null, snapshot: SIGNED_OUT, broken: false, children: APP });
+    expect(React.isValidElement(element)).toBe(true);
+    if (!React.isValidElement<{ fallback: React.ReactNode; children: React.ReactNode }>(element)) return;
+    expect(element.type).toBe(MittrErrorBoundary);
+    const boundary = new MittrErrorBoundary(element.props);
+    boundary.state = { failed: true };
+    expectReloadOnly(renderToStaticMarkup(<>{boundary.render()}</>));
+  });
+
+  test('a signed-in status opens the app', () => {
+    const html = renderToStaticMarkup(
+      <MittrSignInGateBody controller={null} snapshot={{ ...IDLE_SNAPSHOT, status: { signedIn: true, userId: 'u1' } }} broken={false}>
+        {APP}
+      </MittrSignInGateBody>,
+    );
+    expect(html).toBe('<main data-testid="app">the app</main>');
   });
 });

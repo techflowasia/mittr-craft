@@ -15,5 +15,7 @@ export const mittrEn = {
   'mittr.signIn.accountsDamaged': 'Your Mittr account list on this computer is damaged. Choose Repair to set it aside and sign in again.',
   'mittr.signIn.repair': 'Repair',
   'mittr.signIn.repairFailed': 'MittrCraft could not set the damaged account list aside. Try again.',
+  'mittr.signIn.crashed': 'MittrCraft could not show the sign-in screen.',
+  'mittr.signIn.reload': 'Reload',
   'mittr.audit.notice': 'Your instructions are recorded and visible to Mittr admins. Your code and files are not.',
 };

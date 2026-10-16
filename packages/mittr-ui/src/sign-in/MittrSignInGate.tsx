@@ -5,17 +5,13 @@ import { runtimeFetch } from '../../../ui/src/lib/runtime-fetch';
 import { openExternalUrl } from '../../../ui/src/lib/url';
 import { MittrCraftLogo } from '../MittrCraftLogo';
 import { MittrErrorBoundary } from '../MittrErrorBoundary';
-import { useMittrT } from '../strings/mittrT';
+import { mittrT, useMittrT } from '../strings/mittrT';
 import type { MittrKey } from '../strings/mittrT';
 import { AuditNotice } from './AuditNotice';
 import { createSignInGateController, type GateListen, type SignInGateController } from './signInGateController';
 import { gateNotice, gateStateFromStatus, type GateNotice, type GateSnapshot, type GateState } from './signInGateState';
 
-declare global {
-  interface Window {
-    __OPENCHAMBER_DESKTOP__?: { listen?: GateListen };
-  }
-}
+type DesktopEventBridge = { listen?: GateListen };
 
 type GateButton = 'sign-in' | 'repair' | 'check-again' | null;
 
@@ -124,6 +120,25 @@ export function MittrSignInGateView({
   );
 }
 
+/**
+ * Shown when the sign-in screen itself cannot be shown. It stays closed: the
+ * app never opens without a sign-in. It calls no hook that could fail again
+ * (no logo, no i18n context), so it renders wherever the gate did.
+ */
+export function SignInGateFailed(): React.ReactNode {
+  return (
+    <div className="relative flex min-h-dvh w-full items-center justify-center bg-background text-foreground">
+      <div className="app-region-drag fixed left-0 top-0 z-20" style={TITLEBAR_DRAG_STYLE} aria-hidden />
+      <div className="app-region-no-drag relative z-10 flex w-full max-w-xs flex-col items-center gap-6 px-4 py-12 text-center">
+        <p role="alert" className="typography-meta text-foreground">{mittrT('mittr.signIn.crashed')}</p>
+        <Button size="lg" className="w-full" onClick={() => window.location.reload()}>
+          {mittrT('mittr.signIn.reload')}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 const IDLE: GateSnapshot = { status: null, checkFailed: false, actionFailed: null, waiting: false, busy: false };
 
 const watchFocus = (handler: () => void) => {
@@ -131,9 +146,13 @@ const watchFocus = (handler: () => void) => {
   return () => window.removeEventListener('focus', handler);
 };
 
+// SAFETY: the desktop preload exposes this bridge on window; outside the
+// desktop shell it is absent, which the optional chain covers.
+const desktopBridge = (): DesktopEventBridge | undefined => (window as Window & { __OPENCHAMBER_DESKTOP__?: DesktopEventBridge }).__OPENCHAMBER_DESKTOP__;
+
 const createGateController = (): SignInGateController => createSignInGateController({
   fetch: (path, init) => runtimeFetch(path, init),
-  listen: window.__OPENCHAMBER_DESKTOP__?.listen,
+  listen: desktopBridge()?.listen,
   onFocus: watchFocus,
   openUrl: openExternalUrl,
 });
@@ -166,19 +185,15 @@ const useSignInGate = (): SignInGateBinding => {
   return { controller, snapshot, broken };
 };
 
-/**
- * Nothing in MittrCraft works without a Mittr session, so this stands in
- * front of the app on every surface instead of letting someone in to a wall
- * of refused model calls. Only our screen sits inside the error boundary, so
- * a failure in it shows the app instead of an empty window.
- */
-export function MittrSignInGate({ children }: { children: React.ReactNode }): React.ReactNode {
-  const { controller, snapshot, broken } = useSignInGate();
+type MittrSignInGateBodyProps = SignInGateBinding & { children: React.ReactNode };
+
+export function MittrSignInGateBody({ controller, snapshot, broken, children }: MittrSignInGateBodyProps): React.ReactNode {
+  if (broken) return <SignInGateFailed />;
   const state = gateStateFromStatus(snapshot.status);
-  if (broken || state === 'signed-in') return <>{children}</>;
+  if (state === 'signed-in') return <>{children}</>;
 
   return (
-    <MittrErrorBoundary fallback={children}>
+    <MittrErrorBoundary fallback={<SignInGateFailed />}>
       <MittrSignInGateView
         state={state}
         notice={gateNotice(snapshot)}
@@ -191,4 +206,16 @@ export function MittrSignInGate({ children }: { children: React.ReactNode }): Re
       </MittrSignInGateView>
     </MittrErrorBoundary>
   );
+}
+
+/**
+ * Nothing in MittrCraft works without a Mittr session, so this stands in
+ * front of the app on every surface instead of letting someone in to a wall
+ * of refused model calls. It fails closed: if the gate cannot start, or its
+ * screen throws, a Reload screen is shown and never the app. Only our screen
+ * sits inside the error boundary, so errors in the app never pass through it.
+ */
+export function MittrSignInGate({ children }: { children: React.ReactNode }): React.ReactNode {
+  const binding = useSignInGate();
+  return <MittrSignInGateBody {...binding}>{children}</MittrSignInGateBody>;
 }

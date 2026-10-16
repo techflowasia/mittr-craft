@@ -14,7 +14,8 @@ import {
 } from './signInGateState';
 
 export type GateResponse = { ok: boolean; status: number; json: () => Promise<JsonValue> };
-export type GateFetch = (path: string, init?: { method: 'POST' }) => Promise<GateResponse>;
+export type GateFetch = (path: string, init?: { method?: 'POST'; signal?: AbortSignal }) => Promise<GateResponse>;
+export type GateSchedule = (run: () => void, delayMs: number) => () => void;
 export type GateListen = (event: string, handler: () => void) => Promise<() => void> | (() => void);
 
 export type SignInGateDeps = {
@@ -23,6 +24,7 @@ export type SignInGateDeps = {
   listen?: GateListen;
   onFocus: (handler: () => void) => () => void;
   openUrl?: (url: string) => Promise<boolean>;
+  schedule?: GateSchedule;
 };
 
 export type SignInGateController = {
@@ -35,6 +37,18 @@ export type SignInGateController = {
   dispose: () => void;
 };
 
+// A status check that hangs must end as a failed check the person can retry.
+export const STATUS_TIMEOUT_MS = 10_000;
+
+// The server's sign-in transaction lives this long; after it the browser trip
+// can no longer finish, so the gate stops saying it is waiting for one.
+export const TRANSACTION_TTL_MS = 600_000;
+
+const scheduleWithTimers: GateSchedule = (run, delayMs) => {
+  const timer = setTimeout(run, delayMs);
+  return () => clearTimeout(timer);
+};
+
 const INITIAL: GateSnapshot = { status: null, checkFailed: false, actionFailed: null, waiting: false, busy: false };
 
 /**
@@ -43,12 +57,53 @@ const INITIAL: GateSnapshot = { status: null, checkFailed: false, actionFailed: 
  * runs the two things the person can do from the gate, start a sign-in and
  * repair a damaged account list.
  */
-export function createSignInGateController({ fetch, listen, onFocus, openUrl = async () => false }: SignInGateDeps): SignInGateController {
+export function createSignInGateController({
+  fetch,
+  listen,
+  onFocus,
+  openUrl = async () => false,
+  schedule = scheduleWithTimers,
+}: SignInGateDeps): SignInGateController {
   let current = INITIAL;
   let disposed = false;
   let latestCheck = 0;
   const listeners = new Set<() => void>();
   const stops: Array<() => void> = [];
+  const pendingTimers = new Set<() => void>();
+  let cancelWait: (() => void) | null = null;
+
+  const after = (delayMs: number, run: () => void) => {
+    const cancel = schedule(() => {
+      pendingTimers.delete(cancel);
+      run();
+    }, delayMs);
+    pendingTimers.add(cancel);
+    return () => {
+      pendingTimers.delete(cancel);
+      cancel();
+    };
+  };
+
+  const fetchStatus = async (): Promise<GateResponse> => {
+    const abort = new AbortController();
+    let cancelTimeout = () => {};
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      cancelTimeout = after(STATUS_TIMEOUT_MS, () => {
+        abort.abort();
+        reject(new Error('the status check timed out'));
+      });
+    });
+    try {
+      return await Promise.race([fetch(SIGN_IN_STATUS_ENDPOINT, { signal: abort.signal }), timedOut]);
+    } finally {
+      cancelTimeout();
+    }
+  };
+
+  const stopWaiting = () => {
+    cancelWait?.();
+    cancelWait = null;
+  };
 
   const update = (next: Partial<GateSnapshot>) => {
     if (disposed) return;
@@ -59,7 +114,7 @@ export function createSignInGateController({ fetch, listen, onFocus, openUrl = a
   const refresh = async () => {
     const check = ++latestCheck;
     try {
-      const response = await fetch(SIGN_IN_STATUS_ENDPOINT);
+      const response = await fetchStatus();
       if (!response.ok) throw new Error(`status answered ${response.status}`);
       const status = parseSignInStatus(await response.json());
       if (check === latestCheck) update({ status, checkFailed: false });
@@ -80,11 +135,13 @@ export function createSignInGateController({ fetch, listen, onFocus, openUrl = a
 
   const signIn = async () => {
     if (current.busy) return;
+    stopWaiting();
     update({ busy: true, actionFailed: null, waiting: false });
     const response = await post(SIGN_IN_START_ENDPOINT);
     const authorizeUrl = response?.ok ? parseAuthorizeUrl(await response.json().catch(() => null)) : null;
     const opened = authorizeUrl ? await openUrl(authorizeUrl).catch(() => false) : false;
     update({ busy: false, waiting: opened, actionFailed: opened ? null : 'start' });
+    if (opened && !disposed) cancelWait = after(TRANSACTION_TTL_MS, () => { cancelWait = null; update({ waiting: false }); });
     // A refused start usually means something now stands in the way, such as
     // a damaged account list, which the status names.
     if (!opened) await refresh();
@@ -99,6 +156,7 @@ export function createSignInGateController({ fetch, listen, onFocus, openUrl = a
   };
 
   const endWait = () => {
+    stopWaiting();
     update({ waiting: false });
     void refresh();
   };
@@ -131,6 +189,9 @@ export function createSignInGateController({ fetch, listen, onFocus, openUrl = a
       disposed = true;
       listeners.clear();
       for (const stop of stops.splice(0)) stop();
+      for (const cancel of [...pendingTimers]) cancel();
+      pendingTimers.clear();
+      cancelWait = null;
     },
   };
 }
