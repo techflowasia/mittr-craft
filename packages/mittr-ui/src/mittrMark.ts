@@ -9,11 +9,25 @@
  * wholesale rather than editing them.
  *
  * `MARK_PATHS` are the strokes and take the surrounding colour; `ACCENT_PATHS`
- * are the blue data marks and keep their own colour in every theme, the way the
- * rest of the family uses them.
+ * are the blue data marks, blue in every theme the way the rest of the family
+ * uses them.
  */
 export const MITTR_VIEWBOX = '0 0 256 256';
 export const MITTR_ACCENT_BLUE = '#1668e3';
+// How much of the accent is brand blue; the rest is the surface's foreground.
+// `brand/splash.svg` mixes the same share.
+export const MITTR_ACCENT_SHARE = '70%';
+
+/**
+ * The accent colour on a surface whose foreground is `foreground`: brand blue
+ * pulled toward the foreground, so lighter on dark themes and darker on light
+ * ones. Plain brand blue where `color-mix` is not supported.
+ */
+export const mittrAccentFill = (foreground: string): string => {
+  const supportsColorMix = typeof CSS !== 'undefined' && typeof CSS.supports === 'function'
+    && CSS.supports('color', 'color-mix(in srgb, white 50%, transparent)');
+  return supportsColorMix ? `color-mix(in srgb, ${MITTR_ACCENT_BLUE} ${MITTR_ACCENT_SHARE}, ${foreground})` : MITTR_ACCENT_BLUE;
+};
 
 export const MARK_PATHS: readonly string[] = [
   'M 162.83,89.13 L 161.58,89.50 L 161.45,90.17 L 161.48,146.17 L 161.16,151.50 L 160.27,152.17 L 159.50,154.23 L 158.83,154.57 L 158.17,155.61 L 156.26,156.50 L 155.83,157.19 L 153.50,157.48 L 151.50,158.21 L 139.50,158.18 L 137.50,158.50 L 137.50,173.28 L 155.83,173.15 L 157.50,172.20 L 160.10,171.83 L 161.35,170.83 L 162.50,170.65 L 164.17,169.35 L 165.16,169.17 L 165.49,168.17 L 166.66,167.83 L 166.83,167.13 L 167.83,166.69 L 168.17,165.83 L 169.32,165.17 L 169.61,164.17 L 170.56,163.83 L 170.83,162.70 L 171.72,162.17 L 172.37,160.17 L 173.17,159.83 L 173.66,157.50 L 174.50,156.85 L 174.93,153.50 L 175.83,151.52 L 175.95,122.17 L 176.15,120.50 L 176.45,120.17 L 203.83,119.92 L 205.50,118.67 L 206.50,118.29 L 207.17,116.45 L 207.78,115.83 L 207.86,113.50 L 207.50,112.56 L 206.83,111.97 L 206.59,110.83 L 205.49,110.50 L 205.17,109.53 L 204.83,109.43 L 202.17,109.18 L 177.83,109.20 L 176.82,108.83 L 175.97,107.50 L 175.83,89.38 L 173.83,89.02 Z',

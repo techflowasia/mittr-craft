@@ -1,7 +1,7 @@
 import React from 'react';
 
 import { useI18n } from '../../ui/src/lib/i18n/useI18n';
-import { ACCENT_PATHS, MARK_PATHS, MITTR_ACCENT_BLUE, MITTR_VIEWBOX } from './mittrMark';
+import { ACCENT_PATHS, MARK_PATHS, MITTR_VIEWBOX, mittrAccentFill } from './mittrMark';
 
 type MittrCraftLogoProps = React.SVGProps<SVGSVGElement> & {
   isAnimated?: boolean;
@@ -16,9 +16,11 @@ const GLOW_STYLE = '@keyframes oc-logo-glow{0%,100%{filter:drop-shadow(0 0 0 tra
  *
  * The strokes take `currentColor`, so the logo inherits whatever it is placed
  * on; the startup splash takes the pre-paint stroke colour instead, because
- * the app theme has not hydrated yet. The blue accents keep their own colour
- * deliberately: they read as the data marks they are in every theme, and they
- * are the one part of the mark that is not monochrome.
+ * the app theme has not hydrated yet. The blue accents stay blue in every
+ * theme, the one part of the mark that is not monochrome, but are mixed with
+ * the theme's foreground (`--surface-foreground`, or the splash stroke before
+ * the theme loads) the way the upstream mark derives its fills from it: plain
+ * brand blue is too dark to read on a dark background.
  *
  * The props match how the shared UI calls `OpenChamberLogo`.
  */
@@ -31,6 +33,7 @@ export const MittrCraftLogo: React.FC<MittrCraftLogoProps> = ({
 }) => {
   const { t } = useI18n();
   const markColor = variant === 'splash' ? 'var(--splash-stroke, currentColor)' : 'currentColor';
+  const accentColor = mittrAccentFill(variant === 'splash' ? markColor : 'var(--surface-foreground, currentColor)');
 
   return (
     <svg
@@ -55,7 +58,7 @@ export const MittrCraftLogo: React.FC<MittrCraftLogoProps> = ({
         />
       ))}
       {ACCENT_PATHS.map((d) => (
-        <path key={d.slice(0, 24)} d={d} fill={MITTR_ACCENT_BLUE} />
+        <path key={d.slice(0, 24)} d={d} fill={accentColor} />
       ))}
     </svg>
   );
