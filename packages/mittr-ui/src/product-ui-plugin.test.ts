@@ -30,6 +30,11 @@ describe('MittrCraft UI plugin', () => {
     expect(offenders).toEqual([]);
   });
 
+  test('the About dialog says only "Version" under the app name and drops the community tagline', () => {
+    expect(merged['aboutDialog.openChamberVersionLabel']).toBe('Version {version}');
+    expect(merged['aboutDialog.footerNote']).toBe('');
+  });
+
   test('every override keeps the placeholders of the value it replaces', () => {
     const placeholders = (value: string) => (value.match(/\{[^{}]+\}/g) ?? []).sort();
     const changed = Object.entries(strings)

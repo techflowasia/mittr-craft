@@ -5,6 +5,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { findNeedles } from './brand-leak-scan.mjs';
 import { applyVisibleStrings, mergeBuilderConfig, planVisibleStrings, readVisibleStrings, stagedServerFiles } from './build-desktop.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -114,10 +115,32 @@ test('both flavors pack the splash logo their product file names', () => {
   }
 });
 
-test('every visible-strings entry replaces an upstream name and keeps none', () => {
-  for (const entry of readJson('brand/visible-strings.json')) {
-    assert.match(entry.from, /OpenChamber|OpenCode|openchamber:\/\//, entry.from);
-    assert.doesNotMatch(entry.to, /OpenChamber|OpenCode/, entry.to);
+// Entries that leave out a link whose own code names nothing upstream, each
+// with the entry that blanks the address the link would open.
+const LEFT_OUT_LINKS = new Map([
+  [
+    '{className:"app-region-no-drag mt-6 inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground",href:',
+    '?"https://github.com/openchamber/openchamber/releases/latest":"https://opencode.ai/download",',
+  ],
+  ['("walkthrough.help.guide"),onClick:()=>{', '="https://docs.openchamber.dev/walkthrough/",'],
+  [
+    '," ",s.jsx(On,{onClick:()=>{Is(yv)},children:a("settings.classification.page.docsLink")})]',
+    '="https://docs.openchamber.dev/classification-providers/",',
+  ],
+]);
+
+test('every visible-strings entry replaces an upstream name or link and keeps none, or leaves out a link to one', () => {
+  const entries = readJson('brand/visible-strings.json');
+  for (const entry of entries) {
+    assert.deepEqual(findNeedles(entry.to), [], entry.to);
+    if (LEFT_OUT_LINKS.has(entry.from)) {
+      assert.ok(entry.to.includes('hidden:!0') || entry.to.length < entry.from.length, entry.from);
+      const blanked = entries.find((other) => other.from === LEFT_OUT_LINKS.get(entry.from));
+      assert.deepEqual(findNeedles(blanked?.to ?? 'missing'), [], entry.from);
+      assert.match(blanked?.to ?? '', /^[=?]["":,]*$/, entry.from);
+      continue;
+    }
+    assert.notDeepEqual(findNeedles(entry.from), [], entry.from);
   }
 });
 
@@ -142,14 +165,19 @@ test('a flavor file applies after the shared visible strings and may build on th
   }
 });
 
-test('each flavor points the links it emits at its own scheme and still blocks upstream\'s', () => {
+test('each flavor names itself, points the links it emits at its own scheme and still blocks upstream\'s', () => {
   for (const flavor of ['dev', 'prod']) {
-    const { deepLinkProtocol } = readJson(`brand/product.${flavor}.json`);
+    const { appName, deepLinkProtocol } = readJson(`brand/product.${flavor}.json`);
     const entries = readJson(`brand/visible-strings.${flavor}.json`);
-    assert.ok(entries.length > 0, flavor);
-    for (const entry of entries) {
-      assert.match(entry.from, /openchamber(:|")/, `${flavor}: ${entry.from}`);
+    const isLink = (entry) => /openchamber(:|")/.test(entry.from);
+    assert.ok(entries.some(isLink), flavor);
+    for (const entry of entries.filter(isLink)) {
       assert.ok(entry.to.includes(`${deepLinkProtocol}:`) || entry.to.includes(`"${deepLinkProtocol}"`), `${flavor}: ${entry.to}`);
+    }
+    // The window title is the app's name, Dev or not.
+    assert.ok(entries.some((entry) => entry.from === '="OpenChamber",' && entry.to === `="${appName}",`), flavor);
+    for (const entry of entries.filter((entry) => !isLink(entry))) {
+      assert.ok(entry.to.includes(`"${appName}"`), `${flavor}: ${entry.to}`);
     }
     const blocked = entries.find((entry) => entry.from.includes('"openchamber-ui"'));
     assert.ok(blocked.to.includes('"openchamber"') && blocked.to.includes(`"${deepLinkProtocol}"`), flavor);

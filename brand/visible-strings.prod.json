@@ -28,5 +28,11 @@
     "from": "openchamber://focus/linear-auth",
     "to": "mittrcraft://focus/linear-auth",
     "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "=\"OpenChamber\",",
+    "to": "=\"MittrCraft\",",
+    "count": 1
   }
 ]

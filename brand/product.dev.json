@@ -28,5 +28,6 @@
   ],
   "serverPlugins": [
     "product-plugins/mittr-server.mjs"
-  ]
+  ],
+  "serverReportsAppVersion": true
 }

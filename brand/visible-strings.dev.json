@@ -28,5 +28,17 @@
     "from": "openchamber://focus/linear-auth",
     "to": "mittrcraft-dev://focus/linear-auth",
     "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "=\"OpenChamber\",",
+    "to": "=\"MittrCraft Dev\",",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "{className:\"text-lg font-semibold\",children:\"MittrCraft\"}",
+    "to": "{className:\"text-lg font-semibold\",children:\"MittrCraft Dev\"}",
+    "count": 1
   }
 ]

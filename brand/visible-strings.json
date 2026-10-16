@@ -289,12 +289,6 @@
   },
   {
     "file": "resources/web-dist/assets/*.js",
-    "from": "=\"OpenChamber\",",
-    "to": "=\"MittrCraft\",",
-    "count": 1
-  },
-  {
-    "file": "resources/web-dist/assets/*.js",
     "from": "{provider:\"OpenCode Zen\"}",
     "to": "{provider:\"Zen\"}",
     "count": 1
@@ -1653,6 +1647,84 @@
     "file": ".product/web/server/lib/quota/providers/opencode-go.js",
     "from": "'OpenCode Go usage data could not be parsed'",
     "to": "'Go plan usage data could not be parsed'",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "{href:\"https://github.com/openchamber/openchamber\",target:\"_blank\"",
+    "to": "{hidden:!0,target:\"_blank\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "{href:\"https://discord.gg/ZYRSdnwwKA\",target:\"_blank\"",
+    "to": "{hidden:!0,target:\"_blank\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "{href:\"https://x.com/openchamber_dev\",target:\"_blank\"",
+    "to": "{hidden:!0,target:\"_blank\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "=\"https://github.com/openchamber/openchamber\",",
+    "to": "=\"\",",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "=\"https://discord.gg/ZYRSdnwwKA\",",
+    "to": "=\"\",",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "=\"https://x.com/openchamber_dev\",",
+    "to": "=\"\",",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "children:\"@openchamber_dev\"",
+    "to": "children:\"\"",
+    "count": 3
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "{className:\"app-region-no-drag mt-6 inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground\",href:",
+    "to": "{className:\"app-region-no-drag mt-6 inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground\",hidden:!0,href:",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "?\"https://github.com/openchamber/openchamber/releases/latest\":\"https://opencode.ai/download\",",
+    "to": "?\"\":\"\",",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "(\"walkthrough.help.guide\"),onClick:()=>{",
+    "to": "(\"walkthrough.help.guide\"),hidden:!0,onClick:()=>{",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "=\"https://docs.openchamber.dev/walkthrough/\",",
+    "to": "=\"\",",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": ",\" \",s.jsx(On,{onClick:()=>{Is(yv)},children:a(\"settings.classification.page.docsLink\")})]",
+    "to": "]",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "=\"https://docs.openchamber.dev/classification-providers/\",",
+    "to": "=\"\",",
     "count": 1
   }
 ]

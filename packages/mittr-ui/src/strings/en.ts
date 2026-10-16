@@ -6,14 +6,19 @@ import type { I18nDictionary } from '../../../ui/src/lib/i18n/store';
 // that tells the user to install, update, restart or configure the OpenCode
 // engine or its CLI, a hosted service sold under the engine's name (called by
 // its short name, Zen, or by what it is), an engine version that is not the
-// app's version, and "an OpenChamber" (the article).
+// app's version, and "an OpenChamber" (the article). The About dialog's title
+// already names the app, with "Dev" on the Dev build, so its version line says
+// only "Version"; its tagline goes with the upstream community links the build
+// leaves out.
 // The engine is "the engine" in prose and "Engine" in labels.
 export const strings: Partial<I18nDictionary> = {
   'opencodeCompatibility.bundled': 'The engine is bundled with MittrCraft. Update MittrCraft to get engine v2.',
   'opencodeCompatibility.outdatedLocal': 'Engine {version} is installed. This version of MittrCraft requires engine {minimum} or newer.',
   'opencodeCompatibility.local': 'Engine {version} is installed. This version of MittrCraft requires engine v2.',
   'opencodeCompatibility.installDescription': 'MittrCraft will install v2 using the official installer, then restart the engine.',
+  'aboutDialog.openChamberVersionLabel': 'Version {version}',
   'aboutDialog.openCodeVersionLabel': 'Engine version {version}',
+  'aboutDialog.footerNote': '',
   'aboutDialog.diagnosticsDescription': 'Includes MittrCraft state, engine health, directories, and projects.',
   'onboarding.localSetup.windows.stepSetBinaryPath': 'If MittrCraft does not detect the engine automatically, set the binary path below.',
   'onboarding.localSetup.helper.saveAndReload': 'Saves to MittrCraft settings and reloads the engine configuration.',
