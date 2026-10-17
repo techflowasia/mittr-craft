@@ -19,8 +19,7 @@ import { AccountSwitchDialog } from './AccountSwitchDialog';
 import { accountName, accountsApi, initialsOf, type MittrAccount } from './accountsApi';
 import { resyncThenReload, useAccountSwitch } from './accountSwitch';
 import { createAddAccountFlow } from './addAccount';
-
-const FOOTER_BUTTON_CLASS = 'inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-interactive-hover/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+import { FOOTER_BUTTON_CLASS } from './footerButtonClass';
 
 type MenuActions = {
   onActivate: (userId: string) => void;

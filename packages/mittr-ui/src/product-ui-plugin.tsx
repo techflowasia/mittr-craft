@@ -13,6 +13,8 @@ import './quota/registerMittrUsage';
 import { SelectMittrUsage } from './quota/SelectMittrUsage';
 import { MittrSignInGate } from './sign-in/MittrSignInGate';
 import { strings } from './strings/en';
+import { AdSignIn } from './ui-auth/AdSignIn';
+import { SidebarProfile } from './ui-auth/SidebarProfile';
 
 export function MittrRoot({ children }: { children: React.ReactNode }): React.ReactNode {
   return (
@@ -36,7 +38,8 @@ registerProductUiPlugin({
   rootWrapper: MittrRoot,
   slots: {
     'providers-page': OtherProvidersSwitch,
-    'sidebar-footer': MittrAccountMenu,
+    'sidebar-footer': [MittrAccountMenu, SidebarProfile],
+    'session-auth-methods': AdSignIn,
     'about-dialog': SignOutButton,
     'about-settings': AboutSettingsSignOut,
     'assistant-message-footer': [AnsweredByNotice, QuotaRetryButton],

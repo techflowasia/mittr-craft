@@ -1103,7 +1103,7 @@ const checks = {
     has(source('packages/ui/src/components/sections/shared/SettingsSection.tsx'), /^export const SETTINGS_FIELD_LABEL_CLASS =/m, 'SETTINGS_FIELD_LABEL_CLASS is no longer exported');
     const footerClass = source('packages/ui/src/components/session/sidebar/shell/SidebarFooter.tsx').match(/^const footerButtonClassName = '([^']+)';$/m)?.[1];
     assert.ok(footerClass, 'the sidebar footer no longer names its button classes in footerButtonClassName');
-    const accountClass = source('packages/mittr-ui/src/accounts/MittrAccountMenu.tsx').match(/^const FOOTER_BUTTON_CLASS = '([^']+)';$/m)?.[1];
+    const accountClass = source('packages/mittr-ui/src/accounts/footerButtonClass.ts').match(/^export const FOOTER_BUTTON_CLASS = '([^']+)';$/m)?.[1];
     assert.equal(accountClass, footerClass, 'the account button no longer wears the sidebar footer button classes');
   },
 
@@ -1206,6 +1206,36 @@ const checks = {
     has(gate, /\{!isTunnelLocked && passwordEnabled && \(\s*<form onSubmit=\{handleSubmit\}/, 'the password form no longer waits for passwordEnabled');
     has(gate, /setPasswordEnabled\(data\.passwordEnabled !== false\);/, 'the gate no longer reads passwordEnabled from the 401 session status');
     has(source('packages/ui/src/lib/product-plugins.ts'), /'session-auth-methods': \{ isTunnelLocked: boolean \};/);
+    const key = gate.match(/^const TRUST_DEVICE_STORAGE_KEY = '([^']+)';$/m)?.[1];
+    assert.ok(key, 'the gate no longer names its trust-device storage key in TRUST_DEVICE_STORAGE_KEY');
+    has(source('packages/mittr-ui/src/ui-auth/adApi.ts'), new RegExp(`^export const TRUST_DEVICE_STORAGE_KEY = '${key.replace(/\./g, '\\.')}';$`, 'm'), 'the company sign-in no longer reads the gate\'s trust-device choice');
+  },
+
+  'desktop-runtime-detect': () => {
+    const desktop = source('packages/ui/src/lib/desktop.ts');
+    has(desktop, /^export const isDesktopShell = \(\): boolean => \{\s*if \(typeof window === 'undefined'\) return false;\s*return isElectronShell\(\);\s*\};$/m, 'isDesktopShell no longer answers whether the window is the Electron shell');
+    for (const file of ['AdSignIn.tsx', 'SidebarProfile.tsx']) {
+      has(source(`packages/mittr-ui/src/ui-auth/${file}`), /^import \{ isDesktopShell \} from '\.\.\/\.\.\/\.\.\/ui\/src\/lib\/desktop';$/m, `${file} no longer asks isDesktopShell`);
+    }
+    const gate = source('packages/ui/src/components/auth/SessionAuthGate.tsx');
+    has(gate, /const shouldUseDesktopShellPasswordLogin = \(\): boolean => \{\s*return isDesktopShell\(\) && !isLocalDesktopRuntime\(\);\s*\};/, 'the desktop shell no longer signs in to a remote host with a password through the shell, the one way it gets a client token');
+  },
+
+  'ad-sign-in-ui': () => {
+    const checkbox = source('packages/ui/src/components/ui/checkbox.tsx');
+    has(checkbox, /^export const Checkbox = React\.memo/m, 'Checkbox is no longer exported');
+    for (const prop of ['checked: boolean;', 'onChange: (checked: boolean) => void;', 'disabled?: boolean;', 'ariaLabel?: string;']) assert.ok(checkbox.includes(prop), `Checkbox no longer takes ${prop}`);
+    has(source('packages/ui/src/components/ui/input.tsx'), /^export \{ Input \}$/m, 'Input is no longer exported');
+    const button = source('packages/ui/src/components/ui/button.tsx');
+    has(button, /^export \{ Button \}$/m, 'Button is no longer exported');
+    has(button, /^ {8}outline:$/m, 'Button no longer has an outline variant');
+    has(button, /^ {8}icon: "size-9",$/m, 'Button no longer has an icon size');
+    const sprite = source('packages/ui/src/components/icon/sprite.ts');
+    for (const name of ['user', 'lock', 'key', 'loader-4']) has(sprite, new RegExp(`^ {2}"${name}": `, 'm'), `the ${name} icon is gone`);
+    const url = source('packages/ui/src/lib/runtime-url.ts');
+    has(url, /^export const getRuntimeUrlResolver = \(\): RuntimeUrlResolver => activeRuntimeUrlResolver;$/m, 'getRuntimeUrlResolver is no longer exported');
+    has(url, /^ {4}auth: http,$/m, 'the URL resolver no longer builds auth URLs the way it builds API URLs');
+    has(source('packages/ui/src/lib/runtime-fetch.ts'), /input\.startsWith\('\/auth\/'\)/, 'runtimeFetch no longer sends /auth/ paths to the runtime\'s server');
   },
 };
 

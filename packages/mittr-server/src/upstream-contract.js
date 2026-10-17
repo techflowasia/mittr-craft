@@ -417,7 +417,24 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'session-auth-methods-slot',
     files: ['packages/ui/src/components/auth/SessionAuthGate.tsx', 'packages/ui/src/lib/product-plugins.ts'],
-    why: "the session gate renders the session-auth-methods slot once, with isTunnelLocked, after its password form and outside the tunnel check; the password form (passkeys with it) is left out when the 401 session status says passwordEnabled is false",
+    why: "the session gate renders the session-auth-methods slot once, with isTunnelLocked, after its password form and outside the tunnel check; the password form (passkeys with it) is left out when the 401 session status says passwordEnabled is false; the gate keeps the trust-device choice in localStorage under TRUST_DEVICE_STORAGE_KEY, which the slot reads when the gate has no form to show it",
+  },
+  {
+    id: 'desktop-runtime-detect',
+    files: ['packages/ui/src/lib/desktop.ts', 'packages/ui/src/components/auth/SessionAuthGate.tsx'],
+    why: 'isDesktopShell() is true only in the Electron window, so company sign-in and the profile stay off the desktop app: a desktop window signs in to a remote host through the shell (desktop_remote_password_login) and keeps a client token, which a cookie sign-in from the page cannot give it',
+  },
+  {
+    id: 'ad-sign-in-ui',
+    files: [
+      'packages/ui/src/components/ui/button.tsx',
+      'packages/ui/src/components/ui/checkbox.tsx',
+      'packages/ui/src/components/ui/input.tsx',
+      'packages/ui/src/components/icon/sprite.ts',
+      'packages/ui/src/lib/runtime-url.ts',
+      'packages/ui/src/lib/runtime-fetch.ts',
+    ],
+    why: "the company sign-in is drawn with Button (outline, icon size), Input and Checkbox (checked, onChange, disabled, ariaLabel) and the user, lock, key and loader-4 icons; its Microsoft button goes to getRuntimeUrlResolver().auth(...) and its requests go through runtimeFetch, which sends /auth/ paths to the runtime's server",
   },
 ];
 

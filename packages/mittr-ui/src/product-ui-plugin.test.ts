@@ -87,6 +87,19 @@ describe('MittrCraft account controls', () => {
   });
 });
 
+describe('MittrCraft company sign-in', () => {
+  test('the sign-in gate and the sidebar footer show nothing company-related until the server says it is on', () => {
+    const gate = renderToStaticMarkup(
+      React.createElement(I18nProvider, null, React.createElement(ProductSlot, { name: 'session-auth-methods', isTunnelLocked: false })),
+    );
+    expect(gate).toBe('');
+    const footer = renderToStaticMarkup(
+      React.createElement(I18nProvider, null, React.createElement(ProductSlot, { name: 'sidebar-footer' })),
+    );
+    expect(footer).not.toContain(mittrT('mittr.uiAuth.signOut'));
+  });
+});
+
 describe('MittrCraft and the public model catalog', () => {
   test('the window never asks models.dev for model metadata or provider logos', () => {
     expect(remoteModelCatalogAllowed()).toBe(false);
