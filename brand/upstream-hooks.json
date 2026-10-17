@@ -143,6 +143,10 @@
     {
       "hook": "model-controls",
       "why": "A product plugin's model-picker decorations reached no picker, so a build that offers only its own provider's models (unless the person opts in to others) had no way to keep the rest out of the composer's model list on desktop and in the mobile sheet short of editing the composer."
+    },
+    {
+      "hook": "model-controls",
+      "why": "The model picker always offered \"Add new provider\", so a build whose picker plugin shows only its own provider until the person opts in to others showed a row that led to providers the picker would not list; a picker plugin can now withhold that row, and without one it stays."
     }
   ],
   "packages/ui/src/components/sections/openchamber/AboutSettings.tsx": [
@@ -195,6 +199,10 @@
     {
       "hook": "model-catalog",
       "why": "A build that brings its own model list had no way to keep the window from asking models.dev for model metadata (when the server cannot answer) and for provider logos the UI does not bundle, which tells a third party the app is running; a product plugin that sets remoteModelCatalog to false now stops both, and without one nothing changes."
+    },
+    {
+      "hook": "model-controls",
+      "why": "The model picker always offered \"Add new provider\", so a build whose picker plugin shows only its own provider until the person opts in to others showed a row that led to providers the picker would not list; a picker plugin can now withhold that row, and without one it stays."
     }
   ],
   "packages/ui/src/main.tsx": [

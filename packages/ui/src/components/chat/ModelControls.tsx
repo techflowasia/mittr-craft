@@ -2615,7 +2615,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                             collisionAvoidance={{ side: 'none', align: 'shift' }}
                             onKeyDownCapture={handleModelShortcutKeyDownCapture}
                         >
-                            {!selection && <div className="p-1 border-b border-border/40">
+                            {!selection && productModelPicker.offersAddProvider !== false && <div className="p-1 border-b border-border/40">
                                 <button
                                     type="button"
                                     onClick={openAddProviderSettings}

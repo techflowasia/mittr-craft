@@ -286,6 +286,36 @@ describe('product UI plugin root and slots', () => {
     expect(decorations.entryStatus({ ...ENTRY, modelID: 'other' })).toEqual({ pill: 'p1', tone: 'neutral', blocked: false });
   });
 
+  test('the picker offers to add a provider unless a plugin says not to', () => {
+    expect(readModelPicker(true).offersAddProvider).not.toBe(false);
+  });
+
+  test('one plugin that withholds the add-provider row withholds it for all', () => {
+    registerProductUiPlugin({
+      id: 'p1',
+      modelPicker: { useDecorations: () => ({ isProviderShown: () => true, entryStatus: () => null, offersAddProvider: false }) },
+    });
+    registerProductUiPlugin({
+      id: 'p2',
+      modelPicker: { useDecorations: () => ({ isProviderShown: () => true, entryStatus: () => null }) },
+    });
+
+    expect(readModelPicker(true).offersAddProvider).toBe(false);
+  });
+
+  test('plugins that say nothing about the add-provider row keep it', () => {
+    registerProductUiPlugin({
+      id: 'p1',
+      modelPicker: { useDecorations: () => ({ isProviderShown: () => true, entryStatus: () => null }) },
+    });
+    registerProductUiPlugin({
+      id: 'p2',
+      modelPicker: { useDecorations: () => ({ isProviderShown: () => true, entryStatus: () => null, offersAddProvider: true }) },
+    });
+
+    expect(readModelPicker(true).offersAddProvider).not.toBe(false);
+  });
+
   test('message error translation takes the first answer', () => {
     const error = { type: 'provider.quota', message: 'quota', status: 402, responseBody: '{}' };
     expect(translateProductMessageError(error)).toBeNull();

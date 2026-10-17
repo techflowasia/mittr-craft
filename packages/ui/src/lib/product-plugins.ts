@@ -33,6 +33,8 @@ export type ModelEntryStatus = { pill: string; title?: string; tone: 'neutral' |
 export type ModelPickerDecorations = {
   isProviderShown(providerId: string): boolean;
   entryStatus(entry: { providerID: string; modelID: string; name: string }): ModelEntryStatus | null;
+  // false hides the picker's "Add new provider" row.
+  offersAddProvider?: boolean;
 };
 
 type UseModelPickerDecorations = (open: boolean) => ModelPickerDecorations;
@@ -88,6 +90,7 @@ const combineDecorationHooks = (
     return React.useMemo(() => ({
       isProviderShown: (providerId) => first.isProviderShown(providerId) && second.isProviderShown(providerId),
       entryStatus: (entry) => first.entryStatus(entry) ?? second.entryStatus(entry),
+      offersAddProvider: first.offersAddProvider !== false && second.offersAddProvider !== false,
     }), [first, second]);
   }
   return useCombinedDecorations;
