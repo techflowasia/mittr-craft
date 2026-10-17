@@ -857,6 +857,20 @@ const checks = {
     }
   },
 
+  'engine-ripgrep-bin': (t) => {
+    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
+    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: read how it finds rg again, then update this pin');
+    const binary = path.join(repoRoot, 'packages/electron/resources/opencode-cli/opencode');
+    if (!fs.existsSync(binary)) {
+      t.diagnostic('the engine binary is not prepared here, so only the pin is checked');
+      return;
+    }
+    const text = fs.readFileSync(binary, 'latin1');
+    assert.match(text, /\w+=process\.env\.XDG_CACHE_HOME\|\|/, 'the engine no longer takes its cache folder from XDG_CACHE_HOME');
+    assert.match(text, /bin:\w+\.join\(\w+,"bin"\)/, 'the engine bin folder is no longer <cache>/bin');
+    assert.match(text, /\.join\(\w+\.bin,"rg"\);if\(yield\*\w+\.isFile\(\w+\)/, 'the engine no longer runs <cache>/opencode/bin/rg before downloading one');
+  },
+
   'engine-share-config': () => {
     has(source('node_modules/@opencode/schema/dist/config.js'), /share: Schema\.Literals\(\["manual", "auto", "disabled"\]\)/, 'the engine config no longer takes share: "disabled"');
   },

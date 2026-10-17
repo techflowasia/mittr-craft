@@ -100,6 +100,29 @@ test('setup backs up the prod layout once, migrates settings and serves the engi
   assert.equal(again.lines.some((line) => line.includes('pre-2x-backup')), false);
 });
 
+test('each engine start finds the app\'s bundled rg in the engine cache, so the engine never downloads one', async (t) => {
+  const home = tempHome(t);
+  const dataDir = prodLayout(home);
+  const resourcesDir = path.join(home, 'MittrCraft.app', 'Contents', 'Resources');
+  writeFile(path.join(resourcesDir, 'ripgrep', 'rg'), 'bundled rg');
+  const logger = recordingLogger();
+
+  const plugin = await setupMittrServer({ dataDir, logger, env: {}, homeDir: home, resourcesDir });
+  const env = await plugin.engineEnv();
+  const engineRg = path.join(env.XDG_CACHE_HOME, 'opencode', 'bin', 'rg');
+  assert.equal(fs.readFileSync(engineRg, 'utf8'), 'bundled rg');
+  assert.equal(env.PATH, undefined);
+
+  fs.rmSync(path.dirname(engineRg), { recursive: true });
+  await plugin.engineEnv();
+  assert.equal(fs.readFileSync(engineRg, 'utf8'), 'bundled rg');
+
+  fs.rmSync(path.dirname(engineRg), { recursive: true });
+  fs.writeFileSync(path.dirname(engineRg), 'not a folder');
+  assert.equal((await plugin.engineEnv()).OPENCODE_DISABLE_MODELS_FETCH, '1');
+  assert.equal(logger.lines.filter((line) => line.includes('[mittr] could not put the bundled rg')).length, 1);
+});
+
 test('setup on the Dev layout backs up the data dir once, with the engine inside it', async (t) => {
   const home = tempHome(t);
   const dataDir = path.join(home, '.config', 'mittrcraft-dev');

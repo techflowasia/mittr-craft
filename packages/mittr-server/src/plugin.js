@@ -5,6 +5,7 @@ import { activeAccountHome } from './accounts.js';
 import { backupOnce } from './backup.js';
 import { ENGINE_DB_RULE, engineBases, engineConfigDir, engineEnv, sharedHistoryExists } from './engine-home.js';
 import { ENGINE_OUTBOUND_OFF } from './engine-outbound.js';
+import { bundledRipgrep, placeEngineRipgrep } from './engine-ripgrep.js';
 import { ensureGitIdentityStore } from './git-identities.js';
 import { setupMittr } from './mittr/index.js';
 import { MITTR_SETTINGS_KEYS, UPSTREAM_SETTINGS_KEYS, migrateSettingsOnce } from './settings.js';
@@ -31,7 +32,7 @@ const REFETCHABLE = ['speech-models'];
 
 const flavorOf = (dataDir) => (path.basename(dataDir) === DEV_DATA_DIR ? 'dev' : 'prod');
 
-export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context = null }) => {
+export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context = null, resourcesDir = null }) => {
   // Without its own engine root a Dev build would resolve prod's engine
   // folders, and back up, migrate and run on the installed app's database.
   if (flavorOf(dataDir) === 'dev' && !String(env.MITTRCRAFT_ENGINE_HOME ?? '').trim()) {
@@ -65,10 +66,21 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
   const identities = await ensureGitIdentityStore({ dataDir, homeDir, logger });
   if (identities.seededFrom) logger.log(`[mittr] git identities copied from ${identities.seededFrom}`);
 
-  const baseEngineEnv = (accountHome) => ({
-    ...engineEnv({ bases, accountHome, rule: ENGINE_DB_RULE }),
-    ...ENGINE_OUTBOUND_OFF,
-  });
+  const ripgrep = bundledRipgrep(resourcesDir);
+  const placeRipgrep = () => {
+    try {
+      placeEngineRipgrep({ bundled: ripgrep, bases });
+    } catch (error) {
+      logger.warn('[mittr] could not put the bundled rg where the engine looks for it:', error?.message ?? error);
+    }
+  };
+  const baseEngineEnv = (accountHome) => {
+    placeRipgrep();
+    return {
+      ...engineEnv({ bases, accountHome, rule: ENGINE_DB_RULE }),
+      ...ENGINE_OUTBOUND_OFF,
+    };
+  };
   if (!context) return { engineEnv: () => baseEngineEnv(activeAccountHome(dataDir, { logger })) };
 
   const companySignIn = registerCompanySignIn(context, { env, logger });
@@ -94,5 +106,5 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
 
 export default async function setup(context) {
   const { dataDir, logger } = context;
-  return setupMittrServer({ dataDir, logger, env: process.env, homeDir: os.homedir(), context });
+  return setupMittrServer({ dataDir, logger, env: process.env, homeDir: os.homedir(), context, resourcesDir: process.resourcesPath ?? null });
 }

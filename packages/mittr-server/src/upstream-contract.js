@@ -290,6 +290,11 @@ export const UPSTREAM_CONTRACT = [
     why: 'the bundled engine (OpenCode 2.0.22) reads OPENCODE_DISABLE_MODELS_FETCH, which stops its models.opencode.ai catalog download, and OPENCODE_DISABLE_AUTOUPDATE, which stops its update check; engineEnv sets both, and probe --only outbound (scripts/mittr/probe-engine-v2.mjs) shows no egress with them and models.opencode.ai without them, so a new engine version needs that probe run again',
   },
   {
+    id: 'engine-ripgrep-bin',
+    files: ['packages/electron/package.json'],
+    why: 'the bundled engine (OpenCode 2.0.22) runs the first rg on PATH, else <XDG_CACHE_HOME>/opencode/bin/rg, and only then downloads ripgrep 15.1.0 from github.com; engineEnv puts the app\'s bundled rg at that second place on every start, so the engine never downloads one',
+  },
+  {
     id: 'engine-share-config',
     files: ['node_modules/@opencode/schema/dist/config.js'],
     why: 'the engine config takes share: "manual" | "auto" | "disabled"; the managed config sets "disabled" so no engine session is ever shared',
