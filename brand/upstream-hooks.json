@@ -319,6 +319,10 @@
     {
       "hook": "quota-server",
       "why": "A server plugin could not reach the quota registry or the helpers that build a quota result, so the plugin context now hands it registerQuotaProvider and quotaResult."
+    },
+    {
+      "hook": "ui-auth",
+      "why": "A server plugin could not add a sign-in method of its own, so the plugin context now hands it the UI auth provider registry and says whether a UI password is set."
     }
   ],
   "packages/web/server/lib/enterprise-mode.js": [
@@ -407,6 +411,12 @@
     {
       "hook": "server-plugins",
       "why": "A build's server plugin needed more of the server than the app, data dir and logger (the express module, the bound port, settings, UI events, the managed OpenCode and its readiness, git, request scope and shutdown) and had no way to add engine config, so a downstream build would have had to edit upstream's server for each provider, policy or plugin it adds."
+    }
+  ],
+  "packages/web/server/lib/ui-auth/ui-auth.js": [
+    {
+      "hook": "ui-auth",
+      "why": "A build whose browser sign-in comes from a company directory had no way to open or check a UI session without a UI password; registerUiAuthProvider lets it issue and read sessions with the password sessions' secret and lifetimes, makes the session required while it is registered, and the session status names the providers and whether a password works."
     }
   ]
 }

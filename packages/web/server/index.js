@@ -12,7 +12,7 @@ import { fileURLToPath } from 'url';
 import os from 'os';
 import crypto from 'crypto';
 import http2 from 'node:http2';
-import { createUiAuth } from './lib/ui-auth/ui-auth.js';
+import { createUiAuth, registerUiAuthProvider } from './lib/ui-auth/ui-auth.js';
 import { createTunnelAuth } from './lib/opencode/tunnel-auth.js';
 import { createManagedTunnelConfigRuntime } from './lib/tunnels/managed-config.js';
 import { createTunnelProviderRegistry } from './lib/tunnels/registry.js';
@@ -2550,6 +2550,10 @@ async function main(options = {}) {
       quotaResult: { buildResult: buildQuotaResult, toUsageWindow },
       host: options.pluginHost ?? null,
       requestScope: (req) => tunnelAuthController.classifyRequestScope(req),
+      uiAuth: {
+        registerProvider: registerUiAuthProvider,
+        passwordEnabled: () => typeof uiPassword === 'string' && uiPassword.trim().length > 0,
+      },
       onShutdown: (handler) => {
         serverPluginShutdownHandlers.push(handler);
       },

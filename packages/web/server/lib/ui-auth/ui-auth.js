@@ -436,6 +436,85 @@ function persistJwtSecret(secret) {
   return new TextEncoder().encode(secret);
 }
 
+const UI_AUTH_PROVIDER_ID = /^[a-z][a-z0-9-]*$/;
+const uiAuthProviders = new Map();
+let providerSessionSecret = null;
+
+const readProviderSessionSecret = () => {
+  providerSessionSecret ??= getOrCreateJwtSecret();
+  return providerSessionSecret;
+};
+
+const hasUiAuthProviders = () => uiAuthProviders.size > 0;
+
+const appendSetCookie = (res, cookie) => {
+  const existing = typeof res.getHeader === 'function' ? res.getHeader('Set-Cookie') : undefined;
+  if (existing === undefined || existing === null) {
+    res.setHeader('Set-Cookie', cookie);
+    return;
+  }
+  res.setHeader('Set-Cookie', [...(Array.isArray(existing) ? existing : [String(existing)]), cookie]);
+};
+
+const readProviderSession = async (token) => {
+  if (!token) return null;
+  try {
+    const { jwtVerify } = await loadJose();
+    const { payload } = await jwtVerify(token, readProviderSessionSecret(), { algorithms: ['HS256'] });
+    if (payload.type !== 'ui-session' || !uiAuthProviders.has(payload.provider)) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+};
+
+const uiAuthStatusFields = (passwordEnabled) => (
+  hasUiAuthProviders() ? { providers: [...uiAuthProviders.keys()], passwordEnabled } : {}
+);
+
+export const registerUiAuthProvider = ({ id } = {}) => {
+  if (typeof id !== 'string' || !UI_AUTH_PROVIDER_ID.test(id)) {
+    throw new Error('A UI auth provider id is lowercase letters, digits and dashes');
+  }
+  if (uiAuthProviders.has(id)) throw new Error(`UI auth provider ${id} is already registered`);
+  const entry = { id };
+  uiAuthProviders.set(id, entry);
+  const isRegistered = () => uiAuthProviders.get(id) === entry;
+  const cookieFor = (req, value, maxAge) => buildCookie({
+    name: sessionCookieNameForRequest(req, SESSION_COOKIE_NAME),
+    value,
+    maxAge,
+    secure: isSecureRequest(req),
+  });
+
+  return {
+    issueSession: async (req, res, { trustDevice = false, claims = {} } = {}) => {
+      if (!isRegistered()) throw new Error(`UI auth provider ${id} is not registered`);
+      const ttlMs = trustDevice === true ? TRUSTED_DEVICE_SESSION_TTL_MS : SESSION_TTL_MS;
+      const { SignJWT } = await loadJose();
+      const token = await new SignJWT({ type: 'ui-session', provider: id, claims })
+        .setProtectedHeader({ alg: 'HS256' })
+        .setIssuedAt()
+        .setExpirationTime(ttlMs / 1000 + 's')
+        .sign(readProviderSessionSecret());
+      appendSetCookie(res, cookieFor(req, encodeURIComponent(token), Math.floor(ttlMs / 1000)));
+    },
+    readClaims: async (req) => {
+      if (!isRegistered()) return null;
+      const token = parseCookies(req?.headers?.cookie)[sessionCookieNameForRequest(req, SESSION_COOKIE_NAME)];
+      const payload = await readProviderSession(token);
+      if (payload?.provider !== id || !payload.claims || typeof payload.claims !== 'object') return null;
+      return payload.claims;
+    },
+    clearSession: (req, res) => {
+      appendSetCookie(res, cookieFor(req, '', 0));
+    },
+    unregister: () => {
+      if (isRegistered()) uiAuthProviders.delete(id);
+    },
+  };
+};
+
 export const createUiAuth = ({
   password,
   cookieName = SESSION_COOKIE_NAME,
@@ -542,7 +621,79 @@ export const createUiAuth = ({
       return token;
     };
 
+    const providerSessionToken = async (req) => {
+      const token = parseCookies(req.headers.cookie)[sessionCookieNameForRequest(req, cookieName)];
+      return (await readProviderSession(token)) ? token : null;
+    };
+
+    const refuseWithoutProviderSession = (req, res) => {
+      setSessionCookie(req, res, '', 0);
+      res.status(401);
+      if (req.headers.accept?.includes('application/json') || req.path?.startsWith('/api')) {
+        res.json({ error: 'UI authentication required', locked: true });
+      } else {
+        res.type('text/plain').send('Authentication required');
+      }
+    };
+
+    const requireProviderSession = async (req, res, next, { allowClientAuth }) => {
+      if (req.method === 'OPTIONS') {
+        return next();
+      }
+      if (await providerSessionToken(req)) {
+        return next();
+      }
+      if (allowClientAuth && await authenticateClientRequest(req)) {
+        return next();
+      }
+      return refuseWithoutProviderSession(req, res);
+    };
+
+    const handleProviderSessionStatus = async (req, res) => {
+      const fields = uiAuthStatusFields(false);
+      const authorization = req.headers?.authorization;
+      if (typeof authorization === 'string' && authorization.toLowerCase().startsWith('bearer ')) {
+        if (await authenticateClientRequest(req, { allowUrlToken: false })) {
+          return res.json({ authenticated: true, scope: 'client', ...fields });
+        }
+        return res.status(401).json({ authenticated: false, locked: true, ...fields });
+      }
+      if (await providerSessionToken(req)) {
+        return res.json({ authenticated: true, ...fields });
+      }
+      if (await authenticateClientRequest(req)) {
+        return res.json({ authenticated: true, scope: 'client', ...fields });
+      }
+      setSessionCookie(req, res, '', 0);
+      return res.status(401).json({ authenticated: false, locked: true, ...fields });
+    };
+
+    const handleProviderUrlAuthToken = async (req, res) => {
+      const scope = readRequestedUrlAuthScope(req);
+      if (scope === undefined) {
+        return res.status(400).json({ error: 'Unknown URL token scope' });
+      }
+      const clientAuth = await authenticateClientRequest(req, { allowUrlToken: false });
+      const sessionToken = clientAuth ? clientSessionToken(clientAuth) : await providerSessionToken(req);
+      if (!sessionToken) {
+        return refuseWithoutProviderSession(req, res);
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json(issueUrlAuthTokenForSession(sessionToken, scope));
+    };
+
+    const resolveProviderAuthContext = async (req, { allowClientAuth, allowUrlToken }) => {
+      const token = await providerSessionToken(req);
+      if (token) return { type: 'session', token };
+      if (!allowClientAuth) return null;
+      const clientAuth = await authenticateClientRequest(req, { allowUrlToken });
+      return clientAuth ? clientAuthContext(clientAuth) : null;
+    };
+
     const requireAuth = async (req, res, next) => {
+      if (hasUiAuthProviders()) {
+        return requireProviderSession(req, res, next, { allowClientAuth: true });
+      }
       if (!requireClientAuth) {
         return next();
       }
@@ -557,6 +708,9 @@ export const createUiAuth = ({
     };
 
     const requireSessionAuth = async (req, res, next) => {
+      if (hasUiAuthProviders()) {
+        return requireProviderSession(req, res, next, { allowClientAuth: false });
+      }
       if (!requireClientAuth) {
         return next();
       }
@@ -567,6 +721,9 @@ export const createUiAuth = ({
     };
 
     const resolveAuthContext = async (req, res, { allowClientAuth = true, allowUrlToken = true } = {}) => {
+      if (hasUiAuthProviders()) {
+        return resolveProviderAuthContext(req, { allowClientAuth, allowUrlToken });
+      }
       const cookies = parseCookies(req.headers.cookie);
       const name = sessionCookieNameForRequest(req, cookieName);
       if (cookies[name]) {
@@ -584,11 +741,16 @@ export const createUiAuth = ({
     };
 
     return {
-      enabled: false,
+      get enabled() {
+        return hasUiAuthProviders();
+      },
       requireAuth,
       requireSessionAuth,
       resolveAuthContext,
       handleSessionStatus: async (req, res) => {
+        if (hasUiAuthProviders()) {
+          return handleProviderSessionStatus(req, res);
+        }
         if (requireClientAuth) {
           const clientAuth = await authenticateClientRequest(req);
           if (clientAuth) {
@@ -602,6 +764,9 @@ export const createUiAuth = ({
         res.status(400).json({ error: 'UI password not configured' });
       },
       handleUrlAuthToken: async (req, res) => {
+        if (hasUiAuthProviders()) {
+          return handleProviderUrlAuthToken(req, res);
+        }
         const scope = readRequestedUrlAuthScope(req);
         if (scope === undefined) {
           return res.status(400).json({ error: 'Unknown URL token scope' });
@@ -645,6 +810,7 @@ export const createUiAuth = ({
       ensureSessionToken: async (req, res) => {
         const clientAuth = await authenticateClientRequest(req);
         if (clientAuth) return clientSessionToken(clientAuth);
+        if (hasUiAuthProviders()) return providerSessionToken(req);
         return ensureSessionToken(req, res);
       },
       dispose: () => {
@@ -656,6 +822,7 @@ export const createUiAuth = ({
   const salt = crypto.randomBytes(16);
   const expectedHash = crypto.scryptSync(normalizedPassword, salt, 64);
   let jwtSecret = getOrCreateJwtSecret();
+  providerSessionSecret = jwtSecret;
   let passwordBinding = crypto.createHmac('sha256', jwtSecret).update(normalizedPassword).digest('hex');
   const resolveSessionTtlMs = (trustDevice) => (trustDevice ? TRUSTED_DEVICE_SESSION_TTL_MS : sessionTtlMs);
   let passkeyController = createUiPasskeys({
@@ -675,6 +842,7 @@ export const createUiAuth = ({
   const rotateJwtSecret = () => {
     const nextSecret = crypto.randomBytes(32).toString('hex');
     jwtSecret = persistJwtSecret(nextSecret);
+    providerSessionSecret = jwtSecret;
     urlAuthTokens.clear();
     rebuildPasskeyController();
   };
@@ -802,24 +970,24 @@ export const createUiAuth = ({
     if (hasBearer) {
       const clientAuth = await authenticateClientRequest(req, { allowUrlToken: false });
       if (clientAuth) {
-        res.json({ authenticated: true, scope: 'client' });
+        res.json({ authenticated: true, scope: 'client', ...uiAuthStatusFields(true) });
         return;
       }
-      res.status(401).json({ authenticated: false, locked: true });
+      res.status(401).json({ authenticated: false, locked: true, ...uiAuthStatusFields(true) });
       return;
     }
     const token = getTokenFromRequest(req);
     if (await isSessionValid(token)) {
-      res.json({ authenticated: true });
+      res.json({ authenticated: true, ...uiAuthStatusFields(true) });
       return;
     }
     const clientAuth = await authenticateClientRequest(req);
     if (clientAuth) {
-      res.json({ authenticated: true, scope: 'client' });
+      res.json({ authenticated: true, scope: 'client', ...uiAuthStatusFields(true) });
       return;
     }
     clearSessionCookie(req, res);
-    res.status(401).json({ authenticated: false, locked: true });
+    res.status(401).json({ authenticated: false, locked: true, ...uiAuthStatusFields(true) });
   };
 
   const resolveAuthenticatedSessionToken = async (req, { allowUrlToken = true } = {}) => {

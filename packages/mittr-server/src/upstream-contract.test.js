@@ -1106,6 +1106,71 @@ const checks = {
     const accountClass = source('packages/mittr-ui/src/accounts/MittrAccountMenu.tsx').match(/^const FOOTER_BUTTON_CLASS = '([^']+)';$/m)?.[1];
     assert.equal(accountClass, footerClass, 'the account button no longer wears the sidebar footer button classes');
   },
+
+  'ui-auth-provider-registry': (t) => {
+    const server = source('packages/web/server/index.js');
+    has(server, /^import \{ createUiAuth, registerUiAuthProvider \} from '\.\/lib\/ui-auth\/ui-auth\.js';$/m);
+    has(pluginContext(server), /uiAuth: \{\s*registerProvider: registerUiAuthProvider,\s*passwordEnabled: \(\) => typeof uiPassword === 'string' && uiPassword\.trim\(\)\.length > 0,\s*\},/, 'the plugin context no longer hands plugins the UI auth provider registry');
+    has(server, /const uiPassword = typeof options\.uiPassword === 'string'\s*\? options\.uiPassword\s*: \(typeof process\.env\.OPENCHAMBER_UI_PASSWORD === 'string' \? process\.env\.OPENCHAMBER_UI_PASSWORD : null\);/, 'the server no longer reads the UI password where the plugin context sees it');
+    has(source('packages/web/server/lib/opencode/bootstrap-runtime.js'), /createUiAuth\(\{\s*password: uiPassword,/, 'the UI auth controller no longer gets the same UI password');
+
+    const script = `
+      const { createUiAuth, registerUiAuthProvider } = await import(process.env.CONTRACT_UI_AUTH_URL);
+      const response = () => {
+        const res = { statusCode: 200, body: null, headers: {} };
+        res.status = (code) => { res.statusCode = code; return res; };
+        res.json = (body) => { res.body = body; return res; };
+        res.type = () => res;
+        res.send = (body) => { res.body = body; return res; };
+        res.setHeader = (name, value) => { res.headers[name.toLowerCase()] = value; return res; };
+        res.getHeader = (name) => res.headers[name.toLowerCase()];
+        return res;
+      };
+      const request = (cookie) => ({ method: 'GET', path: '/api/x', originalUrl: '/api/x', url: '/api/x', headers: cookie ? { cookie } : {} });
+      const passes = async (auth, req) => { let passed = false; await auth.requireAuth(req, response(), () => { passed = true; }); return passed; };
+      const auth = createUiAuth({});
+      const before = await passes(auth, request());
+      const provider = registerUiAuthProvider({ id: 'contract' });
+      const enabledWhileRegistered = auth.enabled;
+      const refused = response();
+      await auth.requireAuth(request(), refused, () => {});
+      const status = response();
+      await auth.handleSessionStatus(request(), status);
+      const issued = response();
+      await provider.issueSession(request(), issued, { claims: { who: 'contract' } });
+      const cookie = [].concat(issued.headers['set-cookie']).map((entry) => entry.split(';')[0]).join('; ');
+      const withSession = await passes(auth, request(cookie));
+      const claims = await provider.readClaims(request(cookie));
+      const cleared = response();
+      provider.clearSession(request(cookie), cleared);
+      provider.unregister();
+      const after = await passes(auth, request());
+      const afterStatus = response();
+      await auth.handleSessionStatus(request(), afterStatus);
+      console.log(JSON.stringify({ before, enabledWhileRegistered, refused: { status: refused.statusCode, body: refused.body }, status: { code: status.statusCode, body: status.body }, withSession, claims, cleared: [].concat(cleared.headers['set-cookie'])[0], after, afterStatus: afterStatus.body }));
+    `;
+    const { output } = runInTempHome(t, script, {
+      CONTRACT_UI_AUTH_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/ui-auth/ui-auth.js')).href,
+    });
+    assert.equal(output.before, true, 'a server without a UI password no longer lets requests through when no provider is registered');
+    assert.equal(output.enabledWhileRegistered, true, 'the controller no longer reports itself enabled while a provider is registered, so sockets would skip auth');
+    assert.deepEqual(output.refused, { status: 401, body: { error: 'UI authentication required', locked: true } });
+    assert.deepEqual(output.status, { code: 401, body: { authenticated: false, locked: true, providers: ['contract'], passwordEnabled: false } });
+    assert.equal(output.withSession, true, 'a provider session no longer opens the UI');
+    assert.deepEqual(output.claims, { who: 'contract' });
+    assert.match(output.cleared, /^oc_ui_session=; Path=\/; HttpOnly; SameSite=Strict; Max-Age=0/);
+    assert.equal(output.after, true, 'unregistering the last provider no longer gives back upstream behaviour');
+    assert.deepEqual(output.afterStatus, { authenticated: true, disabled: true });
+
+    const plugin = "export default (context) => { context.uiAuth.registerProvider({ id: 'contract' }); context.app.get('/contract-ui-auth-probe', (_req, res) => res.json({ passwordEnabled: context.uiAuth.passwordEnabled() })); context.app.get('/api/contract-ui-auth-probe', (_req, res) => res.json({ reached: true })); };";
+    const session = probeRealServer(t, plugin, { route: '/auth/session' });
+    assert.equal(session.status, 401);
+    assert.deepEqual(JSON.parse(session.text), { authenticated: false, locked: true, providers: ['contract'], passwordEnabled: false });
+    assert.equal(probeRealServer(t, plugin, { route: '/api/contract-ui-auth-probe' }).status, 401, 'a registered provider no longer guards /api on the real server');
+    assert.deepEqual(JSON.parse(probeRealServer(t, plugin, { uiPassword: 'contract-password', route: '/contract-ui-auth-probe' }).text), { passwordEnabled: true });
+    assert.deepEqual(JSON.parse(probeRealServer(t, plugin, { route: '/contract-ui-auth-probe' }).text), { passwordEnabled: false });
+  },
+
 };
 
 test('every contract item has a check, and every check an item', () => {

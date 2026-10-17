@@ -404,6 +404,11 @@ export const UPSTREAM_CONTRACT = [
     ],
     why: 'the account button wears the sidebar footer buttons\' own classes, copied; the account menu is drawn with DropdownMenu (open, onOpenChange, items with onClick, label, separator) inside a Tooltip, the switch wait state with a Dialog whose close button can be left out, messages with toast, and the check, user and loader icons; the About row uses SETTINGS_FIELD_LABEL_CLASS',
   },
+  {
+    id: 'ui-auth-provider-registry',
+    files: ['packages/web/server/lib/ui-auth/ui-auth.js', 'packages/web/server/index.js'],
+    why: 'a server plugin registers a sign-in provider through context.uiAuth.registerProvider; while one is registered a server without a UI password requires a UI session that only the provider issues, the session status lists providers and passwordEnabled, and context.uiAuth.passwordEnabled says whether a UI password is set',
+  },
 ];
 
 // The dictionaries are TypeScript with extensionless imports, which only Bun
