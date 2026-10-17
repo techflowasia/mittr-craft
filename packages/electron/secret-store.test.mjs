@@ -2,10 +2,50 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createSafeStorageSecretStore } from './secret-store.mjs';
 
-const fakeSafeStorage = (available = true) => ({
-  isEncryptionAvailable: () => available,
-  encryptString: (text) => Buffer.from(`E${text}`),
-  decryptString: (data) => data.toString().slice(1),
+const fakeSafeStorage = (available = true) => {
+  const calls = { isEncryptionAvailable: 0, getSelectedStorageBackend: 0, encryptString: 0, decryptString: 0 };
+  return {
+    calls,
+    isEncryptionAvailable: () => {
+      calls.isEncryptionAvailable += 1;
+      return available;
+    },
+    encryptString: (text) => {
+      calls.encryptString += 1;
+      return Buffer.from(`E${text}`);
+    },
+    decryptString: (data) => {
+      calls.decryptString += 1;
+      return data.toString().slice(1);
+    },
+  };
+};
+
+const withBackend = (name) => {
+  const safeStorage = fakeSafeStorage();
+  safeStorage.getSelectedStorageBackend = () => {
+    safeStorage.calls.getSelectedStorageBackend += 1;
+    return name;
+  };
+  return safeStorage;
+};
+
+test('creating the store asks safeStorage nothing, so startup never waits on a keychain', () => {
+  const safeStorage = withBackend('gnome_libsecret');
+  const store = createSafeStorageSecretStore({ safeStorage });
+  assert.ok(store);
+  assert.deepEqual(safeStorage.calls, { isEncryptionAvailable: 0, getSelectedStorageBackend: 0, encryptString: 0, decryptString: 0 });
+});
+
+test('the first use checks availability once and every later use reuses the answer', () => {
+  const safeStorage = withBackend('gnome_libsecret');
+  const store = createSafeStorageSecretStore({ safeStorage });
+  assert.equal(store.available(), true);
+  store.decrypt(store.encrypt('tok'));
+  store.encrypt('again');
+  assert.equal(store.available(), true);
+  assert.equal(safeStorage.calls.isEncryptionAvailable, 1);
+  assert.equal(safeStorage.calls.getSelectedStorageBackend, 1);
 });
 
 test('secret store round-trips through safeStorage', () => {
@@ -21,15 +61,30 @@ test('secret store decrypts bytes that came back as a plain Uint8Array', () => {
   assert.equal(store.decrypt(new Uint8Array(store.encrypt('tok'))), 'tok');
 });
 
-test('no encryption means no store', () => {
-  assert.equal(createSafeStorageSecretStore({ safeStorage: fakeSafeStorage(false) }), null);
-  assert.equal(createSafeStorageSecretStore({ safeStorage: undefined }), null);
-  assert.equal(createSafeStorageSecretStore({}), null);
+test('no encryption is refused at first use, and the refusal is remembered', () => {
+  const safeStorage = fakeSafeStorage(false);
+  const store = createSafeStorageSecretStore({ safeStorage });
+  assert.equal(store.available(), false);
+  assert.throws(() => store.encrypt('tok'), /keychain/);
+  assert.throws(() => store.decrypt(Buffer.from('Etok')), /keychain/);
+  assert.equal(safeStorage.calls.isEncryptionAvailable, 1);
+  assert.equal(safeStorage.calls.encryptString, 0);
+  assert.equal(safeStorage.calls.decryptString, 0);
 });
 
-test('a safeStorage that throws when asked means no store', () => {
+test('a missing safeStorage is a store that is never available', () => {
+  for (const options of [{ safeStorage: undefined }, {}, undefined]) {
+    const store = createSafeStorageSecretStore(options);
+    assert.equal(store.available(), false);
+    assert.throws(() => store.encrypt('tok'), /keychain/);
+  }
+});
+
+test('a safeStorage that throws when asked is unavailable', () => {
   const safeStorage = { isEncryptionAvailable: () => { throw new Error('before ready'); } };
-  assert.equal(createSafeStorageSecretStore({ safeStorage }), null);
+  const store = createSafeStorageSecretStore({ safeStorage });
+  assert.equal(store.available(), false);
+  assert.throws(() => store.encrypt('tok'), /keychain/);
 });
 
 test('encrypt refuses anything but a string, so a secret is never stringified by accident', () => {
@@ -37,11 +92,14 @@ test('encrypt refuses anything but a string, so a secret is never stringified by
   assert.throws(() => store.encrypt({ token: 'x' }), /string/);
 });
 
-test('a keyring that keeps its key in plain text means no store', () => {
-  const backend = (name) => ({ ...fakeSafeStorage(), getSelectedStorageBackend: () => name });
-  assert.equal(createSafeStorageSecretStore({ safeStorage: backend('basic_text') }), null);
-  assert.ok(createSafeStorageSecretStore({ safeStorage: backend('gnome_libsecret') }));
-  assert.ok(createSafeStorageSecretStore({ safeStorage: backend('unknown') }));
+test('a keyring that keeps its key in plain text is refused at first use', () => {
+  const plain = withBackend('basic_text');
+  const store = createSafeStorageSecretStore({ safeStorage: plain });
+  assert.equal(store.available(), false);
+  assert.throws(() => store.encrypt('tok'), /keychain/);
+  assert.equal(plain.calls.encryptString, 0);
+  assert.equal(createSafeStorageSecretStore({ safeStorage: withBackend('gnome_libsecret') }).available(), true);
+  assert.equal(createSafeStorageSecretStore({ safeStorage: withBackend('unknown') }).available(), true);
   const throwing = { ...fakeSafeStorage(), getSelectedStorageBackend: () => { throw new Error('not on this platform'); } };
-  assert.ok(createSafeStorageSecretStore({ safeStorage: throwing }));
+  assert.equal(createSafeStorageSecretStore({ safeStorage: throwing }).available(), true);
 });

@@ -324,7 +324,7 @@ const checks = {
     has(main, /import \{ createDeepLinkRegistry \} from '\.\/deep-link-registry\.mjs';/);
   },
 
-  'plugin-host-option': () => {
+  'plugin-host-option': async () => {
     const main = source('packages/electron/main.mjs');
     has(main, /import \{[^}]*\bsafeStorage\b[^}]*\} from 'electron';/, 'main.mjs no longer imports safeStorage from electron');
     has(main, /import \{ createSafeStorageSecretStore \} from '\.\/secret-store\.mjs';/);
@@ -332,6 +332,13 @@ const checks = {
     assert.ok(start >= 0, 'main.mjs no longer calls startWebUiServer with an options object');
     const call = main.slice(start, main.indexOf('\n  });', start));
     has(call, /pluginHost: \{\s*secretStore: createSafeStorageSecretStore\(\{ safeStorage \}\),\s*deepLinks: \{ register: deepLinkRegistry\.register \},\s*\},/, 'startWebUiServer no longer receives pluginHost');
+    const asked = [];
+    const probe = new Proxy({}, { get: (_target, name) => () => { asked.push(String(name)); return true; } });
+    const { createSafeStorageSecretStore } = await importUpstream('packages/electron/secret-store.mjs');
+    const store = createSafeStorageSecretStore({ safeStorage: probe });
+    assert.deepEqual(asked, [], 'the shell secret store asks safeStorage while it is created, which can block the app behind a keychain dialog');
+    assert.equal(typeof store.available, 'function', 'the shell secret store no longer exposes available(), so the server cannot ask lazily whether it can seal');
+    assert.equal(store.available(), true);
     has(source('packages/web/server/index.js'), /host: options\.pluginHost \?\? null,/, 'the plugin context no longer reads options.pluginHost into host');
   },
 

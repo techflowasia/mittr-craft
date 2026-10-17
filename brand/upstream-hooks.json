@@ -103,6 +103,10 @@
     {
       "hook": "electron-host",
       "why": "On Linux without a keyring, safeStorage reports encryption as available while keeping its key in plain text (the basic_text backend), so the store handed plugins a seal that protected nothing; that backend now means no store."
+    },
+    {
+      "hook": "electron-host",
+      "why": "Asking safeStorage whether it can seal may raise a keychain dialog that blocks the main thread, and the store asked while the app was starting, before any window or server existed; it now asks on first use only, keeps the answer, and exposes it as available() so a plugin decides when to ask."
     }
   ],
   "packages/electron/updater-capability.mjs": [
