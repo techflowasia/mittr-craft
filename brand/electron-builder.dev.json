@@ -46,6 +46,10 @@
     {
       "from": "../../LICENSE",
       "to": "LICENSE.openchamber.txt"
+    },
+    {
+      "from": ".product/ripgrep",
+      "to": "ripgrep"
     }
   ],
   "afterPack": null,

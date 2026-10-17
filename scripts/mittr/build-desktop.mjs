@@ -19,6 +19,12 @@
  * `Contents/Resources/LICENSE.openchamber.txt`, and the build ends with the
  * brand-leak scan on the packed app: a leak fails the build.
  *
+ * The engine gets ripgrep from the app instead of downloading it: the build
+ * stages `rg` and its licences from the release archive pinned in
+ * `scripts/mittr/ripgrep.json` (read from the electron build cache, or the
+ * path in `MITTRCRAFT_RIPGREP_ARCHIVE`; the build never downloads it) into
+ * `Contents/Resources/ripgrep`, and checks the packed copy at the end.
+ *
  * electron-builder's `--config` replaces the `build` block in
  * `packages/electron/package.json` instead of merging with it, so the brand
  * config is an overlay applied here: upstream's block with only our keys
@@ -36,6 +42,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { z } from 'zod';
 
 import { resolveBunExecutable } from '../lib/bun-executable.mjs';
+import { RIPGREP_RESOURCE_DIR, defaultRipgrepArchive, readRipgrepPin, stageRipgrep, verifyPackedRipgrep } from './ripgrep.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const brandDir = path.join(repoRoot, 'brand');
@@ -47,6 +54,8 @@ const serverPluginBundle = path.join(pluginsDir, 'mittr-server.mjs');
 const webServerSource = path.join(repoRoot, 'packages', 'web', 'server');
 
 const FLAVORS = ['dev', 'prod'];
+
+export const RIPGREP_STAGING = `.product/${RIPGREP_RESOURCE_DIR}`;
 
 // The web server is packed straight from its workspace source, so its
 // visible strings are replaced in a staged copy that is packed in its place.
@@ -411,7 +420,7 @@ const main = async () => {
   const pluginMetafile = path.join(pluginMetaDir, 'meta.json');
   buildServerPlugin({ bun, outfile: serverPluginBundle, metafile: pluginMetafile });
 
-  step('3/8 product files and server copy');
+  step('3/8 product files, server copy and ripgrep');
   fs.rmSync(stagingDir, { recursive: true, force: true });
   fs.mkdirSync(stagingDir, { recursive: true });
   fs.copyFileSync(productSource, path.join(stagingDir, 'product.json'));
@@ -419,6 +428,9 @@ const main = async () => {
     fs.copyFileSync(path.join(brandDir, productOverride.splashSvg), path.join(stagingDir, productOverride.splashSvg));
   }
   fs.cpSync(webServerSource, path.join(electronDir, STAGED_SERVER), { recursive: true });
+  const ripgrepPin = readRipgrepPin();
+  const ripgrep = stageRipgrep({ archive: defaultRipgrepArchive(ripgrepPin), pin: ripgrepPin, outDir: path.join(electronDir, RIPGREP_STAGING) });
+  console.log(`[mittr] ripgrep ${ripgrepPin.version} staged for the engine: ${path.relative(repoRoot, ripgrep.binary)}`);
   const product = readProduct({ appPath: stagingDir });
   for (const entry of productOverride.serverPlugins ?? []) {
     if (!fs.existsSync(path.join(electronDir, entry))) throw new Error(`server plugin ${entry} was not built`);
@@ -468,7 +480,8 @@ const main = async () => {
     const appPath = findPackedApp({ productName: builderConfig.productName, distDir: path.join(electronDir, 'dist'), startedAt });
     if (!appPath) throw new Error(`no ${builderConfig.productName}.app was produced in packages/electron/dist`);
     verifyPackedApp({ appPath, scan: runLeakScan });
-    console.log(`[mittr] ${LICENCE_RESOURCE} is packed and the brand-leak scan passed: ${appPath}`);
+    verifyPackedRipgrep({ appPath, pin: ripgrepPin });
+    console.log(`[mittr] ${LICENCE_RESOURCE} and ripgrep ${ripgrepPin.version} are packed and the brand-leak scan passed: ${appPath}`);
   }
 };
 

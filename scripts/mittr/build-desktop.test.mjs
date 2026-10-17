@@ -9,6 +9,7 @@ import { resolveBunExecutable } from '../lib/bun-executable.mjs';
 import { findNeedles } from './brand-leak-scan.mjs';
 import {
   LICENCE_RESOURCE,
+  RIPGREP_STAGING,
   applyVisibleStrings,
   assertPluginBundleFresh,
   buildServerPlugin,
@@ -332,4 +333,14 @@ test('the server plugin is built from source with the engine outbound switches, 
 
   fs.rmSync(bundle);
   assert.throws(() => assertPluginBundleFresh({ bundle, metafile, rootDir: repoRoot }), /was not built/);
+});
+
+test('both flavors pack the staged ripgrep folder as Resources/ripgrep', () => {
+  const upstream = readJson('packages/electron/package.json').build;
+  for (const flavor of ['dev', 'prod']) {
+    const merged = mergeBuilderConfig(upstream, readJson(`brand/electron-builder.${flavor}.json`));
+    assert.ok(merged.extraResources.some((entry) => entry.from === RIPGREP_STAGING && entry.to === 'ripgrep'), flavor);
+    assert.ok(merged.extraResources.some((entry) => entry.to === 'opencode-cli'), `${flavor} lost the engine`);
+  }
+  assert.equal(RIPGREP_STAGING, '.product/ripgrep');
 });
