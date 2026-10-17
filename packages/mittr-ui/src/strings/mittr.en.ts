@@ -31,6 +31,7 @@ export const mittrEn = {
   'mittr.accounts.add.waiting': 'Continue in your browser to add the account.',
   'mittr.accounts.add.startFailed': 'Could not start sign-in. Try again.',
   'mittr.accounts.add.failed': 'Sign-in did not finish. Try again.',
+  'mittr.accounts.add.finishing': 'Finishing sign-in…',
   'mittr.accounts.switch.waiting': 'Switching account…',
   'mittr.accounts.switch.notRestarted': 'MittrCraft did not finish switching accounts.',
   'mittr.accounts.switch.failed': 'MittrCraft could not change the account.',

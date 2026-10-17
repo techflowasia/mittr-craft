@@ -20,13 +20,13 @@ const escaped = (text: string) => text.replace(/&/g, '&amp;').replace(/'/g, '&#x
 
 const items = (props: Partial<React.ComponentProps<typeof MittrAccountMenuItems>> = {}) => renderToStaticMarkup(
   <DropdownMenu open>
-    <MittrAccountMenuItems accounts={[A, B]} loadFailed={false} {...handlers} {...props} />
+    <MittrAccountMenuItems accounts={[A, B]} loadFailed={false} finishingSignIn={false} {...handlers} {...props} />
   </DropdownMenu>,
 );
 
 const view = (props: Partial<MittrAccountMenuViewProps> = {}) => renderToStaticMarkup(
   <I18nProvider>
-    <MittrAccountMenuView accounts={[A, B]} open loadFailed={false} onOpenChange={noop} {...handlers} {...props} />
+    <MittrAccountMenuView accounts={[A, B]} open loadFailed={false} finishingSignIn={false} onOpenChange={noop} {...handlers} {...props} />
   </I18nProvider>,
 );
 
@@ -57,6 +57,17 @@ describe('MittrAccountMenu', () => {
     const rows = menuItems(items({ accounts: null, loadFailed: true }));
     expect(items({ accounts: null, loadFailed: true })).toContain(escaped(mittrT('mittr.accounts.menu.loadFailed')));
     expect(rows).toHaveLength(2);
+  });
+
+  test('while an added account is finishing its sign-in, switching and signing out are held back', () => {
+    const html = items({ finishingSignIn: true });
+    expect(html).toContain(escaped(mittrT('mittr.accounts.add.finishing')));
+    const rows = [...html.matchAll(/<div([^>]*role="menuitem"[^>]*)>([\s\S]*?)<\/div>/g)].map((match) => ({ attrs: match[1], body: match[2] }));
+    const disabled = rows.filter((row) => row.attrs.includes('aria-disabled="true"')).map((row) => row.body);
+    expect(disabled).toHaveLength(2);
+    expect(disabled[0]).toContain('Ann Lee');
+    expect(disabled[1]).toContain(mittrT('mittr.accounts.signOut'));
+    expect(items()).not.toContain('aria-disabled="true"');
   });
 
   test('an account with no name is listed by its id', () => {

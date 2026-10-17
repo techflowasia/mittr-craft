@@ -23,6 +23,7 @@ export type AccountSwitch = {
   retry: () => Promise<void>;
   dismiss: () => Promise<void>;
   attach: () => () => void;
+  abandon: () => void;
 };
 
 export const reloadWindow = (): void => {
@@ -46,6 +47,7 @@ export function createAccountSwitch({ retrySwitch, reload, announce, holdGate: h
   let failed: FailedRequest | null = null;
   let outcomeUnknown = false;
   let attached = true;
+  let generation = 0;
   let finish: ((outcome: SwitchOutcome) => void) | null = null;
   let releaseGate: (() => void) | null = null;
   const listeners = new Set<() => void>();
@@ -93,15 +95,18 @@ export function createAccountSwitch({ retrySwitch, reload, announce, holdGate: h
     lastRequest = request;
     failed = null;
     show('switching');
+    const sent = generation;
     let outcome: SwitchOutcome;
     try {
       outcome = await request();
     } catch (error) {
+      if (sent !== generation) return;
       failed = error instanceof HttpError ? 'refused' : 'lost';
       if (failed === 'lost') outcomeUnknown = true;
       show('failed');
       return;
     }
+    if (sent !== generation) return;
     if (request === retrySwitch) outcomeUnknown = false;
     settle(outcome);
   };
@@ -129,15 +134,22 @@ export function createAccountSwitch({ retrySwitch, reload, announce, holdGate: h
         return;
       }
       show('switching');
+      const sent = generation;
       let outcome: SwitchOutcome;
       try {
         outcome = await retrySwitch();
       } catch {
-        reload();
+        if (sent === generation) reload();
         return;
       }
+      if (sent !== generation) return;
       outcomeUnknown = false;
       settle(outcome);
+    },
+    abandon: () => {
+      generation += 1;
+      forget();
+      show('idle');
     },
     attach: () => {
       attached = true;

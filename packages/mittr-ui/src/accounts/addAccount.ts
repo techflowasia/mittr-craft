@@ -7,7 +7,8 @@ export type AddAccountDeps = {
   onWaiting: () => void;
   onStartFailed: () => void;
   onFailed: () => void;
-  onAdded: () => void;
+  onAdded: () => boolean;
+  resyncThenReload: () => void;
 };
 
 export type AddAccountFlow = {
@@ -15,6 +16,8 @@ export type AddAccountFlow = {
   signedIn: () => void;
   signInFailed: () => void;
   dispose: () => void;
+  waiting: () => boolean;
+  subscribe: (listener: () => void) => () => void;
 };
 
 export function createAddAccountFlow({
@@ -25,9 +28,14 @@ export function createAddAccountFlow({
   onStartFailed,
   onFailed,
   onAdded,
+  resyncThenReload,
 }: AddAccountDeps): AddAccountFlow {
   let endWait: ((handled: boolean) => void) | null = null;
   let cancelTimer: () => void = () => {};
+  const listeners = new Set<() => void>();
+  const changed = () => {
+    for (const listener of listeners) listener();
+  };
 
   const finish = (handled: boolean): boolean => {
     const end = endWait;
@@ -36,6 +44,7 @@ export function createAddAccountFlow({
     cancelTimer();
     cancelTimer = () => {};
     end(handled);
+    changed();
     return true;
   };
 
@@ -45,19 +54,29 @@ export function createAddAccountFlow({
         onStartFailed();
         return;
       }
-      endWait ??= beginWait();
+      if (!endWait) {
+        endWait = beginWait();
+        changed();
+      }
       cancelTimer();
       cancelTimer = schedule(() => { finish(false); }, TRANSACTION_TTL_MS);
       onWaiting();
     },
     signedIn: () => {
-      if (finish(true)) onAdded();
+      if (!endWait) return;
+      if (!onAdded()) resyncThenReload();
+      finish(true);
     },
     signInFailed: () => {
       if (finish(false)) onFailed();
     },
     dispose: () => {
       finish(false);
+    },
+    waiting: () => endWait !== null,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
     },
   };
 }

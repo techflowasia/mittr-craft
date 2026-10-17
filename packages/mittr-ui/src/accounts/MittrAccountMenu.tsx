@@ -17,7 +17,7 @@ import { SIGN_IN_COMPLETED_EVENT, SIGN_IN_FAILED_EVENT } from '../sign-in/signIn
 import { mittrT, useMittrT } from '../strings/mittrT';
 import { AccountSwitchDialog } from './AccountSwitchDialog';
 import { accountName, accountsApi, initialsOf, type MittrAccount } from './accountsApi';
-import { useAccountSwitch } from './accountSwitch';
+import { resyncThenReload, useAccountSwitch } from './accountSwitch';
 import { createAddAccountFlow } from './addAccount';
 
 const FOOTER_BUTTON_CLASS = 'inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-interactive-hover/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
@@ -31,16 +31,19 @@ type MenuActions = {
 export type MittrAccountMenuItemsProps = MenuActions & {
   accounts: MittrAccount[] | null;
   loadFailed: boolean;
+  finishingSignIn: boolean;
 };
 
-export function MittrAccountMenuItems({ accounts, loadFailed, onActivate, onAddAccount, onSignOut }: MittrAccountMenuItemsProps): React.ReactNode {
+export function MittrAccountMenuItems({ accounts, loadFailed, finishingSignIn, onActivate, onAddAccount, onSignOut }: MittrAccountMenuItemsProps): React.ReactNode {
   const t = useMittrT();
   return (
     <>
+      {finishingSignIn ? <DropdownMenuLabel>{t('mittr.accounts.add.finishing')}</DropdownMenuLabel> : null}
       {loadFailed && !accounts ? <DropdownMenuLabel>{t('mittr.accounts.menu.loadFailed')}</DropdownMenuLabel> : null}
       {(accounts ?? []).map((account) => (
         <DropdownMenuItem
           key={account.userId}
+          disabled={finishingSignIn && !account.active}
           onClick={account.active ? undefined : () => onActivate(account.userId)}
           className="flex items-center justify-between gap-2"
         >
@@ -50,7 +53,7 @@ export function MittrAccountMenuItems({ accounts, loadFailed, onActivate, onAddA
       ))}
       <DropdownMenuSeparator />
       <DropdownMenuItem onClick={onAddAccount}>{t('mittr.accounts.menu.add')}</DropdownMenuItem>
-      <DropdownMenuItem onClick={onSignOut}>{t('mittr.accounts.signOut')}</DropdownMenuItem>
+      <DropdownMenuItem disabled={finishingSignIn} onClick={onSignOut}>{t('mittr.accounts.signOut')}</DropdownMenuItem>
     </>
   );
 }
@@ -108,8 +111,17 @@ export function MittrAccountMenu(): React.ReactNode {
     onWaiting: () => { toast.info(mittrT('mittr.accounts.add.waiting')); },
     onStartFailed: () => { toast.error(mittrT('mittr.accounts.add.startFailed')); },
     onFailed: () => { toast.error(mittrT('mittr.accounts.add.failed')); },
-    onAdded: () => { void accountSwitch.run(accountsApi.retrySwitch); },
+    onAdded: () => {
+      if (accountSwitch.state() !== 'idle') return false;
+      void accountSwitch.run(accountsApi.retrySwitch);
+      return true;
+    },
+    resyncThenReload: () => {
+      accountSwitch.abandon();
+      resyncThenReload();
+    },
   }));
+  const finishingSignIn = React.useSyncExternalStore(addAccount.subscribe, addAccount.waiting, addAccount.waiting);
 
   React.useEffect(() => () => addAccount.dispose(), [addAccount]);
 
@@ -158,6 +170,7 @@ export function MittrAccountMenu(): React.ReactNode {
       <MittrAccountMenuView
         accounts={accounts}
         loadFailed={loadFailed}
+        finishingSignIn={finishingSignIn}
         open={open}
         onOpenChange={onOpenChange}
         onActivate={(userId) => { void accountSwitch.run(() => accountsApi.activateAccount(userId)); }}
