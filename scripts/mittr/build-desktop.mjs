@@ -11,7 +11,9 @@
  * stages the product inputs where the packaged app reads them:
  * `packages/electron/.product/product.json` and the splash logo it names
  * (packed at the app root) and `packages/electron/product-plugins/mittr-server.mjs`.
- * All are build output and are never committed.
+ * All are build output and are never committed. The plugin bundle is rebuilt
+ * from source on every run, and packing stops if any source it was built
+ * from is newer than the bundle.
  *
  * The packed app carries upstream's MIT licence as
  * `Contents/Resources/LICENSE.openchamber.txt`, and the build ends with the
@@ -41,6 +43,7 @@ const electronDir = path.join(repoRoot, 'packages', 'electron');
 const stagingDir = path.join(electronDir, '.product');
 const pluginsDir = path.join(electronDir, 'product-plugins');
 const serverPluginEntry = path.join(repoRoot, 'packages', 'mittr-server', 'src', 'plugin.js');
+const serverPluginBundle = path.join(pluginsDir, 'mittr-server.mjs');
 const webServerSource = path.join(repoRoot, 'packages', 'web', 'server');
 
 const FLAVORS = ['dev', 'prod'];
@@ -352,6 +355,25 @@ export const verifyPackedApp = ({ appPath, scan }) => {
   if (status !== 0) throw new Error(`the brand-leak scan of ${appPath} failed (exit ${status})`);
 };
 
+export const buildServerPlugin = ({ bun, outfile, metafile }) => {
+  run(bun, [
+    'build', serverPluginEntry,
+    '--target=node', '--format=esm',
+    '--external', 'electron', '--external', '@openchamber/web', '--external', '@openchamber/web/*',
+    '--outfile', outfile,
+    `--metafile=${metafile}`,
+  ], repoRoot);
+};
+
+export const assertPluginBundleFresh = ({ bundle, metafile, rootDir = repoRoot }) => {
+  if (!fs.existsSync(bundle)) throw new Error(`the server plugin ${bundle} was not built`);
+  const builtAt = fs.statSync(bundle).mtimeMs;
+  const sources = Object.keys(readJson(metafile).inputs).filter((input) => !input.split('/').includes('node_modules'));
+  const newer = sources.find((source) => fs.statSync(path.resolve(rootDir, source)).mtimeMs > builtAt);
+  if (newer) throw new Error(`the server plugin ${path.relative(rootDir, bundle)} is older than its source ${newer}; run the build again`);
+  return sources;
+};
+
 const runLeakScan = (appPath) => {
   const result = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'mittr', 'brand-leak-scan.mjs'), appPath], { cwd: repoRoot, stdio: 'inherit' });
   if (result.error) throw result.error;
@@ -385,12 +407,9 @@ const main = async () => {
 
   step('2/8 server plugin bundle');
   fs.rmSync(pluginsDir, { recursive: true, force: true });
-  run(bun, [
-    'build', serverPluginEntry,
-    '--target=node', '--format=esm',
-    '--external', 'electron', '--external', '@openchamber/web', '--external', '@openchamber/web/*',
-    '--outfile', path.join(pluginsDir, 'mittr-server.mjs'),
-  ], repoRoot);
+  const pluginMetaDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-build-plugin-'));
+  const pluginMetafile = path.join(pluginMetaDir, 'meta.json');
+  buildServerPlugin({ bun, outfile: serverPluginBundle, metafile: pluginMetafile });
 
   step('3/8 product files and server copy');
   fs.rmSync(stagingDir, { recursive: true, force: true });
@@ -430,6 +449,11 @@ const main = async () => {
   if (visibleStrings.length === 0) console.log('[mittr] none listed');
 
   step('6/8 package');
+  try {
+    assertPluginBundleFresh({ bundle: serverPluginBundle, metafile: pluginMetafile });
+  } finally {
+    fs.rmSync(pluginMetaDir, { recursive: true, force: true });
+  }
   const configFile = path.join(stagingDir, 'electron-builder.json');
   fs.writeFileSync(configFile, `${JSON.stringify(builderConfig, null, 2)}\n`);
   run(process.execPath, [path.join('scripts', 'package.mjs'), '--config', configFile], electronDir);

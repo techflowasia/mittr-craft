@@ -5,10 +5,13 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { resolveBunExecutable } from '../lib/bun-executable.mjs';
 import { findNeedles } from './brand-leak-scan.mjs';
 import {
   LICENCE_RESOURCE,
   applyVisibleStrings,
+  assertPluginBundleFresh,
+  buildServerPlugin,
   findPackedApp,
   mergeBuilderConfig,
   planVisibleStrings,
@@ -307,4 +310,26 @@ test('the build ends by checking the packed licence and running the brand-leak s
   assert.throws(() => verifyPackedApp({ appPath, scan: () => 1 }), /brand-leak scan .* failed \(exit 1\)/);
   const bare = fakeApp(t, { licence: false });
   assert.throws(() => verifyPackedApp({ appPath: bare.appPath, scan: () => 0 }), /no LICENSE\.openchamber\.txt/);
+});
+
+test('the server plugin is built from source with the engine outbound switches, and a bundle older than its sources fails the build', (t) => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-bundle-'));
+  t.after(() => fs.rmSync(out, { recursive: true, force: true }));
+  const bundle = path.join(out, 'mittr-server.mjs');
+  const metafile = path.join(out, 'meta.json');
+
+  buildServerPlugin({ bun: resolveBunExecutable(), outfile: bundle, metafile });
+
+  const text = fs.readFileSync(bundle, 'utf8');
+  assert.ok(text.includes('OPENCODE_DISABLE_MODELS_FETCH') && text.includes('OPENCODE_DISABLE_AUTOUPDATE'));
+  const sources = assertPluginBundleFresh({ bundle, metafile, rootDir: repoRoot });
+  assert.ok(sources.includes('packages/mittr-server/src/engine-outbound.js'), sources.join('\n'));
+  assert.ok(sources.every((source) => !source.includes('node_modules')));
+
+  const past = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  fs.utimesSync(bundle, past, past);
+  assert.throws(() => assertPluginBundleFresh({ bundle, metafile, rootDir: repoRoot }), /older than its source packages\/mittr-/);
+
+  fs.rmSync(bundle);
+  assert.throws(() => assertPluginBundleFresh({ bundle, metafile, rootDir: repoRoot }), /was not built/);
 });
