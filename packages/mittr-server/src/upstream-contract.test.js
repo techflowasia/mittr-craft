@@ -1028,27 +1028,18 @@ const checks = {
     has(source('node_modules/@opencode/client/dist/promise/generated/types.d.ts'), /export type SessionStructuredError = \{\s*type: string;\s*message: string;\s*status\?: number;\s*response\?: \{\s*body: string;\s*\};\s*\};/, 'the engine error no longer carries type, message, status and response.body');
   },
 
-  'opencode-client-send-message': () => {
-    const client = source('packages/ui/src/lib/opencode/client.ts');
-    const start = client.indexOf('  async sendMessage(params: {');
-    const end = client.indexOf('}): Promise<string> {', start);
-    assert.ok(start >= 0 && end > start, 'opencodeClient.sendMessage no longer takes one params object');
-    const params = client.slice(start, end);
-    for (const field of [
-      /^\s+id: string$/m,
-      /^\s+model\?: ModelRef$/m,
-      /^\s+agent\?: string$/m,
-      /^\s+providerID: string$/m,
-      /^\s+text: string$/m,
-      /^\s+files\?: Array<FileInputLite>$/m,
-      /^\s+context\?: SyntheticContextInput\[\]$/m,
-      /^\s+agentMentions\?: Array<\{ name: string; source\?: \{ value: string; start: number; end: number \} \}>$/m,
-      /^\s+directory\?: string \| null$/m,
-    ]) has(params, field, `sendMessage no longer takes ${field}`);
-    has(client, /export type FileInputLite = \{\s*id\?: string\s*type: "file"\s*mime: string\s*filename\?: string\s*url: string\s*\}/, 'FileInputLite changed');
-    has(client, /export type SyntheticContextInput = \{\s*id\?: string\s*text: string\s*metadata\?: ContextPartMetadata\s*description\?: string\s*\}/, 'SyntheticContextInput changed');
-    has(client, /for \(const item of context\) \{\s*await admitSynthetic\(item\)\s*\}[\s\S]{0,200}await prompt\(skills\.attached\)/, 'the context is no longer admitted right before the prompt');
-    has(source('packages/ui/src/sync/session-ui-store.ts'), /^export function resolveSendSelection\(\s*sessionId: string,\s*directory: string \| undefined,\s*desired: \{ providerID: string; modelID: string; variant\?: string; agent\?: string \},\s*\): \{ model\?: ModelRef; agent\?: string \} \{/m, 'resolveSendSelection changed its signature');
+  'session-store-send-message': () => {
+    const store = source('packages/ui/src/sync/session-ui-store.ts');
+    const signature = /sendMessage: (?:async )?\(\s*content: string,\s*providerID: string,\s*modelID: string,\s*agent\?: string,\s*attachments\?: AttachedFile\[\],\s*agentMentionName\?: string,\s*additionalParts\?: Array<\{ text: string; attachments\?: AttachedFile\[\]; synthetic\?: boolean; [^>]*\}>,\s*variant\?: string,\s*inputMode\?: "normal" \| "shell",\s*options\?: SendMessageOptions,\s*\) =>/g;
+    assert.equal(store.match(signature)?.length, 2, 'the store sendMessage no longer takes (content, providerID, modelID, agent, attachments, agentMentionName, additionalParts, variant, inputMode, options) in its type and its implementation');
+    has(store, /type SendMessageOptions = \{[^}]*\bsessionId\?: string\s+directory\?: string/, 'SendMessageOptions no longer takes sessionId and directory');
+    has(store, /const targetSessionId = capturedTarget\?\.sessionId \?\? options\?\.sessionId \?\? get\(\)\.currentSessionId/, 'sendMessage no longer sends to options.sessionId');
+    has(store, /const files = attachments\?\.map\(\(a\) => \(\{\s*type: "file" as const,\s*mime: a\.mimeType,\s*url: a\.dataUrl,\s*filename: a\.filename,\s*\}\)\)/, 'attachments no longer travel as their dataUrl, mimeType and filename');
+    has(store, /const contextItems = \(params\.additionalParts \?\? \[\]\)\s*\.filter\(\(part\) => part\.text\.trim\(\)\.length > 0\)/, 'additional parts no longer become context items');
+    has(store, /const selection = resolveSendSelection\(params\.sessionId, requestDirectory, \{/, 'a send no longer switches the model and agent only when needed');
+    has(store, /\/\/ Normal prompt — optimistic insert so message appears instantly\s*await optimisticSend\(\{/, 'a normal prompt is no longer inserted optimistically');
+    has(source('packages/ui/src/lib/opencode/client.ts'), /for \(const item of context\) \{\s*await admitSynthetic\(item\)\s*\}[\s\S]{0,200}await prompt\(skills\.attached\)/, 'the context is no longer admitted right before the prompt');
+    has(source('packages/ui/src/stores/types/sessionTypes.ts'), /export interface AttachedFile \{\s*id: string;\s*file: File;\s*dataUrl: string;\s*mimeType: string;\s*filename: string;\s*size: number;\s*source: "local" \| "server" \| "vscode";/, 'AttachedFile changed');
   },
 
   'quota-retry-turn-read': () => {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { AssistantMessage, Message, Part } from '../../../ui/src/lib/opencode/model';
-import { resendAfterQuota, type QuotaRetryDeps, type QuotaRetryPrompt, type QuotaRetryTurn } from './resend';
+import { resendAfterQuota, sendQuotaRetryPrompt, type QuotaRetryDeps, type QuotaRetryPrompt, type QuotaRetryTurn } from './resend';
 
 const SESSION = 'ses_1';
 
@@ -63,13 +63,13 @@ describe('resendAfterQuota', () => {
       sessionId: SESSION,
       directory: '/repo',
       text: 'draw a cat',
-      files: [{ type: 'file', mime: 'image/png', filename: 'cat.png', url: 'data:image/png;base64,AAA' }],
-      context: [{ text: 'Selected lines from cat.ts', description: 'Selection' }],
-      agentMentions: [{ name: 'artist' }],
+      files: [{ mime: 'image/png', filename: 'cat.png', url: 'data:image/png;base64,AAA' }],
+      syntheticTexts: ['Selected lines from cat.ts'],
       providerID: 'mittr',
       modelID: 'pm_2',
-      variant: 'high',
       agent: 'plan',
+      agentMentionName: 'artist',
+      variant: 'high',
     });
   });
 
@@ -125,11 +125,58 @@ describe('resendAfterQuota', () => {
       sessionId: SESSION,
       text: 'first ask',
       files: [],
-      context: [],
-      agentMentions: [],
+      syntheticTexts: [],
       providerID: 'mittr',
       modelID: 'pm_2',
       agent: 'plan',
     });
+  });
+
+  test('the context before the asking turn is found past switch, system and skill records', async () => {
+    const sent: QuotaRetryPrompt[] = [];
+    const withPlumbing: Message[] = [
+      messages[0],
+      messages[1],
+      { id: 'msg_s0', sessionID: SESSION, role: 'synthetic', time: { created: 3 }, text: 'Pinned notes' },
+      { id: 'msg_m', sessionID: SESSION, role: 'model-switched', time: { created: 3 }, model: { providerID: 'mittr', id: 'pm_2' } },
+      { id: 'msg_s1', sessionID: SESSION, role: 'synthetic', time: { created: 4 }, text: 'Selected lines from cat.ts' },
+      { id: 'msg_sys', sessionID: SESSION, role: 'system', time: { created: 4 }, text: 'Instructions changed' },
+      { id: 'msg_skill', sessionID: SESSION, role: 'skill', time: { created: 4 }, skill: 'review', name: 'review', text: 'Skill body' },
+      messages[5],
+      assistant,
+    ];
+    await resendAfterQuota(assistant, depsWith(async (prompt) => {
+      sent.push(prompt);
+    }, () => ({ messages: withPlumbing, partsOf })));
+    expect(sent[0].syntheticTexts).toEqual(['Pinned notes', 'Selected lines from cat.ts']);
+  });
+});
+
+describe('sendQuotaRetryPrompt', () => {
+  test('passes every field to the position the session store sendMessage reads it from', async () => {
+    const calls: Parameters<Parameters<typeof sendQuotaRetryPrompt>[1]>[] = [];
+    await sendQuotaRetryPrompt({
+      sessionId: SESSION,
+      directory: '/repo',
+      text: 'draw a cat',
+      files: [{ url: 'data:image/png;base64,AAA', mime: 'image/png', filename: 'cat.png' }],
+      syntheticTexts: ['Selected lines from cat.ts'],
+      providerID: 'mittr',
+      modelID: 'pm_2',
+      agent: 'plan',
+      agentMentionName: 'artist',
+      variant: 'high',
+    }, async (...args) => {
+      calls.push(args);
+    });
+    expect(calls).toHaveLength(1);
+    const [content, providerID, modelID, agent, attachments, agentMentionName, additionalParts, variant, inputMode, options] = calls[0];
+    expect([content, providerID, modelID, agent, agentMentionName, variant, inputMode]).toEqual(['draw a cat', 'mittr', 'pm_2', 'plan', 'artist', 'high', 'normal']);
+    expect(attachments?.map(({ dataUrl, mimeType, filename, source }) => ({ dataUrl, mimeType, filename, source }))).toEqual([
+      { dataUrl: 'data:image/png;base64,AAA', mimeType: 'image/png', filename: 'cat.png', source: 'server' },
+    ]);
+    expect(attachments?.[0].file.name).toBe('cat.png');
+    expect(additionalParts).toEqual([{ text: 'Selected lines from cat.ts', synthetic: true }]);
+    expect(options).toEqual({ sessionId: SESSION, directory: '/repo' });
   });
 });

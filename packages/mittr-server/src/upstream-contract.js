@@ -360,14 +360,14 @@ export const UPSTREAM_CONTRACT = [
     why: "an assistant message asks translateProductMessageError once, with its error's type, message, status and response body and the provider the turn ran on, before any of upstream's own error texts, and renders the assistant-message-footer slot once, under the assistant message body, with the message and whether its turn is the latest; the used-up quota text and Try again live there",
   },
   {
-    id: 'opencode-client-send-message',
-    files: ['packages/ui/src/lib/opencode/client.ts', 'packages/ui/src/sync/session-ui-store.ts'],
-    why: "opencodeClient.sendMessage takes the session id, providerID, model, agent, text, files ({ type: 'file', mime, filename, url }), context ([{ text, description }], admitted as synthetic messages right before the prompt), agentMentions ([{ name }]) and directory, and resolveSendSelection says which model and agent the session still has to switch to; Try again sends the refused turn again that way",
+    id: 'session-store-send-message',
+    files: ['packages/ui/src/sync/session-ui-store.ts', 'packages/ui/src/stores/types/sessionTypes.ts', 'packages/ui/src/lib/opencode/client.ts'],
+    why: "useSessionUIStore.getState().sendMessage(content, providerID, modelID, agent, attachments, agentMentionName, additionalParts, variant, inputMode, { sessionId, directory }) sends to that session, takes attachments as AttachedFile (dataUrl, mimeType, filename), turns synthetic additional parts into context admitted before the prompt, switches the model and agent only when the session is not on them, and inserts the user message optimistically; Try again sends the refused turn again that way, as 1.22 did, so the refused turn stops being the latest at once",
   },
   {
     id: 'quota-retry-turn-read',
     files: ['packages/ui/src/sync/sync-refs.ts', 'packages/ui/src/sync/types.ts', 'packages/ui/src/lib/opencode/model.ts', 'packages/ui/src/sync/session-ui-store.ts'],
-    why: "getSyncMessages(sessionId, directory) lists a session's messages in order (the synthetic context, then the asking user message, then its assistant replies), getSyncParts(messageId, directory) gives a user message's text, file and agent parts, and getDirectoryForSession names the session's directory; Try again rebuilds the refused turn from them",
+    why: "getSyncMessages(sessionId, directory) lists a session's messages in order (the synthetic context mixed with switch, system and skill records, then the asking user message, then its assistant replies), getSyncParts(messageId, directory) gives a user message's text, file and agent parts, and getDirectoryForSession names the session's directory; Try again rebuilds the refused turn from them",
   },
   {
     id: 'quota-retry-button-ui',

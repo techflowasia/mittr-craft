@@ -1,19 +1,21 @@
-import { opencodeClient, type FileInputLite } from '../../../ui/src/lib/opencode/client';
 import type { AssistantMessage, Message, Part } from '../../../ui/src/lib/opencode/model';
-import { resolveSendSelection, useSessionUIStore } from '../../../ui/src/sync/session-ui-store';
+import type { AttachedFile } from '../../../ui/src/stores/types/sessionTypes';
+import { useSessionUIStore } from '../../../ui/src/sync/session-ui-store';
 import { getSyncMessages, getSyncParts } from '../../../ui/src/sync/sync-refs';
+
+export type QuotaRetryFile = { url: string; mime: string; filename: string };
 
 export type QuotaRetryPrompt = {
   sessionId: string;
   directory?: string;
   text: string;
-  files: FileInputLite[];
-  context: Array<{ text: string; description?: string }>;
-  agentMentions: Array<{ name: string }>;
+  files: QuotaRetryFile[];
+  syntheticTexts: string[];
   providerID: string;
   modelID: string;
-  variant?: string;
   agent?: string;
+  agentMentionName?: string;
+  variant?: string;
 };
 
 export type QuotaRetryTurn = {
@@ -28,15 +30,18 @@ export type QuotaRetryDeps = {
   pending: Set<string>;
 };
 
-const contextBefore = (messages: readonly Message[], userIndex: number): QuotaRetryPrompt['context'] => {
-  const context: QuotaRetryPrompt['context'] = [];
+type SendMessage = ReturnType<typeof useSessionUIStore.getState>['sendMessage'];
+
+const isConversation = (record: Message): boolean => record.role === 'user' || record.role === 'assistant';
+
+const syntheticTextsBefore = (messages: readonly Message[], userIndex: number): string[] => {
+  const texts: string[] = [];
   for (let index = userIndex - 1; index >= 0; index -= 1) {
     const record = messages[index];
-    if (record.role !== 'synthetic') break;
-    if (!record.text.trim()) continue;
-    context.unshift(record.description ? { text: record.text, description: record.description } : { text: record.text });
+    if (isConversation(record)) break;
+    if (record.role === 'synthetic' && record.text.trim()) texts.unshift(record.text);
   }
-  return context;
+  return texts;
 };
 
 function buildQuotaRetryPrompt(assistant: AssistantMessage, turn: QuotaRetryTurn): QuotaRetryPrompt | null {
@@ -46,15 +51,12 @@ function buildQuotaRetryPrompt(assistant: AssistantMessage, turn: QuotaRetryTurn
   if (userIndex < 0) return null;
 
   const typed: string[] = [];
-  const files: FileInputLite[] = [];
-  const agentMentions: QuotaRetryPrompt['agentMentions'] = [];
+  const files: QuotaRetryFile[] = [];
+  let agentMentionName: string | undefined;
   for (const part of turn.partsOf(turn.messages[userIndex].id)) {
     if (part.type === 'text') typed.push(part.text);
-    else if (part.type === 'file') {
-      const file: FileInputLite = { type: 'file', mime: part.mime, url: part.url };
-      if (part.filename) file.filename = part.filename;
-      files.push(file);
-    } else if (part.type === 'agent') agentMentions.push({ name: part.name });
+    else if (part.type === 'file') files.push({ url: part.url, mime: part.mime, filename: part.filename ?? '' });
+    else if (part.type === 'agent') agentMentionName ??= part.name;
   }
   const text = typed.join('\n').trim();
   if (!text && files.length === 0) return null;
@@ -63,14 +65,14 @@ function buildQuotaRetryPrompt(assistant: AssistantMessage, turn: QuotaRetryTurn
     sessionId: assistant.sessionID,
     text,
     files,
-    context: contextBefore(turn.messages, userIndex),
-    agentMentions,
+    syntheticTexts: syntheticTextsBefore(turn.messages, userIndex),
     providerID: assistant.providerID,
     modelID: assistant.modelID,
   };
   if (turn.directory) prompt.directory = turn.directory;
-  if (assistant.variant) prompt.variant = assistant.variant;
   if (assistant.agent) prompt.agent = assistant.agent;
+  if (agentMentionName) prompt.agentMentionName = agentMentionName;
+  if (assistant.variant) prompt.variant = assistant.variant;
   return prompt;
 }
 
@@ -90,6 +92,31 @@ export async function resendAfterQuota(assistant: AssistantMessage, { readTurn, 
   }
 }
 
+const toAttachment = (file: QuotaRetryFile, index: number): AttachedFile => ({
+  id: `quota-retry-${index}`,
+  file: new File([], file.filename, { type: file.mime }),
+  dataUrl: file.url,
+  mimeType: file.mime,
+  filename: file.filename,
+  size: 0,
+  source: 'server',
+});
+
+export function sendQuotaRetryPrompt(prompt: QuotaRetryPrompt, sendMessage: SendMessage): Promise<void> {
+  return sendMessage(
+    prompt.text,
+    prompt.providerID,
+    prompt.modelID,
+    prompt.agent,
+    prompt.files.map(toAttachment),
+    prompt.agentMentionName,
+    prompt.syntheticTexts.map((text) => ({ text, synthetic: true })),
+    prompt.variant,
+    'normal',
+    { sessionId: prompt.sessionId, directory: prompt.directory },
+  );
+}
+
 const readStoreTurn = (assistant: AssistantMessage): QuotaRetryTurn => {
   const directory = useSessionUIStore.getState().getDirectoryForSession(assistant.sessionID) ?? undefined;
   return {
@@ -99,28 +126,8 @@ const readStoreTurn = (assistant: AssistantMessage): QuotaRetryTurn => {
   };
 };
 
-const sendThroughClient = async (prompt: QuotaRetryPrompt): Promise<void> => {
-  const selection = resolveSendSelection(prompt.sessionId, prompt.directory, {
-    providerID: prompt.providerID,
-    modelID: prompt.modelID,
-    variant: prompt.variant,
-    agent: prompt.agent,
-  });
-  await opencodeClient.sendMessage({
-    id: prompt.sessionId,
-    providerID: prompt.providerID,
-    model: selection.model,
-    agent: selection.agent,
-    text: prompt.text,
-    files: prompt.files,
-    context: prompt.context.length > 0 ? prompt.context : undefined,
-    agentMentions: prompt.agentMentions.length > 0 ? prompt.agentMentions : undefined,
-    directory: prompt.directory,
-  });
-};
-
 export const sessionQuotaRetryDeps = (pending: Set<string>): QuotaRetryDeps => ({
   readTurn: readStoreTurn,
-  send: sendThroughClient,
+  send: (prompt) => sendQuotaRetryPrompt(prompt, useSessionUIStore.getState().sendMessage),
   pending,
 });
