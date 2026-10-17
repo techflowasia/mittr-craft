@@ -49,6 +49,8 @@ export const mittrEn = {
   'mittr.quota.exhausted.chatNoReset': 'Your weekly model quota is used up.',
   'mittr.quota.exhausted.retry': 'Try again',
   'mittr.quota.exhausted.retryFailed': 'MittrCraft could not send your message again. Try again.',
+  'mittr.answeredBy.outOfQuota': 'Answered by {to}. {from} is used up this week.',
+  'mittr.answeredBy.couldNotAnswer': 'Answered by {to}. {from} could not answer.',
   'mittr.providers.noRoute': "This provider is off. Turn on 'Show models from other providers' or pick a Mittr model.",
   'mittr.providers.noRouteMittr': "This Mittr model isn't available to you right now. Pick another Mittr model.",
 };

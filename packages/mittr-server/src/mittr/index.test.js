@@ -424,6 +424,34 @@ test('signing out ends an answer still streaming on that account', async (t) => 
   assert.ok(logger.warnings.includes('[mittr] shim ended 1 answer(s): the Mittr account changed'), logger.warnings.join('\n'));
 });
 
+const SUBSTITUTED_FRAME = `data: ${JSON.stringify({
+  choices: [{ delta: { content: 'hi' } }],
+  answered_by: { substituted: true, requestedLabel: 'Writer', answeredLabel: 'Backup', reason: 'quota' },
+})}\n\ndata: [DONE]\n\n`;
+
+test('an answer from a backup is listed for its session, and a sign-out clears the list', async (t) => {
+  const fetchImpl = fakeFetch((request) => (request.url.endsWith('/chat/completions')
+    ? new Response(SUBSTITUTED_FRAME, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+    : json(session)));
+  const { call, dataDir } = await setUp(t, { fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+
+  const response = await fetch(`${call.base}/mittr-shim/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${shimKey(dataDir)}`, 'x-opencode-session-id': 'ses_1' },
+    body: JSON.stringify({ model: 'writer', stream: true, messages: [] }),
+  });
+  await response.text();
+
+  const listed = await call('GET', '/api/mittr/answered-by?sessionId=ses_1');
+  assert.equal(listed.status, 200);
+  assert.deepEqual(listed.body.answers.map(({ model, answeredLabel, reason }) => ({ model, answeredLabel, reason })), [{ model: 'writer', answeredLabel: 'Backup', reason: 'quota' }]);
+  assert.deepEqual((await call('GET', '/api/mittr/answered-by?sessionId=ses_2')).body.answers, []);
+
+  assert.equal((await call('DELETE', '/api/mittr/auth/session')).status, 200);
+  assert.deepEqual((await call('GET', '/api/mittr/answered-by?sessionId=ses_1')).body.answers, []);
+});
+
 test('a retry while the engine is already on the account\'s home answers at once and leaves a streaming answer alone', async (t) => {
   const held = heldStream();
   const fetchImpl = fakeFetch((request) => (request.url.endsWith('/chat/completions') ? held.respond(request.signal) : json(session)));

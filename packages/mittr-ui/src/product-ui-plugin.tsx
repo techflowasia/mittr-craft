@@ -6,6 +6,7 @@ import { AboutSettingsSignOut, SignOutButton } from './accounts/SignOutButton';
 import { MittrCraftLogo } from './MittrCraftLogo';
 import { OtherProvidersSwitch } from './providers/OtherProvidersSwitch';
 import { useMittrPickerDecorations } from './providers/useMittrPickerFilter';
+import { AnsweredByNotice } from './quota/AnsweredByNotice';
 import { QuotaRetryButton } from './quota/QuotaRetryButton';
 import { mittrMessageError } from './quota/quotaError';
 import './quota/registerMittrUsage';
@@ -38,7 +39,7 @@ registerProductUiPlugin({
     'sidebar-footer': MittrAccountMenu,
     'about-dialog': SignOutButton,
     'about-settings': AboutSettingsSignOut,
-    'assistant-message-footer': [QuotaRetryButton],
+    'assistant-message-footer': [AnsweredByNotice, QuotaRetryButton],
   },
   modelPicker: { useDecorations: useMittrPickerDecorations },
   messageError: mittrMessageError,

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { ENGINE_SHARE_OFF } from '../engine-outbound.js';
 import { createAccountStore } from './account-store.js';
 import { createAccountSwitcher } from './accounts-switch.js';
+import { createAnsweredByLog, createAnsweredByWatcher, registerAnsweredByRoute } from './answered-by.js';
 import { registerMittrAuthRoutes } from './auth-routes.js';
 import { resolveBroker } from './broker.js';
 import { catalogCachePath, createCatalogCache } from './catalog-cache.js';
@@ -128,6 +129,8 @@ export function setupMittr(context, {
     return { items, known };
   };
 
+  const answeredByLog = createAnsweredByLog({ perSession: 10, sessions: 100 });
+
   // Both are defined below and first called once setup has returned.
   let shim = null;
   const syncCatalog = () => catalog.sync();
@@ -168,6 +171,7 @@ export function setupMittr(context, {
     // account now active brings its own models.
     onAccountChange: (nextUserId) => {
       shim?.abortInFlight();
+      answeredByLog.clear();
       return switcher.switchTo(nextUserId);
     },
     switchSettled: () => switcher.settledOnTarget(),
@@ -188,10 +192,12 @@ export function setupMittr(context, {
       if (!current) throw new Error('no Mittr catalog is cached for the active account');
       return modelListOf(current.models.items);
     },
+    onAnswer: createAnsweredByWatcher(answeredByLog.record),
     fetchImpl,
     logger,
     env,
   });
+  registerAnsweredByRoute(app, { log: answeredByLog });
 
   const catalog = registerMittrCatalogRoutes(app, {
     broker,

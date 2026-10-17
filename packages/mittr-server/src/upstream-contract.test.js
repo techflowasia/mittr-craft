@@ -1063,6 +1063,13 @@ const checks = {
     for (const name of ['refresh', 'loader-4']) has(sprite, new RegExp(`^ {2}"${name}": `, 'm'), `the ${name} icon is gone`);
   },
 
+  'answered-by-notice-ui': () => {
+    has(source('packages/ui/src/components/icon/sprite.ts'), /^ {2}"arrow-left-right": /m, 'the arrow-left-right icon is gone');
+    const model = source('packages/ui/src/lib/opencode/model.ts');
+    const assistant = model.slice(model.indexOf('export type AssistantMessage = MessageBase & {'));
+    has(assistant, /^ {2}time: \{\n {4}created: number\n(?: {4}.*\n)* {4}completed\?: number\n {2}\}\n {2}agent: string\n {2}providerID: string\n {2}modelID: string$/m, 'the assistant message no longer carries time.created, time.completed, providerID and modelID');
+  },
+
   'quota-store-dropdown-providers': () => {
     const store = source('packages/ui/src/stores/useQuotaStore.ts');
     has(store, /^ {6}dropdownProviderIds: QUOTA_PROVIDERS\.map\(\(provider\) => provider\.id\),$/m, 'the store no longer starts from the registered providers');

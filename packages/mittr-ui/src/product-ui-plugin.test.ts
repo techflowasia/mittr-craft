@@ -117,4 +117,12 @@ describe('MittrCraft chat messages', () => {
     expect(footer(true)).toContain(mittrT('mittr.quota.exhausted.retry'));
     expect(footer(false)).toBe('');
   });
+
+  test('the footer under an ordinary completed Mittr answer is empty until the session list is read', () => {
+    const answered = { ...refused, time: { created: 2, completed: 5 }, finish: 'stop' as const, error: undefined };
+    const html = renderToStaticMarkup(
+      React.createElement(ProductSlot, { name: 'assistant-message-footer', message: { info: answered, parts: [] }, isLatestTurn: true }),
+    );
+    expect(html).toBe('');
+  });
 });

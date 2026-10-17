@@ -375,6 +375,11 @@ export const UPSTREAM_CONTRACT = [
     why: 'Try again is drawn with the shared Button (variant outline, size xs) and the refresh and loader-4 icons',
   },
   {
+    id: 'answered-by-notice-ui',
+    files: ['packages/ui/src/components/icon/sprite.ts', 'packages/ui/src/lib/opencode/model.ts'],
+    why: "the note under an answer from a backup agent is drawn with the arrow-left-right icon, and finds its message by the assistant message's providerID, modelID and time.created and time.completed",
+  },
+  {
     id: 'quota-store-dropdown-providers',
     files: [
       'packages/ui/src/stores/useQuotaStore.ts',
