@@ -44,10 +44,11 @@ describe('MittrAccountMenu', () => {
     expect(rows[3]).toContain(mittrT('mittr.accounts.signOut'));
   });
 
-  test('the footer button shows the active account\'s initials and names the menu', () => {
+  test('the footer button shows the active account\'s initials and names the menu and the account', () => {
     const html = view();
     expect(html).toContain('>B<');
-    expect(html).toContain(`aria-label="${escaped(mittrT('mittr.accounts.menu.label'))}"`);
+    expect(html).toContain(`aria-label="${escaped(mittrT('mittr.accounts.menu.labelFor', { name: 'Bo' }))}"`);
+    expect(view({ accounts: null })).toContain(`aria-label="${escaped(mittrT('mittr.accounts.menu.label'))}"`);
     expect(view({ accounts: [{ ...A, active: true }] })).toContain('>AL<');
     expect(view({ accounts: null })).toContain('oc-user');
   });
@@ -86,12 +87,14 @@ describe('the switch wait state', () => {
   test('an engine that did not restart offers Retry only', () => {
     const html = status('not-restarted');
     expect(html).toContain(escaped(mittrT('mittr.accounts.switch.notRestarted')));
+    expect(html).toContain(escaped(mittrT('mittr.accounts.switch.quitHint')));
     expect(buttons(html)).toEqual([mittrT('mittr.accounts.switch.retry')]);
   });
 
   test('a failed request offers Retry and Close', () => {
     const html = status('failed');
     expect(html).toContain(escaped(mittrT('mittr.accounts.switch.failed')));
+    expect(html).not.toContain(escaped(mittrT('mittr.accounts.switch.quitHint')));
     expect(buttons(html)).toEqual([mittrT('mittr.accounts.switch.retry'), mittrT('mittr.accounts.switch.close')]);
   });
 });

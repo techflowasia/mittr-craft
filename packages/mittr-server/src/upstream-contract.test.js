@@ -939,6 +939,10 @@ const checks = {
     const sprite = source('packages/ui/src/components/icon/sprite.ts');
     for (const name of ['check', 'user', 'loader']) has(sprite, new RegExp(`^ {2}"${name}": `, 'm'), `the ${name} icon is gone`);
     has(source('packages/ui/src/components/sections/shared/SettingsSection.tsx'), /^export const SETTINGS_FIELD_LABEL_CLASS =/m, 'SETTINGS_FIELD_LABEL_CLASS is no longer exported');
+    const footerClass = source('packages/ui/src/components/session/sidebar/shell/SidebarFooter.tsx').match(/^const footerButtonClassName = '([^']+)';$/m)?.[1];
+    assert.ok(footerClass, 'the sidebar footer no longer names its button classes in footerButtonClassName');
+    const accountClass = source('packages/mittr-ui/src/accounts/MittrAccountMenu.tsx').match(/^const FOOTER_BUTTON_CLASS = '([^']+)';$/m)?.[1];
+    assert.equal(accountClass, footerClass, 'the account button no longer wears the sidebar footer button classes');
   },
 };
 

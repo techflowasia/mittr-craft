@@ -7,6 +7,7 @@ import { MittrCraftLogo } from '../MittrCraftLogo';
 import { MittrErrorBoundary } from '../MittrErrorBoundary';
 import { mittrT, useMittrT } from '../strings/mittrT';
 import type { MittrKey } from '../strings/mittrT';
+import { gateHeld, listenAccountChanged, onGateRelease } from './accountChange';
 import { AuditNotice } from './AuditNotice';
 import { createSignInGateController, desktopBridge, type SignInGateController } from './signInGateController';
 import { gateNotice, gateStateFromStatus, type GateNotice, type GateSnapshot, type GateState } from './signInGateState';
@@ -149,6 +150,8 @@ const createGateController = (): SignInGateController => createSignInGateControl
   listen: desktopBridge()?.listen,
   onFocus: watchFocus,
   openUrl: openExternalUrl,
+  held: gateHeld,
+  onRelease: onGateRelease,
 });
 
 type SignInGateBinding = { controller: SignInGateController | null; snapshot: GateSnapshot; broken: boolean };
@@ -169,6 +172,8 @@ const useSignInGate = (): SignInGateBinding => {
     setController(created);
     return () => created.dispose();
   }, []);
+
+  React.useEffect(() => listenAccountChanged(() => window.location.reload()), []);
 
   const subscribe = React.useCallback(
     (listener: () => void) => (controller ? controller.subscribe(listener) : () => {}),

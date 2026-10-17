@@ -5,27 +5,30 @@ import { Button } from '../../../ui/src/components/ui/button';
 import { useMittrT } from '../strings/mittrT';
 import { AccountSwitchDialog } from './AccountSwitchDialog';
 import { accountsApi } from './accountsApi';
-import { reloadWindow, runSignOut, useAccountSwitch } from './accountSwitch';
+import { runSignOut, useAccountSwitch } from './accountSwitch';
 
 export type SignOutButtonProps = { onSignedOut?: (signedIn: boolean) => void };
 
-export function SignOutButton({ onSignedOut = reloadWindow }: SignOutButtonProps): React.ReactNode {
+export function SignOutButton({ onSignedOut }: SignOutButtonProps): React.ReactNode {
   const t = useMittrT();
-  const { accountSwitch, state } = useAccountSwitch({ retrySwitch: accountsApi.retrySwitch });
+  const { accountSwitch, state } = useAccountSwitch();
+  const signOut = () => (onSignedOut
+    ? runSignOut({ signOutActive: accountsApi.signOutActive, onSignedOut, accountSwitch })
+    : accountSwitch.run(accountsApi.signOutActive));
   return (
     <>
       <Button
         size="sm"
         variant="outline"
         disabled={state !== 'idle'}
-        onClick={() => { void runSignOut({ signOutActive: accountsApi.signOutActive, onSignedOut, accountSwitch }); }}
+        onClick={() => { void signOut(); }}
       >
         {t('mittr.accounts.signOut')}
       </Button>
       <AccountSwitchDialog
         state={state}
         onRetry={() => { void accountSwitch.retry(); }}
-        onDismiss={accountSwitch.dismiss}
+        onDismiss={() => { void accountSwitch.dismiss(); }}
       />
     </>
   );

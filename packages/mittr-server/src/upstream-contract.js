@@ -333,8 +333,9 @@ export const UPSTREAM_CONTRACT = [
       'packages/ui/src/components/ui/index.ts',
       'packages/ui/src/components/icon/sprite.ts',
       'packages/ui/src/components/sections/shared/SettingsSection.tsx',
+      'packages/ui/src/components/session/sidebar/shell/SidebarFooter.tsx',
     ],
-    why: 'the account menu is drawn with DropdownMenu (open, onOpenChange, items with onClick, label, separator) inside a Tooltip, the switch wait state with a Dialog whose close button can be left out, messages with toast, and the check, user and loader icons; the About row uses SETTINGS_FIELD_LABEL_CLASS',
+    why: 'the account button wears the sidebar footer buttons\' own classes, copied; the account menu is drawn with DropdownMenu (open, onOpenChange, items with onClick, label, separator) inside a Tooltip, the switch wait state with a Dialog whose close button can be left out, messages with toast, and the check, user and loader icons; the About row uses SETTINGS_FIELD_LABEL_CLASS',
   },
 ];
 

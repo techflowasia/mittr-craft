@@ -121,6 +121,40 @@ describe('sign-in gate controller', () => {
     controller.dispose();
   });
 
+  test('while an account change holds the gate, a focus does not re-check; the release re-checks once', async () => {
+    const server = fakeFetch({ [SIGN_IN_STATUS_ENDPOINT]: [answer({ signedIn: true, userId: 'u1', displayName: 'A' }), answer({ signedIn: false })] });
+    const desktop = fakeDesktop();
+    let held = false;
+    const releases = new Set<() => void>();
+    const controller = createSignInGateController({
+      fetch: server.fetch,
+      onFocus: desktop.onFocus,
+      held: () => held,
+      onRelease: (listener) => {
+        releases.add(listener);
+        return () => { releases.delete(listener); };
+      },
+    });
+    await settle();
+    expect(controller.state()).toBe('signed-in');
+
+    held = true;
+    desktop.focus();
+    desktop.focus();
+    await settle();
+    expect(server.statusCalls()).toBe(1);
+    expect(controller.state()).toBe('signed-in');
+
+    held = false;
+    for (const release of releases) release();
+    for (const release of releases) release();
+    await settle();
+    expect(server.statusCalls()).toBe(2);
+    expect(controller.state()).toBe('signed-out');
+    controller.dispose();
+    expect(releases.size).toBe(0);
+  });
+
   test('a sign-in that failed in the browser ends the wait and shows the failure', async () => {
     const { controller, desktop, opened } = setUp({
       [SIGN_IN_STATUS_ENDPOINT]: [answer({ signedIn: false }), answer({ signedIn: false, signInFailed: 'unreachable' })],

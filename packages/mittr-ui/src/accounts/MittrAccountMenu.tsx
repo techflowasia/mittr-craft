@@ -16,7 +16,7 @@ import { SIGN_IN_COMPLETED_EVENT, SIGN_IN_FAILED_EVENT } from '../sign-in/signIn
 import { mittrT, useMittrT } from '../strings/mittrT';
 import { AccountSwitchDialog } from './AccountSwitchDialog';
 import { accountName, accountsApi, initialsOf, type MittrAccount } from './accountsApi';
-import { reloadWindow, runSignOut, useAccountSwitch } from './accountSwitch';
+import { useAccountSwitch } from './accountSwitch';
 
 const FOOTER_BUTTON_CLASS = 'inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-interactive-hover/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
@@ -62,7 +62,7 @@ export function MittrAccountMenuView({ open, onOpenChange, ...items }: MittrAcco
   const t = useMittrT();
   const active = items.accounts?.find((account) => account.active) ?? null;
   const initials = active ? initialsOf(accountName(active)) : '';
-  const label = t('mittr.accounts.menu.label');
+  const label = active ? t('mittr.accounts.menu.labelFor', { name: accountName(active) }) : t('mittr.accounts.menu.label');
   return (
     <DropdownMenu open={open} onOpenChange={(next) => onOpenChange(next)}>
       <Tooltip>
@@ -98,7 +98,7 @@ export function MittrAccountMenu(): React.ReactNode {
   const [open, setOpen] = React.useState(false);
   const [accounts, setAccounts] = React.useState<MittrAccount[] | null>(null);
   const [loadFailed, setLoadFailed] = React.useState(false);
-  const { accountSwitch, state } = useAccountSwitch({ retrySwitch: accountsApi.retrySwitch });
+  const { accountSwitch, state } = useAccountSwitch();
   const adding = React.useRef(false);
 
   const load = React.useCallback(() => {
@@ -130,7 +130,7 @@ export function MittrAccountMenu(): React.ReactNode {
       return wasAdding;
     };
     subscribeDesktopEvent(listen, SIGN_IN_COMPLETED_EVENT, () => {
-      if (finishAdding()) void accountSwitch.run(accountsApi.retrySwitch, reloadWindow);
+      if (finishAdding()) void accountSwitch.run(accountsApi.retrySwitch);
     }, keep);
     subscribeDesktopEvent(listen, SIGN_IN_FAILED_EVENT, () => {
       if (finishAdding()) toast.error(mittrT('mittr.accounts.add.failed'));
@@ -161,14 +161,14 @@ export function MittrAccountMenu(): React.ReactNode {
         loadFailed={loadFailed}
         open={open}
         onOpenChange={onOpenChange}
-        onActivate={(userId) => { void accountSwitch.run(() => accountsApi.activateAccount(userId), reloadWindow); }}
+        onActivate={(userId) => { void accountSwitch.run(() => accountsApi.activateAccount(userId)); }}
         onAddAccount={onAddAccount}
-        onSignOut={() => { void runSignOut({ signOutActive: accountsApi.signOutActive, onSignedOut: reloadWindow, accountSwitch }); }}
+        onSignOut={() => { void accountSwitch.run(accountsApi.signOutActive); }}
       />
       <AccountSwitchDialog
         state={state}
         onRetry={() => { void accountSwitch.retry(); }}
-        onDismiss={accountSwitch.dismiss}
+        onDismiss={() => { void accountSwitch.dismiss(); }}
       />
     </>
   );

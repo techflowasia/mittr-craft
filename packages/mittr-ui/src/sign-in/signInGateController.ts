@@ -33,6 +33,8 @@ export type SignInGateDeps = {
   onFocus: (handler: () => void) => () => void;
   openUrl?: (url: string) => Promise<boolean>;
   schedule?: GateSchedule;
+  held?: () => boolean;
+  onRelease?: (listener: () => void) => () => void;
 };
 
 export type SignInGateController = {
@@ -71,6 +73,8 @@ export function createSignInGateController({
   onFocus,
   openUrl = async () => false,
   schedule = scheduleWithTimers,
+  held = () => false,
+  onRelease,
 }: SignInGateDeps): SignInGateController {
   let current = INITIAL;
   let disposed = false;
@@ -119,7 +123,13 @@ export function createSignInGateController({
     for (const listener of listeners) listener();
   };
 
+  let refreshWhenReleased = false;
+
   const refresh = async () => {
+    if (held()) {
+      refreshWhenReleased = true;
+      return;
+    }
     const check = ++latestCheck;
     try {
       const response = await fetchStatus();
@@ -170,6 +180,13 @@ export function createSignInGateController({
   };
 
   stops.push(onFocus(() => { void refresh(); }));
+  if (onRelease) {
+    stops.push(onRelease(() => {
+      if (!refreshWhenReleased) return;
+      refreshWhenReleased = false;
+      void refresh();
+    }));
+  }
   for (const event of [SIGN_IN_COMPLETED_EVENT, SIGN_IN_FAILED_EVENT]) {
     try {
       void Promise.resolve(listen?.(event, endWait)).then((stop) => {

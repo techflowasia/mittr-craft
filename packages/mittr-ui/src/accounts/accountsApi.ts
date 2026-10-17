@@ -33,6 +33,15 @@ export type AccountsApi = {
   startAddAccount: () => Promise<boolean>;
 };
 
+export class HttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super(`HTTP ${status}`);
+    this.status = status;
+  }
+}
+
 const firstLetter = (word: string): string => Array.from(word)[0] ?? '';
 
 export function initialsOf(name: string): string {
@@ -68,7 +77,7 @@ const parseOutcome = (payload: JsonValue): SwitchOutcome => {
 };
 
 const readOk = async (response: AccountsResponse): Promise<JsonValue> => {
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (!response.ok) throw new HttpError(response.status);
   return response.json();
 };
 
