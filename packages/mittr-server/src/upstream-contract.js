@@ -330,6 +330,21 @@ export const UPSTREAM_CONTRACT = [
     why: "a server plugin adds and removes a quota provider through registerQuotaProvider on the plugin context, and builds its result with the buildResult and toUsageWindow the context hands it as quotaResult, so the Usage page lists it beside upstream's own",
   },
   {
+    id: 'quota-ui-registry',
+    files: ['packages/ui/src/lib/quota/providers/index.ts'],
+    why: 'registerQuotaProvider adds a usage provider to the Usage page at run time and selectRegisteredQuotaProvider passes a registered id to the setter it is given, so the Usage page opens on the Mittr provider',
+  },
+  {
+    id: 'quota-store-selection',
+    files: ['packages/ui/src/stores/useQuotaStore.ts', 'packages/ui/src/components/sections/usage/UsagePage.tsx'],
+    why: 'useQuotaStore keeps selectedProviderId and setSelectedProvider, and the Usage page picks a provider itself only while selectedProviderId is null, so a provider chosen before it opens is kept',
+  },
+  {
+    id: 'settings-search-usage',
+    files: ['packages/ui/src/lib/settings/search.ts', 'packages/ui/src/lib/i18n/messages/en.settings.ts'],
+    why: "the usage.model-quotas search item is titled by settings.usage.page.section.modelQuotas, which our English override renames to Weekly model quotas, and the Usage page's own search keywords include quota",
+  },
+  {
     id: 'account-menu-ui',
     files: [
       'packages/ui/src/components/ui/dropdown-menu.tsx',

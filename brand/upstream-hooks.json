@@ -229,6 +229,12 @@
       "why": "The model picker always offered \"Add new provider\", so a build whose picker plugin shows only its own provider until the person opts in to others showed a row that led to providers the picker would not list; a picker plugin can now withhold that row, and without one it stays."
     }
   ],
+  "packages/ui/src/lib/quota/providers/index.ts": [
+    {
+      "hook": "quota-ui",
+      "why": "A build whose server plugin reports a usage source of its own had no way to list it on the Usage page, because the provider list was a fixed table keyed by a closed id union, so registerQuotaProvider now adds an entry at run time (the one cast widens the id there and nowhere else) and selectRegisteredQuotaProvider passes a registered id to the caller's setter, which keeps this module from importing the quota store that already imports it."
+    }
+  ],
   "packages/ui/src/main.tsx": [
     {
       "hook": "ui",

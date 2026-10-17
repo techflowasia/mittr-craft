@@ -957,6 +957,26 @@ const checks = {
     has(server, /import \{ buildResult as buildQuotaResult, toUsageWindow \} from '\.\/lib\/quota\/utils\/formatters\.js';/);
   },
 
+  'quota-ui-registry': () => {
+    const registry = source('packages/ui/src/lib/quota/providers/index.ts');
+    has(registry, /^export function registerQuotaProvider\(meta: \{ id: string; name: string \}, options\?: \{ first\?: boolean \}\): void \{/m, 'registerQuotaProvider is no longer exported with this signature');
+    has(registry, /^export function selectRegisteredQuotaProvider\(id: string, select: \(id: QuotaProviderId\) => void\): void \{/m, 'selectRegisteredQuotaProvider is no longer exported with this signature');
+    has(registry, /^export const QUOTA_PROVIDERS: QuotaProviderMeta\[\] = \[/m, 'QUOTA_PROVIDERS is no longer a mutable list');
+    assert.doesNotMatch(registry, /useQuotaStore/, 'the registry imports the quota store, which imports the registry');
+  },
+
+  'quota-store-selection': () => {
+    const store = source('packages/ui/src/stores/useQuotaStore.ts');
+    has(store, /selectedProviderId: QuotaProviderId \| null;/, 'useQuotaStore no longer has selectedProviderId');
+    has(store, /setSelectedProvider: \(providerId: QuotaProviderId \| null\) => void;/, 'useQuotaStore no longer has setSelectedProvider');
+    has(source('packages/ui/src/components/sections/usage/UsagePage.tsx'), /if \(selectedProviderId\) \{\s*return;\s*\}/, 'the Usage page no longer leaves a chosen provider alone');
+  },
+
+  'settings-search-usage': () => {
+    has(source('packages/ui/src/lib/settings/search.ts'), /id: 'usage\.model-quotas',\s*page: 'usage',\s*titleKey: 'settings\.usage\.page\.section\.modelQuotas',\s*keywords: \[[^\]]*'quota'/, 'the usage.model-quotas search item moved or lost its quota keyword');
+    has(source('packages/ui/src/lib/i18n/messages/en.settings.ts'), /'settings\.usage\.page\.section\.modelQuotas': /, 'the model quotas heading key is gone');
+  },
+
   'account-menu-ui': () => {
     const menu = source('packages/ui/src/components/ui/dropdown-menu.tsx');
     for (const name of ['DropdownMenu', 'DropdownMenuContent', 'DropdownMenuItem', 'DropdownMenuLabel', 'DropdownMenuSeparator', 'DropdownMenuTrigger']) {

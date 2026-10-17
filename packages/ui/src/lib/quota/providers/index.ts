@@ -31,3 +31,22 @@ export const QUOTA_PROVIDERS: QuotaProviderMeta[] = [
   { id: 'zenmux', name: 'ZenMux' },
   { id: 'xai', name: 'xAI' },
 ];
+
+export function registerQuotaProvider(meta: { id: string; name: string }, options?: { first?: boolean }): void {
+  if (QUOTA_PROVIDERS.some((provider) => provider.id === meta.id)) {
+    return;
+  }
+  const entry: QuotaProviderMeta = { id: meta.id as QuotaProviderId, name: meta.name };
+  if (options?.first) {
+    QUOTA_PROVIDERS.unshift(entry);
+  } else {
+    QUOTA_PROVIDERS.push(entry);
+  }
+}
+
+export function selectRegisteredQuotaProvider(id: string, select: (id: QuotaProviderId) => void): void {
+  const provider = QUOTA_PROVIDERS.find((entry) => entry.id === id);
+  if (provider) {
+    select(provider.id);
+  }
+}
