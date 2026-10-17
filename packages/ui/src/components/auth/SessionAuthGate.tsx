@@ -15,6 +15,7 @@ import { runtimeFetch } from '@/lib/runtime-fetch';
 import { installAuthSessionFocusWatch, useAuthSessionStore } from '@/lib/runtime-auth-expiry';
 import { AuthExpiredBanner } from './AuthExpiredBanner';
 import { getRuntimeExtraHeadersSync } from '@/lib/runtime-auth';
+import { ProductSlot } from '@/lib/product-plugins';
 import { getRuntimeApiBaseUrl, getRuntimeKey, subscribeRuntimeEndpointChanged, switchRuntimeEndpoint } from '@/lib/runtime-switch';
 import { desktopHostsGet, desktopHostsSet, getDesktopHostApiUrl, normalizeHostUrl } from '@/lib/desktopHosts';
 import { runtimeIdentityMatches, type GateState, type RuntimeIdentity } from './sessionAuthGateState';
@@ -346,6 +347,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
   const [errorMessage, setErrorMessage] = React.useState('');
   const [retryAfter, setRetryAfter] = React.useState<number | undefined>(undefined);
   const [isTunnelLocked, setIsTunnelLocked] = React.useState(false);
+  const [passwordEnabled, setPasswordEnabled] = React.useState(true);
   const [passkeyStatus, setPasskeyStatus] = React.useState<PasskeyStatus>(defaultPasskeyStatus);
   const [supportsPasskeys, setSupportsPasskeys] = React.useState(false);
   const [isPasskeyBusy, setIsPasskeyBusy] = React.useState(false);
@@ -473,7 +475,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
           return;
         }
         if (response.status === 401) {
-          let data: { tunnelLocked?: boolean; debug?: { hasRefreshToken: boolean; message: string } } = {};
+          let data: { tunnelLocked?: boolean; passwordEnabled?: boolean; debug?: { hasRefreshToken: boolean; message: string } } = {};
           try {
             data = JSON.parse(responseText);
           } catch {
@@ -481,6 +483,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
           }
           resetTransientRetry();
           setIsTunnelLocked(data.tunnelLocked === true);
+          setPasswordEnabled(data.passwordEnabled !== false);
           setPasskeyStatus(latestPasskeyStatus);
           setState('locked');
           setRetryAfter(undefined);
@@ -896,7 +899,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
             </p>
           </div>
 
-          {!isTunnelLocked && (
+          {!isTunnelLocked && passwordEnabled && (
             <form onSubmit={handleSubmit} className="w-full space-y-2">
               {canUsePasskey && (
                 <Button
@@ -997,6 +1000,8 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
               )}
             </form>
           )}
+
+          <ProductSlot name="session-auth-methods" isTunnelLocked={isTunnelLocked} />
 
           {showHostSwitcher && (
             <div className="w-full">

@@ -265,6 +265,10 @@ mock.module('@/lib/runtime-fetch', () => ({
   }),
 }));
 
+mock.module('@/lib/product-plugins', () => ({
+  ProductSlot: () => null,
+}));
+
 mock.module('@/lib/runtime-auth', () => ({
   getRuntimeExtraHeadersSync: mock(() => ({})),
 }));

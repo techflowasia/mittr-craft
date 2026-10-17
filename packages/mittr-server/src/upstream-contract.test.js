@@ -1197,6 +1197,16 @@ const checks = {
     has(source('packages/web/server/lib/server-plugins.js'), /const SERVER_PLUGINS_ENV = 'OPENCHAMBER_SERVER_PLUGINS';/);
     assert.ok(fs.existsSync(path.join(repoRoot, 'packages/mittr-server/bin', '..', '..', 'web', 'bin', 'cli.js')));
   },
+
+  'session-auth-methods-slot': () => {
+    const gate = source('packages/ui/src/components/auth/SessionAuthGate.tsx');
+    has(gate, /^import \{ ProductSlot \} from '@\/lib\/product-plugins';$/m, 'SessionAuthGate no longer imports ProductSlot');
+    assert.equal(lineCount(gate, '<ProductSlot '), 1, 'SessionAuthGate renders ProductSlot more than once, or not at all');
+    has(gate, /<\/form>\s*\)\}\s*<ProductSlot name="session-auth-methods" isTunnelLocked=\{isTunnelLocked\} \/>\s*\{showHostSwitcher && \(/, 'the session-auth-methods slot is no longer after the password form, outside the tunnel check, before the host switcher');
+    has(gate, /\{!isTunnelLocked && passwordEnabled && \(\s*<form onSubmit=\{handleSubmit\}/, 'the password form no longer waits for passwordEnabled');
+    has(gate, /setPasswordEnabled\(data\.passwordEnabled !== false\);/, 'the gate no longer reads passwordEnabled from the 401 session status');
+    has(source('packages/ui/src/lib/product-plugins.ts'), /'session-auth-methods': \{ isTunnelLocked: boolean \};/);
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {

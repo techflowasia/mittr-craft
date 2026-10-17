@@ -143,6 +143,12 @@
       "why": "A product plugin could only rename the product and swap the logo, so a build that needs its own sign-in screen, account menu, model-picker marks or composer actions would have had to edit each upstream component; a root wrapper and named slots that render nothing when no plugin fills them let it add those at one-line call sites."
     }
   ],
+  "packages/ui/src/components/auth/SessionAuthGate.tsx": [
+    {
+      "hook": "session-auth-gate",
+      "why": "The session gate had no place for another way to sign in, so a build that adds one had to edit the gate; it now renders a session-auth-methods slot after the password form, outside the tunnel check, and leaves the password form out when the session status says no password is set, since that form could not sign anyone in."
+    }
+  ],
   "packages/ui/src/components/chat/ChatMessage.tsx": [
     {
       "hook": "chat-message",

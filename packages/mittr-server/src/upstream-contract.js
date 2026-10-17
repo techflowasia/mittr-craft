@@ -414,6 +414,11 @@ export const UPSTREAM_CONTRACT = [
     files: ['packages/web/bin/cli.js', 'packages/web/bin/cli-entry.js', 'packages/web/package.json', 'packages/web/bin/lib/cli-args.js', 'packages/web/server/lib/security/bind-host.js', 'packages/web/server/lib/server-plugins.js', 'packages/web/server/index.js'],
     why: 'the mittrcraft bin runs packages/web/bin/cli.js in its own process with argv[1] set to it, which cli.js takes as being run directly, after filling in OPENCHAMBER_SERVER_PLUGINS, OPENCHAMBER_DATA_DIR, OPENCHAMBER_UI_PASSWORD and OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN, the names upstream reads',
   },
+  {
+    id: 'session-auth-methods-slot',
+    files: ['packages/ui/src/components/auth/SessionAuthGate.tsx', 'packages/ui/src/lib/product-plugins.ts'],
+    why: "the session gate renders the session-auth-methods slot once, with isTunnelLocked, after its password form and outside the tunnel check; the password form (passkeys with it) is left out when the 401 session status says passwordEnabled is false",
+  },
 ];
 
 // The dictionaries are TypeScript with extensionless imports, which only Bun
