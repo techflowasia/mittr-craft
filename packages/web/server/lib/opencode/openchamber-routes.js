@@ -64,6 +64,11 @@ const isUpdateCheckDisabled = (env) => {
   return value === '1' || value === 'true';
 };
 
+const isModelsMetadataDisabled = (env) => {
+  const value = typeof env?.OPENCHAMBER_MODELS_METADATA_DISABLED === 'string' ? env.OPENCHAMBER_MODELS_METADATA_DISABLED.trim().toLowerCase() : '';
+  return value === '1' || value === 'true';
+};
+
 export const registerOpenChamberRoutes = (app, dependencies) => {
   const {
     fs,
@@ -499,6 +504,10 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   });
 
   app.get('/api/openchamber/models-metadata', async (_req, res) => {
+    if (isModelsMetadataDisabled(process.env)) {
+      res.json({});
+      return;
+    }
     try {
       const { getModelsMetadata } = await import('./models-metadata.js');
       const { metadata, fromCache, stale } = await getModelsMetadata({

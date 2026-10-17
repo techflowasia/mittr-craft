@@ -382,6 +382,15 @@ const checks = {
     }
   },
 
+  'models-metadata-disabled-env': () => {
+    const routes = source('packages/web/server/lib/opencode/openchamber-routes.js');
+    has(routes, /app\.get\('\/api\/openchamber\/models-metadata', async \(_req, res\) => \{\s*if \(isModelsMetadataDisabled\(process\.env\)\) \{\s*res\.json\(\{\}\);\s*return;\s*\}/, 'the models metadata route no longer answers an empty catalog before fetching models.dev when switched off');
+    has(routes, /env\.OPENCHAMBER_MODELS_METADATA_DISABLED/, 'the models metadata switch is no longer read from OPENCHAMBER_MODELS_METADATA_DISABLED');
+    for (const flavor of ['dev', 'prod']) {
+      assert.equal(JSON.parse(source(`brand/product.${flavor}.json`)).env.OPENCHAMBER_MODELS_METADATA_DISABLED, '1', flavor);
+    }
+  },
+
   'policy-file-env': async () => {
     const { policyFilePaths } = await importUpstream('packages/web/server/lib/enterprise-mode.js');
     assert.deepEqual(policyFilePaths({ platform: 'darwin', env: { OPENCHAMBER_POLICY_FILE: '/x/policy.json' } }), ['/x/policy.json']);

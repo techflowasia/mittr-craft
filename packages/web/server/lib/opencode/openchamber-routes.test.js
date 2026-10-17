@@ -545,3 +545,35 @@ describe('OpenChamber web update route on Windows', () => {
     expect(logError).toHaveBeenCalledOnce();
   });
 });
+
+describe('OpenChamber model metadata route', () => {
+  it('answers an empty catalog and fetches nothing when the metadata download is switched off', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      for (const value of ['1', 'true']) {
+        const { app } = createApp({ environment: { OPENCHAMBER_MODELS_METADATA_DISABLED: value } });
+        await request(app).get('/api/openchamber/models-metadata').expect(200, {});
+      }
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it('fetches the catalog as before when the switch is absent or off', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ example: { models: {} } }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    try {
+      for (const environment of [{}, { OPENCHAMBER_MODELS_METADATA_DISABLED: '0' }]) {
+        const { app } = createApp({ environment });
+        await request(app).get('/api/openchamber/models-metadata').expect(200, { example: { models: {} } });
+      }
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(fetchSpy.mock.calls.every(([url]) => url === 'https://models.example.test')).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});

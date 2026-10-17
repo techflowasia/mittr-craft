@@ -85,6 +85,11 @@ export const UPSTREAM_CONTRACT = [
     why: 'OPENCHAMBER_UPDATE_CHECK_DISABLED keeps the update and usage check from calling upstream',
   },
   {
+    id: 'models-metadata-disabled-env',
+    files: ['packages/web/server/lib/opencode/openchamber-routes.js'],
+    why: 'OPENCHAMBER_MODELS_METADATA_DISABLED makes /api/openchamber/models-metadata answer an empty catalog without fetching models.dev',
+  },
+  {
     id: 'policy-file-env',
     files: ['packages/web/server/lib/enterprise-mode.js'],
     why: 'OPENCHAMBER_POLICY_FILE replaces the OpenChamber policy path',

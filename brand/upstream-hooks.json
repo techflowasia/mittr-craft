@@ -279,6 +279,10 @@
     {
       "hook": "update-check",
       "why": "A build that ships no updates through the update service had no way to stop the server's update check, which posts the platform, version and a persistent install id."
+    },
+    {
+      "hook": "models-metadata",
+      "why": "A build that brings its own model list had no way to stop the server from downloading the public models.dev catalog for every window that asks, which tells a third party the app is running; OPENCHAMBER_MODELS_METADATA_DISABLED makes the route answer an empty catalog without fetching."
     }
   ],
   "packages/web/server/lib/opencode/v1-migration-topup.js": [
