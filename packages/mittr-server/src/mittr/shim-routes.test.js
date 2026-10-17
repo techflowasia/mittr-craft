@@ -296,6 +296,112 @@ test('a refusal from Mittr reaches the engine with its status, body and retry he
   assert.equal(upstream.requests.length, 2);
 });
 
+const QUOTA_BODY = { error: { type: 'insufficient_quota', code: 'llm_quota_exhausted', resets_at: '2026-10-20T00:00:00+07:00' } };
+
+test('pre-stream 429 becomes 402 with x-should-retry false', async (t) => {
+  const upstream = await platform(t, answerJson(429, QUOTA_BODY, { 'retry-after': '3' }));
+  const events = [];
+  const { request } = await shim(t, { upstreamV1: upstream.v1, onAnswer: (event) => events.push(event) });
+
+  const response = await request('/chat/completions');
+  assert.equal(response.status, 402);
+  assert.equal(response.headers.get('x-should-retry'), 'false');
+  assert.equal(response.headers.get('retry-after'), null);
+  const body = await response.json();
+  assert.equal(body.error.type, 'insufficient_quota');
+  assert.equal(body.error.code, 'llm_quota_exhausted');
+  assert.equal(body.error.message, 'Weekly model quota used up');
+  assert.equal(body.error.resets_at, '2026-10-19T17:00:00.000Z');
+  assert.equal(upstream.requests.length, 1);
+  assert.deepEqual(events, []);
+});
+
+test('flat filter body is recognised', async (t) => {
+  const upstream = await platform(t, answerJson(429, { code: 'llm_quota_exhausted', kind: 'chat', resetsAt: '2026-10-20T00:00:00+07:00' }));
+  const { request } = await shim(t, { upstreamV1: upstream.v1 });
+
+  const response = await request('/chat/completions', { body: { ...REQUEST, stream: false } });
+  assert.equal(response.status, 402);
+  assert.equal(response.headers.get('x-should-retry'), 'false');
+  const body = await response.json();
+  assert.equal(body.error.kind, 'chat');
+  assert.equal(body.error.resets_at, '2026-10-19T17:00:00.000Z');
+  assert.equal(upstream.requests.length, 1);
+});
+
+test('mid-stream quota frame is rewritten and the stream ends', async (t) => {
+  const upstreamClosed = deferred();
+  const upstream = await platform(t, (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write(frame({ content: 'Hel' }));
+    res.write(`data: ${JSON.stringify(QUOTA_BODY)}\n\n${frame({ content: 'after the refusal' })}data: {"choices":[{"delta":{"content":"tail`);
+    res.on('close', () => upstreamClosed.resolve('closed'));
+  });
+  const { request } = await shim(t, { upstreamV1: upstream.v1 });
+
+  const response = await request('/chat/completions');
+  assert.equal(response.status, 200);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  const outcome = await Promise.race([
+    (async () => {
+      for (let next = await reader.read(); !next.done; next = await reader.read()) text += decoder.decode(next.value, { stream: true });
+      return 'ended';
+    })(),
+    pause(2_000).then(() => 'still open'),
+  ]);
+  assert.equal(outcome, 'ended');
+
+  const [first, refusal, ...rest] = text.split('\n\n');
+  assert.equal(`${first}\n\n`, frame({ content: 'Hel' }));
+  assert.ok(refusal.startsWith('data: {"error":{"type":"insufficient_quota","code":"llm_quota_exhausted","message":'), refusal);
+  const payload = JSON.parse(refusal.slice('data: '.length));
+  assert.equal(JSON.parse(payload.error.message).error.resets_at, '2026-10-19T17:00:00.000Z');
+  assert.deepEqual(rest, ['data: [DONE]', '']);
+  assert.equal(text.includes('after the refusal'), false);
+  assert.equal(text.includes('tail'), false);
+  assert.equal(await Promise.race([upstreamClosed.promise, pause(2_000).then(() => 'still open')]), 'closed');
+  assert.equal(upstream.requests.length, 1);
+});
+
+test('a quota frame the platform ends on, with no line break, still ends the stream with [DONE]', async (t) => {
+  const upstream = await platform(t, answerStream([frame({ content: 'Hel' }), `data: ${JSON.stringify(QUOTA_BODY)}`]));
+  const { request } = await shim(t, { upstreamV1: upstream.v1 });
+
+  const text = await readAll(await request('/chat/completions'));
+  const [first, refusal, ...rest] = text.split('\n\n');
+  assert.equal(`${first}\n\n`, frame({ content: 'Hel' }));
+  assert.equal(JSON.parse(refusal.slice('data: '.length)).error.code, 'llm_quota_exhausted');
+  assert.deepEqual(rest, ['data: [DONE]', '']);
+});
+
+test('a plain rate limit is passed through', async (t) => {
+  const limit = { error: { type: 'rate_limit_exceeded', code: 'rate_limit_exceeded', message: 'Slow down' } };
+  const upstream = await platform(t, answerJson(429, limit, { 'retry-after': '1' }));
+  const { request } = await shim(t, { upstreamV1: upstream.v1 });
+
+  const response = await request('/chat/completions');
+  assert.equal(response.status, 429);
+  assert.equal(response.headers.get('x-should-retry'), null);
+  assert.equal(response.headers.get('retry-after'), '1');
+  assert.deepEqual(await response.json(), limit);
+});
+
+test('a used-up agent picked outside the picker, at any effort, ends in one 402', async (t) => {
+  const upstream = await platform(t, answerJson(429, QUOTA_BODY));
+  const { request } = await shim(t, { upstreamV1: upstream.v1 });
+
+  for (const reasoning_effort of [undefined, 'high']) {
+    const response = await request('/chat/completions', { body: { ...REQUEST, model: 'used-up-agent', reasoning_effort } });
+    assert.equal(response.status, 402);
+    assert.equal(response.headers.get('x-should-retry'), 'false');
+    assert.equal((await response.json()).error.code, 'llm_quota_exhausted');
+  }
+  assert.equal(upstream.requests.length, 2);
+  assert.deepEqual(upstream.requests.map((sent) => sent.body.reasoning_effort ?? null), [null, 'high']);
+});
+
 test('a complete (non-streamed) answer is passed through whole', async (t) => {
   const answer = { id: 'c1', choices: [{ index: 0, message: { role: 'assistant', content: 'hi' } }] };
   const upstream = await platform(t, answerJson(200, answer));

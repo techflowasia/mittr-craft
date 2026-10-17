@@ -1,0 +1,659 @@
+{
+  "engine": "packages/electron/resources/opencode-cli/opencode",
+  "engineVersion": "opencode v2.0.22",
+  "startedAt": "2026-10-17T11:29:30.736Z",
+  "scenarios": {
+    "shim": {
+      "pass": true,
+      "connectError": null,
+      "shimTimeoutMs": 3000,
+      "scenarios": {
+        "control": {
+          "pass": true,
+          "observed": {
+            "sessionID": "ses_eb6602ed0ffeYyClEEQvM6xFww",
+            "platformRequests": 1,
+            "platformRequestTimesMs": [
+              29
+            ],
+            "platformAuthorization": [
+              "Bearer probe-platform-token"
+            ],
+            "shimCalls": [
+              "[mittr] shim POST /chat/completions 200"
+            ],
+            "shimOtherLines": [],
+            "idleAfterAnswerMs": 10,
+            "idleAfterPromptMs": 40,
+            "retrySeen": false,
+            "retryEvents": 0,
+            "events": [
+              {
+                "type": "session.created"
+              },
+              {
+                "type": "session.inbox.enqueued"
+              },
+              {
+                "type": "session.execution.started"
+              },
+              {
+                "type": "session.instructions.updated"
+              },
+              {
+                "type": "session.inbox.delivered"
+              },
+              {
+                "type": "session.step.started"
+              },
+              {
+                "type": "session.text.started"
+              },
+              {
+                "type": "session.text.delta"
+              },
+              {
+                "type": "session.text.ended"
+              },
+              {
+                "type": "session.step.streamed"
+              },
+              {
+                "type": "session.step.ended"
+              },
+              {
+                "type": "session.usage.updated"
+              },
+              {
+                "type": "session.execution.succeeded"
+              }
+            ],
+            "assistantError": null,
+            "assistantTexts": [
+              "hello from the platform"
+            ],
+            "transcript": [
+              {
+                "type": "user",
+                "texts": [
+                  "probe answer through the shim"
+                ],
+                "error": null,
+                "finish": null
+              },
+              {
+                "type": "assistant",
+                "texts": [
+                  "hello from the platform"
+                ],
+                "error": null,
+                "finish": "stop"
+              },
+              {
+                "type": "idle",
+                "texts": [],
+                "error": null,
+                "finish": null
+              }
+            ],
+            "assistantFinish": "stop",
+            "messageError": null,
+            "interruptError": null,
+            "promptError": null
+          }
+        },
+        "P2": {
+          "pass": true,
+          "observed": {
+            "sessionID": "ses_eb65fe09affeEHpQbvICHxbCkh",
+            "platformRequests": 1,
+            "platformRequestTimesMs": [
+              25
+            ],
+            "platformAuthorization": [
+              "Bearer probe-platform-token"
+            ],
+            "shimCalls": [
+              "[mittr] shim POST /chat/completions 429"
+            ],
+            "shimOtherLines": [],
+            "idleAfterAnswerMs": 9,
+            "idleAfterPromptMs": 34,
+            "retrySeen": false,
+            "retryEvents": 0,
+            "events": [
+              {
+                "type": "session.created"
+              },
+              {
+                "type": "session.inbox.enqueued"
+              },
+              {
+                "type": "session.execution.started"
+              },
+              {
+                "type": "session.instructions.updated"
+              },
+              {
+                "type": "session.inbox.delivered"
+              },
+              {
+                "type": "session.step.started"
+              },
+              {
+                "type": "session.step.failed",
+                "error": {
+                  "type": "provider.quota",
+                  "status": 402,
+                  "message": "Weekly model quota used up"
+                }
+              },
+              {
+                "type": "session.execution.failed",
+                "error": {
+                  "type": "provider.quota",
+                  "status": 402,
+                  "message": "Weekly model quota used up"
+                }
+              }
+            ],
+            "assistantError": {
+              "type": "provider.quota",
+              "status": 402,
+              "message": "Weekly model quota used up",
+              "responseBody": "{\"error\":{\"type\":\"insufficient_quota\",\"code\":\"llm_quota_exhausted\",\"message\":\"Weekly model quota used up\",\"kind\":\"chat\",\"resets_at\":\"2026-10-19T17:00:00.000Z\"}}",
+              "keys": [
+                "message",
+                "response",
+                "status",
+                "type"
+              ],
+              "responseKeys": [
+                "body"
+              ]
+            },
+            "assistantTexts": [],
+            "transcript": [
+              {
+                "type": "user",
+                "texts": [
+                  "probe quota refusal through the shim"
+                ],
+                "error": null,
+                "finish": null
+              },
+              {
+                "type": "assistant",
+                "texts": [],
+                "error": "provider.quota",
+                "finish": "error"
+              },
+              {
+                "type": "idle",
+                "texts": [],
+                "error": null,
+                "finish": null
+              }
+            ],
+            "assistantFinish": "error",
+            "messageError": null,
+            "interruptError": null,
+            "promptError": null
+          }
+        },
+        "P2b": {
+          "pass": true,
+          "observed": {
+            "sessionID": "ses_eb65f925bffes5ayyL9FLdvUJO",
+            "platformRequests": 1,
+            "platformRequestTimesMs": [
+              16
+            ],
+            "platformAuthorization": [
+              "Bearer probe-platform-token"
+            ],
+            "shimCalls": [
+              "[mittr] shim POST /chat/completions 200"
+            ],
+            "shimOtherLines": [],
+            "idleAfterAnswerMs": 21,
+            "idleAfterPromptMs": 239,
+            "retrySeen": false,
+            "retryEvents": 0,
+            "events": [
+              {
+                "type": "session.created"
+              },
+              {
+                "type": "session.inbox.enqueued"
+              },
+              {
+                "type": "session.execution.started"
+              },
+              {
+                "type": "session.instructions.updated"
+              },
+              {
+                "type": "session.inbox.delivered"
+              },
+              {
+                "type": "session.step.started"
+              },
+              {
+                "type": "session.text.started"
+              },
+              {
+                "type": "session.text.delta"
+              },
+              {
+                "type": "session.text.ended"
+              },
+              {
+                "type": "session.step.streamed"
+              },
+              {
+                "type": "session.step.failed",
+                "error": {
+                  "type": "provider.quota",
+                  "status": 200,
+                  "message": "{\"type\":\"error\",\"error\":{\"type\":\"insufficient_quota\",\"code\":\"insufficient_quota\",\"reason\":\"llm_quota_exhausted\",\"kind\":\"chat\",\"resets_at\":\"2026-10-19T17:00:00.000Z\"}}"
+                }
+              },
+              {
+                "type": "session.execution.failed",
+                "error": {
+                  "type": "provider.quota",
+                  "status": 200,
+                  "message": "{\"type\":\"error\",\"error\":{\"type\":\"insufficient_quota\",\"code\":\"insufficient_quota\",\"reason\":\"llm_quota_exhausted\",\"kind\":\"chat\",\"resets_at\":\"2026-10-19T17:00:00.000Z\"}}"
+                }
+              }
+            ],
+            "assistantError": {
+              "type": "provider.quota",
+              "status": 200,
+              "message": "{\"type\":\"error\",\"error\":{\"type\":\"insufficient_quota\",\"code\":\"insufficient_quota\",\"reason\":\"llm_quota_exhausted\",\"kind\":\"chat\",\"resets_at\":\"2026-10-19T17:00:00.000Z\"}}",
+              "responseBody": "{\"error\":{\"type\":\"insufficient_quota\",\"code\":\"llm_quota_exhausted\",\"message\":\"{\\\"type\\\":\\\"error\\\",\\\"error\\\":{\\\"type\\\":\\\"insufficient_quota\\\",\\\"code\\\":\\\"insufficient_quota\\\",\\\"reason\\\":\\\"llm_quota_exhausted\\\",\\\"kind\\\":\\\"chat\\\",\\\"resets_at\\\":\\\"2026-10-19T17:00:00.000Z\\\"}}\"}}",
+              "keys": [
+                "message",
+                "response",
+                "status",
+                "type"
+              ],
+              "responseKeys": [
+                "body"
+              ]
+            },
+            "assistantTexts": [
+              "partial "
+            ],
+            "transcript": [
+              {
+                "type": "user",
+                "texts": [
+                  "probe mid-stream quota refusal through the shim"
+                ],
+                "error": null,
+                "finish": null
+              },
+              {
+                "type": "assistant",
+                "texts": [
+                  "partial "
+                ],
+                "error": "provider.quota",
+                "finish": "error"
+              },
+              {
+                "type": "idle",
+                "texts": [],
+                "error": null,
+                "finish": null
+              }
+            ],
+            "assistantFinish": "error",
+            "messageError": null,
+            "interruptError": null,
+            "promptError": null
+          }
+        },
+        "hang": {
+          "pass": true,
+          "observed": {
+            "sessionID": "ses_eb65ef539ffeyPfPxjlBsrilut",
+            "platformRequests": 1,
+            "platformRequestTimesMs": [
+              17
+            ],
+            "platformAuthorization": [
+              "Bearer probe-platform-token"
+            ],
+            "shimCalls": [
+              "[mittr] shim POST /chat/completions timeout"
+            ],
+            "shimOtherLines": [],
+            "idleAfterAnswerMs": 9,
+            "idleAfterPromptMs": 3028,
+            "retrySeen": false,
+            "retryEvents": 0,
+            "events": [
+              {
+                "type": "session.created"
+              },
+              {
+                "type": "session.inbox.enqueued"
+              },
+              {
+                "type": "session.execution.started"
+              },
+              {
+                "type": "session.instructions.updated"
+              },
+              {
+                "type": "session.inbox.delivered"
+              },
+              {
+                "type": "session.step.started"
+              },
+              {
+                "type": "session.step.failed",
+                "error": {
+                  "type": "provider.internal",
+                  "status": 504,
+                  "message": "Mittr did not answer in time"
+                }
+              },
+              {
+                "type": "session.execution.failed",
+                "error": {
+                  "type": "provider.internal",
+                  "status": 504,
+                  "message": "Mittr did not answer in time"
+                }
+              }
+            ],
+            "assistantError": {
+              "type": "provider.internal",
+              "status": 504,
+              "message": "Mittr did not answer in time",
+              "responseBody": "{\"error\":\"Mittr did not answer in time\"}",
+              "keys": [
+                "message",
+                "response",
+                "status",
+                "type"
+              ],
+              "responseKeys": [
+                "body"
+              ]
+            },
+            "assistantTexts": [],
+            "transcript": [
+              {
+                "type": "user",
+                "texts": [
+                  "probe platform silent before the headers"
+                ],
+                "error": null,
+                "finish": null
+              },
+              {
+                "type": "assistant",
+                "texts": [],
+                "error": "provider.internal",
+                "finish": "error"
+              },
+              {
+                "type": "idle",
+                "texts": [],
+                "error": null,
+                "finish": null
+              }
+            ],
+            "assistantFinish": "error",
+            "messageError": null,
+            "interruptError": null,
+            "promptError": null
+          }
+        },
+        "cut": {
+          "recordedOnly": true,
+          "observed": {
+            "sessionID": "ses_eb65f4429ffeIcnNTVEpY7Jl8j",
+            "platformRequests": 4,
+            "platformRequestTimesMs": [
+              100,
+              2055,
+              6543,
+              14195
+            ],
+            "platformAuthorization": [
+              "Bearer probe-platform-token"
+            ],
+            "shimCalls": [
+              "[mittr] shim POST /chat/completions 200",
+              "[mittr] shim POST /chat/completions 200",
+              "[mittr] shim POST /chat/completions 200",
+              "[mittr] shim POST /chat/completions 200"
+            ],
+            "shimOtherLines": [
+              "[mittr] shim cut the answer: the stream from Mittr broke (terminated)",
+              "[mittr] shim cut the answer: the stream from Mittr broke (terminated)",
+              "[mittr] shim cut the answer: the stream from Mittr broke (terminated)",
+              "[mittr] shim cut the answer: the stream from Mittr broke (terminated)"
+            ],
+            "idleAfterAnswerMs": null,
+            "idleAfterPromptMs": null,
+            "retrySeen": true,
+            "retryEvents": 4,
+            "events": [
+              {
+                "type": "session.created"
+              },
+              {
+                "type": "session.inbox.enqueued"
+              },
+              {
+                "type": "session.execution.started"
+              },
+              {
+                "type": "session.instructions.updated"
+              },
+              {
+                "type": "session.inbox.delivered"
+              },
+              {
+                "type": "session.step.started"
+              },
+              {
+                "type": "session.text.started"
+              },
+              {
+                "type": "session.text.delta"
+              },
+              {
+                "type": "session.text.ended"
+              },
+              {
+                "type": "session.step.streamed"
+              },
+              {
+                "type": "session.step.failed",
+                "error": {
+                  "type": "provider.transport",
+                  "status": 200,
+                  "message": "Connection lost while reading the response: ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"
+                }
+              },
+              {
+                "type": "session.retry.scheduled",
+                "attempt": 2,
+                "error": {
+                  "type": "provider.transport",
+                  "status": 200,
+                  "message": "Connection lost while reading the response: ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"
+                }
+              },
+              {
+                "type": "session.synthetic"
+              },
+              {
+                "type": "session.step.started"
+              },
+              {
+                "type": "session.text.started"
+              },
+              {
+                "type": "session.text.delta"
+              },
+              {
+                "type": "session.text.ended"
+              },
+              {
+                "type": "session.step.streamed"
+              },
+              {
+                "type": "session.step.failed",
+                "error": {
+                  "type": "provider.transport",
+                  "status": 200,
+                  "message": "Connection lost while reading the response: ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"
+                }
+              },
+              {
+                "type": "session.retry.scheduled",
+                "attempt": 3,
+                "error": {
+                  "type": "provider.transport",
+                  "status": 200,
+                  "message": "Connection lost while reading the response: ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"
+                }
+              },
+              {
+                "type": "session.synthetic"
+              },
+              {
+                "type": "session.step.started"
+              },
+              {
+                "type": "session.text.started"
+              },
+              {
+                "type": "session.text.delta"
+              }
+            ],
+            "assistantError": {
+              "type": "provider.transport",
+              "status": 200,
+              "message": "Connection lost while reading the response: ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
+              "responseBody": null,
+              "keys": [
+                "message",
+                "status",
+                "type"
+              ],
+              "responseKeys": null
+            },
+            "assistantTexts": [
+              "partial "
+            ],
+            "transcript": [
+              {
+                "type": "user",
+                "texts": [
+                  "probe stream cut after the first delta"
+                ],
+                "error": null,
+                "finish": null
+              },
+              {
+                "type": "assistant",
+                "texts": [
+                  "partial "
+                ],
+                "error": "provider.transport",
+                "finish": "error"
+              },
+              {
+                "type": "synthetic",
+                "texts": [
+                  "The previous response was interrupted. Continue from where you left off without repeating completed content."
+                ],
+                "error": null,
+                "finish": null
+              },
+              {
+                "type": "assistant",
+                "texts": [
+                  "partial "
+                ],
+                "error": "provider.transport",
+                "finish": "error"
+              },
+              {
+                "type": "synthetic",
+                "texts": [
+                  "The previous response was interrupted. Continue from where you left off without repeating completed content."
+                ],
+                "error": null,
+                "finish": null
+              },
+              {
+                "type": "assistant",
+                "texts": [
+                  "partial "
+                ],
+                "error": "provider.transport",
+                "finish": "error"
+              },
+              {
+                "type": "synthetic",
+                "texts": [
+                  "The previous response was interrupted. Continue from where you left off without repeating completed content."
+                ],
+                "error": null,
+                "finish": null
+              },
+              {
+                "type": "assistant",
+                "texts": [
+                  "partial "
+                ],
+                "error": "provider.transport",
+                "finish": "error"
+              },
+              {
+                "type": "idle",
+                "texts": [],
+                "error": null,
+                "finish": null
+              }
+            ],
+            "assistantFinish": "error",
+            "messageError": null,
+            "interruptError": null,
+            "promptError": null
+          }
+        }
+      }
+    }
+  },
+  "stopConditions": {},
+  "outbound": {
+    "lsofSamples": 343,
+    "lsofIntervalMs": 250,
+    "pidsSeen": 1,
+    "nonLoopbackRemotes": [],
+    "otherLoopbackPeers": [],
+    "proxyAttempts": 0,
+    "proxyLoopbackAttempts": 0,
+    "proxyNonLoopback": [],
+    "nonLoopbackHostsInLog": []
+  },
+  "stubTotals": {
+    "stub": 0,
+    "other": 0
+  },
+  "finishedAt": "2026-10-17T11:31:13.475Z",
+  "failures": [],
+  "blocked": false
+}

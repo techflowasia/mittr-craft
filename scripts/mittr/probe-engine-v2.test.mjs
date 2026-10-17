@@ -8,7 +8,9 @@ import {
   nonLoopbackFromLsof,
   openCodeMentions,
   refusedByPolicy,
+  shimCallsFor,
   stopConditionFor,
+  textsOf,
 } from './probe-engine-v2.mjs';
 
 test('refusedByPolicy needs an unanswered turn that failed with provider.no-route', () => {
@@ -53,4 +55,23 @@ test('failuresOf flags missing verdicts and egress', () => {
   assert.ok(failures.includes('outbound: proxy models.dev:443'));
   assert.ok(failuresOf({ fatal: 'x', scenarios: {}, outbound }).includes('fatal'));
   assert.deepEqual(failuresOf({ scenarios: { P7: { pass: true } }, outbound: { ...outbound, proxyNonLoopback: [] } }, ['P7']), []);
+});
+
+test('shimCallsFor keeps only the shim call lines of one session', () => {
+  const lines = [
+    { at: 1, line: '[mittr] shim POST /chat/completions 429 session=ses_1' },
+    { at: 2, line: '[mittr] shim POST /chat/completions 200 session=ses_10' },
+    { at: 3, line: '[mittr] shim cut the answer: Mittr went silent' },
+    { at: 4, line: '[mittr] shim POST /chat/completions timeout session=ses_1' },
+  ];
+  assert.deepEqual(shimCallsFor(lines, 'ses_1'), [
+    '[mittr] shim POST /chat/completions 429 session=ses_1',
+    '[mittr] shim POST /chat/completions timeout session=ses_1',
+  ]);
+  assert.deepEqual(shimCallsFor(lines, 'ses_2'), []);
+});
+
+test('textsOf collects every text field in order', () => {
+  assert.deepEqual(textsOf({ parts: [{ type: 'text', text: 'partial ' }, { type: 'step', nested: { text: 'two' } }], text: 3 }), ['partial ', 'two']);
+  assert.deepEqual(textsOf(null), []);
 });

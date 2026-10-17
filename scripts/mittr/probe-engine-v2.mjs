@@ -658,6 +658,202 @@ const probeRefusal = async ({ client, collector, stub, work, mode, label, expect
   return { pass, observed };
 };
 
+const PLATFORM_QUOTA_BODY = { error: { type: 'insufficient_quota', code: 'llm_quota_exhausted', resets_at: RESETS_AT } };
+const SHIM_TIMEOUT_MS = 3000;
+
+const startPlatform = async () => {
+  const port = await freePort();
+  const platform = { port, requests: [], mode: 'ok' };
+  const sockets = new Set();
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (part) => { raw += part; });
+    req.on('end', () => {
+      let body = null;
+      try { body = raw ? JSON.parse(raw) : null; } catch { body = null; }
+      const record = { at: Date.now(), method: req.method, url: req.url, authorization: req.headers.authorization ?? null, mode: platform.mode, answeredAt: null };
+      platform.requests.push(record);
+      const answered = () => { record.answeredAt ??= Date.now(); };
+      const model = body?.model ?? 'm1';
+      const open = () => res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+      if (record.mode === 'refuse') {
+        res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' });
+        res.end(JSON.stringify(PLATFORM_QUOTA_BODY));
+        answered();
+        return;
+      }
+      if (record.mode === 'midstream') {
+        open();
+        res.write(`data: ${chunk(model, { role: 'assistant', content: 'partial ' })}\n\n`);
+        setTimeout(() => {
+          res.write(`data: ${JSON.stringify(PLATFORM_QUOTA_BODY)}\n\n`);
+          answered();
+        }, 200);
+        return;
+      }
+      if (record.mode === 'cut') {
+        open();
+        res.write(`data: ${chunk(model, { role: 'assistant', content: 'partial ' })}\n\n`);
+        setTimeout(() => {
+          answered();
+          req.socket.destroy();
+        }, 200);
+        return;
+      }
+      if (record.mode === 'hang') {
+        res.on('close', answered);
+        return;
+      }
+      sse(res, [
+        chunk(model, { role: 'assistant', content: 'hello from the platform' }),
+        chunk(model, {}, 'stop', { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 }),
+        '[DONE]',
+      ]);
+      answered();
+    });
+  });
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+  });
+  server.on('clientError', (_error, socket) => socket.destroy());
+  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+  platform.since = (mark) => platform.requests.filter((r) => r.method === 'POST' && r.at >= mark);
+  platform.close = () => new Promise((resolve) => {
+    for (const socket of sockets) socket.destroy();
+    server.close(resolve);
+  });
+  return platform;
+};
+
+const startShim = async ({ platform, logLines }) => {
+  const { default: express } = await import('express');
+  const { SHIM_PREFIX, registerMittrShim } = await import('../../packages/mittr-server/src/mittr/shim-routes.js');
+  const localToken = `mc_local_${randomBytes(32).toString('hex')}`;
+  const record = (...args) => logLines.push({ at: Date.now(), line: args.map(String).join(' ') });
+  const app = express();
+  app.use(express.json({ limit: '50mb' }));
+  registerMittrShim(app, {
+    upstreamV1: `http://127.0.0.1:${platform.port}/v1`,
+    localToken,
+    ensureFreshSession: async () => ({ accessToken: 'probe-platform-token' }),
+    env: { MITTRCRAFT_SHIM_LOG: '1' },
+    logger: { log: record, warn: record, error: record },
+    upstreamTimeoutMs: SHIM_TIMEOUT_MS,
+  });
+  const port = await freePort();
+  const server = await new Promise((resolve, reject) => {
+    const listening = app.listen(port, '127.0.0.1', (error) => (error ? reject(error) : resolve(listening)));
+  });
+  return {
+    port,
+    localToken,
+    baseURL: `http://127.0.0.1:${port}${SHIM_PREFIX}`,
+    close: () => new Promise((resolve) => { server.closeAllConnections?.(); server.close(resolve); }),
+  };
+};
+
+export const textsOf = (value, found = []) => {
+  if (Array.isArray(value)) for (const item of value) textsOf(item, found);
+  else if (value && typeof value === 'object') {
+    for (const [key, item] of Object.entries(value)) {
+      if (key === 'text' && typeof item === 'string') found.push(item);
+      else textsOf(item, found);
+    }
+  }
+  return found;
+};
+
+export const shimCallsFor = (logLines, sessionID) => logLines
+  .map(({ line }) => line)
+  .filter((line) => line.startsWith('[mittr] shim POST /chat/completions ') && line.endsWith(` session=${sessionID}`));
+
+const probeShimTurn = async ({ client, collector, platform, shimLog, work, mode, label, windowMs = 20_000 }) => {
+  platform.mode = mode;
+  const { sessionID, createError } = await newSession(client, work, 'mittr', 'm1');
+  if (!sessionID) {
+    platform.mode = 'ok';
+    return { observed: { createError } };
+  }
+  const run = await promptAndSettle({ client, collector, sessionID, text: `probe ${label}`, timeoutMs: windowMs });
+  await sleep(Math.max(0, run.mark + windowMs - Date.now()));
+  let interruptError = null;
+  if (!run.idleAt) {
+    try { await client.session.interrupt({ sessionID }); } catch (error) { interruptError = errorText(error); }
+    await waitFor(() => sessionEvents(collector.events, sessionID, run.mark).find(isIdleEvent), 5000);
+  }
+  platform.mode = 'ok';
+  const events = sessionEvents(collector.events, sessionID, run.mark);
+  const requests = platform.since(run.mark);
+  const firstAnsweredAt = requests[0]?.answeredAt ?? null;
+  let assistant = null;
+  let messageError = null;
+  let transcript = null;
+  try {
+    assistant = await lastAssistant(client, sessionID);
+    const page = await client.message.list({ sessionID, limit: 50, order: 'asc' });
+    transcript = page.data.map((m) => ({ type: m.type ?? m.role ?? null, texts: textsOf(m), error: m.error?.type ?? null, finish: m.finish ?? null }));
+  } catch (error) {
+    messageError = errorText(error);
+  }
+  const error = assistant?.error ?? null;
+  return {
+    observed: {
+      sessionID,
+      platformRequests: requests.length,
+      platformRequestTimesMs: requests.map((r) => r.at - run.mark),
+      platformAuthorization: [...new Set(requests.map((r) => (r.authorization === 'Bearer probe-platform-token' ? r.authorization : 'other')))],
+      shimCalls: shimCallsFor(shimLog, sessionID).map((line) => line.replace(` session=${sessionID}`, '')),
+      shimOtherLines: shimLog.filter(({ at, line }) => at >= run.mark && !line.startsWith('[mittr] shim POST ')).map(({ line }) => line),
+      idleAfterAnswerMs: run.idleAt && firstAnsweredAt ? run.idleAt - firstAnsweredAt : null,
+      idleAfterPromptMs: run.idleAt ? run.idleAt - run.mark : null,
+      retrySeen: events.some(isRetryEvent),
+      retryEvents: events.filter(isRetryEvent).length,
+      events: summarizeEvents(events).slice(0, 24),
+      assistantError: error ? { type: error.type, status: error.status ?? null, message: String(error.message ?? ''), responseBody: error.response?.body ?? null, keys: Object.keys(error).sort(), responseKeys: error.response ? Object.keys(error.response).sort() : null } : null,
+      assistantTexts: textsOf(assistant),
+      transcript,
+      assistantFinish: assistant?.finish ?? null,
+      messageError,
+      interruptError,
+      promptError: run.promptError,
+    },
+  };
+};
+
+const probeShim = async ({ client, collector, platform, shim, shimLog, work }) => {
+  await waitFor(async () => (await modelIds(client, work).catch(() => [])).includes('mittr/m1'), 15_000, 100);
+  let connectError = null;
+  try {
+    await client.integration.connect.key({ integrationID: 'mittr', key: shim.localToken, location: { directory: work } });
+  } catch (error) {
+    connectError = errorText(error);
+  }
+  const turn = (mode, label) => probeShimTurn({ client, collector, platform, shimLog, work, mode, label });
+  const control = await turn('ok', 'answer through the shim');
+  const P2 = await turn('refuse', 'quota refusal through the shim');
+  const P2b = await turn('midstream', 'mid-stream quota refusal through the shim');
+  const cut = await turn('cut', 'stream cut after the first delta');
+  const hang = await turn('hang', 'platform silent before the headers');
+  const once = ({ observed }) => observed.platformRequests === 1 && observed.shimCalls.length === 1 && !observed.retrySeen;
+  const quotaBody = ({ observed }) => String(observed.assistantError?.responseBody ?? '').includes('llm_quota_exhausted')
+    || String(observed.assistantError?.message ?? '').includes('llm_quota_exhausted');
+  const verdict = (value, pass) => ({ pass, ...value });
+  const scenarios = {
+    control: verdict(control, control.observed.platformRequests === 1 && !control.observed.assistantError && control.observed.assistantTexts.some((t) => t.includes('hello from the platform'))),
+    P2: verdict(P2, once(P2) && P2.observed.idleAfterAnswerMs !== null && P2.observed.idleAfterAnswerMs <= 2000 && P2.observed.assistantError?.status === 402 && quotaBody(P2)),
+    P2b: verdict(P2b, once(P2b) && P2b.observed.idleAfterAnswerMs !== null && P2b.observed.idleAfterAnswerMs <= 2000 && P2b.observed.assistantError?.type === 'provider.quota' && quotaBody(P2b)),
+    hang: verdict(hang, once(hang) && hang.observed.shimCalls[0] === '[mittr] shim POST /chat/completions timeout'),
+    cut: { recordedOnly: true, ...cut },
+  };
+  return {
+    pass: connectError === null && scenarios.control.pass && scenarios.P2.pass && scenarios.P2b.pass && scenarios.hang.pass,
+    connectError,
+    shimTimeoutMs: SHIM_TIMEOUT_MS,
+    scenarios,
+  };
+};
+
 const tryPrompt = async ({ client, collector, stubs, work, providerID, modelID = 'm1' }) => {
   for (const s of Object.values(stubs)) s.mode = 'ok';
   const mark = Date.now();
@@ -966,8 +1162,8 @@ const main = async () => {
   const keep = args.includes('--keep');
   const onlyIndex = args.indexOf('--only');
   const only = onlyIndex === -1 ? null : args[onlyIndex + 1];
-  if (only !== null && only !== 'P7' && only !== 'outbound') {
-    console.error('--only takes P7 or outbound');
+  if (only !== null && only !== 'P7' && only !== 'outbound' && only !== 'shim') {
+    console.error('--only takes P7, outbound or shim');
     return 2;
   }
   const scenarios = only ? [only] : SCENARIOS;
@@ -987,6 +1183,9 @@ const main = async () => {
   let collector = null;
   let proxy = null;
   let stopSampler = null;
+  let platform = null;
+  let shim = null;
+  const shimLog = [];
   const stubs = {};
   let cleaned = false;
   const cleanup = async () => {
@@ -996,6 +1195,8 @@ const main = async () => {
     for (const started of engines) await stopEngine(started).catch(() => {});
     await stopSampler?.().catch(() => {});
     for (const s of Object.values(stubs)) await s.close?.();
+    await shim?.close();
+    await platform?.close();
     await proxy?.close();
     if (!keep) fs.rmSync(home, { recursive: true, force: true });
   };
@@ -1057,6 +1258,17 @@ const main = async () => {
 
     if (only === 'P7') {
       result.scenarios.P7 = await userPolicy();
+    } else if (only === 'shim') {
+      platform = await startPlatform();
+      shim = await startShim({ platform, logLines: shimLog });
+      writeJsonAtomic(configFile, {
+        providers: { mittr: providerEntry('Mittr', shim.baseURL, ['m1']) },
+        plugins: [recorderDir, identityDir, retryDir],
+        ...ENGINE_SHARE_OFF,
+        experimental: { policies: policiesFor({ showOtherProviders: false, providerId: 'mittr' }) },
+      });
+      const client = await connect();
+      result.scenarios.shim = await probeShim({ client, collector, platform, shim, shimLog, work: engine.work });
     } else if (only === 'outbound') {
       result.scenarios.outbound = await probeOutbound({
         OpenCode, home, configFile, hookLog, stubs, proxy,
@@ -1182,7 +1394,7 @@ const main = async () => {
     const logText = readLogs(home, logFile);
     const peers = [...outbound.loopbackPeers]
       .map(([pair, firstSeen]) => ({ ports: pair.split('->').map(Number), firstSeen }))
-      .filter(({ ports: [local, remote] }) => engines.every((e) => e.port !== local && e.port !== remote) && remote !== stubs.stub.port && remote !== stubs.other.port && remote !== proxy.port);
+      .filter(({ ports: [local, remote] }) => engines.every((e) => e.port !== local && e.port !== remote) && remote !== stubs.stub.port && remote !== stubs.other.port && remote !== proxy.port && remote !== shim?.port);
     result.outbound = {
       lsofSamples: outbound.samples,
       lsofIntervalMs: 250,

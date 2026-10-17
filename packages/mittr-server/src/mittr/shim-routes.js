@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 
+import { createQuotaStreamRewriter, readQuotaExhausted, toEngineRefusal } from './exhausted.js';
 import { cameThroughProxy, isLoopbackPeer } from './loopback-guard.js';
 import { createStreamMarkupWatcher, describeMarkup } from './response-markup.js';
 
@@ -24,6 +25,9 @@ const UPSTREAM_TIMEOUT_MS = 300_000;
 // What the engine reads from a response besides its body: when, and whether,
 // to try again.
 const PASSED_RESPONSE_HEADERS = ['retry-after', 'retry-after-ms', 'x-should-retry', 'x-request-id'];
+
+const LLM_QUOTA_EXHAUSTED = 'llm_quota_exhausted';
+const STREAM_DONE = 'data: [DONE]\n\n';
 
 const SESSION_ID = /^[\w.:-]{1,128}$/;
 const MODEL_ALIAS = /^[^\s\u0000-\u001f\u007f]{1,200}$/;
@@ -71,6 +75,26 @@ const silenceLimit = (timeoutMs) => {
 
 /** The model alias the engine asked for, or null when it is not a plain alias. */
 const requestedModelOf = (body) => (typeof body?.model === 'string' && MODEL_ALIAS.test(body.model) ? body.model : null);
+
+const parsedOrNull = (text) => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
+const isQuotaRefusalLine = (line) => line.startsWith('data:')
+  && line.includes(LLM_QUOTA_EXHAUSTED)
+  && parsedOrNull(line.slice('data:'.length))?.error?.code === LLM_QUOTA_EXHAUSTED;
+
+const endAtQuotaRefusal = (bytes) => {
+  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (!buffer.includes(LLM_QUOTA_EXHAUSTED)) return null;
+  const lines = buffer.toString('utf8').split('\n');
+  const at = lines.findIndex(isQuotaRefusalLine);
+  return at === -1 ? null : Buffer.from(`${lines.slice(0, at + 1).join('\n')}\n\n${STREAM_DONE}`, 'utf8');
+};
 
 /** Resolves once the engine has taken what is buffered, or has gone (even before this was called). */
 export const drained = (res) => new Promise((resolve) => {
@@ -230,11 +254,17 @@ export function registerMittrShim(app, {
       } finally {
         limit.stop();
       }
+      const answer = parsedOrNull(Buffer.from(bytes).toString('utf8'));
+      const quota = readQuotaExhausted(answer);
+      if (quota) {
+        const refusal = toEngineRefusal(quota);
+        return res.status(refusal.status).set(refusal.headers).json(refusal.body);
+      }
       if (upstream.ok) {
         tellAnswer({ chunk: bytes, done: false });
         tellAnswer({ chunk: NO_BYTES, done: true });
         try {
-          const message = JSON.parse(Buffer.from(bytes).toString('utf8'))?.choices?.[0]?.message;
+          const message = answer?.choices?.[0]?.message;
           reportMarkup(describeMarkup({ content: message?.content, hasToolCalls: Array.isArray(message?.tool_calls) && message.tool_calls.length > 0 }), model);
         } catch {
           // Inspecting the answer is diagnostics; it must never cost the answer.
@@ -254,15 +284,32 @@ export function registerMittrShim(app, {
     res.flushHeaders();
 
     const watcher = createStreamMarkupWatcher();
+    const quotaFrames = createQuotaStreamRewriter();
+    const send = async (bytes) => {
+      if (bytes.length === 0) return;
+      watcher.observe(bytes);
+      tellAnswer({ chunk: bytes, done: false });
+      if (engineGone) return;
+      if (!res.write(bytes)) await drained(res);
+    };
     try {
       limit.arm();
+      let refused = false;
       for await (const chunk of upstream.body) {
-        watcher.observe(chunk);
-        tellAnswer({ chunk, done: false });
+        const bytes = quotaFrames.push(chunk);
+        const refusal = endAtQuotaRefusal(bytes);
+        await send(refusal ?? bytes);
         if (engineGone) return undefined;
-        if (!res.write(chunk)) await drained(res);
-        if (engineGone) return undefined;
+        refused = refusal !== null;
+        if (refused) break;
         limit.arm();
+      }
+      if (refused) {
+        limit.abort();
+      } else {
+        const rest = quotaFrames.end();
+        await send(endAtQuotaRefusal(rest) ?? rest);
+        if (engineGone) return undefined;
       }
     } catch (error) {
       if (engineGone) return undefined;
