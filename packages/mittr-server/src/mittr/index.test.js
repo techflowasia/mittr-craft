@@ -136,6 +136,33 @@ test('a desktop without a keychain refuses sign-in and leaves the stored tokens 
   assert.deepEqual(snapshot(), before);
 });
 
+const lazyStore = (available) => {
+  const calls = { available: 0 };
+  return { calls, ...sealingStore(), available: () => { calls.available += 1; return available; } };
+};
+
+test('setting up with a desktop host never asks whether the keychain works; the first status request does', async (t) => {
+  const secretStore = lazyStore(true);
+  const { call } = await setUp(t, { host: { secretStore, deepLinks: deepLinkHost() } });
+  assert.equal(secretStore.calls.available, 0);
+
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
+  assert.equal(secretStore.calls.available > 0, true);
+});
+
+test('a keychain found unusable at the first sign-in request refuses it, and the tokens on disk stay', async (t) => {
+  const secretStore = lazyStore(false);
+  const { call, dataDir, fetchImpl } = await setUp(t, { host: { secretStore, deepLinks: deepLinkHost() } });
+  assert.equal(secretStore.calls.available, 0);
+
+  const refusal = { status: 503, body: { error: "MittrCraft can't find a secure keychain on this computer to keep your sign-in safe." } };
+  assert.deepEqual(await call('POST', '/api/mittr/auth/start'), refusal);
+  assert.deepEqual(await call('POST', '/api/mittr/auth/callback', { url: 'mittrcraft-dev://auth/callback?code=c1' }), refusal);
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false, keychainMissing: true });
+  assert.equal(fetchImpl.calls.length, 0);
+  assert.equal(fs.existsSync(path.join(dataDir, 'mittr-accounts')) ? sessionFiles(dataDir).length : 0, 0);
+});
+
 test('without a desktop host tokens are kept in a private plain file, with one warning', async (t) => {
   const { call, dataDir, logger } = await setUp(t, { host: null });
   assert.equal((await signIn(call)).status, 200);

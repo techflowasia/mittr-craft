@@ -41,9 +41,11 @@ export function registerMittrAuthRoutes(app, {
   scheme,
   fetchImpl = fetch,
   now = Date.now,
-  // Set when this host cannot keep tokens safely: every route that would
-  // sign in or change the stored accounts answers it instead.
-  signInRefusal = null,
+  // Answers why this host cannot keep tokens safely, or null: every route
+  // that would sign in or change the stored accounts answers it instead. It is
+  // asked per request, never at setup, because the answer may cost a keychain
+  // check that must not hold up the app's start.
+  signInRefusal = () => null,
   // Called once a session for the same account has been stored again.
   onSignIn = null,
   // Called with the next active userId (or null) when the active account changes.
@@ -63,7 +65,7 @@ export function registerMittrAuthRoutes(app, {
 
   // Refused before any browser trip or exchange: no keychain on this host, or
   // an account list that cannot be written without losing who had which home.
-  const currentRefusal = () => signInRefusal ?? (store.damaged() ? ACCOUNTS_DAMAGED : null);
+  const currentRefusal = () => signInRefusal() ?? (store.damaged() ? ACCOUNTS_DAMAGED : null);
 
   const refuseWhenUnsafe = (_req, res, next) => {
     const refusal = currentRefusal();
@@ -185,14 +187,15 @@ export function registerMittrAuthRoutes(app, {
 
   app.get('/api/mittr/auth/status', (_req, res) => {
     const status = statusOf(store.read());
-    if (signInRefusal) status.keychainMissing = true;
+    if (signInRefusal()) status.keychainMissing = true;
     if (store.damaged()) status.accountsDamaged = true;
     if (lastFailure && !status.signedIn) status.signInFailed = lastFailure;
     return res.json(status);
   });
 
   app.post('/api/mittr/auth/accounts/repair', async (_req, res) => {
-    if (signInRefusal) return res.status(503).json({ error: signInRefusal });
+    const keychainRefusal = signInRefusal();
+    if (keychainRefusal) return res.status(503).json({ error: keychainRefusal });
     let result;
     try {
       result = store.repair();

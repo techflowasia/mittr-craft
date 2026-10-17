@@ -35,7 +35,7 @@ const harness = async (t, { fetchImpl = fakeFetch(), sessions = [], signInRefusa
     scheme: 'mittrcraft-dev',
     fetchImpl,
     now: () => clock.now,
-    signInRefusal,
+    signInRefusal: typeof signInRefusal === 'string' ? () => signInRefusal : signInRefusal,
     onSignIn,
     onAccountChange,
   });
@@ -225,6 +225,24 @@ test('a refusal is not a failed sign-in: the status says what stands in the way 
   const locked = await harness(t, { signInRefusal: 'no keychain' });
   await locked.call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=c1` });
   assert.deepEqual((await locked.call('GET', '/api/mittr/auth/status')).body, { signedIn: false, keychainMissing: true });
+});
+
+test('the keychain refusal is asked per request and never when the routes are registered', async (t) => {
+  let asked = 0;
+  let refusal = null;
+  const signInRefusal = () => {
+    asked += 1;
+    return refusal;
+  };
+  const { call } = await harness(t, { signInRefusal });
+  assert.equal(asked, 0);
+
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
+  assert.equal(asked, 1);
+
+  refusal = 'no keychain';
+  assert.deepEqual((await call('POST', '/api/mittr/auth/start')), { status: 503, body: { error: 'no keychain' } });
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false, keychainMissing: true });
 });
 
 test('signing in as another user is an account change', async (t) => {
