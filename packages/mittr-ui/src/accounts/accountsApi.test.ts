@@ -85,4 +85,12 @@ describe('accounts api', () => {
     expect(await apiWith(http.fetch, async () => false).startAddAccount()).toBe(false);
     expect(opened).toHaveLength(1);
   });
+
+  test('cancelling an add asks the server to drop the sign-in it started, and a failed request is not thrown', async () => {
+    const http = answering({});
+    await apiWith(http.fetch).cancelAddAccount();
+    expect(http.calls).toEqual([{ path: '/api/mittr/auth/start', method: 'DELETE', body: undefined }]);
+    await apiWith(offline).cancelAddAccount();
+    await apiWith(answering({ error: 'x' }, 500).fetch).cancelAddAccount();
+  });
 });

@@ -7,7 +7,7 @@ import { I18nProvider } from '../../../ui/src/lib/i18n';
 import { mittrT } from '../strings/mittrT';
 import { AccountSwitchStatus } from './AccountSwitchDialog';
 import { initialsOf } from './accountsApi';
-import { MittrAccountMenuItems, MittrAccountMenuView, type MittrAccountMenuViewProps } from './MittrAccountMenu';
+import { MittrAccountMenuItems, MittrAccountMenuView, menuActions, type MittrAccountMenuViewProps } from './MittrAccountMenu';
 
 const A = { userId: 'u-a', displayName: 'Ann Lee', active: false };
 const B = { userId: 'u-b', displayName: 'Bo', active: true };
@@ -79,6 +79,23 @@ describe('MittrAccountMenu', () => {
     expect(rows[0].attrs).not.toContain('aria-disabled="true"');
     expect(html.indexOf(escaped(mittrT('mittr.accounts.add.finishing')))).toBeLessThan(html.indexOf(escaped(mittrT('mittr.accounts.add.cancel'))));
     expect(items()).not.toContain(escaped(mittrT('mittr.accounts.add.cancel')));
+  });
+
+  test('the menu\'s actions start the add, cancel it, switch and sign out through the flows', () => {
+    const log: string[] = [];
+    const actions = menuActions({
+      addAccount: { start: async () => { log.push('start'); }, cancel: () => { log.push('cancel'); } },
+      runSwitch: (change) => { log.push('switch'); void change(); },
+      api: {
+        activateAccount: async (userId) => { log.push(`activate ${userId}`); return { signedIn: true }; },
+        signOutActive: async () => { log.push('sign out'); return { signedIn: false }; },
+      },
+    });
+    actions.onAddAccount();
+    actions.onCancelAddAccount();
+    actions.onActivate('u-a');
+    actions.onSignOut();
+    expect(log).toEqual(['start', 'cancel', 'switch', 'activate u-a', 'switch', 'sign out']);
   });
 
   test('an account with no name is listed by its id', () => {

@@ -31,6 +31,7 @@ export type AccountsApi = {
   signOutActive: () => Promise<SwitchOutcome>;
   retrySwitch: () => Promise<SwitchOutcome>;
   startAddAccount: () => Promise<boolean>;
+  cancelAddAccount: () => Promise<void>;
 };
 
 export class HttpError extends Error {
@@ -99,6 +100,13 @@ export function createAccountsApi({ fetch, openUrl }: AccountsApiDeps): Accounts
         return authorizeUrl ? await openUrl(authorizeUrl) : false;
       } catch {
         return false;
+      }
+    },
+    cancelAddAccount: async () => {
+      try {
+        await fetch(SIGN_IN_START_ENDPOINT, { method: 'DELETE' });
+      } catch {
+        return;
       }
     },
   };

@@ -16,9 +16,9 @@ import { desktopBridge, scheduleWithTimers, type GateListen } from '../sign-in/s
 import { SIGN_IN_COMPLETED_EVENT, SIGN_IN_FAILED_EVENT } from '../sign-in/signInGateState';
 import { mittrT, useMittrT } from '../strings/mittrT';
 import { AccountSwitchDialog } from './AccountSwitchDialog';
-import { accountName, accountsApi, initialsOf, type MittrAccount } from './accountsApi';
+import { accountName, accountsApi, initialsOf, type AccountsApi, type MittrAccount, type SwitchOutcome } from './accountsApi';
 import { resyncThenReload, useAccountSwitch } from './accountSwitch';
-import { createAddAccountFlow } from './addAccount';
+import { createAddAccountFlow, type AddAccountFlow } from './addAccount';
 import { FOOTER_BUTTON_CLASS } from './footerButtonClass';
 
 type MenuActions = {
@@ -97,6 +97,19 @@ export function MittrAccountMenuView({ open, onOpenChange, ...items }: MittrAcco
   );
 }
 
+export function menuActions({ addAccount, runSwitch, api }: {
+  addAccount: Pick<AddAccountFlow, 'start' | 'cancel'>;
+  runSwitch: (change: () => Promise<SwitchOutcome>) => void;
+  api: Pick<AccountsApi, 'activateAccount' | 'signOutActive'>;
+}): MenuActions {
+  return {
+    onActivate: (userId) => { runSwitch(() => api.activateAccount(userId)); },
+    onAddAccount: () => { void addAccount.start(); },
+    onCancelAddAccount: () => { addAccount.cancel(); },
+    onSignOut: () => { runSwitch(api.signOutActive); },
+  };
+}
+
 const subscribeDesktopEvent = (listen: GateListen, event: string, handler: () => void, keep: (stop: () => void) => void) => {
   try {
     void Promise.resolve(listen(event, handler)).then(keep, () => {});
@@ -112,6 +125,7 @@ export function MittrAccountMenu(): React.ReactNode {
   const { accountSwitch, state } = useAccountSwitch();
   const [addAccount] = React.useState(() => createAddAccountFlow({
     startAddAccount: () => accountsApi.startAddAccount(),
+    cancelAddAccount: () => { void accountsApi.cancelAddAccount(); },
     beginWait: beginSignInWait,
     schedule: scheduleWithTimers,
     onWaiting: () => { toast.info(mittrT('mittr.accounts.add.waiting')); },
@@ -167,10 +181,6 @@ export function MittrAccountMenu(): React.ReactNode {
     if (next) load();
   };
 
-  const onAddAccount = () => {
-    void addAccount.start();
-  };
-
   return (
     <>
       <MittrAccountMenuView
@@ -179,10 +189,7 @@ export function MittrAccountMenu(): React.ReactNode {
         finishingSignIn={finishingSignIn}
         open={open}
         onOpenChange={onOpenChange}
-        onActivate={(userId) => { void accountSwitch.run(() => accountsApi.activateAccount(userId)); }}
-        onAddAccount={onAddAccount}
-        onCancelAddAccount={addAccount.cancel}
-        onSignOut={() => { void accountSwitch.run(accountsApi.signOutActive); }}
+        {...menuActions({ addAccount, runSwitch: (change) => { void accountSwitch.run(change); }, api: accountsApi })}
       />
       <AccountSwitchDialog
         state={state}

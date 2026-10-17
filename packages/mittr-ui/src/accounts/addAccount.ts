@@ -2,6 +2,7 @@ import { TRANSACTION_TTL_MS, type GateSchedule } from '../sign-in/signInGateCont
 
 export type AddAccountDeps = {
   startAddAccount: () => Promise<boolean>;
+  cancelAddAccount: () => void;
   beginWait: () => (handled: boolean) => void;
   schedule: GateSchedule;
   onWaiting: () => void;
@@ -23,6 +24,7 @@ export type AddAccountFlow = {
 
 export function createAddAccountFlow({
   startAddAccount,
+  cancelAddAccount,
   beginWait,
   schedule,
   onWaiting,
@@ -72,6 +74,8 @@ export function createAddAccountFlow({
       if (finish(false)) onFailed();
     },
     cancel: () => {
+      if (!endWait) return;
+      cancelAddAccount();
       finish(false);
     },
     dispose: () => {

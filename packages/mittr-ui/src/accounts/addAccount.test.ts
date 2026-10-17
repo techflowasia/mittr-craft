@@ -9,6 +9,7 @@ const harness = (opened = true) => {
   const timers = new Set<() => void>();
   const deps: AddAccountDeps = {
     startAddAccount: async () => opened,
+    cancelAddAccount: () => log.push('cancel at server'),
     beginWait: () => {
       log.push('wait');
       return (handled) => log.push(handled ? 'end handled' : 'end');
@@ -44,6 +45,7 @@ describe('adding an account', () => {
     const log: string[] = [];
     const fallback = createAddAccountFlow({
       startAddAccount: async () => true,
+      cancelAddAccount: () => {},
       beginWait: () => (handled) => log.push(handled ? 'end handled' : 'end'),
       schedule: () => () => {},
       onWaiting: () => {},
@@ -90,7 +92,7 @@ describe('adding an account', () => {
     flow.cancel();
     flow.signedIn();
     flow.signInFailed();
-    expect(log).toEqual(['wait', 'waiting', 'end']);
+    expect(log).toEqual(['wait', 'waiting', 'cancel at server', 'end']);
     expect(timers.size).toBe(0);
     expect(flow.waiting()).toBe(false);
     expect(seen).toEqual([true, false]);
@@ -100,6 +102,7 @@ describe('adding an account', () => {
     const reloads: string[] = [];
     const flow = createAddAccountFlow({
       startAddAccount: async () => true,
+      cancelAddAccount: () => {},
       beginWait: beginSignInWait,
       schedule: () => () => {},
       onWaiting: () => {},
@@ -113,6 +116,12 @@ describe('adding an account', () => {
     expect(reloads).toEqual([]);
     flow.cancel();
     expect(reloads).toEqual(['deferred']);
+  });
+
+  test('cancel with no wait asks the server for nothing', async () => {
+    const { flow, log } = harness();
+    flow.cancel();
+    expect(log).toEqual([]);
   });
 
   test('starting again while waiting keeps the one wait, and leaving ends it unhandled', async () => {
@@ -146,6 +155,7 @@ describe('adding an account while a switch is under way in the same window', () 
     });
     const flow = createAddAccountFlow({
       startAddAccount: async () => true,
+      cancelAddAccount: () => {},
       beginWait: beginSignInWait,
       schedule: () => () => {},
       onWaiting: () => {},
@@ -189,6 +199,7 @@ describe('adding an account while a switch is under way in the same window', () 
     const fallbacks: string[] = [];
     const flow = createAddAccountFlow({
       startAddAccount: async () => true,
+      cancelAddAccount: () => {},
       beginWait: beginSignInWait,
       schedule: () => () => {},
       onWaiting: () => {},
