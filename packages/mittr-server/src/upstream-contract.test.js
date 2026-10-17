@@ -758,6 +758,26 @@ const checks = {
     has(source('packages/ui/src/lib/product-plugins.ts'), /^export function useProductModelPicker\(open: boolean\): ModelPickerDecorations \{/m);
   },
 
+  'model-picker-blocked-entry': () => {
+    const picker = source('packages/ui/src/components/model-picker/ModelPickerList.tsx');
+    has(picker, /isEntryBlocked\?: \(entry: ModelPickerEntry\) => boolean;/, 'ModelPickerList no longer takes isEntryBlocked');
+    has(picker, /const blocked = isEntryBlocked\?\.\(entry\) \?\? false;/, 'a row no longer asks whether its entry is blocked');
+    has(picker, /aria-disabled=\{disabled \|\| blocked \|\| undefined\}\s*tabIndex=\{-1\}\s*onClick=\{\(\) => \{ if \(!disabled && !blocked\) onSelect\(entry\); \}\}/, 'a blocked row is no longer aria-disabled or still answers a click');
+    has(picker, /if \(disabled \|\| blocked \|\| event\.target !== event\.currentTarget\) return;\s*if \(event\.key === 'Enter' \|\| event\.key === ' '\) \{\s*event\.preventDefault\(\);\s*onSelect\(entry\);/, 'a blocked row still answers Enter or Space');
+    has(picker, /else if \(activeEntry && !isEntryBlocked\?\.\(activeEntry\)\) onSelect\(activeEntry\);/, 'Enter in the search field can still choose a blocked entry');
+    assert.equal(lineCount(picker, 'onSelect(entry)'), 2, 'ModelPickerList chooses an entry somewhere the blocked check does not cover');
+
+    const controls = source('packages/ui/src/components/chat/ModelControls.tsx');
+    assert.equal(lineCount(controls, 'productModelPicker.entryStatus('), 1, 'ModelControls must ask the product picker for an entry status exactly once');
+    has(controls, /const isEntryBlocked = \(entry: ModelPickerEntry\) => entryStatusOf\(entry\)\?\.blocked === true;/, 'the blocked check no longer follows the entry status');
+    has(controls, /<ModelEntryStatusPill status=\{entryStatusOf\(entry\)\} isHighlighted=\{state\.isHighlighted\} \/>\s*\{renderThinkingSlot\(entry, state\)\}/, 'the row end is no longer the status pill followed by the thinking slot');
+    assert.equal(lineCount(controls, 'renderRowEnd={renderRowEnd}'), 1, 'the desktop picker list no longer gets the composed row end');
+    assert.equal(lineCount(controls, 'isEntryBlocked={isEntryBlocked}'), 1, 'the desktop picker list no longer gets isEntryBlocked');
+
+    has(source('packages/ui/src/components/model-picker/ModelEntryStatusPill.tsx'), /aria-label=\{status\.title \?\? status\.pill\}/, 'the status pill lost its aria-label');
+    has(source('packages/ui/src/lib/product-plugins.ts'), /^export type ModelEntryStatus = \{ pill: string; title\?: string; tone: 'neutral' \| 'near'; blocked: boolean \};$/m, 'ModelEntryStatus changed shape');
+  },
+
   'providers-page-slot': () => {
     const grid = source('packages/ui/src/components/sections/providers/ProviderGrid.tsx');
     has(grid, /^import \{ ProductSlot \} from '@\/lib\/product-plugins';$/m, 'ProviderGrid no longer imports ProductSlot');

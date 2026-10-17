@@ -237,6 +237,16 @@ export const UPSTREAM_CONTRACT = [
     why: "ModelControls calls useProductModelPicker once, with the picker's open state, and lets only the providers it shows into the desktop list (isModelAllowed, which ModelPickerList applies to favorites, recents and providers) and into the mobile sheet",
   },
   {
+    id: 'model-picker-blocked-entry',
+    files: [
+      'packages/ui/src/components/chat/ModelControls.tsx',
+      'packages/ui/src/components/model-picker/ModelPickerList.tsx',
+      'packages/ui/src/components/model-picker/ModelEntryStatusPill.tsx',
+      'packages/ui/src/lib/product-plugins.ts',
+    ],
+    why: 'ModelPickerList takes isEntryBlocked and a blocked row is aria-disabled and chooses nothing on click, Enter or Space; ModelControls passes isEntryBlocked and composes renderRowEnd from the status pill of the picker decorations entryStatus and its own renderThinkingSlot',
+  },
+  {
     id: 'providers-page-slot',
     files: [
       'packages/ui/src/components/sections/providers/ProviderGrid.tsx',

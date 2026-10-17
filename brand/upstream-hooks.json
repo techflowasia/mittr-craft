@@ -155,6 +155,22 @@
     {
       "hook": "model-controls",
       "why": "The picker offered the Auto entry even while a picker plugin showed only its own provider, so a build that keeps the composer on its own models until the person opts in to others still offered a choice the server routes elsewhere; the Auto entry now follows the same provider rule, and without a plugin it stays."
+    },
+    {
+      "hook": "model-picker",
+      "why": "The picker rows could carry only the thinking-effort label, so a product plugin's entry status (a mark and whether the entry can be chosen) had no place on the row; the row end now draws the status pill before the thinking label and passes the status to the list as isEntryBlocked, and without a plugin no pill is drawn and nothing is blocked."
+    }
+  ],
+  "packages/ui/src/components/model-picker/ModelEntryStatusPill.tsx": [
+    {
+      "hook": "model-picker",
+      "why": "The row end draws a product plugin's entry status as a small pill with its text, tone and tooltip, in a component of its own so it can be rendered and tested apart from the composer."
+    }
+  ],
+  "packages/ui/src/components/model-picker/ModelPickerList.tsx": [
+    {
+      "hook": "model-picker",
+      "why": "A product plugin could mark a model entry as unavailable, but the picker still let it be chosen, so a build that knows an entry cannot answer (its quota is used up) could draw a mark on the row yet not stop a click, Enter or Space from choosing it; the list now takes isEntryBlocked, and without it every row behaves as before."
     }
   ],
   "packages/ui/src/components/sections/openchamber/AboutSettings.tsx": [

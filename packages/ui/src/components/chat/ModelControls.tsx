@@ -22,6 +22,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Icon } from "@/components/icon/Icon";
 import { ArrowsMerge } from '@/components/icons/ArrowsMerge';
 import type { IconName } from "@/components/icon/icons";
+import { ModelEntryStatusPill } from '@/components/model-picker/ModelEntryStatusPill';
 import { ModelPickerList, type ModelPickerEntry } from '@/components/model-picker/ModelPickerList';
 import { useIsVSCodeRuntime } from '@/hooks/useRuntimeAPIs';
 import { isDesktopShell } from '@/lib/desktop';
@@ -2550,6 +2551,19 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             );
         };
 
+        const entryStatusOf = (entry: ModelPickerEntry) => productModelPicker.entryStatus({
+            providerID: entry.providerID,
+            modelID: entry.modelID,
+            name: getSharedModelDisplayName(entry.model, entry.modelID),
+        });
+        const isEntryBlocked = (entry: ModelPickerEntry) => entryStatusOf(entry)?.blocked === true;
+        const renderRowEnd = (entry: ModelPickerEntry, state: { isHighlighted: boolean; isSelected: boolean }) => (
+            <>
+                <ModelEntryStatusPill status={entryStatusOf(entry)} isHighlighted={state.isHighlighted} />
+                {renderThinkingSlot(entry, state)}
+            </>
+        );
+
         return (
             <Tooltip delayDuration={600}>
                 {!isCompact ? (
@@ -2653,7 +2667,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                 onVariantKey={handleThinkingVariantKey}
                                 isFavorite={(entry) => isFavoriteModel(entry.providerID, entry.modelID)}
                                 onToggleFavorite={(entry) => toggleFavoriteModel(entry.providerID, entry.modelID)}
-                                renderRowEnd={renderThinkingSlot}
+                                renderRowEnd={renderRowEnd}
+                                isEntryBlocked={isEntryBlocked}
                                 renderVersion={modelPickerRenderVersion}
                                 onReorderFavorite={(active, over) => reorderFavoriteModel(
                                     active.providerID,

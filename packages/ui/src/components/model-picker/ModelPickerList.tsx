@@ -487,6 +487,7 @@ interface ModelPickerListProps {
   isFavorite?: (entry: ModelPickerEntry) => boolean;
   onToggleFavorite?: (entry: ModelPickerEntry) => void;
   renderRowEnd?: (entry: ModelPickerEntry, state: { isHighlighted: boolean; isSelected: boolean }) => React.ReactNode;
+  isEntryBlocked?: (entry: ModelPickerEntry) => boolean;
   onActiveKeyDown?: (event: React.KeyboardEvent, entry: ModelPickerEntry | undefined) => void;
   onActiveEntryChange?: (entry: ModelPickerEntry | undefined) => void;
   onVariantKey?: (event: React.KeyboardEvent, entry: ModelPickerEntry) => boolean;
@@ -529,6 +530,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
   isFavorite,
   onToggleFavorite,
   renderRowEnd,
+  isEntryBlocked,
   onActiveKeyDown,
   onActiveEntryChange,
   onVariantKey,
@@ -820,14 +822,14 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
       event.preventDefault();
       if (disabled) return;
       if (activeItem === LEADING_ACTION_SLOT) leadingAction?.onSelect();
-      else if (activeEntry) onSelect(activeEntry);
+      else if (activeEntry && !isEntryBlocked?.(activeEntry)) onSelect(activeEntry);
       return;
     }
     if (event.key === 'Escape') {
       event.preventDefault();
       onEscape?.();
     }
-  }, [disabled, flatModelList, leadingAction, moveSelection, onActiveKeyDown, onEscape, onSelect, onVariantKey, selectionStore]);
+  }, [disabled, flatModelList, isEntryBlocked, leadingAction, moveSelection, onActiveKeyDown, onEscape, onSelect, onVariantKey, selectionStore]);
 
   const headerClassName = cn(
     'typography-micro font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2 px-2 py-1.5',
@@ -849,12 +851,13 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
     selectIndex(rowIndex);
   };
 
-  const rowHighlightClassName = (isHighlighted: boolean) => cn(
+  const rowHighlightClassName = (isHighlighted: boolean, blocked = false) => cn(
     'w-full text-left px-2 py-1.5 rounded-md typography-meta flex items-center gap-2 cursor-pointer',
     !disabled && (isHighlighted
       ? 'bg-interactive-selection text-interactive-selection-foreground'
       : 'hover:bg-interactive-hover/50'),
     disabled && 'cursor-not-allowed opacity-60',
+    blocked && 'cursor-not-allowed',
     rowClassName,
   );
 
@@ -887,6 +890,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
     const count = selectionCount?.(entry) ?? 0;
     const isSelected = selectedModel?.providerID === entry.providerID && selectedModel.modelID === entry.modelID;
     const favorite = isFavorite?.(entry) ?? false;
+    const blocked = isEntryBlocked?.(entry) ?? false;
 
     const handleMouseActivity = (event: React.MouseEvent) => highlightOnPointer(event, rowIndex);
 
@@ -898,13 +902,13 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
               ref={(el) => { itemRefs.current[rowIndex] = el; }}
               role="option"
               aria-selected={isSelected}
-              aria-disabled={disabled || undefined}
+              aria-disabled={disabled || blocked || undefined}
               tabIndex={-1}
-              onClick={() => { if (!disabled) onSelect(entry); }}
+              onClick={() => { if (!disabled && !blocked) onSelect(entry); }}
               onKeyDown={(event) => {
                 // Keys pressed on a control inside the row (the star, the drag handle)
                 // belong to that control, not to choosing the model.
-                if (disabled || event.target !== event.currentTarget) return;
+                if (disabled || blocked || event.target !== event.currentTarget) return;
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault();
                   onSelect(entry);
@@ -912,7 +916,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
               }}
               onMouseEnter={handleMouseActivity}
               onMouseMove={handleMouseActivity}
-              className={rowHighlightClassName(isHighlighted)}
+              className={rowHighlightClassName(isHighlighted, blocked)}
             >
               <div className="flex items-center gap-1.5 flex-1 min-w-0">
                 {dragHandleProps ? (
@@ -922,7 +926,7 @@ export const ModelPickerList: React.FC<ModelPickerListProps> = ({
                 ) : null}
                 {keyPrefix === 'leading' ? <Icon name="openchamber" className="h-3.5 w-3.5 flex-shrink-0" /> : null}
                 {showProviderLogo ? <ProviderLogo providerId={entry.providerID} className="h-3.5 w-3.5 flex-shrink-0" /> : null}
-                <span className="font-medium truncate">{getModelDisplayName(entry.model)}</span>
+                <span className={cn('font-medium truncate', blocked && 'opacity-60')}>{getModelDisplayName(entry.model)}</span>
                 {contextTokens ? <span className={cn('typography-micro flex-shrink-0', isHighlighted ? 'text-interactive-selection-foreground/70' : 'text-muted-foreground')}>{contextTokens}</span> : null}
               </div>
               {count > 0 ? <span className={cn('typography-micro flex-shrink-0', isHighlighted ? 'text-interactive-selection-foreground/70' : 'text-muted-foreground')}>x{count}</span> : null}
