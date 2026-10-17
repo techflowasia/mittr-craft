@@ -87,3 +87,12 @@ test('a shell store that cannot seal refuses sign-in and is never asked to seal'
     assert.equal(secretStore.calls.encrypt + secretStore.calls.decrypt, 0);
   }
 });
+
+test('the refusal lifts once the shell store says yes, without choosing the store again', () => {
+  const secretStore = lazyShellStore(false);
+  const chosen = chooseSecretStore({ host: { secretStore }, logger: recordingLogger() });
+  assert.equal(chosen.refusal(), NO_KEYCHAIN);
+  secretStore.available = () => true;
+  assert.equal(chosen.refusal(), null);
+  assert.equal(chosen.decrypt(chosen.encrypt('r1')), 'r1');
+});

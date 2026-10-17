@@ -36,7 +36,9 @@ const refusingSecretStore = () => {
  * `available()`), never while this is being chosen: asking can raise a
  * keychain dialog, and the app must not wait on one before it has a window.
  * `refusal()` answers the reason sign-in is refused, or null, and asks on
- * each call; the shell's store keeps its first answer.
+ * each call; the shell's store keeps a yes and asks the system again after a
+ * no once a few seconds have passed, so a keychain prompt answered late lifts
+ * the refusal without a restart.
  */
 export function chooseSecretStore({ host, logger = console }) {
   if (!host) return { ...plaintextSecretStore(logger), refusal: () => null };

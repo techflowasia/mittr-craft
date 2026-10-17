@@ -339,6 +339,13 @@ const checks = {
     assert.deepEqual(asked, [], 'the shell secret store asks safeStorage while it is created, which can block the app behind a keychain dialog');
     assert.equal(typeof store.available, 'function', 'the shell secret store no longer exposes available(), so the server cannot ask lazily whether it can seal');
     assert.equal(store.available(), true);
+    const clock = { at: 0 };
+    const keychain = { answer: false, isEncryptionAvailable: () => keychain.answer };
+    const late = createSafeStorageSecretStore({ safeStorage: keychain, now: () => clock.at });
+    assert.equal(late.available(), false);
+    keychain.answer = true;
+    clock.at += 5_000;
+    assert.equal(late.available(), true, 'the shell secret store keeps a no for the whole run, so a keychain prompt answered late needs a restart');
     has(source('packages/web/server/index.js'), /host: options\.pluginHost \?\? null,/, 'the plugin context no longer reads options.pluginHost into host');
   },
 

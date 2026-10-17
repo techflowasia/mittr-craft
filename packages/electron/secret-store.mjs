@@ -27,12 +27,21 @@ const canSeal = (safeStorage) => {
 //
 // Asking the system whether it can seal may raise a keychain dialog that blocks
 // the main thread, so nothing is asked when the store is created. The first
-// `available()`, `encrypt` or `decrypt` asks once and the answer is kept; when
-// it is no, `encrypt` and `decrypt` throw instead of sealing nothing.
-export function createSafeStorageSecretStore({ safeStorage } = {}) {
-  let usable = null;
+// `available()`, `encrypt` or `decrypt` asks; a yes is kept for the run, and a
+// no is asked again on the first use at least RECHECK_AFTER_NO_MS later, so a
+// keychain dialog answered after the first ask gave up takes effect without a
+// restart. While the answer is no, `encrypt` and `decrypt` throw instead of
+// sealing nothing.
+const RECHECK_AFTER_NO_MS = 5_000;
+
+export function createSafeStorageSecretStore({ safeStorage, now = Date.now } = {}) {
+  let usable = false;
+  let askedAt = null;
   const available = () => {
-    if (usable === null) usable = canSeal(safeStorage);
+    if (usable) return true;
+    if (askedAt !== null && now() - askedAt < RECHECK_AFTER_NO_MS) return false;
+    usable = canSeal(safeStorage);
+    askedAt = now();
     return usable;
   };
   const requireKeychain = () => {

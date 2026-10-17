@@ -67,7 +67,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'plugin-host-option',
     files: ['packages/electron/main.mjs', 'packages/electron/secret-store.mjs', 'packages/web/server/index.js'],
-    why: 'the desktop shell passes pluginHost (a safeStorage secret store that checks availability only on first use, through available(), and the deep-link register) to startWebUiServer, which hands it to plugins as context.host',
+    why: 'the desktop shell passes pluginHost (a safeStorage secret store that checks availability only on first use, through available(), keeps a yes and asks again after a no once 5 s have passed, and the deep-link register) to startWebUiServer, which hands it to plugins as context.host',
   },
   {
     id: 'product-runtime-server-plugins',

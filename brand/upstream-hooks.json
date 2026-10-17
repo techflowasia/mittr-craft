@@ -107,6 +107,10 @@
     {
       "hook": "electron-host",
       "why": "Asking safeStorage whether it can seal may raise a keychain dialog that blocks the main thread, and the store asked while the app was starting, before any window or server existed; it now asks on first use only, keeps the answer, and exposes it as available() so a plugin decides when to ask."
+    },
+    {
+      "hook": "electron-host",
+      "why": "The store kept its first answer for the whole run, so when a keychain dialog was answered after the first ask had already come back no, sign-in stayed refused until the app restarted; a yes is still kept, and a no is asked again on the next use at most once every five seconds."
     }
   ],
   "packages/electron/updater-capability.mjs": [

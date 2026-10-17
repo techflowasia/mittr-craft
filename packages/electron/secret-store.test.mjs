@@ -4,11 +4,12 @@ import { createSafeStorageSecretStore } from './secret-store.mjs';
 
 const fakeSafeStorage = (available = true) => {
   const calls = { isEncryptionAvailable: 0, getSelectedStorageBackend: 0, encryptString: 0, decryptString: 0 };
-  return {
+  const safeStorage = {
     calls,
+    available,
     isEncryptionAvailable: () => {
       calls.isEncryptionAvailable += 1;
-      return available;
+      return safeStorage.available;
     },
     encryptString: (text) => {
       calls.encryptString += 1;
@@ -19,6 +20,12 @@ const fakeSafeStorage = (available = true) => {
       return data.toString().slice(1);
     },
   };
+  return safeStorage;
+};
+
+const fakeClock = (start = 1_000_000) => {
+  const clock = { at: start, now: () => clock.at, advance: (ms) => { clock.at += ms; } };
+  return clock;
 };
 
 const withBackend = (name) => {
@@ -61,15 +68,79 @@ test('secret store decrypts bytes that came back as a plain Uint8Array', () => {
   assert.equal(store.decrypt(new Uint8Array(store.encrypt('tok'))), 'tok');
 });
 
-test('no encryption is refused at first use, and the refusal is remembered', () => {
+test('no encryption is refused at first use, and the refusal stands for five seconds', () => {
   const safeStorage = fakeSafeStorage(false);
-  const store = createSafeStorageSecretStore({ safeStorage });
+  const clock = fakeClock();
+  const store = createSafeStorageSecretStore({ safeStorage, now: clock.now });
   assert.equal(store.available(), false);
+  clock.advance(4_999);
   assert.throws(() => store.encrypt('tok'), /keychain/);
   assert.throws(() => store.decrypt(Buffer.from('Etok')), /keychain/);
   assert.equal(safeStorage.calls.isEncryptionAvailable, 1);
   assert.equal(safeStorage.calls.encryptString, 0);
   assert.equal(safeStorage.calls.decryptString, 0);
+});
+
+test('a keychain that says yes within five seconds of a no is not asked again yet', () => {
+  const safeStorage = fakeSafeStorage(false);
+  const clock = fakeClock();
+  const store = createSafeStorageSecretStore({ safeStorage, now: clock.now });
+  assert.equal(store.available(), false);
+  safeStorage.available = true;
+  clock.advance(4_999);
+  assert.equal(store.available(), false);
+  assert.throws(() => store.encrypt('tok'), /keychain/);
+  assert.equal(safeStorage.calls.isEncryptionAvailable, 1);
+});
+
+test('five seconds after a no the next use asks again, so a late keychain answer works without a restart', () => {
+  const safeStorage = fakeSafeStorage(false);
+  const clock = fakeClock();
+  const store = createSafeStorageSecretStore({ safeStorage, now: clock.now });
+  assert.equal(store.available(), false);
+  clock.advance(5_000);
+  assert.equal(store.available(), false);
+  assert.equal(safeStorage.calls.isEncryptionAvailable, 2);
+  safeStorage.available = true;
+  clock.advance(5_000);
+  assert.equal(store.decrypt(store.encrypt('tok')), 'tok');
+  assert.equal(store.available(), true);
+  assert.equal(safeStorage.calls.isEncryptionAvailable, 3);
+});
+
+test('a yes is kept for the whole run', () => {
+  const safeStorage = fakeSafeStorage(true);
+  const clock = fakeClock();
+  const store = createSafeStorageSecretStore({ safeStorage, now: clock.now });
+  assert.equal(store.available(), true);
+  safeStorage.available = false;
+  clock.advance(60 * 60_000);
+  assert.equal(store.available(), true);
+  assert.equal(store.decrypt(store.encrypt('tok')), 'tok');
+  assert.equal(safeStorage.calls.isEncryptionAvailable, 1);
+});
+
+test('a safeStorage that threw is asked again after five seconds', () => {
+  let throws = true;
+  const safeStorage = { ...fakeSafeStorage(), isEncryptionAvailable: () => { if (throws) throw new Error('before ready'); return true; } };
+  const clock = fakeClock();
+  const store = createSafeStorageSecretStore({ safeStorage, now: clock.now });
+  assert.equal(store.available(), false);
+  throws = false;
+  clock.advance(5_000);
+  assert.equal(store.available(), true);
+});
+
+test('a plain-text keyring stays refused when it is asked again', () => {
+  const plain = withBackend('basic_text');
+  const clock = fakeClock();
+  const store = createSafeStorageSecretStore({ safeStorage: plain, now: clock.now });
+  assert.equal(store.available(), false);
+  clock.advance(5_000);
+  assert.equal(store.available(), false);
+  assert.throws(() => store.encrypt('tok'), /keychain/);
+  assert.equal(plain.calls.getSelectedStorageBackend, 2);
+  assert.equal(plain.calls.encryptString, 0);
 });
 
 test('a missing safeStorage is a store that is never available', () => {
