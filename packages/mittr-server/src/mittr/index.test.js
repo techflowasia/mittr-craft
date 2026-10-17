@@ -484,12 +484,15 @@ test('a record started under one account is never sent as another', async (t) =>
   await post('tool', { sessionId: 's1', name: 'edit' });
 
   assert.equal((await signIn(call)).status, 200);
+  assert.equal((await post('prompt', { sessionId: 's1', text: 'a late prompt' })).status, 204);
   assert.equal((await post('finish', { sessionId: 's1', directory: '/work/app', outcome: 'completed' })).status, 204);
+  assert.equal(auditCalls(fetchImpl).length, 0);
 
+  await post('prompt', { sessionId: 's2', text: 'typed as the second account' });
+  assert.equal((await post('finish', { sessionId: 's2', directory: '/work/app', outcome: 'completed' })).status, 204);
   const [audit] = auditCalls(fetchImpl);
   assert.equal(audit.headers.authorization, 'Bearer at-b');
-  assert.deepEqual(audit.body.prompts, []);
-  assert.deepEqual(audit.body.actions, []);
+  assert.deepEqual(audit.body.prompts.map(({ text }) => text), ['typed as the second account']);
   assert.equal(JSON.stringify(audit.body).includes('first account'), false);
 });
 
@@ -502,11 +505,34 @@ test('a switch back to an earlier account drops the records open as well', async
   const post = (route, body) => fetch(`${call.base}/api/mittr/audit/${route}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   await post('prompt', { sessionId: 's1', text: 'typed as the second account' });
   assert.equal((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' })).status, 200);
-  await post('finish', { sessionId: 's1', directory: '/work/app', outcome: 'completed' });
+  assert.equal((await post('finish', { sessionId: 's1', directory: '/work/app', outcome: 'completed' })).status, 204);
+  assert.equal(auditCalls(fetchImpl).length, 0);
+});
 
-  const [audit] = auditCalls(fetchImpl);
-  assert.equal(audit.headers.authorization, 'Bearer at-1');
-  assert.deepEqual(audit.body.prompts, []);
+test('an audit call never opens or decrypts a 1.x session that is still waiting to be carried', async (t) => {
+  const dataDir = tempDataDir(t);
+  const sealing = sealingStore();
+  fs.writeFileSync(path.join(dataDir, 'mittr-session'), sealing.encrypt(JSON.stringify(session)));
+  const uses = [];
+  const secretStore = {
+    available: () => { uses.push('available'); return true; },
+    encrypt: (text) => { uses.push('encrypt'); return sealing.encrypt(text); },
+    decrypt: (data) => { uses.push('decrypt'); return sealing.decrypt(data); },
+  };
+  const fetchImpl = platform();
+  const { call } = await setUp(t, { dataDir, fetchImpl, host: { secretStore, deepLinks: deepLinkHost() } });
+
+  const post = (route, body) => fetch(`${call.base}/api/mittr/audit/${route}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  for (const [route, body] of [
+    ['prompt', { sessionId: 's1', text: 'hello' }],
+    ['tool', { sessionId: 's1', name: 'edit' }],
+    ['turn', { sessionId: 's1', tokens: 3 }],
+    ['finish', { sessionId: 's1', directory: '/work/app', outcome: 'completed' }],
+  ]) assert.equal((await post(route, body)).status, 204, route);
+
+  assert.deepEqual(uses, []);
+  assert.equal(fs.existsSync(path.join(dataDir, 'mittr-session')), true);
+  assert.equal(auditCalls(fetchImpl).length, 0);
 });
 
 test('signed out, a finished session sends nothing and still answers 204', async (t) => {

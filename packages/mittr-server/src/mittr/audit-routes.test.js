@@ -22,10 +22,12 @@ const setUp = async (t, {
   remoteUrl = async () => REMOTE,
   git = { remoteUrl },
   active = { userId: 'u-a' },
+  activeUserId = () => active.userId,
+  remoteTimeoutMs,
 } = {}) => {
   const app = express();
   const logger = recordingLogger();
-  const audit = registerMittrAuditRoutes(app, { express, broker: BROKER, ensureFreshSession, activeUserId: () => active.userId, git, fetchImpl, logger });
+  const audit = registerMittrAuditRoutes(app, { express, broker: BROKER, ensureFreshSession, activeUserId, git, fetchImpl, logger, remoteTimeoutMs });
   const base = await listen(t, app);
   const send = async (route, text) => {
     const response = await fetch(base + route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: text });
@@ -36,6 +38,7 @@ const setUp = async (t, {
 };
 
 const finish = (post, body = {}) => post('/api/mittr/audit/finish', { sessionId: 's1', outcome: 'completed', directory: '/repo', ...body });
+const begin = (post, sessionId = 's1') => post('/api/mittr/audit/tool', { sessionId, name: 'edit' });
 const sent = (fetchImpl, at = 0) => fetchImpl.calls[at].body;
 const rawOf = (fetchImpl, at = 0) => JSON.stringify(fetchImpl.calls[at].body);
 
@@ -105,7 +108,7 @@ test('the 201st open record drops the oldest', async (t) => {
   await finish(post, { sessionId: 's1' });
   assert.deepEqual(sent(fetchImpl, 0).prompts.map(({ text }) => text), ['p1']);
   await finish(post, { sessionId: 's0' });
-  assert.deepEqual(sent(fetchImpl, 1).prompts, []);
+  assert.equal(fetchImpl.calls.length, 1, 'the evicted session has no record left to send');
 });
 
 test('signed out sends nothing and still answers 204', async (t) => {
@@ -126,8 +129,8 @@ test('one record is sent on finish, and the session is forgotten after it', asyn
   await post('/api/mittr/audit/prompt', { sessionId: 's1', text: 'once' });
   await finish(post);
   await finish(post);
-  assert.deepEqual(sent(fetchImpl, 0).prompts.map(({ text }) => text), ['once']);
-  assert.deepEqual(sent(fetchImpl, 1).prompts, []);
+  assert.equal(fetchImpl.calls.length, 1);
+  assert.deepEqual(sent(fetchImpl).prompts.map(({ text }) => text), ['once']);
 });
 
 test('turns and tokens are summed, and a token count that is not a number counts as zero', async (t) => {
@@ -174,6 +177,7 @@ test('nothing the client adds outside the allowlist is sent, and neither is who 
 test('the local directory is used to find the remote and never sent', async (t) => {
   const asked = [];
   const { post, fetchImpl } = await setUp(t, { remoteUrl: async (directory) => { asked.push(directory); return REMOTE; } });
+  await begin(post);
   await finish(post, { directory: '/Users/someone/client-secret' });
   assert.deepEqual(asked, ['/Users/someone/client-secret']);
   assert.equal(rawOf(fetchImpl).includes('client-secret'), false);
@@ -182,6 +186,7 @@ test('the local directory is used to find the remote and never sent', async (t) 
 
 test('a remote with credentials in it sends the owner and repository only, and logs nothing of it', async (t) => {
   const { post, fetchImpl, logger } = await setUp(t, { remoteUrl: async () => 'https://person:s3cret-token@github.com/techflowasia/mittr-craft.git' });
+  await begin(post);
   await finish(post);
   assert.equal(sent(fetchImpl).repository, 'techflowasia/mittr-craft');
   assert.equal(rawOf(fetchImpl).includes('s3cret'), false);
@@ -191,10 +196,12 @@ test('a remote with credentials in it sends the owner and repository only, and l
 
 test('a directory with no remote, or one git cannot read, is sent as no repository', async (t) => {
   const none = await setUp(t, { remoteUrl: async () => null });
+  await begin(none.post);
   await finish(none.post);
   assert.equal(sent(none.fetchImpl).repository, null);
 
   const broken = await setUp(t, { remoteUrl: async () => { throw new Error('not a repository'); } });
+  await begin(broken.post);
   await finish(broken.post);
   assert.equal(sent(broken.fetchImpl).repository, null);
   assert.deepEqual(broken.logger.warnings, []);
@@ -202,12 +209,14 @@ test('a directory with no remote, or one git cannot read, is sent as no reposito
 
 test('the platform call has a time limit', async (t) => {
   const { post, fetchImpl } = await setUp(t);
+  await begin(post);
   await finish(post);
   assert.ok(fetchImpl.calls[0].signal);
 });
 
 test('a platform that refuses the record only costs a warning', async (t) => {
   const { post, logger } = await setUp(t, { fetchImpl: fakeFetch(() => new Response('', { status: 500 })) });
+  await begin(post);
   assert.equal((await finish(post)).status, 204);
   assert.equal(logger.warnings.length, 1);
   assert.ok(logger.warnings[0].includes('500'), logger.warnings[0]);
@@ -215,12 +224,14 @@ test('a platform that refuses the record only costs a warning', async (t) => {
 
 test('a platform that cannot be reached only costs a warning', async (t) => {
   const { post, logger } = await setUp(t, { fetchImpl: async () => { throw new Error('ECONNREFUSED'); } });
+  await begin(post);
   assert.equal((await finish(post)).status, 204);
   assert.deepEqual(logger.warnings, ['[mittr] audit record was not delivered: ECONNREFUSED']);
 });
 
 test('a session refresh that throws still answers 204', async (t) => {
   const { post, fetchImpl, logger } = await setUp(t, { ensureFreshSession: async () => { throw new Error('keychain locked'); } });
+  await begin(post);
   assert.equal((await finish(post)).status, 204);
   assert.equal(fetchImpl.calls.length, 0);
   assert.equal(logger.warnings.length, 1);
@@ -231,11 +242,90 @@ test('records open when the account changes are never sent', async (t) => {
   await post('/api/mittr/audit/prompt', { sessionId: 's1', text: 'typed as the first account' });
   await post('/api/mittr/audit/tool', { sessionId: 's1', name: 'edit' });
   audit.clear();
+  assert.equal((await finish(post)).status, 204);
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('a finish that arrives late for a cleared session sends nothing, not a new record under the account now active', async (t) => {
+  const { post, fetchImpl, audit } = await setUp(t);
+  await post('/api/mittr/audit/prompt', { sessionId: 's1', text: 'typed as the first account' });
+  audit.clear();
+  assert.equal((await finish(post, { model: 'pm_first', directory: '/repo' })).status, 204);
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('a prompt, tool or turn that arrives late for a cleared session opens nothing', async (t) => {
+  const { post, fetchImpl, audit } = await setUp(t);
+  await post('/api/mittr/audit/prompt', { sessionId: 's1', text: 'typed as the first account' });
+  audit.clear();
+  assert.equal((await post('/api/mittr/audit/prompt', { sessionId: 's1', text: 'late prompt' })).status, 204);
+  assert.equal((await post('/api/mittr/audit/tool', { sessionId: 's1', name: 'edit' })).status, 204);
+  assert.equal((await post('/api/mittr/audit/turn', { sessionId: 's1', tokens: 5 })).status, 204);
+  assert.equal((await finish(post)).status, 204);
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('a session opened fresh after the account changed is sent as the account now active', async (t) => {
+  const { post, fetchImpl, audit, active } = await setUp(t, { ensureFreshSession: async () => ({ accessToken: `at-${active.userId}`, subject: { userId: active.userId } }) });
+  await post('/api/mittr/audit/prompt', { sessionId: 's1', text: 'typed as the first account' });
+  active.userId = 'u-b';
+  audit.clear();
+  await post('/api/mittr/audit/prompt', { sessionId: 's2', text: 'typed as the second account' });
+  await finish(post, { sessionId: 's1' });
+  await finish(post, { sessionId: 's2' });
+  assert.equal(fetchImpl.calls.length, 1);
+  assert.equal(fetchImpl.calls[0].headers.authorization, 'Bearer at-u-b');
+  assert.deepEqual(sent(fetchImpl).prompts.map(({ text }) => text), ['typed as the second account']);
+});
+
+test('the sessions a clear forgot are remembered up to a bound, oldest first', async (t) => {
+  const { post, fetchImpl, audit } = await setUp(t);
+  for (let round = 0; round < 6; round += 1) {
+    for (let i = 0; i < 200; i += 1) await post('/api/mittr/audit/tool', { sessionId: `r${round}-${i}`, name: 'edit' });
+    audit.clear();
+  }
+  await post('/api/mittr/audit/tool', { sessionId: 'r5-199', name: 'edit' });
+  await post('/api/mittr/audit/tool', { sessionId: 'r0-0', name: 'edit' });
+  await finish(post, { sessionId: 'r5-199' });
+  assert.equal(fetchImpl.calls.length, 0, 'a recently cleared session stays closed');
+  await finish(post, { sessionId: 'r0-0' });
+  assert.equal(fetchImpl.calls.length, 1, 'one forgotten long ago may open again');
+});
+
+test('a damaged account index gives 204 on every audit route and sends nothing', async (t) => {
+  const { post, fetchImpl } = await setUp(t, { activeUserId: () => { throw new Error('index unreadable'); } });
+  assert.equal((await post('/api/mittr/audit/prompt', { sessionId: 's1', text: 'hello' })).status, 204);
+  assert.equal((await post('/api/mittr/audit/tool', { sessionId: 's1', name: 'edit' })).status, 204);
+  assert.equal((await post('/api/mittr/audit/turn', { sessionId: 's1', tokens: 3 })).status, 204);
+  assert.equal((await finish(post)).status, 204);
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('a damaged index at finish drops the record and still answers 204', async (t) => {
+  let damaged = false;
+  const { post, fetchImpl } = await setUp(t, { activeUserId: () => { if (damaged) throw new Error('index unreadable'); return 'u-a'; } });
+  await begin(post);
+  damaged = true;
+  assert.equal((await finish(post)).status, 204);
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('a remote lookup that never answers is given up after its time limit and the record is sent with no repository', async (t) => {
+  const { post, fetchImpl } = await setUp(t, { remoteUrl: () => new Promise(() => {}), remoteTimeoutMs: 20 });
+  await begin(post);
+  assert.equal((await finish(post)).status, 204);
+  assert.equal(fetchImpl.calls.length, 1);
+  assert.equal(sent(fetchImpl).repository, null);
+});
+
+test('the remote lookup has a default time limit of five seconds', async (t) => {
+  const timers = [];
+  const realSetTimeout = globalThis.setTimeout;
+  t.mock.method(globalThis, 'setTimeout', (fn, ms, ...rest) => { timers.push(ms); return realSetTimeout(fn, ms, ...rest); });
+  const { post } = await setUp(t);
+  await begin(post);
   await finish(post);
-  const body = sent(fetchImpl);
-  assert.deepEqual(body.prompts, []);
-  assert.deepEqual(body.actions, []);
-  assert.equal(JSON.stringify(body).includes('first account'), false);
+  assert.ok(timers.includes(5000), timers.join());
 });
 
 test('a finish that is waiting for its session when the account changes sends nothing', async (t) => {
@@ -261,10 +351,7 @@ test('a record opened under one account is dropped when another is active at fin
 
   active.userId = 'u-a';
   assert.equal((await finish(post)).status, 204);
-  assert.equal(fetchImpl.calls.length, 1);
-  assert.equal(fetchImpl.calls[0].headers.authorization, 'Bearer at-u-a');
-  assert.deepEqual(sent(fetchImpl).prompts, [], 'the dropped record is gone, not kept for later');
-  assert.deepEqual(sent(fetchImpl).actions, []);
+  assert.equal(fetchImpl.calls.length, 0, 'the dropped record is gone, not kept for later and not rebuilt empty');
 });
 
 test('a session of another account than the record\'s owner is never used', async (t) => {

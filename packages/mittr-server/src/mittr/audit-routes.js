@@ -5,6 +5,8 @@ import { resolveRepositoryIdentity } from './repository-identity.js';
 const AUDIT_ENDPOINT = '/desktop/audit';
 const MAX_OPEN_RECORDS = 200;
 const PLATFORM_TIMEOUT_MS = 15_000;
+const REMOTE_LOOKUP_TIMEOUT_MS = 5_000;
+const MAX_CLEARED_SESSIONS = 1000;
 
 export function registerMittrAuditRoutes(app, {
   express,
@@ -14,9 +16,24 @@ export function registerMittrAuditRoutes(app, {
   git,
   fetchImpl = (...args) => fetch(...args),
   logger = console,
+  remoteTimeoutMs = REMOTE_LOOKUP_TIMEOUT_MS,
 }) {
   const open = new Map();
+  const cleared = new Set();
   let epoch = 0;
+
+  const currentUser = () => {
+    try {
+      return activeUserId() ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  const remoteUrl = (directory) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(null), remoteTimeoutMs);
+    Promise.resolve().then(() => git.remoteUrl(directory)).then(resolve, reject).finally(() => clearTimeout(timer));
+  });
 
   const readJson = (limit) => {
     const parse = express.json({ limit });
@@ -26,43 +43,46 @@ export function registerMittrAuditRoutes(app, {
     });
   };
 
-  const entryFor = (sessionId) => {
-    if (!open.has(sessionId)) {
-      if (open.size >= MAX_OPEN_RECORDS) open.delete(open.keys().next().value);
-      open.set(sessionId, { record: createAuditRecord({}), owner: activeUserId() });
-    }
-    return open.get(sessionId);
+  const recordFor = (sessionId) => {
+    if (open.has(sessionId)) return open.get(sessionId).record;
+    if (cleared.has(sessionId)) return null;
+    const owner = currentUser();
+    if (owner === null) return null;
+    if (open.size >= MAX_OPEN_RECORDS) open.delete(open.keys().next().value);
+    const entry = { record: createAuditRecord({}), owner };
+    open.set(sessionId, entry);
+    return entry.record;
   };
-  const recordFor = (sessionId) => entryFor(sessionId).record;
 
   app.post('/api/mittr/audit/prompt', readJson('256kb'), (req, res) => {
     const text = String(req.body?.text ?? '');
-    if (text) recordFor(String(req.body?.sessionId ?? '')).addPrompt(text);
+    if (text) recordFor(String(req.body?.sessionId ?? ''))?.addPrompt(text);
     return res.status(204).end();
   });
 
   app.post('/api/mittr/audit/tool', readJson('8kb'), (req, res) => {
     const name = String(req.body?.name ?? '');
-    if (name) recordFor(String(req.body?.sessionId ?? '')).addToolUse(name);
+    if (name) recordFor(String(req.body?.sessionId ?? ''))?.addToolUse(name);
     return res.status(204).end();
   });
 
   app.post('/api/mittr/audit/turn', readJson('8kb'), (req, res) => {
     const tokens = Number(req.body?.tokens);
-    recordFor(String(req.body?.sessionId ?? '')).addTurn({ tokens: Number.isFinite(tokens) ? tokens : 0 });
+    recordFor(String(req.body?.sessionId ?? ''))?.addTurn({ tokens: Number.isFinite(tokens) ? tokens : 0 });
     return res.status(204).end();
   });
 
   app.post('/api/mittr/audit/finish', readJson('8kb'), async (req, res) => {
     const sessionId = String(req.body?.sessionId ?? '');
     const startedIn = epoch;
-    const { record, owner } = entryFor(sessionId);
+    const entry = open.get(sessionId);
     open.delete(sessionId);
-    if (owner === null || activeUserId() !== owner) return res.status(204).end();
+    if (!entry || currentUser() !== entry.owner) return res.status(204).end();
+    const { record, owner } = entry;
 
     try {
       record.setRepository(await resolveRepositoryIdentity(String(req.body?.directory ?? ''), {
-        remoteUrl: (directory) => git.remoteUrl(directory),
+        remoteUrl,
       }));
       if (req.body?.model) record.setModel(String(req.body.model));
       const payload = serializeAuditRecord(record.finish(String(req.body?.outcome ?? 'unknown')));
@@ -87,6 +107,11 @@ export function registerMittrAuditRoutes(app, {
   return {
     clear: () => {
       epoch += 1;
+      for (const sessionId of open.keys()) {
+        cleared.delete(sessionId);
+        cleared.add(sessionId);
+        if (cleared.size > MAX_CLEARED_SESSIONS) cleared.delete(cleared.values().next().value);
+      }
       open.clear();
     },
   };

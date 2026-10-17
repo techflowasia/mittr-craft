@@ -47,7 +47,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'git-remote-url',
     files: ['packages/web/server/lib/git/service.js', 'packages/web/server/index.js'],
-    why: "the plugin context's git.remoteUrl(directory) is the service's getRemoteUrl(directory, 'origin'): the remote's URL as configured, null when the directory has no such remote or is not a repository, and it never throws",
+    why: "the plugin context's git.remoteUrl(directory) is the service's getRemoteUrl(directory, 'origin'): the remote's URL as configured and trimmed, null when the remote is absent or git fails; a directory that is missing or blank rejects",
   },
   {
     id: 'engine-on-ready',

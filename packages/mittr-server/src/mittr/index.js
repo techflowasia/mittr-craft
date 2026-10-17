@@ -223,7 +223,7 @@ export function setupMittr(context, {
     express,
     broker,
     ensureFreshSession,
-    activeUserId: () => store.list().find((account) => account.active)?.userId ?? null,
+    activeUserId: () => store.list({ carryLegacy: false }).find((account) => account.active)?.userId ?? null,
     git,
     fetchImpl,
     logger,
