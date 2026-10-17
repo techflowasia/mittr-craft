@@ -1072,6 +1072,21 @@ const checks = {
     for (const name of ['refresh', 'loader-4']) has(sprite, new RegExp(`^ {2}"${name}": `, 'm'), `the ${name} icon is gone`);
   },
 
+  'quota-store-dropdown-providers': () => {
+    const store = source('packages/ui/src/stores/useQuotaStore.ts');
+    has(store, /^ {6}dropdownProviderIds: QUOTA_PROVIDERS\.map\(\(provider\) => provider\.id\),$/m, 'the store no longer starts from the registered providers');
+    has(store, /const dropdownProviderIds = data\.usageDropdownProviders\s*\? data\.usageDropdownProviders\.filter\(/, 'a saved dropdown list is no longer filtered into a new list');
+    has(store, /loadSettings: async \(\) => \{\s*const generation = quotaGeneration;\s*try \{\s*const settings = await loadSettingsFromRuntime\(\);\s*if \(generation !== quotaGeneration\) return;\s*set\(settings\);\s*\} catch/, 'loadSettings no longer sets the settings only after a read');
+    has(store, /await get\(\)\.loadSettings\(\);/, 'the runtime load no longer reads loadSettings from the store');
+    for (const file of ['packages/ui/src/hooks/useTraySync.ts', 'packages/ui/src/components/sections/usage/UsagePage.tsx', 'packages/ui/src/components/sections/usage/UsageSidebar.tsx', 'packages/ui/src/components/layout/Header.tsx']) {
+      assert.doesNotMatch(source(file), /import \{[^}]*\bloadSettings\b[^}]*\} from '@\/stores\/useQuotaStore'/, `${file} imports a loadSettings that is not the store's`);
+    }
+    has(source('packages/ui/src/hooks/useTraySync.ts'), /useQuotaStore\.getState\(\)\.loadSettings\(\)/, 'the tray no longer loads the usage settings through the store');
+    has(source('packages/ui/src/hooks/useTraySync.ts'), /if \(!dropdownProviderIds\.includes\(meta\.id\)\) continue;/, 'the tray no longer lists only the dropdown providers');
+    has(source('packages/ui/src/components/usage/usageGroups.ts'), /\.filter\(\(providerMeta\) => dropdownProviderIds\.includes\(providerMeta\.id\)\)/, 'the work-status panel no longer lists only the dropdown providers');
+    has(source('packages/ui/src/components/sections/usage/UsagePage.tsx'), /void updateDesktopSettings\(\{ usageDropdownProviders: next \}\);/, 'the Usage page no longer saves the dropdown list as usageDropdownProviders');
+  },
+
   'account-menu-ui': () => {
     const menu = source('packages/ui/src/components/ui/dropdown-menu.tsx');
     for (const name of ['DropdownMenu', 'DropdownMenuContent', 'DropdownMenuItem', 'DropdownMenuLabel', 'DropdownMenuSeparator', 'DropdownMenuTrigger']) {

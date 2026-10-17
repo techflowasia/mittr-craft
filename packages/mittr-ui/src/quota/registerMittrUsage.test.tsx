@@ -35,6 +35,11 @@ describe('the Mittr usage provider', () => {
     expect(QUOTA_PROVIDERS.filter((provider) => provider.name === 'Mittr')).toHaveLength(1);
   });
 
+  test('the work-status panel and the tray list Mittr before the usage settings are read', () => {
+    const listed: readonly string[] = useQuotaStore.getState().dropdownProviderIds;
+    expect(listed.filter((id) => id === 'mittr')).toHaveLength(1);
+  });
+
   test('Mittr becomes the selected usage provider when none is chosen', () => {
     selectMittrUsage();
     expect(useQuotaStore.getState().selectedProviderId).toBe('mittr');

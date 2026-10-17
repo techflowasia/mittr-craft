@@ -375,6 +375,18 @@ export const UPSTREAM_CONTRACT = [
     why: 'Try again is drawn with the shared Button (variant outline, size xs) and the refresh and loader-4 icons',
   },
   {
+    id: 'quota-store-dropdown-providers',
+    files: [
+      'packages/ui/src/stores/useQuotaStore.ts',
+      'packages/ui/src/hooks/useTraySync.ts',
+      'packages/ui/src/components/usage/usageGroups.ts',
+      'packages/ui/src/components/sections/usage/UsagePage.tsx',
+      'packages/ui/src/components/sections/usage/UsageSidebar.tsx',
+      'packages/ui/src/components/layout/Header.tsx',
+    ],
+    why: "useQuotaStore starts dropdownProviderIds from the providers registered when the store is made, its loadSettings is a store field every caller reads from the store, and it sets a new dropdownProviderIds (the saved usageDropdownProviders that are still registered) only when the settings were read; the tray and the work-status panel list only those ids, and the Usage page saves them as usageDropdownProviders, so Mittr is added to a list saved before it existed, once, after a read",
+  },
+  {
     id: 'account-menu-ui',
     files: [
       'packages/ui/src/components/ui/dropdown-menu.tsx',
