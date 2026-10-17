@@ -118,31 +118,45 @@ export const stageRipgrep = ({ archive, pin, outDir, checkVersion = process.plat
   return { binary: path.join(outDir, 'rg'), sha256: pin.binarySha256 };
 };
 
-const unsignedSha256 = (binary) => {
+const strippedOf = (binary) => {
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-build-rg-sig-'));
   try {
     const copy = path.join(work, 'rg');
     fs.copyFileSync(binary, copy);
     const result = spawnSync('codesign', ['--remove-signature', copy], { encoding: 'utf8' });
     if (result.status !== 0) throw new Error(`codesign could not read the packed rg: ${String(result.stderr).trim()}`);
-    return sha256(fs.readFileSync(copy));
+    const bytes = fs.readFileSync(copy);
+    return { sha256: sha256(bytes), bytes: bytes.length };
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
   }
 };
 
-export const verifyPackedRipgrep = ({ appPath, pin, unsigned = unsignedSha256 }) => {
+const strictSignature = (binary) => {
+  const result = spawnSync('codesign', ['--verify', '--strict', binary], { encoding: 'utf8' });
+  if (result.status !== 0) throw new Error(`the packed rg fails codesign --verify --strict: ${String(result.stderr).trim()}`);
+};
+
+export const verifyPackedRipgrep = ({ appPath, pin, unsigned = strippedOf, verifySignature = strictSignature }) => {
   const binary = path.join(appPath, 'Contents', 'Resources', RIPGREP_RESOURCE_DIR, 'rg');
   if (!fs.existsSync(binary)) throw new Error(`the packed app has no bundled rg: ${binary}`);
   if ((fs.statSync(binary).mode & 0o111) === 0) throw new Error(`the packed rg is not executable: ${binary}`);
   for (const licence of RIPGREP_LICENCE_FILES) {
     if (!fs.existsSync(path.join(path.dirname(binary), licence))) throw new Error(`the packed app has no ripgrep ${licence} beside rg`);
   }
-  const found = sha256(fs.readFileSync(binary));
-  if (found === pin.binarySha256) return binary;
-  const withoutSignature = unsigned(binary);
-  if (withoutSignature !== pin.resignedStrippedSha256) {
-    throw new Error(`the packed rg has sha256 ${found} (${withoutSignature} without its signature), not the pinned ripgrep ${pin.version}`);
+  verifySignature(binary);
+  const bytes = fs.readFileSync(binary);
+  const found = sha256(bytes);
+  if (found === pin.binarySha256) {
+    if (bytes.length !== pin.binaryBytes) throw new Error(`the packed rg is ${bytes.length} bytes, not the pinned ${pin.binaryBytes}`);
+    return binary;
+  }
+  const stripped = unsigned(binary);
+  if (stripped.sha256 !== pin.resignedStrippedSha256) {
+    throw new Error(`the packed rg has sha256 ${found} (${stripped.sha256} without its signature), not the pinned ripgrep ${pin.version}`);
+  }
+  if (stripped.bytes !== pin.resignedStrippedBytes) {
+    throw new Error(`the packed rg is ${stripped.bytes} bytes without its signature, not the pinned ${pin.resignedStrippedBytes}`);
   }
   return binary;
 };

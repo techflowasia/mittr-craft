@@ -42,7 +42,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { z } from 'zod';
 
 import { resolveBunExecutable } from '../lib/bun-executable.mjs';
-import { RIPGREP_RESOURCE_DIR, defaultRipgrepArchive, readRipgrepPin, stageRipgrep, verifyPackedRipgrep } from './ripgrep.mjs';
+import { RIPGREP_RESOURCE_DIR, defaultRipgrepArchive, readPinnedArchive, readRipgrepPin, stageRipgrep, verifyPackedRipgrep } from './ripgrep.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const brandDir = path.join(repoRoot, 'brand');
@@ -383,6 +383,13 @@ export const assertPluginBundleFresh = ({ bundle, metafile, rootDir = repoRoot }
   return sources;
 };
 
+export const checkRipgrepArchive = ({ env = process.env } = {}) => {
+  const pin = readRipgrepPin();
+  const archive = defaultRipgrepArchive(pin, env);
+  readPinnedArchive({ archive, pin });
+  return { pin, archive };
+};
+
 const runLeakScan = (appPath) => {
   const result = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'mittr', 'brand-leak-scan.mjs'), appPath], { cwd: repoRoot, stdio: 'inherit' });
   if (result.error) throw result.error;
@@ -395,6 +402,7 @@ const main = async () => {
     return;
   }
   const flavor = parseFlavor(process.argv.slice(2));
+  const { pin: ripgrepPin, archive: ripgrepArchive } = checkRipgrepArchive();
   const startedAt = Date.now();
   const bun = resolveBunExecutable();
 
@@ -428,8 +436,7 @@ const main = async () => {
     fs.copyFileSync(path.join(brandDir, productOverride.splashSvg), path.join(stagingDir, productOverride.splashSvg));
   }
   fs.cpSync(webServerSource, path.join(electronDir, STAGED_SERVER), { recursive: true });
-  const ripgrepPin = readRipgrepPin();
-  const ripgrep = stageRipgrep({ archive: defaultRipgrepArchive(ripgrepPin), pin: ripgrepPin, outDir: path.join(electronDir, RIPGREP_STAGING) });
+  const ripgrep = stageRipgrep({ archive: ripgrepArchive, pin: ripgrepPin, outDir: path.join(electronDir, RIPGREP_STAGING) });
   console.log(`[mittr] ripgrep ${ripgrepPin.version} staged for the engine: ${path.relative(repoRoot, ripgrep.binary)}`);
   const product = readProduct({ appPath: stagingDir });
   for (const entry of productOverride.serverPlugins ?? []) {

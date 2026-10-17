@@ -13,6 +13,7 @@ import {
   applyVisibleStrings,
   assertPluginBundleFresh,
   buildServerPlugin,
+  checkRipgrepArchive,
   findPackedApp,
   mergeBuilderConfig,
   planVisibleStrings,
@@ -343,4 +344,22 @@ test('both flavors pack the staged ripgrep folder as Resources/ripgrep', () => {
     assert.ok(merged.extraResources.some((entry) => entry.to === 'opencode-cli'), `${flavor} lost the engine`);
   }
   assert.equal(RIPGREP_STAGING, '.product/ripgrep');
+});
+
+test('the build checks the pinned ripgrep archive before any build step, and stops on a missing or wrong one', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rg-preflight-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const missing = path.join(dir, 'missing.tar.gz');
+  assert.throws(() => checkRipgrepArchive({ env: { MITTRCRAFT_RIPGREP_ARCHIVE: missing } }), (error) => error.message.includes(missing) && /never downloads/.test(error.message));
+  const wrong = path.join(dir, 'wrong.tar.gz');
+  fs.writeFileSync(wrong, 'not the release');
+  assert.throws(() => checkRipgrepArchive({ env: { MITTRCRAFT_RIPGREP_ARCHIVE: wrong } }), /has sha256 [0-9a-f]{64}, not the pinned 378e9732/);
+
+  const main = fs.readFileSync(path.join(repoRoot, 'scripts/mittr/build-desktop.mjs'), 'utf8');
+  const body = main.slice(main.indexOf('const main = async () => {'));
+  assert.ok(body.indexOf('checkRipgrepArchive()') !== -1, 'main does not check the ripgrep archive');
+  assert.ok(body.indexOf('checkRipgrepArchive()') < body.indexOf("step('1/8 workspace build')"), 'the ripgrep archive is checked only after the build starts');
+
+  const cached = path.join(repoRoot, 'packages/electron/.cache/ripgrep/ripgrep-15.1.0-aarch64-apple-darwin.tar.gz');
+  if (fs.existsSync(cached)) assert.equal(checkRipgrepArchive({ env: {} }).archive, cached);
 });

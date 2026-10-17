@@ -92,6 +92,8 @@ test('the pin names ripgrep 15.1.0 for Apple silicon, the release URL and three 
   assert.equal(pin.asset, 'ripgrep-15.1.0-aarch64-apple-darwin.tar.gz');
   assert.equal(pin.url, `https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/${pin.asset}`);
   for (const key of ['archiveSha256', 'binarySha256', 'resignedStrippedSha256']) assert.match(pin[key], /^[0-9a-f]{64}$/, key);
+  assert.equal(pin.binaryBytes, 4048816);
+  assert.equal(pin.resignedStrippedBytes, 4017304);
 });
 
 test('the archive is read from the electron build cache unless the env names another path', () => {
@@ -172,11 +174,19 @@ const fakeApp = (t, { binary = Buffer.from('rg bytes'), mode = 0o755, licences =
 };
 
 test('the packed app must carry an executable rg with the pinned bytes and its licences', (t) => {
-  const pinFor = (bytes) => ({ version: '9.9.9', binarySha256: sha256(bytes), resignedStrippedSha256: 'a'.repeat(64) });
+  const pinFor = (bytes) => ({ version: '9.9.9', binarySha256: sha256(bytes), binaryBytes: bytes.length, resignedStrippedSha256: 'a'.repeat(64), resignedStrippedBytes: 100 });
   const never = () => assert.fail('an exact match needs no signature check');
+  const verified = () => {};
 
   const exact = fakeApp(t);
-  assert.ok(verifyPackedRipgrep({ appPath: exact.appPath, pin: pinFor(exact.binary), unsigned: never }).endsWith('ripgrep/rg'));
+  assert.ok(verifyPackedRipgrep({ appPath: exact.appPath, pin: pinFor(exact.binary), unsigned: never, verifySignature: verified }).endsWith('ripgrep/rg'));
+  assert.throws(() => verifyPackedRipgrep({ appPath: exact.appPath, pin: { ...pinFor(exact.binary), binaryBytes: 9 }, unsigned: never, verifySignature: verified }), /is 8 bytes, not the pinned 9/);
+  assert.throws(() => verifyPackedRipgrep({
+    appPath: exact.appPath,
+    pin: pinFor(exact.binary),
+    unsigned: never,
+    verifySignature: () => { throw new Error('the packed rg fails codesign --verify --strict: bad'); },
+  }), /fails codesign --verify --strict/);
 
   assert.throws(() => verifyPackedRipgrep({ appPath: fakeApp(t, { binary: null }).appPath, pin: pinFor(Buffer.from('x')) }), /has no bundled rg/);
   const plain = fakeApp(t, { mode: 0o644 });
@@ -186,8 +196,10 @@ test('the packed app must carry an executable rg with the pinned bytes and its l
 
   const resigned = fakeApp(t, { binary: Buffer.from('re-signed rg bytes') });
   const pin = pinFor(Buffer.from('rg bytes'));
-  assert.ok(verifyPackedRipgrep({ appPath: resigned.appPath, pin, unsigned: () => 'a'.repeat(64) }));
-  assert.throws(() => verifyPackedRipgrep({ appPath: resigned.appPath, pin, unsigned: () => 'b'.repeat(64) }), /not the pinned ripgrep 9\.9\.9/);
+  const stripped = (sha, bytes) => () => ({ sha256: sha, bytes });
+  assert.ok(verifyPackedRipgrep({ appPath: resigned.appPath, pin, unsigned: stripped('a'.repeat(64), 100), verifySignature: verified }));
+  assert.throws(() => verifyPackedRipgrep({ appPath: resigned.appPath, pin, unsigned: stripped('b'.repeat(64), 100), verifySignature: verified }), /not the pinned ripgrep 9\.9\.9/);
+  assert.throws(() => verifyPackedRipgrep({ appPath: resigned.appPath, pin, unsigned: stripped('a'.repeat(64), 104), verifySignature: verified }), /104 bytes without its signature, not the pinned 100/);
 });
 
 test('the pinned release archive in the build cache stages rg 15.1.0, and a re-signed copy still passes the packed check', (t) => {
@@ -213,5 +225,10 @@ test('the pinned release archive in the build cache stages rg 15.1.0, and a re-s
   assert.ok(verifyPackedRipgrep({ appPath, pin }));
 
   fs.appendFileSync(path.join(packedDir, 'rg'), Buffer.from('tampered'));
-  assert.throws(() => verifyPackedRipgrep({ appPath, pin }), /not the pinned ripgrep 15\.1\.0|codesign could not read/);
+  assert.throws(() => verifyPackedRipgrep({ appPath, pin }), /fails codesign --verify --strict/);
+
+  fs.cpSync(path.dirname(staged.binary), packedDir, { recursive: true });
+  fs.appendFileSync(path.join(packedDir, 'rg'), Buffer.from('trailing'));
+  assert.throws(() => verifyPackedRipgrep({ appPath, pin }), /fails codesign --verify --strict|bytes/);
+  assert.throws(() => verifyPackedRipgrep({ appPath, pin, verifySignature: () => {} }), /is 4048824 bytes, not the pinned 4048816|not the pinned ripgrep|codesign could not read the packed rg/);
 });

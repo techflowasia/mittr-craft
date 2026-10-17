@@ -5,5 +5,7 @@
   "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/ripgrep-15.1.0-aarch64-apple-darwin.tar.gz",
   "archiveSha256": "378e973289176ca0c6054054ee7f631a065874a352bf43f0fa60ef079b6ba715",
   "binarySha256": "4fdf1d8365af224bc70e3c1490d8461d859c37cc70e739a11e987af0215f3e94",
-  "resignedStrippedSha256": "ea91b02e833a93bea206911bb80434a837d11a4d2eca520548abd07cece2c2c6"
+  "binaryBytes": 4048816,
+  "resignedStrippedSha256": "ea91b02e833a93bea206911bb80434a837d11a4d2eca520548abd07cece2c2c6",
+  "resignedStrippedBytes": 4017304
 }
