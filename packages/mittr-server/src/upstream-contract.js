@@ -285,6 +285,11 @@ export const UPSTREAM_CONTRACT = [
     why: "the bundled engine is OpenCode 2.0.22, whose session context hook hands plugins the system prompt as o.system text parts opening with its harness sentence; the identity plugin rewrites that sentence, so a new engine version needs probe P3 (scripts/mittr/probe-engine-v2.mjs) run again before this pin moves",
   },
   {
+    id: 'engine-launched-data-home',
+    files: ['packages/web/server/lib/opencode/lifecycle.js', 'packages/web/server/index.js'],
+    why: "the plugin context's opencode.launchedDataHome() is the XDG_DATA_HOME the managed OpenCode process was last launched with (null for an external server), recorded from the very env it is spawned with, so a plugin can see which data folder the running engine is on",
+  },
+  {
     id: 'engine-refresh-restarts',
     files: ['packages/web/server/lib/opencode/lifecycle.js', 'packages/web/server/index.js'],
     why: "a plugin's opencode.refresh(reason) restarts the managed OpenCode and waits for it to be ready, and that restart reads the plugins' engine env again, so a Mittr account switch moves the engine onto the account's home",

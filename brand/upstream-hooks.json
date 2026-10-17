@@ -251,6 +251,10 @@
     {
       "hook": "managed-config",
       "why": "A downstream build adds providers, policies and plugins to the managed OpenCode by returning a config fragment from its server plugin, which the managed config writer puts in the managed OPENCODE_CONFIG file beside OpenChamber's own plugins, keeping that layer even when the user set OPENCODE_CONFIG (their file and OPENCODE_CONFIG_CONTENT then move into OPENCODE_CONFIG_CONTENT), instead of editing upstream's writer."
+    },
+    {
+      "hook": "server-plugins",
+      "why": "A plugin that moves the managed OpenCode's data folder between restarts could not tell which folder the running process was actually launched with, since a restart it asked for may join one already under way that read the environment earlier."
     }
   ],
   "packages/web/server/lib/enterprise-mode.js": [

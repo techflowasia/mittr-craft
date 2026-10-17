@@ -834,6 +834,15 @@ const checks = {
     assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P3 again, then update the identity plugin and this pin');
   },
 
+  'engine-launched-data-home': () => {
+    const server = source('packages/web/server/index.js');
+    has(pluginContext(server), /launchedDataHome: \(\) => openCodeLifecycleRuntime\.getManagedOpenCodeProcessEnv\(\)\?\.XDG_DATA_HOME \?\? null,/, 'the plugin context no longer reports the data folder the engine was launched with');
+
+    const lifecycle = source('packages/web/server/lib/opencode/lifecycle.js');
+    has(lifecycle, /getManagedOpenCodeProcessEnv: \(\) => \(state\.isExternalOpenCode \? null : managedProcessEnv\),/, 'the lifecycle no longer reports the managed process env, or reports one for an external server');
+    has(lifecycle, /const processEnv = [^;]*\.\.\.managedOpenCodeEnv,[\s\S]*?managedProcessEnv = processEnv;\s*let serverInstance;[\s\S]*?env: processEnv,/, 'the recorded env is no longer the one the managed process is spawned with');
+  },
+
   'engine-refresh-restarts': () => {
     const server = source('packages/web/server/index.js');
     has(pluginContext(server), /refresh: async \(reason\) => \{ await refreshOpenCodeAfterConfigChange\(reason\); \},/, 'the plugin context no longer refreshes the managed OpenCode');

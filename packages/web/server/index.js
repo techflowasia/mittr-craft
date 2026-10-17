@@ -2530,6 +2530,7 @@ async function main(options = {}) {
         refresh: async (reason) => { await refreshOpenCodeAfterConfigChange(reason); },
         waitReady: () => waitForOpenCodeReady(),
         defaultDirectory: () => openCodeLifecycleRuntime.getDefaultOpenCodeDirectory(),
+        launchedDataHome: () => openCodeLifecycleRuntime.getManagedOpenCodeProcessEnv()?.XDG_DATA_HOME ?? null,
         onReady: (listener) => {
           engineReadyListeners.add(listener);
           return () => engineReadyListeners.delete(listener);
