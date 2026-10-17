@@ -7,7 +7,7 @@ import { I18nProvider } from '../../../ui/src/lib/i18n';
 import type { RuntimeUrlQuery } from '../../../ui/src/lib/runtime-url';
 import { mittrT } from '../strings/mittrT';
 import type { AdFetch, AdStatus } from './adStatus';
-import { endLockout, entraLoginUrl, failureAfterWait, failureMessage, signInWithDirectory, submitAdSession, type AdSessionResult } from './adApi';
+import { endLockout, entraLoginUrl, failureMessage, signInWithDirectory, submitAdSession, type AdSessionResult } from './adApi';
 import { AdSignInView, LdapFormView, TrustDevice } from './AdSignIn';
 
 const entra: AdStatus = { enabled: true, mode: 'entra', passwordEnabled: false, tunnelLocked: false };
@@ -151,16 +151,6 @@ describe('failureMessage', () => {
   });
 });
 
-describe('failureAfterWait', () => {
-  test('the wait text goes when the wait ends, and any other failure stays', () => {
-    expect(failureAfterWait({ ok: false, reason: 'rate-limited', retryAfterSeconds: 120 })).toBeNull();
-    expect(failureAfterWait({ ok: false, reason: 'rate-limited' })).toBeNull();
-    const invalid: Failure = { ok: false, reason: 'invalid' };
-    expect(failureAfterWait(invalid)).toBe(invalid);
-    expect(failureAfterWait(null)).toBeNull();
-  });
-});
-
 describe('endLockout', () => {
   test('the end of a wait re-enables the button and takes the wait text away, keeping any other failure', () => {
     let blockedUntil = 123;
@@ -176,6 +166,12 @@ describe('endLockout', () => {
     failure = invalid;
     endLockout({ setBlockedUntil: () => {}, setFailure });
     expect(failure).toBe(invalid);
+
+    failure = { ok: false, reason: 'rate-limited' };
+    endLockout({ setBlockedUntil: () => {}, setFailure });
+    expect(failure).toBeNull();
+    endLockout({ setBlockedUntil: () => {}, setFailure });
+    expect(failure).toBeNull();
   });
 });
 
