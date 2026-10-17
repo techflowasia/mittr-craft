@@ -165,14 +165,33 @@ test('this checkout\'s bin refuses to start without a data dir and touches nothi
   assert.deepEqual(fs.readdirSync(home), []);
 });
 
-test('a packed layout without .git gets the default data dir and the bin touches nothing', (t) => {
-  const { root, packageDir } = tempLayout(t, 'mittrcraft-packed-');
-  fs.mkdirSync(path.join(packageDir, 'bin'));
-  fs.copyFileSync(BIN, path.join(packageDir, 'bin', 'mittrcraft.mjs'));
+const packedBin = (t, prefix) => {
+  const { root, packageDir } = tempLayout(t, prefix);
+  fs.cpSync(path.join(repoRoot, 'packages/mittr-server/bin'), path.join(packageDir, 'bin'), { recursive: true });
   fs.copyFileSync(path.join(repoRoot, 'packages/mittr-server/src/cli-env.js'), path.join(packageDir, 'src', 'cli-env.js'));
   fs.writeFileSync(path.join(packageDir, 'src', 'plugin.js'), 'export default () => {};\n');
-  fs.mkdirSync(path.join(root, 'brand'));
-  fs.copyFileSync(path.join(repoRoot, 'brand/product.prod.json'), path.join(root, 'brand', 'product.prod.json'));
+  return { root, packageDir, bin: path.join(packageDir, 'bin', 'mittrcraft.mjs') };
+};
+
+test('the env shipped next to the bin is the prod product env', () => {
+  assert.deepEqual(readProductEnv(path.join(repoRoot, 'packages/mittr-server/bin/product-env.json')), PRODUCT_ENV);
+});
+
+test('a packed bin without brand/ finds its product env and answers --help', (t) => {
+  const { root, bin } = packedBin(t, 'mittrcraft-packed-help-');
+  fs.symlinkSync(path.join(repoRoot, 'packages/web'), path.join(root, 'packages', 'web'), 'dir');
+  assert.equal(fs.existsSync(path.join(root, 'brand')), false);
+
+  const packed = runIsolated(t, bin, ['--help']);
+  const direct = runIsolated(t, SERVER_CLI, ['--help']);
+
+  assert.equal(packed.status, 0, packed.stderr);
+  assert.ok(packed.stdout.includes('openchamber [COMMAND] [OPTIONS]'), packed.stdout);
+  assert.equal(packed.stdout, direct.stdout);
+});
+
+test('a packed layout without .git gets the default data dir and the bin touches nothing', (t) => {
+  const { root, packageDir } = packedBin(t, 'mittrcraft-packed-');
   fs.mkdirSync(path.join(root, 'packages', 'web', 'bin'), { recursive: true });
   fs.writeFileSync(
     path.join(root, 'packages', 'web', 'bin', 'cli.js'),

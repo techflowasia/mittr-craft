@@ -8,7 +8,7 @@ import { prepareCliEnvironment, readProductEnv } from '../src/cli-env.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_CLI = path.resolve(here, '..', '..', 'web', 'bin', 'cli.js');
 const PLUGIN = path.resolve(here, '..', 'src', 'plugin.js');
-const PRODUCT = path.resolve(here, '..', '..', '..', 'brand', 'product.prod.json');
+const PRODUCT = path.resolve(here, 'product-env.json');
 
 const { env, refusal } = prepareCliEnvironment({
   env: process.env,

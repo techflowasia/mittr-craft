@@ -1,0 +1,14 @@
+{
+  "env": {
+    "OPENCHAMBER_DATA_DIR": "~/.config/mittrcraft",
+    "OPENCODE_CONFIG_DIR": "~/.config/mittrcraft/engine/opencode",
+    "OPENCHAMBER_POLICY_FILE": "/Library/Application Support/MittrCraft/policy.json",
+    "OPENCHAMBER_MANAGED_PROCESS_REGISTRY": "~/.config/mittrcraft/managed-opencode",
+    "OPENCHAMBER_UPDATE_CHECK_DISABLED": "1",
+    "OPENCHAMBER_MODELS_METADATA_DISABLED": "1",
+    "MITTRCRAFT_ENGINE_HOME": "",
+    "MITTRCRAFT_DEEP_LINK_SCHEME": "mittrcraft",
+    "MITTRCRAFT_BROKER_URL": "https://api.mittr.asia",
+    "MITTRCRAFT_BROKER_FIXED": "1"
+  }
+}

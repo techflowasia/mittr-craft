@@ -46,7 +46,7 @@ Upstream's "sign out everywhere" (`POST /api/auth/reset`) rotates the secret tha
 
 - `OPENCHAMBER_SERVER_PLUGINS`: this plugin.
 - `OPENCHAMBER_DATA_DIR`: `~/.config/mittrcraft`.
-- The prod broker variables from `brand/product.prod.json`.
+- The prod broker variables from `bin/product-env.json`, a copy of the `env` block of `brand/product.prod.json` that travels with the bin (a test keeps the two equal).
 - The 1.22 names `MITTRCRAFT_UI_PASSWORD`, `MITTRCRAFT_ALLOW_UNAUTHENTICATED_LAN` and `MITTRCRAFT_DATA_DIR`, mapped onto their `OPENCHAMBER_*` names.
 
 It refuses to start when a `MITTR_AD_*` setting is present but `OPENCHAMBER_SERVER_PLUGINS` does not load this plugin.
