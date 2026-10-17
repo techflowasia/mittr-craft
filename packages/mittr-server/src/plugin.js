@@ -67,10 +67,13 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
   if (identities.seededFrom) logger.log(`[mittr] git identities copied from ${identities.seededFrom}`);
 
   const ripgrep = bundledRipgrep(resourcesDir);
+  let ripgrepWarned = false;
   const placeRipgrep = () => {
     try {
       placeEngineRipgrep({ bundled: ripgrep, bases });
     } catch (error) {
+      if (ripgrepWarned) return;
+      ripgrepWarned = true;
       logger.warn('[mittr] could not put the bundled rg where the engine looks for it:', error?.message ?? error);
     }
   };

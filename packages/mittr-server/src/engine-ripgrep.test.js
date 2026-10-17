@@ -56,6 +56,20 @@ test('the bundled rg is put where the engine looks, executable, and replaced whe
   assert.deepEqual(fs.readdirSync(path.dirname(target)), ['rg']);
 });
 
+test('a copy with the right bytes that lost its execute bit is made executable again', (t) => {
+  const home = tempDir(t, 'mittr-home-');
+  const bases = engineBases({ homeDir: home, env: {} });
+  const bundled = bundledRipgrep(resourcesWithRipgrep(t, 'bundled 15.1.0'));
+  const target = engineRipgrepPath(bases);
+  placeEngineRipgrep({ bundled, bases });
+  fs.chmodSync(target, 0o644);
+
+  placeEngineRipgrep({ bundled, bases });
+
+  assert.equal(fs.statSync(target).mode & 0o777, 0o755);
+  assert.equal(fs.readFileSync(target, 'utf8'), 'bundled 15.1.0');
+});
+
 test('without a bundled rg nothing is written', (t) => {
   const home = tempDir(t, 'mittr-home-');
   const bases = engineBases({ homeDir: home, env: {} });

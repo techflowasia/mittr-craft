@@ -22,7 +22,10 @@ const sameFile = (left, right) => {
 export const placeEngineRipgrep = ({ bundled, bases }) => {
   if (!bundled) return null;
   const target = engineRipgrepPath(bases);
-  if (sameFile(bundled, target)) return target;
+  if (sameFile(bundled, target)) {
+    if ((fs.statSync(target).mode & 0o777) !== 0o755) fs.chmodSync(target, 0o755);
+    return target;
+  }
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const staged = `${target}.${process.pid}.partial`;
   try {

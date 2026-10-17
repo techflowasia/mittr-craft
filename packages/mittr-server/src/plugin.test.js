@@ -120,7 +120,13 @@ test('each engine start finds the app\'s bundled rg in the engine cache, so the 
   fs.rmSync(path.dirname(engineRg), { recursive: true });
   fs.writeFileSync(path.dirname(engineRg), 'not a folder');
   assert.equal((await plugin.engineEnv()).OPENCODE_DISABLE_MODELS_FETCH, '1');
+  await plugin.engineEnv();
+  await plugin.engineEnv();
   assert.equal(logger.lines.filter((line) => line.includes('[mittr] could not put the bundled rg')).length, 1);
+
+  fs.rmSync(path.dirname(engineRg));
+  await plugin.engineEnv();
+  assert.equal(fs.readFileSync(engineRg, 'utf8'), 'bundled rg');
 });
 
 test('setup on the Dev layout backs up the data dir once, with the engine inside it', async (t) => {
