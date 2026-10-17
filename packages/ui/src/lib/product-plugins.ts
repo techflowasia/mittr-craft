@@ -47,6 +47,8 @@ export type ModelPickerDecorations = {
 
 type UseModelPickerDecorations = (open: boolean) => ModelPickerDecorations;
 
+type ProductSessionAuthContext = { passwordEnabled: boolean };
+
 type ProductMessageError = { type: string; message: string; status?: number; responseBody?: string; providerID?: string };
 
 export type ProductUiPlugin = {
@@ -58,6 +60,7 @@ export type ProductUiPlugin = {
   slots?: { [K in ProductSlotName]?: ProductSlotComponent<K> | ProductSlotComponent<K>[] };
   modelPicker?: { useDecorations: UseModelPickerDecorations };
   messageError?: (error: ProductMessageError) => string | null;
+  sessionAuthDescription?: (context: ProductSessionAuthContext) => string | null;
   // false: the window never asks models.dev for model metadata or provider
   // logos; it uses what the server answers and the logos bundled with the UI.
   remoteModelCatalog?: boolean;
@@ -241,6 +244,16 @@ export function translateProductMessageError(error: ProductMessageError): string
     const translated = plugin.messageError?.(error) ?? null;
     if (translated !== null) {
       return translated;
+    }
+  }
+  return null;
+}
+
+export function translateProductSessionAuthDescription(context: ProductSessionAuthContext): string | null {
+  for (const plugin of plugins) {
+    const description = plugin.sessionAuthDescription?.(context) ?? null;
+    if (description !== null) {
+      return description;
     }
   }
   return null;

@@ -35,6 +35,7 @@ const resetHarness = () => {
   sessionBody = { authenticated: false };
   desktopShell = false;
   clientTokenFromServer = 'issued-token';
+  descriptionOverride = null;
   slotCalls.length = 0;
   fetchedPaths.length = 0;
   hostSets.length = 0;
@@ -185,6 +186,7 @@ const reactJsxRuntime = {
 let sessionBody: Record<string, unknown> = { authenticated: false };
 let desktopShell = false;
 let clientTokenFromServer = 'issued-token';
+let descriptionOverride: string | null = null;
 const slotCalls: JSXProps[] = [];
 const fetchedPaths: string[] = [];
 const hostSets: unknown[] = [];
@@ -272,6 +274,7 @@ mock.module('@/lib/product-plugins', () => ({
     slotCalls.push(props);
     return { type: 'product-slot', props };
   },
+  translateProductSessionAuthDescription: () => descriptionOverride,
 }));
 
 mock.module('@/lib/runtime-auth', () => ({
@@ -506,5 +509,36 @@ describe('SessionAuthGate session-auth-methods slot', () => {
 
     expect(switchedEndpoints).toEqual([]);
     expect(findElement(await renderGate(), 'product-slot')).not.toBeNull();
+  });
+});
+
+describe('SessionAuthGate description', () => {
+  test('the line under the title is upstream\'s while no plugin words it', async () => {
+    resetHarness();
+    sessionBody = { authenticated: false, locked: true, passwordEnabled: false, providers: ['x'] };
+
+    expect(collectText(await renderGate())).toContain('sessionAuth.locked.passwordDescription');
+  });
+
+  test('a plugin can word the line, and its words replace upstream\'s', async () => {
+    resetHarness();
+    sessionBody = { authenticated: false, locked: true, passwordEnabled: false, providers: ['x'] };
+    descriptionOverride = 'Sign in with your company account.';
+
+    const text = collectText(await renderGate());
+
+    expect(text).toContain('Sign in with your company account.');
+    expect(text).not.toContain('sessionAuth.locked.passwordDescription');
+  });
+
+  test('the tunnel line is never replaced', async () => {
+    resetHarness();
+    sessionBody = { authenticated: false, locked: true, tunnelLocked: true };
+    descriptionOverride = 'Sign in with your company account.';
+
+    const text = collectText(await renderGate());
+
+    expect(text).toContain('sessionAuth.locked.tunnelDescription');
+    expect(text).not.toContain('company account');
   });
 });

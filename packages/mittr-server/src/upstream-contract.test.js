@@ -1204,7 +1204,7 @@ const checks = {
 
   'session-auth-methods-slot': () => {
     const gate = source('packages/ui/src/components/auth/SessionAuthGate.tsx');
-    has(gate, /^import \{ ProductSlot, type SessionAuthRuntime \} from '@\/lib\/product-plugins';$/m, 'SessionAuthGate no longer imports ProductSlot');
+    has(gate, /^import \{ ProductSlot, translateProductSessionAuthDescription, type SessionAuthRuntime \} from '@\/lib\/product-plugins';$/m, 'SessionAuthGate no longer imports ProductSlot');
     assert.equal(lineCount(gate, '<ProductSlot'), 1, 'SessionAuthGate renders ProductSlot more than once, or not at all');
     has(gate, /<\/form>\s*\)\}\s*<ProductSlot\s+name="session-auth-methods"\s+isTunnelLocked=\{isTunnelLocked\}\s+runtime=\{sessionAuthRuntime\(\)\}\s+onSignedIn=\{finishProviderSignIn\}\s+\/>\s*\{showHostSwitcher && \(/, 'the session-auth-methods slot is no longer after the password form, outside the tunnel check, before the host switcher');
     has(gate, /\{!isTunnelLocked && passwordEnabled && \(\s*<form onSubmit=\{handleSubmit\}/, 'the password form no longer waits for passwordEnabled');
@@ -1220,6 +1220,15 @@ const checks = {
     const key = gate.match(/^const TRUST_DEVICE_STORAGE_KEY = '([^']+)';$/m)?.[1];
     assert.ok(key, 'the gate no longer names its trust-device storage key in TRUST_DEVICE_STORAGE_KEY');
     has(source('packages/mittr-ui/src/ui-auth/adApi.ts'), new RegExp(`^export const TRUST_DEVICE_STORAGE_KEY = '${key.replace(/\./g, '\\.')}';$`, 'm'), 'the company sign-in no longer reads the gate\'s trust-device choice');
+  },
+
+  'session-auth-description': () => {
+    const gate = source('packages/ui/src/components/auth/SessionAuthGate.tsx');
+    has(gate, /: \(translateProductSessionAuthDescription\(\{ passwordEnabled \}\) \?\? t\('sessionAuth\.locked\.passwordDescription'\)\)\}/, 'the gate no longer asks the product for its description before upstream\'s');
+    has(gate, /\? t\('sessionAuth\.locked\.tunnelDescription'\)/, 'the tunnel description is no longer the gate\'s own');
+    const plugins = source('packages/ui/src/lib/product-plugins.ts');
+    has(plugins, /sessionAuthDescription\?: \(context: ProductSessionAuthContext\) => string \| null;/);
+    has(plugins, /type ProductSessionAuthContext = \{ passwordEnabled: boolean \};/);
   },
 
   'desktop-runtime-detect': () => {

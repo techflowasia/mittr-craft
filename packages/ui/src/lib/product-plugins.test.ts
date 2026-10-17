@@ -13,6 +13,7 @@ import {
   remoteModelCatalogAllowed,
   resetProductUiPluginsForTests,
   translateProductMessageError,
+  translateProductSessionAuthDescription,
   useProductModelPicker,
   type ModelPickerDecorations,
   type ProductSlotComponent,
@@ -325,6 +326,19 @@ describe('product UI plugin root and slots', () => {
     registerProductUiPlugin({ id: 'p3', messageError: () => 'third' });
 
     expect(translateProductMessageError(error)).toBe('second:402');
+  });
+});
+
+describe('session auth description', () => {
+  test('nothing words the line until a plugin does, and the first answer wins', () => {
+    expect(translateProductSessionAuthDescription({ passwordEnabled: false })).toBeNull();
+
+    registerProductUiPlugin({ id: 'p1', sessionAuthDescription: () => null });
+    registerProductUiPlugin({ id: 'p2', sessionAuthDescription: ({ passwordEnabled }) => (passwordEnabled ? null : 'second') });
+    registerProductUiPlugin({ id: 'p3', sessionAuthDescription: () => 'third' });
+
+    expect(translateProductSessionAuthDescription({ passwordEnabled: false })).toBe('second');
+    expect(translateProductSessionAuthDescription({ passwordEnabled: true })).toBe('third');
   });
 });
 

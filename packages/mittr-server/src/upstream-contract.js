@@ -420,6 +420,11 @@ export const UPSTREAM_CONTRACT = [
     why: "the session gate renders the session-auth-methods slot once, with isTunnelLocked, the runtime it is in and onSignedIn(clientToken?), after its password form and outside the tunnel check; onSignedIn applies the client token it is given (a desktop window keeps it for the host it is connected to), or asks POST /api/client-auth/clients for one, and then lets the person in, answering false when a desktop window cannot get a token; the password form (passkeys with it) is left out when the 401 session status says passwordEnabled is false; the gate keeps the trust-device choice in localStorage under TRUST_DEVICE_STORAGE_KEY, which the slot reads when the gate has no form to show it",
   },
   {
+    id: 'session-auth-description',
+    files: ['packages/ui/src/components/auth/SessionAuthGate.tsx', 'packages/ui/src/lib/product-plugins.ts'],
+    why: "the line under the gate's title is the first answer of translateProductSessionAuthDescription({ passwordEnabled }) from the product plugins' sessionAuthDescription, else upstream's sessionAuth.locked.passwordDescription; the tunnel line is never replaced",
+  },
+  {
     id: 'desktop-runtime-detect',
     files: ['packages/ui/src/lib/desktop.ts', 'packages/ui/src/components/auth/SessionAuthGate.tsx'],
     why: "isDesktopShell() is true only in the Electron window, so the profile stays off the desktop app; the gate tells the sign-in slot its runtime: 'web', 'desktop-local' (the window runs its own server) or 'desktop-remote' (connected to another host, which it signs in to with a client token, since a cookie from the page is not sent to another site)",

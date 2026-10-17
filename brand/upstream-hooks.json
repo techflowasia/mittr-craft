@@ -151,6 +151,10 @@
     {
       "hook": "session-auth-finish",
       "why": "A sign-in method a plugin adds could open a session but had no way to hand it to the gate, and a desktop window connected to another host needs a client token, not the cookie, to stay signed in, so the gate now tells the slot which runtime it is in and gives it an onSignedIn that applies the token it is handed (or asks the host for one) and lets the person in."
+    },
+    {
+      "hook": "session-auth-description",
+      "why": "The line under the sign-in title says the session is password-protected, which is wrong on a server whose only sign-in is a plugin's, so the gate now asks the product plugins for the words first and keeps its own line when none answers."
     }
   ],
   "packages/ui/src/components/chat/ChatMessage.tsx": [
@@ -275,6 +279,10 @@
     {
       "hook": "session-auth-finish",
       "why": "The session-auth-methods slot now receives the runtime the gate is in and an onSignedIn callback, so a sign-in method added by a plugin can finish a sign-in the way a password sign-in does."
+    },
+    {
+      "hook": "session-auth-description",
+      "why": "A product plugin can now word the line under the sign-in title through sessionAuthDescription, the way it can reword a message error, and the first plugin to answer wins."
     }
   ],
   "packages/ui/src/lib/quota/providers/index.ts": [

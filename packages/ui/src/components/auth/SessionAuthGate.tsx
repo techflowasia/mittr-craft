@@ -15,7 +15,7 @@ import { runtimeFetch } from '@/lib/runtime-fetch';
 import { installAuthSessionFocusWatch, useAuthSessionStore } from '@/lib/runtime-auth-expiry';
 import { AuthExpiredBanner } from './AuthExpiredBanner';
 import { getRuntimeExtraHeadersSync } from '@/lib/runtime-auth';
-import { ProductSlot, type SessionAuthRuntime } from '@/lib/product-plugins';
+import { ProductSlot, translateProductSessionAuthDescription, type SessionAuthRuntime } from '@/lib/product-plugins';
 import { getRuntimeApiBaseUrl, getRuntimeKey, subscribeRuntimeEndpointChanged, switchRuntimeEndpoint } from '@/lib/runtime-switch';
 import { desktopHostsGet, desktopHostsSet, getDesktopHostApiUrl, normalizeHostUrl } from '@/lib/desktopHosts';
 import { runtimeIdentityMatches, type GateState, type RuntimeIdentity } from './sessionAuthGateState';
@@ -917,7 +917,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
             <p className="typography-meta text-muted-foreground">
               {isTunnelLocked
                 ? t('sessionAuth.locked.tunnelDescription')
-                : t('sessionAuth.locked.passwordDescription')}
+                : (translateProductSessionAuthDescription({ passwordEnabled }) ?? t('sessionAuth.locked.passwordDescription'))}
             </p>
           </div>
 
