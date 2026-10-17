@@ -55,6 +55,10 @@ export function failureMessage(failure: Extract<AdSessionResult, { ok: false }>)
   }
 }
 
+export function failureAfterWait(failure: Extract<AdSessionResult, { ok: false }> | null): Extract<AdSessionResult, { ok: false }> | null {
+  return failure?.reason === 'rate-limited' ? null : failure;
+}
+
 export async function submitAdSession({ fetch, username, password, trustDevice, issueClientToken = false }: {
   fetch: AdFetch;
   username: string;

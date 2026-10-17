@@ -7,7 +7,7 @@ import { Input } from '../../../ui/src/components/ui/input';
 import type { SessionAuthMethodsProps } from '../../../ui/src/lib/product-plugins';
 import { getRuntimeUrlResolver } from '../../../ui/src/lib/runtime-url';
 import { useMittrT } from '../strings/mittrT';
-import { entraLoginUrl, failureMessage, readStoredTrustDevice, signInWithDirectory, storeTrustDevice, type AdSessionResult } from './adApi';
+import { entraLoginUrl, failureAfterWait, failureMessage, readStoredTrustDevice, signInWithDirectory, storeTrustDevice, type AdSessionResult } from './adApi';
 import { defaultAdFetch, fetchAdStatus, type AdStatus } from './adStatus';
 
 export function TrustDevice({ checked, disabled, onChange }: { checked: boolean; disabled: boolean; onChange: (next: boolean) => void }): React.ReactNode {
@@ -157,7 +157,10 @@ function LdapForm({ trustDevice, busy, onBusyChange, focusUsername, runtime, onS
   React.useEffect(() => {
     const wait = blockedUntil - Date.now();
     if (wait <= 0) return;
-    const timer = window.setTimeout(() => { setBlockedUntil(0); }, wait);
+    const timer = window.setTimeout(() => {
+      setBlockedUntil(0);
+      setFailure(failureAfterWait);
+    }, wait);
     return () => { window.clearTimeout(timer); };
   }, [blockedUntil]);
 
