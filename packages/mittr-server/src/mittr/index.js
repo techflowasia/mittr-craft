@@ -98,6 +98,7 @@ export function setupMittr(context, {
       const { items, known } = activeModelList();
       void onModels(items, { listKnown: known });
     },
+    onLegacyCarryFailed: () => correctEngineHomeSoon(),
   });
 
   // One cache per account file, resolved on every use: an account switch
@@ -140,6 +141,17 @@ export function setupMittr(context, {
     logger,
   });
 
+  let disposed = false;
+  let correction = null;
+  const correctEngineHomeSoon = () => {
+    if (switcher.engineOnTarget() || correction || disposed) return;
+    correction = setTimeout(() => {
+      correction = null;
+      void switcher.correctEngineHome();
+    }, 0);
+    correction.unref?.();
+  };
+
   const { ensureFreshSession, completeSignIn } = registerMittrAuthRoutes(app, {
     express,
     broker,
@@ -164,7 +176,7 @@ export function setupMittr(context, {
     upstreamV1: broker.upstreamV1,
     localToken,
     ensureFreshSession,
-    engineOnActiveHome: () => switcher.engineOnTarget(),
+    engineOnActiveHome: () => !signedIn() || switcher.engineOnTarget(),
     // Never an empty list for a catalog that cannot be read: the shim then
     // says the list is unavailable instead of "you have no models".
     listModels: () => {
@@ -265,7 +277,6 @@ export function setupMittr(context, {
 
   // One more try, once: an engine that keeps refusing waits for its next ready.
   let credentialRetry = null;
-  let disposed = false;
   const retryCredentialOnce = () => {
     if (credentialRetry || disposed) return;
     credentialRetry = setTimeout(() => {
@@ -295,16 +306,9 @@ export function setupMittr(context, {
       startupSyncRunning = false;
     }
   };
-  let correction = null;
   const unsubscribeReady = opencode.onReady(() => {
     engineStarted = true;
-    if (!switcher.engineOnTarget() && !correction && !disposed) {
-      correction = setTimeout(() => {
-        correction = null;
-        void switcher.correctEngineHome();
-      }, 0);
-      correction.unref?.();
-    }
+    correctEngineHomeSoon();
     void startupSync();
     forgetMittrCredential(opencode);
     void storeCredential();

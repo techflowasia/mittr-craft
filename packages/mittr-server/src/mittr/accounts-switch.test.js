@@ -406,3 +406,31 @@ test('a sync that fails after a switch is logged, not thrown', async (t) => {
 
   assert.ok(logger.warnings.some((line) => line.includes('offline')), logger.warnings.join('\n'));
 });
+
+test('a retry after a restart that failed brings the engine onto the active account', async (t) => {
+  const { call, switcher, engine, refreshes, bases, switches } = await harness(t, { sessions: [A, B] });
+  engine.failures = 1;
+
+  assert.deepEqual((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-b' })).body, { signedIn: true, userId: 'u-b', displayName: 'B', engineRestarted: false });
+  assert.equal(switcher.engineOnTarget(), false);
+
+  assert.deepEqual(await call('POST', '/api/mittr/auth/accounts/retry-switch'), { status: 200, body: { signedIn: true, userId: 'u-b', displayName: 'B' } });
+  assert.deepEqual(switches, ['u-b', 'u-b']);
+  assert.deepEqual(refreshes, [SWITCHED, SWITCHED]);
+  assert.equal(engine.launched, path.join(bases.data, 'accounts', homeOf('u-b')));
+
+  assert.deepEqual((await call('POST', '/api/mittr/auth/accounts/retry-switch')).body, { signedIn: true, userId: 'u-b', displayName: 'B' });
+  assert.deepEqual(refreshes, [SWITCHED, SWITCHED]);
+});
+
+test('a retry after signing out of the last account brings the engine onto the empty home', async (t) => {
+  const { call, switcher, engine, refreshes, bases } = await harness(t, { sharedHistory: true, sessions: [A] });
+  engine.failures = 1;
+
+  assert.deepEqual((await call('DELETE', '/api/mittr/auth/session')).body, { signedIn: false, engineRestarted: false });
+  assert.equal(switcher.engineOnTarget(), false);
+
+  assert.deepEqual((await call('POST', '/api/mittr/auth/accounts/retry-switch')).body, { signedIn: false });
+  assert.deepEqual(refreshes, [SWITCHED, SWITCHED]);
+  assert.equal(engine.launched, path.join(bases.data, 'accounts', NO_ACCOUNT_HOME));
+});

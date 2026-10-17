@@ -73,6 +73,7 @@ export function createAccountStore({
   // Called once the 1.x session has become an account, so a reader that was
   // told about it while it was only pending can look again.
   onLegacyCarried = null,
+  onLegacyCarryFailed = null,
 }) {
   const root = path.join(dataDir, ACCOUNTS_DIR);
   const indexPath = accountIndexPath(dataDir);
@@ -221,8 +222,10 @@ export function createAccountStore({
   let legacyCarried = false;
   const carryLegacyOnce = () => {
     if (legacyCarried) return;
+    const wasPending = legacyPending();
     legacyCarried = true;
     if (carryLegacySession()) onLegacyCarried?.();
+    else if (wasPending) onLegacyCarryFailed?.();
   };
 
   // What the first read will find, told without opening anything: the 1.x

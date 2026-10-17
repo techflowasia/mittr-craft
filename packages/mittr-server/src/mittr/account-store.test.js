@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { activeAccountHome } from '../accounts.js';
+import { NO_ACCOUNT_HOME } from '../engine-home.js';
 import { createAccountStore } from './account-store.js';
 
 // Stands in for the keychain. It has to obscure the bytes: a double that only
@@ -180,6 +181,30 @@ test('the carry tells its listener once, and not when the 1.x session cannot be 
   const refused = createAccountStore({ dataDir: other, encrypt, decrypt, onLegacyCarried: () => { told += 1; } });
   refused.read();
   assert.equal(told, 1);
+});
+
+test('a pending 1.x session that cannot be carried tells its failure listener once, and nothing else does', (t) => {
+  const failures = [];
+  const storeWith = (dataDir) => createAccountStore({ dataDir, encrypt, decrypt, onLegacyCarryFailed: () => failures.push(dataDir) });
+
+  const unreadable = tempDataDir(t);
+  fs.writeFileSync(path.join(unreadable, 'mittr-session'), 'not sealed');
+  const refused = storeWith(unreadable);
+  assert.equal(refused.engineHome({ carryLegacy: false }), null);
+  refused.read();
+  refused.read();
+  assert.deepEqual(failures, [unreadable]);
+  assert.equal(refused.engineHome({ carryLegacy: false }), NO_ACCOUNT_HOME);
+
+  const carried = tempDataDir(t);
+  fs.writeFileSync(path.join(carried, 'mittr-session'), encrypt(JSON.stringify(sessionFor('u1', 'A'))));
+  storeWith(carried).read();
+  storeWith(tempDataDir(t)).read();
+  const besideAccounts = tempDataDir(t);
+  storeWith(besideAccounts).write(sessionFor('u2', 'B'));
+  fs.writeFileSync(path.join(besideAccounts, 'mittr-session'), 'not sealed');
+  storeWith(besideAccounts).read();
+  assert.deepEqual(failures, [unreadable]);
 });
 
 test('the 1.x session is carried by the first write too, so a newcomer never takes its shared history', (t) => {

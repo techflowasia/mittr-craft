@@ -234,9 +234,10 @@ test('setup hands Mittr the folder the engine reads its user config from', async
 
 const homeOf = (userId) => crypto.createHash('sha256').update(userId).digest('hex').slice(0, 16);
 
-const mittrPlugin = async (t) => {
+const mittrPlugin = async (t, { legacySession = null } = {}) => {
   const home = tempHome(t);
   const dataDir = prodLayout(home);
+  if (legacySession !== null) writeFile(path.join(dataDir, 'mittr-session'), legacySession);
   const sessionOf = (userId, displayName) => ({ accessToken: `at-${userId}`, refreshToken: `r-${userId}`, expiresAt: Date.now() + 3_600_000, subject: { userId, displayName } });
   const handedOut = [sessionOf('u-a', 'A'), sessionOf('u-b', 'B')];
   const brokerCalls = [];
@@ -248,6 +249,8 @@ const mittrPlugin = async (t) => {
   });
   const engine = fakeEngineContext({ port: null });
   const app = express();
+  const parseJson = express.json();
+  app.use((req, res, next) => (req.path.startsWith('/api') ? next() : parseJson(req, res, next)));
   const logger = recordingLogger();
   const plugin = await setupMittrServer({
     dataDir,
@@ -331,6 +334,35 @@ test('while the engine runs on another account\'s home the shim refuses, and for
   assert.equal(response.status, 503);
   assert.equal(response.headers.get('x-should-retry'), 'false');
   assert.deepEqual(await response.json(), { error: 'The Mittr account is changing. Send the message again in a moment.' });
+  assert.equal(brokerCalls.some((url) => url.includes('/chat/completions')), false);
+});
+
+test('a 1.x session that cannot be carried moves the engine off the shared home onto the empty one', async (t) => {
+  const { engine, call, shared } = await mittrPlugin(t, { legacySession: 'not a session' });
+  assert.equal(engine.launchedDataHome, shared);
+
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
+
+  await until(() => engine.launchedDataHome === path.join(shared, 'accounts', '_none'));
+  assert.deepEqual(engine.restarts, ['mittr account switched']);
+});
+
+test('while the engine is still on the shared home after a failed 1.x carry, the shim says nobody is signed in', async (t) => {
+  const { engine, call, shared, dataDir, brokerCalls } = await mittrPlugin(t, { legacySession: 'not a session' });
+  engine.onRestart = null;
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
+  await until(() => engine.restarts.length === 2);
+  assert.equal(engine.launchedDataHome, shared);
+  const key = fs.readFileSync(path.join(dataDir, 'mittr-shim-token'), 'utf8').trim();
+
+  const response = await fetch(`${call.base}/mittr-shim/v1/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'a1', messages: [] }),
+  });
+
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { error: 'Not signed in to Mittr. Sign in to continue.' });
   assert.equal(brokerCalls.some((url) => url.includes('/chat/completions')), false);
 });
 

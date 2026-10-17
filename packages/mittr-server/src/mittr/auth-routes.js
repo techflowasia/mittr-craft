@@ -88,7 +88,7 @@ export function registerMittrAuthRoutes(app, {
       return outcome?.engineRestarted === false ? { engineRestarted: false } : {};
     } catch (error) {
       logger.warn('[mittr] switching account failed:', error?.message ?? error);
-      return {};
+      return { engineRestarted: false };
     }
   };
 
@@ -237,6 +237,11 @@ export function registerMittrAuthRoutes(app, {
     }
     lastFailure = null;
     const restart = await announceAccountChange(userId);
+    return res.json({ ...statusOf(store.read()), ...restart });
+  });
+
+  app.post('/api/mittr/auth/accounts/retry-switch', refuseWhenUnsafe, async (_req, res) => {
+    const restart = await announceAccountChange(activeUserId());
     return res.json({ ...statusOf(store.read()), ...restart });
   });
 

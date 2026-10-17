@@ -411,13 +411,53 @@ test('activating another signed-in account switches to it, and an unknown one is
   assert.deepEqual(changes, ['u-a']);
 });
 
-test('an account change that fails is logged, not answered as a failure', async (t) => {
+test('an account change that throws is logged and answered as a switch whose engine did not restart', async (t) => {
   const { call } = await harness(t, {
     sessions: [sessionFor('u-a', 'A'), sessionFor('u-b', 'B')],
     onAccountChange: () => { throw new Error('restart failed'); },
   });
-  t.mock.method(console, 'warn', () => {});
-  assert.equal((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' })).status, 200);
+  const warn = t.mock.method(console, 'warn', () => {});
+
+  assert.deepEqual(await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' }), {
+    status: 200,
+    body: { signedIn: true, userId: 'u-a', displayName: 'A', engineRestarted: false },
+  });
+  assert.deepEqual(await call('POST', '/api/mittr/auth/accounts/retry-switch'), {
+    status: 200,
+    body: { signedIn: true, userId: 'u-a', displayName: 'A', engineRestarted: false },
+  });
+  assert.deepEqual(await call('DELETE', '/api/mittr/auth/session'), {
+    status: 200,
+    body: { signedIn: true, userId: 'u-b', displayName: 'B', engineRestarted: false },
+  });
+  assert.ok(warn.mock.calls.some((entry) => String(entry.arguments[1]).includes('restart failed')));
+});
+
+test('retrying a switch announces the account already active again, signed out included', async (t) => {
+  const changes = [];
+  const { call } = await harness(t, {
+    sessions: [sessionFor('u-a', 'A')],
+    onAccountChange: (next) => { changes.push(next); },
+  });
+
+  assert.deepEqual(await call('POST', '/api/mittr/auth/accounts/retry-switch'), {
+    status: 200,
+    body: { signedIn: true, userId: 'u-a', displayName: 'A' },
+  });
+  assert.equal((await call('DELETE', '/api/mittr/auth/session')).status, 200);
+  assert.deepEqual(await call('POST', '/api/mittr/auth/accounts/retry-switch'), { status: 200, body: { signedIn: false } });
+  assert.deepEqual(changes, ['u-a', null, null]);
+});
+
+test('a retry is refused like a switch while the account list is damaged', async (t) => {
+  const changes = [];
+  const { call, dataDir } = await harness(t, { onAccountChange: (next) => { changes.push(next); } });
+  fs.mkdirSync(path.join(dataDir, 'mittr-accounts'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'mittr-accounts', 'index.json'), '{"active": "u-a", "acc');
+  t.mock.method(console, 'error', () => {});
+
+  assert.deepEqual(await call('POST', '/api/mittr/auth/accounts/retry-switch'), { status: 503, body: { error: ACCOUNTS_DAMAGED } });
+  assert.deepEqual(changes, []);
 });
 
 test('a refused sign-in changes nothing on disk', async (t) => {
