@@ -350,7 +350,13 @@
   "packages/web/server/lib/quota/providers/index.js": [
     {
       "hook": "quota-server",
-      "why": "A build's server plugin that has its own usage source had no way to show it on the Usage page, because the quota registry was a fixed table, so providers can now be registered and removed at run time."
+      "why": "A build's server plugin that has its own usage source had no way to show it on the Usage page, because the quota registry was a fixed table, so the provider list and the dispatcher now also read the providers registered at run time."
+    }
+  ],
+  "packages/web/server/lib/quota/providers/registered.js": [
+    {
+      "hook": "quota-server",
+      "why": "Registering a quota provider at run time should not make the server load every provider module at start, so the run-time entries live in a module with no imports that the registry merges and the plugin context uses."
     }
   ],
   "packages/web/server/lib/server-plugins.js": [

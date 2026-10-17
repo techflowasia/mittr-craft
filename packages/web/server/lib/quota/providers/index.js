@@ -7,6 +7,7 @@
 
 import { readOpenCodeCredentials } from '../../opencode/auth.js';
 import { buildResult } from '../utils/index.js';
+import { registeredQuotaProviders, reserveQuotaProviderIds } from './registered.js';
 
 import * as claude from './claude/index.js';
 import * as clinePass from './cline-pass.js';
@@ -189,27 +190,13 @@ const registry = {
 
 const pendingFetches = new Map();
 
-export const registerQuotaProvider = (entry) => {
-  if (!entry || typeof entry.providerId !== 'string' || !entry.providerId
-    || typeof entry.isConfigured !== 'function' || typeof entry.fetchQuota !== 'function') {
-    throw new TypeError('A quota provider needs a providerId, isConfigured() and fetchQuota()');
-  }
-  if (Object.hasOwn(registry, entry.providerId)) {
-    throw new Error(`Quota provider ${entry.providerId} is already registered`);
-  }
-  const registered = {
-    providerId: entry.providerId,
-    providerName: entry.providerName,
-    isConfigured: entry.isConfigured,
-    fetchQuota: entry.fetchQuota
-  };
-  registry[entry.providerId] = registered;
-  return () => {
-    if (registry[entry.providerId] === registered) {
-      delete registry[entry.providerId];
-    }
-  };
-};
+reserveQuotaProviderIds(Object.keys(registry));
+
+const findProvider = (providerId) => (
+  Object.hasOwn(registry, providerId) ? registry[providerId] : registeredQuotaProviders().get(providerId)
+);
+
+export { registerQuotaProvider } from './registered.js';
 
 
 /**
@@ -221,7 +208,7 @@ export const listConfiguredQuotaProviders = async () => {
   const auth = await readOpenCodeCredentials();
   const configured = [];
 
-  for (const [id, provider] of Object.entries(registry)) {
+  for (const [id, provider] of [...Object.entries(registry), ...registeredQuotaProviders()]) {
     try {
       if (provider.isConfigured(auth)) {
         configured.push(id);
@@ -235,7 +222,7 @@ export const listConfiguredQuotaProviders = async () => {
 };
 
 const fetchQuotaForProviderUncoalesced = async (providerId) => {
-  const provider = registry[providerId];
+  const provider = findProvider(providerId);
 
   if (!provider) {
     return buildResult({

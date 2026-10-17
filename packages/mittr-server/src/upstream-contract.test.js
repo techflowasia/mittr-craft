@@ -924,8 +924,11 @@ const checks = {
   },
 
   'quota-provider-registry': async () => {
+    const { registerQuotaProvider: registerRegistered } = await importUpstream('packages/web/server/lib/quota/providers/registered.js');
     const { registerQuotaProvider, fetchQuotaForProvider } = await importUpstream('packages/web/server/lib/quota/providers/index.js');
     assert.equal(typeof registerQuotaProvider, 'function', 'the quota provider registry no longer exports registerQuotaProvider');
+    assert.doesNotMatch(source('packages/web/server/lib/quota/providers/registered.js'), /^import /m, 'registered.js imports something, so the server would load it (and its imports) at start');
+    assert.equal(registerQuotaProvider, registerRegistered, 'the registry no longer takes its run-time providers from registered.js');
     const entry = { providerId: 'contract-probe', providerName: 'Probe', isConfigured: () => true, fetchQuota: async () => ({ providerId: 'contract-probe', ok: true }) };
     const unregister = registerQuotaProvider(entry);
     try {
@@ -950,7 +953,7 @@ const checks = {
     const server = source('packages/web/server/index.js');
     has(pluginContext(server), /^\s+registerQuotaProvider,$/m, 'the server plugin context no longer hands plugins registerQuotaProvider');
     has(pluginContext(server), /^\s+quotaResult: \{ buildResult: buildQuotaResult, toUsageWindow \},$/m, 'the server plugin context no longer hands plugins the quota result helpers');
-    has(server, /import \{ registerQuotaProvider \} from '\.\/lib\/quota\/providers\/index\.js';/);
+    has(server, /import \{ registerQuotaProvider \} from '\.\/lib\/quota\/providers\/registered\.js';/);
     has(server, /import \{ buildResult as buildQuotaResult, toUsageWindow \} from '\.\/lib\/quota\/utils\/formatters\.js';/);
   },
 

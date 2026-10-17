@@ -133,7 +133,7 @@ import { createRemoteClientAuthRuntime } from './lib/client-auth/remote-clients.
 import { createClientPairingRuntime } from './lib/client-auth/pairing.js';
 import { attachRealtimeProxy } from './lib/realtime-proxy.js';
 import { loadServerPlugins, mergeEngineConfig, readServerPluginSpecifiers } from './lib/server-plugins.js';
-import { registerQuotaProvider } from './lib/quota/providers/index.js';
+import { registerQuotaProvider } from './lib/quota/providers/registered.js';
 import { buildResult as buildQuotaResult, toUsageWindow } from './lib/quota/utils/formatters.js';
 import { createRelayService, relayBlockedByEnterprise } from './lib/relay/service.js';
 import { createRelayHostLock } from './lib/relay/host-lock.js';

@@ -326,7 +326,7 @@ export const UPSTREAM_CONTRACT = [
   },
   {
     id: 'quota-provider-registry',
-    files: ['packages/web/server/lib/quota/providers/index.js', 'packages/web/server/lib/quota/utils/formatters.js', 'packages/web/server/index.js'],
+    files: ['packages/web/server/lib/quota/providers/index.js', 'packages/web/server/lib/quota/providers/registered.js', 'packages/web/server/lib/quota/utils/formatters.js', 'packages/web/server/index.js'],
     why: "a server plugin adds and removes a quota provider through registerQuotaProvider on the plugin context, and builds its result with the buildResult and toUsageWindow the context hands it as quotaResult, so the Usage page lists it beside upstream's own",
   },
   {

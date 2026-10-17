@@ -66,4 +66,16 @@ describe('registerQuotaProvider', () => {
     expect(() => registerQuotaProvider({ providerId: 'x-bad', providerName: 'Bad' })).toThrow(TypeError);
     expect(() => registerQuotaProvider(null)).toThrow(TypeError);
   });
+
+  it('rejects an id that is not lowercase letters, digits and dashes', () => {
+    for (const providerId of ['', 'X', 'has space', '-leading', '__proto__', 'a/b', 'constructor.x']) {
+      expect(() => registerQuotaProvider(entry(providerId)), providerId).toThrow(TypeError);
+    }
+    registerQuotaProvider(entry('x-1-ok'))();
+  });
+
+  it('a built-in id cannot be taken over or shadowed', async () => {
+    expect(() => registerQuotaProvider(entry('openrouter'))).toThrow(/openrouter/);
+    expect(() => registerQuotaProvider(entry('github-copilot-addon'))).toThrow(/github-copilot-addon/);
+  });
 });
