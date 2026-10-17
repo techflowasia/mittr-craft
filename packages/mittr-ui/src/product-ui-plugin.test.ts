@@ -90,7 +90,7 @@ describe('MittrCraft account controls', () => {
 describe('MittrCraft company sign-in', () => {
   test('the sign-in gate and the sidebar footer show nothing company-related until the server says it is on', () => {
     const gate = renderToStaticMarkup(
-      React.createElement(I18nProvider, null, React.createElement(ProductSlot, { name: 'session-auth-methods', isTunnelLocked: false })),
+      React.createElement(I18nProvider, null, React.createElement(ProductSlot, { name: 'session-auth-methods', isTunnelLocked: false, runtime: 'web', onSignedIn: async () => true })),
     );
     expect(gate).toBe('');
     const footer = renderToStaticMarkup(

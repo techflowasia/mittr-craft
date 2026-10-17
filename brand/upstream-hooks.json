@@ -147,6 +147,10 @@
     {
       "hook": "session-auth-gate",
       "why": "The session gate had no place for another way to sign in, so a build that adds one had to edit the gate; it now renders a session-auth-methods slot after the password form, outside the tunnel check, and leaves the password form out when the session status says no password is set, since that form could not sign anyone in."
+    },
+    {
+      "hook": "session-auth-finish",
+      "why": "A sign-in method a plugin adds could open a session but had no way to hand it to the gate, and a desktop window connected to another host needs a client token, not the cookie, to stay signed in, so the gate now tells the slot which runtime it is in and gives it an onSignedIn that applies the token it is handed (or asks the host for one) and lets the person in."
     }
   ],
   "packages/ui/src/components/chat/ChatMessage.tsx": [
@@ -267,6 +271,10 @@
     {
       "hook": "chat-message",
       "why": "An error a product plugin rewords did not say which provider the turn ran on, so a build could not tell a turn its own provider could not route (a model the person may not use right now) from one on a provider that is switched off, and gave both the same advice; the plugin now also receives the provider id, and without a plugin nothing changes."
+    },
+    {
+      "hook": "session-auth-finish",
+      "why": "The session-auth-methods slot now receives the runtime the gate is in and an onSignedIn callback, so a sign-in method added by a plugin can finish a sign-in the way a password sign-in does."
     }
   ],
   "packages/ui/src/lib/quota/providers/index.ts": [

@@ -1204,12 +1204,19 @@ const checks = {
 
   'session-auth-methods-slot': () => {
     const gate = source('packages/ui/src/components/auth/SessionAuthGate.tsx');
-    has(gate, /^import \{ ProductSlot \} from '@\/lib\/product-plugins';$/m, 'SessionAuthGate no longer imports ProductSlot');
-    assert.equal(lineCount(gate, '<ProductSlot '), 1, 'SessionAuthGate renders ProductSlot more than once, or not at all');
-    has(gate, /<\/form>\s*\)\}\s*<ProductSlot name="session-auth-methods" isTunnelLocked=\{isTunnelLocked\} \/>\s*\{showHostSwitcher && \(/, 'the session-auth-methods slot is no longer after the password form, outside the tunnel check, before the host switcher');
+    has(gate, /^import \{ ProductSlot, type SessionAuthRuntime \} from '@\/lib\/product-plugins';$/m, 'SessionAuthGate no longer imports ProductSlot');
+    assert.equal(lineCount(gate, '<ProductSlot'), 1, 'SessionAuthGate renders ProductSlot more than once, or not at all');
+    has(gate, /<\/form>\s*\)\}\s*<ProductSlot\s+name="session-auth-methods"\s+isTunnelLocked=\{isTunnelLocked\}\s+runtime=\{sessionAuthRuntime\(\)\}\s+onSignedIn=\{finishProviderSignIn\}\s+\/>\s*\{showHostSwitcher && \(/, 'the session-auth-methods slot is no longer after the password form, outside the tunnel check, before the host switcher');
     has(gate, /\{!isTunnelLocked && passwordEnabled && \(\s*<form onSubmit=\{handleSubmit\}/, 'the password form no longer waits for passwordEnabled');
     has(gate, /setPasswordEnabled\(data\.passwordEnabled !== false\);/, 'the gate no longer reads passwordEnabled from the 401 session status');
-    has(source('packages/ui/src/lib/product-plugins.ts'), /'session-auth-methods': \{ isTunnelLocked: boolean \};/);
+    const finish = gate.slice(gate.indexOf('const finishProviderSignIn = '), gate.indexOf('const handleSubmit = '));
+    for (const line of ['shouldIssueDesktopClientToken()', 'clientToken = await issueDesktopClientToken();', 'applyDesktopClientToken(clientToken, runtime, getRuntimeExtraHeadersSync())', "setState('authenticated');"]) assert.ok(finish.includes(line), `finishProviderSignIn no longer does ${line}`);
+    const issue = gate.slice(gate.indexOf('const issueDesktopClientToken = '), gate.indexOf('const shouldUseDesktopShellPasswordLogin'));
+    has(issue, /runtimeFetch\('\/api\/client-auth\/clients', \{\s*method: 'POST',/, 'issueDesktopClientToken no longer posts /api/client-auth/clients');
+    const plugins = source('packages/ui/src/lib/product-plugins.ts');
+    has(plugins, /'session-auth-methods': SessionAuthMethodsProps;/);
+    has(plugins, /export type SessionAuthRuntime = 'web' \| 'desktop-local' \| 'desktop-remote';/);
+    has(plugins, /onSignedIn: \(clientToken\?: string\) => Promise<boolean>;/);
     const key = gate.match(/^const TRUST_DEVICE_STORAGE_KEY = '([^']+)';$/m)?.[1];
     assert.ok(key, 'the gate no longer names its trust-device storage key in TRUST_DEVICE_STORAGE_KEY');
     has(source('packages/mittr-ui/src/ui-auth/adApi.ts'), new RegExp(`^export const TRUST_DEVICE_STORAGE_KEY = '${key.replace(/\./g, '\\.')}';$`, 'm'), 'the company sign-in no longer reads the gate\'s trust-device choice');
@@ -1218,11 +1225,10 @@ const checks = {
   'desktop-runtime-detect': () => {
     const desktop = source('packages/ui/src/lib/desktop.ts');
     has(desktop, /^export const isDesktopShell = \(\): boolean => \{\s*if \(typeof window === 'undefined'\) return false;\s*return isElectronShell\(\);\s*\};$/m, 'isDesktopShell no longer answers whether the window is the Electron shell');
-    for (const file of ['AdSignIn.tsx', 'SidebarProfile.tsx']) {
-      has(source(`packages/mittr-ui/src/ui-auth/${file}`), /^import \{ isDesktopShell \} from '\.\.\/\.\.\/\.\.\/ui\/src\/lib\/desktop';$/m, `${file} no longer asks isDesktopShell`);
-    }
+    has(source('packages/mittr-ui/src/ui-auth/SidebarProfile.tsx'), /^import \{ isDesktopShell \} from '\.\.\/\.\.\/\.\.\/ui\/src\/lib\/desktop';$/m, 'SidebarProfile no longer asks isDesktopShell');
     const gate = source('packages/ui/src/components/auth/SessionAuthGate.tsx');
-    has(gate, /const shouldUseDesktopShellPasswordLogin = \(\): boolean => \{\s*return isDesktopShell\(\) && !isLocalDesktopRuntime\(\);\s*\};/, 'the desktop shell no longer signs in to a remote host with a password through the shell, the one way it gets a client token');
+    has(gate, /const sessionAuthRuntime = \(\): SessionAuthRuntime => \{\s*if \(!isDesktopShell\(\)\) return 'web';\s*return isLocalDesktopRuntime\(\) \? 'desktop-local' : 'desktop-remote';\s*\};/, 'the gate no longer tells web, local desktop and remote desktop apart');
+    has(gate, /const shouldUseDesktopShellPasswordLogin = \(\): boolean => \{\s*return isDesktopShell\(\) && !isLocalDesktopRuntime\(\);\s*\};/, 'the desktop shell no longer signs in to a remote host with a password through the shell');
   },
 
   'ad-sign-in-ui': () => {

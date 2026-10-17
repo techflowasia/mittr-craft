@@ -167,18 +167,18 @@ describe('product UI plugin root and slots', () => {
   });
 
   test("a slot renders every plugin's component with its props", () => {
-    const seen: boolean[] = [];
-    const methods = (label: string): ProductSlotComponent<'session-auth-methods'> => ({ isTunnelLocked }) => {
-      seen.push(isTunnelLocked);
+    const seen: string[] = [];
+    const methods = (label: string): ProductSlotComponent<'session-auth-methods'> => ({ isTunnelLocked, runtime }) => {
+      seen.push(`${String(isTunnelLocked)}:${runtime}`);
       return createElement('span', null, label);
     };
     registerProductUiPlugin({ id: 'p1', slots: { 'session-auth-methods': methods('one') } });
     registerProductUiPlugin({ id: 'p2', slots: { 'session-auth-methods': methods('two') } });
 
-    const markup = renderToStaticMarkup(createElement(ProductSlot, { name: 'session-auth-methods', isTunnelLocked: true }));
+    const markup = renderToStaticMarkup(createElement(ProductSlot, { name: 'session-auth-methods', isTunnelLocked: true, runtime: 'desktop-remote', onSignedIn: async () => true }));
 
     expect(markup).toBe('<span>one</span><span>two</span>');
-    expect(seen).toEqual([true, true]);
+    expect(seen).toEqual(['true:desktop-remote', 'true:desktop-remote']);
   });
 
   test('one plugin fills a slot with several components in order', () => {

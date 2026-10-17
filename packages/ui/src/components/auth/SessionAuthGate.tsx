@@ -15,7 +15,7 @@ import { runtimeFetch } from '@/lib/runtime-fetch';
 import { installAuthSessionFocusWatch, useAuthSessionStore } from '@/lib/runtime-auth-expiry';
 import { AuthExpiredBanner } from './AuthExpiredBanner';
 import { getRuntimeExtraHeadersSync } from '@/lib/runtime-auth';
-import { ProductSlot } from '@/lib/product-plugins';
+import { ProductSlot, type SessionAuthRuntime } from '@/lib/product-plugins';
 import { getRuntimeApiBaseUrl, getRuntimeKey, subscribeRuntimeEndpointChanged, switchRuntimeEndpoint } from '@/lib/runtime-switch';
 import { desktopHostsGet, desktopHostsSet, getDesktopHostApiUrl, normalizeHostUrl } from '@/lib/desktopHosts';
 import { runtimeIdentityMatches, type GateState, type RuntimeIdentity } from './sessionAuthGateState';
@@ -161,6 +161,11 @@ const issueDesktopClientToken = async (): Promise<string> => {
 
 const shouldUseDesktopShellPasswordLogin = (): boolean => {
   return isDesktopShell() && !isLocalDesktopRuntime();
+};
+
+const sessionAuthRuntime = (): SessionAuthRuntime => {
+  if (!isDesktopShell()) return 'web';
+  return isLocalDesktopRuntime() ? 'desktop-local' : 'desktop-remote';
 };
 
 const captureRuntimeIdentity = (): RuntimeIdentity => ({
@@ -609,6 +614,23 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
     }
   }, [skipAuth, state]);
 
+  const finishProviderSignIn = React.useCallback(async (issuedClientToken?: string): Promise<boolean> => {
+    const runtime = captureRuntimeIdentity();
+    if (shouldIssueDesktopClientToken()) {
+      let clientToken = issuedClientToken?.trim() ?? '';
+      if (!clientToken) {
+        clientToken = await issueDesktopClientToken();
+        if (!isRuntimeIdentityActive(runtime)) return false;
+      }
+      if (!clientToken) return false;
+      if (!await applyDesktopClientToken(clientToken, runtime, getRuntimeExtraHeadersSync())) return false;
+    }
+    setIsTunnelLocked(false);
+    setErrorMessage('');
+    setState('authenticated');
+    return true;
+  }, []);
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     await handlePasswordUnlock(false);
@@ -1001,7 +1023,12 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
             </form>
           )}
 
-          <ProductSlot name="session-auth-methods" isTunnelLocked={isTunnelLocked} />
+          <ProductSlot
+            name="session-auth-methods"
+            isTunnelLocked={isTunnelLocked}
+            runtime={sessionAuthRuntime()}
+            onSignedIn={finishProviderSignIn}
+          />
 
           {showHostSwitcher && (
             <div className="w-full">

@@ -15,12 +15,20 @@ import type { Message, Part } from './opencode/model';
 
 type ProductSurface = 'main' | 'mini-chat';
 
+export type SessionAuthRuntime = 'web' | 'desktop-local' | 'desktop-remote';
+
+export type SessionAuthMethodsProps = {
+  isTunnelLocked: boolean;
+  runtime: SessionAuthRuntime;
+  onSignedIn: (clientToken?: string) => Promise<boolean>;
+};
+
 export type ProductSlotProps = {
   'sidebar-footer': Record<never, never>;
   'about-dialog': Record<never, never>;
   'about-settings': Record<never, never>;
   'providers-page': Record<never, never>;
-  'session-auth-methods': { isTunnelLocked: boolean };
+  'session-auth-methods': SessionAuthMethodsProps;
   'assistant-message-footer': { message: { info: Message; parts: Part[] }; isLatestTurn: boolean };
 };
 
