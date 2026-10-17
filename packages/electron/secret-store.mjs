@@ -20,6 +20,8 @@ const canSeal = (safeStorage) => {
   return !keepsKeyInPlainText(safeStorage);
 };
 
+const RECHECK_AFTER_NO_MS = 5_000;
+
 // Keychain-backed secrets for in-process server plugins. Electron's safeStorage
 // seals a string with a key held by the operating system (Keychain on macOS,
 // DPAPI on Windows, the secret service on Linux). The store hands out bytes the
@@ -32,9 +34,7 @@ const canSeal = (safeStorage) => {
 // keychain dialog answered after the first ask gave up takes effect without a
 // restart. While the answer is no, `encrypt` and `decrypt` throw instead of
 // sealing nothing.
-const RECHECK_AFTER_NO_MS = 5_000;
-
-export function createSafeStorageSecretStore({ safeStorage, now = Date.now } = {}) {
+export function createSafeStorageSecretStore({ safeStorage, now = () => performance.now() } = {}) {
   let usable = false;
   let askedAt = null;
   const available = () => {

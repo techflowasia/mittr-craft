@@ -174,3 +174,32 @@ test('a keyring that keeps its key in plain text is refused at first use', () =>
   const throwing = { ...fakeSafeStorage(), getSelectedStorageBackend: () => { throw new Error('not on this platform'); } };
   assert.equal(createSafeStorageSecretStore({ safeStorage: throwing }).available(), true);
 });
+
+test('a wall clock set backwards does not make a no stick: the re-check runs on monotonic time', (t) => {
+  const safeStorage = fakeSafeStorage(false);
+  let wall = 10_000_000;
+  let monotonic = 500;
+  t.mock.method(Date, 'now', () => wall);
+  t.mock.method(performance, 'now', () => monotonic);
+  const store = createSafeStorageSecretStore({ safeStorage });
+  assert.equal(store.available(), false);
+  safeStorage.available = true;
+  wall -= 60 * 60_000;
+  monotonic += 5_000;
+  assert.equal(store.available(), true);
+  assert.equal(safeStorage.calls.isEncryptionAvailable, 2);
+});
+
+test('an injected monotonic clock decides the re-check, whatever the wall clock does', (t) => {
+  const safeStorage = fakeSafeStorage(false);
+  const clock = fakeClock();
+  let wall = 10_000_000;
+  t.mock.method(Date, 'now', () => wall);
+  const store = createSafeStorageSecretStore({ safeStorage, now: clock.now });
+  assert.equal(store.available(), false);
+  safeStorage.available = true;
+  wall -= 60 * 60_000;
+  clock.advance(5_000);
+  assert.equal(store.available(), true);
+  assert.equal(safeStorage.calls.isEncryptionAvailable, 2);
+});

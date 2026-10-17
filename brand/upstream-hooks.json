@@ -111,6 +111,10 @@
     {
       "hook": "electron-host",
       "why": "The store kept its first answer for the whole run, so when a keychain dialog was answered after the first ask had already come back no, sign-in stayed refused until the app restarted; a yes is still kept, and a no is asked again on the next use at most once every five seconds."
+    },
+    {
+      "hook": "electron-host",
+      "why": "The wait before asking again after a no was measured on the wall clock, so setting the system clock backwards could keep a no for as long as the clock had moved; it is now measured on the monotonic clock."
     }
   ],
   "packages/electron/updater-capability.mjs": [
