@@ -1141,13 +1141,22 @@ const checks = {
       const cookie = [].concat(issued.headers['set-cookie']).map((entry) => entry.split(';')[0]).join('; ');
       const withSession = await passes(auth, request(cookie));
       const claims = await provider.readClaims(request(cookie));
+      const urlTokenResponse = response();
+      await auth.handleUrlAuthToken({ method: 'POST', headers: { cookie }, body: {} }, urlTokenResponse);
+      const urlToken = urlTokenResponse.body.token;
+      const eventRequest = { method: 'GET', path: '/api/event', originalUrl: '/api/event?oc_url_token=' + urlToken, url: '/api/event?oc_url_token=' + urlToken, query: { oc_url_token: urlToken }, headers: {} };
+      const urlTokenBefore = await passes(auth, eventRequest);
       const cleared = response();
       provider.clearSession(request(cookie), cleared);
+      const urlTokenAfterSignOut = await passes(auth, eventRequest);
+      const reset = response();
+      auth.handleResetAuth(request(cookie), reset);
+      const sessionAfterReset = await passes(auth, request(cookie));
       provider.unregister();
       const after = await passes(auth, request());
       const afterStatus = response();
       await auth.handleSessionStatus(request(), afterStatus);
-      console.log(JSON.stringify({ before, enabledWhileRegistered, refused: { status: refused.statusCode, body: refused.body }, status: { code: status.statusCode, body: status.body }, withSession, claims, cleared: [].concat(cleared.headers['set-cookie'])[0], after, afterStatus: afterStatus.body }));
+      console.log(JSON.stringify({ before, enabledWhileRegistered, refused: { status: refused.statusCode, body: refused.body }, status: { code: status.statusCode, body: status.body }, withSession, claims, cleared: [].concat(cleared.headers['set-cookie'])[0], urlTokenBefore, urlTokenAfterSignOut, reset: reset.body, sessionAfterReset, after, afterStatus: afterStatus.body }));
     `;
     const { output } = runInTempHome(t, script, {
       CONTRACT_UI_AUTH_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/ui-auth/ui-auth.js')).href,
@@ -1159,6 +1168,10 @@ const checks = {
     assert.equal(output.withSession, true, 'a provider session no longer opens the UI');
     assert.deepEqual(output.claims, { who: 'contract' });
     assert.match(output.cleared, /^oc_ui_session=; Path=\/; HttpOnly; SameSite=Strict; Max-Age=0/);
+    assert.equal(output.urlTokenBefore, true);
+    assert.equal(output.urlTokenAfterSignOut, false, 'signing out no longer revokes the URL tokens of that session');
+    assert.deepEqual(output.reset, { cleared: true, clearedPasskeys: 0, signedOutEverywhere: true });
+    assert.equal(output.sessionAfterReset, false, 'sign out everywhere no longer ends provider sessions on a server without a UI password');
     assert.equal(output.after, true, 'unregistering the last provider no longer gives back upstream behaviour');
     assert.deepEqual(output.afterStatus, { authenticated: true, disabled: true });
 

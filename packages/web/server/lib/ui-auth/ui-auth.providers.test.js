@@ -212,6 +212,90 @@ describe('ui auth providers registered at run time', () => {
     auth.dispose();
   });
 
+  it('sign out everywhere rotates the provider secret and ends sessions issued before it', async () => {
+    const { createUiAuth } = await loadUiAuth();
+    const auth = createUiAuth({});
+    const upstream = createResponse();
+    auth.handleResetAuth(apiRequest(), upstream);
+    expect(upstream.statusCode).toBe(400);
+    expect(upstream.body).toEqual({ error: 'UI password not configured' });
+
+    const handle = await register('company');
+    const issued = createResponse();
+    await handle.issueSession(apiRequest(), issued, { claims: { username: 'ada' } });
+    const cookie = cookieHeaderFrom(issued);
+    const urlToken = createResponse();
+    await auth.handleUrlAuthToken({ method: 'POST', headers: { cookie }, body: {} }, urlToken);
+    const eventRequest = { method: 'GET', path: '/api/event', originalUrl: `/api/event?oc_url_token=${urlToken.body.token}`, url: `/api/event?oc_url_token=${urlToken.body.token}`, query: { oc_url_token: urlToken.body.token }, headers: {} };
+    const passes = async (req) => {
+      let called = false;
+      await auth.requireAuth(req, createResponse(), () => {
+        called = true;
+      });
+      return called;
+    };
+    expect(await passes(apiRequest({ cookie }))).toBe(true);
+    expect(await passes(eventRequest)).toBe(true);
+    const secretBefore = fs.readFileSync(path.join(dataDir, 'jwt-secret'), 'utf8');
+
+    process.env.OPENCODE_JWT_SECRET = 'pinned-secret';
+    const pinned = createResponse();
+    auth.handleResetAuth(apiRequest({ cookie }), pinned);
+    delete process.env.OPENCODE_JWT_SECRET;
+    expect(pinned.statusCode).toBe(400);
+    expect(pinned.body.error).toContain('OPENCODE_JWT_SECRET');
+    expect(await passes(apiRequest({ cookie }))).toBe(true);
+
+    const reset = createResponse();
+    auth.handleResetAuth(apiRequest({ cookie }), reset);
+
+    expect(reset.body).toEqual({ cleared: true, clearedPasskeys: 0, signedOutEverywhere: true });
+    expect(setCookies(reset)[0]).toContain('Max-Age=0');
+    expect(fs.readFileSync(path.join(dataDir, 'jwt-secret'), 'utf8')).not.toBe(secretBefore);
+    expect(await passes(apiRequest({ cookie }))).toBe(false);
+    expect(await passes(eventRequest)).toBe(false);
+    expect(await handle.readClaims(apiRequest({ cookie }))).toBeNull();
+    const fresh = createResponse();
+    await handle.issueSession(apiRequest(), fresh, {});
+    expect(await passes(apiRequest({ cookie: cookieHeaderFrom(fresh) }))).toBe(true);
+    auth.dispose();
+  });
+
+  it('clearSession revokes the URL tokens of that session only', async () => {
+    const { createUiAuth } = await loadUiAuth();
+    const auth = createUiAuth({});
+    const handle = await register('company');
+    const sessionCookie = async (browser) => {
+      const issued = createResponse();
+      await handle.issueSession(apiRequest(), issued, { claims: { browser } });
+      return cookieHeaderFrom(issued);
+    };
+    const urlTokenFor = async (cookie) => {
+      const res = createResponse();
+      await auth.handleUrlAuthToken({ method: 'POST', headers: { cookie }, body: {} }, res);
+      return res.body.token;
+    };
+    const eventRequest = (token) => ({ method: 'GET', path: '/api/event', originalUrl: `/api/event?oc_url_token=${token}`, url: `/api/event?oc_url_token=${token}`, query: { oc_url_token: token }, headers: {} });
+    const passes = async (req) => {
+      let called = false;
+      await auth.requireAuth(req, createResponse(), () => {
+        called = true;
+      });
+      return called;
+    };
+    const mine = await sessionCookie('mine');
+    const other = await sessionCookie('other');
+    expect(mine).not.toBe(other);
+    const myToken = await urlTokenFor(mine);
+    const otherToken = await urlTokenFor(other);
+
+    handle.clearSession(apiRequest({ cookie: mine }), createResponse());
+
+    expect(await passes(eventRequest(myToken))).toBe(false);
+    expect(await passes(eventRequest(otherToken))).toBe(true);
+    auth.dispose();
+  });
+
   it('refuses a duplicate or malformed id', async () => {
     const { registerUiAuthProvider } = await loadUiAuth();
     await register('company');

@@ -417,6 +417,10 @@
     {
       "hook": "ui-auth",
       "why": "A build whose browser sign-in comes from a company directory had no way to open or check a UI session without a UI password; registerUiAuthProvider lets it issue and read sessions with the password sessions' secret and lifetimes, makes the session required while it is registered, and the session status names the providers and whether a password works."
+    },
+    {
+      "hook": "ui-auth",
+      "why": "On a server whose only sign-in is a registered provider, sign out everywhere did nothing and a provider sign-out left that session's URL tokens usable; the reset now rotates the secret provider sessions are signed with (refused while OPENCODE_JWT_SECRET pins it) and clears URL tokens, and clearSession revokes the URL tokens of the session it ends."
     }
   ]
 }

@@ -407,7 +407,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'ui-auth-provider-registry',
     files: ['packages/web/server/lib/ui-auth/ui-auth.js', 'packages/web/server/index.js'],
-    why: 'a server plugin registers a sign-in provider through context.uiAuth.registerProvider; while one is registered a server without a UI password requires a UI session that only the provider issues, the session status lists providers and passwordEnabled, and context.uiAuth.passwordEnabled says whether a UI password is set',
+    why: 'a server plugin registers a sign-in provider through context.uiAuth.registerProvider; while one is registered a server without a UI password requires a UI session that only the provider issues, the session status lists providers and passwordEnabled, signing out revokes that session\'s URL tokens, sign out everywhere rotates the secret provider sessions are signed with, and context.uiAuth.passwordEnabled says whether a UI password is set',
   },
   {
     id: 'server-cli-entry',

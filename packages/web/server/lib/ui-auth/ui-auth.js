@@ -438,6 +438,7 @@ function persistJwtSecret(secret) {
 
 const UI_AUTH_PROVIDER_ID = /^[a-z][a-z0-9-]*$/;
 const uiAuthProviders = new Map();
+const urlAuthTokenRevokers = new Set();
 let providerSessionSecret = null;
 
 const readProviderSessionSecret = () => {
@@ -507,6 +508,10 @@ export const registerUiAuthProvider = ({ id } = {}) => {
       return payload.claims;
     },
     clearSession: (req, res) => {
+      const token = parseCookies(req?.headers?.cookie)[sessionCookieNameForRequest(req, SESSION_COOKIE_NAME)];
+      if (token) {
+        for (const revoke of urlAuthTokenRevokers) revoke(token);
+      }
       appendSetCookie(res, cookieFor(req, '', 0));
     },
     unregister: () => {
@@ -525,6 +530,13 @@ export const createUiAuth = ({
 } = {}) => {
   const normalizedPassword = normalizePassword(password);
   const urlAuthTokens = new Map();
+
+  const revokeSessionUrlAuthTokens = (sessionToken) => {
+    for (const [token, entry] of urlAuthTokens.entries()) {
+      if (entry?.sessionToken === sessionToken) urlAuthTokens.delete(token);
+    }
+  };
+  urlAuthTokenRevokers.add(revokeSessionUrlAuthTokens);
 
   const sweepUrlAuthTokens = () => {
     const now = Date.now();
@@ -682,6 +694,17 @@ export const createUiAuth = ({
       return res.json(issueUrlAuthTokenForSession(sessionToken, scope));
     };
 
+    const handleProviderResetAuth = (req, res) => {
+      try {
+        providerSessionSecret = persistJwtSecret(crypto.randomBytes(32).toString('hex'));
+        urlAuthTokens.clear();
+        setSessionCookie(req, res, '', 0);
+        res.json({ cleared: true, clearedPasskeys: 0, signedOutEverywhere: true });
+      } catch (error) {
+        res.status(typeof error?.statusCode === 'number' ? error.statusCode : 400).json({ error: error?.message || 'Global sign-out failed' });
+      }
+    };
+
     const resolveProviderAuthContext = async (req, { allowClientAuth, allowUrlToken }) => {
       const token = await providerSessionToken(req);
       if (token) return { type: 'session', token };
@@ -804,7 +827,10 @@ export const createUiAuth = ({
       handlePasskeyRevoke: (_req, res) => {
         res.status(400).json({ error: 'UI password not configured' });
       },
-      handleResetAuth: (_req, res) => {
+      handleResetAuth: (req, res) => {
+        if (hasUiAuthProviders()) {
+          return handleProviderResetAuth(req, res);
+        }
         res.status(400).json({ error: 'UI password not configured' });
       },
       ensureSessionToken: async (req, res) => {
@@ -814,7 +840,7 @@ export const createUiAuth = ({
         return ensureSessionToken(req, res);
       },
       dispose: () => {
-
+        urlAuthTokenRevokers.delete(revokeSessionUrlAuthTokens);
       },
     };
   }
@@ -1182,6 +1208,7 @@ export const createUiAuth = ({
       rateLimitCleanupTimer = null;
     }
     passkeyController.dispose();
+    urlAuthTokenRevokers.delete(revokeSessionUrlAuthTokens);
   };
 
   return {
