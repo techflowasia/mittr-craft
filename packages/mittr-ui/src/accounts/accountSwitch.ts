@@ -1,6 +1,6 @@
 import React from 'react';
 
-import { announceAccountChanged, holdGate } from '../sign-in/accountChange';
+import { announceAccountChanged, holdGate, reloadOrDefer } from '../sign-in/accountChange';
 import { accountsApi, HttpError, type SwitchOutcome } from './accountsApi';
 
 export type AccountSwitchState = 'idle' | 'switching' | 'not-restarted' | 'failed';
@@ -22,15 +22,20 @@ export type AccountSwitch = {
   run: (request: SwitchRequest, onDone?: (outcome: SwitchOutcome) => void) => Promise<void>;
   retry: () => Promise<void>;
   dismiss: () => Promise<void>;
+  attach: () => () => void;
 };
 
 export const reloadWindow = (): void => {
   window.location.reload();
 };
 
+export const resyncThenReload = (): void => {
+  void accountsApi.retrySwitch().catch(() => undefined).finally(reloadWindow);
+};
+
 const ACCOUNT_SWITCH_DEPS: AccountSwitchDeps = {
   retrySwitch: () => accountsApi.retrySwitch(),
-  reload: reloadWindow,
+  reload: () => reloadOrDefer(reloadWindow, resyncThenReload),
   announce: announceAccountChanged,
   holdGate,
 };
@@ -39,6 +44,8 @@ export function createAccountSwitch({ retrySwitch, reload, announce, holdGate: h
   let current: AccountSwitchState = 'idle';
   let lastRequest: SwitchRequest | null = null;
   let failed: FailedRequest | null = null;
+  let outcomeUnknown = false;
+  let attached = true;
   let finish: ((outcome: SwitchOutcome) => void) | null = null;
   let releaseGate: (() => void) | null = null;
   const listeners = new Set<() => void>();
@@ -49,7 +56,7 @@ export function createAccountSwitch({ retrySwitch, reload, announce, holdGate: h
     if (next === 'idle') {
       releaseGate?.();
       releaseGate = null;
-    } else if (!releaseGate) {
+    } else if (!releaseGate && attached) {
       releaseGate = hold();
     }
     for (const listener of listeners) listener();
@@ -59,6 +66,7 @@ export function createAccountSwitch({ retrySwitch, reload, announce, holdGate: h
     finish = null;
     lastRequest = null;
     failed = null;
+    outcomeUnknown = false;
   };
 
   const succeed = (outcome: SwitchOutcome) => {
@@ -69,8 +77,11 @@ export function createAccountSwitch({ retrySwitch, reload, announce, holdGate: h
       return;
     }
     forget();
-    done(outcome);
-    show('idle');
+    try {
+      done(outcome);
+    } finally {
+      show('idle');
+    }
   };
 
   const settle = (outcome: SwitchOutcome) => {
@@ -87,9 +98,11 @@ export function createAccountSwitch({ retrySwitch, reload, announce, holdGate: h
       outcome = await request();
     } catch (error) {
       failed = error instanceof HttpError ? 'refused' : 'lost';
+      if (failed === 'lost') outcomeUnknown = true;
       show('failed');
       return;
     }
+    if (request === retrySwitch) outcomeUnknown = false;
     settle(outcome);
   };
 
@@ -110,7 +123,7 @@ export function createAccountSwitch({ retrySwitch, reload, announce, holdGate: h
     },
     dismiss: async () => {
       if (current !== 'failed') return;
-      if (failed === 'refused') {
+      if (failed === 'refused' && !outcomeUnknown) {
         forget();
         show('idle');
         return;
@@ -123,7 +136,17 @@ export function createAccountSwitch({ retrySwitch, reload, announce, holdGate: h
         reload();
         return;
       }
+      outcomeUnknown = false;
       settle(outcome);
+    },
+    attach: () => {
+      attached = true;
+      if (current !== 'idle' && !releaseGate) releaseGate = hold();
+      return () => {
+        attached = false;
+        releaseGate?.();
+        releaseGate = null;
+      };
     },
   };
 }
@@ -142,6 +165,7 @@ export type AccountSwitchBinding = { accountSwitch: AccountSwitch; state: Accoun
 
 export function useAccountSwitch(): AccountSwitchBinding {
   const [accountSwitch] = React.useState(() => createAccountSwitch());
+  React.useEffect(() => accountSwitch.attach(), [accountSwitch]);
   const state = React.useSyncExternalStore(accountSwitch.subscribe, accountSwitch.state, accountSwitch.state);
   return { accountSwitch, state };
 }

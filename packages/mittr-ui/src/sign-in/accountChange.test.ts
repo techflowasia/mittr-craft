@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { announceAccountChanged, gateHeld, holdGate, listenAccountChanged, onGateRelease } from './accountChange';
+import { announceAccountChanged, beginSignInWait, gateHeld, holdGate, listenAccountChanged, onGateRelease, reloadOrDefer } from './accountChange';
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -39,5 +39,45 @@ describe('the gate hold', () => {
     expect(gateHeld()).toBe(false);
     expect(released).toEqual([1]);
     stop();
+  });
+});
+
+describe('reloads during a sign-in wait', () => {
+  test('without a wait the reload runs at once', () => {
+    const log: string[] = [];
+    reloadOrDefer(() => log.push('reload'), () => log.push('resync and reload'));
+    expect(log).toEqual(['reload']);
+  });
+
+  test('a reload asked during a wait runs once, as a resync and reload, when the wait ends unhandled', () => {
+    const log: string[] = [];
+    const end = beginSignInWait();
+    reloadOrDefer(() => log.push('reload'), () => log.push('resync and reload'));
+    reloadOrDefer(() => log.push('reload'), () => log.push('resync and reload'));
+    expect(log).toEqual([]);
+    end(false);
+    end(false);
+    expect(log).toEqual(['resync and reload']);
+  });
+
+  test('a wait that ends with its own resync and reload drops the deferred one', () => {
+    const log: string[] = [];
+    const end = beginSignInWait();
+    reloadOrDefer(() => log.push('reload'), () => log.push('resync and reload'));
+    end(true);
+    expect(log).toEqual([]);
+    reloadOrDefer(() => log.push('reload'), () => log.push('resync and reload'));
+    expect(log).toEqual(['reload']);
+  });
+
+  test('with two waits the deferred reload waits for the last', () => {
+    const log: string[] = [];
+    const gate = beginSignInWait();
+    const menu = beginSignInWait();
+    reloadOrDefer(() => log.push('reload'), () => log.push('resync and reload'));
+    gate(false);
+    expect(log).toEqual([]);
+    menu(false);
+    expect(log).toEqual(['resync and reload']);
   });
 });

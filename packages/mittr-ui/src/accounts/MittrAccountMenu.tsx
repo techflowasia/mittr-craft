@@ -11,12 +11,14 @@ import {
   DropdownMenuTrigger,
 } from '../../../ui/src/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../ui/src/components/ui/tooltip';
-import { desktopBridge, type GateListen } from '../sign-in/signInGateController';
+import { beginSignInWait } from '../sign-in/accountChange';
+import { desktopBridge, scheduleWithTimers, type GateListen } from '../sign-in/signInGateController';
 import { SIGN_IN_COMPLETED_EVENT, SIGN_IN_FAILED_EVENT } from '../sign-in/signInGateState';
 import { mittrT, useMittrT } from '../strings/mittrT';
 import { AccountSwitchDialog } from './AccountSwitchDialog';
 import { accountName, accountsApi, initialsOf, type MittrAccount } from './accountsApi';
 import { useAccountSwitch } from './accountSwitch';
+import { createAddAccountFlow } from './addAccount';
 
 const FOOTER_BUTTON_CLASS = 'inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-interactive-hover/50 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
@@ -99,7 +101,17 @@ export function MittrAccountMenu(): React.ReactNode {
   const [accounts, setAccounts] = React.useState<MittrAccount[] | null>(null);
   const [loadFailed, setLoadFailed] = React.useState(false);
   const { accountSwitch, state } = useAccountSwitch();
-  const adding = React.useRef(false);
+  const [addAccount] = React.useState(() => createAddAccountFlow({
+    startAddAccount: () => accountsApi.startAddAccount(),
+    beginWait: beginSignInWait,
+    schedule: scheduleWithTimers,
+    onWaiting: () => { toast.info(mittrT('mittr.accounts.add.waiting')); },
+    onStartFailed: () => { toast.error(mittrT('mittr.accounts.add.startFailed')); },
+    onFailed: () => { toast.error(mittrT('mittr.accounts.add.failed')); },
+    onAdded: () => { void accountSwitch.run(accountsApi.retrySwitch); },
+  }));
+
+  React.useEffect(() => () => addAccount.dispose(), [addAccount]);
 
   const load = React.useCallback(() => {
     accountsApi.fetchAccounts().then(
@@ -124,22 +136,13 @@ export function MittrAccountMenu(): React.ReactNode {
       if (disposed) stop();
       else stops.push(stop);
     };
-    const finishAdding = (): boolean => {
-      const wasAdding = adding.current;
-      adding.current = false;
-      return wasAdding;
-    };
-    subscribeDesktopEvent(listen, SIGN_IN_COMPLETED_EVENT, () => {
-      if (finishAdding()) void accountSwitch.run(accountsApi.retrySwitch);
-    }, keep);
-    subscribeDesktopEvent(listen, SIGN_IN_FAILED_EVENT, () => {
-      if (finishAdding()) toast.error(mittrT('mittr.accounts.add.failed'));
-    }, keep);
+    subscribeDesktopEvent(listen, SIGN_IN_COMPLETED_EVENT, addAccount.signedIn, keep);
+    subscribeDesktopEvent(listen, SIGN_IN_FAILED_EVENT, addAccount.signInFailed, keep);
     return () => {
       disposed = true;
       for (const stop of stops.splice(0)) stop();
     };
-  }, [accountSwitch]);
+  }, [addAccount]);
 
   const onOpenChange = (next: boolean) => {
     setOpen(next);
@@ -147,11 +150,7 @@ export function MittrAccountMenu(): React.ReactNode {
   };
 
   const onAddAccount = () => {
-    void accountsApi.startAddAccount().then((opened) => {
-      adding.current = opened;
-      if (opened) toast.info(mittrT('mittr.accounts.add.waiting'));
-      else toast.error(mittrT('mittr.accounts.add.startFailed'));
-    });
+    void addAccount.start();
   };
 
   return (

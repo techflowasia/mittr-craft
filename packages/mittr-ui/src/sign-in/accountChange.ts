@@ -45,3 +45,26 @@ export function onGateRelease(listener: () => void): () => void {
   releaseListeners.add(listener);
   return () => { releaseListeners.delete(listener); };
 }
+
+let waits = 0;
+let afterWait: (() => void) | null = null;
+
+export function beginSignInWait(): (handled: boolean) => void {
+  waits += 1;
+  let ended = false;
+  return (handled) => {
+    if (ended) return;
+    ended = true;
+    waits -= 1;
+    if (handled) afterWait = null;
+    if (waits > 0 || !afterWait) return;
+    const run = afterWait;
+    afterWait = null;
+    run();
+  };
+}
+
+export function reloadOrDefer(reloadNow: () => void, resyncThenReload: () => void): void {
+  if (waits === 0) reloadNow();
+  else afterWait = resyncThenReload;
+}

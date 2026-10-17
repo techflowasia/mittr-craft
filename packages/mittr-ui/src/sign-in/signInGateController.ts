@@ -54,7 +54,7 @@ export const STATUS_TIMEOUT_MS = 10_000;
 // can no longer finish, so the gate stops saying it is waiting for one.
 export const TRANSACTION_TTL_MS = 600_000;
 
-const scheduleWithTimers: GateSchedule = (run, delayMs) => {
+export const scheduleWithTimers: GateSchedule = (run, delayMs) => {
   const timer = setTimeout(run, delayMs);
   return () => clearTimeout(timer);
 };

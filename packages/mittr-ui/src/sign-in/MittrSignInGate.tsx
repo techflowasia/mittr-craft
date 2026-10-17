@@ -7,7 +7,8 @@ import { MittrCraftLogo } from '../MittrCraftLogo';
 import { MittrErrorBoundary } from '../MittrErrorBoundary';
 import { mittrT, useMittrT } from '../strings/mittrT';
 import type { MittrKey } from '../strings/mittrT';
-import { gateHeld, listenAccountChanged, onGateRelease } from './accountChange';
+import { reloadWindow, resyncThenReload } from '../accounts/accountSwitch';
+import { beginSignInWait, gateHeld, listenAccountChanged, onGateRelease, reloadOrDefer } from './accountChange';
 import { AuditNotice } from './AuditNotice';
 import { createSignInGateController, desktopBridge, type SignInGateController } from './signInGateController';
 import { gateNotice, gateStateFromStatus, type GateNotice, type GateSnapshot, type GateState } from './signInGateState';
@@ -173,7 +174,7 @@ const useSignInGate = (): SignInGateBinding => {
     return () => created.dispose();
   }, []);
 
-  React.useEffect(() => listenAccountChanged(() => window.location.reload()), []);
+  React.useEffect(() => listenAccountChanged(() => reloadOrDefer(reloadWindow, resyncThenReload)), []);
 
   const subscribe = React.useCallback(
     (listener: () => void) => (controller ? controller.subscribe(listener) : () => {}),
@@ -181,6 +182,11 @@ const useSignInGate = (): SignInGateBinding => {
   );
   const read = React.useCallback(() => (controller ? controller.snapshot() : IDLE), [controller]);
   const snapshot = React.useSyncExternalStore(subscribe, read, read);
+  React.useEffect(() => {
+    if (!snapshot.waiting) return undefined;
+    const endWait = beginSignInWait();
+    return () => endWait(false);
+  }, [snapshot.waiting]);
   return { controller, snapshot, broken };
 };
 

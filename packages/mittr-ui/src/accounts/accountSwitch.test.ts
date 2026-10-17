@@ -149,6 +149,73 @@ describe('account switch', () => {
     expect(log).toEqual(['hold', 'release', 'hold', 'announce', 'reload']);
   });
 
+  test('a lost answer whose resync is refused stays unknown: Close resyncs and reloads, never plain idle', async () => {
+    let resyncs = 0;
+    const { accountSwitch, log } = harness(() => {
+      resyncs += 1;
+      return resyncs === 1 ? Promise.reject(new HttpError(503)) : Promise.resolve({ signedIn: true });
+    });
+    await accountSwitch.run(lost);
+    await accountSwitch.retry();
+    expect(accountSwitch.state()).toBe('failed');
+
+    await accountSwitch.dismiss();
+    expect(log).toEqual(['hold', 'retry-switch', 'retry-switch', 'announce', 'reload']);
+    expect(accountSwitch.state()).toBe('switching');
+
+    const refusedTwice = harness(() => Promise.reject(new HttpError(503)));
+    await refusedTwice.accountSwitch.run(lost);
+    await refusedTwice.accountSwitch.retry();
+    await refusedTwice.accountSwitch.dismiss();
+    expect(refusedTwice.log).toEqual(['hold', 'retry-switch', 'retry-switch', 'reload']);
+  });
+
+  test('a resync that answers clears the unknown outcome', async () => {
+    const answers: Array<() => Promise<SwitchOutcome>> = [
+      () => Promise.resolve({ signedIn: true, engineRestarted: false }),
+      () => Promise.reject(new HttpError(503)),
+    ];
+    const { accountSwitch, log, holds } = harness(() => (answers.shift() ?? (() => Promise.resolve({ signedIn: true })))());
+    await accountSwitch.run(lost);
+    await accountSwitch.retry();
+    expect(accountSwitch.state()).toBe('not-restarted');
+    await accountSwitch.retry();
+    expect(accountSwitch.state()).toBe('failed');
+    await accountSwitch.dismiss();
+    expect(accountSwitch.state()).toBe('idle');
+    expect(holds()).toBe(0);
+    expect(log).toEqual(['hold', 'retry-switch', 'retry-switch', 'release']);
+  });
+
+  test('a caller whose callback throws still gets the switch back to idle and the gate released', async () => {
+    const { accountSwitch, holds } = harness();
+    await expect(accountSwitch.run(async () => ({ signedIn: false }), () => { throw new Error('callback broke'); })).rejects.toThrow('callback broke');
+    expect(accountSwitch.state()).toBe('idle');
+    expect(holds()).toBe(0);
+  });
+
+  test('detaching in the not-restarted or failed state releases the gate, and attaching again holds it', async () => {
+    const stuck = harness();
+    const detach = stuck.accountSwitch.attach();
+    await stuck.accountSwitch.run(async () => ({ signedIn: true, engineRestarted: false }));
+    expect(stuck.holds()).toBe(1);
+    detach();
+    expect(stuck.holds()).toBe(0);
+    const detachAgain = stuck.accountSwitch.attach();
+    expect(stuck.holds()).toBe(1);
+    detachAgain();
+    expect(stuck.holds()).toBe(0);
+
+    const failing = harness();
+    const detachFailing = failing.accountSwitch.attach();
+    await failing.accountSwitch.run(lost);
+    expect(failing.accountSwitch.state()).toBe('failed');
+    detachFailing();
+    expect(failing.holds()).toBe(0);
+    await failing.accountSwitch.retry();
+    expect(failing.holds()).toBe(0);
+  });
+
   test('only a failed request can be closed: a switch under way stays', async () => {
     const answer = held();
     const { accountSwitch } = harness();
