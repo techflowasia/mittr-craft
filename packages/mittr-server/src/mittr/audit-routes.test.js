@@ -21,17 +21,18 @@ const setUp = async (t, {
   ensureFreshSession = async () => SESSION,
   remoteUrl = async () => REMOTE,
   git = { remoteUrl },
+  active = { userId: 'u-a' },
 } = {}) => {
   const app = express();
   const logger = recordingLogger();
-  const audit = registerMittrAuditRoutes(app, { express, broker: BROKER, ensureFreshSession, git, fetchImpl, logger });
+  const audit = registerMittrAuditRoutes(app, { express, broker: BROKER, ensureFreshSession, activeUserId: () => active.userId, git, fetchImpl, logger });
   const base = await listen(t, app);
   const send = async (route, text) => {
     const response = await fetch(base + route, { method: 'POST', headers: { 'content-type': 'application/json' }, body: text });
     return { status: response.status, text: await response.text() };
   };
   const post = (route, body) => send(route, JSON.stringify(body));
-  return { audit, fetchImpl, logger, post, send, base };
+  return { audit, fetchImpl, logger, post, send, base, active };
 };
 
 const finish = (post, body = {}) => post('/api/mittr/audit/finish', { sessionId: 's1', outcome: 'completed', directory: '/repo', ...body });
@@ -246,5 +247,49 @@ test('a finish that is waiting for its session when the account changes sends no
   audit.clear();
   held.resolve({ accessToken: 'at-b', subject: { userId: 'u-b' } });
   assert.equal((await pending).status, 204);
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('a record opened under one account is dropped when another is active at finish, even when nothing announced the change', async (t) => {
+  const { post, fetchImpl, active } = await setUp(t, { ensureFreshSession: async () => ({ accessToken: `at-${active.userId}`, subject: { userId: active.userId } }) });
+  await post('/api/mittr/audit/prompt', { sessionId: 's1', text: 'typed as the first account' });
+  await post('/api/mittr/audit/tool', { sessionId: 's1', name: 'edit' });
+
+  active.userId = 'u-b';
+  assert.equal((await finish(post)).status, 204);
+  assert.equal(fetchImpl.calls.length, 0, 'nothing is sent with the other account\'s token');
+
+  active.userId = 'u-a';
+  assert.equal((await finish(post)).status, 204);
+  assert.equal(fetchImpl.calls.length, 1);
+  assert.equal(fetchImpl.calls[0].headers.authorization, 'Bearer at-u-a');
+  assert.deepEqual(sent(fetchImpl).prompts, [], 'the dropped record is gone, not kept for later');
+  assert.deepEqual(sent(fetchImpl).actions, []);
+});
+
+test('a session of another account than the record\'s owner is never used', async (t) => {
+  const { post, fetchImpl } = await setUp(t, { ensureFreshSession: async () => ({ accessToken: 'at-b', subject: { userId: 'u-b' } }) });
+  await post('/api/mittr/audit/prompt', { sessionId: 's1', text: 'hello' });
+  assert.equal((await finish(post)).status, 204);
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('an account that changes while the session is being fetched sends nothing', async (t) => {
+  const held = deferred();
+  const { post, fetchImpl, active } = await setUp(t, { ensureFreshSession: () => held.promise });
+  await post('/api/mittr/audit/prompt', { sessionId: 's1', text: 'hello' });
+  const pending = finish(post);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  active.userId = 'u-b';
+  held.resolve({ accessToken: 'at-b', subject: { userId: 'u-b' } });
+  assert.equal((await pending).status, 204);
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('a record opened while nobody is signed in is never sent', async (t) => {
+  const { post, fetchImpl, active } = await setUp(t, { active: { userId: null } });
+  await post('/api/mittr/audit/prompt', { sessionId: 's1', text: 'typed signed out' });
+  active.userId = 'u-a';
+  assert.equal((await finish(post)).status, 204);
   assert.equal(fetchImpl.calls.length, 0);
 });

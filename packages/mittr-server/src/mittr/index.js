@@ -219,7 +219,15 @@ export function setupMittr(context, {
     logger,
   });
 
-  audit = registerMittrAuditRoutes(app, { express, broker, ensureFreshSession, git, fetchImpl, logger });
+  audit = registerMittrAuditRoutes(app, {
+    express,
+    broker,
+    ensureFreshSession,
+    activeUserId: () => store.list().find((account) => account.active)?.userId ?? null,
+    git,
+    fetchImpl,
+    logger,
+  });
 
   const quotaService = createMittrQuotaService({ broker, ensureFreshSession, fetchImpl });
   registerMittrQuotaRoutes(app, { service: quotaService });

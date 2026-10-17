@@ -10,6 +10,7 @@ export function registerMittrAuditRoutes(app, {
   express,
   broker,
   ensureFreshSession,
+  activeUserId,
   git,
   fetchImpl = (...args) => fetch(...args),
   logger = console,
@@ -25,13 +26,14 @@ export function registerMittrAuditRoutes(app, {
     });
   };
 
-  const recordFor = (sessionId) => {
+  const entryFor = (sessionId) => {
     if (!open.has(sessionId)) {
       if (open.size >= MAX_OPEN_RECORDS) open.delete(open.keys().next().value);
-      open.set(sessionId, createAuditRecord({}));
+      open.set(sessionId, { record: createAuditRecord({}), owner: activeUserId() });
     }
     return open.get(sessionId);
   };
+  const recordFor = (sessionId) => entryFor(sessionId).record;
 
   app.post('/api/mittr/audit/prompt', readJson('256kb'), (req, res) => {
     const text = String(req.body?.text ?? '');
@@ -54,8 +56,9 @@ export function registerMittrAuditRoutes(app, {
   app.post('/api/mittr/audit/finish', readJson('8kb'), async (req, res) => {
     const sessionId = String(req.body?.sessionId ?? '');
     const startedIn = epoch;
-    const record = recordFor(sessionId);
+    const { record, owner } = entryFor(sessionId);
     open.delete(sessionId);
+    if (owner === null || activeUserId() !== owner) return res.status(204).end();
 
     try {
       record.setRepository(await resolveRepositoryIdentity(String(req.body?.directory ?? ''), {
@@ -65,7 +68,7 @@ export function registerMittrAuditRoutes(app, {
       const payload = serializeAuditRecord(record.finish(String(req.body?.outcome ?? 'unknown')));
 
       const session = await ensureFreshSession();
-      if (!session?.accessToken || startedIn !== epoch) return res.status(204).end();
+      if (!session?.accessToken || session.subject?.userId !== owner || startedIn !== epoch) return res.status(204).end();
 
       const response = await fetchImpl(new URL(AUDIT_ENDPOINT, broker.baseUrl).toString(), {
         method: 'POST',
