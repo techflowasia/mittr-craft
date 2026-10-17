@@ -53,4 +53,6 @@ It refuses to start when a `MITTR_AD_*` setting is present but `OPENCHAMBER_SERV
 
 Run from a source checkout (a `.git` above the package), it also refuses to start unless `OPENCHAMBER_DATA_DIR` or `MITTRCRAFT_DATA_DIR` is set, so a developer's machine never runs a server on the installed app's data. A packed install has no `.git` and keeps the `~/.config/mittrcraft` default.
 
+The bin is shipped only as this package: `npm pack` carries `bin/` whole, `product-env.json` included, and a test checks it. The desktop app packs only the plugin bundle, not this bin, and upstream's Docker image copies only `packages/web`.
+
 A packed install that sits under a git repository (for example a HOME kept in a dotfiles repo) is treated as a checkout, so it must set `OPENCHAMBER_DATA_DIR`.

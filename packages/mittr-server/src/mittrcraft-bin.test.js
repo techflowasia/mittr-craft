@@ -218,3 +218,20 @@ test('a packed layout without .git gets the default data dir and the bin touches
   });
   assert.deepEqual(fs.readdirSync(home), []);
 });
+
+test('the npm pack of this package ships the bin with the product env beside it', (t) => {
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-pack-')));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(npm_|OPENCHAMBER_|OPENCODE_|XDG_|MITTR)/i.test(name)));
+  const result = spawnSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], {
+    encoding: 'utf8',
+    cwd: path.join(repoRoot, 'packages/mittr-server'),
+    timeout: 60_000,
+    env: { ...inherited, HOME: home, USERPROFILE: home, npm_config_cache: path.join(home, 'cache'), npm_config_update_notifier: 'false' },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const packed = JSON.parse(result.stdout)[0].files.map((file) => file.path);
+  for (const file of ['bin/mittrcraft.mjs', 'bin/product-env.json', 'src/cli-env.js', 'src/plugin.js']) {
+    assert.ok(packed.includes(file), `${file} is not in the pack`);
+  }
+});
