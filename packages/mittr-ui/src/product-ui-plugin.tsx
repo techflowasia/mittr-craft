@@ -47,7 +47,7 @@ registerProductUiPlugin({
   },
   modelPicker: { useDecorations: useMittrPickerDecorations },
   messageError: mittrMessageError,
-  sessionAuthDescription: ({ passwordEnabled }) => (passwordEnabled ? null : mittrT('mittr.uiAuth.gateDescription')),
+  sessionAuthDescription: ({ passwordEnabled, runtime }) => (passwordEnabled || runtime === 'desktop-local' ? null : mittrT('mittr.uiAuth.gateDescription')),
   // Mittr models come from the Mittr catalog; models.dev is a third party.
   remoteModelCatalog: false,
 });

@@ -14,7 +14,12 @@ export type AdStatus = {
   tunnelLocked: boolean;
 };
 
-export type AdResponse = { ok: boolean; status: number; json: () => Promise<JsonValue> };
+export type AdResponse = {
+  ok: boolean;
+  status: number;
+  json: () => Promise<JsonValue>;
+  headers?: { get: (name: string) => string | null };
+};
 export type AdFetch = (path: string, init?: RequestInit) => Promise<AdResponse>;
 
 export const defaultAdFetch: AdFetch = (path, init) => runtimeFetch(path, init);

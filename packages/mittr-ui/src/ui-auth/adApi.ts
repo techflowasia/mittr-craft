@@ -1,19 +1,59 @@
 import type { JsonValue } from '@openchamber/sdk';
 import { z } from 'zod';
 
+import { mittrT } from '../strings/mittrT';
 import type { SessionAuthRuntime } from '../../../ui/src/lib/product-plugins';
 import type { RuntimeUrlQuery } from '../../../ui/src/lib/runtime-url';
-import { defaultAdFetch, JSON_CREDENTIALS_INIT, type AdFetch } from './adStatus';
+import { defaultAdFetch, JSON_CREDENTIALS_INIT, type AdFetch, type AdResponse } from './adStatus';
 
 export const AD_SESSION_ENDPOINT = '/auth/ad/session';
 export const AD_LOGIN_ENDPOINT = '/auth/ad/login';
 export const TRUST_DEVICE_STORAGE_KEY = 'openchamber.uiAuth.trustDevice';
 
-export const DESKTOP_CLIENT_LABEL = 'MittrCraft Desktop';
+export type AdFailureReason = 'invalid' | 'rate-limited' | 'not-configured' | 'use-microsoft' | 'failed';
 
-export type AdSessionResult = { ok: true; clientToken?: string } | { ok: false; reason: 'invalid' | 'rate-limited' | 'failed' };
+export type AdSessionResult =
+  | { ok: true; clientToken?: string }
+  | { ok: false; reason: AdFailureReason; retryAfterSeconds?: number };
 
 const sessionPayload = z.object({ clientToken: z.string().trim().min(1).optional().catch(undefined) });
+
+const refusalPayload = z.object({
+  code: z.string().optional().catch(undefined),
+  retryAfter: z.number().positive().finite().optional().catch(undefined),
+});
+
+const retryAfterHeader = (response: AdResponse): number | undefined => {
+  const seconds = Number(response.headers?.get('retry-after'));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
+};
+
+const refusalOf = async (response: AdResponse): Promise<AdSessionResult> => {
+  const refusal = refusalPayload.safeParse(await response.json().catch(() => null));
+  const body = refusal.success ? refusal.data : {};
+  if (response.status === 429) {
+    const retryAfterSeconds = body.retryAfter ?? retryAfterHeader(response);
+    return retryAfterSeconds === undefined ? { ok: false, reason: 'rate-limited' } : { ok: false, reason: 'rate-limited', retryAfterSeconds };
+  }
+  if (response.status === 400 && body.code === 'not-configured') return { ok: false, reason: 'not-configured' };
+  if (response.status === 400 && body.code === 'use-microsoft') return { ok: false, reason: 'use-microsoft' };
+  if (response.status === 401 || response.status === 400) return { ok: false, reason: 'invalid' };
+  return { ok: false, reason: 'failed' };
+};
+
+export function failureMessage(failure: Extract<AdSessionResult, { ok: false }>): string {
+  switch (failure.reason) {
+    case 'invalid': return mittrT('mittr.uiAuth.invalid');
+    case 'not-configured': return mittrT('mittr.uiAuth.notConfigured');
+    case 'use-microsoft': return mittrT('mittr.uiAuth.useMicrosoft');
+    case 'rate-limited': {
+      if (failure.retryAfterSeconds === undefined) return mittrT('mittr.uiAuth.rateLimited');
+      const minutes = Math.ceil(failure.retryAfterSeconds / 60);
+      return mittrT(minutes === 1 ? 'mittr.uiAuth.rateLimitedMinute' : 'mittr.uiAuth.rateLimitedMinutes', { minutes });
+    }
+    case 'failed': return mittrT('mittr.uiAuth.failed');
+  }
+}
 
 export async function submitAdSession({ fetch, username, password, trustDevice, issueClientToken = false }: {
   fetch: AdFetch;
@@ -28,7 +68,7 @@ export async function submitAdSession({ fetch, username, password, trustDevice, 
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify(issueClientToken
-        ? { username, password, trustDevice, issueClientToken: true, clientLabel: DESKTOP_CLIENT_LABEL }
+        ? { username, password, trustDevice, issueClientToken: true }
         : { username, password, trustDevice }),
     });
     if (response.ok) {
@@ -36,9 +76,7 @@ export async function submitAdSession({ fetch, username, password, trustDevice, 
       const clientToken = parsed.success ? parsed.data.clientToken : undefined;
       return clientToken ? { ok: true, clientToken } : { ok: true };
     }
-    if (response.status === 401 || response.status === 400) return { ok: false, reason: 'invalid' };
-    if (response.status === 429) return { ok: false, reason: 'rate-limited' };
-    return { ok: false, reason: 'failed' };
+    return await refusalOf(response);
   } catch {
     return { ok: false, reason: 'failed' };
   }

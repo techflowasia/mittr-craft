@@ -102,12 +102,17 @@ describe('MittrCraft company sign-in', () => {
 
 describe('MittrCraft sign-in gate wording', () => {
   test('the gate says to sign in with a company account when it has no password form', () => {
-    expect(translateProductSessionAuthDescription({ passwordEnabled: false })).toBe(mittrT('mittr.uiAuth.gateDescription'));
+    expect(translateProductSessionAuthDescription({ passwordEnabled: false, runtime: 'web' })).toBe(mittrT('mittr.uiAuth.gateDescription'));
+    expect(translateProductSessionAuthDescription({ passwordEnabled: false, runtime: 'desktop-remote' })).toBe(mittrT('mittr.uiAuth.gateDescription'));
     expect(mittrT('mittr.uiAuth.gateDescription')).toBe('Sign in with your company account.');
   });
 
   test('the gate keeps upstream\'s line when there is a password form', () => {
-    expect(translateProductSessionAuthDescription({ passwordEnabled: true })).toBeNull();
+    expect(translateProductSessionAuthDescription({ passwordEnabled: true, runtime: 'web' })).toBeNull();
+  });
+
+  test('a local desktop has no company sign-in, so the gate keeps upstream\'s line there', () => {
+    expect(translateProductSessionAuthDescription({ passwordEnabled: false, runtime: 'desktop-local' })).toBeNull();
   });
 });
 
