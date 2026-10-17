@@ -3,8 +3,9 @@
  *
  * The engine opens its system prompt by naming itself. The 2.0.22 harness
  * prompt says it runs in OpenCode, and the older prompts it still carries say
- * it is opencode or OpenCode. The plugin rewrites each of those sentences in
- * every system part and adds one line that tells the model its name. Built-in
+ * it is opencode or OpenCode. The plugin rewrites each of those sentences
+ * where it opens a system part and adds one line that tells the model its
+ * name. Built-in
  * tool and skill names, and paths such as `.opencode/`, are left alone: they
  * are how the engine finds its tools, not how the model introduces itself.
  *
@@ -28,12 +29,14 @@ const introductions = (productName) => [
 export const identityLine = (productName) =>
   `You are ${productName}. When asked who you are or which product this is, answer ${productName}. Never call yourself OpenCode or OpenChamber.`;
 
-// A prompt may wrap a sentence or space it twice; any run of whitespace
-// between two words still matches.
-const sentencePattern = (sentence) => sentence
+// Only a part that opens with the sentence is rewritten: a project's
+// AGENTS.md or a skill that quotes it later on keeps its text. A prompt may
+// wrap the sentence or space it twice; any run of whitespace between two
+// words still matches, and the whitespace before it is kept.
+const openingPattern = (sentence) => `^(\\s*)${sentence
   .split(' ')
   .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  .join('\\s+');
+  .join('\\s+')}`;
 
 /**
  * The plugin's ES module source, `export default { id, setup }`, written to a
@@ -41,15 +44,15 @@ const sentencePattern = (sentence) => sentence
  */
 export const identityPluginSource = ({ productName }) => {
   if (!productName) throw new Error('identityPluginSource needs a productName');
-  const rewrites = introductions(productName).map(({ from, to }) => [sentencePattern(from), to]);
+  const rewrites = introductions(productName).map(({ from, to }) => [openingPattern(from), to]);
   return `const IDENTITY = ${JSON.stringify(identityLine(productName))}
-const REWRITES = ${JSON.stringify(rewrites)}.map(([pattern, text]) => [new RegExp(pattern, 'g'), text])
+const REWRITES = ${JSON.stringify(rewrites)}.map(([pattern, text]) => [new RegExp(pattern), text])
 
 const introduce = (o) => {
   if (!Array.isArray(o.system)) return
   for (const part of o.system) {
     if (part && typeof part.text === 'string') {
-      part.text = REWRITES.reduce((text, [pattern, replacement]) => text.replace(pattern, () => replacement), part.text)
+      part.text = REWRITES.reduce((text, [pattern, replacement]) => text.replace(pattern, (_, lead) => lead + replacement), part.text)
     }
   }
   if (!o.system.some((part) => part && part.text === IDENTITY)) o.system.push({ type: 'text', text: IDENTITY })

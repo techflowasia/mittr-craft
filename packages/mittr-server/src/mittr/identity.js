@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -9,10 +10,21 @@ const PRODUCT_NAME = 'MittrCraft';
 const PLUGIN_DIR = path.join('engine-plugins', 'mittrcraft-identity');
 const MANIFEST = `${JSON.stringify({ type: 'module', exports: { '.': './index.js' } }, null, 2)}\n`;
 
-// Temp + rename, so an engine reloading its plugins never reads half a file;
-// the mode is set again because a rename keeps whatever an old file had.
+const readIfPresent = (file) => fs.readFile(file, 'utf8').catch((error) => {
+  if (error?.code === 'ENOENT') return null;
+  throw error;
+});
+
+// A file that already says the same is only brought back to 0600, so its
+// mtime stays put across builds. Otherwise temp + rename, so an engine
+// reloading its plugins never reads half a file; each temp name is unique,
+// so two builds writing at once never rename each other's file away.
 const writePrivate = async (file, text) => {
-  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+  if (await readIfPresent(file) === text) {
+    await fs.chmod(file, 0o600);
+    return;
+  }
+  const tmp = `${file}.tmp-${process.pid}-${randomUUID()}`;
   try {
     await fs.writeFile(tmp, text, { encoding: 'utf8', mode: 0o600 });
     await fs.chmod(tmp, 0o600);
@@ -23,13 +35,16 @@ const writePrivate = async (file, text) => {
   }
 };
 
+/** Where the identity plugin lives in the data dir. */
+export const identityPluginDir = (dataDir) => path.join(dataDir, PLUGIN_DIR);
+
 /**
  * Writes the identity plugin under `<dataDir>/engine-plugins/` and returns
  * its directory. The engine cannot read inside `app.asar`, so, as upstream
  * does for its agent tool, the source lives in the data dir.
  */
 export const materializeIdentityPlugin = async ({ dataDir }) => {
-  const dir = path.join(dataDir, PLUGIN_DIR);
+  const dir = identityPluginDir(dataDir);
   await fs.mkdir(dir, { recursive: true });
   await writePrivate(path.join(dir, 'package.json'), MANIFEST);
   await writePrivate(path.join(dir, 'index.js'), identityPluginSource({ productName: PRODUCT_NAME }));

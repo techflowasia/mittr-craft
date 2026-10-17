@@ -307,6 +307,23 @@ test('the identity plugin is on disk before the config names it', async (t) => {
   assert.ok(source.includes("'mittrcraft.identity'") || source.includes('"mittrcraft.identity"'), source.slice(0, 200));
 });
 
+test('a plugin that cannot be rewritten keeps the one already on disk in the config', { skip: process.platform === 'win32' }, async (t) => {
+  const { mittr, dataDir, logger } = await setUp(t);
+  const dir = identityDirOf(dataDir);
+  fs.writeFileSync(path.join(dir, 'index.js'), 'export default { id: "older", setup: async () => {} }\n');
+  fs.chmodSync(dir, 0o500);
+  let config;
+  try {
+    config = await mittr.managedConfig();
+  } finally {
+    fs.chmodSync(dir, 0o700);
+  }
+
+  assert.deepEqual(config.plugins, [dir]);
+  assert.deepEqual(config.experimental.policies, LOCKED);
+  assert.ok(logger.warnings.some((line) => line.startsWith('[mittr] could not rewrite the identity plugin; keeping the one already written')), logger.warnings.join('\n'));
+});
+
 test('an identity plugin that cannot be written leaves the lock and the models in the config', async (t) => {
   const dataDir = tempDataDir(t);
   fs.writeFileSync(path.join(dataDir, 'engine-plugins'), 'not a folder');

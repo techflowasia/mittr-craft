@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { createAccountStore } from './account-store.js';
@@ -7,7 +8,7 @@ import { catalogCachePath, createCatalogCache } from './catalog-cache.js';
 import { registerMittrCatalogRoutes } from './catalog-routes.js';
 import { syncDefaultModel } from './default-model.js';
 import { ensureMittrCredential, forgetMittrCredential } from './engine-credential.js';
-import { identityFragment, materializeIdentityPlugin } from './identity.js';
+import { identityFragment, identityPluginDir, materializeIdentityPlugin } from './identity.js';
 import { ensureLocalToken } from './local-token.js';
 import { createMittrSettings } from './mittr-settings.js';
 import { MITTR_PROVIDER_ID, policiesFragment } from './policies.js';
@@ -172,13 +173,19 @@ export function setupMittr(context, {
   let models = [];
 
   // The engine introduces itself as MittrCraft through a plugin written on
-  // every build, before the config names it. A plugin that cannot be written
-  // costs only the name: the lock and the models still go out, and the next
-  // build tries again.
+  // every build, before the config names it. When it cannot be written, a
+  // plugin an earlier build left stays listed, so a failed write never drops
+  // the name; with none on disk the name is all that is lost: the lock and
+  // the models still go out, and the next build tries again.
   const identityConfig = async () => {
     try {
       return identityFragment(await materializeIdentityPlugin({ dataDir }));
     } catch (error) {
+      const dir = identityPluginDir(dataDir);
+      if (fs.existsSync(path.join(dir, 'index.js'))) {
+        logger.warn('[mittr] could not rewrite the identity plugin; keeping the one already written:', error?.message ?? error);
+        return identityFragment(dir);
+      }
       logger.warn('[mittr] could not write the identity plugin; trying again on the next config write:', error?.message ?? error);
       return {};
     }

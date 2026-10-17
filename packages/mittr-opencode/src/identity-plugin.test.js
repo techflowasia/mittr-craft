@@ -101,3 +101,21 @@ test('a product name with replacement patterns is written literally', async () =
 test('the source needs a product name', () => {
   assert.throws(() => identityPluginSource({ productName: '' }), /productName/);
 });
+
+test('a sentence quoted inside a part is left alone; only an opening one is rewritten', async () => {
+  const { hooks } = await loadPlugin();
+  const quoted = `# AGENTS.md\nThe engine starts its prompt with "${HARNESS}" and says "You are opencode, an interactive CLI tool".`;
+  const skill = `Example:\n  You are OpenCode, a coding agent that helps users`;
+  const o = { system: [{ type: 'text', text: HARNESS }, { type: 'text', text: quoted }, { type: 'text', text: skill }] };
+  hooks.get('context')(o);
+  assert.ok(o.system[0].text.startsWith('You are MittrCraft, an AI coding agent.'));
+  assert.equal(o.system[1].text, quoted);
+  assert.equal(o.system[2].text, skill);
+});
+
+test('only the opening sentence of a part is rewritten, not a repeat later in it', async () => {
+  const { hooks } = await loadPlugin();
+  const o = { system: [{ type: 'text', text: `${HARNESS}\nQuote: ${HARNESS}` }] };
+  hooks.get('context')(o);
+  assert.equal(o.system[0].text, `You are MittrCraft, an AI coding agent. Help the user accomplish their goals using the tools you have available.\nQuote: ${HARNESS}`);
+});

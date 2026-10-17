@@ -4,7 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
-import { identityFragment, materializeIdentityPlugin } from './identity.js';
+import { identityFragment, identityPluginDir, materializeIdentityPlugin } from './identity.js';
 import { tempDataDir } from './test-helpers.js';
 
 const modeOf = (file) => fs.statSync(file).mode & 0o777;
@@ -14,6 +14,7 @@ test('materializeIdentityPlugin writes a loadable directory plugin', async (t) =
   const dir = await materializeIdentityPlugin({ dataDir });
 
   assert.equal(dir, path.join(dataDir, 'engine-plugins', 'mittrcraft-identity'));
+  assert.equal(identityPluginDir(dataDir), dir);
   const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
   assert.deepEqual(manifest, { type: 'module', exports: { '.': './index.js' } });
   if (process.platform !== 'win32') {
@@ -44,4 +45,45 @@ test('a second write replaces the files and tightens a loosened mode', async (t)
 
 test('identityFragment lists the plugin directory', () => {
   assert.deepEqual(identityFragment('/data/engine-plugins/mittrcraft-identity'), { plugins: ['/data/engine-plugins/mittrcraft-identity'] });
+});
+
+test('a build that finds the same plugin on disk leaves the files alone', async (t) => {
+  const dataDir = tempDataDir(t);
+  const dir = await materializeIdentityPlugin({ dataDir });
+  const past = new Date('2026-01-01T00:00:00Z');
+  for (const name of ['index.js', 'package.json']) fs.utimesSync(path.join(dir, name), past, past);
+
+  await materializeIdentityPlugin({ dataDir });
+
+  for (const name of ['index.js', 'package.json']) {
+    assert.equal(fs.statSync(path.join(dir, name)).mtimeMs, past.getTime(), `${name} was written again`);
+  }
+});
+
+test('an unchanged plugin with a loosened mode is tightened without a rewrite', { skip: process.platform === 'win32' }, async (t) => {
+  const dataDir = tempDataDir(t);
+  const dir = await materializeIdentityPlugin({ dataDir });
+  const past = new Date('2026-01-01T00:00:00Z');
+  fs.chmodSync(path.join(dir, 'index.js'), 0o644);
+  fs.utimesSync(path.join(dir, 'index.js'), past, past);
+
+  await materializeIdentityPlugin({ dataDir });
+
+  assert.equal(modeOf(path.join(dir, 'index.js')), 0o600);
+  assert.equal(fs.statSync(path.join(dir, 'index.js')).mtimeMs, past.getTime());
+});
+
+test('builds that write at the same moment all succeed and leave one whole plugin', async (t) => {
+  const dataDir = tempDataDir(t);
+  const realNow = Date.now;
+  Date.now = () => 1_700_000_000_000;
+  t.after(() => { Date.now = realNow; });
+  fs.mkdirSync(identityPluginDir(dataDir), { recursive: true });
+  fs.writeFileSync(path.join(identityPluginDir(dataDir), 'index.js'), 'stale');
+
+  const dirs = await Promise.all(Array.from({ length: 8 }, () => materializeIdentityPlugin({ dataDir })));
+
+  assert.deepEqual(new Set(dirs), new Set([identityPluginDir(dataDir)]));
+  assert.ok(fs.readFileSync(path.join(identityPluginDir(dataDir), 'index.js'), 'utf8').includes('mittrcraft.identity'));
+  assert.deepEqual(fs.readdirSync(identityPluginDir(dataDir)).sort(), ['index.js', 'package.json']);
 });
