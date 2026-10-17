@@ -69,6 +69,9 @@ export function createAccountStore({
   // Whether the shared engine folders already hold history. Unknown counts
   // as yes, so a new account is never handed somebody else's history.
   sharedHistoryExists = () => true,
+  // Called once the 1.x session has become an account, so a reader that was
+  // told about it while it was only pending can look again.
+  onLegacyCarried = null,
 }) {
   const root = path.join(dataDir, ACCOUNTS_DIR);
   const indexPath = accountIndexPath(dataDir);
@@ -167,19 +170,21 @@ export function createAccountStore({
   // It becomes the first account, once; one that cannot be decrypted stays.
   const carryLegacySession = () => {
     const legacyPath = path.join(dataDir, LEGACY_SESSION_FILE);
-    if (!fs.existsSync(legacyPath)) return;
+    if (!fs.existsSync(legacyPath)) return false;
     let index;
+    let carried = false;
     try {
       index = indexForWrite();
     } catch {
-      return;
+      return false;
     }
     if (index.accounts.length === 0) {
       try {
         const session = parseSession(JSON.parse(decrypt(fs.readFileSync(legacyPath))));
         writeIndex(upsert(index, session, true, { legacy: true }));
+        carried = true;
       } catch {
-        return;
+        return false;
       }
     }
     try {
@@ -187,6 +192,7 @@ export function createAccountStore({
     } catch {
       // Left for the next start.
     }
+    return carried;
   };
 
   // What an interrupted write left behind; never a file this store finished.
@@ -215,7 +221,19 @@ export function createAccountStore({
   const carryLegacyOnce = () => {
     if (legacyCarried) return;
     legacyCarried = true;
-    carryLegacySession();
+    if (carryLegacySession()) onLegacyCarried?.();
+  };
+
+  // What the first read will find, told without opening anything: the 1.x
+  // session becomes the first account only when the index holds none, and
+  // takes the shared history (home null), which is where its cache is.
+  const legacyPending = () => {
+    if (legacyCarried || !fs.existsSync(path.join(dataDir, LEGACY_SESSION_FILE))) return false;
+    try {
+      return loadIndex().accounts.length === 0;
+    } catch {
+      return false;
+    }
   };
 
   sweepTemporaryFiles();
@@ -321,6 +339,7 @@ export function createAccountStore({
 
   const list = ({ carryLegacy = true } = {}) => {
     if (carryLegacy) carryLegacyOnce();
+    else if (legacyPending()) return [{ userId: null, displayName: '', active: true, pending: true }];
     const index = readIndex();
     return index.accounts
       .filter((entry) => entry.signedIn)
@@ -333,5 +352,5 @@ export function createAccountStore({
     return index.accounts.find((entry) => entry.userId === index.active)?.home ?? null;
   };
 
-  return { read, readOf, write, clear, activate, signOut, list, activeHome, damaged, repair };
+  return { read, readOf, write, clear, activate, signOut, list, activeHome, damaged, repair, legacyPending };
 }

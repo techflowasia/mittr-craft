@@ -138,7 +138,8 @@ test('the 1.x session is opened on the first read, not when the store is created
   };
   const store = createAccountStore({ dataDir, encrypt, decrypt: counting, sharedHistoryExists: () => true });
   assert.equal(opened, 0);
-  assert.deepEqual(store.list({ carryLegacy: false }), []);
+  assert.equal(store.legacyPending(), true);
+  assert.deepEqual(store.list({ carryLegacy: false }), [{ userId: null, displayName: '', active: true, pending: true }]);
   assert.equal(store.activeHome({ carryLegacy: false }), null);
   assert.equal(opened, 0);
   assert.equal(fs.existsSync(legacy), true);
@@ -148,6 +149,37 @@ test('the 1.x session is opened on the first read, not when the store is created
   assert.deepEqual(store.list(), [{ userId: 'u1', displayName: 'A', active: true }]);
   assert.equal(fs.existsSync(legacy), false);
   assert.equal(JSON.parse(fs.readFileSync(path.join(accountsDir(dataDir), 'index.json'), 'utf8')).accounts[0].home, null);
+  assert.equal(store.legacyPending(), false);
+  assert.deepEqual(store.list({ carryLegacy: false }), [{ userId: 'u1', displayName: 'A', active: true }]);
+});
+
+test('a 1.x session is pending only while nothing else is signed in and the index can be read', (t) => {
+  const withIndex = (content) => {
+    const dataDir = tempDataDir(t);
+    fs.writeFileSync(path.join(dataDir, 'mittr-session'), encrypt(JSON.stringify(sessionFor('u1', 'A'))));
+    if (content !== null) writeIndexFile(dataDir, content);
+    return createAccountStore({ dataDir, encrypt, decrypt, logger: silentLogger() });
+  };
+  assert.equal(withIndex(null).legacyPending(), true);
+  assert.equal(withIndex('{"active": "u2", "accounts": [{"userId": "u2", "displayName": "B", "home": "h2", "signedIn": true}]}').legacyPending(), false);
+  assert.equal(withIndex('{"active": "u1", "acc').legacyPending(), false);
+  assert.equal(createAccountStore({ dataDir: tempDataDir(t), encrypt, decrypt }).legacyPending(), false);
+});
+
+test('the carry tells its listener once, and not when the 1.x session cannot be opened', (t) => {
+  const dataDir = tempDataDir(t);
+  fs.writeFileSync(path.join(dataDir, 'mittr-session'), encrypt(JSON.stringify(sessionFor('u1', 'A'))));
+  let told = 0;
+  const store = createAccountStore({ dataDir, encrypt, decrypt, onLegacyCarried: () => { told += 1; } });
+  store.read();
+  store.read();
+  assert.equal(told, 1);
+
+  const other = tempDataDir(t);
+  fs.writeFileSync(path.join(other, 'mittr-session'), 'not sealed');
+  const refused = createAccountStore({ dataDir: other, encrypt, decrypt, onLegacyCarried: () => { told += 1; } });
+  refused.read();
+  assert.equal(told, 1);
 });
 
 test('the 1.x session is carried by the first write too, so a newcomer never takes its shared history', (t) => {

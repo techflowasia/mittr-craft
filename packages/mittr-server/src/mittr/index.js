@@ -54,7 +54,8 @@ const NO_ACCOUNT_CATALOG = {
  * and kept in `mittr-settings.json`; changing it rewrites the managed config.
  *
  * The models come from the active account's Mittr catalog. Setup applies the
- * cached one at once and then syncs without waiting; a sign-in syncs; an
+ * cached one at once; the engine's first ready syncs it without waiting (the
+ * stored session is not opened while the app starts); a sign-in syncs; an
  * account change applies that account's cache, then syncs.
  *
  * The same config loads the identity plugin, so the model calls itself
@@ -81,7 +82,20 @@ export function setupMittr(context, {
   const broker = resolveBroker(env);
   const scheme = deepLinkScheme(env);
   const { encrypt, decrypt, refusal } = chooseSecretStore({ host, logger });
-  const store = createAccountStore({ dataDir, encrypt, decrypt, logger, sharedHistoryExists });
+  // A 1.x single session is carried on the first read, not at setup. Until
+  // then it counts as the signed-in account (see `activeModelList`); once it
+  // is a real account the cache is applied again.
+  const store = createAccountStore({
+    dataDir,
+    encrypt,
+    decrypt,
+    logger,
+    sharedHistoryExists,
+    onLegacyCarried: () => {
+      const { items, known } = activeModelList();
+      void onModels(items, { listKnown: known });
+    },
+  });
 
   // One cache per account file, resolved on every use: an account switch
   // moves every reader and the next sync's write to the new account's file.
@@ -100,7 +114,11 @@ export function setupMittr(context, {
   const activeModelList = () => {
     if (!signedIn()) return { items: [], known: true };
     const cached = activeCatalogCache().read();
-    return { items: cached?.models?.items ?? [], known: cached?.models?.configured === true };
+    const items = cached?.models?.items ?? [];
+    // A 1.x session not yet carried may be anybody's: an empty list says
+    // nothing about what it will offer, and must not take the default away.
+    const known = cached?.models?.configured === true && !(items.length === 0 && store.legacyPending());
+    return { items, known };
   };
 
   // Both are defined below and first called once setup has returned.
@@ -250,13 +268,23 @@ export function setupMittr(context, {
   // it reads the stored session, and opening that can raise a keychain
   // dialog, so it waits until the server is listening and the window has
   // something to show.
+  // It counts as done only once it succeeds, so a later ready retries a first
+  // sync that found the platform unreachable.
   let startupSyncDone = false;
+  let startupSyncRunning = false;
+  const startupSync = async () => {
+    if (startupSyncDone || startupSyncRunning) return;
+    startupSyncRunning = true;
+    try {
+      const outcome = await syncCatalog();
+      if (outcome?.status === 200) startupSyncDone = true;
+    } finally {
+      startupSyncRunning = false;
+    }
+  };
   const unsubscribeReady = opencode.onReady(() => {
     engineStarted = true;
-    if (!startupSyncDone) {
-      startupSyncDone = true;
-      void syncCatalog();
-    }
+    void startupSync();
     forgetMittrCredential(opencode);
     void storeCredential();
   });

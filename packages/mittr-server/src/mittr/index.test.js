@@ -189,6 +189,71 @@ test('a signed-in account is not opened while the app starts, only once the engi
   assert.ok(uses.includes('decrypt'));
 });
 
+const writeCachedCatalog = (dataDir, aliases) => {
+  const cached = { bundleVersion: 7, subject: null };
+  for (const name of ['mcp', 'skills', 'knowledge']) cached[name] = { configured: true, items: [] };
+  cached.models = { configured: true, items: aliases.map((alias) => ({ alias, label: alias })) };
+  fs.writeFileSync(path.join(dataDir, 'mittr-catalog.json'), JSON.stringify(cached));
+};
+
+test('a 1.x single-account user keeps their models and default before the session is carried, and nothing is opened at setup', async (t) => {
+  const dataDir = tempDataDir(t);
+  const sealing = sealingStore();
+  fs.writeFileSync(path.join(dataDir, 'mittr-session'), sealing.encrypt(JSON.stringify(session)));
+  writeCachedCatalog(dataDir, ['a1', 'a2']);
+  const uses = [];
+  const secretStore = {
+    available: () => { uses.push('available'); return true; },
+    encrypt: (text) => { uses.push('encrypt'); return sealing.encrypt(text); },
+    decrypt: (data) => { uses.push('decrypt'); return sealing.decrypt(data); },
+  };
+  const engine = fakeEngineContext({ userConfigFile: { model: 'mittr/a2' } });
+  const { mittr, call } = await setUp(t, { dataDir, engine, fetchImpl: platform(), host: { secretStore, deepLinks: deepLinkHost() } });
+
+  assert.deepEqual(await mittrModelsOf(mittr), ['a1', 'a2']);
+  assert.equal(defaultModelOf(engine), 'mittr/a2');
+  assert.equal(engine.userConfigWrites.length, 0);
+  assert.deepEqual(uses, []);
+  assert.equal(fs.existsSync(path.join(dataDir, 'mittr-session')), true);
+
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: true, userId: 'u-a', displayName: 'A' });
+  assert.equal(fs.existsSync(path.join(dataDir, 'mittr-session')), false);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(await mittrModelsOf(mittr), ['a1', 'a2']);
+  assert.equal(defaultModelOf(engine), 'mittr/a2');
+});
+
+test('a 1.x session that cannot be carried does not take the default away while it is only pending', async (t) => {
+  const dataDir = tempDataDir(t);
+  fs.writeFileSync(path.join(dataDir, 'mittr-session'), 'not sealed');
+  writeCachedCatalog(dataDir, []);
+  const engine = fakeEngineContext({ userConfigFile: { model: 'mittr/a2' } });
+  await setUp(t, { dataDir, engine, host: { secretStore: sealingStore(), deepLinks: deepLinkHost() } });
+  assert.equal(defaultModelOf(engine), 'mittr/a2');
+});
+
+test('a first sync that finds the platform unreachable is tried again at the next ready', async (t) => {
+  const dataDir = tempDataDir(t);
+  const first = await setUp(t, { dataDir, fetchImpl: platform() });
+  assert.equal((await signIn(first.call)).status, 200);
+  await until(() => catalogFiles(dataDir).length === 1);
+  await first.mittr.dispose();
+
+  let down = true;
+  const fetchImpl = platform({ catalog: (request) => (down ? new Response('down', { status: 503 }) : json(CATALOG_A)) });
+  const { engine } = await setUp(t, { dataDir, fetchImpl });
+  engine.fireReady();
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  down = false;
+  engine.fireReady();
+  await until(() => catalogCalls(fetchImpl).length === 2);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  engine.fireReady();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(catalogCalls(fetchImpl).length, 2);
+});
+
 test('only the first ready starts the catalog sync', async (t) => {
   const dataDir = tempDataDir(t);
   const first = await setUp(t, { dataDir, fetchImpl: platform() });
