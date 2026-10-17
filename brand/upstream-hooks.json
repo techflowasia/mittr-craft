@@ -161,6 +161,10 @@
     {
       "hook": "about-settings",
       "why": "The About page links to the project's repository, chat and social account from constants in the component, so a build that ships without those links had no way to leave them out short of editing the page."
+    },
+    {
+      "hook": "about",
+      "why": "The About page had no place for a product's own row, so a build that offers one there (signing out) would have had to edit the page; a slot after the update rows renders nothing when no plugin fills it."
     }
   ],
   "packages/ui/src/components/sections/providers/ProviderGrid.tsx": [
@@ -173,6 +177,12 @@
     {
       "hook": "sidebar-footer",
       "why": "The sidebar footer had no place for a product's own control, so a build that adds one there (an account menu) would have had to edit the footer; a slot after the settings, usage, shortcuts and about buttons renders nothing when no plugin fills it and is shown wherever those buttons are."
+    }
+  ],
+  "packages/ui/src/components/ui/AboutDialog.tsx": [
+    {
+      "hook": "about",
+      "why": "The About dialog had no place for a product's own action, so a build that offers one there (signing out) would have had to edit the dialog; a slot under the version lines renders nothing when no plugin fills it."
     }
   ],
   "packages/ui/src/components/ui/OpenChamberLogo.tsx": [

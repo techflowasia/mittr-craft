@@ -15,6 +15,7 @@ import { copyTextToClipboard } from '@/lib/clipboard';
 import { reloadOpenCodeConfiguration } from '@/stores/useAgentsStore';
 import { fetchOpenCodeUpgradeStatus, runOpenCodeUpgrade, type OpenCodeUpgradeStatus } from '@/components/update/openCodeUpgrade';
 import { InstanceServiceUrls } from './InstanceServiceUrls';
+import { ProductSlot } from '@/lib/product-plugins';
 import {
   SettingsSection,
   SETTINGS_BRAND_TITLE_CLASS,
@@ -561,6 +562,8 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
             <p className="typography-meta text-[var(--status-error)]">{update.error}</p>
           </div>
         )}
+
+        <ProductSlot name="about-settings" />
 
         <div className="flex flex-col gap-2 border-b border-border/40 px-4 py-3 @xl:flex-row @xl:items-center @xl:justify-between">
           <span className={SETTINGS_FIELD_LABEL_CLASS}>{t('settings.openchamber.about.field.instanceUrls')}</span>

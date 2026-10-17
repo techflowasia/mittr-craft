@@ -304,6 +304,16 @@ export const UPSTREAM_CONTRACT = [
     files: ['packages/ui/src/components/session/sidebar/shell/SidebarFooter.tsx', 'packages/ui/src/components/session/SessionSidebar.tsx'],
     why: 'the session sidebar renders its footer once, with the runtime buttons (and so the sidebar-footer slot) shown everywhere but VS Code, so the account menu is there on desktop',
   },
+  {
+    id: 'about-dialog-slot',
+    files: ['packages/ui/src/components/ui/AboutDialog.tsx', 'packages/ui/src/App.tsx', 'packages/ui/src/lib/product-plugins.ts'],
+    why: 'the About dialog the app opens renders the about-dialog slot once, under its version lines; the sign-out button lives there',
+  },
+  {
+    id: 'about-settings-slot',
+    files: ['packages/ui/src/components/sections/openchamber/AboutSettings.tsx', 'packages/ui/src/lib/product-plugins.ts'],
+    why: "the About settings page renders the about-settings slot once, in its desktop layout after the update rows and before the instance addresses; the sign-out row lives there, and the phone layout has none",
+  },
 ];
 
 // The dictionaries are TypeScript with extensionless imports, which only Bun

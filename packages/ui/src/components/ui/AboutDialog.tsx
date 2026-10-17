@@ -11,6 +11,7 @@ import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
 import { getDesktopAppVersion } from '@/lib/desktopNative';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { ProductSlot } from '@/lib/product-plugins';
 
 interface AboutDialogProps {
   open: boolean;
@@ -157,6 +158,8 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
               )}
             </div>
           </div>
+
+          <ProductSlot name="about-dialog" />
 
           {showDiagnostics && (
             <div className="flex flex-col items-center gap-2 pt-2">

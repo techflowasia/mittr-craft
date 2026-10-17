@@ -878,6 +878,30 @@ const checks = {
     const start = sidebar.indexOf('<SidebarFooter');
     assert.ok(sidebar.slice(start, sidebar.indexOf('/>', start)).includes('showRuntimeButtons={!isVSCode}'), 'the session sidebar no longer shows the footer runtime buttons everywhere but VS Code');
   },
+
+  'about-dialog-slot': () => {
+    const dialog = source('packages/ui/src/components/ui/AboutDialog.tsx');
+    has(dialog, /^import \{ ProductSlot \} from '@\/lib\/product-plugins';$/m, 'AboutDialog no longer imports ProductSlot');
+    assert.equal(lineCount(dialog, '<ProductSlot '), 1, 'AboutDialog renders ProductSlot more than once, or not at all');
+    const versions = dialog.indexOf("t('aboutDialog.openCodeVersionLabel'");
+    const slot = dialog.indexOf('<ProductSlot name="about-dialog" />');
+    const diagnostics = dialog.indexOf('{showDiagnostics && (');
+    assert.ok(versions >= 0 && slot > versions && diagnostics > slot, 'the about-dialog slot is no longer under the version lines');
+    has(source('packages/ui/src/App.tsx'), /<AboutDialog\s+open=\{isAboutDialogOpen\}/, 'the app no longer opens AboutDialog from the UI store');
+    has(source('packages/ui/src/lib/product-plugins.ts'), /'about-dialog': Record<never, never>;/);
+  },
+
+  'about-settings-slot': () => {
+    const page = source('packages/ui/src/components/sections/openchamber/AboutSettings.tsx');
+    has(page, /^import \{ ProductSlot \} from '@\/lib\/product-plugins';$/m, 'AboutSettings no longer imports ProductSlot');
+    assert.equal(lineCount(page, '<ProductSlot '), 1, 'AboutSettings renders ProductSlot more than once, or not at all');
+    const desktop = page.indexOf('// Desktop layout');
+    const updateError = page.lastIndexOf('{update.error && (');
+    const slot = page.indexOf('<ProductSlot name="about-settings" />');
+    const addresses = page.lastIndexOf("t('settings.openchamber.about.field.instanceUrls')");
+    assert.ok(desktop >= 0 && updateError > desktop && slot > updateError && addresses > slot, 'the about-settings slot is no longer in the desktop layout between the update rows and the instance addresses');
+    has(source('packages/ui/src/lib/product-plugins.ts'), /'about-settings': Record<never, never>;/);
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {
