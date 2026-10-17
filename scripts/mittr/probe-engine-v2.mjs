@@ -34,7 +34,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { identityLine, identityPluginSource } from '../../packages/mittr-opencode/src/identity-plugin.js';
-import { ENGINE_OUTBOUND_OFF } from '../../packages/mittr-server/src/engine-outbound.js';
+import { ENGINE_OUTBOUND_OFF, ENGINE_SHARE_OFF } from '../../packages/mittr-server/src/engine-outbound.js';
 import { policiesFor } from '../../packages/mittr-server/src/mittr/policies.js';
 
 export const quotaRefusal = ({ kind, resetsAt }) => ({
@@ -913,7 +913,7 @@ const outboundRun = async ({ OpenCode, home, configFile, hookLog, stubs, proxy, 
   const collector = collectEvents(client);
   try {
     await sleep(500);
-    await waitFor(async () => (await modelIds(client, engine.work).catch(() => [])).length > 0, 10_000, 100);
+    await waitFor(async () => (await modelIds(client, engine.work).catch(() => [])).includes('stub/m1'), 15_000, 100);
     const models = await modelIds(client, engine.work).catch((error) => `error: ${errorText(error)}`);
     const providers = await client.provider.list({ location: { directory: engine.work } })
       .then((out) => (out.data ?? out).length)
@@ -1047,6 +1047,7 @@ const main = async () => {
         canary: providerEntry('Canary', `https://${CANARY_HOST}/v1`, ['m1']),
       },
       plugins: [recorderDir, identityDir, retryDir],
+      ...ENGINE_SHARE_OFF,
       experimental: { policies },
     });
     writeJsonAtomic(configFile, config(['m1'], policiesFor({ showOtherProviders: false, providerId: 'stub' })));

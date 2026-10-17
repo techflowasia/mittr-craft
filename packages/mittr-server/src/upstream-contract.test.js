@@ -825,6 +825,10 @@ const checks = {
     }
   },
 
+  'engine-share-config': () => {
+    has(source('node_modules/@opencode/schema/dist/config.js'), /share: Schema\.Literals\(\["manual", "auto", "disabled"\]\)/, 'the engine config no longer takes share: "disabled"');
+  },
+
   'engine-identity-hook': () => {
     const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
     assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P3 again, then update the identity plugin and this pin');

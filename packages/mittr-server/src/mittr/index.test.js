@@ -289,7 +289,7 @@ const identityDirOf = (dataDir) => path.join(dataDir, 'engine-plugins', 'mittrcr
 test('setup hands the server plugin an engine env, a config fragment and a bounded dispose', async (t) => {
   const { mittr, engine, dataDir } = await setUp(t);
   assert.deepEqual(await mittr.engineEnv(), { NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost' });
-  assert.deepEqual(await mittr.managedConfig(), { plugins: [identityDirOf(dataDir)], experimental: { policies: LOCKED } });
+  assert.deepEqual(await mittr.managedConfig(), { plugins: [identityDirOf(dataDir)], share: 'disabled', experimental: { policies: LOCKED } });
   await mittr.dispose();
   assert.equal(engine.readyListeners.size, 0);
 });
@@ -431,7 +431,7 @@ const engineAndBroker = (answer) => fakeEngineFetch({ answer, other: () => json(
 test('the lock is in the config from the first build, before any model or port', async (t) => {
   const engine = fakeEngineContext({ port: null });
   const { mittr, dataDir } = await setUp(t, { engine });
-  assert.deepEqual(await mittr.managedConfig(), { plugins: [identityDirOf(dataDir)], experimental: { policies: LOCKED } });
+  assert.deepEqual(await mittr.managedConfig(), { plugins: [identityDirOf(dataDir)], share: 'disabled', experimental: { policies: LOCKED } });
 });
 
 test('the identity plugin is on disk before the config names it', async (t) => {
@@ -479,8 +479,21 @@ test('the stored switch ON still denies the hosted opencode provider', async (t)
   const { mittr } = await setUp(t, { dataDir });
   assert.deepEqual(await mittr.managedConfig(), {
     plugins: [identityDirOf(dataDir)],
+    share: 'disabled',
     experimental: { policies: [{ action: 'provider.use', resource: 'opencode', effect: 'deny' }] },
   });
+});
+
+test('engine session sharing is off with the switch off and on, and stays off across a flip', async (t) => {
+  const engine = fakeEngineContext();
+  const { mittr, call } = await setUp(t, { engine });
+  assert.equal((await mittr.managedConfig()).share, 'disabled');
+  assert.equal((await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: true })).status, 200);
+  assert.deepEqual(engine.rendered.at(-1).experimental.policies, OTHERS_SHOWN);
+  assert.equal(engine.rendered.at(-1).share, 'disabled');
+  assert.equal((await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: false })).status, 200);
+  assert.deepEqual(engine.rendered.at(-1).experimental.policies, LOCKED);
+  assert.equal(engine.rendered.at(-1).share, 'disabled');
 });
 
 test('the shim URL follows the bound server port', async (t) => {

@@ -275,6 +275,11 @@ export const UPSTREAM_CONTRACT = [
     why: 'the bundled engine (OpenCode 2.0.22) reads OPENCODE_DISABLE_MODELS_FETCH, which stops its models.opencode.ai catalog download, and OPENCODE_DISABLE_AUTOUPDATE, which stops its update check; engineEnv sets both, and probe --only outbound (scripts/mittr/probe-engine-v2.mjs) shows no egress with them and models.opencode.ai without them, so a new engine version needs that probe run again',
   },
   {
+    id: 'engine-share-config',
+    files: ['node_modules/@opencode/schema/dist/config.js'],
+    why: 'the engine config takes share: "manual" | "auto" | "disabled"; the managed config sets "disabled" so no engine session is ever shared',
+  },
+  {
     id: 'engine-identity-hook',
     files: ['packages/electron/package.json'],
     why: "the bundled engine is OpenCode 2.0.22, whose session context hook hands plugins the system prompt as o.system text parts opening with its harness sentence; the identity plugin rewrites that sentence, so a new engine version needs probe P3 (scripts/mittr/probe-engine-v2.mjs) run again before this pin moves",

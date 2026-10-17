@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { ENGINE_SHARE_OFF } from '../engine-outbound.js';
 import { createAccountStore } from './account-store.js';
 import { registerMittrAuthRoutes } from './auth-routes.js';
 import { resolveBroker } from './broker.js';
@@ -230,6 +231,7 @@ export function setupMittr(context, {
     return [
       identity,
       server.port() === null ? {} : mittrProviderFragment({ shimBaseUrl: shimBaseUrl(server.port()), models: rendered }),
+      ENGINE_SHARE_OFF,
       policiesFragment(settings),
     ].reduce((merged, fragment) => mergeEngineConfig(merged, fragment), {});
   };

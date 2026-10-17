@@ -11,3 +11,5 @@ export const ENGINE_OUTBOUND_OFF = Object.freeze({
   OPENCODE_DISABLE_MODELS_FETCH: '1',
   OPENCODE_DISABLE_AUTOUPDATE: '1',
 });
+
+export const ENGINE_SHARE_OFF = Object.freeze({ share: 'disabled' });
