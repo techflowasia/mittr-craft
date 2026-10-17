@@ -167,7 +167,7 @@ export function setupMittr(context, {
       shim?.abortInFlight();
       return switcher.switchTo(nextUserId);
     },
-    engineOnTarget: () => switcher.engineOnTarget(),
+    switchSettled: () => switcher.settledOnTarget(),
     logger,
   });
 
@@ -393,8 +393,10 @@ export function setupMittr(context, {
   const onModels = async (items, options) => {
     try {
       await applyModels(items, options);
+      return true;
     } catch (error) {
       logger.warn('[mittr] could not apply the Mittr models:', error?.message ?? error);
+      return false;
     }
   };
 

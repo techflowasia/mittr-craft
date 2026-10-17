@@ -36,7 +36,7 @@ const quietLogger = () => {
   return { warnings, log: () => {}, warn: (...args) => warnings.push(args.join(' ')), error: () => {} };
 };
 
-const harness = async (t, { sharedHistory = false, legacy = null, sessions = [], exchanges = [], fetchImpl = null, sync = async () => {} } = {}) => {
+const harness = async (t, { sharedHistory = false, legacy = null, sessions = [], exchanges = [], fetchImpl = null, sync = async () => {}, cacheResults = [] } = {}) => {
   const root = tempDataDir(t);
   const dataDir = path.join(root, 'data');
   const bases = engineBases({ homeDir: root, env: { MITTRCRAFT_ENGINE_HOME: path.join(root, 'engine') } });
@@ -82,6 +82,9 @@ const harness = async (t, { sharedHistory = false, legacy = null, sessions = [],
     applyCache: async () => {
       applied.push(store.activeHome());
       events.push(`apply:${store.engineHome()}`);
+      const result = cacheResults.shift();
+      if (result instanceof Error) throw result;
+      return result ?? true;
     },
     sync: () => {
       syncs.push(store.read()?.subject.userId ?? null);
@@ -117,7 +120,7 @@ const harness = async (t, { sharedHistory = false, legacy = null, sessions = [],
       switches.push(next);
       return switcher.switchTo(next);
     },
-    engineOnTarget: () => switcher.engineOnTarget(),
+    switchSettled: () => switcher.settledOnTarget(),
     logger,
   });
   return { auth, store, switcher, engine, bases, dataDir, refreshes, events, applied, syncs, switches, signIns, logger, engineEnvNow, call: await serve(t, app) };
@@ -435,4 +438,33 @@ test('a retry after signing out of the last account brings the engine onto the e
   assert.deepEqual((await call('POST', '/api/mittr/auth/accounts/retry-switch')).body, { signedIn: false });
   assert.deepEqual(refreshes, [SWITCHED, SWITCHED]);
   assert.equal(engine.launched, path.join(bases.data, 'accounts', NO_ACCOUNT_HOME));
+});
+
+test('a retry after a switch that threw runs the switch again, though the engine is already on the account\'s home', async (t) => {
+  const { call, switcher, applied, switches, refreshes } = await harness(t, { sessions: [A, B], cacheResults: [new Error('cache unreadable')] });
+
+  await assert.rejects(switcher.switchTo('u-a'), /cache unreadable/);
+  assert.equal(switcher.engineOnTarget(), true);
+  assert.equal(switcher.settledOnTarget(), false);
+
+  assert.deepEqual((await call('POST', '/api/mittr/auth/accounts/retry-switch')).body, { signedIn: true, userId: 'u-a', displayName: 'A' });
+  assert.deepEqual(switches, ['u-a']);
+  assert.equal(applied.length, 2);
+  assert.equal(switcher.settledOnTarget(), true);
+
+  assert.deepEqual((await call('POST', '/api/mittr/auth/accounts/retry-switch')).body, { signedIn: true, userId: 'u-a', displayName: 'A' });
+  assert.deepEqual(switches, ['u-a']);
+  assert.deepEqual(refreshes, []);
+});
+
+test('a switch whose models could not be applied is not settled, so a retry applies them again', async (t) => {
+  const { call, switcher, applied, switches } = await harness(t, { sessions: [A, B], cacheResults: [false] });
+
+  assert.deepEqual(await switcher.switchTo('u-a'), { signedIn: true, userId: 'u-a', displayName: 'A' });
+  assert.equal(switcher.settledOnTarget(), false);
+
+  await call('POST', '/api/mittr/auth/accounts/retry-switch');
+  assert.deepEqual(switches, ['u-a']);
+  assert.equal(applied.length, 2);
+  assert.equal(switcher.settledOnTarget(), true);
 });

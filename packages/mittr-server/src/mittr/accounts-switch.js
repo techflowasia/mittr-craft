@@ -6,6 +6,7 @@ const RESTARTS_PER_TARGET = 2;
 export function createAccountSwitcher({ store, opencode, applyCache, sync, engineDataHome = null, logger = console }) {
   let queue = Promise.resolve();
   let triedFor;
+  let lastSwitchCompleted = true;
 
   const warnSyncFailed = (error) => logger.warn('[mittr] catalog sync after the account change failed:', error?.message ?? error);
   const syncInBackground = () => {
@@ -51,9 +52,11 @@ export function createAccountSwitcher({ store, opencode, applyCache, sync, engin
   const activeUserId = () => store.list().find((account) => account.active)?.userId ?? null;
 
   const run = async (userId) => {
+    lastSwitchCompleted = false;
     if (activeUserId() !== userId) store.activate(userId);
-    await applyCache();
+    const cacheApplied = (await applyCache()) !== false;
     const engineRestarted = await restartOntoTarget();
+    lastSwitchCompleted = cacheApplied;
     syncInBackground();
     const status = statusOf(store.read());
     return engineRestarted ? status : { ...status, engineRestarted: false };
@@ -74,5 +77,7 @@ export function createAccountSwitcher({ store, opencode, applyCache, sync, engin
     await restartOntoTarget();
   });
 
-  return { switchTo, afterSignIn, engineOnTarget, correctEngineHome };
+  const settledOnTarget = () => lastSwitchCompleted && engineOnTarget();
+
+  return { switchTo, afterSignIn, engineOnTarget, settledOnTarget, correctEngineHome };
 }
