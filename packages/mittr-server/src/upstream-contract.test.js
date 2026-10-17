@@ -1171,6 +1171,15 @@ const checks = {
     assert.deepEqual(JSON.parse(probeRealServer(t, plugin, { route: '/contract-ui-auth-probe' }).text), { passwordEnabled: false });
   },
 
+  'server-cli-entry': () => {
+    const cli = source('packages/web/bin/cli.js');
+    has(cli, /^const isCliExecution = isModuleCliExecution\(process\.argv\[1\], import\.meta\.url, fs\.realpathSync, 'openchamber'\);$/m, 'cli.js no longer decides it runs by comparing argv[1] with its own path');
+    has(source('packages/web/bin/cli-entry.js'), /if \(pathToFileURL\(normalizedEntryPath\)\.href === pathToFileURL\(normalizedModulePath\)\.href\) \{\s*return true;\s*\}/);
+    assert.equal(JSON.parse(source('packages/web/package.json')).bin.openchamber, './bin/cli.js');
+    const wrapper = source('packages/mittr-server/bin/mittrcraft.mjs');
+    has(wrapper, /path\.resolve\(path\.dirname\(fileURLToPath\(import\.meta\.url\)\), '\.\.', '\.\.', 'web', 'bin', 'cli\.js'\)/, 'the mittrcraft bin no longer points at the server CLI');
+    assert.ok(fs.existsSync(path.join(repoRoot, 'packages/mittr-server/bin', '..', '..', 'web', 'bin', 'cli.js')));
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {

@@ -8,6 +8,7 @@ import { ENGINE_OUTBOUND_OFF } from './engine-outbound.js';
 import { ensureGitIdentityStore } from './git-identities.js';
 import { setupMittr } from './mittr/index.js';
 import { MITTR_SETTINGS_KEYS, UPSTREAM_SETTINGS_KEYS, migrateSettingsOnce } from './settings.js';
+import { registerCompanySignIn } from './ui-auth/routes.js';
 
 /**
  * MittrCraft's server plugin, loaded through `OPENCHAMBER_SERVER_PLUGINS`.
@@ -17,7 +18,8 @@ import { MITTR_SETTINGS_KEYS, UPSTREAM_SETTINGS_KEYS, migrateSettingsOnce } from
  * the data dir its own git identity store. It then hands the server the
  * engine environment on every engine start, read fresh each time so an
  * account switch takes effect on the next restart. Given the server's
- * context, it also sets up Mittr sign-in on the server.
+ * context, it also sets up Mittr sign-in on the server and, when the environment
+ * configures one, company directory or Microsoft sign-in for browser sessions.
  */
 
 const BACKUP_MARKER = '.pre-2x-backup-done';
@@ -69,6 +71,8 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
   });
   if (!context) return { engineEnv: () => baseEngineEnv(activeAccountHome(dataDir, { logger })) };
 
+  const companySignIn = registerCompanySignIn(context, { env, logger });
+  if (companySignIn.enabled) logger.log(`[mittr] company sign-in (${companySignIn.mode}) is required for browser sessions`);
   const mittr = setupMittr(context, {
     env,
     sharedHistoryExists: () => sharedHistoryExists(bases),
@@ -78,7 +82,13 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
   return {
     engineEnv: async () => ({ ...baseEngineEnv(mittr.engineHome()), ...(await mittr.engineEnv()) }),
     managedConfig: mittr.managedConfig,
-    dispose: mittr.dispose,
+    dispose: async () => {
+      try {
+        await mittr.dispose();
+      } finally {
+        companySignIn.dispose();
+      }
+    },
   };
 };
 

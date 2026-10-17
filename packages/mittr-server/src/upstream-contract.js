@@ -409,6 +409,11 @@ export const UPSTREAM_CONTRACT = [
     files: ['packages/web/server/lib/ui-auth/ui-auth.js', 'packages/web/server/index.js'],
     why: 'a server plugin registers a sign-in provider through context.uiAuth.registerProvider; while one is registered a server without a UI password requires a UI session that only the provider issues, the session status lists providers and passwordEnabled, and context.uiAuth.passwordEnabled says whether a UI password is set',
   },
+  {
+    id: 'server-cli-entry',
+    files: ['packages/web/bin/cli.js', 'packages/web/bin/cli-entry.js', 'packages/web/package.json'],
+    why: 'the mittrcraft bin runs packages/web/bin/cli.js in its own process with argv[1] set to it, which cli.js takes as being run directly',
+  },
 ];
 
 // The dictionaries are TypeScript with extensionless imports, which only Bun

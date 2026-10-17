@@ -3,10 +3,16 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "mittrcraft": "./bin/mittrcraft.mjs"
+  },
   "scripts": {
     "test": "node --test \"src/**/*.test.js\""
   },
   "devDependencies": {
     "express": "^5.1.0"
+  },
+  "dependencies": {
+    "ldapjs": "^3.0.7"
   }
 }

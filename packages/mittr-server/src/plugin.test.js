@@ -205,6 +205,69 @@ test('setup with the server context mounts Mittr sign-in and keeps the engine en
   await plugin.dispose();
 });
 
+const ENTRA_ENV = {
+  MITTR_AD_CLIENT_ID: 'client-app-id',
+  MITTR_AD_CLIENT_SECRET: 'entra-client-secret-value',
+  MITTR_AD_TENANT_ID: '11111111-2222-3333-4444-555555555555',
+  MITTR_AD_REDIRECT_URI: 'https://mittrcraft.example.test/auth/ad/callback',
+};
+
+const uiAuthContext = () => {
+  const registered = [];
+  return {
+    registered,
+    uiAuth: {
+      registerProvider: ({ id }) => {
+        registered.push(id);
+        return { issueSession: async () => {}, readClaims: async () => null, clearSession: () => {}, unregister: () => registered.splice(registered.indexOf(id), 1) };
+      },
+      passwordEnabled: () => false,
+    },
+  };
+};
+
+test('setup with Microsoft sign-in configured requires it for browser sessions', async (t) => {
+  const home = tempHome(t);
+  const dataDir = prodLayout(home);
+  const app = express();
+  const logger = recordingLogger();
+  const { registered, uiAuth } = uiAuthContext();
+  const plugin = await setupMittrServer({
+    dataDir,
+    logger,
+    env: { ...ENTRA_ENV, MITTRCRAFT_BROKER_URL: 'https://api.mittr.asia', MITTRCRAFT_BROKER_FIXED: '1', MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft' },
+    homeDir: home,
+    context: { app, express, dataDir, logger, host: null, requestScope: () => 'local', uiAuth, ...fakeEngineContext({ port: null }).context },
+  });
+
+  assert.deepEqual(registered, ['ad']);
+  const { status, body } = await (await serve(t, app))('GET', '/auth/ad/status');
+  assert.equal(status, 200);
+  assert.deepEqual(body, { enabled: true, mode: 'entra', passwordEnabled: false, tunnelLocked: false });
+  assert.ok(logger.lines.some((line) => line.includes('company sign-in (entra)')));
+  assert.ok(!logger.lines.some((line) => line.includes(ENTRA_ENV.MITTR_AD_CLIENT_SECRET)));
+  await plugin.dispose();
+  assert.deepEqual(registered, []);
+});
+
+test('setup with partial Microsoft settings refuses to start', async (t) => {
+  const home = tempHome(t);
+  const dataDir = prodLayout(home);
+  const logger = recordingLogger();
+  const { registered, uiAuth } = uiAuthContext();
+  const { MITTR_AD_CLIENT_SECRET, ...partial } = ENTRA_ENV;
+  assert.ok(MITTR_AD_CLIENT_SECRET);
+
+  await assert.rejects(setupMittrServer({
+    dataDir,
+    logger,
+    env: { ...partial, MITTRCRAFT_BROKER_URL: 'https://api.mittr.asia', MITTRCRAFT_BROKER_FIXED: '1', MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft' },
+    homeDir: home,
+    context: { app: express(), express, dataDir, logger, host: null, requestScope: () => 'local', uiAuth, ...fakeEngineContext({ port: null }).context },
+  }), /Missing MITTR_AD_CLIENT_SECRET/);
+  assert.deepEqual(registered, []);
+});
+
 test('setup hands Mittr the folder the engine reads its user config from', async (t) => {
   const home = tempHome(t);
   const dataDir = prodLayout(home);
