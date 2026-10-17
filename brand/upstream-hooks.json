@@ -155,6 +155,10 @@
     {
       "hook": "session-auth-description",
       "why": "The line under the sign-in title says the session is password-protected, which is wrong on a server whose only sign-in is a plugin's, so the gate now asks the product plugins for the words first and keeps its own line when none answers."
+    },
+    {
+      "hook": "session-auth-finish-host",
+      "why": "A sign-in a plugin started on one host could finish after the person switched to another, and the gate would then give the first host's client token to the second, so the finisher it hands the slot is now bound to the host the gate was drawn for and does nothing, answering false, once the window is on another."
     }
   ],
   "packages/ui/src/components/chat/ChatMessage.tsx": [

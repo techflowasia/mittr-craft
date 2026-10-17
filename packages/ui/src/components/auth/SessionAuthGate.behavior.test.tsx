@@ -267,6 +267,7 @@ mock.module('@/lib/runtime-fetch', () => ({
 
 mock.module('@/lib/product-plugins', () => ({
   ProductSlot: () => null,
+  translateProductSessionAuthDescription: () => null,
 }));
 
 mock.module('@/lib/runtime-auth', () => ({

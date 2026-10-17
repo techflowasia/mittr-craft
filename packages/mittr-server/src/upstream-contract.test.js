@@ -1211,6 +1211,8 @@ const checks = {
     has(gate, /setPasswordEnabled\(data\.passwordEnabled !== false\);/, 'the gate no longer reads passwordEnabled from the 401 session status');
     const finish = gate.slice(gate.indexOf('const finishProviderSignIn = '), gate.indexOf('const handleSubmit = '));
     for (const line of ['shouldIssueDesktopClientToken()', 'clientToken = await issueDesktopClientToken();', 'applyDesktopClientToken(clientToken, runtime, getRuntimeExtraHeadersSync())', "setState('authenticated');"]) assert.ok(finish.includes(line), `finishProviderSignIn no longer does ${line}`);
+    has(finish, /const runtime: RuntimeIdentity = \{ apiBaseUrl: signInApiBaseUrl, runtimeKey: signInHostKey \};/, 'the sign-in finisher is no longer bound to the host the gate was drawn for');
+    assert.ok(lineCount(finish, 'isRuntimeIdentityActive(runtime)') >= 3, 'the sign-in finisher no longer checks the host is still the one it was bound to');
     const issue = gate.slice(gate.indexOf('const issueDesktopClientToken = '), gate.indexOf('const shouldUseDesktopShellPasswordLogin'));
     has(issue, /runtimeFetch\('\/api\/client-auth\/clients', \{\s*method: 'POST',/, 'issueDesktopClientToken no longer posts /api/client-auth/clients');
     const plugins = source('packages/ui/src/lib/product-plugins.ts');

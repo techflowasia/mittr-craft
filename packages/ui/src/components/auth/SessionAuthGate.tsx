@@ -614,22 +614,28 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
     }
   }, [skipAuth, state]);
 
-  const finishProviderSignIn = React.useCallback(async (issuedClientToken?: string): Promise<boolean> => {
-    const runtime = captureRuntimeIdentity();
-    if (shouldIssueDesktopClientToken()) {
-      let clientToken = issuedClientToken?.trim() ?? '';
-      if (!clientToken) {
-        clientToken = await issueDesktopClientToken();
-        if (!isRuntimeIdentityActive(runtime)) return false;
+  const signInHostKey = getRuntimeKey();
+  const signInApiBaseUrl = getRuntimeApiBaseUrl();
+  const finishProviderSignIn = React.useMemo(() => {
+    const runtime: RuntimeIdentity = { apiBaseUrl: signInApiBaseUrl, runtimeKey: signInHostKey };
+    return async (issuedClientToken?: string): Promise<boolean> => {
+      if (!isRuntimeIdentityActive(runtime)) return false;
+      if (shouldIssueDesktopClientToken()) {
+        let clientToken = issuedClientToken?.trim() ?? '';
+        if (!clientToken) {
+          clientToken = await issueDesktopClientToken();
+          if (!isRuntimeIdentityActive(runtime)) return false;
+        }
+        if (!clientToken) return false;
+        if (!await applyDesktopClientToken(clientToken, runtime, getRuntimeExtraHeadersSync())) return false;
       }
-      if (!clientToken) return false;
-      if (!await applyDesktopClientToken(clientToken, runtime, getRuntimeExtraHeadersSync())) return false;
-    }
-    setIsTunnelLocked(false);
-    setErrorMessage('');
-    setState('authenticated');
-    return true;
-  }, []);
+      if (!isRuntimeIdentityActive(runtime)) return false;
+      setIsTunnelLocked(false);
+      setErrorMessage('');
+      setState('authenticated');
+      return true;
+    };
+  }, [signInApiBaseUrl, signInHostKey]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();

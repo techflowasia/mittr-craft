@@ -35,7 +35,9 @@ const resetHarness = () => {
   sessionBody = { authenticated: false };
   desktopShell = false;
   clientTokenFromServer = 'issued-token';
+  clientTokenDelay = null;
   descriptionOverride = null;
+  descriptionContexts.length = 0;
   slotCalls.length = 0;
   fetchedPaths.length = 0;
   hostSets.length = 0;
@@ -186,7 +188,9 @@ const reactJsxRuntime = {
 let sessionBody: Record<string, unknown> = { authenticated: false };
 let desktopShell = false;
 let clientTokenFromServer = 'issued-token';
+let clientTokenDelay: Promise<void> | null = null;
 let descriptionOverride: string | null = null;
+const descriptionContexts: unknown[] = [];
 const slotCalls: JSXProps[] = [];
 const fetchedPaths: string[] = [];
 const hostSets: unknown[] = [];
@@ -263,6 +267,7 @@ mock.module('@/lib/runtime-fetch', () => ({
   runtimeFetch: mock(async (path: string) => {
     fetchedPaths.push(path);
     if (path === '/api/client-auth/clients') {
+      await clientTokenDelay;
       return new Response(JSON.stringify({ token: clientTokenFromServer }), { status: 201, headers: { 'content-type': 'application/json' } });
     }
     return new Response(JSON.stringify(sessionBody), { status: 401, headers: { 'content-type': 'application/json' } });
@@ -274,7 +279,10 @@ mock.module('@/lib/product-plugins', () => ({
     slotCalls.push(props);
     return { type: 'product-slot', props };
   },
-  translateProductSessionAuthDescription: () => descriptionOverride,
+  translateProductSessionAuthDescription: (context: unknown) => {
+    descriptionContexts.push(context);
+    return descriptionOverride;
+  },
 }));
 
 mock.module('@/lib/runtime-auth', () => ({
@@ -509,6 +517,67 @@ describe('SessionAuthGate session-auth-methods slot', () => {
 
     expect(switchedEndpoints).toEqual([]);
     expect(findElement(await renderGate(), 'product-slot')).not.toBeNull();
+  });
+});
+
+describe('SessionAuthGate sign-in that finishes after a host switch', () => {
+  const remoteA = async () => {
+    resetHarness();
+    desktopShell = true;
+    runtimeApiBaseUrl = 'https://host-a.example';
+    runtimeKey = 'host:a';
+    return slotProps(await renderGate());
+  };
+
+  const switchTo = (apiBaseUrl: string, key: string) => {
+    runtimeApiBaseUrl = apiBaseUrl;
+    runtimeKey = key;
+    runtimeEndpointChangedListener?.();
+  };
+
+  const nothingApplied = () => {
+    expect(hostSets).toEqual([]);
+    expect(switchedEndpoints).toEqual([]);
+  };
+
+  test('discards a directory sign-in that finishes on another remote host', async () => {
+    const props = await remoteA();
+    switchTo('https://host-b.example', 'host:b');
+
+    expect(await props.onSignedIn('token-a')).toBe(false);
+
+    nothingApplied();
+  });
+
+  test('discards a directory sign-in that finishes after switching to Local', async () => {
+    const props = await remoteA();
+    switchTo('', 'local');
+
+    expect(await props.onSignedIn('token-a')).toBe(false);
+
+    nothingApplied();
+  });
+
+  test('discards the client token it was still asking the first host for', async () => {
+    const props = await remoteA();
+    let releaseToken: () => void = () => undefined;
+    clientTokenDelay = new Promise<void>((resolve) => { releaseToken = resolve; });
+
+    const pending = props.onSignedIn();
+    await Promise.resolve();
+    switchTo('https://host-b.example', 'host:b');
+    releaseToken();
+
+    expect(await pending).toBe(false);
+    nothingApplied();
+  });
+
+  test('a web sign-in that finishes after the runtime changed does not let the person in', async () => {
+    resetHarness();
+    const props = slotProps(await renderGate());
+    switchTo('https://host-b.example', 'host:b');
+
+    expect(await props.onSignedIn()).toBe(false);
   });
 });
 
