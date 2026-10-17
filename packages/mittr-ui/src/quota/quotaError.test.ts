@@ -122,10 +122,10 @@ describe('the chat error text', () => {
     expect(text).toBe('Your organisation has not given you MittrCraft access. Ask an admin.');
   });
 
-  test('a withdrawn agent says the list was refreshed and to pick another', () => {
+  test('a withdrawn agent says the list is being refreshed and to pick another', () => {
     const text = mittrMessageError(refused('agent_not_granted', withdrawnBody));
     expect(text).toBe(mittrT('mittr.model.refused.staleCatalog'));
-    expect(text).toBe('This agent is no longer available to you. The model list has been refreshed; pick another.');
+    expect(text).toBe('This agent is no longer available to you. Your model list is being refreshed; pick another.');
   });
 
   test('the refusal is read from the body the engine stores, the flat string form and the message alone', () => {
