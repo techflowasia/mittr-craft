@@ -59,6 +59,14 @@ export function failureAfterWait(failure: Extract<AdSessionResult, { ok: false }
   return failure?.reason === 'rate-limited' ? null : failure;
 }
 
+export function endLockout({ setBlockedUntil, setFailure }: {
+  setBlockedUntil: (next: number) => void;
+  setFailure: (next: (current: Extract<AdSessionResult, { ok: false }> | null) => Extract<AdSessionResult, { ok: false }> | null) => void;
+}): void {
+  setBlockedUntil(0);
+  setFailure(failureAfterWait);
+}
+
 export async function submitAdSession({ fetch, username, password, trustDevice, issueClientToken = false }: {
   fetch: AdFetch;
   username: string;

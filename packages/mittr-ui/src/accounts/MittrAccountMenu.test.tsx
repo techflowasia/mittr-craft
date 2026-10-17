@@ -7,7 +7,8 @@ import { I18nProvider } from '../../../ui/src/lib/i18n';
 import { mittrT } from '../strings/mittrT';
 import { AccountSwitchStatus } from './AccountSwitchDialog';
 import { initialsOf } from './accountsApi';
-import { MittrAccountMenuItems, MittrAccountMenuView, menuActions, type MittrAccountMenuViewProps } from './MittrAccountMenu';
+import { menuActions } from './menuActions';
+import { MittrAccountMenuItems, MittrAccountMenuView, type MittrAccountMenuViewProps } from './MittrAccountMenu';
 
 const A = { userId: 'u-a', displayName: 'Ann Lee', active: false };
 const B = { userId: 'u-b', displayName: 'Bo', active: true };

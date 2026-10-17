@@ -7,7 +7,7 @@ import { Input } from '../../../ui/src/components/ui/input';
 import type { SessionAuthMethodsProps } from '../../../ui/src/lib/product-plugins';
 import { getRuntimeUrlResolver } from '../../../ui/src/lib/runtime-url';
 import { useMittrT } from '../strings/mittrT';
-import { entraLoginUrl, failureAfterWait, failureMessage, readStoredTrustDevice, signInWithDirectory, storeTrustDevice, type AdSessionResult } from './adApi';
+import { endLockout, entraLoginUrl, failureMessage, readStoredTrustDevice, signInWithDirectory, storeTrustDevice, type AdSessionResult } from './adApi';
 import { defaultAdFetch, fetchAdStatus, type AdStatus } from './adStatus';
 
 export function TrustDevice({ checked, disabled, onChange }: { checked: boolean; disabled: boolean; onChange: (next: boolean) => void }): React.ReactNode {
@@ -129,14 +129,6 @@ export function LdapFormView({ username, password, busy, blocked, failure, usern
       ) : null}
     </form>
   );
-}
-
-export function endLockout({ setBlockedUntil, setFailure }: {
-  setBlockedUntil: (next: number) => void;
-  setFailure: React.Dispatch<React.SetStateAction<FailedSession | null>>;
-}): void {
-  setBlockedUntil(0);
-  setFailure(failureAfterWait);
 }
 
 type LdapFormProps = {

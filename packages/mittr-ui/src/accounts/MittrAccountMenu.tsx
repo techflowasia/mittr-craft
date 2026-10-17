@@ -16,17 +16,11 @@ import { desktopBridge, scheduleWithTimers, type GateListen } from '../sign-in/s
 import { SIGN_IN_COMPLETED_EVENT, SIGN_IN_FAILED_EVENT } from '../sign-in/signInGateState';
 import { mittrT, useMittrT } from '../strings/mittrT';
 import { AccountSwitchDialog } from './AccountSwitchDialog';
-import { accountName, accountsApi, initialsOf, type AccountsApi, type MittrAccount, type SwitchOutcome } from './accountsApi';
+import { accountName, accountsApi, initialsOf, type MittrAccount } from './accountsApi';
 import { resyncThenReload, useAccountSwitch } from './accountSwitch';
-import { createAddAccountFlow, type AddAccountFlow } from './addAccount';
+import { createAddAccountFlow } from './addAccount';
 import { FOOTER_BUTTON_CLASS } from './footerButtonClass';
-
-type MenuActions = {
-  onActivate: (userId: string) => void;
-  onAddAccount: () => void;
-  onCancelAddAccount: () => void;
-  onSignOut: () => void;
-};
+import { menuActions, type MenuActions } from './menuActions';
 
 export type MittrAccountMenuItemsProps = MenuActions & {
   accounts: MittrAccount[] | null;
@@ -95,19 +89,6 @@ export function MittrAccountMenuView({ open, onOpenChange, ...items }: MittrAcco
       </DropdownMenuContent>
     </DropdownMenu>
   );
-}
-
-export function menuActions({ addAccount, runSwitch, api }: {
-  addAccount: Pick<AddAccountFlow, 'start' | 'cancel'>;
-  runSwitch: (change: () => Promise<SwitchOutcome>) => void;
-  api: Pick<AccountsApi, 'activateAccount' | 'signOutActive'>;
-}): MenuActions {
-  return {
-    onActivate: (userId) => { runSwitch(() => api.activateAccount(userId)); },
-    onAddAccount: () => { void addAccount.start(); },
-    onCancelAddAccount: () => { addAccount.cancel(); },
-    onSignOut: () => { runSwitch(api.signOutActive); },
-  };
 }
 
 const subscribeDesktopEvent = (listen: GateListen, event: string, handler: () => void, keep: (stop: () => void) => void) => {
