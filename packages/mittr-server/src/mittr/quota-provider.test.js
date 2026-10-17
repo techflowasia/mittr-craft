@@ -55,13 +55,36 @@ test('a line over its limit reads as fully used', async () => {
 test('a speech line is shown in minutes', async () => {
   const result = await providerFor(quota([{ label: 'Voice input', used: 30, limit: 600, kind: 'stt' }])).fetchQuota();
   const weekly = result.usage.models['Voice input'].windows.weekly;
-  assert.equal(weekly.valueLabel, '9.5 of 10 min left');
+  assert.equal(weekly.valueLabel, '9.5 min of 10 min left');
   assert.equal(weekly.remainingPercent, 95);
 });
 
-test('a long speech allowance stays in minutes', async () => {
-  const result = await providerFor(quota([{ label: 'Voice input', used: 600, limit: 36_000, kind: 'stt' }])).fetchQuota();
-  assert.equal(result.usage.models['Voice input'].windows.weekly.valueLabel, '590 of 600 min left');
+test('a speech allowance of an hour or more is shown in hours', async () => {
+  const cases = [
+    [{ used: 600, limit: 36_000 }, '9 h 50 min of 10 h left'],
+    [{ used: 0, limit: 3600 }, '1 h of 1 h left'],
+    [{ used: 3600, limit: 7200 }, '1 h of 2 h left'],
+    [{ used: 30, limit: 3630 }, '1 h of 1 h 1 min left'],
+    [{ used: 3000, limit: 3600 }, '10 min of 1 h left'],
+    [{ used: 3585, limit: 3600 }, '0.3 min of 1 h left'],
+    [{ used: 36_000, limit: 90_000 }, '15 h of 25 h left'],
+    [{ used: 1000, limit: 7200 }, '1 h 43 min of 2 h left'],
+    [{ used: 7200, limit: 7200 }, '0 min of 2 h left'],
+  ];
+  for (const [amounts, expected] of cases) {
+    const result = await providerFor(quota([{ label: 'Voice input', kind: 'stt', ...amounts }])).fetchQuota();
+    assert.equal(result.usage.models['Voice input'].windows.weekly.valueLabel, expected, JSON.stringify(amounts));
+  }
+});
+
+test('the role name outranks the label, as in 1.22', async () => {
+  const result = await providerFor(quota([{ label: 'Stale label', labelKey: 'quota.role.manager', used: 1, limit: 10, kind: 'chat' }])).fetchQuota();
+  assert.deepEqual(Object.keys(result.usage.models), ['Team manager (assigns, summarises, reviews)']);
+});
+
+test('an unknown role key falls back to the label', async () => {
+  const result = await providerFor(quota([{ label: 'Writer', labelKey: 'quota.role.unknown', used: 1, limit: 10, kind: 'chat' }])).fetchQuota();
+  assert.deepEqual(Object.keys(result.usage.models), ['Writer']);
 });
 
 test('large amounts are grouped', async () => {

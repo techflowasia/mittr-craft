@@ -1120,3 +1120,16 @@ test('a server that cannot add usage providers still starts, with one warning', 
   const { logger } = await setUp(t, { engine });
   assert.equal(logger.warnings.filter((line) => line.includes('usage providers')).length, 1);
 });
+
+test('Mittr is added to the usage providers after the engine listener, the last step of setup', async (t) => {
+  const engine = fakeEngineContext();
+  const app = serverLikeApp();
+  const originalOnReady = engine.context.opencode.onReady;
+  engine.context.opencode.onReady = (...args) => {
+    assert.deepEqual(engine.quotaProviders, [], 'the usage provider was added before setup finished its other steps');
+    return originalOnReady(...args);
+  };
+  const mittr = setupMittr({ app, express, dataDir: tempDataDir(t), logger: recordingLogger(), host: null, ...engine.context }, { env: DEV_ENV, fetchImpl: fakeFetch(() => json(session)), engineConfigDir: USER_CONFIG_DIR });
+  t.after(() => mittr.dispose());
+  assert.equal(engine.quotaProviders.length, 1);
+});

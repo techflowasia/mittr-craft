@@ -204,18 +204,6 @@ export function setupMittr(context, {
 
   const quotaService = createMittrQuotaService({ broker, ensureFreshSession, fetchImpl });
   registerMittrQuotaRoutes(app, { service: quotaService });
-  let unregisterQuotaProvider = null;
-  try {
-    unregisterQuotaProvider = context.registerQuotaProvider(mittrQuotaProvider({
-      service: quotaService,
-      isSignedIn: signedIn,
-      isBrokerConfigured: () => Boolean(broker.baseUrl),
-      ...context.quotaResult,
-    }));
-  } catch (error) {
-    logger.warn('[mittr] could not add Mittr to the usage providers:', error?.message ?? error);
-  }
-
   const unregisterDeepLink = host?.deepLinks?.register({
     host: 'auth',
     // Either way the window is brought forward and re-reads status, so a
@@ -424,6 +412,18 @@ export function setupMittr(context, {
   const startList = activeModelList();
   models = modelListOf(startList.items);
   if (startList.known) followDefaultModel(models);
+
+  let unregisterQuotaProvider = null;
+  try {
+    unregisterQuotaProvider = context.registerQuotaProvider(mittrQuotaProvider({
+      service: quotaService,
+      isSignedIn: signedIn,
+      isBrokerConfigured: () => Boolean(broker.baseUrl),
+      ...context.quotaResult,
+    }));
+  } catch (error) {
+    logger.warn('[mittr] could not add Mittr to the usage providers:', error?.message ?? error);
+  }
 
   return {
     engineEnv: () => loopbackProxyExemption(env),

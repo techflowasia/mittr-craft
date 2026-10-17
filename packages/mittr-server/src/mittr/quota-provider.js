@@ -32,22 +32,24 @@ const formatCount = (value, maximumFractionDigits = 0) => (
   new Intl.NumberFormat('en-US', { maximumFractionDigits }).format(Math.max(0, value))
 );
 
-const minutesOf = (seconds) => Math.max(0, seconds) / 60;
-const minuteDigits = (minutes) => (minutes < 10 ? 1 : 0);
+const formatSpeechSeconds = (seconds) => {
+  const minutes = Math.max(0, seconds) / 60;
+  if (minutes < 60) return `${formatCount(minutes, minutes < 10 ? 1 : 0)} min`;
+  const total = Math.round(minutes);
+  const hours = formatCount(Math.floor(total / 60));
+  const rest = total % 60;
+  return rest === 0 ? `${hours} h` : `${hours} h ${rest} min`;
+};
 
 const leftLabel = ({ kind, used, limit }) => {
   const left = Math.max(0, limit - used);
-  if (kind === 'stt') {
-    const limitMinutes = minutesOf(limit);
-    const leftMinutes = minutesOf(left);
-    return `${formatCount(leftMinutes, minuteDigits(leftMinutes))} of ${formatCount(limitMinutes, minuteDigits(limitMinutes))} min left`;
-  }
+  if (kind === 'stt') return `${formatSpeechSeconds(left)} of ${formatSpeechSeconds(limit)} left`;
   return `${formatCount(Math.round(left))} of ${formatCount(Math.round(limit))} left`;
 };
 
 const usedPercentOf = ({ used, limit }) => Math.min(100, Math.max(0, (used / limit) * 100));
 
-const lineName = (line) => line.label || ROLE_NAMES[line.labelKey] || OTHER_MODEL;
+const lineName = (line) => ROLE_NAMES[line.labelKey] || line.label || OTHER_MODEL;
 
 const uniqueName = (taken, line) => {
   const name = lineName(line);
