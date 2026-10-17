@@ -89,7 +89,7 @@ export const mittrQuotaProvider = ({ service, isSignedIn, isBrokerConfigured, bu
     const resetAt = Date.parse(week.resetsAt);
     const windowSeconds = windowSecondsOf(week);
     if (week.lines.length === 0) {
-      return result({ ok: true, configured: true, usage: { windows: {}, models: {} }, planLabel: NO_MODEL });
+      return result({ ok: true, configured: true, usage: { windows: { [NO_MODEL]: toUsageWindow({ usedPercent: null, resetAt: null }) }, models: {} } });
     }
 
     const models = {};

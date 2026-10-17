@@ -162,5 +162,6 @@ export const strings: Partial<I18nDictionary> = {
   'settings.openchamber.about.native.serverOpenChamberVersion': 'Server: MittrCraft version {version}',
   'settings.extensions.toast.hostTooOld': 'This extension needs MittrCraft version {version} or newer.',
   'pwa.installPrompt.description': 'Install the MittrCraft app for quicker access',
+  'settings.usage.page.section.modelQuotas': 'Weekly model quotas',
   'updateDialog.error.signatureRejected': 'The downloaded update was rejected: its code signature does not match this installation. This usually means the running copy was not installed from an official signed release. Install the MittrCraft app from an official release, then update again.',
 };

@@ -107,12 +107,18 @@ test('a system line without a label is named by its role', async () => {
   assert.deepEqual(Object.keys(result.usage.models), ['System decision model (Jev)']);
 });
 
-test('an empty week reads no model available', async () => {
+test('an empty week is one bare line that reads no model available', async () => {
   const result = await providerFor(quota([])).fetchQuota();
   assert.equal(result.ok, true);
-  assert.equal(result.planLabel, 'No model available this week');
+  assert.equal(result.configured, true);
+  assert.equal(result.planLabel, undefined);
   assert.deepEqual(result.usage.models, {});
-  assert.deepEqual(result.usage.windows, {});
+  assert.deepEqual(Object.keys(result.usage.windows), ['No model available this week']);
+  const line = result.usage.windows['No model available this week'];
+  assert.equal(line.usedPercent, null);
+  assert.equal(line.remainingPercent, null);
+  assert.equal(line.resetAt, null);
+  assert.equal(line.valueLabel, undefined);
 });
 
 test('not configured when signed out', async () => {

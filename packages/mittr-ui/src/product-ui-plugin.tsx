@@ -1,11 +1,28 @@
+import React from 'react';
+
 import { registerProductUiPlugin } from '../../ui/src/lib/product-plugins';
 import { MittrAccountMenu } from './accounts/MittrAccountMenu';
 import { AboutSettingsSignOut, SignOutButton } from './accounts/SignOutButton';
 import { MittrCraftLogo } from './MittrCraftLogo';
 import { OtherProvidersSwitch } from './providers/OtherProvidersSwitch';
 import { useMittrPickerDecorations } from './providers/useMittrPickerFilter';
+import { selectMittrUsage } from './quota/registerMittrUsage';
 import { MittrSignInGate } from './sign-in/MittrSignInGate';
 import { strings } from './strings/en';
+
+function SelectMittrUsage(): React.ReactNode {
+  React.useEffect(selectMittrUsage, []);
+  return null;
+}
+
+export function MittrRoot({ children }: { children: React.ReactNode }): React.ReactNode {
+  return (
+    <MittrSignInGate>
+      <SelectMittrUsage />
+      {children}
+    </MittrSignInGate>
+  );
+}
 
 // Registered on import, which the entry points do before their first render:
 // the model picker takes its decorations once and keeps them.
@@ -17,7 +34,7 @@ registerProductUiPlugin({
   ],
   dictionaries: { en: strings },
   logo: MittrCraftLogo,
-  rootWrapper: MittrSignInGate,
+  rootWrapper: MittrRoot,
   slots: {
     'providers-page': OtherProvidersSwitch,
     'sidebar-footer': MittrAccountMenu,
