@@ -446,6 +446,11 @@ export const UPSTREAM_CONTRACT = [
     ],
     why: "the company sign-in is drawn with Button (outline, icon size), Input and Checkbox (checked, onChange, disabled, ariaLabel) and the user, lock, key and loader-4 icons; its Microsoft button goes to getRuntimeUrlResolver().auth(...) and its requests go through runtimeFetch, which sends /auth/ paths to the runtime's server",
   },
+  {
+    id: 'noindex',
+    files: ['packages/web/server/index.js'],
+    why: "hosted MittrCraft stays out of search engines through upstream's own header and robots.txt",
+  },
 ];
 
 // The dictionaries are TypeScript with extensionless imports, which only Bun

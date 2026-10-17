@@ -1263,6 +1263,18 @@ const checks = {
     has(url, /^ {4}auth: http,$/m, 'the URL resolver no longer builds auth URLs the way it builds API URLs');
     has(source('packages/ui/src/lib/runtime-fetch.ts'), /input\.startsWith\('\/auth\/'\)/, 'runtimeFetch no longer sends /auth/ paths to the runtime\'s server');
   },
+
+  noindex: () => {
+    const server = source('packages/web/server/index.js');
+    has(server, /app\.use\(\(req, res, next\) => \{\s*res\.setHeader\('X-Robots-Tag', 'noindex, nofollow'\);/, 'no middleware sets X-Robots-Tag to noindex, nofollow');
+    has(server, /app\.get\('\/robots\.txt', \(_req, res\) => \{\s*res\.type\('text\/plain'\)\.send\('User-agent: \*\\nDisallow: \/\\n'\);/, 'the robots.txt route no longer answers User-agent: * and Disallow: /');
+    const header = server.search(/res\.setHeader\('X-Robots-Tag', 'noindex, nofollow'\)/);
+    const robots = server.search(/app\.get\('\/robots\.txt'/);
+    const cors = server.indexOf("const origin = typeof req.headers.origin === 'string'");
+    assert.ok(cors > 0, 'the CORS middleware is no longer in index.js');
+    assert.ok(header >= 0 && header < cors, 'X-Robots-Tag is no longer set before the CORS middleware');
+    assert.ok(robots >= 0 && robots < cors, 'robots.txt is no longer answered before the CORS middleware');
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {
