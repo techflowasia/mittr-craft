@@ -452,6 +452,75 @@ test('an answer from a backup is listed for its session, and a sign-out clears t
   assert.deepEqual((await call('GET', '/api/mittr/answered-by?sessionId=ses_1')).body.answers, []);
 });
 
+const auditCalls = (fetchImpl) => fetchImpl.calls.filter((request) => request.url.endsWith('/desktop/audit'));
+
+test('the audit routes send a finished session with the active account\'s token and the remote from the server\'s git', async (t) => {
+  const fetchImpl = platform();
+  const { call, engine } = await setUp(t, { fetchImpl });
+  engine.remotes['/work/app'] = 'https://person:s3cret-token@github.com/techflowasia/mittr-craft.git';
+  assert.equal((await signIn(call)).status, 200);
+
+  const post = (route, body) => fetch(`${call.base}/api/mittr/audit/${route}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await post('prompt', { sessionId: 's1', text: 'add a button' })).status, 204);
+  assert.equal((await post('tool', { sessionId: 's1', name: 'edit' })).status, 204);
+  assert.equal((await post('finish', { sessionId: 's1', directory: '/work/app', outcome: 'completed' })).status, 204);
+
+  const [audit] = auditCalls(fetchImpl);
+  assert.equal(audit.url, 'https://api-dev.mittr.asia/desktop/audit');
+  assert.equal(audit.headers.authorization, 'Bearer at-1');
+  assert.equal(audit.body.repository, 'techflowasia/mittr-craft');
+  assert.deepEqual(audit.body.prompts.map(({ text }) => text), ['add a button']);
+  assert.deepEqual(audit.body.actions, [{ tool: 'edit', count: 1 }]);
+  assert.equal(JSON.stringify(audit.body).includes('s3cret'), false);
+});
+
+test('a record started under one account is never sent as another', async (t) => {
+  const fetchImpl = platform({ sessions: [session, sessionB] });
+  const { call } = await setUp(t, { fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+
+  const post = (route, body) => fetch(`${call.base}/api/mittr/audit/${route}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  await post('prompt', { sessionId: 's1', text: 'typed as the first account' });
+  await post('tool', { sessionId: 's1', name: 'edit' });
+
+  assert.equal((await signIn(call)).status, 200);
+  assert.equal((await post('finish', { sessionId: 's1', directory: '/work/app', outcome: 'completed' })).status, 204);
+
+  const [audit] = auditCalls(fetchImpl);
+  assert.equal(audit.headers.authorization, 'Bearer at-b');
+  assert.deepEqual(audit.body.prompts, []);
+  assert.deepEqual(audit.body.actions, []);
+  assert.equal(JSON.stringify(audit.body).includes('first account'), false);
+});
+
+test('a switch back to an earlier account drops the records open as well', async (t) => {
+  const fetchImpl = platform({ sessions: [session, sessionB] });
+  const { call } = await setUp(t, { fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  assert.equal((await signIn(call)).status, 200);
+
+  const post = (route, body) => fetch(`${call.base}/api/mittr/audit/${route}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  await post('prompt', { sessionId: 's1', text: 'typed as the second account' });
+  assert.equal((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' })).status, 200);
+  await post('finish', { sessionId: 's1', directory: '/work/app', outcome: 'completed' });
+
+  const [audit] = auditCalls(fetchImpl);
+  assert.equal(audit.headers.authorization, 'Bearer at-1');
+  assert.deepEqual(audit.body.prompts, []);
+});
+
+test('signed out, a finished session sends nothing and still answers 204', async (t) => {
+  const fetchImpl = platform();
+  const { call } = await setUp(t, { fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+
+  const post = (route, body) => fetch(`${call.base}/api/mittr/audit/${route}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  await post('prompt', { sessionId: 's1', text: 'typed while signed in' });
+  assert.equal((await call('DELETE', '/api/mittr/auth/session')).status, 200);
+  assert.equal((await post('finish', { sessionId: 's1', directory: '/work/app', outcome: 'completed' })).status, 204);
+  assert.equal(auditCalls(fetchImpl).length, 0);
+});
+
 test('a retry while the engine is already on the account\'s home answers at once and leaves a streaming answer alone', async (t) => {
   const held = heldStream();
   const fetchImpl = fakeFetch((request) => (request.url.endsWith('/chat/completions') ? held.respond(request.signal) : json(session)));

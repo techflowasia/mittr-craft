@@ -5,6 +5,7 @@ import { ENGINE_SHARE_OFF } from '../engine-outbound.js';
 import { createAccountStore } from './account-store.js';
 import { createAccountSwitcher } from './accounts-switch.js';
 import { createAnsweredByLog, createAnsweredByWatcher, registerAnsweredByRoute } from './answered-by.js';
+import { registerMittrAuditRoutes } from './audit-routes.js';
 import { registerMittrAuthRoutes } from './auth-routes.js';
 import { resolveBroker } from './broker.js';
 import { catalogCachePath, createCatalogCache } from './catalog-cache.js';
@@ -88,7 +89,7 @@ export function setupMittr(context, {
   engineDataHome = null,
   now = Date.now,
 } = {}) {
-  const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig, events } = context;
+  const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig, events, git } = context;
   const broker = resolveBroker(env);
   const scheme = deepLinkScheme(env);
   const { encrypt, decrypt, refusal } = chooseSecretStore({ host, logger });
@@ -136,6 +137,7 @@ export function setupMittr(context, {
 
   // Both are defined below and first called once setup has returned.
   let shim = null;
+  let audit = null;
   const syncCatalog = () => catalog.sync();
   const mayResync = createThrottle(RESYNC_INTERVAL_MS, now);
   const onRefusal = ({ kind, reason }) => {
@@ -179,6 +181,7 @@ export function setupMittr(context, {
     onAccountChange: (nextUserId) => {
       shim?.abortInFlight();
       answeredByLog.clear();
+      audit?.clear();
       return switcher.switchTo(nextUserId);
     },
     switchSettled: () => switcher.settledOnTarget(),
@@ -215,6 +218,8 @@ export function setupMittr(context, {
     fetchImpl,
     logger,
   });
+
+  audit = registerMittrAuditRoutes(app, { express, broker, ensureFreshSession, git, fetchImpl, logger });
 
   const quotaService = createMittrQuotaService({ broker, ensureFreshSession, fetchImpl });
   registerMittrQuotaRoutes(app, { service: quotaService });

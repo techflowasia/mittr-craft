@@ -45,6 +45,11 @@ export const UPSTREAM_CONTRACT = [
     why: "the plugin context reports the server's bound port, null before listen",
   },
   {
+    id: 'git-remote-url',
+    files: ['packages/web/server/lib/git/service.js', 'packages/web/server/index.js'],
+    why: "the plugin context's git.remoteUrl(directory) is the service's getRemoteUrl(directory, 'origin'): the remote's URL as configured, null when the directory has no such remote or is not a repository, and it never throws",
+  },
+  {
     id: 'engine-on-ready',
     files: ['packages/web/server/lib/opencode/lifecycle.js', 'packages/web/server/index.js'],
     why: 'plugins hear about each managed OpenCode start and restart that reached ready',

@@ -202,8 +202,6 @@ const checks = {
       /requestScope: \(req\) => tunnelAuthController\.classifyRequestScope\(req\),/,
       /onShutdown: \(handler\) => \{\s*serverPluginShutdownHandlers\.push\(handler\);\s*\},/,
     ]) has(context, entry, `the server plugin context no longer has ${entry}`);
-    has(server, /import \{ getRemoteUrl, resolvePrimaryWorktreeRoot \} from '\.\/lib\/git\/service\.js';/);
-    has(source('packages/web/server/lib/git/service.js'), /export async function getRemoteUrl\(directory, remoteName = 'origin'\) \{\s*const git = await createGit\(directory\);\s*try \{\s*const url = await git\.remote\(\['get-url', '--', remoteName\]\);/);
     has(source('packages/web/server/lib/opencode/tunnel-auth.js'), /const classifyRequestScope = \(req\) => \{/);
     has(server, /stopAllGuestServices: async \(\) => \{\s*try \{\s*await stopServerPlugins\(\);\s*\} finally \{\s*await stopAllGuestServices\(\);\s*\}\s*\},/, 'server plugins no longer stop inside the graceful shutdown');
     const shutdown = source('packages/web/server/lib/opencode/shutdown-runtime.js');
@@ -273,6 +271,13 @@ const checks = {
     has(server, /^let server = null;$/m);
     has(server, /server = http\.createServer\(app\);/);
     has(pluginContext(server), /server: \{\s*port: \(\) => \{\s*const address = server\?\.address\?\.\(\);\s*return address && Number\.isInteger\(address\.port\) \? address\.port : null;\s*\},\s*\},/, 'the plugin context no longer reports the bound port as getActivePort does');
+  },
+
+  'git-remote-url': () => {
+    const server = source('packages/web/server/index.js');
+    has(server, /import \{ getRemoteUrl, resolvePrimaryWorktreeRoot \} from '\.\/lib\/git\/service\.js';/, 'index.js no longer imports getRemoteUrl from the git service');
+    has(pluginContext(server), /git: \{ remoteUrl: \(directory\) => getRemoteUrl\(directory, 'origin'\) \},/, 'the plugin context no longer carries git.remoteUrl as the origin remote');
+    has(source('packages/web/server/lib/git/service.js'), /export async function getRemoteUrl\(directory, remoteName = 'origin'\) \{\s*const git = await createGit\(directory\);\s*try \{\s*const url = await git\.remote\(\['get-url', '--', remoteName\]\);\s*return url\?\.trim\(\) \|\| null;\s*\} catch \{\s*return null;\s*\}\s*\}/, 'getRemoteUrl no longer answers the trimmed remote URL, or null on any failure');
   },
 
   'engine-on-ready': () => {
