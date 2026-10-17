@@ -9,7 +9,7 @@ import express from 'express';
 
 import { repoRoot } from '../upstream-contract.js';
 import { listen } from '../mittr/test-helpers.js';
-import { PROVIDER_ID, TRANSACTION_COOKIE, registerCompanySignIn } from './routes.js';
+import { PROVIDER_ID, TRANSACTION_COOKIE, clientLabelFor, registerCompanySignIn } from './routes.js';
 import { ENTRA_ENV, LDAP_ENV, NOW, directoryEntry, fakeDirectory, fakeMicrosoft, recordingLogger } from './test-fixtures.js';
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-ui-auth-'));
@@ -432,6 +432,14 @@ test('LDAP sign-in gives a desktop app a client token only when asked', async (t
   assert.equal(minter.calls[0].fallbackLabel, undefined);
   assert.equal(minter.calls[0].authMethod, 'ad');
   assert.equal(Date.parse(minter.calls[0].expiresAt), NOW + 12 * 60 * 60 * 1000);
+});
+
+test('the desktop client label drops control characters and keeps at most 56 of the username', () => {
+  assert.equal(clientLabelFor('ada'), 'MittrCraft Desktop (ada)');
+  assert.equal(clientLabelFor('a\u0000d\u001b[2Ja\n\u007f'), 'MittrCraft Desktop (ad[2Ja)');
+  assert.equal(clientLabelFor('x'.repeat(80)), `MittrCraft Desktop (${'x'.repeat(56)})`);
+  assert.equal(clientLabelFor(`${'\u{1F600}'.repeat(60)}`), `MittrCraft Desktop (${'\u{1F600}'.repeat(56)})`);
+  assert.equal(clientLabelFor(`\u0007${'y'.repeat(56)}\u0007`), `MittrCraft Desktop (${'y'.repeat(56)})`);
 });
 
 test('a trusted device keeps its client token for as long as its session', async (t) => {

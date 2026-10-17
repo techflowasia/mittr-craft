@@ -10,6 +10,7 @@ const BODY_LIMIT = '16kb';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const TRUSTED_DEVICE_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CLIENT_LABEL = 'MittrCraft Desktop';
+const CLIENT_LABEL_USERNAME_MAX = 56;
 const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 const RATE_LIMIT_MAX_ATTEMPTS = 10;
 const RATE_LIMIT_LOCKOUT_MS = 15 * 60 * 1000;
@@ -18,6 +19,11 @@ const LOGIN_STARTS_PER_IP = 20;
 const LOGIN_STARTS_PER_WINDOW = 60;
 const VERIFY_FAILED_PAGE = 'Microsoft sign-in could not be verified. Return to MittrCraft and try again.';
 const SIGN_IN_FAILED_PAGE = 'Microsoft sign-in failed. Return to MittrCraft and try again.';
+
+export const clientLabelFor = (username) => {
+  const shown = Array.from(String(username).replace(/\p{Cc}/gu, '')).slice(0, CLIENT_LABEL_USERNAME_MAX).join('');
+  return `${CLIENT_LABEL} (${shown})`;
+};
 
 export const selectCompanyAuth = (env, { ldap = {}, entra = {} } = {}) => {
   if (hasEntraConfiguration(env)) return createEntraAuth(env, entra);
@@ -283,7 +289,7 @@ export const registerCompanySignIn = (context, {
     if (typeof context.uiAuth?.createClient !== 'function') return null;
     try {
       const minted = await context.uiAuth.createClient({
-        label: `${CLIENT_LABEL} (${username})`,
+        label: clientLabelFor(username),
         expiresAt: new Date(now() + (trustDevice ? TRUSTED_DEVICE_SESSION_TTL_MS : SESSION_TTL_MS)).toISOString(),
         authMethod: 'ad',
       });
