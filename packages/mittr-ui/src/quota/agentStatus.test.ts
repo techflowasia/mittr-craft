@@ -69,7 +69,7 @@ describe('agent status marks', () => {
     expect(agentEntryStatus(status({ state: 'substitute', substituteLabel: 'MITTR 1.0 fast' }), 'Writer')).toEqual({
       blocked: false,
       tone: 'neutral',
-      pill: 'Backup model',
+      pill: 'Using backup',
       title: 'Writer is used up this week, so MITTR 1.0 fast answers instead.',
     });
     expect(agentEntryStatus(status({ state: 'substitute' }), 'Writer')?.title)

@@ -83,7 +83,7 @@ export function createQuotaMeController({ fetch, now = Date.now }: { fetch: Quot
 
   const load = ({ force = false }: { force?: boolean } = {}): Promise<void> => {
     if (pending) return pending;
-    if (!force && current.status === 'ok' && loadedAt !== null && now() - loadedAt < QUOTA_ME_FRESH_MS) {
+    if (!force && loadedAt !== null && now() - loadedAt < QUOTA_ME_FRESH_MS) {
       return Promise.resolve();
     }
     pending = read()

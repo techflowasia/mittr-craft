@@ -121,13 +121,24 @@ describe('quota controller', () => {
     expect(paths).toHaveLength(1);
   });
 
-  test('a failed read marks nothing and is tried again on the next open', async () => {
-    const { controller, paths } = harness([failing(503), ok(body({ writer: agent() }))]);
+  test('a failed read marks nothing and stays fresh for 30 seconds like a good one', async () => {
+    const { controller, paths, time } = harness([failing(503), ok(body({ writer: agent() }))]);
     await controller.load();
     expect(controller.snapshot()).toEqual({ status: 'unavailable' });
+    time.advance(QUOTA_ME_FRESH_MS - 1);
+    await controller.load();
+    expect(paths).toHaveLength(1);
+    time.advance(1);
     await controller.load();
     expect(paths).toHaveLength(2);
     expect(controller.snapshot().status).toBe('ok');
+  });
+
+  test('two opens at once share one failing read too', async () => {
+    const { controller, paths } = harness([offline]);
+    await Promise.all([controller.load(), controller.load()]);
+    expect(paths).toHaveLength(1);
+    expect(controller.snapshot()).toEqual({ status: 'unavailable' });
   });
 
   test('a read that fails after a good one clears the marks', async () => {
