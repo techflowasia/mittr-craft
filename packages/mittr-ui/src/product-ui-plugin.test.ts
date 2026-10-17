@@ -70,6 +70,23 @@ describe('MittrCraft model picker and providers page', () => {
   });
 });
 
+describe('MittrCraft account controls', () => {
+  const slotHtml = (name: 'sidebar-footer' | 'about-dialog' | 'about-settings') => renderToStaticMarkup(
+    React.createElement(I18nProvider, null, React.createElement(ProductSlot, { name })),
+  );
+
+  test('the sidebar footer carries the account menu', () => {
+    expect(slotHtml('sidebar-footer')).toContain(`aria-label="${mittrT('mittr.accounts.menu.label')}"`);
+  });
+
+  test('the About dialog and the About page carry a sign-out button', () => {
+    expect(slotHtml('about-dialog')).toContain(`>${mittrT('mittr.accounts.signOut')}</button>`);
+    const page = slotHtml('about-settings');
+    expect(page).toContain(mittrT('mittr.accounts.about.label'));
+    expect(page).toContain(`>${mittrT('mittr.accounts.signOut')}</button>`);
+  });
+});
+
 describe('MittrCraft and the public model catalog', () => {
   test('the window never asks models.dev for model metadata or provider logos', () => {
     expect(remoteModelCatalogAllowed()).toBe(false);

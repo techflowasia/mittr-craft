@@ -8,10 +8,8 @@ import { MittrErrorBoundary } from '../MittrErrorBoundary';
 import { mittrT, useMittrT } from '../strings/mittrT';
 import type { MittrKey } from '../strings/mittrT';
 import { AuditNotice } from './AuditNotice';
-import { createSignInGateController, type GateListen, type SignInGateController } from './signInGateController';
+import { createSignInGateController, desktopBridge, type SignInGateController } from './signInGateController';
 import { gateNotice, gateStateFromStatus, type GateNotice, type GateSnapshot, type GateState } from './signInGateState';
-
-type DesktopEventBridge = { listen?: GateListen };
 
 type GateButton = 'sign-in' | 'repair' | 'check-again' | null;
 
@@ -145,10 +143,6 @@ const watchFocus = (handler: () => void) => {
   window.addEventListener('focus', handler);
   return () => window.removeEventListener('focus', handler);
 };
-
-// SAFETY: the desktop preload exposes this bridge on window; outside the
-// desktop shell it is absent, which the optional chain covers.
-const desktopBridge = (): DesktopEventBridge | undefined => (window as Window & { __OPENCHAMBER_DESKTOP__?: DesktopEventBridge }).__OPENCHAMBER_DESKTOP__;
 
 const createGateController = (): SignInGateController => createSignInGateController({
   fetch: (path, init) => runtimeFetch(path, init),

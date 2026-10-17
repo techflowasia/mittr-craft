@@ -85,6 +85,7 @@ describe('MittrSignInGateView', () => {
   test('a status nobody could read offers to check again, not to sign in', () => {
     const html = view({ state: 'checking', notice: 'check-failed' });
     expect(html).toContain(escaped(mittrT('mittr.signIn.checkFailed')));
+    expect(html).toContain('If macOS is asking for keychain permission, choose Allow.');
     expect(buttons(html)).toEqual([mittrT('mittr.signIn.checkAgain')]);
   });
 

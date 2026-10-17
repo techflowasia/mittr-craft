@@ -1,4 +1,6 @@
 import { registerProductUiPlugin } from '../../ui/src/lib/product-plugins';
+import { MittrAccountMenu } from './accounts/MittrAccountMenu';
+import { AboutSettingsSignOut, SignOutButton } from './accounts/SignOutButton';
 import { MittrCraftLogo } from './MittrCraftLogo';
 import { OtherProvidersSwitch } from './providers/OtherProvidersSwitch';
 import { useMittrPickerDecorations } from './providers/useMittrPickerFilter';
@@ -16,7 +18,12 @@ registerProductUiPlugin({
   dictionaries: { en: strings },
   logo: MittrCraftLogo,
   rootWrapper: MittrSignInGate,
-  slots: { 'providers-page': OtherProvidersSwitch },
+  slots: {
+    'providers-page': OtherProvidersSwitch,
+    'sidebar-footer': MittrAccountMenu,
+    'about-dialog': SignOutButton,
+    'about-settings': AboutSettingsSignOut,
+  },
   modelPicker: { useDecorations: useMittrPickerDecorations },
   // Mittr models come from the Mittr catalog; models.dev is a third party.
   remoteModelCatalog: false,

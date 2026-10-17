@@ -49,7 +49,7 @@ describe('provider lock controller', () => {
   test('the picker filter re-reads on the change event', async () => {
     const http = fakeFetch({ get: [answer({ showOtherProviders: false }), answer({ showOtherProviders: true })] });
     const channel = fakeChannel();
-    const controller = createProviderLockController({ fetch: http.fetch, subscribe: channel.subscribe, announce: channel.announce });
+    const controller = createProviderLockController({ fetch: http.fetch, subscribe: channel.subscribe, announce: channel.announce, reloadProviders: () => {} });
     expect(http.gets()).toBe(0);
 
     await controller.refresh();
@@ -68,7 +68,7 @@ describe('provider lock controller', () => {
   test('before any answer, and when the read fails, other providers stay hidden', async () => {
     const http = fakeFetch({ get: [unreachable] });
     const channel = fakeChannel();
-    const controller = createProviderLockController({ fetch: http.fetch, subscribe: channel.subscribe, announce: channel.announce });
+    const controller = createProviderLockController({ fetch: http.fetch, subscribe: channel.subscribe, announce: channel.announce, reloadProviders: () => {} });
     expect(controller.snapshot()).toEqual({ showOtherProviders: false, known: false });
     await controller.refresh();
     expect(controller.snapshot()).toEqual({ showOtherProviders: false, known: false });
@@ -78,12 +78,12 @@ describe('provider lock controller', () => {
     const bodies: JsonValue[] = [{ showOtherProviders: 'true' }, {}, null, [true]];
     for (const body of bodies) {
       const http = fakeFetch({ get: [answer(body)] });
-      const controller = createProviderLockController({ fetch: http.fetch, subscribe: fakeChannel().subscribe, announce: () => {} });
+      const controller = createProviderLockController({ fetch: http.fetch, subscribe: fakeChannel().subscribe, announce: () => {}, reloadProviders: () => {} });
       await controller.refresh();
       expect(controller.snapshot()).toEqual({ showOtherProviders: false, known: false });
     }
     const refused = fakeFetch({ get: [answer({ showOtherProviders: true }, 500)] });
-    const controller = createProviderLockController({ fetch: refused.fetch, subscribe: fakeChannel().subscribe, announce: () => {} });
+    const controller = createProviderLockController({ fetch: refused.fetch, subscribe: fakeChannel().subscribe, announce: () => {}, reloadProviders: () => {} });
     await controller.refresh();
     expect(controller.snapshot().showOtherProviders).toBe(false);
   });
@@ -94,7 +94,7 @@ describe('provider lock controller', () => {
       releaseFirst = () => resolve({ ok: true, status: 200, json: async () => ({ showOtherProviders: true }) });
     });
     const http = fakeFetch({ get: [first, answer({ showOtherProviders: false })] });
-    const controller = createProviderLockController({ fetch: http.fetch, subscribe: fakeChannel().subscribe, announce: () => {} });
+    const controller = createProviderLockController({ fetch: http.fetch, subscribe: fakeChannel().subscribe, announce: () => {}, reloadProviders: () => {} });
     const older = controller.refresh();
     await controller.refresh();
     releaseFirst();
@@ -105,7 +105,7 @@ describe('provider lock controller', () => {
   test('saving puts the value, shows what the server stored and tells other windows', async () => {
     const http = fakeFetch({ put: [answer({ showOtherProviders: true })] });
     const channel = fakeChannel();
-    const controller = createProviderLockController({ fetch: http.fetch, subscribe: channel.subscribe, announce: channel.announce });
+    const controller = createProviderLockController({ fetch: http.fetch, subscribe: channel.subscribe, announce: channel.announce, reloadProviders: () => {} });
     const seen: boolean[] = [];
     controller.subscribe(() => seen.push(controller.snapshot().showOtherProviders));
 
@@ -120,7 +120,7 @@ describe('provider lock controller', () => {
   test('a save the engine has not taken up yet still shows the stored value', async () => {
     const http = fakeFetch({ put: [answer({ error: 'not yet', showOtherProviders: true }, 500)] });
     const channel = fakeChannel();
-    const controller = createProviderLockController({ fetch: http.fetch, subscribe: channel.subscribe, announce: channel.announce });
+    const controller = createProviderLockController({ fetch: http.fetch, subscribe: channel.subscribe, announce: channel.announce, reloadProviders: () => {} });
     expect(await controller.save(true)).toBe('not-applied');
     expect(controller.snapshot()).toEqual({ showOtherProviders: true, known: true });
     expect(channel.announced()).toBe(1);
@@ -129,15 +129,38 @@ describe('provider lock controller', () => {
   test('a save that failed re-reads, so the switch shows what is really stored', async () => {
     const http = fakeFetch({ put: [answer({ error: 'Cannot store' }, 500)], get: [answer({ showOtherProviders: false })] });
     const channel = fakeChannel();
-    const controller = createProviderLockController({ fetch: http.fetch, subscribe: channel.subscribe, announce: channel.announce });
+    const controller = createProviderLockController({ fetch: http.fetch, subscribe: channel.subscribe, announce: channel.announce, reloadProviders: () => {} });
     expect(await controller.save(true)).toBe('failed');
     expect(http.gets()).toBe(1);
     expect(controller.snapshot()).toEqual({ showOtherProviders: false, known: true });
     expect(channel.announced()).toBe(0);
 
     const offline = fakeFetch({});
-    const second = createProviderLockController({ fetch: offline.fetch, subscribe: channel.subscribe, announce: channel.announce });
+    const second = createProviderLockController({ fetch: offline.fetch, subscribe: channel.subscribe, announce: channel.announce, reloadProviders: () => {} });
     expect(await second.save(false)).toBe('failed');
+  });
+});
+
+describe('the provider list after the switch changes', () => {
+  test('a stored save and a change from another window ask for a fresh provider list; a failed save does not', async () => {
+    const http = fakeFetch({
+      put: [answer({ showOtherProviders: true }), answer({ error: 'not yet', showOtherProviders: false }, 500), answer({ error: 'Cannot store' }, 500)],
+      get: [answer({ showOtherProviders: false })],
+    });
+    const channel = fakeChannel();
+    let reloads = 0;
+    const controller = createProviderLockController({ fetch: http.fetch, subscribe: channel.subscribe, announce: channel.announce, reloadProviders: () => { reloads += 1; } });
+
+    expect(await controller.save(true)).toBe('saved');
+    expect(reloads).toBe(1);
+    expect(await controller.save(false)).toBe('not-applied');
+    expect(reloads).toBe(2);
+    expect(await controller.save(true)).toBe('failed');
+    expect(reloads).toBe(2);
+
+    channel.fire();
+    await settle();
+    expect(reloads).toBe(3);
   });
 });
 

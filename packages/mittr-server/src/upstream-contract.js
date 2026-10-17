@@ -319,6 +319,23 @@ export const UPSTREAM_CONTRACT = [
     files: ['packages/ui/src/components/chat/ModelControls.tsx', 'packages/ui/src/lib/routing/autoModel.ts'],
     why: "the composer's Auto entry (provider openchamber) is offered on desktop and in the mobile sheet only while the picker decorations show that provider, so the Mittr lock hides it while other providers are off",
   },
+  {
+    id: 'config-store-fresh-providers',
+    files: ['packages/ui/src/stores/useConfigStore.ts', 'packages/ui/src/lib/opencode/client.ts'],
+    why: "useConfigStore.getState().loadProviders({ fresh: true }) waits out a provider read already in flight and reads the engine's providers and models again, so the picker takes up a provider switch saved here or in another window",
+  },
+  {
+    id: 'account-menu-ui',
+    files: [
+      'packages/ui/src/components/ui/dropdown-menu.tsx',
+      'packages/ui/src/components/ui/tooltip.tsx',
+      'packages/ui/src/components/ui/dialog.tsx',
+      'packages/ui/src/components/ui/index.ts',
+      'packages/ui/src/components/icon/sprite.ts',
+      'packages/ui/src/components/sections/shared/SettingsSection.tsx',
+    ],
+    why: 'the account menu is drawn with DropdownMenu (open, onOpenChange, items with onClick, label, separator) inside a Tooltip, the switch wait state with a Dialog whose close button can be left out, messages with toast, and the check, user and loader icons; the About row uses SETTINGS_FIELD_LABEL_CLASS',
+  },
 ];
 
 // The dictionaries are TypeScript with extensionless imports, which only Bun

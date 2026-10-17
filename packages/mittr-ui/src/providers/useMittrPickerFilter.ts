@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { runtimeFetch } from '../../../ui/src/lib/runtime-fetch';
 import type { ModelPickerDecorations } from '../../../ui/src/lib/product-plugins';
+import { useConfigStore } from '../../../ui/src/stores/useConfigStore';
 
 export const PROVIDER_LOCK_ENDPOINT = '/api/mittr/provider-lock';
 const PROVIDER_LOCK_CHANGED_EVENT = 'mittr.provider-lock.changed';
@@ -25,6 +26,7 @@ export type ProviderLockDeps = {
   subscribe: (onChange: () => void) => () => void;
   // Tells the others that this one changed it.
   announce: () => void;
+  reloadProviders: () => void;
 };
 
 export type ProviderLockBinding = { snapshot: ProviderLockSnapshot; controller: ProviderLockController };
@@ -54,7 +56,7 @@ const UNKNOWN: ProviderLockSnapshot = { showOtherProviders: false, known: false 
  * `subscribe` says it changed elsewhere. A read that fails keeps what was
  * known; the newest read wins over an older one that answers late.
  */
-export function createProviderLockController({ fetch, subscribe, announce }: ProviderLockDeps): ProviderLockController {
+export function createProviderLockController({ fetch, subscribe, announce, reloadProviders }: ProviderLockDeps): ProviderLockController {
   let current = UNKNOWN;
   let disposed = false;
   let latestRead = 0;
@@ -101,10 +103,14 @@ export function createProviderLockController({ fetch, subscribe, announce }: Pro
     }
     show(stored);
     announce();
+    reloadProviders();
     return ok ? 'saved' : 'not-applied';
   };
 
-  const stop = subscribe(() => { void refresh(); });
+  const stop = subscribe(() => {
+    void refresh();
+    reloadProviders();
+  });
 
   return {
     snapshot: () => current,
@@ -149,6 +155,9 @@ const sharedController = (): ProviderLockController => {
       return () => { channel.onmessage = null; };
     },
     announce: () => channel?.postMessage(PROVIDER_LOCK_CHANGED_EVENT),
+    reloadProviders: () => {
+      void useConfigStore.getState().loadProviders({ fresh: true, source: 'mittr:provider-lock' });
+    },
   });
   return shared;
 };

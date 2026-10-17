@@ -18,6 +18,14 @@ export type GateFetch = (path: string, init?: { method?: 'POST'; signal?: AbortS
 export type GateSchedule = (run: () => void, delayMs: number) => () => void;
 export type GateListen = (event: string, handler: () => void) => Promise<() => void> | (() => void);
 
+type DesktopEventBridge = { listen?: GateListen };
+
+export function desktopBridge(): DesktopEventBridge | undefined {
+  // SAFETY: the desktop preload exposes this bridge on window; outside the
+  // desktop shell it is absent, which the optional chain covers.
+  return (window as Window & { __OPENCHAMBER_DESKTOP__?: DesktopEventBridge }).__OPENCHAMBER_DESKTOP__;
+}
+
 export type SignInGateDeps = {
   fetch: GateFetch;
   // The desktop bridge's listen; absent outside the desktop shell.

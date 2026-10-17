@@ -912,6 +912,34 @@ const checks = {
     has(source('packages/ui/src/lib/routing/autoModel.ts'), /^export const AUTO_PROVIDER_ID = 'openchamber';$/m, 'the Auto sentinel provider moved');
     has(source('packages/mittr-ui/src/providers/useMittrPickerFilter.ts'), /isProviderShown: \(providerId\) => showOtherProviders \|\| providerId === MITTR_PROVIDER_ID,/);
   },
+
+  'config-store-fresh-providers': () => {
+    const store = source('packages/ui/src/stores/useConfigStore.ts');
+    has(store, /^export const useConfigStore = create<ConfigStore>\(\)\(/m, 'useConfigStore is no longer a zustand store with getState');
+    has(store, /loadProviders: \(options\?: \{ directory\?: string \| null; source\?: string; fresh\?: boolean \}\) => Promise<void>;/, 'loadProviders no longer takes fresh');
+    has(store, /if \(existing && options\?\.fresh\) \{\s*await existing\.catch\(\(\) => undefined\);/, 'a fresh provider load no longer waits out the one in flight');
+    has(store, /opencodeClient\.getProvidersForConfig\(fromDirectoryKey\(directoryKey\), \{ fresh: options\?\.fresh \}\)/, 'a fresh provider load no longer reaches the client as fresh');
+    has(source('packages/ui/src/lib/opencode/client.ts'), /async getProvidersForConfig\(directory\?: string \| null, options\?: \{ fresh\?: boolean \}\): Promise<ProviderCatalog> \{[\s\S]{0,300}if \(existing && options\?\.fresh\) \{\s*await existing\.catch\(\(\) => undefined\)/, 'the client no longer waits out an in-flight provider read for a fresh one');
+    has(source('packages/mittr-ui/src/providers/useMittrPickerFilter.ts'), /useConfigStore\.getState\(\)\.loadProviders\(\{ fresh: true, source: 'mittr:provider-lock' \}\)/);
+  },
+
+  'account-menu-ui': () => {
+    const menu = source('packages/ui/src/components/ui/dropdown-menu.tsx');
+    for (const name of ['DropdownMenu', 'DropdownMenuContent', 'DropdownMenuItem', 'DropdownMenuLabel', 'DropdownMenuSeparator', 'DropdownMenuTrigger']) {
+      has(menu, new RegExp(`^function ${name}\\(`, 'm'), `dropdown-menu no longer defines ${name}`);
+      has(menu, new RegExp(`^\\s+${name},$`, 'm'), `dropdown-menu no longer exports ${name}`);
+    }
+    has(menu, /if \(!event\.defaultPrevented\) onSelect\?\.\(event\);/, 'a menu item no longer runs its click');
+    const tooltip = source('packages/ui/src/components/ui/tooltip.tsx');
+    for (const name of ['Tooltip', 'TooltipContent', 'TooltipTrigger']) has(tooltip, new RegExp(`^export \\{[^}]*\\b${name}\\b[^}]*\\}`, 'm'), `tooltip no longer exports ${name}`);
+    const dialog = source('packages/ui/src/components/ui/dialog.tsx');
+    has(dialog, /showCloseButton = true,/, 'DialogContent no longer lets the close button be left out');
+    has(dialog, /\{showCloseButton && \(/);
+    has(source('packages/ui/src/components/ui/index.ts'), /^export \{ toast \} from '\.\/toast'/m, 'toast is no longer exported from components/ui');
+    const sprite = source('packages/ui/src/components/icon/sprite.ts');
+    for (const name of ['check', 'user', 'loader']) has(sprite, new RegExp(`^ {2}"${name}": `, 'm'), `the ${name} icon is gone`);
+    has(source('packages/ui/src/components/sections/shared/SettingsSection.tsx'), /^export const SETTINGS_FIELD_LABEL_CLASS =/m, 'SETTINGS_FIELD_LABEL_CLASS is no longer exported');
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {
