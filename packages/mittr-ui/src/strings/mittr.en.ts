@@ -45,4 +45,9 @@ export const mittrEn = {
   'mittr.quota.agent.backupLabel': '{agent} is used up this week, so {model} answers instead.',
   'mittr.quota.agent.backupLabelUnnamed': '{agent} is used up this week, so a backup model answers instead.',
   'mittr.quota.agent.leftLabel': "{agent} has {n}% of this week's quota left.",
+  'mittr.quota.exhausted.chat': 'Your weekly model quota is used up. It resets {when}.',
+  'mittr.quota.exhausted.chatNoReset': 'Your weekly model quota is used up.',
+  'mittr.quota.exhausted.retry': 'Try again',
+  'mittr.quota.exhausted.retryFailed': 'MittrCraft could not send your message again. Try again.',
+  'mittr.providers.noRoute': "This provider is off. Turn on 'Show models from other providers' or pick a Mittr model.",
 };

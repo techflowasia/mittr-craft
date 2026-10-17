@@ -1028,6 +1028,50 @@ const checks = {
     has(source('node_modules/@opencode/client/dist/promise/generated/types.d.ts'), /export type SessionStructuredError = \{\s*type: string;\s*message: string;\s*status\?: number;\s*response\?: \{\s*body: string;\s*\};\s*\};/, 'the engine error no longer carries type, message, status and response.body');
   },
 
+  'opencode-client-send-message': () => {
+    const client = source('packages/ui/src/lib/opencode/client.ts');
+    const start = client.indexOf('  async sendMessage(params: {');
+    const end = client.indexOf('}): Promise<string> {', start);
+    assert.ok(start >= 0 && end > start, 'opencodeClient.sendMessage no longer takes one params object');
+    const params = client.slice(start, end);
+    for (const field of [
+      /^\s+id: string$/m,
+      /^\s+model\?: ModelRef$/m,
+      /^\s+agent\?: string$/m,
+      /^\s+providerID: string$/m,
+      /^\s+text: string$/m,
+      /^\s+files\?: Array<FileInputLite>$/m,
+      /^\s+context\?: SyntheticContextInput\[\]$/m,
+      /^\s+agentMentions\?: Array<\{ name: string; source\?: \{ value: string; start: number; end: number \} \}>$/m,
+      /^\s+directory\?: string \| null$/m,
+    ]) has(params, field, `sendMessage no longer takes ${field}`);
+    has(client, /export type FileInputLite = \{\s*id\?: string\s*type: "file"\s*mime: string\s*filename\?: string\s*url: string\s*\}/, 'FileInputLite changed');
+    has(client, /export type SyntheticContextInput = \{\s*id\?: string\s*text: string\s*metadata\?: ContextPartMetadata\s*description\?: string\s*\}/, 'SyntheticContextInput changed');
+    has(client, /for \(const item of context\) \{\s*await admitSynthetic\(item\)\s*\}[\s\S]{0,200}await prompt\(skills\.attached\)/, 'the context is no longer admitted right before the prompt');
+    has(source('packages/ui/src/sync/session-ui-store.ts'), /^export function resolveSendSelection\(\s*sessionId: string,\s*directory: string \| undefined,\s*desired: \{ providerID: string; modelID: string; variant\?: string; agent\?: string \},\s*\): \{ model\?: ModelRef; agent\?: string \} \{/m, 'resolveSendSelection changed its signature');
+  },
+
+  'quota-retry-turn-read': () => {
+    const refs = source('packages/ui/src/sync/sync-refs.ts');
+    has(refs, /export function getSyncMessages\(sessionId: string, directory\?: string\) \{\s*return getDirectoryState\(directory\)\?\.message\[sessionId\] \?\? \[\]/, 'getSyncMessages no longer reads the session messages');
+    has(refs, /export function getSyncParts\(messageId: string, directory\?: string\) \{\s*return getDirectoryState\(directory\)\?\.part\[messageId\] \?\? \[\]/, 'getSyncParts no longer reads the message parts');
+    has(source('packages/ui/src/sync/types.ts'), /^ {2}message: Record<string, Message\[\]>\n {2}part: Record<string, Part\[\]>$/m);
+    const model = source('packages/ui/src/lib/opencode/model.ts');
+    has(model, /export type SyntheticMessage = MessageBase & \{\s*role: "synthetic"\s*time: \{ created: number \}\s*text: string\s*description\?: string\s*\}/, 'SyntheticMessage changed');
+    has(model, /export type FilePart = PartBase & \{\s*type: "file"\s*mime: string\s*filename\?: string\s*url: string\s*\}/, 'FilePart changed');
+    has(model, /export type AgentPart = PartBase & \{\s*type: "agent"\s*name: string\s*\}/, 'AgentPart changed');
+    has(model, /^ {2}agent: string\n {2}providerID: string\n {2}modelID: string\n {2}variant\?: string$/m, 'the assistant message no longer carries its agent, provider, model and variant');
+    has(source('packages/ui/src/sync/session-ui-store.ts'), /^ {2}getDirectoryForSession: \(sessionId: string\) => string \| null$/m);
+  },
+
+  'quota-retry-button-ui': () => {
+    const button = source('packages/ui/src/components/ui/button.tsx');
+    has(button, /^ {8}outline:$/m, 'the Button outline variant is gone');
+    has(button, /^ {8}xs: "/m, 'the Button xs size is gone');
+    const sprite = source('packages/ui/src/components/icon/sprite.ts');
+    for (const name of ['refresh', 'loader-4']) has(sprite, new RegExp(`^ {2}"${name}": `, 'm'), `the ${name} icon is gone`);
+  },
+
   'account-menu-ui': () => {
     const menu = source('packages/ui/src/components/ui/dropdown-menu.tsx');
     for (const name of ['DropdownMenu', 'DropdownMenuContent', 'DropdownMenuItem', 'DropdownMenuLabel', 'DropdownMenuSeparator', 'DropdownMenuTrigger']) {

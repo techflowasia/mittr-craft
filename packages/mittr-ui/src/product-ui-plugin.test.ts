@@ -96,3 +96,25 @@ describe('MittrCraft and the public model catalog', () => {
     expect(renderToStaticMarkup(React.createElement(ProviderLogo, { providerId: 'mittr' }))).toBe('');
   });
 });
+
+describe('MittrCraft chat messages', () => {
+  const refused = {
+    id: 'msg_a',
+    sessionID: 'ses_1',
+    role: 'assistant' as const,
+    time: { created: 2 },
+    agent: 'build',
+    providerID: 'mittr',
+    modelID: 'pm_1',
+    finish: 'error' as const,
+    error: { type: 'provider.quota', message: 'Weekly model quota used up', status: 402, response: { body: '{"error":{"code":"llm_quota_exhausted"}}' } },
+  };
+
+  test('the footer under a used-up latest turn offers Try again', () => {
+    const footer = (isLatestTurn: boolean) => renderToStaticMarkup(
+      React.createElement(ProductSlot, { name: 'assistant-message-footer', message: { info: refused, parts: [] }, isLatestTurn }),
+    );
+    expect(footer(true)).toContain(mittrT('mittr.quota.exhausted.retry'));
+    expect(footer(false)).toBe('');
+  });
+});

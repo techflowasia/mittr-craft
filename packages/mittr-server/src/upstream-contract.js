@@ -360,6 +360,21 @@ export const UPSTREAM_CONTRACT = [
     why: "an assistant message asks translateProductMessageError once, with its error's type, message, status and response body, before any of upstream's own error texts, and renders the assistant-message-footer slot once, under the assistant message body, with the message and whether its turn is the latest; the used-up quota text and Try again live there",
   },
   {
+    id: 'opencode-client-send-message',
+    files: ['packages/ui/src/lib/opencode/client.ts', 'packages/ui/src/sync/session-ui-store.ts'],
+    why: "opencodeClient.sendMessage takes the session id, providerID, model, agent, text, files ({ type: 'file', mime, filename, url }), context ([{ text, description }], admitted as synthetic messages right before the prompt), agentMentions ([{ name }]) and directory, and resolveSendSelection says which model and agent the session still has to switch to; Try again sends the refused turn again that way",
+  },
+  {
+    id: 'quota-retry-turn-read',
+    files: ['packages/ui/src/sync/sync-refs.ts', 'packages/ui/src/sync/types.ts', 'packages/ui/src/lib/opencode/model.ts', 'packages/ui/src/sync/session-ui-store.ts'],
+    why: "getSyncMessages(sessionId, directory) lists a session's messages in order (the synthetic context, then the asking user message, then its assistant replies), getSyncParts(messageId, directory) gives a user message's text, file and agent parts, and getDirectoryForSession names the session's directory; Try again rebuilds the refused turn from them",
+  },
+  {
+    id: 'quota-retry-button-ui',
+    files: ['packages/ui/src/components/ui/button.tsx', 'packages/ui/src/components/icon/sprite.ts'],
+    why: 'Try again is drawn with the shared Button (variant outline, size xs) and the refresh and loader-4 icons',
+  },
+  {
     id: 'account-menu-ui',
     files: [
       'packages/ui/src/components/ui/dropdown-menu.tsx',

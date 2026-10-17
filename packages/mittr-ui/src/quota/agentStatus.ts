@@ -3,12 +3,12 @@ import { mittrT } from '../strings/mittrT';
 import type { AgentStatus } from './quotaMeStore';
 
 const MITTR_PROVIDER_ID = 'mittr';
-const PRODUCT_LOCALE = 'en-GB';
-const PRODUCT_TIME_ZONE = 'Asia/Bangkok';
+export const PRODUCT_LOCALE = 'en-GB';
+export const PRODUCT_TIME_ZONE = 'Asia/Bangkok';
 
 const resetFormats = new Map<string, Intl.DateTimeFormat>();
 
-const formatResetTime = (resetsAt: string, locale: string, timeZone: string): string => {
+export const formatResetTime = (resetsAt: string, locale: string, timeZone: string): string => {
   const key = `${locale}|${timeZone}`;
   let format = resetFormats.get(key);
   if (!format) {
