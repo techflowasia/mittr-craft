@@ -112,6 +112,7 @@ export function createAccountStore({
   // An index that exists but cannot be read is never written over: a fresh
   // one would give the next account the first account's engine history.
   const indexForWrite = () => {
+    carryLegacyOnce();
     try {
       return loadIndex();
     } catch (error) {
@@ -205,8 +206,19 @@ export function createAccountStore({
     }
   };
 
+  // Opening a sealed session can make the operating system ask for the
+  // keychain, so the 1.x session is not opened while the app starts: the
+  // first call that reads a session or the account list does it, once.
+  // `carryLegacy: false` reads the index as it is, for a caller that must
+  // not open any session yet (the app's start).
+  let legacyCarried = false;
+  const carryLegacyOnce = () => {
+    if (legacyCarried) return;
+    legacyCarried = true;
+    carryLegacySession();
+  };
+
   sweepTemporaryFiles();
-  carryLegacySession();
 
   let reportedDamage = false;
   const damaged = () => {
@@ -266,12 +278,14 @@ export function createAccountStore({
   };
 
   const read = () => {
+    carryLegacyOnce();
     const index = readIndex();
     return index.active ? readSessionOf(index.active) : null;
   };
 
   // The session of an account that is signed in, active or not.
   const readOf = (userId) => {
+    carryLegacyOnce();
     const entry = readIndex().accounts.find((candidate) => candidate.userId === userId);
     return entry?.signedIn ? readSessionOf(userId) : null;
   };
@@ -305,14 +319,16 @@ export function createAccountStore({
     writeIndex(index);
   };
 
-  const list = () => {
+  const list = ({ carryLegacy = true } = {}) => {
+    if (carryLegacy) carryLegacyOnce();
     const index = readIndex();
     return index.accounts
       .filter((entry) => entry.signedIn)
       .map((entry) => ({ userId: entry.userId, displayName: entry.displayName, active: entry.userId === index.active }));
   };
 
-  const activeHome = () => {
+  const activeHome = ({ carryLegacy = true } = {}) => {
+    if (carryLegacy) carryLegacyOnce();
     const index = readIndex();
     return index.accounts.find((entry) => entry.userId === index.active)?.home ?? null;
   };

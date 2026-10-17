@@ -86,10 +86,12 @@ export function setupMittr(context, {
   // One cache per account file, resolved on every use: an account switch
   // moves every reader and the next sync's write to the new account's file.
   const catalogCaches = new Map();
-  const signedIn = () => store.list().some((account) => account.active);
+  // These read the account index only: opening a stored session may raise a
+  // keychain dialog, which no lookup made while the app starts may do.
+  const signedIn = () => store.list({ carryLegacy: false }).some((account) => account.active);
   const activeCatalogCache = () => {
     if (!signedIn()) return NO_ACCOUNT_CATALOG;
-    const filePath = catalogCachePath(dataDir, store.activeHome());
+    const filePath = catalogCachePath(dataDir, store.activeHome({ carryLegacy: false }));
     if (!catalogCaches.has(filePath)) catalogCaches.set(filePath, createCatalogCache({ filePath, logger }));
     return catalogCaches.get(filePath);
   };
@@ -244,8 +246,17 @@ export function setupMittr(context, {
 
   // Each ready is a new engine, maybe on the same port and another account's
   // database, and the key is new each run, so it is stored again.
+  // The first ready also starts the catalog sync that follows the last list:
+  // it reads the stored session, and opening that can raise a keychain
+  // dialog, so it waits until the server is listening and the window has
+  // something to show.
+  let startupSyncDone = false;
   const unsubscribeReady = opencode.onReady(() => {
     engineStarted = true;
+    if (!startupSyncDone) {
+      startupSyncDone = true;
+      void syncCatalog();
+    }
     forgetMittrCredential(opencode);
     void storeCredential();
   });
@@ -334,12 +345,12 @@ export function setupMittr(context, {
   };
 
   // The last list first, so an offline start still shows the account's
-  // models; then the platform's current one, without holding up the start.
-  // The engine's first config build reads these, and its start the default.
+  // models; the platform's current one follows the engine's first ready,
+  // without holding up the start. The engine's first config build reads
+  // these, and its start the default.
   const startList = activeModelList();
   models = modelListOf(startList.items);
   if (startList.known) followDefaultModel(models);
-  void syncCatalog();
 
   return {
     engineEnv: () => loopbackProxyExemption(env),

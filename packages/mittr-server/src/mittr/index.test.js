@@ -163,6 +163,49 @@ test('a keychain found unusable at the first sign-in request refuses it, and the
   assert.equal(fs.existsSync(path.join(dataDir, 'mittr-accounts')) ? sessionFiles(dataDir).length : 0, 0);
 });
 
+test('a signed-in account is not opened while the app starts, only once the engine is ready', async (t) => {
+  const dataDir = tempDataDir(t);
+  const first = await setUp(t, { dataDir, fetchImpl: platform(), host: { secretStore: sealingStore(), deepLinks: deepLinkHost() } });
+  assert.equal((await signIn(first.call)).status, 200);
+  await until(() => fs.existsSync(path.join(dataDir, 'mittr-accounts')) && catalogFiles(dataDir).length === 1);
+  await first.mittr.dispose();
+
+  const sealing = sealingStore();
+  const uses = [];
+  const secretStore = {
+    available: () => { uses.push('available'); return true; },
+    encrypt: (text) => { uses.push('encrypt'); return sealing.encrypt(text); },
+    decrypt: (data) => { uses.push('decrypt'); return sealing.decrypt(data); },
+  };
+  const fetchImpl = platform();
+  const { mittr, engine } = await setUp(t, { dataDir, fetchImpl, host: { secretStore, deepLinks: deepLinkHost() } });
+  assert.deepEqual(await mittrModelsOf(mittr), ['a1', 'a2']);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(uses, []);
+  assert.equal(catalogCalls(fetchImpl).length, 0);
+
+  engine.fireReady();
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  assert.ok(uses.includes('decrypt'));
+});
+
+test('only the first ready starts the catalog sync', async (t) => {
+  const dataDir = tempDataDir(t);
+  const first = await setUp(t, { dataDir, fetchImpl: platform() });
+  assert.equal((await signIn(first.call)).status, 200);
+  await until(() => catalogFiles(dataDir).length === 1);
+  await first.mittr.dispose();
+
+  const fetchImpl = platform();
+  const { engine } = await setUp(t, { dataDir, fetchImpl });
+  engine.fireReady();
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  engine.fireReady();
+  engine.fireReady();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(catalogCalls(fetchImpl).length, 1);
+});
+
 test('without a desktop host tokens are kept in a private plain file, with one warning', async (t) => {
   const { call, dataDir, logger } = await setUp(t, { host: null });
   assert.equal((await signIn(call)).status, 200);
@@ -543,10 +586,12 @@ test('offline start applies the cached catalog', async (t) => {
   const offline = deferred();
   const fetchImpl = platform({ catalog: () => offline.promise.then(() => { throw new Error('ECONNREFUSED'); }) });
   const { mittr, call, logger, engine } = await setUp(t, { dataDir, fetchImpl });
-  await until(() => catalogCalls(fetchImpl).length === 1);
   assert.deepEqual(await mittrModelsOf(mittr), ['a1', 'a2']);
   // The engine has not started yet: its first config build reads these.
   assert.equal(engine.refreshes.length, 0);
+  assert.equal(catalogCalls(fetchImpl).length, 0);
+  engine.fireReady();
+  await until(() => catalogCalls(fetchImpl).length === 1);
 
   offline.resolve();
   await until(() => logger.errors.some((line) => line.includes('catalog sync failed')));

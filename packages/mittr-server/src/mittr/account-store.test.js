@@ -127,6 +127,40 @@ test('the single session 1.x stored becomes the first account, once', (t) => {
   assert.equal(fs.existsSync(path.join(dataDir, 'mittr-session')), false);
 });
 
+test('the 1.x session is opened on the first read, not when the store is created, and takes the shared history', (t) => {
+  const dataDir = tempDataDir(t);
+  const legacy = path.join(dataDir, 'mittr-session');
+  fs.writeFileSync(legacy, encrypt(JSON.stringify(sessionFor('u1', 'A'))));
+  let opened = 0;
+  const counting = (data) => {
+    opened += 1;
+    return decrypt(data);
+  };
+  const store = createAccountStore({ dataDir, encrypt, decrypt: counting, sharedHistoryExists: () => true });
+  assert.equal(opened, 0);
+  assert.deepEqual(store.list({ carryLegacy: false }), []);
+  assert.equal(store.activeHome({ carryLegacy: false }), null);
+  assert.equal(opened, 0);
+  assert.equal(fs.existsSync(legacy), true);
+
+  assert.equal(store.read().subject.userId, 'u1');
+  assert.equal(store.activeHome(), null);
+  assert.deepEqual(store.list(), [{ userId: 'u1', displayName: 'A', active: true }]);
+  assert.equal(fs.existsSync(legacy), false);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(accountsDir(dataDir), 'index.json'), 'utf8')).accounts[0].home, null);
+});
+
+test('the 1.x session is carried by the first write too, so a newcomer never takes its shared history', (t) => {
+  const dataDir = tempDataDir(t);
+  fs.writeFileSync(path.join(dataDir, 'mittr-session'), encrypt(JSON.stringify(sessionFor('u1', 'A'))));
+  const store = storeIn(dataDir, { sharedHistoryExists: () => true });
+  store().write(sessionFor('u2', 'B'));
+  assert.equal(store().readOf('u1').subject.userId, 'u1');
+  assert.equal(store().activeHome(), homeOf('u2'));
+  store().activate('u1');
+  assert.equal(store().activeHome(), null);
+});
+
 test('a 1.x session that cannot be decrypted is left where it is', (t) => {
   const dataDir = tempDataDir(t);
   const legacy = path.join(dataDir, 'mittr-session');
@@ -383,7 +417,7 @@ test('an index deleted outright does not hand the shared history to whoever sign
   const dataDir = tempDataDir(t);
   const store = storeIn(dataDir, { sharedHistoryExists: () => true });
   fs.writeFileSync(path.join(dataDir, 'mittr-session'), encrypt(JSON.stringify(sessionFor('u-z', 'Z'))));
-  store();
+  store().read();
   fs.rmSync(accountsDir(dataDir), { recursive: true });
   store().write(sessionFor('u-y', 'Y'));
   assert.equal(store().activeHome(), homeOf('u-y'));
