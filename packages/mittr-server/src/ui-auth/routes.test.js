@@ -93,7 +93,23 @@ test('with nothing configured no provider is registered and the server stays as 
   assert.deepEqual((await call('GET', '/auth/ad/status')).body, { enabled: false, passwordEnabled: false, tunnelLocked: false });
   assert.equal((await call('GET', '/api/x')).status, 200);
   assert.equal((await call('DELETE', '/auth/session')).status, 404);
-  assert.equal((await call('POST', '/auth/ad/session', { body: { username: 'a', password: 'b' } })).status, 400);
+  const refused = await call('POST', '/auth/ad/session', { body: { username: 'a', password: 'b' } });
+  assert.equal(refused.status, 400);
+  assert.equal(refused.body.code, 'not-configured');
+});
+
+test('the LDAP session route says why it refuses a Microsoft server and an empty form', async (t) => {
+  const entra = await harness(t, { env: ENTRA_ENV, microsoft: fakeMicrosoft() });
+  const microsoft = await entra.call('POST', '/auth/ad/session', { body: { username: 'a', password: 'b' } });
+  assert.equal(microsoft.status, 400);
+  assert.equal(microsoft.body.code, 'use-microsoft');
+});
+
+test('an LDAP form with nothing in it is refused as missing fields', async (t) => {
+  const { call } = await harness(t, { env: LDAP_ENV, directory: ldapDirectory() });
+  const empty = await call('POST', '/auth/ad/session', { body: { username: 'ada', password: '' } });
+  assert.equal(empty.status, 400);
+  assert.equal(empty.body.code, 'missing-fields');
 });
 
 test('a configured provider makes every API request need a session', async (t) => {
@@ -406,13 +422,14 @@ test('LDAP sign-in gives a desktop app a client token only when asked', async (t
   assert.equal(plain.body.clientToken, undefined);
   assert.equal(minter.calls.length, 0);
 
-  const asked = await call('POST', '/auth/ad/session', { body: { username: 'ada', password: 'correct horse', issueClientToken: true, clientLabel: 'MittrCraft Desktop' } });
+  const asked = await call('POST', '/auth/ad/session', { body: { username: 'ada', password: 'correct horse', issueClientToken: true, clientLabel: 'Anything the app says' } });
   assert.equal(asked.status, 200);
   assert.equal(asked.body.clientToken, 'oc_client_token');
   assert.equal(asked.body.client.id, 'client-1');
   assert.ok(sessionCookieOf(asked));
   assert.equal(minter.calls.length, 1);
-  assert.equal(minter.calls[0].fallbackLabel, 'MittrCraft Desktop');
+  assert.equal(minter.calls[0].label, 'MittrCraft Desktop (ada)');
+  assert.equal(minter.calls[0].fallbackLabel, undefined);
   assert.equal(minter.calls[0].authMethod, 'ad');
   assert.equal(Date.parse(minter.calls[0].expiresAt), NOW + 12 * 60 * 60 * 1000);
 });

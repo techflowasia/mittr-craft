@@ -9,7 +9,7 @@ const CALLBACK_PATH = '/auth/ad/callback';
 const BODY_LIMIT = '16kb';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const TRUSTED_DEVICE_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const CLIENT_LABEL_LIMIT = 80;
+const CLIENT_LABEL = 'MittrCraft Desktop';
 const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 const RATE_LIMIT_MAX_ATTEMPTS = 10;
 const RATE_LIMIT_LOCKOUT_MS = 15 * 60 * 1000;
@@ -279,12 +279,11 @@ export const registerCompanySignIn = (context, {
     }
   });
 
-  const mintClientToken = async (req, trustDevice) => {
+  const mintClientToken = async (username, trustDevice) => {
     if (typeof context.uiAuth?.createClient !== 'function') return null;
-    const label = typeof req.body?.clientLabel === 'string' ? req.body.clientLabel.trim().slice(0, CLIENT_LABEL_LIMIT) : '';
     try {
       const minted = await context.uiAuth.createClient({
-        fallbackLabel: label || undefined,
+        label: `${CLIENT_LABEL} (${username})`,
         expiresAt: new Date(now() + (trustDevice ? TRUSTED_DEVICE_SESSION_TTL_MS : SESSION_TTL_MS)).toISOString(),
         authMethod: 'ad',
       });
@@ -296,8 +295,8 @@ export const registerCompanySignIn = (context, {
   };
 
   app.post('/auth/ad/session', refuseTunnel('AD login is disabled for tunnel scope'), parseBody, async (req, res) => {
-    if (!auth) return res.status(400).json({ error: 'AD authentication not configured' });
-    if (!isLdap) return res.status(400).json({ error: 'Use the Microsoft sign-in redirect' });
+    if (!auth) return res.status(400).json({ error: 'AD authentication not configured', code: 'not-configured' });
+    if (!isLdap) return res.status(400).json({ error: 'Use the Microsoft sign-in redirect', code: 'use-microsoft' });
     const limit = limiter.check(req);
     if (!limit.allowed) {
       res.setHeader('Retry-After', String(limit.retryAfter));
@@ -305,7 +304,7 @@ export const registerCompanySignIn = (context, {
     }
     const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    if (!username || !password) return res.status(400).json({ error: 'Username and password are required' });
+    if (!username || !password) return res.status(400).json({ error: 'Username and password are required', code: 'missing-fields' });
 
     const result = await auth.authenticate(username, password);
     if (!result.ok) {
@@ -319,7 +318,7 @@ export const registerCompanySignIn = (context, {
       trustDevice,
       claims: { authMethod: 'ad', username, profile: result.profile },
     });
-    const client = req.body?.issueClientToken === true ? await mintClientToken(req, trustDevice) : null;
+    const client = req.body?.issueClientToken === true ? await mintClientToken(username, trustDevice) : null;
     res.setHeader('Cache-Control', 'no-store');
     return res.json({
       authenticated: true,
