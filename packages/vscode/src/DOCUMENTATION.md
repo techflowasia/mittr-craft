@@ -43,6 +43,8 @@ Keep `bridge.ts` as a thin orchestration layer that delegates message handling t
 
 The webview CSP permits `blob:` only for `worker-src` so shared UI parsers can run bounded local decompression off the main thread. Blob scripts remain disallowed by `script-src`.
 
+`webviewHtml.ts` serializes the complete `window.__VSCODE_CONFIG__` bootstrap object and production/development module URLs with JSON stringification followed by escaping `<`, U+2028, and U+2029 for inline script context. Workspace paths, folder names, session IDs, and extension versions remain data even when they contain quotes or script-closing markup. `window.__MITTRCRAFT_HOME__` is derived from the serialized workspace path; bootstrap field names, defaults, and panel modes are unchanged. Behavioral regression tests execute the generated scripts and verify exact string round-trips and production bundle selection.
+
 - `bridge-localfs-proxy-runtime.ts`
   - Local `/api/fs/read` and `/api/fs/raw` proxy helpers and shared proxy utility helpers.
   - Workspace-contained Markdown gallery images use these local filesystem

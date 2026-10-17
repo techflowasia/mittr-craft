@@ -401,7 +401,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
   const handleEntraLogin = React.useCallback(() => {
     const loginUrl = getRuntimeUrlResolver().auth('/auth/ad/login', {
       trustDevice: trustDevice ? 'true' : undefined,
-      returnTo: window.location.origin,
+      returnTo: window.location.href,
     });
     window.location.assign(loginUrl);
   }, [trustDevice]);

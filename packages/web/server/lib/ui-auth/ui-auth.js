@@ -237,13 +237,13 @@ const resolveAdReturnTo = (req) => {
   if (!rawReturnTo) return '/';
   try {
     const target = new URL(rawReturnTo);
-    if ((target.protocol !== 'http:' && target.protocol !== 'https:') || target.username || target.password || target.hash) {
+    if ((target.protocol !== 'http:' && target.protocol !== 'https:') || target.username || target.password) {
       return '/';
     }
     const requestHost = readHeader(req, 'host');
     if (!requestHost) return '/';
     const requestOrigin = new URL(`${isSecureRequest(req) ? 'https' : 'http'}://${requestHost}`);
-    if (target.origin === requestOrigin.origin) return `${target.pathname}${target.search}`;
+    if (target.origin === requestOrigin.origin) return `${target.pathname}${target.search}${target.hash}`;
 
     const referrer = readHeader(req, 'referer');
     const referrerOrigin = referrer ? new URL(referrer).origin : '';
@@ -253,7 +253,7 @@ const resolveAdReturnTo = (req) => {
       && isLoopbackHostname(requestOrigin.hostname)
       && target.origin === referrerOrigin
     ) {
-      return `${target.origin}${target.pathname}${target.search}`;
+      return `${target.origin}${target.pathname}${target.search}${target.hash}`;
     }
   } catch {
   }

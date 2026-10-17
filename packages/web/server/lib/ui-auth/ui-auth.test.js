@@ -429,7 +429,7 @@ describe('ui auth Microsoft Entra seam', () => {
         completeAuthorization: async () => ({
           trustDevice: false,
           profile: { displayName: 'Ada Lovelace' },
-          returnTo: 'http://localhost:5180/',
+          returnTo: 'http://localhost:5180/projects/demo?directory=%2Fworkspace%2Fdemo#session-123',
         }),
         dispose: () => {},
       },
@@ -438,16 +438,59 @@ describe('ui auth Microsoft Entra seam', () => {
     const startRes = createResponse();
     await auth.handleAdLoginStart({
       headers: { host: 'localhost:3000', referer: 'http://localhost:5180/' },
-      query: { returnTo: 'http://localhost:5180/' },
+      query: { returnTo: 'http://localhost:5180/projects/demo?directory=%2Fworkspace%2Fdemo#session-123' },
     }, startRes);
-    expect(authorizationInput).toEqual({ trustDevice: false, returnTo: 'http://localhost:5180/' });
+    expect(authorizationInput).toEqual({
+      trustDevice: false,
+      returnTo: 'http://localhost:5180/projects/demo?directory=%2Fworkspace%2Fdemo#session-123',
+    });
 
     const callbackRes = createResponse();
     await auth.handleAdCallback({
       headers: { cookie: 'oc_ad_transaction=state-hmr' },
       query: { state: 'state-hmr', code: 'authorization-code' },
     }, callbackRes);
-    expect(callbackRes.getHeader('location')).toBe('http://localhost:5180/');
+    expect(callbackRes.getHeader('location')).toBe('http://localhost:5180/projects/demo?directory=%2Fworkspace%2Fdemo#session-123');
+  });
+
+  it('returns a same-origin login to the complete MittrCraft page URL', async () => {
+    const createUiAuth = await loadCreateUiAuth();
+    let authorizationInput = null;
+    const auth = createUiAuth({
+      adAuthController: {
+        enabled: true,
+        configurationPresent: true,
+        mode: 'entra',
+        getStatus: () => ({ enabled: true, mode: 'entra' }),
+        beginAuthorization: async (input) => {
+          authorizationInput = input;
+          return { authorizationUrl: 'https://login.microsoftonline.com/tenant/authorize', state: 'state-page', expiresAt: Date.now() + 60_000 };
+        },
+        completeAuthorization: async () => ({
+          trustDevice: false,
+          profile: { displayName: 'Ada Lovelace' },
+          returnTo: '/projects/demo?directory=%2Fworkspace%2Fdemo#session-123',
+        }),
+        dispose: () => {},
+      },
+    });
+
+    const startRes = createResponse();
+    await auth.handleAdLoginStart({
+      headers: { host: 'workspace.example.com', 'x-forwarded-proto': 'https' },
+      query: { returnTo: 'https://workspace.example.com/projects/demo?directory=%2Fworkspace%2Fdemo#session-123' },
+    }, startRes);
+    expect(authorizationInput).toEqual({
+      trustDevice: false,
+      returnTo: '/projects/demo?directory=%2Fworkspace%2Fdemo#session-123',
+    });
+
+    const callbackRes = createResponse();
+    await auth.handleAdCallback({
+      headers: { cookie: 'oc_ad_transaction=state-page' },
+      query: { state: 'state-page', code: 'authorization-code' },
+    }, callbackRes);
+    expect(callbackRes.getHeader('location')).toBe('/projects/demo?directory=%2Fworkspace%2Fdemo#session-123');
   });
 
   it('rejects an untrusted Microsoft login return target', async () => {

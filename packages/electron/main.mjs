@@ -17,6 +17,7 @@ import { createTrayController } from './tray.mjs';
 import { resolveManagedOpenCodeCwd } from './opencode-cwd.mjs';
 import { resolveStartupUrlProbePlan, shouldIgnoreLoopbackConnectionLimit } from './startup-url-selection.mjs';
 import { sanitizeRuntimeRequestHeaders } from './runtime-request-headers.mjs';
+import { desktopHostsForSender, resolveSavedDesktopHost, probeSavedDesktopHost, savedDesktopHostNavigationUrl } from './desktop-host-access.mjs';
 import { assertUpdaterCapability } from './updater-capability.mjs';
 import { checkForDesktopUpdate } from './updater-check.mjs';
 import { resolveUpdaterChannel } from './updater-channel.mjs';
@@ -4323,10 +4324,20 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     case 'desktop_hosts_get':
-      return {
-        ...readDesktopHostsConfig(),
-        localOrigin: state.localOrigin || state.sidecarUrl || null,
-      };
+      return desktopHostsForSender(readDesktopHostsConfig(), state.localOrigin || state.sidecarUrl || null, isLocalSender(browserWindow?.webContents));
+
+    case 'desktop_saved_host_probe': {
+      const host = resolveSavedDesktopHost(readDesktopHostsConfig(), args.hostId, state.sidecarUrl || state.localOrigin, readDesktopLocalClientToken());
+      return probeSavedDesktopHost(host, probeHostWithTimeout);
+    }
+
+    case 'desktop_switch_to_host': {
+      if (!browserWindow || browserWindow.isDestroyed()) throw new Error('Window not available');
+      const host = resolveSavedDesktopHost(readDesktopHostsConfig(), args.hostId, state.sidecarUrl || state.localOrigin, readDesktopLocalClientToken());
+      const localUiUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.localOrigin || state.sidecarUrl);
+      await navigateWindow(browserWindow, savedDesktopHostNavigationUrl(localUiUrl, host.id));
+      return null;
+    }
 
     case 'desktop_hosts_set': {
       const nextConfigInput = args.input || args.config || {};
@@ -4551,27 +4562,10 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       // LOCAL UI and let the renderer pick the transport (direct first, E2EE
       // tunnel fallback) via the injected relay host id — a fixed apiBaseUrl
       // would strand the window when the direct leg is unreachable.
-      const hostId = typeof args.hostId === 'string' ? args.hostId.trim() : '';
-      const config = readDesktopHostsConfig();
-      const host = config.hosts.find((entry) => entry.id === hostId);
-      if (!host) throw new Error('Host not found');
-      if (host.relay) {
-        const windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.sidecarUrl || state.localOrigin);
-        await createAdditionalWindow(windowUrl, {
-          apiBaseUrl: '',
-          clientToken: host.clientToken || '',
-          requestHeaders: sanitizeRuntimeRequestHeaders(host.requestHeaders || {}),
-          relayHostId: host.id,
-        });
-        return null;
-      }
-      const targetUrl = normalizeHostUrl(host.apiUrl || host.url);
-      if (!targetUrl) throw new Error('Invalid URL');
-      const windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : targetUrl;
-      await createAdditionalWindow(windowUrl, {
-        apiBaseUrl: targetUrl,
-        clientToken: host.clientToken || '',
-        requestHeaders: sanitizeRuntimeRequestHeaders(host.requestHeaders || {}),
+      const host = resolveSavedDesktopHost(readDesktopHostsConfig(), args.hostId, state.sidecarUrl || state.localOrigin, readDesktopLocalClientToken());
+      const localUiUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.localOrigin || state.sidecarUrl);
+      await createAdditionalWindow(savedDesktopHostNavigationUrl(localUiUrl, host.id), {
+        apiBaseUrl: '', clientToken: '', requestHeaders: {},
       });
       return null;
     }
@@ -5016,9 +5010,9 @@ const isLocalSender = (webContents) => {
 
 const COMMANDS_SAFE_FOR_REMOTE = new Set([
   'desktop_hosts_get',
-  'desktop_host_probe',
+  'desktop_saved_host_probe',
+  'desktop_switch_to_host',
   'desktop_new_window',
-  'desktop_new_window_at_url',
   'desktop_new_window_for_host',
   'desktop_set_window_title',
   'desktop_set_window_theme',

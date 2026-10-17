@@ -17,6 +17,8 @@ import { useUIStore } from '@/stores/useUIStore';
 import { useI18n } from '@/lib/i18n';
 import {
   desktopHostProbe,
+  desktopSavedHostProbe,
+  desktopSwitchToHost,
   desktopHostsGet,
   desktopHostsSet,
   desktopLocalClientTokenGet,
@@ -249,6 +251,7 @@ export function DesktopHostSwitcherDialog({
   const setSettingsPage = useUIStore((state) => state.setSettingsPage);
 
   const [configHosts, setConfigHosts] = React.useState<DesktopHost[]>([]);
+  const [hostAccess, setHostAccess] = React.useState<'full' | 'metadata'>('full');
   const [defaultHostId, setDefaultHostId] = React.useState<string | null>(null);
   const [statusById, setStatusById] = React.useState<Record<string, HostStatus>>(() => ({ ...lastKnownHostStatuses }));
   React.useEffect(() => {
@@ -346,6 +349,7 @@ export function DesktopHostSwitcherDialog({
       for (const instance of sshCfg.instances) {
         nextSshHostIds[instance.id] = true;
       }
+      setHostAccess(cfg.access || 'full');
       setConfigHosts(cfg.hosts || []);
       setDefaultHostId(cfg.defaultHostId ?? null);
       setSshHostIds(nextSshHostIds);
@@ -368,6 +372,10 @@ export function DesktopHostSwitcherDialog({
       const localClientToken = await getLocalClientToken();
       const results = await Promise.all(
         hosts.map(async (h) => {
+          if (hostAccess === 'metadata') {
+            const result = await desktopSavedHostProbe(h.id).catch((): HostProbeResult => ({ status: 'unknown', latencyMs: 0 }));
+            return [h.id, result] as const;
+          }
           const clientToken = h.id === LOCAL_HOST_ID ? localClientToken : (h.clientToken || '');
           const probeRelayLeg = async (): Promise<HostStatus> => {
             const res = await probeRelayDesktopHost(h.relay!, { clientToken, requestHeaders: h.requestHeaders || null }).catch((): HostProbeResult => ({ status: 'unreachable', latencyMs: 0 }));
@@ -399,7 +407,7 @@ export function DesktopHostSwitcherDialog({
     } finally {
       setIsProbing(false);
     }
-  }, []);
+  }, [hostAccess]);
 
   React.useEffect(() => {
     if (!open) {
@@ -446,6 +454,15 @@ export function DesktopHostSwitcherDialog({
   }, [open]);
 
   const handleSwitch = React.useCallback(async (host: DesktopHost) => {
+    if (hostAccess === 'metadata') {
+      try {
+        await desktopSwitchToHost(host.id);
+        onHostSwitched?.();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
+      return;
+    }
     // Relay legs ride the E2EE tunnel activated in-renderer via
     // switchRuntimeEndpoint({ relay }); the runtime fetch/socket layers route
     // through the tunnel from the singleton registry.
@@ -640,7 +657,7 @@ export function DesktopHostSwitcherDialog({
     } catch {
       window.location.href = target;
     }
-  }, [localOrigin, onHostSwitched, sshHostIds, sshStatusesById, statusById, t]);
+  }, [hostAccess, localOrigin, onHostSwitched, sshHostIds, sshStatusesById, statusById, t]);
 
   const cancelEdit = React.useCallback(() => {
     setEditingId(null);
@@ -688,7 +705,7 @@ export function DesktopHostSwitcherDialog({
     };
     // Relay-capable hosts can't be expressed as a fixed window URL — the new
     // window boots the local UI and picks direct-vs-tunnel itself.
-    if (host.relay && host.id !== LOCAL_HOST_ID) {
+    if (hostAccess === 'metadata' || (host.relay && host.id !== LOCAL_HOST_ID)) {
       desktopOpenNewWindowForHost(host.id).catch(reportFailure);
       return;
     }
@@ -696,7 +713,7 @@ export function DesktopHostSwitcherDialog({
     if (!origin) return;
     const target = toNavigationUrl(origin);
     desktopOpenNewWindowAtUrl(target, { clientToken: host.clientToken || null, requestHeaders: host.requestHeaders || null }).catch(reportFailure);
-  }, [localOrigin, t]);
+  }, [hostAccess, localOrigin, t]);
 
   const switchToLocal = React.useCallback(async () => {
     sshSwitchTokenRef.current += 1;
@@ -709,6 +726,10 @@ export function DesktopHostSwitcherDialog({
       detail: null,
       phase: 'idle',
     }));
+    if (hostAccess === 'metadata') {
+      await desktopSwitchToHost(LOCAL_HOST_ID);
+      return;
+    }
     const localTarget = toNavigationUrl(localOrigin);
     if (isElectronShell()) {
       const clientToken = await getLocalClientToken();
@@ -718,7 +739,7 @@ export function DesktopHostSwitcherDialog({
     }
     onHostSwitched?.();
     window.location.assign(localTarget);
-  }, [localOrigin, onHostSwitched]);
+  }, [hostAccess, localOrigin, onHostSwitched]);
 
   const cancelSshSwitch = React.useCallback(async () => {
     const hostId = sshSwitchModal.hostId || switchingHostId;
@@ -971,7 +992,7 @@ export function DesktopHostSwitcherDialog({
                             )}
                             onClick={() => void setDefault(host.id)}
                             aria-label={isDefault ? t('desktopHostSwitcher.actions.defaultInstanceAria') : t('desktopHostSwitcher.actions.setAsDefaultAria')}
-                            disabled={isSaving || (!isDefault && isBlockedDisplayStatus(statusKind))}
+                            disabled={hostAccess === 'metadata' || isSaving || (!isDefault && isBlockedDisplayStatus(statusKind))}
                           >
                             {isDefault ? <Icon name="star-fill" className="h-4 w-4" /> : <Icon name="star" className="h-4 w-4" />}
                           </button>

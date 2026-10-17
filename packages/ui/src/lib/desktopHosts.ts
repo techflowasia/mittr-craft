@@ -40,6 +40,8 @@ export type DesktopHostRelay = {
 
 export type DesktopHost = {
   id: string;
+  access?: 'metadata';
+  hasRelay?: boolean;
   label: string;
   /** Legacy/UI URL. During migration this may equal apiUrl. For relay hosts this is a display-only `relay://<serverId>` pseudo-URL. */
   url: string;
@@ -66,6 +68,7 @@ const parseHostRelay = (value: unknown): DesktopHostRelay | null => {
 };
 
 export type DesktopHostsConfig = {
+  access?: 'full' | 'metadata';
   hosts: DesktopHost[];
   defaultHostId: string | null;
   initialHostChoiceCompleted: boolean;
@@ -197,7 +200,7 @@ export const importDesktopHostPairing = async (
 };
 
 export type HostProbeResult = {
-  status: 'ok' | 'auth' | 'update-recommended' | 'incompatible' | 'wrong-service' | 'unreachable';
+  status: 'ok' | 'auth' | 'update-recommended' | 'incompatible' | 'wrong-service' | 'unreachable' | 'unknown';
   latencyMs: number;
 };
 
@@ -319,14 +322,16 @@ const parseHost = (value: unknown): DesktopHost | null => {
   const label = readString(value, 'label');
   const url = readString(value, 'url');
   const apiUrl = readString(value, 'apiUrl') || readString(value, 'api_url');
-  const clientToken = readString(value, 'clientToken') || readString(value, 'client_token');
-  const requestHeaders = sanitizeRequestHeaders(value.requestHeaders);
-  const relay = parseHostRelay(value.relay);
+  const metadata = value.access === 'metadata';
+  const clientToken = metadata ? null : readString(value, 'clientToken') || readString(value, 'client_token');
+  const requestHeaders = metadata ? undefined : sanitizeRequestHeaders(value.requestHeaders);
+  const relay = metadata ? null : parseHostRelay(value.relay);
   if (!id || !label || !url) return null;
   return {
     id,
     label,
     url,
+    ...(metadata ? { access: 'metadata' as const, hasRelay: value.hasRelay === true } : {}),
     ...(apiUrl ? { apiUrl } : {}),
     ...(clientToken ? { clientToken } : {}),
     ...(requestHeaders ? { requestHeaders } : {}),
@@ -356,7 +361,7 @@ export const desktopHostsGet = async (): Promise<DesktopHostsConfig> => {
 
   const hostsRaw = raw.hosts;
   const hosts = Array.isArray(hostsRaw)
-    ? hostsRaw.map(parseHost).filter((h): h is DesktopHost => Boolean(h))
+    ? hostsRaw.map((host) => parseHost(raw.access === 'metadata' && isRecord(host) ? { ...host, access: 'metadata' } : host)).filter((h): h is DesktopHost => Boolean(h))
     : [];
 
   const defaultHostId =
@@ -368,10 +373,12 @@ export const desktopHostsGet = async (): Promise<DesktopHostsConfig> => {
     raw.initialHostChoiceCompleted === true || raw.initial_host_choice_completed === true;
   const localOrigin = readString(raw, 'localOrigin') || readString(raw, 'local_origin');
 
-  return { hosts, defaultHostId, initialHostChoiceCompleted, localOrigin };
+  if (raw.access !== undefined && raw.access !== 'full' && raw.access !== 'metadata') throw new Error('Invalid desktop host access');
+  return { hosts, defaultHostId, initialHostChoiceCompleted, localOrigin, access: raw.access === 'metadata' ? 'metadata' : 'full' };
 };
 
 export const desktopHostsSet = async (config: DesktopHostsConfigInput): Promise<void> => {
+  if (config.hosts.some((host) => host.access === 'metadata')) throw new Error('Desktop host metadata cannot be saved');
   const invoke = getInvoke();
   if (!invoke) return;
   const input: Record<string, unknown> = {
@@ -503,6 +510,24 @@ export const desktopOpenNewWindowAtUrl = async (url: string, options?: { clientT
  * the new window boots the local UI and picks the transport itself (direct
  * first, E2EE tunnel fallback), which a fixed URL cannot express.
  */
+export const desktopSavedHostProbe = async (hostId: string): Promise<HostProbeResult> => {
+  const invoke = getInvoke();
+  if (!invoke) throw new Error('Desktop host probing is unavailable');
+  const raw = await invoke('desktop_saved_host_probe', { hostId });
+  if (!isRecord(raw)) throw new Error('Invalid desktop host probe');
+  if (raw.status === 'relay-unavailable') return { status: 'unknown', latencyMs: 0 };
+  const statuses = ['ok', 'auth', 'update-recommended', 'incompatible', 'wrong-service', 'unreachable'] as const;
+  const status = statuses.find((status) => status === raw.status);
+  if (!status) throw new Error('Invalid desktop host probe status');
+  return { status, latencyMs: readNumber(raw, 'latencyMs') ?? 0 };
+};
+
+export const desktopSwitchToHost = async (hostId: string): Promise<void> => {
+  const invoke = getInvoke();
+  if (!invoke) throw new Error('Desktop host switching is unavailable');
+  await invoke('desktop_switch_to_host', { hostId });
+};
+
 export const desktopOpenNewWindowForHost = async (hostId: string): Promise<void> => {
   const invoke = getInvoke();
   if (!invoke) return;

@@ -62,7 +62,8 @@ if (clientToken && isLocalPage) {
 // Which saved host this window should connect to over the relay-capable path
 // (direct probe first, E2EE tunnel fallback). Local pages only — the id is
 // only useful together with the desktop IPC channel anyway.
-const relayHostId = readArgValue('--mittrcraft-relay-host-id');
+const navigationHostId = isLocalPage ? new URL(location.href).searchParams.get('desktopHostId') : '';
+const relayHostId = navigationHostId || readArgValue('--mittrcraft-relay-host-id');
 if (relayHostId && isLocalPage) {
   contextBridge.exposeInMainWorld('__MITTRCRAFT_RELAY_HOST_ID__', relayHostId);
 }

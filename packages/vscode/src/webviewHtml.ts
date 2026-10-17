@@ -43,6 +43,13 @@ const uniqueTokens = (values: Array<string | null | undefined>): string => {
   return Array.from(new Set(values.map(asCspToken).filter((value): value is string => Boolean(value)))).join(' ');
 };
 
+const serializeInlineScript = (value: unknown): string => {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+};
+
 export function getWebviewHtml(options: WebviewHtmlOptions): string {
   const {
     webview,
@@ -57,7 +64,6 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
     devServerUrl,
     extensionVersion = '',
   } = options;
-  const workspaceFoldersJson = JSON.stringify(workspaceFolders).replace(/</g, '\\u003c');
 
   const scriptPath = vscode.Uri.joinPath(extensionUri, 'dist', 'webview', 'assets', 'index.js');
   const scriptUri = webview.asWebviewUri(scriptPath);
@@ -73,6 +79,19 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
   const workerSrc = uniqueTokens([webview.cspSource, 'blob:', devServerOrigin]);
 
   const themeKind = getThemeKindName(vscode.window.activeColorTheme.kind);
+  const bootstrapConfig = serializeInlineScript({
+    workspaceFolder,
+    workspaceFolders,
+    theme: themeKind,
+    connectionStatus: initialStatus,
+    cliAvailable,
+    extensionVersion,
+    platform: os.platform(),
+    arch: os.arch(),
+    panelType,
+    viewMode,
+    initialSessionId: initialSessionId || null,
+  });
 
   // Use VS Code CSS variables for proper theme integration
   // These variables are automatically provided by VS Code to webviews
@@ -181,20 +200,8 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
     // Polyfill process for Node.js modules running in browser
     window.process = window.process || { env: { NODE_ENV: 'production' }, platform: '', version: '', browser: true };
 
-    window.__VSCODE_CONFIG__ = {
-      workspaceFolder: "${workspaceFolder.replace(/\\/g, '\\\\')}",
-      workspaceFolders: ${workspaceFoldersJson},
-      theme: "${themeKind}",
-      connectionStatus: "${initialStatus}",
-      cliAvailable: ${cliAvailable},
-      extensionVersion: "${extensionVersion.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}",
-      platform: "${os.platform()}",
-      arch: "${os.arch()}",
-      panelType: "${panelType}",
-      viewMode: "${viewMode}",
-      initialSessionId: ${initialSessionId ? `"${initialSessionId.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : 'null'},
-    };
-    window.__MITTRCRAFT_HOME__ = "${workspaceFolder.replace(/\\/g, '\\\\')}";
+    window.__VSCODE_CONFIG__ = ${bootstrapConfig};
+    window.__MITTRCRAFT_HOME__ = window.__VSCODE_CONFIG__.workspaceFolder;
     
     function getBootstrapMessages() {
       var locale = 'en';
@@ -262,8 +269,8 @@ export function getWebviewHtml(options: WebviewHtmlOptions): string {
     });
   </script>
   <script type="module">
-    const prodEntryUrl = ${JSON.stringify(scriptUri.toString())};
-    const devServerUrl = ${normalizedDevServerUrl ? JSON.stringify(normalizedDevServerUrl) : 'null'};
+    const prodEntryUrl = ${serializeInlineScript(scriptUri.toString())};
+    const devServerUrl = ${serializeInlineScript(normalizedDevServerUrl)};
 
     const loadProductionBundle = () => {
       const script = document.createElement('script');

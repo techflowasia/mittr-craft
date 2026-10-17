@@ -51,6 +51,7 @@ import {
 } from '@/lib/desktopSsh';
 import {
   desktopHostProbe,
+  desktopSavedHostProbe,
   desktopHostsGet,
   desktopHostsSet,
   desktopInstallIdGet,
@@ -421,6 +422,7 @@ export const RemoteInstancesPage: React.FC = () => {
   const [isPrimaryActionPending, setIsPrimaryActionPending] = React.useState(false);
   const [isRetryPending, setIsRetryPending] = React.useState(false);
   const [clockMs, setClockMs] = React.useState(() => Date.now());
+  const [directHostAccess, setDirectHostAccess] = React.useState<'full' | 'metadata'>('full');
   const [directHosts, setDirectHosts] = React.useState<DesktopHost[]>([]);
   // Live reachability per saved host (undefined = probe in flight), mirroring
   // the host switcher's status line so this list is not just dead text.
@@ -475,6 +477,7 @@ export const RemoteInstancesPage: React.FC = () => {
     setDirectError(null);
     try {
       const config = await desktopHostsGet();
+      setDirectHostAccess(config.access || 'full');
       setDirectHosts(config.hosts || []);
       setDirectDefaultHostId(config.defaultHostId || 'local');
     } catch (err) {
@@ -751,6 +754,9 @@ export const RemoteInstancesPage: React.FC = () => {
     if (!showInstanceManagement || directHosts.length === 0) return;
     let cancelled = false;
     void Promise.all(directHosts.map(async (host) => {
+      if (directHostAccess === 'metadata') {
+        return [host.id, await desktopSavedHostProbe(host.id).catch((): HostProbeResult => ({ status: 'unknown', latencyMs: 0 }))] as const;
+      }
       const relayProbe = () => probeRelayDesktopHost(host.relay!, { clientToken: host.clientToken || null, requestHeaders: host.requestHeaders || null }).catch((): HostProbeResult => ({ status: 'unreachable', latencyMs: 0 }));
       // Relay-only host: tunnel probe. Multi-transport host: direct first,
       // relay as the away-from-home fallback.
@@ -775,7 +781,7 @@ export const RemoteInstancesPage: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [directHosts, showInstanceManagement]);
+  }, [directHostAccess, directHosts, showInstanceManagement]);
 
   const loadRemoteClients = React.useCallback(async (options?: { silent?: boolean }) => {
     if (!clientAuth) return;
@@ -1502,10 +1508,10 @@ export const RemoteInstancesPage: React.FC = () => {
                the manual fallback. The token-storage note lives in the add
                dialog next to the token field it describes. */
             <div className="flex shrink-0 items-center gap-2">
-              <Button type="button" size="xs" className="!font-normal" onClick={() => setDirectImportDialogOpen(true)} disabled={directSaving}>
+              <Button type="button" size="xs" className="!font-normal" onClick={() => setDirectImportDialogOpen(true)} disabled={directHostAccess === 'metadata' || directSaving}>
                 {t('settings.remoteInstances.direct.import.action')}
               </Button>
-              <Button type="button" variant="outline" size="xs" className="!font-normal" onClick={() => setDirectAddDialogOpen(true)} disabled={directSaving}>
+              <Button type="button" variant="outline" size="xs" className="!font-normal" onClick={() => setDirectAddDialogOpen(true)} disabled={directHostAccess === 'metadata' || directSaving}>
                 <Icon name="add" className="h-3.5 w-3.5" />
                 {t('settings.remoteInstances.direct.actions.add')}
               </Button>
@@ -1556,7 +1562,7 @@ export const RemoteInstancesPage: React.FC = () => {
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
-                        <Button type="button" variant="ghost" size="xs" className="!font-normal" onClick={() => void setDefaultDirectHost(host.id)} disabled={directSaving || directDefaultHostId === host.id} aria-label={t('desktopHostSwitcher.actions.setAsDefaultAria')}>
+                        <Button type="button" variant="ghost" size="xs" className="!font-normal" onClick={() => void setDefaultDirectHost(host.id)} disabled={directHostAccess === 'metadata' || directSaving || directDefaultHostId === host.id} aria-label={t('desktopHostSwitcher.actions.setAsDefaultAria')}>
                           {directDefaultHostId === host.id ? <Icon name="star-fill" className="h-3.5 w-3.5" /> : <Icon name="star" className="h-3.5 w-3.5" />}
                         </Button>
                         {/* The edit form is URL/token-centric; relay-ONLY hosts have
@@ -1564,12 +1570,12 @@ export const RemoteInstancesPage: React.FC = () => {
                             link instead. Multi-transport hosts keep their relay leg
                             through the edit (object spread preserves it). */}
                         {host.relay && !host.apiUrl ? null : (
-                          <Button type="button" variant="ghost" size="xs" className="!font-normal" onClick={() => beginEditDirectHost(host)} disabled={directSaving}>
+                          <Button type="button" variant="ghost" size="xs" className="!font-normal" onClick={() => beginEditDirectHost(host)} disabled={directHostAccess === 'metadata' || directSaving}>
                             <Icon name="pencil" className="h-3.5 w-3.5" />
                             {t('desktopHostSwitcher.actions.edit')}
                           </Button>
                         )}
-                        <Button type="button" variant="ghost" size="xs" className="!font-normal" onClick={() => void handleRemoveDirectHost(host.id)} disabled={directSaving}>
+                        <Button type="button" variant="ghost" size="xs" className="!font-normal" onClick={() => void handleRemoveDirectHost(host.id)} disabled={directHostAccess === 'metadata' || directSaving}>
                           <Icon name="delete-bin" className="h-3.5 w-3.5" />
                           {t('settings.common.actions.delete')}
                         </Button>
@@ -1590,10 +1596,10 @@ export const RemoteInstancesPage: React.FC = () => {
               <DialogDescription>{t('settings.remoteInstances.direct.addDialog.description')}</DialogDescription>
             </DialogHeader>
             <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void handleAddDirectHost(); }}>
-              <Input className="h-8" value={directLabel} onChange={(event) => setDirectLabel(event.target.value)} placeholder={t('settings.remoteInstances.direct.field.labelPlaceholder')} disabled={directSaving} />
-              <Input className="h-8" value={directUrl} onChange={(event) => setDirectUrl(event.target.value)} placeholder={t('settings.remoteInstances.direct.field.urlPlaceholder')} disabled={directSaving} autoFocus />
+              <Input className="h-8" value={directLabel} onChange={(event) => setDirectLabel(event.target.value)} placeholder={t('settings.remoteInstances.direct.field.labelPlaceholder')} disabled={directHostAccess === 'metadata' || directSaving} />
+              <Input className="h-8" value={directUrl} onChange={(event) => setDirectUrl(event.target.value)} placeholder={t('settings.remoteInstances.direct.field.urlPlaceholder')} disabled={directHostAccess === 'metadata' || directSaving} autoFocus />
               <div className="space-y-1">
-                <Input className="h-8" value={directToken} onChange={(event) => setDirectToken(event.target.value)} placeholder={t('settings.remoteInstances.direct.field.tokenPlaceholder')} type="password" disabled={directSaving} />
+                <Input className="h-8" value={directToken} onChange={(event) => setDirectToken(event.target.value)} placeholder={t('settings.remoteInstances.direct.field.tokenPlaceholder')} type="password" disabled={directHostAccess === 'metadata' || directSaving} />
                 <p className="px-1 typography-micro text-muted-foreground">{t('settings.remoteInstances.direct.note')}</p>
               </div>
               <div className="space-y-2">
@@ -1603,21 +1609,21 @@ export const RemoteInstancesPage: React.FC = () => {
                 </div>
                 {directHeaders.map((header) => (
                   <div key={header.id} className="flex w-full gap-2">
-                    <Input className="h-8 font-mono text-xs" value={header.name} onChange={(event) => setDirectHeaders((headers) => headers.map((item) => item.id === header.id ? { ...item, name: event.target.value } : item))} placeholder={t('settings.remoteInstances.direct.headers.field.namePlaceholder')} disabled={directSaving} />
-                    <Input className="h-8 font-mono text-xs" value={header.value} onChange={(event) => setDirectHeaders((headers) => headers.map((item) => item.id === header.id ? { ...item, value: event.target.value } : item))} placeholder={t('settings.remoteInstances.direct.headers.field.valuePlaceholder')} type="password" disabled={directSaving} />
-                    <button type="button" onClick={() => setDirectHeaders((headers) => headers.filter((item) => item.id !== header.id))} className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-[var(--status-error-background)] hover:text-[var(--status-error)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]" aria-label={t('settings.remoteInstances.direct.headers.removeAria')} disabled={directSaving}>
+                    <Input className="h-8 font-mono text-xs" value={header.name} onChange={(event) => setDirectHeaders((headers) => headers.map((item) => item.id === header.id ? { ...item, name: event.target.value } : item))} placeholder={t('settings.remoteInstances.direct.headers.field.namePlaceholder')} disabled={directHostAccess === 'metadata' || directSaving} />
+                    <Input className="h-8 font-mono text-xs" value={header.value} onChange={(event) => setDirectHeaders((headers) => headers.map((item) => item.id === header.id ? { ...item, value: event.target.value } : item))} placeholder={t('settings.remoteInstances.direct.headers.field.valuePlaceholder')} type="password" disabled={directHostAccess === 'metadata' || directSaving} />
+                    <button type="button" onClick={() => setDirectHeaders((headers) => headers.filter((item) => item.id !== header.id))} className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-[var(--status-error-background)] hover:text-[var(--status-error)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]" aria-label={t('settings.remoteInstances.direct.headers.removeAria')} disabled={directHostAccess === 'metadata' || directSaving}>
                       <Icon name="close" className="h-4 w-4" />
                     </button>
                   </div>
                 ))}
-                <Button type="button" variant="ghost" size="xs" className="!font-normal" onClick={() => setDirectHeaders((headers) => [...headers, createHeaderDraft()])} disabled={directSaving}>
+                <Button type="button" variant="ghost" size="xs" className="!font-normal" onClick={() => setDirectHeaders((headers) => [...headers, createHeaderDraft()])} disabled={directHostAccess === 'metadata' || directSaving}>
                   <Icon name="add" className="h-3.5 w-3.5" />
                   {t('settings.remoteInstances.direct.headers.actions.add')}
                 </Button>
               </div>
               <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" size="xs" className="!font-normal" onClick={() => setDirectAddDialogOpen(false)} disabled={directSaving}>{t('settings.common.actions.cancel')}</Button>
-                <Button type="submit" size="xs" className="!font-normal" disabled={directSaving || !directUrl.trim()}>{t('settings.remoteInstances.direct.actions.add')}</Button>
+                <Button type="button" variant="outline" size="xs" className="!font-normal" onClick={() => setDirectAddDialogOpen(false)} disabled={directHostAccess === 'metadata' || directSaving}>{t('settings.common.actions.cancel')}</Button>
+                <Button type="submit" size="xs" className="!font-normal" disabled={directHostAccess === 'metadata' || directSaving || !directUrl.trim()}>{t('settings.remoteInstances.direct.actions.add')}</Button>
               </div>
             </form>
           </DialogContent>
@@ -1630,9 +1636,9 @@ export const RemoteInstancesPage: React.FC = () => {
               <DialogDescription>{t('settings.remoteInstances.direct.description')}</DialogDescription>
             </DialogHeader>
             <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void saveDirectHostEdit(); }}>
-              <Input className="h-8" value={directEditLabel} onChange={(event) => setDirectEditLabel(event.target.value)} placeholder={t('settings.remoteInstances.direct.field.labelPlaceholder')} disabled={directSaving} />
-              <Input className="h-8" value={directEditUrl} onChange={(event) => setDirectEditUrl(event.target.value)} placeholder={t('settings.remoteInstances.direct.field.urlPlaceholder')} disabled={directSaving} autoFocus />
-              <Input className="h-8" value={directEditToken} onChange={(event) => setDirectEditToken(event.target.value)} placeholder={t('settings.remoteInstances.direct.field.tokenPlaceholder')} type="password" disabled={directSaving} />
+              <Input className="h-8" value={directEditLabel} onChange={(event) => setDirectEditLabel(event.target.value)} placeholder={t('settings.remoteInstances.direct.field.labelPlaceholder')} disabled={directHostAccess === 'metadata' || directSaving} />
+              <Input className="h-8" value={directEditUrl} onChange={(event) => setDirectEditUrl(event.target.value)} placeholder={t('settings.remoteInstances.direct.field.urlPlaceholder')} disabled={directHostAccess === 'metadata' || directSaving} autoFocus />
+              <Input className="h-8" value={directEditToken} onChange={(event) => setDirectEditToken(event.target.value)} placeholder={t('settings.remoteInstances.direct.field.tokenPlaceholder')} type="password" disabled={directHostAccess === 'metadata' || directSaving} />
               <div className="space-y-2">
                 <div className="flex items-center gap-1.5">
                   <SettingsGroupTitle>{t('settings.remoteInstances.direct.headers.title')}</SettingsGroupTitle>
@@ -1640,21 +1646,21 @@ export const RemoteInstancesPage: React.FC = () => {
                 </div>
                 {directEditHeaders.map((header) => (
                   <div key={header.id} className="flex w-full gap-2">
-                    <Input className="h-8 font-mono text-xs" value={header.name} onChange={(event) => setDirectEditHeaders((headers) => headers.map((item) => item.id === header.id ? { ...item, name: event.target.value } : item))} placeholder={t('settings.remoteInstances.direct.headers.field.namePlaceholder')} disabled={directSaving} />
-                    <Input className="h-8 font-mono text-xs" value={header.value} onChange={(event) => setDirectEditHeaders((headers) => headers.map((item) => item.id === header.id ? { ...item, value: event.target.value } : item))} placeholder={t('settings.remoteInstances.direct.headers.field.valuePlaceholder')} type="password" disabled={directSaving} />
-                    <button type="button" onClick={() => setDirectEditHeaders((headers) => headers.filter((item) => item.id !== header.id))} className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-[var(--status-error-background)] hover:text-[var(--status-error)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]" aria-label={t('settings.remoteInstances.direct.headers.removeAria')} disabled={directSaving}>
+                    <Input className="h-8 font-mono text-xs" value={header.name} onChange={(event) => setDirectEditHeaders((headers) => headers.map((item) => item.id === header.id ? { ...item, name: event.target.value } : item))} placeholder={t('settings.remoteInstances.direct.headers.field.namePlaceholder')} disabled={directHostAccess === 'metadata' || directSaving} />
+                    <Input className="h-8 font-mono text-xs" value={header.value} onChange={(event) => setDirectEditHeaders((headers) => headers.map((item) => item.id === header.id ? { ...item, value: event.target.value } : item))} placeholder={t('settings.remoteInstances.direct.headers.field.valuePlaceholder')} type="password" disabled={directHostAccess === 'metadata' || directSaving} />
+                    <button type="button" onClick={() => setDirectEditHeaders((headers) => headers.filter((item) => item.id !== header.id))} className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-[var(--status-error-background)] hover:text-[var(--status-error)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]" aria-label={t('settings.remoteInstances.direct.headers.removeAria')} disabled={directHostAccess === 'metadata' || directSaving}>
                       <Icon name="close" className="h-4 w-4" />
                     </button>
                   </div>
                 ))}
-                <Button type="button" variant="ghost" size="xs" className="!font-normal" onClick={() => setDirectEditHeaders((headers) => [...headers, createHeaderDraft()])} disabled={directSaving}>
+                <Button type="button" variant="ghost" size="xs" className="!font-normal" onClick={() => setDirectEditHeaders((headers) => [...headers, createHeaderDraft()])} disabled={directHostAccess === 'metadata' || directSaving}>
                   <Icon name="add" className="h-3.5 w-3.5" />
                   {t('settings.remoteInstances.direct.headers.actions.add')}
                 </Button>
               </div>
               <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" size="xs" className="!font-normal" onClick={() => setDirectEditingId(null)} disabled={directSaving}>{t('settings.common.actions.cancel')}</Button>
-                <Button type="submit" size="xs" className="!font-normal" disabled={directSaving}>{t('settings.common.actions.saveChanges')}</Button>
+                <Button type="button" variant="outline" size="xs" className="!font-normal" onClick={() => setDirectEditingId(null)} disabled={directHostAccess === 'metadata' || directSaving}>{t('settings.common.actions.cancel')}</Button>
+                <Button type="submit" size="xs" className="!font-normal" disabled={directHostAccess === 'metadata' || directSaving}>{t('settings.common.actions.saveChanges')}</Button>
               </div>
             </form>
           </DialogContent>
@@ -1667,10 +1673,10 @@ export const RemoteInstancesPage: React.FC = () => {
               <DialogDescription>{t('settings.remoteInstances.direct.import.description')}</DialogDescription>
             </DialogHeader>
             <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void importDirectConnectLink(); }}>
-              <Input className="h-8" value={directConnectLink} onChange={(event) => setDirectConnectLink(event.target.value)} placeholder={t('settings.remoteInstances.direct.import.placeholder')} disabled={directSaving} autoFocus />
+              <Input className="h-8" value={directConnectLink} onChange={(event) => setDirectConnectLink(event.target.value)} placeholder={t('settings.remoteInstances.direct.import.placeholder')} disabled={directHostAccess === 'metadata' || directSaving} autoFocus />
               <div className="flex justify-end gap-2">
-                <Button type="button" variant="outline" size="xs" className="!font-normal" onClick={() => setDirectImportDialogOpen(false)} disabled={directSaving}>{t('settings.common.actions.cancel')}</Button>
-                <Button type="submit" size="xs" className="!font-normal" disabled={directSaving || !directConnectLink.trim()}>{t('settings.remoteInstances.direct.import.action')}</Button>
+                <Button type="button" variant="outline" size="xs" className="!font-normal" onClick={() => setDirectImportDialogOpen(false)} disabled={directHostAccess === 'metadata' || directSaving}>{t('settings.common.actions.cancel')}</Button>
+                <Button type="submit" size="xs" className="!font-normal" disabled={directHostAccess === 'metadata' || directSaving || !directConnectLink.trim()}>{t('settings.remoteInstances.direct.import.action')}</Button>
               </div>
             </form>
           </DialogContent>

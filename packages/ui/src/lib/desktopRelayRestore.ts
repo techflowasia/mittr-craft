@@ -120,7 +120,18 @@ export const restoreDesktopRelayRuntime = async (targetHostId?: string): Promise
   const hostId = targetHostId || (config.defaultHostId !== 'local' ? config.defaultHostId : null);
   if (!hostId) return;
   const host = config.hosts.find((entry) => entry.id === hostId);
-  if (!host?.relay) return;
+  if (config.access === 'metadata') return;
+  if (hostId === 'local') {
+    const { desktopLocalClientTokenGet } = await import('@/lib/desktopHosts');
+    switchRuntimeEndpoint({ apiBaseUrl: config.localOrigin || '', clientToken: await desktopLocalClientTokenGet(), runtimeKey: 'local' });
+    return;
+  }
+  if (!host) return;
+  if (targetHostId && !host.relay) {
+    switchRuntimeEndpoint({ apiBaseUrl: getDesktopHostApiUrl(host), clientToken: host.clientToken || null, requestHeaders: host.requestHeaders || null, runtimeKey: `host:${host.id}` });
+    return;
+  }
+  if (!host.relay) return;
   // Must match runtimeKeyForHost() in DesktopHostSwitcher so switch/resolve agree.
   const runtimeKey = `host:${host.id}`;
   if (getRuntimeKey() === runtimeKey) return;

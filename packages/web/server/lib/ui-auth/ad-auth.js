@@ -59,7 +59,7 @@ const createLdapClient = (config) => {
   const client = ldap.createClient({
     url: config.url,
     tlsOptions: {
-      rejectUnauthorized: false,
+      rejectUnauthorized: true,
     },
     connectTimeout: 5000,
     timeout: 10000,

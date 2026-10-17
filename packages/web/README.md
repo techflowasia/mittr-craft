@@ -60,6 +60,10 @@ MittrCraft uses Authorization Code Flow with PKCE and validates the returned ID 
 
 This redirect flow signs in browser sessions. MittrCraft Desktop continues to use its client credential or UI-password flow; open an Entra-only remote instance in a browser.
 
+Legacy LDAP / Active Directory requires `MITTR_AD_ENABLED=true` plus `MITTR_AD_URL`, `MITTR_AD_BIND_DN`, `MITTR_AD_BIND_PASSWORD`, and `MITTR_AD_SEARCH_BASE`. Any non-empty Entra configuration takes precedence, even when incomplete; it does not fall back to LDAP.
+
+Use `ldaps://` for encrypted directory connections. Both LDAP login and profile lookup verify TLS server certificates and hostnames. For a private CA, set `NODE_EXTRA_CA_CERTS=/absolute/path/to/directory-ca.pem` in the server environment **before Node starts** (including service startup), then restart the server. Node reads this PEM CA bundle at startup; changing the environment in a running process is insufficient. Fix the trust chain or hostname rather than disabling verification; the adapter provides no insecure bypass. Existing `ldap://` URLs remain compatible but are plaintext, **not encrypted**, and are not upgraded with StartTLS. See [LDAP authentication details](server/lib/ui-auth/DOCUMENTATION.md#ldap--active-directory).
+
 `startup enable` snapshots your current environment into the native service so startup behaves like you launched `mittrcraft` from the same shell. This preserves provider tokens, PATH, SSH agent settings, and other CLI auth/config env vars. Use `--no-env-snapshot` for a minimal service env.
 
 When MittrCraft launches the local OpenCode server, it also registers a native
