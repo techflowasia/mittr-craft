@@ -3,7 +3,8 @@ import React, { act } from 'react';
 import { Window } from 'happy-dom';
 
 const browser = new Window({ url: 'http://localhost/' });
-Object.assign(globalThis, {
+const originals = new Map<string, PropertyDescriptor | undefined>();
+for (const [name, value] of Object.entries({
   window: browser, document: browser.document, navigator: browser.navigator,
   Node: browser.Node, Element: browser.Element, HTMLElement: browser.HTMLElement,
   Event: browser.Event, MouseEvent: browser.MouseEvent, PointerEvent: browser.PointerEvent,
@@ -15,7 +16,10 @@ Object.assign(globalThis, {
   localStorage: browser.localStorage, sessionStorage: browser.sessionStorage,
   fetch: () => new Promise<Response>(() => {}),
   IS_REACT_ACT_ENVIRONMENT: true,
-});
+})) {
+  originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+  Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
+}
 
 const { createRoot } = await import('react-dom/client');
 const { I18nProvider } = await import('@/lib/i18n');
@@ -41,8 +45,12 @@ afterEach(() => {
   resetProductUiPluginsForTests();
 });
 
-afterAll(() => {
-  browser.close();
+afterAll(async () => {
+  for (const [name, descriptor] of originals) {
+    if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+    else Reflect.deleteProperty(globalThis, name);
+  }
+  await browser.happyDOM.close();
 });
 
 describe('AboutDialog product slot', () => {
