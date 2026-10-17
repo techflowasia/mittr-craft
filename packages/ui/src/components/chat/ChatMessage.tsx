@@ -44,6 +44,7 @@ import { setContextObligatoryMessage } from '@/sync/session-actions';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { useChatColumnActions } from './chatColumnSession';
 import { isFileChangeTool, isShellTool } from '@/lib/opencode/tools';
+import { ProductSlot, translateProductMessageError } from '@/lib/product-plugins';
 
 const ToolOutputDialog = lazyWithChunkRecovery(() => import('./message/ToolOutputDialog'));
 
@@ -561,6 +562,13 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
         if (isUser) {
             return undefined;
         }
+        if (message.info.role === 'assistant' && message.info.error) {
+            const { type, message: errorText, status, response } = message.info.error;
+            const productText = translateProductMessageError({ type, message: errorText, status, responseBody: response?.body });
+            if (productText !== null) {
+                return { text: productText };
+            }
+        }
         const errorInfo = (message.info as { error?: unknown } | undefined)?.error as
             | { data?: { message?: unknown }; message?: unknown; name?: unknown }
             | undefined;
@@ -918,7 +926,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                                 isDarkTheme={isDarkTheme}
                                 extraActions={guestMessageActions}
                             />
-
+                            <ProductSlot name="assistant-message-footer" message={message} isLatestTurn={turnGroupingContext?.isLatestTurn === true} />
                         </div>
                     )}
                 </div>

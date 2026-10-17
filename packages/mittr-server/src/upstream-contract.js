@@ -355,6 +355,11 @@ export const UPSTREAM_CONTRACT = [
     why: "the usage.model-quotas search item is titled by settings.usage.page.section.modelQuotas, which our English override renames to Weekly model quotas, and the Usage page's own search keywords include quota",
   },
   {
+    id: 'chat-message-product-hooks',
+    files: ['packages/ui/src/components/chat/ChatMessage.tsx', 'packages/ui/src/lib/product-plugins.ts'],
+    why: "an assistant message asks translateProductMessageError once, with its error's type, message, status and response body, before any of upstream's own error texts, and renders the assistant-message-footer slot once, under the assistant message body, with the message and whether its turn is the latest; the used-up quota text and Try again live there",
+  },
+  {
     id: 'account-menu-ui',
     files: [
       'packages/ui/src/components/ui/dropdown-menu.tsx',

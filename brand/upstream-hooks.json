@@ -143,6 +143,12 @@
       "why": "A product plugin could only rename the product and swap the logo, so a build that needs its own sign-in screen, account menu, model-picker marks or composer actions would have had to edit each upstream component; a root wrapper and named slots that render nothing when no plugin fills them let it add those at one-line call sites."
     }
   ],
+  "packages/ui/src/components/chat/ChatMessage.tsx": [
+    {
+      "hook": "chat-message",
+      "why": "An assistant message showed every failed turn as the engine's raw error and had no place for a product's own follow-up, so a build whose provider refuses a turn for a reason the person can act on (a used-up weekly quota) could neither say so plainly nor offer to send it again; a product plugin may now reword the error first, and a footer slot under the message renders nothing when no plugin fills it."
+    }
+  ],
   "packages/ui/src/components/chat/ModelControls.tsx": [
     {
       "hook": "model-controls",
