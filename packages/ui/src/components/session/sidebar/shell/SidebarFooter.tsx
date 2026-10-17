@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
+import { ProductSlot } from '@/lib/product-plugins';
 
 type Props = {
   onOpenSettings: () => void;
@@ -67,6 +68,7 @@ export function SidebarFooter({
             </TooltipTrigger>
             <TooltipContent side="top" sideOffset={4}><p>{t('sessions.sidebar.footer.actions.aboutOpenChamber')}</p></TooltipContent>
           </Tooltip>
+          <ProductSlot name="sidebar-footer" />
         </>
       ) : null}
       {showUpdateButton ? (

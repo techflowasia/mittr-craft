@@ -856,6 +856,28 @@ const checks = {
     has(refresh, /await restartOpenCode\(reason \|\| 'config-change'\);[\s\S]*await waitForOpenCodeReady\(\);/, 'a refresh no longer restarts the managed OpenCode and waits for it to be ready');
     has(lifecycle, /state\.openCodeProcess = await startOpenCode\(\);/, 'a managed restart no longer goes through startOpenCode, which reads the engine env');
   },
+
+  'sidebar-footer-slot': () => {
+    const footer = source('packages/ui/src/components/session/sidebar/shell/SidebarFooter.tsx');
+    has(footer, /^import \{ ProductSlot \} from '@\/lib\/product-plugins';$/m, 'SidebarFooter no longer imports ProductSlot');
+    assert.equal(lineCount(footer, '<ProductSlot '), 1, 'SidebarFooter renders ProductSlot more than once, or not at all');
+    const runtime = footer.indexOf('{showRuntimeButtons ? (');
+    const about = footer.indexOf("t('sessions.sidebar.footer.actions.aboutOpenChamber')");
+    const slot = footer.indexOf('<ProductSlot name="sidebar-footer" />');
+    const update = footer.indexOf('{showUpdateButton ? (');
+    assert.ok(runtime >= 0 && about > runtime && slot > about && update > slot, 'the sidebar-footer slot is no longer after the runtime buttons and before the update button');
+    has(source('packages/ui/src/lib/product-plugins.ts'), /'sidebar-footer': Record<never, never>;/);
+  },
+
+  'sidebar-footer-visible-on-desktop': () => {
+    const footer = source('packages/ui/src/components/session/sidebar/shell/SidebarFooter.tsx');
+    has(footer, /^ {2}showRuntimeButtons = true,$/m, 'the footer no longer shows its runtime buttons by default');
+    has(footer, /if \(!showRuntimeButtons && !showUpdateButton\) \{\s*return null;\s*\}/, 'the footer now hides itself in another case');
+    const sidebar = source('packages/ui/src/components/session/SessionSidebar.tsx');
+    assert.equal(lineCount(sidebar, '<SidebarFooter'), 1, 'the session sidebar renders its footer more than once, or not at all');
+    const start = sidebar.indexOf('<SidebarFooter');
+    assert.ok(sidebar.slice(start, sidebar.indexOf('/>', start)).includes('showRuntimeButtons={!isVSCode}'), 'the session sidebar no longer shows the footer runtime buttons everywhere but VS Code');
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {

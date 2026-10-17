@@ -294,6 +294,16 @@ export const UPSTREAM_CONTRACT = [
     files: ['packages/web/server/lib/opencode/lifecycle.js', 'packages/web/server/index.js'],
     why: "a plugin's opencode.refresh(reason) restarts the managed OpenCode and waits for it to be ready, and that restart reads the plugins' engine env again, so a Mittr account switch moves the engine onto the account's home; a refresh that lands while another restart is under way joins it instead, and that restart may have read the env before the switch, so the switcher checks opencode.launchedDataHome() afterwards and refreshes once more when the engine came up elsewhere",
   },
+  {
+    id: 'sidebar-footer-slot',
+    files: ['packages/ui/src/components/session/sidebar/shell/SidebarFooter.tsx', 'packages/ui/src/lib/product-plugins.ts'],
+    why: 'the sidebar footer renders the sidebar-footer slot once, after its settings, usage, shortcuts and about buttons and before the update button; the account menu lives there',
+  },
+  {
+    id: 'sidebar-footer-visible-on-desktop',
+    files: ['packages/ui/src/components/session/sidebar/shell/SidebarFooter.tsx', 'packages/ui/src/components/session/SessionSidebar.tsx'],
+    why: 'the session sidebar renders its footer once, with the runtime buttons (and so the sidebar-footer slot) shown everywhere but VS Code, so the account menu is there on desktop',
+  },
 ];
 
 // The dictionaries are TypeScript with extensionless imports, which only Bun

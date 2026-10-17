@@ -169,6 +169,12 @@
       "why": "The providers page had no place for a product's own provider setting, so a build that adds one (a switch for showing other providers) would have had to edit the page; a slot inside the page layout, above the provider cards, renders nothing when no plugin fills it."
     }
   ],
+  "packages/ui/src/components/session/sidebar/shell/SidebarFooter.tsx": [
+    {
+      "hook": "sidebar-footer",
+      "why": "The sidebar footer had no place for a product's own control, so a build that adds one there (an account menu) would have had to edit the footer; a slot after the settings, usage, shortcuts and about buttons renders nothing when no plugin fills it and is shown wherever those buttons are."
+    }
+  ],
   "packages/ui/src/components/ui/OpenChamberLogo.tsx": [
     {
       "hook": "ui",
