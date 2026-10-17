@@ -31,7 +31,7 @@ The log never shows a password, the bind password or anything the person typed. 
 These routes sit outside `/api`. Each one refuses tunnel and unknown-public requests with 403.
 
 - `GET /auth/ad/status`
-- `GET /auth/ad/login`: limited to 20 starts per address per 10 minutes. At most 1000 sign-ins can be in progress at once; a new one is refused when that many are open, and no sign-in in progress is pushed out.
+- `GET /auth/ad/login`: limited to 20 unfinished sign-ins per address. A slot is released when the callback finishes, whether it succeeds or fails, or after 10 minutes. At most 1000 sign-ins can be in progress at once; a new one is refused when that many are open, and no sign-in in progress is pushed out.
 - `GET /auth/ad/callback`
 - `POST /auth/ad/session`: LDAP only. Limited to 10 failed attempts per address per 5 minutes, then a 15-minute lockout.
 - `GET /auth/ad/profile`
@@ -49,3 +49,5 @@ Upstream's "sign out everywhere" (`POST /api/auth/reset`) rotates the secret tha
 - The 1.22 names `MITTRCRAFT_UI_PASSWORD`, `MITTRCRAFT_ALLOW_UNAUTHENTICATED_LAN` and `MITTRCRAFT_DATA_DIR`, mapped onto their `OPENCHAMBER_*` names.
 
 It refuses to start when a `MITTR_AD_*` setting is present but `OPENCHAMBER_SERVER_PLUGINS` does not load this plugin.
+
+Run from a source checkout (a `.git` above the package), it also refuses to start unless `OPENCHAMBER_DATA_DIR` or `MITTRCRAFT_DATA_DIR` is set, so a developer's machine never runs a server on the installed app's data. A packed install has no `.git` and keeps the `~/.config/mittrcraft` default.

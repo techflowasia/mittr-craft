@@ -15,6 +15,7 @@ const { env, refusal } = prepareCliEnvironment({
   homeDir: os.homedir(),
   pluginPath: PLUGIN,
   productEnv: readProductEnv(PRODUCT),
+  packageDir: path.resolve(here, '..'),
 });
 if (refusal) {
   console.error(refusal);

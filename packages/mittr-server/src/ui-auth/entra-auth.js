@@ -304,6 +304,9 @@ export const createEntraAuth = (env = process.env, {
     mode: 'entra',
     beginAuthorization,
     completeAuthorization,
+    cancelAuthorization: (state) => {
+      transactions.delete(state);
+    },
     getStatus: () => ({ enabled: true, mode: 'entra' }),
     dispose: () => transactions.clear(),
   };

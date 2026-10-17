@@ -122,3 +122,80 @@ test('the mittrcraft bin exits before the server CLI when company sign-in would 
   assert.ok(!result.stderr.includes('service-account-secret'));
   assert.deepEqual(fs.readdirSync(result.home), []);
 });
+
+const tempLayout = (t, prefix) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const packageDir = path.join(root, 'packages', 'mittr-server');
+  fs.mkdirSync(path.join(packageDir, 'src'), { recursive: true });
+  return { root, packageDir };
+};
+
+test('from a source checkout the bin refuses the default data dir and runs with an explicit one', (t) => {
+  const { root, packageDir } = tempLayout(t, 'mittrcraft-checkout-');
+  fs.mkdirSync(path.join(root, '.git'));
+  const inCheckout = (env) => prepareCliEnvironment({ env, homeDir: '/home/person', pluginPath: PLUGIN, productEnv: PRODUCT_ENV, packageDir });
+
+  const refused = inCheckout({});
+  assert.match(refused.refusal, /^mittrcraft: this copy runs from a source checkout \(/);
+  assert.ok(refused.refusal.includes(root) && refused.refusal.includes('OPENCHAMBER_DATA_DIR or MITTRCRAFT_DATA_DIR'));
+  assert.equal(inCheckout({ OPENCHAMBER_DATA_DIR: '  ' }).refusal.startsWith('mittrcraft: this copy runs from a source checkout'), true);
+
+  const explicit = inCheckout({ OPENCHAMBER_DATA_DIR: '/srv/oc-data' });
+  assert.equal(explicit.refusal, null);
+  assert.equal(explicit.env.OPENCHAMBER_DATA_DIR, '/srv/oc-data');
+  const legacy = inCheckout({ MITTRCRAFT_DATA_DIR: '/srv/mittr-data' });
+  assert.equal(legacy.refusal, null);
+  assert.equal(legacy.env.OPENCHAMBER_DATA_DIR, '/srv/mittr-data');
+
+  const worktree = tempLayout(t, 'mittrcraft-worktree-');
+  fs.writeFileSync(path.join(worktree.root, '.git'), 'gitdir: /elsewhere\n');
+  assert.ok(prepareCliEnvironment({ env: {}, homeDir: '/home/person', pluginPath: PLUGIN, productEnv: PRODUCT_ENV, packageDir: worktree.packageDir }).refusal);
+});
+
+test('this checkout\'s bin refuses to start without a data dir and touches nothing', (t) => {
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-bin-')));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(OPENCHAMBER_|OPENCODE_|XDG_|MITTR)/.test(name)));
+  const result = spawnSync(process.execPath, [BIN, '--help'], { encoding: 'utf8', cwd: home, timeout: 60_000, env: { ...inherited, HOME: home, USERPROFILE: home } });
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /^mittrcraft: this copy runs from a source checkout/);
+  assert.deepEqual(fs.readdirSync(home), []);
+});
+
+test('a packed layout without .git gets the default data dir and the bin touches nothing', (t) => {
+  const { root, packageDir } = tempLayout(t, 'mittrcraft-packed-');
+  fs.mkdirSync(path.join(packageDir, 'bin'));
+  fs.copyFileSync(BIN, path.join(packageDir, 'bin', 'mittrcraft.mjs'));
+  fs.copyFileSync(path.join(repoRoot, 'packages/mittr-server/src/cli-env.js'), path.join(packageDir, 'src', 'cli-env.js'));
+  fs.writeFileSync(path.join(packageDir, 'src', 'plugin.js'), 'export default () => {};\n');
+  fs.mkdirSync(path.join(root, 'brand'));
+  fs.copyFileSync(path.join(repoRoot, 'brand/product.prod.json'), path.join(root, 'brand', 'product.prod.json'));
+  fs.mkdirSync(path.join(root, 'packages', 'web', 'bin'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'packages', 'web', 'bin', 'cli.js'),
+    "console.log(JSON.stringify({ args: process.argv.slice(2), dataDir: process.env.OPENCHAMBER_DATA_DIR, plugins: process.env.OPENCHAMBER_SERVER_PLUGINS, broker: process.env.MITTRCRAFT_BROKER_URL }));\n",
+  );
+  fs.writeFileSync(path.join(root, 'packages', 'web', 'package.json'), '{"type":"module"}\n');
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-bin-')));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(OPENCHAMBER_|OPENCODE_|XDG_|MITTR)/.test(name)));
+
+  const result = spawnSync(process.execPath, [path.join(packageDir, 'bin', 'mittrcraft.mjs'), 'serve', '--port', '9'], {
+    encoding: 'utf8',
+    cwd: home,
+    timeout: 60_000,
+    env: { ...inherited, HOME: home, USERPROFILE: home },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), {
+    args: ['serve', '--port', '9'],
+    dataDir: path.join(home, '.config', 'mittrcraft'),
+    plugins: JSON.stringify([path.join(packageDir, 'src', 'plugin.js')]),
+    broker: 'https://api.mittr.asia',
+  });
+  assert.deepEqual(fs.readdirSync(home), []);
+});

@@ -28,7 +28,7 @@ const AD_ROUTES = [
   ['GET', '/auth/ad/profile'],
 ];
 
-const harness = async (t, { env, scope = 'local', password = '', directory, microsoft, logger = recordingLogger() } = {}) => {
+const harness = async (t, { env, scope = 'local', password = '', directory, microsoft, logger = recordingLogger(), clock = { now: NOW } } = {}) => {
   const app = express();
   const uiAuth = createUiAuth({ password });
   t.after(() => uiAuth.dispose());
@@ -41,8 +41,8 @@ const harness = async (t, { env, scope = 'local', password = '', directory, micr
   }, {
     env,
     ldap: directory ? { createClient: directory.createClient } : {},
-    entra: microsoft ? { fetchImpl: microsoft.fetchImpl, now: () => NOW } : {},
-    now: () => NOW,
+    entra: microsoft ? { fetchImpl: microsoft.fetchImpl, now: () => clock.now } : {},
+    now: () => clock.now,
   });
   t.after(() => signIn.dispose());
   app.use('/api', (req, res, next) => uiAuth.requireAuth(req, res, next));
@@ -257,6 +257,31 @@ test('one address cannot flood Microsoft sign-in starts', async (t) => {
   microsoft.state.nonce = first.nonce;
   const completed = await call('GET', `/auth/ad/callback?state=${first.state}&code=auth-code`, { cookie: first.cookie });
   assert.equal(completed.status, 302, 'the first sign-in in progress was evicted');
+});
+
+test('the start cap counts only sign-ins still in progress', async (t) => {
+  const microsoft = fakeMicrosoft();
+  const clock = { now: NOW };
+  const { call } = await harness(t, { env: ENTRA_ENV, microsoft, clock });
+
+  for (let signIn = 0; signIn < 25; signIn += 1) {
+    const { state, nonce, cookie } = await startEntra(call);
+    microsoft.state.nonce = nonce;
+    const done = await call('GET', `/auth/ad/callback?state=${state}&code=auth-code`, { cookie });
+    assert.equal(done.status, 302, `sign-in ${signIn + 1}`);
+  }
+  const failed = await startEntra(call);
+  microsoft.state.claims = { aud: 'another-app' };
+  microsoft.state.nonce = failed.nonce;
+  assert.equal((await call('GET', `/auth/ad/callback?state=${failed.state}&code=auth-code`, { cookie: failed.cookie })).status, 401);
+  const cancelled = await startEntra(call);
+  assert.equal((await call('GET', `/auth/ad/callback?state=${cancelled.state}&error=access_denied`, { cookie: cancelled.cookie })).status, 400);
+
+  for (let start = 0; start < 20; start += 1) assert.equal((await call('GET', '/auth/ad/login')).status, 302, `start ${start + 1}`);
+  assert.equal((await call('GET', '/auth/ad/login')).status, 429);
+
+  clock.now += 600_000;
+  assert.equal((await call('GET', '/auth/ad/login')).status, 302, 'expired sign-ins still held a slot');
 });
 
 test('a Microsoft token for another app does not open a session', async (t) => {

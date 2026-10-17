@@ -31,8 +31,25 @@ const loadsPlugin = (specifiers, pluginPath) => {
   }
 };
 
-export const prepareCliEnvironment = ({ env, homeDir, pluginPath, productEnv }) => {
+const findCheckoutRoot = (startDir) => {
+  let dir = path.resolve(startDir);
+  for (;;) {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+};
+
+export const prepareCliEnvironment = ({ env, homeDir, pluginPath, productEnv, packageDir }) => {
   const next = { ...env };
+  const checkout = packageDir ? findCheckoutRoot(packageDir) : null;
+  if (checkout && isUnset(next.OPENCHAMBER_DATA_DIR) && isUnset(next.MITTRCRAFT_DATA_DIR)) {
+    return {
+      env: next,
+      refusal: `mittrcraft: this copy runs from a source checkout (${checkout}), so it will not use the installed app's data dir ${path.join(homeDir, '.config', 'mittrcraft')}. Set OPENCHAMBER_DATA_DIR or MITTRCRAFT_DATA_DIR to the data dir this server should use.`,
+    };
+  }
   for (const [name, legacy] of Object.entries(LEGACY_NAMES)) {
     if (isUnset(next[name]) && !isUnset(next[legacy])) next[name] = next[legacy];
   }

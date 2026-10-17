@@ -82,21 +82,55 @@ const resolveReturnTo = (req) => {
 const clientKey = (req) => (req.ip || req.socket?.remoteAddress || 'no-ip').replace(/^::ffff:/, '');
 
 const createLoginStartLimiter = (now) => {
-  const starts = new Map();
-  return {
-    take: (req) => {
-      const key = clientKey(req);
-      const timestamp = now();
-      const recent = (starts.get(key) ?? []).filter((at) => timestamp - at < TRANSACTION_TTL_MS);
-      if (recent.length >= LOGIN_STARTS_PER_IP) {
-        starts.set(key, recent);
-        return { allowed: false, retryAfter: Math.ceil((recent[0] + TRANSACTION_TTL_MS - timestamp) / 1000) };
+  const pendingByClient = new Map();
+  const clientByState = new Map();
+  const pendingOf = (key) => {
+    const pending = pendingByClient.get(key);
+    if (!pending) return null;
+    const timestamp = now();
+    for (const [state, expiresAt] of pending) {
+      if (expiresAt <= timestamp) {
+        pending.delete(state);
+        clientByState.delete(state);
       }
-      if (!starts.has(key) && starts.size >= RATE_LIMIT_MAX_KEYS) starts.delete(starts.keys().next().value);
-      starts.set(key, [...recent, timestamp]);
-      return { allowed: true };
+    }
+    if (pending.size === 0) {
+      pendingByClient.delete(key);
+      return null;
+    }
+    return pending;
+  };
+  return {
+    check: (req) => {
+      const pending = pendingOf(clientKey(req));
+      if (!pending || pending.size < LOGIN_STARTS_PER_IP) return { allowed: true };
+      const soonest = Math.min(...pending.values());
+      return { allowed: false, retryAfter: Math.max(1, Math.ceil((soonest - now()) / 1000)) };
     },
-    reset: () => starts.clear(),
+    hold: (req, state, expiresAt) => {
+      const key = clientKey(req);
+      if (!pendingByClient.has(key) && pendingByClient.size >= RATE_LIMIT_MAX_KEYS) {
+        const [oldest, states] = pendingByClient.entries().next().value;
+        for (const held of states.keys()) clientByState.delete(held);
+        pendingByClient.delete(oldest);
+      }
+      const pending = pendingOf(key) ?? new Map();
+      pending.set(state, expiresAt);
+      pendingByClient.set(key, pending);
+      clientByState.set(state, key);
+    },
+    release: (state) => {
+      const key = clientByState.get(state);
+      if (key === undefined) return;
+      clientByState.delete(state);
+      const pending = pendingByClient.get(key);
+      pending?.delete(state);
+      if (pending?.size === 0) pendingByClient.delete(key);
+    },
+    reset: () => {
+      pendingByClient.clear();
+      clientByState.clear();
+    },
   };
 };
 
@@ -168,7 +202,7 @@ export const registerCompanySignIn = (context, {
 
   app.get('/auth/ad/login', refuseTunnel('Microsoft login is disabled for tunnel scope'), async (req, res) => {
     if (!isEntra) return res.status(400).json({ error: 'Microsoft authentication not configured' });
-    const start = loginStarts.take(req);
+    const start = loginStarts.check(req);
     if (!start.allowed) {
       res.setHeader('Retry-After', String(start.retryAfter));
       return res.status(429).json({ error: 'Too many sign-in attempts, please try again later', retryAfter: start.retryAfter });
@@ -176,6 +210,7 @@ export const registerCompanySignIn = (context, {
     try {
       const trustDevice = queryText(req, 'trustDevice') === 'true' || queryText(req, 'trustDevice') === '1';
       const transaction = await auth.beginAuthorization({ trustDevice, returnTo: resolveReturnTo(req) });
+      loginStarts.hold(req, transaction.state, transaction.expiresAt);
       const maxAge = Math.max(1, Math.floor((transaction.expiresAt - now()) / 1000));
       res.setHeader('Cache-Control', 'no-store');
       appendSetCookie(res, transactionCookie(req, encodeURIComponent(transaction.state), maxAge));
@@ -194,7 +229,10 @@ export const registerCompanySignIn = (context, {
     const expected = readCookie(req, TRANSACTION_COOKIE);
     appendSetCookie(res, transactionCookie(req, '', 0));
     res.setHeader('Cache-Control', 'no-store');
-    if (queryText(req, 'error') || !state || !code || !sameText(expected, state)) {
+    const ownState = Boolean(state) && sameText(expected, state);
+    if (ownState) loginStarts.release(state);
+    if (queryText(req, 'error') || !code || !ownState) {
+      if (ownState) auth.cancelAuthorization(state);
       return res.status(400).type('text/plain').send(VERIFY_FAILED_PAGE);
     }
     try {
