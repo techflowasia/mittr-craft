@@ -424,6 +424,28 @@ test('signing out ends an answer still streaming on that account', async (t) => 
   assert.ok(logger.warnings.includes('[mittr] shim ended 1 answer(s): the Mittr account changed'), logger.warnings.join('\n'));
 });
 
+test('a retry while the engine is already on the account\'s home answers at once and leaves a streaming answer alone', async (t) => {
+  const held = heldStream();
+  const fetchImpl = fakeFetch((request) => (request.url.endsWith('/chat/completions') ? held.respond(request.signal) : json(session)));
+  const engine = fakeEngineContext();
+  const { call, dataDir } = await setUp(t, { fetchImpl, engine });
+  assert.equal((await signIn(call)).status, 200);
+  const restarts = engine.restarts.length;
+
+  const response = await askShim(call, shimKey(dataDir), { model: 'gpt-a', stream: true, messages: [] });
+  assert.equal(response.status, 200);
+  const reader = response.body.getReader();
+  await reader.read();
+
+  const retried = await call('POST', '/api/mittr/auth/accounts/retry-switch');
+  assert.equal(retried.status, 200);
+  assert.equal(retried.body.signedIn, true);
+  assert.equal(retried.body.engineRestarted, undefined);
+  assert.equal(engine.restarts.length, restarts);
+  assert.equal(await Promise.race([held.aborted.then(() => 'aborted'), new Promise((resolve) => { setTimeout(() => resolve('still streaming'), 200); })]), 'still streaming');
+  await reader.cancel();
+});
+
 const MODELS = [{ alias: 'a1', label: 'Writer' }, { alias: 'a2', label: '' }];
 const engineCalls = (fetchImpl) => fetchImpl.calls.filter((call) => call.url.includes('/api/integration/'));
 const engineAndBroker = (answer) => fakeEngineFetch({ answer, other: () => json(session) });

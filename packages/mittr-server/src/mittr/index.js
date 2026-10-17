@@ -167,6 +167,7 @@ export function setupMittr(context, {
       shim?.abortInFlight();
       return switcher.switchTo(nextUserId);
     },
+    engineOnTarget: () => switcher.engineOnTarget(),
     logger,
   });
 

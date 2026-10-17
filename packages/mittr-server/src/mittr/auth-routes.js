@@ -50,6 +50,7 @@ export function registerMittrAuthRoutes(app, {
   onSignIn = null,
   // Called with the next active userId (or null) when the active account changes.
   onAccountChange = null,
+  engineOnTarget = () => false,
   logger = console,
 }) {
   const redirectUri = authRedirectUri(scheme);
@@ -241,6 +242,7 @@ export function registerMittrAuthRoutes(app, {
   });
 
   app.post('/api/mittr/auth/accounts/retry-switch', refuseWhenUnsafe, async (_req, res) => {
+    if (engineOnTarget()) return res.json(statusOf(store.read()));
     const restart = await announceAccountChange(activeUserId());
     return res.json({ ...statusOf(store.read()), ...restart });
   });

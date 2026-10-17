@@ -117,6 +117,7 @@ const harness = async (t, { sharedHistory = false, legacy = null, sessions = [],
       switches.push(next);
       return switcher.switchTo(next);
     },
+    engineOnTarget: () => switcher.engineOnTarget(),
     logger,
   });
   return { auth, store, switcher, engine, bases, dataDir, refreshes, events, applied, syncs, switches, signIns, logger, engineEnvNow, call: await serve(t, app) };
@@ -421,6 +422,7 @@ test('a retry after a restart that failed brings the engine onto the active acco
 
   assert.deepEqual((await call('POST', '/api/mittr/auth/accounts/retry-switch')).body, { signedIn: true, userId: 'u-b', displayName: 'B' });
   assert.deepEqual(refreshes, [SWITCHED, SWITCHED]);
+  assert.deepEqual(switches, ['u-b', 'u-b']);
 });
 
 test('a retry after signing out of the last account brings the engine onto the empty home', async (t) => {
