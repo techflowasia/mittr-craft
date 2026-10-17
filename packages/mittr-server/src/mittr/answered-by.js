@@ -85,9 +85,10 @@ export const createAnsweredByWatcher = (cb) => {
   };
 
   return (event) => {
+    let key = null;
     try {
       if (!event || !event.sessionId || !event.model) return;
-      const key = `${event.sessionId}\n${event.model}\n${event.startedAt}`;
+      key = `${event.sessionId}\n${event.model}\n${event.requestId ?? event.startedAt}`;
       if (event.done) {
         const request = requests.get(key);
         requests.delete(key);
@@ -97,7 +98,7 @@ export const createAnsweredByWatcher = (cb) => {
       const request = requestOf(key);
       if (!request.settled && event.chunk?.length) take(request, event, event.chunk);
     } catch {
-      requests.clear();
+      if (key !== null) requests.delete(key);
     }
   };
 };

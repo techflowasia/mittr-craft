@@ -86,23 +86,43 @@ test('an answer that is not streamed is read whole', () => {
   assert.equal(log.list('ses_1')[0].reason, 'quota');
 });
 
-test('a cut-off or quota error frame is ignored and never throws', () => {
-  const { log, onAnswer } = watched();
+test('a cut-off or quota error frame is skipped, and a later substituted frame on the same request still records', () => {
   const cutOff = { error: { type: 'invalid_request_error', code: 'stream_cut_off', message: 'The answer was cut off.' } };
   const quota = { error: { type: 'insufficient_quota', code: 'llm_quota_exhausted' } };
+  for (const [startedAt, errorFrame] of [[1000, frame(cutOff)], [2000, frame(quota)]]) {
+    const { log, onAnswer } = watched();
+    onAnswer({ ...request({ startedAt }), chunk: bytes(errorFrame), done: false });
+    assert.deepEqual(log.list('ses_1'), []);
+    onAnswer({ ...request({ startedAt }), chunk: bytes(frame(FIRST)), done: false });
+    onAnswer({ ...request({ startedAt }), chunk: new Uint8Array(0), done: true });
+    assert.equal(log.list('ses_1').length, 1);
+  }
+});
+
+test('an error body that is not streamed records nothing and never throws', () => {
+  const { log, onAnswer } = watched();
   assert.doesNotThrow(() => {
-    onAnswer({ ...request(), chunk: bytes(frame(PLAIN)), done: false });
-    onAnswer({ ...request(), chunk: bytes(`\n${frame(cutOff)}data: [DONE]\n\n`), done: false });
+    onAnswer({ ...request(), chunk: bytes('{"error":'), done: false });
     onAnswer({ ...request(), chunk: new Uint8Array(0), done: true });
-    onAnswer({ ...request({ startedAt: 2000 }), chunk: bytes(frame(quota)), done: false });
-    onAnswer({ ...request({ startedAt: 2000 }), chunk: new Uint8Array(0), done: true });
-    onAnswer({ ...request({ startedAt: 3000 }), chunk: bytes('{"error":'), done: false });
-    onAnswer({ ...request({ startedAt: 3000 }), chunk: new Uint8Array(0), done: true });
     onAnswer({ ...request({ startedAt: 4000 }), chunk: bytes('\xff\xfe'), done: false });
     onAnswer({ ...request({ startedAt: 4000 }), chunk: undefined, done: false });
     onAnswer(undefined);
   });
   assert.deepEqual(log.list('ses_1'), []);
+});
+
+test('a listener that throws costs only its own request', () => {
+  const seen = [];
+  const onAnswer = createAnsweredByWatcher((sessionId, answer) => {
+    seen.push(answer.answeredLabel);
+    if (answer.answeredLabel === 'Boom') throw new Error('boom');
+  });
+  const boom = frame({ ...FIRST, answered_by: { ...SUBSTITUTED, answeredLabel: 'Boom' } });
+  const fine = frame(FIRST);
+  onAnswer({ ...request({ requestId: 1 }), chunk: bytes(fine.slice(0, 25)), done: false });
+  assert.doesNotThrow(() => onAnswer({ ...request({ requestId: 2 }), chunk: bytes(boom), done: false }));
+  onAnswer({ ...request({ requestId: 1 }), chunk: bytes(fine.slice(25)), done: false });
+  assert.deepEqual(seen, ['Boom', 'Backup']);
 });
 
 test('requests with no session or model are not recorded', () => {
@@ -120,6 +140,19 @@ test('two answers streaming in one session are kept apart', () => {
   onAnswer({ ...request({ startedAt: 1001, model: 'other' }), chunk: bytes(frame(other)), done: false });
   onAnswer({ ...request(), chunk: bytes(text.slice(20)), done: false });
   assert.deepEqual(log.list('ses_1').map((answer) => [answer.model, answer.answeredLabel]), [['other', 'Second'], ['writer', 'Backup']]);
+});
+
+test('two requests of one session and model that start in the same millisecond are kept apart by their request id', () => {
+  const { log, onAnswer } = watched();
+  const second = frame({ ...FIRST, answered_by: { ...SUBSTITUTED, answeredLabel: 'Second' } });
+  const first = frame(FIRST);
+  onAnswer({ ...request({ requestId: 1 }), chunk: bytes(first.slice(0, 20)), done: false });
+  onAnswer({ ...request({ requestId: 2 }), chunk: bytes(second.slice(0, 20)), done: false });
+  onAnswer({ ...request({ requestId: 1 }), chunk: bytes(first.slice(20)), done: false });
+  onAnswer({ ...request({ requestId: 2 }), chunk: bytes(second.slice(20)), done: false });
+  onAnswer({ ...request({ requestId: 1 }), chunk: new Uint8Array(0), done: true });
+  onAnswer({ ...request({ requestId: 2 }), chunk: new Uint8Array(0), done: true });
+  assert.deepEqual(log.list('ses_1').map((answer) => answer.answeredLabel).sort(), ['Backup', 'Second']);
 });
 
 test('the log keeps the last few answers per session and a bounded number of sessions', () => {

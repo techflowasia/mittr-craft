@@ -123,10 +123,11 @@ export const drained = (res) => new Promise((resolve) => {
  * The routes sit outside `/api`: the engine has no UI session. The server
  * parses JSON for every path outside `/api` before plugin routes run.
  *
- * `onAnswer({ sessionId, model, startedAt, chunk, done })` hears each part of
+ * `onAnswer({ sessionId, model, startedAt, requestId, chunk, done })` hears each part of
  * every successful answer, then once more with `done: true`. `model` is the
  * alias the engine asked for (or null) and `startedAt` when the request came
- * in, so a listener can match the answer to the engine's message.
+ * in, so a listener can match the answer to the engine's message. `requestId`
+ * is unique to the request, so a listener can tell apart two that started together.
  *
  * Returns `{ abortInFlight }`, which cuts every answer still streaming.
  */
@@ -145,6 +146,7 @@ export function registerMittrShim(app, {
 }) {
   // Answers on their way from Mittr with a signed-in account's token.
   const inFlight = new Set();
+  let requestCount = 0;
 
   const expectedKey = digest(localToken);
   const presentsKey = (header) => {
@@ -203,8 +205,12 @@ export function registerMittrShim(app, {
     const model = JSON.stringify(requestedModel);
     const limit = silenceLimit(upstreamTimeoutMs);
     const listener = answerListener();
-    const tellAnswer = (event) => listener({ ...event, sessionId, model: requestedModel, startedAt });
+    const requestId = ++requestCount;
     let engineGone = false;
+    const tellAnswer = (event) => {
+      if (engineGone) return;
+      listener({ ...event, sessionId, model: requestedModel, startedAt, requestId });
+    };
     res.on('close', () => {
       inFlight.delete(res);
       if (res.writableFinished) return;

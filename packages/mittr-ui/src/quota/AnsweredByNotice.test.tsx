@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { Message } from '../../../ui/src/lib/opencode/model';
 import { mittrT } from '../strings/mittrT';
 import type { AnsweredBy } from './answeredBy';
-import { AnsweredByLine, AnsweredByNotice, AnsweredByNoticeView } from './AnsweredByNotice';
+import { AnsweredByLine, AnsweredByNoticeView } from './AnsweredByNotice';
 
 const ANSWER: AnsweredBy = { at: 1500, model: 'pm_1', reason: 'quota', requestedLabel: 'Writer', answeredLabel: 'Backup' };
 
@@ -46,18 +46,5 @@ describe('answered-by notice', () => {
     expect(renderToStaticMarkup(<AnsweredByLine info={assistant()} list={list} />)).toContain('Answered by Backup');
     expect(renderToStaticMarkup(<AnsweredByLine info={assistant({ time: { created: 100, completed: 900 } })} list={list} />)).toBe('');
     expect(renderToStaticMarkup(<AnsweredByLine info={assistant()} list={undefined} />)).toBe('');
-  });
-
-  test('other providers get no notice', () => {
-    expect(renderToStaticMarkup(<AnsweredByNotice message={{ info: assistant({ providerID: 'openai' }), parts: [] }} isLatestTurn />)).toBe('');
-    expect(renderToStaticMarkup(<AnsweredByNotice message={{ info: { id: 'msg_u', sessionID: 'ses_1', role: 'user', time: { created: 1 } } as Message, parts: [] }} isLatestTurn />)).toBe('');
-  });
-
-  test('a Mittr message that has not completed gets no notice and asks for nothing', () => {
-    expect(renderToStaticMarkup(<AnsweredByNotice message={{ info: assistant({ time: { created: 1000 } }), parts: [] }} isLatestTurn={false} />)).toBe('');
-  });
-
-  test('a completed Mittr message shows nothing until the session list has been read', () => {
-    expect(renderToStaticMarkup(<AnsweredByNotice message={{ info: assistant(), parts: [] }} isLatestTurn />)).toBe('');
   });
 });

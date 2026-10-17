@@ -592,6 +592,20 @@ test('a complete answer reaches onAnswer as one chunk, and a refusal not at all'
   assert.deepEqual(events, []);
 });
 
+test('each request reaches onAnswer under its own request id, even when they start together', async (t) => {
+  const upstream = await platform(t, answerStream([frame({ content: 'Hi' }), DONE]));
+  const events = [];
+  const { request } = await shim(t, { upstreamV1: upstream.v1, now: () => 1_800_000_000_000, onAnswer: (event) => events.push(event) });
+  await Promise.all([request('/chat/completions'), request('/chat/completions')].map(async (pending) => readAll(await pending)));
+  const ids = new Set(events.map((event) => event.requestId));
+  assert.equal(ids.size, 2);
+  for (const id of ids) {
+    const own = events.filter((event) => event.requestId === id);
+    assert.equal(own.at(-1).done, true);
+    assert.equal(own.filter((event) => event.done).length, 1);
+  }
+});
+
 test('a failing onAnswer never costs the engine its answer, and is logged once', async (t) => {
   const frames = [frame({ content: 'Hel' }), frame({ content: 'lo' }), DONE];
   const upstream = await platform(t, answerStream(frames));

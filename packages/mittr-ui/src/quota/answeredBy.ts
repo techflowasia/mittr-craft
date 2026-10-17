@@ -131,6 +131,10 @@ const sharedController = (): AnsweredByController => {
   return shared;
 };
 
+export function setAnsweredByController(controller: AnsweredByController | null): void {
+  shared = controller;
+}
+
 export function useAnsweredBy(sessionId: string, completedAt: number): AnsweredByList | undefined {
   const controller = sharedController();
   const list = React.useSyncExternalStore(
