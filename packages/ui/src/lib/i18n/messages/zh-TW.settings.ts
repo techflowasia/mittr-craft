@@ -966,6 +966,8 @@ export const settingsDict = {
   'settings.mittrcraft.tools.field.agentChromeToolInfo': 'Let agents use Chrome starting from a copy of the Chrome profile you choose, so sites you are signed in to stay signed in. You are asked the first time an agent uses each site. Applies after MittrCraft Engine restarts.',
   'settings.mittrcraft.tools.field.agentChromeProfile': 'Chrome profile',
   'settings.mittrcraft.tools.field.agentChromeProfilePlaceholder': 'Choose a profile',
+  'settings.mittrcraft.tools.field.agentChromeProfilePermission': 'MittrCraft 尚未取得完整磁碟取用權限，因此無法讀取 Chrome 設定檔。請前往「系統設定」→「隱私權與安全性」→「完整磁碟取用權限」，啟用 MittrCraft 後重新啟動 App。',
+  'settings.mittrcraft.tools.field.agentChromeProfileUnavailable': '此 MittrCraft 執行環境無法使用 Chrome 設定檔。',
   'settings.mittrcraft.tools.field.agentChromeHeaded': 'Show the Chrome window while agents use it',
   'settings.mittrcraft.tools.field.agentChromeSites': 'Allowed sites',
   'settings.mittrcraft.tools.field.agentChromeSitesEmpty': 'No sites yet — you will be asked the first time.',

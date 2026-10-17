@@ -23,6 +23,12 @@ other.
   loopback credential.
 - `../mittrcraft-sessions/routes.js` and `../scheduled-tasks/service.js` own
   their domain operations and are composed into this service.
+- `GET /api/mittrcraft/chrome/profiles` returns a `status` alongside the
+  profile list. On macOS, the service checks access to Chrome's user-data
+  directory and returns `permission_required` for `EPERM` or `EACCES`, so the
+  Settings UI can direct users to grant MittrCraft Full Disk Access. A readable
+  directory with no profiles remains a successful `ready` response with an
+  empty list; an unavailable Chrome-control binary returns `unavailable`.
 
 ## Invariants
 

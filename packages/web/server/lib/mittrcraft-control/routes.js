@@ -14,8 +14,12 @@ export const registerMittrCraftControlRoutes = (app, { controlService }) => {
 
   app.get('/api/mittrcraft/chrome/profiles', async (_req, res) => {
     try {
-      const profiles = typeof controlService.chromeProfiles === 'function' ? await controlService.chromeProfiles() : [];
-      return res.json({ profiles });
+      const result = typeof controlService.chromeProfiles === 'function'
+        ? await controlService.chromeProfiles()
+        : { status: 'unavailable', profiles: [] };
+      // Preserve the legacy service adapter shape while current services add
+      // the explicit status needed by Settings.
+      return res.json(Array.isArray(result) ? { profiles: result } : result);
     } catch (error) {
       const controlError = asControlError(error, 'Could not list Chrome profiles');
       return res.status(controlError.statusCode).json({ error: controlError.message });

@@ -11,7 +11,7 @@ import {
 } from '@/components/sections/shared/SettingsSection';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { fetchChromeProfiles, removeChromeApprovedHost, type ChromeProfile } from '@/lib/chromeProfilesApi';
+import { fetchChromeProfiles, removeChromeApprovedHost, type ChromeProfile, type ChromeProfileResult } from '@/lib/chromeProfilesApi';
 import { recordDeferredOpenCodeRestart } from '@/lib/opencode/deferredRestart';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { useUIStore } from '@/stores/useUIStore';
@@ -45,15 +45,38 @@ export const MittrCraftToolsSettings: React.FC = () => {
   const agentChromeHeaded = useUIStore((state) => state.agentChromeHeaded);
   const setAgentChromeHeaded = useUIStore((state) => state.setAgentChromeHeaded);
   const [profiles, setProfiles] = React.useState<ChromeProfile[]>([]);
+  const [profileResultStatus, setProfileResultStatus] = React.useState<ChromeProfileResult['status'] | 'error' | null>(null);
 
   React.useEffect(() => {
-    if (!agentChromeToolEnabled) return;
+    if (!agentChromeToolEnabled) {
+      setProfiles([]);
+      setProfileResultStatus(null);
+      return;
+    }
     let cancelled = false;
-    void fetchChromeProfiles().then((list) => {
-      if (!cancelled) setProfiles(list);
-    });
+    let latestRequest = 0;
+    const refreshProfiles = () => {
+      const request = ++latestRequest;
+      setProfileResultStatus(null);
+      void fetchChromeProfiles().then((result) => {
+        if (cancelled || request !== latestRequest) return;
+        setProfiles(result.profiles);
+        setProfileResultStatus(result.status);
+      }).catch(() => {
+        if (!cancelled && request === latestRequest) setProfileResultStatus('error');
+      });
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') refreshProfiles();
+    };
+
+    refreshProfiles();
+    window.addEventListener('focus', refreshProfiles);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
       cancelled = true;
+      window.removeEventListener('focus', refreshProfiles);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
     };
   }, [agentChromeToolEnabled]);
 
@@ -153,6 +176,14 @@ export const MittrCraftToolsSettings: React.FC = () => {
                 </SelectContent>
               </Select>
             </SettingsFieldRow>
+            {profileResultStatus === 'permission_required' && (
+              <p className={SETTINGS_HELPER_CLASS} style={{ color: 'var(--status-error)' }}>
+                {t('settings.mittrcraft.tools.field.agentChromeProfilePermission')}
+              </p>
+            )}
+            {(profileResultStatus === 'unavailable' || profileResultStatus === 'error') && (
+              <p className={SETTINGS_HELPER_CLASS}>{t('settings.mittrcraft.tools.field.agentChromeProfileUnavailable')}</p>
+            )}
             <SettingsCheckboxRow
               settingsItem="sessions.agent-chrome-headed"
               checked={agentChromeHeaded}

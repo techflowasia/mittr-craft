@@ -893,8 +893,24 @@ export const createMittrCraftControlService = (dependencies) => {
   };
 
   const chromeProfiles = async () => {
-    if (!chromeControl?.available) return [];
-    return chromeControl.profiles();
+    if (!chromeControl?.available) return { status: 'unavailable', profiles: [] };
+
+    // Chrome keeps profiles in a macOS-protected location. Check access in the
+    // MittrCraft server process so Settings can explain a TCC denial instead of
+    // displaying the same empty list as a machine with no profiles.
+    if (process.platform === 'darwin') {
+      const chromeUserData = path.join(os.homedir(), 'Library', 'Application Support', 'Google', 'Chrome');
+      try {
+        await fsPromises.readdir(chromeUserData);
+      } catch (error) {
+        if (error?.code === 'EPERM' || error?.code === 'EACCES') {
+          return { status: 'permission_required', profiles: [] };
+        }
+        if (error?.code !== 'ENOENT') throw error;
+      }
+    }
+
+    return { status: 'ready', profiles: await chromeControl.profiles() };
   };
 
   const execute = async (action, input = {}, contextDirectory, options = {}) => {
