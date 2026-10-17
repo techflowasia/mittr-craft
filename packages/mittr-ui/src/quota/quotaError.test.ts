@@ -102,7 +102,14 @@ describe('the chat error text', () => {
   });
 
   test('a turn on a provider the lock keeps off says how to turn it on', () => {
+    expect(mittrMessageError({ type: 'provider.no-route', message: 'Model unavailable: other/m1', providerID: 'other' })).toBe(mittrT('mittr.providers.noRoute'));
     expect(mittrMessageError({ type: 'provider.no-route', message: 'Model unavailable: other/m1' })).toBe(mittrT('mittr.providers.noRoute'));
+  });
+
+  test('a Mittr model with no route says to pick another Mittr model', () => {
+    const text = mittrMessageError({ type: 'provider.no-route', message: 'Model unavailable: mittr/pm_9', providerID: 'mittr' });
+    expect(text).toBe(mittrT('mittr.providers.noRouteMittr'));
+    expect(text).toBe("This Mittr model isn't available to you right now. Pick another Mittr model.");
   });
 
   test("other errors keep upstream's text", () => {

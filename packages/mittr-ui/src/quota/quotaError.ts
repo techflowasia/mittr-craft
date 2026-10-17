@@ -6,12 +6,13 @@ import { formatResetTime, PRODUCT_LOCALE, PRODUCT_TIME_ZONE } from './agentStatu
 const LLM_QUOTA_EXHAUSTED = 'llm_quota_exhausted';
 const INSUFFICIENT_QUOTA = 'insufficient_quota';
 const NO_ROUTE = 'provider.no-route';
+const MITTR_PROVIDER_ID = 'mittr';
 
 type QuotaKind = 'chat' | 'image' | 'stt' | 'tts';
 
 export type QuotaExhausted = { kind: QuotaKind; resetsAt: string | null };
 
-export type MessageError = { type: string; message: string; status?: number; responseBody?: string };
+export type MessageError = { type: string; message: string; status?: number; responseBody?: string; providerID?: string };
 
 const resetTime = z.string().refine((value) => !Number.isNaN(Date.parse(value))).nullable().catch(null);
 const label = z.string().optional().catch(undefined);
@@ -78,6 +79,8 @@ export function mittrMessageError(error: MessageError): string | null {
       ? mittrT('mittr.quota.exhausted.chat', { when: formatResetTime(quota.resetsAt, PRODUCT_LOCALE, PRODUCT_TIME_ZONE) })
       : mittrT('mittr.quota.exhausted.chatNoReset');
   }
-  if (error.type === NO_ROUTE) return mittrT('mittr.providers.noRoute');
+  if (error.type === NO_ROUTE) {
+    return error.providerID === MITTR_PROVIDER_ID ? mittrT('mittr.providers.noRouteMittr') : mittrT('mittr.providers.noRoute');
+  }
   return null;
 }
