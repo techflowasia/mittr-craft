@@ -1248,6 +1248,12 @@
     "count": 1
   },
   {
+    "file": ".product/web/server/lib/opencode/managed-config-file.js",
+    "from": "before OpenChamber can move it under a server plugin's config",
+    "to": "before MittrCraft can move it under a server plugin's config",
+    "count": 1
+  },
+  {
     "file": ".product/web/server/lib/opencode/managed-plugin-config.js",
     "from": "before OpenChamber can inject its",
     "to": "before MittrCraft can inject its",
