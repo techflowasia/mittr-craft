@@ -39,6 +39,8 @@ export const mittrEn = {
   'mittr.accounts.switch.retry': 'Retry',
   'mittr.accounts.switch.close': 'Close',
   'mittr.uiAuth.microsoft': 'Sign in with Microsoft',
+  'mittr.uiAuth.microsoftInBrowser': 'Microsoft sign-in is available in a browser.',
+  'mittr.uiAuth.gateDescription': 'Sign in with your company account.',
   'mittr.uiAuth.username': 'Username',
   'mittr.uiAuth.password': 'Password',
   'mittr.uiAuth.signIn': 'Sign in',

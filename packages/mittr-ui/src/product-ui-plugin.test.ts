@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { ProviderLogo } from '../../ui/src/components/ui/ProviderLogo';
 import { I18nProvider } from '../../ui/src/lib/i18n';
 import { dict as enDict } from '../../ui/src/lib/i18n/messages/en';
-import { overlayDictionary, ProductSlot, remoteModelCatalogAllowed, useProductModelPicker } from '../../ui/src/lib/product-plugins';
+import { overlayDictionary, ProductSlot, remoteModelCatalogAllowed, translateProductSessionAuthDescription, useProductModelPicker } from '../../ui/src/lib/product-plugins';
 import './product-ui-plugin';
 import { strings } from './strings/en';
 import { mittrT } from './strings/mittrT';
@@ -97,6 +97,17 @@ describe('MittrCraft company sign-in', () => {
       React.createElement(I18nProvider, null, React.createElement(ProductSlot, { name: 'sidebar-footer' })),
     );
     expect(footer).not.toContain(mittrT('mittr.uiAuth.signOut'));
+  });
+});
+
+describe('MittrCraft sign-in gate wording', () => {
+  test('the gate says to sign in with a company account when it has no password form', () => {
+    expect(translateProductSessionAuthDescription({ passwordEnabled: false })).toBe(mittrT('mittr.uiAuth.gateDescription'));
+    expect(mittrT('mittr.uiAuth.gateDescription')).toBe('Sign in with your company account.');
+  });
+
+  test('the gate keeps upstream\'s line when there is a password form', () => {
+    expect(translateProductSessionAuthDescription({ passwordEnabled: true })).toBeNull();
   });
 });
 

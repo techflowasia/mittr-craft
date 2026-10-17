@@ -4,10 +4,10 @@ import { Icon } from '../../../ui/src/components/icon/Icon';
 import { Button } from '../../../ui/src/components/ui/button';
 import { Checkbox } from '../../../ui/src/components/ui/checkbox';
 import { Input } from '../../../ui/src/components/ui/input';
-import { isDesktopShell } from '../../../ui/src/lib/desktop';
+import type { SessionAuthMethodsProps } from '../../../ui/src/lib/product-plugins';
 import { getRuntimeUrlResolver } from '../../../ui/src/lib/runtime-url';
 import { useMittrT } from '../strings/mittrT';
-import { entraLoginUrl, readStoredTrustDevice, storeTrustDevice, submitAdSession, type AdSessionResult } from './adApi';
+import { entraLoginUrl, readStoredTrustDevice, signInWithDirectory, storeTrustDevice, type AdSessionResult } from './adApi';
 import { defaultAdFetch, fetchAdStatus, type AdStatus } from './adStatus';
 
 function TrustDevice({ checked, onChange }: { checked: boolean; onChange: (next: boolean) => void }): React.ReactNode {
@@ -40,6 +40,11 @@ function Divider(): React.ReactNode {
   );
 }
 
+function MicrosoftInBrowser(): React.ReactNode {
+  const t = useMittrT();
+  return <p className="text-center typography-meta text-muted-foreground">{t('mittr.uiAuth.microsoftInBrowser')}</p>;
+}
+
 function MicrosoftButton({ trustDevice }: { trustDevice: () => boolean }): React.ReactNode {
   const t = useMittrT();
   const go = () => {
@@ -59,7 +64,7 @@ const FAILURE_KEY = {
   failed: 'mittr.uiAuth.failed',
 } as const;
 
-function LdapForm({ trustDevice }: { trustDevice: () => boolean }): React.ReactNode {
+function LdapForm({ trustDevice, runtime, onSignedIn }: { trustDevice: () => boolean } & Pick<SessionAuthMethodsProps, 'runtime' | 'onSignedIn'>): React.ReactNode {
   const t = useMittrT();
   const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
@@ -73,11 +78,10 @@ function LdapForm({ trustDevice }: { trustDevice: () => boolean }): React.ReactN
     setPassword('');
     setBusy(true);
     setFailure(null);
-    const result = await submitAdSession({ fetch: defaultAdFetch, ...attempt, trustDevice: trustDevice() });
+    const result = await signInWithDirectory({ fetch: defaultAdFetch, ...attempt, trustDevice: trustDevice(), runtime, onSignedIn });
     setBusy(false);
     if (result.ok) {
       setUsername('');
-      window.location.reload();
       return;
     }
     setFailure(result);
@@ -131,7 +135,7 @@ function LdapForm({ trustDevice }: { trustDevice: () => boolean }): React.ReactN
   );
 }
 
-function AdMethods({ status }: { status: AdStatus }): React.ReactNode {
+function AdMethods({ status, runtime, onSignedIn }: { status: AdStatus } & Pick<SessionAuthMethodsProps, 'runtime' | 'onSignedIn'>): React.ReactNode {
   const ownsTrustDevice = !status.passwordEnabled;
   const [trustDevice, setTrustDevice] = React.useState(readStoredTrustDevice);
   const changeTrustDevice = (next: boolean) => {
@@ -139,38 +143,39 @@ function AdMethods({ status }: { status: AdStatus }): React.ReactNode {
     storeTrustDevice(next);
   };
   const currentTrustDevice = ownsTrustDevice ? () => trustDevice : readStoredTrustDevice;
+  const inBrowserOnly = status.mode === 'entra' && runtime === 'desktop-remote';
   return (
     <div className="w-full space-y-2">
       {status.passwordEnabled ? <Divider /> : null}
-      {status.mode === 'entra' ? <MicrosoftButton trustDevice={currentTrustDevice} /> : <LdapForm trustDevice={currentTrustDevice} />}
-      {ownsTrustDevice ? <TrustDevice checked={trustDevice} onChange={changeTrustDevice} /> : null}
+      {inBrowserOnly ? <MicrosoftInBrowser /> : null}
+      {!inBrowserOnly && status.mode === 'entra' ? <MicrosoftButton trustDevice={currentTrustDevice} /> : null}
+      {status.mode === 'ldap' ? <LdapForm trustDevice={currentTrustDevice} runtime={runtime} onSignedIn={onSignedIn} /> : null}
+      {ownsTrustDevice && !inBrowserOnly ? <TrustDevice checked={trustDevice} onChange={changeTrustDevice} /> : null}
     </div>
   );
 }
 
-export type AdSignInViewProps = {
+export type AdSignInViewProps = SessionAuthMethodsProps & {
   status: AdStatus | null;
-  isDesktop: boolean;
-  isTunnelLocked: boolean;
 };
 
-export function AdSignInView({ status, isDesktop, isTunnelLocked }: AdSignInViewProps): React.ReactNode {
-  if (isDesktop || isTunnelLocked || !status || !status.enabled || status.tunnelLocked) return null;
-  return <AdMethods status={status} />;
+export function AdSignInView({ status, runtime, isTunnelLocked, onSignedIn }: AdSignInViewProps): React.ReactNode {
+  if (runtime === 'desktop-local' || isTunnelLocked || !status || !status.enabled || status.tunnelLocked) return null;
+  return <AdMethods status={status} runtime={runtime} onSignedIn={onSignedIn} />;
 }
 
-export function AdSignIn({ isTunnelLocked }: { isTunnelLocked: boolean }): React.ReactNode {
-  const isDesktop = isDesktopShell();
+export function AdSignIn({ isTunnelLocked, runtime, onSignedIn }: SessionAuthMethodsProps): React.ReactNode {
   const [status, setStatus] = React.useState<AdStatus | null>(null);
+  const skipped = runtime === 'desktop-local' || isTunnelLocked;
 
   React.useEffect(() => {
-    if (isDesktop || isTunnelLocked) return;
+    if (skipped) return;
     let current = true;
     void fetchAdStatus().then((next) => {
       if (current) setStatus(next);
     });
     return () => { current = false; };
-  }, [isDesktop, isTunnelLocked]);
+  }, [skipped]);
 
-  return <AdSignInView status={status} isDesktop={isDesktop} isTunnelLocked={isTunnelLocked} />;
+  return <AdSignInView status={status} runtime={runtime} isTunnelLocked={isTunnelLocked} onSignedIn={onSignedIn} />;
 }

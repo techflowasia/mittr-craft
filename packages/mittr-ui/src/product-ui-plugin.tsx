@@ -13,6 +13,7 @@ import './quota/registerMittrUsage';
 import { SelectMittrUsage } from './quota/SelectMittrUsage';
 import { MittrSignInGate } from './sign-in/MittrSignInGate';
 import { strings } from './strings/en';
+import { mittrT } from './strings/mittrT';
 import { AdSignIn } from './ui-auth/AdSignIn';
 import { SidebarProfile } from './ui-auth/SidebarProfile';
 
@@ -46,6 +47,7 @@ registerProductUiPlugin({
   },
   modelPicker: { useDecorations: useMittrPickerDecorations },
   messageError: mittrMessageError,
+  sessionAuthDescription: ({ passwordEnabled }) => (passwordEnabled ? null : mittrT('mittr.uiAuth.gateDescription')),
   // Mittr models come from the Mittr catalog; models.dev is a third party.
   remoteModelCatalog: false,
 });
