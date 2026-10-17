@@ -332,7 +332,7 @@ export function createAccountStore({
   const activate = (userId) => {
     const index = indexForWrite();
     const entry = index.accounts.find((candidate) => candidate.userId === userId);
-    if (!entry || !entry.signedIn) throw new Error('That account is not signed in on this machine');
+    if (userId !== null && (!entry || !entry.signedIn)) throw new Error('That account is not signed in on this machine');
     index.active = userId;
     writeIndex(index);
   };

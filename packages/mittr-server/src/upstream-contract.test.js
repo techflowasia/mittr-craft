@@ -833,6 +833,20 @@ const checks = {
     const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
     assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P3 again, then update the identity plugin and this pin');
   },
+
+  'engine-refresh-restarts': () => {
+    const server = source('packages/web/server/index.js');
+    has(pluginContext(server), /refresh: async \(reason\) => \{ await refreshOpenCodeAfterConfigChange\(reason\); \},/, 'the plugin context no longer refreshes the managed OpenCode');
+    has(server, /const refreshOpenCodeAfterConfigChange = \(\.\.\.args\) => openCodeLifecycleRuntime\.refreshOpenCodeAfterConfigChange\(\.\.\.args\);/, 'index.js no longer refreshes through the lifecycle');
+
+    const lifecycle = source('packages/web/server/lib/opencode/lifecycle.js');
+    const start = lifecycle.indexOf('const refreshOpenCodeAfterConfigChange = async (reason');
+    const end = lifecycle.indexOf('const bootstrapOpenCodeAtStartup', start);
+    assert.ok(start >= 0 && end > start, 'the lifecycle no longer defines refreshOpenCodeAfterConfigChange before the startup bootstrap');
+    const refresh = lifecycle.slice(start, end);
+    has(refresh, /await restartOpenCode\(reason \|\| 'config-change'\);[\s\S]*await waitForOpenCodeReady\(\);/, 'a refresh no longer restarts the managed OpenCode and waits for it to be ready');
+    has(lifecycle, /state\.openCodeProcess = await startOpenCode\(\);/, 'a managed restart no longer goes through startOpenCode, which reads the engine env');
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {

@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { ENGINE_SHARE_OFF } from '../engine-outbound.js';
 import { createAccountStore } from './account-store.js';
+import { createAccountSwitcher } from './accounts-switch.js';
 import { registerMittrAuthRoutes } from './auth-routes.js';
 import { resolveBroker } from './broker.js';
 import { catalogCachePath, createCatalogCache } from './catalog-cache.js';
@@ -126,6 +127,17 @@ export function setupMittr(context, {
   let shim = null;
   const syncCatalog = () => catalog.sync();
 
+  const switcher = createAccountSwitcher({
+    store,
+    opencode,
+    applyCache: () => {
+      const { items, known } = activeModelList();
+      return onModels(items, { listKnown: known });
+    },
+    sync: syncCatalog,
+    logger,
+  });
+
   const { ensureFreshSession, completeSignIn } = registerMittrAuthRoutes(app, {
     express,
     broker,
@@ -133,17 +145,13 @@ export function setupMittr(context, {
     scheme,
     fetchImpl,
     signInRefusal: refusal,
-    onSignIn: () => {
-      void syncCatalog();
-    },
+    onSignIn: (previousUserId, nextUserId) => switcher.afterSignIn(previousUserId, nextUserId),
     // A sign-out or a switch ends every answer still streaming on the
     // account that was active, whether or not the engine restarts. The
     // account now active brings its own models.
-    onAccountChange: async () => {
+    onAccountChange: async (nextUserId) => {
       shim?.abortInFlight();
-      const { items, known } = activeModelList();
-      await onModels(items, { listKnown: known });
-      void syncCatalog();
+      await switcher.switchTo(nextUserId);
     },
     logger,
   });

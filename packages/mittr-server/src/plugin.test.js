@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,7 +7,7 @@ import test from 'node:test';
 
 import express from 'express';
 
-import { fakeEngineContext, serve } from './mittr/test-helpers.js';
+import { fakeEngineContext, listen, serve } from './mittr/test-helpers.js';
 import setup, { setupMittrServer } from './plugin.js';
 
 const ACCOUNT = '0123456789abcdef';
@@ -28,7 +29,7 @@ const writeFile = (file, content) => {
 
 const recordingLogger = () => {
   const lines = [];
-  return { lines, log: (...args) => lines.push(args.join(' ')), warn: (...args) => lines.push(args.join(' ')) };
+  return { lines, log: (...args) => lines.push(args.join(' ')), warn: (...args) => lines.push(args.join(' ')), error: (...args) => lines.push(args.join(' ')) };
 };
 
 const prodLayout = (home) => {
@@ -230,6 +231,59 @@ test('setup hands Mittr the folder the engine reads its user config from', async
   const personal = await run(path.join(home, '.config', 'opencode', 'opencode.json'));
   assert.deepEqual(personal.engine.userConfigWrites, []);
   assert.ok(personal.logger.lines.some((line) => line.includes('the default model is left alone')));
+});
+
+test('each Mittr account runs the engine on its own home, and a switch restarts it there', async (t) => {
+  const home = tempHome(t);
+  const dataDir = prodLayout(home);
+  const sessionOf = (userId, displayName) => ({ accessToken: `at-${userId}`, refreshToken: `r-${userId}`, expiresAt: Date.now() + 3_600_000, subject: { userId, displayName } });
+  const handedOut = [sessionOf('u-a', 'A'), sessionOf('u-b', 'B')];
+  const broker = await listen(t, (req, res) => {
+    res.setHeader('content-type', 'application/json');
+    if (req.url === '/auth/desktop/exchange') return res.end(JSON.stringify(handedOut.shift()));
+    return res.end(JSON.stringify({ bundleVersion: 1, subject: null, models: [] }));
+  });
+  const engine = fakeEngineContext({ port: null });
+  const app = express();
+  const logger = recordingLogger();
+  const plugin = await setupMittrServer({
+    dataDir,
+    logger,
+    env: { MITTRCRAFT_BROKER_URL: broker, MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft' },
+    homeDir: home,
+    context: { app, express, dataDir, logger, host: null, ...engine.context },
+  });
+  t.after(() => plugin.dispose());
+  const call = await serve(t, app);
+  const signIn = async () => {
+    await call('POST', '/api/mittr/auth/start');
+    return call('POST', '/api/mittr/auth/callback', { url: 'mittrcraft://auth/callback?code=c1' });
+  };
+  const shared = path.join(home, '.local', 'share', 'mittrcraft', 'engine');
+  const homeOf = (userId) => crypto.createHash('sha256').update(userId).digest('hex').slice(0, 16);
+  const dataHome = async () => (await plugin.engineEnv()).XDG_DATA_HOME;
+
+  assert.equal(await dataHome(), shared);
+
+  assert.equal((await signIn()).body.userId, 'u-a');
+  assert.deepEqual(engine.restarts, ['mittr account switched']);
+  assert.equal(await dataHome(), path.join(shared, 'accounts', homeOf('u-a')));
+
+  assert.equal((await signIn()).body.userId, 'u-b');
+  assert.equal(engine.restarts.length, 2);
+  assert.equal(await dataHome(), path.join(shared, 'accounts', homeOf('u-b')));
+
+  assert.equal((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' })).body.userId, 'u-a');
+  assert.equal(engine.restarts.length, 3);
+  assert.equal(await dataHome(), path.join(shared, 'accounts', homeOf('u-a')));
+
+  assert.equal((await call('DELETE', '/api/mittr/auth/session')).body.userId, 'u-b');
+  assert.equal(engine.restarts.length, 4);
+  assert.equal(await dataHome(), path.join(shared, 'accounts', homeOf('u-b')));
+
+  assert.deepEqual((await call('DELETE', '/api/mittr/auth/session')).body, { signedIn: false });
+  assert.equal(engine.restarts.length, 5);
+  assert.equal(await dataHome(), shared);
 });
 
 test('the default export is the server-plugin setup', () => {

@@ -25,7 +25,7 @@ const UNREACHABLE = 'Cannot reach Mittr';
 
 export const ACCOUNTS_DAMAGED = 'Your Mittr account list on this computer is damaged. Choose Repair to set it aside and sign in again.';
 
-const statusOf = (session) => (session
+export const statusOf = (session) => (session
   ? { signedIn: true, userId: session.subject.userId, displayName: session.subject.displayName }
   : { signedIn: false });
 
@@ -160,7 +160,7 @@ export function registerMittrAuthRoutes(app, {
       // Sign-in has succeeded by now; a follow-up that fails never changes
       // the answer.
       try {
-        await onSignIn();
+        await onSignIn(before, session.subject.userId);
       } catch (error) {
         logger.warn('[mittr] work after sign-in failed:', error?.message ?? error);
       }
