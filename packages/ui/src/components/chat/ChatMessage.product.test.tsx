@@ -158,7 +158,7 @@ describe('ChatMessage product hooks', () => {
     const html = await render({ info: assistant(refused), parts: [] }, turn(true));
     expect(html).toContain('Product refusal text');
     expect(html).not.toContain('Opencode failed to send message with error');
-    expect(seen.at(-1)).toEqual({ type: 'probe.refused', message: 'raw refusal', status: 402, responseBody: '{"reason":"probe"}' });
+    expect(seen.at(-1)).toEqual({ type: 'probe.refused', message: 'raw refusal', status: 402, responseBody: '{"reason":"probe"}', providerID: 'probe' });
   });
 
   test('an error the plugin does not translate keeps the upstream text', async () => {

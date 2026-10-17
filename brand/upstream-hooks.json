@@ -147,6 +147,10 @@
     {
       "hook": "chat-message",
       "why": "An assistant message showed every failed turn as the engine's raw error and had no place for a product's own follow-up, so a build whose provider refuses a turn for a reason the person can act on (a used-up weekly quota) could neither say so plainly nor offer to send it again; a product plugin may now reword the error first, and a footer slot under the message renders nothing when no plugin fills it."
+    },
+    {
+      "hook": "chat-message",
+      "why": "An error a product plugin rewords did not say which provider the turn ran on, so a build could not tell a turn its own provider could not route (a model the person may not use right now) from one on a provider that is switched off, and gave both the same advice; the plugin now also receives the provider id, and without a plugin nothing changes."
     }
   ],
   "packages/ui/src/components/chat/ModelControls.tsx": [
@@ -253,6 +257,10 @@
     {
       "hook": "model-controls",
       "why": "The model picker always offered \"Add new provider\", so a build whose picker plugin shows only its own provider until the person opts in to others showed a row that led to providers the picker would not list; a picker plugin can now withhold that row, and without one it stays."
+    },
+    {
+      "hook": "chat-message",
+      "why": "An error a product plugin rewords did not say which provider the turn ran on, so a build could not tell a turn its own provider could not route (a model the person may not use right now) from one on a provider that is switched off, and gave both the same advice; the plugin now also receives the provider id, and without a plugin nothing changes."
     }
   ],
   "packages/ui/src/lib/quota/providers/index.ts": [

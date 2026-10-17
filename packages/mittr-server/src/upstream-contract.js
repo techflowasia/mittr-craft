@@ -357,7 +357,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'chat-message-product-hooks',
     files: ['packages/ui/src/components/chat/ChatMessage.tsx', 'packages/ui/src/lib/product-plugins.ts'],
-    why: "an assistant message asks translateProductMessageError once, with its error's type, message, status and response body, before any of upstream's own error texts, and renders the assistant-message-footer slot once, under the assistant message body, with the message and whether its turn is the latest; the used-up quota text and Try again live there",
+    why: "an assistant message asks translateProductMessageError once, with its error's type, message, status and response body and the provider the turn ran on, before any of upstream's own error texts, and renders the assistant-message-footer slot once, under the assistant message body, with the message and whether its turn is the latest; the used-up quota text and Try again live there",
   },
   {
     id: 'opencode-client-send-message',

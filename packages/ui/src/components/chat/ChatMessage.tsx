@@ -564,7 +564,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
         }
         if (message.info.role === 'assistant' && message.info.error) {
             const { type, message: errorText, status, response } = message.info.error;
-            const productText = translateProductMessageError({ type, message: errorText, status, responseBody: response?.body });
+            const productText = translateProductMessageError({ type, message: errorText, status, responseBody: response?.body, providerID: message.info.providerID });
             if (productText !== null) {
                 return { text: productText };
             }

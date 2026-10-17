@@ -1010,7 +1010,7 @@ const checks = {
     has(message, /^import \{ ProductSlot, translateProductMessageError \} from '@\/lib\/product-plugins';$/m, 'ChatMessage no longer imports ProductSlot and translateProductMessageError');
     assert.equal(lineCount(message, 'translateProductMessageError('), 1, 'ChatMessage asks for a product error text more than once, or not at all');
     const memo = message.indexOf('const assistantError = React.useMemo(');
-    const asked = message.indexOf('translateProductMessageError({ type, message: errorText, status, responseBody: response?.body })');
+    const asked = message.indexOf('translateProductMessageError({ type, message: errorText, status, responseBody: response?.body, providerID: message.info.providerID })');
     const upstreamText = message.indexOf('`Opencode failed to send message with error: ${detail}`');
     assert.ok(memo >= 0 && asked > memo && upstreamText > asked, 'the product error text is no longer asked for first in the assistantError memo');
     has(message, /const \{ type, message: errorText, status, response \} = message\.info\.error;\s*const productText = translateProductMessageError\([^)]*\);\s*if \(productText !== null\) \{\s*return \{ text: productText \};/, 'a product error text no longer replaces the error text');
@@ -1023,7 +1023,7 @@ const checks = {
     has(message, /\) : \(\s*<div className="relative">\s*<MessageBody\s+sessionId=\{message\.info\.sessionID\}/, 'the last MessageBody is no longer the assistant branch');
     const plugins = source('packages/ui/src/lib/product-plugins.ts');
     has(plugins, /'assistant-message-footer': \{ message: \{ info: Message; parts: Part\[\] \}; isLatestTurn: boolean \};/);
-    has(plugins, /type ProductMessageError = \{ type: string; message: string; status\?: number; responseBody\?: string \};/);
+    has(plugins, /type ProductMessageError = \{ type: string; message: string; status\?: number; responseBody\?: string; providerID\?: string \};/);
     has(plugins, /messageError\?: \(error: ProductMessageError\) => string \| null;/);
     has(source('node_modules/@opencode/client/dist/promise/generated/types.d.ts'), /export type SessionStructuredError = \{\s*type: string;\s*message: string;\s*status\?: number;\s*response\?: \{\s*body: string;\s*\};\s*\};/, 'the engine error no longer carries type, message, status and response.body');
   },

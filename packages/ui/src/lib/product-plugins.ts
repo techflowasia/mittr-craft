@@ -39,7 +39,7 @@ export type ModelPickerDecorations = {
 
 type UseModelPickerDecorations = (open: boolean) => ModelPickerDecorations;
 
-type ProductMessageError = { type: string; message: string; status?: number; responseBody?: string };
+type ProductMessageError = { type: string; message: string; status?: number; responseBody?: string; providerID?: string };
 
 export type ProductUiPlugin = {
   id: string;
