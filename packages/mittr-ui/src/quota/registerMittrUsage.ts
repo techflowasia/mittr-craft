@@ -8,7 +8,9 @@ const MITTR_QUOTA_PROVIDER_ID = 'mittr';
 registerQuotaProvider({ id: MITTR_QUOTA_PROVIDER_ID, name: 'Mittr' }, { first: true });
 
 selectRegisteredQuotaProvider(MITTR_QUOTA_PROVIDER_ID, (mittr) => keepMittrInUsageDropdown(useQuotaStore, mittr, {
-  persist: async (ids) => (await updateDesktopSettings({ usageDropdownProviders: ids })).ok,
+  persist: async (ids) => {
+    await updateDesktopSettings({ usageDropdownProviders: ids });
+  },
   ...storedAddedMark(() => globalThis.localStorage),
 }));
 

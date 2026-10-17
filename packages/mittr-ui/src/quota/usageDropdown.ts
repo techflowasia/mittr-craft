@@ -6,7 +6,7 @@ export type UsageDropdownStore<Id extends string> = {
 };
 
 export type UsageDropdownDeps = {
-  persist: (ids: string[]) => Promise<boolean>;
+  persist: (ids: string[]) => Promise<void>;
   wasAdded: () => boolean;
   markAdded: () => void;
 };
@@ -22,7 +22,8 @@ export function keepMittrInUsageDropdown<Id extends string>(store: UsageDropdown
       return;
     }
     store.setState({ dropdownProviderIds: next });
-    if (await deps.persist(next)) deps.markAdded();
+    deps.markAdded();
+    await deps.persist(next);
   };
 
   const loadSettings = store.getState().loadSettings;

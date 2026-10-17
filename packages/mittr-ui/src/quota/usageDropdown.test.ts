@@ -31,7 +31,6 @@ const depsFor = (saved: Saved, storage: Storage, saveOk = true) => {
     persist: async (ids) => {
       writes.push(ids);
       if (saveOk) saved.ids = ids;
-      return saveOk;
     },
     ...storedAddedMark(() => storage),
   };
@@ -96,16 +95,19 @@ describe('Mittr in the usage dropdown', () => {
     expect(store.getState().dropdownProviderIds).toEqual(['codex', 'mittr']);
   });
 
-  test('a save that fails is tried again on the next read', async () => {
+  test('a failed first save, then the person hiding Mittr, never brings it back', async () => {
     const saved: Saved = { ids: ['codex'], readFails: false };
     const store = quotaStore(saved, ['codex']);
     const { deps, writes } = depsFor(saved, memoryStorage(), false);
     keepMittrInUsageDropdown(store, 'mittr', deps);
     await store.getState().loadSettings();
-    await store.getState().loadSettings();
     expect(store.getState().dropdownProviderIds).toEqual(['codex', 'mittr']);
-    expect(writes).toEqual([['codex', 'mittr'], ['codex', 'mittr']]);
-    expect(deps.wasAdded()).toBe(false);
+    expect(writes).toEqual([['codex', 'mittr']]);
+    store.setState({ dropdownProviderIds: ['codex'] });
+    await store.getState().loadSettings();
+    expect(store.getState().dropdownProviderIds).toEqual(['codex']);
+    expect(writes).toHaveLength(1);
+    expect(deps.wasAdded()).toBe(true);
   });
 
   test('without browser storage Mittr is still added only once per run', () => {
