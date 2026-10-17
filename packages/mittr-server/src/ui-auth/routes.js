@@ -7,6 +7,9 @@ export const PROVIDER_ID = 'ad';
 export const TRANSACTION_COOKIE = 'oc_ad_transaction';
 const CALLBACK_PATH = '/auth/ad/callback';
 const BODY_LIMIT = '16kb';
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const TRUSTED_DEVICE_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const CLIENT_LABEL_LIMIT = 80;
 const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 const RATE_LIMIT_MAX_ATTEMPTS = 10;
 const RATE_LIMIT_LOCKOUT_MS = 15 * 60 * 1000;
@@ -276,6 +279,22 @@ export const registerCompanySignIn = (context, {
     }
   });
 
+  const mintClientToken = async (req, trustDevice) => {
+    if (typeof context.uiAuth?.createClient !== 'function') return null;
+    const label = typeof req.body?.clientLabel === 'string' ? req.body.clientLabel.trim().slice(0, CLIENT_LABEL_LIMIT) : '';
+    try {
+      const minted = await context.uiAuth.createClient({
+        fallbackLabel: label || undefined,
+        expiresAt: new Date(now() + (trustDevice ? TRUSTED_DEVICE_SESSION_TTL_MS : SESSION_TTL_MS)).toISOString(),
+        authMethod: 'ad',
+      });
+      return minted?.token ? minted : null;
+    } catch (error) {
+      logger.warn('[mittr] could not issue a client token:', error?.message ?? 'Error');
+      return null;
+    }
+  };
+
   app.post('/auth/ad/session', refuseTunnel('AD login is disabled for tunnel scope'), parseBody, async (req, res) => {
     if (!auth) return res.status(400).json({ error: 'AD authentication not configured' });
     if (!isLdap) return res.status(400).json({ error: 'Use the Microsoft sign-in redirect' });
@@ -295,12 +314,18 @@ export const registerCompanySignIn = (context, {
       return res.status(401).json({ error: result.error || 'Invalid credentials' });
     }
     limiter.clear(req);
+    const trustDevice = req.body?.trustDevice === true;
     await provider.issueSession(req, res, {
-      trustDevice: req.body?.trustDevice === true,
+      trustDevice,
       claims: { authMethod: 'ad', username, profile: result.profile },
     });
+    const client = req.body?.issueClientToken === true ? await mintClientToken(req, trustDevice) : null;
     res.setHeader('Cache-Control', 'no-store');
-    return res.json({ authenticated: true, profile: result.profile });
+    return res.json({
+      authenticated: true,
+      profile: result.profile,
+      ...(client ? { clientToken: client.token, client: client.client } : {}),
+    });
   });
 
   app.get('/auth/ad/profile', refuseTunnel('AD profile is disabled for tunnel scope'), async (req, res) => {

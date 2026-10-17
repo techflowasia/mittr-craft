@@ -33,7 +33,7 @@ These routes sit outside `/api`. Each one refuses tunnel and unknown-public requ
 - `GET /auth/ad/status`
 - `GET /auth/ad/login`: limited to 20 unfinished sign-ins per address. A slot is held from the moment a start begins, and released when the start fails, when the callback finishes (whether it succeeds or fails), or after 10 minutes. Each address may also start at most 60 sign-ins per 10 minutes, finished or not. At most 1000 sign-ins can be in progress at once; a new one is refused when that many are open, and no sign-in in progress is pushed out.
 - `GET /auth/ad/callback`
-- `POST /auth/ad/session`: LDAP only. Limited to 10 failed attempts per address per 5 minutes, then a 15-minute lockout.
+- `POST /auth/ad/session`: LDAP only. Limited to 10 failed attempts per address per 5 minutes, then a 15-minute lockout. With `issueClientToken: true` in the body it also answers `clientToken` for a desktop app that cannot send the session cookie to another site; the token lasts as long as the session, and the person does not choose its kind.
 - `GET /auth/ad/profile`
 - `DELETE /auth/session`: clears this browser's session and revokes its URL tokens.
 

@@ -28,7 +28,7 @@ const AD_ROUTES = [
   ['GET', '/auth/ad/profile'],
 ];
 
-const harness = async (t, { env, scope = 'local', password = '', directory, microsoft, logger = recordingLogger(), clock = { now: NOW } } = {}) => {
+const harness = async (t, { env, scope = 'local', password = '', directory, microsoft, createClient, logger = recordingLogger(), clock = { now: NOW } } = {}) => {
   const app = express();
   const uiAuth = createUiAuth({ password });
   t.after(() => uiAuth.dispose());
@@ -37,7 +37,7 @@ const harness = async (t, { env, scope = 'local', password = '', directory, micr
     express,
     logger,
     requestScope: () => scope,
-    uiAuth: { registerProvider: registerUiAuthProvider, passwordEnabled: () => Boolean(password) },
+    uiAuth: { registerProvider: registerUiAuthProvider, passwordEnabled: () => Boolean(password), ...(createClient ? { createClient } : {}) },
   }, {
     env,
     ldap: directory ? { createClient: directory.createClient } : {},
@@ -384,6 +384,79 @@ test('LDAP sign-in opens a UI session, and an empty password never binds', async
   assert.equal(profile.body.profile.department, 'Engineering');
   assert.equal((await call('GET', '/auth/ad/profile')).status, 401);
   assert.equal((await call('GET', '/auth/ad/login')).status, 400);
+});
+
+const clientMinter = () => {
+  const calls = [];
+  return {
+    calls,
+    createClient: async (options) => {
+      calls.push(options);
+      return { token: 'oc_client_token', client: { id: 'client-1', label: options.fallbackLabel } };
+    },
+  };
+};
+
+test('LDAP sign-in gives a desktop app a client token only when asked', async (t) => {
+  const minter = clientMinter();
+  const { call } = await harness(t, { env: LDAP_ENV, directory: ldapDirectory(), createClient: minter.createClient });
+
+  const plain = await call('POST', '/auth/ad/session', { body: { username: 'ada', password: 'correct horse' } });
+  assert.equal(plain.status, 200);
+  assert.equal(plain.body.clientToken, undefined);
+  assert.equal(minter.calls.length, 0);
+
+  const asked = await call('POST', '/auth/ad/session', { body: { username: 'ada', password: 'correct horse', issueClientToken: true, clientLabel: 'MittrCraft Desktop' } });
+  assert.equal(asked.status, 200);
+  assert.equal(asked.body.clientToken, 'oc_client_token');
+  assert.equal(asked.body.client.id, 'client-1');
+  assert.ok(sessionCookieOf(asked));
+  assert.equal(minter.calls.length, 1);
+  assert.equal(minter.calls[0].fallbackLabel, 'MittrCraft Desktop');
+  assert.equal(minter.calls[0].authMethod, 'ad');
+  assert.equal(Date.parse(minter.calls[0].expiresAt), NOW + 12 * 60 * 60 * 1000);
+});
+
+test('a trusted device keeps its client token for as long as its session', async (t) => {
+  const minter = clientMinter();
+  const { call } = await harness(t, { env: LDAP_ENV, directory: ldapDirectory(), createClient: minter.createClient });
+
+  await call('POST', '/auth/ad/session', { body: { username: 'ada', password: 'correct horse', trustDevice: true, issueClientToken: true } });
+
+  assert.equal(Date.parse(minter.calls[0].expiresAt), NOW + 7 * 24 * 60 * 60 * 1000);
+});
+
+test('the person picks neither the kind nor the dedupe key of the client token', async (t) => {
+  const minter = clientMinter();
+  const { call } = await harness(t, { env: LDAP_ENV, directory: ldapDirectory(), createClient: minter.createClient });
+
+  await call('POST', '/auth/ad/session', { body: { username: 'ada', password: 'correct horse', issueClientToken: true, clientKind: 'desktop-local', dedupeKey: 'desktop-local' } });
+
+  assert.equal(minter.calls.length, 1);
+  assert.equal(minter.calls[0].clientKind, undefined);
+  assert.equal(minter.calls[0].dedupeKey, undefined);
+});
+
+test('no client token for wrong credentials', async (t) => {
+  const minter = clientMinter();
+  const { call } = await harness(t, { env: LDAP_ENV, directory: ldapDirectory(), createClient: minter.createClient });
+
+  const refused = await call('POST', '/auth/ad/session', { body: { username: 'ada', password: 'nope', issueClientToken: true } });
+
+  assert.equal(refused.status, 401);
+  assert.equal(minter.calls.length, 0);
+});
+
+test('a failed mint still leaves the session', async (t) => {
+  const logger = recordingLogger();
+  const failing = await harness(t, { env: LDAP_ENV, directory: ldapDirectory(), logger, createClient: async () => { throw new Error('store is read-only'); } });
+
+  const response = await failing.call('POST', '/auth/ad/session', { body: { username: 'ada', password: 'correct horse', issueClientToken: true } });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.authenticated, true);
+  assert.equal(response.body.clientToken, undefined);
+  assert.ok(sessionCookieOf(response));
+  assert.ok(logger.lines.some((line) => line.includes('client token')));
 });
 
 test('repeated wrong LDAP passwords are rate limited', async (t) => {
