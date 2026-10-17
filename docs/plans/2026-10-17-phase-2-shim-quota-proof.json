@@ -1,7 +1,7 @@
 {
   "engine": "packages/electron/resources/opencode-cli/opencode",
   "engineVersion": "opencode v2.0.22",
-  "startedAt": "2026-10-17T11:29:30.736Z",
+  "startedAt": "2026-10-17T11:38:24.058Z",
   "scenarios": {
     "shim": {
       "pass": true,
@@ -11,10 +11,10 @@
         "control": {
           "pass": true,
           "observed": {
-            "sessionID": "ses_eb6602ed0ffeYyClEEQvM6xFww",
+            "sessionID": "ses_eb6580b21ffedq766QFrAmuOHh",
             "platformRequests": 1,
             "platformRequestTimesMs": [
-              29
+              34
             ],
             "platformAuthorization": [
               "Bearer probe-platform-token"
@@ -23,8 +23,8 @@
               "[mittr] shim POST /chat/completions 200"
             ],
             "shimOtherLines": [],
-            "idleAfterAnswerMs": 10,
-            "idleAfterPromptMs": 40,
+            "idleAfterAnswerMs": 12,
+            "idleAfterPromptMs": 47,
             "retrySeen": false,
             "retryEvents": 0,
             "events": [
@@ -105,10 +105,10 @@
         "P2": {
           "pass": true,
           "observed": {
-            "sessionID": "ses_eb65fe09affeEHpQbvICHxbCkh",
+            "sessionID": "ses_eb657bcf1ffemdWzc37yA4wfpj",
             "platformRequests": 1,
             "platformRequestTimesMs": [
-              25
+              21
             ],
             "platformAuthorization": [
               "Bearer probe-platform-token"
@@ -117,8 +117,8 @@
               "[mittr] shim POST /chat/completions 429"
             ],
             "shimOtherLines": [],
-            "idleAfterAnswerMs": 9,
-            "idleAfterPromptMs": 34,
+            "idleAfterAnswerMs": 7,
+            "idleAfterPromptMs": 28,
             "retrySeen": false,
             "retryEvents": 0,
             "events": [
@@ -204,10 +204,10 @@
         "P2b": {
           "pass": true,
           "observed": {
-            "sessionID": "ses_eb65f925bffes5ayyL9FLdvUJO",
+            "sessionID": "ses_eb6576ec6ffeYrMY0wAGZzRB2W",
             "platformRequests": 1,
             "platformRequestTimesMs": [
-              16
+              19
             ],
             "platformAuthorization": [
               "Bearer probe-platform-token"
@@ -216,8 +216,8 @@
               "[mittr] shim POST /chat/completions 200"
             ],
             "shimOtherLines": [],
-            "idleAfterAnswerMs": 21,
-            "idleAfterPromptMs": 239,
+            "idleAfterAnswerMs": 66,
+            "idleAfterPromptMs": 286,
             "retrySeen": false,
             "retryEvents": 0,
             "events": [
@@ -319,10 +319,10 @@
         "hang": {
           "pass": true,
           "observed": {
-            "sessionID": "ses_eb65ef539ffeyPfPxjlBsrilut",
+            "sessionID": "ses_eb656d279ffeMdz7ReaC3Q0nka",
             "platformRequests": 1,
             "platformRequestTimesMs": [
-              17
+              15
             ],
             "platformAuthorization": [
               "Bearer probe-platform-token"
@@ -331,8 +331,8 @@
               "[mittr] shim POST /chat/completions timeout"
             ],
             "shimOtherLines": [],
-            "idleAfterAnswerMs": 9,
-            "idleAfterPromptMs": 3028,
+            "idleAfterAnswerMs": 4,
+            "idleAfterPromptMs": 3059,
             "retrySeen": false,
             "retryEvents": 0,
             "events": [
@@ -416,35 +416,26 @@
           }
         },
         "cut": {
-          "recordedOnly": true,
+          "pass": true,
           "observed": {
-            "sessionID": "ses_eb65f4429ffeIcnNTVEpY7Jl8j",
-            "platformRequests": 4,
+            "sessionID": "ses_eb6572099ffe5AsoGMlbXzVtHE",
+            "platformRequests": 1,
             "platformRequestTimesMs": [
-              100,
-              2055,
-              6543,
-              14195
+              19
             ],
             "platformAuthorization": [
               "Bearer probe-platform-token"
             ],
             "shimCalls": [
-              "[mittr] shim POST /chat/completions 200",
-              "[mittr] shim POST /chat/completions 200",
-              "[mittr] shim POST /chat/completions 200",
               "[mittr] shim POST /chat/completions 200"
             ],
             "shimOtherLines": [
-              "[mittr] shim cut the answer: the stream from Mittr broke (terminated)",
-              "[mittr] shim cut the answer: the stream from Mittr broke (terminated)",
-              "[mittr] shim cut the answer: the stream from Mittr broke (terminated)",
               "[mittr] shim cut the answer: the stream from Mittr broke (terminated)"
             ],
-            "idleAfterAnswerMs": null,
-            "idleAfterPromptMs": null,
-            "retrySeen": true,
-            "retryEvents": 4,
+            "idleAfterAnswerMs": 7,
+            "idleAfterPromptMs": 228,
+            "retrySeen": false,
+            "retryEvents": 0,
             "events": [
               {
                 "type": "session.created"
@@ -479,22 +470,104 @@
               {
                 "type": "session.step.failed",
                 "error": {
-                  "type": "provider.transport",
+                  "type": "provider.invalid-request",
                   "status": 200,
-                  "message": "Connection lost while reading the response: ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"
+                  "message": "The answer was cut off. Send your message again."
                 }
               },
               {
-                "type": "session.retry.scheduled",
-                "attempt": 2,
+                "type": "session.execution.failed",
                 "error": {
-                  "type": "provider.transport",
+                  "type": "provider.invalid-request",
                   "status": 200,
-                  "message": "Connection lost while reading the response: ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"
+                  "message": "The answer was cut off. Send your message again."
                 }
+              }
+            ],
+            "assistantError": {
+              "type": "provider.invalid-request",
+              "status": 200,
+              "message": "The answer was cut off. Send your message again.",
+              "responseBody": "{\"error\":{\"type\":\"invalid_request_error\",\"code\":\"stream_cut_off\",\"message\":\"The answer was cut off. Send your message again.\"}}",
+              "keys": [
+                "message",
+                "response",
+                "status",
+                "type"
+              ],
+              "responseKeys": [
+                "body"
+              ]
+            },
+            "assistantTexts": [
+              "partial "
+            ],
+            "transcript": [
+              {
+                "type": "user",
+                "texts": [
+                  "probe stream cut after the first delta"
+                ],
+                "error": null,
+                "finish": null
               },
               {
-                "type": "session.synthetic"
+                "type": "assistant",
+                "texts": [
+                  "partial "
+                ],
+                "error": "provider.invalid-request",
+                "finish": "error"
+              },
+              {
+                "type": "idle",
+                "texts": [],
+                "error": null,
+                "finish": null
+              }
+            ],
+            "assistantFinish": "error",
+            "messageError": null,
+            "interruptError": null,
+            "promptError": null
+          }
+        },
+        "stall": {
+          "pass": true,
+          "observed": {
+            "sessionID": "ses_eb656844cffexttOvoZg3e2dl9",
+            "platformRequests": 1,
+            "platformRequestTimesMs": [
+              29
+            ],
+            "platformAuthorization": [
+              "Bearer probe-platform-token"
+            ],
+            "shimCalls": [
+              "[mittr] shim POST /chat/completions 200"
+            ],
+            "shimOtherLines": [
+              "[mittr] shim cut the answer: Mittr went silent"
+            ],
+            "idleAfterAnswerMs": 8,
+            "idleAfterPromptMs": 3039,
+            "retrySeen": false,
+            "retryEvents": 0,
+            "events": [
+              {
+                "type": "session.created"
+              },
+              {
+                "type": "session.inbox.enqueued"
+              },
+              {
+                "type": "session.execution.started"
+              },
+              {
+                "type": "session.instructions.updated"
+              },
+              {
+                "type": "session.inbox.delivered"
               },
               {
                 "type": "session.step.started"
@@ -514,44 +587,34 @@
               {
                 "type": "session.step.failed",
                 "error": {
-                  "type": "provider.transport",
+                  "type": "provider.invalid-request",
                   "status": 200,
-                  "message": "Connection lost while reading the response: ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"
+                  "message": "The answer was cut off. Send your message again."
                 }
               },
               {
-                "type": "session.retry.scheduled",
-                "attempt": 3,
+                "type": "session.execution.failed",
                 "error": {
-                  "type": "provider.transport",
+                  "type": "provider.invalid-request",
                   "status": 200,
-                  "message": "Connection lost while reading the response: ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"
+                  "message": "The answer was cut off. Send your message again."
                 }
-              },
-              {
-                "type": "session.synthetic"
-              },
-              {
-                "type": "session.step.started"
-              },
-              {
-                "type": "session.text.started"
-              },
-              {
-                "type": "session.text.delta"
               }
             ],
             "assistantError": {
-              "type": "provider.transport",
+              "type": "provider.invalid-request",
               "status": 200,
-              "message": "Connection lost while reading the response: ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()",
-              "responseBody": null,
+              "message": "The answer was cut off. Send your message again.",
+              "responseBody": "{\"error\":{\"type\":\"invalid_request_error\",\"code\":\"stream_cut_off\",\"message\":\"The answer was cut off. Send your message again.\"}}",
               "keys": [
                 "message",
+                "response",
                 "status",
                 "type"
               ],
-              "responseKeys": null
+              "responseKeys": [
+                "body"
+              ]
             },
             "assistantTexts": [
               "partial "
@@ -560,7 +623,7 @@
               {
                 "type": "user",
                 "texts": [
-                  "probe stream cut after the first delta"
+                  "probe stream silent after the first delta"
                 ],
                 "error": null,
                 "finish": null
@@ -570,55 +633,7 @@
                 "texts": [
                   "partial "
                 ],
-                "error": "provider.transport",
-                "finish": "error"
-              },
-              {
-                "type": "synthetic",
-                "texts": [
-                  "The previous response was interrupted. Continue from where you left off without repeating completed content."
-                ],
-                "error": null,
-                "finish": null
-              },
-              {
-                "type": "assistant",
-                "texts": [
-                  "partial "
-                ],
-                "error": "provider.transport",
-                "finish": "error"
-              },
-              {
-                "type": "synthetic",
-                "texts": [
-                  "The previous response was interrupted. Continue from where you left off without repeating completed content."
-                ],
-                "error": null,
-                "finish": null
-              },
-              {
-                "type": "assistant",
-                "texts": [
-                  "partial "
-                ],
-                "error": "provider.transport",
-                "finish": "error"
-              },
-              {
-                "type": "synthetic",
-                "texts": [
-                  "The previous response was interrupted. Continue from where you left off without repeating completed content."
-                ],
-                "error": null,
-                "finish": null
-              },
-              {
-                "type": "assistant",
-                "texts": [
-                  "partial "
-                ],
-                "error": "provider.transport",
+                "error": "provider.invalid-request",
                 "finish": "error"
               },
               {
@@ -639,7 +654,7 @@
   },
   "stopConditions": {},
   "outbound": {
-    "lsofSamples": 343,
+    "lsofSamples": 398,
     "lsofIntervalMs": 250,
     "pidsSeen": 1,
     "nonLoopbackRemotes": [],
@@ -653,7 +668,7 @@
     "stub": 0,
     "other": 0
   },
-  "finishedAt": "2026-10-17T11:31:13.475Z",
+  "finishedAt": "2026-10-17T11:40:26.787Z",
   "failures": [],
   "blocked": false
 }

@@ -28,6 +28,8 @@ const PASSED_RESPONSE_HEADERS = ['retry-after', 'retry-after-ms', 'x-should-retr
 
 const LLM_QUOTA_EXHAUSTED = 'llm_quota_exhausted';
 const STREAM_DONE = 'data: [DONE]\n\n';
+const CUT_OFF = { error: { type: 'invalid_request_error', code: 'stream_cut_off', message: 'The answer was cut off. Send your message again.' } };
+const CUT_OFF_END = `\ndata: ${JSON.stringify(CUT_OFF)}\n\n${STREAM_DONE}`;
 
 const SESSION_ID = /^[\w.:-]{1,128}$/;
 const MODEL_ALIAS = /^[^\s\u0000-\u001f\u007f]{1,200}$/;
@@ -314,10 +316,7 @@ export function registerMittrShim(app, {
     } catch (error) {
       if (engineGone) return undefined;
       logger.error(`[mittr] shim cut the answer: ${limit.timedOut() ? 'Mittr went silent' : `the stream from Mittr broke (${error?.message ?? error})`}`);
-      // Ending the response would hand the engine half an answer as if it
-      // were whole. Cutting the connection reads as the failure it is.
-      res.destroy();
-      return undefined;
+      return res.end(CUT_OFF_END);
     } finally {
       limit.stop();
     }
