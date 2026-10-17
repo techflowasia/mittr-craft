@@ -220,6 +220,45 @@ test('a verified Microsoft callback opens a UI session and goes back where the p
   }
 });
 
+test('after Microsoft sign-in the redirect never leaves this origin', async (t) => {
+  const cases = ['/.//evil.example', '/..//evil.example', '/./\\evil.example', '//evil', '\\\\evil', '/\\evil', '%2F%2Fevil', '/%2F%2Fevil', '/projects?x=1'];
+  for (const returnTo of cases) {
+    const microsoft = fakeMicrosoft();
+    const { call, signIn } = await harness(t, { env: ENTRA_ENV, microsoft });
+    const { state, nonce, cookie } = await startEntra(call, returnTo);
+    microsoft.state.nonce = nonce;
+
+    const response = await call('GET', `/auth/ad/callback?state=${state}&code=auth-code`, { cookie });
+
+    assert.equal(response.status, 302, returnTo);
+    const location = response.headers.get('location');
+    assert.ok(location.startsWith('/') && !/^[\\/]{2}/.test(location) && !location.startsWith('/\\'), `${returnTo} -> ${location}`);
+    assert.equal(new URL(location, 'http://127.0.0.1').origin, 'http://127.0.0.1', `${returnTo} -> ${location}`);
+    signIn.dispose();
+  }
+  const microsoft = fakeMicrosoft();
+  const { call } = await harness(t, { env: ENTRA_ENV, microsoft });
+  const { state, nonce, cookie } = await startEntra(call, '/projects?x=1');
+  microsoft.state.nonce = nonce;
+  assert.equal((await call('GET', `/auth/ad/callback?state=${state}&code=auth-code`, { cookie })).headers.get('location'), '/projects?x=1');
+});
+
+test('one address cannot flood Microsoft sign-in starts', async (t) => {
+  const microsoft = fakeMicrosoft();
+  const { call } = await harness(t, { env: ENTRA_ENV, microsoft });
+  const first = await startEntra(call);
+
+  for (let attempt = 1; attempt < 20; attempt += 1) assert.equal((await call('GET', '/auth/ad/login')).status, 302);
+  const refused = await call('GET', '/auth/ad/login');
+
+  assert.equal(refused.status, 429);
+  assert.ok(Number(refused.headers.get('retry-after')) > 0);
+  assert.equal(refused.cookies.length, 0);
+  microsoft.state.nonce = first.nonce;
+  const completed = await call('GET', `/auth/ad/callback?state=${first.state}&code=auth-code`, { cookie: first.cookie });
+  assert.equal(completed.status, 302, 'the first sign-in in progress was evicted');
+});
+
 test('a Microsoft token for another app does not open a session', async (t) => {
   const microsoft = fakeMicrosoft();
   const { call } = await harness(t, { env: ENTRA_ENV, microsoft });

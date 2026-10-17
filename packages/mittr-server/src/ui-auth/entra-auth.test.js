@@ -146,3 +146,18 @@ test('metadata for another tenant is refused', async () => {
   const auth = createEntraAuth(ENTRA_ENV, { fetchImpl: microsoft.fetchImpl, now: () => NOW });
   await assert.rejects(auth.beginAuthorization(), /metadata is invalid/);
 });
+
+test('when too many sign-ins are in progress a new one is refused and none is evicted', async (t) => {
+  const microsoft = fakeMicrosoft();
+  const auth = createEntraAuth(ENTRA_ENV, { fetchImpl: microsoft.fetchImpl, now: () => NOW, maxTransactions: 3 });
+  t.after(() => auth.dispose());
+  const first = await auth.beginAuthorization();
+  microsoft.state.nonce = new URL(first.authorizationUrl).searchParams.get('nonce');
+  await auth.beginAuthorization();
+  await auth.beginAuthorization();
+
+  await assert.rejects(auth.beginAuthorization(), (error) => error.code === 'SIGN_IN_BUSY');
+
+  assert.equal((await auth.completeAuthorization({ code: 'auth-code', state: first.state })).profile.id, 'object-1');
+  await auth.beginAuthorization();
+});

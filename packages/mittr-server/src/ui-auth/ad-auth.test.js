@@ -151,3 +151,21 @@ test('a cleartext directory URL is allowed with a warning', () => {
   assert.equal(auth.enabled, true);
   assert.ok(logger.lines.some((line) => line.includes('ldap://')));
 });
+
+test('an untrusted directory certificate is logged by its code with the CA hint, and nothing the person typed', async () => {
+  const directory = directoryWithAda({ connect: 'manual' });
+  const logger = recordingLogger();
+  const auth = createAdAuth(LDAP_ENV, { createClient: directory.createClient, logger });
+  const signingIn = auth.authenticate('CN=intruder,DC=evil', 'typed secret');
+  await new Promise((resolve) => setImmediate(resolve));
+  const tlsError = new Error('unable to verify the first certificate');
+  tlsError.code = 'UNABLE_TO_VERIFY_LEAF_SIGNATURE';
+  directory.clients[0].emit('connectError', tlsError);
+
+  assert.deepEqual(await signingIn, { ok: false, error: 'AD authentication failed' });
+  assert.ok(logger.lines.some((line) => line.includes('UNABLE_TO_VERIFY_LEAF_SIGNATURE') && line.includes('NODE_EXTRA_CA_CERTS')), logger.lines.join('\n'));
+  for (const line of logger.lines) {
+    assert.ok(!line.includes('typed secret') && !line.includes('intruder') && !line.includes(LDAP_ENV.MITTR_AD_BIND_PASSWORD), line);
+  }
+  assert.equal(directory.clients[0].closed, true);
+});

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 
 import { createAdAuth, hasAdConfiguration } from './ad-auth.js';
-import { createEntraAuth, hasEntraConfiguration } from './entra-auth.js';
+import { TRANSACTION_TTL_MS, createEntraAuth, hasEntraConfiguration } from './entra-auth.js';
 
 export const PROVIDER_ID = 'ad';
 export const TRANSACTION_COOKIE = 'oc_ad_transaction';
@@ -11,6 +11,7 @@ const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 const RATE_LIMIT_MAX_ATTEMPTS = 10;
 const RATE_LIMIT_LOCKOUT_MS = 15 * 60 * 1000;
 const RATE_LIMIT_MAX_KEYS = 10_000;
+const LOGIN_STARTS_PER_IP = 20;
 const VERIFY_FAILED_PAGE = 'Microsoft sign-in could not be verified. Return to MittrCraft and try again.';
 const SIGN_IN_FAILED_PAGE = 'Microsoft sign-in failed. Return to MittrCraft and try again.';
 
@@ -71,15 +72,37 @@ const resolveReturnTo = (req) => {
     const origin = new URL(`${isSecureRequest(req) ? 'https' : 'http'}://${host}`).origin;
     const target = new URL(raw, origin);
     if (target.origin !== origin || target.username || target.password) return '/';
+    if (/^[\\/]{2}/.test(target.pathname) || /^[\\/]{2}/.test(decodeURIComponent(target.pathname))) return '/';
     return `${target.pathname}${target.search}`;
   } catch {
     return '/';
   }
 };
 
+const clientKey = (req) => (req.ip || req.socket?.remoteAddress || 'no-ip').replace(/^::ffff:/, '');
+
+const createLoginStartLimiter = (now) => {
+  const starts = new Map();
+  return {
+    take: (req) => {
+      const key = clientKey(req);
+      const timestamp = now();
+      const recent = (starts.get(key) ?? []).filter((at) => timestamp - at < TRANSACTION_TTL_MS);
+      if (recent.length >= LOGIN_STARTS_PER_IP) {
+        starts.set(key, recent);
+        return { allowed: false, retryAfter: Math.ceil((recent[0] + TRANSACTION_TTL_MS - timestamp) / 1000) };
+      }
+      if (!starts.has(key) && starts.size >= RATE_LIMIT_MAX_KEYS) starts.delete(starts.keys().next().value);
+      starts.set(key, [...recent, timestamp]);
+      return { allowed: true };
+    },
+    reset: () => starts.clear(),
+  };
+};
+
 const createLoginRateLimiter = (now) => {
   const records = new Map();
-  const keyOf = (req) => (req.ip || req.socket?.remoteAddress || 'no-ip').replace(/^::ffff:/, '');
+  const keyOf = clientKey;
   return {
     check: (req) => {
       const record = records.get(keyOf(req));
@@ -119,6 +142,7 @@ export const registerCompanySignIn = (context, {
   }
   const provider = auth ? context.uiAuth.registerProvider({ id: PROVIDER_ID }) : null;
   const limiter = createLoginRateLimiter(now);
+  const loginStarts = createLoginStartLimiter(now);
   const parseBody = express.json({ limit: BODY_LIMIT });
   const isEntra = auth?.mode === 'entra';
   const isLdap = auth?.mode === 'ldap';
@@ -144,6 +168,11 @@ export const registerCompanySignIn = (context, {
 
   app.get('/auth/ad/login', refuseTunnel('Microsoft login is disabled for tunnel scope'), async (req, res) => {
     if (!isEntra) return res.status(400).json({ error: 'Microsoft authentication not configured' });
+    const start = loginStarts.take(req);
+    if (!start.allowed) {
+      res.setHeader('Retry-After', String(start.retryAfter));
+      return res.status(429).json({ error: 'Too many sign-in attempts, please try again later', retryAfter: start.retryAfter });
+    }
     try {
       const trustDevice = queryText(req, 'trustDevice') === 'true' || queryText(req, 'trustDevice') === '1';
       const transaction = await auth.beginAuthorization({ trustDevice, returnTo: resolveReturnTo(req) });
@@ -153,6 +182,7 @@ export const registerCompanySignIn = (context, {
       return res.redirect(302, transaction.authorizationUrl);
     } catch (error) {
       logger.warn('[mittr] could not start Microsoft sign-in:', error?.message ?? 'Error');
+      if (error?.code === 'SIGN_IN_BUSY') return res.status(429).json({ error: 'Too many sign-ins in progress, please try again later' });
       return res.status(502).json({ error: 'Unable to start Microsoft sign-in' });
     }
   });
@@ -234,6 +264,7 @@ export const registerCompanySignIn = (context, {
       provider?.unregister();
       auth?.dispose();
       limiter.reset();
+      loginStarts.reset();
     },
   };
 };

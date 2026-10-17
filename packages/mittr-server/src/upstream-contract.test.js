@@ -1190,7 +1190,11 @@ const checks = {
     has(source('packages/web/bin/cli-entry.js'), /if \(pathToFileURL\(normalizedEntryPath\)\.href === pathToFileURL\(normalizedModulePath\)\.href\) \{\s*return true;\s*\}/);
     assert.equal(JSON.parse(source('packages/web/package.json')).bin.openchamber, './bin/cli.js');
     const wrapper = source('packages/mittr-server/bin/mittrcraft.mjs');
-    has(wrapper, /path\.resolve\(path\.dirname\(fileURLToPath\(import\.meta\.url\)\), '\.\.', '\.\.', 'web', 'bin', 'cli\.js'\)/, 'the mittrcraft bin no longer points at the server CLI');
+    has(wrapper, /const SERVER_CLI = path\.resolve\(here, '\.\.', '\.\.', 'web', 'bin', 'cli\.js'\);/, 'the mittrcraft bin no longer points at the server CLI');
+    has(source('packages/web/bin/lib/cli-args.js'), /uiPassword: process\.env\.OPENCHAMBER_UI_PASSWORD \|\| undefined,/, 'the CLI no longer reads OPENCHAMBER_UI_PASSWORD, the name the bin maps MITTRCRAFT_UI_PASSWORD onto');
+    has(source('packages/web/server/lib/security/bind-host.js'), /env\?\.OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN === 'true'/, 'the server no longer reads OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN');
+    has(source('packages/web/server/index.js'), /process\.env\.OPENCHAMBER_DATA_DIR/, 'the server no longer reads OPENCHAMBER_DATA_DIR');
+    has(source('packages/web/server/lib/server-plugins.js'), /const SERVER_PLUGINS_ENV = 'OPENCHAMBER_SERVER_PLUGINS';/);
     assert.ok(fs.existsSync(path.join(repoRoot, 'packages/mittr-server/bin', '..', '..', 'web', 'bin', 'cli.js')));
   },
 };

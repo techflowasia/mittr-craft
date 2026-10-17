@@ -119,6 +119,7 @@ export const createEntraAuth = (env = process.env, {
   fetchImpl = globalThis.fetch,
   now = () => Date.now(),
   randomBytes = crypto.randomBytes,
+  maxTransactions = MAX_TRANSACTIONS,
 } = {}) => {
   const parsed = readConfig(env);
   if (!parsed.config) {
@@ -149,7 +150,11 @@ export const createEntraAuth = (env = process.env, {
     for (const [state, transaction] of transactions) {
       if (transaction.expiresAt <= timestamp) transactions.delete(state);
     }
-    while (transactions.size >= MAX_TRANSACTIONS) transactions.delete(transactions.keys().next().value);
+    if (transactions.size >= maxTransactions) {
+      const busy = new Error('Too many Microsoft sign-ins are in progress');
+      busy.code = 'SIGN_IN_BUSY';
+      throw busy;
+    }
   };
 
   const getMetadata = () => {

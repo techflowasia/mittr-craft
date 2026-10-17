@@ -7,6 +7,7 @@ const CLOSE_TIMEOUT_MS = 1_000;
 const PROFILE_CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_USERNAME_LENGTH = 256;
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
+const TLS_ERROR_CODE = /CERT|SELF_SIGNED|UNABLE_TO_|TLS|SSL|ALTNAME/;
 
 const ATTRIBUTES = {
   username: 'sAMAccountName',
@@ -128,6 +129,13 @@ export const createAdAuth = (env = process.env, {
 } = {}) => {
   const parsed = readAdConfig(env);
   if (!parsed.config) return disabledAuth(parsed);
+  const describeError = (error) => {
+    const code = typeof error?.code === 'string' ? error.code : '';
+    if (code && TLS_ERROR_CODE.test(code)) {
+      return `${error?.name ?? 'Error'} ${code} (the directory's TLS certificate was not trusted; if it comes from an internal CA, point NODE_EXTRA_CA_CERTS at that CA's certificate)`;
+    }
+    return code ? `${error?.name ?? 'Error'} ${code}` : (error?.name ?? 'Error');
+  };
   const config = parsed.config;
   const profiles = new Map();
 
@@ -164,7 +172,7 @@ export const createAdAuth = (env = process.env, {
       tlsOptions: { minVersion: 'TLSv1.2' },
     });
     client.on('error', (error) => {
-      logger.warn('[mittr] directory connection error:', error?.name ?? 'Error');
+      logger.warn('[mittr] directory connection error:', describeError(error));
     });
     try {
       await withTimeout(connectTimeoutMs, (resolve, reject) => {
@@ -207,6 +215,7 @@ export const createAdAuth = (env = process.env, {
     } catch (error) {
       const failure = new Error('The directory service account could not sign in');
       failure.name = error?.name === 'DirectoryTimeout' ? 'DirectoryTimeout' : 'ServiceBindError';
+      if (typeof error?.code === 'string') failure.code = error.code;
       throw failure;
     }
   };
@@ -237,7 +246,7 @@ export const createAdAuth = (env = process.env, {
         return { ok: true, profile };
       });
     } catch (error) {
-      logger.warn('[mittr] directory sign-in failed:', error?.name ?? 'Error');
+      logger.warn('[mittr] directory sign-in failed:', describeError(error));
       if (error?.name === 'DirectoryTimeout' || error?.name === 'ConnectionError') {
         return { ok: false, error: 'AD server connection timeout' };
       }
@@ -261,7 +270,7 @@ export const createAdAuth = (env = process.env, {
         return profile;
       });
     } catch (error) {
-      logger.warn('[mittr] could not read the directory profile:', error?.name ?? 'Error');
+      logger.warn('[mittr] could not read the directory profile:', describeError(error));
       return null;
     }
   };
