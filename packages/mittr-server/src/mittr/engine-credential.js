@@ -31,13 +31,13 @@ const removeStaleMittrKeys = async ({ opencode, key, fetchImpl }) => {
   });
   if (!listed.ok) {
     await listed.body?.cancel();
-    throw new Error(`OpenCode did not list its keys (HTTP ${listed.status})`);
+    throw new Error(`The engine did not list its keys (HTTP ${listed.status})`);
   }
   const entries = (await listed.json())?.data;
-  if (!Array.isArray(entries)) throw new Error('OpenCode listed its keys in a shape this version does not know');
+  if (!Array.isArray(entries)) throw new Error('The engine listed its keys in a shape this version does not know');
   const mittrEntries = entries.filter(isMittrEntry);
   const current = mittrEntries.find((entry) => isCurrent(entry, key));
-  if (!current) throw new Error('OpenCode does not list the Mittr key it just took as active');
+  if (!current) throw new Error('The engine does not list the Mittr key it just took as active');
   let kept = 0;
   for (const entry of mittrEntries.filter((candidate) => candidate !== current)) {
     const removed = await fetchImpl(opencode.url(`${CREDENTIALS_ROUTE}/${encodeURIComponent(entry.id)}`), {
@@ -48,7 +48,7 @@ const removeStaleMittrKeys = async ({ opencode, key, fetchImpl }) => {
     await removed.body?.cancel();
     if (!removed.ok) kept += 1;
   }
-  if (kept > 0) throw new Error(`OpenCode kept ${kept} old Mittr key(s)`);
+  if (kept > 0) throw new Error(`The engine kept ${kept} old Mittr key(s)`);
 };
 
 /**
@@ -82,7 +82,7 @@ export async function ensureMittrCredential({ opencode, key, fetchImpl = (...arg
     if (response.ok) break;
     const delay = NOT_REGISTERED_RETRY_DELAYS_MS[attempt];
     if (response.status !== 404 || delay === undefined) {
-      throw new Error(`OpenCode did not take the Mittr key (HTTP ${response.status})`);
+      throw new Error(`The engine did not take the Mittr key (HTTP ${response.status})`);
     }
     await wait(delay);
   }

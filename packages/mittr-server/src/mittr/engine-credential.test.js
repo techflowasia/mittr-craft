@@ -89,7 +89,7 @@ test('an old key the engine keeps is reported, and the next call tries again', a
     entries: [keyEntry('cred_old_run', 'mittr', `mc_local_${'00'.repeat(32)}`, true)],
     answer: (call) => (call.method === 'DELETE' && refuseRemoval ? new Response(null, { status: 500 }) : null),
   });
-  await assert.rejects(ensureMittrCredential({ opencode, key: KEY, fetchImpl }), /kept 1 old Mittr key/);
+  await assert.rejects(ensureMittrCredential({ opencode, key: KEY, fetchImpl }), /The engine kept 1 old Mittr key/);
   refuseRemoval = false;
   assert.equal(await ensureMittrCredential({ opencode, key: KEY, fetchImpl }), 'stored');
   assert.deepEqual(fetchImpl.store.map((entry) => entry.value.key), [KEY]);
@@ -100,7 +100,7 @@ test('a key the engine does not list as active is not counted as stored', async 
   const fetchImpl = fakeEngineFetch({
     answer: (call) => (call.url.endsWith('/api/credential') ? new Response(JSON.stringify({ data: [] }), { status: 200 }) : null),
   });
-  await assert.rejects(ensureMittrCredential({ opencode, key: KEY, fetchImpl }), /active/);
+  await assert.rejects(ensureMittrCredential({ opencode, key: KEY, fetchImpl }), /The engine does not list the Mittr key it just took as active$/);
   assert.equal(fetchImpl.calls.filter((call) => call.method === 'DELETE').length, 0);
 });
 
@@ -109,7 +109,16 @@ test('a key list in an unknown shape removes nothing', async () => {
   const fetchImpl = fakeEngineFetch({
     answer: (call) => (call.url.endsWith('/api/credential') ? new Response(JSON.stringify([]), { status: 200 }) : null),
   });
-  await assert.rejects(ensureMittrCredential({ opencode, key: KEY, fetchImpl }), /shape/);
+  await assert.rejects(ensureMittrCredential({ opencode, key: KEY, fetchImpl }), /The engine listed its keys in a shape/);
+  assert.equal(fetchImpl.calls.filter((call) => call.method === 'DELETE').length, 0);
+});
+
+test('a key list the engine refuses to give is reported with its status, naming the engine', async () => {
+  const opencode = fakeEngine();
+  const fetchImpl = fakeEngineFetch({
+    answer: (call) => ((call.method ?? 'GET') === 'GET' && call.url.endsWith('/api/credential') ? new Response('no', { status: 503 }) : null),
+  });
+  await assert.rejects(ensureMittrCredential({ opencode, key: KEY, fetchImpl }), /The engine did not list its keys \(HTTP 503\)$/);
   assert.equal(fetchImpl.calls.filter((call) => call.method === 'DELETE').length, 0);
 });
 
@@ -140,7 +149,7 @@ test('a provider the engine has not picked up yet is asked again, briefly', asyn
 test('a provider that never appears fails after the last wait, and is not remembered', async () => {
   const opencode = fakeEngine();
   const fetchImpl = fakeEngineFetch({ answer: (call) => (call.url.endsWith('/connect/key') ? new Response('Integration not found', { status: 404 }) : null) });
-  await assert.rejects(ensureMittrCredential({ opencode, key: KEY, fetchImpl, wait: noWait }), /404/);
+  await assert.rejects(ensureMittrCredential({ opencode, key: KEY, fetchImpl, wait: noWait }), /The engine did not take the Mittr key \(HTTP 404\)$/);
   assert.equal(fetchImpl.connects().length, 5);
   const later = fakeEngineFetch();
   assert.equal(await ensureMittrCredential({ opencode, key: KEY, fetchImpl: later }), 'stored');
