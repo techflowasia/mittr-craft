@@ -8,7 +8,7 @@ import type { RuntimeUrlQuery } from '../../../ui/src/lib/runtime-url';
 import { mittrT } from '../strings/mittrT';
 import type { AdFetch, AdStatus } from './adStatus';
 import { entraLoginUrl, failureAfterWait, failureMessage, signInWithDirectory, submitAdSession, type AdSessionResult } from './adApi';
-import { AdSignInView, LdapFormView, TrustDevice } from './AdSignIn';
+import { AdSignInView, LdapFormView, TrustDevice, endLockout } from './AdSignIn';
 
 const entra: AdStatus = { enabled: true, mode: 'entra', passwordEnabled: false, tunnelLocked: false };
 const ldap: AdStatus = { enabled: true, mode: 'ldap', passwordEnabled: false, tunnelLocked: false };
@@ -158,6 +158,24 @@ describe('failureAfterWait', () => {
     const invalid: Failure = { ok: false, reason: 'invalid' };
     expect(failureAfterWait(invalid)).toBe(invalid);
     expect(failureAfterWait(null)).toBeNull();
+  });
+});
+
+describe('endLockout', () => {
+  test('the end of a wait re-enables the button and takes the wait text away, keeping any other failure', () => {
+    let blockedUntil = 123;
+    let failure: Failure | null = { ok: false, reason: 'rate-limited', retryAfterSeconds: 60 };
+    const setFailure = (next: Failure | null | ((current: Failure | null) => Failure | null)) => {
+      failure = typeof next === 'function' ? next(failure) : next;
+    };
+    endLockout({ setBlockedUntil: (next) => { blockedUntil = next; }, setFailure });
+    expect(blockedUntil).toBe(0);
+    expect(failure).toBeNull();
+
+    const invalid: Failure = { ok: false, reason: 'invalid' };
+    failure = invalid;
+    endLockout({ setBlockedUntil: () => {}, setFailure });
+    expect(failure).toBe(invalid);
   });
 });
 

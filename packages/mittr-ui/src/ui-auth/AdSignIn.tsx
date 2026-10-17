@@ -131,6 +131,14 @@ export function LdapFormView({ username, password, busy, blocked, failure, usern
   );
 }
 
+export function endLockout({ setBlockedUntil, setFailure }: {
+  setBlockedUntil: (next: number) => void;
+  setFailure: React.Dispatch<React.SetStateAction<FailedSession | null>>;
+}): void {
+  setBlockedUntil(0);
+  setFailure(failureAfterWait);
+}
+
 type LdapFormProps = {
   trustDevice: () => boolean;
   busy: boolean;
@@ -157,10 +165,7 @@ function LdapForm({ trustDevice, busy, onBusyChange, focusUsername, runtime, onS
   React.useEffect(() => {
     const wait = blockedUntil - Date.now();
     if (wait <= 0) return;
-    const timer = window.setTimeout(() => {
-      setBlockedUntil(0);
-      setFailure(failureAfterWait);
-    }, wait);
+    const timer = window.setTimeout(() => { endLockout({ setBlockedUntil, setFailure }); }, wait);
     return () => { window.clearTimeout(timer); };
   }, [blockedUntil]);
 
