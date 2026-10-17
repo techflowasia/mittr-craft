@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { ModelPickerList, type ModelPickerProvider } from '@/components/model-picker/ModelPickerList';
 import { registerProductUiPlugin, resetProductUiPluginsForTests, useProductModelPicker } from '@/lib/product-plugins';
+import { AUTO_MODEL_ID, AUTO_PROVIDER_ID } from '@/lib/routing/autoModel';
 
 // ModelControls draws its picker in a portal, which static markup does not
 // render, and the composer's stores cannot be stood in for without module
@@ -26,8 +27,11 @@ const LABELS = {
 
 const noop = () => {};
 
+const AUTO_ENTRY = { providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID, model: { id: AUTO_MODEL_ID, name: 'Auto pick' } };
+
 function PickerAsModelControlsWiresIt(): React.ReactNode {
   const productModelPicker = useProductModelPicker(true);
+  const offeredAutoEntry = productModelPicker.isProviderShown(AUTO_ENTRY.providerID) ? AUTO_ENTRY : null;
   return (
     <ModelPickerList
       providers={PROVIDERS}
@@ -37,6 +41,7 @@ function PickerAsModelControlsWiresIt(): React.ReactNode {
       onSearchQueryChange={noop}
       onSelect={noop}
       labels={LABELS}
+      leadingEntry={offeredAutoEntry}
       isModelAllowed={(providerID) => productModelPicker.isProviderShown(providerID)}
     />
   );
@@ -63,5 +68,16 @@ describe('ModelControls product picker', () => {
     const html = renderToStaticMarkup(<PickerAsModelControlsWiresIt />);
     expect(html).toContain('Mittr Writer');
     expect(html).toContain('GPT Five');
+    expect(html).toContain('Auto pick');
+  });
+
+  test('the Auto entry is offered only while a plugin shows its provider', () => {
+    registerProductUiPlugin({
+      id: 'mittr-only',
+      modelPicker: {
+        useDecorations: () => ({ isProviderShown: (providerId) => providerId === 'mittr', entryStatus: () => null }),
+      },
+    });
+    expect(renderToStaticMarkup(<PickerAsModelControlsWiresIt />)).not.toContain('Auto pick');
   });
 });

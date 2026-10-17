@@ -505,6 +505,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
         (providerID: string) => productModelPicker.isProviderShown(providerID),
         [productModelPicker],
     );
+    const offeredAutoEntry = autoEntry && isProductModelAllowed(autoEntry.providerID) ? autoEntry : null;
     const setAgentMenuOpen = selection ? setLocalModelSelectorOpen : setModelSelectorOpen;
     const openAddProviderSettings = React.useCallback(() => {
         requestProviderConnect(true);
@@ -2046,8 +2047,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             );
         };
 
-        const mobileAutoEntry = autoEntry && (normalizedQuery.length === 0 || getModelDisplayName(autoEntry.model).toLowerCase().includes(normalizedQuery.toLowerCase()))
-            ? autoEntry
+        const mobileAutoEntry = offeredAutoEntry && (normalizedQuery.length === 0 || getModelDisplayName(offeredAutoEntry.model).toLowerCase().includes(normalizedQuery.toLowerCase()))
+            ? offeredAutoEntry
             : null;
         const hasResults = Boolean(mobileAutoEntry) || filteredFavorites.length > 0 || filteredRecents.length > 0 || filteredProviders.length > 0;
 
@@ -2636,7 +2637,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                 onSelect={handleSharedModelSelect}
                                 labels={modelPickerLabels}
                                 selectedModel={currentProviderId && currentModelId ? { providerID: currentProviderId, modelID: currentModelId } : null}
-                                leadingEntry={autoEntry}
+                                leadingEntry={offeredAutoEntry}
                                 leadingAction={onRunInParallel ? {
                                     label: t('chat.modelControls.runInParallel'),
                                     icon: <ArrowsMerge className="h-3.5 w-3.5 flex-shrink-0" />,

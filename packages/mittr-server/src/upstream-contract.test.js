@@ -749,7 +749,7 @@ const checks = {
     assert.equal(lineCount(controls, '<ModelPickerList'), 1, 'ModelControls renders another ModelPickerList');
     const list = controls.slice(controls.indexOf('<ModelPickerList'), controls.indexOf('/>', controls.indexOf('maxHeightClassName=', controls.indexOf('<ModelPickerList'))));
     assert.ok(list.includes('isModelAllowed={isProductModelAllowed}'), 'the desktop picker list no longer gets isModelAllowed from the product picker');
-    assert.equal(lineCount(controls, 'isProductModelAllowed('), 3, 'the mobile sheet no longer filters its providers, favorites and recents');
+    assert.equal(lineCount(controls, 'isProductModelAllowed('), 4, 'the mobile sheet no longer filters its providers, favorites and recents, or the Auto entry no longer follows the product picker');
 
     const picker = source('packages/ui/src/components/model-picker/ModelPickerList.tsx');
     has(picker, /isModelAllowed\?: \(providerID: string, modelID: string\) => boolean;/);
@@ -901,6 +901,16 @@ const checks = {
     const addresses = page.lastIndexOf("t('settings.openchamber.about.field.instanceUrls')");
     assert.ok(desktop >= 0 && updateError > desktop && slot > updateError && addresses > slot, 'the about-settings slot is no longer in the desktop layout between the update rows and the instance addresses');
     has(source('packages/ui/src/lib/product-plugins.ts'), /'about-settings': Record<never, never>;/);
+  },
+
+  'model-controls-auto-entry': () => {
+    const controls = source('packages/ui/src/components/chat/ModelControls.tsx');
+    has(controls, /const offeredAutoEntry = autoEntry && isProductModelAllowed\(autoEntry\.providerID\) \? autoEntry : null;/, 'the Auto entry no longer follows the picker decorations');
+    assert.equal(lineCount(controls, 'leadingEntry={offeredAutoEntry}'), 1, 'the desktop picker no longer leads with the offered Auto entry');
+    has(controls, /const mobileAutoEntry = offeredAutoEntry && /, 'the mobile sheet no longer offers only the offered Auto entry');
+    assert.equal(controls.match(/\bautoEntry\b/g)?.length, 4, 'the Auto entry is used somewhere it does not follow the picker decorations');
+    has(source('packages/ui/src/lib/routing/autoModel.ts'), /^export const AUTO_PROVIDER_ID = 'openchamber';$/m, 'the Auto sentinel provider moved');
+    has(source('packages/mittr-ui/src/providers/useMittrPickerFilter.ts'), /isProviderShown: \(providerId\) => showOtherProviders \|\| providerId === MITTR_PROVIDER_ID,/);
   },
 };
 

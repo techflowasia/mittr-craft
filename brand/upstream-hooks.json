@@ -151,6 +151,10 @@
     {
       "hook": "model-controls",
       "why": "The model picker always offered \"Add new provider\", so a build whose picker plugin shows only its own provider until the person opts in to others showed a row that led to providers the picker would not list; a picker plugin can now withhold that row, and without one it stays."
+    },
+    {
+      "hook": "model-controls",
+      "why": "The picker offered the Auto entry even while a picker plugin showed only its own provider, so a build that keeps the composer on its own models until the person opts in to others still offered a choice the server routes elsewhere; the Auto entry now follows the same provider rule, and without a plugin it stays."
     }
   ],
   "packages/ui/src/components/sections/openchamber/AboutSettings.tsx": [

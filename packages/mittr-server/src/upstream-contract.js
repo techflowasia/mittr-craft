@@ -314,6 +314,11 @@ export const UPSTREAM_CONTRACT = [
     files: ['packages/ui/src/components/sections/openchamber/AboutSettings.tsx', 'packages/ui/src/lib/product-plugins.ts'],
     why: "the About settings page renders the about-settings slot once, in its desktop layout after the update rows and before the instance addresses; the sign-out row lives there, and the phone layout has none",
   },
+  {
+    id: 'model-controls-auto-entry',
+    files: ['packages/ui/src/components/chat/ModelControls.tsx', 'packages/ui/src/lib/routing/autoModel.ts'],
+    why: "the composer's Auto entry (provider openchamber) is offered on desktop and in the mobile sheet only while the picker decorations show that provider, so the Mittr lock hides it while other providers are off",
+  },
 ];
 
 // The dictionaries are TypeScript with extensionless imports, which only Bun
