@@ -923,7 +923,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
             <p className="typography-meta text-muted-foreground">
               {isTunnelLocked
                 ? t('sessionAuth.locked.tunnelDescription')
-                : (translateProductSessionAuthDescription({ passwordEnabled }) ?? t('sessionAuth.locked.passwordDescription'))}
+                : (translateProductSessionAuthDescription({ passwordEnabled, runtime: sessionAuthRuntime() }) ?? t('sessionAuth.locked.passwordDescription'))}
             </p>
           </div>
 

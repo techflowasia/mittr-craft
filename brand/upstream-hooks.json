@@ -159,6 +159,10 @@
     {
       "hook": "session-auth-finish-host",
       "why": "A sign-in a plugin started on one host could finish after the person switched to another, and the gate would then give the first host's client token to the second, so the finisher it hands the slot is now bound to the host the gate was drawn for and does nothing, answering false, once the window is on another."
+    },
+    {
+      "hook": "session-auth-description-runtime",
+      "why": "A plugin that words the line under the sign-in title could not tell a local desktop, which has no company sign-in to offer, from a web or remote window, so the gate now also gives it the runtime it is in."
     }
   ],
   "packages/ui/src/components/chat/ChatMessage.tsx": [
@@ -287,6 +291,10 @@
     {
       "hook": "session-auth-description",
       "why": "A product plugin can now word the line under the sign-in title through sessionAuthDescription, the way it can reword a message error, and the first plugin to answer wins."
+    },
+    {
+      "hook": "session-auth-description-runtime",
+      "why": "The context sessionAuthDescription is given now carries the runtime the sign-in gate is in as well as passwordEnabled."
     }
   ],
   "packages/ui/src/lib/quota/providers/index.ts": [

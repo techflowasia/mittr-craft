@@ -47,7 +47,7 @@ export type ModelPickerDecorations = {
 
 type UseModelPickerDecorations = (open: boolean) => ModelPickerDecorations;
 
-type ProductSessionAuthContext = { passwordEnabled: boolean };
+type ProductSessionAuthContext = { passwordEnabled: boolean; runtime: SessionAuthRuntime };
 
 type ProductMessageError = { type: string; message: string; status?: number; responseBody?: string; providerID?: string };
 

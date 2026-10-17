@@ -1226,11 +1226,11 @@ const checks = {
 
   'session-auth-description': () => {
     const gate = source('packages/ui/src/components/auth/SessionAuthGate.tsx');
-    has(gate, /: \(translateProductSessionAuthDescription\(\{ passwordEnabled \}\) \?\? t\('sessionAuth\.locked\.passwordDescription'\)\)\}/, 'the gate no longer asks the product for its description before upstream\'s');
+    has(gate, /: \(translateProductSessionAuthDescription\(\{ passwordEnabled, runtime: sessionAuthRuntime\(\) \}\) \?\? t\('sessionAuth\.locked\.passwordDescription'\)\)\}/, 'the gate no longer asks the product for its description before upstream\'s');
     has(gate, /\? t\('sessionAuth\.locked\.tunnelDescription'\)/, 'the tunnel description is no longer the gate\'s own');
     const plugins = source('packages/ui/src/lib/product-plugins.ts');
     has(plugins, /sessionAuthDescription\?: \(context: ProductSessionAuthContext\) => string \| null;/);
-    has(plugins, /type ProductSessionAuthContext = \{ passwordEnabled: boolean \};/);
+    has(plugins, /type ProductSessionAuthContext = \{ passwordEnabled: boolean; runtime: SessionAuthRuntime \};/);
   },
 
   'desktop-runtime-detect': () => {

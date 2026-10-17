@@ -422,7 +422,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'session-auth-description',
     files: ['packages/ui/src/components/auth/SessionAuthGate.tsx', 'packages/ui/src/lib/product-plugins.ts'],
-    why: "the line under the gate's title is the first answer of translateProductSessionAuthDescription({ passwordEnabled }) from the product plugins' sessionAuthDescription, else upstream's sessionAuth.locked.passwordDescription; the tunnel line is never replaced",
+    why: "the line under the gate's title is the first answer of translateProductSessionAuthDescription({ passwordEnabled, runtime }) with the runtime the sign-in slot is given from the product plugins' sessionAuthDescription, else upstream's sessionAuth.locked.passwordDescription; the tunnel line is never replaced",
   },
   {
     id: 'desktop-runtime-detect',

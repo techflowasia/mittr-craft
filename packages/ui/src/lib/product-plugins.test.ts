@@ -331,14 +331,14 @@ describe('product UI plugin root and slots', () => {
 
 describe('session auth description', () => {
   test('nothing words the line until a plugin does, and the first answer wins', () => {
-    expect(translateProductSessionAuthDescription({ passwordEnabled: false })).toBeNull();
+    expect(translateProductSessionAuthDescription({ passwordEnabled: false, runtime: 'web' })).toBeNull();
 
     registerProductUiPlugin({ id: 'p1', sessionAuthDescription: () => null });
-    registerProductUiPlugin({ id: 'p2', sessionAuthDescription: ({ passwordEnabled }) => (passwordEnabled ? null : 'second') });
+    registerProductUiPlugin({ id: 'p2', sessionAuthDescription: ({ passwordEnabled, runtime }) => (passwordEnabled ? null : `second:${runtime}`) });
     registerProductUiPlugin({ id: 'p3', sessionAuthDescription: () => 'third' });
 
-    expect(translateProductSessionAuthDescription({ passwordEnabled: false })).toBe('second');
-    expect(translateProductSessionAuthDescription({ passwordEnabled: true })).toBe('third');
+    expect(translateProductSessionAuthDescription({ passwordEnabled: false, runtime: 'desktop-remote' })).toBe('second:desktop-remote');
+    expect(translateProductSessionAuthDescription({ passwordEnabled: true, runtime: 'web' })).toBe('third');
   });
 });
 

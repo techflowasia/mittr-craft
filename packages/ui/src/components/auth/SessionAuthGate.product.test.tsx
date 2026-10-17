@@ -587,6 +587,8 @@ describe('SessionAuthGate description', () => {
     sessionBody = { authenticated: false, locked: true, passwordEnabled: false, providers: ['x'] };
 
     expect(collectText(await renderGate())).toContain('sessionAuth.locked.passwordDescription');
+
+    expect(descriptionContexts.at(-1)).toEqual({ passwordEnabled: false, runtime: 'web' });
   });
 
   test('a plugin can word the line, and its words replace upstream\'s', async () => {
@@ -598,6 +600,17 @@ describe('SessionAuthGate description', () => {
 
     expect(text).toContain('Sign in with your company account.');
     expect(text).not.toContain('sessionAuth.locked.passwordDescription');
+    expect(descriptionContexts.at(-1)).toEqual({ passwordEnabled: false, runtime: 'web' });
+  });
+
+  test('the plugin is told the runtime, so it can leave a local desktop alone', async () => {
+    resetHarness();
+    desktopShell = true;
+    (globalThis as unknown as { window: Record<string, unknown> }).window.__OPENCHAMBER_LOCAL_ORIGIN__ = 'http://127.0.0.1:3000';
+    sessionBody = { authenticated: false, locked: true, passwordEnabled: false, providers: ['x'] };
+
+    await renderGate();
+    expect(descriptionContexts.at(-1)).toEqual({ passwordEnabled: false, runtime: 'desktop-local' });
   });
 
   test('the tunnel line is never replaced', async () => {
