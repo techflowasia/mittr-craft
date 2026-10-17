@@ -20,6 +20,9 @@
  *   node scripts/mittr/probe-engine-v2.mjs --json <out>
  *     [--keep]              keep the temp HOME for inspection
  *     [--only P7]           run only the user-config policy scenario
+ *     [--only outbound]     run the engine with the server's outbound switches
+ *                           and once without them (the control), and record
+ *                           every attempt to leave the machine
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -31,6 +34,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { identityLine, identityPluginSource } from '../../packages/mittr-opencode/src/identity-plugin.js';
+import { ENGINE_OUTBOUND_OFF } from '../../packages/mittr-server/src/engine-outbound.js';
 import { policiesFor } from '../../packages/mittr-server/src/mittr/policies.js';
 
 export const quotaRefusal = ({ kind, resetsAt }) => ({
@@ -404,7 +408,7 @@ const stopEngine = async (engine) => {
   engine.stopped = !groupAlive(engine.pid);
 };
 
-const startEngine = async ({ home, configFile, logFile, proxyPort, hookLog, onSpawn, extraEnv = {} }) => {
+const startEngine = async ({ home, configFile, logFile, proxyPort, hookLog, onSpawn, extraEnv = {}, outboundEnv = ENGINE_OUTBOUND_OFF }) => {
   const port = await freePort();
   const password = randomBytes(24).toString('hex');
   const work = path.join(home, 'work');
@@ -422,8 +426,7 @@ const startEngine = async ({ home, configFile, logFile, proxyPort, hookLog, onSp
     XDG_STATE_HOME: path.join(home, '.local/state'),
     XDG_CACHE_HOME: path.join(home, '.cache'),
     OPENCODE_CONFIG: configFile,
-    OPENCODE_DISABLE_MODELS_FETCH: '1',
-    OPENCODE_DISABLE_AUTOUPDATE: '1',
+    ...outboundEnv,
     OPENCODE_SERVER_PASSWORD: password,
     HTTP_PROXY: proxyUrl,
     HTTPS_PROXY: proxyUrl,
@@ -891,6 +894,80 @@ const probeUserPolicy = async ({ home, stubs, proxy, identityDir, startWith }) =
   };
 };
 
+// How long each run stays up after its first turn, so a background fetch the
+// engine starts on its own has time to show.
+const OUTBOUND_SETTLE_MS = 15_000;
+
+/**
+ * One engine run as the app drives it: start, list the models and the
+ * providers, answer a turn on the loopback stub, then stay up a while.
+ */
+const outboundRun = async ({ OpenCode, home, configFile, hookLog, stubs, proxy, outboundEnv, onSpawn }) => {
+  fs.mkdirSync(home, { recursive: true });
+  let engine = null;
+  await startEngine({
+    home, configFile, logFile: path.join(home, 'engine.out.log'), proxyPort: proxy.port, hookLog, outboundEnv,
+    onSpawn: (spawned) => { engine = spawned; onSpawn(spawned); },
+  });
+  const client = OpenCode.make({ baseUrl: engine.base, headers: engine.headers });
+  const collector = collectEvents(client);
+  try {
+    await sleep(500);
+    await waitFor(async () => (await modelIds(client, engine.work).catch(() => [])).length > 0, 10_000, 100);
+    const models = await modelIds(client, engine.work).catch((error) => `error: ${errorText(error)}`);
+    const providers = await client.provider.list({ location: { directory: engine.work } })
+      .then((out) => (out.data ?? out).length)
+      .catch((error) => `error: ${errorText(error)}`);
+    const integrations = await client.integration.list({ location: { directory: engine.work } })
+      .then((out) => (out.data ?? out).length)
+      .catch((error) => `error: ${errorText(error)}`);
+    const turn = await tryPrompt({ client, collector, stubs, work: engine.work, providerID: 'stub' });
+    await sleep(OUTBOUND_SETTLE_MS);
+    return { models, providers, integrations, answered: turn.answered, settledMs: OUTBOUND_SETTLE_MS };
+  } finally {
+    await collector.stop().catch(() => {});
+    await stopEngine(engine);
+  }
+};
+
+/**
+ * R69: with the server's outbound switches the engine makes no attempt to
+ * leave the machine. The control run is the same engine and the same steps
+ * without the switches, behind its own recording proxy and in its own HOME,
+ * so the probe shows what the switches stop and that the proxy catches it.
+ */
+const probeOutbound = async ({ OpenCode, home, configFile, hookLog, stubs, proxy, onSpawn }) => {
+  const ours = await outboundRun({ OpenCode, home, configFile, hookLog, stubs, proxy, outboundEnv: ENGINE_OUTBOUND_OFF, onSpawn });
+
+  const controlHome = path.join(home, 'control');
+  const controlProxy = await startProxy();
+  const controlSink = { samples: 0, pids: [], remotes: new Set(), loopbackPeers: new Map() };
+  let controlEngine = null;
+  const stopControlSampler = startOutboundSampler(() => controlEngine?.pid ?? null, controlSink);
+  let control;
+  try {
+    const run = await outboundRun({
+      OpenCode, home: controlHome, configFile, hookLog, stubs, proxy: controlProxy, outboundEnv: {},
+      onSpawn: (spawned) => { controlEngine = spawned; onSpawn(spawned, { control: true }); },
+    });
+    control = {
+      ...run,
+      without: Object.keys(ENGINE_OUTBOUND_OFF),
+      proxyNonLoopback: [...new Set(controlProxy.attempts.filter((a) => !a.loopback).map((a) => `${a.host}:${a.port}`))].sort(),
+      nonLoopbackRemotes: [...controlSink.remotes].sort(),
+      nonLoopbackHostsInLog: nonLoopbackFromLog(readLogs(controlHome, path.join(controlHome, 'engine.out.log'))).sort(),
+    };
+  } finally {
+    await stopControlSampler();
+    await controlProxy.close();
+  }
+  return {
+    pass: Array.isArray(ours.models) && ours.models.includes('stub/m1') && ours.answered && control.proxyNonLoopback.length > 0,
+    ours: { env: ENGINE_OUTBOUND_OFF, ...ours },
+    control,
+  };
+};
+
 const main = async () => {
   const args = process.argv.slice(2);
   const jsonIndex = args.indexOf('--json');
@@ -902,8 +979,8 @@ const main = async () => {
   const keep = args.includes('--keep');
   const onlyIndex = args.indexOf('--only');
   const only = onlyIndex === -1 ? null : args[onlyIndex + 1];
-  if (only !== null && only !== 'P7') {
-    console.error('--only takes P7');
+  if (only !== null && only !== 'P7' && only !== 'outbound') {
+    console.error('--only takes P7 or outbound');
     return 2;
   }
   const scenarios = only ? [only] : SCENARIOS;
@@ -992,6 +1069,11 @@ const main = async () => {
 
     if (only === 'P7') {
       result.scenarios.P7 = await userPolicy();
+    } else if (only === 'outbound') {
+      result.scenarios.outbound = await probeOutbound({
+        OpenCode, home, configFile, hookLog, stubs, proxy,
+        onSpawn: (spawned, { control = false } = {}) => { engines.push(spawned); if (!control) engine = spawned; },
+      });
     } else {
 
     let client = await connect();

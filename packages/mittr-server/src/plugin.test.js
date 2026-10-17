@@ -76,6 +76,8 @@ test('setup backs up the prod layout once, migrates settings and serves the engi
     XDG_STATE_HOME: path.join(home, '.local', 'state', 'mittrcraft', 'engine'),
     XDG_CACHE_HOME: path.join(home, '.cache', 'mittrcraft', 'engine'),
     OPENCODE_DB: 'opencode.db',
+    OPENCODE_DISABLE_MODELS_FETCH: '1',
+    OPENCODE_DISABLE_AUTOUPDATE: '1',
   });
 
   writeFile(
@@ -188,6 +190,8 @@ test('setup with the server context mounts Mittr sign-in and keeps the engine en
   assert.ok(body.authorizeUrl.includes('redirect_uri=mittrcraft%3A%2F%2Fauth%2Fcallback'), body.authorizeUrl);
   assert.equal((await plugin.engineEnv()).XDG_DATA_HOME, path.join(home, '.local', 'share', 'mittrcraft', 'engine'));
   assert.equal((await plugin.engineEnv()).NO_PROXY.split(',').includes('127.0.0.1'), true);
+  assert.equal((await plugin.engineEnv()).OPENCODE_DISABLE_MODELS_FETCH, '1');
+  assert.equal((await plugin.engineEnv()).OPENCODE_DISABLE_AUTOUPDATE, '1');
   assert.deepEqual(await plugin.managedConfig(), {
     plugins: [path.join(dataDir, 'engine-plugins', 'mittrcraft-identity')],
     experimental: {

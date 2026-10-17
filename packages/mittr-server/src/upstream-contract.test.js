@@ -781,6 +781,20 @@ const checks = {
     has(policy, /export const Effect = Schema\.Literals\(\["allow", "deny"\]\);/);
   },
 
+  'engine-outbound-switches': (t) => {
+    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
+    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run the probe with --only outbound again, then update this pin');
+    const binary = path.join(repoRoot, 'packages/electron/resources/opencode-cli/opencode');
+    if (!fs.existsSync(binary)) {
+      t.diagnostic('the engine binary is not prepared here, so only the pin is checked');
+      return;
+    }
+    const bytes = fs.readFileSync(binary);
+    for (const name of ['OPENCODE_DISABLE_MODELS_FETCH', 'OPENCODE_DISABLE_AUTOUPDATE']) {
+      assert.ok(bytes.includes(`process.env.${name}`), `the bundled engine no longer reads ${name}, so it reaches a third party again`);
+    }
+  },
+
   'engine-identity-hook': () => {
     const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
     assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P3 again, then update the identity plugin and this pin');
