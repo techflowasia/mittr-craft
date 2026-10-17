@@ -159,6 +159,10 @@
     {
       "hook": "model-picker",
       "why": "The picker rows could carry only the thinking-effort label, so a product plugin's entry status (a mark and whether the entry can be chosen) had no place on the row; the row end now draws the status pill before the thinking label and passes the status to the list as isEntryBlocked, and without a plugin no pill is drawn and nothing is blocked."
+    },
+    {
+      "hook": "model-picker",
+      "why": "The phone-sized model sheet builds its own rows, so an entry a product plugin marked as unavailable could still be applied there by its row, its effort chips or its more-efforts panel and showed no mark; the sheet now draws the same status pill and disables those buttons for a blocked entry, and without a plugin it is unchanged."
     }
   ],
   "packages/ui/src/components/model-picker/ModelEntryStatusPill.tsx": [

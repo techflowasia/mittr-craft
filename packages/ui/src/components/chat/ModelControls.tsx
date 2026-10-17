@@ -506,6 +506,12 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
         (providerID: string) => productModelPicker.isProviderShown(providerID),
         [productModelPicker],
     );
+    const entryStatusOf = (entry: ModelPickerEntry) => productModelPicker.entryStatus({
+        providerID: entry.providerID,
+        modelID: entry.modelID,
+        name: getSharedModelDisplayName(entry.model, entry.modelID),
+    });
+    const isEntryBlocked = (entry: ModelPickerEntry) => entryStatusOf(entry)?.blocked === true;
     const offeredAutoEntry = autoEntry && isProductModelAllowed(autoEntry.providerID) ? autoEntry : null;
     const setAgentMenuOpen = selection ? setLocalModelSelectorOpen : setModelSelectorOpen;
     const openAddProviderSettings = React.useCallback(() => {
@@ -1912,6 +1918,9 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                 new Map([...capabilityIcons, ...modalityIcons].map((icon) => [icon.key, icon])).values()
             );
             const contextText = metadata?.limit?.context ? `${formatTokens(metadata.limit.context)} ctx` : null;
+            const mobileEntry = { model, providerID: providerId, modelID: modelId };
+            const mobileEntryStatus = entryStatusOf(mobileEntry);
+            const mobileEntryBlocked = isEntryBlocked(mobileEntry);
 
             return (
                 <div
@@ -1925,9 +1934,13 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                         <button
                             type="button"
                             onClick={() => handleMobileModelApply(providerId, modelId, resolvedVariant)}
+                            disabled={mobileEntryBlocked}
+                            aria-disabled={mobileEntryBlocked || undefined}
+                            title={mobileEntryStatus?.title}
                             className={cn(
                                 'flex flex-1 min-w-0 items-start gap-2 text-left',
-                                'focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-lg'
+                                'focus:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-lg',
+                                mobileEntryBlocked && 'cursor-not-allowed'
                             )}
                         >
                             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -1937,9 +1950,10 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                     ) : showProviderLogo ? (
                                         <ProviderLogo providerId={providerId} className="size-3.5 flex-shrink-0" />
                                     ) : null}
-                                    <span className="typography-meta font-medium text-foreground truncate">
+                                    <span className={cn('typography-meta font-medium text-foreground truncate', mobileEntryBlocked && 'opacity-60')}>
                                         {getModelDisplayName(model)}
                                     </span>
+                                    <ModelEntryStatusPill status={mobileEntryStatus} isHighlighted={false} />
                                     {isSelected ? <Icon name="check" className="size-4 flex-shrink-0 text-inherit" /> : null}
                                 </div>
                                 {contextText || indicatorIcons.length > 0 ? (
@@ -2019,6 +2033,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                             key={`${rowKey}-variant-${variantOption ?? 'default'}`}
                                             type="button"
                                             onClick={() => handleMobileModelApply(providerId, modelId, variantOption)}
+                                            disabled={mobileEntryBlocked}
+                                            aria-disabled={mobileEntryBlocked || undefined}
                                             className={cn(
                                                 'inline-flex items-center rounded-full border px-2.5 py-1 typography-meta font-medium',
                                                 isVariantSelected
@@ -2035,6 +2051,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
                                     <button
                                         type="button"
                                         onClick={() => openMobileVariantOverflow(providerId, modelId)}
+                                        disabled={mobileEntryBlocked}
+                                        aria-disabled={mobileEntryBlocked || undefined}
                                         className="inline-flex items-center rounded-full border border-border/40 px-2.5 py-1 typography-meta font-medium text-muted-foreground hover:bg-interactive-hover/50"
                                         aria-label={t('chat.modelControls.moreThinkingModes')}
                                     >
@@ -2551,12 +2569,6 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
             );
         };
 
-        const entryStatusOf = (entry: ModelPickerEntry) => productModelPicker.entryStatus({
-            providerID: entry.providerID,
-            modelID: entry.modelID,
-            name: getSharedModelDisplayName(entry.model, entry.modelID),
-        });
-        const isEntryBlocked = (entry: ModelPickerEntry) => entryStatusOf(entry)?.blocked === true;
         const renderRowEnd = (entry: ModelPickerEntry, state: { isHighlighted: boolean; isSelected: boolean }) => (
             <>
                 <ModelEntryStatusPill status={entryStatusOf(entry)} isHighlighted={state.isHighlighted} />

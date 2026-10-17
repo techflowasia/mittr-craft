@@ -244,7 +244,7 @@ export const UPSTREAM_CONTRACT = [
       'packages/ui/src/components/model-picker/ModelEntryStatusPill.tsx',
       'packages/ui/src/lib/product-plugins.ts',
     ],
-    why: 'ModelPickerList takes isEntryBlocked and a blocked row is aria-disabled and chooses nothing on click, Enter or Space; ModelControls passes isEntryBlocked and composes renderRowEnd from the status pill of the picker decorations entryStatus and its own renderThinkingSlot',
+    why: 'ModelPickerList takes isEntryBlocked and a blocked row is aria-disabled and chooses nothing on click, Enter or Space; ModelControls passes isEntryBlocked and composes renderRowEnd from the status pill of the picker decorations entryStatus and its own renderThinkingSlot; the mobile sheet row draws the same pill and disables its apply buttons (row, effort chips, more-efforts) for a blocked entry',
   },
   {
     id: 'providers-page-slot',

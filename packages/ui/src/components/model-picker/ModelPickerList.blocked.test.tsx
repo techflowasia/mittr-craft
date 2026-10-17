@@ -22,9 +22,9 @@ const { ModelPickerList } = await import('./ModelPickerList');
 type ListProps = React.ComponentProps<typeof ModelPickerList>;
 
 const PROVIDERS: ListProps['providers'] = [{
-  id: 'mittr',
-  name: 'Mittr',
-  models: [{ id: 'writer', name: 'Mittr Writer' }, { id: 'analyst', name: 'Mittr Analyst' }],
+  id: 'acme',
+  name: 'Acme',
+  models: [{ id: 'writer', name: 'Acme Writer' }, { id: 'analyst', name: 'Acme Analyst' }],
 }];
 
 const LABELS: ListProps['labels'] = {
@@ -143,7 +143,7 @@ describe('ModelPickerList blocked entries', () => {
       isEntryBlocked: isWriter,
       onSelect: (entry) => chosen.push(entry.modelID),
     }));
-    const writer = picker.rowOf('Mittr Writer');
+    const writer = picker.rowOf('Acme Writer');
 
     await picker.click(writer);
     await picker.press(writer, 'Enter');
@@ -161,7 +161,7 @@ describe('ModelPickerList blocked entries', () => {
     const picker = await mountList(listProps({
       isEntryBlocked: isWriter,
       onSelect: (entry) => chosen.push(entry.modelID),
-      selectedModel: { providerID: 'mittr', modelID: 'writer' },
+      selectedModel: { providerID: 'acme', modelID: 'writer' },
     }));
     await picker.press(picker.search(), 'Enter');
     expect(chosen).toEqual([]);
@@ -178,7 +178,7 @@ describe('ModelPickerList blocked entries', () => {
       isEntryBlocked: isWriter,
       onSelect: (entry) => chosen.push(entry.modelID),
     }));
-    const analyst = picker.rowOf('Mittr Analyst');
+    const analyst = picker.rowOf('Acme Analyst');
 
     await picker.click(analyst);
     await picker.press(analyst, 'Enter');
@@ -191,9 +191,9 @@ describe('ModelPickerList blocked entries', () => {
     const html = renderToStaticMarkup(<ModelPickerList {...listProps({ isEntryBlocked: isWriter })} />);
     const rows = html.split('role="option"').slice(1);
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toContain('Mittr Writer');
+    expect(rows[0]).toContain('Acme Writer');
     expect(rows[0]).toContain('aria-disabled="true"');
-    expect(rows[1]).toContain('Mittr Analyst');
+    expect(rows[1]).toContain('Acme Analyst');
     expect(rows[1]).not.toContain('aria-disabled');
   });
 
@@ -203,7 +203,7 @@ describe('ModelPickerList blocked entries', () => {
 
     const chosen: string[] = [];
     const picker = await mountList(listProps({ onSelect: (entry) => chosen.push(entry.modelID) }));
-    const writer = picker.rowOf('Mittr Writer');
+    const writer = picker.rowOf('Acme Writer');
     await picker.click(writer);
     await picker.press(writer, 'Enter');
     await picker.press(writer, ' ');

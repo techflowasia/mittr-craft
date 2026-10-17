@@ -120,13 +120,13 @@ describe('ModelControls product picker', () => {
         useDecorations: () => ({
           isProviderShown: () => true,
           entryStatus: (entry) => (entry.modelID === 'writer'
-            ? { pill: 'Used up', title: 'Mittr Writer is used up this week', tone: 'neutral', blocked: true }
+            ? { pill: 'Used up', title: 'Writer is used up this week', tone: 'neutral', blocked: true }
             : null),
         }),
       },
     });
     const [writer, gpt] = rowsOf(renderToStaticMarkup(<PickerWithEntryStatus />));
-    expect(writer).toContain('aria-label="Mittr Writer is used up this week"');
+    expect(writer).toContain('aria-label="Writer is used up this week"');
     expect(writer).toContain('>Used up</span>');
     expect(writer.indexOf('Used up')).toBeLessThan(writer.indexOf('Thinking: Default'));
     expect(writer).toContain('aria-disabled="true"');

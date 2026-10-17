@@ -766,6 +766,7 @@ const checks = {
     has(picker, /if \(disabled \|\| blocked \|\| event\.target !== event\.currentTarget\) return;\s*if \(event\.key === 'Enter' \|\| event\.key === ' '\) \{\s*event\.preventDefault\(\);\s*onSelect\(entry\);/, 'a blocked row still answers Enter or Space');
     has(picker, /else if \(activeEntry && !isEntryBlocked\?\.\(activeEntry\)\) onSelect\(activeEntry\);/, 'Enter in the search field can still choose a blocked entry');
     assert.equal(lineCount(picker, 'onSelect(entry)'), 2, 'ModelPickerList chooses an entry somewhere the blocked check does not cover');
+    assert.equal(lineCount(picker, 'onSelect(activeEntry)'), 1, 'ModelPickerList chooses the highlighted entry somewhere the blocked check does not cover');
 
     const controls = source('packages/ui/src/components/chat/ModelControls.tsx');
     assert.equal(lineCount(controls, 'productModelPicker.entryStatus('), 1, 'ModelControls must ask the product picker for an entry status exactly once');
@@ -773,6 +774,12 @@ const checks = {
     has(controls, /<ModelEntryStatusPill status=\{entryStatusOf\(entry\)\} isHighlighted=\{state\.isHighlighted\} \/>\s*\{renderThinkingSlot\(entry, state\)\}/, 'the row end is no longer the status pill followed by the thinking slot');
     assert.equal(lineCount(controls, 'renderRowEnd={renderRowEnd}'), 1, 'the desktop picker list no longer gets the composed row end');
     assert.equal(lineCount(controls, 'isEntryBlocked={isEntryBlocked}'), 1, 'the desktop picker list no longer gets isEntryBlocked');
+    has(controls, /const mobileEntryStatus = entryStatusOf\(mobileEntry\);\s*const mobileEntryBlocked = isEntryBlocked\(mobileEntry\);/, 'the mobile sheet row no longer takes its status and blocked check from the same helpers');
+    has(controls, /onClick=\{\(\) => handleMobileModelApply\(providerId, modelId, resolvedVariant\)\}\s*disabled=\{mobileEntryBlocked\}\s*aria-disabled=\{mobileEntryBlocked \|\| undefined\}/, 'a blocked entry can be applied from the mobile sheet row');
+    has(controls, /onClick=\{\(\) => handleMobileModelApply\(providerId, modelId, variantOption\)\}\s*disabled=\{mobileEntryBlocked\}\s*aria-disabled=\{mobileEntryBlocked \|\| undefined\}/, 'a blocked entry can be applied from the mobile sheet effort buttons');
+    has(controls, /onClick=\{\(\) => openMobileVariantOverflow\(providerId, modelId\)\}\s*disabled=\{mobileEntryBlocked\}/, 'a blocked entry can be applied from the mobile effort panel');
+    assert.equal(lineCount(controls, 'handleMobileModelApply(providerId, modelId'), 2, 'the mobile sheet applies a model somewhere the blocked check does not cover');
+    has(controls, /<ModelEntryStatusPill status=\{mobileEntryStatus\} isHighlighted=\{false\} \/>/, 'the mobile sheet row no longer draws the status pill');
 
     has(source('packages/ui/src/components/model-picker/ModelEntryStatusPill.tsx'), /aria-label=\{status\.title \?\? status\.pill\}/, 'the status pill lost its aria-label');
     has(source('packages/ui/src/lib/product-plugins.ts'), /^export type ModelEntryStatus = \{ pill: string; title\?: string; tone: 'neutral' \| 'near'; blocked: boolean \};$/m, 'ModelEntryStatus changed shape');
