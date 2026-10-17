@@ -4,7 +4,9 @@ Date: 2026-10-17. Branch `rebase/upstream-2.1.1`, tested at `1df67d11c`.
 
 ## Verdict
 
-**FAIL, on one check: quit and relaunch.** After the relaunch the keychain access prompt for "MittrCraft Dev Safe Storage" came back, the local server froze behind it, and the window showed the sign-in screen with "MittrCraft could not check whether you are signed in." Step 5 (three relaunches) could not be finished for the same reason. Every other check passed.
+**PASS after the owner's keychain approval.** The first relaunch hit the keychain access prompt for "MittrCraft Dev Safe Storage" again, because the owner's first answer was "Allow". The local server froze behind it, and that run ended on the sign-in screen (F1). The owner then chose **Always Allow** for the test build. After that, relaunches 2 and 3 came up signed in with one engine each. Relaunch 3 raised no prompt at all. Two items stay open:
+- (b) was skipped.
+- 4.5 ran on two engine agents, because the account has one Mittr agent (D1).
 
 | Check | Result |
 |---|---|
@@ -17,10 +19,10 @@ Date: 2026-10-17. Branch `rebase/upstream-2.1.1`, tested at `1df67d11c`.
 | 4.4 "say hi" through `@opencode/client`: an answer streams in | **PASS** |
 | 4.5 "who are you?" on two agents names MittrCraft only | **PASS**, with a deviation: the account has one Mittr agent (D1) |
 | 4.6 Token storage | **PASS** (the refresh-token value sub-check was skipped, D2) |
-| 4.7 Quit and relaunch: no sign-in screen, still signed in | **FAIL**: keychain prompt on relaunch (F1) |
+| 4.7 Quit and relaunch: no sign-in screen, still signed in | **PASS** after Always Allow (relaunches 2 and 3). Relaunch 1 failed on the keychain prompt (F1) |
 | (a) New session starts on the first Mittr agent, no engine restart | **PASS** |
 | (b) Shim "Not signed in" error readable in chat | **SKIPPED**: it needs a sign-out, which would undo the owner's sign-in |
-| (c) Step 5: one engine 30 s after each of three relaunches | **INCOMPLETE**: relaunch 1 has exactly one engine; relaunches 2 and 3 are blocked by F1 |
+| (c) Step 5: one engine 30 s after each of three relaunches | **PASS**: exactly one engine after each of the 3 relaunches |
 | (d) No outbound connection to `*.openchamber.dev` | **PASS** (findings O1, O2) |
 
 ## Build under test
@@ -49,14 +51,16 @@ node scripts/mittr/build-desktop.mjs --flavor dev     # exit 0
 |---|---|---|
 | `mittrcraft-dev` handler | `/Applications/MittrCraft Dev.app` | same |
 | LaunchServices secure plist (JSON sha1) | `7a6a6dea5cf3…a145c0` | same |
-| Keychain item "MittrCraft Dev Safe Storage" | present (exit 0) | present (exit 0) |
-| Prod 1.22 PID 2848 | up 01-17:14:17 | up 01-17:24:40, same start time |
+| Keychain item "MittrCraft Dev Safe Storage" | present (exit 0) | present (exit 0). The owner granted **Always Allow** to the test build's access to this item; its access list now includes the ad-hoc-signed 2.x binary |
+| Prod 1.22 PID 2848 | up 01-17:14:17 | up 01-17:24:40 at 08:09, and 01-18:01:51 at 08:46, with the same start time |
 | Dev 1.x | not running | not running |
 
 `stat` listings (depth 3) of the 11 real dirs: no difference in `~/.config/mittrcraft`, `~/.config/mittrcraft-dev`, `~/.local/share/mittrcraft`, `~/.config/openchamber`, `~/.local/share/opencode`, `~/.config/opencode`, `Application Support/MittrCraft Dev` and `Application Support/OpenChamber` (missing before and after). The differences that remain all belong to the running prod 1.22:
 
 - `Application Support/MittrCraft`: 68 lines, all browser caches (`Cache/Cache_Data`, `GPUCache`, `Dawn*Cache`, `DIPS-wal`, `Partitions/mittrcraft-browser`).
-- `~/.cache/mittrcraft/engine/opencode/models.json` and `~/.local/state/mittrcraft/engine/opencode/locks` (mtime 08:02:45). Only prod's engines 3624 and 3635 have these paths as `XDG_CACHE_HOME`/`XDG_STATE_HOME`. The test engine's XDG dirs were all inside the temp HOME. Prod's engine log shows its hourly tick at 08:02:32 local.
+- `~/.cache/mittrcraft/engine/opencode/models.json` and `~/.local/state/mittrcraft/engine/opencode/locks` (mtime 08:02:45). Only prod's engines 3624 and 3635 have these paths as `XDG_CACHE_HOME`/`XDG_STATE_HOME`. The test engine's XDG dirs were all inside the temp HOME. Prod's engine log shows its hourly tick at 08:02:32 local. The 08:46 re-check shows the same files again at 08:23:47, the tick of prod's other engine.
+- `~/.config/mittrcraft/mittr-accounts/<id>.session` and `index.json`, at 08:27:33 (08:46 re-check). This is exactly 3600 s after their previous write at 07:27:33, which is prod 1.22's hourly token refresh. The test app's account files are all under the temp HOME.
+- `Application Support/MittrCraft/Local Storage/leveldb` (08:46 re-check): prod's renderer storage.
 
 ## How sign-in happened
 
@@ -103,14 +107,26 @@ The open picker shows one group, MITTR, with one row, "MITTR Fast 200K", ticked.
 - `index.json` holds only `displayName`, `home`, `signedIn`, `userId` per account.
 - **D2:** the refresh-token value from the exchange was not available to the checker, because the owner's browser handed the link to the app directly. The `grep -a -F <value>` sub-check was skipped.
 
-### 4.7 quit and relaunch: FAIL (F1)
+### 4.7 quit and relaunch: PASS after Always Allow
+
+Relaunch 1 (failed, F1):
 
 - 08:03:06: `kill -TERM` to the test PID. It exited in about 2 s, and its engine went with it. Port 57133 was free.
 - 08:03:16: relaunched with the same env and binary. Port 57133 bound within 1 s, and the engine started.
 - 08:03:18: a SecurityAgent prompt appeared again (an on-screen window of 434×186 at layer 1000). A `sample` of the app shows the main thread in `SecItemCopyMatching`, waiting, under an HTTP request handler. It is the same read-access prompt as in part A2. It was not touched and not screenshotted.
 - From then on `/health` and `/api/mittr/auth/status` give no answer, and the test window shows "Sign in to MittrCraft" with "MittrCraft could not check whether you are signed in."
 - Nobody answered the prompt during a 5-minute wait.
+- Then, at about 08:28:11, the prompt was answered and the main thread resumed. But `safeStorage` reported no encryption for that run, and the secret store keeps its first answer. `status` became `{"signedIn":false,"keychainMissing":true}`, and the window showed "Sign in to MittrCraft" with "MittrCraft can't find a secure keychain on this computer to keep your sign-in safe." The engine had timed out during the freeze (`Timeout waiting for the engine to start after 30000ms`) and was replaced once, so one engine was still running.
 - **Why:** the owner's answer was "Allow", which covers one run. The ad-hoc-signed 2.x binary is not on the item's access list, so every launch asks again. A signed-in user reads the keychain on the first status request, so the relaunch hits the prompt at once. While it is up, the whole local server is frozen, because `safeStorage` is called synchronously on the Electron main thread that also runs the server.
+
+After the owner chose **Always Allow** for the test build, the app was relaunched twice more with the same env and binary. Each time `ps` confirmed the worktree binary, the app was quit with `kill -TERM` and exited in about 2 s, and port 57133 was free before the launch.
+
+| Relaunch | PID | Keychain prompt | 30 s later | `status` | Window |
+|---|---|---|---|---|---|
+| 2 (08:45:03) | 54354 | A SecurityAgent process ran at 08:45:06 and was gone within 30 s; the main thread paused about 8.5 s. Nobody at the gate touched it | `/health` ok; one engine | `signedIn: true` | the app (New session, MITTR Fast, Build); no sign-in screen |
+| 3 (08:45:54) | 55618 | none: no SecurityAgent process in 35 s of 0.3 s polling, and no pause in the log | `/health` ok; one engine | `signedIn: true` | the app, with the Settings dialog open; no sign-in screen |
+
+At 08:47:08 the test app (PID 55618) was quit with `kill -TERM`. No process from the worktree build was left, and port 57133 was free.
 
 ## Extra checks
 
@@ -122,11 +138,16 @@ At sign-in the app wrote `{"model": "mittr/mittr-fast"}` to the engine's user co
 
 It needs a signed-out app with a Mittr model selected. Signing out would undo the owner's sign-in, so it was not done.
 
-### (c) engine count: INCOMPLETE
+### (c) engine count: PASS
 
-- Before the relaunch: `pgrep -P <app> -f opencode` showed one engine.
-- Relaunch 1: one engine at 24 s and still one at 6 min.
-- Relaunches 2 and 3 were not done, because relaunch 1 is held by F1.
+`pgrep -P <app pid> -f opencode`:
+
+| Relaunch | Engines | When |
+|---|---|---|
+| 1 | one (39294) | at 24 s |
+| 1 | one (51721) | at 41 min, after the startup timeout replaced it |
+| 2 | one (54395) | at 30 s |
+| 3 | one (55667) | at 31 s |
 
 ### (d) outbound connections: PASS (findings O1, O2)
 
@@ -144,7 +165,15 @@ It needs a signed-out app with a Mittr model selected. Signing out would undo th
 
 ## Findings for follow-up
 
-1. **F1:** a signed-in Dev 2.x asks for keychain access on every launch until the user chooses Always Allow, or until the build is signed so that it is on the item's access list. While the prompt is up the server is frozen, and the UI shows the sign-in screen with an error. Options: move the keychain read off the main thread; show a "waiting for keychain permission" state; sign the Dev build; or have the owner choose Always Allow for the test binary and re-run 4.7 and step 5.
+1. **F1:** until the user chooses Always Allow, or until the build is signed so that it is on the item's access list, a signed-in Dev 2.x asks for keychain access on every launch.
+   - While the prompt is up, the server is frozen and the UI shows the sign-in screen with an error.
+   - If the prompt is answered late, the run stays at "can't find a secure keychain", because the store keeps its first answer. Only a restart recovers.
+   - Options:
+     - move the keychain read off the main thread;
+     - show a "waiting for keychain permission" state;
+     - retry once after a late answer;
+     - sign the Dev build.
+   - On relaunch 2, a SecurityAgent process ran briefly, possibly the last step of the access-list change. Relaunch 3 had none.
 2. **D1:** add a second alias to the test account and re-run 4.5 on two different Mittr agents.
 3. **P1:** the "Add new provider" row in the locked picker.
 4. **O1, O2:** third-party connections from the engine and the app.
