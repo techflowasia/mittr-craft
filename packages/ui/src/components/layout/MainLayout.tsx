@@ -22,11 +22,13 @@ import { MultiRunLauncher } from '@/components/multirun';
 import { TerminalView } from '@/components/views/TerminalView';
 import { DrawerProvider } from '@/contexts/DrawerContext';
 import { VoiceAssistant } from '@/components/voice-assistant/TalkButton';
+import { Icon } from '@/components/icon/Icon';
 
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useUpdatePolling } from '@/hooks/useUpdatePolling';
 import { useDeviceInfo } from '@/lib/device';
+import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { lazyWithChunkRecovery } from '@/lib/chunkLoadRecovery';
 
@@ -44,6 +46,22 @@ const FilesView = lazyWithChunkRecovery(() => import('@/components/views/FilesVi
 const DiagramView = lazyWithChunkRecovery(() => import('@/components/views/DiagramView').then(m => ({ default: m.DiagramView })));
 const SettingsView = lazyWithChunkRecovery(() => import('@/components/views/SettingsView').then(m => ({ default: m.SettingsView })));
 const SettingsWindow = lazyWithChunkRecovery(() => import('@/components/views/SettingsWindow').then(m => ({ default: m.SettingsWindow })));
+
+const SettingsLoading: React.FC = () => {
+    const { t } = useI18n();
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 dark:bg-black/40"
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+        >
+            <Icon name="loader-4" aria-hidden="true" className="size-6 animate-spin text-foreground" />
+            <span className="sr-only">{t('common.loading')}</span>
+        </div>
+    );
+};
 
 export const MainLayout: React.FC = () => {
     const isSidebarOpen = useUIStore((state) => state.isSidebarOpen);
@@ -497,7 +515,7 @@ export const MainLayout: React.FC = () => {
                             style={{ paddingTop: 'var(--oc-safe-area-top, 0px)' }}
                         >
                             <ErrorBoundary>
-                                <React.Suspense fallback={null}>
+                                <React.Suspense fallback={<SettingsLoading />}>
                                     <SettingsView onClose={() => setSettingsDialogOpen(false)} />
                                 </React.Suspense>
                             </ErrorBoundary>
@@ -525,7 +543,7 @@ export const MainLayout: React.FC = () => {
 
                     {/* Desktop settings: windowed dialog with blur */}
                     {settingsWindowMounted ? (
-                        <React.Suspense fallback={null}>
+                        <React.Suspense fallback={<SettingsLoading />}>
                             <SettingsWindow
                                 open={isSettingsDialogOpen}
                                 onOpenChange={setSettingsDialogOpen}

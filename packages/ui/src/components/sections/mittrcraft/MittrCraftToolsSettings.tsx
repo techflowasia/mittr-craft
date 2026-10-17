@@ -146,7 +146,7 @@ export const MittrCraftToolsSettings: React.FC = () => {
                 >
                   <SelectValue placeholder={t('settings.mittrcraft.tools.field.agentChromeProfilePlaceholder')} />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent portalToBody>
                   {profiles.map((profile) => (
                     <SelectItem key={profile.directory} value={profile.directory}>{profile.name}</SelectItem>
                   ))}
