@@ -177,6 +177,13 @@ describe('Mittr picker decorations', () => {
     expect(on.isProviderShown('openai')).toBe(true);
   });
 
+  test('the entry status it is given is the picker entry status', () => {
+    const status = { pill: 'Used up', tone: 'neutral' as const, blocked: true };
+    const decorations = mittrPickerDecorations({ showOtherProviders: false }, (entry) => (entry.modelID === 'a1' ? status : null));
+    expect(decorations.entryStatus({ providerID: 'mittr', modelID: 'a1', name: 'Writer' })).toEqual(status);
+    expect(decorations.entryStatus({ providerID: 'mittr', modelID: 'a2', name: 'Analyst' })).toBeNull();
+  });
+
   test('the picker offers to add a provider only while other providers are shown', () => {
     expect(mittrPickerDecorations({ showOtherProviders: false }).offersAddProvider).toBe(false);
     expect(mittrPickerDecorations({ showOtherProviders: true }).offersAddProvider).toBe(true);

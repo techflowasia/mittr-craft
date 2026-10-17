@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { runtimeFetch } from '../../../ui/src/lib/runtime-fetch';
 import type { ModelPickerDecorations } from '../../../ui/src/lib/product-plugins';
 import { useConfigStore } from '../../../ui/src/stores/useConfigStore';
+import { mittrEntryStatus } from '../quota/agentStatus';
+import { useQuotaMe } from '../quota/quotaMeStore';
 
 export const PROVIDER_LOCK_ENDPOINT = '/api/mittr/provider-lock';
 const PROVIDER_LOCK_CHANGED_EVENT = 'mittr.provider-lock.changed';
@@ -128,10 +130,13 @@ export function createProviderLockController({ fetch, subscribe, announce, reloa
   };
 }
 
-export function mittrPickerDecorations({ showOtherProviders }: ProviderLock): ModelPickerDecorations {
+export function mittrPickerDecorations(
+  { showOtherProviders }: ProviderLock,
+  entryStatus: ModelPickerDecorations['entryStatus'] = () => null,
+): ModelPickerDecorations {
   return {
     isProviderShown: (providerId) => showOtherProviders || providerId === MITTR_PROVIDER_ID,
-    entryStatus: () => null,
+    entryStatus,
     offersAddProvider: showOtherProviders,
   };
 }
@@ -178,5 +183,10 @@ export function useMittrPickerFilter(open: boolean): ProviderLock {
 
 export function useMittrPickerDecorations(open: boolean): ModelPickerDecorations {
   const { showOtherProviders } = useMittrPickerFilter(open);
-  return React.useMemo(() => mittrPickerDecorations({ showOtherProviders }), [showOtherProviders]);
+  const quota = useQuotaMe(open);
+  const agentStatus = quota.status === 'ok' ? quota.quota.agentStatus : null;
+  return React.useMemo(
+    () => mittrPickerDecorations({ showOtherProviders }, mittrEntryStatus(agentStatus)),
+    [showOtherProviders, agentStatus],
+  );
 }
