@@ -2553,6 +2553,7 @@ async function main(options = {}) {
       uiAuth: {
         registerProvider: registerUiAuthProvider,
         passwordEnabled: () => typeof uiPassword === 'string' && uiPassword.trim().length > 0,
+        createClient: (options) => remoteClientAuthRuntime.createClient(options),
       },
       onShutdown: (handler) => {
         serverPluginShutdownHandlers.push(handler);

@@ -329,6 +329,10 @@
     {
       "hook": "ui-auth",
       "why": "A server plugin could not add a sign-in method of its own, so the plugin context now hands it the UI auth provider registry and says whether a UI password is set."
+    },
+    {
+      "hook": "ui-auth-client",
+      "why": "A sign-in provider added at run time could open a UI session but not mint the client token a desktop app needs to stay signed in to a remote server, so the plugin context's uiAuth now hands plugins the remote clients store's createClient."
     }
   ],
   "packages/web/server/lib/enterprise-mode.js": [

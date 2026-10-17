@@ -1110,7 +1110,11 @@ const checks = {
   'ui-auth-provider-registry': (t) => {
     const server = source('packages/web/server/index.js');
     has(server, /^import \{ createUiAuth, registerUiAuthProvider \} from '\.\/lib\/ui-auth\/ui-auth\.js';$/m);
-    has(pluginContext(server), /uiAuth: \{\s*registerProvider: registerUiAuthProvider,\s*passwordEnabled: \(\) => typeof uiPassword === 'string' && uiPassword\.trim\(\)\.length > 0,\s*\},/, 'the plugin context no longer hands plugins the UI auth provider registry');
+    has(pluginContext(server), /uiAuth: \{\s*registerProvider: registerUiAuthProvider,\s*passwordEnabled: \(\) => typeof uiPassword === 'string' && uiPassword\.trim\(\)\.length > 0,\s*createClient: \(options\) => remoteClientAuthRuntime\.createClient\(options\),\s*\},/, 'the plugin context no longer hands plugins the UI auth provider registry');
+    const clients = source('packages/web/server/lib/client-auth/remote-clients.js');
+    has(clients, /const createClient = async \(\{\s*label,\s*fallbackLabel,\s*expiresAt,\s*clientKind,\s*dedupeKey,\s*authMethod,/, 'createClient no longer takes fallbackLabel, expiresAt and authMethod');
+    has(clients, /return \{ client: publicClient\(client\), token \};/, 'createClient no longer answers { client, token }');
+    has(server, /const remoteClientAuthRuntime = createRemoteClientAuthRuntime\(\{/, 'the server no longer builds the remote clients store the plugin context mints from');
     has(server, /const uiPassword = typeof options\.uiPassword === 'string'\s*\? options\.uiPassword\s*: \(typeof process\.env\.OPENCHAMBER_UI_PASSWORD === 'string' \? process\.env\.OPENCHAMBER_UI_PASSWORD : null\);/, 'the server no longer reads the UI password where the plugin context sees it');
     has(source('packages/web/server/lib/opencode/bootstrap-runtime.js'), /createUiAuth\(\{\s*password: uiPassword,/, 'the UI auth controller no longer gets the same UI password');
 
