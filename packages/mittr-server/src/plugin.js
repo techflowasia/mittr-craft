@@ -63,19 +63,20 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
   const identities = await ensureGitIdentityStore({ dataDir, homeDir, logger });
   if (identities.seededFrom) logger.log(`[mittr] git identities copied from ${identities.seededFrom}`);
 
-  const baseEngineEnv = () => ({
-    ...engineEnv({ bases, accountHome: activeAccountHome(dataDir, { logger }), rule: ENGINE_DB_RULE }),
+  const baseEngineEnv = (accountHome) => ({
+    ...engineEnv({ bases, accountHome, rule: ENGINE_DB_RULE }),
     ...ENGINE_OUTBOUND_OFF,
   });
-  if (!context) return { engineEnv: baseEngineEnv };
+  if (!context) return { engineEnv: () => baseEngineEnv(activeAccountHome(dataDir, { logger })) };
 
   const mittr = setupMittr(context, {
     env,
     sharedHistoryExists: () => sharedHistoryExists(bases),
     engineConfigDir: engineConfigDir({ bases, env }),
+    engineDataHome: (accountHome) => engineEnv({ bases, accountHome, rule: ENGINE_DB_RULE }).XDG_DATA_HOME,
   });
   return {
-    engineEnv: async () => ({ ...baseEngineEnv(), ...(await mittr.engineEnv()) }),
+    engineEnv: async () => ({ ...baseEngineEnv(mittr.engineHome()), ...(await mittr.engineEnv()) }),
     managedConfig: mittr.managedConfig,
     dispose: mittr.dispose,
   };

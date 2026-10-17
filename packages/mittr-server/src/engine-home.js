@@ -16,6 +16,8 @@ import path from 'node:path';
 
 const ACCOUNT_HOME = /^[0-9a-f]{16}$/;
 
+export const NO_ACCOUNT_HOME = '_none';
+
 /**
  * How OpenCode 2 picks up a 1.x database. It opens
  * `<XDG_DATA_HOME>/opencode/opencode.db` and migrates it in place, which is the
@@ -57,7 +59,7 @@ export const engineConfigDir = ({ bases, env }) => {
  * `accounts/<home>`; configuration and caches stay shared, as in 1.x.
  */
 export const engineEnv = ({ bases, accountHome, rule }) => {
-  if (accountHome !== null && !ACCOUNT_HOME.test(String(accountHome))) {
+  if (accountHome !== null && accountHome !== NO_ACCOUNT_HOME && !ACCOUNT_HOME.test(String(accountHome))) {
     throw new Error('An engine account home must be an account key');
   }
   const own = (base) => (accountHome ? path.join(base, 'accounts', accountHome) : base);

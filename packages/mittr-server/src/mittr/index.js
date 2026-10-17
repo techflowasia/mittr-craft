@@ -79,6 +79,7 @@ export function setupMittr(context, {
   sharedHistoryExists = () => true,
   credentialRetryMs = CREDENTIAL_RETRY_MS,
   engineConfigDir = null,
+  engineDataHome = null,
 } = {}) {
   const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig, events } = context;
   const broker = resolveBroker(env);
@@ -135,6 +136,7 @@ export function setupMittr(context, {
       return onModels(items, { listKnown: known });
     },
     sync: syncCatalog,
+    engineDataHome,
     logger,
   });
 
@@ -145,13 +147,13 @@ export function setupMittr(context, {
     scheme,
     fetchImpl,
     signInRefusal: refusal,
-    onSignIn: (previousUserId, nextUserId) => switcher.afterSignIn(previousUserId, nextUserId),
+    onSignIn: () => switcher.afterSignIn(),
     // A sign-out or a switch ends every answer still streaming on the
     // account that was active, whether or not the engine restarts. The
     // account now active brings its own models.
-    onAccountChange: async (nextUserId) => {
+    onAccountChange: (nextUserId) => {
       shim?.abortInFlight();
-      await switcher.switchTo(nextUserId);
+      return switcher.switchTo(nextUserId);
     },
     logger,
   });
@@ -162,6 +164,7 @@ export function setupMittr(context, {
     upstreamV1: broker.upstreamV1,
     localToken,
     ensureFreshSession,
+    engineOnActiveHome: () => switcher.engineOnTarget(),
     // Never an empty list for a catalog that cannot be read: the shim then
     // says the list is unavailable instead of "you have no models".
     listModels: () => {
@@ -292,8 +295,16 @@ export function setupMittr(context, {
       startupSyncRunning = false;
     }
   };
+  let correction = null;
   const unsubscribeReady = opencode.onReady(() => {
     engineStarted = true;
+    if (!switcher.engineOnTarget() && !correction && !disposed) {
+      correction = setTimeout(() => {
+        correction = null;
+        void switcher.correctEngineHome();
+      }, 0);
+      correction.unref?.();
+    }
     void startupSync();
     forgetMittrCredential(opencode);
     void storeCredential();
@@ -392,12 +403,15 @@ export function setupMittr(context, {
 
   return {
     engineEnv: () => loopbackProxyExemption(env),
+    engineHome: () => store.engineHome({ carryLegacy: false }),
     managedConfig,
     applyModels,
     dispose: async () => {
       disposed = true;
       clearTimeout(credentialRetry);
       credentialRetry = null;
+      clearTimeout(correction);
+      correction = null;
       unsubscribeReady();
       unregisterDeepLink?.();
     },

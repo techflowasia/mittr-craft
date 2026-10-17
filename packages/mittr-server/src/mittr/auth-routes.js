@@ -82,11 +82,13 @@ export function registerMittrAuthRoutes(app, {
   const refreshing = new Map();
 
   const announceAccountChange = async (nextUserId) => {
-    if (!onAccountChange) return;
+    if (!onAccountChange) return {};
     try {
-      await onAccountChange(nextUserId);
+      const outcome = await onAccountChange(nextUserId);
+      return outcome?.engineRestarted === false ? { engineRestarted: false } : {};
     } catch (error) {
       logger.warn('[mittr] switching account failed:', error?.message ?? error);
+      return {};
     }
   };
 
@@ -154,8 +156,9 @@ export function registerMittrAuthRoutes(app, {
       return failure(500, CANNOT_STORE);
     }
 
+    let restart = {};
     if (before !== session.subject.userId) {
-      await announceAccountChange(session.subject.userId);
+      restart = await announceAccountChange(session.subject.userId);
     } else if (onSignIn) {
       // Sign-in has succeeded by now; a follow-up that fails never changes
       // the answer.
@@ -166,7 +169,7 @@ export function registerMittrAuthRoutes(app, {
       }
     }
 
-    return { status: 200, body: statusOf(session) };
+    return { status: 200, body: { ...statusOf(session), ...restart } };
   };
 
   app.post('/api/mittr/auth/start', refuseWhenUnsafe, (_req, res) => {
@@ -216,8 +219,8 @@ export function registerMittrAuthRoutes(app, {
     }
     lastFailure = null;
     const next = store.read();
-    await announceAccountChange(next?.subject.userId ?? null);
-    return res.json(statusOf(next));
+    const restart = await announceAccountChange(next?.subject.userId ?? null);
+    return res.json({ ...statusOf(next), ...restart });
   });
 
   app.get('/api/mittr/auth/accounts', (_req, res) => res.json({ accounts: store.list() }));
@@ -233,8 +236,8 @@ export function registerMittrAuthRoutes(app, {
       return res.status(500).json({ error: CANNOT_STORE });
     }
     lastFailure = null;
-    await announceAccountChange(userId);
-    return res.json(statusOf(store.read()));
+    const restart = await announceAccountChange(userId);
+    return res.json({ ...statusOf(store.read()), ...restart });
   });
 
   const refresh = async (session) => {
@@ -257,10 +260,8 @@ export function registerMittrAuthRoutes(app, {
         // changed while it was in flight.
         const wasActive = activeUserId() === userId;
         store.signOut(userId);
-        if (!wasActive) return null;
-        const next = store.read();
-        void announceAccountChange(next?.subject.userId ?? null);
-        return next;
+        if (wasActive) void announceAccountChange(store.read()?.subject.userId ?? null);
+        return null;
       }
       if (!response.ok) return store.read();
 

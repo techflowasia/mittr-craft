@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import express from 'express';
 
-import { fakeEngineContext, listen, serve } from './mittr/test-helpers.js';
+import { fakeEngineContext, listen, serve, until } from './mittr/test-helpers.js';
 import setup, { setupMittrServer } from './plugin.js';
 
 const ACCOUNT = '0123456789abcdef';
@@ -73,8 +73,8 @@ test('setup backs up the prod layout once, migrates settings and serves the engi
 
   assert.deepEqual(await plugin.engineEnv(), {
     XDG_CONFIG_HOME: path.join(home, '.config', 'mittrcraft', 'engine'),
-    XDG_DATA_HOME: path.join(home, '.local', 'share', 'mittrcraft', 'engine'),
-    XDG_STATE_HOME: path.join(home, '.local', 'state', 'mittrcraft', 'engine'),
+    XDG_DATA_HOME: path.join(home, '.local', 'share', 'mittrcraft', 'engine', 'accounts', '_none'),
+    XDG_STATE_HOME: path.join(home, '.local', 'state', 'mittrcraft', 'engine', 'accounts', '_none'),
     XDG_CACHE_HOME: path.join(home, '.cache', 'mittrcraft', 'engine'),
     OPENCODE_DB: 'opencode.db',
     OPENCODE_DISABLE_MODELS_FETCH: '1',
@@ -121,9 +121,8 @@ test('setup on the Dev layout backs up the data dir once, with the engine inside
   assert.equal(fs.existsSync(`${engineHome}.pre-2x-backup`), false);
   assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'settings.json'), 'utf8')).desktopLocalPort, 57123);
   const env = await plugin.engineEnv();
-  for (const key of ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME']) {
-    assert.equal(env[key], engineHome, key);
-  }
+  for (const key of ['XDG_CONFIG_HOME', 'XDG_CACHE_HOME']) assert.equal(env[key], engineHome, key);
+  for (const key of ['XDG_DATA_HOME', 'XDG_STATE_HOME']) assert.equal(env[key], path.join(engineHome, 'accounts', '_none'), key);
 });
 
 test('setup refuses a Dev data dir without its own engine root', async (t) => {
@@ -189,7 +188,7 @@ test('setup with the server context mounts Mittr sign-in and keeps the engine en
   assert.equal(status, 200);
   assert.ok(body.authorizeUrl.startsWith('https://api.mittr.asia/auth/desktop/start?code_challenge='), body.authorizeUrl);
   assert.ok(body.authorizeUrl.includes('redirect_uri=mittrcraft%3A%2F%2Fauth%2Fcallback'), body.authorizeUrl);
-  assert.equal((await plugin.engineEnv()).XDG_DATA_HOME, path.join(home, '.local', 'share', 'mittrcraft', 'engine'));
+  assert.equal((await plugin.engineEnv()).XDG_DATA_HOME, path.join(home, '.local', 'share', 'mittrcraft', 'engine', 'accounts', '_none'));
   assert.equal((await plugin.engineEnv()).NO_PROXY.split(',').includes('127.0.0.1'), true);
   assert.equal((await plugin.engineEnv()).OPENCODE_DISABLE_MODELS_FETCH, '1');
   assert.equal((await plugin.engineEnv()).OPENCODE_DISABLE_AUTOUPDATE, '1');
@@ -233,12 +232,16 @@ test('setup hands Mittr the folder the engine reads its user config from', async
   assert.ok(personal.logger.lines.some((line) => line.includes('the default model is left alone')));
 });
 
-test('each Mittr account runs the engine on its own home, and a switch restarts it there', async (t) => {
+const homeOf = (userId) => crypto.createHash('sha256').update(userId).digest('hex').slice(0, 16);
+
+const mittrPlugin = async (t) => {
   const home = tempHome(t);
   const dataDir = prodLayout(home);
   const sessionOf = (userId, displayName) => ({ accessToken: `at-${userId}`, refreshToken: `r-${userId}`, expiresAt: Date.now() + 3_600_000, subject: { userId, displayName } });
   const handedOut = [sessionOf('u-a', 'A'), sessionOf('u-b', 'B')];
+  const brokerCalls = [];
   const broker = await listen(t, (req, res) => {
+    brokerCalls.push(req.url);
     res.setHeader('content-type', 'application/json');
     if (req.url === '/auth/desktop/exchange') return res.end(JSON.stringify(handedOut.shift()));
     return res.end(JSON.stringify({ bundleVersion: 1, subject: null, models: [] }));
@@ -254,16 +257,25 @@ test('each Mittr account runs the engine on its own home, and a switch restarts 
     context: { app, express, dataDir, logger, host: null, ...engine.context },
   });
   t.after(() => plugin.dispose());
+  const launch = async () => { engine.launchedDataHome = (await plugin.engineEnv()).XDG_DATA_HOME; };
+  engine.onRestart = launch;
+  await launch();
   const call = await serve(t, app);
   const signIn = async () => {
     await call('POST', '/api/mittr/auth/start');
     return call('POST', '/api/mittr/auth/callback', { url: 'mittrcraft://auth/callback?code=c1' });
   };
   const shared = path.join(home, '.local', 'share', 'mittrcraft', 'engine');
-  const homeOf = (userId) => crypto.createHash('sha256').update(userId).digest('hex').slice(0, 16);
-  const dataHome = async () => (await plugin.engineEnv()).XDG_DATA_HOME;
+  return { plugin, engine, call, signIn, shared, dataDir, brokerCalls, logger };
+};
 
-  assert.equal(await dataHome(), shared);
+test('each Mittr account runs the engine on its own home, and a switch restarts it there', async (t) => {
+  const { plugin, engine, call, signIn, shared } = await mittrPlugin(t);
+  const dataHome = async () => (await plugin.engineEnv()).XDG_DATA_HOME;
+  const none = path.join(shared, 'accounts', '_none');
+
+  assert.equal(await dataHome(), none);
+  assert.equal(engine.launchedDataHome, none);
 
   assert.equal((await signIn()).body.userId, 'u-a');
   assert.deepEqual(engine.restarts, ['mittr account switched']);
@@ -283,7 +295,43 @@ test('each Mittr account runs the engine on its own home, and a switch restarts 
 
   assert.deepEqual((await call('DELETE', '/api/mittr/auth/session')).body, { signedIn: false });
   assert.equal(engine.restarts.length, 5);
-  assert.equal(await dataHome(), shared);
+  assert.equal(await dataHome(), none);
+  assert.equal(engine.launchedDataHome, none);
+});
+
+test('a ready on another account\'s home is corrected after the listener returns, never inside it', async (t) => {
+  const { engine, signIn, shared } = await mittrPlugin(t);
+  assert.equal((await signIn()).body.userId, 'u-a');
+  assert.equal(engine.restarts.length, 1);
+
+  engine.launchedDataHome = path.join(shared, 'accounts', homeOf('u-b'));
+  engine.fireReady();
+  assert.equal(engine.restarts.length, 1);
+
+  await until(() => engine.restarts.length === 2);
+  assert.equal(engine.launchedDataHome, path.join(shared, 'accounts', homeOf('u-a')));
+  engine.fireReady();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(engine.restarts.length, 2);
+});
+
+test('while the engine runs on another account\'s home the shim refuses, and forwards nothing', async (t) => {
+  const { engine, call, signIn, shared, dataDir, brokerCalls } = await mittrPlugin(t);
+  assert.equal((await signIn()).body.userId, 'u-a');
+  engine.onRestart = null;
+  engine.launchedDataHome = path.join(shared, 'accounts', homeOf('u-b'));
+  const key = fs.readFileSync(path.join(dataDir, 'mittr-shim-token'), 'utf8').trim();
+
+  const response = await fetch(`${call.base}/mittr-shim/v1/chat/completions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'a1', messages: [] }),
+  });
+
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get('x-should-retry'), 'false');
+  assert.deepEqual(await response.json(), { error: 'The Mittr account is changing. Send the message again in a moment.' });
+  assert.equal(brokerCalls.some((url) => url.includes('/chat/completions')), false);
 });
 
 test('the default export is the server-plugin setup', () => {

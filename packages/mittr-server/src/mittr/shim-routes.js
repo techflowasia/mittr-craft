@@ -10,6 +10,7 @@ const NOT_SIGNED_IN = 'Not signed in to Mittr. Sign in to continue.';
 const UNREACHABLE = 'Cannot reach Mittr';
 const TIMED_OUT = 'Mittr did not answer in time';
 const NO_MODEL_LIST = 'The Mittr model list is not available';
+const SWITCHING = 'The Mittr account is changing. Send the message again in a moment.';
 
 // On an answer the shim itself gives up on, where asking again at once cannot
 // help: the engine would otherwise retry it several times over.
@@ -107,6 +108,7 @@ export function registerMittrShim(app, {
   upstreamV1,
   localToken,
   ensureFreshSession,
+  engineOnActiveHome = () => true,
   listModels = () => [],
   onAnswer = () => {},
   fetchImpl = (...args) => fetch(...args),
@@ -155,6 +157,7 @@ export function registerMittrShim(app, {
   const guard = (req, res, next) => {
     if (!isLoopbackPeer(req.socket?.remoteAddress) || cameThroughProxy(req.headers)) return res.status(403).json({ error: 'Forbidden' });
     if (!presentsKey(req.headers.authorization)) return res.status(401).json({ error: 'Unauthorized' });
+    if (!engineOnActiveHome()) return res.status(503).set(NO_RETRY).json({ error: SWITCHING });
     return next();
   };
 
@@ -191,6 +194,7 @@ export function registerMittrShim(app, {
     }
     if (engineGone) return undefined;
     if (!session?.accessToken) return res.status(401).json({ error: NOT_SIGNED_IN });
+    if (!engineOnActiveHome()) return res.status(503).set(NO_RETRY).json({ error: SWITCHING });
     inFlight.add(res);
 
     let upstream;

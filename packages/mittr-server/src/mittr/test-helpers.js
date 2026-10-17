@@ -105,7 +105,11 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
       return () => readyListeners.delete(listener);
     },
     restart: async (reason) => { restarts.push(reason); },
-    refresh: async (reason) => { restarts.push(reason); },
+    refresh: async (reason) => {
+      restarts.push(reason);
+      await fake.onRestart?.(reason);
+    },
+    launchedDataHome: () => fake.launchedDataHome,
     userConfig: {
       path: path.join(USER_CONFIG_DIR, 'opencode.json'),
       read: () => {
@@ -146,6 +150,8 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
     userConfigFile: structuredClone(userConfigFile),
     userConfigWrites,
     userConfigError: null,
+    launchedDataHome: null,
+    onRestart: null,
     fireReady: () => { for (const listener of readyListeners) listener(); },
   };
   return fake;

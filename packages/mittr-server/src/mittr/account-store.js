@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import nodeFs from 'node:fs';
 import path from 'node:path';
 
+import { NO_ACCOUNT_HOME } from '../engine-home.js';
 import { parseSession } from './session.js';
 
 /**
@@ -352,5 +353,13 @@ export function createAccountStore({
     return index.accounts.find((entry) => entry.userId === index.active)?.home ?? null;
   };
 
-  return { read, readOf, write, clear, activate, signOut, list, activeHome, damaged, repair, legacyPending };
+  const engineHome = ({ carryLegacy = true } = {}) => {
+    if (carryLegacy) carryLegacyOnce();
+    if (legacyPending()) return null;
+    const index = readIndex();
+    const active = index.accounts.find((entry) => entry.userId === index.active);
+    return active ? active.home : NO_ACCOUNT_HOME;
+  };
+
+  return { read, readOf, write, clear, activate, signOut, list, activeHome, engineHome, damaged, repair, legacyPending };
 }

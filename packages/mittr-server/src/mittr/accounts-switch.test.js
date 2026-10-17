@@ -7,7 +7,7 @@ import test from 'node:test';
 import express from 'express';
 
 import { activeAccountHome } from '../accounts.js';
-import { ENGINE_DB_RULE, engineBases, engineEnv, sharedHistoryExists } from '../engine-home.js';
+import { ENGINE_DB_RULE, NO_ACCOUNT_HOME, engineBases, engineEnv, sharedHistoryExists } from '../engine-home.js';
 import { createAccountStore } from './account-store.js';
 import { createAccountSwitcher } from './accounts-switch.js';
 import { registerMittrAuthRoutes } from './auth-routes.js';
@@ -36,7 +36,7 @@ const quietLogger = () => {
   return { warnings, log: () => {}, warn: (...args) => warnings.push(args.join(' ')), error: () => {} };
 };
 
-const harness = async (t, { sharedHistory = false, sessions = [], exchanges = [], fetchImpl = null, sync = async () => {} } = {}) => {
+const harness = async (t, { sharedHistory = false, legacy = null, sessions = [], exchanges = [], fetchImpl = null, sync = async () => {} } = {}) => {
   const root = tempDataDir(t);
   const dataDir = path.join(root, 'data');
   const bases = engineBases({ homeDir: root, env: { MITTRCRAFT_ENGINE_HOME: path.join(root, 'engine') } });
@@ -44,26 +44,53 @@ const harness = async (t, { sharedHistory = false, sessions = [], exchanges = []
     fs.mkdirSync(path.join(bases.data, 'opencode'), { recursive: true });
     fs.writeFileSync(path.join(bases.data, 'opencode', 'opencode.db'), 'sessions');
   }
+  if (legacy) {
+    fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'mittr-session'), encrypt(JSON.stringify(legacy)));
+  }
   const store = createAccountStore({ dataDir, encrypt, decrypt, sharedHistoryExists: () => sharedHistoryExists(bases) });
   for (const session of sessions) store.write(session, { activate: false });
 
   const refreshes = [];
+  const events = [];
   const applied = [];
   const syncs = [];
   const switches = [];
   const signIns = [];
   const logger = quietLogger();
-  const opencode = { refresh: async (reason) => { refreshes.push(reason); } };
+  const engineEnvNow = () => engineEnv({ bases, accountHome: store.engineHome({ carryLegacy: false }), rule: ENGINE_DB_RULE });
+  const engine = { launched: null, joins: 0, failures: 0 };
+  const opencode = {
+    refresh: async (reason) => {
+      refreshes.push(reason);
+      events.push('refresh');
+      if (engine.failures > 0) {
+        engine.failures -= 1;
+        throw new Error('engine did not come back');
+      }
+      if (engine.joins > 0) {
+        engine.joins -= 1;
+        return;
+      }
+      engine.launched = engineEnvNow().XDG_DATA_HOME;
+    },
+    launchedDataHome: () => engine.launched,
+  };
   const switcher = createAccountSwitcher({
     store,
     opencode,
-    applyCache: async () => { applied.push(store.activeHome()); },
+    applyCache: async () => {
+      applied.push(store.activeHome());
+      events.push(`apply:${store.engineHome()}`);
+    },
     sync: () => {
       syncs.push(store.read()?.subject.userId ?? null);
       return sync();
     },
+    engineDataHome: (accountHome) => engineEnv({ bases, accountHome, rule: ENGINE_DB_RULE }).XDG_DATA_HOME,
     logger,
   });
+  engine.launched = engineEnvNow().XDG_DATA_HOME;
 
   let exchanged = 0;
   const platform = fetchImpl ?? fakeFetch((request) => {
@@ -84,7 +111,7 @@ const harness = async (t, { sharedHistory = false, sessions = [], exchanges = []
     now: () => clock.now,
     onSignIn: (previousUserId, nextUserId) => {
       signIns.push([previousUserId, nextUserId]);
-      return switcher.afterSignIn(previousUserId, nextUserId);
+      return switcher.afterSignIn();
     },
     onAccountChange: (next) => {
       switches.push(next);
@@ -92,8 +119,7 @@ const harness = async (t, { sharedHistory = false, sessions = [], exchanges = []
     },
     logger,
   });
-  const engineEnvNow = () => engineEnv({ bases, accountHome: activeAccountHome(dataDir, { logger }), rule: ENGINE_DB_RULE });
-  return { auth, store, switcher, bases, dataDir, refreshes, applied, syncs, switches, signIns, logger, engineEnvNow, call: await serve(t, app) };
+  return { auth, store, switcher, engine, bases, dataDir, refreshes, events, applied, syncs, switches, signIns, logger, engineEnvNow, call: await serve(t, app) };
 };
 
 const signIn = async (call) => {
@@ -157,12 +183,11 @@ test('switching back to a first account that got its own home uses that home', a
 
 test('a switch applies the account\'s cache before the restart, then syncs without waiting for it', async (t) => {
   const never = deferred();
-  const { switcher, applied, syncs, refreshes } = await harness(t, { sessions: [A, B], sync: () => never.promise });
+  const { switcher, events, syncs } = await harness(t, { sessions: [A, B], sync: () => never.promise });
 
   assert.equal((await switcher.switchTo('u-b')).userId, 'u-b');
 
-  assert.deepEqual(applied, [homeOf('u-b')]);
-  assert.deepEqual(refreshes, [SWITCHED]);
+  assert.deepEqual(events, [`apply:${homeOf('u-b')}`, 'refresh']);
   assert.deepEqual(syncs, ['u-b']);
 });
 
@@ -186,13 +211,26 @@ test('the activate route restarts the engine, though the account is active befor
   assert.ok(engineEnvNow().XDG_DATA_HOME.endsWith(path.join('accounts', homeOf('u-b'))));
 });
 
-test('a first sign-in on the home the engine started on does not restart it', async (t) => {
-  const { call, refreshes, switches } = await harness(t, { exchanges: [A] });
+test('with nobody signed in the engine runs on an empty home of its own, and a first sign-in moves it to the account\'s', async (t) => {
+  const { call, refreshes, switches, bases, engine } = await harness(t, { exchanges: [A] });
+  assert.equal(engine.launched, path.join(bases.data, 'accounts', NO_ACCOUNT_HOME));
 
   assert.equal((await signIn(call)).status, 200);
 
   assert.deepEqual(switches, ['u-a']);
+  assert.deepEqual(refreshes, [SWITCHED]);
+  assert.equal(engine.launched, bases.data);
+});
+
+test('a 1.x session waiting to be carried keeps the shared home, and carrying it does not restart the engine', async (t) => {
+  const { switcher, store, refreshes, bases, engine } = await harness(t, { legacy: A });
+  assert.equal(engine.launched, bases.data);
+
+  assert.equal((await switcher.switchTo('u-a')).userId, 'u-a');
+
+  assert.equal(store.activeHome(), null);
   assert.deepEqual(refreshes, []);
+  assert.equal(engine.launched, bases.data);
 });
 
 test('a first sign-in onto a home of its own restarts the engine there', async (t) => {
@@ -214,7 +252,7 @@ test('signing in again as the active account only syncs', async (t) => {
   assert.deepEqual(switches, ['u-a']);
   assert.deepEqual(signIns, [['u-a', 'u-a']]);
   assert.deepEqual(syncs, ['u-a', 'u-a']);
-  assert.deepEqual(refreshes, []);
+  assert.deepEqual(refreshes, [SWITCHED]);
 });
 
 test('a refused refresh of an inactive account leaves the active account signed in', async (t) => {
@@ -263,19 +301,20 @@ test('signing out of the last account switches to none', async (t) => {
 
   assert.deepEqual(switches, [null]);
   assert.deepEqual(refreshes, [SWITCHED]);
-  assert.equal(engineEnvNow().XDG_DATA_HOME, bases.data);
+  assert.equal(engineEnvNow().XDG_DATA_HOME, path.join(bases.data, 'accounts', NO_ACCOUNT_HOME));
   assert.deepEqual(await switcher.switchTo(null), { signedIn: false });
   assert.deepEqual(refreshes, [SWITCHED]);
 });
 
-test('switching to none leaves every account signed in and none active', async (t) => {
-  const { switcher, store, refreshes } = await harness(t, { sessions: [A, B] });
+test('switching to none leaves every account signed in and none active, on the empty home', async (t) => {
+  const { switcher, store, refreshes, bases, engine } = await harness(t, { sessions: [A, B] });
   await switcher.switchTo('u-b');
 
   assert.deepEqual(await switcher.switchTo(null), { signedIn: false });
 
   assert.deepEqual(store.list().map(({ userId, active }) => [userId, active]), [['u-a', false], ['u-b', false]]);
   assert.deepEqual(refreshes, [SWITCHED, SWITCHED]);
+  assert.equal(engine.launched, path.join(bases.data, 'accounts', NO_ACCOUNT_HOME));
 });
 
 test('last active account survives a restart', async (t) => {
@@ -301,21 +340,62 @@ test('overlapping switches run one after another and end on the last', async (t)
   assert.equal(engineEnvNow().XDG_DATA_HOME.includes(`${path.sep}accounts${path.sep}`), false);
 });
 
-test('a restart that fails is logged, and the next switch compares against the home it was sent to', async (t) => {
-  const { store, logger } = await harness(t, { sessions: [A, B] });
-  const refreshes = [];
-  const switcher = createAccountSwitcher({
-    store,
-    opencode: { refresh: async (reason) => { refreshes.push(reason); throw new Error('engine did not come back'); } },
-    applyCache: async () => {},
-    sync: async () => {},
-    logger,
-  });
+test('a refresh that joins a restart still on the old home is followed by one more, ending on the target', async (t) => {
+  const { switcher, engine, refreshes, bases } = await harness(t, { sessions: [A, B] });
+  engine.joins = 1;
 
-  assert.equal((await switcher.switchTo('u-b')).userId, 'u-b');
+  assert.deepEqual(await switcher.switchTo('u-b'), { signedIn: true, userId: 'u-b', displayName: 'B' });
+
+  assert.deepEqual(refreshes, [SWITCHED, SWITCHED]);
+  assert.equal(engine.launched, path.join(bases.data, 'accounts', homeOf('u-b')));
+  assert.equal(switcher.engineOnTarget(), true);
+});
+
+test('an engine that stays on the old home after two restarts is reported, and stays closed', async (t) => {
+  const { switcher, engine, refreshes, bases, logger } = await harness(t, { sessions: [A, B] });
+  engine.joins = 2;
+
+  assert.deepEqual(await switcher.switchTo('u-b'), { signedIn: true, userId: 'u-b', displayName: 'B', engineRestarted: false });
+
+  assert.deepEqual(refreshes, [SWITCHED, SWITCHED]);
+  assert.equal(engine.launched, bases.data);
+  assert.equal(switcher.engineOnTarget(), false);
+  assert.ok(logger.warnings.some((line) => line.includes('still on another account')), logger.warnings.join('\n'));
+});
+
+test('a restart that fails is logged and answered with engineRestarted false, and the next switch tries again', async (t) => {
+  const { switcher, engine, refreshes, logger, call } = await harness(t, { sessions: [A, B] });
+  engine.failures = 2;
+
+  assert.deepEqual(await switcher.switchTo('u-b'), { signedIn: true, userId: 'u-b', displayName: 'B', engineRestarted: false });
   assert.ok(logger.warnings.some((line) => line.includes('engine did not come back')), logger.warnings.join('\n'));
-  await switcher.switchTo('u-b');
+
+  assert.deepEqual(await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' }), { status: 200, body: { signedIn: true, userId: 'u-a', displayName: 'A' } });
   assert.deepEqual(refreshes, [SWITCHED]);
+
+  assert.deepEqual((await call('DELETE', '/api/mittr/auth/session')).body, { signedIn: true, userId: 'u-b', displayName: 'B', engineRestarted: false });
+  assert.deepEqual(refreshes, [SWITCHED, SWITCHED]);
+
+  assert.deepEqual(await switcher.switchTo('u-b'), { signedIn: true, userId: 'u-b', displayName: 'B' });
+  assert.deepEqual(refreshes, [SWITCHED, SWITCHED, SWITCHED]);
+});
+
+test('a correction after a ready on the wrong home restarts once, and only once for the same target', async (t) => {
+  const { switcher, engine, store, refreshes, bases, logger } = await harness(t, { sessions: [A, B] });
+  store.activate('u-b');
+  assert.equal(switcher.engineOnTarget(), false);
+
+  engine.joins = 2;
+  await switcher.correctEngineHome();
+  assert.deepEqual(refreshes, [SWITCHED, SWITCHED]);
+  assert.equal(engine.launched, bases.data);
+
+  await switcher.correctEngineHome();
+  assert.deepEqual(refreshes, [SWITCHED, SWITCHED]);
+  assert.ok(logger.warnings.some((line) => line.includes('came up on another account')), logger.warnings.join('\n'));
+
+  await switcher.switchTo('u-b');
+  assert.equal(engine.launched, path.join(bases.data, 'accounts', homeOf('u-b')));
 });
 
 test('a sync that fails after a switch is logged, not thrown', async (t) => {

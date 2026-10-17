@@ -292,7 +292,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'engine-refresh-restarts',
     files: ['packages/web/server/lib/opencode/lifecycle.js', 'packages/web/server/index.js'],
-    why: "a plugin's opencode.refresh(reason) restarts the managed OpenCode and waits for it to be ready, and that restart reads the plugins' engine env again, so a Mittr account switch moves the engine onto the account's home",
+    why: "a plugin's opencode.refresh(reason) restarts the managed OpenCode and waits for it to be ready, and that restart reads the plugins' engine env again, so a Mittr account switch moves the engine onto the account's home; a refresh that lands while another restart is under way joins it instead, and that restart may have read the env before the switch, so the switcher checks opencode.launchedDataHome() afterwards and refreshes once more when the engine came up elsewhere",
   },
 ];
 

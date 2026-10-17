@@ -326,6 +326,22 @@ test('a refused refresh signs out the account it was for', async (t) => {
   assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
 });
 
+test('a refused refresh of the active account hands its request nothing, not the next account\'s session', async (t) => {
+  const changes = [];
+  const fetchImpl = fakeFetch(() => json({ error: 'invalid_grant' }, 401));
+  const { auth, store } = await harness(t, {
+    fetchImpl,
+    sessions: [sessionFor('u-b', 'B'), sessionFor('u-a', 'A', { expiresAt: NOW + 1_000 })],
+    onAccountChange: (next) => changes.push(next),
+  });
+  assert.equal(store.read().subject.userId, 'u-a');
+
+  assert.equal(await auth.ensureFreshSession(), null);
+
+  assert.equal(store.read().subject.userId, 'u-b');
+  assert.deepEqual(changes, ['u-b']);
+});
+
 test('a failing platform keeps the session', async (t) => {
   for (const respond of [() => json({ error: 'bad gateway' }, 502), () => { throw new Error('offline'); }]) {
     const fetchImpl = fakeFetch(respond);
