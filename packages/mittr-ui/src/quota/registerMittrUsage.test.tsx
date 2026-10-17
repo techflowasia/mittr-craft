@@ -7,6 +7,8 @@ import { dict as enDict } from '../../../ui/src/lib/i18n/messages/en';
 import { overlayDictionary } from '../../../ui/src/lib/product-plugins';
 import { useQuotaStore } from '../../../ui/src/stores/useQuotaStore';
 import { MittrRoot } from '../product-ui-plugin';
+import { MittrSignInGate } from '../sign-in/MittrSignInGate';
+import { SelectMittrUsage } from './SelectMittrUsage';
 import { selectMittrUsage } from './registerMittrUsage';
 
 const runtimeCtx = {
@@ -46,12 +48,12 @@ describe('the Mittr usage provider', () => {
 
   test('the choice is made inside the sign-in gate, so only once someone is signed in', () => {
     const gate = MittrRoot({ children: 'app' });
-    expect(React.isValidElement<{ children: React.ReactNode }>(gate)).toBe(true);
-    if (!React.isValidElement<{ children: React.ReactNode }>(gate)) return;
+    if (!React.isValidElement<{ children: React.ReactNode }>(gate)) throw new Error('MittrRoot did not return an element');
+    expect(gate.type).toBe(MittrSignInGate);
     const inside = React.Children.toArray(gate.props.children);
     expect(inside).toHaveLength(2);
     expect(inside[1]).toBe('app');
-    expect(React.isValidElement(inside[0]) && typeof inside[0].type === 'function').toBe(true);
+    expect(React.isValidElement(inside[0]) && inside[0].type === SelectMittrUsage).toBe(true);
   });
 });
 

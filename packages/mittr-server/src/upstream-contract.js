@@ -341,7 +341,7 @@ export const UPSTREAM_CONTRACT = [
   },
   {
     id: 'settings-search-usage',
-    files: ['packages/ui/src/lib/settings/search.ts', 'packages/ui/src/lib/i18n/messages/en.settings.ts'],
+    files: ['packages/ui/src/lib/settings/search.ts', 'packages/ui/src/lib/settings/metadata.ts', 'packages/ui/src/lib/i18n/messages/en.settings.ts'],
     why: "the usage.model-quotas search item is titled by settings.usage.page.section.modelQuotas, which our English override renames to Weekly model quotas, and the Usage page's own search keywords include quota",
   },
   {

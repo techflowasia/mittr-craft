@@ -974,6 +974,7 @@ const checks = {
 
   'settings-search-usage': () => {
     has(source('packages/ui/src/lib/settings/search.ts'), /id: 'usage\.model-quotas',\s*page: 'usage',\s*titleKey: 'settings\.usage\.page\.section\.modelQuotas',\s*keywords: \[[^\]]*'quota'/, 'the usage.model-quotas search item moved or lost its quota keyword');
+    has(source('packages/ui/src/lib/settings/metadata.ts'), /slug: 'usage',[^}]*keywords: \[[^\]]*'quota'/, "the usage page's search keywords no longer include quota");
     has(source('packages/ui/src/lib/i18n/messages/en.settings.ts'), /'settings\.usage\.page\.section\.modelQuotas': /, 'the model quotas heading key is gone');
   },
 

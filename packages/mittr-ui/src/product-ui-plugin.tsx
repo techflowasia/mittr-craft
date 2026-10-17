@@ -6,14 +6,10 @@ import { AboutSettingsSignOut, SignOutButton } from './accounts/SignOutButton';
 import { MittrCraftLogo } from './MittrCraftLogo';
 import { OtherProvidersSwitch } from './providers/OtherProvidersSwitch';
 import { useMittrPickerDecorations } from './providers/useMittrPickerFilter';
-import { selectMittrUsage } from './quota/registerMittrUsage';
+import './quota/registerMittrUsage';
+import { SelectMittrUsage } from './quota/SelectMittrUsage';
 import { MittrSignInGate } from './sign-in/MittrSignInGate';
 import { strings } from './strings/en';
-
-function SelectMittrUsage(): React.ReactNode {
-  React.useEffect(selectMittrUsage, []);
-  return null;
-}
 
 export function MittrRoot({ children }: { children: React.ReactNode }): React.ReactNode {
   return (
