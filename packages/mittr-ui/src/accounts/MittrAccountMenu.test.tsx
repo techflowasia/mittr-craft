@@ -14,7 +14,7 @@ const B = { userId: 'u-b', displayName: 'Bo', active: true };
 
 const noop = () => {};
 
-const handlers = { onActivate: noop, onAddAccount: noop, onSignOut: noop };
+const handlers = { onActivate: noop, onAddAccount: noop, onCancelAddAccount: noop, onSignOut: noop };
 
 const escaped = (text: string) => text.replace(/&/g, '&amp;').replace(/'/g, '&#x27;').replace(/"/g, '&quot;');
 
@@ -68,6 +68,17 @@ describe('MittrAccountMenu', () => {
     expect(disabled[0]).toContain('Ann Lee');
     expect(disabled[1]).toContain(mittrT('mittr.accounts.signOut'));
     expect(items()).not.toContain('aria-disabled="true"');
+  });
+
+  test('while an added account is finishing its sign-in, the note says it waits on the browser and offers Cancel', () => {
+    const html = items({ finishingSignIn: true });
+    expect(mittrT('mittr.accounts.add.finishing')).toBe('Waiting for sign-in in the browser…');
+    const rows = [...html.matchAll(/<div([^>]*role="menuitem"[^>]*)>([\s\S]*?)<\/div>/g)].map((match) => ({ attrs: match[1], body: match[2] }));
+    expect(rows).toHaveLength(5);
+    expect(rows[0].body).toContain(escaped(mittrT('mittr.accounts.add.cancel')));
+    expect(rows[0].attrs).not.toContain('aria-disabled="true"');
+    expect(html.indexOf(escaped(mittrT('mittr.accounts.add.finishing')))).toBeLessThan(html.indexOf(escaped(mittrT('mittr.accounts.add.cancel'))));
+    expect(items()).not.toContain(escaped(mittrT('mittr.accounts.add.cancel')));
   });
 
   test('an account with no name is listed by its id', () => {

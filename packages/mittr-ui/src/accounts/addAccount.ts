@@ -15,6 +15,7 @@ export type AddAccountFlow = {
   start: () => Promise<void>;
   signedIn: () => void;
   signInFailed: () => void;
+  cancel: () => void;
   dispose: () => void;
   waiting: () => boolean;
   subscribe: (listener: () => void) => () => void;
@@ -69,6 +70,9 @@ export function createAddAccountFlow({
     },
     signInFailed: () => {
       if (finish(false)) onFailed();
+    },
+    cancel: () => {
+      finish(false);
     },
     dispose: () => {
       finish(false);

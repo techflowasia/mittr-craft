@@ -24,6 +24,7 @@ import { FOOTER_BUTTON_CLASS } from './footerButtonClass';
 type MenuActions = {
   onActivate: (userId: string) => void;
   onAddAccount: () => void;
+  onCancelAddAccount: () => void;
   onSignOut: () => void;
 };
 
@@ -33,11 +34,17 @@ export type MittrAccountMenuItemsProps = MenuActions & {
   finishingSignIn: boolean;
 };
 
-export function MittrAccountMenuItems({ accounts, loadFailed, finishingSignIn, onActivate, onAddAccount, onSignOut }: MittrAccountMenuItemsProps): React.ReactNode {
+export function MittrAccountMenuItems({ accounts, loadFailed, finishingSignIn, onActivate, onAddAccount, onCancelAddAccount, onSignOut }: MittrAccountMenuItemsProps): React.ReactNode {
   const t = useMittrT();
   return (
     <>
-      {finishingSignIn ? <DropdownMenuLabel>{t('mittr.accounts.add.finishing')}</DropdownMenuLabel> : null}
+      {finishingSignIn ? (
+        <>
+          <DropdownMenuLabel>{t('mittr.accounts.add.finishing')}</DropdownMenuLabel>
+          <DropdownMenuItem onClick={onCancelAddAccount}>{t('mittr.accounts.add.cancel')}</DropdownMenuItem>
+          <DropdownMenuSeparator />
+        </>
+      ) : null}
       {loadFailed && !accounts ? <DropdownMenuLabel>{t('mittr.accounts.menu.loadFailed')}</DropdownMenuLabel> : null}
       {(accounts ?? []).map((account) => (
         <DropdownMenuItem
@@ -174,6 +181,7 @@ export function MittrAccountMenu(): React.ReactNode {
         onOpenChange={onOpenChange}
         onActivate={(userId) => { void accountSwitch.run(() => accountsApi.activateAccount(userId)); }}
         onAddAccount={onAddAccount}
+        onCancelAddAccount={addAccount.cancel}
         onSignOut={() => { void accountSwitch.run(accountsApi.signOutActive); }}
       />
       <AccountSwitchDialog

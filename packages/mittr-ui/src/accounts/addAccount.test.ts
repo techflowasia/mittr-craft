@@ -81,6 +81,40 @@ describe('adding an account', () => {
     expect(log).toEqual(['start failed']);
   });
 
+  test('cancelling ends the wait unhandled with no failure, and a sign-in that finishes later is not taken as the add', async () => {
+    const { flow, log, timers } = harness();
+    const seen: boolean[] = [];
+    flow.subscribe(() => seen.push(flow.waiting()));
+    await flow.start();
+    flow.cancel();
+    flow.cancel();
+    flow.signedIn();
+    flow.signInFailed();
+    expect(log).toEqual(['wait', 'waiting', 'end']);
+    expect(timers.size).toBe(0);
+    expect(flow.waiting()).toBe(false);
+    expect(seen).toEqual([true, false]);
+  });
+
+  test('a cancelled add lets a reload that waited on it run', async () => {
+    const reloads: string[] = [];
+    const flow = createAddAccountFlow({
+      startAddAccount: async () => true,
+      beginWait: beginSignInWait,
+      schedule: () => () => {},
+      onWaiting: () => {},
+      onStartFailed: () => {},
+      onFailed: () => {},
+      onAdded: () => true,
+      resyncThenReload: () => {},
+    });
+    await flow.start();
+    reloadOrDefer(() => reloads.push('now'), () => reloads.push('deferred'));
+    expect(reloads).toEqual([]);
+    flow.cancel();
+    expect(reloads).toEqual(['deferred']);
+  });
+
   test('starting again while waiting keeps the one wait, and leaving ends it unhandled', async () => {
     const { flow, log, timers } = harness();
     await flow.start();
