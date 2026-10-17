@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 
 import { createQuotaStreamRewriter, readQuotaExhausted, toEngineRefusal } from './exhausted.js';
 import { cameThroughProxy, isLoopbackPeer } from './loopback-guard.js';
+import { describeModelRefusal } from './model-refusal.js';
 import { createStreamMarkupWatcher, describeMarkup } from './response-markup.js';
 
 /** Where the engine's `mittr` provider points: `http://127.0.0.1:<server port>` + this. */
@@ -138,6 +139,7 @@ export function registerMittrShim(app, {
   engineOnActiveHome = () => true,
   listModels = () => [],
   onAnswer = () => {},
+  onRefusal = () => {},
   fetchImpl = (...args) => fetch(...args),
   logger = console,
   env = process.env,
@@ -180,6 +182,16 @@ export function registerMittrShim(app, {
         failed = true;
       }
     };
+  };
+
+  const reportRefusal = (answer) => {
+    const { reason } = describeModelRefusal(answer);
+    logger.warn(`[mittr] model refused: ${reason}`);
+    try {
+      onRefusal({ kind: 'model', reason });
+    } catch (error) {
+      logger.error('[mittr] shim refusal listener failed:', error?.message ?? error);
+    }
   };
 
   const guard = (req, res, next) => {
@@ -268,6 +280,7 @@ export function registerMittrShim(app, {
         const refusal = toEngineRefusal(quota);
         return res.status(refusal.status).set(refusal.headers).json(refusal.body);
       }
+      if (upstream.status === 403) reportRefusal(answer);
       if (upstream.ok) {
         tellAnswer({ chunk: bytes, done: false });
         tellAnswer({ chunk: NO_BYTES, done: true });

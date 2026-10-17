@@ -319,6 +319,79 @@ test('a refusal from Mittr reaches the engine with its status, body and retry he
   assert.equal(upstream.requests.length, 2);
 });
 
+test('the shim reports a model refusal', async (t) => {
+  const refusal = { error: { code: 'agent_not_granted', message: 'agent_not_granted' } };
+  const upstream = await platform(t, answerJson(403, refusal, { 'x-request-id': 'req-9' }));
+  const logger = recordingLogger();
+  const refusals = [];
+  const { request } = await shim(t, { upstreamV1: upstream.v1, logger, onRefusal: (event) => refusals.push(event) });
+
+  const response = await request('/chat/completions');
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.get('x-request-id'), 'req-9');
+  assert.deepEqual(await response.json(), refusal);
+  assert.deepEqual(refusals, [{ kind: 'model', reason: 'stale-catalog' }]);
+  assert.deepEqual(logger.lines.warn, ['[mittr] model refused: stale-catalog']);
+});
+
+test('a refusal is reported for a stream request too, and the body goes through unchanged', async (t) => {
+  const refusal = { error: { message: 'desktop_entitlement_required', type: 'invalid_request_error', code: 'forbidden' } };
+  const upstream = await platform(t, answerJson(403, refusal));
+  const refusals = [];
+  const { request } = await shim(t, { upstreamV1: upstream.v1, onRefusal: (event) => refusals.push(event) });
+
+  const response = await request('/chat/completions', { body: { ...REQUEST, stream: true } });
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), refusal);
+  assert.deepEqual(refusals, [{ kind: 'model', reason: 'entitlement' }]);
+});
+
+test('a refusal nobody can name is still forwarded and reported as unknown', async (t) => {
+  const upstream = await platform(t, (_req, res) => {
+    res.writeHead(403, { 'content-type': 'text/html' });
+    res.end('<html>blocked</html>');
+  });
+  const logger = recordingLogger();
+  const refusals = [];
+  const { request } = await shim(t, { upstreamV1: upstream.v1, logger, onRefusal: (event) => refusals.push(event) });
+
+  const response = await request('/chat/completions');
+  assert.equal(response.status, 403);
+  assert.equal(await readAll(response), '<html>blocked</html>');
+  assert.deepEqual(refusals, [{ kind: 'model', reason: 'unknown' }]);
+  assert.deepEqual(logger.lines.warn, ['[mittr] model refused: unknown']);
+});
+
+test('the log of a refusal holds the reason alone, and a failing listener costs the engine nothing', async (t) => {
+  const refusal = { error: { code: 'agent_not_granted', message: 'agent_not_granted: plover' } };
+  const upstream = await platform(t, answerJson(403, refusal));
+  const logger = recordingLogger();
+  const { request } = await shim(t, {
+    upstreamV1: upstream.v1,
+    logger,
+    onRefusal: () => { throw new Error('listener broke'); },
+  });
+
+  const response = await request('/chat/completions');
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), refusal);
+  const lines = [...logger.lines.log, ...logger.lines.warn, ...logger.lines.error];
+  assert.equal(lines.some((line) => line.includes('listener broke')), true);
+  for (const line of lines) {
+    assert.equal(line.includes('at-1'), false);
+    assert.equal(line.includes(LOCAL_TOKEN), false);
+    assert.equal(line.includes('plover'), false);
+  }
+});
+
+test('only a 403 is a model refusal', async (t) => {
+  const upstream = await platform(t, (req, res, sent) => answerJson(Number(sent.body.model), { error: { code: 'agent_not_granted' } })(req, res));
+  const refusals = [];
+  const { request } = await shim(t, { upstreamV1: upstream.v1, onRefusal: (event) => refusals.push(event) });
+  for (const status of [400, 401, 404, 500]) await readAll(await request('/chat/completions', { body: { ...REQUEST, stream: false, model: String(status) } }));
+  assert.deepEqual(refusals, []);
+});
+
 const QUOTA_BODY = { error: { type: 'insufficient_quota', code: 'llm_quota_exhausted', resets_at: '2026-10-20T00:00:00+07:00' } };
 
 test('pre-stream 429 becomes 402 with x-should-retry false', async (t) => {

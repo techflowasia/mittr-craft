@@ -660,6 +660,10 @@ const probeRefusal = async ({ client, collector, stub, work, mode, label, expect
 
 const PLATFORM_QUOTA_BODY = { error: { type: 'insufficient_quota', code: 'llm_quota_exhausted', resets_at: RESETS_AT } };
 const SHIM_TIMEOUT_MS = 3000;
+const PLATFORM_FORBIDDEN_BODIES = {
+  'forbidden-entitlement': { error: { message: 'desktop_entitlement_required', type: 'invalid_request_error', code: 'forbidden' } },
+  'forbidden-stale': { error: { message: 'agent_not_granted', type: 'invalid_request_error', code: 'agent_not_granted' } },
+};
 
 const startPlatform = async () => {
   const port = await freePort();
@@ -679,6 +683,12 @@ const startPlatform = async () => {
       if (record.mode === 'refuse') {
         res.writeHead(429, { 'content-type': 'application/json', 'retry-after': '1' });
         res.end(JSON.stringify(PLATFORM_QUOTA_BODY));
+        answered();
+        return;
+      }
+      if (PLATFORM_FORBIDDEN_BODIES[record.mode]) {
+        res.writeHead(403, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(PLATFORM_FORBIDDEN_BODIES[record.mode]));
         answered();
         return;
       }
@@ -842,6 +852,8 @@ const probeShim = async ({ client, collector, platform, shim, shimLog, work }) =
   const cut = await turn('cut', 'stream cut after the first delta');
   const hang = await turn('hang', 'platform silent before the headers');
   const stall = await turn('stall', 'stream silent after the first delta');
+  const entitlement = await turn('forbidden-entitlement', 'refused for want of an entitlement');
+  const staleCatalog = await turn('forbidden-stale', 'refused because the agent was withdrawn');
   const once = ({ observed }) => observed.platformRequests === 1 && observed.shimCalls.length === 1 && !observed.retrySeen;
   const quotaBody = ({ observed }) => String(observed.assistantError?.responseBody ?? '').includes('llm_quota_exhausted')
     || String(observed.assistantError?.message ?? '').includes('llm_quota_exhausted');
@@ -849,6 +861,8 @@ const probeShim = async ({ client, collector, platform, shim, shimLog, work }) =
   const cutOff = ({ observed }) => once({ observed }) && observed.idleAfterAnswerMs !== null && observed.idleAfterAnswerMs <= 2000
     && observed.assistantError?.message === 'The answer was cut off. Send your message again.'
     && observed.assistantTexts.includes('partial ');
+  const forbidden = ({ observed }, code) => once({ observed }) && observed.idleAfterAnswerMs !== null && observed.idleAfterAnswerMs <= 2000
+    && observed.assistantError?.status === 403 && String(observed.assistantError?.responseBody ?? '').includes(code);
   const scenarios = {
     control: verdict(control, control.observed.platformRequests === 1 && !control.observed.assistantError && control.observed.assistantTexts.some((t) => t.includes('hello from the platform'))),
     P2: verdict(P2, once(P2) && P2.observed.idleAfterAnswerMs !== null && P2.observed.idleAfterAnswerMs <= 2000 && P2.observed.assistantError?.status === 402 && quotaBody(P2)),
@@ -856,6 +870,8 @@ const probeShim = async ({ client, collector, platform, shim, shimLog, work }) =
     hang: verdict(hang, once(hang) && hang.observed.shimCalls[0] === '[mittr] shim POST /chat/completions timeout'),
     cut: verdict(cut, cutOff(cut)),
     stall: verdict(stall, cutOff(stall) && stall.observed.shimOtherLines.includes('[mittr] shim cut the answer: Mittr went silent')),
+    entitlement: verdict(entitlement, forbidden(entitlement, 'desktop_entitlement_required') && entitlement.observed.shimOtherLines.includes('[mittr] model refused: entitlement')),
+    staleCatalog: verdict(staleCatalog, forbidden(staleCatalog, 'agent_not_granted') && staleCatalog.observed.shimOtherLines.includes('[mittr] model refused: stale-catalog')),
   };
   return {
     pass: connectError === null && Object.values(scenarios).every((scenario) => scenario.pass),

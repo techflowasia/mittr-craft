@@ -7,6 +7,13 @@ const LLM_QUOTA_EXHAUSTED = 'llm_quota_exhausted';
 const INSUFFICIENT_QUOTA = 'insufficient_quota';
 const NO_ROUTE = 'provider.no-route';
 const MITTR_PROVIDER_ID = 'mittr';
+const FORBIDDEN = 403;
+const STREAM_CUT_OFF = 'stream_cut_off';
+
+const MODEL_REFUSAL_TEXTS = {
+  desktop_entitlement_required: 'mittr.model.refused.entitlement',
+  agent_not_granted: 'mittr.model.refused.staleCatalog',
+} as const;
 
 type QuotaKind = 'chat' | 'image' | 'stt' | 'tts';
 
@@ -72,6 +79,31 @@ export function quotaExhaustedFromError({ message, responseBody }: MessageError)
   return found;
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const errorCodesOf = (text: string | undefined): string[] => {
+  const parsed = parseJson(text);
+  if (!parsed.ok || !isRecord(parsed.value)) return [];
+  const { error } = parsed.value;
+  const found = typeof error === 'string' ? [error] : isRecord(error) ? [error.code, error.message] : [];
+  return found.filter((candidate): candidate is string => typeof candidate === 'string');
+};
+
+const isModelRefusalCode = (code: string): code is keyof typeof MODEL_REFUSAL_TEXTS => Object.hasOwn(MODEL_REFUSAL_TEXTS, code);
+
+const modelRefusalText = ({ status, message, responseBody }: MessageError): string | null => {
+  if (status !== FORBIDDEN) return null;
+  for (const code of [...errorCodesOf(responseBody), message]) {
+    if (isModelRefusalCode(code)) return mittrT(MODEL_REFUSAL_TEXTS[code]);
+  }
+  return null;
+};
+
+const isCutOff = ({ responseBody }: MessageError): boolean => {
+  const parsed = parseJson(responseBody);
+  return parsed.ok && isRecord(parsed.value) && isRecord(parsed.value.error) && parsed.value.error.code === STREAM_CUT_OFF;
+};
+
 export function mittrMessageError(error: MessageError): string | null {
   const quota = quotaExhaustedFromError(error);
   if (quota) {
@@ -79,6 +111,9 @@ export function mittrMessageError(error: MessageError): string | null {
       ? mittrT('mittr.quota.exhausted.chat', { when: formatResetTime(quota.resetsAt, PRODUCT_LOCALE, PRODUCT_TIME_ZONE) })
       : mittrT('mittr.quota.exhausted.chatNoReset');
   }
+  const refusal = modelRefusalText(error);
+  if (refusal !== null) return refusal;
+  if (isCutOff(error)) return mittrT('mittr.answer.cutOff');
   if (error.type === NO_ROUTE) {
     return error.providerID === MITTR_PROVIDER_ID ? mittrT('mittr.providers.noRouteMittr') : mittrT('mittr.providers.noRoute');
   }

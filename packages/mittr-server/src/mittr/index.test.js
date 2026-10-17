@@ -49,10 +49,10 @@ const serverLikeApp = () => {
 
 // `built` stands for the engine's first config build, which the server makes
 // before it first starts the engine.
-const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext(), sharedHistoryExists, built = true, engineConfigDir = USER_CONFIG_DIR } = {}) => {
+const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext(), sharedHistoryExists, built = true, engineConfigDir = USER_CONFIG_DIR, now } = {}) => {
   const app = serverLikeApp();
   const logger = recordingLogger();
-  const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context }, { env, fetchImpl, sharedHistoryExists, engineConfigDir });
+  const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context }, { env, fetchImpl, sharedHistoryExists, engineConfigDir, now });
   t.after(() => mittr.dispose());
   engine.contribute = mittr.managedConfig;
   if (built) await mittr.managedConfig();
@@ -1160,4 +1160,45 @@ test('Mittr is added to the usage providers after the engine listener, the last 
   const mittr = setupMittr({ app, express, dataDir: tempDataDir(t), logger: recordingLogger(), host: null, ...engine.context }, { env: DEV_ENV, fetchImpl: fakeFetch(() => json(session)), engineConfigDir: USER_CONFIG_DIR });
   t.after(() => mittr.dispose());
   assert.equal(engine.quotaProviders.length, 1);
+});
+
+const refusingPlatform = (body) => fakeFetch((request) => {
+  if (request.url.endsWith('/chat/completions')) return json(body, 403);
+  if (isCatalogCall(request)) return json(CATALOG_A);
+  return json(session);
+});
+
+test('stale catalog triggers one sync per minute', async (t) => {
+  let clock = NOW;
+  const fetchImpl = refusingPlatform({ error: { code: 'agent_not_granted', message: 'agent_not_granted' } });
+  const { call, dataDir } = await setUp(t, { fetchImpl, now: () => clock });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+
+  const refused = async () => {
+    const response = await askShim(call, shimKey(dataDir));
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: { code: 'agent_not_granted', message: 'agent_not_granted' } });
+  };
+  await refused();
+  await until(() => catalogCalls(fetchImpl).length === 2);
+  clock += 10_000;
+  await refused();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(catalogCalls(fetchImpl).length, 2);
+  clock += 51_000;
+  await refused();
+  await until(() => catalogCalls(fetchImpl).length === 3);
+});
+
+test('an entitlement refusal asks for no sync, and neither does one nobody can name', async (t) => {
+  for (const body of [{ error: { message: 'desktop_entitlement_required', code: 'forbidden' } }, { error: 'something_else' }]) {
+    const fetchImpl = refusingPlatform(body);
+    const { call, dataDir } = await setUp(t, { fetchImpl });
+    assert.equal((await signIn(call)).status, 200);
+    await until(() => catalogCalls(fetchImpl).length === 1);
+    assert.equal((await askShim(call, shimKey(dataDir))).status, 403);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(catalogCalls(fetchImpl).length, 1);
+  }
 });

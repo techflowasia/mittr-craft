@@ -14,6 +14,7 @@ import { ensureMittrCredential, forgetMittrCredential } from './engine-credentia
 import { identityFragment, identityPluginDir, materializeIdentityPlugin } from './identity.js';
 import { ensureLocalToken } from './local-token.js';
 import { createMittrSettings } from './mittr-settings.js';
+import { createThrottle } from './model-refusal.js';
 import { MITTR_PROVIDER_ID, policiesFragment } from './policies.js';
 import { loopbackProxyExemption, mittrProviderFragment, shimBaseUrl } from './provider-config.js';
 import { registerProviderLockRoutes } from './provider-lock-routes.js';
@@ -27,6 +28,7 @@ import { deepLinkScheme } from './sign-in.js';
 const SIGNED_IN_EVENT = 'mittrcraft:signed-in';
 const SIGN_IN_FAILED_EVENT = 'mittrcraft:sign-in-failed';
 const SHIM_TOKEN_FILE = 'mittr-shim-token';
+const RESYNC_INTERVAL_MS = 60_000;
 
 const modelListOf = (items) => items.map(({ alias, label }) => ({ alias, label }));
 
@@ -84,6 +86,7 @@ export function setupMittr(context, {
   credentialRetryMs = CREDENTIAL_RETRY_MS,
   engineConfigDir = null,
   engineDataHome = null,
+  now = Date.now,
 } = {}) {
   const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig, events } = context;
   const broker = resolveBroker(env);
@@ -134,6 +137,10 @@ export function setupMittr(context, {
   // Both are defined below and first called once setup has returned.
   let shim = null;
   const syncCatalog = () => catalog.sync();
+  const mayResync = createThrottle(RESYNC_INTERVAL_MS, now);
+  const onRefusal = ({ kind, reason }) => {
+    if (kind === 'model' && reason === 'stale-catalog' && mayResync()) void syncCatalog();
+  };
 
   const switcher = createAccountSwitcher({
     store,
@@ -193,6 +200,7 @@ export function setupMittr(context, {
       return modelListOf(current.models.items);
     },
     onAnswer: createAnsweredByWatcher(answeredByLog.record),
+    onRefusal,
     fetchImpl,
     logger,
     env,

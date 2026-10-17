@@ -112,6 +112,66 @@ describe('the chat error text', () => {
     expect(text).toBe("This Mittr model isn't available to you right now. Pick another Mittr model.");
   });
 
+  const refused = (code: string, responseBody?: string): MessageError => ({ type: 'provider.auth', message: code, status: 403, ...(responseBody === undefined ? {} : { responseBody }) });
+  const entitlementBody = JSON.stringify({ error: { message: 'desktop_entitlement_required', type: 'invalid_request_error', code: 'forbidden' } });
+  const withdrawnBody = JSON.stringify({ error: { message: 'agent_not_granted', type: 'invalid_request_error', code: 'agent_not_granted' } });
+
+  test('the chat says an admin is needed', () => {
+    const text = mittrMessageError(refused('desktop_entitlement_required', entitlementBody));
+    expect(text).toBe(mittrT('mittr.model.refused.entitlement'));
+    expect(text).toBe('Your organisation has not given you MittrCraft access. Ask an admin.');
+  });
+
+  test('a withdrawn agent says the list was refreshed and to pick another', () => {
+    const text = mittrMessageError(refused('agent_not_granted', withdrawnBody));
+    expect(text).toBe(mittrT('mittr.model.refused.staleCatalog'));
+    expect(text).toBe('This agent is no longer available to you. The model list has been refreshed; pick another.');
+  });
+
+  test('the refusal is read from the body the engine stores, the flat string form and the message alone', () => {
+    expect(mittrMessageError(refused('x', JSON.stringify({ error: { code: 'agent_not_granted' } })))).toBe(mittrT('mittr.model.refused.staleCatalog'));
+    expect(mittrMessageError(refused('x', JSON.stringify({ error: 'desktop_entitlement_required' })))).toBe(mittrT('mittr.model.refused.entitlement'));
+    expect(mittrMessageError(refused('agent_not_granted'))).toBe(mittrT('mittr.model.refused.staleCatalog'));
+    expect(mittrMessageError(refused('desktop_entitlement_required', '<html>bad gateway</html>'))).toBe(mittrT('mittr.model.refused.entitlement'));
+  });
+
+  test('a 403 nobody can name, or a refusal word on another status, keeps upstream text', () => {
+    expect(mittrMessageError(refused('Forbidden', JSON.stringify({ error: { message: 'Forbidden', code: 'forbidden' } })))).toBeNull();
+    expect(mittrMessageError(refused('agent_not_granted_yet', JSON.stringify({ error: { message: 'agent_not_granted_yet' } })))).toBeNull();
+    expect(mittrMessageError({ type: 'provider.auth', message: 'agent_not_granted', status: 401, responseBody: withdrawnBody })).toBeNull();
+    expect(mittrMessageError({ type: 'provider.auth', message: 'agent_not_granted' })).toBeNull();
+  });
+
+  test('a quota refusal still wins over the refusal reader', () => {
+    expect(mittrMessageError(engineError(JSON.stringify(envelope)))).toBe(mittrT('mittr.quota.exhausted.chat', { when: bangkok(RESETS_AT) }));
+  });
+
+  const CUT_OFF = JSON.stringify({ error: { type: 'invalid_request_error', code: 'stream_cut_off', message: 'The answer was cut off. Send your message again.' } });
+
+  test('a cut-off answer reads as product text without the engine prefix, and never asks to try again', () => {
+    const text = mittrMessageError({ type: 'provider.invalid-request', message: 'The answer was cut off. Send your message again.', status: 200, responseBody: CUT_OFF, providerID: 'mittr' });
+    expect(text).toBe(mittrT('mittr.answer.cutOff'));
+    expect(text).toBe('The answer was cut off. Send your message again.');
+    expect(/try again/i.test(text ?? '')).toBe(false);
+    expect(/failed to send message/i.test(text ?? '')).toBe(false);
+  });
+
+  test('other invalid-request errors keep upstream text', () => {
+    expect(mittrMessageError({ type: 'provider.invalid-request', message: 'bad', status: 400, responseBody: JSON.stringify({ error: { type: 'invalid_request_error', code: 'model_not_found' } }) })).toBeNull();
+  });
+
+  test('none of the new texts contains the words that make the engine retry', () => {
+    for (const key of ['mittr.model.refused.entitlement', 'mittr.model.refused.staleCatalog', 'mittr.answer.cutOff'] as const) {
+      expect(/try again/i.test(mittrT(key))).toBe(false);
+    }
+  });
+
+  test('the registered plugin rewords the new errors', () => {
+    expect(translateProductMessageError(refused('desktop_entitlement_required', entitlementBody))).toBe(mittrT('mittr.model.refused.entitlement'));
+    expect(translateProductMessageError(refused('agent_not_granted', withdrawnBody))).toBe(mittrT('mittr.model.refused.staleCatalog'));
+    expect(translateProductMessageError({ type: 'provider.invalid-request', message: 'cut', status: 200, responseBody: CUT_OFF })).toBe(mittrT('mittr.answer.cutOff'));
+  });
+
   test("other errors keep upstream's text", () => {
     expect(mittrMessageError({ type: 'provider.rate-limit', message: 'Too Many Requests', status: 429 })).toBeNull();
     expect(mittrMessageError({ type: 'APIError', message: 'boom', status: 500, responseBody: '{"error":{"type":"server_error"}}' })).toBeNull();
