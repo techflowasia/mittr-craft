@@ -790,6 +790,14 @@ const checks = {
     has(policy, /export const Effect = Schema\.Literals\(\["allow", "deny"\]\);/);
   },
 
+  'model-controls-add-provider-row': () => {
+    const controls = source('packages/ui/src/components/chat/ModelControls.tsx');
+    has(controls, /\{!selection && productModelPicker\.offersAddProvider !== false && <div[^>]*>\s*<button\s+type="button"\s+onClick=\{openAddProviderSettings\}/, 'the add-provider row no longer follows the picker decorations');
+    assert.equal(lineCount(controls, 'onClick={openAddProviderSettings}'), 1, 'ModelControls offers another add-provider entry');
+    has(source('packages/ui/src/lib/product-plugins.ts'), /offersAddProvider: first\.offersAddProvider !== false && second\.offersAddProvider !== false,/, 'composed picker decorations no longer withhold the add-provider row when one plugin does');
+    has(source('packages/mittr-ui/src/providers/useMittrPickerFilter.ts'), /offersAddProvider: showOtherProviders,/);
+  },
+
   'ui-remote-model-catalog': () => {
     const plugins = source('packages/ui/src/lib/product-plugins.ts');
     has(plugins, /remoteModelCatalog\?: boolean;/, 'a product plugin can no longer turn the remote model catalog off');

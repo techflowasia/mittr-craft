@@ -256,6 +256,11 @@ export const UPSTREAM_CONTRACT = [
     why: 'the engine config takes experimental.policies, an ordered list of { action: "provider.use", resource, effect: "allow" | "deny" }, which is how the provider lock is written',
   },
   {
+    id: 'model-controls-add-provider-row',
+    files: ['packages/ui/src/components/chat/ModelControls.tsx', 'packages/ui/src/lib/product-plugins.ts'],
+    why: 'the picker draws its "Add new provider" row only while the composed picker decorations do not say offersAddProvider: false, and one plugin saying false withholds it',
+  },
+  {
     id: 'ui-remote-model-catalog',
     files: [
       'packages/ui/src/lib/product-plugins.ts',

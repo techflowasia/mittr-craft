@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
+import { ProviderLogo } from '../../ui/src/components/ui/ProviderLogo';
 import { I18nProvider } from '../../ui/src/lib/i18n';
 import { dict as enDict } from '../../ui/src/lib/i18n/messages/en';
 import { overlayDictionary, ProductSlot, remoteModelCatalogAllowed, useProductModelPicker } from '../../ui/src/lib/product-plugins';
@@ -72,5 +73,9 @@ describe('MittrCraft model picker and providers page', () => {
 describe('MittrCraft and the public model catalog', () => {
   test('the window never asks models.dev for model metadata or provider logos', () => {
     expect(remoteModelCatalogAllowed()).toBe(false);
+  });
+
+  test('the Mittr provider shows no logo rather than a remote image that fails', () => {
+    expect(renderToStaticMarkup(React.createElement(ProviderLogo, { providerId: 'mittr' }))).toBe('');
   });
 });

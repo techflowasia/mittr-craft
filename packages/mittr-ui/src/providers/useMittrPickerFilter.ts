@@ -126,6 +126,7 @@ export function mittrPickerDecorations({ showOtherProviders }: ProviderLock): Mo
   return {
     isProviderShown: (providerId) => showOtherProviders || providerId === MITTR_PROVIDER_ID,
     entryStatus: () => null,
+    offersAddProvider: showOtherProviders,
   };
 }
 

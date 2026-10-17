@@ -153,4 +153,9 @@ describe('Mittr picker decorations', () => {
     expect(on.isProviderShown('mittr')).toBe(true);
     expect(on.isProviderShown('openai')).toBe(true);
   });
+
+  test('the picker offers to add a provider only while other providers are shown', () => {
+    expect(mittrPickerDecorations({ showOtherProviders: false }).offersAddProvider).toBe(false);
+    expect(mittrPickerDecorations({ showOtherProviders: true }).offersAddProvider).toBe(true);
+  });
 });
