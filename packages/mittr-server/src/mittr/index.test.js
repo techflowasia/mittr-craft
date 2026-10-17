@@ -99,6 +99,20 @@ test('deep-link auth handler completes sign-in and asks for the signed-in event'
   assert.equal(deepLinks.unregistered(), 1);
 });
 
+test('a deep-link callback for a cancelled sign-in asks for no event, so a newer wait is left alone', async (t) => {
+  const deepLinks = deepLinkHost();
+  const { call, logger, fetchImpl } = await setUp(t, { host: { secretStore: sealingStore(), deepLinks } });
+  await call('POST', '/api/mittr/auth/start');
+  await call('DELETE', '/api/mittr/auth/start');
+
+  const result = await deepLinks.registrations[0].handle({ type: 'auth', raw: 'mittrcraft-dev://auth/callback?code=late' });
+
+  assert.deepEqual(result, {});
+  assert.deepEqual(logger.warnings, ['[mittr] a sign-in from the browser arrived for a cancelled attempt and was dropped: No sign-in is in progress']);
+  assert.equal(fetchImpl.calls.filter((entry) => entry.url.endsWith('/auth/desktop/exchange')).length, 0);
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
+});
+
 test('a deep-link sign-in that fails is logged and asks for the failed event, so the window can show it', async (t) => {
   const deepLinks = deepLinkHost();
   const { call, logger } = await setUp(t, { host: { secretStore: sealingStore(), deepLinks } });

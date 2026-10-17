@@ -240,6 +240,10 @@ export function setupMittr(context, {
         await completeSignIn(link.raw);
         return { emit: SIGNED_IN_EVENT };
       } catch (error) {
+        if (error?.stale) {
+          logger.warn('[mittr] a sign-in from the browser arrived for a cancelled attempt and was dropped:', error.message);
+          return {};
+        }
         logger.warn('[mittr] sign-in from the browser did not finish:', error?.message ?? error);
         return { emit: SIGN_IN_FAILED_EVENT };
       }

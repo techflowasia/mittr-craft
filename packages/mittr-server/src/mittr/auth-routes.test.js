@@ -108,6 +108,55 @@ test('a rejected exchange still spends the transaction', async (t) => {
   assert.equal((await call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=c1` })).body.error, 'No sign-in is in progress');
 });
 
+test('a cancelled sign-in is dropped: its late callback is refused, nothing is exchanged and no account changes', async (t) => {
+  const fetchImpl = fakeFetch(() => json(sessionFor('u-b', 'B')));
+  const changes = [];
+  const { auth, call, store } = await harness(t, { fetchImpl, sessions: [sessionFor('u-a', 'A')], onAccountChange: (userId) => changes.push(userId) });
+  await startSignIn(call);
+
+  assert.equal((await call('DELETE', '/api/mittr/auth/start')).status, 200);
+  const late = await call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=late` });
+
+  assert.deepEqual(late, { status: 400, body: { error: 'No sign-in is in progress' } });
+  await assert.rejects(auth.completeSignIn(`${DEV_CALLBACK}?code=late`), { status: 400, stale: true });
+  assert.equal(fetchImpl.calls.length, 0);
+  assert.deepEqual(changes, []);
+  assert.equal(store.read().subject.userId, 'u-a');
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: true, userId: 'u-a', displayName: 'A' });
+  assert.equal((await call('DELETE', '/api/mittr/auth/start')).status, 200);
+});
+
+test('a callback from a cancelled tab neither fails nor spends the sign-in started after it', async (t) => {
+  const fetchImpl = fakeFetch(({ body }) => (body.code === 'from-new-tab' ? json(sessionFor('u-b', 'B')) : json({ error: 'invalid_grant' }, 400)));
+  const { auth, call } = await harness(t, { fetchImpl });
+  await startSignIn(call);
+  await call('DELETE', '/api/mittr/auth/start');
+  await startSignIn(call);
+
+  await assert.rejects(auth.completeSignIn(`${DEV_CALLBACK}?code=from-cancelled-tab`), { message: 'Mittr rejected the sign-in', status: 400, stale: true });
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
+
+  assert.deepEqual(await auth.completeSignIn(`${DEV_CALLBACK}?code=from-new-tab`), { signedIn: true, userId: 'u-b', displayName: 'B' });
+  assert.equal(fetchImpl.calls.length, 2);
+});
+
+test('a sign-in cancelled while its exchange is out changes no account', async (t) => {
+  const answer = deferred();
+  const fetchImpl = fakeFetch(() => answer.promise);
+  const changes = [];
+  const { auth, call, store } = await harness(t, { fetchImpl, onAccountChange: (userId) => changes.push(userId) });
+  await startSignIn(call);
+
+  const finishing = auth.completeSignIn(`${DEV_CALLBACK}?code=c1`);
+  await call('DELETE', '/api/mittr/auth/start');
+  answer.resolve(json(sessionFor('u-b', 'B')));
+
+  await assert.rejects(finishing, { status: 409, stale: true });
+  assert.equal(store.read(), null);
+  assert.deepEqual(changes, []);
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
+});
+
 test('callback on the wrong scheme is refused', async (t) => {
   const { call, fetchImpl } = await harness(t);
   await startSignIn(call);

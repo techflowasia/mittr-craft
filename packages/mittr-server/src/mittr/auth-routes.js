@@ -1,5 +1,5 @@
 import { parseSession } from './session.js';
-import { authRedirectUri, createTransaction, verifyCallback } from './sign-in.js';
+import { TRANSACTION_TTL_MS, authRedirectUri, createTransaction, verifyCallback } from './sign-in.js';
 
 // The platform's desktop endpoints. There is no `/api` prefix: on the platform
 // `/api/auth/*` belongs to its auth middleware, which answers 404 for these.
@@ -76,6 +76,9 @@ export function registerMittrAuthRoutes(app, {
   // One pending sign-in at a time. Starting a second replaces the first, so a
   // callback for an abandoned attempt can never be redeemed later.
   let pending = null;
+  let attempt = 0;
+  let cancelledAt = null;
+  const recentlyCancelled = () => cancelledAt !== null && now() - cancelledAt <= TRANSACTION_TTL_MS;
 
   // One refresh in flight per account. Mittr rotates both tokens and kills the
   // old refresh token as it answers, so a second concurrent call would present
@@ -96,6 +99,7 @@ export function registerMittrAuthRoutes(app, {
   const activeUserId = () => store.read()?.subject.userId ?? null;
 
   const failure = (status, error) => ({ status, body: { error } });
+  const stale = (status, error) => ({ ...failure(status, error), stale: true });
 
   // How the last sign-in from the browser ended, until the next one starts:
   // the deep link has no window to answer, so the gate reads it from status.
@@ -106,11 +110,12 @@ export function registerMittrAuthRoutes(app, {
     if (refusal) return failure(503, refusal);
     const result = await finishSignIn(callbackUrl);
     if (result.status === 200) lastFailure = null;
-    else lastFailure = result.body.error === UNREACHABLE ? 'unreachable' : 'failed';
+    else if (!result.stale) lastFailure = result.body.error === UNREACHABLE ? 'unreachable' : 'failed';
     return result;
   };
 
   const finishSignIn = async (callbackUrl) => {
+    if (!pending && recentlyCancelled()) return stale(400, 'No sign-in is in progress');
     let code;
     try {
       ({ code } = verifyCallback(pending, callbackUrl, { now, scheme }));
@@ -121,7 +126,9 @@ export function registerMittrAuthRoutes(app, {
     // Spend the transaction before the exchange. Mittr spends the code on
     // first presentation whether or not it succeeds, so a retry against the
     // same transaction could never work and must not look like it might.
-    const { verifier } = pending;
+    const transaction = pending;
+    const { verifier } = transaction;
+    const ownAttempt = attempt;
     pending = null;
 
     let response;
@@ -137,7 +144,12 @@ export function registerMittrAuthRoutes(app, {
       return failure(502, UNREACHABLE);
     }
 
-    if (!response.ok) return failure(response.status, 'Mittr rejected the sign-in');
+    if (!response.ok) {
+      if (!recentlyCancelled()) return failure(response.status, 'Mittr rejected the sign-in');
+      if (attempt === ownAttempt) pending = transaction;
+      return stale(response.status, 'Mittr rejected the sign-in');
+    }
+    if (attempt !== ownAttempt) return stale(409, 'The sign-in was cancelled');
 
     let session;
     try {
@@ -175,6 +187,7 @@ export function registerMittrAuthRoutes(app, {
 
   app.post('/api/mittr/auth/start', refuseWhenUnsafe, (_req, res) => {
     pending = createTransaction({ now });
+    attempt += 1;
     lastFailure = null;
     const authorizeUrl = new URL(ENDPOINT.start, broker.baseUrl);
     authorizeUrl.searchParams.set('code_challenge', pending.challenge);
@@ -182,6 +195,13 @@ export function registerMittrAuthRoutes(app, {
     // The caller opens this: Electron in the system browser, the web UI by
     // navigating. The server never launches a browser itself.
     return res.json({ authorizeUrl: authorizeUrl.toString() });
+  });
+
+  app.delete('/api/mittr/auth/start', (_req, res) => {
+    if (pending) cancelledAt = now();
+    pending = null;
+    attempt += 1;
+    return res.json({});
   });
 
   app.post('/api/mittr/auth/callback', refuseWhenUnsafe, readJson, async (req, res) => {
@@ -304,8 +324,8 @@ export function registerMittrAuthRoutes(app, {
 
   /** Finishes a sign-in from the callback URL; throws the refusal, with its HTTP status. */
   const completeSignIn = async (callbackUrl) => {
-    const { status, body } = await signIn(callbackUrl);
-    if (status !== 200) throw Object.assign(new Error(body.error), { status });
+    const { status, body, stale: forCancelled = false } = await signIn(callbackUrl);
+    if (status !== 200) throw Object.assign(new Error(body.error), { status, stale: forCancelled });
     return body;
   };
 
