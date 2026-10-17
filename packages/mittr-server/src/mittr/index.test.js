@@ -1061,3 +1061,62 @@ test('a switch change before the engine config is first built writes nothing, an
   assert.equal(engine.refreshes.length, 0);
   assert.deepEqual((await mittr.managedConfig()).experimental.policies, OTHERS_SHOWN);
 });
+
+const QUOTA_WEEK = {
+  weekStart: '2026-10-12T17:00:00.000Z',
+  resetsAt: '2026-10-19T17:00:00.000Z',
+  lines: [{ modelKey: 'mk-1', kind: 'chat', label: 'Writer', used: 30, limit: 50, source: 'group' }],
+};
+const isQuotaCall = (request) => request.url.endsWith('/api/quota/me');
+const quotaPlatform = (week = QUOTA_WEEK) => fakeEngineFetch({
+  other: (request) => {
+    if (isQuotaCall(request)) return json(week);
+    if (isCatalogCall(request)) return json(CATALOG_A);
+    return json(session);
+  },
+});
+
+test('Mittr is a usage provider while the plugin runs, and gone after dispose', async (t) => {
+  const engine = fakeEngineContext();
+  const { mittr } = await setUp(t, { engine, fetchImpl: quotaPlatform() });
+  assert.deepEqual(engine.quotaProviders.map((entry) => [entry.providerId, entry.providerName]), [['mittr', 'Mittr']]);
+  await mittr.dispose();
+  assert.deepEqual(engine.quotaProviders, []);
+});
+
+test('the usage provider is configured only while someone is signed in', async (t) => {
+  const engine = fakeEngineContext();
+  const { call } = await setUp(t, { engine, fetchImpl: quotaPlatform() });
+  const [provider] = engine.quotaProviders;
+  assert.equal(provider.isConfigured({}), false);
+  assert.equal((await signIn(call)).status, 200);
+  assert.equal(provider.isConfigured({}), true);
+  const result = await provider.fetchQuota();
+  assert.equal(result.ok, true);
+  assert.equal(result.usage.models.Writer.windows.weekly.valueLabel, '20 of 50 left');
+  assert.equal(result.usage.models.Writer.windows.weekly.resetAt, Date.parse(QUOTA_WEEK.resetsAt));
+});
+
+test('this week\'s quota is read with the account token, and a signed-out read is refused', async (t) => {
+  const fetchImpl = quotaPlatform();
+  const { call } = await setUp(t, { fetchImpl });
+  const signedOut = await call('GET', '/api/mittr/quota/me');
+  assert.equal(signedOut.status, 401);
+  assert.deepEqual(signedOut.body, { error: 'Could not read this week’s quota', reasonCode: 'not_signed_in' });
+  assert.equal(fetchImpl.calls.filter(isQuotaCall).length, 0);
+
+  assert.equal((await signIn(call)).status, 200);
+  const signedInRead = await call('GET', '/api/mittr/quota/me');
+  assert.equal(signedInRead.status, 200);
+  assert.deepEqual(signedInRead.body, QUOTA_WEEK);
+  const [request] = fetchImpl.calls.filter(isQuotaCall);
+  assert.equal(request.url, 'https://api-dev.mittr.asia/api/quota/me');
+  assert.equal(request.headers.Authorization, 'Bearer at-1');
+});
+
+test('a server that cannot add usage providers still starts, with one warning', async (t) => {
+  const engine = fakeEngineContext();
+  engine.context.registerQuotaProvider = () => { throw new Error('already registered'); };
+  const { logger } = await setUp(t, { engine });
+  assert.equal(logger.warnings.filter((line) => line.includes('usage providers')).length, 1);
+});

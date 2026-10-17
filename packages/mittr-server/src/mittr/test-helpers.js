@@ -4,7 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 // Upstream's merge rule, by path: the server hands plugins this very function.
+import { buildResult, toUsageWindow } from '../../../web/server/lib/quota/utils/formatters.js';
 import { mergeEngineConfig } from '../../../web/server/lib/server-plugins.js';
+
+export const quotaResult = { buildResult, toUsageWindow };
 
 // Stands in for the keychain and actually obscures the bytes, so a test that
 // looks for a token on disk proves something.
@@ -92,6 +95,7 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
   const restarts = [];
   const userConfigWrites = [];
   const broadcasts = [];
+  const quotaProviders = [];
   const engine = {
     port: enginePort,
     url: (route = '/') => {
@@ -136,8 +140,18 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
         },
       },
       mergeEngineConfig,
+      registerQuotaProvider: (entry) => {
+        if (quotaProviders.some((registered) => registered.providerId === entry.providerId)) throw new Error(`Quota provider ${entry.providerId} is already registered`);
+        quotaProviders.push(entry);
+        return () => {
+          const at = quotaProviders.indexOf(entry);
+          if (at !== -1) quotaProviders.splice(at, 1);
+        };
+      },
+      quotaResult,
       events: { broadcast: (type, payload) => broadcasts.push({ type, payload }) },
     },
+    quotaProviders,
     server,
     broadcasts,
     engine,

@@ -7,7 +7,6 @@ import {
   nonLoopbackFromLog,
   nonLoopbackFromLsof,
   openCodeMentions,
-  quotaRefusal,
   refusedByPolicy,
   stopConditionFor,
 } from './probe-engine-v2.mjs';
@@ -17,15 +16,6 @@ test('refusedByPolicy needs an unanswered turn that failed with provider.no-rout
   assert.equal(refusedByPolicy({ answered: false, events: [{ type: 'session.created' }, noRoute] }), true);
   assert.equal(refusedByPolicy({ answered: false, events: [{ type: 'session.execution.failed', error: { type: 'provider.auth' } }] }), false);
   assert.equal(refusedByPolicy({ answered: true, events: [noRoute] }), false);
-});
-
-test('quotaRefusal carries the no-retry header', () => {
-  const refusal = quotaRefusal({ kind: 'weekly', resetsAt: '2026-10-20T00:00:00+07:00' });
-  assert.equal(refusal.status, 402);
-  assert.equal(refusal.headers['x-should-retry'], 'false');
-  assert.equal(refusal.body.error.code, 'llm_quota_exhausted');
-  assert.equal(refusal.body.error.type, 'insufficient_quota');
-  assert.equal(refusal.body.error.resets_at, '2026-10-19T17:00:00.000Z');
 });
 
 test('outbound parsers keep only non-loopback peers', () => {

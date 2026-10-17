@@ -35,21 +35,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { identityLine, identityPluginSource } from '../../packages/mittr-opencode/src/identity-plugin.js';
 import { ENGINE_OUTBOUND_OFF, ENGINE_SHARE_OFF } from '../../packages/mittr-server/src/engine-outbound.js';
+import { toEngineRefusal } from '../../packages/mittr-server/src/mittr/exhausted.js';
 import { policiesFor } from '../../packages/mittr-server/src/mittr/policies.js';
-
-export const quotaRefusal = ({ kind, resetsAt }) => ({
-  status: 402,
-  headers: { 'x-should-retry': 'false' },
-  body: {
-    error: {
-      type: 'insufficient_quota',
-      code: 'llm_quota_exhausted',
-      message: 'Weekly model quota used up',
-      kind,
-      resets_at: new Date(resetsAt).toISOString(),
-    },
-  },
-});
 
 // What a user who owns OPENCODE_CONFIG might allow on their own (R45 probe):
 // every provider, the other stub by name, and the hosted provider by name.
@@ -207,13 +194,13 @@ const RATE_LIMIT_BODY = { error: { type: 'rate_limit_exceeded', code: 'rate_limi
 const answer = (stub, record, req, res) => {
   const model = record.body?.model ?? 'm1';
   if (stub.mode === 'refuse') {
-    const refusal = quotaRefusal({ kind: 'weekly', resetsAt: RESETS_AT });
+    const refusal = toEngineRefusal({ kind: 'weekly', resetsAt: RESETS_AT });
     res.writeHead(refusal.status, { 'content-type': 'application/json', ...refusal.headers });
     res.end(JSON.stringify(refusal.body));
     return;
   }
   if (stub.mode === 'midstream') {
-    const refusal = quotaRefusal({ kind: 'weekly', resetsAt: RESETS_AT });
+    const refusal = toEngineRefusal({ kind: 'weekly', resetsAt: RESETS_AT });
     sse(res, [chunk(model, { role: 'assistant', content: 'partial ' }), JSON.stringify(refusal.body), '[DONE]']);
     return;
   }

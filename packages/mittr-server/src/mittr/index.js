@@ -16,6 +16,9 @@ import { createMittrSettings } from './mittr-settings.js';
 import { MITTR_PROVIDER_ID, policiesFragment } from './policies.js';
 import { loopbackProxyExemption, mittrProviderFragment, shimBaseUrl } from './provider-config.js';
 import { registerProviderLockRoutes } from './provider-lock-routes.js';
+import { mittrQuotaProvider } from './quota-provider.js';
+import { registerMittrQuotaRoutes } from './quota-routes.js';
+import { createMittrQuotaService } from './quota-service.js';
 import { chooseSecretStore } from './secret-store.js';
 import { registerMittrShim } from './shim-routes.js';
 import { deepLinkScheme } from './sign-in.js';
@@ -198,6 +201,20 @@ export function setupMittr(context, {
     fetchImpl,
     logger,
   });
+
+  const quotaService = createMittrQuotaService({ broker, ensureFreshSession, fetchImpl });
+  registerMittrQuotaRoutes(app, { service: quotaService });
+  let unregisterQuotaProvider = null;
+  try {
+    unregisterQuotaProvider = context.registerQuotaProvider(mittrQuotaProvider({
+      service: quotaService,
+      isSignedIn: signedIn,
+      isBrokerConfigured: () => Boolean(broker.baseUrl),
+      ...context.quotaResult,
+    }));
+  } catch (error) {
+    logger.warn('[mittr] could not add Mittr to the usage providers:', error?.message ?? error);
+  }
 
   const unregisterDeepLink = host?.deepLinks?.register({
     host: 'auth',
@@ -421,6 +438,7 @@ export function setupMittr(context, {
       correction = null;
       unsubscribeReady();
       unregisterDeepLink?.();
+      unregisterQuotaProvider?.();
     },
   };
 }
