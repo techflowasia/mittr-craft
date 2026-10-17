@@ -325,6 +325,11 @@ export const UPSTREAM_CONTRACT = [
     why: "useConfigStore.getState().loadProviders({ fresh: true }) waits out a provider read already in flight and reads the engine's providers and models again, so the picker takes up a provider switch saved here or in another window",
   },
   {
+    id: 'quota-provider-registry',
+    files: ['packages/web/server/lib/quota/providers/index.js', 'packages/web/server/lib/quota/utils/formatters.js', 'packages/web/server/index.js'],
+    why: "a server plugin adds and removes a quota provider through registerQuotaProvider on the plugin context, and builds its result with the buildResult and toUsageWindow the context hands it as quotaResult, so the Usage page lists it beside upstream's own",
+  },
+  {
     id: 'account-menu-ui',
     files: [
       'packages/ui/src/components/ui/dropdown-menu.tsx',

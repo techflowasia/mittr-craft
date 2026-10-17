@@ -275,6 +275,10 @@
     {
       "hook": "server-plugins",
       "why": "A plugin that moves the managed OpenCode's data folder between restarts could not tell which folder the running process was actually launched with, since a restart it asked for may join one already under way that read the environment earlier."
+    },
+    {
+      "hook": "quota-server",
+      "why": "A server plugin could not reach the quota registry or the helpers that build a quota result, so the plugin context now hands it registerQuotaProvider and quotaResult."
     }
   ],
   "packages/web/server/lib/enterprise-mode.js": [
@@ -341,6 +345,12 @@
     {
       "hook": "opencode",
       "why": "The V1 session top-up rewrites the migration cursor in OpenCode's database before the managed OpenCode starts, and it always looked for that database at ~/.local/share/opencode/opencode.db."
+    }
+  ],
+  "packages/web/server/lib/quota/providers/index.js": [
+    {
+      "hook": "quota-server",
+      "why": "A build's server plugin that has its own usage source had no way to show it on the Usage page, because the quota registry was a fixed table, so providers can now be registered and removed at run time."
     }
   ],
   "packages/web/server/lib/server-plugins.js": [

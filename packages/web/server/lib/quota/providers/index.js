@@ -189,6 +189,28 @@ const registry = {
 
 const pendingFetches = new Map();
 
+export const registerQuotaProvider = (entry) => {
+  if (!entry || typeof entry.providerId !== 'string' || !entry.providerId
+    || typeof entry.isConfigured !== 'function' || typeof entry.fetchQuota !== 'function') {
+    throw new TypeError('A quota provider needs a providerId, isConfigured() and fetchQuota()');
+  }
+  if (Object.hasOwn(registry, entry.providerId)) {
+    throw new Error(`Quota provider ${entry.providerId} is already registered`);
+  }
+  const registered = {
+    providerId: entry.providerId,
+    providerName: entry.providerName,
+    isConfigured: entry.isConfigured,
+    fetchQuota: entry.fetchQuota
+  };
+  registry[entry.providerId] = registered;
+  return () => {
+    if (registry[entry.providerId] === registered) {
+      delete registry[entry.providerId];
+    }
+  };
+};
+
 
 /**
  * Providers with a usable credential. OpenCode's stored credentials are read

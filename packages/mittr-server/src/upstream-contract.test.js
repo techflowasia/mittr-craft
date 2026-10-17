@@ -923,6 +923,37 @@ const checks = {
     has(source('packages/mittr-ui/src/providers/useMittrPickerFilter.ts'), /useConfigStore\.getState\(\)\.loadProviders\(\{ fresh: true, source: 'mittr:provider-lock' \}\)/);
   },
 
+  'quota-provider-registry': async () => {
+    const { registerQuotaProvider, fetchQuotaForProvider } = await importUpstream('packages/web/server/lib/quota/providers/index.js');
+    assert.equal(typeof registerQuotaProvider, 'function', 'the quota provider registry no longer exports registerQuotaProvider');
+    const entry = { providerId: 'contract-probe', providerName: 'Probe', isConfigured: () => true, fetchQuota: async () => ({ providerId: 'contract-probe', ok: true }) };
+    const unregister = registerQuotaProvider(entry);
+    try {
+      assert.equal((await fetchQuotaForProvider('contract-probe')).ok, true, 'a registered provider is no longer dispatched');
+      assert.throws(() => registerQuotaProvider(entry), 'a second registration of one id no longer throws');
+    } finally {
+      unregister();
+    }
+    assert.equal((await fetchQuotaForProvider('contract-probe')).ok, false, 'unregistering no longer removes the provider');
+
+    const { buildResult, toUsageWindow } = await importUpstream('packages/web/server/lib/quota/utils/formatters.js');
+    const window = toUsageWindow({ usedPercent: 60, windowSeconds: 604800, resetAt: 1_760_000_000_000, valueLabel: '20 of 50 left' });
+    assert.deepEqual(
+      { used: window.usedPercent, remaining: window.remainingPercent, seconds: window.windowSeconds, resetAt: window.resetAt, label: window.valueLabel },
+      { used: 60, remaining: 40, seconds: 604800, resetAt: 1_760_000_000_000, label: '20 of 50 left' },
+    );
+    const result = buildResult({ providerId: 'p', providerName: 'P', ok: true, configured: true, usage: { windows: { weekly: window } }, planLabel: 'plan' });
+    assert.equal(result.planLabel, 'plan');
+    assert.equal(result.usage.windows.weekly, window);
+    assert.equal(buildResult({ providerId: 'p', providerName: 'P', ok: false, configured: true, error: 'x' }).error, 'x');
+
+    const server = source('packages/web/server/index.js');
+    has(pluginContext(server), /^\s+registerQuotaProvider,$/m, 'the server plugin context no longer hands plugins registerQuotaProvider');
+    has(pluginContext(server), /^\s+quotaResult: \{ buildResult: buildQuotaResult, toUsageWindow \},$/m, 'the server plugin context no longer hands plugins the quota result helpers');
+    has(server, /import \{ registerQuotaProvider \} from '\.\/lib\/quota\/providers\/index\.js';/);
+    has(server, /import \{ buildResult as buildQuotaResult, toUsageWindow \} from '\.\/lib\/quota\/utils\/formatters\.js';/);
+  },
+
   'account-menu-ui': () => {
     const menu = source('packages/ui/src/components/ui/dropdown-menu.tsx');
     for (const name of ['DropdownMenu', 'DropdownMenuContent', 'DropdownMenuItem', 'DropdownMenuLabel', 'DropdownMenuSeparator', 'DropdownMenuTrigger']) {
