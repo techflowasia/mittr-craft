@@ -417,7 +417,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'ui-auth-provider-registry',
     files: ['packages/web/server/lib/ui-auth/ui-auth.js', 'packages/web/server/index.js'],
-    why: 'a server plugin registers a sign-in provider through context.uiAuth.registerProvider; while one is registered a server without a UI password requires a UI session that only the provider issues, the session status lists providers and passwordEnabled, signing out revokes that session\'s URL tokens, sign out everywhere rotates the secret provider sessions are signed with, context.uiAuth.passwordEnabled says whether a UI password is set, and context.uiAuth.createClient(options) mints a client token (the remote clients store createClient: label, expiresAt, authMethod) that a desktop app presents as a bearer token',
+    why: 'a server plugin registers a sign-in provider through context.uiAuth.registerProvider; while one is registered a server without a UI password requires a UI session that only the provider issues, the session status lists providers and passwordEnabled, signing out revokes that session\'s URL tokens, sign out everywhere rotates the secret provider sessions are signed with, context.uiAuth.passwordEnabled says whether a UI password is set, and context.uiAuth.createClient(options) mints a client token (the remote clients store createClient: label, expiresAt, authMethod) that a desktop app presents as a bearer token; the store trims a label and cuts it at 80 UTF-16 units, so the desktop label is built to fit',
   },
   {
     id: 'server-cli-entry',

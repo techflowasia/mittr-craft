@@ -434,12 +434,31 @@ test('LDAP sign-in gives a desktop app a client token only when asked', async (t
   assert.equal(Date.parse(minter.calls[0].expiresAt), NOW + 12 * 60 * 60 * 1000);
 });
 
-test('the desktop client label drops control characters and keeps at most 56 of the username', () => {
+test('the desktop client label drops control and format characters', () => {
   assert.equal(clientLabelFor('ada'), 'MittrCraft Desktop (ada)');
   assert.equal(clientLabelFor('a\u0000d\u001b[2Ja\n\u007f'), 'MittrCraft Desktop (ad[2Ja)');
-  assert.equal(clientLabelFor('x'.repeat(80)), `MittrCraft Desktop (${'x'.repeat(56)})`);
-  assert.equal(clientLabelFor(`${'\u{1F600}'.repeat(60)}`), `MittrCraft Desktop (${'\u{1F600}'.repeat(56)})`);
-  assert.equal(clientLabelFor(`\u0007${'y'.repeat(56)}\u0007`), `MittrCraft Desktop (${'y'.repeat(56)})`);
+  assert.equal(clientLabelFor('a\u200bd\u202ea\u2066\ufeff'), 'MittrCraft Desktop (ada)');
+});
+
+test('the whole desktop client label fits upstream\'s 80 UTF-16 units and keeps its closing parenthesis', () => {
+  const long = clientLabelFor('x'.repeat(200));
+  assert.equal(long.length, 80);
+  assert.equal(long, `MittrCraft Desktop (${'x'.repeat(59)})`);
+  assert.equal(clientLabelFor('x'.repeat(59)), `MittrCraft Desktop (${'x'.repeat(59)})`);
+});
+
+test('a capped desktop client label never splits a surrogate pair', () => {
+  const label = clientLabelFor('\u{1F600}'.repeat(40));
+  assert.ok(label.length <= 80, String(label.length));
+  assert.equal(label, `MittrCraft Desktop (${'\u{1F600}'.repeat(29)})`);
+  assert.equal(clientLabelFor(`x${'\u{1F600}'.repeat(40)}`), `MittrCraft Desktop (x${'\u{1F600}'.repeat(29)})`);
+  assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(clientLabelFor(`x${'\u{1F600}'.repeat(40)}`)));
+});
+
+test('a username with nothing left after cleaning gives the plain desktop label', () => {
+  assert.equal(clientLabelFor(''), 'MittrCraft Desktop');
+  assert.equal(clientLabelFor('\u0000\u001b\u200b'), 'MittrCraft Desktop');
+  assert.equal(clientLabelFor('   '), 'MittrCraft Desktop');
 });
 
 test('a trusted device keeps its client token for as long as its session', async (t) => {

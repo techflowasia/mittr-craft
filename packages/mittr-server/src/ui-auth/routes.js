@@ -10,7 +10,7 @@ const BODY_LIMIT = '16kb';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const TRUSTED_DEVICE_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const CLIENT_LABEL = 'MittrCraft Desktop';
-const CLIENT_LABEL_USERNAME_MAX = 56;
+const CLIENT_LABEL_MAX_LENGTH = 80;
 const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
 const RATE_LIMIT_MAX_ATTEMPTS = 10;
 const RATE_LIMIT_LOCKOUT_MS = 15 * 60 * 1000;
@@ -21,7 +21,14 @@ const VERIFY_FAILED_PAGE = 'Microsoft sign-in could not be verified. Return to M
 const SIGN_IN_FAILED_PAGE = 'Microsoft sign-in failed. Return to MittrCraft and try again.';
 
 export const clientLabelFor = (username) => {
-  const shown = Array.from(String(username).replace(/\p{Cc}/gu, '')).slice(0, CLIENT_LABEL_USERNAME_MAX).join('');
+  const cleaned = String(username).replace(/[\p{Cc}\p{Cf}]/gu, '').trim();
+  if (!cleaned) return CLIENT_LABEL;
+  const budget = CLIENT_LABEL_MAX_LENGTH - `${CLIENT_LABEL} ()`.length;
+  let shown = '';
+  for (const character of cleaned) {
+    if (shown.length + character.length > budget) break;
+    shown += character;
+  }
   return `${CLIENT_LABEL} (${shown})`;
 };
 

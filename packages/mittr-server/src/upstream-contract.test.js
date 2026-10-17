@@ -1133,6 +1133,8 @@ const checks = {
     const clients = source('packages/web/server/lib/client-auth/remote-clients.js');
     has(clients, /const createClient = async \(\{\s*label,\s*fallbackLabel,\s*expiresAt,\s*clientKind,\s*dedupeKey,\s*authMethod,/, 'createClient no longer takes fallbackLabel, expiresAt and authMethod');
     has(clients, /return \{ client: publicClient\(client\), token \};/, 'createClient no longer answers { client, token }');
+    has(clients, /^const MAX_LABEL_LENGTH = 80;$/m, 'the remote clients store no longer cuts a label at 80 UTF-16 units, which clientLabelFor fits');
+    has(clients, /return trimmed\.length > MAX_LABEL_LENGTH \? trimmed\.slice\(0, MAX_LABEL_LENGTH\) : trimmed;/, 'the remote clients store no longer trims and cuts a label by UTF-16 length');
     has(server, /const remoteClientAuthRuntime = createRemoteClientAuthRuntime\(\{/, 'the server no longer builds the remote clients store the plugin context mints from');
     has(server, /const uiPassword = typeof options\.uiPassword === 'string'\s*\? options\.uiPassword\s*: \(typeof process\.env\.OPENCHAMBER_UI_PASSWORD === 'string' \? process\.env\.OPENCHAMBER_UI_PASSWORD : null\);/, 'the server no longer reads the UI password where the plugin context sees it');
     has(source('packages/web/server/lib/opencode/bootstrap-runtime.js'), /createUiAuth\(\{\s*password: uiPassword,/, 'the UI auth controller no longer gets the same UI password');
