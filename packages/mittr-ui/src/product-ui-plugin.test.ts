@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { I18nProvider } from '../../ui/src/lib/i18n';
 import { dict as enDict } from '../../ui/src/lib/i18n/messages/en';
-import { overlayDictionary, ProductSlot, useProductModelPicker } from '../../ui/src/lib/product-plugins';
+import { overlayDictionary, ProductSlot, remoteModelCatalogAllowed, useProductModelPicker } from '../../ui/src/lib/product-plugins';
 import './product-ui-plugin';
 import { strings } from './strings/en';
 import { mittrT } from './strings/mittrT';
@@ -66,5 +66,11 @@ describe('MittrCraft model picker and providers page', () => {
     );
     expect(html).toContain(mittrT('mittr.providers.otherProviders.label'));
     expect(html).toContain('role="switch"');
+  });
+});
+
+describe('MittrCraft and the public model catalog', () => {
+  test('the window never asks models.dev for model metadata or provider logos', () => {
+    expect(remoteModelCatalogAllowed()).toBe(false);
   });
 });

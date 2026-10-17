@@ -256,6 +256,15 @@ export const UPSTREAM_CONTRACT = [
     why: 'the engine config takes experimental.policies, an ordered list of { action: "provider.use", resource, effect: "allow" | "deny" }, which is how the provider lock is written',
   },
   {
+    id: 'ui-remote-model-catalog',
+    files: [
+      'packages/ui/src/lib/product-plugins.ts',
+      'packages/ui/src/hooks/useProviderLogo.ts',
+      'packages/ui/src/stores/useConfigStore.ts',
+    ],
+    why: 'a product plugin with remoteModelCatalog: false keeps the window from fetching models.dev: the metadata load asks only the server route, and a provider logo the UI does not bundle is none instead of a models.dev URL',
+  },
+  {
     id: 'engine-outbound-switches',
     files: ['packages/electron/package.json'],
     why: 'the bundled engine (OpenCode 2.0.22) reads OPENCODE_DISABLE_MODELS_FETCH, which stops its models.opencode.ai catalog download, and OPENCODE_DISABLE_AUTOUPDATE, which stops its update check; engineEnv sets both, and probe --only outbound (scripts/mittr/probe-engine-v2.mjs) shows no egress with them and models.opencode.ai without them, so a new engine version needs that probe run again',

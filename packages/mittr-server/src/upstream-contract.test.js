@@ -790,6 +790,19 @@ const checks = {
     has(policy, /export const Effect = Schema\.Literals\(\["allow", "deny"\]\);/);
   },
 
+  'ui-remote-model-catalog': () => {
+    const plugins = source('packages/ui/src/lib/product-plugins.ts');
+    has(plugins, /remoteModelCatalog\?: boolean;/, 'a product plugin can no longer turn the remote model catalog off');
+    has(plugins, /export function remoteModelCatalogAllowed\(\): boolean \{\s*return plugins\.every\(\(plugin\) => plugin\.remoteModelCatalog !== false\);/);
+    const logos = source('packages/ui/src/hooks/useProviderLogo.ts');
+    has(logos, /providerId && remoteModelCatalogAllowed\(\) \? `https:\/\/models\.dev\/logos\/\$\{providerId\}\.svg` : null/, 'provider logos no longer ask whether the remote model catalog is allowed');
+    assert.equal(lineCount(logos, 'models.dev/logos'), 1, 'another models.dev logo URL is built outside the remote-catalog check');
+    const store = source('packages/ui/src/stores/useConfigStore.ts');
+    has(store, /const sources = remoteModelCatalogAllowed\(\) \? \[MODELS_DEV_PROXY_URL, MODELS_DEV_API_URL\] : \[MODELS_DEV_PROXY_URL\];/, 'the metadata load no longer skips models.dev when the remote catalog is off');
+    assert.equal(lineCount(store, 'MODELS_DEV_API_URL'), 2, 'models.dev is fetched from another place in the config store');
+    has(source('packages/mittr-ui/src/product-ui-plugin.tsx'), /remoteModelCatalog: false,/);
+  },
+
   'engine-outbound-switches': (t) => {
     const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
     assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run the probe with --only outbound again, then update this pin');

@@ -18,4 +18,6 @@ registerProductUiPlugin({
   rootWrapper: MittrSignInGate,
   slots: { 'providers-page': OtherProvidersSwitch },
   modelPicker: { useDecorations: useMittrPickerDecorations },
+  // Mittr models come from the Mittr catalog; models.dev is a third party.
+  remoteModelCatalog: false,
 });
