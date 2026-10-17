@@ -7,8 +7,9 @@ import type { Message, Part } from './opencode/model';
 // A product plugin lets a build that bundles this UI rebrand it without
 // editing UI source: it can overlay translation strings, rewrite words across
 // every string it did not overlay, and replace the logo. It can also wrap the
-// app root, render into named slots, decorate the model picker and reword
-// message errors. Plugins are collected at build time by the entry points and
+// app root, render into named slots, decorate the model picker, reword
+// message errors and keep the window from downloading the public model
+// catalog itself. Plugins are collected at build time by the entry points and
 // register themselves on import. With no plugin registered every function here
 // is a pass-through and every slot renders nothing.
 
@@ -47,6 +48,9 @@ export type ProductUiPlugin = {
   slots?: { [K in ProductSlotName]?: ProductSlotComponent<K> | ProductSlotComponent<K>[] };
   modelPicker?: { useDecorations: UseModelPickerDecorations };
   messageError?: (error: ProductMessageError) => string | null;
+  // false: the window never asks models.dev for model metadata or provider
+  // logos; it uses what the server answers and the logos bundled with the UI.
+  remoteModelCatalog?: boolean;
 };
 
 type Substitution = { pattern: RegExp; to: string };
@@ -170,6 +174,10 @@ export function overlayDictionary(locale: Locale, dict: I18nDictionary): I18nDic
 
   overlaid.set(locale, { source: dict, result });
   return result;
+}
+
+export function remoteModelCatalogAllowed(): boolean {
+  return plugins.every((plugin) => plugin.remoteModelCatalog !== false);
 }
 
 export function getProductLogo(): ProductUiPlugin['logo'] | undefined {

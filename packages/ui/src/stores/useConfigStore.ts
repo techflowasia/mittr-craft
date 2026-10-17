@@ -25,6 +25,7 @@ import { streamDebugEnabled } from "@/stores/utils/streamDebug";
 import { parseModelIdentifier, parseModelSelection } from "@/lib/modelIdentifier";
 import { configModelIdentifier } from "@/lib/opencode/projection";
 import { runtimeFetch } from "@/lib/runtime-fetch";
+import { remoteModelCatalogAllowed } from "@/lib/product-plugins";
 import { EMPTY_VOICE_API_KEYS, fetchVoiceApiKeys, migrateLegacyVoiceApiKeys, updateVoiceApiKeys, type VoiceApiKeyKind, type VoiceApiKeyState } from "@/lib/voiceKeysApi";
 import { markStartupTrace, measureStartupTrace } from "@/lib/startupTrace";
 import { normalizePath } from "@/lib/pathNormalization";
@@ -660,12 +661,12 @@ const transformModelsDevResponse = (payload: unknown): Map<string, ModelMetadata
     return metadataMap;
 };
 
-const fetchModelsDevMetadata = async (): Promise<Map<string, ModelMetadata>> => {
+export const fetchModelsDevMetadata = async (): Promise<Map<string, ModelMetadata>> => {
     if (typeof fetch !== 'function') {
         return new Map();
     }
 
-    const sources = [MODELS_DEV_PROXY_URL, MODELS_DEV_API_URL];
+    const sources = remoteModelCatalogAllowed() ? [MODELS_DEV_PROXY_URL, MODELS_DEV_API_URL] : [MODELS_DEV_PROXY_URL];
 
     for (const source of sources) {
         const controller = typeof AbortController !== 'undefined' ? new AbortController() : undefined;

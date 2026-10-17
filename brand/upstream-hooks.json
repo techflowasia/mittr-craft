@@ -167,6 +167,12 @@
       "why": "A build that bundles this UI needs a way to rename the product and swap the mark without editing UI source on every upstream release."
     }
   ],
+  "packages/ui/src/hooks/useProviderLogo.ts": [
+    {
+      "hook": "model-catalog",
+      "why": "A build that brings its own model list had no way to keep the window from asking models.dev for model metadata (when the server cannot answer) and for provider logos the UI does not bundle, which tells a third party the app is running; a product plugin that sets remoteModelCatalog to false now stops both, and without one nothing changes."
+    }
+  ],
   "packages/ui/src/lib/i18n/store.ts": [
     {
       "hook": "ui",
@@ -185,6 +191,10 @@
     {
       "hook": "ui-plugins",
       "why": "A model-picker plugin registered after the picker had rendered swapped the one hook the picker calls for a composition with more hooks, which React rejects with a hooks-order error, so once the picker has used it the hook stays fixed and a late picker plugin is ignored until reload."
+    },
+    {
+      "hook": "model-catalog",
+      "why": "A build that brings its own model list had no way to keep the window from asking models.dev for model metadata (when the server cannot answer) and for provider logos the UI does not bundle, which tells a third party the app is running; a product plugin that sets remoteModelCatalog to false now stops both, and without one nothing changes."
     }
   ],
   "packages/ui/src/main.tsx": [
@@ -195,6 +205,12 @@
     {
       "hook": "ui-plugins",
       "why": "A product plugin could only rename the product and swap the logo, so a build that needs its own sign-in screen, account menu, model-picker marks or composer actions would have had to edit each upstream component; a root wrapper and named slots that render nothing when no plugin fills them let it add those at one-line call sites."
+    }
+  ],
+  "packages/ui/src/stores/useConfigStore.ts": [
+    {
+      "hook": "model-catalog",
+      "why": "A build that brings its own model list had no way to keep the window from asking models.dev for model metadata (when the server cannot answer) and for provider logos the UI does not bundle, which tells a third party the app is running; a product plugin that sets remoteModelCatalog to false now stops both, and without one nothing changes."
     }
   ],
   "packages/ui/src/stores/useUpdateStore.ts": [

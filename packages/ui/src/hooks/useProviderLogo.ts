@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 
+import { remoteModelCatalogAllowed } from '@/lib/product-plugins';
+
 type LogoSource = 'local' | 'remote' | 'none';
 
 interface UseProviderLogoReturn {
@@ -65,6 +67,10 @@ const buildLogoCandidates = (providerId: string | null | undefined) => {
     return [...new Set(candidates)];
 };
 
+const remoteLogoSrc = (providerId: string | null): string | null => (
+    providerId && remoteModelCatalogAllowed() ? `https://models.dev/logos/${providerId}.svg` : null
+);
+
 const resolveProviderLogoSrc = (providerId: string | null | undefined): string | null => {
     const candidates = buildLogoCandidates(providerId);
     const localResolvedId = candidates.find((candidate) => LOCAL_PROVIDER_LOGO_MAP.has(candidate)) ?? null;
@@ -73,8 +79,7 @@ const resolveProviderLogoSrc = (providerId: string | null | undefined): string |
         return localLogoSrc;
     }
 
-    const remoteResolvedId = candidates[0] ?? null;
-    return remoteResolvedId ? `https://models.dev/logos/${remoteResolvedId}.svg` : null;
+    return remoteLogoSrc(candidates[0] ?? null);
 };
 
 const preloadProviderLogo = (providerId: string | null | undefined): void => {
@@ -108,7 +113,7 @@ for (const [path, url] of Object.entries(localLogoModules)) {
 export function useProviderLogo(providerId: string | null | undefined): UseProviderLogoReturn {
     const candidates = buildLogoCandidates(providerId);
     const localResolvedId = candidates.find((candidate) => LOCAL_PROVIDER_LOGO_MAP.has(candidate)) ?? null;
-    const remoteResolvedId = candidates[0] ?? null;
+    const remoteSrc = remoteLogoSrc(candidates[0] ?? null);
     const hasLocalLogo = Boolean(localResolvedId);
     const localLogoSrc = localResolvedId ? LOCAL_PROVIDER_LOGO_MAP.get(localResolvedId) ?? null : null;
 
@@ -116,13 +121,13 @@ export function useProviderLogo(providerId: string | null | undefined): UseProvi
 
     useEffect(() => {
         setSource(hasLocalLogo ? 'local' : 'remote');
-    }, [hasLocalLogo, localResolvedId, remoteResolvedId]);
+    }, [hasLocalLogo, localResolvedId, remoteSrc]);
 
     const handleError = useCallback(() => {
         setSource((current) => (current === 'local' && hasLocalLogo ? 'remote' : 'none'));
     }, [hasLocalLogo]);
 
-    if (!localResolvedId && !remoteResolvedId) {
+    if (!localResolvedId && !remoteSrc) {
         return { src: null, onError: handleError, hasLogo: false };
     }
 
@@ -134,9 +139,9 @@ export function useProviderLogo(providerId: string | null | undefined): UseProvi
         };
     }
 
-    if (source === 'remote' && remoteResolvedId) {
+    if (source === 'remote' && remoteSrc) {
         return {
-            src: `https://models.dev/logos/${remoteResolvedId}.svg`,
+            src: remoteSrc,
             onError: handleError,
             hasLogo: true,
         };

@@ -10,6 +10,7 @@ import {
   ProductRoot,
   ProductSlot,
   registerProductUiPlugin,
+  remoteModelCatalogAllowed,
   resetProductUiPluginsForTests,
   translateProductMessageError,
   useProductModelPicker,
@@ -294,5 +295,19 @@ describe('product UI plugin root and slots', () => {
     registerProductUiPlugin({ id: 'p3', messageError: () => 'third' });
 
     expect(translateProductMessageError(error)).toBe('second:402');
+  });
+});
+
+describe('remote model catalog', () => {
+  test('the window may fetch the public model catalog until a plugin turns it off', () => {
+    expect(remoteModelCatalogAllowed()).toBe(true);
+    registerProductUiPlugin({ id: 'brand' });
+    expect(remoteModelCatalogAllowed()).toBe(true);
+    registerProductUiPlugin({ id: 'offline', remoteModelCatalog: false });
+    expect(remoteModelCatalogAllowed()).toBe(false);
+    registerProductUiPlugin({ id: 'other', remoteModelCatalog: true });
+    expect(remoteModelCatalogAllowed()).toBe(false);
+    resetProductUiPluginsForTests();
+    expect(remoteModelCatalogAllowed()).toBe(true);
   });
 });
