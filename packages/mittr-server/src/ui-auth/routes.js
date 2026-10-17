@@ -12,6 +12,7 @@ const RATE_LIMIT_MAX_ATTEMPTS = 10;
 const RATE_LIMIT_LOCKOUT_MS = 15 * 60 * 1000;
 const RATE_LIMIT_MAX_KEYS = 10_000;
 const LOGIN_STARTS_PER_IP = 20;
+const LOGIN_STARTS_PER_WINDOW = 60;
 const VERIFY_FAILED_PAGE = 'Microsoft sign-in could not be verified. Return to MittrCraft and try again.';
 const SIGN_IN_FAILED_PAGE = 'Microsoft sign-in failed. Return to MittrCraft and try again.';
 
@@ -82,53 +83,74 @@ const resolveReturnTo = (req) => {
 const clientKey = (req) => (req.ip || req.socket?.remoteAddress || 'no-ip').replace(/^::ffff:/, '');
 
 const createLoginStartLimiter = (now) => {
-  const pendingByClient = new Map();
+  const clients = new Map();
   const clientByState = new Map();
-  const pendingOf = (key) => {
-    const pending = pendingByClient.get(key);
-    if (!pending) return null;
+  let nextSlot = 0;
+
+  const sweep = (key) => {
+    const client = clients.get(key);
+    if (!client) return null;
     const timestamp = now();
-    for (const [state, expiresAt] of pending) {
+    for (const [slot, expiresAt] of client.pending) {
       if (expiresAt <= timestamp) {
-        pending.delete(state);
-        clientByState.delete(state);
+        client.pending.delete(slot);
+        clientByState.delete(slot);
       }
     }
-    if (pending.size === 0) {
-      pendingByClient.delete(key);
+    client.starts = client.starts.filter((at) => timestamp - at < TRANSACTION_TTL_MS);
+    if (client.pending.size === 0 && client.starts.length === 0) {
+      clients.delete(key);
       return null;
     }
-    return pending;
+    return client;
   };
+
+  const releaseSlot = (key, slot) => {
+    const client = clients.get(key);
+    client?.pending.delete(slot);
+    if (client && client.pending.size === 0 && client.starts.length === 0) clients.delete(key);
+  };
+
   return {
-    check: (req) => {
-      const pending = pendingOf(clientKey(req));
-      if (!pending || pending.size < LOGIN_STARTS_PER_IP) return { allowed: true };
-      const soonest = Math.min(...pending.values());
-      return { allowed: false, retryAfter: Math.max(1, Math.ceil((soonest - now()) / 1000)) };
-    },
-    hold: (req, state, expiresAt) => {
+    reserve: (req) => {
       const key = clientKey(req);
-      if (!pendingByClient.has(key) && pendingByClient.size >= RATE_LIMIT_MAX_KEYS) {
-        const [oldest, states] = pendingByClient.entries().next().value;
-        for (const held of states.keys()) clientByState.delete(held);
-        pendingByClient.delete(oldest);
+      const timestamp = now();
+      const client = sweep(key);
+      if (client && client.pending.size >= LOGIN_STARTS_PER_IP) {
+        return { allowed: false, retryAfter: Math.max(1, Math.ceil((Math.min(...client.pending.values()) - timestamp) / 1000)) };
       }
-      const pending = pendingOf(key) ?? new Map();
-      pending.set(state, expiresAt);
-      pendingByClient.set(key, pending);
-      clientByState.set(state, key);
+      if (client && client.starts.length >= LOGIN_STARTS_PER_WINDOW) {
+        return { allowed: false, retryAfter: Math.max(1, Math.ceil((client.starts[0] + TRANSACTION_TTL_MS - timestamp) / 1000)) };
+      }
+      if (!client && clients.size >= RATE_LIMIT_MAX_KEYS) {
+        const [oldest, evicted] = clients.entries().next().value;
+        for (const slot of evicted.pending.keys()) clientByState.delete(slot);
+        clients.delete(oldest);
+      }
+      const entry = client ?? { pending: new Map(), starts: [] };
+      const slot = `slot:${nextSlot += 1}`;
+      entry.pending.set(slot, timestamp + TRANSACTION_TTL_MS);
+      entry.starts.push(timestamp);
+      clients.set(key, entry);
+      return {
+        allowed: true,
+        hold: (state, expiresAt) => {
+          const current = clients.get(key);
+          if (!current?.pending.delete(slot)) return;
+          current.pending.set(state, expiresAt);
+          clientByState.set(state, key);
+        },
+        cancel: () => releaseSlot(key, slot),
+      };
     },
     release: (state) => {
       const key = clientByState.get(state);
       if (key === undefined) return;
       clientByState.delete(state);
-      const pending = pendingByClient.get(key);
-      pending?.delete(state);
-      if (pending?.size === 0) pendingByClient.delete(key);
+      releaseSlot(key, state);
     },
     reset: () => {
-      pendingByClient.clear();
+      clients.clear();
       clientByState.clear();
     },
   };
@@ -202,15 +224,21 @@ export const registerCompanySignIn = (context, {
 
   app.get('/auth/ad/login', refuseTunnel('Microsoft login is disabled for tunnel scope'), async (req, res) => {
     if (!isEntra) return res.status(400).json({ error: 'Microsoft authentication not configured' });
-    const start = loginStarts.check(req);
+    const start = loginStarts.reserve(req);
     if (!start.allowed) {
       res.setHeader('Retry-After', String(start.retryAfter));
       return res.status(429).json({ error: 'Too many sign-in attempts, please try again later', retryAfter: start.retryAfter });
     }
     try {
       const trustDevice = queryText(req, 'trustDevice') === 'true' || queryText(req, 'trustDevice') === '1';
-      const transaction = await auth.beginAuthorization({ trustDevice, returnTo: resolveReturnTo(req) });
-      loginStarts.hold(req, transaction.state, transaction.expiresAt);
+      let transaction;
+      try {
+        transaction = await auth.beginAuthorization({ trustDevice, returnTo: resolveReturnTo(req) });
+      } catch (error) {
+        start.cancel();
+        throw error;
+      }
+      start.hold(transaction.state, transaction.expiresAt);
       const maxAge = Math.max(1, Math.floor((transaction.expiresAt - now()) / 1000));
       res.setHeader('Cache-Control', 'no-store');
       appendSetCookie(res, transactionCookie(req, encodeURIComponent(transaction.state), maxAge));

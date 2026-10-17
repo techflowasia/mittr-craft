@@ -284,6 +284,58 @@ test('the start cap counts only sign-ins still in progress', async (t) => {
   assert.equal((await call('GET', '/auth/ad/login')).status, 302, 'expired sign-ins still held a slot');
 });
 
+test('one address may start at most 60 Microsoft sign-ins in 10 minutes, finished or not', async (t) => {
+  const microsoft = fakeMicrosoft();
+  const clock = { now: NOW };
+  const { call } = await harness(t, { env: ENTRA_ENV, microsoft, clock });
+
+  for (let signIn = 0; signIn < 60; signIn += 1) {
+    const { state, nonce, cookie } = await startEntra(call);
+    microsoft.state.nonce = nonce;
+    assert.equal((await call('GET', `/auth/ad/callback?state=${state}&code=auth-code`, { cookie })).status, 302, `sign-in ${signIn + 1}`);
+  }
+  const tokenRequests = microsoft.calls.filter((entry) => entry.method === 'POST').length;
+  const refused = await call('GET', '/auth/ad/login');
+
+  assert.equal(refused.status, 429);
+  const retryAfter = Number(refused.headers.get('retry-after'));
+  assert.ok(retryAfter > 0 && retryAfter <= 600, String(retryAfter));
+  assert.equal(refused.cookies.length, 0);
+  assert.equal(microsoft.calls.filter((entry) => entry.method === 'POST').length, tokenRequests);
+  clock.now += 600_000;
+  assert.equal((await call('GET', '/auth/ad/login')).status, 302);
+});
+
+test('a parallel burst of starts cannot get past the cap while Microsoft is slow to answer', async (t) => {
+  const microsoft = fakeMicrosoft();
+  const slow = { ...microsoft, fetchImpl: async (url, init) => {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    return microsoft.fetchImpl(url, init);
+  } };
+  const { call } = await harness(t, { env: ENTRA_ENV, microsoft: slow });
+
+  const responses = await Promise.all(Array.from({ length: 25 }, () => call('GET', '/auth/ad/login')));
+
+  const started = responses.filter((response) => response.status === 302).length;
+  assert.ok(started <= 20, `${started} starts passed`);
+  assert.equal(started, 20);
+  assert.equal(responses.filter((response) => response.status === 429).length, 5);
+});
+
+test('a start that fails gives its slot back', async (t) => {
+  const microsoft = fakeMicrosoft();
+  let failing = true;
+  const flaky = { ...microsoft, fetchImpl: async (url, init) => {
+    if (failing) throw new Error('network down');
+    return microsoft.fetchImpl(url, init);
+  } };
+  const { call } = await harness(t, { env: ENTRA_ENV, microsoft: flaky });
+
+  for (let attempt = 0; attempt < 20; attempt += 1) assert.equal((await call('GET', '/auth/ad/login')).status, 502);
+  failing = false;
+  assert.equal((await call('GET', '/auth/ad/login')).status, 302);
+});
+
 test('a Microsoft token for another app does not open a session', async (t) => {
   const microsoft = fakeMicrosoft();
   const { call } = await harness(t, { env: ENTRA_ENV, microsoft });
