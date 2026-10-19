@@ -9,10 +9,18 @@ const SCRUBBED = [/^OPENCODE/, /^MITTR/, /^OPENCHAMBER/, /^XDG_/, /^GIT_/];
 export const realUserHome = () => os.userInfo().homedir;
 
 const resolved = (target) => {
-  try {
-    return fs.realpathSync(target);
-  } catch {
-    return path.resolve(target);
+  const absolute = path.resolve(target);
+  const rest = [];
+  let current = absolute;
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync.native(current), ...rest);
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return absolute;
+      rest.unshift(path.basename(current));
+      current = parent;
+    }
   }
 };
 
@@ -22,7 +30,7 @@ const inside = (child, parent) => {
 };
 
 export const createIsolatedHome = () => {
-  const home = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), HOME_PREFIX));
+  const home = fs.mkdtempSync(path.join(resolved(os.tmpdir()), HOME_PREFIX));
   for (const relative of ['.config', '.local/share', '.local/state', '.cache']) {
     fs.mkdirSync(path.join(home, relative), { recursive: true });
   }
@@ -69,7 +77,34 @@ export const assertIsolatedEnv = (env, { realHome = realUserHome() } = {}) => {
   return env;
 };
 
-const removable = (home) => path.basename(home).startsWith(HOME_PREFIX) && inside(home, fs.realpathSync(os.tmpdir()));
+const removable = (home) => path.basename(home).startsWith(HOME_PREFIX) && inside(home, os.tmpdir());
+
+export const STALE_HOME_MS = 60 * 60 * 1000;
+
+export const sweepStaleHomes = ({ tmp = os.tmpdir(), maxAgeMs = STALE_HOME_MS, now = Date.now(), realHome = realUserHome() } = {}) => {
+  const root = resolved(tmp);
+  const removed = [];
+  let entries;
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return removed;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith(HOME_PREFIX)) continue;
+    const target = path.join(root, entry.name);
+    if (resolved(target) !== target || !inside(target, root)) continue;
+    if (inside(realHome, target)) continue;
+    try {
+      if (now - fs.statSync(target).mtimeMs <= maxAgeMs) continue;
+      fs.rmSync(target, { recursive: true, force: true });
+      removed.push(target);
+    } catch {
+      continue;
+    }
+  }
+  return removed;
+};
 
 export const withIsolatedEnv = (run, { makeHome = createIsolatedHome, parentEnv = process.env, realHome = realUserHome() } = {}) => {
   const home = makeHome();

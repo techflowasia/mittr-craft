@@ -24,7 +24,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { RealHomeError, withIsolatedEnv } from './isolated-env.mjs';
+import { RealHomeError, sweepStaleHomes, withIsolatedEnv } from './isolated-env.mjs';
 
 export const BASELINE_FILE = 'brand/test-baseline.json';
 
@@ -172,6 +172,7 @@ export const main = (args, { cwd, isolation = {}, exec = defaultExec, log = cons
     return 1;
   }
   try {
+    sweepStaleHomes({ tmp: isolation.tmp, realHome: isolation.realHome });
     return runTestBaseline({ cwd, only: args, isolation, exec, log }).ok ? 0 : 1;
   } catch (failure) {
     error(`[mittr] ${failure.message}`);

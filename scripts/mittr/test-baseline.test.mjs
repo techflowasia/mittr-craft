@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { HOME_PREFIX, RealHomeError, assertIsolatedEnv, isolatedEnv, withIsolatedEnv } from './isolated-env.mjs';
+import { HOME_PREFIX, RealHomeError, assertIsolatedEnv, isolatedEnv, sweepStaleHomes, withIsolatedEnv } from './isolated-env.mjs';
 import { compareStage, main, parseFailures, rootTestStages, runTestBaseline } from './test-baseline.mjs';
 
 const ISOLATED_OUTPUT = `FAIL (node) src/a.test.mjs
@@ -245,7 +245,7 @@ test('the command line exits non-zero with a plain message when the home is the 
 
   const code = main([], {
     cwd: dir,
-    isolation: { makeHome: () => os.userInfo().homedir },
+    isolation: { makeHome: () => os.userInfo().homedir, tmp: path.join(dir, 'no-tmp') },
     exec: () => { ran = true; return { status: 0, output: '' }; },
     log: () => {},
     error: (line) => errors.push(line),
@@ -286,4 +286,128 @@ test('the guard refuses a missing home, a data dir outside the home and leftover
   assert.throws(() => assertIsolatedEnv({ ...good, OPENCHAMBER_DATA_DIR: path.join(realHome, '.config', 'openchamber') }, { realHome }), /OPENCHAMBER_DATA_DIR is outside/);
   assert.throws(() => assertIsolatedEnv({ ...good, XDG_DATA_HOME: path.join(realHome, '.local', 'share') }, { realHome }), /XDG_DATA_HOME is outside/);
   assert.throws(() => assertIsolatedEnv({ ...good, OPENCODE_CONFIG: '/x' }, { realHome }), /OPENCODE_CONFIG is still set/);
+});
+
+const standInHome = (t) => {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stand-in-')));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const realHome = path.join(base, 'techflow');
+  fs.mkdirSync(path.join(realHome, '.config'), { recursive: true });
+  return { base, realHome };
+};
+
+const guardAccepts = (home, realHome) => {
+  const env = isolatedEnv({ home, parentEnv: {}, realHome });
+  return () => assertIsolatedEnv(env, { realHome });
+};
+
+test('the guard refuses every spelling of the real home', (t) => {
+  const { base, realHome } = standInHome(t);
+
+  assert.throws(guardAccepts(`${realHome}/`, realHome), /real user home/, 'trailing slash');
+  assert.throws(guardAccepts(`${realHome}//.`, realHome), /real user home/, 'dot segment');
+  assert.throws(guardAccepts(path.join(realHome, '.config', '..'), realHome), /real user home/, 'parent segment');
+
+  const link = path.join(base, 'link-to-home');
+  fs.symlinkSync(realHome, link);
+  assert.throws(guardAccepts(link, realHome), /real user home/, 'symlink to the real home');
+  assert.throws(guardAccepts(`${link}/`, realHome), /real user home/, 'symlink with a trailing slash');
+
+  assert.throws(guardAccepts(base, realHome), /contains the real user home/, 'a folder that contains the real home');
+  assert.throws(guardAccepts(path.join(base, 'techflow', '..'), realHome), /contains the real user home/, 'a folder that contains it through a dot segment');
+});
+
+test('the guard refuses a differently-cased spelling of the real home on a case-insensitive disk', (t) => {
+  const { realHome } = standInHome(t);
+  const swapped = path.join(path.dirname(realHome), path.basename(realHome).toUpperCase());
+  if (!fs.existsSync(swapped)) {
+    t.skip('this disk is case-sensitive');
+    return;
+  }
+
+  assert.throws(guardAccepts(swapped, realHome), /real user home/);
+  assert.throws(guardAccepts(`${swapped}/`, realHome), /real user home/);
+  assert.throws(guardAccepts(path.dirname(swapped.toUpperCase()), realHome), /contains the real user home/);
+});
+
+test('a temporary home beside the real home is accepted', (t) => {
+  const { base, realHome } = standInHome(t);
+  const other = path.join(base, `${HOME_PREFIX}ok`);
+  fs.mkdirSync(other);
+
+  assert.ok(guardAccepts(other, realHome)());
+});
+
+test('the temporary home is removed when the stage fails or throws', (t) => {
+  const dir = fixtureRepo(t, 'bun run --cwd packages/web test');
+  let home;
+
+  runTestBaseline({ cwd: dir, exec: ({ env }) => { home = env.HOME; return { status: 1, output: ' FAIL  a.test.js > broken\n' }; }, log: () => {} });
+  assert.ok(home.includes(HOME_PREFIX));
+  assert.ok(!fs.existsSync(home), 'removed after a failing stage');
+
+  assert.throws(() => runTestBaseline({ cwd: dir, exec: ({ env }) => { home = env.HOME; throw new Error('spawn failed'); }, log: () => {} }), /spawn failed/);
+  assert.ok(!fs.existsSync(home), 'removed after a stage that throws');
+});
+
+test('stale temporary homes are swept from the temp folder, and nothing else is', (t) => {
+  const { base, realHome } = standInHome(t);
+  const tmp = path.join(base, 'tmp');
+  fs.mkdirSync(tmp);
+  const make = (name, ageMs, now) => {
+    const target = path.join(tmp, name);
+    fs.mkdirSync(path.join(target, 'nested'), { recursive: true });
+    const when = new Date(now - ageMs);
+    fs.utimesSync(target, when, when);
+    return target;
+  };
+  const now = Date.now();
+  const stale = make(`${HOME_PREFIX}old`, 2 * 60 * 60 * 1000, now);
+  const fresh = make(`${HOME_PREFIX}new`, 5 * 60 * 1000, now);
+  const other = make('someone-elses-folder', 5 * 60 * 60 * 1000, now);
+  const outside = path.join(base, `${HOME_PREFIX}outside`);
+  fs.mkdirSync(outside);
+  fs.utimesSync(outside, new Date(now - 9 * 60 * 60 * 1000), new Date(now - 9 * 60 * 60 * 1000));
+  const link = path.join(tmp, `${HOME_PREFIX}link`);
+  fs.symlinkSync(outside, link);
+
+  assert.deepEqual(sweepStaleHomes({ tmp, now, realHome }), [stale]);
+
+  assert.ok(!fs.existsSync(stale));
+  for (const kept of [fresh, other, outside, link, realHome]) assert.ok(fs.existsSync(kept), `${kept} must stay`);
+});
+
+test('a stale folder that holds the real home is never swept', (t) => {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-home-')));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const tmp = path.join(base, 'tmp');
+  const container = path.join(tmp, `${HOME_PREFIX}holder`);
+  const realHome = path.join(container, 'user');
+  fs.mkdirSync(realHome, { recursive: true });
+  const old = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  fs.utimesSync(container, old, old);
+
+  assert.deepEqual(sweepStaleHomes({ tmp, realHome }), []);
+  assert.ok(fs.existsSync(realHome));
+});
+
+test('the command line sweeps stale temporary homes before the first stage', (t) => {
+  const dir = fixtureRepo(t, 'node -e 0');
+  const tmp = path.join(dir, 'tmp');
+  const stale = path.join(tmp, `${HOME_PREFIX}stale`);
+  fs.mkdirSync(stale, { recursive: true });
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  fs.utimesSync(stale, old, old);
+  let sweptBeforeRun = null;
+
+  const code = main([], {
+    cwd: dir,
+    isolation: { tmp },
+    exec: () => { sweptBeforeRun = !fs.existsSync(stale); return { status: 0, output: '' }; },
+    log: () => {},
+    error: () => {},
+  });
+
+  assert.equal(code, 0);
+  assert.equal(sweptBeforeRun, true);
 });
