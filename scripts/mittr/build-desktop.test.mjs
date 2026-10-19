@@ -328,7 +328,7 @@ test('the server plugin is built from source with the engine outbound switches, 
   assert.ok(sources.includes('packages/mittr-server/src/engine-outbound.js'), sources.join('\n'));
   assert.ok(sources.every((source) => !source.includes('node_modules')));
 
-  const past = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const past = new Date(1000);
   fs.utimesSync(bundle, past, past);
   assert.throws(() => assertPluginBundleFresh({ bundle, metafile, rootDir: repoRoot }), /older than its source packages\/mittr-/);
 

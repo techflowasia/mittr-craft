@@ -46,6 +46,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { resolveBunExecutable } from '../lib/bun-executable.mjs';
 import { checkUpstreamTouch, formatTouchReport } from './check-upstream-touch.mjs';
+import { withIsolatedEnv } from './isolated-env.mjs';
 
 const BRANCH_PREFIX = 'upstream-update/';
 const REBASED_LINE = 'rebase/upstream-2.1.1';
@@ -79,8 +80,9 @@ const gitIn = (cwd) => {
   return git;
 };
 
-const defaultRun = ({ command, args, cwd }) => {
-  const result = spawnSync(command, args, { cwd, stdio: 'inherit' });
+const defaultRun = ({ command, args, cwd, isolated = false }) => {
+  const spawn = (env) => spawnSync(command, args, { cwd, stdio: 'inherit', ...(env ? { env } : {}) });
+  const result = isolated ? withIsolatedEnv(spawn) : spawn();
   if (result.error) throw result.error;
   return result.status ?? 1;
 };
@@ -144,11 +146,11 @@ const WALK_CHECKLIST = [
  */
 const buildSteps = (ctx) => {
   const { cwd, git, run, log, bun, node, sha, short, branch, from } = ctx;
-  const gate = (step, command, args, label = [path.basename(command), ...args].join(' ')) => ({
+  const gate = (step, command, args, label = [path.basename(command), ...args].join(' '), isolated = false) => ({
     show: label,
     exec: () => {
       log(`\n[mittr] ${label}`);
-      if (run({ command, args, cwd }) !== 0) {
+      if (run({ command, args, cwd, ...(isolated ? { isolated } : {}) }) !== 0) {
         throw new Stop(step, `${label} failed`, 'fix it on this branch and commit');
       }
     },
@@ -225,12 +227,12 @@ const buildSteps = (ctx) => {
             commitIfStaged(`chore(deps): re-resolve bun.lock for upstream ${short}`);
           },
         },
-        gate('checks', node, ['--test', 'packages/mittr-server/src/upstream-contract.test.js']),
+        gate('checks', node, ['--test', 'packages/mittr-server/src/upstream-contract.test.js'], undefined, true),
         gate('checks', bun, ['run', 'type-check']),
         gate('checks', bun, ['run', 'lint']),
         gate('checks', node, ['scripts/mittr/test-baseline.mjs']),
-        ...mittrTestPackages(cwd).map((name) => gate('checks', bun, ['run', '--cwd', `packages/${name}`, 'test'])),
-        gate('checks', node, ['scripts/run-isolated-tests.mjs', 'scripts/mittr']),
+        ...mittrTestPackages(cwd).map((name) => gate('checks', bun, ['run', '--cwd', `packages/${name}`, 'test'], undefined, true)),
+        gate('checks', node, ['scripts/run-isolated-tests.mjs', 'scripts/mittr'], undefined, true),
       ],
     },
     {

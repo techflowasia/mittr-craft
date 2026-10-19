@@ -95,13 +95,15 @@ const fixture = (t, { conflicting = false } = {}) => {
 // Stands in for every non-git command: records it and fails the ones asked to.
 const recordingRunner = (_dir, { failOn } = {}) => {
   const calls = [];
-  const run = ({ command, args }) => {
+  const isolatedCalls = [];
+  const run = ({ command, args, isolated }) => {
     const line = [path.basename(command), ...args].join(' ');
     calls.push(line);
+    if (isolated) isolatedCalls.push(line);
     if (failOn && line.includes(failOn)) return 1;
     return 0;
   };
-  return { calls, run };
+  return { calls, isolatedCalls, run };
 };
 
 const capture = () => {
@@ -169,6 +171,12 @@ test('a clean update merges on its own branch, records the base, runs every gate
 
   assert.match(output.text(), /upstream files touched: 2 of 40/);
   assert.match(output.text(), /walk/i);
+
+  assert.deepEqual(runner.isolatedCalls.map((call) => call.replace(/^\S+ /, '')), [
+    '--test packages/mittr-server/src/upstream-contract.test.js',
+    'run --cwd packages/mittr-x test',
+    'scripts/run-isolated-tests.mjs scripts/mittr',
+  ], 'the test gates run under a temporary home; install, lint and the build do not');
 });
 
 test('a conflict stops the update and names the hook that owns each file, with its reason', (t) => {

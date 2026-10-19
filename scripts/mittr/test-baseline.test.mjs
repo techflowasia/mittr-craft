@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 
-import { compareStage, parseFailures, rootTestStages, runTestBaseline } from './test-baseline.mjs';
+import { HOME_PREFIX, RealHomeError, assertIsolatedEnv, isolatedEnv, withIsolatedEnv } from './isolated-env.mjs';
+import { compareStage, main, parseFailures, rootTestStages, runTestBaseline } from './test-baseline.mjs';
 
 const ISOLATED_OUTPUT = `FAIL (node) src/a.test.mjs
 FAIL (bun) src/b.test.ts
@@ -154,4 +156,132 @@ test('a failure that does not come back when the stage runs again is reported as
 
   runs.push({ status: 1, output: ' FAIL  a.test.js > sometimes\n' }, { status: 0, output: '' });
   assert.equal(runTestBaseline({ cwd: dir, exec: () => runs.shift(), log: () => {} }).ok, true);
+});
+
+const fixtureRepo = (t, script) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-baseline-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ scripts: { test: script } }));
+  fs.mkdirSync(path.join(dir, 'brand'));
+  fs.writeFileSync(path.join(dir, 'brand', 'test-baseline.json'), JSON.stringify({ failures: [] }));
+  return dir;
+};
+
+test('every stage runs under its own temporary home, never the real one', (t) => {
+  const dir = fixtureRepo(t, 'node run.mjs scripts && bun run --cwd packages/web test && bun run --cwd packages/ui test');
+  const realHome = os.userInfo().homedir;
+  const seen = [];
+  const exec = ({ command, env }) => {
+    seen.push({ command, env, existed: fs.existsSync(env.HOME) });
+    return { status: 0, output: '' };
+  };
+
+  assert.equal(runTestBaseline({ cwd: dir, exec, log: () => {} }).ok, true);
+
+  assert.equal(seen.length, 3);
+  assert.equal(new Set(seen.map(({ env }) => env.HOME)).size, 3, 'each stage gets a fresh home');
+  for (const { env, existed } of seen) {
+    assert.ok(existed, 'the home exists while the stage runs');
+    assert.notEqual(env.HOME, realHome);
+    assert.ok(env.HOME.startsWith(fs.realpathSync(os.tmpdir())), 'the home is a temporary folder');
+    assert.equal(env.XDG_CONFIG_HOME, path.join(env.HOME, '.config'));
+    assert.equal(env.XDG_DATA_HOME, path.join(env.HOME, '.local', 'share'));
+    assert.equal(env.XDG_CACHE_HOME, path.join(env.HOME, '.cache'));
+    assert.equal(env.XDG_STATE_HOME, path.join(env.HOME, '.local', 'state'));
+    assert.equal(env.OPENCHAMBER_DATA_DIR, path.join(env.HOME, '.config', 'openchamber'));
+    assert.equal(env.GIT_CONFIG_NOSYSTEM, '1');
+    assert.ok(env.npm_config_cache.startsWith(env.HOME));
+    assert.ok(env.BUN_INSTALL.startsWith(env.HOME));
+    assert.equal(env.PATH, process.env.PATH, 'the toolchain stays on PATH');
+    assert.ok(!fs.existsSync(env.HOME), 'the home is removed when the stage ends');
+  }
+});
+
+test('the parent engine and product variables never reach a stage', (t) => {
+  const dir = fixtureRepo(t, 'bun run --cwd packages/web test');
+  const names = ['OPENCODE_CONFIG', 'OPENCODE_SERVER_PASSWORD', 'MITTRCRAFT_BROKER_URL', 'MITTR_FOO', 'OPENCHAMBER_PORT', 'GIT_DIR', 'XDG_CONFIG_HOME'];
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  t.after(() => {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  for (const name of names) process.env[name] = `/real/${name}`;
+  let env;
+
+  runTestBaseline({ cwd: dir, exec: (call) => { env = call.env; return { status: 0, output: '' }; }, log: () => {} });
+
+  for (const name of ['OPENCODE_CONFIG', 'OPENCODE_SERVER_PASSWORD', 'MITTRCRAFT_BROKER_URL', 'MITTR_FOO', 'OPENCHAMBER_PORT', 'GIT_DIR']) {
+    assert.equal(env[name], undefined, `${name} must be removed`);
+  }
+  assert.ok(env.XDG_CONFIG_HOME.startsWith(env.HOME));
+});
+
+test('a stage that would run under the real home is refused before anything runs', (t) => {
+  const dir = fixtureRepo(t, 'bun run --cwd packages/web test');
+  const realHome = os.userInfo().homedir;
+  let ran = false;
+
+  assert.throws(
+    () => runTestBaseline({
+      cwd: dir,
+      exec: () => { ran = true; return { status: 0, output: '' }; },
+      log: () => {},
+      isolation: { makeHome: () => realHome },
+    }),
+    (error) => error instanceof RealHomeError && /real user home/.test(error.message),
+  );
+  assert.equal(ran, false);
+  assert.ok(fs.existsSync(realHome), 'the refusal never removes the real home');
+});
+
+test('the command line exits non-zero with a plain message when the home is the real one', (t) => {
+  const dir = fixtureRepo(t, 'node -e 0');
+  const errors = [];
+  let ran = false;
+
+  const code = main([], {
+    cwd: dir,
+    isolation: { makeHome: () => os.userInfo().homedir },
+    exec: () => { ran = true; return { status: 0, output: '' }; },
+    log: () => {},
+    error: (line) => errors.push(line),
+  });
+
+  assert.equal(code, 2);
+  assert.equal(ran, false);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /^\[mittr\] refusing to run tests: HOME is the real user home/);
+});
+
+test('git, node and bun keep working inside the isolated home', (t) => {
+  const outputs = withIsolatedEnv((env) => {
+    const run = (command, args) => spawnSync(command, args, { env, encoding: 'utf8', cwd: env.HOME });
+    return {
+      email: run('git', ['config', '--get', 'user.email']),
+      name: run('git', ['config', '--get', 'user.name']),
+      home: run(process.execPath, ['-e', 'process.stdout.write(require("node:os").homedir())']),
+      bun: run('bun', ['--version']),
+      npmCache: run(process.execPath, ['-e', 'process.stdout.write(process.env.npm_config_cache)']),
+    };
+  });
+  t.diagnostic(`bun ${outputs.bun.stdout.trim()}`);
+
+  assert.equal(outputs.email.stdout.trim(), 'test-runner@example.invalid');
+  assert.ok(outputs.name.stdout.trim().length > 0);
+  assert.notEqual(outputs.home.stdout, os.userInfo().homedir);
+  assert.equal(outputs.bun.status, 0);
+  assert.ok(outputs.npmCache.stdout.startsWith(outputs.home.stdout));
+});
+
+test('the guard refuses a missing home, a data dir outside the home and leftover engine variables', () => {
+  const realHome = os.userInfo().homedir;
+  const good = isolatedEnv({ home: path.join(os.tmpdir(), `${HOME_PREFIX}check`), parentEnv: {}, realHome });
+  assert.ok(assertIsolatedEnv(good, { realHome }));
+  assert.throws(() => assertIsolatedEnv({ ...good, HOME: undefined }, { realHome }), RealHomeError);
+  assert.throws(() => assertIsolatedEnv({ ...good, HOME: realHome }, { realHome }), /real user home/);
+  assert.throws(() => assertIsolatedEnv({ ...good, OPENCHAMBER_DATA_DIR: path.join(realHome, '.config', 'openchamber') }, { realHome }), /OPENCHAMBER_DATA_DIR is outside/);
+  assert.throws(() => assertIsolatedEnv({ ...good, XDG_DATA_HOME: path.join(realHome, '.local', 'share') }, { realHome }), /XDG_DATA_HOME is outside/);
+  assert.throws(() => assertIsolatedEnv({ ...good, OPENCODE_CONFIG: '/x' }, { realHome }), /OPENCODE_CONFIG is still set/);
 });

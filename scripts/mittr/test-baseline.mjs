@@ -24,6 +24,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { RealHomeError, withIsolatedEnv } from './isolated-env.mjs';
+
 export const BASELINE_FILE = 'brand/test-baseline.json';
 
 const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
@@ -131,14 +133,14 @@ export const formatBaselineReport = (results) => {
   return lines.join('\n');
 };
 
-const defaultExec = ({ command, cwd }) => {
-  const result = spawnSync('/bin/sh', ['-c', command], { cwd, encoding: 'utf8', maxBuffer: 1024 * 1024 * 1024 });
+const defaultExec = ({ command, cwd, env }) => {
+  const result = spawnSync('/bin/sh', ['-c', command], { cwd, env, encoding: 'utf8', maxBuffer: 1024 * 1024 * 1024 });
   if (result.error) throw result.error;
   return { status: result.status ?? 1, output: `${result.stdout ?? ''}${result.stderr ?? ''}` };
 };
 
 /** Runs the stages (all, or the ones named) and returns `{ ok, results }`. */
-export const runTestBaseline = ({ cwd, only = [], exec = defaultExec, log = console.log }) => {
+export const runTestBaseline = ({ cwd, only = [], exec = defaultExec, log = console.log, isolation = {} }) => {
   const stages = rootTestStages(JSON.parse(fs.readFileSync(path.join(cwd, 'package.json'), 'utf8')));
   const unknown = only.filter((name) => !stages.some((stage) => stage.name === name));
   if (unknown.length > 0) throw new Error(`no test stage named ${unknown.join(', ')}; stages: ${stages.map(({ name }) => name).join(', ')}`);
@@ -147,7 +149,7 @@ export const runTestBaseline = ({ cwd, only = [], exec = defaultExec, log = cons
   const results = [];
   const runStage = (stage, label) => {
     log(`\n[mittr] tests ${stage.name}${label}: ${stage.command}`);
-    const { status, output } = exec({ command: stage.command, cwd });
+    const { status, output } = withIsolatedEnv((env) => exec({ command: stage.command, cwd, env }), isolation);
     log(output.trimEnd());
     return compareStage({ stage: stage.name, status, failures: status === 0 ? [] : parseFailures(output), baseline });
   };
@@ -159,22 +161,25 @@ export const runTestBaseline = ({ cwd, only = [], exec = defaultExec, log = cons
   return { ok: results.every(({ unexpected }) => unexpected.length === 0), results };
 };
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
-  const args = process.argv.slice(2);
+export const main = (args, { cwd, isolation = {}, exec = defaultExec, log = console.log, error = console.error } = {}) => {
   if (args.includes('--help') || args.includes('-h')) {
-    console.log('Usage: node scripts/mittr/test-baseline.mjs [<stage> ...]\n\nRuns each stage of the root test script and fails only on a failure brand/test-baseline.json does not list.');
-    process.exit(0);
+    log('Usage: node scripts/mittr/test-baseline.mjs [<stage> ...]\n\nRuns each stage of the root test script and fails only on a failure brand/test-baseline.json does not list.');
+    return 0;
   }
   const flag = args.find((arg) => arg.startsWith('-'));
   if (flag) {
-    console.error(`[mittr] unknown option ${flag}`);
-    process.exit(1);
+    error(`[mittr] unknown option ${flag}`);
+    return 1;
   }
   try {
-    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-    process.exitCode = runTestBaseline({ cwd: repoRoot, only: args }).ok ? 0 : 1;
-  } catch (error) {
-    console.error(`[mittr] ${error.message}`);
-    process.exitCode = 1;
+    return runTestBaseline({ cwd, only: args, isolation, exec, log }).ok ? 0 : 1;
+  } catch (failure) {
+    error(`[mittr] ${failure.message}`);
+    return failure instanceof RealHomeError ? 2 : 1;
   }
+};
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+  process.exitCode = main(process.argv.slice(2), { cwd: repoRoot });
 }
