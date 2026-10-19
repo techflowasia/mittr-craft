@@ -43,7 +43,6 @@ export const isolatedEnv = ({ home, parentEnv = process.env, realHome = realUser
     XDG_DATA_HOME: path.join(home, '.local', 'share'),
     XDG_CACHE_HOME: path.join(home, '.cache'),
     XDG_STATE_HOME: path.join(home, '.local', 'state'),
-    OPENCHAMBER_DATA_DIR: path.join(home, '.config', 'openchamber'),
     GIT_CONFIG_NOSYSTEM: '1',
     npm_config_cache: path.join(home, '.npm'),
     BUN_INSTALL: path.join(home, '.bun'),
@@ -60,10 +59,11 @@ export const assertIsolatedEnv = (env, { realHome = realUserHome() } = {}) => {
   if (!env.HOME) refuse('HOME is not set');
   if (resolved(env.HOME) === resolved(realHome)) refuse('HOME is the real user home');
   if (inside(realHome, env.HOME)) refuse('HOME contains the real user home');
-  for (const name of ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'OPENCHAMBER_DATA_DIR']) {
+  for (const name of ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME']) {
     if (!env[name]) refuse(`${name} is not set`);
     if (!inside(env[name], env.HOME)) refuse(`${name} is outside the temporary HOME`);
   }
+  if (env.OPENCHAMBER_DATA_DIR && !inside(env.OPENCHAMBER_DATA_DIR, env.HOME)) refuse('OPENCHAMBER_DATA_DIR is outside the temporary HOME');
   const leaked = Object.keys(env).find((name) => /^(OPENCODE|MITTR)/.test(name));
   if (leaked) refuse(`${leaked} is still set`);
   return env;

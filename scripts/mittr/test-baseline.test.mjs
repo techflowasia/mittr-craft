@@ -188,7 +188,9 @@ test('every stage runs under its own temporary home, never the real one', (t) =>
     assert.equal(env.XDG_DATA_HOME, path.join(env.HOME, '.local', 'share'));
     assert.equal(env.XDG_CACHE_HOME, path.join(env.HOME, '.cache'));
     assert.equal(env.XDG_STATE_HOME, path.join(env.HOME, '.local', 'state'));
-    assert.equal(env.OPENCHAMBER_DATA_DIR, path.join(env.HOME, '.config', 'openchamber'));
+    assert.equal(env.OPENCHAMBER_DATA_DIR, undefined, 'the data dir is left to default inside the home');
+    const resolved = spawnSync(process.execPath, ['-e', "const os=require('node:os'),path=require('node:path');process.stdout.write(process.env.OPENCHAMBER_DATA_DIR?path.resolve(process.env.OPENCHAMBER_DATA_DIR):path.join(os.homedir(),'.config','openchamber'))"], { env, encoding: 'utf8' }).stdout;
+    assert.equal(resolved, path.join(env.HOME, '.config', 'openchamber'), 'the data dir resolves inside the temporary home');
     assert.equal(env.GIT_CONFIG_NOSYSTEM, '1');
     assert.ok(env.npm_config_cache.startsWith(env.HOME));
     assert.ok(env.BUN_INSTALL.startsWith(env.HOME));
@@ -199,7 +201,7 @@ test('every stage runs under its own temporary home, never the real one', (t) =>
 
 test('the parent engine and product variables never reach a stage', (t) => {
   const dir = fixtureRepo(t, 'bun run --cwd packages/web test');
-  const names = ['OPENCODE_CONFIG', 'OPENCODE_SERVER_PASSWORD', 'MITTRCRAFT_BROKER_URL', 'MITTR_FOO', 'OPENCHAMBER_PORT', 'GIT_DIR', 'XDG_CONFIG_HOME'];
+  const names = ['OPENCODE_CONFIG', 'OPENCODE_SERVER_PASSWORD', 'MITTRCRAFT_BROKER_URL', 'MITTR_FOO', 'OPENCHAMBER_PORT', 'OPENCHAMBER_DATA_DIR', 'GIT_DIR', 'XDG_CONFIG_HOME'];
   const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
   t.after(() => {
     for (const [name, value] of Object.entries(saved)) {
@@ -212,7 +214,7 @@ test('the parent engine and product variables never reach a stage', (t) => {
 
   runTestBaseline({ cwd: dir, exec: (call) => { env = call.env; return { status: 0, output: '' }; }, log: () => {} });
 
-  for (const name of ['OPENCODE_CONFIG', 'OPENCODE_SERVER_PASSWORD', 'MITTRCRAFT_BROKER_URL', 'MITTR_FOO', 'OPENCHAMBER_PORT', 'GIT_DIR']) {
+  for (const name of ['OPENCODE_CONFIG', 'OPENCODE_SERVER_PASSWORD', 'MITTRCRAFT_BROKER_URL', 'MITTR_FOO', 'OPENCHAMBER_PORT', 'OPENCHAMBER_DATA_DIR', 'GIT_DIR']) {
     assert.equal(env[name], undefined, `${name} must be removed`);
   }
   assert.ok(env.XDG_CONFIG_HOME.startsWith(env.HOME));

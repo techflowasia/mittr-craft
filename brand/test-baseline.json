@@ -66,12 +66,6 @@
       "file": "server/lib/spaces/websocket.test.js",
       "test": "the WebSocket forwarder > ends every socket when it is closed",
       "why": "flaky: fails in a full run, passes alone"
-    },
-    {
-      "stage": "web",
-      "file": "server/lib/guests/ssh-install.test.js",
-      "test": "SSH integration suite uses an isolated server home",
-      "why": "the test writes its git identities under its own HOME and expects OPENCHAMBER_DATA_DIR to be unset; every isolated run sets it, and the test passes when it is unset"
     }
   ]
 }
