@@ -2,11 +2,39 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const isolated = await vi.hoisted(async () => {
+  const hoistedFs = await import('node:fs');
+  const hoistedOs = await import('node:os');
+  const hoistedPath = await import('node:path');
+  const names = ['HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'];
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  const home = hoistedFs.realpathSync(hoistedFs.mkdtempSync(hoistedPath.join(hoistedOs.tmpdir(), 'quota-home-')));
+  process.env.HOME = home;
+  process.env.XDG_CONFIG_HOME = hoistedPath.join(home, '.config');
+  process.env.XDG_DATA_HOME = hoistedPath.join(home, '.local', 'share');
+  process.env.XDG_STATE_HOME = hoistedPath.join(home, '.local', 'state');
+  process.env.XDG_CACHE_HOME = hoistedPath.join(home, '.cache');
+  return { home, saved };
+});
 
 vi.mock('../../opencode/auth.js', () => ({ readOpenCodeCredentials: async () => ({}) }));
 
 import { fetchQuotaForProvider, listConfiguredQuotaProviders, registerQuotaProvider } from './index.js';
+
+afterAll(() => {
+  for (const [name, value] of Object.entries(isolated.saved)) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+  fs.rmSync(isolated.home, { recursive: true, force: true });
+});
+
+it('every provider runs under a temporary home, never the real one', () => {
+  expect(os.homedir()).toBe(isolated.home);
+  expect(process.env.XDG_CONFIG_HOME?.startsWith(isolated.home)).toBe(true);
+});
 
 const originalPath = process.env.PATH;
 let keychainLog;
