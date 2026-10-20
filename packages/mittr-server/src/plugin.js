@@ -74,7 +74,7 @@ const takeCompanySignInEnv = (env) => {
   return taken;
 };
 
-export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context = null, resourcesDir = null }) => {
+export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context = null, resourcesDir = null, mintShimKey }) => {
   const takenSignInEnv = takeCompanySignInEnv(env);
   const runtimePin = takeBinRuntimePin(env);
   const withheld = Object.fromEntries([...Object.keys(takenSignInEnv), ...Object.values(SECRET_FILE_VARIABLES), ...SERVER_ONLY_SECRETS, ...runtimePin].map((name) => [name, undefined]));
@@ -145,6 +145,7 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
     sharedHistoryExists: () => sharedHistoryExists(bases),
     engineConfigDir: engineConfigDir({ bases, env }),
     engineDataHome: (accountHome) => engineEnv({ bases, accountHome, rule: ENGINE_DB_RULE }).XDG_DATA_HOME,
+    mintShimKey,
   });
   return {
     engineEnv: async () => ({ ...baseEngineEnv(mittr.engineHome()), ...(await mittr.engineEnv()), ...withheldNow() }),

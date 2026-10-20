@@ -10,6 +10,7 @@ import express from 'express';
 
 import { engineBases } from './engine-home.js';
 import { fakeEngineContext, listen, serve, until } from './mittr/test-helpers.js';
+import { mintLocalToken } from './mittr/local-token.js';
 import setup, { setupMittrServer } from './plugin.js';
 import { LDAP_ENV } from './ui-auth/test-fixtures.js';
 
@@ -574,12 +575,17 @@ const mittrPlugin = async (t, { legacySession = null } = {}) => {
   const parseJson = express.json();
   app.use((req, res, next) => (req.path.startsWith('/api') ? next() : parseJson(req, res, next)));
   const logger = recordingLogger();
+  const keys = [];
   const plugin = await setupMittrServer({
     dataDir,
     logger,
     env: { MITTRCRAFT_BROKER_URL: broker, MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft' },
     homeDir: home,
     context: { app, express, dataDir, logger, host: null, ...engine.context },
+    mintShimKey: () => {
+      keys.push(mintLocalToken());
+      return keys.at(-1);
+    },
   });
   t.after(() => plugin.dispose());
   const launch = async () => { engine.launchedDataHome = (await plugin.engineEnv()).XDG_DATA_HOME; };
@@ -591,7 +597,9 @@ const mittrPlugin = async (t, { legacySession = null } = {}) => {
     return call('POST', '/api/mittr/auth/callback', { url: 'mittrcraft://auth/callback?code=c1' });
   };
   const shared = path.join(home, '.local', 'share', 'mittrcraft', 'engine');
-  return { plugin, engine, call, signIn, shared, dataDir, brokerCalls, logger };
+  assert.equal(keys.length, 1);
+  assert.equal(fs.existsSync(path.join(dataDir, 'mittr-shim-token')), false);
+  return { plugin, engine, call, signIn, shared, dataDir, brokerCalls, logger, shimKey: keys[0] };
 };
 
 test('each Mittr account runs the engine on its own home, and a switch restarts it there', async (t) => {
@@ -641,11 +649,10 @@ test('a ready on another account\'s home is corrected after the listener returns
 });
 
 test('while the engine runs on another account\'s home the shim refuses, and forwards nothing', async (t) => {
-  const { engine, call, signIn, shared, dataDir, brokerCalls } = await mittrPlugin(t);
+  const { engine, call, signIn, shared, brokerCalls, shimKey: key } = await mittrPlugin(t);
   assert.equal((await signIn()).body.userId, 'u-a');
   engine.onRestart = null;
   engine.launchedDataHome = path.join(shared, 'accounts', homeOf('u-b'));
-  const key = fs.readFileSync(path.join(dataDir, 'mittr-shim-token'), 'utf8').trim();
 
   const response = await fetch(`${call.base}/mittr-shim/v1/chat/completions`, {
     method: 'POST',
@@ -670,12 +677,11 @@ test('a 1.x session that cannot be carried moves the engine off the shared home 
 });
 
 test('while the engine is still on the shared home after a failed 1.x carry, the shim says nobody is signed in', async (t) => {
-  const { engine, call, shared, dataDir, brokerCalls } = await mittrPlugin(t, { legacySession: 'not a session' });
+  const { engine, call, shared, brokerCalls, shimKey: key } = await mittrPlugin(t, { legacySession: 'not a session' });
   engine.onRestart = null;
   assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
   await until(() => engine.restarts.length === 2);
   assert.equal(engine.launchedDataHome, shared);
-  const key = fs.readFileSync(path.join(dataDir, 'mittr-shim-token'), 'utf8').trim();
 
   const response = await fetch(`${call.base}/mittr-shim/v1/chat/completions`, {
     method: 'POST',

@@ -6,6 +6,7 @@ import test from 'node:test';
 import express from 'express';
 
 import { setupMittr } from './index.js';
+import { mintLocalToken } from './local-token.js';
 import { USER_CONFIG_DIR, deferred, fakeEngineContext, fakeEngineFetch, fakeFetch, json, serve, tempDataDir, until } from './test-helpers.js';
 
 const NOW = Date.now();
@@ -49,10 +50,17 @@ const serverLikeApp = () => {
 
 // `built` stands for the engine's first config build, which the server makes
 // before it first starts the engine.
+const shimKeys = new Map();
+
 const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext(), sharedHistoryExists, built = true, engineConfigDir = USER_CONFIG_DIR, now } = {}) => {
   const app = serverLikeApp();
   const logger = recordingLogger();
-  const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context }, { env, fetchImpl, sharedHistoryExists, engineConfigDir, now });
+  const mintShimKey = () => {
+    const key = mintLocalToken();
+    shimKeys.set(dataDir, key);
+    return key;
+  };
+  const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context }, { env, fetchImpl, sharedHistoryExists, engineConfigDir, now, mintShimKey });
   t.after(() => mittr.dispose());
   engine.contribute = mittr.managedConfig;
   if (built) await mittr.managedConfig();
@@ -324,7 +332,7 @@ test('a damaged account list is logged with its path through the server logger, 
 });
 
 const SHIM_TOKEN = /^mc_local_[0-9a-f]{64}$/;
-const shimKey = (dataDir) => fs.readFileSync(path.join(dataDir, 'mittr-shim-token'), 'utf8');
+const shimKey = (dataDir) => shimKeys.get(dataDir);
 const askShim = (call, key, body = { model: 'gpt-a', stream: false, messages: [] }) => fetch(`${call.base}/mittr-shim/v1/chat/completions`, {
   method: 'POST',
   headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
@@ -337,7 +345,7 @@ test('the shim is mounted with a key of its own, and hands Mittr the account tok
   const { call, dataDir } = await setUp(t, { fetchImpl });
   const key = shimKey(dataDir);
   assert.match(key, SHIM_TOKEN);
-  if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(dataDir, 'mittr-shim-token')).mode & 0o777, 0o600);
+  assert.equal(fs.existsSync(path.join(dataDir, 'mittr-shim-token')), false);
 
   const signedOut = await askShim(call, key);
   assert.equal(signedOut.status, 401);

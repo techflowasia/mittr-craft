@@ -13,7 +13,7 @@ import { registerMittrCatalogRoutes } from './catalog-routes.js';
 import { syncDefaultModel } from './default-model.js';
 import { ensureMittrCredential, forgetMittrCredential } from './engine-credential.js';
 import { identityFragment, identityPluginDir, materializeIdentityPlugin } from './identity.js';
-import { ensureLocalToken } from './local-token.js';
+import { mintLocalToken } from './local-token.js';
 import { createMittrSettings } from './mittr-settings.js';
 import { createModelRefusalHandler, createThrottle } from './model-refusal.js';
 import { MITTR_PROVIDER_ID, policiesFragment } from './policies.js';
@@ -28,7 +28,6 @@ import { deepLinkScheme } from './sign-in.js';
 
 const SIGNED_IN_EVENT = 'mittrcraft:signed-in';
 const SIGN_IN_FAILED_EVENT = 'mittrcraft:sign-in-failed';
-const SHIM_TOKEN_FILE = 'mittr-shim-token';
 const RESYNC_INTERVAL_MS = 60_000;
 
 const modelListOf = (items) => items.map(({ alias, label }) => ({ alias, label }));
@@ -88,6 +87,7 @@ export function setupMittr(context, {
   engineConfigDir = null,
   engineDataHome = null,
   now = Date.now,
+  mintShimKey = mintLocalToken,
 } = {}) {
   const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig, events, git } = context;
   const broker = resolveBroker(env);
@@ -192,7 +192,7 @@ export function setupMittr(context, {
   });
 
   // A new key every run: one that leaked from an earlier run opens nothing.
-  const localToken = ensureLocalToken({ tokenPath: path.join(dataDir, SHIM_TOKEN_FILE), rotate: true });
+  const localToken = mintShimKey();
   shim = registerMittrShim(app, {
     upstreamV1: broker.upstreamV1,
     localToken,
