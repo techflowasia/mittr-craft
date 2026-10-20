@@ -38,6 +38,7 @@ export type SignInGateDeps = {
   held?: () => boolean;
   onRelease?: (listener: () => void) => () => void;
   onAccountChanged?: () => void;
+  onStatus?: (status: SignInStatus) => void;
 };
 
 export type SignInGateController = {
@@ -83,6 +84,7 @@ export function createSignInGateController({
   held = () => false,
   onRelease,
   onAccountChanged = () => {},
+  onStatus = () => {},
 }: SignInGateDeps): SignInGateController {
   let current = INITIAL;
   let disposed = false;
@@ -165,6 +167,7 @@ export function createSignInGateController({
       const status = parseSignInStatus(await response.json());
       if (check !== latestCheck) return;
       const before = current.status;
+      onStatus(status);
       update(status.signedIn ? { status, checkFailed: false, accounts: [] } : { status, checkFailed: false });
       if (accountWentAway(before, status)) onAccountChanged();
       if (!status.signedIn) {

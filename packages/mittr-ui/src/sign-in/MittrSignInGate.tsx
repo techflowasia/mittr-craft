@@ -12,6 +12,7 @@ import { accountName, accountsApi, type MittrAccount } from '../accounts/account
 import { reloadWindow, resyncThenReload, useAccountSwitch, type AccountSwitchBinding } from '../accounts/accountSwitch';
 import { announceAccountChanged, beginSignInWait, gateHeld, listenAccountChanged, onGateRelease, reloadOrDefer } from './accountChange';
 import { AuditNotice } from './AuditNotice';
+import { setSignedInAccount } from './signedInAccount';
 import { createSignInGateController, desktopBridge, type SignInGateController } from './signInGateController';
 import { gateNotice, gateStateFromStatus, type GateNotice, type GateSnapshot, type GateState } from './signInGateState';
 
@@ -177,6 +178,7 @@ const createGateController = (): SignInGateController => createSignInGateControl
     announceAccountChanged();
     reloadOrDefer(reloadWindow, resyncThenReload);
   },
+  onStatus: (status) => setSignedInAccount(status.signedIn ? status.userId ?? null : null),
 });
 
 type SignInGateBinding = { controller: SignInGateController | null; snapshot: GateSnapshot; broken: boolean };

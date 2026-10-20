@@ -423,6 +423,18 @@ describe('sign-in gate controller', () => {
     controller.dispose();
   });
 
+  test('each status read is told to the status listener', async () => {
+    const statuses: unknown[] = [];
+    const server = fakeFetch({ [SIGN_IN_STATUS_ENDPOINT]: [signedInAs('u-a', 'A'), answer({ signedIn: false })], [ACCOUNTS_ENDPOINT]: [answer({ accounts: [] })] });
+    const desktop = fakeDesktop();
+    const controller = createSignInGateController({ fetch: server.fetch, onFocus: desktop.onFocus, schedule: fakeClock().schedule, onStatus: (status) => { statuses.push(status); } });
+    await settle();
+    desktop.focus();
+    await settle();
+    expect(statuses).toEqual([{ signedIn: true, userId: 'u-a', displayName: 'A' }, { signedIn: false }]);
+    controller.dispose();
+  });
+
   test('without a desktop bridge only focus re-checks', async () => {
     const { controller, desktop } = setUp({ [SIGN_IN_STATUS_ENDPOINT]: [answer({ signedIn: false })] }, { withDesktop: false });
     await settle();

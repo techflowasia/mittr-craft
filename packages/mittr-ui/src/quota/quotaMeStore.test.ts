@@ -8,6 +8,7 @@ import {
   QUOTA_ME_ENDPOINT,
   QUOTA_ME_FRESH_MS,
   type QuotaMeFetch,
+  type QuotaMeResponse,
 } from './quotaMeStore';
 
 const agent = (over: Record<string, JsonValue> = {}): JsonValue => ({
@@ -213,6 +214,49 @@ describe('quota controller', () => {
     const { controller } = harness([ok({ hello: 'world' })]);
     await controller.load();
     expect(controller.snapshot()).toEqual({ status: 'unavailable' });
+  });
+
+  test('marks are kept per account: another account never sees them, and a read that lands after a switch is dropped', async () => {
+    let account: string | null = 'u-a';
+    const accountListeners = new Set<() => void>();
+    const switchTo = (next: string | null) => {
+      account = next;
+      for (const listener of accountListeners) listener();
+    };
+    let release: () => void = () => {};
+    const answers = [ok(body({ writer: agent() })), () => new Promise<QuotaMeResponse>((resolve) => { release = () => resolve({ ok: true, json: async () => body({ writer: agent() }) }); })];
+    const paths: string[] = [];
+    const controller = createQuotaMeController({
+      fetch: (path) => {
+        paths.push(path);
+        return (answers.shift() ?? offline)();
+      },
+      account: () => account,
+      watchAccount: (listener) => {
+        accountListeners.add(listener);
+        return () => { accountListeners.delete(listener); };
+      },
+    });
+    let heard = 0;
+    const stop = controller.subscribe(() => { heard += 1; });
+
+    await controller.load();
+    expect(controller.snapshot().status).toBe('ok');
+
+    switchTo('u-b');
+    expect(controller.snapshot()).toEqual({ status: 'idle' });
+    expect(heard).toBe(2);
+    const late = controller.load();
+    switchTo('u-c');
+    release();
+    await late;
+    expect(controller.snapshot()).toEqual({ status: 'idle' });
+
+    switchTo('u-a');
+    expect(controller.snapshot().status).toBe('ok');
+    stop();
+    expect(accountListeners.size).toBe(0);
+    expect(paths).toHaveLength(2);
   });
 
   test('listeners hear each change and can stop listening', async () => {

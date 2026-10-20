@@ -3,6 +3,7 @@ import type { JsonValue } from '@openchamber/sdk';
 import { z } from 'zod';
 
 import { runtimeFetch } from '../../../ui/src/lib/runtime-fetch';
+import { signedInAccount, watchSignedInAccount } from '../sign-in/signedInAccount';
 
 export const QUOTA_ME_ENDPOINT = '/api/mittr/quota/me';
 export const QUOTA_ME_FRESH_MS = 30_000;
@@ -83,14 +84,26 @@ export type QuotaMeController = {
 const IDLE: QuotaMeState = { status: 'idle' };
 const UNAVAILABLE: QuotaMeState = { status: 'unavailable' };
 
-export function createQuotaMeController({ fetch, now = Date.now }: { fetch: QuotaMeFetch; now?: () => number }): QuotaMeController {
-  let current = IDLE;
-  let loadedAt: number | null = null;
-  let pending: Promise<void> | null = null;
+type QuotaMeDeps = {
+  fetch: QuotaMeFetch;
+  now?: () => number;
+  account?: () => string | null;
+  watchAccount?: (listener: () => void) => () => void;
+};
+
+type CachedQuotaMe = { state: QuotaMeState; loadedAt: number };
+
+export function createQuotaMeController({
+  fetch,
+  now = Date.now,
+  account = () => null,
+  watchAccount = () => () => {},
+}: QuotaMeDeps): QuotaMeController {
+  const cached = new Map<string | null, CachedQuotaMe>();
+  const pending = new Map<string | null, Promise<void>>();
   const listeners = new Set<() => void>();
 
-  const publish = (next: QuotaMeState) => {
-    current = next;
+  const notify = () => {
     for (const listener of listeners) listener();
   };
 
@@ -106,26 +119,35 @@ export function createQuotaMeController({ fetch, now = Date.now }: { fetch: Quot
   };
 
   const load = ({ force = false }: { force?: boolean } = {}): Promise<void> => {
-    if (pending) return pending;
-    if (!force && loadedAt !== null && now() - loadedAt < QUOTA_ME_FRESH_MS) {
+    const owner = account();
+    const running = pending.get(owner);
+    if (running) return running;
+    const known = cached.get(owner);
+    if (!force && known && now() - known.loadedAt < QUOTA_ME_FRESH_MS) {
       return Promise.resolve();
     }
-    pending = read()
-      .then((next) => {
-        loadedAt = now();
-        publish(next);
+    const loading = read()
+      .then((state) => {
+        if (account() !== owner) return;
+        cached.set(owner, { state, loadedAt: now() });
+        notify();
       })
       .finally(() => {
-        pending = null;
+        pending.delete(owner);
       });
-    return pending;
+    pending.set(owner, loading);
+    return loading;
   };
 
   return {
-    snapshot: () => current,
+    snapshot: () => cached.get(account())?.state ?? IDLE,
     subscribe: (listener) => {
       listeners.add(listener);
-      return () => { listeners.delete(listener); };
+      const stopWatching = watchAccount(listener);
+      return () => {
+        listeners.delete(listener);
+        stopWatching();
+      };
     },
     load,
   };
@@ -134,15 +156,20 @@ export function createQuotaMeController({ fetch, now = Date.now }: { fetch: Quot
 let shared: QuotaMeController | null = null;
 
 const sharedController = (): QuotaMeController => {
-  shared ??= createQuotaMeController({ fetch: (path) => runtimeFetch(path) });
+  shared ??= createQuotaMeController({
+    fetch: (path) => runtimeFetch(path),
+    account: signedInAccount,
+    watchAccount: watchSignedInAccount,
+  });
   return shared;
 };
 
 export function useQuotaMe(open: boolean): QuotaMeState {
   const controller = sharedController();
   const state = React.useSyncExternalStore(controller.subscribe, controller.snapshot, controller.snapshot);
+  const owner = React.useSyncExternalStore(watchSignedInAccount, signedInAccount, signedInAccount);
   React.useEffect(() => {
     if (open) void controller.load();
-  }, [controller, open]);
+  }, [controller, open, owner]);
   return state;
 }
