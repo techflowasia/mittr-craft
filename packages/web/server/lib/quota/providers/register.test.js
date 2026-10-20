@@ -1,14 +1,31 @@
-import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../opencode/auth.js', () => ({ readOpenCodeCredentials: async () => ({}) }));
-vi.mock('child_process', async (importOriginal) => {
-  const actual = await importOriginal();
-  const refuse = () => { throw new Error('no child process in this test'); };
-  return { ...actual, default: actual, execFileSync: vi.fn(refuse), execFile: vi.fn(refuse), spawn: vi.fn(refuse) };
+
+import { fetchQuotaForProvider, listConfiguredQuotaProviders, registerQuotaProvider } from './index.js';
+
+const originalPath = process.env.PATH;
+let keychainLog;
+let shimDir;
+
+beforeEach(() => {
+  shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-keychain-'));
+  keychainLog = path.join(shimDir, 'calls.log');
+  const shim = path.join(shimDir, 'security');
+  fs.writeFileSync(shim, `#!/bin/sh\necho "$@" >> "${keychainLog}"\nexit 44\n`, { mode: 0o755 });
+  process.env.PATH = `${shimDir}${path.delimiter}${originalPath}`;
 });
 
-import * as childProcess from 'child_process';
-import { fetchQuotaForProvider, listConfiguredQuotaProviders, registerQuotaProvider } from './index.js';
+afterEach(() => {
+  process.env.PATH = originalPath;
+  fs.rmSync(shimDir, { recursive: true, force: true });
+});
+
+const keychainCalls = () => (fs.existsSync(keychainLog) ? fs.readFileSync(keychainLog, 'utf8').trim().split('\n') : []);
 
 const entry = (providerId, extra = {}) => ({
   providerId,
@@ -87,12 +104,10 @@ describe('registerQuotaProvider', () => {
 });
 
 describe('an exclusive quota provider', () => {
-  const BUILT_IN_IDS = ['cline-pass', 'codex', 'cursor', 'deepinfra', 'deepseek', 'exe-dev', 'google', 'hyper', 'zai-coding-plan', 'zhipuai-coding-plan', 'kimi-for-coding', 'openrouter', 'nano-gpt', 'github-copilot', 'github-copilot-addon', 'minimax-coding-plan', 'minimax-cn-coding-plan', 'ollama-cloud', 'wafer', 'opencode-go', 'neuralwatt', 'kilo', 'zenmux', 'xai'];
-
-  it('while it is registered no built-in provider is listed, fetched, or reads a credential', async () => {
-    childProcess.execFileSync.mockClear();
-    childProcess.execFile.mockClear();
-    childProcess.spawn.mockClear();
+  const providerModules = import.meta.glob(['./*.js', './*/index.js', '!./*.test.js', '!./index.js', '!./registered.js'], { eager: true });
+  const BUILT_IN_IDS = [...new Set(Object.values(providerModules).flatMap((module) => [module.providerId, module.providerIdAddon]).filter(Boolean))];
+  it('while it is registered no built-in provider is listed, fetched, or reads the keychain', async () => {
+    expect(BUILT_IN_IDS.length).toBeGreaterThan(20);
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('no network in this test'));
     const unregister = registerQuotaProvider(entry('x-alone'), { exclusive: true });
     try {
@@ -101,9 +116,7 @@ describe('an exclusive quota provider', () => {
         await expect(fetchQuotaForProvider(providerId)).resolves.toMatchObject({ ok: false, configured: false, error: 'Unsupported provider' });
       }
       await expect(fetchQuotaForProvider('x-alone')).resolves.toMatchObject({ providerId: 'x-alone', ok: true });
-      expect(childProcess.execFileSync).not.toHaveBeenCalled();
-      expect(childProcess.execFile).not.toHaveBeenCalled();
-      expect(childProcess.spawn).not.toHaveBeenCalled();
+      expect(keychainCalls()).toEqual([]);
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       unregister();
@@ -111,22 +124,18 @@ describe('an exclusive quota provider', () => {
     }
   });
 
-  it('once it is removed the built-in providers are asked again', async () => {
-    childProcess.execFileSync.mockClear();
+  it.runIf(process.platform === 'darwin')('once it is removed the built-in providers read the keychain again', async () => {
     const unregister = registerQuotaProvider(entry('x-alone-again'), { exclusive: true });
     unregister();
     await listConfiguredQuotaProviders();
-    if (process.platform === 'darwin') {
-      expect(childProcess.execFileSync).toHaveBeenCalledWith('security', expect.arrayContaining(['find-generic-password']), expect.anything());
-    }
+    expect(keychainCalls().some((line) => line.startsWith('find-generic-password'))).toBe(true);
   });
 
-  it('a provider registered without it leaves the built-in providers in place', async () => {
-    childProcess.execFileSync.mockClear();
+  it.runIf(process.platform === 'darwin')('a provider registered without it leaves the built-in providers in place', async () => {
     const unregister = registerQuotaProvider(entry('x-beside'));
     try {
       await listConfiguredQuotaProviders();
-      if (process.platform === 'darwin') expect(childProcess.execFileSync).toHaveBeenCalled();
+      expect(keychainCalls().some((line) => line.startsWith('find-generic-password'))).toBe(true);
     } finally {
       unregister();
     }
