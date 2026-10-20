@@ -1324,6 +1324,23 @@ const checks = {
     );
   },
 
+  'web-shell-after-plugins': () => {
+    const routes = source('packages/web/server/lib/opencode/static-routes-runtime.js');
+    has(routes, /const env = typeof process\.env\.OPENCHAMBER_DIST_DIR === 'string' \? process\.env\.OPENCHAMBER_DIST_DIR\.trim\(\) : '';\s*if \(env\) \{\s*return path\.resolve\(env\);\s*\}\s*return path\.join\(__dirname, '\.\.', 'dist'\);/, 'the web build is no longer found through OPENCHAMBER_DIST_DIR or beside the server');
+    has(routes, /app\.use\(express\.static\(distPath, \{/, 'the web build is no longer served by express.static');
+    has(routes, /res\.sendFile\(path\.join\(distPath, 'index\.html'\)\);/, 'other app paths no longer get res.sendFile of index.html');
+    const manifest = source('packages/web/server/lib/opencode/pwa-manifest-routes.js');
+    has(manifest, /app\.get\('\/manifest\.webmanifest', async \(req, res\) => \{/, 'the PWA manifest route moved');
+    has(manifest, /res\.send\(JSON\.stringify\(manifest\)\);/, 'the PWA manifest is no longer sent with res.send');
+    has(manifest, /description: 'Web interface companion for OpenCode AI coding agent',/, 'the PWA manifest description changed');
+    has(manifest, /const DEFAULT_PWA_APP_NAME = 'OpenChamber';/, 'the PWA manifest default name changed');
+    has(source('packages/web/server/lib/opencode/startup-pipeline-runtime.js'), /staticRoutesRuntime\.registerStaticRoutes\(app\);/, 'the startup pipeline no longer mounts the web build');
+    const server = source('packages/web/server/index.js');
+    const plugins = server.indexOf('serverPlugins = await loadServerPlugins({');
+    const pipeline = server.indexOf('const startupPipelineResult = await startupPipelineRuntime.run({');
+    assert.ok(plugins > 0 && pipeline > plugins, 'server plugins no longer set up before the startup pipeline mounts the web build');
+  },
+
   noindex: () => {
     const server = source('packages/web/server/index.js');
     has(server, /app\.use\(\(req, res, next\) => \{\s*res\.setHeader\('X-Robots-Tag', 'noindex, nofollow'\);/, 'no middleware sets X-Robots-Tag to noindex, nofollow');

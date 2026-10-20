@@ -462,6 +462,11 @@ export const UPSTREAM_CONTRACT = [
     why: 'a plugin engine variable set to undefined outranks the login shell snapshot and process.env on every engine start, version probe, install and upgrade, and is left out of the child environment',
   },
   {
+    id: 'web-shell-after-plugins',
+    files: ['packages/web/server/lib/opencode/static-routes-runtime.js', 'packages/web/server/lib/opencode/pwa-manifest-routes.js', 'packages/web/server/lib/opencode/startup-pipeline-runtime.js', 'packages/web/server/index.js'],
+    why: 'the web build is served from OPENCHAMBER_DIST_DIR or packages/web/dist by express.static, every other app path gets res.sendFile of its index.html, the PWA manifest is res.send of its JSON, and all of it is mounted after server plugins set up',
+  },
+  {
     id: 'noindex',
     files: ['packages/web/server/index.js'],
     why: "hosted MittrCraft stays out of search engines through upstream's own header and robots.txt",

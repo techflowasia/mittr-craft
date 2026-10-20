@@ -10,6 +10,7 @@ import { ensureGitIdentityStore } from './git-identities.js';
 import { setupMittr } from './mittr/index.js';
 import { MITTR_SETTINGS_KEYS, UPSTREAM_SETTINGS_KEYS, migrateSettingsOnce } from './settings.js';
 import { registerCompanySignIn } from './ui-auth/routes.js';
+import { registerBrandedWeb } from './web-brand.js';
 
 /**
  * MittrCraft's server plugin, loaded through `OPENCHAMBER_SERVER_PLUGINS`.
@@ -103,6 +104,7 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
 
   const companySignIn = registerCompanySignIn(context, { env: companySignInEnv, logger });
   if (companySignIn.enabled) logger.log(`[mittr] company sign-in (${companySignIn.mode}) is required for browser sessions`);
+  registerBrandedWeb(context, { env, logger });
   const mittr = setupMittr(context, {
     env,
     sharedHistoryExists: () => sharedHistoryExists(bases),

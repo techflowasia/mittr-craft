@@ -236,6 +236,27 @@ test('setup with the server context mounts Mittr sign-in and keeps the engine en
   await plugin.dispose();
 });
 
+test('setup with the server context serves the hosted web UI with the MittrCraft brand', async (t) => {
+  const home = tempHome(t);
+  const dataDir = prodLayout(home);
+  const dist = path.join(home, 'web-dist');
+  writeFile(path.join(dist, 'index.html'), '<html><head><title>OpenChamber - AI Coding Assistant</title></head></html>');
+  const app = express();
+  const logger = recordingLogger();
+  const plugin = await setupMittrServer({
+    dataDir,
+    logger,
+    env: { OPENCHAMBER_DIST_DIR: dist, MITTRCRAFT_BROKER_URL: 'https://api.mittr.asia', MITTRCRAFT_BROKER_FIXED: '1', MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft' },
+    homeDir: home,
+    context: { app, express, dataDir, logger, host: null, ...fakeEngineContext({ port: null }).context },
+  });
+  t.after(() => plugin.dispose());
+  app.use(express.static(dist));
+
+  const page = await fetch(`${await listen(t, app)}/`);
+  assert.equal(await page.text(), '<html><head><title>MittrCraft - AI Coding Assistant</title></head></html>');
+});
+
 const ENTRA_ENV = {
   MITTR_AD_CLIENT_ID: 'client-app-id',
   MITTR_AD_CLIENT_SECRET: 'entra-client-secret-value',
