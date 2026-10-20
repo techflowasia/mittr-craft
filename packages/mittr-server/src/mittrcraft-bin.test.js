@@ -7,6 +7,7 @@ import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { prepareCliEnvironment, readProductEnv } from './cli-env.js';
+import { engineBases, engineConfigDir } from './engine-home.js';
 import { repoRoot } from './upstream-contract.js';
 
 const BIN = path.join(repoRoot, 'packages/mittr-server/bin/mittrcraft.mjs');
@@ -98,6 +99,37 @@ test('the mittrcraft bin keeps what is set and maps the 1.22 names onto unset up
   assert.equal(kept.OPENCHAMBER_DATA_DIR, '/srv/oc-data');
   assert.equal(kept.MITTRCRAFT_BROKER_URL, 'https://api-dev.mittr.asia');
   assert.deepEqual(JSON.parse(kept.OPENCHAMBER_SERVER_PLUGINS), ['/opt/other.mjs', PLUGIN]);
+});
+
+test('with its own data dir the bin puts the engine, its config and the process registry under it, never the installed app\'s', () => {
+  const installed = ['/home/person/.config/mittrcraft', '/home/person/.local', '/home/person/.cache/mittrcraft'];
+  for (const env of [{ OPENCHAMBER_DATA_DIR: '/srv/mc-test' }, { MITTRCRAFT_DATA_DIR: '/srv/mc-test' }, { OPENCHAMBER_DATA_DIR: '/srv/mc-test/' }]) {
+    const prepared = prepare(env).env;
+    assert.equal(prepared.MITTRCRAFT_ENGINE_HOME, '/srv/mc-test/engine');
+    assert.equal(prepared.OPENCODE_CONFIG_DIR, '/srv/mc-test/engine/opencode');
+    assert.equal(prepared.OPENCHAMBER_MANAGED_PROCESS_REGISTRY, '/srv/mc-test/managed-opencode');
+    const bases = engineBases({ homeDir: '/home/person', env: prepared });
+    const engine = [...Object.values(bases), engineConfigDir({ bases, env: prepared }), prepared.OPENCHAMBER_MANAGED_PROCESS_REGISTRY];
+    for (const where of engine) {
+      assert.ok(where.startsWith('/srv/mc-test/'), where);
+      assert.ok(!installed.some((root) => where.startsWith(root)), where);
+    }
+  }
+});
+
+test('the default data dir, named or not, keeps the installed layout, and an engine home set by hand carries the engine config', () => {
+  for (const env of [{}, { OPENCHAMBER_DATA_DIR: '/home/person/.config/mittrcraft' }, { OPENCHAMBER_DATA_DIR: '~/.config/mittrcraft' }]) {
+    const prepared = prepare(env).env;
+    assert.equal(prepared.MITTRCRAFT_ENGINE_HOME, '');
+    assert.equal(prepared.OPENCODE_CONFIG_DIR, '/home/person/.config/mittrcraft/engine/opencode');
+    assert.equal(prepared.OPENCHAMBER_MANAGED_PROCESS_REGISTRY, '/home/person/.config/mittrcraft/managed-opencode');
+  }
+  const own = prepare({ OPENCHAMBER_DATA_DIR: '/srv/mc-test', MITTRCRAFT_ENGINE_HOME: '/srv/engine', OPENCHAMBER_MANAGED_PROCESS_REGISTRY: '/run/registry' }).env;
+  assert.equal(own.MITTRCRAFT_ENGINE_HOME, '/srv/engine');
+  assert.equal(own.OPENCODE_CONFIG_DIR, '/srv/engine/opencode');
+  assert.equal(own.OPENCHAMBER_MANAGED_PROCESS_REGISTRY, '/run/registry');
+  assert.equal(prepare({ MITTRCRAFT_ENGINE_HOME: '/srv/engine' }).env.OPENCODE_CONFIG_DIR, '/srv/engine/opencode');
+  assert.equal(prepare({ OPENCHAMBER_DATA_DIR: '/srv/mc-test', OPENCODE_CONFIG_DIR: '/etc/oc' }).env.OPENCODE_CONFIG_DIR, '/etc/oc');
 });
 
 test('company sign-in settings without the Mittr plugin refuse to start', () => {

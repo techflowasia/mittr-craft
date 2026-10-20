@@ -15,6 +15,13 @@ const isUnset = (value) => typeof value !== 'string' || value.trim() === '';
 
 const expandHome = (value, homeDir) => (String(value).startsWith('~/') ? path.join(homeDir, String(value).slice(2)) : value);
 
+const resolveDir = (value, homeDir) => path.resolve(expandHome(String(value).trim(), homeDir));
+
+const isInside = (dir, root) => {
+  const relative = path.relative(root, dir);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+};
+
 const samePath = (left, right) => {
   const resolve = (file) => {
     try {
@@ -57,11 +64,23 @@ export const prepareCliEnvironment = ({ env, homeDir, pluginPath, productEnv, pa
   for (const [name, legacy] of Object.entries(LEGACY_NAMES)) {
     if (isUnset(next[name]) && !isUnset(next[legacy])) next[name] = next[legacy];
   }
-  if (isUnset(next.OPENCHAMBER_DATA_DIR)) next.OPENCHAMBER_DATA_DIR = path.join(homeDir, '.config', 'mittrcraft');
+  const installedDataDir = path.join(homeDir, '.config', 'mittrcraft');
+  const ownDataDir = isUnset(next.OPENCHAMBER_DATA_DIR) || samePath(resolveDir(next.OPENCHAMBER_DATA_DIR, homeDir), installedDataDir)
+    ? null
+    : resolveDir(next.OPENCHAMBER_DATA_DIR, homeDir);
+  if (isUnset(next.OPENCHAMBER_DATA_DIR)) next.OPENCHAMBER_DATA_DIR = installedDataDir;
+  if (ownDataDir && isUnset(next.MITTRCRAFT_ENGINE_HOME)) next.MITTRCRAFT_ENGINE_HOME = path.join(ownDataDir, 'engine');
+  if (!isUnset(next.MITTRCRAFT_ENGINE_HOME) && isUnset(next.OPENCODE_CONFIG_DIR)) {
+    next.OPENCODE_CONFIG_DIR = path.join(resolveDir(next.MITTRCRAFT_ENGINE_HOME, homeDir), 'opencode');
+  }
   if (isUnset(next.OPENCHAMBER_SERVER_PLUGINS)) next.OPENCHAMBER_SERVER_PLUGINS = JSON.stringify([pluginPath]);
   for (const [name, value] of Object.entries(productEnv ?? {})) {
     if (DARWIN_ONLY.has(name) && platform !== 'darwin') continue;
-    if (isUnset(next[name])) next[name] = expandHome(value, homeDir);
+    if (!isUnset(next[name])) continue;
+    const expanded = expandHome(value, homeDir);
+    next[name] = ownDataDir && !isUnset(expanded) && isInside(path.resolve(expanded), installedDataDir)
+      ? path.join(ownDataDir, path.relative(installedDataDir, path.resolve(expanded)))
+      : expanded;
   }
   if (isUnset(next.BUN_BINARY)) {
     next.BUN_BINARY = nodePath;

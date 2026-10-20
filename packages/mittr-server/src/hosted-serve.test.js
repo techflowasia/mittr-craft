@@ -34,7 +34,8 @@ const args = process.argv.slice(2);
 const watched = JSON.parse(process.env.HOSTED_TEST_WATCHED);
 const companySignIn = Object.keys(process.env).filter((name) => name.startsWith('MITTR_AD_')).sort();
 const seen = watched.filter((name) => name in process.env);
-fs.appendFileSync(process.env.HOSTED_TEST_ENGINE_LOG, JSON.stringify({ args, companySignIn, seen, pid: process.pid }) + '\\n');
+const homes = Object.fromEntries(['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'OPENCODE_CONFIG_DIR'].map((name) => [name, process.env[name] ?? null]));
+fs.appendFileSync(process.env.HOSTED_TEST_ENGINE_LOG, JSON.stringify({ args, companySignIn, seen, homes, pid: process.pid }) + '\\n');
 if (args.includes('--version')) {
   console.log('2.0.22');
   process.exit(0);
@@ -185,6 +186,22 @@ test('a hosted server from the packed layout keeps company sign-in and server se
   await hosted.stop();
   assertNothingLeftTheMachine(hosted);
   for (const secret of ['service-account-secret', ENTRA_ENV.MITTR_AD_CLIENT_SECRET, ...Object.values(SERVER_ONLY)]) assert.ok(!hosted.output.includes(secret));
+});
+
+test('a hosted server with its own data dir keeps the engine, its config and the registry there, and writes nothing of the installed app\'s', { timeout: 120_000 }, async (t) => {
+  const dataDir = path.join(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-own-data-'))), 'srv');
+  t.after(() => fs.rmSync(path.dirname(dataDir), { recursive: true, force: true }));
+  const hosted = await startHosted(t, { OPENCHAMBER_DATA_DIR: dataDir });
+  await hosted.ready('/health');
+  const started = await hosted.engineStarted();
+  await hosted.stop();
+
+  for (const [name, where] of Object.entries(started.homes)) assert.ok(where?.startsWith(`${dataDir}${path.sep}`), `${name}=${where}`);
+  for (const dir of [...UPSTREAM_HOME_DIRS, '.config/mittrcraft', '.local/share/mittrcraft', '.local/state/mittrcraft', '.cache/mittrcraft']) {
+    assert.equal(fs.existsSync(path.join(hosted.home, dir)), false, `${dir} was written:\n${hosted.output}`);
+  }
+  assert.ok(fs.existsSync(path.join(dataDir, 'managed-opencode')), `the engine registry is not under the data dir:\n${hosted.output}`);
+  assert.deepEqual(readLines(hosted.egressLog), []);
 });
 
 test('a hosted server answers the update check and the model catalog without calling anyone', { timeout: 120_000 }, async (t) => {

@@ -77,6 +77,13 @@ Upstream's "sign out everywhere" (`POST /api/auth/reset`) rotates the secret tha
   - keep the engine registry and the engine config under `~/.config/mittrcraft`;
   - fix the broker to the prod Mittr.
 
+  With its own data dir (`OPENCHAMBER_DATA_DIR` or `MITTRCRAFT_DATA_DIR` set to anything but `~/.config/mittrcraft`), the bin derives the engine from it instead, for each variable left unset:
+  - `MITTRCRAFT_ENGINE_HOME` is `<data dir>/engine`, so all four engine bases sit there and none under `~/.config`, `~/.local` or `~/.cache`;
+  - `OPENCODE_CONFIG_DIR` is `<data dir>/engine/opencode`;
+  - `OPENCHAMBER_MANAGED_PROCESS_REGISTRY` is `<data dir>/managed-opencode`.
+
+  `MITTRCRAFT_ENGINE_HOME` set by hand also moves `OPENCODE_CONFIG_DIR` to `<engine home>/opencode`, unless that is set too.
+
   `OPENCHAMBER_POLICY_FILE` names a macOS path, so it is applied on macOS only. Elsewhere upstream's fixed policy paths stay in force, such as `/etc/openchamber/policy.json` on Linux.
 - `BUN_BINARY`: the Node that runs `mittrcraft`, recorded in `MITTRCRAFT_BIN_BUN_BINARY`.
   - Upstream's daemon then runs the server on Node instead of Bun, so a variable the plugin takes out of the environment reaches no child.
@@ -87,7 +94,7 @@ Upstream's "sign out everywhere" (`POST /api/auth/reset`) rotates the secret tha
 
 It refuses to start when a `MITTR_AD_*` setting is present but `OPENCHAMBER_SERVER_PLUGINS` does not load this plugin.
 
-Run from a source checkout (a `.git` above the package), it also refuses to start unless `OPENCHAMBER_DATA_DIR` or `MITTRCRAFT_DATA_DIR` is set, so a developer's machine never runs a server on the installed app's data. A packed install has no `.git` and keeps the `~/.config/mittrcraft` default.
+Run from a source checkout (a `.git` above the package), it also refuses to start unless `OPENCHAMBER_DATA_DIR` or `MITTRCRAFT_DATA_DIR` is set. With that data dir the engine, its config and the registry follow it, as above, so a developer's machine never runs a server on the installed app's data or engine folders. A packed install has no `.git` and keeps the `~/.config/mittrcraft` default.
 
 The bin is shipped only as this package: `npm pack` carries `bin/` whole, `product-env.json` included, and a test checks it. The desktop app packs only the plugin bundle, not this bin, and upstream's Docker image copies only `packages/web`.
 
