@@ -386,7 +386,7 @@ test('the log of a refusal holds the reason alone, and a failing listener costs 
 
 test('an entitlement refusal for a model the catalog no longer offers reaches the engine as a withdrawn agent', async (t) => {
   const refusal = { error: { message: 'desktop_entitlement_required', type: 'invalid_request_error', code: 'forbidden' } };
-  const upstream = await platform(t, answerJson(403, refusal));
+  const upstream = await platform(t, answerJson(403, refusal, { 'x-request-id': 'req-7' }));
   const refusals = [];
   const { request } = await shim(t, {
     upstreamV1: upstream.v1,
@@ -398,6 +398,7 @@ test('an entitlement refusal for a model the catalog no longer offers reaches th
 
   const response = await request('/chat/completions', { body: { ...REQUEST, model: 'mittr-pro' } });
   assert.equal(response.status, 403);
+  assert.equal(response.headers.get('x-request-id'), 'req-7');
   assert.deepEqual(await response.json(), { error: { message: 'agent_not_granted', type: 'invalid_request_error', code: 'agent_not_granted' } });
   assert.deepEqual(refusals, [{ kind: 'model', reason: 'entitlement', model: 'mittr-pro' }]);
   assert.equal(upstream.requests.length, 1);

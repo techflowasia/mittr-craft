@@ -286,7 +286,11 @@ export function registerMittrShim(app, {
       if (upstream.status === 403) {
         const verdict = await reportRefusal(answer, requestedModel);
         if (engineGone) return undefined;
-        if (verdict?.withdrawn === true) return res.status(403).json(WITHDRAWN);
+        if (verdict?.withdrawn === true) {
+          const requestId = upstream.headers.get('x-request-id');
+          if (requestId !== null) res.setHeader('x-request-id', requestId);
+          return res.status(403).json(WITHDRAWN);
+        }
       }
       if (upstream.ok) {
         tellAnswer({ chunk: bytes, done: false });
