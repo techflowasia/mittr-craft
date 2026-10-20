@@ -50,11 +50,9 @@ const uniqueName = (taken, line) => {
 
 const ownLines = (lines, models) => {
   const names = new Map();
-  if (models?.configured === true && Array.isArray(models.items)) {
-    for (const item of models.items) {
-      if (typeof item?.alias === 'string' && !names.has(item.alias)) {
-        names.set(item.alias, typeof item.label === 'string' && item.label ? item.label : item.alias);
-      }
+  if (models?.configured === true) {
+    for (const { alias, label } of models.items) {
+      if (!names.has(alias)) names.set(alias, label || alias);
     }
   }
   return lines.flatMap((line) => {
