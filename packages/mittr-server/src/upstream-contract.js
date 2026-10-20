@@ -432,7 +432,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'server-cli-entry',
     files: ['packages/web/bin/cli.js', 'packages/web/bin/cli-entry.js', 'packages/web/package.json', 'packages/web/bin/lib/cli-args.js', 'packages/web/server/lib/security/bind-host.js', 'packages/web/server/lib/server-plugins.js', 'packages/web/server/index.js'],
-    why: 'the mittrcraft bin runs packages/web/bin/cli.js in its own process with argv[1] set to it, which cli.js takes as being run directly, after filling in OPENCHAMBER_SERVER_PLUGINS, OPENCHAMBER_DATA_DIR, OPENCHAMBER_UI_PASSWORD and OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN, the names upstream reads',
+    why: 'the mittrcraft bin runs packages/web/bin/cli.js in its own process with argv[1] set to it, which cli.js takes as being run directly, after filling in what the launch left unset: OPENCHAMBER_SERVER_PLUGINS and OPENCHAMBER_DATA_DIR, OPENCHAMBER_UI_PASSWORD and OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN from their 1.22 names, every variable of bin/product-env.json (with the engine home, the engine config and the process registry under a data dir the caller set), and BUN_BINARY, all names upstream reads',
   },
   {
     id: 'session-auth-methods-slot',
