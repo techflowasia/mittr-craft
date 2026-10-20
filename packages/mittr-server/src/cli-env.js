@@ -10,7 +10,7 @@ const COMPANY_SIGN_IN_VARIABLE = /^MITTR_AD_/;
 
 const isUnset = (value) => typeof value !== 'string' || value.trim() === '';
 
-const expandHome = (value, homeDir) => (typeof value === 'string' && value.startsWith('~/') ? path.join(homeDir, value.slice(2)) : value);
+const expandHome = (value, homeDir) => (String(value).startsWith('~/') ? path.join(homeDir, String(value).slice(2)) : value);
 
 const samePath = (left, right) => {
   const resolve = (file) => {

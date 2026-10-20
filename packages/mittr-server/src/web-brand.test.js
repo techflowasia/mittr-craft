@@ -66,7 +66,7 @@ const hostedServer = async (t, dist, { pwaAppName = '' } = {}) => {
     buildOpenCodeUrl: () => 'http://127.0.0.1:9',
     getOpenCodeAuthHeaders: () => ({}),
     readSettingsFromDiskMigrated: async () => ({ pwaAppName }),
-    normalizePwaAppName: (value, fallback) => (typeof value === 'string' && value.trim() ? value.trim() : fallback),
+    normalizePwaAppName: (value, fallback) => String(value ?? '').trim() || fallback,
     normalizePwaOrientation: (_value, fallback) => fallback,
     isRequestAuthorized: async () => false,
   }).registerStaticRoutes(app);

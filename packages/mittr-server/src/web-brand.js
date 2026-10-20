@@ -51,7 +51,7 @@ export const createBrandedWeb = ({ distDir, brand }) => {
     } catch {
       return body;
     }
-    if (parsed === null || typeof parsed !== 'object') return body;
+    if (parsed?.constructor !== Object) return body;
     const { name, description } = brand.manifest;
     for (const key of ['name', 'short_name']) {
       if (parsed[key] === name.from) parsed[key] = name.to;
