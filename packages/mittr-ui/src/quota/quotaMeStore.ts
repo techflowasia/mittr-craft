@@ -18,7 +18,17 @@ const agentStatusSchema = z.object({
   state: z.enum(['ok', 'near', 'substitute', 'out']),
   percentLeft: amount.optional().catch(undefined),
   substituteLabel: z.string().optional().catch(undefined),
+  maySubstitute: z.literal(true).optional(),
 });
+
+const chatLineSchema = z.object({
+  modelKey: z.string(),
+  kind: z.literal('chat'),
+  used: amount,
+  limit: z.number().positive(),
+});
+
+const NEAR_USED_SHARE = 0.8;
 
 const quotaMeSchema = z.object({
   weekStart: time,
@@ -39,6 +49,14 @@ export type QuotaMeState =
 export type QuotaMeResponse = { ok: boolean; json: () => Promise<JsonValue> };
 export type QuotaMeFetch = (path: string) => Promise<QuotaMeResponse>;
 
+const statusOfLine = ({ modelKey, used, limit }: z.infer<typeof chatLineSchema>, resetsAt: string): AgentStatus => {
+  const left = Math.max(0, limit - used);
+  const base = { modelKey, left, limit, resetsAt };
+  if (used < limit * NEAR_USED_SHARE) return { ...base, state: 'ok' };
+  if (used < limit) return { ...base, state: 'near', percentLeft: Math.max(1, Math.floor((left / limit) * 100)) };
+  return { ...base, state: 'out', maySubstitute: true };
+};
+
 export function parseQuotaMe(payload: JsonValue): QuotaMe | null {
   const parsed = quotaMeSchema.safeParse(payload);
   if (!parsed.success) return null;
@@ -46,6 +64,12 @@ export function parseQuotaMe(payload: JsonValue): QuotaMe | null {
   for (const [alias, raw] of Object.entries(parsed.data.agentStatus ?? {})) {
     const status = agentStatusSchema.safeParse(raw);
     if (status.success) agentStatus.set(alias, status.data);
+  }
+  for (const raw of parsed.data.lines) {
+    const line = chatLineSchema.safeParse(raw);
+    if (line.success && !agentStatus.has(line.data.modelKey)) {
+      agentStatus.set(line.data.modelKey, statusOfLine(line.data, parsed.data.resetsAt));
+    }
   }
   return { agentStatus };
 }

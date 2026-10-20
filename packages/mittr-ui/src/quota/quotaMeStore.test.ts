@@ -86,6 +86,65 @@ describe('parsing this week quota', () => {
   });
 });
 
+const devPlatformWeek: JsonValue = {
+  weekStart: '2026-10-20T00:00:00+07:00',
+  resetsAt: '2026-10-26T00:00:00+07:00',
+  lines: [
+    { modelKey: 'mittr-fast', kind: 'chat', label: 'MITTR Fast', used: 971205, limit: 981205, source: 'user', agents: [{ key: 'mittr-1-0', label: 'MITTR 1.0' }, { key: 'mittr-1-0-max', label: 'MITTR 1.0 Max' }] },
+    { modelKey: 'mittr-pro', kind: 'chat', label: 'MITTR Pro', used: 26450, limit: 26450, source: 'user' },
+    { modelKey: 'mittr-writer', kind: 'chat', label: 'MITTR Writer', used: 40, limit: 100, source: 'default' },
+    { modelKey: 'm:9b17db7ab3d1', kind: 'chat', label: '', labelKey: 'quota.role.decision', used: 50617, limit: 50000000, source: 'default' },
+    { modelKey: 'qwen3-asr', kind: 'stt', label: 'Voice input', used: 0, limit: 36000, source: 'default' },
+  ],
+  agentStatus: {
+    'mittr-1-0': { modelKey: 'mittr-fast', left: 10000, limit: 981205, resetsAt: '2026-10-26T00:00:00+07:00', state: 'near', percentLeft: 1 },
+    'mittr-1-0-max': { modelKey: 'mittr-fast', left: 10000, limit: 981205, resetsAt: '2026-10-26T00:00:00+07:00', state: 'near', percentLeft: 1 },
+    'mittr-lawyer': { modelKey: 'm:9b17db7ab3d1', left: 49949383, limit: 50000000, resetsAt: '2026-10-26T00:00:00+07:00', state: 'ok' },
+  },
+};
+
+describe('a platform that keys agent status by its own agents', () => {
+  const quota = parseQuotaMe(devPlatformWeek);
+
+  test('a name that is near its limit is found by its line', () => {
+    expect(quota?.agentStatus.get('mittr-fast')).toEqual({
+      modelKey: 'mittr-fast',
+      left: 10000,
+      limit: 981205,
+      resetsAt: '2026-10-26T00:00:00+07:00',
+      state: 'near',
+      percentLeft: 1,
+    });
+  });
+
+  test('a used-up name is marked used up, and a backup may still answer it', () => {
+    expect(quota?.agentStatus.get('mittr-pro')).toEqual({
+      modelKey: 'mittr-pro',
+      left: 0,
+      limit: 26450,
+      resetsAt: '2026-10-26T00:00:00+07:00',
+      state: 'out',
+      maySubstitute: true,
+    });
+  });
+
+  test('a name well inside its limit has no mark to show', () => {
+    expect(quota?.agentStatus.get('mittr-writer')?.state).toBe('ok');
+  });
+
+  test('an entry keyed by the name itself wins over its line', () => {
+    const keyed = parseQuotaMe({ ...week, lines: [{ modelKey: 'writer', kind: 'chat', label: 'Writer', used: 1, limit: 100, source: 'default' }], agentStatus: { writer: agent() } });
+    expect(keyed?.agentStatus.get('writer')?.state).toBe('out');
+    expect(keyed?.agentStatus.get('writer')?.maySubstitute).toBeUndefined();
+  });
+
+  test('speech lines and damaged lines give no agent mark', () => {
+    expect(quota?.agentStatus.has('qwen3-asr')).toBe(false);
+    const damaged = parseQuotaMe({ ...week, lines: [{ modelKey: 'a', kind: 'chat', used: 'x', limit: 5 }, { modelKey: 'b', kind: 'chat', used: 1, limit: 0 }, 'c'] });
+    expect(damaged?.agentStatus.size).toBe(0);
+  });
+});
+
 describe('quota controller', () => {
   test('it reads the quota route and keeps the agent statuses', async () => {
     const { controller, paths } = harness([ok(body({ writer: agent() }))]);

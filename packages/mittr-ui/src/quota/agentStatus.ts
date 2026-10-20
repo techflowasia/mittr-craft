@@ -40,7 +40,7 @@ export function agentEntryStatus(
   switch (status.state) {
     case 'out':
       return {
-        blocked: true,
+        blocked: status.maySubstitute !== true,
         tone: 'neutral',
         pill: t('mittr.quota.agent.out'),
         title: t('mittr.quota.agent.outLabel', { agent: agentName, when: formatResetTime(status.resetsAt, locale, timeZone) }),

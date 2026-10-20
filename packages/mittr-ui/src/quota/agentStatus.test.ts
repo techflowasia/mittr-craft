@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { agentEntryStatus, mittrEntryStatus } from './agentStatus';
-import type { AgentStatus } from './quotaMeStore';
+import { parseQuotaMe, type AgentStatus } from './quotaMeStore';
 
 const status = (over: Partial<AgentStatus>): AgentStatus => ({
   modelKey: 'writer-model',
@@ -43,6 +43,15 @@ describe('agent status marks', () => {
     const elsewhere = agentEntryStatus(status({ state: 'out', left: 0 }), 'Writer', undefined, 'en-GB', 'America/Los_Angeles');
     expect(elsewhere?.title).toContain('19 Oct');
     expect(elsewhere?.title).not.toContain('20 Oct');
+  });
+
+  test('a used-up name a backup may still answer is marked but stays pickable', () => {
+    const out = agentEntryStatus(status({ state: 'out', left: 0, maySubstitute: true }), 'MITTR Pro');
+    expect(out?.blocked).toBe(false);
+    expect(out?.tone).toBe('neutral');
+    expect(out?.pill).toBe('Used up');
+    expect(out?.title).toContain('MITTR Pro is used up this week');
+    expect(out?.title).toContain('20 Oct');
   });
 
   test('near agent shows what is left', () => {
@@ -100,5 +109,29 @@ describe('looking an agent up for a picker entry', () => {
 
   test('before the quota is known nothing is marked', () => {
     expect(mittrEntryStatus(null)({ providerID: 'mittr', modelID: 'writer', name: 'Writer' })).toBeNull();
+  });
+});
+
+describe('picker marks from the dev platform as it answers today', () => {
+  const quota = parseQuotaMe({
+    weekStart: '2026-10-20T00:00:00+07:00',
+    resetsAt: '2026-10-26T00:00:00+07:00',
+    lines: [
+      { modelKey: 'mittr-fast', kind: 'chat', label: 'MITTR Fast', used: 971205, limit: 981205, source: 'user', agents: [{ key: 'mittr-1-0', label: 'MITTR 1.0' }] },
+      { modelKey: 'mittr-pro', kind: 'chat', label: 'MITTR Pro', used: 26450, limit: 26450, source: 'user' },
+    ],
+    agentStatus: {
+      'mittr-1-0': { modelKey: 'mittr-fast', left: 10000, limit: 981205, resetsAt: '2026-10-26T00:00:00+07:00', state: 'near', percentLeft: 1 },
+    },
+  });
+  const entryStatus = mittrEntryStatus(quota?.agentStatus ?? null);
+
+  test('the catalog names get their marks although no status is keyed by them', () => {
+    expect(entryStatus({ providerID: 'mittr', modelID: 'mittr-fast', name: 'MITTR Fast' })?.pill).toBe('1% left');
+    const pro = entryStatus({ providerID: 'mittr', modelID: 'mittr-pro', name: 'MITTR Pro' });
+    expect(pro?.pill).toBe('Used up');
+    expect(pro?.blocked).toBe(false);
+    expect(pro?.title).toContain('MITTR Pro is used up this week. It comes back Mon 26 Oct');
+    expect(pro?.title).toContain('00:00');
   });
 });
