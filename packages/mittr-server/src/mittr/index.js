@@ -15,7 +15,7 @@ import { ensureMittrCredential, forgetMittrCredential } from './engine-credentia
 import { identityFragment, identityPluginDir, materializeIdentityPlugin } from './identity.js';
 import { ensureLocalToken } from './local-token.js';
 import { createMittrSettings } from './mittr-settings.js';
-import { createThrottle } from './model-refusal.js';
+import { createModelRefusalHandler, createThrottle } from './model-refusal.js';
 import { MITTR_PROVIDER_ID, policiesFragment } from './policies.js';
 import { loopbackProxyExemption, mittrProviderFragment, shimBaseUrl } from './provider-config.js';
 import { registerProviderLockRoutes } from './provider-lock-routes.js';
@@ -139,10 +139,11 @@ export function setupMittr(context, {
   let shim = null;
   let audit = null;
   const syncCatalog = () => catalog.sync();
-  const mayResync = createThrottle(RESYNC_INTERVAL_MS, now);
-  const onRefusal = ({ kind, reason }) => {
-    if (kind === 'model' && reason === 'stale-catalog' && mayResync()) void syncCatalog();
-  };
+  const onRefusal = createModelRefusalHandler({
+    mayResync: createThrottle(RESYNC_INTERVAL_MS, now),
+    sync: syncCatalog,
+    catalogModels: () => activeCatalogCache().read()?.models ?? null,
+  });
 
   const switcher = createAccountSwitcher({
     store,

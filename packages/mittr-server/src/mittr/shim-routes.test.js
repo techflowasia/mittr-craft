@@ -330,7 +330,7 @@ test('the shim reports a model refusal', async (t) => {
   assert.equal(response.status, 403);
   assert.equal(response.headers.get('x-request-id'), 'req-9');
   assert.deepEqual(await response.json(), refusal);
-  assert.deepEqual(refusals, [{ kind: 'model', reason: 'stale-catalog' }]);
+  assert.deepEqual(refusals, [{ kind: 'model', reason: 'stale-catalog', model: 'gpt-a' }]);
   assert.deepEqual(logger.lines.warn, ['[mittr] model refused: stale-catalog']);
 });
 
@@ -343,7 +343,7 @@ test('a refusal is reported for a stream request too, and the body goes through 
   const response = await request('/chat/completions', { body: { ...REQUEST, stream: true } });
   assert.equal(response.status, 403);
   assert.deepEqual(await response.json(), refusal);
-  assert.deepEqual(refusals, [{ kind: 'model', reason: 'entitlement' }]);
+  assert.deepEqual(refusals, [{ kind: 'model', reason: 'entitlement', model: 'gpt-a' }]);
 });
 
 test('a refusal nobody can name is still forwarded and reported as unknown', async (t) => {
@@ -358,7 +358,7 @@ test('a refusal nobody can name is still forwarded and reported as unknown', asy
   const response = await request('/chat/completions');
   assert.equal(response.status, 403);
   assert.equal(await readAll(response), '<html>blocked</html>');
-  assert.deepEqual(refusals, [{ kind: 'model', reason: 'unknown' }]);
+  assert.deepEqual(refusals, [{ kind: 'model', reason: 'unknown', model: 'gpt-a' }]);
   assert.deepEqual(logger.lines.warn, ['[mittr] model refused: unknown']);
 });
 
@@ -382,6 +382,41 @@ test('the log of a refusal holds the reason alone, and a failing listener costs 
     assert.equal(line.includes(LOCAL_TOKEN), false);
     assert.equal(line.includes('plover'), false);
   }
+});
+
+test('an entitlement refusal for a model the catalog no longer offers reaches the engine as a withdrawn agent', async (t) => {
+  const refusal = { error: { message: 'desktop_entitlement_required', type: 'invalid_request_error', code: 'forbidden' } };
+  const upstream = await platform(t, answerJson(403, refusal));
+  const refusals = [];
+  const { request } = await shim(t, {
+    upstreamV1: upstream.v1,
+    onRefusal: async (event) => {
+      refusals.push(event);
+      return { withdrawn: true };
+    },
+  });
+
+  const response = await request('/chat/completions', { body: { ...REQUEST, model: 'mittr-pro' } });
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: { message: 'agent_not_granted', type: 'invalid_request_error', code: 'agent_not_granted' } });
+  assert.deepEqual(refusals, [{ kind: 'model', reason: 'entitlement', model: 'mittr-pro' }]);
+  assert.equal(upstream.requests.length, 1);
+});
+
+test('the engine waits for the refusal check and gets the platform answer when nothing is decided', async (t) => {
+  const refusal = { error: { message: 'desktop_entitlement_required', type: 'invalid_request_error', code: 'forbidden' } };
+  const upstream = await platform(t, answerJson(403, refusal, { 'x-request-id': 'req-4' }));
+  const checked = deferred();
+  const { request } = await shim(t, { upstreamV1: upstream.v1, onRefusal: () => checked.promise });
+
+  const pending = request('/chat/completions', { body: { ...REQUEST, model: 'mittr-pro' } });
+  const early = await Promise.race([pending.then(() => 'answered'), pause(100).then(() => 'waiting')]);
+  assert.equal(early, 'waiting');
+  checked.resolve(undefined);
+  const response = await pending;
+  assert.equal(response.status, 403);
+  assert.equal(response.headers.get('x-request-id'), 'req-4');
+  assert.deepEqual(await response.json(), refusal);
 });
 
 test('only a 403 is a model refusal', async (t) => {

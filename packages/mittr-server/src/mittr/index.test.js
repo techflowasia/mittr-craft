@@ -775,9 +775,10 @@ const catalogCalls = (fetchImpl) => fetchImpl.calls.filter(isCatalogCall);
 
 // Mittr as the platform answers it: each sign-in exchange hands out the next
 // session, and the catalog follows the token it is asked with.
-const platform = ({ sessions = [session], catalogs = { 'at-1': CATALOG_A, 'at-b': CATALOG_B }, catalog = null } = {}) => {
+const platform = ({ sessions = [session], catalogs = { 'at-1': CATALOG_A, 'at-b': CATALOG_B }, catalog = null, answer } = {}) => {
   let exchanges = 0;
   return fakeEngineFetch({
+    answer,
     other: (request) => {
       if (isCatalogCall(request)) {
         if (catalog) return catalog(request);
@@ -1300,14 +1301,54 @@ test('stale catalog triggers one sync per minute', async (t) => {
   await until(() => catalogCalls(fetchImpl).length === 3);
 });
 
-test('an entitlement refusal asks for no sync, and neither does one nobody can name', async (t) => {
-  for (const body of [{ error: { message: 'desktop_entitlement_required', code: 'forbidden' } }, { error: 'something_else' }]) {
-    const fetchImpl = refusingPlatform(body);
-    const { call, dataDir } = await setUp(t, { fetchImpl });
-    assert.equal((await signIn(call)).status, 200);
-    await until(() => catalogCalls(fetchImpl).length === 1);
-    assert.equal((await askShim(call, shimKey(dataDir))).status, 403);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    assert.equal(catalogCalls(fetchImpl).length, 1);
-  }
+test('a refusal nobody can name asks for no sync', async (t) => {
+  const fetchImpl = refusingPlatform({ error: 'something_else' });
+  const { call, dataDir } = await setUp(t, { fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  assert.equal((await askShim(call, shimKey(dataDir))).status, 403);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(catalogCalls(fetchImpl).length, 1);
+});
+
+test('an entitlement refusal shares the one sync per minute with a stale catalog', async (t) => {
+  let clock = NOW;
+  const fetchImpl = refusingPlatform({ error: { message: 'desktop_entitlement_required', code: 'forbidden' } });
+  const { call, dataDir } = await setUp(t, { fetchImpl, now: () => clock });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  const ask = () => askShim(call, shimKey(dataDir), { model: 'a1', stream: false, messages: [] });
+  assert.equal((await ask()).status, 403);
+  assert.equal(catalogCalls(fetchImpl).length, 2);
+  clock += 59_000;
+  assert.equal((await ask()).status, 403);
+  assert.equal(catalogCalls(fetchImpl).length, 2);
+  clock += 1_000;
+  assert.equal((await ask()).status, 403);
+  assert.equal(catalogCalls(fetchImpl).length, 3);
+});
+
+test('a model withdrawn since the last sync is refused as withdrawn after one sync, and a model still offered as an entitlement refusal', async (t) => {
+  const entitlement = { error: { message: 'desktop_entitlement_required', type: 'invalid_request_error', code: 'forbidden' } };
+  let offered = CATALOG_A;
+  const fetchImpl = platform({
+    catalog: () => json(offered),
+    answer: (request) => (request.url.endsWith('/chat/completions') ? json(entitlement, 403) : null),
+  });
+  const { mittr, call, dataDir } = await setUp(t, { fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  await until(async () => (await mittrModelsOf(mittr)).length === 2);
+  const synced = catalogCalls(fetchImpl).length;
+
+  offered = { ...CATALOG_A, bundleVersion: 8, models: [{ alias: 'a1', label: 'Writer' }] };
+  const withdrawn = await askShim(call, shimKey(dataDir), { model: 'a2', stream: false, messages: [] });
+  assert.equal(withdrawn.status, 403);
+  assert.deepEqual(await withdrawn.json(), { error: { message: 'agent_not_granted', type: 'invalid_request_error', code: 'agent_not_granted' } });
+  assert.equal(catalogCalls(fetchImpl).length, synced + 1);
+  assert.deepEqual(await mittrModelsOf(mittr), ['a1']);
+
+  const kept = await askShim(call, shimKey(dataDir), { model: 'a1', stream: false, messages: [] });
+  assert.equal(kept.status, 403);
+  assert.deepEqual(await kept.json(), entitlement);
+  assert.equal(catalogCalls(fetchImpl).length, synced + 1);
 });

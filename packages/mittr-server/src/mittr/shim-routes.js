@@ -18,6 +18,8 @@ const SWITCHING = 'The Mittr account is changing. Send the message again in a mo
 // help: the engine would otherwise retry it several times over.
 const NO_RETRY = { 'x-should-retry': 'false' };
 
+const WITHDRAWN = { error: { message: 'agent_not_granted', type: 'invalid_request_error', code: 'agent_not_granted' } };
+
 // The longest Mittr may stay silent: before it answers, or between two parts
 // of a streamed answer. A model can think for a long time, so it is generous,
 // but a platform that never answers must not hold a turn open for good.
@@ -184,13 +186,14 @@ export function registerMittrShim(app, {
     };
   };
 
-  const reportRefusal = (answer) => {
+  const reportRefusal = async (answer, model) => {
     const { reason } = describeModelRefusal(answer);
     logger.warn(`[mittr] model refused: ${reason}`);
     try {
-      onRefusal({ kind: 'model', reason });
+      return await onRefusal({ kind: 'model', reason, model });
     } catch (error) {
       logger.error('[mittr] shim refusal listener failed:', error?.message ?? error);
+      return undefined;
     }
   };
 
@@ -280,7 +283,11 @@ export function registerMittrShim(app, {
         const refusal = toEngineRefusal(quota);
         return res.status(refusal.status).set(refusal.headers).json(refusal.body);
       }
-      if (upstream.status === 403) reportRefusal(answer);
+      if (upstream.status === 403) {
+        const verdict = await reportRefusal(answer, requestedModel);
+        if (engineGone) return undefined;
+        if (verdict?.withdrawn === true) return res.status(403).json(WITHDRAWN);
+      }
       if (upstream.ok) {
         tellAnswer({ chunk: bytes, done: false });
         tellAnswer({ chunk: NO_BYTES, done: true });

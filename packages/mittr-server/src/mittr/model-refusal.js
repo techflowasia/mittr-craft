@@ -27,3 +27,22 @@ export function createThrottle(intervalMs, now = Date.now) {
     return true;
   };
 }
+
+export function createModelRefusalHandler({ mayResync, sync, catalogModels }) {
+  const withdrawn = (model) => {
+    const models = catalogModels();
+    if (models?.configured !== true || !Array.isArray(models.items)) return undefined;
+    return models.items.some((item) => item?.alias === model) ? undefined : { withdrawn: true };
+  };
+
+  return async ({ kind, reason, model }) => {
+    if (kind !== 'model') return undefined;
+    if (reason === 'stale-catalog') {
+      if (mayResync()) void sync();
+      return undefined;
+    }
+    if (reason !== 'entitlement' || typeof model !== 'string' || !model) return undefined;
+    if (mayResync()) await sync();
+    return withdrawn(model);
+  };
+}
