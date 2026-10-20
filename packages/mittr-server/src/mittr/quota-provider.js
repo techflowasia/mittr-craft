@@ -3,23 +3,9 @@ import { MITTR_PROVIDER_ID } from './policies.js';
 const WEEKLY = 'weekly';
 const NO_MODEL = 'No model available this week';
 const READ_FAILED = 'Could not read this week’s quota';
-const OTHER_MODEL = 'Other system model';
 
 const KIND_NAMES = { chat: 'Chat', image: 'Images', stt: 'Voice input', tts: 'Spoken replies' };
-
-const ROLE_NAMES = {
-  'quota.role.decision': 'System decision model (Jev)',
-  'quota.role.decisionRoute': 'Decision steps (measured route)',
-  'quota.role.tools': 'Tool steps (measured route)',
-  'quota.role.prose': 'Writing steps (measured route)',
-  'quota.role.rerank': 'Search result ranking',
-  'quota.role.image': 'Image drawing',
-  'quota.role.visionCheck': 'Checking text on images',
-  'quota.role.manager': 'Team manager (assigns, summarises, reviews)',
-  'quota.role.default': 'System default model',
-  'quota.model.other': OTHER_MODEL,
-  'quota.fallback.label': 'Fallback for system models without their own limit',
-};
+const SPEECH = new Set(['stt', 'tts']);
 
 const FAILURES = {
   not_signed_in: 'Sign in to Mittr to see this week’s quota',
@@ -49,7 +35,7 @@ const leftLabel = ({ kind, used, limit }) => {
 
 const usedPercentOf = ({ used, limit }) => Math.min(100, Math.max(0, (used / limit) * 100));
 
-const lineName = (line) => ROLE_NAMES[line.labelKey] || line.label || OTHER_MODEL;
+const lineName = (line) => line.label || KIND_NAMES[line.kind];
 
 const uniqueName = (taken, line) => {
   const name = lineName(line);
@@ -62,12 +48,28 @@ const uniqueName = (taken, line) => {
   }
 };
 
+const ownLines = (lines, models) => {
+  const names = new Map();
+  if (models?.configured === true && Array.isArray(models.items)) {
+    for (const item of models.items) {
+      if (typeof item?.alias === 'string' && !names.has(item.alias)) {
+        names.set(item.alias, typeof item.label === 'string' && item.label ? item.label : item.alias);
+      }
+    }
+  }
+  return lines.flatMap((line) => {
+    if (SPEECH.has(line.kind)) return [line];
+    if (line.kind !== 'chat' || !names.has(line.modelKey)) return [];
+    return [{ ...line, label: names.get(line.modelKey) }];
+  });
+};
+
 const windowSecondsOf = ({ weekStart, resetsAt }) => {
   const seconds = (Date.parse(resetsAt) - Date.parse(weekStart)) / 1000;
   return seconds > 0 ? seconds : null;
 };
 
-export const mittrQuotaProvider = ({ service, isSignedIn, isBrokerConfigured, buildResult, toUsageWindow }) => {
+export const mittrQuotaProvider = ({ service, isSignedIn, isBrokerConfigured, catalogModels, buildResult, toUsageWindow }) => {
   const result = (fields) => buildResult({ providerId: MITTR_PROVIDER_ID, providerName: 'Mittr', ...fields });
 
   const isConfigured = () => {
@@ -88,13 +90,14 @@ export const mittrQuotaProvider = ({ service, isSignedIn, isBrokerConfigured, bu
 
     const resetAt = Date.parse(week.resetsAt);
     const windowSeconds = windowSecondsOf(week);
-    if (week.lines.length === 0) {
+    const lines = ownLines(week.lines, catalogModels());
+    if (lines.length === 0) {
       return result({ ok: true, configured: true, usage: { windows: { [NO_MODEL]: toUsageWindow({ usedPercent: null, resetAt: null }) }, models: {} } });
     }
 
     const models = {};
     const taken = new Set();
-    for (const line of week.lines) {
+    for (const line of lines) {
       const name = uniqueName(taken, line);
       taken.add(name);
       models[name] = {
@@ -103,7 +106,7 @@ export const mittrQuotaProvider = ({ service, isSignedIn, isBrokerConfigured, bu
         },
       };
     }
-    const overall = Math.max(...week.lines.map(usedPercentOf));
+    const overall = Math.max(...lines.map(usedPercentOf));
     return result({
       ok: true,
       configured: true,

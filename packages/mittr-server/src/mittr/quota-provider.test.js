@@ -6,10 +6,12 @@ import { quotaResult } from './test-helpers.js';
 
 const RESETS_AT = '2026-10-20T00:00:00+07:00';
 const quota = (lines, extra = {}) => ({ weekStart: '2026-10-13T00:00:00+07:00', resetsAt: RESETS_AT, lines, ...extra });
+const CATALOG = { configured: true, items: [{ alias: 'writer', label: 'Writer' }, { alias: 'reader', label: 'Reader' }] };
 const providerFor = (week, overrides = {}) => mittrQuotaProvider({
   service: { readMine: async () => week },
   isSignedIn: () => true,
   isBrokerConfigured: () => true,
+  catalogModels: () => CATALOG,
   ...quotaResult,
   ...overrides,
 });
@@ -21,7 +23,7 @@ test('the provider is Mittr', () => {
 });
 
 test('the provider shows remaining per agent with the reset time', async () => {
-  const result = await providerFor(quota([{ label: 'Writer', used: 30, limit: 50, kind: 'chat' }])).fetchQuota();
+  const result = await providerFor(quota([{ modelKey: 'writer', label: 'Writer', used: 30, limit: 50, kind: 'chat' }])).fetchQuota();
   assert.equal(result.providerId, 'mittr');
   assert.equal(result.ok, true);
   assert.equal(result.configured, true);
@@ -35,8 +37,8 @@ test('the provider shows remaining per agent with the reset time', async () => {
 
 test('the provider shows the most used line as the overall weekly share', async () => {
   const result = await providerFor(quota([
-    { label: 'Writer', used: 30, limit: 50, kind: 'chat' },
-    { label: 'Reader', used: 5, limit: 100, kind: 'chat' },
+    { modelKey: 'writer', label: 'Writer', used: 30, limit: 50, kind: 'chat' },
+    { modelKey: 'reader', label: 'Reader', used: 5, limit: 100, kind: 'chat' },
   ])).fetchQuota();
   const overall = result.usage.windows.weekly;
   assert.equal(overall.usedPercent, 60);
@@ -45,7 +47,7 @@ test('the provider shows the most used line as the overall weekly share', async 
 });
 
 test('a line over its limit reads as fully used', async () => {
-  const result = await providerFor(quota([{ label: 'Writer', used: 80, limit: 50, kind: 'chat' }])).fetchQuota();
+  const result = await providerFor(quota([{ modelKey: 'writer', label: 'Writer', used: 80, limit: 50, kind: 'chat' }])).fetchQuota();
   const weekly = result.usage.models.Writer.windows.weekly;
   assert.equal(weekly.usedPercent, 100);
   assert.equal(weekly.remainingPercent, 0);
@@ -77,34 +79,63 @@ test('a speech allowance of an hour or more is shown in hours', async () => {
   }
 });
 
-test('the role name outranks the label, as in 1.22', async () => {
-  const result = await providerFor(quota([{ label: 'Stale label', labelKey: 'quota.role.manager', used: 1, limit: 10, kind: 'chat' }])).fetchQuota();
-  assert.deepEqual(Object.keys(result.usage.models), ['Team manager (assigns, summarises, reviews)']);
-});
-
-test('an unknown role key falls back to the label', async () => {
-  const result = await providerFor(quota([{ label: 'Writer', labelKey: 'quota.role.unknown', used: 1, limit: 10, kind: 'chat' }])).fetchQuota();
-  assert.deepEqual(Object.keys(result.usage.models), ['Writer']);
-});
-
 test('large amounts are grouped', async () => {
-  const result = await providerFor(quota([{ label: 'Writer', used: 1200, limit: 500_000, kind: 'chat' }])).fetchQuota();
+  const result = await providerFor(quota([{ modelKey: 'writer', label: 'Writer', used: 1200, limit: 500_000, kind: 'chat' }])).fetchQuota();
   assert.equal(result.usage.models.Writer.windows.weekly.valueLabel, '498,800 of 500,000 left');
 });
 
-test('lines with the same label stay apart', async () => {
+test('lines with the same name stay apart', async () => {
+  const twins = { configured: true, items: [{ alias: 'm1', label: 'Mittr' }, { alias: 'm2', label: 'Mittr' }] };
   const result = await providerFor(quota([
-    { label: 'Mittr', used: 1, limit: 10, kind: 'chat' },
-    { label: 'Mittr', used: 2, limit: 10, kind: 'image' },
-    { label: 'Mittr', used: 3, limit: 10, kind: 'chat' },
-  ])).fetchQuota();
+    { modelKey: 'm1', label: 'Mittr', used: 1, limit: 10, kind: 'chat' },
+    { modelKey: 'speech', label: 'Mittr', used: 2, limit: 10, kind: 'stt' },
+    { modelKey: 'm2', label: 'Mittr', used: 3, limit: 10, kind: 'chat' },
+  ]), { catalogModels: () => twins }).fetchQuota();
   assert.equal(Object.keys(result.usage.models).length, 3);
   assert.equal(Object.values(result.usage.models).map((model) => model.windows.weekly.usedPercent).sort().join(), '10,20,30');
 });
 
-test('a system line without a label is named by its role', async () => {
-  const result = await providerFor(quota([{ label: '', labelKey: 'quota.role.decision', used: 1, limit: 10, kind: 'chat' }])).fetchQuota();
-  assert.deepEqual(Object.keys(result.usage.models), ['System decision model (Jev)']);
+const DEV_PLATFORM_WEEK = quota([
+  { modelKey: 'mittr-fast', kind: 'chat', label: 'MITTR 1.0 fast', used: 971205, limit: 981205, source: 'user', agents: [{ key: 'mittr-1-0', label: 'MITTR 1.0' }] },
+  { modelKey: 'mittr-pro', kind: 'chat', label: 'MITTR Pro', used: 26450, limit: 26450, source: 'user' },
+  { modelKey: 'm:9b17db7ab3d1', kind: 'chat', label: '', labelKey: 'quota.role.decision', used: 50617, limit: 50000000, source: 'default' },
+  { modelKey: 'm:41aa0be2c7d9', kind: 'chat', label: '', labelKey: 'quota.role.manager', used: 50000000, limit: 50000000, source: 'default' },
+  { modelKey: 'studio-writer', kind: 'chat', label: 'Studio writer', used: 10, limit: 100, source: 'default' },
+  { modelKey: 'm:0c1d2e3f4a5b', kind: 'image', label: '', labelKey: 'quota.role.image', used: 1, limit: 10, source: 'default' },
+  { modelKey: 'qwen3-asr', kind: 'stt', label: 'ฟังเสียง', used: 0, limit: 36000, source: 'default' },
+], {
+  agentStatus: { 'mittr-1-0': { modelKey: 'mittr-fast', left: 10000, limit: 981205, resetsAt: RESETS_AT, state: 'near', percentLeft: 1 } },
+});
+const DEV_CATALOG = { configured: true, items: [{ alias: 'mittr-fast', label: 'MITTR Fast' }, { alias: 'mittr-pro', label: 'MITTR Pro' }] };
+
+test('Usage lists the person\'s MittrCraft names by their catalog names, and speech, and no internal platform line', async () => {
+  const result = await providerFor(DEV_PLATFORM_WEEK, { catalogModels: () => DEV_CATALOG }).fetchQuota();
+  assert.deepEqual(Object.keys(result.usage.models), ['MITTR Fast', 'MITTR Pro', 'ฟังเสียง']);
+  assert.equal(result.usage.models['MITTR Fast'].windows.weekly.valueLabel, '10,000 of 981,205 left');
+  assert.equal(result.usage.models['ฟังเสียง'].windows.weekly.valueLabel, '10 h of 10 h left');
+});
+
+test('the overall weekly share reads only the lines shown', async () => {
+  const shown = await providerFor(DEV_PLATFORM_WEEK, { catalogModels: () => ({ configured: true, items: [{ alias: 'mittr-fast', label: 'MITTR Fast' }] }) }).fetchQuota();
+  assert.equal(Math.round(shown.usage.windows.weekly.usedPercent), 99);
+  const quiet = await providerFor(quota([
+    { modelKey: 'writer', label: 'Writer', used: 1, limit: 100, kind: 'chat' },
+    { modelKey: 'm:41aa0be2c7d9', label: '', labelKey: 'quota.role.manager', used: 100, limit: 100, kind: 'chat' },
+  ])).fetchQuota();
+  assert.equal(quiet.usage.windows.weekly.usedPercent, 1);
+});
+
+test('with no catalog to read only speech is listed', async () => {
+  for (const models of [null, undefined, { configured: false, items: [] }]) {
+    const result = await providerFor(DEV_PLATFORM_WEEK, { catalogModels: () => models }).fetchQuota();
+    assert.deepEqual(Object.keys(result.usage.models), ['ฟังเสียง'], JSON.stringify(models));
+  }
+});
+
+test('a week with only internal lines reads no model available', async () => {
+  const result = await providerFor(quota([{ modelKey: 'm:9b17db7ab3d1', label: '', labelKey: 'quota.role.decision', used: 1, limit: 10, kind: 'chat' }])).fetchQuota();
+  assert.deepEqual(result.usage.models, {});
+  assert.deepEqual(Object.keys(result.usage.windows), ['No model available this week']);
 });
 
 test('an empty week is one bare line that reads no model available', async () => {

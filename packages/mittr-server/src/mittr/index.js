@@ -133,6 +133,8 @@ export function setupMittr(context, {
     return { items, known };
   };
 
+  const activeCatalogModels = () => activeCatalogCache().read()?.models ?? null;
+
   const answeredByLog = createAnsweredByLog({ perSession: 10, sessions: 100 });
 
   // Both are defined below and first called once setup has returned.
@@ -142,7 +144,7 @@ export function setupMittr(context, {
   const onRefusal = createModelRefusalHandler({
     mayResync: createThrottle(RESYNC_INTERVAL_MS, now),
     sync: syncCatalog,
-    catalogModels: () => activeCatalogCache().read()?.models ?? null,
+    catalogModels: activeCatalogModels,
   });
 
   const switcher = createAccountSwitcher({
@@ -451,6 +453,7 @@ export function setupMittr(context, {
       service: quotaService,
       isSignedIn: signedIn,
       isBrokerConfigured: () => Boolean(broker.baseUrl),
+      catalogModels: activeCatalogModels,
       ...context.quotaResult,
     }), { exclusive: true });
   } catch (error) {

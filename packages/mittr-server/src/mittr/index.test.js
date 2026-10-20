@@ -1203,7 +1203,10 @@ test('a switch change before the engine config is first built writes nothing, an
 const QUOTA_WEEK = {
   weekStart: '2026-10-12T17:00:00.000Z',
   resetsAt: '2026-10-19T17:00:00.000Z',
-  lines: [{ modelKey: 'mk-1', kind: 'chat', label: 'Writer', used: 30, limit: 50, source: 'group' }],
+  lines: [
+    { modelKey: 'a1', kind: 'chat', label: 'Writer', used: 30, limit: 50, source: 'group' },
+    { modelKey: 'm:9b17db7ab3d1', kind: 'chat', label: '', labelKey: 'quota.role.decision', used: 1, limit: 10, source: 'default' },
+  ],
 };
 const isQuotaCall = (request) => request.url.endsWith('/api/quota/me');
 const quotaPlatform = (week = QUOTA_WEEK) => fakeEngineFetch({
@@ -1225,13 +1228,15 @@ test('Mittr is a usage provider while the plugin runs, and gone after dispose', 
 
 test('the usage provider is configured only while someone is signed in', async (t) => {
   const engine = fakeEngineContext();
-  const { call } = await setUp(t, { engine, fetchImpl: quotaPlatform() });
+  const { mittr, call } = await setUp(t, { engine, fetchImpl: quotaPlatform() });
   const [provider] = engine.quotaProviders;
   assert.equal(provider.isConfigured({}), false);
   assert.equal((await signIn(call)).status, 200);
   assert.equal(provider.isConfigured({}), true);
+  await until(async () => (await mittrModelsOf(mittr)).length === 2);
   const result = await provider.fetchQuota();
   assert.equal(result.ok, true);
+  assert.deepEqual(Object.keys(result.usage.models), ['Writer']);
   assert.equal(result.usage.models.Writer.windows.weekly.valueLabel, '20 of 50 left');
   assert.equal(result.usage.models.Writer.windows.weekly.resetAt, Date.parse(QUOTA_WEEK.resetsAt));
 });
