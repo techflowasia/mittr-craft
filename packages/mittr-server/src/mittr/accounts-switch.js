@@ -52,8 +52,8 @@ export function createAccountSwitcher({ store, opencode, applyCache, sync, engin
   const activeUserId = () => store.list().find((account) => account.active)?.userId ?? null;
 
   const run = async (userId) => {
-    lastSwitchCompleted = false;
     if (activeUserId() !== userId) store.activate(userId);
+    lastSwitchCompleted = false;
     const cacheApplied = (await applyCache()) !== false;
     const engineRestarted = await restartOntoTarget();
     lastSwitchCompleted = cacheApplied;

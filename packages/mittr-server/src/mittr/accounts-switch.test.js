@@ -473,6 +473,20 @@ test('a retry after a switch that threw runs the switch again, though the engine
   assert.deepEqual(refreshes, []);
 });
 
+test('a switch whose account could not be activated changes nothing, so the retry short-circuit still holds', async (t) => {
+  const { call, switcher, store, switches, refreshes, applied } = await harness(t, { sessions: [A, B] });
+  assert.equal(switcher.settledOnTarget(), true);
+  store.activate = () => { throw new Error('disk full'); };
+
+  await assert.rejects(switcher.switchTo('u-b'), /disk full/);
+
+  assert.equal(switcher.settledOnTarget(), true);
+  assert.deepEqual((await call('POST', '/api/mittr/auth/accounts/retry-switch')).body, { signedIn: true, userId: 'u-a', displayName: 'A' });
+  assert.deepEqual(switches, []);
+  assert.deepEqual(refreshes, []);
+  assert.deepEqual(applied, []);
+});
+
 test('a switch whose models could not be applied is not settled, so a retry applies them again', async (t) => {
   const { call, switcher, applied, switches } = await harness(t, { sessions: [A, B], cacheResults: [false] });
 
