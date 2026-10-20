@@ -219,6 +219,52 @@ test('a packed layout without .git gets the default data dir and the bin touches
   assert.deepEqual(fs.readdirSync(home), []);
 });
 
+const PRODUCT_KEYS = Object.keys(PRODUCT_ENV);
+
+const runPackedEnvProbe = (t, extraEnv = {}) => {
+  const { root, packageDir } = packedBin(t, 'mittrcraft-packed-env-');
+  fs.mkdirSync(path.join(root, 'packages', 'web', 'bin'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'packages', 'web', 'bin', 'cli.js'),
+    `console.log(JSON.stringify(Object.fromEntries(${JSON.stringify(PRODUCT_KEYS)}.map((name) => [name, process.env[name] ?? null]))));\n`,
+  );
+  fs.writeFileSync(path.join(root, 'packages', 'web', 'package.json'), '{"type":"module"}\n');
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-bin-')));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(OPENCHAMBER_|OPENCODE_|XDG_|MITTR)/.test(name)));
+  const result = spawnSync(process.execPath, [path.join(packageDir, 'bin', 'mittrcraft.mjs'), 'serve'], {
+    encoding: 'utf8',
+    cwd: home,
+    timeout: 60_000,
+    env: { ...inherited, HOME: home, USERPROFILE: home, ...extraEnv },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return { home, seen: JSON.parse(result.stdout) };
+};
+
+test('a packed layout run applies the whole prod product env, with ~ as the home', (t) => {
+  const { home, seen } = runPackedEnvProbe(t);
+
+  assert.deepEqual(seen, {
+    OPENCHAMBER_DATA_DIR: path.join(home, '.config', 'mittrcraft'),
+    OPENCODE_CONFIG_DIR: path.join(home, '.config', 'mittrcraft', 'engine', 'opencode'),
+    OPENCHAMBER_POLICY_FILE: '/Library/Application Support/MittrCraft/policy.json',
+    OPENCHAMBER_MANAGED_PROCESS_REGISTRY: path.join(home, '.config', 'mittrcraft', 'managed-opencode'),
+    OPENCHAMBER_UPDATE_CHECK_DISABLED: '1',
+    OPENCHAMBER_MODELS_METADATA_DISABLED: '1',
+    MITTRCRAFT_ENGINE_HOME: '',
+    MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft',
+    MITTRCRAFT_BROKER_URL: 'https://api.mittr.asia',
+    MITTRCRAFT_BROKER_FIXED: '1',
+  });
+  assert.deepEqual(fs.readdirSync(home), []);
+});
+
+test('every product env value gives way to one set explicitly', (t) => {
+  const explicit = Object.fromEntries(PRODUCT_KEYS.map((name) => [name, `/explicit/${name.toLowerCase()}`]));
+  assert.deepEqual(runPackedEnvProbe(t, explicit).seen, explicit);
+});
+
 test('the npm pack of this package ships the bin with the product env beside it', (t) => {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-pack-')));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));

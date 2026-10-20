@@ -6,10 +6,11 @@ const LEGACY_NAMES = {
   OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN: 'MITTRCRAFT_ALLOW_UNAUTHENTICATED_LAN',
   OPENCHAMBER_DATA_DIR: 'MITTRCRAFT_DATA_DIR',
 };
-const BROKER_VARIABLE = /^MITTRCRAFT_BROKER_/;
 const COMPANY_SIGN_IN_VARIABLE = /^MITTR_AD_/;
 
 const isUnset = (value) => typeof value !== 'string' || value.trim() === '';
+
+const expandHome = (value, homeDir) => (typeof value === 'string' && value.startsWith('~/') ? path.join(homeDir, value.slice(2)) : value);
 
 const samePath = (left, right) => {
   const resolve = (file) => {
@@ -56,7 +57,7 @@ export const prepareCliEnvironment = ({ env, homeDir, pluginPath, productEnv, pa
   if (isUnset(next.OPENCHAMBER_DATA_DIR)) next.OPENCHAMBER_DATA_DIR = path.join(homeDir, '.config', 'mittrcraft');
   if (isUnset(next.OPENCHAMBER_SERVER_PLUGINS)) next.OPENCHAMBER_SERVER_PLUGINS = JSON.stringify([pluginPath]);
   for (const [name, value] of Object.entries(productEnv ?? {})) {
-    if (BROKER_VARIABLE.test(name) && isUnset(next[name])) next[name] = value;
+    if (isUnset(next[name])) next[name] = expandHome(value, homeDir);
   }
 
   const companySignIn = Object.keys(next).filter((name) => COMPANY_SIGN_IN_VARIABLE.test(name) && !isUnset(next[name])).sort();
