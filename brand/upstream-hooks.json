@@ -425,6 +425,10 @@
     {
       "hook": "models-metadata",
       "why": "A build that brings its own model list had no way to stop the server from downloading the public models.dev catalog for every window that asks, which tells a third party the app is running; OPENCHAMBER_MODELS_METADATA_DISABLED makes the route answer an empty catalog without fetching."
+    },
+    {
+      "hook": "update-install",
+      "why": "With the update check switched off the install route still asked the update service and could install and restart into upstream's package, so OPENCHAMBER_UPDATE_CHECK_DISABLED now makes it answer that no update is available, with no request, install or restart."
     }
   ],
   "packages/web/server/lib/opencode/v1-migration-topup.js": [

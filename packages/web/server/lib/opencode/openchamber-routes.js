@@ -244,6 +244,8 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
         return;
       }
 
+      if (isUpdateCheckDisabled(process.env)) return res.status(400).json({ error: 'No update available', updatesDisabled: true });
+
       const { spawn: spawnChild, spawnSync } = await import('child_process');
       const {
         checkForUpdates,

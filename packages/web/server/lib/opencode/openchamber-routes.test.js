@@ -135,6 +135,22 @@ describe('OpenChamber desktop host update route', () => {
     }
   });
 
+  it('installs nothing, asks no update service and restarts nothing when the check is switched off', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      const { app, dependencies } = createApp({ environment: { OPENCHAMBER_UPDATE_CHECK_DISABLED: '1' } });
+      await request(app).post('/api/openchamber/update-install').expect(400, { error: 'No update available', updatesDisabled: true });
+      await new Promise(resolve => setImmediate(resolve));
+      expect(packageManager.checkForUpdates).not.toHaveBeenCalled();
+      expect(childProcess.spawn).not.toHaveBeenCalled();
+      expect(childProcess.spawnSync).not.toHaveBeenCalled();
+      expect(dependencies.process.exit).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it('checks for updates as before when the switch is absent or off', async () => {
     packageManager.checkForUpdates.mockResolvedValue({ available: false, currentVersion: '2.1.1' });
     for (const environment of [{}, { OPENCHAMBER_UPDATE_CHECK_DISABLED: '0' }]) {
