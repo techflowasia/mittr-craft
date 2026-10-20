@@ -1300,6 +1300,30 @@ const checks = {
     has(source('packages/ui/src/lib/runtime-fetch.ts'), /input\.startsWith\('\/auth\/'\)/, 'runtimeFetch no longer sends /auth/ paths to the runtime\'s server');
   },
 
+  'plugin-engine-env-withholds': async (t) => {
+    const { loadServerPlugins } = await importUpstream('packages/web/server/lib/server-plugins.js');
+    const plugin = path.join(tempDir(t, 'contract-withhold-'), 'withhold.mjs');
+    fs.writeFileSync(plugin, 'export default () => ({ engineEnv: () => ({ WITHHELD_SECRET: undefined }) });');
+    const plugins = await loadServerPlugins({ specifiers: [plugin], context: { app: {}, dataDir: '/data', logger: console } });
+    const engineEnv = await plugins.engineEnv();
+    assert.ok(Object.hasOwn(engineEnv, 'WITHHELD_SECRET'), 'a plugin engine variable set to undefined is dropped before the merge');
+    const child = spawnSync(process.execPath, ['-e', 'console.log(process.env.WITHHELD_SECRET === undefined)'], {
+      encoding: 'utf8',
+      env: { ...process.env, WITHHELD_SECRET: 'from the shell', ...engineEnv },
+    });
+    assert.equal(child.stdout.trim(), 'true', 'an undefined variable reaches the child environment');
+
+    const lifecycle = source('packages/web/server/lib/opencode/lifecycle.js');
+    has(lifecycle, /const processEnv = stripAppImageLauncherEnv\(stripAppImageArgv0Leak\(applyProviderEnvAliases\(\{\s*\.\.\.shellEnv,\s*\.\.\.process\.env,\s*\.\.\.managedOpenCodeEnv,/, 'the engine start no longer spreads the managed env after the shell snapshot and process.env');
+    has(lifecycle, /checkOpenCodeBinary\(resolveManagedOpenCodeLaunchSpec\(resolvedBinary\), \{\s*env: \{ \.\.\.process\.env, \.\.\.managedOpenCodeEnv \},/, 'the version preflight no longer spreads the managed env after process.env');
+    const server = source('packages/web/server/index.js');
+    assert.equal(
+      lineCount(server, 'env: { ...getLoginShellEnvSnapshot(), ...process.env, ...(await getServerPluginEngineEnv()), PATH: buildManagedOpenCodePath() }'),
+      2,
+      'the v2 install and the CLI upgrade no longer spread the plugin engine env after the shell snapshot and process.env',
+    );
+  },
+
   noindex: () => {
     const server = source('packages/web/server/index.js');
     has(server, /app\.use\(\(req, res, next\) => \{\s*res\.setHeader\('X-Robots-Tag', 'noindex, nofollow'\);/, 'no middleware sets X-Robots-Tag to noindex, nofollow');

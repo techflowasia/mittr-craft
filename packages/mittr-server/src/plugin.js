@@ -32,7 +32,21 @@ const REFETCHABLE = ['speech-models'];
 
 const flavorOf = (dataDir) => (path.basename(dataDir) === DEV_DATA_DIR ? 'dev' : 'prod');
 
+const COMPANY_SIGN_IN_VARIABLE = /^MITTR_AD_/;
+
+const takeCompanySignInEnv = (env) => {
+  const taken = {};
+  for (const name of Object.keys(env)) {
+    if (!COMPANY_SIGN_IN_VARIABLE.test(name)) continue;
+    taken[name] = env[name];
+    delete env[name];
+  }
+  return taken;
+};
+
 export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context = null, resourcesDir = null }) => {
+  const companySignInEnv = takeCompanySignInEnv(env);
+  const withheld = Object.fromEntries(Object.keys(companySignInEnv).map((name) => [name, undefined]));
   // Without its own engine root a Dev build would resolve prod's engine
   // folders, and back up, migrate and run on the installed app's database.
   if (flavorOf(dataDir) === 'dev' && !String(env.MITTRCRAFT_ENGINE_HOME ?? '').trim()) {
@@ -82,11 +96,12 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
     return {
       ...engineEnv({ bases, accountHome, rule: ENGINE_DB_RULE }),
       ...ENGINE_OUTBOUND_OFF,
+      ...withheld,
     };
   };
   if (!context) return { engineEnv: () => baseEngineEnv(activeAccountHome(dataDir, { logger })) };
 
-  const companySignIn = registerCompanySignIn(context, { env, logger });
+  const companySignIn = registerCompanySignIn(context, { env: companySignInEnv, logger });
   if (companySignIn.enabled) logger.log(`[mittr] company sign-in (${companySignIn.mode}) is required for browser sessions`);
   const mittr = setupMittr(context, {
     env,
@@ -95,7 +110,7 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
     engineDataHome: (accountHome) => engineEnv({ bases, accountHome, rule: ENGINE_DB_RULE }).XDG_DATA_HOME,
   });
   return {
-    engineEnv: async () => ({ ...baseEngineEnv(mittr.engineHome()), ...(await mittr.engineEnv()) }),
+    engineEnv: async () => ({ ...baseEngineEnv(mittr.engineHome()), ...(await mittr.engineEnv()), ...withheld }),
     managedConfig: mittr.managedConfig,
     dispose: async () => {
       try {

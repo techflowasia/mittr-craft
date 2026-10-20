@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -9,6 +10,7 @@ import express from 'express';
 
 import { fakeEngineContext, listen, serve, until } from './mittr/test-helpers.js';
 import setup, { setupMittrServer } from './plugin.js';
+import { LDAP_ENV } from './ui-auth/test-fixtures.js';
 
 const ACCOUNT = '0123456789abcdef';
 
@@ -295,6 +297,57 @@ test('setup with partial Microsoft settings refuses to start', async (t) => {
     context: { app: express(), express, dataDir, logger, host: null, requestScope: () => 'local', uiAuth, ...fakeEngineContext({ port: null }).context },
   }), /Missing MITTR_AD_CLIENT_SECRET/);
   assert.deepEqual(registered, []);
+});
+
+const companySignInNames = (env) => Object.keys(env).filter((name) => name.startsWith('MITTR_AD_')).sort();
+
+const namesSeenByChild = (env) => {
+  const child = spawnSync(process.execPath, ['-e', 'console.log(JSON.stringify(Object.keys(process.env)))'], { env, encoding: 'utf8' });
+  assert.equal(child.status, 0, child.stderr);
+  return companySignInNames(Object.fromEntries(JSON.parse(child.stdout).map((name) => [name, ''])));
+};
+
+for (const [mode, signInEnv] of [['entra', { ...ENTRA_ENV, MITTR_AD_BIND_PASSWORD: 'service-account-secret' }], ['ldap', LDAP_ENV]]) {
+  test(`company sign-in (${mode}) settings are read once and kept out of every engine start`, async (t) => {
+    const home = tempHome(t);
+    const dataDir = prodLayout(home);
+    const app = express();
+    const logger = recordingLogger();
+    const { registered, uiAuth } = uiAuthContext();
+    const env = { ...signInEnv, PATH: process.env.PATH, MITTRCRAFT_BROKER_URL: 'https://api.mittr.asia', MITTRCRAFT_BROKER_FIXED: '1', MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft' };
+    const plugin = await setupMittrServer({
+      dataDir,
+      logger,
+      env,
+      homeDir: home,
+      context: { app, express, dataDir, logger, host: null, requestScope: () => 'local', uiAuth, ...fakeEngineContext({ port: null }).context },
+    });
+    t.after(() => plugin.dispose());
+
+    assert.deepEqual(registered, ['ad']);
+    const { body } = await (await serve(t, app))('GET', '/auth/ad/status');
+    assert.deepEqual(body, { enabled: true, mode, passwordEnabled: false, tunnelLocked: false });
+    assert.deepEqual(companySignInNames(env), []);
+
+    const engineEnv = await plugin.engineEnv();
+    for (const name of Object.keys(signInEnv)) {
+      assert.ok(Object.hasOwn(engineEnv, name), name);
+      assert.equal(engineEnv[name], undefined, name);
+    }
+    const loginShell = { ...signInEnv };
+    assert.deepEqual(namesSeenByChild({ ...loginShell, ...env, ...engineEnv }), []);
+  });
+}
+
+test('without the server context, company sign-in settings still never reach the engine', async (t) => {
+  const home = tempHome(t);
+  const dataDir = prodLayout(home);
+  const env = { ...ENTRA_ENV, PATH: process.env.PATH };
+
+  const plugin = await setupMittrServer({ dataDir, logger: recordingLogger(), env, homeDir: home });
+
+  assert.deepEqual(companySignInNames(env), []);
+  assert.deepEqual(namesSeenByChild({ ...ENTRA_ENV, ...env, ...(await plugin.engineEnv()) }), []);
 });
 
 test('setup hands Mittr the folder the engine reads its user config from', async (t) => {
