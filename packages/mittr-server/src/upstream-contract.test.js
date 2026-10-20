@@ -1023,7 +1023,8 @@ const checks = {
 
   'quota-ui-registry': () => {
     const registry = source('packages/ui/src/lib/quota/providers/index.ts');
-    has(registry, /^export function registerQuotaProvider\(meta: \{ id: string; name: string \}, options\?: \{ first\?: boolean \}\): void \{/m, 'registerQuotaProvider is no longer exported with this signature');
+    has(registry, /^export function registerQuotaProvider\(meta: \{ id: string; name: string \}, options\?: \{ first\?: boolean; exclusive\?: boolean \}\): void \{/m, 'registerQuotaProvider is no longer exported with this signature');
+    has(registry, /if \(options\?\.exclusive\) \{\s*const kept = QUOTA_PROVIDERS\.filter\(\(provider\) => runTimeProviders\.has\(provider\.id\)\);\s*QUOTA_PROVIDERS\.splice\(0, QUOTA_PROVIDERS\.length, \.\.\.kept\);/, 'an exclusive usage provider no longer takes the built-in providers off the list');
     has(registry, /^export function selectRegisteredQuotaProvider\(id: string, select: \(id: QuotaProviderId\) => void\): void \{/m, 'selectRegisteredQuotaProvider is no longer exported with this signature');
     has(registry, /^export const QUOTA_PROVIDERS: QuotaProviderMeta\[\] = \[/m, 'QUOTA_PROVIDERS is no longer a mutable list');
     assert.doesNotMatch(registry, /useQuotaStore/, 'the registry imports the quota store, which imports the registry');

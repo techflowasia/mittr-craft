@@ -357,7 +357,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'quota-ui-registry',
     files: ['packages/ui/src/lib/quota/providers/index.ts'],
-    why: 'registerQuotaProvider adds a usage provider to the Usage page at run time and selectRegisteredQuotaProvider passes a registered id to the setter it is given, so the Usage page opens on the Mittr provider',
+    why: "registerQuotaProvider adds a usage provider to the Usage page at run time, and with exclusive takes upstream's built-in providers off the list for good, and selectRegisteredQuotaProvider passes a registered id to the setter it is given, so the Usage page lists Mittr alone and opens on it",
   },
   {
     id: 'quota-store-selection',

@@ -32,15 +32,22 @@ export const QUOTA_PROVIDERS: QuotaProviderMeta[] = [
   { id: 'xai', name: 'xAI' },
 ];
 
-export function registerQuotaProvider(meta: { id: string; name: string }, options?: { first?: boolean }): void {
+const runTimeProviders = new Set<string>();
+
+export function registerQuotaProvider(meta: { id: string; name: string }, options?: { first?: boolean; exclusive?: boolean }): void {
   if (QUOTA_PROVIDERS.some((provider) => provider.id === meta.id)) {
     return;
   }
   const entry: QuotaProviderMeta = { id: meta.id as QuotaProviderId, name: meta.name };
+  runTimeProviders.add(entry.id);
   if (options?.first) {
     QUOTA_PROVIDERS.unshift(entry);
   } else {
     QUOTA_PROVIDERS.push(entry);
+  }
+  if (options?.exclusive) {
+    const kept = QUOTA_PROVIDERS.filter((provider) => runTimeProviders.has(provider.id));
+    QUOTA_PROVIDERS.splice(0, QUOTA_PROVIDERS.length, ...kept);
   }
 }
 

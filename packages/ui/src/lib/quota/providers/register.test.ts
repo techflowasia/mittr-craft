@@ -42,3 +42,18 @@ describe('registering a quota provider at run time', () => {
     expect(useQuotaStore.getState().selectedProviderId).toBeNull();
   });
 });
+
+describe('an exclusive quota provider', () => {
+  test('takes every built-in provider off the list and keeps the run-time ones', () => {
+    registerQuotaProvider({ id: 'probe-kept', name: 'Probe kept' });
+    expect(QUOTA_PROVIDERS.some((provider) => provider.id === 'google')).toBe(true);
+    registerQuotaProvider({ id: 'probe-alone', name: 'Probe alone' }, { first: true, exclusive: true });
+    expect(QUOTA_PROVIDERS[0]?.id).toBe('probe-alone');
+    expect(QUOTA_PROVIDERS.some((provider) => provider.id === 'probe-kept')).toBe(true);
+    for (const id of ['codex', 'cursor', 'github-copilot', 'google', 'openrouter', 'xai']) {
+      expect(QUOTA_PROVIDERS.some((provider) => provider.id === id)).toBe(false);
+    }
+    registerQuotaProvider({ id: 'probe-later', name: 'Probe later' });
+    expect(QUOTA_PROVIDERS.some((provider) => provider.id === 'probe-later')).toBe(true);
+  });
+});

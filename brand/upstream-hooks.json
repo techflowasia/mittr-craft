@@ -301,6 +301,10 @@
     {
       "hook": "quota-ui",
       "why": "A build whose server plugin reports a usage source of its own had no way to list it on the Usage page, because the provider list was a fixed table keyed by a closed id union, so registerQuotaProvider now adds an entry at run time (the one cast widens the id there and nowhere else) and selectRegisteredQuotaProvider passes a registered id to the caller's setter, which keeps this module from importing the quota store that already imports it."
+    },
+    {
+      "hook": "quota-ui",
+      "why": "A build that reports usage from its own source may not want upstream's built-in providers on the Usage page, where listing them makes the page ask the server for each one, so registerQuotaProvider takes an exclusive option that leaves only the providers registered at run time on the list."
     }
   ],
   "packages/ui/src/main.tsx": [
