@@ -50,7 +50,7 @@ describe('agent status marks', () => {
     expect(out?.blocked).toBe(false);
     expect(out?.tone).toBe('neutral');
     expect(out?.pill).toBe('Used up');
-    expect(out?.title).toContain('MITTR Pro is used up this week');
+    expect(out?.title).toContain('MITTR Pro is used up this week. A backup may answer; if none can, it comes back');
     expect(out?.title).toContain('20 Oct');
   });
 
@@ -131,7 +131,7 @@ describe('picker marks from the dev platform as it answers today', () => {
     const pro = entryStatus({ providerID: 'mittr', modelID: 'mittr-pro', name: 'MITTR Pro' });
     expect(pro?.pill).toBe('Used up');
     expect(pro?.blocked).toBe(false);
-    expect(pro?.title).toContain('MITTR Pro is used up this week. It comes back Mon 26 Oct');
+    expect(pro?.title).toContain('MITTR Pro is used up this week. A backup may answer; if none can, it comes back Mon 26 Oct');
     expect(pro?.title).toContain('00:00');
   });
 });

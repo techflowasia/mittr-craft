@@ -43,7 +43,10 @@ export function agentEntryStatus(
         blocked: status.maySubstitute !== true,
         tone: 'neutral',
         pill: t('mittr.quota.agent.out'),
-        title: t('mittr.quota.agent.outLabel', { agent: agentName, when: formatResetTime(status.resetsAt, locale, timeZone) }),
+        title: t(status.maySubstitute === true ? 'mittr.quota.agent.outMaybeBackupLabel' : 'mittr.quota.agent.outLabel', {
+          agent: agentName,
+          when: formatResetTime(status.resetsAt, locale, timeZone),
+        }),
       };
     case 'substitute':
       return {

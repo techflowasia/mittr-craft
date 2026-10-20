@@ -62,6 +62,7 @@ export const mittrEn = {
   'mittr.quota.agent.backup': 'Using backup',
   'mittr.quota.agent.left': '{n}% left',
   'mittr.quota.agent.outLabel': '{agent} is used up this week. It comes back {when}.',
+  'mittr.quota.agent.outMaybeBackupLabel': '{agent} is used up this week. A backup may answer; if none can, it comes back {when}.',
   'mittr.quota.agent.backupLabel': '{agent} is used up this week, so {model} answers instead.',
   'mittr.quota.agent.backupLabelUnnamed': '{agent} is used up this week, so a backup model answers instead.',
   'mittr.quota.agent.leftLabel': "{agent} has {n}% of this week's quota left.",
