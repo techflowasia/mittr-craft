@@ -286,6 +286,26 @@ test('every product env value and the runtime give way to one set explicitly', (
   assert.deepEqual(runPackedEnvProbe(t, explicit).seen, explicit);
 });
 
+test('the bin marks the runtime it pinned, and leaves one set by hand unmarked', () => {
+  const base = { homeDir: '/home/person', pluginPath: PLUGIN, productEnv: PRODUCT_ENV, nodePath: '/opt/node/bin/node', bunVersion: undefined };
+  const pinned = prepareCliEnvironment({ ...base, env: {} }).env;
+  assert.equal(pinned.BUN_BINARY, '/opt/node/bin/node');
+  assert.equal(pinned.MITTRCRAFT_BIN_BUN_BINARY, '/opt/node/bin/node');
+  assert.equal(prepareCliEnvironment({ ...base, env: { BUN_BINARY: '/opt/bun/bin/bun' } }).env.MITTRCRAFT_BIN_BUN_BINARY, undefined);
+});
+
+test('run by Bun, the bin refuses plain company sign-in secrets and points to Node or the file form', () => {
+  const base = { homeDir: '/home/person', pluginPath: PLUGIN, productEnv: PRODUCT_ENV, bunVersion: '1.3.14' };
+  const both = prepareCliEnvironment({ ...base, env: { MITTR_AD_CLIENT_SECRET: 'entra-secret', MITTR_AD_BIND_PASSWORD: 'bind-secret' } }).refusal;
+  assert.equal(both, 'mittrcraft: this copy runs on Bun, which hands MITTR_AD_CLIENT_SECRET and MITTR_AD_BIND_PASSWORD to every program the server starts, agents\' commands included. Run mittrcraft with Node, or put each secret in a file named by MITTR_AD_CLIENT_SECRET_FILE and MITTR_AD_BIND_PASSWORD_FILE and unset the plain variables.');
+  assert.ok(!both.includes('entra-secret') && !both.includes('bind-secret'));
+  assert.match(prepareCliEnvironment({ ...base, env: { MITTR_AD_BIND_PASSWORD: 'x' } }).refusal, /MITTR_AD_BIND_PASSWORD_FILE and unset the plain variable\.$/);
+
+  assert.equal(prepareCliEnvironment({ ...base, env: { MITTR_AD_CLIENT_ID: 'app', MITTR_AD_CLIENT_SECRET_FILE: '/run/secrets/entra' } }).refusal, null);
+  assert.equal(prepareCliEnvironment({ ...base, env: { MITTR_AD_CLIENT_SECRET: ' ' } }).refusal, null);
+  assert.equal(prepareCliEnvironment({ ...base, bunVersion: undefined, env: { MITTR_AD_CLIENT_SECRET: 'entra-secret' } }).refusal, null);
+});
+
 test('the npm pack of this package ships the bin with the product env beside it', (t) => {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-pack-')));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));

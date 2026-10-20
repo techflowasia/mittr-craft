@@ -24,6 +24,10 @@ Otherwise, LDAP or Active Directory is used when `MITTR_AD_ENABLED=true`. All fo
 
 With the `_FILE` form, the secret is never in any process environment. A process listing such as `ps eww` cannot show it, and nothing the server starts inherits it. The file stays readable by the account the server runs as, and agents run as that account too, so keep the file outside the projects people open.
 
+Set only the `_FILE` variable, not the plain one as well. The plain copy would stay in the server's starting environment, where `ps eww` shows it, even though the file wins.
+
+`mittrcraft startup install` writes the current environment into the launchd plist, or into the `startup.env` file that the systemd unit reads. A plain secret would be stored in that file. For a startup service, use the `_FILE` form.
+
 ### Kept from the engine
 
 The engine runs agents' shell commands, so it never sees the sign-in settings. At start the server plugin takes every `MITTR_AD_*` variable out of the server's own environment. Then, on every engine start, version probe, install and upgrade, it sets each of them to unset. This removes the copy that upstream's login-shell snapshot took before the plugin loaded.
@@ -38,7 +42,7 @@ The same happens to the server's other secrets:
 
 The server keeps these secrets, and only the engine loses them. The agent tool's token and URL, the engine's own password, provider keys and the broker settings still reach the engine.
 
-Under Bun, a variable taken out of `process.env` still reaches a child process started without an explicit environment. For that reason, `mittrcraft` runs the server on Node (see below). On Bun, use the `_FILE` form for both secrets.
+Under Bun, a variable taken out of `process.env` still reaches a child process started without an explicit environment. For that reason, `mittrcraft` runs the server on Node (see below). When `mittrcraft` itself is run by Bun and `MITTR_AD_CLIENT_SECRET` or `MITTR_AD_BIND_PASSWORD` is set, it refuses to start, and says to run it with Node or to use the `_FILE` form.
 
 ## The directory's TLS certificate
 
@@ -74,7 +78,11 @@ Upstream's "sign out everywhere" (`POST /api/auth/reset`) rotates the secret tha
   - fix the broker to the prod Mittr.
 
   `OPENCHAMBER_POLICY_FILE` names a macOS path, so it is applied on macOS only. Elsewhere upstream's fixed policy paths stay in force, such as `/etc/openchamber/policy.json` on Linux.
-- `BUN_BINARY`: the Node that runs `mittrcraft`. Upstream's daemon then runs the server on Node instead of Bun, so a variable the plugin takes out of the environment reaches no child. Setting `BUN_BINARY` yourself brings Bun back.
+- `BUN_BINARY`: the Node that runs `mittrcraft`, recorded in `MITTRCRAFT_BIN_BUN_BINARY`.
+  - Upstream's daemon then runs the server on Node instead of Bun, so a variable the plugin takes out of the environment reaches no child.
+  - Once the server runs, the plugin removes both variables again, so neither the server's own Bun lookups nor terminals nor the engine see Node as Bun. A login-shell copy is unset for the engine too.
+  - Setting `BUN_BINARY` yourself brings Bun back, and the plugin leaves your value alone.
+  - On Windows, upstream checks `BUN_BINARY` by running it without `cmd.exe`, so a `bun.cmd` shim cannot be named there. To run on Bun, name `bun.exe` itself. Otherwise the daemon falls back to Node.
 - The 1.22 names `MITTRCRAFT_UI_PASSWORD`, `MITTRCRAFT_ALLOW_UNAUTHENTICATED_LAN` and `MITTRCRAFT_DATA_DIR`, mapped onto their `OPENCHAMBER_*` names.
 
 It refuses to start when a `MITTR_AD_*` setting is present but `OPENCHAMBER_SERVER_PLUGINS` does not load this plugin.

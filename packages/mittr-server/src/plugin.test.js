@@ -423,6 +423,29 @@ test('the server\'s own secrets stay with the server and out of every engine sta
   assert.deepEqual(seenByChild(spawned, Object.keys(ENGINE_KEEPS)), Object.keys(ENGINE_KEEPS));
 });
 
+test('the runtime the bin pinned is taken back once the server runs, and one set by hand is left alone', async (t) => {
+  const run = async (env) => {
+    const home = tempHome(t);
+    const plugin = await setupMittrServer({ dataDir: prodLayout(home), logger: recordingLogger(), env, homeDir: home });
+    return { env, engineEnv: await plugin.engineEnv() };
+  };
+
+  const pinned = await run({ BUN_BINARY: '/opt/node/bin/node', MITTRCRAFT_BIN_BUN_BINARY: '/opt/node/bin/node', PATH: process.env.PATH });
+  assert.equal(Object.hasOwn(pinned.env, 'BUN_BINARY'), false);
+  assert.equal(Object.hasOwn(pinned.env, 'MITTRCRAFT_BIN_BUN_BINARY'), false);
+  for (const name of ['BUN_BINARY', 'MITTRCRAFT_BIN_BUN_BINARY']) assert.ok(Object.hasOwn(pinned.engineEnv, name) && pinned.engineEnv[name] === undefined, name);
+  const loginShell = { BUN_BINARY: '/opt/node/bin/node', MITTRCRAFT_BIN_BUN_BINARY: '/opt/node/bin/node' };
+  assert.deepEqual(seenByChild({ ...loginShell, ...pinned.env, ...pinned.engineEnv }, ['BUN_BINARY', 'MITTRCRAFT_BIN_BUN_BINARY']), []);
+
+  const own = await run({ BUN_BINARY: '/opt/bun/bin/bun', MITTRCRAFT_BIN_BUN_BINARY: '/opt/node/bin/node' });
+  assert.equal(own.env.BUN_BINARY, '/opt/bun/bin/bun');
+  assert.equal(Object.hasOwn(own.engineEnv, 'BUN_BINARY'), false);
+
+  const handSet = await run({ BUN_BINARY: '/opt/bun/bin/bun' });
+  assert.equal(handSet.env.BUN_BINARY, '/opt/bun/bin/bun');
+  assert.equal(Object.hasOwn(handSet.engineEnv, 'BUN_BINARY'), false);
+});
+
 const secretFile = (home, name, content) => {
   const file = path.join(home, 'secrets', name);
   writeFile(file, content);

@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { activeAccountHome } from './accounts.js';
 import { backupOnce } from './backup.js';
+import { BIN_BUN_BINARY } from './cli-env.js';
 import { ENGINE_DB_RULE, engineBases, engineConfigDir, engineEnv, sharedHistoryExists } from './engine-home.js';
 import { ENGINE_OUTBOUND_OFF } from './engine-outbound.js';
 import { bundledRipgrep, placeEngineRipgrep } from './engine-ripgrep.js';
@@ -49,6 +50,18 @@ const SERVER_ONLY_SECRETS = [
   'OPENCHAMBER_JEV_API_KEY',
 ];
 
+const takeBinRuntimePin = (env) => {
+  if (!Object.hasOwn(env, BIN_BUN_BINARY)) return [];
+  const pinned = String(env[BIN_BUN_BINARY] ?? '').trim();
+  const taken = [BIN_BUN_BINARY];
+  if (pinned && env.BUN_BINARY === pinned) {
+    delete env.BUN_BINARY;
+    taken.push('BUN_BINARY');
+  }
+  delete env[BIN_BUN_BINARY];
+  return taken;
+};
+
 const takeCompanySignInEnv = (env) => {
   const taken = {};
   for (const name of Object.keys(env)) {
@@ -61,7 +74,8 @@ const takeCompanySignInEnv = (env) => {
 
 export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context = null, resourcesDir = null }) => {
   const takenSignInEnv = takeCompanySignInEnv(env);
-  const withheld = Object.fromEntries([...Object.keys(takenSignInEnv), ...Object.values(SECRET_FILE_VARIABLES), ...SERVER_ONLY_SECRETS].map((name) => [name, undefined]));
+  const runtimePin = takeBinRuntimePin(env);
+  const withheld = Object.fromEntries([...Object.keys(takenSignInEnv), ...Object.values(SECRET_FILE_VARIABLES), ...SERVER_ONLY_SECRETS, ...runtimePin].map((name) => [name, undefined]));
   const companySignInEnv = readSecretFiles(takenSignInEnv);
   // Without its own engine root a Dev build would resolve prod's engine
   // folders, and back up, migrate and run on the installed app's database.

@@ -8,6 +8,8 @@ const LEGACY_NAMES = {
 };
 const COMPANY_SIGN_IN_VARIABLE = /^MITTR_AD_/;
 const DARWIN_ONLY = new Set(['OPENCHAMBER_POLICY_FILE']);
+const PLAIN_SIGN_IN_SECRETS = ['MITTR_AD_CLIENT_SECRET', 'MITTR_AD_BIND_PASSWORD'];
+export const BIN_BUN_BINARY = 'MITTRCRAFT_BIN_BUN_BINARY';
 
 const isUnset = (value) => typeof value !== 'string' || value.trim() === '';
 
@@ -43,7 +45,7 @@ const findCheckoutRoot = (startDir) => {
   }
 };
 
-export const prepareCliEnvironment = ({ env, homeDir, pluginPath, productEnv, packageDir, platform = process.platform, nodePath = process.execPath }) => {
+export const prepareCliEnvironment = ({ env, homeDir, pluginPath, productEnv, packageDir, platform = process.platform, nodePath = process.execPath, bunVersion = process.versions.bun }) => {
   const next = { ...env };
   const checkout = packageDir ? findCheckoutRoot(packageDir) : null;
   if (checkout && isUnset(next.OPENCHAMBER_DATA_DIR) && isUnset(next.MITTRCRAFT_DATA_DIR)) {
@@ -61,13 +63,23 @@ export const prepareCliEnvironment = ({ env, homeDir, pluginPath, productEnv, pa
     if (DARWIN_ONLY.has(name) && platform !== 'darwin') continue;
     if (isUnset(next[name])) next[name] = expandHome(value, homeDir);
   }
-  if (isUnset(next.BUN_BINARY)) next.BUN_BINARY = nodePath;
+  if (isUnset(next.BUN_BINARY)) {
+    next.BUN_BINARY = nodePath;
+    next[BIN_BUN_BINARY] = nodePath;
+  }
 
   const companySignIn = Object.keys(next).filter((name) => COMPANY_SIGN_IN_VARIABLE.test(name) && !isUnset(next[name])).sort();
   if (companySignIn.length > 0 && !loadsPlugin(next.OPENCHAMBER_SERVER_PLUGINS, pluginPath)) {
     return {
       env: next,
       refusal: `mittrcraft: company sign-in is configured (${companySignIn.join(', ')}), but OPENCHAMBER_SERVER_PLUGINS does not load ${pluginPath}, so the server would start without it. Unset OPENCHAMBER_SERVER_PLUGINS or add that path to it.`,
+    };
+  }
+  const plainSecrets = PLAIN_SIGN_IN_SECRETS.filter((name) => !isUnset(next[name]));
+  if (bunVersion && plainSecrets.length > 0) {
+    return {
+      env: next,
+      refusal: `mittrcraft: this copy runs on Bun, which hands ${plainSecrets.join(' and ')} to every program the server starts, agents' commands included. Run mittrcraft with Node, or put each secret in a file named by ${plainSecrets.map((name) => `${name}_FILE`).join(' and ')} and unset ${plainSecrets.length > 1 ? 'the plain variables' : 'the plain variable'}.`,
     };
   }
   return { env: next, refusal: null };
