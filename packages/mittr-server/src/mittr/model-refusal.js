@@ -28,7 +28,28 @@ export function createThrottle(intervalMs, now = Date.now) {
   };
 }
 
-export function createModelRefusalHandler({ mayResync, sync, catalogModels }) {
+const REFUSAL_WAIT_MS = 15_000;
+
+const settledWithin = (promise, ms) => new Promise((resolve) => {
+  const timer = setTimeout(resolve, ms);
+  timer.unref?.();
+  void promise.then(() => {
+    clearTimeout(timer);
+    resolve();
+  });
+});
+
+export function createModelRefusalHandler({ mayResync, syncStored, catalogModels, waitMs = REFUSAL_WAIT_MS }) {
+  let pending = null;
+  const startSync = () => {
+    const run = new Promise((resolve) => { resolve(syncStored()); }).catch(() => undefined);
+    pending = run;
+    void run.then(() => {
+      if (pending === run) pending = null;
+    });
+    return run;
+  };
+
   const withdrawn = (model) => {
     const models = catalogModels();
     if (models?.configured !== true) return undefined;
@@ -38,11 +59,12 @@ export function createModelRefusalHandler({ mayResync, sync, catalogModels }) {
   return async ({ kind, reason, model }) => {
     if (kind !== 'model') return undefined;
     if (reason === 'stale-catalog') {
-      if (mayResync()) void sync();
+      if (mayResync()) void startSync();
       return undefined;
     }
     if (reason !== 'entitlement' || !model) return undefined;
-    if (mayResync()) await sync();
+    const waiting = mayResync() ? startSync() : pending;
+    if (waiting) await settledWithin(waiting, waitMs);
     return withdrawn(model);
   };
 }

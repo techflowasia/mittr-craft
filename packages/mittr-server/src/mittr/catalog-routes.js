@@ -45,7 +45,9 @@ const refusalCodeOf = async (response) => {
  * away over a network blip.
  *
  * Syncs run one after another, so an older answer never lands over a newer
- * one. Returns `{ sync }`, which reports rather than throws.
+ * one. Returns `{ sync, syncStored }`: `sync` reports rather than throws,
+ * and `syncStored` resolves as soon as the fetched catalog is stored, or when
+ * the sync ends without one, with the models applied a turn later.
  */
 export function registerMittrCatalogRoutes(app, {
   broker,
@@ -58,7 +60,7 @@ export function registerMittrCatalogRoutes(app, {
   const endpoint = new URL(CATALOG_ENDPOINT, broker.baseUrl).toString();
   const failure = (status, error, extra = {}) => ({ status, body: { error, ...extra } });
 
-  const runSync = async () => {
+  const runSync = async ({ onStored } = {}) => {
     // Refreshed first: a sync is often the first call after a long idle, just
     // when the access token has run out on a session that is still good.
     const session = await ensureFreshSession();
@@ -97,6 +99,11 @@ export function registerMittrCatalogRoutes(app, {
       return failure(500, CANNOT_STORE);
     }
 
+    if (onStored) {
+      onStored();
+      await new Promise((resolve) => { setImmediate(resolve); });
+    }
+
     if (catalog.models.configured && cache() === target) {
       try {
         await onModels(catalog.models.items);
@@ -108,14 +115,18 @@ export function registerMittrCatalogRoutes(app, {
   };
 
   let last = Promise.resolve();
-  const sync = () => {
-    const run = last.then(runSync);
+  const sync = (options) => {
+    const run = last.then(() => runSync(options));
     last = run.catch(() => {});
     return run.catch((error) => {
       logger.error('[mittr] catalog sync failed:', error?.message ?? error);
       return failure(500, 'The Mittr catalog sync failed');
     });
   };
+
+  const syncStored = () => new Promise((resolve) => {
+    void sync({ onStored: resolve }).then(resolve);
+  });
 
   app.post('/api/mittr/catalog/sync', async (_req, res) => {
     const { status, body } = await sync();
@@ -133,5 +144,5 @@ export function registerMittrCatalogRoutes(app, {
     });
   });
 
-  return { sync };
+  return { sync, syncStored };
 }

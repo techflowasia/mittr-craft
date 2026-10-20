@@ -1341,20 +1341,52 @@ test('a model withdrawn since the last sync is refused as withdrawn after one sy
     catalog: () => json(offered),
     answer: (request) => (request.url.endsWith('/chat/completions') ? json(entitlement, 403) : null),
   });
-  const { mittr, call, dataDir } = await setUp(t, { fetchImpl });
+  const engine = fakeEngineContext();
+  const { mittr, call, dataDir } = await setUp(t, { fetchImpl, engine });
   assert.equal((await signIn(call)).status, 200);
   await until(async () => (await mittrModelsOf(mittr)).length === 2);
   const synced = catalogCalls(fetchImpl).length;
 
+  const slowApply = deferred();
+  engine.refreshGate = slowApply.promise;
+  const refreshesBefore = engine.refreshes.length;
   offered = { ...CATALOG_A, bundleVersion: 8, models: [{ alias: 'a1', label: 'Writer' }] };
   const withdrawn = await askShim(call, shimKey(dataDir), { model: 'a2', stream: false, messages: [] });
   assert.equal(withdrawn.status, 403);
   assert.deepEqual(await withdrawn.json(), { error: { message: 'agent_not_granted', type: 'invalid_request_error', code: 'agent_not_granted' } });
   assert.equal(catalogCalls(fetchImpl).length, synced + 1);
-  assert.deepEqual(await mittrModelsOf(mittr), ['a1']);
+
+  slowApply.resolve();
+  await until(() => engine.refreshes.length > refreshesBefore);
+  await until(async () => JSON.stringify(await mittrModelsOf(mittr)) === JSON.stringify(['a1']));
 
   const kept = await askShim(call, shimKey(dataDir), { model: 'a1', stream: false, messages: [] });
   assert.equal(kept.status, 403);
   assert.deepEqual(await kept.json(), entitlement);
   assert.equal(catalogCalls(fetchImpl).length, synced + 1);
+});
+
+test('the engine hears a withdrawn model before the models are applied, however slow the apply is', async (t) => {
+  const entitlement = { error: { message: 'desktop_entitlement_required', type: 'invalid_request_error', code: 'forbidden' } };
+  let offered = CATALOG_A;
+  const fetchImpl = platform({
+    catalog: () => json(offered),
+    answer: (request) => (request.url.endsWith('/chat/completions') ? json(entitlement, 403) : null),
+  });
+  const engine = fakeEngineContext();
+  const { mittr, call, dataDir } = await setUp(t, { fetchImpl, engine });
+  assert.equal((await signIn(call)).status, 200);
+  await until(async () => (await mittrModelsOf(mittr)).length === 2);
+
+  const neverApplied = deferred();
+  engine.refreshGate = neverApplied.promise;
+  t.after(() => neverApplied.resolve());
+  const refreshesBefore = engine.refreshes.length;
+  offered = { ...CATALOG_A, bundleVersion: 9, models: [{ alias: 'a1', label: 'Writer' }] };
+  const started = Date.now();
+  const response = await askShim(call, shimKey(dataDir), { model: 'a2', stream: false, messages: [] });
+  assert.ok(Date.now() - started < 5_000);
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).error.code, 'agent_not_granted');
+  await until(() => engine.refreshes.length > refreshesBefore);
 });

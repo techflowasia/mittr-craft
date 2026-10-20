@@ -143,7 +143,7 @@ export function setupMittr(context, {
   const syncCatalog = () => catalog.sync();
   const onRefusal = createModelRefusalHandler({
     mayResync: createThrottle(RESYNC_INTERVAL_MS, now),
-    sync: syncCatalog,
+    syncStored: () => catalog.syncStored(),
     catalogModels: activeCatalogModels,
   });
 

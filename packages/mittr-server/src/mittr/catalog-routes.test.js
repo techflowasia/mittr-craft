@@ -210,3 +210,26 @@ test('syncs run one after another, so an older answer never lands over a newer o
   assert.equal(ownCache.read().bundleVersion, 8);
   assert.equal(models.length, 2);
 });
+
+test('syncStored resolves once the catalog is stored, before the models are applied', async (t) => {
+  const applied = deferred();
+  const started = [];
+  const { syncStored, ownCache } = await setUp(t, {
+    onModels: async (items) => {
+      started.push(items);
+      await applied.promise;
+    },
+  });
+  await syncStored();
+  assert.equal(ownCache.read().bundleVersion, 7);
+  assert.equal(started.length, 0);
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.equal(started.length, 1);
+  applied.resolve();
+});
+
+test('syncStored resolves when the sync ends without storing anything', async (t) => {
+  const { syncStored, ownCache } = await setUp(t, { fetchImpl: fakeFetch(() => json({ message: 'desktop_entitlement_required' }, 403)) });
+  await syncStored();
+  assert.equal(ownCache.read(), null);
+});
