@@ -193,6 +193,7 @@ test('a failed read is a failed result in plain words', async () => {
     ['unreachable', 'Cannot reach Mittr'],
     ['upstream_timeout', 'Cannot reach Mittr'],
     ['not_available', 'Mittr does not report a quota for this account'],
+    ['not_permitted', 'This week’s quota is not available to you'],
     ['upstream_failed', 'Could not read this week’s quota'],
     ['not_configured', 'Could not read this week’s quota'],
   ];

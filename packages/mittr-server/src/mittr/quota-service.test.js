@@ -46,9 +46,11 @@ test('quota me maps a 401 to not_signed_in', async () => {
   assert.equal(error.statusCode, 401);
 });
 
-test('quota me maps a 403 to not_signed_in', async () => {
+test('quota me maps a 403 to not_permitted, a signed-in person the platform will not show it to', async () => {
   const { service } = setUp({ fetchImpl: fakeFetch(() => json({}, 403)) });
-  assert.equal((await failure(service.readMine())).reasonCode, 'not_signed_in');
+  const error = await failure(service.readMine());
+  assert.equal(error.reasonCode, 'not_permitted');
+  assert.equal(error.statusCode, 403);
 });
 
 test('quota me without a session is not_signed_in and does not call the platform', async () => {

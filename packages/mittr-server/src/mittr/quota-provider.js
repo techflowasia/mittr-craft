@@ -12,6 +12,7 @@ const FAILURES = {
   unreachable: 'Cannot reach Mittr',
   upstream_timeout: 'Cannot reach Mittr',
   not_available: 'Mittr does not report a quota for this account',
+  not_permitted: 'This week’s quota is not available to you',
 };
 
 const formatCount = (value, maximumFractionDigits = 0) => (

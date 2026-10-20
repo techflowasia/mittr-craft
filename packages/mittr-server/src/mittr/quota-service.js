@@ -7,6 +7,7 @@ const LABEL_KEY = /^quota\.[A-Za-z.]+$/;
 
 const STATUS_BY_REASON = {
   not_signed_in: 401,
+  not_permitted: 403,
   not_available: 404,
   upstream_failed: 502,
   unreachable: 502,
@@ -110,7 +111,8 @@ export const createMittrQuotaService = ({
     } catch {
       throw createQuotaReadError(timeout.aborted ? 'upstream_timeout' : 'unreachable');
     }
-    if (response.status === 401 || response.status === 403) throw createQuotaReadError('not_signed_in');
+    if (response.status === 401) throw createQuotaReadError('not_signed_in');
+    if (response.status === 403) throw createQuotaReadError('not_permitted');
     if (response.status === 404) throw createQuotaReadError('not_available');
     if (!response.ok) throw createQuotaReadError('upstream_failed');
     const quota = readQuotaMe(await response.json().catch(() => null));
