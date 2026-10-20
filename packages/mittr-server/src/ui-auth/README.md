@@ -18,6 +18,28 @@ Otherwise, LDAP or Active Directory is used when `MITTR_AD_ENABLED=true`. All fo
 - `MITTR_AD_BIND_PASSWORD`
 - `MITTR_AD_SEARCH_BASE`
 
+### Secrets from a file
+
+`MITTR_AD_CLIENT_SECRET_FILE` and `MITTR_AD_BIND_PASSWORD_FILE` name a file that holds the client secret or the bind password, for example a mounted container secret. The server reads each file once at start. One trailing line break is dropped. A `_FILE` setting wins over the plain variable, and a file that cannot be read refuses the start.
+
+With the `_FILE` form, the secret is never in any process environment. A process listing such as `ps eww` cannot show it, and nothing the server starts inherits it. The file stays readable by the account the server runs as, and agents run as that account too, so keep the file outside the projects people open.
+
+### Kept from the engine
+
+The engine runs agents' shell commands, so it never sees the sign-in settings. At start the server plugin takes every `MITTR_AD_*` variable out of the server's own environment. Then, on every engine start, version probe, install and upgrade, it sets each of them to unset. This removes the copy that upstream's login-shell snapshot took before the plugin loaded.
+
+The same happens to the server's other secrets:
+- `OPENCHAMBER_UI_PASSWORD` and `MITTRCRAFT_UI_PASSWORD`
+- `OPENCODE_JWT_SECRET`
+- `OPENCHAMBER_TUNNEL_TOKEN` and `NGROK_AUTHTOKEN`
+- `OPENCHAMBER_APNS_P8`, `OPENCHAMBER_APNS_KEY_ID` and `OPENCHAMBER_APNS_TEAM_ID`
+- `OPENCHAMBER_LINEAR_CLIENT_SECRET`
+- `OPENCHAMBER_JEV_API_KEY`
+
+The server keeps these secrets, and only the engine loses them. The agent tool's token and URL, the engine's own password, provider keys and the broker settings still reach the engine.
+
+Under Bun, a variable taken out of `process.env` still reaches a child process started without an explicit environment. For that reason, `mittrcraft` runs the server on Node (see below). On Bun, use the `_FILE` form for both secrets.
+
 ## The directory's TLS certificate
 
 The directory's certificate is verified. If it comes from an internal CA, sign-in fails, and the log names the TLS error code (for example `UNABLE_TO_VERIFY_LEAF_SIGNATURE` or `SELF_SIGNED_CERT_IN_CHAIN`).

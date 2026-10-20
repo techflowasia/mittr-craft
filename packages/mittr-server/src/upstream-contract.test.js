@@ -1322,6 +1322,8 @@ const checks = {
       2,
       'the v2 install and the CLI upgrade no longer spread the plugin engine env after the shell snapshot and process.env',
     );
+    has(server, /readOpenCodeCliVersion\(resolveManagedOpenCodeLaunchSpec\(binary\), \{\s*env: \{ \.\.\.process\.env, \.\.\.\(await getServerPluginEngineEnv\(\)\) \},/, 'the compatibility probe no longer spreads the plugin engine env after process.env');
+    has(server, /getManagedOpenCodeEnv: async \(\) => \(\{\s*\.\.\.\(managedConfigRuntime \? await managedConfigRuntime\.buildManagedChildEnv\(\) : \{\}\),\s*\.\.\.\(await getServerPluginEngineEnv\(\)\),\s*\}\)/, 'the plugin engine env is no longer the last layer of the managed env');
   },
 
   'api-only-switch': () => {

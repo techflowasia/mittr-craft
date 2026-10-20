@@ -10,6 +10,7 @@ import { ensureGitIdentityStore } from './git-identities.js';
 import { setupMittr } from './mittr/index.js';
 import { MITTR_SETTINGS_KEYS, UPSTREAM_SETTINGS_KEYS, migrateSettingsOnce } from './settings.js';
 import { registerCompanySignIn } from './ui-auth/routes.js';
+import { SECRET_FILE_VARIABLES, readSecretFiles } from './ui-auth/secret-files.js';
 import { registerBrandedWeb } from './web-brand.js';
 
 /**
@@ -35,6 +36,19 @@ const flavorOf = (dataDir) => (path.basename(dataDir) === DEV_DATA_DIR ? 'dev' :
 
 const COMPANY_SIGN_IN_VARIABLE = /^MITTR_AD_/;
 
+const SERVER_ONLY_SECRETS = [
+  'OPENCHAMBER_UI_PASSWORD',
+  'MITTRCRAFT_UI_PASSWORD',
+  'OPENCODE_JWT_SECRET',
+  'OPENCHAMBER_TUNNEL_TOKEN',
+  'NGROK_AUTHTOKEN',
+  'OPENCHAMBER_APNS_P8',
+  'OPENCHAMBER_APNS_KEY_ID',
+  'OPENCHAMBER_APNS_TEAM_ID',
+  'OPENCHAMBER_LINEAR_CLIENT_SECRET',
+  'OPENCHAMBER_JEV_API_KEY',
+];
+
 const takeCompanySignInEnv = (env) => {
   const taken = {};
   for (const name of Object.keys(env)) {
@@ -46,8 +60,9 @@ const takeCompanySignInEnv = (env) => {
 };
 
 export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context = null, resourcesDir = null }) => {
-  const companySignInEnv = takeCompanySignInEnv(env);
-  const withheld = Object.fromEntries(Object.keys(companySignInEnv).map((name) => [name, undefined]));
+  const takenSignInEnv = takeCompanySignInEnv(env);
+  const withheld = Object.fromEntries([...Object.keys(takenSignInEnv), ...Object.values(SECRET_FILE_VARIABLES), ...SERVER_ONLY_SECRETS].map((name) => [name, undefined]));
+  const companySignInEnv = readSecretFiles(takenSignInEnv);
   // Without its own engine root a Dev build would resolve prod's engine
   // folders, and back up, migrate and run on the installed app's database.
   if (flavorOf(dataDir) === 'dev' && !String(env.MITTRCRAFT_ENGINE_HOME ?? '').trim()) {

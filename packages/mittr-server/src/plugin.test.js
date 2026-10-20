@@ -14,6 +14,19 @@ import { LDAP_ENV } from './ui-auth/test-fixtures.js';
 
 const ACCOUNT = '0123456789abcdef';
 
+const SERVER_ONLY_SECRETS = [
+  'OPENCHAMBER_UI_PASSWORD',
+  'MITTRCRAFT_UI_PASSWORD',
+  'OPENCODE_JWT_SECRET',
+  'OPENCHAMBER_TUNNEL_TOKEN',
+  'NGROK_AUTHTOKEN',
+  'OPENCHAMBER_APNS_P8',
+  'OPENCHAMBER_APNS_KEY_ID',
+  'OPENCHAMBER_APNS_TEAM_ID',
+  'OPENCHAMBER_LINEAR_CLIENT_SECRET',
+  'OPENCHAMBER_JEV_API_KEY',
+];
+
 const tempHome = (t) => {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-plugin-')));
   t.after(() => {
@@ -81,6 +94,7 @@ test('setup backs up the prod layout once, migrates settings and serves the engi
     OPENCODE_DB: 'opencode.db',
     OPENCODE_DISABLE_MODELS_FETCH: '1',
     OPENCODE_DISABLE_AUTOUPDATE: '1',
+    ...Object.fromEntries(['MITTR_AD_CLIENT_SECRET', 'MITTR_AD_BIND_PASSWORD', ...SERVER_ONLY_SECRETS].map((name) => [name, undefined])),
   });
 
   writeFile(
@@ -369,6 +383,96 @@ test('without the server context, company sign-in settings still never reach the
 
   assert.deepEqual(companySignInNames(env), []);
   assert.deepEqual(namesSeenByChild({ ...ENTRA_ENV, ...env, ...(await plugin.engineEnv()) }), []);
+});
+
+const ENGINE_KEEPS = {
+  OPENCHAMBER_AGENT_TOOL_TOKEN: 'agent-tool-token',
+  OPENCHAMBER_AGENT_TOOL_URL: 'http://127.0.0.1:1/agent-tool',
+  OPENCODE_PASSWORD: 'engine-password',
+  OPENCODE_SERVER_PASSWORD: 'engine-password',
+  OPENAI_API_KEY: 'provider-key',
+  MITTRCRAFT_BROKER_URL: 'https://api.mittr.asia',
+  MITTRCRAFT_BROKER_FIXED: '1',
+};
+
+const seenByChild = (env, names) => {
+  const child = spawnSync(process.execPath, ['-e', `console.log(JSON.stringify(${JSON.stringify(names)}.filter((name) => name in process.env)))`], { env, encoding: 'utf8' });
+  assert.equal(child.status, 0, child.stderr);
+  return JSON.parse(child.stdout);
+};
+
+test('the server\'s own secrets stay with the server and out of every engine start, and what the engine needs reaches it', async (t) => {
+  const home = tempHome(t);
+  const dataDir = prodLayout(home);
+  const secrets = Object.fromEntries(SERVER_ONLY_SECRETS.map((name) => [name, `value-of-${name.toLowerCase()}`]));
+  const env = { ...secrets, ...ENGINE_KEEPS, PATH: process.env.PATH, MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft' };
+  const plugin = await setupMittrServer({
+    dataDir,
+    logger: recordingLogger(),
+    env,
+    homeDir: home,
+    context: { app: express(), express, dataDir, logger: recordingLogger(), host: null, ...fakeEngineContext({ port: null }).context },
+  });
+  t.after(() => plugin.dispose());
+
+  for (const name of SERVER_ONLY_SECRETS) assert.equal(env[name], secrets[name], `${name} left the server`);
+  const engineEnv = await plugin.engineEnv();
+  for (const name of SERVER_ONLY_SECRETS) assert.ok(Object.hasOwn(engineEnv, name) && engineEnv[name] === undefined, name);
+  const spawned = { ...secrets, ...env, ...engineEnv };
+  assert.deepEqual(seenByChild(spawned, SERVER_ONLY_SECRETS), []);
+  assert.deepEqual(seenByChild(spawned, Object.keys(ENGINE_KEEPS)), Object.keys(ENGINE_KEEPS));
+});
+
+const secretFile = (home, name, content) => {
+  const file = path.join(home, 'secrets', name);
+  writeFile(file, content);
+  fs.chmodSync(file, 0o600);
+  return file;
+};
+
+for (const [mode, plain, fileVariable, secretName] of [
+  ['entra', ENTRA_ENV, 'MITTR_AD_CLIENT_SECRET_FILE', 'MITTR_AD_CLIENT_SECRET'],
+  ['ldap', LDAP_ENV, 'MITTR_AD_BIND_PASSWORD_FILE', 'MITTR_AD_BIND_PASSWORD'],
+]) {
+  test(`company sign-in (${mode}) starts with its secret only in ${fileVariable}, and the engine sees neither`, async (t) => {
+    const home = tempHome(t);
+    const dataDir = prodLayout(home);
+    const app = express();
+    const { registered, uiAuth } = uiAuthContext();
+    const { [secretName]: plainSecret, ...rest } = plain;
+    assert.ok(plainSecret);
+    const env = { ...rest, [fileVariable]: secretFile(home, 'company-sign-in', 'secret-from-file\n'), PATH: process.env.PATH, MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft' };
+    const plugin = await setupMittrServer({
+      dataDir,
+      logger: recordingLogger(),
+      env,
+      homeDir: home,
+      context: { app, express, dataDir, logger: recordingLogger(), host: null, requestScope: () => 'local', uiAuth, ...fakeEngineContext({ port: null }).context },
+    });
+    t.after(() => plugin.dispose());
+
+    assert.deepEqual(registered, ['ad']);
+    const { body } = await (await serve(t, app))('GET', '/auth/ad/status');
+    assert.deepEqual(body, { enabled: true, mode, passwordEnabled: false, tunnelLocked: false });
+    assert.deepEqual(companySignInNames(env), []);
+    const engineEnv = await plugin.engineEnv();
+    for (const name of [fileVariable, secretName]) assert.ok(Object.hasOwn(engineEnv, name) && engineEnv[name] === undefined, name);
+  });
+}
+
+test('a secret file that cannot be read refuses to start, naming the variable and nothing it holds', async (t) => {
+  const home = tempHome(t);
+  const dataDir = prodLayout(home);
+  const { uiAuth } = uiAuthContext();
+  const { MITTR_AD_CLIENT_SECRET, ...rest } = ENTRA_ENV;
+  assert.ok(MITTR_AD_CLIENT_SECRET);
+  await assert.rejects(setupMittrServer({
+    dataDir,
+    logger: recordingLogger(),
+    env: { ...rest, MITTR_AD_CLIENT_SECRET_FILE: path.join(home, 'missing-secret') },
+    homeDir: home,
+    context: { app: express(), express, dataDir, logger: recordingLogger(), host: null, requestScope: () => 'local', uiAuth, ...fakeEngineContext({ port: null }).context },
+  }), /^Error: MITTR_AD_CLIENT_SECRET_FILE names a file that could not be read \(ENOENT\)/);
 });
 
 test('setup hands Mittr the folder the engine reads its user config from', async (t) => {
