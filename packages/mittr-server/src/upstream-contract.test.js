@@ -1324,6 +1324,19 @@ const checks = {
     );
   },
 
+  'api-only-switch': () => {
+    const server = source('packages/web/server/index.js');
+    has(server, /const apiOnly = options\.apiOnly === true \|\| isEnvFlagEnabled\(process\.env\.OPENCHAMBER_API_ONLY\);/, 'API-only mode is no longer the option or OPENCHAMBER_API_ONLY');
+    has(server, /const isEnvFlagEnabled = \(value\) => \{\s*if \(value === true \|\| value === 1\) return true;\s*if \(typeof value !== 'string'\) return false;\s*const normalized = value\.trim\(\)\.toLowerCase\(\);\s*return normalized === '1' \|\| normalized === 'true';/, 'OPENCHAMBER_API_ONLY no longer reads 1 or true, trimmed and in any case');
+    has(source('packages/web/server/lib/opencode/startup-pipeline-runtime.js'), /if \(apiOnly\) \{\s*staticRoutesRuntime\.registerApiOnlyFallbackRoutes\(app\);\s*\} else \{\s*staticRoutesRuntime\.registerStaticRoutes\(app\);\s*\}/, 'API-only mode no longer replaces the web build with the API-only fallback');
+    const serverOptions = source('packages/web/server/lib/opencode/cli-options.js');
+    has(serverOptions, /if \(optionName === 'api-only'\) \{\s*options\.apiOnly = true;/, 'the server no longer reads --api-only');
+    has(source('packages/web/bin/lib/cli-args.js'), /case 'api-only':\s*options\.apiOnly = true;/, 'the CLI no longer reads --api-only');
+    const serve = source('packages/web/bin/lib/commands-serve.js');
+    has(serve, /startWebUiServer\(\{[^}]*apiOnly: options\.apiOnly === true,/, 'the foreground server no longer gets API-only mode from the CLI option');
+    has(serve, /if \(options\.apiOnly === true\) \{\s*serverArgs\.push\('--api-only'\);/, 'the daemon no longer gets --api-only');
+  },
+
   'web-shell-after-plugins': () => {
     const routes = source('packages/web/server/lib/opencode/static-routes-runtime.js');
     has(routes, /const env = typeof process\.env\.OPENCHAMBER_DIST_DIR === 'string' \? process\.env\.OPENCHAMBER_DIST_DIR\.trim\(\) : '';\s*if \(env\) \{\s*return path\.resolve\(env\);\s*\}\s*return path\.join\(__dirname, '\.\.', 'dist'\);/, 'the web build is no longer found through OPENCHAMBER_DIST_DIR or beside the server');

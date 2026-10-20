@@ -462,6 +462,11 @@ export const UPSTREAM_CONTRACT = [
     why: 'a plugin engine variable set to undefined outranks the login shell snapshot and process.env on every engine start, version probe, install and upgrade, and is left out of the child environment',
   },
   {
+    id: 'api-only-switch',
+    files: ['packages/web/server/index.js', 'packages/web/server/lib/opencode/startup-pipeline-runtime.js', 'packages/web/server/lib/opencode/cli-options.js', 'packages/web/bin/lib/cli-args.js', 'packages/web/bin/lib/commands-serve.js'],
+    why: 'API-only mode, which mounts the API-only fallback instead of the web build, is on exactly when the process got --api-only or OPENCHAMBER_API_ONLY is 1 or true, in the foreground server and the daemon alike',
+  },
+  {
     id: 'web-shell-after-plugins',
     files: ['packages/web/server/lib/opencode/static-routes-runtime.js', 'packages/web/server/lib/opencode/pwa-manifest-routes.js', 'packages/web/server/lib/opencode/startup-pipeline-runtime.js', 'packages/web/server/index.js'],
     why: 'the web build is served from OPENCHAMBER_DIST_DIR or packages/web/dist by express.static, every other app path gets res.sendFile of its index.html, the PWA manifest is res.send of its JSON, and all of it is mounted after server plugins set up',
