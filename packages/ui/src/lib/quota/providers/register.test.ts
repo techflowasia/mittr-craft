@@ -44,16 +44,18 @@ describe('registering a quota provider at run time', () => {
 });
 
 describe('an exclusive quota provider', () => {
+  const listedIds = (): string[] => QUOTA_PROVIDERS.map((provider) => provider.id);
+
   test('takes every built-in provider off the list and keeps the run-time ones', () => {
     registerQuotaProvider({ id: 'probe-kept', name: 'Probe kept' });
-    expect(QUOTA_PROVIDERS.some((provider) => provider.id === 'google')).toBe(true);
+    expect(listedIds()).toContain('google');
     registerQuotaProvider({ id: 'probe-alone', name: 'Probe alone' }, { first: true, exclusive: true });
-    expect(QUOTA_PROVIDERS[0]?.id).toBe('probe-alone');
-    expect(QUOTA_PROVIDERS.some((provider) => provider.id === 'probe-kept')).toBe(true);
+    expect(listedIds()[0]).toBe('probe-alone');
+    expect(listedIds()).toContain('probe-kept');
     for (const id of ['codex', 'cursor', 'github-copilot', 'google', 'openrouter', 'xai']) {
-      expect(QUOTA_PROVIDERS.some((provider) => provider.id === id)).toBe(false);
+      expect(listedIds()).not.toContain(id);
     }
     registerQuotaProvider({ id: 'probe-later', name: 'Probe later' });
-    expect(QUOTA_PROVIDERS.some((provider) => provider.id === 'probe-later')).toBe(true);
+    expect(listedIds()).toContain('probe-later');
   });
 });
