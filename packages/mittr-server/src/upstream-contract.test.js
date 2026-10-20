@@ -1003,6 +1003,24 @@ const checks = {
     has(server, /import \{ buildResult as buildQuotaResult, toUsageWindow \} from '\.\/lib\/quota\/utils\/formatters\.js';/);
   },
 
+  'quota-provider-exclusive': async () => {
+    const { registerQuotaProvider, builtInQuotaProvidersShown } = await importUpstream('packages/web/server/lib/quota/providers/registered.js');
+    assert.equal(builtInQuotaProvidersShown(), true, 'the built-in quota providers are hidden with no exclusive provider registered');
+    const probe = { providerId: 'contract-alone', providerName: 'Alone', isConfigured: () => true, fetchQuota: async () => ({ providerId: 'contract-alone', ok: true }) };
+    const unregister = registerQuotaProvider(probe, { exclusive: true });
+    try {
+      assert.equal(builtInQuotaProvidersShown(), false, 'an exclusive provider no longer hides the built-in quota providers');
+    } finally {
+      unregister();
+    }
+    assert.equal(builtInQuotaProvidersShown(), true, 'removing the exclusive provider no longer brings the built-in quota providers back');
+    const registry = source('packages/web/server/lib/quota/providers/index.js');
+    has(registry, /const builtInProviders = \(\) => \(builtInQuotaProvidersShown\(\) \? Object\.entries\(registry\) : \[\]\);/, 'the provider list no longer leaves the built-in providers out while an exclusive one is registered');
+    has(registry, /for \(const \[id, provider\] of \[\.\.\.builtInProviders\(\), \.\.\.registeredQuotaProviders\(\)\]\)/, 'the provider list no longer reads the built-in providers through the exclusive check');
+    has(registry, /Object\.hasOwn\(registry, providerId\)\s*\? \(builtInQuotaProvidersShown\(\) \? registry\[providerId\] : undefined\)/, 'the dispatcher no longer refuses a built-in provider while an exclusive one is registered');
+    assert.equal(lineCount(registry, 'registry[providerId]'), 1, 'the dispatcher reaches a built-in provider some other way');
+  },
+
   'quota-ui-registry': () => {
     const registry = source('packages/ui/src/lib/quota/providers/index.ts');
     has(registry, /^export function registerQuotaProvider\(meta: \{ id: string; name: string \}, options\?: \{ first\?: boolean \}\): void \{/m, 'registerQuotaProvider is no longer exported with this signature');

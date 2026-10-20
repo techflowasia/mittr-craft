@@ -2,8 +2,11 @@ const PROVIDER_ID = /^[a-z0-9][a-z0-9-]*$/;
 
 const entries = new Map();
 const reserved = new Set();
+const exclusive = new Set();
 
 export const registeredQuotaProviders = () => entries;
+
+export const builtInQuotaProvidersShown = () => exclusive.size === 0;
 
 export const reserveQuotaProviderIds = (ids) => {
   for (const id of ids) {
@@ -12,7 +15,7 @@ export const reserveQuotaProviderIds = (ids) => {
   }
 };
 
-export const registerQuotaProvider = (entry) => {
+export const registerQuotaProvider = (entry, options) => {
   if (!entry || typeof entry.providerId !== 'string' || !PROVIDER_ID.test(entry.providerId)
     || typeof entry.isConfigured !== 'function' || typeof entry.fetchQuota !== 'function') {
     throw new TypeError('A quota provider needs a providerId of lowercase letters, digits and dashes, isConfigured() and fetchQuota()');
@@ -27,7 +30,9 @@ export const registerQuotaProvider = (entry) => {
     fetchQuota: entry.fetchQuota
   };
   entries.set(entry.providerId, registered);
+  if (options?.exclusive === true) exclusive.add(registered);
   return () => {
+    exclusive.delete(registered);
     if (entries.get(entry.providerId) === registered) {
       entries.delete(entry.providerId);
     }

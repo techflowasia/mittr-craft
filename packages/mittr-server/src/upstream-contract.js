@@ -350,6 +350,11 @@ export const UPSTREAM_CONTRACT = [
     why: "a server plugin adds and removes a quota provider through registerQuotaProvider on the plugin context, and builds its result with the buildResult and toUsageWindow the context hands it as quotaResult, so the Usage page lists it beside upstream's own",
   },
   {
+    id: 'quota-provider-exclusive',
+    files: ['packages/web/server/lib/quota/providers/registered.js', 'packages/web/server/lib/quota/providers/index.js'],
+    why: "a quota provider registered with { exclusive: true } takes upstream's built-in providers out of the provider list and the dispatcher while it stays registered, so none of them reads another vendor's credential or calls that vendor",
+  },
+  {
     id: 'quota-ui-registry',
     files: ['packages/ui/src/lib/quota/providers/index.ts'],
     why: 'registerQuotaProvider adds a usage provider to the Usage page at run time and selectRegisteredQuotaProvider passes a registered id to the setter it is given, so the Usage page opens on the Mittr provider',

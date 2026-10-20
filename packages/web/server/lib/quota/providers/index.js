@@ -7,7 +7,7 @@
 
 import { readOpenCodeCredentials } from '../../opencode/auth.js';
 import { buildResult } from '../utils/index.js';
-import { registeredQuotaProviders, reserveQuotaProviderIds } from './registered.js';
+import { builtInQuotaProvidersShown, registeredQuotaProviders, reserveQuotaProviderIds } from './registered.js';
 
 import * as claude from './claude/index.js';
 import * as clinePass from './cline-pass.js';
@@ -192,8 +192,12 @@ const pendingFetches = new Map();
 
 reserveQuotaProviderIds(Object.keys(registry));
 
+const builtInProviders = () => (builtInQuotaProvidersShown() ? Object.entries(registry) : []);
+
 const findProvider = (providerId) => (
-  Object.hasOwn(registry, providerId) ? registry[providerId] : registeredQuotaProviders().get(providerId)
+  Object.hasOwn(registry, providerId)
+    ? (builtInQuotaProvidersShown() ? registry[providerId] : undefined)
+    : registeredQuotaProviders().get(providerId)
 );
 
 export { registerQuotaProvider } from './registered.js';
@@ -208,7 +212,7 @@ export const listConfiguredQuotaProviders = async () => {
   const auth = await readOpenCodeCredentials();
   const configured = [];
 
-  for (const [id, provider] of [...Object.entries(registry), ...registeredQuotaProviders()]) {
+  for (const [id, provider] of [...builtInProviders(), ...registeredQuotaProviders()]) {
     try {
       if (provider.isConfigured(auth)) {
         configured.push(id);

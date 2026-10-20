@@ -433,12 +433,20 @@
     {
       "hook": "quota-server",
       "why": "A build's server plugin that has its own usage source had no way to show it on the Usage page, because the quota registry was a fixed table, so the provider list and the dispatcher now also read the providers registered at run time."
+    },
+    {
+      "hook": "quota-server",
+      "why": "A build that reports usage from its own source may not want upstream's built-in quota providers, several of which read another vendor's stored login (a keychain item, a config file) and call that vendor's usage API when the Usage page opens, so a provider registered as exclusive takes them out of the provider list and the dispatcher until it is removed."
     }
   ],
   "packages/web/server/lib/quota/providers/registered.js": [
     {
       "hook": "quota-server",
       "why": "Registering a quota provider at run time should not make the server load every provider module at start, so the run-time entries live in a module with no imports that the registry merges and the plugin context uses."
+    },
+    {
+      "hook": "quota-server",
+      "why": "The exclusive flag is kept beside the run-time entries, in the module with no imports, so the registry and the plugin context read the same state without loading every provider at start."
     }
   ],
   "packages/web/server/lib/server-plugins.js": [
