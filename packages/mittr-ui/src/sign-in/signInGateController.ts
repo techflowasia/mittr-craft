@@ -1,5 +1,6 @@
 import type { JsonValue } from '@openchamber/sdk';
 
+import { ACCOUNTS_ENDPOINT, parseAccounts, type MittrAccount } from '../accounts/accountsApi';
 import {
   gateStateFromStatus,
   parseAuthorizeUrl,
@@ -11,6 +12,7 @@ import {
   SIGN_IN_STATUS_ENDPOINT,
   type GateSnapshot,
   type GateState,
+  type SignInStatus,
 } from './signInGateState';
 
 export type GateResponse = { ok: boolean; status: number; json: () => Promise<JsonValue> };
@@ -35,6 +37,7 @@ export type SignInGateDeps = {
   schedule?: GateSchedule;
   held?: () => boolean;
   onRelease?: (listener: () => void) => () => void;
+  onAccountChanged?: () => void;
 };
 
 export type SignInGateController = {
@@ -50,6 +53,8 @@ export type SignInGateController = {
 // A status check that hangs must end as a failed check the person can retry.
 export const STATUS_TIMEOUT_MS = 10_000;
 
+export const STATUS_POLL_MS = 30_000;
+
 // The server's sign-in transaction lives this long; after it the browser trip
 // can no longer finish, so the gate stops saying it is waiting for one.
 export const TRANSACTION_TTL_MS = 600_000;
@@ -59,7 +64,9 @@ export const scheduleWithTimers: GateSchedule = (run, delayMs) => {
   return () => clearTimeout(timer);
 };
 
-const INITIAL: GateSnapshot = { status: null, checkFailed: false, actionFailed: null, waiting: false, busy: false };
+const INITIAL: GateSnapshot = { status: null, checkFailed: false, actionFailed: null, waiting: false, busy: false, accounts: [] };
+
+const accountWentAway = (before: SignInStatus | null, after: SignInStatus) => Boolean(before?.signedIn) && (!after.signedIn || after.userId !== before?.userId);
 
 /**
  * The sign-in gate without React: it reads the status route on start, on
@@ -75,6 +82,7 @@ export function createSignInGateController({
   schedule = scheduleWithTimers,
   held = () => false,
   onRelease,
+  onAccountChanged = () => {},
 }: SignInGateDeps): SignInGateController {
   let current = INITIAL;
   let disposed = false;
@@ -83,6 +91,7 @@ export function createSignInGateController({
   const stops: Array<() => void> = [];
   const pendingTimers = new Set<() => void>();
   let cancelWait: (() => void) | null = null;
+  let cancelPoll: (() => void) | null = null;
 
   const after = (delayMs: number, run: () => void) => {
     const cancel = schedule(() => {
@@ -125,6 +134,25 @@ export function createSignInGateController({
 
   let refreshWhenReleased = false;
 
+  const pollWhileSignedIn = () => {
+    cancelPoll?.();
+    cancelPoll = null;
+    if (disposed || !current.status?.signedIn) return;
+    cancelPoll = after(STATUS_POLL_MS, () => {
+      cancelPoll = null;
+      void refresh();
+    });
+  };
+
+  const readAccounts = async (): Promise<MittrAccount[]> => {
+    try {
+      const response = await fetch(ACCOUNTS_ENDPOINT);
+      return response.ok ? parseAccounts(await response.json()) : [];
+    } catch {
+      return [];
+    }
+  };
+
   const refresh = async () => {
     if (held()) {
       refreshWhenReleased = true;
@@ -135,11 +163,20 @@ export function createSignInGateController({
       const response = await fetchStatus();
       if (!response.ok) throw new Error(`status answered ${response.status}`);
       const status = parseSignInStatus(await response.json());
-      if (check === latestCheck) update({ status, checkFailed: false });
+      if (check !== latestCheck) return;
+      const before = current.status;
+      update(status.signedIn ? { status, checkFailed: false, accounts: [] } : { status, checkFailed: false });
+      if (accountWentAway(before, status)) onAccountChanged();
+      if (!status.signedIn) {
+        const accounts = await readAccounts();
+        if (check === latestCheck) update({ accounts });
+      }
     } catch {
       // A status nobody could read is not "signed out": the last known status
       // stands, and with none the gate says the check failed.
       if (check === latestCheck) update({ checkFailed: true });
+    } finally {
+      if (check === latestCheck) pollWhileSignedIn();
     }
   };
 
@@ -217,6 +254,7 @@ export function createSignInGateController({
       for (const cancel of [...pendingTimers]) cancel();
       pendingTimers.clear();
       cancelWait = null;
+      cancelPoll = null;
     },
   };
 }

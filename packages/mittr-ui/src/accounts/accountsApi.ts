@@ -63,6 +63,8 @@ const accountsPayload = z.object({
   })),
 });
 
+export const parseAccounts = (payload: JsonValue): MittrAccount[] => accountsPayload.parse(payload).accounts;
+
 const outcomePayload = z.object({
   signedIn: z.boolean(),
   userId: z.string().optional().catch(undefined),
@@ -86,7 +88,7 @@ export function createAccountsApi({ fetch, openUrl }: AccountsApiDeps): Accounts
   const switchBy = async (path: string, init: Parameters<AccountsFetch>[1]) => parseOutcome(await readOk(await fetch(path, init)));
 
   return {
-    fetchAccounts: async () => accountsPayload.parse(await readOk(await fetch(ACCOUNTS_ENDPOINT))).accounts,
+    fetchAccounts: async () => parseAccounts(await readOk(await fetch(ACCOUNTS_ENDPOINT))),
     activateAccount: (userId) => switchBy(ACTIVATE_ENDPOINT, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

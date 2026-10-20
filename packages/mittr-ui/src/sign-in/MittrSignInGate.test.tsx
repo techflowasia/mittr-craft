@@ -44,6 +44,28 @@ describe('MittrSignInGateView', () => {
     expect(html).not.toContain('the app');
   });
 
+  test('after Mittr ended the sign-in, the gate says so and offers each account still signed in, then a new sign-in', () => {
+    const html = view({
+      state: 'signed-out',
+      notice: 'session-ended',
+      accounts: [{ userId: 'u-b', displayName: 'B', active: false }, { userId: 'u-c', displayName: ' ', active: false }],
+      onContinueAs: noop,
+    });
+    expect(html).toContain(escaped(mittrT('mittr.signIn.sessionEnded')));
+    expect(buttons(html)).toEqual([
+      mittrT('mittr.signIn.continueAs', { name: 'B' }),
+      mittrT('mittr.signIn.continueAs', { name: 'u-c' }),
+      mittrT('mittr.signIn.action'),
+    ]);
+    expect(html).not.toContain('the app');
+  });
+
+  test('accounts are offered only where a sign-in is, never past a damaged list', () => {
+    const accounts = [{ userId: 'u-b', displayName: 'B', active: false }];
+    expect(buttons(view({ state: 'signed-out', notice: 'accounts-damaged', accounts, onContinueAs: noop }))).toEqual([mittrT('mittr.signIn.repair')]);
+    expect(buttons(view({ state: 'signed-out', accounts }))).toEqual([mittrT('mittr.signIn.action')]);
+  });
+
   test('a damaged account list offers Repair and no sign-in that would be refused', () => {
     const html = view({ state: 'signed-out', notice: 'accounts-damaged' });
     expect(html).toContain(escaped(mittrT('mittr.signIn.accountsDamaged')));
@@ -106,7 +128,7 @@ describe('MittrErrorBoundary', () => {
 });
 
 describe('the gate fails closed', () => {
-  const IDLE_SNAPSHOT: GateSnapshot = { status: null, checkFailed: false, actionFailed: null, waiting: false, busy: false };
+  const IDLE_SNAPSHOT: GateSnapshot = { status: null, checkFailed: false, actionFailed: null, waiting: false, busy: false, accounts: [] };
   const SIGNED_OUT: GateSnapshot = { ...IDLE_SNAPSHOT, status: { signedIn: false } };
 
   const expectReloadOnly = (html: string) => {

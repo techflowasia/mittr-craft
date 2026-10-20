@@ -18,6 +18,7 @@ const snapshot = (over: Partial<GateSnapshot> = {}): GateSnapshot => ({
   actionFailed: null,
   waiting: false,
   busy: false,
+  accounts: [],
   ...over,
 });
 
@@ -92,6 +93,14 @@ describe('gateNotice', () => {
     expect(gateNotice(snapshot({ waiting: true }))).toBe('waiting');
     expect(gateNotice(snapshot({ status: null, checkFailed: true }))).toBe('check-failed');
     expect(gateNotice(snapshot())).toBe(null);
+  });
+
+  test('an account Mittr signed out is said, below anything that stands in the way of signing in again', () => {
+    expect(parseSignInStatus({ signedIn: false, sessionEnded: true })).toEqual({ signedIn: false, sessionEnded: true });
+    expect(parseSignInStatus({ signedIn: true, userId: 'u1', sessionEnded: true })).toEqual({ signedIn: true, userId: 'u1' });
+    expect(gateNotice(snapshot({ status: { signedIn: false, sessionEnded: true } }))).toBe('session-ended');
+    expect(gateNotice(snapshot({ status: { signedIn: false, sessionEnded: true }, waiting: true }))).toBe('waiting');
+    expect(gateNotice(snapshot({ status: { signedIn: false, sessionEnded: true, accountsDamaged: true } }))).toBe('accounts-damaged');
   });
 
   test('a new browser trip hides the failure of the one before', () => {

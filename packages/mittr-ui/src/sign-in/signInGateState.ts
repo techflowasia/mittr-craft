@@ -1,6 +1,8 @@
 import type { JsonValue } from '@openchamber/sdk';
 import { z } from 'zod';
 
+import type { MittrAccount } from '../accounts/accountsApi';
+
 export type GateState = 'checking' | 'signed-out' | 'signed-in';
 
 export type SignInFailure = 'unreachable' | 'failed';
@@ -12,6 +14,7 @@ export type SignInStatus = {
   accountsDamaged?: true;
   keychainMissing?: true;
   signInFailed?: SignInFailure;
+  sessionEnded?: true;
 };
 
 export type GateAction = 'start' | 'repair';
@@ -22,6 +25,7 @@ export type GateSnapshot = {
   actionFailed: GateAction | null;
   waiting: boolean;
   busy: boolean;
+  accounts: MittrAccount[];
 };
 
 export type GateNotice =
@@ -32,7 +36,8 @@ export type GateNotice =
   | 'start-failed'
   | 'waiting'
   | 'sign-in-failed'
-  | 'sign-in-unreachable';
+  | 'sign-in-unreachable'
+  | 'session-ended';
 
 export const SIGN_IN_STATUS_ENDPOINT = '/api/mittr/auth/status';
 export const SIGN_IN_START_ENDPOINT = '/api/mittr/auth/start';
@@ -50,6 +55,7 @@ const statusPayload = z.object({
   accountsDamaged: z.literal(true).optional().catch(undefined),
   keychainMissing: z.literal(true).optional().catch(undefined),
   signInFailed: z.enum(['unreachable', 'failed']).optional().catch(undefined),
+  sessionEnded: z.literal(true).optional().catch(undefined),
 });
 
 // The status route is a boundary: anything but an exact `signedIn: true` is
@@ -57,13 +63,14 @@ const statusPayload = z.object({
 export function parseSignInStatus(payload: JsonValue): SignInStatus {
   const parsed = statusPayload.safeParse(payload);
   if (!parsed.success) return { signedIn: false };
-  const { signedIn, userId, displayName, accountsDamaged, keychainMissing, signInFailed } = parsed.data;
+  const { signedIn, userId, displayName, accountsDamaged, keychainMissing, signInFailed, sessionEnded } = parsed.data;
   const status: SignInStatus = { signedIn };
   if (signedIn && userId !== undefined) status.userId = userId;
   if (signedIn && displayName !== undefined) status.displayName = displayName;
   if (accountsDamaged) status.accountsDamaged = true;
   if (keychainMissing) status.keychainMissing = true;
   if (signInFailed) status.signInFailed = signInFailed;
+  if (!signedIn && sessionEnded) status.sessionEnded = true;
   return status;
 }
 
@@ -98,5 +105,6 @@ export function gateNotice(snapshot: GateSnapshot): GateNotice | null {
   if (waiting) return 'waiting';
   if (status.signInFailed === 'unreachable') return 'sign-in-unreachable';
   if (status.signInFailed === 'failed') return 'sign-in-failed';
+  if (status.sessionEnded) return 'session-ended';
   return null;
 }

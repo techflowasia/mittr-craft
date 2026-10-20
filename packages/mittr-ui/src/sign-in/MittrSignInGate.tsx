@@ -7,8 +7,10 @@ import { MittrCraftLogo } from '../MittrCraftLogo';
 import { MittrErrorBoundary } from '../MittrErrorBoundary';
 import { mittrT, useMittrT } from '../strings/mittrT';
 import type { MittrKey } from '../strings/mittrT';
-import { reloadWindow, resyncThenReload } from '../accounts/accountSwitch';
-import { beginSignInWait, gateHeld, listenAccountChanged, onGateRelease, reloadOrDefer } from './accountChange';
+import { AccountSwitchDialog } from '../accounts/AccountSwitchDialog';
+import { accountName, accountsApi, type MittrAccount } from '../accounts/accountsApi';
+import { reloadWindow, resyncThenReload, useAccountSwitch, type AccountSwitchBinding } from '../accounts/accountSwitch';
+import { announceAccountChanged, beginSignInWait, gateHeld, listenAccountChanged, onGateRelease, reloadOrDefer } from './accountChange';
 import { AuditNotice } from './AuditNotice';
 import { createSignInGateController, desktopBridge, type SignInGateController } from './signInGateController';
 import { gateNotice, gateStateFromStatus, type GateNotice, type GateSnapshot, type GateState } from './signInGateState';
@@ -30,6 +32,7 @@ const NOTICE_TEXT = {
   waiting: { key: 'mittr.signIn.waiting', tone: 'quiet' },
   'sign-in-failed': { key: 'mittr.signIn.failed', tone: 'error' },
   'sign-in-unreachable': { key: 'mittr.signIn.unreachable', tone: 'error' },
+  'session-ended': { key: 'mittr.signIn.sessionEnded', tone: 'warning' },
 } satisfies Record<GateNotice, NoticeText>;
 
 const TONE_CLASS = {
@@ -59,6 +62,8 @@ export type MittrSignInGateViewProps = {
   onSignIn: () => void;
   onRepair?: () => void;
   onCheckAgain?: () => void;
+  accounts?: MittrAccount[];
+  onContinueAs?: (userId: string) => void;
   children: React.ReactNode;
 };
 
@@ -69,6 +74,8 @@ export function MittrSignInGateView({
   onSignIn,
   onRepair,
   onCheckAgain,
+  accounts = [],
+  onContinueAs,
   children,
 }: MittrSignInGateViewProps): React.ReactNode {
   const t = useMittrT();
@@ -83,6 +90,7 @@ export function MittrSignInGateView({
   const action = button ? handlers[button] : null;
   const text = notice ? NOTICE_TEXT[notice] : null;
   const checking = state === 'checking' && notice !== 'check-failed';
+  const continueAs = button === 'sign-in' && onContinueAs ? accounts : [];
 
   return (
     <div className="relative flex min-h-dvh w-full items-center justify-center overflow-hidden bg-background text-foreground">
@@ -106,6 +114,18 @@ export function MittrSignInGateView({
                   {t(text.key)}
                 </p>
               ) : null}
+              {continueAs.map((account) => (
+                <Button
+                  key={account.userId}
+                  size="lg"
+                  variant="outline"
+                  className="w-full"
+                  disabled={busy}
+                  onClick={() => onContinueAs?.(account.userId)}
+                >
+                  {t('mittr.signIn.continueAs', { name: accountName(account) })}
+                </Button>
+              ))}
               {action?.onClick ? (
                 <Button size="lg" className="w-full" disabled={busy} onClick={action.onClick}>
                   {t(action.label)}
@@ -139,7 +159,7 @@ export function SignInGateFailed(): React.ReactNode {
   );
 }
 
-const IDLE: GateSnapshot = { status: null, checkFailed: false, actionFailed: null, waiting: false, busy: false };
+const IDLE: GateSnapshot = { status: null, checkFailed: false, actionFailed: null, waiting: false, busy: false, accounts: [] };
 
 const watchFocus = (handler: () => void) => {
   window.addEventListener('focus', handler);
@@ -153,6 +173,10 @@ const createGateController = (): SignInGateController => createSignInGateControl
   openUrl: openExternalUrl,
   held: gateHeld,
   onRelease: onGateRelease,
+  onAccountChanged: () => {
+    announceAccountChanged();
+    reloadOrDefer(reloadWindow, resyncThenReload);
+  },
 });
 
 type SignInGateBinding = { controller: SignInGateController | null; snapshot: GateSnapshot; broken: boolean };
@@ -190,9 +214,9 @@ const useSignInGate = (): SignInGateBinding => {
   return { controller, snapshot, broken };
 };
 
-type MittrSignInGateBodyProps = SignInGateBinding & { children: React.ReactNode };
+type MittrSignInGateBodyProps = SignInGateBinding & { switching?: AccountSwitchBinding; children: React.ReactNode };
 
-export function MittrSignInGateBody({ controller, snapshot, broken, children }: MittrSignInGateBodyProps): React.ReactNode {
+export function MittrSignInGateBody({ controller, snapshot, broken, switching, children }: MittrSignInGateBodyProps): React.ReactNode {
   if (broken) return <SignInGateFailed />;
   const state = gateStateFromStatus(snapshot.status);
   if (state === 'signed-in') return <>{children}</>;
@@ -202,13 +226,22 @@ export function MittrSignInGateBody({ controller, snapshot, broken, children }: 
       <MittrSignInGateView
         state={state}
         notice={gateNotice(snapshot)}
-        busy={snapshot.busy || !controller}
+        busy={snapshot.busy || !controller || (switching !== undefined && switching.state !== 'idle')}
         onSignIn={() => { void controller?.signIn(); }}
         onRepair={() => { void controller?.repair(); }}
         onCheckAgain={() => { void controller?.refresh(); }}
+        accounts={snapshot.accounts}
+        onContinueAs={switching ? (userId) => { void switching.accountSwitch.run(() => accountsApi.activateAccount(userId)); } : undefined}
       >
         {children}
       </MittrSignInGateView>
+      {switching ? (
+        <AccountSwitchDialog
+          state={switching.state}
+          onRetry={() => { void switching.accountSwitch.retry(); }}
+          onDismiss={() => { void switching.accountSwitch.dismiss(); }}
+        />
+      ) : null}
     </MittrErrorBoundary>
   );
 }
@@ -222,5 +255,6 @@ export function MittrSignInGateBody({ controller, snapshot, broken, children }: 
  */
 export function MittrSignInGate({ children }: { children: React.ReactNode }): React.ReactNode {
   const binding = useSignInGate();
-  return <MittrSignInGateBody {...binding}>{children}</MittrSignInGateBody>;
+  const switching = useAccountSwitch();
+  return <MittrSignInGateBody {...binding} switching={switching}>{children}</MittrSignInGateBody>;
 }

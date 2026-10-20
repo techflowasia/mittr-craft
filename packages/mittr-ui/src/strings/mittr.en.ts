@@ -17,6 +17,8 @@ export const mittrEn = {
   'mittr.signIn.repairFailed': 'MittrCraft could not set the damaged account list aside. Try again.',
   'mittr.signIn.crashed': 'MittrCraft could not show the sign-in screen.',
   'mittr.signIn.reload': 'Reload',
+  'mittr.signIn.sessionEnded': 'Mittr ended your sign-in on this computer. Sign in again to continue.',
+  'mittr.signIn.continueAs': 'Continue as {name}',
   'mittr.audit.notice': 'Your instructions are recorded and visible to Mittr admins. Your code and files are not.',
   'mittr.providers.otherProviders.label': 'Show models from other providers',
   'mittr.providers.otherProviders.note': "When this is on, your prompts can go to those providers, using keys you add yourself. Mittr models stay available; the engine's own Zen models stay off.",

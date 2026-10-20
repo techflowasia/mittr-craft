@@ -2,8 +2,10 @@ import { describe, expect, test } from 'bun:test';
 
 import type { JsonValue } from '@openchamber/sdk';
 
+import { ACCOUNTS_ENDPOINT } from '../accounts/accountsApi';
 import {
   createSignInGateController,
+  STATUS_POLL_MS,
   STATUS_TIMEOUT_MS,
   TRANSACTION_TTL_MS,
   type GateFetch,
@@ -81,15 +83,19 @@ const setUp = (routes: Record<string, Answer[]>, { withDesktop = true } = {}) =>
   const desktop = fakeDesktop();
   const clock = fakeClock();
   const opened: string[] = [];
+  const changes: string[] = [];
   const controller = createSignInGateController({
     fetch: server.fetch,
     listen: withDesktop ? desktop.listen : undefined,
     onFocus: desktop.onFocus,
     openUrl: async (url) => { opened.push(url); return true; },
     schedule: clock.schedule,
+    onAccountChanged: () => { changes.push('changed'); },
   });
-  return { controller, server, desktop, opened, clock };
+  return { controller, server, desktop, opened, clock, changes };
 };
+
+const signedInAs = (userId: string, displayName: string) => answer({ signedIn: true, userId, displayName });
 
 describe('sign-in gate controller', () => {
   test('controller moves to signed-out on a signed-out status', async () => {
@@ -328,6 +334,93 @@ describe('sign-in gate controller', () => {
     unsubscribe();
     controller.dispose();
     expect(desktop.listening()).toBe(0);
+  });
+
+  test('while signed in the status is read again every half minute, and never while signed out', async () => {
+    const { controller, server, clock } = setUp({
+      [SIGN_IN_STATUS_ENDPOINT]: [signedInAs('u-a', 'A'), signedInAs('u-a', 'A'), answer({ signedIn: false })],
+      [ACCOUNTS_ENDPOINT]: [answer({ accounts: [] })],
+    });
+    await settle();
+    expect(clock.pending()).toBe(1);
+    clock.advance(STATUS_POLL_MS - 1);
+    await settle();
+    expect(server.statusCalls()).toBe(1);
+    clock.advance(1);
+    await settle();
+    expect(server.statusCalls()).toBe(2);
+    clock.advance(STATUS_POLL_MS);
+    await settle();
+    expect(server.statusCalls()).toBe(3);
+    expect(controller.state()).toBe('signed-out');
+    expect(clock.pending()).toBe(0);
+    controller.dispose();
+  });
+
+  test('an account signed out under the window is an account change, told once', async () => {
+    const { controller, clock, changes } = setUp({
+      [SIGN_IN_STATUS_ENDPOINT]: [signedInAs('u-a', 'A'), answer({ signedIn: false, sessionEnded: true })],
+      [ACCOUNTS_ENDPOINT]: [answer({ accounts: [{ userId: 'u-b', displayName: 'B', active: false }] })],
+    });
+    await settle();
+    expect(changes).toEqual([]);
+    clock.advance(STATUS_POLL_MS);
+    await settle();
+    expect(changes).toEqual(['changed']);
+    expect(controller.snapshot().status).toEqual({ signedIn: false, sessionEnded: true });
+    controller.refresh();
+    await settle();
+    expect(changes).toEqual(['changed']);
+    controller.dispose();
+  });
+
+  test('another account under the window is an account change too', async () => {
+    const { controller, desktop, changes } = setUp({ [SIGN_IN_STATUS_ENDPOINT]: [signedInAs('u-a', 'A'), signedInAs('u-b', 'B')] });
+    await settle();
+    desktop.focus();
+    await settle();
+    expect(changes).toEqual(['changed']);
+    controller.dispose();
+  });
+
+  test('signing in from the gate, or reading the same account again, is no account change', async () => {
+    const { controller, desktop, changes } = setUp({
+      [SIGN_IN_STATUS_ENDPOINT]: [answer({ signedIn: false }), signedInAs('u-a', 'A'), signedInAs('u-a', 'A')],
+      [ACCOUNTS_ENDPOINT]: [answer({ accounts: [] })],
+    });
+    await settle();
+    desktop.emit(SIGN_IN_COMPLETED_EVENT);
+    await settle();
+    desktop.focus();
+    await settle();
+    expect(controller.state()).toBe('signed-in');
+    expect(changes).toEqual([]);
+    controller.dispose();
+  });
+
+  test('signed out, the gate lists the accounts still signed in on this computer, and none once signed in', async () => {
+    const { controller, desktop, server } = setUp({
+      [SIGN_IN_STATUS_ENDPOINT]: [answer({ signedIn: false, sessionEnded: true }), signedInAs('u-b', 'B')],
+      [ACCOUNTS_ENDPOINT]: [answer({ accounts: [{ userId: 'u-b', displayName: 'B', active: false }] })],
+    });
+    await settle();
+    expect(controller.snapshot().accounts).toEqual([{ userId: 'u-b', displayName: 'B', active: false }]);
+    desktop.focus();
+    await settle();
+    expect(controller.snapshot().accounts).toEqual([]);
+    expect(server.calls.filter((call) => call.path === ACCOUNTS_ENDPOINT)).toHaveLength(1);
+    controller.dispose();
+  });
+
+  test('an account list nobody could read offers no account to continue as', async () => {
+    const { controller } = setUp({
+      [SIGN_IN_STATUS_ENDPOINT]: [answer({ signedIn: false })],
+      [ACCOUNTS_ENDPOINT]: [answer({ error: 'nope' }, 500)],
+    });
+    await settle();
+    expect(controller.state()).toBe('signed-out');
+    expect(controller.snapshot().accounts).toEqual([]);
+    controller.dispose();
   });
 
   test('without a desktop bridge only focus re-checks', async () => {
