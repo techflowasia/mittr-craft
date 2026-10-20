@@ -1019,6 +1019,7 @@ const checks = {
     has(registry, /for \(const \[id, provider\] of \[\.\.\.builtInProviders\(\), \.\.\.registeredQuotaProviders\(\)\]\)/, 'the provider list no longer reads the built-in providers through the exclusive check');
     has(registry, /Object\.hasOwn\(registry, providerId\)\s*\? \(builtInQuotaProvidersShown\(\) \? registry\[providerId\] : undefined\)/, 'the dispatcher no longer refuses a built-in provider while an exclusive one is registered');
     assert.equal(lineCount(registry, 'registry[providerId]'), 1, 'the dispatcher reaches a built-in provider some other way');
+    has(source('packages/mittr-server/src/mittr/index.js'), /\}\), \{ exclusive: true \}\);/, 'Mittr no longer registers as the only usage provider');
   },
 
   'quota-ui-registry': () => {

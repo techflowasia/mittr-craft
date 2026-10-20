@@ -352,7 +352,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'quota-provider-exclusive',
     files: ['packages/web/server/lib/quota/providers/registered.js', 'packages/web/server/lib/quota/providers/index.js'],
-    why: "a quota provider registered with { exclusive: true } takes upstream's built-in providers out of the provider list and the dispatcher while it stays registered, so none of them reads another vendor's credential or calls that vendor",
+    why: "a quota provider registered with { exclusive: true } takes upstream's built-in providers out of the provider list and the dispatcher while it stays registered, so none of them reads another vendor's credential or calls that vendor; Mittr registers that way",
   },
   {
     id: 'quota-ui-registry',

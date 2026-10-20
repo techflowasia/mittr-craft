@@ -96,6 +96,7 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
   const userConfigWrites = [];
   const broadcasts = [];
   const quotaProviders = [];
+  const quotaProviderOptions = [];
   const engine = {
     port: enginePort,
     url: (route = '/') => {
@@ -140,9 +141,10 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
         },
       },
       mergeEngineConfig,
-      registerQuotaProvider: (entry) => {
+      registerQuotaProvider: (entry, options) => {
         if (quotaProviders.some((registered) => registered.providerId === entry.providerId)) throw new Error(`Quota provider ${entry.providerId} is already registered`);
         quotaProviders.push(entry);
+        quotaProviderOptions.push(options);
         return () => {
           const at = quotaProviders.indexOf(entry);
           if (at !== -1) quotaProviders.splice(at, 1);
@@ -153,6 +155,7 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
       git: { remoteUrl: async (directory) => (fake.remotes ?? {})[directory] ?? null },
     },
     quotaProviders,
+    quotaProviderOptions,
     server,
     broadcasts,
     remotes: {},

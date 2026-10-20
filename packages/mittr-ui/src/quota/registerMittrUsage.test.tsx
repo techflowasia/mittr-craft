@@ -35,6 +35,14 @@ describe('the Mittr usage provider', () => {
     expect(QUOTA_PROVIDERS.filter((provider) => provider.name === 'Mittr')).toHaveLength(1);
   });
 
+  test('no upstream usage provider is listed beside Mittr', () => {
+    expect(QUOTA_PROVIDERS.map((provider) => provider.id)).toEqual(['mittr']);
+  });
+
+  test('the work-status panel and the tray ask no upstream usage provider before the usage settings are read', () => {
+    expect([...useQuotaStore.getState().dropdownProviderIds]).toEqual(['mittr']);
+  });
+
   test('the work-status panel and the tray list Mittr before the usage settings are read', () => {
     const listed: readonly string[] = useQuotaStore.getState().dropdownProviderIds;
     expect(listed.filter((id) => id === 'mittr')).toHaveLength(1);

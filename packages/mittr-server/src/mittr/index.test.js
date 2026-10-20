@@ -1218,6 +1218,7 @@ test('Mittr is a usage provider while the plugin runs, and gone after dispose', 
   const engine = fakeEngineContext();
   const { mittr } = await setUp(t, { engine, fetchImpl: quotaPlatform() });
   assert.deepEqual(engine.quotaProviders.map((entry) => [entry.providerId, entry.providerName]), [['mittr', 'Mittr']]);
+  assert.deepEqual(engine.quotaProviderOptions, [{ exclusive: true }]);
   await mittr.dispose();
   assert.deepEqual(engine.quotaProviders, []);
 });

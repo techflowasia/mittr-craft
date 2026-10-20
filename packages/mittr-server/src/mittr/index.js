@@ -452,7 +452,7 @@ export function setupMittr(context, {
       isSignedIn: signedIn,
       isBrokerConfigured: () => Boolean(broker.baseUrl),
       ...context.quotaResult,
-    }));
+    }), { exclusive: true });
   } catch (error) {
     logger.warn('[mittr] could not add Mittr to the usage providers:', error?.message ?? error);
   }
