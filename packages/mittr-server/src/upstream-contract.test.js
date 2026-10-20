@@ -1326,6 +1326,18 @@ const checks = {
     has(server, /getManagedOpenCodeEnv: async \(\) => \(\{\s*\.\.\.\(managedConfigRuntime \? await managedConfigRuntime\.buildManagedChildEnv\(\) : \{\}\),\s*\.\.\.\(await getServerPluginEngineEnv\(\)\),\s*\}\)/, 'the plugin engine env is no longer the last layer of the managed env');
   },
 
+  'update-install-disabled-env': () => {
+    const routes = source('packages/web/server/lib/opencode/openchamber-routes.js');
+    const route = routes.slice(routes.indexOf("app.post('/api/openchamber/update-install'"));
+    const guard = route.indexOf("if (isUpdateCheckDisabled(process.env)) return res.status(400).json({ error: 'No update available', updatesDisabled: true });");
+    assert.ok(guard > 0, 'the update-install route no longer answers the switch');
+    for (const step of ["await import('child_process')", 'await checkForUpdates()', 'spawnChild(']) {
+      const at = route.indexOf(step);
+      assert.ok(at > guard, `${step} no longer comes after the switch`);
+    }
+    has(routes, /const isUpdateCheckDisabled = \(env\) => \{\s*const value = typeof env\?\.OPENCHAMBER_UPDATE_CHECK_DISABLED === 'string' \? env\.OPENCHAMBER_UPDATE_CHECK_DISABLED\.trim\(\)\.toLowerCase\(\) : '';\s*return value === '1' \|\| value === 'true';/, 'the switch no longer reads 1 or true');
+  },
+
   'api-only-switch': () => {
     const server = source('packages/web/server/index.js');
     has(server, /const apiOnly = options\.apiOnly === true \|\| isEnvFlagEnabled\(process\.env\.OPENCHAMBER_API_ONLY\);/, 'API-only mode is no longer the option or OPENCHAMBER_API_ONLY');
@@ -1333,6 +1345,7 @@ const checks = {
     has(source('packages/web/server/lib/opencode/startup-pipeline-runtime.js'), /if \(apiOnly\) \{\s*staticRoutesRuntime\.registerApiOnlyFallbackRoutes\(app\);\s*\} else \{\s*staticRoutesRuntime\.registerStaticRoutes\(app\);\s*\}/, 'API-only mode no longer replaces the web build with the API-only fallback');
     const serverOptions = source('packages/web/server/lib/opencode/cli-options.js');
     has(serverOptions, /if \(optionName === 'api-only'\) \{\s*options\.apiOnly = true;/, 'the server no longer reads --api-only');
+    has(serverOptions, /const optionName = eqIndex >= 0 \? arg\.slice\(2, eqIndex\) : arg\.slice\(2\);/, 'the server no longer reads --api-only=<anything> as --api-only');
     has(source('packages/web/bin/lib/cli-args.js'), /case 'api-only':\s*options\.apiOnly = true;/, 'the CLI no longer reads --api-only');
     const serve = source('packages/web/bin/lib/commands-serve.js');
     has(serve, /startWebUiServer\(\{[^}]*apiOnly: options\.apiOnly === true,/, 'the foreground server no longer gets API-only mode from the CLI option');

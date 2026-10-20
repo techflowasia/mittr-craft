@@ -9,7 +9,7 @@ import express from 'express';
 import { createStaticRoutesRuntime } from '../../web/server/lib/opencode/static-routes-runtime.js';
 import { listen } from './mittr/test-helpers.js';
 import { repoRoot } from './upstream-contract.js';
-import { createBrandedWeb, readWebBrand, registerBrandedWeb } from './web-brand.js';
+import { createBrandedWeb, readWebBrand, registerBrandedWeb, servesApiOnly } from './web-brand.js';
 
 const readJson = (relative) => JSON.parse(fs.readFileSync(path.join(repoRoot, relative), 'utf8'));
 const DESKTOP_STRINGS = [...readJson('brand/visible-strings.json'), ...readJson('brand/visible-strings.prod.json')];
@@ -195,7 +195,13 @@ test('in API-only mode upstream answers every page itself and nothing is branded
     assert.ok(page.text.includes('API-only mode') && !page.text.includes(SHELL_TITLE), page.text.slice(0, 200));
     assert.notEqual((await get('/assets/main-Ab12Cd34.js')).text, 'const t="MittrCraft",x;');
   }
-  const off = registerBrandedWeb({ app: express(), logger: recordingLogger() }, { env: { OPENCHAMBER_DIST_DIR: upstreamDist(t), OPENCHAMBER_API_ONLY: 'false' }, argv: [], brand: FIXTURE_BRAND });
+  for (const argv of [['--api-only=true'], ['--api-only='], ['serve', '--api-only', '--port', '9']]) {
+    assert.equal(servesApiOnly({}, argv), true, argv.join(' '));
+  }
+  for (const argv of [['--api-only-x'], ['--api-onlyx'], ['api-only'], ['--port', '--api'], []]) {
+    assert.equal(servesApiOnly({}, argv), false, argv.join(' '));
+  }
+  const off = registerBrandedWeb({ app: express(), logger: recordingLogger() }, { env: { OPENCHAMBER_DIST_DIR: upstreamDist(t), OPENCHAMBER_API_ONLY: 'false' }, argv: ['--api-only-later'], brand: FIXTURE_BRAND });
   assert.equal(off.enabled, true);
   await off.web.ready;
 });

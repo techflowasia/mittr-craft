@@ -130,7 +130,7 @@ const startHosted = async (t, extraEnv) => {
       NODE_OPTIONS: `--import ${path.join(tools, 'guard.mjs')}`,
       HOSTED_TEST_EGRESS_LOG: egressLog,
       HOSTED_TEST_ENGINE_LOG: engineLog,
-      HOSTED_TEST_WATCHED: JSON.stringify([...Object.keys(SERVER_ONLY), ...ENGINE_NEEDS]),
+      HOSTED_TEST_WATCHED: JSON.stringify([...Object.keys(SERVER_ONLY), ...ENGINE_NEEDS, 'BUN_BINARY', 'MITTRCRAFT_BIN_BUN_BINARY']),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -198,6 +198,11 @@ test('a hosted server answers the update check and the model catalog without cal
   const metadata = await fetch(`${hosted.base}/api/openchamber/models-metadata`, { headers: { accept: 'application/json' } });
   assert.equal(metadata.status, 200);
   assert.deepEqual(await metadata.json(), {});
+  const install = await fetch(`${hosted.base}/api/openchamber/update-install`, { method: 'POST', headers: { accept: 'application/json' } });
+  assert.equal(install.status, 400);
+  assert.deepEqual(await install.json(), { error: 'No update available', updatesDisabled: true });
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  assert.equal((await fetch(`${hosted.base}/health`)).status, 200, 'the server went away after the install request');
 
   await hosted.stop();
   assertNothingLeftTheMachine(hosted);

@@ -90,6 +90,11 @@ export const UPSTREAM_CONTRACT = [
     why: 'OPENCHAMBER_UPDATE_CHECK_DISABLED keeps the update and usage check from calling upstream',
   },
   {
+    id: 'update-install-disabled-env',
+    files: ['packages/web/server/lib/opencode/openchamber-routes.js'],
+    why: 'OPENCHAMBER_UPDATE_CHECK_DISABLED also makes the web update-install route answer that no update is available, before it asks the update service, installs or restarts',
+  },
+  {
     id: 'models-metadata-disabled-env',
     files: ['packages/web/server/lib/opencode/openchamber-routes.js'],
     why: 'OPENCHAMBER_MODELS_METADATA_DISABLED makes /api/openchamber/models-metadata answer an empty catalog without fetching models.dev',

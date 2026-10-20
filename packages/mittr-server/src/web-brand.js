@@ -10,7 +10,7 @@ const DEFAULT_DIST_DIR = path.resolve(here, '..', '..', 'web', 'dist');
 const SHELL = 'index.html';
 const MANIFEST_ROUTE = '/manifest.webmanifest';
 const IMMUTABLE = 'public, max-age=31536000, immutable';
-const API_ONLY_FLAG = '--api-only';
+const API_ONLY_FLAG = /^--api-only(=|$)/;
 
 const patternOf = (file) => new RegExp(`^${file.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')}$`);
 
@@ -29,7 +29,7 @@ export const webDistDir = (env) => {
   return own ? path.resolve(own) : DEFAULT_DIST_DIR;
 };
 
-export const servesApiOnly = (env, argv) => isFlagOn(env.OPENCHAMBER_API_ONLY) || argv.includes(API_ONLY_FLAG);
+export const servesApiOnly = (env, argv) => isFlagOn(env.OPENCHAMBER_API_ONLY) || argv.some((arg) => API_ONLY_FLAG.test(String(arg)));
 
 const listFiles = (distDir, entries) => {
   const folders = new Set(entries.map((entry) => path.posix.dirname(entry.file)));
