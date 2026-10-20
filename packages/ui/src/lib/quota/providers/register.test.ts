@@ -47,12 +47,13 @@ describe('an exclusive quota provider', () => {
   const listedIds = (): string[] => QUOTA_PROVIDERS.map((provider) => provider.id);
 
   test('takes every built-in provider off the list and keeps the run-time ones', () => {
+    const builtIn = listedIds().filter((id) => !id.startsWith('probe-'));
+    expect(builtIn.length).toBeGreaterThan(20);
     registerQuotaProvider({ id: 'probe-kept', name: 'Probe kept' });
-    expect(listedIds()).toContain('google');
     registerQuotaProvider({ id: 'probe-alone', name: 'Probe alone' }, { first: true, exclusive: true });
     expect(listedIds()[0]).toBe('probe-alone');
     expect(listedIds()).toContain('probe-kept');
-    for (const id of ['codex', 'cursor', 'github-copilot', 'google', 'openrouter', 'xai']) {
+    for (const id of builtIn) {
       expect(listedIds()).not.toContain(id);
     }
     registerQuotaProvider({ id: 'probe-later', name: 'Probe later' });
