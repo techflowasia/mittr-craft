@@ -111,6 +111,26 @@ test('signing out an inactive account leaves the active one alone', (t) => {
   assert.deepEqual(store().list(), [{ userId: 'u2', displayName: 'B', active: true }]);
 });
 
+test('signing an account out without choosing the next leaves nobody active, and the rest listed', (t) => {
+  const store = storeIn(tempDataDir(t));
+  store().write(sessionFor('u2', 'B'));
+  store().write(sessionFor('u1', 'A'));
+  store().signOut('u1', { activateNext: false });
+  assert.equal(store().read(), null);
+  assert.equal(store().engineHome(), NO_ACCOUNT_HOME);
+  assert.deepEqual(store().list(), [{ userId: 'u2', displayName: 'B', active: false }]);
+});
+
+test('writing without activating never makes an account active, even when nobody is', (t) => {
+  const store = storeIn(tempDataDir(t));
+  store().write(sessionFor('u2', 'B'));
+  store().write(sessionFor('u1', 'A'));
+  store().signOut('u1', { activateNext: false });
+  store().write(sessionFor('u2', 'B', 'at-rotated'), { activate: false });
+  assert.equal(store().read(), null);
+  assert.equal(store().readOf('u2').accessToken, 'at-rotated');
+});
+
 test('signed out entirely once the last account leaves', (t) => {
   const store = storeIn(tempDataDir(t));
   store().write(sessionFor('u1', 'A'));

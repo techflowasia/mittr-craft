@@ -104,12 +104,16 @@ export function registerMittrAuthRoutes(app, {
   // How the last sign-in from the browser ended, until the next one starts:
   // the deep link has no window to answer, so the gate reads it from status.
   let lastFailure = null;
+  let sessionEnded = false;
 
   const signIn = async (callbackUrl) => {
     const refusal = currentRefusal();
     if (refusal) return failure(503, refusal);
     const result = await finishSignIn(callbackUrl);
-    if (result.status === 200) lastFailure = null;
+    if (result.status === 200) {
+      lastFailure = null;
+      sessionEnded = false;
+    }
     else if (!result.stale) lastFailure = result.body.error === UNREACHABLE ? 'unreachable' : 'failed';
     return result;
   };
@@ -214,6 +218,7 @@ export function registerMittrAuthRoutes(app, {
     if (signInRefusal()) status.keychainMissing = true;
     if (store.damaged()) status.accountsDamaged = true;
     if (lastFailure && !status.signedIn) status.signInFailed = lastFailure;
+    if (sessionEnded && !status.signedIn) status.sessionEnded = true;
     return res.json(status);
   });
 
@@ -239,6 +244,7 @@ export function registerMittrAuthRoutes(app, {
       return res.status(500).json({ error: CANNOT_STORE });
     }
     lastFailure = null;
+    sessionEnded = false;
     const next = store.read();
     const restart = await announceAccountChange(next?.subject.userId ?? null);
     return res.json({ ...statusOf(next), ...restart });
@@ -257,6 +263,7 @@ export function registerMittrAuthRoutes(app, {
       return res.status(500).json({ error: CANNOT_STORE });
     }
     lastFailure = null;
+    sessionEnded = false;
     const restart = await announceAccountChange(userId);
     return res.json({ ...statusOf(store.read()), ...restart });
   });
@@ -286,8 +293,11 @@ export function registerMittrAuthRoutes(app, {
         // Only the account this refresh was for: the active one may have
         // changed while it was in flight.
         const wasActive = activeUserId() === userId;
-        store.signOut(userId);
-        if (wasActive) void announceAccountChange(store.read()?.subject.userId ?? null);
+        store.signOut(userId, { activateNext: false });
+        if (wasActive) {
+          sessionEnded = true;
+          void announceAccountChange(null);
+        }
         return null;
       }
       if (!response.ok) return store.read();

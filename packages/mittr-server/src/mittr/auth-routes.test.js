@@ -7,6 +7,7 @@ import test from 'node:test';
 import express from 'express';
 
 import { createAccountStore } from './account-store.js';
+import { NO_ACCOUNT_HOME } from '../engine-home.js';
 import { ACCOUNTS_DAMAGED, REFRESH_MARGIN_MS, registerMittrAuthRoutes } from './auth-routes.js';
 import { decrypt, deferred, encrypt, fakeFetch, json, serve, tempDataDir } from './test-helpers.js';
 
@@ -367,18 +368,18 @@ test('a refused refresh signs out the account it was for', async (t) => {
   const { auth, store, call } = await harness(t, { fetchImpl, sessions: [sessionFor('u-a', 'A', { expiresAt: NOW + 1_000 })] });
   const signedOut = [];
   const signOut = store.signOut;
-  store.signOut = (userId) => { signedOut.push(userId); signOut(userId); };
+  store.signOut = (userId, options) => { signedOut.push(userId); signOut(userId, options); };
   store.clear = () => assert.fail('a refused refresh must not clear whichever account is active');
 
   assert.equal(await auth.ensureFreshSession(), null);
   assert.deepEqual(signedOut, ['u-a']);
-  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false, sessionEnded: true });
 });
 
-test('a refused refresh of the active account hands its request nothing, not the next account\'s session', async (t) => {
+test('a refused refresh of the active account signs only that account out and switches to nobody else', async (t) => {
   const changes = [];
   const fetchImpl = fakeFetch(() => json({ error: 'invalid_grant' }, 401));
-  const { auth, store } = await harness(t, {
+  const { auth, store, call } = await harness(t, {
     fetchImpl,
     sessions: [sessionFor('u-b', 'B'), sessionFor('u-a', 'A', { expiresAt: NOW + 1_000 })],
     onAccountChange: (next) => changes.push(next),
@@ -387,8 +388,71 @@ test('a refused refresh of the active account hands its request nothing, not the
 
   assert.equal(await auth.ensureFreshSession(), null);
 
+  assert.equal(store.read(), null);
+  assert.deepEqual(changes, [null]);
+  assert.equal(store.engineHome(), NO_ACCOUNT_HOME);
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false, sessionEnded: true });
+  assert.deepEqual((await call('GET', '/api/mittr/auth/accounts')).body, { accounts: [{ userId: 'u-b', displayName: 'B', active: false }] });
+  assert.equal(await auth.ensureFreshSession(), null);
+  assert.equal(fetchImpl.calls.length, 1);
+});
+
+test('the person picks the next account after a refused refresh, and the ended notice goes', async (t) => {
+  const fetchImpl = fakeFetch(() => json({ error: 'invalid_grant' }, 401));
+  const { auth, call } = await harness(t, {
+    fetchImpl,
+    sessions: [sessionFor('u-b', 'B'), sessionFor('u-a', 'A', { expiresAt: NOW + 1_000 })],
+  });
+  await auth.ensureFreshSession();
+
+  const picked = await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-b' });
+
+  assert.equal(picked.status, 200);
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: true, userId: 'u-b', displayName: 'B' });
+  await call('DELETE', '/api/mittr/auth/session');
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
+});
+
+test('a refused refresh of an account that is no longer active leaves the active one alone and ends nothing', async (t) => {
+  const changes = [];
+  const reply = deferred();
+  const fetchImpl = fakeFetch(() => reply.promise);
+  const { auth, store, call } = await harness(t, {
+    fetchImpl,
+    sessions: [sessionFor('u-b', 'B'), sessionFor('u-a', 'A', { expiresAt: NOW + 1_000 })],
+    onAccountChange: (next) => changes.push(next),
+  });
+  const refreshing = auth.ensureFreshSession();
+  store.activate('u-b');
+  reply.resolve(json({ error: 'invalid_grant' }, 401));
+
+  assert.equal(await refreshing, null);
   assert.equal(store.read().subject.userId, 'u-b');
-  assert.deepEqual(changes, ['u-b']);
+  assert.deepEqual(changes, []);
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: true, userId: 'u-b', displayName: 'B' });
+});
+
+test('a refresh that lands after the active account was signed out does not make its account active', async (t) => {
+  const replies = { 'r-a': deferred(), 'r-b': deferred() };
+  const fetchImpl = fakeFetch((request) => replies[request.body.refresh_token].promise);
+  const { auth, store } = await harness(t, {
+    fetchImpl,
+    sessions: [
+      sessionFor('u-a', 'A', { refreshToken: 'r-a', expiresAt: NOW + 1_000 }),
+      sessionFor('u-b', 'B', { refreshToken: 'r-b', expiresAt: NOW + 1_000 }),
+    ],
+  });
+  const refreshingB = auth.ensureFreshSession();
+  store.activate('u-a');
+  const refreshingA = auth.ensureFreshSession();
+  replies['r-a'].resolve(json({ error: 'invalid_grant' }, 401));
+  assert.equal(await refreshingA, null);
+
+  replies['r-b'].resolve(json(sessionFor('u-b', 'B', { refreshToken: 'r-b2' })));
+  assert.equal(await refreshingB, null);
+
+  assert.equal(store.read(), null);
+  assert.equal(store.readOf('u-b').refreshToken, 'r-b2');
 });
 
 test('a failing platform keeps the session', async (t) => {

@@ -164,7 +164,7 @@ export function createAccountStore({
         signedIn: true,
       });
     }
-    if (activate || !index.active) index.active = userId;
+    if (activate) index.active = userId;
     return index;
   };
 
@@ -316,14 +316,14 @@ export function createAccountStore({
     writeIndex(upsert(indexForWrite(), session, activate));
   };
 
-  const signOut = (userId) => {
+  const signOut = (userId, { activateNext = true } = {}) => {
     const index = indexForWrite();
     const entry = index.accounts.find((candidate) => candidate.userId === userId);
     if (!entry) return;
     entry.signedIn = false;
     fs.rmSync(sessionPath(userId), { force: true });
     if (index.active === userId) {
-      index.active = index.accounts.find((candidate) => candidate.signedIn)?.userId ?? null;
+      index.active = activateNext ? index.accounts.find((candidate) => candidate.signedIn)?.userId ?? null : null;
     }
     writeIndex(index);
   };

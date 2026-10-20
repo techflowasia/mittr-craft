@@ -49,7 +49,7 @@ const harness = async (t, { sharedHistory = false, legacy = null, sessions = [],
     fs.writeFileSync(path.join(dataDir, 'mittr-session'), encrypt(JSON.stringify(legacy)));
   }
   const store = createAccountStore({ dataDir, encrypt, decrypt, sharedHistoryExists: () => sharedHistoryExists(bases) });
-  for (const session of sessions) store.write(session, { activate: false });
+  sessions.forEach((session, index) => store.write(session, { activate: index === 0 }));
 
   const refreshes = [];
   const events = [];
@@ -286,6 +286,22 @@ test('a refused refresh of an inactive account leaves the active account signed 
   assert.deepEqual(refreshes, [SWITCHED, SWITCHED]);
   const refreshCalls = fetchImpl.calls.filter((request) => request.url.endsWith('/auth/desktop/refresh'));
   assert.deepEqual(refreshCalls.map((request) => request.body.refresh_token), ['r-u-b']);
+});
+
+test('a refused refresh of the active account puts the engine on the neutral home and switches to nobody', async (t) => {
+  const fetchImpl = fakeFetch((request) => (request.url.endsWith('/auth/desktop/refresh') ? new Response(null, { status: 401 }) : json({})));
+  const expiringA = sessionFor('u-a', 'A', { expiresAt: NOW + 30_000 });
+  const { auth, store, switcher, switches, refreshes, bases, engine } = await harness(t, { sessions: [expiringA, B], fetchImpl });
+  assert.equal(store.read().subject.userId, 'u-a');
+
+  assert.equal(await auth.ensureFreshSession(), null);
+  await switcher.correctEngineHome();
+
+  assert.deepEqual(switches, [null]);
+  assert.equal(store.read(), null);
+  assert.deepEqual(store.list(), [{ userId: 'u-b', displayName: 'B', active: false }]);
+  assert.equal(engine.launched, path.join(bases.data, 'accounts', NO_ACCOUNT_HOME));
+  assert.deepEqual(refreshes, [SWITCHED]);
 });
 
 test('signing out of the active account switches to the next one', async (t) => {
