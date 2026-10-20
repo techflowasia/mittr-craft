@@ -56,6 +56,33 @@ test('the bundled rg is put where the engine looks, executable, and replaced whe
   assert.deepEqual(fs.readdirSync(path.dirname(target)), ['rg']);
 });
 
+test('the copy is checked by size and modification time, without reading either file', (t) => {
+  const home = tempDir(t, 'mittr-home-');
+  const bases = engineBases({ homeDir: home, env: {} });
+  const bundled = bundledRipgrep(resourcesWithRipgrep(t, 'bundled 15.1.0'));
+  fs.utimesSync(bundled, new Date('2026-01-02T03:04:05.678Z'), new Date('2026-01-02T03:04:05.678Z'));
+  const target = engineRipgrepPath(bases);
+  placeEngineRipgrep({ bundled, bases });
+  assert.ok(Math.abs(fs.statSync(target).mtimeMs - fs.statSync(bundled).mtimeMs) < 1);
+
+  const read = fs.readFileSync;
+  const reads = [];
+  fs.readFileSync = (file, ...rest) => {
+    reads.push(String(file));
+    return read(file, ...rest);
+  };
+  try {
+    placeEngineRipgrep({ bundled, bases });
+  } finally {
+    fs.readFileSync = read;
+  }
+  assert.deepEqual(reads, []);
+
+  fs.writeFileSync(target, 'same size, 14b');
+  placeEngineRipgrep({ bundled, bases });
+  assert.equal(fs.readFileSync(target, 'utf8'), 'bundled 15.1.0');
+});
+
 test('a copy with the right bytes that lost its execute bit is made executable again', (t) => {
   const home = tempDir(t, 'mittr-home-');
   const bases = engineBases({ homeDir: home, env: {} });

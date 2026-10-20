@@ -11,9 +11,10 @@ export const bundledRipgrep = (resourcesDir) => {
 
 export const engineRipgrepPath = (bases) => path.join(bases.cache, 'opencode', 'bin', 'rg');
 
-const sameFile = (left, right) => {
+const sameCopy = (source, target) => {
   try {
-    return fs.statSync(left).size === fs.statSync(right).size && fs.readFileSync(left).equals(fs.readFileSync(right));
+    const copy = fs.statSync(target);
+    return copy.size === source.size && Math.abs(copy.mtimeMs - source.mtimeMs) < 1;
   } catch {
     return false;
   }
@@ -22,7 +23,8 @@ const sameFile = (left, right) => {
 export const placeEngineRipgrep = ({ bundled, bases }) => {
   if (!bundled) return null;
   const target = engineRipgrepPath(bases);
-  if (sameFile(bundled, target)) {
+  const source = fs.statSync(bundled);
+  if (sameCopy(source, target)) {
     if ((fs.statSync(target).mode & 0o777) !== 0o755) fs.chmodSync(target, 0o755);
     return target;
   }
@@ -31,6 +33,7 @@ export const placeEngineRipgrep = ({ bundled, bases }) => {
   try {
     fs.copyFileSync(bundled, staged);
     fs.chmodSync(staged, 0o755);
+    fs.utimesSync(staged, source.atime, source.mtime);
     fs.renameSync(staged, target);
   } finally {
     fs.rmSync(staged, { force: true });

@@ -114,9 +114,12 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
 
   const ripgrep = bundledRipgrep(resourcesDir);
   let ripgrepWarned = false;
+  let ripgrepPlaced = false;
   const placeRipgrep = () => {
+    if (ripgrepPlaced) return;
     try {
       placeEngineRipgrep({ bundled: ripgrep, bases });
+      ripgrepPlaced = true;
     } catch (error) {
       if (ripgrepWarned) return;
       ripgrepWarned = true;

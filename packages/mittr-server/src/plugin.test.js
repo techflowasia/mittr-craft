@@ -8,6 +8,7 @@ import test from 'node:test';
 
 import express from 'express';
 
+import { engineBases } from './engine-home.js';
 import { fakeEngineContext, listen, serve, until } from './mittr/test-helpers.js';
 import setup, { setupMittrServer } from './plugin.js';
 import { LDAP_ENV } from './ui-auth/test-fixtures.js';
@@ -117,14 +118,13 @@ test('setup backs up the prod layout once, migrates settings and serves the engi
   assert.equal(again.lines.some((line) => line.includes('pre-2x-backup')), false);
 });
 
-test('each engine start finds the app\'s bundled rg in the engine cache, so the engine never downloads one', async (t) => {
+test('the first engine start puts the app\'s bundled rg in the engine cache, so the engine never downloads one, and later starts do not check it again', async (t) => {
   const home = tempHome(t);
   const dataDir = prodLayout(home);
   const resourcesDir = path.join(home, 'MittrCraft.app', 'Contents', 'Resources');
   writeFile(path.join(resourcesDir, 'ripgrep', 'rg'), 'bundled rg');
-  const logger = recordingLogger();
 
-  const plugin = await setupMittrServer({ dataDir, logger, env: {}, homeDir: home, resourcesDir });
+  const plugin = await setupMittrServer({ dataDir, logger: recordingLogger(), env: {}, homeDir: home, resourcesDir });
   const env = await plugin.engineEnv();
   const engineRg = path.join(env.XDG_CACHE_HOME, 'opencode', 'bin', 'rg');
   assert.equal(fs.readFileSync(engineRg, 'utf8'), 'bundled rg');
@@ -132,10 +132,23 @@ test('each engine start finds the app\'s bundled rg in the engine cache, so the 
 
   fs.rmSync(path.dirname(engineRg), { recursive: true });
   await plugin.engineEnv();
-  assert.equal(fs.readFileSync(engineRg, 'utf8'), 'bundled rg');
+  assert.equal(fs.existsSync(engineRg), false);
 
-  fs.rmSync(path.dirname(engineRg), { recursive: true });
-  fs.writeFileSync(path.dirname(engineRg), 'not a folder');
+  const nextRun = await setupMittrServer({ dataDir, logger: recordingLogger(), env: {}, homeDir: home, resourcesDir });
+  await nextRun.engineEnv();
+  assert.equal(fs.readFileSync(engineRg, 'utf8'), 'bundled rg');
+});
+
+test('a bundled rg that could not be placed is tried again on each start until it is, and warned about once', async (t) => {
+  const home = tempHome(t);
+  const dataDir = prodLayout(home);
+  const resourcesDir = path.join(home, 'MittrCraft.app', 'Contents', 'Resources');
+  writeFile(path.join(resourcesDir, 'ripgrep', 'rg'), 'bundled rg');
+  const logger = recordingLogger();
+  const plugin = await setupMittrServer({ dataDir, logger, env: {}, homeDir: home, resourcesDir });
+  const engineRg = path.join(engineBases({ homeDir: home, env: {} }).cache, 'opencode', 'bin', 'rg');
+  writeFile(path.dirname(engineRg), 'not a folder');
+
   assert.equal((await plugin.engineEnv()).OPENCODE_DISABLE_MODELS_FETCH, '1');
   await plugin.engineEnv();
   await plugin.engineEnv();
