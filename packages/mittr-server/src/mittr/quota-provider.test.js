@@ -125,10 +125,26 @@ test('the overall weekly share reads only the lines shown', async () => {
   assert.equal(quiet.usage.windows.weekly.usedPercent, 1);
 });
 
-test('with no catalog to read only speech is listed', async () => {
+test('with no catalog held yet the week reads as not read, never as no model available', async () => {
   for (const models of [null, undefined, { configured: false, items: [] }]) {
     const result = await providerFor(DEV_PLATFORM_WEEK, { catalogModels: () => models }).fetchQuota();
-    assert.deepEqual(Object.keys(result.usage.models), ['ฟังเสียง'], JSON.stringify(models));
+    assert.equal(result.ok, false, JSON.stringify(models));
+    assert.equal(result.configured, true);
+    assert.equal(result.error, 'Could not read this week’s quota');
+    assert.equal(result.usage, null);
+  }
+});
+
+test('signed out or with no platform the week is never read as no model available', async () => {
+  for (const reasonCode of ['not_signed_in', 'not_configured']) {
+    const result = await providerFor(null, {
+      isSignedIn: () => reasonCode !== 'not_signed_in',
+      isBrokerConfigured: () => reasonCode !== 'not_configured',
+      catalogModels: () => null,
+      service: { readMine: async () => { throw Object.assign(new Error('no'), { reasonCode }); } },
+    }).fetchQuota();
+    assert.equal(result.ok, false, reasonCode);
+    assert.equal(JSON.stringify(result).includes('No model available this week'), false, reasonCode);
   }
 });
 

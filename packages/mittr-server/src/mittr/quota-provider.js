@@ -50,10 +50,8 @@ const uniqueName = (taken, line) => {
 
 const ownLines = (lines, models) => {
   const names = new Map();
-  if (models?.configured === true) {
-    for (const { alias, label } of models.items) {
-      if (!names.has(alias)) names.set(alias, label || alias);
-    }
+  for (const { alias, label } of models.items) {
+    if (!names.has(alias)) names.set(alias, label || alias);
   }
   return lines.flatMap((line) => {
     if (SPEECH.has(line.kind)) return [line];
@@ -88,7 +86,9 @@ export const mittrQuotaProvider = ({ service, isSignedIn, isBrokerConfigured, ca
 
     const resetAt = Date.parse(week.resetsAt);
     const windowSeconds = windowSecondsOf(week);
-    const lines = ownLines(week.lines, catalogModels());
+    const held = catalogModels();
+    if (held?.configured !== true) return result({ ok: false, configured: true, error: READ_FAILED });
+    const lines = ownLines(week.lines, held);
     if (lines.length === 0) {
       return result({ ok: true, configured: true, usage: { windows: { [NO_MODEL]: toUsageWindow({ usedPercent: null, resetAt: null }) }, models: {} } });
     }
