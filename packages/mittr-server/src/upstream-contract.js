@@ -462,6 +462,17 @@ export const UPSTREAM_CONTRACT = [
     why: "the company sign-in is drawn with Button (outline, icon size), Input and Checkbox (checked, onChange, disabled, ariaLabel) and the user, lock, key and loader-4 icons; its Microsoft button goes to getRuntimeUrlResolver().auth(...) and its requests go through runtimeFetch, which sends /auth/ paths to the runtime's server",
   },
   {
+    id: 'server-only-secrets',
+    files: ['packages/web/server', 'packages/web/bin', 'packages/mittr-server/src/plugin.js'],
+    why: "every secret-shaped OPENCHAMBER_ or OPENCODE_ variable, and NGROK_AUTHTOKEN, that upstream's server or CLI reads is either withheld from the engine (SERVER_ONLY_SECRETS in plugin.js) or one upstream means a child to have; a name upstream adds, renames or drops fails here",
+    childSecrets: ['OPENCODE_PASSWORD', 'OPENCODE_SERVER_PASSWORD', 'OPENCHAMBER_AGENT_TOOL_TOKEN', 'OPENCHAMBER_SERVICE_TOKEN', 'OPENCHAMBER_GIT_SSH_KEY'],
+  },
+  {
+    id: 'login-shell-env-before-plugins',
+    files: ['packages/web/server/index.js', 'packages/web/server/lib/opencode/env-runtime.js'],
+    why: 'the server copies every login-shell variable that process.env lacks into process.env when index.js is imported, before plugins set up, so a variable set only in the login shell is in the environment the plugin takes company sign-in settings from',
+  },
+  {
     id: 'plugin-engine-env-withholds',
     files: ['packages/web/server/lib/server-plugins.js', 'packages/web/server/lib/opencode/lifecycle.js', 'packages/web/server/index.js'],
     why: 'a plugin engine variable set to undefined outranks the login shell snapshot and process.env on every engine start, version probe, install and upgrade, and is left out of the child environment',

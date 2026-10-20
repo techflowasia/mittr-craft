@@ -37,9 +37,10 @@ const flavorOf = (dataDir) => (path.basename(dataDir) === DEV_DATA_DIR ? 'dev' :
 
 const COMPANY_SIGN_IN_VARIABLE = /^MITTR_AD_/;
 
-const SERVER_ONLY_SECRETS = [
+export const SERVER_ONLY_SECRETS = [
   'OPENCHAMBER_UI_PASSWORD',
   'MITTRCRAFT_UI_PASSWORD',
+  'OPENCODE_UI_PASSWORD',
   'OPENCODE_JWT_SECRET',
   'OPENCHAMBER_TUNNEL_TOKEN',
   'NGROK_AUTHTOKEN',
@@ -62,10 +63,11 @@ const takeBinRuntimePin = (env) => {
   return taken;
 };
 
+const companySignInNamesIn = (env) => Object.keys(env).filter((name) => COMPANY_SIGN_IN_VARIABLE.test(name));
+
 const takeCompanySignInEnv = (env) => {
   const taken = {};
-  for (const name of Object.keys(env)) {
-    if (!COMPANY_SIGN_IN_VARIABLE.test(name)) continue;
+  for (const name of companySignInNamesIn(env)) {
     taken[name] = env[name];
     delete env[name];
   }
@@ -121,12 +123,13 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
       logger.warn('[mittr] could not put the bundled rg where the engine looks for it:', error?.message ?? error);
     }
   };
+  const withheldNow = () => ({ ...withheld, ...Object.fromEntries(companySignInNamesIn(env).map((name) => [name, undefined])) });
   const baseEngineEnv = (accountHome) => {
     placeRipgrep();
     return {
       ...engineEnv({ bases, accountHome, rule: ENGINE_DB_RULE }),
       ...ENGINE_OUTBOUND_OFF,
-      ...withheld,
+      ...withheldNow(),
     };
   };
   if (!context) return { engineEnv: () => baseEngineEnv(activeAccountHome(dataDir, { logger })) };
@@ -141,7 +144,7 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
     engineDataHome: (accountHome) => engineEnv({ bases, accountHome, rule: ENGINE_DB_RULE }).XDG_DATA_HOME,
   });
   return {
-    engineEnv: async () => ({ ...baseEngineEnv(mittr.engineHome()), ...(await mittr.engineEnv()), ...withheld }),
+    engineEnv: async () => ({ ...baseEngineEnv(mittr.engineHome()), ...(await mittr.engineEnv()), ...withheldNow() }),
     managedConfig: mittr.managedConfig,
     dispose: async () => {
       try {

@@ -32,15 +32,17 @@ Set only the `_FILE` variable, not the plain one as well. The plain copy would s
 
 The engine runs agents' shell commands, so it never sees the sign-in settings. At start the server plugin takes every `MITTR_AD_*` variable out of the server's own environment. Then, on every engine start, version probe, install and upgrade, it sets each of them to unset. This removes the copy that upstream's login-shell snapshot took before the plugin loaded.
 
+A `MITTR_AD_*` variable set only in the login shell is taken the same way: upstream copies the snapshot into the server's environment as it loads, before any plugin starts. Any `MITTR_AD_*` name still in the server's environment when the engine starts is unset by its prefix too.
+
 The same happens to the server's other secrets:
-- `OPENCHAMBER_UI_PASSWORD` and `MITTRCRAFT_UI_PASSWORD`
+- `OPENCHAMBER_UI_PASSWORD`, `MITTRCRAFT_UI_PASSWORD` and `OPENCODE_UI_PASSWORD`
 - `OPENCODE_JWT_SECRET`
 - `OPENCHAMBER_TUNNEL_TOKEN` and `NGROK_AUTHTOKEN`
 - `OPENCHAMBER_APNS_P8`, `OPENCHAMBER_APNS_KEY_ID` and `OPENCHAMBER_APNS_TEAM_ID`
 - `OPENCHAMBER_LINEAR_CLIENT_SECRET`
 - `OPENCHAMBER_JEV_API_KEY`
 
-The server keeps these secrets, and only the engine loses them. The agent tool's token and URL, the engine's own password, provider keys and the broker settings still reach the engine.
+The server keeps these secrets, and only the engine loses them. A contract check fails when upstream starts reading a secret that is on neither this list nor the list of those it means its children to have. The agent tool's token and URL, the engine's own password, provider keys and the broker settings still reach the engine.
 
 Under Bun, a variable taken out of `process.env` still reaches a child process started without an explicit environment. For that reason, `mittrcraft` runs the server on Node (see below). When `mittrcraft` itself is run by Bun and `MITTR_AD_CLIENT_SECRET` or `MITTR_AD_BIND_PASSWORD` is set, it refuses to start, and says to run it with Node or to use the `_FILE` form.
 

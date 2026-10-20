@@ -17,6 +17,7 @@ const ACCOUNT = '0123456789abcdef';
 const SERVER_ONLY_SECRETS = [
   'OPENCHAMBER_UI_PASSWORD',
   'MITTRCRAFT_UI_PASSWORD',
+  'OPENCODE_UI_PASSWORD',
   'OPENCODE_JWT_SECRET',
   'OPENCHAMBER_TUNNEL_TOKEN',
   'NGROK_AUTHTOKEN',
@@ -383,6 +384,21 @@ test('without the server context, company sign-in settings still never reach the
 
   assert.deepEqual(companySignInNames(env), []);
   assert.deepEqual(namesSeenByChild({ ...ENTRA_ENV, ...env, ...(await plugin.engineEnv()) }), []);
+});
+
+test('a company sign-in variable that turns up after setup is withheld from the engine by its name', async (t) => {
+  for (const context of [null, { app: express(), express, logger: recordingLogger(), host: null, ...fakeEngineContext({ port: null }).context }]) {
+    const home = tempHome(t);
+    const dataDir = prodLayout(home);
+    const env = { PATH: process.env.PATH, MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft' };
+    const plugin = await setupMittrServer({ dataDir, logger: recordingLogger(), env, homeDir: home, context: context && { ...context, dataDir } });
+    t.after(() => plugin.dispose?.());
+
+    env.MITTR_AD_LATE_SECRET = 'late-value';
+    const engineEnv = await plugin.engineEnv();
+    assert.ok(Object.hasOwn(engineEnv, 'MITTR_AD_LATE_SECRET') && engineEnv.MITTR_AD_LATE_SECRET === undefined);
+    assert.deepEqual(namesSeenByChild({ ...env, ...engineEnv }), []);
+  }
 });
 
 const ENGINE_KEEPS = {

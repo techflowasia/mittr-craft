@@ -112,8 +112,9 @@ const SERVER_ONLY = {
 };
 const ENGINE_NEEDS = ['OPENCODE_SERVER_PASSWORD', 'OPENCODE_PASSWORD'];
 
-const startHosted = async (t, extraEnv) => {
+const startHosted = async (t, extraEnv, { profile = null } = {}) => {
   const { bin, tools, engine, home } = hostedLayout(t);
+  if (profile) fs.writeFileSync(path.join(home, '.profile'), profile);
   const egressLog = path.join(tools, 'egress.jsonl');
   const engineLog = path.join(tools, 'engine.jsonl');
   const port = await freePort();
@@ -186,6 +187,15 @@ test('a hosted server from the packed layout keeps company sign-in and server se
   await hosted.stop();
   assertNothingLeftTheMachine(hosted);
   for (const secret of ['service-account-secret', ENTRA_ENV.MITTR_AD_CLIENT_SECRET, ...Object.values(SERVER_ONLY)]) assert.ok(!hosted.output.includes(secret));
+});
+
+test('a company sign-in variable set only in the login shell never reaches the engine', { timeout: 120_000 }, async (t) => {
+  const hosted = await startHosted(t, {}, { profile: 'export MITTR_AD_SHELL_ONLY=shell-only-value\n' });
+  await hosted.ready('/health');
+  await hosted.engineStarted();
+  for (const line of readLines(hosted.engineLog)) assert.deepEqual(line.companySignIn, [], `engine ${line.args.join(' ')}`);
+  await hosted.stop();
+  assert.ok(!hosted.output.includes('shell-only-value'));
 });
 
 test('a hosted server with its own data dir keeps the engine, its config and the registry there, and writes nothing of the installed app\'s', { timeout: 120_000 }, async (t) => {

@@ -14,6 +14,7 @@ import {
   readEnglishOverrides,
   repoRoot,
 } from './upstream-contract.js';
+import { SERVER_ONLY_SECRETS } from './plugin.js';
 
 const source = (relative) => fs.readFileSync(path.join(repoRoot, relative), 'utf8');
 const importUpstream = (relative) => import(pathToFileURL(path.join(repoRoot, relative)).href);
@@ -1298,6 +1299,40 @@ const checks = {
     has(url, /^export const getRuntimeUrlResolver = \(\): RuntimeUrlResolver => activeRuntimeUrlResolver;$/m, 'getRuntimeUrlResolver is no longer exported');
     has(url, /^ {4}auth: http,$/m, 'the URL resolver no longer builds auth URLs the way it builds API URLs');
     has(source('packages/ui/src/lib/runtime-fetch.ts'), /input\.startsWith\('\/auth\/'\)/, 'runtimeFetch no longer sends /auth/ paths to the runtime\'s server');
+  },
+
+  'server-only-secrets': () => {
+    const { childSecrets } = item('server-only-secrets');
+    const secretName = /\b(?:(?:OPENCHAMBER|OPENCODE)_[A-Z0-9_]*(?:SECRET|TOKEN|PASSWORD|P8|KEY|KEY_ID|TEAM_ID)|NGROK_AUTHTOKEN)\b/g;
+    const read = new Set();
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(path.join(repoRoot, dir), { withFileTypes: true })) {
+        const relative = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== 'node_modules') walk(relative);
+        } else if (/\.(?:js|mjs)$/.test(entry.name) && !/\.test\.(?:js|mjs)$/.test(entry.name)) {
+          for (const [name] of source(relative).matchAll(secretName)) read.add(name);
+        }
+      }
+    };
+    walk('packages/web/server');
+    walk('packages/web/bin');
+    const known = new Set([...SERVER_ONLY_SECRETS, ...childSecrets]);
+    assert.deepEqual([...read].filter((name) => !known.has(name)).sort(), [], 'upstream reads a secret the engine would inherit; withhold it in SERVER_ONLY_SECRETS or record it as a child secret');
+    const ours = new Set(['MITTRCRAFT_UI_PASSWORD']);
+    assert.deepEqual([...known].filter((name) => !ours.has(name) && !read.has(name)).sort(), [], 'upstream no longer reads a secret recorded here; it was renamed or dropped');
+  },
+
+  'login-shell-env-before-plugins': () => {
+    const server = source('packages/web/server/index.js');
+    const applied = server.search(/^applyLoginShellEnvSnapshot\(\);$/m);
+    const plugins = server.indexOf('serverPlugins = await loadServerPlugins({');
+    assert.ok(applied > 0, 'index.js no longer applies the login-shell snapshot when it is imported');
+    assert.ok(plugins > applied, 'plugins are no longer set up after the login-shell snapshot is applied');
+    const runtime = source('packages/web/server/lib/opencode/env-runtime.js');
+    const apply = runtime.slice(runtime.indexOf('const applyLoginShellEnvSnapshot = () => {'));
+    has(apply, /for \(const \[key, value\] of Object\.entries\(snapshot\)\) \{\s*if \(skipKeys\.has\(key\)\) \{\s*continue;\s*\}\s*const existing = process\.env\[key\];\s*if \(typeof existing === 'string' && existing\.length > 0\) \{\s*continue;\s*\}\s*process\.env\[key\] = value;/, 'the login-shell snapshot no longer fills every variable process.env lacks');
+    has(apply, /const skipKeys = new Set\(\['PWD', 'OLDPWD', 'SHLVL', '_', 'ARGV0'\]\);/, 'the login-shell snapshot skips other variables now');
   },
 
   'plugin-engine-env-withholds': async (t) => {
