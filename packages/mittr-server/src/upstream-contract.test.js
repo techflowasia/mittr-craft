@@ -1337,6 +1337,16 @@ const checks = {
     has(serve, /if \(options\.apiOnly === true\) \{\s*serverArgs\.push\('--api-only'\);/, 'the daemon no longer gets --api-only');
   },
 
+  'serve-runtime-switch': () => {
+    const cli = source('packages/web/bin/cli.js');
+    has(cli, /function getBunBinary\(\) \{\s*if \(typeof process\.env\.BUN_BINARY === 'string' && process\.env\.BUN_BINARY\.trim\(\)\.length > 0\) \{\s*return process\.env\.BUN_BINARY\.trim\(\);/, 'BUN_BINARY no longer names the runtime first');
+    has(cli, /spawnSync\(BUN_BIN, \['--version'\]/, 'the runtime is no longer probed with --version');
+    has(cli, /return isBunInstalled\(\) \? 'bun' : 'node';/, 'the server runtime is no longer the probed one');
+    const serve = source('packages/web/bin/lib/commands-serve.js');
+    has(serve, /const runtimeBin = preferredRuntime === 'bun' \? bunBin : process\.execPath;/, 'the daemon no longer runs on the probed runtime');
+    has(serve, /const child = spawn\(runtimeBin, serverArgs, \{[\s\S]{0,200}env: \{\s*\.\.\.process\.env,/, 'the daemon no longer gets an explicit copy of the CLI environment');
+  },
+
   'web-shell-after-plugins': () => {
     const routes = source('packages/web/server/lib/opencode/static-routes-runtime.js');
     has(routes, /const env = typeof process\.env\.OPENCHAMBER_DIST_DIR === 'string' \? process\.env\.OPENCHAMBER_DIST_DIR\.trim\(\) : '';\s*if \(env\) \{\s*return path\.resolve\(env\);\s*\}\s*return path\.join\(__dirname, '\.\.', 'dist'\);/, 'the web build is no longer found through OPENCHAMBER_DIST_DIR or beside the server');

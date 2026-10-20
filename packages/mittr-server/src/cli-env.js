@@ -7,6 +7,7 @@ const LEGACY_NAMES = {
   OPENCHAMBER_DATA_DIR: 'MITTRCRAFT_DATA_DIR',
 };
 const COMPANY_SIGN_IN_VARIABLE = /^MITTR_AD_/;
+const DARWIN_ONLY = new Set(['OPENCHAMBER_POLICY_FILE']);
 
 const isUnset = (value) => typeof value !== 'string' || value.trim() === '';
 
@@ -42,7 +43,7 @@ const findCheckoutRoot = (startDir) => {
   }
 };
 
-export const prepareCliEnvironment = ({ env, homeDir, pluginPath, productEnv, packageDir }) => {
+export const prepareCliEnvironment = ({ env, homeDir, pluginPath, productEnv, packageDir, platform = process.platform, nodePath = process.execPath }) => {
   const next = { ...env };
   const checkout = packageDir ? findCheckoutRoot(packageDir) : null;
   if (checkout && isUnset(next.OPENCHAMBER_DATA_DIR) && isUnset(next.MITTRCRAFT_DATA_DIR)) {
@@ -57,8 +58,10 @@ export const prepareCliEnvironment = ({ env, homeDir, pluginPath, productEnv, pa
   if (isUnset(next.OPENCHAMBER_DATA_DIR)) next.OPENCHAMBER_DATA_DIR = path.join(homeDir, '.config', 'mittrcraft');
   if (isUnset(next.OPENCHAMBER_SERVER_PLUGINS)) next.OPENCHAMBER_SERVER_PLUGINS = JSON.stringify([pluginPath]);
   for (const [name, value] of Object.entries(productEnv ?? {})) {
+    if (DARWIN_ONLY.has(name) && platform !== 'darwin') continue;
     if (isUnset(next[name])) next[name] = expandHome(value, homeDir);
   }
+  if (isUnset(next.BUN_BINARY)) next.BUN_BINARY = nodePath;
 
   const companySignIn = Object.keys(next).filter((name) => COMPANY_SIGN_IN_VARIABLE.test(name) && !isUnset(next[name])).sort();
   if (companySignIn.length > 0 && !loadsPlugin(next.OPENCHAMBER_SERVER_PLUGINS, pluginPath)) {

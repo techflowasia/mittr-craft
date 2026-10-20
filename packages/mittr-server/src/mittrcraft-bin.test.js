@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { prepareCliEnvironment, readProductEnv } from './cli-env.js';
 import { repoRoot } from './upstream-contract.js';
@@ -219,7 +220,7 @@ test('a packed layout without .git gets the default data dir and the bin touches
   assert.deepEqual(fs.readdirSync(home), []);
 });
 
-const PRODUCT_KEYS = Object.keys(PRODUCT_ENV);
+const PRODUCT_KEYS = [...Object.keys(PRODUCT_ENV), 'BUN_BINARY'];
 
 const runPackedEnvProbe = (t, extraEnv = {}) => {
   const { root, packageDir } = packedBin(t, 'mittrcraft-packed-env-');
@@ -248,7 +249,7 @@ test('a packed layout run applies the whole prod product env, with ~ as the home
   assert.deepEqual(seen, {
     OPENCHAMBER_DATA_DIR: path.join(home, '.config', 'mittrcraft'),
     OPENCODE_CONFIG_DIR: path.join(home, '.config', 'mittrcraft', 'engine', 'opencode'),
-    OPENCHAMBER_POLICY_FILE: '/Library/Application Support/MittrCraft/policy.json',
+    OPENCHAMBER_POLICY_FILE: process.platform === 'darwin' ? '/Library/Application Support/MittrCraft/policy.json' : null,
     OPENCHAMBER_MANAGED_PROCESS_REGISTRY: path.join(home, '.config', 'mittrcraft', 'managed-opencode'),
     OPENCHAMBER_UPDATE_CHECK_DISABLED: '1',
     OPENCHAMBER_MODELS_METADATA_DISABLED: '1',
@@ -256,11 +257,31 @@ test('a packed layout run applies the whole prod product env, with ~ as the home
     MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft',
     MITTRCRAFT_BROKER_URL: 'https://api.mittr.asia',
     MITTRCRAFT_BROKER_FIXED: '1',
+    BUN_BINARY: process.execPath,
   });
   assert.deepEqual(fs.readdirSync(home), []);
 });
 
-test('every product env value gives way to one set explicitly', (t) => {
+test('the MittrCraft policy path replaces upstream\'s fixed ones on macOS only, where it is a path', async () => {
+  const { policyFilePaths } = await import(pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/enterprise-mode.js')).href);
+  const on = (platform, env = {}) => {
+    const prepared = prepareCliEnvironment({ env, homeDir: '/home/person', pluginPath: PLUGIN, productEnv: PRODUCT_ENV, platform });
+    return { prepared: prepared.env.OPENCHAMBER_POLICY_FILE, paths: policyFilePaths({ platform, env: prepared.env }) };
+  };
+  assert.deepEqual(on('darwin'), { prepared: '/Library/Application Support/MittrCraft/policy.json', paths: ['/Library/Application Support/MittrCraft/policy.json'] });
+  assert.deepEqual(on('linux'), { prepared: undefined, paths: ['/etc/openchamber/policy.json'] });
+  assert.deepEqual(on('win32'), { prepared: undefined, paths: ['C:\\ProgramData\\OpenChamber\\policy.json'] });
+  assert.deepEqual(on('linux', { OPENCHAMBER_POLICY_FILE: '/etc/mittrcraft/policy.json' }), { prepared: '/etc/mittrcraft/policy.json', paths: ['/etc/mittrcraft/policy.json'] });
+});
+
+test('the hosted server runs on the Node that runs the bin unless BUN_BINARY says otherwise', () => {
+  const base = { homeDir: '/home/person', pluginPath: PLUGIN, productEnv: PRODUCT_ENV, nodePath: '/opt/node/bin/node' };
+  assert.equal(prepareCliEnvironment({ ...base, env: {} }).env.BUN_BINARY, '/opt/node/bin/node');
+  assert.equal(prepareCliEnvironment({ ...base, env: { BUN_BINARY: ' ' } }).env.BUN_BINARY, '/opt/node/bin/node');
+  assert.equal(prepareCliEnvironment({ ...base, env: { BUN_BINARY: '/opt/bun/bin/bun' } }).env.BUN_BINARY, '/opt/bun/bin/bun');
+});
+
+test('every product env value and the runtime give way to one set explicitly', (t) => {
   const explicit = Object.fromEntries(PRODUCT_KEYS.map((name) => [name, `/explicit/${name.toLowerCase()}`]));
   assert.deepEqual(runPackedEnvProbe(t, explicit).seen, explicit);
 });
