@@ -2,15 +2,21 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  agentToolsStopConditions,
   codeModeCall,
+  codeModeCatalogHas,
+  directToolNames,
   failuresOf,
   headerReport,
+  imagePartsOf,
   loopbackPeersFromLsof,
   mcpEntityFromCatalog,
   offeredTools,
   nonLoopbackFromLog,
   nonLoopbackFromLsof,
   openCodeMentions,
+  permissionAskedOf,
+  permissionPathFor,
   refusedByPolicy,
   shimCallsFor,
   skillsMcpStopConditions,
@@ -20,6 +26,7 @@ import {
   markerHits,
   withoutMarkers,
 } from './probe-engine-v2.mjs';
+import { MARKER_PNG, MARKER_SHA256 } from './probe-tool-plugin.mjs';
 import { STUB_ANSWER, argValue, handleMessage } from './stub-mcp-server.mjs';
 
 test('refusedByPolicy needs an unanswered turn that failed with provider.no-route', () => {
@@ -197,4 +204,70 @@ test('headerReport says whether a recorded request carried the marker header, wi
   assert.equal(JSON.stringify(report).includes('m-1'), false);
   assert.equal(headerReport([requests[1]], 'm-1').markerAnywhere, false);
   assert.equal(headerReport([{ method: 'POST', path: '/mcp', headers: { 'x-other': 'm-1' } }], 'm-1').markerHeaderReceived, false);
+});
+
+test('an image_url data URI is found with its sha256', () => {
+  const uri = `data:image/png;base64,${MARKER_PNG}`;
+  const body = {
+    messages: [
+      { role: 'user', content: [{ type: 'text', text: 'look' }, { type: 'image_url', image_url: { url: uri } }] },
+      { role: 'tool', content: [{ type: 'input_image', image_url: uri }] },
+      { role: 'user', content: [{ type: 'image_url', image_url: { url: 'https://example.invalid/x.png' } }] },
+    ],
+  };
+  const marker = { mime: 'image/png', bytes: 77, sha256: MARKER_SHA256 };
+  assert.deepEqual(imagePartsOf(body), [marker, marker]);
+});
+
+test('a tool message with only text has no image', () => {
+  const body = { messages: [{ role: 'user', content: 'go' }, { role: 'tool', tool_call_id: 'call_1', content: '{"ok":true}' }, { role: 'tool', content: [{ type: 'text', text: 'image_url' }] }] };
+  assert.deepEqual(imagePartsOf(body), []);
+  assert.deepEqual(imagePartsOf(null), []);
+});
+
+test('a permission.asked payload gives its action and resources', () => {
+  const asked = {
+    type: 'permission.asked',
+    data: { id: 'per_1', sessionID: 'ses_1', action: 'mittrcraft_chrome', resources: ['probe.example.test'], save: ['probe.example.test'], message: 'Allow?', metadata: { host: 'probe.example.test' }, source: { type: 'tool', messageID: 'msg_1', id: 'call_1' } },
+  };
+  const events = [{ type: 'session.created', data: { sessionID: 'ses_1' } }, asked, { type: 'permission.replied', data: { sessionID: 'ses_1', requestID: 'per_1', reply: 'once' } }];
+  assert.deepEqual(permissionAskedOf(events), [{ id: 'per_1', sessionID: 'ses_1', action: 'mittrcraft_chrome', resources: ['probe.example.test'], save: ['probe.example.test'], message: 'Allow?', metadata: { host: 'probe.example.test' } }]);
+  assert.deepEqual(permissionAskedOf([{ type: 'permission.asked', data: { id: 'per_2', sessionID: 'ses_2', action: 'bash', resources: [] } }]), [{ id: 'per_2', sessionID: 'ses_2', action: 'bash', resources: [], save: null, message: null, metadata: null }]);
+});
+
+test('a Code Mode catalog line names the tool', () => {
+  const system = '# Code Mode\nUse the `execute` tool to call the tools listed below.\n## Available tools\n- mittr_probe_code (1 tool)\n  - tools.mittr_probe_code(input: {}): Promise<unknown> // Probe';
+  assert.equal(codeModeCatalogHas(system, 'mittr_probe_code'), true);
+  assert.equal(codeModeCatalogHas(system, 'mittr_probe_direct'), false);
+  assert.equal(codeModeCatalogHas('The mittr_probe_code tool is described here.', 'mittr_probe_code'), false);
+  assert.deepEqual(directToolNames({ tools: [{ type: 'function', function: { name: 'mittr_probe_direct' } }, { type: 'function', function: { name: 'execute' } }] }), ['mittr_probe_direct', 'execute']);
+});
+
+test('agent-tools stop conditions follow the brief', () => {
+  const cell = (model, call, markerSeen) => ({ model, call, markerSeen });
+  const allSeen = [cell('m1', 'direct', true), cell('m1', 'code', true), cell('mimg', 'direct', true), cell('mimg', 'code', true)];
+  const base = { P13: { pass: true }, P13b: { pass: true }, P14: { cells: allSeen }, P15: { path: 'E' }, P16: { autoAnswers: true }, P17: { pass: true }, P18: { pass: true } };
+  const ok = agentToolsStopConditions(base);
+  assert.equal(ok.P13.stop, false);
+  assert.equal(ok.P14.action, 'none');
+  assert.equal(ok.P15.path, 'E');
+  assert.match(ok.P16.action, /needs the A-30 hook/);
+  assert.equal(agentToolsStopConditions({ ...base, P13: { pass: false } }).P13.stop, true);
+  assert.match(agentToolsStopConditions({ ...base, P13b: { pass: false } }).P13b.action, /hook route/);
+  assert.match(agentToolsStopConditions({ ...base, P14: { cells: [cell('m1', 'direct', false), cell('mimg', 'direct', false)] } }).P14.action, /stop the image half/);
+  assert.match(agentToolsStopConditions({ ...base, P14: { cells: [cell('m1', 'direct', false), cell('mimg', 'direct', true)] } }).P14.action, /adds input/);
+  assert.match(agentToolsStopConditions({ ...base, P14: { cells: [cell('m1', 'direct', true), cell('m1', 'code', false)] } }).P14.action, /Code Mode loses the image/);
+  assert.equal(agentToolsStopConditions({ ...base, P14: { cells: [...allSeen, { ...cell('mtext', 'direct', false), diagnostic: true }] } }).P14.action, 'none');
+  assert.match(agentToolsStopConditions({ ...base, P16: { autoAnswers: false } }).P16.action, /budget stays 34/);
+  assert.match(agentToolsStopConditions({ ...base, P17: { pass: false } }).P17.action, /refresh\('mittr tools changed'\)/);
+  assert.match(agentToolsStopConditions({ ...base, P18: { pass: false } }).P18.action, /session\.idle/);
+});
+
+test('path E needs a raised ask, all three replies learned, and no answer the engine gives by itself unless its rule can be deleted', () => {
+  const learned = { once: true, always: true, reject: true };
+  assert.equal(permissionPathFor({ raised: true, learned, engineAnswersLater: false, deletedAndAskedAgain: false }), 'E');
+  assert.equal(permissionPathFor({ raised: true, learned, engineAnswersLater: true, deletedAndAskedAgain: true }), 'E');
+  assert.equal(permissionPathFor({ raised: true, learned, engineAnswersLater: true, deletedAndAskedAgain: false }), 'M');
+  assert.equal(permissionPathFor({ raised: false, learned, engineAnswersLater: false, deletedAndAskedAgain: false }), 'M');
+  assert.equal(permissionPathFor({ raised: true, learned: { ...learned, always: false }, engineAnswersLater: false, deletedAndAskedAgain: false }), 'M');
 });

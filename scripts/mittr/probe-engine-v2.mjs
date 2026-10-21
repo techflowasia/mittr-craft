@@ -23,13 +23,16 @@
  *     [--only outbound]     run the engine with the server's outbound switches
  *                           and once without them (the control), and record
  *                           every attempt to leave the machine
+ *     [--only agent-tools]  run P13 to P18: plugin tools beside upstream's agent
+ *                           tools, their images, their permission prompt, a
+ *                           hot toggle and abort
  *     [--only config-exposure]
  *                           put secret markers in a managed-config MCP entry
  *                           and record which engine config and MCP reads the
  *                           UI makes answer them
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
@@ -44,6 +47,18 @@ import { catalogMcpEntity } from '../../packages/mittr-server/src/mittr/mcp-frag
 import { policiesFor } from '../../packages/mittr-server/src/mittr/policies.js';
 import { toMcpEntity } from '../../packages/web/server/lib/opencode/config-v2.js';
 
+import {
+  HOOKED_HOST,
+  MARKER_SHA256,
+  PROBE_ASK_MESSAGE,
+  PROBE_HOST,
+  PROBE_PERMISSION,
+  PROBE_TOOL_NAMES,
+  PROVEN_IMAGE_PART,
+  WRAP_MARKER,
+  writePlugin,
+  writeProbeToolPlugin,
+} from './probe-tool-plugin.mjs';
 import { handleMessage as stubMcpReply } from './stub-mcp-server.mjs';
 
 export const mcpEntityFromCatalog = (raw) => catalogMcpEntity(raw, toMcpEntity);
@@ -352,12 +367,6 @@ const writeJsonAtomic = (file, value) => {
   fs.renameSync(tmp, file);
 };
 
-const writePlugin = (dir, name, source) => {
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'package.json'), `${JSON.stringify({ name, version: '0.0.0', private: true, type: 'module', exports: { '.': './index.js' } }, null, 2)}\n`, { mode: 0o600 });
-  fs.writeFileSync(path.join(dir, 'index.js'), source, { mode: 0o600 });
-};
-
 const descendants = (pid) => {
   const all = [pid];
   for (let i = 0; i < all.length; i += 1) {
@@ -499,7 +508,7 @@ const collectEvents = (client) => {
   const run = (async () => {
     try {
       for await (const event of client.event.subscribe()) {
-        events.push({ at: Date.now(), type: event.type, data: event.data });
+        events.push({ at: Date.now(), type: event.type, data: event.data, id: event.id, created: event.created, location: event.location });
         if (controller.stopped) break;
       }
     } catch (error) {
@@ -848,6 +857,69 @@ export const codeModeCall = (body, server, tool) => {
   if (!systemPlainText(body).includes(`${callPath}(`)) return null;
   return { name: 'execute', arguments: { code: `return await ${callPath}({ query: "41" })` } };
 };
+
+export const directToolNames = (body) => offeredTools(body);
+
+const codeModeSection = (systemText) => {
+  const text = String(systemText ?? '');
+  const at = text.indexOf('# Code Mode');
+  return at === -1 ? '' : text.slice(at);
+};
+
+export const codeModePathOf = (systemText, name) => {
+  for (const line of codeModeSection(systemText).split('\n')) {
+    const match = line.match(/^\s+- (\S*?)\(/);
+    if (!match) continue;
+    const callPath = match[1];
+    const last = callPath.split(/[.[\]"]+/).filter(Boolean).at(-1);
+    if (last === name) return callPath;
+  }
+  return null;
+};
+
+export const codeModeCatalogHas = (systemText, name) => codeModePathOf(systemText, name) !== null;
+
+const DATA_URI = /^data:([^;,]+)(?:;[^,]*)?;base64,(.*)$/s;
+
+const imageUrlOf = (part) => {
+  const value = part.image_url;
+  if (value && Object.hasOwn(Object(value), 'url')) return String(value.url);
+  return value === undefined || value === null ? '' : String(value);
+};
+
+export const imagePartsOf = (body) => {
+  const found = [];
+  const walk = (value) => {
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item);
+      return;
+    }
+    if (!value || Object(value) !== value) return;
+    if (value.type === 'image_url' || value.type === 'input_image') {
+      const match = imageUrlOf(value).match(DATA_URI);
+      if (match) {
+        const bytes = Buffer.from(match[2], 'base64');
+        found.push({ mime: match[1], bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
+      }
+      return;
+    }
+    for (const item of Object.values(value)) walk(item);
+  };
+  walk(body?.messages ?? body?.input ?? []);
+  return found;
+};
+
+export const permissionAskedOf = (events) => (Array.isArray(events) ? events : [])
+  .filter((event) => event?.type === 'permission.asked' && event.data)
+  .map(({ data }) => ({
+    id: data.id ?? null,
+    sessionID: data.sessionID ?? null,
+    action: data.action ?? null,
+    resources: data.resources ?? [],
+    save: data.save ?? null,
+    message: data.message ?? null,
+    metadata: data.metadata ?? null,
+  }));
 
 const NO_ACTION = { action: 'none', stop: false };
 const MCP_FALLBACK = 'Task 9 takes its named fallback: user-scope entries are written through context.opencode.userConfig and reconciled per account before each restart';
@@ -1911,6 +1983,711 @@ const probeProjectLayer = async ({ home, configFile, baseConfig, connect, curren
   };
 };
 
+const AGENT_TOOLS_SCENARIOS = ['P13', 'P13b', 'P14', 'P15', 'P16', 'P17', 'P18'];
+const P17_WINDOW_MS = 5000;
+const ASK_WAIT_MS = 10_000;
+const CONFIG_SETTLE_MS = 2000;
+const IMAGE_MODEL = 'mimg';
+const TEXT_ONLY_MODEL = 'mtext';
+
+export const agentToolsStopConditions = (scenarios) => {
+  const { P13 = {}, P13b = {}, P14 = {}, P15 = {}, P16 = {}, P17 = {}, P18 = {} } = scenarios;
+  const conditions = {};
+  conditions.P13 = P13.pass ? NO_ACTION : { action: "stop and report: no direct plugin tool beside upstream's, so Tasks 4-11 cannot proceed", stop: true };
+  conditions.P13b = P13b.pass ? NO_ACTION : { action: 'Task 5 takes the hook route (agent-tool/runtime.js, +1)', stop: false };
+  const cells = (P14.cells ?? []).filter((cell) => !cell.diagnostic);
+  const seen = (filter) => cells.filter(filter).some((cell) => cell.markerSeen);
+  const image = [];
+  if (!seen((cell) => cell.call === 'direct')) image.push('stop the image half of A-13/A-18/A-26 and report to the owner before Task 5; Tasks 6 and 7 return the saved path and hint only');
+  else if (!seen((cell) => cell.call === 'direct' && cell.model === 'm1')) image.push("Task 5 adds input: ['text','image'] to every Mittr model (owner item 5)");
+  if (seen((cell) => cell.call === 'direct') && !seen((cell) => cell.call === 'code')) image.push("owner note only: Code Mode loses the image; our tools follow upstream's agentToolsCodeMode");
+  conditions.P14 = image.length === 0 ? NO_ACTION : { action: image.join('; '), stop: false };
+  conditions.P15 = P15.path === 'E'
+    ? { action: "Task 8 takes path E (the engine's own prompt)", path: 'E', stop: false }
+    : { action: "Task 8 takes path M (MittrCraft's own prompt)", path: 'M', stop: false };
+  conditions.P16 = P16.autoAnswers === false
+    ? { action: 'auto does not answer our ask: the A-30 hook is not needed even on path E; Task 8 skips its hook and the budget stays 34', stop: false }
+    : { action: P15.path === 'E' ? 'auto answers our ask: on path E Task 8 needs the A-30 hook (permission-auto-accept/runtime.js, +1)' : 'auto answers an engine ask, but path M raises none, so no hook', stop: false };
+  conditions.P17 = P17.pass ? NO_ACTION : { action: "Task 4 calls context.opencode.refresh('mittr tools changed') after a switch change, and the note records the restart cost", stop: false };
+  conditions.P18 = P18.pass ? NO_ACTION : { action: "Task 4 aborts in-flight actions from the session.idle aborted: true event only, as upstream does", stop: false };
+  return conditions;
+};
+
+export const permissionPathFor = ({ raised, learned, engineAnswersLater, deletedAndAskedAgain }) => {
+  const learnedAll = ['once', 'always', 'reject'].every((reply) => learned?.[reply] === true);
+  return raised && learnedAll && (!engineAnswersLater || deletedAndAskedAgain) ? 'E' : 'M';
+};
+
+const listenerPids = (port) => (spawnSync('lsof', ['-nP', '-t', `-iTCP:${port}`, '-sTCP:LISTEN'], { encoding: 'utf8' }).stdout ?? '')
+  .split('\n').map((line) => Number(line.trim())).filter(Boolean);
+
+const processGroupOf = (pid) => Number((spawnSync('ps', ['-o', 'pgid=', '-p', String(pid)], { encoding: 'utf8' }).stdout ?? '').trim()) || null;
+
+const guardedFetchFor = (engine, guard) => async (input, init) => {
+  const url = new URL(input instanceof Request ? input.url : String(input));
+  if (Number(url.port) === engine.port) {
+    const pids = listenerPids(engine.port);
+    if (pids.length === 0 || !pids.every((pid) => processGroupOf(pid) === engine.pid)) {
+      guard.refused += 1;
+      throw new Error(`port guard: the listener on ${engine.port} is not the probe engine`);
+    }
+    guard.checked += 1;
+  }
+  return fetch(input, init);
+};
+
+const toolTextsOf = (body) => (Array.isArray(body?.messages) ? body.messages : [])
+  .filter((message) => message?.role === 'tool')
+  .map((message) => (Array.isArray(message.content) ? textsOf(message.content).join('') : String(message.content ?? '')));
+
+const parsedJson = (text) => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
+const messageOutline = (body) => (Array.isArray(body?.messages) ? body.messages : [])
+  .filter((message) => message?.role !== 'system')
+  .map((message) => ({
+    role: message.role,
+    content: Array.isArray(message.content) ? message.content.map((part) => part?.type ?? 'unknown') : (message.content === null || message.content === undefined ? null : 'string'),
+    toolCalls: Array.isArray(message.tool_calls) ? message.tool_calls.map((call) => call?.function?.name ?? null) : undefined,
+  }));
+
+const startHangServer = async () => {
+  const port = await unusedPort();
+  const hang = { port, requests: [], closes: [] };
+  const sockets = new Set();
+  const server = http.createServer((req) => {
+    const at = Date.now();
+    hang.requests.push({ at, path: req.url });
+    req.socket.once('close', () => hang.closes.push({ at: Date.now(), afterMs: Date.now() - at }));
+  });
+  server.on('connection', (socket) => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
+  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+  hang.close = () => new Promise((resolve) => {
+    for (const socket of sockets) socket.destroy();
+    server.close(resolve);
+  });
+  return hang;
+};
+
+const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, onSpawn, setCollector, closers }) => {
+  const { default: express } = await import('express');
+  const lib = (file) => pathToFileURL(path.join(REPO, 'packages/web/server/lib', file)).href;
+  const { createAgentToolRuntime } = await import(lib('agent-tool/runtime.js'));
+  const { createManagedConfigRuntime } = await import(lib('opencode/managed-config-file.js'));
+  const { createOpenChamberControlService } = await import(lib('openchamber-control/service.js'));
+  const { createBrowserControlBroker } = await import(lib('browser-control/broker.js'));
+  const { createPermissionAutoAcceptRuntime } = await import(lib('permission-auto-accept/runtime.js'));
+  const { translateWireEvent } = await import(lib('event-stream/translate-v2.js'));
+  const crypto = await import('node:crypto');
+  const rel = underHome(home);
+  const dataDir = path.join(home, 'data');
+  const probeDir = path.join(home, 'engine-plugins', 'mittrcraft-probe-tools');
+  const configDir = path.join(home, '.config', 'opencode');
+  fs.mkdirSync(configDir, { recursive: true });
+  const work = path.join(home, 'work');
+  const projectFile = path.join(work, 'opencode.json');
+  const guard = { checked: 0, refused: 0 };
+  const recorder = { entries: [] };
+  const askLog = [];
+  const managed = { permissions: [], policies: [] };
+  let engine = null;
+  let guarded = null;
+
+  const control = createOpenChamberControlService({
+    browserControl: createBrowserControlBroker({ emitRequest: () => 0, createId: () => `browser-${randomBytes(6).toString('hex')}` }),
+    readSettingsFromDiskMigrated: async () => ({}),
+    buildOpenCodeUrl: (apiPath) => `${engine?.base ?? 'http://127.0.0.1:1'}${apiPath}`,
+    getOpenCodeAuthHeaders: () => ({}),
+  });
+  const callbackPort = await unusedPort();
+  const agentToolRuntime = createAgentToolRuntime({
+    crypto,
+    fsPromises: fs.promises,
+    path,
+    dataDir,
+    getActivePort: () => callbackPort,
+    getActiveHost: () => '127.0.0.1',
+    executeAction: (action, input, directory, options) => control.execute(action, input, directory, options),
+    resolveSessionDirectory: async () => work,
+  });
+
+  const call = async (method, apiPath, body = null) => {
+    const init = { method, headers: { ...engine.headers } };
+    if (body) {
+      init.headers['content-type'] = 'application/json';
+      init.body = JSON.stringify(body);
+    }
+    const res = await guarded(`${engine.base}${apiPath}`, init);
+    const text = await res.text();
+    const parsed = text ? parsedJson(text) : null;
+    const json = parsed && Object.hasOwn(Object(parsed), 'data') ? parsed.data : parsed;
+    return { status: res.status, json, text: parsed === null && text ? text.slice(0, 300) : null };
+  };
+
+  const app = express();
+  app.post('/probe/record', express.json({ limit: '1mb' }), (req, res) => {
+    recorder.entries.push({ ...req.body, receivedAt: Date.now() });
+    res.json({ ok: true });
+  });
+  app.post('/probe/ask', express.json({ limit: '1mb' }), async (req, res) => {
+    const { sessionID, host, messageID, callID, agent } = req.body ?? {};
+    let closed = false;
+    res.on('close', () => { if (!res.writableEnded) closed = true; });
+    const base = { action: PROBE_PERMISSION, resources: [host], save: [host], metadata: { host }, message: PROBE_ASK_MESSAGE(host) };
+    if (agent) base.agent = agent;
+    let created = await call('POST', `/api/session/${encodeURIComponent(sessionID)}/permission`, messageID && callID ? { ...base, source: { type: 'tool', messageID, id: callID } } : base);
+    const entry = { sessionID, host, at: Date.now(), withSource: Boolean(messageID && callID), createStatus: created.status, created: created.json ?? created.text, closedBeforeReply: false, reply: null };
+    if (created.status >= 400 && entry.withSource) {
+      created = await call('POST', `/api/session/${encodeURIComponent(sessionID)}/permission`, base);
+      Object.assign(entry, { withSource: false, retriedWithoutSource: true, createStatus: created.status, created: created.json ?? created.text });
+    }
+    askLog.push(entry);
+    const id = created.json?.id ?? null;
+    if (created.status >= 300 || created.json?.effect !== 'ask' || !id) {
+      res.json({ effect: created.json?.effect ?? null, status: created.status });
+      return;
+    }
+    const outcome = await waitFor(() => (closed ? { closed: true } : collector().events.find((e) => e.type === 'permission.replied' && e.data?.requestID === id)), 120_000, 50);
+    if (outcome?.closed) {
+      entry.closedBeforeReply = true;
+      return;
+    }
+    entry.reply = outcome?.data?.reply ?? null;
+    res.json({ effect: 'ask', id, reply: entry.reply });
+  });
+  agentToolRuntime.registerRoutes(app, express);
+  const callbackServer = await new Promise((resolve, reject) => {
+    const listening = app.listen(callbackPort, '127.0.0.1', (error) => (error ? reject(error) : resolve(listening)));
+  });
+  closers.push(() => new Promise((resolve) => { callbackServer.closeAllConnections?.(); callbackServer.close(resolve); }));
+  const hang = await startHangServer();
+  closers.push(hang.close);
+
+  const stubProvider = () => ({
+    name: 'Stub',
+    package: 'aisdk:@ai-sdk/openai-compatible',
+    settings: { baseURL: `http://127.0.0.1:${stub.port}/v1` },
+    models: {
+      m1: { modelID: 'm1', name: 'm1', capabilities: { tools: true } },
+      [IMAGE_MODEL]: { modelID: IMAGE_MODEL, name: IMAGE_MODEL, capabilities: { tools: true, input: ['text', 'image'] } },
+      [TEXT_ONLY_MODEL]: { modelID: TEXT_ONLY_MODEL, name: TEXT_ONLY_MODEL, capabilities: { tools: true, input: ['text'] } },
+    },
+  });
+  const managedRuntime = createManagedConfigRuntime({
+    fsPromises: fs.promises,
+    path,
+    dataDir,
+    env: {},
+    agentToolRuntime,
+    readSettings: async () => ({ agentControlToolEnabled: true, agentWebToolEnabled: true, agentToolsCodeMode: false }),
+    isAgentMemoryAvailable: () => false,
+    contributeConfig: async () => {
+      const fragment = {
+        providers: { stub: stubProvider() },
+        plugins: [probeDir],
+        ...ENGINE_SHARE_OFF,
+        experimental: { policies: [...policiesFor({ showOtherProviders: false, providerId: 'stub' }), ...managed.policies] },
+      };
+      if (managed.permissions.length > 0) fragment.permissions = managed.permissions;
+      return fragment;
+    },
+  });
+  writeProbeToolPlugin(probeDir);
+  const childEnv = await managedRuntime.buildManagedChildEnv();
+  const managedFile = managedRuntime.filePath;
+  const managedPlugins = JSON.parse(fs.readFileSync(managedFile, 'utf8')).plugins.map((entry) => rel(entry));
+  const toolsUrl = `http://127.0.0.1:${callbackPort}/api/mittr/tools`;
+  engine = await startEngine({
+    home, configFile: managedFile, logFile, proxyPort: proxy.port, hookLog, onSpawn,
+    extraEnv: {
+      ...childEnv,
+      OPENCODE_CONFIG_DIR: configDir,
+      MITTRCRAFT_TOOLS_URL: toolsUrl,
+      MITTR_PROBE_RECORD_URL: `http://127.0.0.1:${callbackPort}/probe/record`,
+      MITTR_PROBE_HANG_URL: `http://127.0.0.1:${hang.port}/hang`,
+    },
+  });
+  guarded = guardedFetchFor(engine, guard);
+  const client = OpenCode.make({ baseUrl: engine.base, headers: engine.headers, fetch: guarded });
+  const events = collectEvents(client);
+  setCollector(events);
+  const collector = () => events;
+  const enginePid = engine.pid;
+  const engineAlive = () => engine.child.exitCode === null && engine.child.signalCode === null && isAlive(enginePid);
+  await sleep(500);
+  await waitFor(async () => (await modelIds(client, work).catch(() => [])).includes('stub/m1'), 15_000, 100);
+  const modelCapabilities = await client.model.list({ location: { directory: work } })
+    .then((out) => out.data.filter((m) => m.providerID === 'stub').map((m) => ({ id: m.id, capabilities: m.capabilities })))
+    .catch((error) => `error: ${errorText(error)}`);
+
+  const asked = (sessionID, since = 0) => permissionAskedOf(sessionEvents(events.events, sessionID, since));
+  const rawEvent = (event) => (event ? { id: event.id ?? null, type: event.type, created: event.created ?? null, location: event.location ? { directory: rel(event.location.directory) } : null, data: event.data } : null);
+  const wirePayload = (event) => ({ id: event.id, type: event.type, created: event.created, location: event.location, data: event.data });
+  const relDeep = (value) => JSON.parse(JSON.stringify(value ?? null).split(home).join('<home>'));
+  const codeCall = (body, name) => {
+    const callPath = codeModePathOf(systemPlainText(body), name);
+    return callPath && offeredTools(body).includes('execute') ? { name: 'execute', arguments: { code: `return await ${callPath}({})` } } : null;
+  };
+
+  const turn = async ({ model = 'm1', label, pick, onAsked = null, settleMs = 30_000 }) => {
+    const { sessionID, createError } = await newSession(client, work, 'stub', model);
+    if (!sessionID) return { createError, requests: [], toolTexts: [], records: [] };
+    stub.mode = 'tool';
+    stub.pickCall = (body) => (hasToolResult(body) ? null : pick(body));
+    const mark = Date.now();
+    let promptError = null;
+    const sent = client.session.prompt({ sessionID, text: `probe ${label}` }).catch((error) => { promptError = errorText(error); });
+    let askedEvent = null;
+    let askedResult = null;
+    if (onAsked) {
+      askedEvent = await waitFor(() => events.events.find((e) => e.at >= mark && e.type === 'permission.asked' && e.data?.sessionID === sessionID), ASK_WAIT_MS, 50);
+      askedResult = await onAsked({ sessionID, event: askedEvent, mark });
+    }
+    const idle = await waitFor(() => sessionEvents(events.events, sessionID, mark).find(isIdleEvent), settleMs, 100);
+    await Promise.race([sent, sleep(1000)]);
+    stub.mode = 'ok';
+    stub.pickCall = null;
+    const requests = stub.forSession(sessionID);
+    const next = requests.find((r) => hasToolResult(r.body)) ?? null;
+    return {
+      sessionID,
+      mark,
+      label,
+      model,
+      idle: Boolean(idle),
+      idleAfterMs: idle ? idle.at - mark : null,
+      promptError,
+      requests,
+      first: requests[0] ?? null,
+      next,
+      calledTool: requests.map((r) => r.calledTool).find(Boolean) ?? null,
+      toolTexts: next ? toolTextsOf(next.body) : [],
+      records: recorder.entries.filter((entry) => entry.sessionID === sessionID),
+      asked: asked(sessionID, mark),
+      askedEvent,
+      askedResult,
+      events: summarizeEvents(sessionEvents(events.events, sessionID, mark)).slice(0, 30),
+    };
+  };
+  const brief = (t) => ({
+    sessionID: t.sessionID ?? null,
+    model: t.model,
+    calledTool: t.calledTool,
+    idle: t.idle,
+    idleAfterMs: t.idleAfterMs,
+    promptError: t.promptError ?? t.createError ?? null,
+    stubRequests: t.requests.length,
+    toolTexts: t.toolTexts.map((text) => text.slice(0, 600)),
+    events: t.events,
+  });
+  const scenarios = {};
+
+  const directTurn = await turn({ label: 'P13 direct', pick: () => ({ name: 'mittr_probe_direct', arguments: {} }) });
+  const firstBody = directTurn.first?.body;
+  const system = systemPlainText(firstBody);
+  const direct = directToolNames(firstBody);
+  const codeTurn = await turn({ label: 'P13 code', pick: (body) => codeCall(body, 'mittr_probe_code') });
+  const directResult = parsedJson(directTurn.toolTexts[0] ?? '');
+  const firstOf = (kind) => recorder.entries.find((entry) => entry.kind === kind) ?? null;
+  const executeRecord = recorder.entries.find((entry) => entry.kind === 'execute' && entry.tool === 'mittr_probe_direct') ?? null;
+  const catalogLines = codeModeSection(system).split('\n').filter((line) => /mittr_probe|openchamber/.test(line)).map((line) => line.slice(0, 240));
+  scenarios.P13 = {
+    pass: ['mittr_probe_direct', 'openchamber', 'openchamber_web'].every((name) => direct.includes(name))
+      && !direct.includes('mittr_probe_code') && codeModeCatalogHas(system, 'mittr_probe_code') && directResult?.envType === 'string',
+    observed: {
+      managedPlugins,
+      directToolNames: direct,
+      codeModeCatalogHasProbeCode: codeModeCatalogHas(system, 'mittr_probe_code'),
+      codeModePath: codeModePathOf(system, 'mittr_probe_code'),
+      catalogLines,
+      directTurn: brief(directTurn),
+      envType: directResult?.envType ?? null,
+      codeTurn: brief(codeTurn),
+      setupContext: firstOf('setup') ? { ctx: firstOf('setup').ctx, nested: firstOf('setup').nested } : null,
+      transformTools: firstOf('transform') ? { tools: firstOf('transform').tools, listedAtFirstTransform: firstOf('transform').listed } : null,
+      executeContext: executeRecord?.context ?? null,
+      evaluateHook: recorder.entries.find((entry) => entry.kind.startsWith('evaluate-hook-')) ?? null,
+    },
+  };
+
+  const webTurn = await turn({ label: 'P13b wrap', pick: () => ({ name: 'openchamber_web', arguments: { action: 'browser.snapshot', parameters: {} } }) });
+  const webText = webTurn.toolTexts.join('\n');
+  const transforms = recorder.entries.filter((entry) => entry.kind === 'transform');
+  scenarios.P13b = {
+    pass: webText.includes(WRAP_MARKER) && recorder.entries.some((entry) => entry.kind === 'wrap-ran'),
+    observed: {
+      methodsUsed: ['tools.get', 'tools.update'],
+      wrap: transforms[0]?.wrap ?? null,
+      wrapEveryTransform: transforms.map((entry) => entry.wrap),
+      wrapRan: recorder.entries.filter((entry) => entry.kind === 'wrap-ran').length,
+      upstreamEnvelope: parsedJson(webTurn.toolTexts[0]?.split(WRAP_MARKER)[0] ?? '') ?? null,
+      turn: brief(webTurn),
+    },
+  };
+
+  const cells = [];
+  for (const model of ['m1', IMAGE_MODEL, TEXT_ONLY_MODEL]) {
+    for (const [callKind, tool] of [['direct', 'mittr_probe_image'], ['code', 'mittr_probe_image_code'], ['legacy', 'mittr_probe_image_legacy']]) {
+      const imageTurn = await turn({
+        model,
+        label: `P14 ${model} ${callKind}`,
+        pick: (body) => (callKind === 'code' ? codeCall(body, tool) : { name: tool, arguments: {} }),
+      });
+      const images = imagePartsOf(imageTurn.next?.body);
+      cells.push({
+        model,
+        diagnostic: model === TEXT_ONLY_MODEL,
+        call: callKind,
+        tool,
+        markerSeen: images.some((image) => image.sha256 === MARKER_SHA256),
+        images,
+        nextRequestOutline: messageOutline(imageTurn.next?.body),
+        turn: brief(imageTurn),
+      });
+    }
+  }
+  const legacy = cells.filter((cell) => cell.call === 'legacy' && !cell.diagnostic);
+  const legacyRefused = legacy.some((cell) => cell.turn.toolTexts.some((text) => /error|invalid/i.test(text)) || !cell.turn.idle);
+  scenarios.P14 = {
+    pass: cells.some((cell) => cell.call === 'direct' && !cell.diagnostic && cell.markerSeen),
+    markerSha256: MARKER_SHA256,
+    provenPart: { type: PROVEN_IMAGE_PART.type, mime: PROVEN_IMAGE_PART.mime, name: PROVEN_IMAGE_PART.name, uri: 'data:image/png;base64,<MARKER_PNG>' },
+    modelCapabilities,
+    matrix: cells.filter((cell) => cell.call !== 'legacy' && !cell.diagnostic).map(({ model, call: kind, markerSeen }) => ({ model, call: kind, markerSeen })),
+    textOnlyDiagnostic: cells.filter((cell) => cell.diagnostic).map(({ call: kind, markerSeen, turn: t }) => ({ call: kind, markerSeen, toolTexts: t.toolTexts })),
+    legacyResult: legacy.some((cell) => cell.markerSeen) ? 'seen' : legacyRefused ? 'refused' : 'ignored',
+    cells,
+  };
+
+  const replyTo = async (sessionID, requestID, decision) => call('POST', `/api/session/${encodeURIComponent(sessionID)}/permission/${encodeURIComponent(requestID)}/reply`, { decision });
+  const pendingList = async () => {
+    const listed = await call('GET', '/api/permission/request');
+    const items = Array.isArray(listed.json) ? listed.json : listed.json?.data ?? [];
+    return { status: listed.status, ids: items.map((item) => item.id), sample: items[0] ? Object.keys(items[0]).sort() : [] };
+  };
+  const abortTurn = async (sessionID) => {
+    const abort = await call('POST', `/api/session/${encodeURIComponent(sessionID)}/abort`);
+    if (abort.status < 300) return { route: 'abort', status: abort.status };
+    let interruptError = null;
+    try { await client.session.interrupt({ sessionID }); } catch (error) { interruptError = errorText(error); }
+    return { route: 'interrupt', abortStatus: abort.status, interruptError };
+  };
+  const askTool = (variant, host = PROBE_HOST) => () => ({ name: 'mittr_probe_ask', arguments: { variant, host } });
+  const outcomeOf = (t) => parsedJson(t.toolTexts[0] ?? '')?.outcome ?? t.records.find((entry) => entry.kind === 'ask-outcome')?.outcome ?? null;
+
+  const variants = {};
+  for (const variant of ['a', 'b', 'c']) {
+    const askTurn = await turn({ label: `P15 ${variant}`, pick: askTool(variant) });
+    variants[variant] = { raised: askTurn.asked.length > 0, asked: askTurn.asked, toolOutcome: outcomeOf(askTurn), turn: brief(askTurn) };
+  }
+  const optionTurn = await turn({ label: 'P15 d', pick: () => ({ name: 'mittr_probe_permission_option', arguments: {} }) });
+  managed.permissions = [{ action: PROBE_PERMISSION, resource: '*', effect: 'deny' }];
+  await managedRuntime.refreshManagedConfigFile();
+  await sleep(CONFIG_SETTLE_MS);
+  const deniedTurn = await turn({ label: 'P15 d deny', pick: () => null });
+  managed.permissions = [];
+  await managedRuntime.refreshManagedConfigFile();
+  await sleep(CONFIG_SETTLE_MS);
+  variants.d = {
+    raised: optionTurn.asked.length > 0,
+    asked: optionTurn.asked,
+    toolRan: optionTurn.toolTexts.some((text) => text.includes('"ran":true')),
+    hiddenByManagedDeny: !directToolNames(deniedTurn.first?.body).includes('mittr_probe_permission_option'),
+    offeredWithoutRule: directToolNames(optionTurn.first?.body).includes('mittr_probe_permission_option'),
+    turn: brief(optionTurn),
+  };
+
+  const effectWith = async (label, { permissions = [], policies = [], project = null, host = PROBE_HOST }) => {
+    managed.permissions = permissions;
+    managed.policies = policies;
+    await managedRuntime.refreshManagedConfigFile();
+    if (project) writeJsonAtomic(projectFile, project);
+    else fs.rmSync(projectFile, { force: true });
+    await sleep(CONFIG_SETTLE_MS);
+    const { sessionID, createError } = await newSession(client, work, 'stub', 'm1');
+    if (!sessionID) return { label, createError };
+    const created = await call('POST', `/api/session/${encodeURIComponent(sessionID)}/permission`, { action: PROBE_PERMISSION, resources: [host], save: [host], metadata: { host } });
+    const event = await waitFor(() => events.events.find((e) => e.type === 'permission.asked' && e.data?.sessionID === sessionID), 1500, 50);
+    if (created.json?.effect === 'ask' && created.json?.id) await replyTo(sessionID, created.json.id, 'reject');
+    return { label, host, managedPermissions: permissions, managedPolicies: policies, project: project ?? null, status: created.status, effect: created.json?.effect ?? null, error: created.json ? null : created.text, askedEvent: Boolean(event) };
+  };
+  const projectAllow = { permissions: [{ action: PROBE_PERMISSION, resource: '*', effect: 'allow' }] };
+  const managedAsk = [{ action: PROBE_PERMISSION, resource: '*', effect: 'ask' }];
+  const policyDeny = [{ action: 'permission', resource: `${PROBE_PERMISSION}:*`, effect: 'deny' }];
+  const ruleMatrix = [
+    await effectWith('no rule', {}),
+    await effectWith('managed ask', { permissions: managedAsk }),
+    await effectWith('project allow', { project: projectAllow }),
+    await effectWith('managed ask, project allow', { permissions: managedAsk, project: projectAllow }),
+    await effectWith('managed permission policy deny, project allow', { policies: policyDeny, project: projectAllow }),
+    await effectWith('evaluate hook, project allow', { project: projectAllow, host: HOOKED_HOST }),
+  ];
+  const hookRecords = recorder.entries.filter((entry) => entry.kind === 'evaluate-hook').map(({ keys, effectSeen, effectLeft }) => ({ keys, effectSeen, effectLeft }));
+  managed.policies = [];
+  fs.rmSync(projectFile, { force: true });
+
+  managed.permissions = managedAsk;
+  await managedRuntime.refreshManagedConfigFile();
+  await sleep(CONFIG_SETTLE_MS);
+
+  const decisionRun = async (decision, host = PROBE_HOST) => {
+    const run = await turn({
+      label: `P15 e ${decision}`,
+      pick: askTool('e', host),
+      onAsked: async ({ sessionID, event }) => {
+        if (!event) return { asked: false };
+        const listedGlobal = await pendingList();
+        const listedSession = await call('GET', `/api/session/${encodeURIComponent(sessionID)}/permission`);
+        const reply = await replyTo(sessionID, event.data.id, decision);
+        await sleep(300);
+        const replied = events.events.find((e) => e.type === 'permission.replied' && e.data?.requestID === event.data.id) ?? null;
+        return {
+          asked: true,
+          listedByRequestRoute: listedGlobal.ids.includes(event.data.id),
+          requestRouteStatus: listedGlobal.status,
+          requestItemKeys: listedGlobal.sample,
+          listedBySessionRoute: (Array.isArray(listedSession.json) ? listedSession.json : listedSession.json?.data ?? []).some((item) => item.id === event.data.id),
+          replyStatus: reply.status,
+          replyBody: { decision },
+          repliedRaw: rawEvent(replied),
+          repliedTranslated: replied ? relDeep(translateWireEvent(wirePayload(replied))) : null,
+        };
+      },
+    });
+    return { decision, host, askedRaw: rawEvent(run.askedEvent), askedTranslated: run.askedEvent ? relDeep(translateWireEvent(wirePayload(run.askedEvent))) : null, onAsked: run.askedResult, toolOutcome: outcomeOf(run), serverSide: askLog.filter((entry) => entry.sessionID === run.sessionID).map(({ sessionID: _s, at: _a, ...rest }) => rest), turn: brief(run) };
+  };
+  const runs = {};
+  for (const decision of ['once', 'reject', 'always']) runs[decision] = await decisionRun(decision);
+  const learned = Object.fromEntries(Object.entries(runs).map(([decision, run]) => [decision, run.toolOutcome?.value?.reply === decision]));
+  const raisedE = Object.values(runs).some((run) => run.askedRaw && (run.askedRaw.data.resources?.includes(PROBE_HOST) || run.askedRaw.data.metadata?.host === PROBE_HOST));
+  variants.e = { raised: raisedE, how: 'the tool calls a loopback callback, which calls POST /api/session/:id/permission on the engine and waits for the raw permission.replied event' };
+
+  const again = await decisionRun('reject');
+  const projectList = await client.project.list().catch((error) => `error: ${errorText(error)}`);
+  const project = Array.isArray(projectList) ? projectList.find((p) => p.directory === work || p.worktree === work) ?? projectList[0] : (projectList?.data ?? []).find?.((p) => p.directory === work) ?? null;
+  const savedAll = await call('GET', '/api/permission/saved');
+  const savedForProject = project?.id ? await call('GET', `/api/permission/saved?projectID=${encodeURIComponent(project.id)}`) : null;
+  const savedItems = [savedForProject?.json, savedAll.json].map((json) => (Array.isArray(json) ? json : json?.data ?? [])).find((items) => items.length > 0) ?? [];
+  const savedRule = savedItems.find((item) => item.action === PROBE_PERMISSION && item.resource === PROBE_HOST) ?? null;
+  const deleted = savedRule ? await call('DELETE', `/api/permission/saved/${encodeURIComponent(savedRule.id)}`) : null;
+  await sleep(500);
+  const afterDelete = savedRule ? await decisionRun('reject') : null;
+  const P15d = {
+    engineAnsweredLaterAsk: again.askedRaw === null,
+    laterAsk: again,
+    savedListRoute: { withoutProject: { status: savedAll.status, count: Array.isArray(savedAll.json) ? savedAll.json.length : savedAll.json?.data?.length ?? null }, withProject: savedForProject ? { status: savedForProject.status } : null, projectKeys: project ? Object.keys(project).sort() : null },
+    savedRule: savedRule ? { keys: Object.keys(savedRule).sort(), action: savedRule.action, resource: savedRule.resource } : null,
+    deleteRoute: deleted ? { path: 'DELETE /api/permission/saved/:id', status: deleted.status } : null,
+    askedAgainAfterDelete: afterDelete ? afterDelete.askedRaw !== null : null,
+    afterDelete,
+  };
+
+  const abortRun = await turn({
+    label: 'P15e abort',
+    pick: askTool('e'),
+    onAsked: async ({ sessionID, event }) => {
+      if (!event) return { asked: false };
+      const before = await pendingList();
+      const abort = await abortTurn(sessionID);
+      await sleep(1500);
+      const after = await pendingList();
+      const leftover = after.ids.includes(event.data.id);
+      if (leftover) await replyTo(sessionID, event.data.id, 'reject');
+      return { asked: true, listedBefore: before.ids.includes(event.data.id), abort, stillListedAfterAbort: leftover, repliedEvent: rawEvent(events.events.find((e) => e.type === 'permission.replied' && e.data?.requestID === event.data.id)) };
+    },
+  });
+  await sleep(500);
+  const P15e = {
+    onAsked: abortRun.askedResult,
+    toolSaw: abortRun.records.filter((entry) => entry.kind.startsWith('ask-')).map(({ kind, outcome, variant }) => ({ kind, variant, outcome: outcome ?? null })),
+    serverSide: askLog.filter((entry) => entry.sessionID === abortRun.sessionID).map(({ closedBeforeReply, reply, createStatus }) => ({ closedBeforeReply, reply, createStatus })),
+    turn: brief(abortRun),
+  };
+
+  const path15 = permissionPathFor({ raised: raisedE || ['a', 'b', 'c', 'd'].some((v) => variants[v].raised), learned, engineAnswersLater: P15d.engineAnsweredLaterAsk, deletedAndAskedAgain: P15d.askedAgainAfterDelete === true });
+  const firstRaised = ['a', 'b', 'c', 'd', 'e'].find((v) => variants[v].raised) ?? null;
+  scenarios.P15 = {
+    pass: firstRaised !== null,
+    path: path15,
+    firstRaised,
+    host: PROBE_HOST,
+    variants,
+    decisions: runs,
+    learned,
+    messageOnEvent: Object.values(runs).some((run) => run.askedRaw?.data?.message === PROBE_ASK_MESSAGE(PROBE_HOST)),
+    rawRepliedCarriesReply: Object.values(runs).every((run) => run.onAsked?.repliedRaw?.data?.reply === run.decision),
+    translatedRepliedFields: runs.once.onAsked?.repliedTranslated?.[0] ? Object.keys(runs.once.onAsked.repliedTranslated[0].properties).sort() : null,
+    P15d,
+    P15e,
+    ruleMatrix,
+    askRuleDuringDecisions: { layer: 'managed config permissions', rules: managedAsk },
+    evaluateHookCalls: hookRecords,
+    policySchema: 'experimental.policies entries take action provider.use or permission and effect allow or deny only (@opencode/schema 2.0.22 config/policy.js)',
+  };
+
+  const hubSubscribers = new Set();
+  const evaluated = [];
+  const runtimeCalls = [];
+  const broadcasts = [];
+  const autoAccept = createPermissionAutoAcceptRuntime({
+    globalEventHub: {
+      subscribeEvent: (fn) => { hubSubscribers.add(fn); return () => hubSubscribers.delete(fn); },
+      subscribeStatus: () => () => {},
+    },
+    buildOpenCodeUrl: (apiPath) => `${engine.base}${apiPath}`,
+    getOpenCodeAuthHeaders: () => ({ Authorization: engine.headers.Authorization }),
+    readSettingsFromDiskMigrated: async () => ({}),
+    persistSettings: async () => {},
+    broadcastGlobalUiEvent: (event) => broadcasts.push({ type: event.type, properties: Object.keys(event.properties ?? {}).sort() }),
+    evaluatePermission: async (permission, directory) => {
+      evaluated.push({ permission: relDeep(permission), directory: rel(directory) });
+      return null;
+    },
+    fetchImpl: async (url, init) => {
+      const target = new URL(url);
+      runtimeCalls.push({ method: init?.method ?? 'GET', path: target.pathname, body: init?.body ? JSON.parse(init.body) : null, directoryHeader: init?.headers?.['x-opencode-directory'] ? rel(decodeURIComponent(init.headers['x-opencode-directory'])) : null });
+      return guarded(url, init);
+    },
+  });
+  let forwarded = events.events.length;
+  const forwarder = setInterval(() => {
+    for (; forwarded < events.events.length; forwarded += 1) {
+      const event = events.events[forwarded];
+      const payload = wirePayload(event);
+      const hubEvent = { directory: event.location?.directory ?? 'global', payload, translated: () => translateWireEvent(payload) };
+      for (const fn of hubSubscribers) fn(hubEvent);
+    }
+  }, 25);
+  closers.push(async () => clearInterval(forwarder));
+  const stopHub = autoAccept.start();
+  closers.push(async () => stopHub());
+  const modeTurn = async (mode, onAsked) => {
+    const { sessionID } = await newSession(client, work, 'stub', 'm1');
+    await autoAccept.setSessionPolicy(sessionID, mode, work);
+    const before = runtimeCalls.length;
+    stub.mode = 'tool';
+    stub.pickCall = (body) => (hasToolResult(body) ? null : { name: 'mittr_probe_ask', arguments: { variant: 'e', host: PROBE_HOST } });
+    const mark = Date.now();
+    void client.session.prompt({ sessionID, text: `probe P16 ${mode}` }).catch(() => {});
+    const event = await waitFor(() => events.events.find((e) => e.at >= mark && e.type === 'permission.asked' && e.data?.sessionID === sessionID), ASK_WAIT_MS, 50);
+    const extra = event ? await onAsked({ sessionID, event }) : null;
+    const idle = await waitFor(() => sessionEvents(events.events, sessionID, mark).find(isIdleEvent), 20_000, 100);
+    stub.mode = 'ok';
+    stub.pickCall = null;
+    const record = recorder.entries.find((entry) => entry.kind === 'ask-outcome' && entry.sessionID === sessionID);
+    const replied = event ? events.events.find((e) => e.type === 'permission.replied' && e.data?.requestID === event.data.id) : null;
+    return {
+      mode,
+      asked: Boolean(event),
+      askedHasIdAndSession: Boolean(event?.data?.id && event?.data?.sessionID),
+      translatedAsked: event ? relDeep(translateWireEvent(wirePayload(event))[0] ?? null) : null,
+      toolOutcome: record?.outcome ?? null,
+      replied: replied ? { reply: replied.data.reply, afterAskMs: replied.at - event.at } : null,
+      runtimeCalls: runtimeCalls.slice(before),
+      idle: Boolean(idle),
+      ...extra,
+    };
+  };
+  const safety = await modeTurn('safety', async ({ sessionID, event }) => {
+    await waitFor(() => evaluated.length > 0, 5000, 50);
+    const evaluatedBefore = evaluated.length;
+    const callsBefore = runtimeCalls.length;
+    await autoAccept.reconcilePending({ directories: [work] });
+    const reconcileCalls = runtimeCalls.slice(callsBefore);
+    const listed = await pendingList();
+    const held = await autoAccept.isPermissionAutoAnswered(sessionID, work, event.data.id);
+    await replyTo(sessionID, event.data.id, 'reject');
+    return { reconcileRead: reconcileCalls.map(({ method, path: p }) => `${method} ${p}`), reconcileListed: listed.ids.includes(event.data.id), evaluatedAgainByReconcile: evaluated.length > evaluatedBefore, autoAnsweredFlag: held };
+  });
+  const auto = await modeTurn('auto', async () => {
+    await sleep(1500);
+    return {};
+  });
+  const autoAnswers = auto.toolOutcome?.value?.reply === 'once' && auto.runtimeCalls.some((c) => c.method === 'POST' && c.path.endsWith('/reply') && c.body?.decision === 'once');
+  scenarios.P16 = {
+    pass: safety.askedHasIdAndSession && safety.reconcileListed && evaluated.length > 0,
+    autoAnswers,
+    replyOnceBody: auto.runtimeCalls.find((c) => c.method === 'POST' && c.path.endsWith('/reply'))?.body ?? null,
+    evaluatePermissionGets: evaluated[0] ?? null,
+    safety,
+    auto,
+    broadcasts,
+  };
+
+  const waitTurnPromise = (async () => {
+    const { sessionID } = await newSession(client, work, 'stub', 'm1');
+    stub.mode = 'tool';
+    stub.pickCall = (body) => (hasToolResult(body) ? null : { name: 'mittr_probe_wait', arguments: {} });
+    const mark = Date.now();
+    void client.session.prompt({ sessionID, text: 'probe P18' }).catch(() => {});
+    const reached = await waitFor(() => hang.requests.find((r) => r.at >= mark), 10_000, 50);
+    const abortAt = Date.now();
+    const abort = reached ? await abortTurn(sessionID) : null;
+    const signalFired = await waitFor(() => recorder.entries.find((entry) => entry.kind === 'wait-signal-aborted' && entry.sessionID === sessionID), 5000, 50);
+    const closed = await waitFor(() => hang.closes.find((c) => c.at >= abortAt), 5000, 50);
+    const outcome = await waitFor(() => recorder.entries.find((entry) => entry.kind === 'wait-outcome' && entry.sessionID === sessionID), 3000, 50);
+    const idle = await waitFor(() => sessionEvents(events.events, sessionID, mark).find(isIdleEvent), 10_000, 100);
+    stub.mode = 'ok';
+    stub.pickCall = null;
+    return {
+      pass: Boolean(signalFired) && Boolean(closed),
+      listenerReached: Boolean(reached),
+      abort,
+      signalFired: Boolean(signalFired),
+      signalAfterAbortMs: signalFired ? signalFired.receivedAt - abortAt : null,
+      listenerSawClose: Boolean(closed),
+      closeAfterAbortMs: closed ? closed.at - abortAt : null,
+      toolOutcome: outcome ? { outcome: outcome.outcome, name: outcome.name ?? null, message: outcome.message ?? null } : null,
+      idle: Boolean(idle),
+      events: summarizeEvents(sessionEvents(events.events, sessionID, mark)).slice(0, 20),
+    };
+  })();
+  scenarios.P18 = await waitTurnPromise;
+
+  const setupsBefore = recorder.entries.filter((entry) => entry.kind === 'setup').length;
+  const toggleAt = Date.now();
+  writeProbeToolPlugin(probeDir, { include: PROBE_TOOL_NAMES.filter((name) => name !== 'mittr_probe_direct') });
+  const refreshed = await managedRuntime.refreshManagedConfigFile();
+  const attempts = [];
+  let gone = false;
+  while (Date.now() - toggleAt < P17_WINDOW_MS + 2000) {
+    const check = await turn({ label: 'P17 toggle', pick: () => null, settleMs: 10_000 });
+    const names = directToolNames(check.first?.body);
+    attempts.push({ afterMs: Date.now() - toggleAt, offered: names.includes('mittr_probe_direct'), probeTools: names.filter((name) => name.startsWith('mittr_probe')) });
+    if (!names.includes('mittr_probe_direct') && names.includes('mittr_probe_image')) {
+      gone = true;
+      break;
+    }
+    await sleep(500);
+  }
+  const goneAfterMs = gone ? attempts.at(-1).afterMs : null;
+  scenarios.P17 = {
+    pass: gone && goneAfterMs <= P17_WINDOW_MS && engineAlive() && engine.pid === enginePid,
+    refreshed,
+    goneAfterMs,
+    windowMs: P17_WINDOW_MS,
+    attempts,
+    enginePidUnchanged: engine.pid === enginePid,
+    engineAlive: engineAlive(),
+    setupsAfterToggle: recorder.entries.filter((entry) => entry.kind === 'setup').length - setupsBefore,
+  };
+
+  return {
+    scenarios,
+    ports: { engine: engine.port, callback: callbackPort, hang: hang.port, stub: stub.port, proxy: proxy.port },
+    portGuard: guard,
+    recorderEntries: recorder.entries.length,
+    askLogEntries: askLog.length,
+    toolsUrlSet: Boolean(toolsUrl),
+    extraLoopbackPorts: [callbackPort, hang.port],
+  };
+};
+
 const main = async () => {
   const args = process.argv.slice(2);
   const jsonIndex = args.indexOf('--json');
@@ -1922,11 +2699,11 @@ const main = async () => {
   const keep = args.includes('--keep');
   const onlyIndex = args.indexOf('--only');
   const only = onlyIndex === -1 ? null : args[onlyIndex + 1];
-  if (only !== null && !['P7', 'outbound', 'shim', 'skills-mcp', 'config-exposure', 'project-layer'].includes(only)) {
-    console.error('--only takes P7, outbound, shim, skills-mcp, config-exposure or project-layer');
+  if (only !== null && !['P7', 'outbound', 'shim', 'skills-mcp', 'config-exposure', 'project-layer', 'agent-tools'].includes(only)) {
+    console.error('--only takes P7, outbound, shim, skills-mcp, config-exposure, project-layer or agent-tools');
     return 2;
   }
-  const scenarios = only === 'skills-mcp' ? SKILLS_MCP_SCENARIOS : (only ? [only] : SCENARIOS);
+  const scenarios = only === 'skills-mcp' ? SKILLS_MCP_SCENARIOS : only === 'agent-tools' ? AGENT_TOOLS_SCENARIOS : (only ? [only] : SCENARIOS);
   if (!fs.existsSync(ENGINE)) throw new Error(`engine binary missing: ${ENGINE} (run prepare:opencode-cli)`);
 
   const { OpenCode } = await import('@opencode/client');
@@ -1951,6 +2728,8 @@ const main = async () => {
   const marker = `mittr-probe-${randomBytes(6).toString('hex')}`;
   const stubLog = path.join(home, 'stub-mcp.jsonl');
   const leftovers = { killed: [], afterCleanup: null };
+  const closers = [];
+  let extraLoopbackPorts = [];
   let exposureMarkers = null;
   let cleaned = false;
   const cleanup = async () => {
@@ -1968,6 +2747,7 @@ const main = async () => {
     }
     leftovers.afterCleanup = markerProcesses(marker).length;
     await stopSampler?.().catch(() => {});
+    for (const close of closers) await close().catch(() => {});
     for (const s of Object.values(stubs)) await s.close?.();
     await shim?.close();
     await recorder?.close();
@@ -2031,7 +2811,20 @@ const main = async () => {
       startWith: async (extraEnv) => ({ client: await connect(extraEnv), collector, engine }),
     });
 
-    if (only === 'project-layer') {
+    if (only === 'agent-tools') {
+      result.reserved57133Listening = Boolean(listenerOn(57133));
+      const found = await probeAgentTools({
+        OpenCode, home, stub: stubs.stub, proxy, hookLog, logFile, closers,
+        onSpawn: (spawned) => { engine = spawned; engines.push(spawned); },
+        setCollector: (started) => { collector = started; },
+      });
+      for (const name of AGENT_TOOLS_SCENARIOS) result.scenarios[name] = found.scenarios[name];
+      result.ports = found.ports;
+      result.portGuard = found.portGuard;
+      result.recorderEntries = found.recorderEntries;
+      result.enginePid = engine.pid;
+      extraLoopbackPorts = found.extraLoopbackPorts;
+    } else if (only === 'project-layer') {
       result.reserved57133Listening = Boolean(listenerOn(57133));
       recorder = await startRecordingMcp();
       const found = await probeProjectLayer({
@@ -2216,7 +3009,7 @@ const main = async () => {
     const logText = readLogs(home, logFile);
     const peers = [...outbound.loopbackPeers]
       .map(([pair, firstSeen]) => ({ ports: pair.split('->').map(Number), firstSeen }))
-      .filter(({ ports: [local, remote] }) => engines.every((e) => e.port !== local && e.port !== remote) && remote !== stubs.stub.port && remote !== stubs.other.port && remote !== proxy.port && remote !== shim?.port && remote !== recorder?.port);
+      .filter(({ ports: [local, remote] }) => engines.every((e) => e.port !== local && e.port !== remote) && remote !== stubs.stub.port && remote !== stubs.other.port && remote !== proxy.port && remote !== shim?.port && remote !== recorder?.port && !extraLoopbackPorts.includes(remote));
     result.outbound = {
       lsofSamples: outbound.samples,
       lsofIntervalMs: 250,
@@ -2242,6 +3035,11 @@ const main = async () => {
   }
 
   if ((only === 'config-exposure' || only === 'project-layer') && result.enginePort) result.engineProcessesAfterCleanup = engineProcesses(result.enginePort).length;
+  if (only === 'agent-tools') {
+    result.leftoverStubProcesses = leftovers;
+    if (AGENT_TOOLS_SCENARIOS.every((name) => result.scenarios[name])) result.stopConditions = agentToolsStopConditions(result.scenarios);
+    if (result.enginePort === undefined && result.ports) result.engineProcessesAfterCleanup = engineProcesses(result.ports.engine).length;
+  }
   if (only === 'skills-mcp') {
     result.leftoverStubProcesses = leftovers;
     if (SKILLS_MCP_SCENARIOS.every((name) => result.scenarios[name])) result.stopConditions = skillsMcpStopConditions(result.scenarios);
