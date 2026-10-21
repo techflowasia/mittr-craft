@@ -748,6 +748,43 @@ const checks = {
     assert.deepEqual(toMcpEntity({ command: ['acme'] }), { type: 'local', command: ['acme'] }, 'an entry without a type no longer defaults to local, which catalogMcpEntity guards against');
   },
 
+  'plugin-context-control': async (t) => {
+    const server = source('packages/web/server/index.js');
+    has(server, /^import \{ OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS \} from '\.\/lib\/openchamber-control\/actions\.js';$/m, 'index.js no longer imports the agent tool and web action definitions');
+    has(server, /^import \{ SCREENSHOT_DIRECTORY, writeScreenshot \} from '\.\/lib\/openchamber-control\/screenshots\.js';$/m, 'index.js no longer imports the screenshot writer');
+    has(server, /^const openChamberControlService = createOpenChamberControlService\(\{$/m, 'index.js no longer builds one control service');
+    has(pluginContext(server), /control: \{\s*execute: openChamberControlService\.execute,\s*resolveSessionDirectory: openChamberControlService\.resolveSessionDirectory,\s*definitions: \(\) => \(\{ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS \}\),\s*writeScreenshot,\s*SCREENSHOT_DIRECTORY,\s*\},/, 'the plugin context no longer hands plugins the control service, its definitions and the screenshot writer as control');
+
+    const service = source('packages/web/server/lib/openchamber-control/service.js');
+    has(service, /const execute = async \(action, input = \{\}, contextDirectory, options = \{\}\) => \{/, 'the control service execute no longer takes (action, input, contextDirectory, options)');
+    has(service, /browserAction\(action, input, options\.signal, contextDirectory, options\.contextSessionId\)/, 'the control service no longer passes options.signal and options.contextSessionId to page actions');
+    has(service, /return \{ execute, resolveSessionDirectory \};/, 'the control service no longer returns execute and resolveSessionDirectory');
+
+    const actions = await importUpstream('packages/web/server/lib/openchamber-control/actions.js');
+    const lists = { control: actions.OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: actions.OPENCHAMBER_WEB_ACTION_DEFINITIONS };
+    for (const [name, list] of Object.entries(lists)) {
+      assert.ok(Array.isArray(list) && list.length > 0, `actions.js no longer exports the ${name} definitions`);
+      for (const entry of list) {
+        assert.ok(['action', 'title', 'description'].every((key) => entry[key] === String(entry[key]) && entry[key] !== ''), `a ${name} definition lost its action, title or description: ${JSON.stringify(entry)}`);
+      }
+    }
+    assert.ok(lists.control.some(({ action }) => action === 'session.list') && lists.web.some(({ action }) => action === 'browser.open'), 'the definitions no longer hold session.list and browser.open');
+
+    const screenshots = await importUpstream('packages/web/server/lib/openchamber-control/screenshots.js');
+    assert.equal(screenshots.SCREENSHOT_DIRECTORY, path.join('.openchamber', 'screenshots'));
+    const directory = tempDir(t, 'contract-shots-');
+    const written = await screenshots.writeScreenshot({
+      directory,
+      base64: Buffer.from('acme').toString('base64'),
+      mime: 'image/png',
+      label: 'Before Fix',
+      now: new Date('2026-10-21T01:02:03.456Z'),
+    });
+    const relative = '.openchamber/screenshots/before-fix-2026-10-21T01-02-03-456.png';
+    assert.deepEqual(written, { path: relative, absolutePath: path.join(directory, relative) }, 'writeScreenshot no longer answers the project-relative and absolute paths it wrote');
+    assert.equal(fs.readFileSync(written.absolutePath, 'utf8'), 'acme');
+  },
+
   'mcp-user-layers': (t) => {
     has(source('packages/web/server/lib/opencode/shared.js'), /userPaths: \[\s*path\.join\(OPENCODE_CONFIG_DIR, 'opencode\.json'\),\s*path\.join\(OPENCODE_CONFIG_DIR, 'opencode\.jsonc'\),\s*\],/, 'the user config layers are no longer opencode.json and opencode.jsonc in the config folder');
     has(source('packages/web/server/lib/opencode/mcp.js'), /if \(!\/\^\[a-z0-9\]\[a-z0-9_-\]\*\[a-z0-9\]\$\|\^\[a-z0-9\]\$\/\.test\(name\)\) \{/, 'validateMcpName no longer allows exactly lowercase letters, digits, - and _ with a letter or digit at each end');

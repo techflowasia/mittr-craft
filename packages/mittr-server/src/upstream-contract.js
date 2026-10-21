@@ -243,6 +243,16 @@ export const UPSTREAM_CONTRACT = [
     why: "catalog connectors, keys included, live only in the managed config file: it is written mode 0600 through a temp file and a rename, handed to the engine child alone as OPENCODE_CONFIG, and never read by Settings → MCP, whose custom layer is the server's own OPENCODE_CONFIG; a person's own OPENCODE_CONFIG file and OPENCODE_CONFIG_CONTENT go to the engine beside it, so a mittr- name held there leaves ours out",
   },
   {
+    id: 'plugin-context-control',
+    files: [
+      'packages/web/server/index.js',
+      'packages/web/server/lib/openchamber-control/actions.js',
+      'packages/web/server/lib/openchamber-control/service.js',
+      'packages/web/server/lib/openchamber-control/screenshots.js',
+    ],
+    why: "the plugin context's control is the server's own control service, unchanged: execute(action, input, contextDirectory, { signal, contextSessionId }) and resolveSessionDirectory(sessionID), definitions() with the agent tool's control list and the web list, and writeScreenshot with SCREENSHOT_DIRECTORY (.openchamber/screenshots, a slug of the label and a stamp)",
+  },
+  {
     id: 'engine-integration-connect-key',
     files: ['node_modules/@opencode/client/package.json'],
     why: 'the engine stores a provider key through POST /api/integration/{id}/connect/key with a { key } body and answers 204, or 404 until a config-defined provider is picked up; the Mittr credential is stored that way',

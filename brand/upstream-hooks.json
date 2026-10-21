@@ -379,6 +379,10 @@
     {
       "hook": "server-plugins",
       "why": "A downstream build turns catalog connector configs into the engine's own entry shape without copying upstream's normaliser, so the plugin context's opencode handle now carries config-v2's toMcpEntity as mcpEntity."
+    },
+    {
+      "hook": "server-plugins",
+      "why": "A downstream build adds its own actions next to the control contract and reaches the same service the CLI and agent tool use, instead of copying it, so the plugin context's control hands plugins the control service's execute and resolveSessionDirectory, the agent tool's control and web action definitions, and the screenshot writer with its folder."
     }
   ],
   "packages/web/server/lib/enterprise-mode.js": [
