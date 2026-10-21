@@ -7,6 +7,7 @@ import { prepareCliEnvironment, readProductEnv, RIPGREP_DOWNLOAD_NOTICE, RIPGREP
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_CLI = path.resolve(here, '..', '..', 'web', 'bin', 'cli.js');
+const ENTRY = path.resolve(here, 'openchamber.mjs');
 const PLUGIN = path.resolve(here, '..', 'src', 'plugin.js');
 const PRODUCT = path.resolve(here, 'product-env.json');
 
@@ -30,5 +31,5 @@ if (startsServer(process.argv.slice(2)) && !ripgrep.found) {
 }
 Object.assign(process.env, env);
 
-process.argv[1] = SERVER_CLI;
+process.argv[1] = ENTRY;
 await import(pathToFileURL(SERVER_CLI).href);

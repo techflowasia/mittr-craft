@@ -1235,8 +1235,15 @@ const checks = {
     has(cli, /^const isCliExecution = isModuleCliExecution\(process\.argv\[1\], import\.meta\.url, fs\.realpathSync, 'openchamber'\);$/m, 'cli.js no longer decides it runs by comparing argv[1] with its own path');
     has(source('packages/web/bin/cli-entry.js'), /if \(pathToFileURL\(normalizedEntryPath\)\.href === pathToFileURL\(normalizedModulePath\)\.href\) \{\s*return true;\s*\}/);
     assert.equal(JSON.parse(source('packages/web/package.json')).bin.openchamber, './bin/cli.js');
+    has(source('packages/web/bin/cli-entry.js'), /return parsedEntryName === expectedBinName\.trim\(\)\.toLowerCase\(\);/, 'cli.js no longer takes an entry file named openchamber as being run directly');
+    const startup = source('packages/web/bin/lib/cli-startup.js');
+    has(startup, /const entry = typeof process\.argv\[1\] === 'string' && process\.argv\[1\]\.trim\(\)\.length > 0\s*\? process\.argv\[1\]/, 'the startup entry no longer comes from argv[1]');
+    has(startup, /const args = \[resolveCliEntrypoint\(\), 'serve', '--foreground', '--port'/, 'the startup arguments no longer begin with the entry');
+    assert.equal(lineCount(startup, 'buildStartupArgs(options)'), 3, 'the systemd unit, the macOS wrapper and the Windows wrapper no longer all take their command from buildStartupArgs');
     const wrapper = source('packages/mittr-server/bin/mittrcraft.mjs');
     has(wrapper, /const SERVER_CLI = path\.resolve\(here, '\.\.', '\.\.', 'web', 'bin', 'cli\.js'\);/, 'the mittrcraft bin no longer points at the server CLI');
+    has(wrapper, /^process\.argv\[1\] = ENTRY;$/m, 'the mittrcraft bin no longer sets argv[1] to the entry that startup units run');
+    assert.equal(source('packages/mittr-server/bin/openchamber.mjs'), "import './mittrcraft.mjs';\n");
     has(source('packages/web/bin/lib/cli-args.js'), /uiPassword: process\.env\.OPENCHAMBER_UI_PASSWORD \|\| undefined,/, 'the CLI no longer reads OPENCHAMBER_UI_PASSWORD, the name the bin maps MITTRCRAFT_UI_PASSWORD onto');
     has(source('packages/web/server/lib/security/bind-host.js'), /env\?\.OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN === 'true'/, 'the server no longer reads OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN');
     has(source('packages/web/server/index.js'), /process\.env\.OPENCHAMBER_DATA_DIR/, 'the server no longer reads OPENCHAMBER_DATA_DIR');

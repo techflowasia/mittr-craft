@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { findRipgrep, prepareCliEnvironment, startsServer } from './cli-env.js';
+import { findRipgrep, pathExtOf, prepareCliEnvironment, searchPathOf, startsServer } from './cli-env.js';
 
 const tempDir = (t) => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-rg-')));
@@ -59,10 +59,35 @@ test('only MITTRCRAFT_ALLOW_RIPGREP_DOWNLOAD=1 allows the download', () => {
 });
 
 test('only invocations that can start the server need rg', () => {
-  for (const argv of [[], ['serve'], ['serve', '--foreground', '--port', '9'], ['--port', '9'], ['restart'], ['tunnel', 'start'], ['connect-url'], ['update'], ['unknown']]) {
+  for (const argv of [[], ['serve'], ['serve', '--foreground', '--port', '9'], ['--port', '9'], ['-p', '9'], ['--host', '0.0.0.0'], ['--port=9', 'serve'], ['restart'], ['-p', '9', 'restart'], ['tunnel', 'start'], ['--port', '9', 'tunnel', 'start'], ['connect-url'], ['update'], ['unknown'], ['startup', 'enable'], ['--port', '9', 'startup', 'enable'], ['startup', 'enable', '--port', '9']]) {
     assert.equal(startsServer(argv), true, argv.join(' '));
   }
-  for (const argv of [['--help'], ['-h'], ['serve', '--help'], ['--version'], ['-v'], ['stop'], ['status'], ['logs'], ['startup', 'install'], ['schedule', 'list'], ['session', 'list'], ['models'], ['projects'], ['control']]) {
+  for (const argv of [['--help'], ['-h'], ['serve', '--help'], ['--version'], ['-v'], ['stop'], ['status'], ['-p', '3000', 'stop'], ['--port', '9', 'status'], ['--host', 'example.test', 'status'], ['--port=9', 'status'], ['logs'], ['--lines', '5', 'logs'], ['startup'], ['startup', 'status'], ['startup', 'disable'], ['-p', '9', 'startup', 'disable'], ['schedule', 'list'], ['session', 'list'], ['models'], ['projects'], ['control'], ['tunnel'], ['tunnel', 'help'], ['tunnel', 'doctor'], ['tunnel', 'providers'], ['tunnel', 'status'], ['tunnel', 'stop'], ['tunnel', 'ready'], ['tunnel', 'profile', 'list'], ['tunnel', 'completion', 'bash'], ['--port', '9', 'tunnel', 'doctor'], ['help'], ['completion'], ['completion', 'bash']]) {
     assert.equal(startsServer(argv), false, argv.join(' '));
   }
+});
+
+test('on Windows rg is rg.exe or a PATHEXT entry on a Path key, and no execute bit is asked for', () => {
+  const present = new Set(['C:\\tools\\rg.exe', 'D:\\bin\\rg.cmd']);
+  const fake = {
+    statSync: (file) => {
+      if (!present.has(file)) throw new Error('ENOENT');
+      return { isFile: () => true };
+    },
+  };
+  assert.equal(findRipgrep('C:\\none;C:\\tools', { fs: fake, platform: 'win32' }), 'C:\\tools\\rg.exe');
+  assert.equal(findRipgrep('C:\\none;;D:\\bin', { fs: fake, platform: 'win32', pathext: '.COM;.EXE;.CMD' }), 'D:\\bin\\rg.cmd');
+  assert.equal(findRipgrep('D:\\bin', { fs: fake, platform: 'win32', pathext: '.COM;.EXE' }), null);
+  assert.equal(findRipgrep('C:\\tools', { fs: fake, platform: 'linux' }), null);
+});
+
+test('on Windows the search path and PATHEXT come from the keys whatever their case', () => {
+  assert.equal(searchPathOf({ Path: 'C:\\a' }, 'win32'), 'C:\\a');
+  assert.equal(searchPathOf({ PATH: 'C:\\a' }, 'win32'), 'C:\\a');
+  assert.equal(searchPathOf({ pAtH: 'C:\\a' }, 'win32'), 'C:\\a');
+  assert.equal(searchPathOf({ Path: 'C:\\a' }, 'linux'), undefined);
+  assert.equal(searchPathOf({ PATH: '/a' }, 'linux'), '/a');
+  assert.equal(searchPathOf({}, 'win32'), undefined);
+  assert.equal(pathExtOf({ PathExt: '.EXE;.BAT' }, 'win32'), '.EXE;.BAT');
+  assert.equal(pathExtOf({ PathExt: '.EXE' }, 'linux'), undefined);
 });

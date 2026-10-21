@@ -13,7 +13,7 @@ export const BIN_BUN_BINARY = 'MITTRCRAFT_BIN_BUN_BINARY';
 export const RIPGREP_MISSING_MESSAGE = 'ripgrep (rg) is not installed on this server. Install it, or set MITTRCRAFT_ALLOW_RIPGREP_DOWNLOAD=1 to let the engine download it from github.com.';
 export const RIPGREP_DOWNLOAD_NOTICE = '[mittr] rg is missing; the engine will download it from github.com on first use';
 const HELP_OR_VERSION_FLAGS = new Set(['--help', '-h', '--version', '-v']);
-const COMMANDS_WITHOUT_SERVER = new Set(['stop', 'status', 'logs', 'startup', 'schedule', 'session', 'models', 'projects', 'control']);
+const COMMANDS_WITHOUT_SERVER = new Set(['stop', 'status', 'logs', 'schedule', 'session', 'models', 'projects', 'control', 'help', 'completion']);
 
 const isUnset = (value) => typeof value !== 'string' || value.trim() === '';
 
@@ -56,25 +56,73 @@ const findCheckoutRoot = (startDir) => {
   }
 };
 
-export const findRipgrep = (pathValue, { fs: fileSystem = fs } = {}) => {
+const envValue = (env, name, platform) => {
+  if (platform !== 'win32') return env[name];
+  const key = Object.keys(env).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+  return key === undefined ? undefined : env[key];
+};
+
+export const searchPathOf = (env, platform = process.platform) => envValue(env, 'PATH', platform);
+
+export const pathExtOf = (env, platform = process.platform) => envValue(env, 'PATHEXT', platform);
+
+const WINDOWS_DEFAULT_PATHEXT = '.COM;.EXE;.BAT;.CMD';
+
+const ripgrepNames = (platform, pathext) => {
+  if (platform !== 'win32') return ['rg'];
+  const extensions = (isUnset(pathext) ? WINDOWS_DEFAULT_PATHEXT : pathext).split(';').map((extension) => extension.trim().toLowerCase()).filter(Boolean);
+  return [...new Set(['rg.exe', ...extensions.map((extension) => `rg${extension}`)])];
+};
+
+export const findRipgrep = (pathValue, { fs: fileSystem = fs, platform = process.platform, pathext } = {}) => {
   if (isUnset(pathValue)) return null;
-  for (const dir of String(pathValue).split(path.delimiter)) {
+  const windows = platform === 'win32';
+  const join = windows ? path.win32.join : path.join;
+  const names = ripgrepNames(platform, pathext);
+  for (const dir of String(pathValue).split(windows ? ';' : path.delimiter)) {
     if (dir === '') continue;
-    const candidate = path.join(dir, 'rg');
-    try {
-      if (!fileSystem.statSync(candidate).isFile()) continue;
-      fileSystem.accessSync(candidate, fs.constants.X_OK);
-      return candidate;
-    } catch {
-      continue;
+    for (const name of names) {
+      const candidate = join(dir, name);
+      try {
+        if (!fileSystem.statSync(candidate).isFile()) continue;
+        if (!windows) fileSystem.accessSync(candidate, fs.constants.X_OK);
+        return candidate;
+      } catch {
+        continue;
+      }
     }
   }
   return null;
 };
 
+const VALUE_FLAGS = new Set([
+  'port', 'p', 'host', 'ui-password', 'provider', 'mode', 'profile', 'name', 'title', 'worktree', 'branch', 'start-ref', 'base',
+  'project', 'dir', 'directory', 'task', 'session', 'message', 'prompt', 'model', 'daily', 'weekly', 'once', 'time', 'cron',
+  'timezone', 'agent', 'variant', 'goal-token-budget', 'config', 'token', 'token-file', 'hostname', 'server', 'server-url',
+  'connect-ttl', 'session-ttl', 'timeout', 'role', 'lines', 'limit',
+]);
+
+const positionalArguments = (argv) => {
+  const positional = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (!arg.startsWith('-')) {
+      positional.push(arg);
+      continue;
+    }
+    const long = arg.startsWith('--');
+    const name = long ? arg.slice(2).split('=')[0] : arg.slice(1);
+    const next = argv[index + 1];
+    if (VALUE_FLAGS.has(name) && !(long && arg.includes('=')) && typeof next === 'string' && (!next.startsWith('-') || /^-\d+$/.test(next))) index += 1;
+  }
+  return positional;
+};
+
 export const startsServer = (argv) => {
   if (argv.some((arg) => HELP_OR_VERSION_FLAGS.has(arg))) return false;
-  const command = argv.find((arg) => !arg.startsWith('-'));
+  const [command, subcommand] = positionalArguments(argv);
+  if (command === 'startup') return subcommand === 'enable';
+  if (command === 'tunnel') return subcommand === 'start';
   return !COMMANDS_WITHOUT_SERVER.has(command);
 };
 
@@ -130,7 +178,7 @@ export const prepareCliEnvironment = ({ env, homeDir, pluginPath, productEnv, pa
   return {
     env: next,
     refusal: null,
-    ripgrep: { found: findRipgrep(next.PATH), downloadAllowed: next.MITTRCRAFT_ALLOW_RIPGREP_DOWNLOAD === '1' },
+    ripgrep: { found: findRipgrep(searchPathOf(next, platform), { platform, pathext: pathExtOf(next, platform) }), downloadAllowed: next.MITTRCRAFT_ALLOW_RIPGREP_DOWNLOAD === '1' },
   };
 };
 

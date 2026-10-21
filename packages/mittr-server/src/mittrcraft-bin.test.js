@@ -358,7 +358,7 @@ test('the npm pack of this package ships the bin with the product env beside it'
   });
   assert.equal(result.status, 0, result.stderr);
   const packed = JSON.parse(result.stdout)[0].files.map((file) => file.path);
-  for (const file of ['bin/mittrcraft.mjs', 'bin/product-env.json', 'src/cli-env.js', 'src/plugin.js', 'src/web-brand.js', 'src/web-brand.json']) {
+  for (const file of ['bin/mittrcraft.mjs', 'bin/openchamber.mjs', 'bin/product-env.json', 'src/cli-env.js', 'src/plugin.js', 'src/web-brand.js', 'src/web-brand.json']) {
     assert.ok(packed.includes(file), `${file} is not in the pack`);
   }
 });
@@ -442,5 +442,79 @@ test('commands that start no server need no rg', (t) => {
     const result = runPackedServe(t, { pathValue: emptyPath, args });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stderr, '', args.join(' '));
+  }
+});
+
+const STARTUP_ENTRY = path.join(repoRoot, 'packages/mittr-server/bin/openchamber.mjs');
+
+const startupStubDir = (t, { withRipgrep }) => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-startup-stubs-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const names = ['systemctl', 'loginctl', 'schtasks.exe', ...(withRipgrep ? ['rg', 'rg.exe'] : [])];
+  for (const name of names) fs.writeFileSync(path.join(dir, name), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  return dir;
+};
+
+const runStartup = (t, platform, args, { withRipgrep = true, extraEnv = {} } = {}) => {
+  const stubs = startupStubDir(t, { withRipgrep });
+  const preload = path.join(stubs, 'platform.mjs');
+  fs.writeFileSync(preload, `Object.defineProperty(process, 'platform', { value: ${JSON.stringify(platform)} });\n`);
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-bin-')));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(OPENCHAMBER_|OPENCODE_|XDG_|MITTR|PATH$)/.test(name)));
+  const result = spawnSync(process.execPath, ['--import', preload, BIN, ...args], {
+    encoding: 'utf8',
+    cwd: home,
+    timeout: 60_000,
+    env: { ...inherited, HOME: home, USERPROFILE: home, PATH: stubs, OPENCHAMBER_DATA_DIR: path.join(home, 'data'), NO_COLOR: '1', ...extraEnv },
+  });
+  return { ...result, home };
+};
+
+test('the startup unit the bin writes runs the mittrcraft bin, not the upstream CLI', (t) => {
+  const result = runStartup(t, 'linux', ['startup', 'enable', '--port', '3999']);
+
+  assert.equal(result.status, 0, result.stderr);
+  const unit = fs.readFileSync(path.join(result.home, '.config', 'systemd', 'user', 'openchamber.service'), 'utf8');
+  const execStart = unit.split('\n').find((line) => line.startsWith('ExecStart='));
+  assert.ok(execStart.includes(`"${STARTUP_ENTRY}" "serve" "--foreground" "--port" "3999"`), execStart);
+  assert.ok(!execStart.includes(SERVER_CLI), execStart);
+  assert.match(fs.readFileSync(STARTUP_ENTRY, 'utf8'), /import '\.\/mittrcraft\.mjs';/);
+});
+
+test('the Windows startup wrapper the bin writes runs the mittrcraft bin, not the upstream CLI', (t) => {
+  const result = runStartup(t, 'win32', ['startup', 'enable', '--port', '3999'], { extraEnv: { MITTRCRAFT_ALLOW_RIPGREP_DOWNLOAD: '1' } });
+
+  assert.equal(result.status, 0, result.stderr);
+  const wrapper = fs.readFileSync(path.join(result.home, 'data', 'bin', 'OpenChamber.ps1'), 'utf8');
+  assert.ok(wrapper.includes(STARTUP_ENTRY), wrapper);
+  assert.ok(!wrapper.includes(SERVER_CLI), wrapper);
+});
+
+test('the startup entry runs the bin: it gates on rg and forwards the arguments', (t) => {
+  const forwarded = runIsolated(t, STARTUP_ENTRY, ['--help']);
+  const direct = runIsolated(t, SERVER_CLI, ['--help']);
+  assert.equal(forwarded.status, 0, forwarded.stderr);
+  assert.equal(forwarded.stdout, direct.stdout);
+
+  const emptyPath = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-nopath-')));
+  t.after(() => fs.rmSync(emptyPath, { recursive: true, force: true }));
+  const refused = runIsolated(t, STARTUP_ENTRY, ['serve', '--foreground', '--port', '9'], { PATH: emptyPath });
+  assert.equal(refused.status, 1);
+  assert.equal(refused.stderr.trim(), RG_MISSING_MESSAGE);
+});
+
+test('startup enable without rg refuses and writes no unit, while status and disable are not gated', (t) => {
+  const refused = runStartup(t, 'linux', ['startup', 'enable'], { withRipgrep: false });
+
+  assert.equal(refused.status, 1);
+  assert.equal(refused.stderr.trim(), RG_MISSING_MESSAGE);
+  assert.equal(fs.existsSync(path.join(refused.home, '.config', 'systemd')), false);
+  assert.equal(fs.existsSync(path.join(refused.home, 'data', 'startup.env')), false);
+
+  for (const action of ['status', 'disable']) {
+    const result = runStartup(t, 'linux', ['startup', action], { withRipgrep: false });
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(!result.stderr.includes(RG_MISSING_MESSAGE), action);
   }
 });
