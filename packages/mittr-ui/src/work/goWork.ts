@@ -95,3 +95,24 @@ export async function runGoWork(plan: GoWorkPlan, deps: GoWorkDeps): Promise<'st
   deps.toast.success(mittrT('mittr.work.toast.sessionCreated'));
   return 'started';
 }
+
+export async function startGoWork(
+  guard: { current: boolean },
+  setStarting: (itemId: string | null) => void,
+  itemId: string,
+  plan: () => GoWorkPlan,
+  deps: GoWorkDeps,
+): Promise<'started' | 'failed' | 'busy'> {
+  if (guard.current) return 'busy';
+  guard.current = true;
+  setStarting(itemId);
+  try {
+    return await runGoWork(plan(), deps);
+  } catch (error) {
+    deps.toast.error(mittrT('mittr.work.toast.startFailed'), { description: error instanceof Error ? error.message : String(error) });
+    return 'failed';
+  } finally {
+    guard.current = false;
+    setStarting(null);
+  }
+}

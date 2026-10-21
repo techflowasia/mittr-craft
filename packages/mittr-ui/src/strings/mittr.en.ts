@@ -91,7 +91,6 @@ export const mittrEn = {
   'mittr.work.notConnected': 'The Mittr platform is not connected yet.',
   'mittr.work.empty': 'No work items assigned to you.',
   'mittr.work.error': 'Failed to load work items',
-  'mittr.work.noPhase': 'No phase',
   'mittr.work.actions.refresh': 'Refresh',
   'mittr.work.row.priority': 'Priority: {priority}',
   'mittr.work.row.due': 'Due {due}',

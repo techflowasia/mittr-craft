@@ -25,7 +25,7 @@ import { listenAccountChanged } from '../sign-in/accountChange';
 import { signedInAccount, watchSignedInAccount } from '../sign-in/signedInAccount';
 import { useMittrT } from '../strings/mittrT';
 import { createMyWorkController, MY_WORK_LOADING, type MyWorkController, type MyWorkState } from './myWorkController';
-import { mittrAvailable, mittrCatalogAliases, planGoWork, runGoWork, type GoWorkDeps } from './goWork';
+import { mittrAvailable, mittrCatalogAliases, planGoWork, startGoWork, type GoWorkDeps } from './goWork';
 import { captureSendSelection } from './sendSelection';
 import { fetchMyWork } from './workApi';
 import {
@@ -383,15 +383,12 @@ function useGoWork(onClose: () => void): GoWorkBinding {
   const [startingItemId, setStartingItemId] = React.useState<string | null>(null);
   const running = React.useRef(false);
   const goWork = (item: WorkItem, project: WorkProject) => {
-    if (running.current) return;
-    running.current = true;
-    setStartingItemId(item.id);
-    const selection = captureSendSelection();
-    const available = mittrAvailable(selection, mittrCatalogAliases(useConfigStore.getState().providers), agentStatus);
-    void runGoWork(planGoWork({ item, project, selection, available }), sessionGoWorkDeps(onClose)).finally(() => {
-      running.current = false;
-      setStartingItemId(null);
-    });
+    const plan = () => {
+      const selection = captureSendSelection();
+      const available = mittrAvailable(selection, mittrCatalogAliases(useConfigStore.getState().providers), agentStatus);
+      return planGoWork({ item, project, selection, available });
+    };
+    void startGoWork(running, setStartingItemId, item.id, plan, sessionGoWorkDeps(onClose));
   };
   return { startingItemId, goWork };
 }

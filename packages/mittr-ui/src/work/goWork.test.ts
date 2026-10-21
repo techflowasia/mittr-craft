@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import type { AgentStatus } from '../quota/quotaMeStore';
 import { mittrT } from '../strings/mittrT';
-import { mittrAvailable, mittrCatalogAliases, planGoWork, runGoWork, type GoWorkDeps, type GoWorkPlan } from './goWork';
+import { mittrAvailable, mittrCatalogAliases, planGoWork, runGoWork, startGoWork, type GoWorkDeps, type GoWorkPlan } from './goWork';
 import type { WorkItem } from './workItems';
 
 const item = (overrides: Partial<WorkItem> = {}): WorkItem => ({
@@ -198,5 +198,32 @@ describe('Go work', () => {
     expect(await runGoWork(okPlan(), deps)).toBe('failed');
     expect(names()).toEqual(['createSession', 'initialize', 'closeDialog', 'toast.error']);
     expect(calls.at(-1)).toEqual(['toast.error', mittrT('mittr.work.toast.startFailed'), 'send refused']);
+  });
+
+  test('a plan that throws leaves Go work usable', async () => {
+    const guard = { current: false };
+    const starting: Array<string | null> = [];
+    const { deps, calls } = fakeDeps();
+    const broken = () => { throw new Error('store not ready'); };
+    expect(await startGoWork(guard, (id) => starting.push(id), 'w-1', broken, deps)).toBe('failed');
+    expect(guard.current).toBe(false);
+    expect(starting).toEqual(['w-1', null]);
+    expect(calls).toEqual([['toast.error', mittrT('mittr.work.toast.startFailed'), 'store not ready']]);
+    expect(await startGoWork(guard, (id) => starting.push(id), 'w-1', () => okPlan(), deps)).toBe('started');
+    expect(guard.current).toBe(false);
+    expect(starting).toEqual(['w-1', null, 'w-1', null]);
+  });
+
+  test('a second Go work while one runs starts nothing', async () => {
+    const guard = { current: true };
+    const starting: Array<string | null> = [];
+    const { deps, calls } = fakeDeps();
+    let planned = false;
+    const plan = () => { planned = true; return okPlan(); };
+    expect(await startGoWork(guard, (id) => starting.push(id), 'w-1', plan, deps)).toBe('busy');
+    expect(planned).toBe(false);
+    expect(starting).toEqual([]);
+    expect(calls).toEqual([]);
+    expect(guard.current).toBe(true);
   });
 });
