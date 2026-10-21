@@ -162,3 +162,11 @@ test('codeModeCall runs a catalog tool through execute until a tool result is in
   assert.equal(codeModeCall({ ...body, messages: [{ role: 'system', content: '# Code Mode' }] }, 'mittr-probe', 'lookup'), null);
   assert.equal(codeModeCall({ ...body, tools: [] }, 'mittr-probe', 'lookup'), null);
 });
+
+test('failuresOf takes a scenario that went as expected over its pass verdict', () => {
+  const outbound = { nonLoopbackRemotes: [], nonLoopbackHostsInLog: [], proxyNonLoopback: [] };
+  const run = (P10b) => failuresOf({ scenarios: { P8: { pass: true }, P10b }, outbound }, ['P8', 'P10b']);
+  assert.deepEqual(run({ pass: false, asExpected: true }), []);
+  assert.deepEqual(run({ pass: true, asExpected: false }), ['P10b: FAIL']);
+  assert.deepEqual(run({ pass: false }), ['P10b: FAIL']);
+});

@@ -1,6 +1,8 @@
-const hasCommand = (raw) => Array.isArray(raw.command) && raw.command.length > 0;
+const isNonEmptyText = (item) => item === String(item) && item !== '';
 
-const hasUrl = (raw) => typeof raw.url === 'string' && raw.url.trim() !== '';
+const hasCommand = (raw) => Array.isArray(raw.command) && raw.command.length > 0 && raw.command.every(isNonEmptyText);
+
+const hasUrl = (raw) => Boolean(raw.url?.trim?.());
 
 export const catalogMcpEntity = (raw, toEntity) => {
   if (raw?.type === 'local' && hasCommand(raw)) return toEntity(raw);

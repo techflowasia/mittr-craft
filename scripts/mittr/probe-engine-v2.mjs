@@ -1035,7 +1035,7 @@ export const failuresOf = (result, scenarios = SCENARIOS) => {
   if (result.fatal) failures.push('fatal');
   for (const name of scenarios) {
     if (!result.scenarios[name]) failures.push(`${name}: no verdict`);
-    else if (!result.scenarios[name].pass) failures.push(`${name}: FAIL`);
+    else if (!(result.scenarios[name].asExpected ?? result.scenarios[name].pass)) failures.push(`${name}: FAIL`);
   }
   const outbound = result.outbound;
   if (!outbound) failures.push('outbound: not recorded');
@@ -1593,6 +1593,7 @@ const probeSkillsMcp = async ({ home, configFile, baseConfig, stub, connect, cur
   scenarios.P10b = {
     pass: listedAsServer,
     expected: 'not listed (preflight F14)',
+    asExpected: listedAsServer === false,
     listed: listedAsServer,
     editable: listedAsServer,
     observed: {

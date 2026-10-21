@@ -1,12 +1,12 @@
 # Phase 3: how OpenCode 2.0.22 finds catalog skills and runs catalog connectors
 
-Date: 2026-10-21. Script: `node scripts/mittr/probe-engine-v2.mjs --only skills-mcp --json <out>`. Engine: the bundled `packages/electron/resources/opencode-cli/opencode`, which reports `opencode v2.0.22`. The numbers below are from the last full run. The timing notes count the eleven full runs made once the probe could drive the engine's Code Mode. The probe's JSON output is kept outside the repository; it holds no token.
+Date: 2026-10-21. Script: `node scripts/mittr/probe-engine-v2.mjs --only skills-mcp --json <out>`. Engine: the bundled `packages/electron/resources/opencode-cli/opencode`, which reports `opencode v2.0.22`. The numbers below are from the last full run. The race rates in the timing notes (4 of 11, 1 of 11) come from repeated runs during development, made once the probe could drive the engine's Code Mode. The evidence JSON holds one run, and it is kept outside the repository; it holds no token.
 
 ## The short answer
 
-- Catalog skills reach the engine in both layouts, nested `skills/mittr/<name>/` and flat `skills/mittr-<name>/`. A new skill shows up within about 0.3 s, with no restart. **Task 8 keeps its planned `mittr/` folder and needs no refresh after a change.**
+- Catalog skills reach the engine in both layouts, nested `skills/mittr/<name>/` and flat `skills/mittr-<name>/`. A new skill shows up within about 0.3 s, with no restart. The plan's stop rule does not trip. **Task 8 uses the flat layout `mittr-<name>/` (ruling R119), because nested ids drop `mittr/` and a developer's own skill hid a catalog skill of the same name. It needs no refresh after a change.**
 - A connector in the managed config file connects within about 0.3 s. Its tool runs once when asked, and it stops within about 0.3 s when the entry is removed, all with no restart.
-- **Settings → MCP does not list a connector that lives only in the managed file.** P10b failed, as preflight finding 14 expected. **Task 9 therefore takes the user-config path as its main path:** org entries are written through `context.opencode.userConfig` and reconciled per account before each restart.
+- **Settings → MCP does not list a connector that lives only in the managed file.** P10b failed, as preflight finding 14 expected. **Task 9 therefore takes the user-config path as its main path:** org entries are written through `context.opencode.userConfig` and reconciled per account before each restart (ruling R120). A connector the person deletes in Settings → MCP comes back at the next reconcile; the off switch is the catalog toggle.
 - Nothing tried to leave the machine.
 
 ## Results
@@ -19,6 +19,8 @@ Date: 2026-10-21. Script: `node scripts/mittr/probe-engine-v2.mjs --only skills-
 | P10b listed in Settings → MCP | FAIL (expected) | Upstream's `listMcpConfigs`, run with the server's own env, returned an empty list. |
 | P11 fan-out | PASS | N = 3: one new stub process per project, and each project's tool call ran in that project's process. |
 | P12 hot removal | PASS | Every stub process exited 279 ms after the entry was removed. The MCP status list was empty, and the tool was gone from the next turn. |
+
+P11's N = 3 counts the stub processes that are new since P10. The raw `pgrep -f stub-mcp-server.*<marker>` count is 4, because the work dir's own process from P10 is still running.
 
 ### P8: skill discovery
 
@@ -97,7 +99,7 @@ There were none.
 - The engine's HTTP(S) proxy pointed at the probe's loopback recording proxy, which saw 0 attempts.
 - `lsof` was sampled every 250 ms, 24 samples, over the engine and its 4 stub children. It saw no non-loopback remote.
 - The engine log names no non-loopback host.
-- Port 57133 was not listening, and the probe never contacts it. Before the engine started, the probe checked that nothing else was listening on the loopback port it had picked.
+- Port 57133 was not listening, and the probe never contacts it. Before the engine started, the probe checked with `lsof` that nothing else was listening on the engine's loopback port. Only the engine port gets this check; the stub provider's and the proxy's random loopback ports do not.
 
 The run itself has no egress control. The recording proxy was shown to catch egress by phase 2's `proxy-control` scenario.
 
@@ -111,15 +113,15 @@ The run itself has no egress control. The recording proxy was shown to catch egr
 
 None of the plan's Task 6 stop conditions stops the phase.
 
-- **P8 passed in both layouts.** No stop, and no switch to the flat layout. Task 8 writes `<skills>/mittr/<name>/`, as planned.
-  - The engine id is `<name>`, not `mittr/<name>`.
-  - A catalog skill whose name equals one of the developer's own skills may be hidden by it, as the clash case showed.
+- **P8 passed in both layouts.** The plan's stop rule does not trip. Task 8 uses the flat layout `<skills>/mittr-<name>/` (ruling R119), with id `mittr-<name>`. Ownership is the `mittr-` prefix plus a `.mittr-version` file, and the account marker is `<skillsRoot>/.mittr-account`.
+  - Why: a nested skill's engine id is `<name>`, not `mittr/<name>`, and a developer's own skill of the same name hid the catalog skill, as the clash case showed.
   - The frontmatter `name:` does not have to equal the folder name.
 - **P9 passed.** Task 8 does not call `context.opencode.refresh('mittr catalog skills changed')` after a change.
 - **P10 passed, but P10b failed.** The plan's rule for "P10 or P10b fails" applies, and so does preflight finding 14's ruling. **Task 9 takes the user-config path as its main path:**
   - org entries are written through `context.opencode.userConfig` and reconciled per account before each restart;
   - owned names are recorded in `<dataDir>/mittr-mcp-owned.json` (finding 15);
   - Task 17 checks a catalog connector as a user entry in Settings → MCP.
+  - A connector the person deletes in Settings → MCP comes back at the next reconcile. The supported off switch is the catalog toggle (ruling R120).
   - The managed-file path works for the engine. It is not enough, because Settings → MCP would not list the connector.
 - **P11 gave one process per project.** No owner note is due under the plan's rule.
 - **P12 passed.** Removing an entry stops its processes with no restart.
@@ -131,4 +133,5 @@ None of the plan's Task 6 stop conditions stops the phase.
 - **First turn after a change.** About 0.5 s after a connector was added, 4 of 11 turns did not see its tool yet. About 0.5 s after one was removed, 1 of 11 turns still saw it. A person who sends a message the instant a connector arrives or leaves may get one turn with the old tool list.
 - **Settings → MCP shows org connectors as editable.** On Task 9's user-config path, an org connector looks like the person's own: it can be edited or deleted. The next reconcile puts it back. The page has no read-only state to say otherwise.
 - **Process count.** Every project or worktree directory the person opens starts its own process for each local org connector. That is 1 per project per connector, kept while the location lives. Upstream's guide says a location lives for an hour without session events.
-- **Skill name clashes.** A nested catalog skill shares one id space with the developer's own skills.
+- **Skill name clashes.** A nested catalog skill shares one id space with the developer's own skills. This is why Task 8 uses the flat `mittr-<name>/` layout.
+- **Built-in skills.** The engine ships built-in `opencode` ("OpenCode") and `report` skills, and the model sees both. `report` says it publishes the issue with the GitHub CLI.

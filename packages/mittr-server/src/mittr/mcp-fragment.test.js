@@ -41,6 +41,14 @@ test('a local entry without a command is refused', () => {
   assert.deepEqual(calls, []);
 });
 
+test('a local command with an item that is not a non-empty string is refused', () => {
+  const { calls, toEntity } = recording();
+  assert.equal(catalogMcpEntity({ type: 'local', command: [1, null] }, toEntity), null);
+  assert.equal(catalogMcpEntity({ type: 'local', command: [''] }, toEntity), null);
+  assert.equal(catalogMcpEntity({ type: 'local', command: ['node', ''] }, toEntity), null);
+  assert.deepEqual(calls, []);
+});
+
 test('a remote entry without a url is refused', () => {
   const { calls, toEntity } = recording();
   for (const url of [undefined, '', '   ', 42]) {
