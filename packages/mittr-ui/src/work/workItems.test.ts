@@ -162,16 +162,24 @@ describe('my work Plane workspaces', () => {
     expect(resolveFilter('jira', [item('p1', 'plane', 'Todo')])).toBe('all');
   });
 
-  test('the Plane chip is pressed for plane and for any named workspace', () => {
-    expect(chipPressed('plane', 'plane')).toBe(true);
-    expect(chipPressed('plane', 'plane:techflow')).toBe(true);
-    expect(chipPressed('plane', 'jira')).toBe(false);
-    expect(chipPressed('plane', 'all')).toBe(false);
-    expect(chipPressed('plane:mittr', 'plane:mittr')).toBe(true);
-    expect(chipPressed('plane:mittr', 'plane:techflow')).toBe(false);
-    expect(chipPressed('plane:mittr', 'plane')).toBe(false);
-    expect(chipPressed('jira', 'jira')).toBe(true);
-    expect(chipPressed('jira', 'plane')).toBe(false);
+  test('the Plane chip is pressed for plane and for a workspace with no chip of its own', () => {
+    const collapsed = displayLanes([item('j1', 'jira', 'Todo'), item('t1', 'plane', 'Todo', 'techflow')]);
+    expect(chipPressed('plane', 'plane', collapsed)).toBe(true);
+    expect(chipPressed('plane', 'plane:techflow', collapsed)).toBe(true);
+    expect(chipPressed('plane', 'jira', collapsed)).toBe(false);
+    expect(chipPressed('plane', 'all', collapsed)).toBe(false);
+    expect(chipPressed('jira', 'jira', collapsed)).toBe(true);
+    expect(chipPressed('jira', 'plane', collapsed)).toBe(false);
+  });
+
+  test('with several workspaces and a leftover Plane chip exactly one chip is pressed', () => {
+    const mixed = [item('j1', 'jira', 'Todo'), item('t1', 'plane', 'Todo', 'techflow'), item('m1', 'plane', 'Todo', 'mittr'), item('p1', 'plane', 'Todo')];
+    const lanes = displayLanes(mixed);
+    expect(lanes.map((lane) => lane.key)).toEqual(['jira', 'plane', 'plane:mittr', 'plane:techflow']);
+    for (const filter of ['all', 'jira', 'plane', 'plane:mittr', 'plane:techflow']) {
+      const pressed = lanes.filter((lane) => chipPressed(lane.key, filter, lanes)).map((lane) => lane.key);
+      expect(pressed).toEqual(filter === 'all' ? [] : [filter]);
+    }
   });
 });
 

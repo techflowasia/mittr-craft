@@ -67,8 +67,11 @@ export const resolveFilter = (saved: string, items: WorkItem[]): string => {
   return lanesOf(items).some((lane) => lane.key === saved) ? saved : 'all';
 };
 
-export const chipPressed = (chipKey: string, filter: string): boolean =>
-  chipKey === 'plane' ? filter === 'plane' || filter.startsWith('plane:') : chipKey === filter;
+export const chipPressed = (chipKey: string, filter: string, lanes: Lane[]): boolean => {
+  if (chipKey !== 'plane') return chipKey === filter;
+  if (filter === 'plane') return true;
+  return filter.startsWith('plane:') && !lanes.some((lane) => lane.key === filter);
+};
 
 export const stateRank = (state: string): number => {
   const s = state.toLowerCase();
