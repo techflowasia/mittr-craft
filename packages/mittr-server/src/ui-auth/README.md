@@ -100,6 +100,8 @@ Install ripgrep on the server; MittrCraft does not let the engine fetch it from 
 
 `mittrcraft startup enable` installs a unit that runs `bin/openchamber.mjs`, which hands over to `mittrcraft`, so every boot gets the same environment and the same `rg` check as a manual start. If `rg` is gone by then, the unit exits with the error above and the service manager retries.
 
+Boot runs with the PATH saved by `startup enable`; if ripgrep is not on it, the service stops at boot until you install ripgrep or re-run `startup enable`.
+
 Run from a source checkout (a `.git` above the package), it also refuses to start unless `OPENCHAMBER_DATA_DIR` or `MITTRCRAFT_DATA_DIR` is set. With that data dir the engine, its config and the registry follow it, as above, so a developer's machine never runs a server on the installed app's data or engine folders. A packed install has no `.git` and keeps the `~/.config/mittrcraft` default.
 
 The bin is shipped only as this package: `npm pack` carries `bin/` whole, `product-env.json` included, and a test checks it. The desktop app packs only the plugin bundle, not this bin, and upstream's Docker image copies only `packages/web`.

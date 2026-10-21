@@ -512,6 +512,13 @@ test('startup enable without rg refuses and writes no unit, while status and dis
   assert.equal(fs.existsSync(path.join(refused.home, '.config', 'systemd')), false);
   assert.equal(fs.existsSync(path.join(refused.home, 'data', 'startup.env')), false);
 
+  for (const action of ['Enable', ' enable']) {
+    const result = runStartup(t, 'linux', ['startup', action], { withRipgrep: false });
+    assert.equal(result.status, 1, JSON.stringify(action));
+    assert.equal(result.stderr.trim(), RG_MISSING_MESSAGE);
+    assert.equal(fs.existsSync(path.join(result.home, '.config', 'systemd')), false);
+  }
+
   for (const action of ['status', 'disable']) {
     const result = runStartup(t, 'linux', ['startup', action], { withRipgrep: false });
     assert.equal(result.status, 0, result.stderr);

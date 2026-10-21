@@ -120,7 +120,8 @@ const positionalArguments = (argv) => {
 
 export const startsServer = (argv) => {
   if (argv.some((arg) => HELP_OR_VERSION_FLAGS.has(arg))) return false;
-  const [command, subcommand] = positionalArguments(argv);
+  const [command, rawSubcommand] = positionalArguments(argv);
+  const subcommand = rawSubcommand?.trim().toLowerCase();
   if (command === 'startup') return subcommand === 'enable';
   if (command === 'tunnel') return subcommand === 'start';
   return !COMMANDS_WITHOUT_SERVER.has(command);
