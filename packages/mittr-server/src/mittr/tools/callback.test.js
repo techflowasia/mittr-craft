@@ -117,18 +117,22 @@ test('a call carrying the previous start\'s token is refused', async (t) => {
   assert.equal((await post(OPEN, { token: second })).status, 200);
 });
 
-test('a retired token is refused at once, and the next start\'s token still works', async (t) => {
+test('retiring refuses every token from before it at once, and only a token minted after it becomes active', async (t) => {
   const { callback, post } = await setUp(t);
   const running = callback.engineEnv(4100).MITTRCRAFT_TOOLS_TOKEN;
   callback.engineReady();
-  const next = callback.engineEnv(4100).MITTRCRAFT_TOOLS_TOKEN;
+  const handedOut = callback.engineEnv(4100).MITTRCRAFT_TOOLS_TOKEN;
 
   callback.retire();
 
+  const fresh = callback.engineEnv(4100).MITTRCRAFT_TOOLS_TOKEN;
+  assert.notEqual(fresh, running);
+  assert.notEqual(fresh, handedOut);
   assert.deepEqual(await post(OPEN, { token: running }), { status: 401, body: { error: 'Unauthorized' } });
-  assert.equal((await post(OPEN, { token: next })).status, 200);
+  assert.deepEqual(await post(OPEN, { token: handedOut }), { status: 401, body: { error: 'Unauthorized' } });
   callback.engineReady();
-  assert.equal((await post(OPEN, { token: next })).status, 200);
+  assert.equal((await post(OPEN, { token: handedOut })).status, 401);
+  assert.equal((await post(OPEN, { token: fresh })).status, 200);
 });
 
 test('a compatibility read between two starts changes nothing', async (t) => {

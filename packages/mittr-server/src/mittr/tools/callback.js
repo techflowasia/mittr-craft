@@ -52,6 +52,7 @@ export function createToolsCallback({ crypto, registry, resolveSessionDirectory,
 
   const retire = () => {
     active = null;
+    pending = mint();
   };
 
   const sameToken = (provided, expected) => {

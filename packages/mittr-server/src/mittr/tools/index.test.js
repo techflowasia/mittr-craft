@@ -323,18 +323,22 @@ test('an account switch retires the running engine\'s token at once, and the nex
   const engineA = tools.engineEnv().MITTRCRAFT_TOOLS_TOKEN;
   fireReady();
   assert.equal((await (await post(lookup, engineA)).json()).ok, true);
+  const beforeSwitch = tools.engineEnv().MITTRCRAFT_TOOLS_TOKEN;
 
   const switched = tools.accountChanged();
   const refused = await post(lookup, engineA);
   assert.equal(refused.status, 401);
   assert.deepEqual(await refused.json(), { error: 'Unauthorized' });
+  assert.equal((await post(lookup, beforeSwitch)).status, 401);
   await switched;
 
   const engineB = tools.engineEnv().MITTRCRAFT_TOOLS_TOKEN;
   assert.notEqual(engineB, engineA);
+  assert.notEqual(engineB, beforeSwitch);
   fireReady();
   assert.equal((await (await post(lookup, engineB)).json()).ok, true);
   assert.equal((await post(lookup, engineA)).status, 401);
+  assert.equal((await post(lookup, beforeSwitch)).status, 401);
 });
 
 test('1.22 tool settings parked under mittr reach the first plugin', async (t) => {

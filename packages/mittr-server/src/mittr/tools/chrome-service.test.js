@@ -826,6 +826,56 @@ test('chrome.do needs a goal and an open page', async (t) => {
   assert.equal(stepper.calls.length, 0);
 });
 
+test('a chrome.do whose Chrome is closed while the platform chooses a step clicks nothing and keeps no session', async (t) => {
+  const choosing = deferred();
+  const chosen = deferred();
+  const stepper = pinnable({
+    nextStep: async () => {
+      choosing.resolve();
+      return chosen.promise;
+    },
+  });
+  const { service, ctx, browser, since } = await doSetUp(t, { stepper });
+  const doing = service.execute('chrome.do', { goal: 'Send the form' }, ctx);
+  await choosing.promise;
+
+  await service.closeAll();
+  chosen.resolve(CLICK_SEND);
+
+  await assert.rejects(doing, refusal(409, 'The Mittr account changed'));
+  assert.equal(since().some(([command]) => command === 'click'), false);
+  assert.equal(browser.urls.has(SES_1), false);
+});
+
+test('a chrome.do whose snapshot is running when Chrome is closed ends with the account change and keeps no session', async (t) => {
+  const base = fakeBrowser();
+  const snapshotting = deferred();
+  const release = deferred();
+  const gate = { armed: false };
+  const browser = {
+    ...base,
+    execute: async (binary, argv, options) => {
+      if (gate.armed && commandOf(argv)[0] === 'snapshot') {
+        snapshotting.resolve();
+        await release.promise;
+      }
+      return base.execute(binary, argv, options);
+    },
+  };
+  const { service, ctx, since, stepper } = await doSetUp(t, { browser, replies: [CLICK_SEND] });
+  gate.armed = true;
+  const doing = service.execute('chrome.do', { goal: 'Send the form' }, ctx);
+  await snapshotting.promise;
+
+  await service.closeAll();
+  release.resolve();
+
+  await assert.rejects(doing, refusal(409, 'The Mittr account changed'));
+  assert.deepEqual(since().slice(-3), [['close', '--all'], ['snapshot', '-i'], ['close']]);
+  assert.equal(base.urls.has(SES_1), false);
+  assert.equal(stepper.calls.length, 0, 'the page read across the close is not sent to the platform');
+});
+
 test('a chrome.do cancelled between steps stops and reads nothing more', async (t) => {
   const controller = new AbortController();
   const stepper = stepperOf([FILL_NAME, CLICK_SEND]);

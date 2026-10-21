@@ -424,6 +424,7 @@ export function createChromeService({
     }
     if (!control.chromeInstalled()) throw new MittrToolError('Google Chrome is not installed on this Mac; ask the user to install it', 503);
     await ready;
+    if (started !== generation) throw new MittrToolError(ACCOUNT_CHANGED, 409);
     const sessionName = chromeSessionName(sessionId);
     if (!planned.page && !modes.has(sessionName) && !(await control.sessions().catch(() => [])).includes(sessionName)) {
       throw new MittrToolError(NO_PAGE_OPEN, 400);
