@@ -5,6 +5,7 @@ import path from 'node:path';
 
 // Upstream's merge rule, by path: the server hands plugins this very function.
 import { buildResult, toUsageWindow } from '../../../web/server/lib/quota/utils/formatters.js';
+import { toMcpEntity } from '../../../web/server/lib/opencode/config-v2.js';
 import { mergeEngineConfig } from '../../../web/server/lib/server-plugins.js';
 
 export const quotaResult = { buildResult, toUsageWindow };
@@ -115,6 +116,7 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
       await fake.onRestart?.(reason);
     },
     launchedDataHome: () => fake.launchedDataHome,
+    mcpEntity: toMcpEntity,
     userConfig: {
       path: path.join(USER_CONFIG_DIR, 'opencode.json'),
       read: () => {

@@ -233,6 +233,16 @@ export const UPSTREAM_CONTRACT = [
     why: "the plugin context's opencode.mcpEntity is config-v2's toMcpEntity, unchanged: a v1 or v2 MCP entry becomes the v2 entry upstream writes (type local unless remote, enabled inverted into disabled, local command as strings, remote url, headers and snake_case oauth), so catalog connectors land in the engine's own shape without a copy of upstream's normaliser",
   },
   {
+    id: 'mcp-user-layers',
+    files: ['packages/web/server/lib/opencode/mcp.js', 'packages/web/server/lib/opencode/config-v2.js', 'packages/web/server/lib/opencode/shared.js'],
+    why: "the person's own user config layers are opencode.json and opencode.jsonc under OPENCODE_CONFIG_DIR; Settings → MCP (listMcpConfigs) lists their v2 mcp.servers entries and their typed v1 mcp.<name> entries, so 1.22's mittr/<name> entries would still be listed and are swept; a catalog connector whose mittr-<name> one of those layers already holds is left out, since the engine deep-merges layers; upstream names a server only as ^[a-z0-9][a-z0-9_-]*[a-z0-9]$, which every mittr-<name> matches",
+  },
+  {
+    id: 'managed-config-private',
+    files: ['packages/web/server/lib/opencode/managed-config-file.js', 'packages/web/server/lib/opencode/shared.js'],
+    why: "catalog connectors, keys included, live only in the managed config file: it is written mode 0600 through a temp file and a rename, handed to the engine child alone as OPENCODE_CONFIG, and never read by Settings → MCP, whose custom layer is the server's own OPENCODE_CONFIG",
+  },
+  {
     id: 'engine-integration-connect-key',
     files: ['node_modules/@opencode/client/package.json'],
     why: 'the engine stores a provider key through POST /api/integration/{id}/connect/key with a { key } body and answers 204, or 404 until a config-defined provider is picked up; the Mittr credential is stored that way',

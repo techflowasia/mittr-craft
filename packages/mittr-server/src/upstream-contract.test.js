@@ -748,6 +748,52 @@ const checks = {
     assert.deepEqual(toMcpEntity({ command: ['acme'] }), { type: 'local', command: ['acme'] }, 'an entry without a type no longer defaults to local, which catalogMcpEntity guards against');
   },
 
+  'mcp-user-layers': (t) => {
+    has(source('packages/web/server/lib/opencode/shared.js'), /userPaths: \[\s*path\.join\(OPENCODE_CONFIG_DIR, 'opencode\.json'\),\s*path\.join\(OPENCODE_CONFIG_DIR, 'opencode\.jsonc'\),\s*\],/, 'the user config layers are no longer opencode.json and opencode.jsonc in the config folder');
+    has(source('packages/web/server/lib/opencode/mcp.js'), /if \(!\/\^\[a-z0-9\]\[a-z0-9_-\]\*\[a-z0-9\]\$\|\^\[a-z0-9\]\$\/\.test\(name\)\) \{/, 'validateMcpName no longer allows exactly lowercase letters, digits, - and _ with a letter or digit at each end');
+
+    const configDir = tempDir(t, 'contract-mcp-config-');
+    fs.writeFileSync(path.join(configDir, 'opencode.json'), JSON.stringify({
+      mcp: {
+        servers: { 'mittr-acme': { type: 'remote', url: 'https://acme.example/mcp' }, mine: { type: 'local', command: ['acme-mcp'] } },
+        'mittr/legacy': { type: 'local', command: ['old'] },
+        timeout: 5,
+      },
+    }));
+    const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(OPENCODE_|XDG_)/.test(name)));
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', 'console.log = () => {}; const { listMcpConfigs } = await import(process.env.CONTRACT_MCP_URL); process.stdout.write(JSON.stringify(listMcpConfigs(undefined).map(({ name, scope, type }) => ({ name, scope, type })).sort((a, b) => a.name.localeCompare(b.name))));'], {
+      encoding: 'utf8',
+      env: { ...inherited, HOME: tempDir(t, 'contract-home-'), OPENCODE_CONFIG_DIR: configDir, CONTRACT_MCP_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/opencode/mcp.js')).href },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), [
+      { name: 'mine', scope: 'user', type: 'local' },
+      { name: 'mittr-acme', scope: 'user', type: 'remote' },
+      { name: 'mittr/legacy', scope: 'user', type: 'local' },
+    ], 'Settings → MCP no longer lists the user config\'s mcp.servers and typed v1 entries as user servers');
+  },
+
+  'managed-config-private': async (t) => {
+    const managed = source('packages/web/server/lib/opencode/managed-config-file.js');
+    has(managed, /await fsPromises\.writeFile\(tmp, text, \{ encoding: 'utf8', mode: 0o600 \}\);\s*await fsPromises\.rename\(tmp, filePath\);/, 'the managed config is no longer written 0600 through a temp file and a rename');
+    has(source('packages/web/server/lib/opencode/shared.js'), /customPath: process\.env\.OPENCODE_CONFIG\s*\? path\.resolve\(process\.env\.OPENCODE_CONFIG\)\s*: null,/, 'Settings → MCP no longer takes its custom layer from the server\'s own OPENCODE_CONFIG');
+
+    const { createManagedConfigRuntime, MANAGED_CONFIG_FILE_NAME } = await importUpstream('packages/web/server/lib/opencode/managed-config-file.js');
+    const dataDir = tempDir(t, 'contract-managed-private-');
+    const env = {};
+    const connector = { type: 'remote', url: 'https://acme.example/mcp', headers: { authorization: 'Bearer k' } };
+    const runtime = createManagedConfigRuntime({ fsPromises: fs.promises, path, dataDir, env, readSettings: async () => ({}), isAgentMemoryAvailable: () => false, contributeConfig: async () => ({ mcp: { servers: { 'acme-x': connector } } }) });
+    const childEnv = await runtime.buildManagedChildEnv();
+    const file = path.join(dataDir, MANAGED_CONFIG_FILE_NAME);
+    assert.equal(childEnv.OPENCODE_CONFIG, file);
+    assert.equal(env.OPENCODE_CONFIG, undefined, 'the managed file is no longer handed to the child alone');
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).mcp.servers['acme-x'], connector);
+    if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600, 'the managed config is no longer private');
+    await runtime.refreshManagedConfigFile();
+    if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600, 'a managed config refresh is no longer private');
+    assert.deepEqual(fs.readdirSync(dataDir), [MANAGED_CONFIG_FILE_NAME]);
+  },
+
   'engine-integration-connect-key': () => {
     const dist = path.join(repoRoot, 'node_modules/@opencode/client/dist/chunks');
     const chunks = fs.readdirSync(dist).filter((name) => name.endsWith('.js')).map((name) => fs.readFileSync(path.join(dist, name), 'utf8'));

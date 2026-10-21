@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import express from 'express';
 
+import { createManagedConfigRuntime } from '../../../web/server/lib/opencode/managed-config-file.js';
 import { setupMittr } from './index.js';
 import { mintLocalToken } from './local-token.js';
 import { USER_CONFIG_DIR, deferred, fakeEngineContext, fakeEngineFetch, fakeFetch, json, serve, tempDataDir, until } from './test-helpers.js';
@@ -1628,4 +1629,270 @@ test('a toggled skill that could not be written answers applied false and names 
   assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'skills', name: 'mine', enabled: true }), { status: 200, body: { ok: true, applied: false } });
   assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'skills', name: 'notes', enabled: true }), { status: 200, body: { ok: true } });
   assert.equal(fs.readFileSync(path.join(engineConfigDir, 'skills', 'mittr-mine', 'SKILL.md'), 'utf8'), MY_SKILL);
+});
+
+const mcpConnector = (name, ...command) => ({ name, config: { type: 'local', command } });
+const withMcp = (catalog, items) => ({ ...catalog, mcp: items });
+const cachedWithMcp = (items) => ({ ...cachedWithSkills([]), mcp: { configured: true, items } });
+const MY_SERVERS = { mine: { type: 'local', command: ['my-own-mcp'] }, 'mittr-foo': { type: 'remote', url: 'https://my-own.example/mcp' } };
+const noConnectorWrites = (engine) => engine.userConfigWrites.every(({ config }) => Object.keys(config.mcp?.servers ?? {}).every((name) => Object.hasOwn(MY_SERVERS, name))
+  && Object.keys(config.mcp ?? {}).every((name) => !name.startsWith('mittr-')));
+
+const managedFileOnDisk = (t, engine) => {
+  const runtime = createManagedConfigRuntime({
+    fsPromises: fs.promises,
+    path,
+    dataDir: tempDataDir(t),
+    env: {},
+    readSettings: async () => ({}),
+    isAgentMemoryAvailable: () => false,
+    contributeConfig: () => engine.contribute(),
+  });
+  const disk = {
+    fail: null,
+    start: () => runtime.buildManagedChildEnv(),
+    read: () => (fs.existsSync(runtime.filePath) ? JSON.parse(fs.readFileSync(runtime.filePath, 'utf8')) : null),
+    mcp: () => Object.keys(disk.read()?.mcp?.servers ?? {}).sort(),
+    mode: () => fs.statSync(runtime.filePath).mode & 0o777,
+  };
+  engine.context.managedConfig.refresh = async () => {
+    engine.refreshes.push(Date.now());
+    if (disk.fail) throw disk.fail;
+    return runtime.refreshManagedConfigFile();
+  };
+  return disk;
+};
+
+test('setup has the first account\'s catalog connectors in the managed file from the index alone, and never in the user config', async (t) => {
+  const dataDir = tempDataDir(t);
+  writeAccountIndex(dataDir, [{ userId: 'u-a', displayName: 'A', home: null, signedIn: true }], 'u-a');
+  fs.writeFileSync(path.join(dataDir, 'mittr-catalog.json'), JSON.stringify(cachedWithMcp([mcpConnector('iApp Thai Legal', 'npx', '-y', 'acme-legal')])));
+  const opened = [];
+  const secretStore = {
+    available: () => true,
+    encrypt: () => { opened.push('encrypt'); throw new Error('the keychain was asked to seal'); },
+    decrypt: () => { opened.push('decrypt'); throw new Error('the keychain was asked to open'); },
+  };
+  const engine = fakeEngineContext({ userConfigFile: { mcp: { servers: MY_SERVERS } } });
+  const disk = managedFileOnDisk(t, engine);
+
+  await setUp(t, { dataDir, engine, built: false, host: { secretStore, deepLinks: deepLinkHost() } });
+  await disk.start();
+
+  assert.deepEqual(disk.mcp(), ['mittr-iapp-thai-legal']);
+  assert.deepEqual(disk.read().mcp.servers['mittr-iapp-thai-legal'], { type: 'local', command: ['npx', '-y', 'acme-legal'] });
+  if (process.platform !== 'win32') assert.equal(disk.mode(), 0o600);
+  assert.deepEqual(engine.userConfigFile.mcp, { servers: MY_SERVERS });
+  assert.ok(noConnectorWrites(engine));
+  assert.equal(fs.existsSync(path.join(dataDir, 'mittr-mcp-owned.json')), false);
+  assert.deepEqual(opened, []);
+});
+
+test('a sync writes the account\'s connectors into the managed file, and signing out of the last account writes it without them', async (t) => {
+  const engine = fakeEngineContext({ userConfigFile: { mcp: { servers: MY_SERVERS } } });
+  const disk = managedFileOnDisk(t, engine);
+  const fetchImpl = platform({ catalogs: { 'at-1': withMcp(CATALOG_A, [mcpConnector('docs', 'docs-mcp'), mcpConnector('law', 'law-mcp')]) } });
+  const { call } = await setUp(t, { engine, fetchImpl });
+
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => disk.mcp().length === 2);
+  assert.deepEqual(disk.mcp(), ['mittr-docs', 'mittr-law']);
+
+  assert.equal((await call('DELETE', '/api/mittr/auth/session')).status, 200);
+  await until(() => disk.mcp().length === 0);
+  assert.notEqual(disk.read(), null);
+  assert.deepEqual(engine.userConfigFile.mcp, { servers: MY_SERVERS });
+  assert.ok(noConnectorWrites(engine));
+});
+
+test('a switch has only the new account\'s connectors in the managed file before the engine restarts', async (t) => {
+  const fetchImpl = platform({
+    sessions: [session, sessionB],
+    catalogs: { 'at-1': withMcp(CATALOG_A, [mcpConnector('x', 'x-mcp')]), 'at-b': withMcp(CATALOG_B, [mcpConnector('y', 'y-mcp')]) },
+  });
+  const dataHomeOf = (home) => `/engine-data/${home ?? 'shared'}`;
+  const engine = fakeEngineContext();
+  const disk = managedFileOnDisk(t, engine);
+  engine.launchedDataHome = dataHomeOf('none');
+  const atRestart = [];
+  const { mittr, call } = await setUp(t, { engine, fetchImpl, engineDataHome: dataHomeOf });
+  engine.onRestart = () => {
+    atRestart.push(disk.mcp());
+    engine.launchedDataHome = dataHomeOf(mittr.engineHome());
+  };
+
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => disk.mcp().join() === 'mittr-x');
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => disk.mcp().join() === 'mittr-y');
+  assert.deepEqual(atRestart.at(-1), []);
+
+  for (const [userId, expected] of [['u-a', ['mittr-x']], ['u-b', ['mittr-y']]]) {
+    const restarts = atRestart.length;
+    assert.equal((await call('POST', '/api/mittr/auth/accounts/activate', { userId })).status, 200);
+    assert.ok(atRestart.length > restarts);
+    assert.deepEqual(atRestart.at(-1), expected, userId);
+    assert.deepEqual(disk.mcp(), expected, userId);
+  }
+  assert.ok(noConnectorWrites(engine));
+});
+
+test('a catalog whose only change is a connector rewrites the managed file once', async (t) => {
+  let offered = CATALOG_A;
+  const fetchImpl = platform({ catalog: () => json(offered) });
+  const engine = fakeEngineContext();
+  const disk = managedFileOnDisk(t, engine);
+  const { mittr, call } = await setUp(t, { engine, fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  await until(async () => (await mittrModelsOf(mittr)).length === 2);
+  assert.equal((await call('POST', '/api/mittr/catalog/sync')).status, 200);
+  const before = engine.refreshes.length;
+  assert.equal((await call('POST', '/api/mittr/catalog/sync')).status, 200);
+  assert.equal(engine.refreshes.length, before);
+
+  offered = withMcp(CATALOG_A, [mcpConnector('docs', 'docs-mcp')]);
+  assert.equal((await call('POST', '/api/mittr/catalog/sync')).status, 200);
+  assert.equal(engine.refreshes.length, before + 1);
+  assert.deepEqual(disk.mcp(), ['mittr-docs']);
+});
+
+test('turning a catalog connector off takes it out of the managed file at once, and on brings it back', async (t) => {
+  const engine = fakeEngineContext();
+  const disk = managedFileOnDisk(t, engine);
+  const fetchImpl = platform({ catalogs: { 'at-1': withMcp(CATALOG_A, [mcpConnector('docs', 'docs-mcp'), mcpConnector('law', 'law-mcp')]) } });
+  const { call } = await setUp(t, { engine, fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => disk.mcp().length === 2);
+
+  assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'mcp', name: 'docs', enabled: false }), { status: 200, body: { ok: true } });
+  assert.deepEqual(disk.mcp(), ['mittr-law']);
+  assert.equal((await call('POST', '/api/mittr/catalog/sync')).status, 200);
+  assert.deepEqual(disk.mcp(), ['mittr-law']);
+
+  assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'mcp', name: 'docs', enabled: true }), { status: 200, body: { ok: true } });
+  assert.deepEqual(disk.mcp(), ['mittr-docs', 'mittr-law']);
+});
+
+test('a toggle answers applied false when the connector is left out or the managed file cannot be written, and the next sync applies it', async (t) => {
+  const engine = fakeEngineContext({ userConfigFile: { mcp: { servers: MY_SERVERS } } });
+  const disk = managedFileOnDisk(t, engine);
+  const fetchImpl = platform({ catalogs: { 'at-1': withMcp(CATALOG_A, [mcpConnector('foo', 'org-foo'), mcpConnector('docs', 'docs-mcp')]) } });
+  const { call, logger } = await setUp(t, { engine, fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => disk.mcp().includes('mittr-docs'));
+  assert.deepEqual(disk.mcp(), ['mittr-docs']);
+
+  assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'mcp', name: 'foo', enabled: true }), { status: 200, body: { ok: true, applied: false } });
+  assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'mcp', name: 'docs', enabled: true }), { status: 200, body: { ok: true } });
+
+  disk.fail = new Error('disk full');
+  assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'mcp', name: 'docs', enabled: false }), { status: 200, body: { ok: true, applied: false } });
+  assert.ok(logger.warnings.some((line) => line.includes('applying the catalog enablement failed')));
+  assert.deepEqual(disk.mcp(), ['mittr-docs']);
+  disk.fail = null;
+  assert.equal((await call('POST', '/api/mittr/catalog/sync')).status, 200);
+  assert.deepEqual(disk.mcp(), []);
+  assert.deepEqual(engine.userConfigFile.mcp, { servers: MY_SERVERS });
+});
+
+test('a name the person\'s own user config or engine config folder already holds is left out, and those files are only read', async (t) => {
+  const engineConfigDir = path.join(tempDataDir(t), 'opencode');
+  fs.mkdirSync(engineConfigDir, { recursive: true });
+  const jsonc = '{\n  // my own\n  "mcp": { "servers": { "mittr-bar": { "type": "local", "command": ["my-bar"] } } },\n}\n';
+  fs.writeFileSync(path.join(engineConfigDir, 'opencode.jsonc'), jsonc);
+  const legacy = { type: 'local', command: ['old'] };
+  const engine = fakeEngineContext({ userConfigFile: { mcp: { servers: MY_SERVERS, 'mittr/legacy': legacy } } });
+  const disk = managedFileOnDisk(t, engine);
+  const fetchImpl = platform({ catalogs: { 'at-1': withMcp(CATALOG_A, ['foo', 'bar', 'docs'].map((name) => mcpConnector(name, `org-${name}`, 'org-secret'))) } });
+  const { call, logger } = await setUp(t, { engine, fetchImpl, engineConfigDir });
+
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => disk.mcp().length > 0);
+  assert.deepEqual(disk.mcp(), ['mittr-docs']);
+  const leftOut = logger.warnings.filter((line) => line.includes('was left out'));
+  assert.ok(leftOut.some((line) => line.includes("'foo'")) && leftOut.some((line) => line.includes("'bar'")), leftOut.join('\n'));
+  assert.equal(leftOut.some((line) => /org-|my-bar|my-own/.test(line)), false);
+  assert.equal(fs.readFileSync(path.join(engineConfigDir, 'opencode.jsonc'), 'utf8'), jsonc);
+  assert.deepEqual(engine.userConfigWrites, []);
+  assert.deepEqual(engine.userConfigFile.mcp['mittr/legacy'], legacy);
+});
+
+test('a pending 1.x session renders no connector and clears 1.22\'s mittr/ entries at setup, and its carry renders its own', async (t) => {
+  const dataDir = tempDataDir(t);
+  const secretStore = recordingSecretStore();
+  fs.writeFileSync(path.join(dataDir, 'mittr-session'), sealingStore().encrypt(JSON.stringify(session)));
+  fs.writeFileSync(path.join(dataDir, 'mittr-catalog.json'), JSON.stringify(cachedWithMcp([mcpConnector('docs', 'docs-mcp')])));
+  const engine = fakeEngineContext({ userConfigFile: { mcp: { servers: MY_SERVERS, 'mittr/legacy': { type: 'local', command: ['old'] } } } });
+  const disk = managedFileOnDisk(t, engine);
+
+  const { call, logger } = await setUp(t, { dataDir, engine, fetchImpl: platform(), host: { secretStore, deepLinks: deepLinkHost() } });
+  await disk.start();
+
+  assert.deepEqual(disk.mcp(), []);
+  assert.deepEqual(engine.userConfigFile.mcp, { servers: MY_SERVERS });
+  assert.ok(logger.lines.some((line) => line.includes('mittr/legacy')));
+  assert.deepEqual(secretStore.uses, []);
+
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: true, userId: 'u-a', displayName: 'A' });
+  await until(() => disk.mcp().length === 1);
+  assert.deepEqual(disk.mcp(), ['mittr-docs']);
+});
+
+const SECRETS = ['SEKRET-H1', 'SEKRET-E1', 'SEKRET-E2', 'SEKRET-H2', 'SEKRET-E3', 'SEKRET-ARG'];
+const SECRET_CATALOG = withMcp(CATALOG_A, [
+  { name: 'remote', config: { type: 'remote', url: 'https://acme.example/mcp', headers: { authorization: 'Bearer SEKRET-H1' } } },
+  { name: 'local', config: { type: 'local', command: ['acme-mcp', '--token=SEKRET-ARG'], environment: { ACME_KEY: 'SEKRET-E1' } } },
+  { name: 'broken', config: { command: ['acme-mcp'], environment: { ACME_KEY: 'SEKRET-E2' } } },
+  { name: 'Remote', config: { type: 'remote', url: 'https://acme.example/other', headers: { authorization: 'Bearer SEKRET-H2' } } },
+  { name: 'foo', config: { type: 'local', command: ['acme-mcp'], environment: { ACME_KEY: 'SEKRET-E3' } } },
+]);
+
+test('no connector header, env value or argument reaches a log line, an error or a mittr route\'s answer', async (t) => {
+  const engine = fakeEngineContext({ userConfigFile: { mcp: { servers: MY_SERVERS } } });
+  const disk = managedFileOnDisk(t, engine);
+  const fetchImpl = platform({ catalogs: { 'at-1': SECRET_CATALOG } });
+  const { call, logger, dataDir } = await setUp(t, { engine, fetchImpl });
+  const answers = [];
+  const ask = async (method, route, body) => {
+    const answer = await call(method, route, body);
+    answers.push(JSON.stringify(answer));
+    return answer;
+  };
+
+  answers.push(JSON.stringify(await signIn(call)));
+  await until(() => disk.mcp().length === 2);
+  assert.deepEqual(disk.mcp(), ['mittr-local', 'mittr-remote']);
+  await ask('POST', '/api/mittr/catalog/sync');
+  for (const name of ['remote', 'local', 'broken', 'Remote', 'foo']) {
+    await ask('PUT', '/api/mittr/catalog/enablement', { kind: 'mcp', name, enabled: false });
+    await ask('PUT', '/api/mittr/catalog/enablement', { kind: 'mcp', name, enabled: true });
+  }
+  disk.fail = new Error('disk full');
+  await ask('PUT', '/api/mittr/catalog/enablement', { kind: 'mcp', name: 'local', enabled: true });
+  disk.fail = null;
+  for (const route of ['/api/mittr/auth/status', '/api/mittr/auth/accounts', '/api/mittr/quota/me', '/api/mittr/answered-by']) await ask('GET', route);
+  await ask('PUT', '/api/mittr/catalog/enablement', { kind: 'nope', name: 'local' });
+
+  const lines = [...logger.lines, ...logger.warnings, ...logger.errors];
+  assert.ok(lines.some((line) => line.includes("'broken'")) && lines.some((line) => line.includes("'Remote'")) && lines.some((line) => line.includes("'foo'")), lines.join('\n'));
+  for (const secret of SECRETS) {
+    assert.equal(lines.some((line) => line.includes(secret)), false, `a log line holds ${secret}`);
+    assert.equal(answers.some((answer) => answer.includes(secret)), false, `a route answer holds ${secret}`);
+  }
+  const caches = catalogFiles(dataDir).map((name) => path.join(dataDir, 'mittr-accounts', name));
+  assert.equal(caches.length, 1);
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(caches[0]).mode & 0o777, 0o600, 'the catalog cache, which holds the connector configs, is not private');
+    assert.equal(disk.mode(), 0o600, 'the managed file, which holds the connector configs, is not private');
+  }
+  assert.ok(noConnectorWrites(engine));
+});
+
+test('GET /api/mittr/catalog answers no connector header or env value', { todo: 'reported to the owner: the catalog route returns each mcp item as cached, config included' }, async (t) => {
+  const fetchImpl = platform({ catalogs: { 'at-1': SECRET_CATALOG } });
+  const { call } = await setUp(t, { fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  const answer = JSON.stringify(await call('GET', '/api/mittr/catalog'));
+  for (const secret of SECRETS) assert.equal(answer.includes(secret), false, secret);
 });

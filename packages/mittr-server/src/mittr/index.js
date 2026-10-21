@@ -15,6 +15,7 @@ import { createEnablementStore } from './enablement.js';
 import { ensureMittrCredential, forgetMittrCredential } from './engine-credential.js';
 import { identityFragment, identityPluginDir, materializeIdentityPlugin } from './identity.js';
 import { mintLocalToken } from './local-token.js';
+import { catalogMcpServers, heldMcpNames, mcpFragment, sweepLegacyUserMcp } from './mcp-fragment.js';
 import { createMittrSettings } from './mittr-settings.js';
 import { createModelRefusalHandler, createThrottle } from './model-refusal.js';
 import { MITTR_PROVIDER_ID, policiesFragment } from './policies.js';
@@ -31,6 +32,7 @@ import { reconcileSkills, skillIdOf } from './skill-reconciler.js';
 const SIGNED_IN_EVENT = 'mittrcraft:signed-in';
 const SIGN_IN_FAILED_EVENT = 'mittrcraft:sign-in-failed';
 const RESYNC_INTERVAL_MS = 60_000;
+const QUIET_LOGGER = { warn: () => {} };
 
 const modelListOf = (items) => items.map(({ alias, label }) => ({ alias, label }));
 
@@ -106,6 +108,7 @@ export function setupMittr(context, {
     sharedHistoryExists,
     onLegacyCarried: () => {
       applySkillsQuietly();
+      sweepLegacyConnectorsQuietly();
       const { items, known } = activeModelList();
       void onModels(items, { listKnown: known });
     },
@@ -156,10 +159,60 @@ export function setupMittr(context, {
       logger.warn('[mittr] could not apply the catalog skills:', error?.message ?? error);
     }
   };
-  const applySkillsAfterToggle = (kind, name) => {
-    if (kind !== 'skills') return;
+  const applySkillsAfterToggle = (name) => {
     const { failed } = applySkills();
     if (failed.some((failure) => failure.name === skillIdOf(name))) throw new Error(`catalog skill '${skillIdOf(name)}' was not applied`);
+  };
+
+  // Only when the server's user config is the engine's: elsewhere it may be
+  // a personal OpenCode config, which is never ours to write.
+  const userConfig = opencode.userConfig ?? null;
+  const ownsEngineUserConfig = Boolean(engineConfigDir && userConfig)
+    && path.resolve(userConfig.path) === path.join(path.resolve(engineConfigDir), 'opencode.json');
+  if (engineConfigDir && userConfig && !ownsEngineUserConfig) {
+    logger.warn(`[mittr] the engine reads its config from ${path.resolve(engineConfigDir)}, not ${path.dirname(path.resolve(userConfig.path))}; the default model is left alone`);
+  }
+  const sweepLegacyConnectorsQuietly = () => {
+    if (!ownsEngineUserConfig) return;
+    try {
+      const swept = sweepLegacyUserMcp(userConfig);
+      if (swept.length > 0) logger.log(`[mittr] removed 1.22 catalog connector entries from the user config: ${swept.join(', ')}`);
+    } catch (error) {
+      logger.warn('[mittr] could not clear the 1.22 catalog connectors from the user config:', error?.message ?? error);
+    }
+  };
+  const readText = (filePath) => {
+    try {
+      return fs.readFileSync(filePath, 'utf8');
+    } catch {
+      return null;
+    }
+  };
+  const readUserConfigQuietly = () => {
+    try {
+      return userConfig ? [userConfig.read()] : [];
+    } catch {
+      return [];
+    }
+  };
+  const ownMcpNames = () => {
+    const dirs = new Set([engineConfigDir, userConfig ? path.dirname(userConfig.path) : null].filter(Boolean).map((dir) => path.resolve(dir)));
+    const texts = [...dirs].flatMap((dir) => ['opencode.json', 'opencode.jsonc'].map((name) => readText(path.join(dir, name)))).filter((text) => text !== null);
+    return heldMcpNames({ configs: readUserConfigQuietly(), texts });
+  };
+  const connectorInputs = () => ({ collection: activeCatalogCache().read()?.mcp, enablement, toEntity: opencode.mcpEntity, held: ownMcpNames() });
+  const managedConnectors = ({ log = false } = {}) => {
+    if (activeAccountKey() === null) return {};
+    try {
+      return mcpFragment({ ...connectorInputs(), logger: log ? logger : QUIET_LOGGER });
+    } catch (error) {
+      if (log) logger.warn('[mittr] could not render the catalog connectors:', error?.message ?? error);
+      return {};
+    }
+  };
+  const connectorLeftOut = (name) => {
+    if (activeAccountKey() === null) return false;
+    return catalogMcpServers(connectorInputs()).leftOut.some((entry) => entry.name === name);
   };
 
   const answeredByLog = createAnsweredByLog({ perSession: 10, sessions: 100 });
@@ -179,6 +232,7 @@ export function setupMittr(context, {
     opencode,
     applyCache: () => {
       applySkillsQuietly();
+      sweepLegacyConnectorsQuietly();
       const { items, known } = activeModelList();
       return onModels(items, { listKnown: known });
     },
@@ -248,8 +302,15 @@ export function setupMittr(context, {
     cache: activeCatalogCache,
     enablement,
     onModels: (items) => onModels(items, { listKnown: true }),
-    onCatalog: (stored) => applySkillsQuietly(stored),
-    onEnablementChange: applySkillsAfterToggle,
+    onCatalog: async (stored) => {
+      applySkillsQuietly(stored);
+      sweepLegacyConnectorsQuietly();
+      await rewriteIfChanged();
+    },
+    onEnablementChange: async (kind, name) => {
+      if (kind === 'skills') applySkillsAfterToggle(name);
+      if (kind === 'mcp') await applyConnectorsAfterToggle(name);
+    },
     fetchImpl,
     logger,
   });
@@ -317,15 +378,18 @@ export function setupMittr(context, {
   // written only once that refresh has finished.
   let configBuilt = false;
   let pendingRendered = null;
+  const fingerprintOf = (renderedModels, connectors) => JSON.stringify([renderedModels, connectors]);
   const managedConfig = async () => {
     const rendered = models;
+    const connectors = managedConnectors({ log: true });
     const settings = await mittrSettings.read();
     const identity = await identityConfig();
     configBuilt = true;
-    pendingRendered = JSON.stringify(rendered);
+    pendingRendered = fingerprintOf(rendered, connectors);
     return [
       identity,
       server.port() === null ? {} : mittrProviderFragment({ shimBaseUrl: shimBaseUrl(server.port()), models: rendered }),
+      connectors,
       ENGINE_SHARE_OFF,
       policiesFragment(settings),
     ].reduce((merged, fragment) => mergeEngineConfig(merged, fragment), {});
@@ -386,14 +450,6 @@ export function setupMittr(context, {
     void storeCredential();
   });
 
-  // Only when the server's user config is the engine's: elsewhere it may be
-  // a personal OpenCode config, which is never ours to write.
-  const userConfig = opencode.userConfig ?? null;
-  const ownsEngineUserConfig = Boolean(engineConfigDir && userConfig)
-    && path.resolve(userConfig.path) === path.join(path.resolve(engineConfigDir), 'opencode.json');
-  if (engineConfigDir && userConfig && !ownsEngineUserConfig) {
-    logger.warn(`[mittr] the engine reads its config from ${path.resolve(engineConfigDir)}, not ${path.dirname(path.resolve(userConfig.path))}; the default model is left alone`);
-  }
   // Never throws: a default that cannot be set leaves the models applied.
   const followDefaultModel = (items) => {
     if (!ownsEngineUserConfig) return;
@@ -421,7 +477,7 @@ export function setupMittr(context, {
   let writtenModels = null;
   const writeModels = async (items, listKnown) => {
     models = modelListOf(items);
-    if (configBuilt && JSON.stringify(models) !== writtenModels) {
+    if (configBuilt && fingerprintOf(models, managedConnectors()) !== writtenModels) {
       await context.managedConfig.refresh();
       writtenModels = pendingRendered;
     }
@@ -451,6 +507,20 @@ export function setupMittr(context, {
     applying = written.catch(() => {});
     return written;
   };
+  const rewriteIfChanged = () => {
+    const written = applying.then(async () => {
+      if (!configBuilt || fingerprintOf(models, managedConnectors()) === writtenModels) return;
+      await context.managedConfig.refresh();
+      writtenModels = pendingRendered;
+    });
+    applying = written.catch(() => {});
+    return written;
+  };
+  const applyConnectorsAfterToggle = async (name) => {
+    sweepLegacyConnectorsQuietly();
+    await rewriteProviderLock();
+    if (connectorLeftOut(name)) throw new Error(`catalog connector '${name}' was not applied`);
+  };
   registerProviderLockRoutes(app, {
     express,
     mittrSettings,
@@ -476,6 +546,7 @@ export function setupMittr(context, {
   // without holding up the start. The engine's first config build reads
   // these, and its start the default.
   applySkillsQuietly();
+  sweepLegacyConnectorsQuietly();
   const startList = activeModelList();
   models = modelListOf(startList.items);
   if (startList.known) followDefaultModel(models);
