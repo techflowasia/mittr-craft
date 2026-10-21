@@ -362,6 +362,72 @@ test('only the first ready starts the catalog sync', async (t) => {
   assert.equal(catalogCalls(fetchImpl).length, 1);
 });
 
+const engineThatRestartsOntoTheAccount = () => {
+  const dataHomeOf = (home) => `/engine-data/${home ?? 'shared'}`;
+  const engine = fakeEngineContext();
+  const restartOnto = (mittr) => {
+    engine.onRestart = () => {
+      engine.launchedDataHome = dataHomeOf(mittr.engineHome());
+      engine.fireReady();
+    };
+  };
+  return { engine, dataHomeOf, restartOnto };
+};
+
+test('a first sign-in on a fresh install gives one catalog request, and the engine still gets its key', async (t) => {
+  const fetchImpl = platform();
+  const { engine, dataHomeOf, restartOnto } = engineThatRestartsOntoTheAccount();
+  const { mittr, call, logger } = await setUp(t, { engine, fetchImpl, engineDataHome: dataHomeOf });
+  restartOnto(mittr);
+  engine.launchedDataHome = dataHomeOf(mittr.engineHome());
+  engine.fireReady();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(catalogCalls(fetchImpl).length, 0);
+
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  await until(() => logger.lines.includes('[mittr] the engine has its Mittr key for this run'));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(catalogCalls(fetchImpl).length, 1);
+  assert.equal(engine.launchedDataHome, dataHomeOf(mittr.engineHome()));
+  assert.deepEqual(await mittrModelsOf(mittr), ['a1', 'a2']);
+});
+
+test('a sign-in before the engine\'s first ready gives one catalog request', async (t) => {
+  const fetchImpl = platform();
+  const { engine, dataHomeOf, restartOnto } = engineThatRestartsOntoTheAccount();
+  const { mittr, call } = await setUp(t, { engine, fetchImpl, engineDataHome: dataHomeOf });
+  restartOnto(mittr);
+
+  assert.equal((await signIn(call)).status, 200);
+  engine.launchedDataHome = dataHomeOf(mittr.engineHome());
+  engine.fireReady();
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(catalogCalls(fetchImpl).length, 1);
+});
+
+test('after a first sign-in on a fresh install, signing in again and adding another account each still read the catalog', async (t) => {
+  const fetchImpl = platform({ sessions: [session, session, sessionB] });
+  const { engine, dataHomeOf, restartOnto } = engineThatRestartsOntoTheAccount();
+  const { mittr, call } = await setUp(t, { engine, fetchImpl, engineDataHome: dataHomeOf });
+  restartOnto(mittr);
+  engine.launchedDataHome = dataHomeOf(mittr.engineHome());
+  engine.fireReady();
+
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 2);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 3);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(catalogCalls(fetchImpl).length, 3);
+  assert.deepEqual(catalogCalls(fetchImpl).map((request) => request.headers.authorization), ['Bearer at-1', 'Bearer at-1', 'Bearer at-b']);
+});
+
 test('without a desktop host tokens are kept in a private plain file, with one warning', async (t) => {
   const { call, dataDir, logger } = await setUp(t, { host: null });
   assert.equal((await signIn(call)).status, 200);

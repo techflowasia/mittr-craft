@@ -237,6 +237,12 @@ export function setupMittr(context, {
   let shim = null;
   let audit = null;
   const syncCatalog = () => catalog.sync();
+  let accountSync = null;
+  const syncAfterAccountChange = () => {
+    const outcome = syncCatalog();
+    accountSync = { key: activeAccountKey(), outcome };
+    return outcome;
+  };
   const onRefusal = createModelRefusalHandler({
     mayResync: createThrottle(RESYNC_INTERVAL_MS, now),
     syncStored: () => catalog.syncStored(),
@@ -252,7 +258,7 @@ export function setupMittr(context, {
       const { items, known } = activeModelList();
       return onModels(items, { listKnown: known });
     },
-    sync: syncCatalog,
+    sync: syncAfterAccountChange,
     engineDataHome,
     logger,
   });
@@ -446,16 +452,17 @@ export function setupMittr(context, {
   // it reads the stored session, and opening that can raise a keychain
   // dialog, so it waits until the server is listening and the window has
   // something to show.
-  // It counts as done only once it succeeds, so a later ready retries a first
-  // sync that found the platform unreachable.
+  // It counts as done once it succeeds or finds nobody signed in, so a later
+  // ready retries a first sync that found the platform unreachable.
   let startupSyncDone = false;
   let startupSyncRunning = false;
   const startupSync = async () => {
     if (startupSyncDone || startupSyncRunning) return;
     startupSyncRunning = true;
     try {
-      const outcome = await syncCatalog();
-      if (outcome?.status === 200) startupSyncDone = true;
+      const covering = accountSync?.key === activeAccountKey() ? await accountSync.outcome : null;
+      const outcome = covering?.status === 200 ? covering : await syncCatalog();
+      if (outcome?.status === 200 || (outcome?.status === 401 && !signedIn())) startupSyncDone = true;
     } finally {
       startupSyncRunning = false;
     }
