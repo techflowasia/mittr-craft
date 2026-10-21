@@ -14,7 +14,7 @@ The evidence (screenshots, logs, JSON, `ps` and `lsof` samples) is kept outside 
 
 | Group | PASS / FAIL / NOT RUN | Notes |
 |---|---|---|
-| Hygiene (build and static checks) | 9 / 1 / 0 | The build exits 1 at the leak scan (finding 1); the app itself is complete and was used. |
+| Hygiene (build and static checks) | 9 / 1 / 0 | The gate's build exited 1 at the leak scan (finding 1); the app itself was complete and was used. Fixed after the gate: the build at `641976172` exits 0, "0 unexplained". |
 | Upstream tools (verify only) | 11 / 1 / 0 | `browser.scroll` moves the page but answers a 20 s timeout (finding 2). |
 | Switches | 2 / 0 / 0 | |
 | Images | 1 / 0 / 0 | The engine re-encodes a large capture before the model sees it (finding 3). |
@@ -55,7 +55,7 @@ No Mittr feature check failed. The four FAILs are: the leak scan on an upstream 
 
 | # | Check | Command | Observed | Result |
 |---|---|---|---|---|
-| H1 | Dev build, leak scan, drivers and notices | `node scripts/mittr/build-desktop.mjs --flavor dev` | **exit 1** at step 8/8, 01:49:09–01:52:39. `1404 files: 255 translation keys, 4126 translated, 129 allowlisted, 1 unexplained, 0 unused allowlist entries`. The hit: `app.asar/product-plugins/mittr-server.mjs` holds `"OpenChamberControlError"` (from `packages/mittr-server/src/mittr/tools/control-routes.js`, `UPSTREAM_CONTROL_ERROR`). The app bundle was complete; the driver and notice checks were run separately (A-27) | FAIL (finding 1) |
+| H1 | Dev build, leak scan, drivers and notices | `node scripts/mittr/build-desktop.mjs --flavor dev` | **exit 1** at step 8/8, 01:49:09–01:52:39. `1404 files: 255 translation keys, 4126 translated, 129 allowlisted, 1 unexplained, 0 unused allowlist entries`. The hit: `app.asar/product-plugins/mittr-server.mjs` holds `"OpenChamberControlError"` (from `packages/mittr-server/src/mittr/tools/control-routes.js`, `UPSTREAM_CONTROL_ERROR`). The app bundle was complete; the driver and notice checks were run separately (A-27). After the gate, at `641976172`: exit 0, `0 unexplained`, "the brand-leak scan passed" | FAIL at the gate (finding 1); passes after the gate |
 | H2 | Upstream touch | `node scripts/mittr/check-upstream-touch.mjs --no-write` | `35 of 40`, "upstream touch check passed", nothing unlisted, nothing stale | PASS |
 | H3 | Type-check | `bun run type-check` | exit 0 | PASS |
 | H4 | Lint | `bun run lint` | exit 0; 0 errors, the 5 known `packages/ui` warnings | PASS |
@@ -215,13 +215,13 @@ All in A1, session directory = the temp project, model `mittr/stub-sa-fast`.
 
 ## Findings
 
-1. **The build fails its leak scan.** `control-routes.js` names upstream's error class (`'OpenChamberControlError'`) as a string, so the packed `product-plugins/mittr-server.mjs` carries the upstream brand. Task 3 added it; this is the first build since. A product defect, not fixed here (an allowlist entry or a check of the error's shape instead of its name).
-2. **`browser.scroll` (upstream, A-09)** moves the page, but answers "The in-app browser did not respond within 20s" every time (3 of 3; `scrollY` reached `maxScrollY`). Every other panel action answered in time. It may depend on the window not being frontmost; not investigated further.
+1. **The build failed its leak scan.** `control-routes.js` named upstream's error class (`'OpenChamberControlError'`) as a string, so the packed `product-plugins/mittr-server.mjs` carried the upstream brand. Task 3 added it; the gate's build was the first since. Fixed after the gate: the server hands plugins the class as `context.control.ControlError` (`e1dc8f6d0`), and the route matches the error by that class, not by its name (`641976172`). The build at `641976172` exits 0 with 0 unexplained, and the packed plugin holds the name 0 times.
+2. **`browser.scroll` (upstream, A-09)** moves the page, but answers "The in-app browser did not respond within 20s" every time (3 of 3; `scrollY` reached `maxScrollY`). Every other panel action answered in time. The cause, found after the gate, is upstream's code: `buildScrollScript` scrolls, then waits for two animation frames in the page; an agent tab that is not on screen gets none, so the call never settles and the browser-control broker answers at 20 s. A capture answers because upstream reveals the stage first. The MittrCraft panel tool wrap does not cause it: it adds nothing before upstream's call and passes a scroll result through unchanged. Owner note: upstream's scroll needs a fallback; nothing is sent upstream.
 3. **The engine re-encodes large images.** A 1536 × 2048 JPEG capture reached the model as a 1500 × 2000 PNG (69,106 bytes); small images arrive byte-identical. So the model sees every capture, but not always its exact bytes, and our 5 MiB cap is never the binding limit for large screens.
 4. **R155: yes.** A bash child of the engine sees `OPENCODE_SERVER_PASSWORD` and `OPENCODE_PASSWORD`, as well as both tool tokens. An agent's shell can therefore reach the engine API, including a reply to the server's own card. Owner note under R149; the server's minted request id (R155) still limits which card counts.
 5. **A-04 with a model outside Mittr.** `schedule.create` with `openai/gpt-4o` is accepted; its run's session ends `failed` with no answer and no traffic, but upstream's task state reports `lastStatus: "success"`. Upstream behaviour.
 6. Upstream's mobile viewport is 390 px wide, not 375.
-7. **Changing the profile or the visible-window switch does not close open agent Chrome sessions.** Two sessions on `Default` stayed open after switching to `Profile 1` and turning the window on, until quit (the start-up and quit `close --all` clear them). They were not driven again, to keep every Chrome headless. Whether a later call reuses them on the old profile is untested. A follow-up for Task 7's settings change, or 4B.
+7. **Changing the profile or the visible-window switch does not close open agent Chrome sessions.** Two sessions on `Default` stayed open after switching to `Profile 1` and turning the window on, until quit (the start-up and quit `close --all` clear them). They were not driven again, to keep every Chrome headless. A later call does not reuse them: `chrome-service.test.js` shows that the next call on such a session closes the Chrome on the old profile and mode and reopens it on the new ones. They still run until that call or quit.
 8. **A remote client can read Jira and Plane through `/api/mittr/control`.** R148 gates only Chrome and computer actions on local scope; `jira.get_issue` answered 200 to a forwarded request. Owner note, beside F40 (the hosted work tool).
 9. **Login item.** At each launch the app logged "Unable to set login item: Operation not permitted": it tries to register itself as a login item ("Start MittrCraft when you log in" is in Settings → General). macOS refused, so nothing changed. Owner note.
 10. **Gate harness: the refusing proxy crashed** at about 02:15 on an `ECONNRESET`. Until it was restarted (02:25), Chrome's proxy connections were refused at the TCP level instead of logged; the `lsof` watcher saw 0 non-loopback peers from Chrome throughout. Fixed in the gate's helper, not in the product.
@@ -238,7 +238,7 @@ All in A1, session directory = the temp project, model `mittr/stub-sa-fast`.
 |---|---|---|---|
 | `packages/web/server/lib/permission-auto-accept/runtime.js` | `permission-auto-accept` | 8 | A question about using the person's Chrome sign-in on a site must always reach the person. Upstream's auto mode answered it within milliseconds and safety mode handed it to the classifier. A server plugin may now mark a permission `neverAutoAnswer`; a marked request is held for the user in every mode. With no marking plugin, nothing changes (owner path E, R141). |
 
-Also edited, not counted: `packages/web/server/index.js` (already counted; the full upstream action list for R147, the capture route, the `neverAutoAnswer` wiring) and `packages/web/server/lib/server-plugins.js` (generic hook file). `agent-tool/runtime.js` was not touched: the capture is wrapped from our own plugin (A-13 live: the wrap works). Budget left: 5.
+Also edited, not counted: `packages/web/server/index.js` (already counted; `context.control` with the control service, its definitions, the full upstream action list for R147, `ControlError` and the screenshot writer, and the `neverAutoAnswer` wiring) and `packages/web/server/lib/server-plugins.js` (generic hook file). `agent-tool/runtime.js` was not touched: the capture is wrapped from our own plugin (A-13 live: the wrap works). Budget left: 5.
 
 ## Part B — needs the owner
 
@@ -290,8 +290,16 @@ From the ledger and this gate:
 21. **Approval scope (Task 8).** "Always" is per Mac; engine-saved rules are per project and never count as approval; removing a site clears engine rules only in the default directory's project; a cold location answers `deny` for about 400 ms (retried once).
 22. **The tools callback address** (Task 4 #6) and `allowForConversation` (not exposed without a ruling).
 23. **Egress from upstream at start** (GitHub API, the npm registry, a Cloudflare address, a Microsoft address from the Electron network service) and the login-item attempt (finding 9).
-24. **Profile or window changes leave open agent Chrome sessions running** until closed or quit (finding 7).
+24. **Profile or window changes leave open agent Chrome sessions running** until the next call on them, which reopens them on the new profile and mode, or quit (finding 7).
 25. **Still open from phase 3:** I3, I5.
+
+From the final review of the branch:
+
+26. **R155, the cost of narrowing.** Narrowing the engine's child environment (decision 16) is an upstream lifecycle change and costs one more counted file.
+27. **The own-port fence does not know a tunnel's public address.** While a tunnel is up, an allowed tunnel host reaches MittrCraft's own server through the agent Chrome, with the person's cookies. The card names the host, so the person decides.
+28. **Upstream's `browser.scroll` needs a fallback** for a tab that gets no animation frames (finding 2).
+29. **R159.** A tool switched off in Settings is refused on every surface, so the window, the CLI and voice cannot drive it either.
+30. **R160.** An account switch retires the running engine's tools token at once, and a Chrome call begun before the switch ends with "The Mittr account changed" instead of opening Chrome again.
 
 ## Platform follow-ups
 
