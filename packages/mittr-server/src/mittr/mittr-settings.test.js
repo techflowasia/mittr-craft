@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { createMittrSettings } from './mittr-settings.js';
+import { createMittrSettings, isHost } from './mittr-settings.js';
 import { tempDataDir } from './test-helpers.js';
 
 const recordingLogger = () => {
@@ -233,4 +233,14 @@ test('a carry keeps the stored provider switch', async (t) => {
   const settings = createMittrSettings({ dataDir, logger: recordingLogger() });
   await settings.carryParkedToolSettings();
   assert.deepEqual(await settings.read(), stored(true, { ...DEFAULT_TOOLS, computer: false }));
+});
+
+test('a bracketed site is only an IPv6 address in the form a page address gives', () => {
+  for (const host of ['[:]', '[:::]', '[1]', '[abc]', '[dead:beef]', '[1:2:3:4:5:6:7:8:9:a:b]', '[::ffff:1.2.3.4]', '[fe80::1%en0]', '[2001:0db8::1]', '[]']) {
+    assert.equal(isHost(host), false, host);
+  }
+  for (const url of ['http://[::1]:8080/', 'https://[2001:DB8:0::1]/', 'http://[::ffff:192.0.2.10]/']) {
+    const host = new URL(url).hostname.toLowerCase();
+    assert.equal(isHost(host), true, host);
+  }
 });

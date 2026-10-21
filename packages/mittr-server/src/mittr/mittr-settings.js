@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import net from 'node:net';
 import path from 'node:path';
 
 import { writePrivateAtomic } from './private-file.js';
@@ -7,7 +8,8 @@ import { isPlainObject } from './values.js';
 const SETTINGS_FILE = 'mittr-settings.json';
 const UPSTREAM_SETTINGS_FILE = 'settings.json';
 const PARKED = 'mittr';
-const HOST = /^(?:[a-z0-9.-]+|\[[0-9a-f:]+\])$/;
+const HOST = /^[a-z0-9.-]+$/;
+const BRACKETED = /^\[([0-9a-f:.]+)\]$/;
 const INVALID_SWITCH = 'showOtherProviders must be true or false';
 
 const PARKED_TOOL_KEYS = Object.freeze({
@@ -24,7 +26,19 @@ const DOT_NAMES = new Set(['.', '..']);
 const isBoolean = (value) => value === true || value === false;
 const isText = (value) => value === String(value);
 const hostOf = (value) => (isText(value) ? value.trim().toLowerCase() : '');
-export const isHost = (value) => HOST.test(hostOf(value));
+const isPageIPv6 = (host) => {
+  const inner = BRACKETED.exec(host)?.[1];
+  if (!inner || !net.isIPv6(inner)) return false;
+  try {
+    return new URL(`http://${host}/`).hostname === host;
+  } catch {
+    return false;
+  }
+};
+export const isHost = (value) => {
+  const host = hostOf(value);
+  return HOST.test(host) || isPageIPv6(host);
+};
 export const profileOf = (value) => {
   const name = isText(value) ? value.trim() : '';
   return name && !name.startsWith('-') && !NOT_IN_PROFILE_NAME.test(name) && !DOT_NAMES.has(name) ? name : null;
