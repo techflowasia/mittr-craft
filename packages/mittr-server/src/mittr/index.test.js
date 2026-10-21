@@ -291,6 +291,15 @@ test('the catalog routes keep a disable in the data dir of this machine, for any
   assert.deepEqual((await call('PUT', '/api/mittr/catalog/enablement', { kind: 'models', name: 'a1' })).status, 400);
 });
 
+test('the control route runs an upstream action through the server\'s control service', async (t) => {
+  const engine = fakeEngineContext();
+  engine.controlAnswer = async () => ({ sessions: [{ id: 's1' }] });
+  const { call } = await setUp(t, { engine });
+
+  assert.deepEqual(await call('POST', '/api/mittr/control', { action: 'session.list', input: {}, contextDirectory: '/p', contextSessionId: 's1' }), { status: 200, body: { sessions: [{ id: 's1' }] } });
+  assert.deepEqual(engine.controlCalls.map(([action, input, directory, { contextSessionId }]) => [action, input, directory, contextSessionId]), [['session.list', {}, '/p', 's1']]);
+});
+
 test('startup gives one catalog request', async (t) => {
   const dataDir = tempDataDir(t);
   const first = await setUp(t, { dataDir, fetchImpl: platform() });

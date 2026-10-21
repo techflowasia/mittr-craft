@@ -29,6 +29,8 @@ import { chooseSecretStore } from './secret-store.js';
 import { registerMittrShim } from './shim-routes.js';
 import { deepLinkScheme } from './sign-in.js';
 import { reconcileSkills, skillIdOf } from './skill-reconciler.js';
+import { registerMittrControlRoutes } from './tools/control-routes.js';
+import { createMittrActionRegistry } from './tools/registry.js';
 import { registerMittrWorkRoutes } from './work-routes.js';
 
 const SIGNED_IN_EVENT = 'mittrcraft:signed-in';
@@ -98,7 +100,7 @@ export function setupMittr(context, {
   mintShimKey = mintLocalToken,
   companySignIn = false,
 } = {}) {
-  const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig, events, git, uiAuth } = context;
+  const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig, events, git, uiAuth, control } = context;
   const connectorsOff = !host || companySignIn === true || uiAuth?.passwordEnabled?.() === true;
   if (connectorsOff) logger.log(HOSTED_CONNECTORS_OFF);
   const broker = resolveBroker(env);
@@ -356,6 +358,8 @@ export function setupMittr(context, {
   registerMittrQuotaRoutes(app, { service: quotaService });
   registerMittrWorkRoutes(app, { broker, ensureFreshSession, fetchImpl, logger });
   registerMittrIntegrationsRoutes(app, { express, broker, ensureFreshSession, fetchImpl, logger });
+  const registry = createMittrActionRegistry({ control });
+  registerMittrControlRoutes(app, { express, registry });
   const unregisterDeepLink = host?.deepLinks?.register({
     host: 'auth',
     // Either way the window is brought forward and re-reads status, so a

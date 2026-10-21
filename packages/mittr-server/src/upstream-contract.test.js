@@ -770,6 +770,20 @@ const checks = {
     }
     assert.ok(lists.control.some(({ action }) => action === 'session.list') && lists.web.some(({ action }) => action === 'browser.open'), 'the definitions no longer hold session.list and browser.open');
 
+    const { createMittrActionRegistry } = await import('./mittr/tools/registry.js');
+    const registry = createMittrActionRegistry({ control: { definitions: () => lists } });
+    registry.defineTool({ name: 'contract_probe', description: 'probe', parameters: { type: 'object' } });
+    for (const { action } of [...lists.control, ...lists.web]) {
+      assert.throws(() => registry.register({ action, tool: 'contract_probe', title: 'T', description: 'D', effect: 'read', execute: async () => ({}) }), /is an upstream action/, `a Mittr action could take upstream's ${action}`);
+    }
+    const toolsDir = path.join(repoRoot, 'packages/mittr-server/src/mittr/tools');
+    const mittrActions = fs.readdirSync(toolsDir)
+      .filter((name) => name.endsWith('.js') && !name.endsWith('.test.js'))
+      .flatMap((name) => [...fs.readFileSync(path.join(toolsDir, name), 'utf8').matchAll(/\baction: '([^']+)'/g)].map((match) => match[1]));
+    for (const action of mittrActions) {
+      assert.ok(!actions.OPENCHAMBER_ALL_ACTIONS.includes(action), `the Mittr action ${action} is an upstream action name`);
+    }
+
     const screenshots = await importUpstream('packages/web/server/lib/openchamber-control/screenshots.js');
     assert.equal(screenshots.SCREENSHOT_DIRECTORY, path.join('.openchamber', 'screenshots'));
     const directory = tempDir(t, 'contract-shots-');
@@ -783,6 +797,11 @@ const checks = {
     const relative = '.openchamber/screenshots/before-fix-2026-10-21T01-02-03-456.png';
     assert.deepEqual(written, { path: relative, absolutePath: path.join(directory, relative) }, 'writeScreenshot no longer answers the project-relative and absolute paths it wrote');
     assert.equal(fs.readFileSync(written.absolutePath, 'utf8'), 'acme');
+
+    const routes = source('packages/web/server/lib/openchamber-control/routes.js');
+    has(routes, /req\.once\('aborted', abortOnDisconnect\);\s*res\.once\('close', abortOnDisconnect\);/, 'the control route no longer aborts the action when the request closes');
+    has(routes, /\.\.\.\(controlError\.partial === true \? \{\s*partial: true,\s*partialAction: controlError\.partialAction,\s*sessionId: controlError\.sessionId,\s*directory: controlError\.directory,\s*\} : \{\}\),/, 'the control route no longer answers the partial-result fields');
+    has(source('packages/web/server/lib/openchamber-control/error.js'), /Number\(error\?\.statusCode\) \|\| Number\(error\?\.status\) \|\| fallbackStatus/, 'asControlError no longer takes the status from statusCode, then status');
   },
 
   'mcp-user-layers': (t) => {
