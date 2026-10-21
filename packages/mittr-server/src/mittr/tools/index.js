@@ -13,6 +13,7 @@ import { createComputerControl, createLaunchApp, resolveCuaDriver } from './comp
 import { materializeToolsPlugin, toolsFragment, toolsPluginDir, toolsPluginSource } from './plugin-source.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
 import { CAPTURE_TOOL } from './screenshots.js';
+import { registerWorkActions } from './work-lookup.js';
 
 export const CHROME_CLOSE_TIMEOUT_MS = 3_000;
 
@@ -122,6 +123,7 @@ export function setupMittrTools(context, {
     available: () => chromeControl.available && offered[MITTR_TOOLS.chrome](),
     doTask: () => stepper !== null && signedIn(),
   });
+  registerWorkActions(registry, platform ?? {});
   const switchedOn = {
     [MITTR_TOOLS.computer]: ({ tools }) => tools.computer !== false,
     [MITTR_TOOLS.chrome]: ({ tools }) => tools.chrome !== false,

@@ -22,27 +22,9 @@ const recordingLogger = () => {
   return { lines, log: record, warn: record, error: record };
 };
 
-const ALL_DRIVERS = { computer: () => '/r/cua-driver/cua-driver', chrome: () => '/r/agent-browser/agent-browser', chromePath: () => CHROME_EXECUTABLE };
+const CARD = { key: 'MRKB-1', summary: 'Pay with PromptPay', statusName: 'In Progress' };
 
-const registerFakeTools = (registry, { hang } = {}) => {
-  const runs = [];
-  for (const [name, action] of [[MITTR_TOOLS.work, 'jira.get_issue']]) {
-    registry.defineTool({ name, description: `${name} description`, parameters: { value: { type: 'string' } } });
-    registry.register({
-      action,
-      tool: name,
-      title: action,
-      description: `${action} description`,
-      effect: 'read',
-      execute: async (input, ctx) => {
-        runs.push({ action, ctx });
-        if (hang) await hang(ctx);
-        return { ran: action };
-      },
-    });
-  }
-  return runs;
-};
+const ALL_DRIVERS = { computer: () => '/r/cua-driver/cua-driver', chrome: () => '/r/agent-browser/agent-browser', chromePath: () => CHROME_EXECUTABLE };
 
 const setUp = async (t, {
   dataDir = tempDataDir(t),
@@ -51,12 +33,12 @@ const setUp = async (t, {
   signedIn = () => true,
   upstreamSettings = {},
   port = 4100,
-  hang,
+  hang = null,
   resolveSessionDirectory = async (id) => `/work/${id}`,
   chromeApprovals = NO_APPROVALS,
   enginePort = 4096,
   engineBase = null,
-  platform,
+  platform = fakePlatform((call) => (hang ? hang(call.signal) : json(CARD))).deps,
 } = {}) => {
   const registry = createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, execute: async () => ({}) } });
   const readyListeners = new Set();
@@ -108,7 +90,12 @@ const setUp = async (t, {
     platform,
     logger,
   });
-  const runs = registerFakeTools(registry, { hang });
+  const runs = [];
+  const execute = registry.execute.bind(registry);
+  registry.execute = (action, input, ctx) => {
+    runs.push({ action, ctx });
+    return execute(action, input, ctx);
+  };
   t.after(() => tools.dispose());
   const base = await listen(t, app);
   const call = async (body) => {
@@ -259,8 +246,8 @@ test('the callback refuses a tool that is switched off, and one this install can
     schemaVersion: 1, ok: false, action: 'list_apps', error: { message: 'The Computer tool is not available in this install', kind: 'runtime' },
   });
   assert.deepEqual(runs, []);
-  assert.deepEqual(await call({ tool: 'mittrcraft_work', input: { action: 'get_issue' }, sessionID: 's1' }), { schemaVersion: 1, ok: true, action: 'jira.get_issue', data: { ran: 'jira.get_issue' } });
-  assert.deepEqual(runs.map(({ ctx }) => [ctx.directory, ctx.sessionId, ctx.surface, ctx.tool, ctx.via, ctx.scope]), [['/work/s1', 's1', 'agent', 'mittrcraft_work', 'engine', undefined]]);
+  assert.deepEqual(await call({ tool: 'mittrcraft_work', input: { action: 'jira.get_issue', parameters: { key: 'MRKB-1' } }, sessionID: 's1' }), { schemaVersion: 1, ok: true, action: 'jira.get_issue', data: CARD });
+  assert.deepEqual(runs.map(({ action, ctx }) => [action, ctx.directory, ctx.sessionId, ctx.surface, ctx.tool, ctx.via, ctx.scope]), [['jira.get_issue', '/work/s1', 's1', 'agent', 'mittrcraft_work', 'engine', undefined]]);
 });
 
 test('the work tool answers a signed-out call with sign in first', async (t) => {
@@ -272,15 +259,15 @@ test('an aborted turn aborts its in-flight action', async (t) => {
   const started = deferred();
   const aborted = deferred();
   const { call, emit } = await setUp(t, {
-    hang: (ctx) => new Promise((_resolve, reject) => {
-      ctx.signal.addEventListener('abort', () => {
+    hang: (signal) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
         aborted.resolve(true);
         reject(new Error('aborted'));
       }, { once: true });
       started.resolve();
     }),
   });
-  const pending = call({ tool: 'mittrcraft_work', input: { action: 'get_issue' }, sessionID: 'ses_9' });
+  const pending = call({ tool: 'mittrcraft_work', input: { action: 'jira.get_issue', parameters: { key: 'MRKB-1' } }, sessionID: 'ses_9' });
   await started.promise;
 
   emit([{ type: 'session.idle', properties: { sessionID: 'ses_9' } }, { type: 'session.idle', properties: { sessionID: 'ses_other', aborted: true } }]);
@@ -295,7 +282,7 @@ test('each engine start gets the token minted before it, and the start before th
   const first = tools.engineEnv();
   assert.equal(first.MITTRCRAFT_TOOLS_URL, 'http://127.0.0.1:4100/mittr-tools/v1/call');
   fireReady();
-  assert.equal((await call({ tool: 'mittrcraft_work', input: { action: 'get_issue' } })).ok, true);
+  assert.equal((await call({ tool: 'mittrcraft_work', input: { action: 'jira.get_issue', parameters: { key: 'MRKB-1' } } })).ok, true);
   const second = tools.engineEnv();
   assert.notEqual(second.MITTRCRAFT_TOOLS_TOKEN, first.MITTRCRAFT_TOOLS_TOKEN);
   fireReady();

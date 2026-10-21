@@ -11,7 +11,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const sourceOf = (name) => fs.readFileSync(path.join(here, name), 'utf8');
 
 const PLATFORM_CALLERS = ['auth-routes.js', 'audit-routes.js', 'catalog-routes.js', 'quota-service.js'];
-const SHARED_CALLERS = ['work-routes.js', 'integrations-routes.js', 'tools/browser-stepper.js'];
+const SHARED_CALLERS = ['work-routes.js', 'integrations-routes.js', 'tools/browser-stepper.js', 'tools/work-lookup.js'];
 
 const productionModules = () => ['', 'tools'].flatMap((folder) => fs.readdirSync(path.join(here, folder))
   .filter((name) => name.endsWith('.js') && !name.endsWith('.test.js') && name !== 'test-helpers.js')
@@ -61,11 +61,12 @@ test('every platform call uses the one timeout', () => {
   }
 });
 
-test('the work, work tracking and browser step callers reach the platform only through callPlatform, which uses the one timeout unless told otherwise', () => {
+test('the work, work tracking, browser step and card lookup callers reach the platform only through callPlatform, which uses the one timeout unless told otherwise', () => {
   assert.match(sourceOf('platform.js'), /AbortSignal\.timeout\(timeoutMs\)/);
   assert.match(sourceOf('platform.js'), /timeoutMs = PLATFORM_TIMEOUT_MS/);
   assert.match(sourceOf('tools/browser-stepper.js'), /timeoutMs = BROWSER_STEP_TIMEOUT_MS/);
   assert.doesNotMatch(sourceOf('tools/browser-stepper.js'), /30_?000/);
+  assert.doesNotMatch(sourceOf('tools/work-lookup.js'), /timeoutMs|TIMEOUT_MS/);
   for (const name of SHARED_CALLERS) {
     const source = sourceOf(name);
     assert.match(source, /callPlatform\(fetchImpl,/, name);

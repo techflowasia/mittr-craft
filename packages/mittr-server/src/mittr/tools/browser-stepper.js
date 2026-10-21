@@ -1,6 +1,6 @@
-import { keyOf } from '../account-store.js';
-import { ACCOUNT_CHANGED, BROWSER_STEP_TIMEOUT_MS, callPlatform, platformErrorText } from '../platform.js';
+import { BROWSER_STEP_TIMEOUT_MS, callPlatform, platformErrorText } from '../platform.js';
 import { isRecord } from '../values.js';
+import { pinAccount, sessionKeyOf } from './account-guard.js';
 import { MittrToolError } from './registry.js';
 
 export const MAX_GOAL_CHARS = 4_000;
@@ -43,11 +43,6 @@ const readStep = (body) => {
   };
 };
 
-const sessionKeyOf = (session) => {
-  const userId = session?.subject?.userId;
-  return isText(userId) && userId ? keyOf(userId) : null;
-};
-
 export function createBrowserStepper({
   broker,
   ensureFreshSession,
@@ -60,12 +55,7 @@ export function createBrowserStepper({
   const endpoint = new URL(NEXT_STEP_ENDPOINT, broker.baseUrl).toString();
 
   const begin = () => {
-    const pinned = activeAccountKey();
-    const ensureSameAccount = (sessionKey = pinned) => {
-      if (activeAccountKey() !== pinned || sessionKey !== pinned || engineOnActiveHome() !== true) {
-        throw new MittrToolError(ACCOUNT_CHANGED, 409);
-      }
-    };
+    const ensureSameAccount = pinAccount({ activeAccountKey, engineOnActiveHome });
 
     const nextStep = async ({ goal, snapshot, history, values }, signal) => {
       ensureSameAccount();
