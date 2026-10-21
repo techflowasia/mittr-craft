@@ -1516,6 +1516,37 @@ const checks = {
     assert.ok(header >= 0 && header < cors, 'X-Robots-Tag is no longer set before the CORS middleware');
     assert.ok(robots >= 0 && robots < cors, 'robots.txt is no longer answered before the CORS middleware');
   },
+
+  'projects-store': () => {
+    const store = source('packages/ui/src/stores/useProjectsStore.ts');
+    has(store, /^export const useProjectsStore = create<ProjectsStore>\(\)\(/m, 'useProjectsStore is no longer a store created from ProjectsStore');
+    has(store, /^interface ProjectsStore \{[^}]*^ {2}projects: ProjectEntry\[\];$/ms, 'the projects store no longer exposes projects as ProjectEntry[]');
+    has(source('packages/ui/src/lib/api/types.ts'), /^export interface ProjectEntry \{\n {2}id: string;\n {2}path: string;\n {2}label\?: string;$/m, 'a project entry no longer has id, path and an optional label');
+  },
+
+  'open-external-url': () => {
+    has(source('packages/ui/src/lib/url.ts'), /^export const openExternalUrl = \(url: string\): Promise<boolean> =>\n {2}isExternalHttpUrl\(url\) \? openValidatedExternalUrl\(url\) : Promise\.resolve\(false\);$/m, 'openExternalUrl(url) no longer answers a Promise<boolean> and opens only web addresses');
+  },
+
+  'my-work-panel-ui': () => {
+    const dialog = source('packages/ui/src/components/ui/dialog.tsx');
+    for (const name of ['Dialog', 'DialogContent', 'DialogDescription', 'DialogHeader', 'DialogTitle']) {
+      has(dialog, new RegExp(`^export \\{[^}]*\\n {2}${name},$[^}]*\\}`, 'm'), `dialog no longer exports ${name}`);
+    }
+    has(source('packages/ui/src/components/ui/collapsible.tsx'), /^const Collapsible = BaseCollapsible\.Root;$/m, 'Collapsible is no longer the Base UI root, which takes defaultOpen and onOpenChange');
+    has(source('packages/ui/src/components/ui/collapsible.tsx'), /^export \{ Collapsible, CollapsibleTrigger, CollapsibleContent \};$/m);
+    has(source('packages/ui/src/components/ui/input.tsx'), /^export \{ Input \}$/m);
+    const button = source('packages/ui/src/components/ui/button.tsx');
+    has(button, /^\s+chip: cn\($/m, 'Button lost the chip variant');
+    has(button, /aria-pressed:bg-interactive-selection/, 'a pressed chip no longer wears the selection colour');
+    has(button, /^\s+outline:$/m, 'Button lost the outline variant');
+    has(button, /^\s+sm: "/m, 'Button lost the sm size');
+    const sprite = source('packages/ui/src/components/icon/sprite.ts');
+    for (const name of ['briefcase', 'search', 'refresh', 'loader-4', 'error-warning', 'arrow-right-s', 'task', 'stack', 'play', 'folder']) {
+      has(sprite, new RegExp(`^ {2}"${name}": `, 'm'), `the ${name} icon is gone`);
+    }
+    has(source('packages/ui/src/lib/utils.ts'), /^export function formatDirectoryName\(path: string \| null \| undefined, homeDirectory\?: string \| null\): string \{$/m, 'formatDirectoryName(path) changed');
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {

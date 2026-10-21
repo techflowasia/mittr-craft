@@ -517,6 +517,28 @@ export const UPSTREAM_CONTRACT = [
     files: ['packages/web/server/index.js'],
     why: "hosted MittrCraft stays out of search engines through upstream's own header and robots.txt",
   },
+  {
+    id: 'projects-store',
+    files: ['packages/ui/src/stores/useProjectsStore.ts', 'packages/ui/src/lib/api/types.ts'],
+    why: 'My work lists the projects to start work in from useProjectsStore, whose projects each carry an id, a path and an optional label',
+  },
+  {
+    id: 'open-external-url',
+    files: ['packages/ui/src/lib/url.ts'],
+    why: 'a My work card opens its Jira or Plane page through openExternalUrl(url), which answers a Promise<boolean> and opens only web addresses',
+  },
+  {
+    id: 'my-work-panel-ui',
+    files: [
+      'packages/ui/src/components/ui/dialog.tsx',
+      'packages/ui/src/components/ui/collapsible.tsx',
+      'packages/ui/src/components/ui/input.tsx',
+      'packages/ui/src/components/ui/button.tsx',
+      'packages/ui/src/components/icon/sprite.ts',
+      'packages/ui/src/lib/utils.ts',
+    ],
+    why: "the My work panel is a Dialog with a header, title and description; its state groups fold with Collapsible (defaultOpen, onOpenChange), its title filter is an Input, its source filters are chip Buttons pressed with aria-pressed, its actions are outline sm Buttons, it draws the briefcase, search, refresh, loader-4, error-warning, arrow-right-s, task, stack, play and folder icons, and it names a project without a label by formatDirectoryName(path)",
+  },
 ];
 
 // The dictionaries are TypeScript with extensionless imports, which only Bun

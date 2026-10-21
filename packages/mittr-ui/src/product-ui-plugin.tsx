@@ -1,7 +1,6 @@
 import React from 'react';
 
 import { registerProductUiPlugin } from '../../ui/src/lib/product-plugins';
-import { MittrAccountMenu } from './accounts/MittrAccountMenu';
 import { AboutSettingsSignOut, SignOutButton } from './accounts/SignOutButton';
 import { MittrCraftLogo } from './MittrCraftLogo';
 import { OtherProvidersSwitch } from './providers/OtherProvidersSwitch';
@@ -11,11 +10,11 @@ import { QuotaRetryButton } from './quota/QuotaRetryButton';
 import { mittrMessageError } from './quota/quotaError';
 import './quota/registerMittrUsage';
 import { SelectMittrUsage } from './quota/SelectMittrUsage';
+import { SIDEBAR_FOOTER } from './sidebarFooter';
 import { MittrSignInGate } from './sign-in/MittrSignInGate';
 import { strings } from './strings/en';
 import { mittrT } from './strings/mittrT';
 import { AdSignIn } from './ui-auth/AdSignIn';
-import { SidebarProfile } from './ui-auth/SidebarProfile';
 
 export function MittrRoot({ children }: { children: React.ReactNode }): React.ReactNode {
   return (
@@ -39,7 +38,7 @@ registerProductUiPlugin({
   rootWrapper: MittrRoot,
   slots: {
     'providers-page': OtherProvidersSwitch,
-    'sidebar-footer': [MittrAccountMenu, SidebarProfile],
+    'sidebar-footer': SIDEBAR_FOOTER,
     'session-auth-methods': AdSignIn,
     'about-dialog': SignOutButton,
     'about-settings': AboutSettingsSignOut,

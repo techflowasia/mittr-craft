@@ -6,9 +6,13 @@ import { ProviderLogo } from '../../ui/src/components/ui/ProviderLogo';
 import { I18nProvider } from '../../ui/src/lib/i18n';
 import { dict as enDict } from '../../ui/src/lib/i18n/messages/en';
 import { overlayDictionary, ProductSlot, remoteModelCatalogAllowed, translateProductSessionAuthDescription, useProductModelPicker } from '../../ui/src/lib/product-plugins';
+import { MittrAccountMenu } from './accounts/MittrAccountMenu';
 import './product-ui-plugin';
+import { SIDEBAR_FOOTER } from './sidebarFooter';
 import { strings } from './strings/en';
 import { mittrT } from './strings/mittrT';
+import { SidebarProfile } from './ui-auth/SidebarProfile';
+import { MyWorkFooterItem } from './work/MyWorkButton';
 
 const MISLEADING = [
   'an MittrCraft',
@@ -77,6 +81,15 @@ describe('MittrCraft account controls', () => {
 
   test('the sidebar footer carries the account menu', () => {
     expect(slotHtml('sidebar-footer')).toContain(`aria-label="${mittrT('mittr.accounts.menu.label')}"`);
+  });
+
+  test('the footer slot holds the account menu, then My work', () => {
+    expect(SIDEBAR_FOOTER).toEqual([MittrAccountMenu, MyWorkFooterItem, SidebarProfile]);
+    const html = slotHtml('sidebar-footer');
+    const accounts = html.indexOf(`aria-label="${mittrT('mittr.accounts.menu.label')}"`);
+    const myWork = html.indexOf(`aria-label="${mittrT('mittr.work.open')}"`);
+    expect(accounts).toBeGreaterThanOrEqual(0);
+    expect(myWork).toBeGreaterThan(accounts);
   });
 
   test('the About dialog and the About page carry a sign-out button', () => {
