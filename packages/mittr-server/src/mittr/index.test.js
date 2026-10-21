@@ -407,6 +407,72 @@ test('a sign-in before the engine\'s first ready gives one catalog request', asy
   assert.equal(catalogCalls(fetchImpl).length, 1);
 });
 
+test('on a fresh install, a first sign-in whose catalog read fails is read once more at the next ready', async (t) => {
+  let down = true;
+  const fetchImpl = platform({ catalog: () => (down ? new Response('down', { status: 503 }) : json(CATALOG_A)) });
+  const { engine, dataHomeOf, restartOnto } = engineThatRestartsOntoTheAccount();
+  const { mittr, call } = await setUp(t, { engine, fetchImpl, engineDataHome: dataHomeOf });
+  restartOnto(mittr);
+  engine.launchedDataHome = dataHomeOf(mittr.engineHome());
+  engine.fireReady();
+
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(catalogCalls(fetchImpl).length, 1);
+
+  down = false;
+  engine.fireReady();
+  await until(() => catalogCalls(fetchImpl).length === 2);
+  await until(async () => (await mittrModelsOf(mittr)).length === 2);
+  engine.fireReady();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(catalogCalls(fetchImpl).length, 2);
+});
+
+test('a startup sync never takes another account\'s sync as its own', async (t) => {
+  const fetchImpl = platform({ sessions: [session, sessionB] });
+  const { engine, dataHomeOf } = engineThatRestartsOntoTheAccount();
+  const { mittr, call } = await setUp(t, { engine, fetchImpl, engineDataHome: dataHomeOf });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  engine.launchedDataHome = dataHomeOf(mittr.engineHome());
+  const held = deferred();
+  engine.onRestart = () => {
+    engine.launchedDataHome = dataHomeOf(mittr.engineHome());
+    engine.fireReady();
+    return held.promise;
+  };
+  const added = signIn(call);
+  await until(() => catalogCalls(fetchImpl).length === 2);
+  assert.deepEqual(catalogCalls(fetchImpl).map((request) => request.headers.authorization), ['Bearer at-1', 'Bearer at-b']);
+  held.resolve();
+  assert.equal((await added).status, 200);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(catalogCalls(fetchImpl).slice(1).every((request) => request.headers.authorization === 'Bearer at-b'));
+});
+
+test('an engine that becomes ready twice while a sign-in reads the catalog adds no read for that account', async (t) => {
+  const answered = deferred();
+  const fetchImpl = platform({ catalog: async () => { await answered.promise; return json(CATALOG_A); } });
+  const { engine, dataHomeOf } = engineThatRestartsOntoTheAccount();
+  const { mittr, call } = await setUp(t, { engine, fetchImpl, engineDataHome: dataHomeOf });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+
+  engine.launchedDataHome = dataHomeOf(mittr.engineHome());
+  engine.fireReady();
+  engine.fireReady();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  answered.resolve();
+  await until(async () => (await mittrModelsOf(mittr)).length === 2);
+  engine.fireReady();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(catalogCalls(fetchImpl).length, 1);
+});
+
 test('after a first sign-in on a fresh install, signing in again and adding another account each still read the catalog', async (t) => {
   const fetchImpl = platform({ sessions: [session, session, sessionB] });
   const { engine, dataHomeOf, restartOnto } = engineThatRestartsOntoTheAccount();

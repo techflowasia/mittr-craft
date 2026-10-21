@@ -241,6 +241,9 @@ export function setupMittr(context, {
   const syncAfterAccountChange = () => {
     const outcome = syncCatalog();
     accountSync = { key: activeAccountKey(), outcome };
+    void outcome.then((result) => {
+      if (result?.status !== 200 && accountSync?.outcome === outcome) startupSyncDone = false;
+    });
     return outcome;
   };
   const onRefusal = createModelRefusalHandler({
