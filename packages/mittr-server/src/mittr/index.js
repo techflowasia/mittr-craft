@@ -11,6 +11,7 @@ import { resolveBroker } from './broker.js';
 import { catalogCachePath, createCatalogCache } from './catalog-cache.js';
 import { registerMittrCatalogRoutes } from './catalog-routes.js';
 import { syncDefaultModel } from './default-model.js';
+import { createEnablementStore } from './enablement.js';
 import { ensureMittrCredential, forgetMittrCredential } from './engine-credential.js';
 import { identityFragment, identityPluginDir, materializeIdentityPlugin } from './identity.js';
 import { mintLocalToken } from './local-token.js';
@@ -213,10 +214,13 @@ export function setupMittr(context, {
   });
   registerAnsweredByRoute(app, { log: answeredByLog });
 
+  const enablement = createEnablementStore({ filePath: path.join(dataDir, 'mittr-enablement.json') });
   const catalog = registerMittrCatalogRoutes(app, {
+    express,
     broker,
     ensureFreshSession,
     cache: activeCatalogCache,
+    enablement,
     onModels: (items) => onModels(items, { listKnown: true }),
     fetchImpl,
     logger,

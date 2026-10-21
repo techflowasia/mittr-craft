@@ -31,6 +31,16 @@ const isCachedCatalog = (value) => value !== null && typeof value === 'object'
   && Number.isInteger(value.bundleVersion)
   && CATALOG_COLLECTIONS.every((name) => isCollection(value[name]));
 
+const KEPT_COLLECTIONS = ['mcp', 'skills'];
+
+export const keepConfigured = (previous, next) => {
+  const kept = { ...next };
+  for (const name of KEPT_COLLECTIONS) {
+    if (!next[name].configured && previous?.[name]?.configured) kept[name] = previous[name];
+  }
+  return kept;
+};
+
 /**
  * The last catalog Mittr sent one account, so its models survive a network
  * blip or an offline start. It does not make Mittr work offline: without the

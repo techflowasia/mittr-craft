@@ -1,6 +1,9 @@
+import { keepConfigured } from './catalog-cache.js';
 import { parseCatalog } from './catalog.js';
+import { jsonBody } from './json-body.js';
 import { CANNOT_REACH_MITTR, PLATFORM_TIMEOUT_MS } from './platform.js';
 import { MITTR_PROVIDER_ID } from './policies.js';
+import { isRecord } from './values.js';
 
 // The platform's desktop catalog: the organisation's roster for the person
 // the token belongs to, never anyone's personal agents. No `/api` prefix: on
@@ -16,6 +19,19 @@ const CANNOT_STORE = 'Cannot store the Mittr catalog on this machine';
 const REFUSAL_CODE = /^[a-z][a-z0-9_]{0,63}$/;
 
 const EMPTY_COLLECTION = { configured: false, items: [] };
+
+const SWITCHABLE_KINDS = ['mcp', 'skills'];
+const BAD_ENABLEMENT = 'kind must be mcp or skills, and name is required';
+const ENABLEMENT_BODY_LIMIT = '8kb';
+
+const withEnablement = (collection, kind, enablement) => ({
+  configured: collection.configured,
+  items: collection.items.map((item) => {
+    if (!isRecord(item)) return item;
+    const enabled = kind === 'models' || enablement.isEnabled(kind, String(item.name ?? item.alias ?? ''));
+    return { ...item, enabled };
+  }),
+});
 
 const refusalCodeOf = async (response) => {
   try {
@@ -47,10 +63,14 @@ const refusalCodeOf = async (response) => {
  * the sync ends without one, with the models applied a turn later.
  */
 export function registerMittrCatalogRoutes(app, {
+  express,
   broker,
   ensureFreshSession,
   cache,
+  enablement,
   onModels,
+  onCatalog = async () => {},
+  onEnablementChange = async () => {},
   fetchImpl = (...args) => fetch(...args),
   logger = console,
 }) {
@@ -87,8 +107,9 @@ export function registerMittrCatalogRoutes(app, {
       return failure(502, `Mittr served an unusable catalog: ${error?.message ?? error}`);
     }
 
+    const stored = keepConfigured(target.read(), catalog);
     try {
-      target.write(catalog);
+      target.write(stored);
     } catch (error) {
       // Applied only once stored: the cache is what the next start, the
       // catalog route and the shim's model list all read.
@@ -101,11 +122,18 @@ export function registerMittrCatalogRoutes(app, {
       await new Promise((resolve) => { setImmediate(resolve); });
     }
 
-    if (catalog.models.configured && cache() === target) {
+    if (cache() === target) {
+      if (stored.models.configured) {
+        try {
+          await onModels(stored.models.items);
+        } catch (error) {
+          logger.warn('[mittr] applying the Mittr models failed:', error?.message ?? error);
+        }
+      }
       try {
-        await onModels(catalog.models.items);
+        await onCatalog(stored);
       } catch (error) {
-        logger.warn('[mittr] applying the Mittr models failed:', error?.message ?? error);
+        logger.warn('[mittr] applying the Mittr catalog failed:', error?.message ?? error);
       }
     }
     return { status: 200, body: { bundleVersion: catalog.bundleVersion } };
@@ -135,10 +163,29 @@ export function registerMittrCatalogRoutes(app, {
     return res.json({
       providerId: MITTR_PROVIDER_ID,
       bundleVersion: catalog?.bundleVersion ?? null,
-      models: catalog?.models ?? EMPTY_COLLECTION,
-      mcp: catalog?.mcp ?? EMPTY_COLLECTION,
-      skills: catalog?.skills ?? EMPTY_COLLECTION,
+      models: withEnablement(catalog?.models ?? EMPTY_COLLECTION, 'models', enablement),
+      mcp: withEnablement(catalog?.mcp ?? EMPTY_COLLECTION, 'mcp', enablement),
+      skills: withEnablement(catalog?.skills ?? EMPTY_COLLECTION, 'skills', enablement),
     });
+  });
+
+  app.put('/api/mittr/catalog/enablement', jsonBody(express, { limit: ENABLEMENT_BODY_LIMIT }), async (req, res) => {
+    const { kind, name, enabled } = isRecord(req.body) ? req.body : {};
+    if (typeof kind !== 'string' || !SWITCHABLE_KINDS.includes(kind) || typeof name !== 'string' || !name) {
+      return res.status(400).json({ error: BAD_ENABLEMENT });
+    }
+    try {
+      enablement.setEnabled(kind, name, enabled !== false);
+    } catch (error) {
+      logger.error('[mittr] could not store the catalog enablement:', error?.message ?? error);
+      return res.status(500).json({ error: 'Cannot store the choice on this machine' });
+    }
+    try {
+      await onEnablementChange(kind);
+    } catch (error) {
+      logger.warn('[mittr] applying the catalog enablement failed:', error?.message ?? error);
+    }
+    return res.json({ ok: true });
   });
 
   return { sync, syncStored };

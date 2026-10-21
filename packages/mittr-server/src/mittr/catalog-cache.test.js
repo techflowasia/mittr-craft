@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { catalogCachePath, createCatalogCache } from './catalog-cache.js';
+import { catalogCachePath, createCatalogCache, keepConfigured } from './catalog-cache.js';
 import { tempDataDir } from './test-helpers.js';
 
 const catalog = {
@@ -103,4 +103,40 @@ test('a failed write leaves the last catalog whole and throws', (t) => {
   assert.throws(() => cache.write({ ...catalog, bundleVersion: 8, models: { configured: true, items: [{ alias: 1n }] } }));
   assert.equal(cache.read().bundleVersion, 7);
   assert.deepEqual(fs.readdirSync(dataDir), ['mittr-catalog.json']);
+});
+
+const collection = (items, configured = true) => ({ configured, items });
+
+test('keepConfigured takes the previous mcp and skills for a next collection that is not configured', () => {
+  const previous = { ...catalog, mcp: collection([{ name: 'law' }]), skills: collection([{ name: 'notes' }]) };
+  const next = { ...catalog, bundleVersion: 8 };
+  const kept = keepConfigured(previous, next);
+  assert.deepEqual(kept.mcp, collection([{ name: 'law' }]));
+  assert.deepEqual(kept.skills, collection([{ name: 'notes' }]));
+  assert.equal(kept.bundleVersion, 8);
+  assert.deepEqual(kept.models, next.models);
+});
+
+test('keepConfigured lets a configured next collection win, empty included', () => {
+  const previous = { ...catalog, mcp: collection([{ name: 'law' }]), skills: collection([{ name: 'notes' }]) };
+  const next = { ...catalog, bundleVersion: 8, mcp: collection([]), skills: collection([{ name: 'other' }]) };
+  const kept = keepConfigured(previous, next);
+  assert.deepEqual(kept.mcp, collection([]));
+  assert.deepEqual(kept.skills, collection([{ name: 'other' }]));
+});
+
+test('keepConfigured has nothing to keep without a previous catalog or a configured previous collection', () => {
+  const next = { ...catalog, bundleVersion: 8 };
+  assert.deepEqual(keepConfigured(null, next), next);
+  assert.deepEqual(keepConfigured({ ...catalog }, next), next);
+});
+
+test('keepConfigured leaves models and knowledge to the next catalog and changes neither input', () => {
+  const previous = { ...catalog, models: collection([{ alias: 'old' }]), knowledge: collection([{ id: 'k' }]), skills: collection([{ name: 'notes' }]) };
+  const next = { ...catalog, bundleVersion: 8 };
+  const before = structuredClone({ previous, next });
+  const kept = keepConfigured(previous, next);
+  assert.deepEqual(kept.models, next.models);
+  assert.deepEqual(kept.knowledge, next.knowledge);
+  assert.deepEqual({ previous, next }, before);
 });

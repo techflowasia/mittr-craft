@@ -276,6 +276,19 @@ test('a first sync that finds the platform unreachable is tried again at the nex
   assert.equal(catalogCalls(fetchImpl).length, 2);
 });
 
+test('the catalog routes keep a disable in the data dir of this machine, for any account', async (t) => {
+  const dataDir = tempDataDir(t);
+  const { call } = await setUp(t, { dataDir, fetchImpl: platform() });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogFiles(dataDir).length === 1);
+
+  assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'skills', name: 'card-analysis', enabled: false }), { status: 200, body: { ok: true } });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'mittr-enablement.json'), 'utf8')).skills['card-analysis'].disabled, true);
+  const { body } = await call('GET', '/api/mittr/catalog');
+  assert.deepEqual(body.models.items.map((item) => item.enabled), [true, true]);
+  assert.deepEqual((await call('PUT', '/api/mittr/catalog/enablement', { kind: 'models', name: 'a1' })).status, 400);
+});
+
 test('only the first ready starts the catalog sync', async (t) => {
   const dataDir = tempDataDir(t);
   const first = await setUp(t, { dataDir, fetchImpl: platform() });
