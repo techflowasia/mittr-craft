@@ -1,5 +1,5 @@
 import { INVALID_BODY, jsonBody } from './json-body.js';
-import { CANNOT_REACH_MITTR, PLATFORM_TIMED_OUT, PLATFORM_TIMEOUT_MS, isTimeout, platformErrorText } from './platform.js';
+import { callPlatform, platformErrorText } from './platform.js';
 import { isRecord } from './values.js';
 
 const INTEGRATIONS_ENDPOINT = '/api/integrations';
@@ -79,25 +79,8 @@ export function registerMittrIntegrationsRoutes(app, {
         const plan = prepare(req, userId);
         if (plan.refusal) return answer(res, plan.refusal.status, plan.refusal.error);
 
-        const headers = { authorization: `Bearer ${session.accessToken}` };
-        if (plan.body) headers['content-type'] = 'application/json';
-
-        let response;
-        let body = null;
-        try {
-          response = await fetchImpl(urlOf(subpath), {
-            method,
-            headers,
-            body: plan.body ? JSON.stringify(plan.body) : undefined,
-            signal: AbortSignal.timeout(PLATFORM_TIMEOUT_MS),
-          });
-          body = await response.json().catch((error) => {
-            if (isTimeout(error)) throw error;
-            return null;
-          });
-        } catch (error) {
-          return isTimeout(error) ? failed(res, 504, PLATFORM_TIMED_OUT) : failed(res, 502, CANNOT_REACH_MITTR);
-        }
+        const { response, body, failure } = await callPlatform(fetchImpl, urlOf(subpath), { accessToken: session.accessToken, method, body: plan.body });
+        if (failure) return failed(res, failure.status, failure.error);
 
         if (!response.ok) return answer(res, response.status, platformErrorText(body) ?? `HTTP ${response.status}`);
         return res.json(plan.reply(body, userId));

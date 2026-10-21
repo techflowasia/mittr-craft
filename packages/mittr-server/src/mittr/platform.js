@@ -19,3 +19,24 @@ export const platformErrorText = (body) => {
 };
 
 export const isTimeout = (error) => error?.name === 'TimeoutError' || error?.name === 'AbortError';
+
+export const callPlatform = async (fetchImpl, url, { accessToken, method = 'GET', body } = {}) => {
+  const headers = { authorization: `Bearer ${accessToken}` };
+  if (body) headers['content-type'] = 'application/json';
+  try {
+    const response = await fetchImpl(url, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(PLATFORM_TIMEOUT_MS),
+    });
+    const reply = await response.json().catch((error) => {
+      if (isTimeout(error)) throw error;
+      return null;
+    });
+    return { response, body: reply };
+  } catch (error) {
+    if (isTimeout(error)) return { failure: { status: 504, error: PLATFORM_TIMED_OUT } };
+    return { failure: { status: 502, error: CANNOT_REACH_MITTR }, cause: error };
+  }
+};

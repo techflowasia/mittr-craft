@@ -4,12 +4,14 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { CANNOT_REACH_MITTR, PLATFORM_TIMED_OUT, PLATFORM_TIMEOUT_MS, READ_FAILED, isTimeout, platformErrorText } from './platform.js';
+import { CANNOT_REACH_MITTR, PLATFORM_TIMED_OUT, PLATFORM_TIMEOUT_MS, READ_FAILED, callPlatform, isTimeout, platformErrorText } from './platform.js';
+import { fakeFetch, json } from './test-helpers.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sourceOf = (name) => fs.readFileSync(path.join(here, name), 'utf8');
 
-const PLATFORM_CALLERS = ['auth-routes.js', 'audit-routes.js', 'catalog-routes.js', 'quota-service.js', 'work-routes.js', 'integrations-routes.js'];
+const PLATFORM_CALLERS = ['auth-routes.js', 'audit-routes.js', 'catalog-routes.js', 'quota-service.js'];
+const SHARED_CALLERS = ['work-routes.js', 'integrations-routes.js'];
 
 const productionModules = () => fs.readdirSync(here)
   .filter((name) => name.endsWith('.js') && !name.endsWith('.test.js') && name !== 'test-helpers.js');
@@ -53,6 +55,44 @@ test('every platform call uses the one timeout', () => {
     }
     assert.match(source, /import \{[^}]*PLATFORM_TIMEOUT_MS[^}]*\} from '\.\/platform\.js'/, name);
   }
+});
+
+test('the work and work tracking routes reach the platform only through callPlatform, which uses the one timeout', () => {
+  assert.match(sourceOf('platform.js'), /AbortSignal\.timeout\(PLATFORM_TIMEOUT_MS\)/);
+  for (const name of SHARED_CALLERS) {
+    const source = sourceOf(name);
+    assert.match(source, /callPlatform\(fetchImpl,/, name);
+    assert.doesNotMatch(source, /AbortSignal\.timeout|fetchImpl\(/, name);
+  }
+});
+
+test('callPlatform sends the token, a JSON body when there is one and the one timeout, and reads the reply', async () => {
+  const fetchImpl = fakeFetch(() => json({ ok: true }));
+  const got = await callPlatform(fetchImpl, 'https://p.example/x', { accessToken: 'at-1', method: 'PUT', body: { a: 1 } });
+  assert.equal(got.response.status, 200);
+  assert.deepEqual(got.body, { ok: true });
+  const [call] = fetchImpl.calls;
+  assert.equal(call.method, 'PUT');
+  assert.deepEqual(call.headers, { authorization: 'Bearer at-1', 'content-type': 'application/json' });
+  assert.deepEqual(call.body, { a: 1 });
+  assert.ok(call.signal);
+
+  const plain = fakeFetch(() => new Response('not json', { status: 200 }));
+  const read = await callPlatform(plain, 'https://p.example/x', { accessToken: 'at-1' });
+  assert.equal(read.body, null);
+  assert.equal(plain.calls[0].method, 'GET');
+  assert.deepEqual(plain.calls[0].headers, { authorization: 'Bearer at-1' });
+  assert.equal(plain.calls[0].body, undefined);
+});
+
+test('callPlatform answers 504 for a timeout and 502 for anything else, never throwing', async () => {
+  const slow = await callPlatform(async () => { throw new DOMException('slow', 'TimeoutError'); }, 'https://p.example/x', { accessToken: 'at' });
+  assert.deepEqual(slow, { failure: { status: 504, error: PLATFORM_TIMED_OUT } });
+  const down = await callPlatform(async () => { throw new TypeError('fetch failed'); }, 'https://p.example/x', { accessToken: 'at' });
+  assert.deepEqual(down.failure, { status: 502, error: CANNOT_REACH_MITTR });
+  assert.equal(down.cause.name, 'TypeError');
+  const slowBody = await callPlatform(async () => ({ status: 200, ok: true, json: async () => { throw new DOMException('slow', 'TimeoutError'); } }), 'https://p.example/x', { accessToken: 'at' });
+  assert.deepEqual(slowBody, { failure: { status: 504, error: PLATFORM_TIMED_OUT } });
 });
 
 test('no module defines its own platform timeout or platform messages', () => {

@@ -1,4 +1,4 @@
-import { CANNOT_REACH_MITTR, PLATFORM_TIMED_OUT, PLATFORM_TIMEOUT_MS, isTimeout, platformErrorText } from './platform.js';
+import { callPlatform, platformErrorText } from './platform.js';
 
 const WORK_ENDPOINT = '/desktop/work';
 
@@ -7,14 +7,6 @@ const PLATFORM_UNAVAILABLE = 'Mittr platform is unavailable';
 const LOAD_FAILED = 'Failed to load work items';
 
 const NOT_CONFIGURED = { configured: false, items: [], userId: null };
-
-const refusalTextOf = async (response) => {
-  try {
-    return platformErrorText(await response.json()) ?? NOT_AUTHORIZED;
-  } catch {
-    return NOT_AUTHORIZED;
-  }
-};
 
 export function registerMittrWorkRoutes(app, {
   broker,
@@ -33,31 +25,18 @@ export function registerMittrWorkRoutes(app, {
       if (!session?.accessToken) return res.json(NOT_CONFIGURED);
       const userId = session.subject?.userId ?? null;
 
-      let response;
-      try {
-        response = await fetchImpl(endpoint, {
-          method: 'GET',
-          headers: { authorization: `Bearer ${session.accessToken}` },
-          signal: AbortSignal.timeout(PLATFORM_TIMEOUT_MS),
-        });
-      } catch (error) {
-        if (isTimeout(error)) return failure(res, 504, PLATFORM_TIMED_OUT);
-        logger.error('[mittr] work items could not be read:', error?.name ?? 'error');
-        return failure(res, 502, CANNOT_REACH_MITTR);
+      const { response, body, failure: unreached, cause } = await callPlatform(fetchImpl, endpoint, { accessToken: session.accessToken });
+      if (unreached) {
+        if (unreached.status === 502) logger.error('[mittr] work items could not be read:', cause?.name ?? 'error');
+        return failure(res, unreached.status, unreached.error);
       }
 
       if (response.status === 401 || response.status === 403) {
-        return failure(res, response.status, await refusalTextOf(response));
+        return failure(res, response.status, platformErrorText(body) ?? NOT_AUTHORIZED);
       }
       if (response.status >= 500) return failure(res, 503, PLATFORM_UNAVAILABLE);
       if (!response.ok) return failure(res, response.status, LOAD_FAILED);
 
-      let body = null;
-      try {
-        body = await response.json();
-      } catch (error) {
-        if (isTimeout(error)) return failure(res, 504, PLATFORM_TIMED_OUT);
-      }
       return res.json({ configured: true, items: Array.isArray(body?.items) ? body.items : [], userId });
     } catch (error) {
       logger.error('[mittr] work items could not be loaded:', error?.name ?? 'error');
