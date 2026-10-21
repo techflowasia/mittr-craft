@@ -228,6 +228,11 @@ export const UPSTREAM_CONTRACT = [
     why: "plugins get the user's OpenCode config as opencode.userConfig: CONFIG_FILE under OPENCODE_CONFIG_DIR (else XDG_CONFIG_HOME/opencode), read with readConfigFile (a missing file is {}, a broken one throws) and written with writeConfig (other keys and comments kept, a broken file never overwritten); the Mittr default model is kept there",
   },
   {
+    id: 'plugin-context-mcp-entity',
+    files: ['packages/web/server/lib/opencode/config-v2.js', 'packages/web/server/index.js'],
+    why: "the plugin context's opencode.mcpEntity is config-v2's toMcpEntity, unchanged: a v1 or v2 MCP entry becomes the v2 entry upstream writes (type local unless remote, enabled inverted into disabled, local command as strings, remote url, headers and snake_case oauth), so catalog connectors land in the engine's own shape without a copy of upstream's normaliser",
+  },
+  {
     id: 'engine-integration-connect-key',
     files: ['node_modules/@opencode/client/package.json'],
     why: 'the engine stores a provider key through POST /api/integration/{id}/connect/key with a { key } body and answers 204, or 404 until a config-defined provider is picked up; the Mittr credential is stored that way',

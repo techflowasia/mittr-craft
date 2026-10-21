@@ -728,6 +728,26 @@ const checks = {
     has(pluginContext(server), /opencode: \{[^]*?userConfig: \{\s*path: OPENCODE_USER_CONFIG_FILE,\s*read: \(\) => readOpenCodeConfigFile\(OPENCODE_USER_CONFIG_FILE\),\s*write: \(config\) => writeOpenCodeConfig\(config, OPENCODE_USER_CONFIG_FILE\),\s*\},/, 'the plugin context no longer hands plugins the user config as opencode.userConfig');
   },
 
+  'plugin-context-mcp-entity': async () => {
+    const server = source('packages/web/server/index.js');
+    has(server, /^import \{ toMcpEntity \} from '\.\/lib\/opencode\/config-v2\.js';$/m, 'index.js no longer imports toMcpEntity from config-v2');
+    has(pluginContext(server), /opencode: \{[^]*?mcpEntity: toMcpEntity,/, 'the plugin context no longer hands plugins toMcpEntity as opencode.mcpEntity');
+    has(source('packages/web/server/lib/opencode/config-v2.js'), /^export \{[^}]*\btoMcpEntity,/m, 'config-v2 no longer exports toMcpEntity');
+
+    const { toMcpEntity } = await importUpstream('packages/web/server/lib/opencode/config-v2.js');
+    assert.deepEqual(
+      toMcpEntity({ type: 'local', command: ['npx', '-y', 'acme-mcp'], environment: { ACME_KEY: 'k' }, enabled: false }),
+      { type: 'local', command: ['npx', '-y', 'acme-mcp'], environment: { ACME_KEY: 'k' }, disabled: true },
+      'a v1 local entry no longer becomes the v2 entry',
+    );
+    assert.deepEqual(
+      toMcpEntity({ type: 'remote', url: ' https://acme.example/mcp ', headers: { authorization: 'Bearer k' }, oauth: { clientId: 'c' } }),
+      { type: 'remote', url: 'https://acme.example/mcp', headers: { authorization: 'Bearer k' }, oauth: { client_id: 'c' } },
+      'a v1 remote entry no longer becomes the v2 entry',
+    );
+    assert.deepEqual(toMcpEntity({ command: ['acme'] }), { type: 'local', command: ['acme'] }, 'an entry without a type no longer defaults to local, which catalogMcpEntity guards against');
+  },
+
   'engine-integration-connect-key': () => {
     const dist = path.join(repoRoot, 'node_modules/@opencode/client/dist/chunks');
     const chunks = fs.readdirSync(dist).filter((name) => name.endsWith('.js')).map((name) => fs.readFileSync(path.join(dist, name), 'utf8'));

@@ -365,6 +365,10 @@
     {
       "hook": "ui-auth-client",
       "why": "A sign-in provider added at run time could open a UI session but not mint the client token a desktop app needs to stay signed in to a remote server, so the plugin context's uiAuth now hands plugins the remote clients store's createClient."
+    },
+    {
+      "hook": "server-plugins",
+      "why": "A downstream build turns catalog connector configs into the engine's own entry shape without copying upstream's normaliser, so the plugin context's opencode handle now carries config-v2's toMcpEntity as mcpEntity."
     }
   ],
   "packages/web/server/lib/enterprise-mode.js": [

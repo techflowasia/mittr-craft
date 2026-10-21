@@ -83,6 +83,7 @@ import { createBootstrapRuntime } from './lib/opencode/bootstrap-runtime.js';
 import { createSessionRuntime } from './lib/opencode/session-runtime.js';
 import { configureOpenCodeRuntimeProviders, resetOpenCodeRuntimeProviders } from './lib/small-model/client.js';
 import { configureOpenCodeCredentials, openCodeCredentialSource } from './lib/opencode/auth.js';
+import { toMcpEntity } from './lib/opencode/config-v2.js';
 import { createOpenCodeWatcherRuntime } from './lib/opencode/watcher.js';
 import { createSessionAssistRuntime } from './lib/session-assist/runtime.js';
 import { createSessionGoalRuntime } from './lib/session-goal/runtime.js';
@@ -2542,6 +2543,7 @@ async function main(options = {}) {
           read: () => readOpenCodeConfigFile(OPENCODE_USER_CONFIG_FILE),
           write: (config) => writeOpenCodeConfig(config, OPENCODE_USER_CONFIG_FILE),
         },
+        mcpEntity: toMcpEntity,
       },
       git: { remoteUrl: (directory) => getRemoteUrl(directory, 'origin') },
       managedConfig: { refresh: () => managedConfigRuntime.refreshManagedConfigFile() },
