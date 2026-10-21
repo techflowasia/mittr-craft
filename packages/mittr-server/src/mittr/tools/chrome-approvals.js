@@ -1,9 +1,13 @@
+import crypto from 'node:crypto';
+
 import { isRecord } from '../values.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
 
 export const CHROME_PERMISSION = MITTR_TOOLS.chrome;
 export const DECISION_WAIT_MS = 10_000;
 export const PENDING_POLL_MS = 5_000;
+export const DENY_RETRY_MS = 500;
+const EARLY_LIMIT = 64;
 const ENGINE_TIMEOUT_MS = 5_000;
 
 const CANCELLED = 'Cancelled while waiting for the user';
@@ -151,44 +155,101 @@ const savedFor = (rules, host) => rules.filter((rule) => rule?.action === CHROME
 
 const couldNotAsk = (host) => new MittrToolError(`MittrCraft could not ask the user about ${host}; try again in a moment`, 503);
 
+const ID_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+let lastMintMs = 0;
+let mintCounter = 0;
+
+export const mintPermissionId = () => {
+  const now = Date.now();
+  if (now !== lastMintMs) {
+    lastMintMs = now;
+    mintCounter = 0;
+  }
+  mintCounter += 1;
+  const time = (BigInt(now) * 0x1000n + BigInt(mintCounter)).toString(16).padStart(12, '0').slice(-12);
+  const random = Array.from(crypto.randomBytes(14), (byte) => ID_CHARS[byte % ID_CHARS.length]).join('');
+  return `per_${time}${random}`;
+};
+
+const sleep = (ms) => new Promise((resolve) => {
+  const timer = setTimeout(resolve, ms);
+  timer.unref?.();
+});
+
 export function createChromeSiteApprovals({
   settings,
   engine,
   defaultDirectory = () => null,
   decisionWaitMs = DECISION_WAIT_MS,
   pollMs = PENDING_POLL_MS,
+  denyRetryMs = DENY_RETRY_MS,
+  mintId = mintPermissionId,
   logger = console,
 }) {
   const approvals = createChromeApprovals({ settings, logger });
   const asking = new Map();
   const byRequest = new Map();
+  const early = new Map();
 
-  const bind = (entry, requestId) => {
-    const id = textOf(requestId);
-    if (!id || entry.done) return;
-    entry.ids.add(id);
-    byRequest.set(id, entry);
+  const recordQuietly = (sessionId, host, reply) => approvals.record(sessionId, host, reply).catch((error) => {
+    logger.warn('[mittr] could not record a Chrome site answer:', error?.message ?? error);
+  });
+
+  const withdraw = async (entry, decision) => {
+    const requestId = entry.requestId;
+    if (!requestId) return;
+    entry.requestId = null;
+    if (byRequest.get(requestId) === entry) byRequest.delete(requestId);
+    await engine.reply(entry.sessionId, requestId, decision).catch((failure) => {
+      logger.warn(`[mittr] could not close a Chrome site question: ${failure?.status ?? 'no answer'}`);
+    });
   };
 
-  const unbindAll = (entry) => {
-    for (const id of entry.ids) {
-      if (byRequest.get(id) === entry) byRequest.delete(id);
+  const settleOthers = (decided) => {
+    for (const other of asking.values()) {
+      if (other === decided || other.done || other.host !== decided.host) continue;
+      void withdraw(other, 'once');
+      void recordQuietly(other.sessionId, other.host, 'always');
     }
   };
 
-  const asked = (requestId, sessionId, host) => {
-    const entry = asking.get(keyFor(sessionId, host));
-    if (entry) bind(entry, requestId);
+  const decide = (entry, requestId, reply) => {
+    if (byRequest.get(requestId) === entry) byRequest.delete(requestId);
+    if (entry.requestId === requestId) entry.requestId = null;
+    void recordQuietly(entry.sessionId, entry.host, reply).then(() => {
+      if (reply === 'always') settleOthers(entry);
+    });
+  };
+
+  const holdEarly = (requestId, sessionId, reply) => {
+    if (early.size >= EARLY_LIMIT) {
+      const [oldest, held] = early.entries().next().value;
+      clearTimeout(held.timer);
+      early.delete(oldest);
+    }
+    const timer = setTimeout(() => early.delete(requestId), decisionWaitMs);
+    timer.unref?.();
+    early.set(requestId, { sessionId, reply, timer });
+  };
+
+  const bind = (entry, requestId) => {
+    entry.requestId = requestId;
+    byRequest.set(requestId, entry);
+    const held = early.get(requestId);
+    if (!held) return;
+    clearTimeout(held.timer);
+    early.delete(requestId);
+    if (held.sessionId === entry.sessionId) decide(entry, requestId, held.reply);
   };
 
   const replied = (requestId, sessionId, reply) => {
+    if (!REPLIES.has(reply)) return;
     const entry = byRequest.get(requestId);
-    if (!entry || entry.sessionId !== sessionId || !REPLIES.has(reply)) return;
-    byRequest.delete(requestId);
-    entry.ids.delete(requestId);
-    void approvals.record(entry.sessionId, entry.host, reply).catch((error) => {
-      logger.warn('[mittr] could not record a Chrome site answer:', error?.message ?? error);
-    });
+    if (!entry) {
+      holdEarly(requestId, sessionId, reply);
+      return;
+    }
+    if (entry.sessionId === sessionId) decide(entry, requestId, reply);
   };
 
   const clearSaved = async (host, directory) => {
@@ -216,8 +277,9 @@ export function createChromeSiteApprovals({
     later(check, pollMs);
   });
 
-  const requestFor = (host, source) => {
+  const requestFor = (id, host, source) => {
     const request = {
+      id,
       action: CHROME_PERMISSION,
       resources: [host],
       save: [host],
@@ -228,73 +290,113 @@ export function createChromeSiteApprovals({
     return request;
   };
 
-  const created = async (entry, { directory, source }) => {
+  const createOnce = async (entry, source, signal) => {
+    if (signal.aborted) throw cancelled();
+    const id = mintId();
     let answer;
     try {
-      answer = await engine.create(entry.sessionId, requestFor(entry.host, source));
+      answer = await engine.create(entry.sessionId, requestFor(id, entry.host, source));
     } catch (error) {
       logger.warn(`[mittr] the engine did not raise the Chrome site question: ${error?.status ?? 'no answer'}`);
       throw couldNotAsk(entry.host);
     }
-    if (answer?.effect !== 'allow' || entry.retried) return answer;
-    entry.retried = true;
-    const cleared = await clearSaved(entry.host, directory).catch(() => 0);
-    if (cleared === 0) throw couldNotAsk(entry.host);
-    return created(entry, { directory, source });
+    if (answer?.effect !== 'ask') return answer?.effect ?? null;
+    const answeredId = textOf(answer.id);
+    if (answeredId !== id) {
+      if (answeredId) await engine.reply(entry.sessionId, answeredId, 'reject').catch(() => undefined);
+      logger.warn('[mittr] the engine raised the Chrome site question under an id MittrCraft did not give it; the question was withdrawn');
+      throw couldNotAsk(entry.host);
+    }
+    bind(entry, id);
+    return 'ask';
   };
 
-  const raise = async (entry, { directory, source, signal }) => {
-    if (signal?.aborted) throw new MittrToolError(CANCELLED, 499);
+  const raiseQuestion = async (entry, { directory, source, signal }) => {
+    let effect = await createOnce(entry, source, signal);
+    if (effect === 'deny') {
+      await sleep(denyRetryMs);
+      effect = await createOnce(entry, source, signal);
+    }
+    if (effect === 'allow') {
+      const cleared = await clearSaved(entry.host, directory).catch(() => 0);
+      if (cleared > 0) effect = await createOnce(entry, source, signal);
+    }
+    if (effect === 'ask') return;
+    if (effect === 'deny') throw new MittrToolError(`The engine refused to ask the user about ${entry.host}; a permission rule may block it`, 403);
+    throw couldNotAsk(entry.host);
+  };
+
+  const raise = async (entry, { directory, source }) => {
+    const { signal } = entry.controller;
     const decision = approvals.awaitDecision(entry.sessionId, entry.host, signal);
     decision.catch(() => {});
     const done = new AbortController();
+    let outcome = null;
     try {
-      const answer = await created(entry, { directory, source });
-      if (answer?.effect === 'deny') throw new MittrToolError(`A permission rule blocks using the Chrome sign-in on ${entry.host}`, 403);
-      if (answer?.effect === 'allow') throw couldNotAsk(entry.host);
-      const requestId = textOf(answer?.id);
-      if (!requestId) throw couldNotAsk(entry.host);
-      bind(entry, requestId);
-      const outcome = await Promise.race([decision, watchForLoss(entry.sessionId, requestId, done.signal)]);
+      await raiseQuestion(entry, { directory, source, signal });
+      const watched = entry.requestId;
+      const lost = watched ? watchForLoss(entry.sessionId, watched, done.signal) : new Promise(() => {});
+      outcome = await Promise.race([decision, lost]);
       if (outcome === LOST) throw new MittrToolError(`The user's answer for ${entry.host} did not arrive; ask again`, 403);
       return outcome;
     } catch (error) {
-      if (!isCancelled(error) && !signal?.aborted) throw error;
-      const unanswered = [...entry.ids];
-      unbindAll(entry);
-      for (const id of unanswered) {
-        await engine.reply(entry.sessionId, id, 'reject').catch((failure) => {
-          logger.warn(`[mittr] could not withdraw a Chrome site question: ${failure?.status ?? 'no answer'}`);
-        });
-      }
+      if (!isCancelled(error) && !signal.aborted) throw error;
       throw new MittrToolError(CANCELLED, 499);
     } finally {
       done.abort();
       entry.done = true;
-      unbindAll(entry);
+      await withdraw(entry, outcome === 'once' || outcome === 'always' ? 'once' : 'reject');
     }
   };
 
-  const untilAborted = (work, signal) => new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new MittrToolError(CANCELLED, 499));
-      return;
-    }
-    const onAbort = () => reject(new MittrToolError(CANCELLED, 499));
+  const follow = (entry, signal) => new Promise((resolve, reject) => {
+    let left = false;
+    const leave = () => {
+      if (left) return false;
+      left = true;
+      signal?.removeEventListener('abort', onAbort);
+      entry.callers -= 1;
+      if (entry.callers > 0) return false;
+      entry.controller.abort();
+      return true;
+    };
+    const onAbort = () => {
+      if (!leave()) {
+        reject(new MittrToolError(CANCELLED, 499));
+        return;
+      }
+      entry.result.then(() => reject(new MittrToolError(CANCELLED, 499)), reject);
+    };
     signal?.addEventListener('abort', onAbort, { once: true });
-    work.then(resolve, reject).finally(() => signal?.removeEventListener('abort', onAbort));
+    entry.result.then(
+      (value) => {
+        if (left) return;
+        leave();
+        resolve(value);
+      },
+      (error) => {
+        if (left) return;
+        leave();
+        reject(error);
+      },
+    );
   });
 
   const ask = ({ sessionId, host, directory, source, signal }) => {
+    if (signal?.aborted) return Promise.reject(new MittrToolError(CANCELLED, 499));
     const key = keyFor(sessionId, host);
-    const running = asking.get(key);
-    if (running) return untilAborted(running.result, signal);
-    const entry = { sessionId, host, ids: new Set(), done: false, retried: false };
-    asking.set(key, entry);
-    entry.result = raise(entry, { directory, source, signal }).finally(() => {
-      if (asking.get(key) === entry) asking.delete(key);
-    });
-    return entry.result;
+    let entry = asking.get(key);
+    if (!entry || entry.done) {
+      entry = { sessionId, host, requestId: null, done: false, callers: 0, controller: new AbortController() };
+      const started = entry;
+      asking.set(key, started);
+      started.result = raise(started, { directory, source }).finally(() => {
+        if (asking.get(key) === started) asking.delete(key);
+      });
+      started.result.catch(() => {});
+    }
+    entry.callers += 1;
+    return follow(entry, signal);
   };
 
   const removeHost = async (host) => {
@@ -312,28 +414,16 @@ export function createChromeSiteApprovals({
     forgetSession: approvals.forgetSession,
     forgetAll: approvals.forgetAll,
     ask,
-    asked,
     replied,
     removeHost,
   };
 }
 
-const hostOf = (request) => (Array.isArray(request?.resources) && request.resources.length === 1 ? textOf(request.resources[0]) : null);
-
 export const subscribeApprovals = (events, approvals) => events.subscribe((event) => {
   const raw = event?.payload;
   const data = raw?.data;
-  if (!isRecord(data)) return;
-  if (raw.type === 'permission.asked' && data.action === CHROME_PERMISSION) {
-    const host = hostOf(data);
-    const requestId = textOf(data.id);
-    const sessionId = textOf(data.sessionID);
-    if (host && requestId && sessionId) approvals.asked(requestId, sessionId, host);
-    return;
-  }
-  if (raw.type === 'permission.replied') {
-    const requestId = textOf(data.requestID);
-    const sessionId = textOf(data.sessionID);
-    if (requestId && sessionId) approvals.replied(requestId, sessionId, data.reply);
-  }
+  if (raw?.type !== 'permission.replied' || !isRecord(data)) return;
+  const requestId = textOf(data.requestID);
+  const sessionId = textOf(data.sessionID);
+  if (requestId && sessionId) approvals.replied(requestId, sessionId, data.reply);
 });

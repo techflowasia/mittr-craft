@@ -44,6 +44,7 @@ import { identityLine, identityPluginSource } from '../../packages/mittr-opencod
 import { ENGINE_OUTBOUND_OFF, ENGINE_SHARE_OFF } from '../../packages/mittr-server/src/engine-outbound.js';
 import { toEngineRefusal } from '../../packages/mittr-server/src/mittr/exhausted.js';
 import { catalogMcpEntity } from '../../packages/mittr-server/src/mittr/mcp-fragment.js';
+import { mintPermissionId } from '../../packages/mittr-server/src/mittr/tools/chrome-approvals.js';
 import { policiesFor } from '../../packages/mittr-server/src/mittr/policies.js';
 import { toMcpEntity } from '../../packages/web/server/lib/opencode/config-v2.js';
 
@@ -2533,6 +2534,29 @@ const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
   };
 
   await useManagedRules([]);
+  const clientId = await (async () => {
+    const sessionID = await sessionIn(work);
+    const id = mintPermissionId();
+    const created = await call('POST', `/api/session/${encodeURIComponent(sessionID)}/permission`, { id, action: PROBE_PERMISSION, resources: [HOOKED_HOST], save: [HOOKED_HOST], metadata: { host: HOOKED_HOST } });
+    const askedEvent = await askedEventFor(id);
+    const listed = await call('GET', `/api/session/${encodeURIComponent(sessionID)}/permission`);
+    const reply = await replyTo(sessionID, id, 'once');
+    const replied = await repliedEventFor(id, 3000);
+    const second = await call('POST', `/api/session/${encodeURIComponent(sessionID)}/permission`, { id, action: PROBE_PERMISSION, resources: [HOOKED_HOST], save: [HOOKED_HOST], metadata: { host: HOOKED_HOST } });
+    await withdraw(sessionID, second);
+    return {
+      createStatus: created.status,
+      effect: created.json?.effect ?? null,
+      answeredWithGivenId: created.json?.id === id,
+      askedEventHasGivenId: askedEvent?.data?.id === id,
+      listedWithGivenId: (Array.isArray(listed.json) ? listed.json : []).some((item) => item.id === id),
+      replyStatus: reply.status,
+      repliedRawReply: replied?.data?.reply ?? null,
+      reusedIdStatus: second.status,
+      reusedIdEffect: second.json?.effect ?? null,
+      reusedIdAnsweredSameId: second.json?.id === id,
+    };
+  })();
   const hookNoRule = await (async () => {
     const sessionID = await sessionIn(work);
     const created = await createAsk(sessionID, HOOKED_HOST);
@@ -2625,7 +2649,7 @@ const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
     },
   });
   await sleep(500);
-  const P15f = { hookNoRule, hookAfterAlways, crossProject, interrupt: interruptRun.askedResult, interruptTurn: brief(interruptRun) };
+  const P15f = { clientId, hookNoRule, hookAfterAlways, crossProject, interrupt: interruptRun.askedResult, interruptTurn: brief(interruptRun) };
 
   const path15 = permissionPathFor({ raised: raisedE || ['a', 'b', 'c', 'd'].some((v) => variants[v].raised), learned, engineAnswersLater: P15d.engineAnsweredLaterAsk, deletedAndAskedAgain: P15d.askedAgainAfterDelete === true });
   const firstRaised = ['a', 'b', 'c', 'd', 'e'].find((v) => variants[v].raised) ?? null;

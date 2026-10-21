@@ -414,7 +414,6 @@ const everySite = () => {
     record,
     isApproved: async () => true,
     ask: async () => 'reject',
-    asked: () => {},
     replied: () => {},
     forgetSession: (sessionId) => record.forgotten.push(sessionId),
     forgetAll: () => { record.forgotAll += 1; },
@@ -517,11 +516,12 @@ const fakeEngineServer = async (t, { effect = 'ask' } = {}) => {
     seen.push({ method: req.method, path: req.path, body: req.body, auth: req.get('authorization') ?? null });
     next();
   });
-  app.post('/api/session/:id/permission', (_req, res) => res.json({ data: effect === 'ask' ? { id: 'per_1', effect } : { effect } }));
+  app.post('/api/session/:id/permission', (req, res) => res.json({ data: effect === 'ask' ? { id: req.body.id, effect } : { effect } }));
   app.post('/api/session/:id/permission/:pid/reply', (_req, res) => res.status(204).end());
-  app.get('/api/session/:id/permission', (_req, res) => res.json({ data: [{ id: 'per_1' }] }));
+  app.get('/api/session/:id/permission', (_req, res) => res.json({ data: seen.filter(({ method, path: route }) => method === 'POST' && route.endsWith('/permission')).map(({ body }) => ({ id: body.id })) }));
   app.get('/api/permission/saved', (_req, res) => res.json({ data: [] }));
-  return { base: await listen(t, app), seen };
+  const raisedId = () => seen.find(({ method, path: route }) => method === 'POST' && route.endsWith('/permission'))?.body?.id;
+  return { base: await listen(t, app), seen, raisedId };
 };
 
 const engineChromeSetUp = async (t, options = {}) => {
@@ -544,11 +544,13 @@ test('an engine call for a site not yet allowed raises the engine\'s own questio
   const opened = chrome('open', { url: 'http://acme.example.test/' }, { messageID: 'msg_1', callID: 'call_1' });
   await until(() => engine.seen.some(({ path: route }) => route === '/api/session/ses_1/permission'));
   assert.equal(driver.commands().some(({ command }) => command[0] === 'open'), false, 'nothing opens before the person answers');
-  emitRaw({ type: 'permission.replied', data: { sessionID: 'ses_1', requestID: 'per_1', reply: 'once' } });
+  emitRaw({ type: 'permission.replied', data: { sessionID: 'ses_1', requestID: engine.raisedId(), reply: 'once' } });
   const answer = await opened;
   assert.equal(answer.ok, true);
   const created = engine.seen.find(({ method, path: route }) => method === 'POST' && route === '/api/session/ses_1/permission');
+  assert.match(created.body.id, /^per_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
   assert.deepEqual(created.body, {
+    id: created.body.id,
     action: 'mittrcraft_chrome',
     resources: ['acme.example.test'],
     save: ['acme.example.test'],
@@ -564,10 +566,10 @@ test('a translated reply alone decides nothing: only the raw reply carries the a
   const { chrome, engine, eventListeners, driver } = await realApprovals(t);
   const opened = chrome('open', { url: 'http://acme.example.test/' });
   await until(() => engine.seen.some(({ path: route }) => route === '/api/session/ses_1/permission'));
-  for (const listener of eventListeners) listener({ payload: {}, translated: () => [{ type: 'permission.replied', properties: { sessionID: 'ses_1', requestID: 'per_1' } }] });
+  for (const listener of eventListeners) listener({ payload: {}, translated: () => [{ type: 'permission.replied', properties: { sessionID: 'ses_1', requestID: engine.raisedId() } }] });
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(driver.commands().some(({ command }) => command[0] === 'open'), false);
-  for (const listener of eventListeners) listener({ payload: { type: 'permission.replied', data: { sessionID: 'ses_1', requestID: 'per_1', reply: 'reject' } }, translated: () => [] });
+  for (const listener of eventListeners) listener({ payload: { type: 'permission.replied', data: { sessionID: 'ses_1', requestID: engine.raisedId(), reply: 'reject' } }, translated: () => [] });
   assert.deepEqual((await opened).error, { message: 'The user did not allow using their Chrome sign-in on acme.example.test', kind: 'usage' });
 });
 
@@ -577,7 +579,7 @@ test('an account switch withdraws an open Chrome question with a reject', async 
   await until(() => engine.seen.some(({ path: route }) => route === '/api/session/ses_1/permission'));
   await tools.accountChanged();
   assert.deepEqual((await opened).error, { message: 'Cancelled while waiting for the user', kind: 'usage' });
-  assert.deepEqual(engine.seen.filter(({ path: route }) => route.endsWith('/reply')).map(({ path: route, body }) => [route, body]), [['/api/session/ses_1/permission/per_1/reply', { decision: 'reject' }]]);
+  assert.deepEqual(engine.seen.filter(({ path: route }) => route.endsWith('/reply')).map(({ path: route, body }) => [route, body]), [[`/api/session/ses_1/permission/${engine.raisedId()}/reply`, { decision: 'reject' }]]);
 });
 
 test('a Chrome call over http from another machine raises no question', async (t) => {

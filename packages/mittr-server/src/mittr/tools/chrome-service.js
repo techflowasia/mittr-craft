@@ -54,7 +54,6 @@ export const NO_APPROVALS = Object.freeze({
   ask: async ({ host }) => {
     throw notYetAllowed(host);
   },
-  asked: () => {},
   replied: () => {},
   forgetSession: () => {},
   forgetAll: () => {},

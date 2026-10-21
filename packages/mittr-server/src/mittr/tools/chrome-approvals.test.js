@@ -14,6 +14,7 @@ import {
   createChromeSiteApprovals,
   createEnginePermissions,
   isChromePermission,
+  mintPermissionId,
   subscribeApprovals,
 } from './chrome-approvals.js';
 
@@ -55,7 +56,7 @@ const fakeEngine = (hub, { projects = { ses_1: 'prj_1', ses_2: 'prj_1', ses_3: '
         return { effect: 'allow' };
       }
       state.next += 1;
-      const id = `per_${state.next}`;
+      const id = state.ignoreIds ? `per_engine_${state.next}` : request.id ?? `per_${state.next}`;
       state.pending.set(id, { id, sessionID: sessionId, ...request });
       const { message: _message, ...shown } = request;
       hub.emitRaw('permission.asked', { id, sessionID: sessionId, ...shown });
@@ -104,7 +105,12 @@ const setUp = (t, { engineOptions, decisionWaitMs = 50, pollMs = 10 } = {}) => {
   const engine = fakeEngine(hub, engineOptions);
   const settings = createMittrSettings({ dataDir: tempDataDir(t) });
   const logger = quietLogger();
-  const approvals = createChromeSiteApprovals({ settings, engine, defaultDirectory: () => '/work/acme', decisionWaitMs, pollMs, logger });
+  let minted = 0;
+  const mintId = () => {
+    minted += 1;
+    return `per_m${minted}`;
+  };
+  const approvals = createChromeSiteApprovals({ settings, engine, defaultDirectory: () => '/work/acme', decisionWaitMs, pollMs, denyRetryMs: 5, mintId, logger });
   const unsubscribe = subscribeApprovals(hub, approvals);
   t.after(unsubscribe);
   return { hub, engine, settings, approvals, logger };
@@ -132,7 +138,7 @@ test('the server raises the engine\'s own question with the host in resources, s
   assert.equal(await asked, 'once');
   assert.deepEqual(engine.state.creates, [{
     sessionId: 'ses_1',
-    request: { action: 'mittrcraft_chrome', resources: [HOST], save: [HOST], message: chromeQuestion(HOST), metadata: { host: HOST }, source },
+    request: { id: 'per_m1', action: 'mittrcraft_chrome', resources: [HOST], save: [HOST], message: chromeQuestion(HOST), metadata: { host: HOST }, source },
   }]);
   assert.equal(chromeQuestion(HOST), `Allow the agent to use your Chrome sign-in on ${HOST}?`);
 });
@@ -298,7 +304,9 @@ test('an engine that allows without a saved rule leaves the site refused', async
   await assert.rejects(askFor(approvals, 'ses_1'), (error) => error.statusCode === 503 && error.message === `MittrCraft could not ask the user about ${HOST}; try again in a moment`);
   assert.equal(await approvals.isApproved('ses_1', HOST), false);
   engine.state.effect = 'deny';
-  await assert.rejects(askFor(approvals, 'ses_1'), (error) => error.statusCode === 403 && /A permission rule blocks/.test(error.message));
+  const before = engine.state.creates.length;
+  await assert.rejects(askFor(approvals, 'ses_1'), (error) => error.statusCode === 403 && error.message === `The engine refused to ask the user about ${HOST}; a permission rule may block it`);
+  assert.equal(engine.state.creates.length - before, 2, 'a deny is asked once more before it is reported');
 });
 
 test('an engine that cannot raise the question leaves the site refused', async (t) => {
@@ -475,4 +483,120 @@ test('the engine client raises, answers, lists and removes through the engine\'s
   assert.deepEqual(seen[1].body, { decision: 'reject' });
   assert.ok(seen.every(({ auth }) => auth === 'Basic acme'));
   await assert.rejects(engine.reply('ses 1', 'per_gone', 'reject'), (error) => error.status === 404);
+});
+
+test('a minted id is a permission id the engine accepts, and never repeats', () => {
+  const ids = new Set(Array.from({ length: 200 }, () => mintPermissionId()));
+  assert.equal(ids.size, 200);
+  for (const id of ids) assert.match(id, /^per_[0-9a-f]{12}[0-9A-Za-z]{14}$/);
+});
+
+test('only the request the server raised decides: an outside request for the same session and site answered once approves nothing', async (t) => {
+  const { engine, approvals, hub } = setUp(t);
+  const controller = new AbortController();
+  const asked = askFor(approvals, 'ses_1', { signal: controller.signal });
+  const own = await nextRequest(engine);
+  engine.state.pending.set('per_outside', { id: 'per_outside', sessionID: 'ses_1', action: CHROME_PERMISSION, resources: [HOST], save: [HOST], metadata: { host: HOST } });
+  hub.emitRaw('permission.asked', { id: 'per_outside', sessionID: 'ses_1', action: CHROME_PERMISSION, resources: [HOST], save: [HOST], metadata: { host: HOST } });
+  await engine.answer('per_outside', 'once');
+  let settled = false;
+  asked.then(() => { settled = true; }, () => { settled = true; });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(settled, false, 'the call still waits for its own question');
+  assert.equal(await approvals.isApproved('ses_1', HOST), false);
+  assert.deepEqual(engine.pendingIds(), [own]);
+  controller.abort();
+  await assert.rejects(asked, /Cancelled while waiting for the user/);
+});
+
+test('an engine that raises the question under another id has it withdrawn and the site stays refused', async (t) => {
+  const { engine, approvals } = setUp(t);
+  engine.state.ignoreIds = true;
+  await assert.rejects(askFor(approvals, 'ses_1'), (error) => error.statusCode === 503);
+  assert.deepEqual(engine.state.replies.map(({ requestId, decision }) => [requestId, decision]), [['per_engine_1', 'reject']]);
+  assert.equal(await approvals.isApproved('ses_1', HOST), false);
+});
+
+test('a deny from a location that is still starting is asked once more before it is reported', async (t) => {
+  const { engine, approvals } = setUp(t);
+  const effects = ['deny'];
+  const create = engine.create;
+  engine.create = (sessionId, request) => {
+    const effect = effects.shift();
+    if (effect) {
+      engine.state.creates.push({ sessionId, request });
+      return Promise.resolve({ effect });
+    }
+    return create(sessionId, request);
+  };
+  const asked = askFor(approvals, 'ses_1');
+  await engine.answer(await nextRequest(engine), 'once');
+  assert.equal(await asked, 'once');
+  assert.deepEqual(engine.state.creates.map(({ request }) => request.id), ['per_m1', 'per_m2']);
+});
+
+test('Always for a site settles every other session\'s open question about it', async (t) => {
+  const { engine, approvals } = setUp(t);
+  const first = askFor(approvals, 'ses_1');
+  const firstId = await nextRequest(engine, 1);
+  const second = askFor(approvals, 'ses_3');
+  const secondId = await nextRequest(engine, 2);
+  const other = approvals.ask({ sessionId: 'ses_2', host: 'other.example.test', directory: '/work/acme' });
+  const otherId = await nextRequest(engine, 3);
+  await engine.answer(firstId, 'always');
+  assert.equal(await first, 'always');
+  assert.equal(await second, 'always');
+  assert.equal(await approvals.isApproved('ses_3', HOST), true);
+  assert.deepEqual(engine.state.replies.map(({ requestId, decision }) => [requestId, decision]), [[firstId, 'always'], [secondId, 'once']]);
+  assert.deepEqual(engine.pendingIds(), [otherId]);
+  await engine.answer(otherId, 'reject');
+  assert.equal(await other, 'reject');
+});
+
+test('an answer that arrives before the question is known is held for the wait, then dropped', async (t) => {
+  const { engine, approvals, hub } = setUp(t, { decisionWaitMs: 40 });
+  engine.state.beforeAnswer = async (id) => {
+    hub.emitRaw('permission.replied', { sessionID: 'ses_1', requestID: id, reply: 'once' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  };
+  assert.equal(await askFor(approvals, 'ses_1'), 'once');
+
+  engine.state.beforeAnswer = null;
+  hub.emitRaw('permission.replied', { sessionID: 'ses_2', requestID: 'per_m2', reply: 'always' });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const controller = new AbortController();
+  const late = askFor(approvals, 'ses_2', { signal: controller.signal });
+  await nextRequest(engine);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(await approvals.isApproved('ses_2', HOST), false, 'a reply held past the wait decides nothing');
+  controller.abort();
+  await assert.rejects(late, /Cancelled while waiting for the user/);
+});
+
+test('a held answer from another session decides nothing', async (t) => {
+  const { engine, approvals, hub } = setUp(t);
+  engine.state.beforeAnswer = (id) => hub.emitRaw('permission.replied', { sessionID: 'ses_2', requestID: id, reply: 'always' });
+  const controller = new AbortController();
+  const asked = askFor(approvals, 'ses_1', { signal: controller.signal });
+  await nextRequest(engine);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(await approvals.isApproved('ses_1', HOST), false);
+  controller.abort();
+  await assert.rejects(asked, /Cancelled while waiting for the user/);
+});
+
+test('each waiting call stops on its own turn\'s abort, and the shared question stays for the other', async (t) => {
+  const { engine, approvals } = setUp(t);
+  const firstTurn = new AbortController();
+  const secondTurn = new AbortController();
+  const first = askFor(approvals, 'ses_1', { signal: firstTurn.signal });
+  const second = askFor(approvals, 'ses_1', { signal: secondTurn.signal });
+  const requestId = await nextRequest(engine);
+  firstTurn.abort();
+  await assert.rejects(first, (error) => error.statusCode === 499);
+  assert.deepEqual(engine.state.replies, []);
+  assert.deepEqual(engine.pendingIds(), [requestId]);
+  await engine.answer(requestId, 'once');
+  assert.equal(await second, 'once');
+  assert.equal(engine.state.creates.length, 1);
 });

@@ -652,7 +652,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'engine-permission-api',
     files: ['packages/electron/package.json', 'node_modules/@opencode/client/package.json'],
-    why: "the bundled engine is OpenCode 2.0.22, where POST /api/session/:id/permission with { action, resources, save, metadata, source } raises the engine's own permission card (answering { data: { id, effect } }, and dropping message), POST /api/session/:id/permission/:requestID/reply takes { decision } and answers 204, GET /api/session/:id/permission lists that session's open requests, GET and DELETE /api/permission/saved(/:id) list and remove the rules an always answer saves, and a plugin's ctx.permission.hook('evaluate', fn) may turn the effect a project rule gave (allow) into ask; probe P15 and P16 (scripts/mittr/probe-engine-v2.mjs --only agent-tools) must run again before this pin moves",
+    why: "the bundled engine is OpenCode 2.0.22, where POST /api/session/:id/permission with { id, action, resources, save, metadata, source } raises the engine's own permission card under the id the server minted (answering { data: { id, effect } }, and dropping message), POST /api/session/:id/permission/:requestID/reply takes { decision } and answers 204, GET /api/session/:id/permission lists that session's open requests, GET and DELETE /api/permission/saved(/:id) list and remove the rules an always answer saves, and a plugin's ctx.permission.hook('evaluate', fn) may turn the effect a project rule gave (allow) into ask; probe P15 and P16 (scripts/mittr/probe-engine-v2.mjs --only agent-tools) must run again before this pin moves",
   },
 ];
 
