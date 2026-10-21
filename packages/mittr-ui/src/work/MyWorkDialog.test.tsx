@@ -7,7 +7,7 @@ import { DEFAULT_LOCALE } from '../../../ui/src/lib/i18n/runtime';
 import { useI18nStore } from '../../../ui/src/lib/i18n/store';
 import { mittrT } from '../strings/mittrT';
 import type { MyWorkState } from './myWorkController';
-import { MyWorkDialogView, type MyWorkDialogViewProps } from './MyWorkDialog';
+import { MyWorkDialogView, WorkRow, type MyWorkDialogViewProps } from './MyWorkDialog';
 import { stateRankColor, type WorkItem } from './workItems';
 import { createWorkPrefs } from './workPrefs';
 
@@ -83,7 +83,7 @@ describe('My work panel', () => {
     expect(html).toContain(stateRankColor(0));
     expect(html).toContain(escaped(mittrT('mittr.work.row.priority', { priority: 'High' })));
     expect(html).toContain(escaped(mittrT('mittr.work.row.due', { due: '2026-10-30' })));
-    expect(html).toContain('href="https://x.atlassian.net/browse/MRKB-2122"');
+    expect(html).not.toContain('href="https:');
   });
 
   test('two Plane workspaces show two chips named after them', () => {
@@ -108,7 +108,7 @@ describe('My work panel', () => {
     expect(pressed('plane:gone')).toEqual([true, false, false]);
     const scoped = view({ state: ready(items), filter: 'jira' });
     expect(scoped).toContain('Fix login');
-    expect(scoped).not.toContain('href="https://example.test/p-1"');
+    expect(scoped).not.toContain('>p-1<');
   });
 
   test('the title filter narrows the rows and the counts', () => {
@@ -121,7 +121,8 @@ describe('My work panel', () => {
   test('the not-connected state shows its text and no list', () => {
     const html = view({ state: { status: 'not-connected', items: [] } });
     expect(html).toContain(mittrT('mittr.work.notConnected'));
-    expect(html).not.toContain('<a ');
+    expect(html).not.toContain('Fix login');
+    expect(chips(html)).toEqual([]);
   });
 
   test('an error shows its text as an alert and no list', () => {
@@ -129,13 +130,45 @@ describe('My work panel', () => {
     expect(html).toContain('role="alert"');
     expect(html).toContain('Mittr platform is unavailable');
     expect(html).toContain('--status-error');
-    expect(html).not.toContain('<a ');
+    expect(html).not.toContain('Fix login');
+    expect(chips(html)).toEqual([]);
   });
 
   test('loading shows its text and keeps Refresh disabled', () => {
     const html = view({ state: { status: 'loading', items: [] } });
     expect(html).toContain(mittrT('mittr.work.loading'));
+    expect(chips(html)).toEqual([]);
     expect(/<button[^>]*disabled=""[^>]*>[\s\S]*?Refresh<\/button>/.test(html)).toBe(true);
+  });
+
+  test('the title filter is named for assistive technology', () => {
+    expect(mittrT('mittr.work.filter.label')).toBe('Filter by title');
+    expect(view()).toContain(`aria-label="${mittrT('mittr.work.filter.label')}"`);
+  });
+
+  test('a row opens its page only through onOpenUrl, from any click or key, and never as a plain link', () => {
+    const opened: string[] = [];
+    const html = renderToStaticMarkup(<WorkRow item={JIRA} color="var(--border)" onOpenUrl={(url) => opened.push(url)} goWork={null} />);
+    expect(html).not.toContain('<a ');
+    expect(html).not.toContain('href="https:');
+    expect(/^<div[^>]*><button type="button"[^>]*>[\s\S]*Fix login[\s\S]*<\/button><\/div>$/.test(html)).toBe(true);
+    expect(html).toContain('hover:bg-interactive-hover');
+    const row = WorkRow({ item: JIRA, color: 'var(--border)', onOpenUrl: (url) => opened.push(url), goWork: null });
+    expect(React.isValidElement<{ children: React.ReactNode }>(row)).toBe(true);
+    if (!React.isValidElement<{ children: React.ReactNode }>(row)) return;
+    const [opener] = React.Children.toArray(row.props.children);
+    expect(React.isValidElement<{ onClick: () => void }>(opener) && opener.type === 'button').toBe(true);
+    if (!React.isValidElement<{ onClick: () => void }>(opener)) return;
+    opener.props.onClick();
+    expect(opened).toEqual(['https://x.atlassian.net/browse/MRKB-2122']);
+  });
+
+  test('a row with no address neither looks nor acts like a link', () => {
+    const html = renderToStaticMarkup(<WorkRow item={{ ...JIRA, url: ' ' }} color="var(--border)" onOpenUrl={noop} goWork={null} />);
+    expect(html).toContain('Fix login');
+    expect(html).not.toContain('<button');
+    expect(html).not.toContain('<a ');
+    expect(html).not.toContain('hover:bg-interactive-hover');
   });
 
   test('no work shows the empty text', () => {

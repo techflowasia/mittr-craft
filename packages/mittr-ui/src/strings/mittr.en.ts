@@ -96,6 +96,7 @@ export const mittrEn = {
   'mittr.work.row.priority': 'Priority: {priority}',
   'mittr.work.row.due': 'Due {due}',
   'mittr.work.filter.placeholder': 'Filter by title...',
+  'mittr.work.filter.label': 'Filter by title',
   'mittr.work.filter.empty': 'No work items match "{query}".',
   'mittr.work.source.jira': 'Jira',
   'mittr.work.source.plane': 'Plane',

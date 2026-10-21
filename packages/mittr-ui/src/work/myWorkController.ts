@@ -70,7 +70,10 @@ export function createMyWorkController({ fetchWork, currentUserId, listenAccount
       listeners.add(fn);
       return () => { listeners.delete(fn); };
     },
-    refresh: load,
+    refresh: () => {
+      reloadedForMismatch = false;
+      return load();
+    },
     dispose: () => {
       if (disposed) return;
       disposed = true;

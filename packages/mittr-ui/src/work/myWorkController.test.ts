@@ -68,6 +68,25 @@ describe('My work controller', () => {
     expect(seen.some((state) => state.items.some((shown) => shown.id.startsWith('a-')))).toBe(false);
   });
 
+  test('Refresh after a failed retry may retry a mismatch again', async () => {
+    const { controller, pending, seen, settle } = setup({ current: 'u-b' });
+    void controller.refresh();
+    pending[0].resolve({ configured: true, items: [item('a-1')], userId: 'u-a' });
+    await settle();
+    pending[1].reject(new Error('Mittr platform is unavailable'));
+    await settle();
+    expect(controller.state().status).toBe('error');
+    void controller.refresh();
+    expect(pending).toHaveLength(3);
+    pending[2].resolve({ configured: true, items: [item('a-2')], userId: 'u-a' });
+    await settle();
+    expect(pending).toHaveLength(4);
+    pending[3].resolve({ configured: true, items: [item('b-1')], userId: 'u-b' });
+    await settle();
+    expect(controller.state()).toEqual({ status: 'ready', items: [item('b-1')] });
+    expect(seen.some((state) => state.items.some((shown) => shown.id.startsWith('a-')))).toBe(false);
+  });
+
   test('not configured shows the not-connected state', async () => {
     const { controller, pending, settle } = setup();
     void controller.refresh();

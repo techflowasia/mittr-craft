@@ -93,34 +93,44 @@ type WorkRowProps = {
   goWork: React.ReactNode;
 };
 
-function WorkRow({ item, color, onOpenUrl, goWork }: WorkRowProps): React.ReactNode {
+export function WorkRow({ item, color, onOpenUrl, goWork }: WorkRowProps): React.ReactNode {
   const t = useMittrT();
   const key = cardKeyOf(item);
+  const url = item.url.trim();
+  const content = (
+    <>
+      {key ? <span className="shrink-0 typography-micro font-mono text-muted-foreground">{key}</span> : null}
+      <span className="typography-ui-label min-w-0 truncate font-medium text-foreground" title={item.title}>{item.title}</span>
+      {item.state ? (
+        <span className="shrink-0 rounded-full border px-1.5 typography-micro text-muted-foreground" style={{ borderColor: color }}>{item.state}</span>
+      ) : null}
+      {item.priority || item.due ? (
+        <span className="flex shrink-0 items-center gap-2 typography-micro text-muted-foreground">
+          {item.priority ? <span>{t('mittr.work.row.priority', { priority: item.priority })}</span> : null}
+          {item.due ? <span>{t('mittr.work.row.due', { due: item.due })}</span> : null}
+        </span>
+      ) : null}
+    </>
+  );
   return (
     <div
-      className="flex items-center gap-2 rounded-md border-y border-r border-l-2 border-border py-1.5 pl-2.5 pr-2 transition-colors hover:bg-interactive-hover/50"
+      className={cn(
+        'flex items-center gap-2 rounded-md border-y border-r border-l-2 border-border py-1.5 pl-2.5 pr-2',
+        url && 'transition-colors hover:bg-interactive-hover/50',
+      )}
       style={{ borderLeftColor: color }}
     >
-      <a
-        href={item.url}
-        onClick={(event) => {
-          event.preventDefault();
-          if (item.url) onOpenUrl(item.url);
-        }}
-        className="flex min-w-0 flex-1 items-baseline gap-2"
-      >
-        {key ? <span className="shrink-0 typography-micro font-mono text-muted-foreground">{key}</span> : null}
-        <span className="typography-ui-label min-w-0 truncate font-medium text-foreground" title={item.title}>{item.title}</span>
-        {item.state ? (
-          <span className="shrink-0 rounded-full border px-1.5 typography-micro text-muted-foreground" style={{ borderColor: color }}>{item.state}</span>
-        ) : null}
-        {item.priority || item.due ? (
-          <span className="flex shrink-0 items-center gap-2 typography-micro text-muted-foreground">
-            {item.priority ? <span>{t('mittr.work.row.priority', { priority: item.priority })}</span> : null}
-            {item.due ? <span>{t('mittr.work.row.due', { due: item.due })}</span> : null}
-          </span>
-        ) : null}
-      </a>
+      {url ? (
+        <button
+          type="button"
+          onClick={() => onOpenUrl(url)}
+          className="flex min-w-0 flex-1 items-baseline gap-2 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {content}
+        </button>
+      ) : (
+        <div className="flex min-w-0 flex-1 items-baseline gap-2">{content}</div>
+      )}
       {goWork}
     </div>
   );
@@ -244,6 +254,7 @@ export function MyWorkDialogView({ state, filter, prefs, query, onQuery, onFilte
             value={query}
             onChange={(event) => onQuery(event.target.value)}
             placeholder={t('mittr.work.filter.placeholder')}
+            aria-label={t('mittr.work.filter.label')}
             className="h-8 pl-8 typography-small"
           />
         </div>
@@ -253,30 +264,32 @@ export function MyWorkDialogView({ state, filter, prefs, query, onQuery, onFilte
         </Button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Button variant="chip" size="sm" aria-pressed={resolved === 'all'} onClick={() => onFilter('all')}>
-          {t('mittr.work.source.filter.all')} {filtered.length}
-        </Button>
-        {chips.map((lane) => {
-          const named = lane.workspace !== null;
-          const label = sourceLabel(lane, named);
-          const accessible = named && lane.workspace ? t('mittr.work.source.planeWorkspace', { workspace: lane.workspace }) : label;
-          const count = chipCount(lane);
-          return (
-            <Button
-              key={lane.key}
-              variant="chip"
-              size="sm"
-              aria-pressed={chipPressed(lane.key, resolved, chips)}
-              aria-label={`${accessible} ${count}`}
-              onClick={() => onFilter(lane.key)}
-            >
-              {named ? <Icon name="stack" className="h-3.5 w-3.5" aria-hidden="true" /> : null}
-              {label} {count}
-            </Button>
-          );
-        })}
-      </div>
+      {state.status === 'ready' ? (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button variant="chip" size="sm" aria-pressed={resolved === 'all'} onClick={() => onFilter('all')}>
+            {t('mittr.work.source.filter.all')} {filtered.length}
+          </Button>
+          {chips.map((lane) => {
+            const named = lane.workspace !== null;
+            const label = sourceLabel(lane, named);
+            const accessible = named && lane.workspace ? t('mittr.work.source.planeWorkspace', { workspace: lane.workspace }) : label;
+            const count = chipCount(lane);
+            return (
+              <Button
+                key={lane.key}
+                variant="chip"
+                size="sm"
+                aria-pressed={chipPressed(lane.key, resolved, chips)}
+                aria-label={`${accessible} ${count}`}
+                onClick={() => onFilter(lane.key)}
+              >
+                {named ? <Icon name="stack" className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+                {label} {count}
+              </Button>
+            );
+          })}
+        </div>
+      ) : null}
 
       {body()}
     </div>
