@@ -7,10 +7,10 @@ import type { ModelPickerDecorations } from '../../../ui/src/lib/product-plugins
 import { useConfigStore } from '../../../ui/src/stores/useConfigStore';
 import { mittrEntryStatus } from '../quota/agentStatus';
 import { useQuotaMe } from '../quota/quotaMeStore';
+import { MITTR_PROVIDER_ID } from '../mittrProvider';
 
 export const PROVIDER_LOCK_ENDPOINT = '/api/mittr/provider-lock';
 const PROVIDER_LOCK_CHANGED_EVENT = 'mittr.provider-lock.changed';
-const MITTR_PROVIDER_ID = 'mittr';
 
 export type ProviderLock = { showOtherProviders: boolean };
 type ProviderLockSnapshot = ProviderLock & { known: boolean };

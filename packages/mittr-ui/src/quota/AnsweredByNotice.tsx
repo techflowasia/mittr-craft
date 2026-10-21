@@ -5,8 +5,7 @@ import type { Message } from '../../../ui/src/lib/opencode/model';
 import type { ProductSlotProps } from '../../../ui/src/lib/product-plugins';
 import { useMittrT } from '../strings/mittrT';
 import { substitutedAnswerOf, useAnsweredBy, type AnsweredBy, type AnsweredByList } from './answeredBy';
-
-const MITTR_PROVIDER_ID = 'mittr';
+import { MITTR_PROVIDER_ID } from '../mittrProvider';
 
 export function AnsweredByNoticeView({ answer }: { answer: AnsweredBy }): React.ReactNode {
   const t = useMittrT();

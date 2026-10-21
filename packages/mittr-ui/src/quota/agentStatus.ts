@@ -1,8 +1,8 @@
 import type { ModelEntryStatus } from '../../../ui/src/lib/product-plugins';
 import { mittrT } from '../strings/mittrT';
 import type { AgentStatus } from './quotaMeStore';
+import { MITTR_PROVIDER_ID } from '../mittrProvider';
 
-const MITTR_PROVIDER_ID = 'mittr';
 export const PRODUCT_LOCALE = 'en-GB';
 export const PRODUCT_TIME_ZONE = 'Asia/Bangkok';
 

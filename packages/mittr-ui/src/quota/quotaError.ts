@@ -2,11 +2,11 @@ import { z } from 'zod';
 
 import { mittrT } from '../strings/mittrT';
 import { formatResetTime, PRODUCT_LOCALE, PRODUCT_TIME_ZONE } from './agentStatus';
+import { MITTR_PROVIDER_ID } from '../mittrProvider';
 
 const LLM_QUOTA_EXHAUSTED = 'llm_quota_exhausted';
 const INSUFFICIENT_QUOTA = 'insufficient_quota';
 const NO_ROUTE = 'provider.no-route';
-const MITTR_PROVIDER_ID = 'mittr';
 const FORBIDDEN = 403;
 const STREAM_CUT_OFF = 'stream_cut_off';
 

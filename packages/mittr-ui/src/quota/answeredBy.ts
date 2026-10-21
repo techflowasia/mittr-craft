@@ -2,11 +2,10 @@ import React from 'react';
 
 import type { Message } from '../../../ui/src/lib/opencode/model';
 import { runtimeFetch } from '../../../ui/src/lib/runtime-fetch';
+import { MITTR_PROVIDER_ID } from '../mittrProvider';
 
 export const ANSWERED_BY_ENDPOINT = '/api/mittr/answered-by';
 export const ANSWERED_BY_RETRY_MS = 30_000;
-
-const MITTR_PROVIDER_ID = 'mittr';
 
 export type AnsweredByReason = 'quota' | 'failed' | 'silent';
 
