@@ -1547,6 +1547,54 @@ const checks = {
     }
     has(source('packages/ui/src/lib/utils.ts'), /^export function formatDirectoryName\(path: string \| null \| undefined, homeDirectory\?: string \| null\): string \{$/m, 'formatDirectoryName(path) changed');
   },
+
+  'session-create-selection': () => {
+    const actions = source('packages/ui/src/sync/session-actions.ts');
+    has(actions, /^export type SessionCreateSelection = \{ model\?: ModelRef; agent\?: string \}$/m, 'SessionCreateSelection is no longer { model?: ModelRef; agent?: string }');
+    has(actions, /^export async function createSession\(\n {2}title\?: string,\n {2}directoryOverride\?: string \| null,\n {2}metadata\?: Metadata,\n {2}selectionTransition\?: "submitted-draft",\n {2}selection\?: SessionCreateSelection,\n {2}navigation: "open" \| "preserve" = "open",\n\): Promise<Session \| null> \{$/m, 'createSession no longer takes (title, directory, metadata, selectionTransition, selection, navigation)');
+    has(actions, /opencodeClient\.createSession\(\s*\{ title, metadata, model: selection\?\.model, agent: selection\?\.agent \},\s*effectiveDirectory,\s*\)/, 'createSession no longer creates the session on the selection');
+    has(actions, /if \(navigation === "open"\) useSessionUIStore\.getState\(\)\.setCurrentSession\(session\.id, sessionDirectory, selectionTransition\)/, "createSession no longer opens the session for 'open'");
+    has(actions, /console\.error\("\[session-actions\] createSession failed", error\)\s*return null\s*\}\s*\}/, 'a failed createSession no longer answers null');
+    has(source('node_modules/@opencode/client/dist/promise/generated/types.d.ts'), /export type ModelRef = \{\s*id: string;\s*providerID: string;\s*variant\?: string;\s*\};/, 'ModelRef is no longer { id, providerID, variant? }');
+    has(source('packages/ui/src/sync/session-ui-store.ts'), /^ {2}initializeNewOpenChamberSession: \(sessionId: string, agents: unknown\[\]\) => void$/m, 'initializeNewOpenChamberSession(sessionId, agents) changed');
+    has(source('packages/ui/src/stores/useUIStore.ts'), /^ {2}closeMainSurfaces: \(\) => void;$/m, 'closeMainSurfaces() is gone');
+  },
+
+  'guest-send-selection': () => {
+    const upstream = source('packages/ui/src/lib/guests/start-session.ts');
+    const ours = source('packages/mittr-ui/src/work/sendSelection.ts');
+    const arrowBody = (text, declaration) => {
+      const start = text.indexOf(declaration);
+      assert.ok(start >= 0, `${declaration} is gone`);
+      const open = text.indexOf('=> {', start) + 3;
+      let depth = 0;
+      for (let index = open; index < text.length; index += 1) {
+        if (text[index] === '{') depth += 1;
+        else if (text[index] === '}' && --depth === 0) {
+          return text.slice(start + declaration.length, index + 1).replace(/\s+/g, ' ').trim();
+        }
+      }
+      assert.fail(`${declaration} has no end`);
+    };
+    for (const [theirs, mine] of [
+      ['const resolveDefaultAgentName = ', 'const resolveDefaultAgentName = '],
+      ['const resolveDefaultModelSelection = ', 'const resolveDefaultModelSelection = '],
+      ['const resolveDefaultVariant = ', 'const resolveDefaultVariant = '],
+      ['const captureGuestSendSelection = ', 'export const captureSendSelection = '],
+    ]) {
+      assert.equal(arrowBody(ours, mine), arrowBody(upstream, theirs), `${theirs.trim()} changed upstream; bring sendSelection.ts in line`);
+    }
+    for (const [name, from] of [
+      ['parseModelIdentifier', 'lib/modelIdentifier'],
+      ['modelVariantNames', 'lib/modelVariants'],
+      ['useConfigStore', 'stores/useConfigStore'],
+      ['useSelectionStore', 'sync/selection-store'],
+    ]) {
+      assert.ok(upstream.includes(`import { ${name} } from '@/${from}';`), `start-session.ts no longer takes ${name} from @/${from}`);
+      assert.ok(ours.includes(`import { ${name} } from '../../../ui/src/${from}';`), `sendSelection.ts no longer takes ${name} from ${from}`);
+    }
+    has(upstream, /const sendSelection = captureGuestSendSelection\(\);/, 'startGuestSession no longer starts on captureGuestSendSelection()');
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {

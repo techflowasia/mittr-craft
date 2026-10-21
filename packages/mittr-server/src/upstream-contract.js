@@ -539,6 +539,26 @@ export const UPSTREAM_CONTRACT = [
     ],
     why: "the My work panel is a Dialog with a header, title and description; its state groups fold with Collapsible (defaultOpen, onOpenChange), its title filter is an Input, its source filters are chip Buttons pressed with aria-pressed, its actions are outline sm Buttons, it draws the briefcase, search, refresh, loader-4, error-warning, arrow-right-s, task, stack, play and folder icons, and it names a project without a label by formatDirectoryName(path)",
   },
+  {
+    id: 'session-create-selection',
+    files: [
+      'packages/ui/src/sync/session-actions.ts',
+      'packages/ui/src/sync/session-ui-store.ts',
+      'packages/ui/src/stores/useUIStore.ts',
+    ],
+    why: "Go work starts its session through createSession(title, directory, metadata, selectionTransition, selection, navigation), which creates the session on selection's model ({ providerID, id, variant }) and agent, opens it when navigation is 'open' and answers null when the create fails; the session is then set up with initializeNewOpenChamberSession(sessionId, agents), and closeMainSurfaces() brings the chat forward, as upstream does for a guest session it opens",
+  },
+  {
+    id: 'guest-send-selection',
+    files: [
+      'packages/ui/src/lib/guests/start-session.ts',
+      'packages/ui/src/stores/useConfigStore.ts',
+      'packages/ui/src/sync/selection-store.ts',
+      'packages/ui/src/lib/modelIdentifier.ts',
+      'packages/ui/src/lib/modelVariants.ts',
+    ],
+    why: "Go work picks its model, agent and variant as upstream picks them for a session a guest starts; upstream keeps captureGuestSendSelection and its three resolvers private, so packages/mittr-ui/src/work/sendSelection.ts holds a copy, and the four bodies must match upstream's text, with the same imports, for as long as startGuestSession still uses that selection",
+  },
 ];
 
 // The dictionaries are TypeScript with extensionless imports, which only Bun

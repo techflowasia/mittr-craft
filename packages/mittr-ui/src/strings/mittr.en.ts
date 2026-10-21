@@ -109,4 +109,5 @@ export const mittrEn = {
   'mittr.work.projectMenu.label': 'Start in which project?',
   'mittr.work.projectMenu.empty': 'Add a project first',
   'mittr.work.error.noModelSelected': 'No model is selected yet',
+  'mittr.work.error.noMittrModel': 'No Mittr model is available to you this week.',
 };

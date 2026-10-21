@@ -2,12 +2,13 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
+import { DropdownMenuItem, DropdownMenuLabel } from '../../../ui/src/components/ui/dropdown-menu';
 import { I18nProvider } from '../../../ui/src/lib/i18n';
 import { DEFAULT_LOCALE } from '../../../ui/src/lib/i18n/runtime';
 import { useI18nStore } from '../../../ui/src/lib/i18n/store';
 import { mittrT } from '../strings/mittrT';
 import type { MyWorkState } from './myWorkController';
-import { MyWorkDialogView, WorkRow, type MyWorkDialogViewProps } from './MyWorkDialog';
+import { GoWorkMenu, MyWorkDialogView, WorkRow, type MyWorkDialogViewProps, type WorkProject } from './MyWorkDialog';
 import { stateRankColor, type WorkItem } from './workItems';
 import { createWorkPrefs } from './workPrefs';
 
@@ -36,6 +37,25 @@ const JIRA = item('j-1', {
 });
 
 const ready = (items: WorkItem[]): MyWorkState => ({ status: 'ready', items });
+
+type MenuElement = React.ReactElement<{ children?: React.ReactNode; onClick?: () => void; disabled?: boolean }>;
+
+const elementsOf = (node: React.ReactNode, type: React.ElementType): MenuElement[] => {
+  const found: MenuElement[] = [];
+  const walk = (current: React.ReactNode) => {
+    if (Array.isArray(current)) {
+      current.forEach(walk);
+      return;
+    }
+    if (!React.isValidElement<{ children?: React.ReactNode; onClick?: () => void; disabled?: boolean }>(current)) return;
+    if (current.type === type) found.push(current);
+    walk(current.props.children);
+  };
+  walk(node);
+  return found;
+};
+
+const textOf = (element: MenuElement): string => renderToStaticMarkup(<>{element.props.children}</>).replace(/<[^>]+>/g, '');
 
 const noop = () => {};
 
@@ -169,6 +189,43 @@ describe('My work panel', () => {
     expect(html).not.toContain('<button');
     expect(html).not.toContain('<a ');
     expect(html).not.toContain('hover:bg-interactive-hover');
+  });
+
+  test('a row that arrives with no address renders as plain text', () => {
+    const missing: WorkItem = { ...JIRA };
+    Reflect.deleteProperty(missing, 'url');
+    const html = renderToStaticMarkup(<WorkRow item={missing} color="var(--border)" onOpenUrl={noop} goWork={null} />);
+    expect(html).toContain('Fix login');
+    expect(html).not.toContain('<button');
+    expect(view({ state: ready([missing]) })).toContain('Fix login');
+  });
+
+  test("Go work's menu lists the projects and starts the card in the one chosen", () => {
+    const projects: WorkProject[] = [
+      { id: 'p-1', path: '/work/app', label: 'Shop app' },
+      { id: 'p-2', path: '/work/tools' },
+    ];
+    const started: Array<[string, string]> = [];
+    const menu = GoWorkMenu({ item: JIRA, projects, starting: false, onGoWork: (card, project) => started.push([card.id, project.path]) });
+    const items = elementsOf(menu, DropdownMenuItem);
+    expect(items.map((entry) => textOf(entry))).toEqual(['Shop app', 'tools']);
+    items[1].props.onClick?.();
+    expect(started).toEqual([['j-1', '/work/tools']]);
+    expect(textOf(elementsOf(menu, DropdownMenuLabel)[0])).toBe('Start in which project?');
+  });
+
+  test("Go work's menu with no project says to add one and starts nothing", () => {
+    const menu = GoWorkMenu({ item: JIRA, projects: [], starting: false, onGoWork: noop });
+    const items = elementsOf(menu, DropdownMenuItem);
+    expect(items).toHaveLength(1);
+    expect(items[0].props.disabled).toBe(true);
+    expect(textOf(items[0])).toBe(mittrT('mittr.work.projectMenu.empty'));
+  });
+
+  test('a card being started shows its Go work busy and cannot start again', () => {
+    const html = view({ onGoWork: noop, startingItemId: 'j-1' });
+    expect(/<button[^>]*disabled=""[^>]*>[\s\S]*?oc-loader-4[\s\S]*?Go work<\/button>/.test(html)).toBe(true);
+    expect(view({ onGoWork: noop })).not.toContain('oc-loader-4');
   });
 
   test('no work shows the empty text', () => {

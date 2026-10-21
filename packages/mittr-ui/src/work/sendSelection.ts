@@ -1,0 +1,64 @@
+import { parseModelIdentifier } from '../../../ui/src/lib/modelIdentifier';
+import { modelVariantNames } from '../../../ui/src/lib/modelVariants';
+import { useConfigStore } from '../../../ui/src/stores/useConfigStore';
+import { useSelectionStore } from '../../../ui/src/sync/selection-store';
+
+const resolveDefaultAgentName = (): string | undefined => {
+  const configState = useConfigStore.getState();
+  if (configState.settingsDefaultAgent) {
+    return configState.settingsDefaultAgent;
+  }
+  const visibleAgents = configState.agents.filter((agent) => !agent.hidden);
+  return (
+    configState.currentAgentName
+    || visibleAgents.find((agent) => agent.mode === 'primary' || !agent.mode)?.name
+    || visibleAgents[0]?.name
+  );
+};
+
+const resolveDefaultModelSelection = (): { providerID: string; modelID: string } | null => {
+  const parsed = parseModelIdentifier(useConfigStore.getState().settingsDefaultModel);
+  if (!parsed) {
+    return null;
+  }
+  if (!useConfigStore.getState().getModelMetadata(parsed.providerId, parsed.modelId)) {
+    return null;
+  }
+  return { providerID: parsed.providerId, modelID: parsed.modelId };
+};
+
+const resolveDefaultVariant = (providerID: string, modelID: string): string | undefined => {
+  const configState = useConfigStore.getState();
+  const settingsDefaultVariant = configState.settingsDefaultVariant;
+  const currentVariant = configState.currentProviderId === providerID && configState.currentModelId === modelID
+    ? configState.currentVariant
+    : undefined;
+  const provider = configState.providers.find((entry) => entry.id === providerID);
+  const model = provider?.models.find((entry) => entry.id === modelID);
+  const variantNames = modelVariantNames(model);
+  if (variantNames.length === 0) {
+    return settingsDefaultVariant || currentVariant || undefined;
+  }
+  if (settingsDefaultVariant && variantNames.includes(settingsDefaultVariant)) {
+    return settingsDefaultVariant;
+  }
+  if (currentVariant && variantNames.includes(currentVariant)) {
+    return currentVariant;
+  }
+  return undefined;
+};
+
+export const captureSendSelection = () => {
+  const configState = useConfigStore.getState();
+  const lastUsedProvider = useSelectionStore.getState().lastUsedProvider;
+  const defaultModel = resolveDefaultModelSelection();
+  const providerID = defaultModel?.providerID || configState.currentProviderId || lastUsedProvider?.providerID;
+  const modelID = defaultModel?.modelID || configState.currentModelId || lastUsedProvider?.modelID;
+  const agentName = resolveDefaultAgentName() || configState.currentAgentName || undefined;
+  if (!providerID || !modelID) {
+    return null;
+  }
+  return { providerID, modelID, agentName, variant: resolveDefaultVariant(providerID, modelID) };
+};
+
+export type SendSelection = NonNullable<ReturnType<typeof captureSendSelection>>;

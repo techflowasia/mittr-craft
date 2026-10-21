@@ -1,6 +1,7 @@
 import React from 'react';
 
 import { Icon } from '../../../ui/src/components/icon/Icon';
+import { toast } from '../../../ui/src/components/ui';
 import { Button } from '../../../ui/src/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../ui/src/components/ui/collapsible';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../ui/src/components/ui/dialog';
@@ -14,11 +15,18 @@ import {
 import { Input } from '../../../ui/src/components/ui/input';
 import { openExternalUrl } from '../../../ui/src/lib/url';
 import { cn, formatDirectoryName } from '../../../ui/src/lib/utils';
+import { useConfigStore } from '../../../ui/src/stores/useConfigStore';
 import { useProjectsStore } from '../../../ui/src/stores/useProjectsStore';
+import { useUIStore } from '../../../ui/src/stores/useUIStore';
+import * as sessionActions from '../../../ui/src/sync/session-actions';
+import { useSessionUIStore } from '../../../ui/src/sync/session-ui-store';
+import { useQuotaMe } from '../quota/quotaMeStore';
 import { listenAccountChanged } from '../sign-in/accountChange';
 import { signedInAccount, watchSignedInAccount } from '../sign-in/signedInAccount';
 import { useMittrT } from '../strings/mittrT';
 import { createMyWorkController, MY_WORK_LOADING, type MyWorkController, type MyWorkState } from './myWorkController';
+import { mittrAvailable, mittrCatalogAliases, planGoWork, runGoWork, type GoWorkDeps } from './goWork';
+import { captureSendSelection } from './sendSelection';
 import { fetchMyWork } from './workApi';
 import {
   cardKeyOf,
@@ -48,6 +56,7 @@ export type MyWorkDialogViewProps = {
   onRefresh: () => void;
   onOpenUrl: (url: string) => void;
   onGoWork?: (item: WorkItem, project: WorkProject) => void;
+  startingItemId?: string | null;
   projects: readonly WorkProject[];
 };
 
@@ -57,15 +66,16 @@ type GoWorkMenuProps = {
   item: WorkItem;
   projects: readonly WorkProject[];
   onGoWork: (item: WorkItem, project: WorkProject) => void;
+  starting: boolean;
 };
 
-function GoWorkMenu({ item, projects, onGoWork }: GoWorkMenuProps): React.ReactNode {
+export function GoWorkMenu({ item, projects, onGoWork, starting }: GoWorkMenuProps): React.ReactNode {
   const t = useMittrT();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="shrink-0">
-          <Icon name="play" className="h-3.5 w-3.5" />
+        <Button variant="outline" size="sm" className="shrink-0" disabled={starting}>
+          <Icon name={starting ? 'loader-4' : 'play'} className={cn('h-3.5 w-3.5', starting && 'animate-spin')} />
           {t('mittr.work.actions.goWork')}
         </Button>
       </DropdownMenuTrigger>
@@ -96,7 +106,7 @@ type WorkRowProps = {
 export function WorkRow({ item, color, onOpenUrl, goWork }: WorkRowProps): React.ReactNode {
   const t = useMittrT();
   const key = cardKeyOf(item);
-  const url = item.url.trim();
+  const url = item.url?.trim() ?? '';
   const content = (
     <>
       {key ? <span className="shrink-0 typography-micro font-mono text-muted-foreground">{key}</span> : null}
@@ -136,12 +146,12 @@ export function WorkRow({ item, color, onOpenUrl, goWork }: WorkRowProps): React
   );
 }
 
-type WorkGroupProps = Pick<MyWorkDialogViewProps, 'prefs' | 'onOpenUrl' | 'onGoWork' | 'projects'> & {
+type WorkGroupProps = Pick<MyWorkDialogViewProps, 'prefs' | 'onOpenUrl' | 'onGoWork' | 'startingItemId' | 'projects'> & {
   group: LaneGroup;
   label: string | null;
 };
 
-function WorkGroup({ group, label, prefs, onOpenUrl, onGoWork, projects }: WorkGroupProps): React.ReactNode {
+function WorkGroup({ group, label, prefs, onOpenUrl, onGoWork, startingItemId, projects }: WorkGroupProps): React.ReactNode {
   const t = useMittrT();
   return (
     <div className="space-y-2">
@@ -177,7 +187,7 @@ function WorkGroup({ group, label, prefs, onOpenUrl, onGoWork, projects }: WorkG
                     item={item}
                     color={color}
                     onOpenUrl={onOpenUrl}
-                    goWork={onGoWork ? <GoWorkMenu item={item} projects={projects} onGoWork={onGoWork} /> : null}
+                    goWork={onGoWork ? <GoWorkMenu item={item} projects={projects} onGoWork={onGoWork} starting={startingItemId === item.id} /> : null}
                   />
                 ))}
               </div>
@@ -189,7 +199,7 @@ function WorkGroup({ group, label, prefs, onOpenUrl, onGoWork, projects }: WorkG
   );
 }
 
-export function MyWorkDialogView({ state, filter, prefs, query, onQuery, onFilter, onRefresh, onOpenUrl, onGoWork, projects }: MyWorkDialogViewProps): React.ReactNode {
+export function MyWorkDialogView({ state, filter, prefs, query, onQuery, onFilter, onRefresh, onOpenUrl, onGoWork, startingItemId = null, projects }: MyWorkDialogViewProps): React.ReactNode {
   const t = useMittrT();
   const loading = state.status === 'loading';
   const needle = query.trim().toLowerCase();
@@ -238,6 +248,7 @@ export function MyWorkDialogView({ state, filter, prefs, query, onQuery, onFilte
             prefs={prefs}
             onOpenUrl={onOpenUrl}
             onGoWork={onGoWork}
+            startingItemId={startingItemId}
             projects={projects}
           />
         ))}
@@ -330,9 +341,65 @@ function useMyWorkController(): MyWorkController | null {
   return controller;
 }
 
-function MyWorkPanel(): React.ReactNode {
+const sessionGoWorkDeps = (closeDialog: () => void): GoWorkDeps => ({
+  createSession: (title, directory, selection) => sessionActions.createSession(
+    title,
+    directory,
+    undefined,
+    undefined,
+    { model: { providerID: selection.providerID, id: selection.modelID, variant: selection.variant }, agent: selection.agentName },
+    'open',
+  ),
+  initialize: (sessionId) => {
+    useSessionUIStore.getState().initializeNewOpenChamberSession(sessionId, useConfigStore.getState().agents);
+  },
+  sendMessage: (prompt, selection, sessionId, directory) => useSessionUIStore.getState().sendMessage(
+    prompt,
+    selection.providerID,
+    selection.modelID,
+    selection.agentName,
+    undefined,
+    undefined,
+    undefined,
+    selection.variant,
+    undefined,
+    { sessionId, directory },
+  ),
+  closeDialog: () => {
+    closeDialog();
+    useUIStore.getState().closeMainSurfaces();
+  },
+  toast: {
+    success: (message) => { toast.success(message); },
+    error: (message, options) => { toast.error(message, options); },
+  },
+});
+
+type GoWorkBinding = { startingItemId: string | null; goWork: (item: WorkItem, project: WorkProject) => void };
+
+function useGoWork(onClose: () => void): GoWorkBinding {
+  const quota = useQuotaMe(true);
+  const agentStatus = quota.status === 'ok' ? quota.quota.agentStatus : null;
+  const [startingItemId, setStartingItemId] = React.useState<string | null>(null);
+  const running = React.useRef(false);
+  const goWork = (item: WorkItem, project: WorkProject) => {
+    if (running.current) return;
+    running.current = true;
+    setStartingItemId(item.id);
+    const selection = captureSendSelection();
+    const available = mittrAvailable(selection, mittrCatalogAliases(useConfigStore.getState().providers), agentStatus);
+    void runGoWork(planGoWork({ item, project, selection, available }), sessionGoWorkDeps(onClose)).finally(() => {
+      running.current = false;
+      setStartingItemId(null);
+    });
+  };
+  return { startingItemId, goWork };
+}
+
+function MyWorkPanel({ onClose }: { onClose: () => void }): React.ReactNode {
   const t = useMittrT();
   const controller = useMyWorkController();
+  const { startingItemId, goWork } = useGoWork(onClose);
   const state = React.useSyncExternalStore(
     controller ? controller.subscribe : subscribeNothing,
     () => (controller ? controller.state() : MY_WORK_LOADING),
@@ -363,6 +430,8 @@ function MyWorkPanel(): React.ReactNode {
         onFilter={selectFilter}
         onRefresh={() => { void controller?.refresh(); }}
         onOpenUrl={(url) => { void openExternalUrl(url); }}
+        onGoWork={goWork}
+        startingItemId={startingItemId}
         projects={projects}
       />
     </>
@@ -375,7 +444,7 @@ export function MyWorkDialog({ open, onOpenChange }: MyWorkDialogProps): React.R
   return (
     <Dialog open={open} onOpenChange={(next) => onOpenChange(next)}>
       <DialogContent className="max-w-3xl">
-        <MyWorkPanel />
+        <MyWorkPanel onClose={() => onOpenChange(false)} />
       </DialogContent>
     </Dialog>
   );
