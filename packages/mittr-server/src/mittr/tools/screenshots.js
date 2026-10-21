@@ -13,6 +13,7 @@ export const TOO_LARGE = 'The image is too large to attach; it is saved at ';
 export const CAPTURE_TIMEOUT_MS = 15_000;
 
 const NOT_A_SCREENSHOT = 'That image is not a saved screenshot of this project';
+export const NO_SCREENSHOT_DIRECTORY = 'A project directory is required to save a screenshot';
 
 const MIME_BY_EXTENSION = new Map([
   ['.png', 'image/png'],
@@ -113,7 +114,7 @@ export const attachableImage = (data) => {
 };
 
 export const saveScreenshot = async ({ control, directory, base64, mime, label }) => {
-  if (directory !== String(directory) || !directory.trim()) throw new MittrToolError('A project directory is required to save a screenshot', 400);
+  if (directory !== String(directory) || !directory.trim()) throw new MittrToolError(NO_SCREENSHOT_DIRECTORY, 400);
   const saved = await control.writeScreenshot({ directory, base64, mime, label });
   return { path: saved.path, image: { base64, mime } };
 };

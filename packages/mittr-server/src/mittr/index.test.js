@@ -2310,7 +2310,7 @@ const toolNamesIn = (dataDir) => {
   return fs.existsSync(file) ? [...fs.readFileSync(file, 'utf8').matchAll(/name: "(mittrcraft_[a-z]+)"/g)].map((match) => match[1]) : [];
 };
 const defineFakeTools = (mittr) => {
-  for (const [name, action] of [['mittrcraft_computer', 'computer.list_apps'], ['mittrcraft_chrome', 'chrome.open']]) {
+  for (const [name, action] of [['mittrcraft_chrome', 'chrome.open']]) {
     mittr.registry.defineTool({ name, description: name, parameters: {} });
     mittr.registry.register({ action, tool: name, title: action, description: action, effect: 'read', execute: async () => ({ ran: action }) });
   }

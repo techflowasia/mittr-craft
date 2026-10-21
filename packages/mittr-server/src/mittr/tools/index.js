@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { createToolsCallback } from './callback.js';
+import { registerComputerActions } from './computer-actions.js';
+import { bundledDriverPath, createComputerControl, createLaunchApp, resolveCuaDriver } from './computer-control.js';
 import { materializeToolsPlugin, toolsFragment, toolsPluginDir, toolsPluginSource } from './plugin-source.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
 import { CAPTURE_TOOL } from './screenshots.js';
@@ -25,15 +27,9 @@ const readTextOrNull = (file) => {
   }
 };
 
-const bundledBinary = ({ dirFromEnv, resourcesDir, name, exists }) => {
-  const fromEnv = String(dirFromEnv ?? '').trim();
-  const candidates = [fromEnv ? path.join(fromEnv, name) : null, resourcesDir ? path.join(resourcesDir, name, name) : null];
-  return candidates.find((candidate) => candidate !== null && exists(candidate)) ?? null;
-};
-
 export const bundledDrivers = ({ resourcesDir, env, exists = fs.existsSync }) => ({
-  computer: () => bundledBinary({ dirFromEnv: env.MITTRCRAFT_BUNDLED_CUA_DRIVER_DIR, resourcesDir, name: 'cua-driver', exists }),
-  chrome: () => bundledBinary({ dirFromEnv: env.MITTRCRAFT_BUNDLED_AGENT_BROWSER_DIR, resourcesDir, name: 'agent-browser', exists }),
+  computer: () => resolveCuaDriver({ resourcesDir, env, exists }),
+  chrome: () => bundledDriverPath({ dirFromEnv: env.MITTRCRAFT_BUNDLED_AGENT_BROWSER_DIR, resourcesDir, name: 'agent-browser', exists }),
   chromeInstalled: () => exists(CHROME_EXECUTABLE),
 });
 
@@ -63,6 +59,12 @@ export function setupMittrTools(context, {
     [MITTR_TOOLS.chrome]: () => personalDesktop() && drivers.chrome() !== null && drivers.chromeInstalled(),
     [MITTR_TOOLS.work]: () => signedIn(),
   };
+  registerComputerActions(registry, {
+    control: createComputerControl({ binary: drivers.computer() }),
+    launchApp: createLaunchApp(),
+    writeScreenshot: control.writeScreenshot,
+    offered: offered[MITTR_TOOLS.computer],
+  });
   const switchedOn = {
     [MITTR_TOOLS.computer]: ({ tools }) => tools.computer !== false,
     [MITTR_TOOLS.chrome]: ({ tools }) => tools.chrome !== false,

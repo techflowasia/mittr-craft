@@ -253,3 +253,24 @@ export const fakeEngineFetch = ({ entries = [], answer = () => null, other = () 
   impl.connects = () => impl.calls.filter((call) => call.url.endsWith('/connect/key'));
   return impl;
 };
+
+export const SCREEN_RECORDING_NOT_GRANTED = 'Screen Recording is NOT granted for this process.';
+
+export const stubCuaDriver = (t, answers = {}) => {
+  const dir = tempDataDir(t);
+  for (const [tool, answer] of Object.entries(answers)) fs.writeFileSync(path.join(dir, `${tool}.json`), JSON.stringify(answer));
+  const file = path.join(dir, 'cua-driver');
+  fs.writeFileSync(file, [
+    '#!/bin/sh',
+    'case "$1" in',
+    '  hang) exec /bin/sleep 30 ;;',
+    '  garbled) printf "not json"; exit 0 ;;',
+    'esac',
+    'answer="$(/usr/bin/dirname "$0")/$1.json"',
+    'if [ -f "$answer" ]; then /bin/cat "$answer"; exit 0; fi',
+    `echo "${SCREEN_RECORDING_NOT_GRANTED}" >&2`,
+    'exit 1',
+    '',
+  ].join('\n'), { mode: 0o755 });
+  return file;
+};

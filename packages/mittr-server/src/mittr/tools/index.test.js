@@ -9,7 +9,7 @@ import { MARKER_PNG } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
 import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
 import { SCREENSHOT_DIRECTORY, writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { createMittrSettings } from '../mittr-settings.js';
-import { deferred, listen, tempDataDir } from '../test-helpers.js';
+import { SCREEN_RECORDING_NOT_GRANTED, deferred, listen, stubCuaDriver, tempDataDir } from '../test-helpers.js';
 import { CHROME_EXECUTABLE, bundledDrivers, setupMittrTools } from './index.js';
 import { MITTR_TOOLS, createMittrActionRegistry } from './registry.js';
 
@@ -23,7 +23,7 @@ const ALL_DRIVERS = { computer: () => '/r/cua-driver/cua-driver', chrome: () => 
 
 const registerFakeTools = (registry, { hang } = {}) => {
   const runs = [];
-  for (const [name, action] of [[MITTR_TOOLS.computer, 'computer.list_apps'], [MITTR_TOOLS.chrome, 'chrome.open'], [MITTR_TOOLS.work, 'jira.get_issue']]) {
+  for (const [name, action] of [[MITTR_TOOLS.chrome, 'chrome.open'], [MITTR_TOOLS.work, 'jira.get_issue']]) {
     registry.defineTool({ name, description: `${name} description`, parameters: { value: { type: 'string' } } });
     registry.register({
       action,
@@ -52,7 +52,6 @@ const setUp = async (t, {
   resolveSessionDirectory = async (id) => `/work/${id}`,
 } = {}) => {
   const registry = createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, execute: async () => ({}) } });
-  const runs = registerFakeTools(registry, { hang });
   const readyListeners = new Set();
   const eventListeners = new Set();
   const app = express();
@@ -97,6 +96,7 @@ const setUp = async (t, {
     drivers,
     logger,
   });
+  const runs = registerFakeTools(registry, { hang });
   t.after(() => tools.dispose());
   const base = await listen(t, app);
   const call = async (body) => {
@@ -325,7 +325,7 @@ test('dispose stops listening for engine starts and events', async (t) => {
   assert.equal(eventListeners.size, 0);
 });
 
-test('the bundled drivers come from the env folder first, then the app resources, and Chrome from its install', (t) => {
+test('a set driver folder is the only place a driver is looked for, otherwise the app resources, and Chrome from its install', (t) => {
   const root = tempDataDir(t);
   const resourcesDir = path.join(root, 'Resources');
   const envDir = path.join(root, 'env-cua');
@@ -337,8 +337,12 @@ test('the bundled drivers come from the env folder first, then the app resources
   assert.equal(packed.chrome(), null);
 
   fs.mkdirSync(envDir);
+  assert.equal(bundledDrivers({ resourcesDir, env: { MITTRCRAFT_BUNDLED_CUA_DRIVER_DIR: envDir }, exists: fs.existsSync }).computer(), null, 'a set folder without the driver is not a fall-through to the packed one');
   fs.writeFileSync(path.join(envDir, 'cua-driver'), '');
   assert.equal(bundledDrivers({ resourcesDir, env: { MITTRCRAFT_BUNDLED_CUA_DRIVER_DIR: envDir }, exists: fs.existsSync }).computer(), path.join(envDir, 'cua-driver'));
+  fs.mkdirSync(path.join(resourcesDir, 'agent-browser'));
+  fs.writeFileSync(path.join(resourcesDir, 'agent-browser', 'agent-browser'), '');
+  assert.equal(bundledDrivers({ resourcesDir, env: { MITTRCRAFT_BUNDLED_AGENT_BROWSER_DIR: envDir }, exists: fs.existsSync }).chrome(), null, 'the agent-browser folder is held to the same rule');
   assert.equal(bundledDrivers({ resourcesDir: null, env: {}, exists: fs.existsSync }).computer(), null);
 
   const checked = [];
@@ -354,4 +358,40 @@ test('a plugin that cannot be written leaves the tools out and records nothing a
   fs.writeFileSync(path.join(dataDir, 'engine-plugins', 'mittrcraft-tools'), 'in the way');
   assert.deepEqual(await tools.render(), { fragment: {}, signature: '' });
   assert.ok(logger.lines.some((line) => line.startsWith('[mittr] could not write the MittrCraft tools plugin; the engine config leaves the tools out, and the next config write tries again:')), logger.lines.join('\n'));
+});
+
+test('the computer tool runs the bundled driver for an engine call and saves its screenshot in the session\'s project', async (t) => {
+  const project = fs.realpathSync(tempDataDir(t));
+  const driver = stubCuaDriver(t, {
+    list_apps: { apps: [{ name: 'Calculator', pid: 501, running: true, bundle_id: 'com.apple.calculator' }] },
+    get_desktop_state: { screenshot_png_b64: MARKER_PNG, screenshot_mime_type: 'image/png', screen_width: 2, screen_height: 2 },
+  });
+  const { tools, call, pluginSource } = await setUp(t, {
+    drivers: { ...ALL_DRIVERS, computer: () => driver },
+    resolveSessionDirectory: async (id) => (id === 'ses_1' ? project : null),
+  });
+  await tools.managedConfig();
+  assert.match(pluginSource(), /computer\.screenshot/);
+
+  assert.deepEqual(await call({ tool: 'mittrcraft_computer', input: { action: 'list_apps' }, sessionID: 'ses_1' }), {
+    schemaVersion: 1, ok: true, action: 'computer.list_apps', data: { apps: [{ name: 'Calculator', pid: 501, running: true, bundleId: 'com.apple.calculator' }] },
+  });
+
+  const shot = await call({ tool: 'mittrcraft_computer', input: { action: 'screenshot' }, sessionID: 'ses_1' });
+  assert.equal(shot.ok, true);
+  assert.match(shot.data.path, /^\.openchamber\/screenshots\/desktop-.+\.png$/);
+  assert.deepEqual(shot.data.image, { base64: MARKER_PNG, mime: 'image/png' });
+  assert.deepEqual(fs.readFileSync(path.join(project, shot.data.path)), Buffer.from(MARKER_PNG, 'base64'));
+});
+
+test('a missing grant reaches the agent as a plain sentence', async (t) => {
+  const project = fs.realpathSync(tempDataDir(t));
+  const { call } = await setUp(t, { drivers: { ...ALL_DRIVERS, computer: () => stubCuaDriver(t) }, resolveSessionDirectory: async () => project });
+  assert.deepEqual(await call({ tool: 'mittrcraft_computer', input: { action: 'screenshot' }, sessionID: 'ses_1' }), {
+    schemaVersion: 1,
+    ok: false,
+    action: 'computer.screenshot',
+    error: { message: 'MittrCraft needs the Screen Recording permission for CuaDriver. Turn it on in System Settings → Privacy & Security → Screen Recording.', kind: 'usage' },
+  });
+  assert.equal(SCREEN_RECORDING_NOT_GRANTED, 'Screen Recording is NOT granted for this process.');
 });
