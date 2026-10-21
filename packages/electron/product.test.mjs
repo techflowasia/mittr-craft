@@ -172,19 +172,19 @@ test('applyProductEnv with no env leaves the environment alone', () => {
 });
 
 test('envDefaults fill only unset keys', () => {
-  const product = { env: {}, envDefaults: { MITTRCRAFT_BROKER_URL: 'https://api-dev.mittr.asia' } };
+  const product = { env: {}, envDefaults: { ACME_BROKER_URL: 'https://api.example.test' } };
 
-  const launched = { MITTRCRAFT_BROKER_URL: 'http://127.0.0.1:3000' };
+  const launched = { ACME_BROKER_URL: 'http://127.0.0.1:3000' };
   applyProductEnv(product, launched);
-  assert.equal(launched.MITTRCRAFT_BROKER_URL, 'http://127.0.0.1:3000');
+  assert.equal(launched.ACME_BROKER_URL, 'http://127.0.0.1:3000');
 
   const empty = {};
   applyProductEnv(product, empty);
-  assert.equal(empty.MITTRCRAFT_BROKER_URL, 'https://api-dev.mittr.asia');
+  assert.equal(empty.ACME_BROKER_URL, 'https://api.example.test');
 
-  const blank = { MITTRCRAFT_BROKER_URL: '  ' };
+  const blank = { ACME_BROKER_URL: '  ' };
   applyProductEnv(product, blank);
-  assert.equal(blank.MITTRCRAFT_BROKER_URL, 'https://api-dev.mittr.asia');
+  assert.equal(blank.ACME_BROKER_URL, 'https://api.example.test');
 });
 
 test('a product env value still wins over a launch value when the product also has defaults', () => {
@@ -198,13 +198,16 @@ test('readProduct expands ~/ in envDefaults', () => {
   assert.deepEqual(product.envDefaults, { A: path.join(HOME, 'a') });
 });
 
-test('prod broker ignores a launch override', () => {
-  const brand = fs.readFileSync(path.resolve(import.meta.dirname, '../../brand/product.prod.json'), 'utf8');
-  const product = readProduct({ appPath: APP_PATH, fs: fakeFs({ [path.join(APP_PATH, 'product.json')]: brand }), homeDir: HOME });
-  const env = { MITTRCRAFT_BROKER_URL: 'https://example.invalid' };
+test('a product env value ignores a launch override', () => {
+  const product = readProduct({
+    appPath: APP_PATH,
+    fs: productFile({ env: { ACME_BROKER_URL: 'https://fixed.example.test', ACME_BROKER_FIXED: '1' } }),
+    homeDir: HOME,
+  });
+  const env = { ACME_BROKER_URL: 'https://example.invalid' };
   applyProductEnv(product, env);
-  assert.equal(env.MITTRCRAFT_BROKER_URL, 'https://api.mittr.asia');
-  assert.equal(env.MITTRCRAFT_BROKER_FIXED, '1');
+  assert.equal(env.ACME_BROKER_URL, 'https://fixed.example.test');
+  assert.equal(env.ACME_BROKER_FIXED, '1');
 });
 
 test('the server reports its own version unless the product asks for the app version', () => {
@@ -231,13 +234,13 @@ test('ensureProductDirs pre-creates projects/themes/speech-models', () => {
 test('app name comes from product', () => {
   const product = readProduct({
     appPath: APP_PATH,
-    fs: productFile({ appName: 'MittrCraft', linuxDesktopName: 'mittrcraft.desktop' }),
+    fs: productFile({ appName: 'Acme', linuxDesktopName: 'acme.desktop' }),
     homeDir: HOME,
   });
   assert.deepEqual(resolveAppNames(product, { isDev: true }), {
-    appName: 'MittrCraft',
-    linuxDesktopName: 'mittrcraft.desktop',
-    devUserDataName: 'MittrCraft Dev',
+    appName: 'Acme',
+    linuxDesktopName: 'acme.desktop',
+    devUserDataName: 'Acme Dev',
   });
   assert.equal(resolveAppNames(product, { isDev: false }).devUserDataName, null);
 });

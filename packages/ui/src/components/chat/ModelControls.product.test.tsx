@@ -14,7 +14,7 @@ import { AUTO_MODEL_ID, AUTO_PROVIDER_ID } from '@/lib/routing/autoModel';
 // isModelAllowed. The upstream contract pins that wiring in ModelControls.
 
 const PROVIDERS: ModelPickerProvider[] = [
-  { id: 'mittr', name: 'Mittr', models: [{ id: 'writer', name: 'Mittr Writer' }] },
+  { id: 'acme', name: 'Acme', models: [{ id: 'writer', name: 'Acme Writer' }] },
   { id: 'openai', name: 'OpenAI', models: [{ id: 'gpt-5.5', name: 'GPT Five' }] },
 ];
 
@@ -86,28 +86,28 @@ afterEach(() => {
 describe('ModelControls product picker', () => {
   test('picker hides other providers when a plugin says so', () => {
     registerProductUiPlugin({
-      id: 'mittr-only',
+      id: 'acme-only',
       modelPicker: {
-        useDecorations: () => ({ isProviderShown: (providerId) => providerId === 'mittr', entryStatus: () => null }),
+        useDecorations: () => ({ isProviderShown: (providerId) => providerId === 'acme', entryStatus: () => null }),
       },
     });
     const html = renderToStaticMarkup(<PickerAsModelControlsWiresIt />);
-    expect(html).toContain('Mittr Writer');
+    expect(html).toContain('Acme Writer');
     expect(html).not.toContain('GPT Five');
   });
 
   test('with no plugin every provider renders', () => {
     const html = renderToStaticMarkup(<PickerAsModelControlsWiresIt />);
-    expect(html).toContain('Mittr Writer');
+    expect(html).toContain('Acme Writer');
     expect(html).toContain('GPT Five');
     expect(html).toContain('Auto pick');
   });
 
   test('the Auto entry is offered only while a plugin shows its provider', () => {
     registerProductUiPlugin({
-      id: 'mittr-only',
+      id: 'acme-only',
       modelPicker: {
-        useDecorations: () => ({ isProviderShown: (providerId) => providerId === 'mittr', entryStatus: () => null }),
+        useDecorations: () => ({ isProviderShown: (providerId) => providerId === 'acme', entryStatus: () => null }),
       },
     });
     expect(renderToStaticMarkup(<PickerAsModelControlsWiresIt />)).not.toContain('Auto pick');

@@ -66,10 +66,10 @@ test('updater stays available for a product that declares a feed', () => {
 });
 
 test('a check without a feed answers that updates are off, not that the app is up to date', () => {
-  assert.deepEqual(updateCheckWithoutFeed({ updaterFeed: null, currentVersion: '2.1.1+mittr.1' }), {
+  assert.deepEqual(updateCheckWithoutFeed({ updaterFeed: null, currentVersion: '2.1.1+acme.1' }), {
     available: false,
     updatesDisabled: true,
-    currentVersion: '2.1.1+mittr.1',
+    currentVersion: '2.1.1+acme.1',
     version: null,
     body: null,
     date: null,

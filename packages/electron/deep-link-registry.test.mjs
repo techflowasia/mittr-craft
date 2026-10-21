@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createDeepLinkRegistry } from './deep-link-registry.mjs';
 
-const authLink = { type: 'auth', value: 'callback', raw: 'mittrcraft-dev://auth/callback?code=c' };
+const authLink = { type: 'auth', value: 'callback', raw: 'acme-dev://auth/callback?code=c' };
 
 test('a registered host handles its link and asks for an event', async () => {
   const emitted = [];
