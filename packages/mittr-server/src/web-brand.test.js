@@ -10,28 +10,13 @@ import { createStaticRoutesRuntime } from '../../web/server/lib/opencode/static-
 import { listen } from './mittr/test-helpers.js';
 import { repoRoot } from './upstream-contract.js';
 import { createBrandedWeb, readWebBrand, registerBrandedWeb, servesApiOnly } from './web-brand.js';
+import { WEB_BRAND_COMMAND, generateWebBrand } from './web-brand-source.js';
 
 const readJson = (relative) => JSON.parse(fs.readFileSync(path.join(repoRoot, relative), 'utf8'));
-const DESKTOP_STRINGS = [...readJson('brand/visible-strings.json'), ...readJson('brand/visible-strings.prod.json')];
-const WEB_DIST = 'resources/web-dist/';
-const PWA_ROUTES = '.product/web/server/lib/opencode/pwa-manifest-routes.js';
 const BRAND = readWebBrand();
 
-const quoted = (text) => /'([^']*)'/.exec(text)[1];
-
 test('the brand shipped beside the plugin is the desktop build\'s brand for the web UI and its manifest', () => {
-  const expectedFiles = DESKTOP_STRINGS
-    .filter((entry) => entry.file.startsWith(WEB_DIST))
-    .map((entry) => ({ ...entry, file: entry.file.slice(WEB_DIST.length) }));
-  assert.deepEqual(BRAND.files, expectedFiles, 'regenerate src/web-brand.json from brand/visible-strings*.json');
-
-  const pwa = DESKTOP_STRINGS.filter((entry) => entry.file === PWA_ROUTES);
-  assert.equal(pwa.length, 2);
-  const [name, description] = [pwa.find((entry) => entry.from.startsWith('const DEFAULT_PWA_APP_NAME')), pwa.find((entry) => !entry.from.startsWith('const DEFAULT_PWA_APP_NAME'))];
-  assert.deepEqual(BRAND.manifest, {
-    name: { from: quoted(name.from), to: quoted(name.to) },
-    description: { from: quoted(description.from), to: quoted(description.to) },
-  });
+  assert.deepEqual(BRAND, generateWebBrand(), `regenerate src/web-brand.json with ${WEB_BRAND_COMMAND}`);
   assert.equal(BRAND.manifest.name.to, readJson('brand/product.prod.json').appName);
 });
 
