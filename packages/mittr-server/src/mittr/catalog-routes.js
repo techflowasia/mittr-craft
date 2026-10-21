@@ -161,14 +161,37 @@ export function registerMittrCatalogRoutes(app, {
     return { status: 200, body: { bundleVersion: catalog.bundleVersion } };
   };
 
-  let last = Promise.resolve();
-  const sync = (options) => {
-    const run = last.then(() => runSync(options));
-    last = run.catch(() => {});
-    return run.catch((error) => {
-      logger.error('[mittr] catalog sync failed:', error?.message ?? error);
-      return failure(500, 'The Mittr catalog sync failed');
-    });
+  const queue = [];
+  let busy = false;
+  const drain = async () => {
+    if (busy) return;
+    busy = true;
+    while (queue.length) {
+      const entry = queue.shift();
+      let result;
+      try {
+        result = await runSync({ onStored: () => entry.listeners.forEach((listener) => listener()) });
+      } catch (error) {
+        logger.error('[mittr] catalog sync failed:', error?.message ?? error);
+        result = failure(500, 'The Mittr catalog sync failed');
+      }
+      entry.settle(result);
+    }
+    busy = false;
+  };
+
+  const sync = ({ onStored } = {}) => {
+    const key = cache();
+    const waiting = queue.find((entry) => entry.key === key);
+    if (waiting) {
+      if (onStored) waiting.listeners.push(onStored);
+      return waiting.result;
+    }
+    const entry = { key, listeners: onStored ? [onStored] : [] };
+    entry.result = new Promise((settle) => { entry.settle = settle; });
+    queue.push(entry);
+    void drain();
+    return entry.result;
   };
 
   const syncStored = () => new Promise((resolve) => {

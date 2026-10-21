@@ -291,6 +291,60 @@ test('the catalog routes keep a disable in the data dir of this machine, for any
   assert.deepEqual((await call('PUT', '/api/mittr/catalog/enablement', { kind: 'models', name: 'a1' })).status, 400);
 });
 
+test('startup gives one catalog request', async (t) => {
+  const dataDir = tempDataDir(t);
+  const first = await setUp(t, { dataDir, fetchImpl: platform() });
+  assert.equal((await signIn(first.call)).status, 200);
+  await until(() => catalogFiles(dataDir).length === 1);
+  await first.mittr.dispose();
+
+  const fetchImpl = platform();
+  const { engine } = await setUp(t, { dataDir, fetchImpl });
+  engine.fireReady();
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(catalogCalls(fetchImpl).length, 1);
+});
+
+test('a sign-in gives one catalog request', async (t) => {
+  const fetchImpl = platform();
+  const { call } = await setUp(t, { fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(catalogCalls(fetchImpl).length, 1);
+
+  assert.equal((await signIn(call)).status, 200);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(catalogCalls(fetchImpl).length, 2);
+});
+
+test('a switch gives one catalog request', async (t) => {
+  const fetchImpl = platform({ sessions: [session, sessionB] });
+  const { call } = await setUp(t, { fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 2);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const before = catalogCalls(fetchImpl).length;
+
+  assert.equal((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' })).status, 200);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(catalogCalls(fetchImpl).length, before + 1);
+});
+
+test('each sync route call gives one catalog request when called one after another', async (t) => {
+  const fetchImpl = platform();
+  const { call } = await setUp(t, { fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  for (let n = 2; n <= 4; n += 1) {
+    assert.equal((await call('POST', '/api/mittr/catalog/sync')).status, 200);
+    assert.equal(catalogCalls(fetchImpl).length, n);
+  }
+});
+
 test('only the first ready starts the catalog sync', async (t) => {
   const dataDir = tempDataDir(t);
   const first = await setUp(t, { dataDir, fetchImpl: platform() });

@@ -221,6 +221,122 @@ test('syncs run one after another, so an older answer never lands over a newer o
   assert.equal(models.length, 2);
 });
 
+const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+test('syncs asked while one is running give two requests, not four', async (t) => {
+  const answers = [deferred(), deferred()];
+  const { sync, fetchImpl, ownCache, models } = await setUp(t, { fetchImpl: fakeFetch((_call, n) => answers[n - 1].promise) });
+
+  const running = sync();
+  await tick();
+  const asked = [sync(), sync(), sync()];
+  await tick();
+  assert.equal(fetchImpl.calls.length, 1);
+
+  answers[0].resolve(json({ ...PAYLOAD, bundleVersion: 7 }));
+  await tick();
+  assert.equal(fetchImpl.calls.length, 2);
+  answers[1].resolve(json({ ...PAYLOAD, bundleVersion: 8 }));
+
+  const results = await Promise.all([running, ...asked]);
+  assert.deepEqual(results.map((result) => result.body.bundleVersion), [7, 8, 8, 8]);
+  assert.equal(fetchImpl.calls.length, 2);
+  assert.equal(ownCache.read().bundleVersion, 8);
+  assert.equal(models.length, 2);
+});
+
+test('syncs asked one after another each give a request', async (t) => {
+  const { sync, fetchImpl, call } = await setUp(t);
+  await sync();
+  await call('POST', '/api/mittr/catalog/sync');
+  await call('POST', '/api/mittr/catalog/sync');
+  assert.equal(fetchImpl.calls.length, 3);
+});
+
+test('callers that join a queued sync each hear their own stored result', async (t) => {
+  const answers = [deferred(), deferred()];
+  const { sync, fetchImpl, ownCache } = await setUp(t, { fetchImpl: fakeFetch((_call, n) => answers[n - 1].promise) });
+
+  const running = sync();
+  await tick();
+  const heard = [];
+  const first = sync({ onStored: () => heard.push(['first', ownCache.read()?.bundleVersion]) });
+  const second = sync({ onStored: () => heard.push(['second', ownCache.read()?.bundleVersion]) });
+  answers[0].resolve(json({ ...PAYLOAD, bundleVersion: 7 }));
+  await tick();
+  answers[1].resolve(json({ ...PAYLOAD, bundleVersion: 8 }));
+  await Promise.all([running, first, second]);
+
+  assert.deepEqual(heard, [['first', 8], ['second', 8]]);
+  assert.equal(fetchImpl.calls.length, 2);
+});
+
+test('syncStored resolves for every caller that joined a queued sync', async (t) => {
+  const answers = [deferred(), deferred()];
+  const { sync, syncStored, fetchImpl, ownCache } = await setUp(t, { fetchImpl: fakeFetch((_call, n) => answers[n - 1].promise) });
+
+  const running = sync();
+  await tick();
+  const stored = [syncStored(), syncStored()];
+  answers[0].resolve(json(PAYLOAD));
+  await running;
+  answers[1].resolve(json({ ...PAYLOAD, bundleVersion: 9 }));
+  await Promise.all(stored);
+
+  assert.equal(ownCache.read().bundleVersion, 9);
+  assert.equal(fetchImpl.calls.length, 2);
+});
+
+test('a sync for another account never joins one queued or running for this one', async (t) => {
+  const dataDir = tempDataDir(t);
+  const cacheA = createCatalogCache({ filePath: catalogCachePath(dataDir, '000000000000000a') });
+  const cacheB = createCatalogCache({ filePath: catalogCachePath(dataDir, '000000000000000b') });
+  let active = cacheA;
+  const answers = [deferred(), deferred()];
+  const { sync, fetchImpl, models } = await setUp(t, { dataDir, cache: () => active, fetchImpl: fakeFetch((_call, n) => answers[n - 1].promise) });
+
+  const forA = sync();
+  await tick();
+  active = cacheB;
+  const forB = sync();
+  const forBAgain = sync();
+  answers[0].resolve(json({ ...PAYLOAD, bundleVersion: 7 }));
+  await tick();
+  answers[1].resolve(json({ ...PAYLOAD, bundleVersion: 8 }));
+  const results = await Promise.all([forA, forB, forBAgain]);
+
+  assert.deepEqual(results.map((result) => result.body.bundleVersion), [7, 8, 8]);
+  assert.equal(fetchImpl.calls.length, 2);
+  assert.equal(cacheA.read().bundleVersion, 7);
+  assert.equal(cacheB.read().bundleVersion, 8);
+  assert.equal(models.length, 1);
+});
+
+test('a failed sync gives every caller that joined it the failure, and the next sync asks again', async (t) => {
+  const answers = [deferred(), deferred()];
+  const { sync, fetchImpl, ownCache } = await setUp(t, {
+    fetchImpl: fakeFetch((_call, n) => (n <= 2 ? answers[n - 1].promise : json(PAYLOAD))),
+  });
+
+  const running = sync();
+  await tick();
+  const joined = [sync(), sync()];
+  answers[0].resolve(json(PAYLOAD));
+  await running;
+  answers[1].resolve(json({ message: 'desktop_entitlement_required' }, 403));
+  const results = await Promise.all(joined);
+
+  assert.deepEqual(results, [
+    { status: 403, body: { error: 'Mittr refused the catalog request', code: 'desktop_entitlement_required' } },
+    { status: 403, body: { error: 'Mittr refused the catalog request', code: 'desktop_entitlement_required' } },
+  ]);
+  assert.equal(ownCache.read().bundleVersion, 7);
+  assert.equal(fetchImpl.calls.length, 2);
+
+  assert.equal((await sync()).status, 200);
+  assert.equal(fetchImpl.calls.length, 3);
+});
+
 test('syncStored resolves once the catalog is stored, before the models are applied', async (t) => {
   const applied = deferred();
   const started = [];
