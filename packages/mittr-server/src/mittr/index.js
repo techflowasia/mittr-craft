@@ -32,6 +32,7 @@ import { reconcileSkills, skillIdOf } from './skill-reconciler.js';
 const SIGNED_IN_EVENT = 'mittrcraft:signed-in';
 const SIGN_IN_FAILED_EVENT = 'mittrcraft:sign-in-failed';
 const RESYNC_INTERVAL_MS = 60_000;
+const MANAGED_CONFIG_FILE_NAME = 'opencode.managed.json';
 const QUIET_LOGGER = { warn: () => {} };
 
 const modelListOf = (items) => items.map(({ alias, label }) => ({ alias, label }));
@@ -195,9 +196,18 @@ export function setupMittr(context, {
       return [];
     }
   };
+  const managedFile = path.resolve(dataDir, MANAGED_CONFIG_FILE_NAME);
+  const ownEngineConfigTexts = () => {
+    const file = String(env.OPENCODE_CONFIG ?? '').trim();
+    const content = String(env.OPENCODE_CONFIG_CONTENT ?? '');
+    return [file && path.resolve(file) !== managedFile ? readText(path.resolve(file)) : null, content.trim() ? content : null];
+  };
   const ownMcpNames = () => {
     const dirs = new Set([engineConfigDir, userConfig ? path.dirname(userConfig.path) : null].filter(Boolean).map((dir) => path.resolve(dir)));
-    const texts = [...dirs].flatMap((dir) => ['opencode.json', 'opencode.jsonc'].map((name) => readText(path.join(dir, name)))).filter((text) => text !== null);
+    const texts = [
+      ...[...dirs].flatMap((dir) => ['opencode.json', 'opencode.jsonc'].map((name) => readText(path.join(dir, name)))),
+      ...ownEngineConfigTexts(),
+    ].filter((text) => text !== null);
     return heldMcpNames({ configs: readUserConfigQuietly(), texts });
   };
   const connectorInputs = () => ({ collection: activeCatalogCache().read()?.mcp, enablement, toEntity: opencode.mcpEntity, held: ownMcpNames() });

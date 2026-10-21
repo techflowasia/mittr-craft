@@ -240,7 +240,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'managed-config-private',
     files: ['packages/web/server/lib/opencode/managed-config-file.js', 'packages/web/server/lib/opencode/shared.js'],
-    why: "catalog connectors, keys included, live only in the managed config file: it is written mode 0600 through a temp file and a rename, handed to the engine child alone as OPENCODE_CONFIG, and never read by Settings → MCP, whose custom layer is the server's own OPENCODE_CONFIG",
+    why: "catalog connectors, keys included, live only in the managed config file: it is written mode 0600 through a temp file and a rename, handed to the engine child alone as OPENCODE_CONFIG, and never read by Settings → MCP, whose custom layer is the server's own OPENCODE_CONFIG; a person's own OPENCODE_CONFIG file and OPENCODE_CONFIG_CONTENT go to the engine beside it, so a mittr- name held there leaves ours out",
   },
   {
     id: 'engine-integration-connect-key',

@@ -1817,6 +1817,40 @@ test('a name the person\'s own user config or engine config folder already holds
   assert.deepEqual(engine.userConfigFile.mcp['mittr/legacy'], legacy);
 });
 
+test('a name the person\'s own OPENCODE_CONFIG file or OPENCODE_CONFIG_CONTENT holds is left out, and the file is only read', async (t) => {
+  const dataDir = tempDataDir(t);
+  const ownFile = path.join(tempDataDir(t), 'my-opencode.jsonc');
+  const ownText = '{\n  // mine\n  "mcp": { "servers": { "mittr-own": { "type": "local", "command": ["my-own"] } } }\n}\n';
+  fs.writeFileSync(ownFile, ownText);
+  const content = JSON.stringify({ mcp: { 'mittr-content': { type: 'remote', url: 'https://mine.example/mcp' } } });
+  const engine = fakeEngineContext();
+  const disk = managedFileOnDisk(t, engine);
+  const fetchImpl = platform({ catalogs: { 'at-1': withMcp(CATALOG_A, ['own', 'content', 'docs'].map((name) => mcpConnector(name, `org-${name}`))) } });
+  const { call, logger } = await setUp(t, { dataDir, engine, fetchImpl, env: { ...DEV_ENV, OPENCODE_CONFIG: ownFile, OPENCODE_CONFIG_CONTENT: content } });
+
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => disk.mcp().length > 0);
+  assert.deepEqual(disk.mcp(), ['mittr-docs']);
+  const leftOut = logger.warnings.filter((line) => line.includes('was left out'));
+  assert.deepEqual(leftOut.map((line) => line.match(/'([^']+)'/)[1]).sort(), ['content', 'own']);
+  assert.equal(leftOut.some((line) => /org-|my-own|mine\.example/.test(line)), false);
+  assert.equal(fs.readFileSync(ownFile, 'utf8'), ownText);
+  assert.ok(noConnectorWrites(engine));
+});
+
+test('an OPENCODE_CONFIG that names the managed file itself does not hide the catalog connectors', async (t) => {
+  const dataDir = tempDataDir(t);
+  const managedFile = path.join(dataDir, 'opencode.managed.json');
+  fs.writeFileSync(managedFile, JSON.stringify({ mcp: { servers: { 'mittr-docs': { type: 'local', command: ['org-docs'] } } } }));
+  const engine = fakeEngineContext();
+  const disk = managedFileOnDisk(t, engine);
+  const fetchImpl = platform({ catalogs: { 'at-1': withMcp(CATALOG_A, [mcpConnector('docs', 'org-docs')]) } });
+  const { call } = await setUp(t, { dataDir, engine, fetchImpl, env: { ...DEV_ENV, OPENCODE_CONFIG: managedFile } });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => disk.mcp().length > 0);
+  assert.deepEqual(disk.mcp(), ['mittr-docs']);
+});
+
 test('a pending 1.x session renders no connector and clears 1.22\'s mittr/ entries at setup, and its carry renders its own', async (t) => {
   const dataDir = tempDataDir(t);
   const secretStore = recordingSecretStore();

@@ -779,6 +779,8 @@ const checks = {
     has(source('packages/web/server/lib/opencode/shared.js'), /customPath: process\.env\.OPENCODE_CONFIG\s*\? path\.resolve\(process\.env\.OPENCODE_CONFIG\)\s*: null,/, 'Settings → MCP no longer takes its custom layer from the server\'s own OPENCODE_CONFIG');
 
     const { createManagedConfigRuntime, MANAGED_CONFIG_FILE_NAME } = await importUpstream('packages/web/server/lib/opencode/managed-config-file.js');
+    assert.equal(MANAGED_CONFIG_FILE_NAME, 'opencode.managed.json', 'the managed file moved: the held-name check must not read it as the person\'s own OPENCODE_CONFIG');
+    has(managed, /const userFile = path\.resolve\(env\.OPENCODE_CONFIG\.trim\(\)\);[\s\S]*?parseUserConfig\(env\.OPENCODE_CONFIG_CONTENT \?\? '', 'OPENCODE_CONFIG_CONTENT'\),/, 'the person\'s own OPENCODE_CONFIG and OPENCODE_CONFIG_CONTENT are no longer the layers handed to the engine beside the managed file');
     const dataDir = tempDir(t, 'contract-managed-private-');
     const env = {};
     const connector = { type: 'remote', url: 'https://acme.example/mcp', headers: { authorization: 'Bearer k' } };
