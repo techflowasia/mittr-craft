@@ -285,6 +285,24 @@ test('a chrome or computer action over http runs only for a request from this ma
   assert.deepEqual(await registry.execute('computer.click', {}, { surface: 'agent', tool: COMPUTER }), { ran: 'computer.click' });
 });
 
+test('a tool its switch refuses answers that refusal on every surface and runs nothing', async () => {
+  const { registry, control, runs } = setUp();
+  const asked = [];
+  registry.useSwitches(async (tool) => {
+    asked.push(tool);
+    return tool === CHROME ? new MittrToolError('The Chrome tool is turned off in Settings → Integrations', 403) : null;
+  });
+
+  for (const ctx of [{ surface: 'agent', tool: CHROME }, { surface: 'voice' }, { surface: 'http', scope: { local: true } }]) {
+    await assert.rejects(registry.execute('chrome.open', {}, ctx), refusal(403, 'The Chrome tool is turned off in Settings → Integrations'), ctx.surface);
+  }
+  assert.deepEqual(runs, []);
+  assert.deepEqual(await registry.execute('computer.click', {}, { surface: 'voice' }), { ran: 'computer.click' });
+  assert.deepEqual(await registry.execute('session.list', {}, { surface: 'voice' }), { sessions: [] });
+  assert.equal(control.calls.length, 1);
+  assert.deepEqual(asked, [CHROME, CHROME, CHROME, COMPUTER]);
+});
+
 test('the MittrCraft tool names are fixed', () => {
   assert.deepEqual(MITTR_TOOLS, { computer: 'mittrcraft_computer', chrome: 'mittrcraft_chrome', work: 'mittrcraft_work' });
 });

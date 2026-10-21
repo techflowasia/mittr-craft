@@ -145,16 +145,21 @@ export function setupMittrTools(context, {
 
   const wrapCapture = ({ upstream }) => upstream?.agentWebToolEnabled !== false;
 
+  const switchRefusal = async (name) => {
+    if (!Object.hasOwn(switchedOn, name) || switchedOn[name](await readSwitches())) return null;
+    return name === MITTR_TOOLS.work
+      ? new MittrToolError(`${TITLES[name]} is off while the control tool is turned off in Settings`, 403)
+      : new MittrToolError(`${TITLES[name]} is turned off in Settings → Integrations`, 403);
+  };
+  registry.useSwitches(switchRefusal);
+
   const refusalFor = async (name) => {
     if (name === CAPTURE_TOOL) return wrapCapture(await readSwitches()) ? null : new MittrToolError('The in-app browser tool is turned off in Settings', 403);
     if (!Object.hasOwn(offered, name)) return new MittrToolError('This tool is not available in this install', 503);
     if (!offered[name]()) {
       return name === MITTR_TOOLS.work ? new MittrToolError(NOT_SIGNED_IN, 401) : new MittrToolError(`${TITLES[name]} is not available in this install`, 503);
     }
-    if (switchedOn[name](await readSwitches())) return null;
-    return name === MITTR_TOOLS.work
-      ? new MittrToolError(`${TITLES[name]} is off while the control tool is turned off in Settings`, 403)
-      : new MittrToolError(`${TITLES[name]} is turned off in Settings → Integrations`, 403);
+    return switchRefusal(name);
   };
 
   const callback = createToolsCallback({

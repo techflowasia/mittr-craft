@@ -26,6 +26,7 @@ export function createMittrActionRegistry({ control, logger = console }) {
   const upstreamActions = new Set(control.all);
   const tools = new Map();
   const actions = new Map();
+  let switchRefusal = async () => null;
 
   const isAvailable = (entry) => {
     try {
@@ -101,6 +102,11 @@ export function createMittrActionRegistry({ control, logger = console }) {
 
     resolve,
 
+    useSwitches(refusalOf) {
+      if (!(refusalOf instanceof Function)) throw new Error('useSwitches takes a function');
+      switchRefusal = refusalOf;
+    },
+
     async execute(action, input, ctx = {}) {
       const { surface } = ctx;
       if (!SURFACES.has(surface)) throw new MittrToolError(`Unknown surface "${surface}"`, 400);
@@ -117,6 +123,8 @@ export function createMittrActionRegistry({ control, logger = console }) {
       if (surface === 'http' && THIS_MACHINE_ONLY.has(entry.tool) && ctx.scope?.local !== true) {
         throw new MittrToolError(`${entry.title} can only be used from this machine`, 403);
       }
+      const refusal = await switchRefusal(entry.tool);
+      if (refusal) throw refusal;
       return entry.execute(input, ctx);
     },
   };

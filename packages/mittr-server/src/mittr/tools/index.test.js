@@ -251,6 +251,33 @@ test('the callback refuses a tool that is switched off, and one this install can
   assert.deepEqual(runs.map(({ action, ctx }) => [action, ctx.directory, ctx.sessionId, ctx.surface, ctx.tool, ctx.via, ctx.scope]), [['jira.get_issue', '/work/s1', 's1', 'agent', 'mittrcraft_work', 'engine', undefined]]);
 });
 
+test('a switched-off tool is refused over http and by voice with the callback\'s refusal, and runs nothing', async (t) => {
+  const { tools, registry, state } = await setUp(t);
+  await tools.applySwitches({ chrome: false, computer: false });
+  state.upstreamSettings = { agentControlToolEnabled: false };
+  const surfaces = [{ surface: 'http', scope: { local: true } }, { surface: 'voice' }];
+  const refusals = [
+    ['chrome.open', { url: 'http://acme.example.test/' }, 'The Chrome tool is turned off in Settings → Integrations'],
+    ['computer.list_apps', {}, 'The Computer tool is turned off in Settings → Integrations'],
+    ['jira.get_issue', { key: 'MRKB-1' }, 'The work tool is off while the control tool is turned off in Settings'],
+  ];
+  for (const ctx of surfaces) {
+    for (const [action, input, message] of refusals) {
+      await assert.rejects(registry.execute(action, input, { ...ctx, sessionId: 's1', directory: '/work/s1' }), (error) => {
+        assert.equal(error.message, message, `${ctx.surface} ${action}`);
+        assert.equal(error.statusCode, 403);
+        return true;
+      });
+    }
+  }
+
+  await tools.applySwitches({ chrome: true, computer: true });
+  state.upstreamSettings = {};
+  for (const ctx of surfaces) {
+    assert.deepEqual(await registry.execute('jira.get_issue', { key: 'MRKB-1' }, ctx), CARD, ctx.surface);
+  }
+});
+
 test('the work tool answers a signed-out call with sign in first', async (t) => {
   const { call } = await setUp(t, { signedIn: () => false });
   assert.deepEqual((await call({ tool: 'mittrcraft_work', input: { action: 'get_issue' }, sessionID: 's1' })).error, { message: 'Not signed in to Mittr. Sign in to continue.', kind: 'usage' });
