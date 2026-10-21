@@ -20,6 +20,7 @@
     "binarySha256": "9a7731f7e961a57963f0deb132878367fdf7354e7327a4d558fe4a68e4686b81",
     "bundleIdentifier": "com.trycua.driver",
     "teamIdentifier": "YCK386LBJ7",
-    "licence": "MIT"
+    "licence": "MIT",
+    "noticeSha256": "5c428cedde39ead9fafca8f323e76564dfb5fe0c880bd1bafd7a88b1f051bf6c"
   }
 }

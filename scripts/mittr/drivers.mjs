@@ -59,11 +59,26 @@ const readCuaArchive = (pins, file) => {
   return readPinnedFile({ file, pin, expectedSha256: pin.archiveSha256, expectedBytes: pin.archiveBytes });
 };
 
+export const assertDriverArchitecture = (architecture) => {
+  if (architecture !== 'arm64') {
+    throw new Error(`the drivers in scripts/mittr/drivers.json are pinned for arm64 only; a ${architecture} build would pack an arm64 agent-browser, so it is refused`);
+  }
+  return architecture;
+};
+
 export const checkDriverSources = ({ pins = readDriverPins(), env = process.env } = {}) => {
   const sources = driverSources(pins, env);
   readAgentBrowser(pins, sources.agentBrowserBinary);
   readCuaArchive(pins, sources.cuaArchive);
   return { pins, ...sources };
+};
+
+export const noticeSection = (notices, name) => {
+  const heading = `\n## ${name}\n`;
+  const start = notices.indexOf(heading);
+  if (start === -1) throw new Error(`${NOTICES_RESOURCE} has no ${name} section`);
+  const next = notices.indexOf('\n## ', start + heading.length);
+  return notices.slice(start + 1, next === -1 ? notices.length : next + 1);
 };
 
 export const noticeLicenceText = (notices, name) => {
@@ -81,7 +96,10 @@ export const checkNotices = ({ pins, file = NOTICES_SOURCE }) => {
   if (found !== pins.agentBrowser.licenceSha256) {
     throw new Error(`the agent-browser licence text in brand/${NOTICES_RESOURCE} has sha256 ${found}, not the pinned ${pins.agentBrowser.licenceSha256}`);
   }
-  noticeLicenceText(text, 'cua-driver');
+  const cuaSection = sha256(noticeSection(text, 'cua-driver'));
+  if (cuaSection !== pins.cuaDriver.noticeSha256) {
+    throw new Error(`the cua-driver section of brand/${NOTICES_RESOURCE} has sha256 ${cuaSection}, not the pinned ${pins.cuaDriver.noticeSha256}`);
+  }
   return file;
 };
 
@@ -200,7 +218,7 @@ const checkPackedCuaApp = ({ cuaDir, pin, codesign }) => {
   const identifier = text.match(/^Identifier=(.+)$/m)?.[1]?.trim() ?? 'none';
   const team = text.match(/^TeamIdentifier=(.+)$/m)?.[1]?.trim() ?? 'none';
   if (identifier !== pin.bundleIdentifier || team !== pin.teamIdentifier) {
-    throw new Error(`the packed ${CUA_APP} is signed by team ${team}, not ${pin.teamIdentifier}: it was re-signed and would lose its macOS permission identity (identifier ${identifier})`);
+    throw new Error(`the packed ${CUA_APP} is signed as ${identifier} by team ${team}, not ${pin.bundleIdentifier} by team ${pin.teamIdentifier}: it was re-signed and would lose its macOS permission identity`);
   }
   const deep = codesign(['--verify', '--deep', '--strict', cuaApp]);
   if (deep.status !== 0) throw new Error(`the packed ${CUA_APP} fails codesign --verify --deep --strict: ${String(deep.stderr).trim()}`);

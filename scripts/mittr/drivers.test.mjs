@@ -11,10 +11,12 @@ import {
   AGENT_BROWSER_BINARY_ENV,
   CUA_DRIVER_ARCHIVE_ENV,
   NOTICES_RESOURCE,
+  assertDriverArchitecture,
   checkDriverSources,
   checkNotices,
   driverSources,
   noticeLicenceText,
+  noticeSection,
   readDriverPins,
   stageDrivers,
   verifyPackedDrivers,
@@ -197,7 +199,7 @@ test('the packed drivers report the pinned versions, the pinned signer and the n
 test('a packed CuaDriver.app with another team identifier fails the check', (t) => {
   const { pins } = fixtureDrivers(t);
   const { appPath, codesign, run, noticesSource } = packedApp(t, pins, { teamIdentifier: 'not set' });
-  assert.throws(() => verifyPackedDrivers({ appPath, pins, codesign, run, notices: noticesSource }), /CuaDriver\.app is signed by team not set, not TEAM000001: it was re-signed and would lose its macOS permission identity/);
+  assert.throws(() => verifyPackedDrivers({ appPath, pins, codesign, run, notices: noticesSource }), /CuaDriver\.app is signed as test\.example\.driver by team not set, not test\.example\.driver by team TEAM000001: it was re-signed and would lose its macOS permission identity/);
 });
 
 test('a re-signed packed agent-browser passes only when its unsigned bytes are the pinned ones', (t) => {
@@ -213,6 +215,64 @@ test('a re-signed packed agent-browser passes only when its unsigned bytes are t
   );
 });
 
+test('a re-signed packed agent-browser with the pinned unsigned hash but another byte count fails the check', (t) => {
+  const { pins } = fixtureDrivers(t);
+  const { appPath, codesign, run, noticesSource } = packedApp(t, pins);
+  fs.writeFileSync(path.join(appPath, 'Contents', 'Resources', 'agent-browser', 'agent-browser'), machOArm64('re-signed agent-browser'));
+  const wrongBytes = () => ({ sha256: pins.agentBrowser.resignedStrippedSha256, bytes: pins.agentBrowser.resignedStrippedBytes + 1 });
+  assert.throws(() => verifyPackedDrivers({ appPath, pins, codesign, run, notices: noticesSource, unsigned: wrongBytes }), /not the pinned agent-browser 9\.8\.7/);
+});
+
+test('a packed agent-browser that is not executable or fails its signature check fails the check', (t) => {
+  const { pins } = fixtureDrivers(t);
+  const plain = packedApp(t, pins);
+  fs.chmodSync(path.join(plain.appPath, 'Contents', 'Resources', 'agent-browser', 'agent-browser'), 0o644);
+  assert.throws(() => verifyPackedDrivers({ ...plain, pins, notices: plain.noticesSource }), /the packed agent-browser is not executable/);
+  const unsigned = packedApp(t, pins);
+  const failsStrict = (args) => (args[0] === '--verify' && args[1] === '--strict' ? { status: 1, stdout: '', stderr: 'code object is not signed at all' } : unsigned.codesign(args));
+  assert.throws(() => verifyPackedDrivers({ ...unsigned, codesign: failsStrict, pins, notices: unsigned.noticesSource }), /the packed agent-browser fails codesign --verify --strict: code object is not signed at all/);
+});
+
+test('a packed CuaDriver.app whose binary changed fails the check as re-signed', (t) => {
+  const { pins } = fixtureDrivers(t);
+  const packed = packedApp(t, pins);
+  fs.writeFileSync(path.join(packed.appPath, 'Contents', 'Resources', 'cua-driver', 'CuaDriver.app', 'Contents', 'MacOS', 'cua-driver'), Buffer.from('fixture cua-driver binary, re-signed'));
+  assert.throws(() => verifyPackedDrivers({ ...packed, pins, notices: packed.noticesSource }), /the packed CuaDriver\.app binary has sha256 [0-9a-f]{64}, not the pinned [0-9a-f]{64}: it was re-signed and would lose its macOS permission identity/);
+});
+
+test('a packed CuaDriver.app with another identifier fails the check', (t) => {
+  const { pins } = fixtureDrivers(t);
+  const packed = packedApp(t, { ...pins, cuaDriver: { ...pins.cuaDriver, bundleIdentifier: 'test.example.other' } });
+  assert.throws(() => verifyPackedDrivers({ ...packed, pins, notices: packed.noticesSource }), /CuaDriver\.app is signed as test\.example\.other by team TEAM000001, not test\.example\.driver by team TEAM000001: it was re-signed/);
+});
+
+test('a packed cua-driver link that is missing or points elsewhere fails the check', (t) => {
+  const { pins } = fixtureDrivers(t);
+  const packed = packedApp(t, pins);
+  const link = path.join(packed.appPath, 'Contents', 'Resources', 'cua-driver', 'cua-driver');
+  fs.rmSync(link);
+  fs.symlinkSync('./CuaDriver.app/Contents/MacOS/other', link);
+  assert.throws(() => verifyPackedDrivers({ ...packed, pins, notices: packed.noticesSource }), /cua-driver is not a link to \.\/CuaDriver\.app\/Contents\/MacOS\/cua-driver/);
+  fs.rmSync(link);
+  assert.throws(() => verifyPackedDrivers({ ...packed, pins, notices: packed.noticesSource }), /cua-driver is not a link to/);
+});
+
+test('a packed CuaDriver.app that fails the deep signature check fails the check', (t) => {
+  const { pins } = fixtureDrivers(t);
+  const packed = packedApp(t, pins);
+  const failsDeep = (args) => (args[1] === '--deep' ? { status: 1, stdout: '', stderr: 'nested code is modified or invalid' } : packed.codesign(args));
+  assert.throws(() => verifyPackedDrivers({ ...packed, codesign: failsDeep, pins, notices: packed.noticesSource }), /the packed CuaDriver\.app fails codesign --verify --deep --strict: nested code is modified or invalid/);
+});
+
+test('a packed driver that reports another version fails the check', (t) => {
+  const { pins } = fixtureDrivers(t);
+  const packed = packedApp(t, pins);
+  const oldCua = (binary, args) => (binary.endsWith('agent-browser') ? packed.run(binary, args) : { status: 0, stdout: 'cua-driver 0.0.1\n' });
+  assert.throws(() => verifyPackedDrivers({ ...packed, run: oldCua, pins, notices: packed.noticesSource }), /the packed cua-driver does not report cua-driver 9\.9\.9 \(exit 0\): cua-driver 0\.0\.1/);
+  const brokenAgentBrowser = (binary, args) => (binary.endsWith('agent-browser') ? { status: 1, stdout: '' } : packed.run(binary, args));
+  assert.throws(() => verifyPackedDrivers({ ...packed, run: brokenAgentBrowser, pins, notices: packed.noticesSource }), /the packed agent-browser does not report agent-browser 9\.8\.7 \(exit 1\)/);
+});
+
 test('a packed app without the notices, or with another notices file, fails the check', (t) => {
   const { pins } = fixtureDrivers(t);
   const bare = packedApp(t, pins, { notices: false });
@@ -222,18 +282,50 @@ test('a packed app without the notices, or with another notices file, fails the 
   assert.throws(() => verifyPackedDrivers({ ...other, pins, notices: other.noticesSource }), /THIRD_PARTY_NOTICES\.md is not brand\/THIRD_PARTY_NOTICES\.md/);
 });
 
-test('the notices carry the fetched agent-browser licence unchanged and 1.22\'s cua-driver section', () => {
+test('the notices carry the fetched agent-browser licence unchanged and the pinned cua-driver section', (t) => {
   const pins = readDriverPins();
   const text = fs.readFileSync(path.join(repoRoot, 'brand', 'THIRD_PARTY_NOTICES.md'), 'utf8');
   assert.equal(sha256(noticeLicenceText(text, 'agent-browser')), pins.agentBrowser.licenceSha256);
   assert.ok(text.includes(pins.agentBrowser.licenceUrl));
-  assert.match(text, /\n## cua-driver\n\nBundled from https:\/\/github\.com\/trycua\/cua .*\n\nMIT License\n\nCopyright \(c\) 2025 Cua AI, Inc\.\n/);
+  const cua = noticeSection(text, 'cua-driver');
+  assert.equal(sha256(cua), pins.cuaDriver.noticeSha256);
+  assert.match(cua, /^## cua-driver\n\nBundled from https:\/\/github\.com\/trycua\/cua \(`scripts\/mittr\/drivers\.mjs`\)\.\n\nMIT License\n\nCopyright \(c\) 2025 Cua AI, Inc\.\n/);
+  assert.ok(cua.endsWith('SOFTWARE.\n'));
   assert.doesNotThrow(() => checkNotices({ pins }));
   assert.throws(() => checkNotices({ pins: { ...pins, agentBrowser: { ...pins.agentBrowser, licenceSha256: 'd'.repeat(64) } } }), /agent-browser licence text in brand\/THIRD_PARTY_NOTICES\.md has sha256 [0-9a-f]{64}, not the pinned d{64}/);
+
+  const edited = path.join(scratch(t, 'notices-'), 'notices.md');
+  fs.writeFileSync(edited, text.replace('Copyright (c) 2025 Cua AI, Inc.', 'Copyright (c) 2025 Someone Else'));
+  assert.throws(() => checkNotices({ pins, file: edited }), /the cua-driver section of brand\/THIRD_PARTY_NOTICES\.md has sha256 [0-9a-f]{64}, not the pinned 5c428ced/);
 });
 
-test('the module never calls fetch', () => {
-  const source = fs.readFileSync(path.join(repoRoot, 'scripts', 'mittr', 'drivers.mjs'), 'utf8');
-  assert.equal(source.includes('fetch('), false);
-  assert.equal(/from 'node:(https?|net|tls)'/.test(source), false);
+test('a build for any architecture but arm64 refuses to pack the drivers', () => {
+  assert.equal(assertDriverArchitecture('arm64'), 'arm64');
+  assert.throws(() => assertDriverArchitecture('x64'), /pinned for arm64 only; a x64 build would pack an arm64 agent-browser, so it is refused/);
+});
+
+const NETWORK_MODULES = ['http', 'https', 'http2', 'net', 'tls', 'dns', 'dgram', 'undici'];
+const NETWORK_BINARIES = ['curl', 'wget', 'nc', 'scp', 'rsync'];
+
+const networkUseIn = (source) => [
+  ...[...source.matchAll(/\bfetch\b|\bXMLHttpRequest\b|\bWebSocket\b/g)].map((match) => match[0]),
+  ...[...source.matchAll(/['"`](?:node:)?([a-z0-9]+)(?:\/[a-z]+)?['"`]/g)].filter((match) => NETWORK_MODULES.includes(match[1])).map((match) => match[0]),
+  ...[...source.matchAll(/['"`](?:\/usr\/bin\/)?([a-z]+)['"`]/g)].filter((match) => NETWORK_BINARIES.includes(match[1])).map((match) => match[0]),
+  ...[...source.matchAll(/\bimport\(([^)]*)/g)].filter((match) => !match[1].startsWith('pathToFileURL(')).map((match) => match[0]),
+];
+
+test('the network scan finds static and dynamic imports, fetch and spawned download tools', () => {
+  assert.deepEqual(networkUseIn("import http from 'node:http';"), ["'node:http'"]);
+  assert.deepEqual(networkUseIn("const m = await import('node:https');"), ["'node:https'", "import('node:https'"]);
+  assert.deepEqual(networkUseIn("import('dns'); require(\"dgram\");"), ["'dns'", '"dgram"', "import('dns'"]);
+  assert.deepEqual(networkUseIn('globalThis.fetch'), ['fetch']);
+  assert.deepEqual(networkUseIn("spawnSync('curl', ['-L', url]); spawnSync('/usr/bin/wget', [url]);"), ["'curl'", "'/usr/bin/wget'"]);
+  assert.deepEqual(networkUseIn("await import(pathToFileURL(file).href); spawnSync('tar', []); spawnSync('codesign', [])"), []);
+});
+
+test('the driver module and the build script never reach the network', () => {
+  for (const file of ['drivers.mjs', 'build-desktop.mjs']) {
+    const source = fs.readFileSync(path.join(repoRoot, 'scripts', 'mittr', file), 'utf8');
+    assert.deepEqual(networkUseIn(source), [], file);
+  }
 });

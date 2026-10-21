@@ -41,9 +41,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { z } from 'zod';
 
+import { resolveTargetArchitecture } from '../../packages/electron/scripts/target-architecture.mjs';
 import { matcherFor } from '../../packages/mittr-server/src/brand-matcher.js';
 import { resolveBunExecutable } from '../lib/bun-executable.mjs';
-import { AGENT_BROWSER_RESOURCE_DIR, CUA_DRIVER_RESOURCE_DIR, NOTICES_RESOURCE, checkDriverSources, checkNotices, stageDrivers, verifyPackedDrivers } from './drivers.mjs';
+import { AGENT_BROWSER_RESOURCE_DIR, CUA_DRIVER_RESOURCE_DIR, NOTICES_RESOURCE, assertDriverArchitecture, checkDriverSources, checkNotices, stageDrivers, verifyPackedDrivers } from './drivers.mjs';
 import { RIPGREP_RESOURCE_DIR, defaultRipgrepArchive, readPinnedArchive, readRipgrepPin, stageRipgrep, verifyPackedRipgrep } from './ripgrep.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -394,6 +395,7 @@ const main = async () => {
   }
   const flavor = parseFlavor(process.argv.slice(2));
   const { pin: ripgrepPin, archive: ripgrepArchive } = checkRipgrepArchive();
+  assertDriverArchitecture(resolveTargetArchitecture().node);
   const drivers = checkDriverSources();
   checkNotices({ pins: drivers.pins });
   const startedAt = Date.now();

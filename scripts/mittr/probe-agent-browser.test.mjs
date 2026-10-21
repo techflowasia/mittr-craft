@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
 
-import { CHROME_FLAGS, exposedListeners, pathsUnder, peersOf, sandboxProfile, upgradeRefused } from './probe-agent-browser.mjs';
+import { CHROME_FLAGS, chromeArgs, exposedListeners, installStopHandlers, pathsUnder, peersOf, sandboxProfile, upgradeRefused } from './probe-agent-browser.mjs';
 
 const lsof = [
   'COMMAND     PID     USER   FD     TYPE DEVICE SIZE/OFF     NODE NAME',
@@ -66,4 +67,39 @@ test('Chrome gets the keychain-free and quiet-network flags, one per line and wi
     '--no-default-browser-check',
   ]);
   assert.equal(CHROME_FLAGS.some((flag) => flag.includes(',')), false);
+});
+
+test('every Chrome launch goes through the refusing loopback proxy, as a flag with no comma', () => {
+  const args = chromeArgs(51234);
+  assert.deepEqual(args.slice(0, CHROME_FLAGS.length), CHROME_FLAGS);
+  assert.equal(args.at(-1), '--proxy-server=127.0.0.1:51234');
+  assert.equal(args.some((flag) => flag.includes(',')), false);
+});
+
+test('SIGINT and SIGTERM run the clean-up once, then exit with the signal code', async () => {
+  for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+    const target = new EventEmitter();
+    const calls = [];
+    const exited = new Promise((resolve) => {
+      installStopHandlers({ target, cleanup: async (received) => { calls.push(received); }, exit: resolve });
+    });
+    target.emit(signal, signal);
+    target.emit(signal, signal);
+    assert.equal(await exited, code);
+    assert.deepEqual(calls, [signal]);
+  }
+});
+
+test('a clean-up that fails still exits, and the handlers can be removed', async () => {
+  const target = new EventEmitter();
+  const exited = new Promise((resolve) => {
+    installStopHandlers({ target, cleanup: async () => { throw new Error('close failed'); }, exit: resolve });
+  });
+  target.emit('SIGTERM', 'SIGTERM');
+  assert.equal(await exited, 143);
+  const other = new EventEmitter();
+  const remove = installStopHandlers({ target: other, cleanup: async () => {}, exit: () => {} });
+  assert.equal(other.listenerCount('SIGINT'), 1);
+  remove();
+  assert.equal(other.listenerCount('SIGINT') + other.listenerCount('SIGTERM'), 0);
 });

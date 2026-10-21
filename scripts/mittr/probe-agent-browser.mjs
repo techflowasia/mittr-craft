@@ -32,6 +32,23 @@ const SAMPLE_MS = 250;
 const SEEDED_PROFILE = { directory: 'Default', name: 'Mittr Probe Throwaway' };
 const WATCHED_DIALOGS = ['SecurityAgent', 'UserNotificationCenter'];
 
+export const chromeArgs = (proxyPort) => [...CHROME_FLAGS, `--proxy-server=127.0.0.1:${proxyPort}`];
+
+export const installStopHandlers = ({ cleanup, target = process, exit = (code) => process.exit(code) }) => {
+  let stopping = false;
+  const handle = (signal) => {
+    if (stopping) return;
+    stopping = true;
+    Promise.resolve().then(() => cleanup(signal)).catch(() => {}).finally(() => exit(signal === 'SIGINT' ? 130 : 143));
+  };
+  target.on('SIGINT', handle);
+  target.on('SIGTERM', handle);
+  return () => {
+    target.off('SIGINT', handle);
+    target.off('SIGTERM', handle);
+  };
+};
+
 export const pathsUnder = (lsofText, root) => {
   const found = new Set();
   for (const line of String(lsofText).split('\n')) {
@@ -318,7 +335,6 @@ const main = async () => {
   const env = {
     ...baseEnv,
     AGENT_BROWSER_EXECUTABLE_PATH: CHROME,
-    AGENT_BROWSER_ARGS: CHROME_FLAGS.join('\n'),
     AGENT_BROWSER_SESSION: 'p4',
     AGENT_BROWSER_IDLE_TIMEOUT_MS: '300000',
   };
@@ -343,7 +359,7 @@ const main = async () => {
   const ownerChromeBefore = await pidsOf('Google Chrome');
   const dialogBaseline = Object.fromEntries(await Promise.all(WATCHED_DIALOGS.map(async (name) => [name, await pidsOf(name)])));
 
-  const seen = { processes: new Map(), realPaths: new Set(), peers: new Set(), peerOwners: new Map(), peersByRow: new Map(), listeners: new Set(), exposed: new Set(), tempPaths: new Set(), dialogs: [], samples: 0 };
+  const seen = { processes: new Map(), realPaths: new Set(), peers: new Set(), peerOwners: new Map(), listeners: new Set(), exposed: new Set(), tempPaths: new Set(), dialogs: [], samples: 0 };
   let row = 'setup';
   let sampling = true;
   let busy = false;
@@ -366,9 +382,7 @@ const main = async () => {
       }
       for (const line of stdout.split('\n')) {
         for (const peer of peersOf(line)) {
-          if (row !== 'AB3-proxy') seen.peers.add(peer);
-          if (!seen.peersByRow.has(row)) seen.peersByRow.set(row, new Set());
-          seen.peersByRow.get(row).add(peer);
+          seen.peers.add(peer);
           if (!seen.peerOwners.has(peer)) {
             const pid = Number(line.split(/\s+/)[1]);
             seen.peerOwners.set(peer, { pid, process: (seen.processes.get(pid)?.command ?? '').replaceAll(root, '<temp>').slice(0, 140), row, at: new Date().toISOString() });
@@ -400,10 +414,12 @@ const main = async () => {
     return !result.stopped;
   };
 
+  const live = new Set();
   const ab = (args, { sandbox = null, timeout = 60_000 } = {}) => new Promise((resolve) => {
     const command = sandbox ? '/usr/bin/sandbox-exec' : STAGED_AGENT_BROWSER;
     const argv = sandbox ? ['-f', sandbox, STAGED_AGENT_BROWSER, ...args] : args;
-    const child = spawn(command, argv, { cwd: home, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, argv, { cwd: home, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    live.add(child.pid);
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
@@ -411,6 +427,7 @@ const main = async () => {
     const killer = setTimeout(() => child.kill('SIGKILL'), timeout);
     child.on('close', (status, signal) => {
       clearTimeout(killer);
+      live.delete(child.pid);
       const entry = { row, args: args.map((arg) => (arg.length > 120 ? `${arg.slice(0, 117)}...` : arg)), status, signal, stdoutBytes: stdout.length, stderr: stderr.trim().slice(0, 400) };
       result.commands.push(entry);
       resolve({ status, signal, stdout, stderr });
@@ -434,10 +451,43 @@ const main = async () => {
     };
   };
 
+  const killSurvivors = async () => {
+    const killed = [];
+    for (const pid of live) {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {}
+    }
+    for (const proc of ourProcesses(await processTable(), markers)) {
+      if (proc.command.includes(root) || proc.command.startsWith(STAGED_AGENT_BROWSER) || proc.command.startsWith(path.dirname(path.dirname(path.dirname(CHROME))))) {
+        try {
+          process.kill(proc.pid, 'SIGKILL');
+          killed.push({ pid: proc.pid, command: proc.command.replaceAll(root, '<temp>').slice(0, 160) });
+        } catch {}
+      }
+    }
+    return killed;
+  };
+
   const pageServer = await startPageServer();
   const pageUrl = `http://127.0.0.1:${pageServer.port}/`;
+  const proxy = await startRefusingProxy();
+  const launchArgs = chromeArgs(proxy.port);
+  const proxyFlag = launchArgs[launchArgs.length - 1];
+  env.AGENT_BROWSER_ARGS = launchArgs.join('\n');
   let chromeMain = null;
-  let proxyDiagnostic = null;
+
+  const removeStopHandlers = installStopHandlers({
+    cleanup: async () => {
+      sampling = false;
+      clearInterval(timer);
+      await Promise.race([ab(['close', '--all'], { timeout: 10_000 }), sleep(10_000)]);
+      await killSurvivors();
+      pageServer.server.close();
+      proxy.server.close();
+      if (!keep) fs.rmSync(root, { recursive: true, force: true });
+    },
+  });
 
   try {
     row = 'AB1';
@@ -487,8 +537,18 @@ const main = async () => {
     result.profileCopy = { userDataDir: userDataArg ? userDataArg.replaceAll(root, '<temp>') : null, underTemp: Boolean(userDataArg?.startsWith(root)), seededUserData: seededUserData.replaceAll(root, '<temp>') };
     const headless = Boolean(chromeMain?.command.includes('--headless'));
     result.headless = headless;
+    result.proxyFlagOnChrome = Boolean(chromeMain?.command.includes(proxyFlag));
     if (!chromeMain || !headless) {
       stopFor(chromeMain ? 'Chrome was not started headless' : 'no Chrome process was found for the probe');
+      throw new Error(result.stopped.reason);
+    }
+    if (!result.profileCopy.underTemp) {
+      result.rows.AB1.pass = false;
+      stopFor('Chrome was started on a user-data-dir outside the temp root');
+      throw new Error(result.stopped.reason);
+    }
+    if (!result.proxyFlagOnChrome) {
+      stopFor(`Chrome was started without ${proxyFlag}`);
       throw new Error(result.stopped.reason);
     }
     if (!dialogCheck()) throw new Error(result.stopped.reason);
@@ -542,6 +602,9 @@ const main = async () => {
       const ourPids = new Set([...seen.processes.keys()]);
       ab6.streamPortHolderIsOurs = holderPids.length > 0 && holderPids.every((pid) => ourPids.has(pid));
       if (ab6.streamPortHolderIsOurs) {
+        const sameOrigin = `http://127.0.0.1:${streamPort}`;
+        ab6.sameOrigin = { origin: sameOrigin, ...(await websocketUpgrade(streamPort, sameOrigin)) };
+        ab6.sameOrigin.accepted = !upgradeRefused(ab6.sameOrigin.response);
         ab6.evilOrigin = { origin: EVIL_ORIGIN, ...(await websocketUpgrade(streamPort, EVIL_ORIGIN)) };
         ab6.evilOrigin.refused = upgradeRefused(ab6.evilOrigin.response);
       }
@@ -563,41 +626,15 @@ const main = async () => {
     ab5.pass = ab5.closeStatus === 0 && ab5.leftAfterClose.length === 0 && ab5.pgrepStaged === '' && ab5.pgrepTempRoot === '';
     if (!dialogCheck()) throw new Error(result.stopped.reason);
 
-    row = 'AB3-proxy';
-    const proxy = await startRefusingProxy();
-    const diagnostic = { note: 'diagnostic only, AB3 is judged without a proxy', proxy: `http://127.0.0.1:${proxy.port}` };
-    proxyDiagnostic = diagnostic;
-    try {
-      env.AGENT_BROWSER_PROXY = diagnostic.proxy;
-      const reopened = await ab(['open', pageUrl], { timeout: 90_000 });
-      diagnostic.open = reopened.status === 0;
-      await settle(10_000);
-      const page = await ab(['read']);
-      diagnostic.loopbackPageStillLoads = page.status === 0 && page.stdout.includes('Probe form');
-      Object.assign(diagnostic, await closeAll());
-    } finally {
-      delete env.AGENT_BROWSER_PROXY;
-      await new Promise((resolve) => proxy.server.close(resolve));
-    }
-    diagnostic.refusedThroughProxy = proxy.attempts;
-    diagnostic.directPeers = [...(seen.peersByRow.get('AB3-proxy') ?? [])];
   } catch (error) {
     if (!result.stopped) stopFor(error.message);
   } finally {
     sampling = false;
     clearInterval(timer);
     while (busy) await sleep(50);
-    const survivors = ourProcesses(await processTable(), markers);
-    result.killedAtEnd = [];
-    for (const proc of survivors) {
-      if (proc.command.includes(root) || proc.command.startsWith(STAGED_AGENT_BROWSER) || proc.command.startsWith(path.dirname(path.dirname(path.dirname(CHROME))))) {
-        try {
-          process.kill(proc.pid, 'SIGKILL');
-          result.killedAtEnd.push({ pid: proc.pid, command: proc.command.replaceAll(root, '<temp>').slice(0, 160) });
-        } catch {}
-      }
-    }
+    result.killedAtEnd = await killSurvivors();
     await new Promise((resolve) => pageServer.server.close(resolve));
+    await new Promise((resolve) => proxy.server.close(resolve));
   }
 
   await sleep(1_000);
@@ -618,12 +655,16 @@ const main = async () => {
     ab1.realPathsOpened = [...seen.realPaths];
     ab1.realPathInCommandLines = result.processesSeen.some((proc) => proc.command.includes(roots.googleSupport) || proc.command.includes(roots.agentBrowser));
     ab1.realPathMtimeChanges = result.realPathMtimes.filter((entry) => entry.changed).map((entry) => entry.path);
-    if (ab1.pass !== false) ab1.pass = ab1.onlySeededProfile === true && ab1.realPathsOpened.length === 0 && !ab1.realPathInCommandLines && ab1.sandboxDenials.length === 0;
-    if (ab1.pass === false && !result.stopped) stopFor('a real Chrome or Google path was opened, named or denied');
+    ab1.profileCopyUnderTemp = result.profileCopy?.underTemp === true;
+    if (ab1.pass !== false) {
+      ab1.pass = ab1.onlySeededProfile === true && ab1.realPathsOpened.length === 0 && !ab1.realPathInCommandLines && ab1.sandboxDenials.length === 0
+        && ab1.realPathMtimeChanges.length === 0 && ab1.profileCopyUnderTemp;
+    }
+    if (ab1.pass === false && !result.stopped) stopFor('a real Chrome or Google path was opened, named, denied or changed, or the profile copy was outside the temp root');
   }
 
   const keychainAfter = keychainStatus(realHome);
-  const chromeFlagsPassed = chromeMain ? Object.fromEntries(CHROME_FLAGS.map((flag) => [flag, chromeMain.command.includes(flag)])) : null;
+  const chromeFlagsPassed = chromeMain ? Object.fromEntries(launchArgs.map((flag) => [flag, chromeMain.command.includes(flag)])) : null;
   const help = spawnSync(STAGED_AGENT_BROWSER, ['--help'], { cwd: home, env, encoding: 'utf8', timeout: 20_000 });
   result.rows.AB2 = {
     argumentChannel: helpLines(help.stdout),
@@ -635,14 +676,23 @@ const main = async () => {
   };
   result.rows.AB2.pass = Boolean(chromeFlagsPassed?.['--use-mock-keychain'] && chromeFlagsPassed?.['--password-store=basic']) && keychainBefore === keychainAfter && result.rows.AB2.securityAgentSeen.length === 0;
 
-  result.rows.AB3 = { peers: [...seen.peers], peerOwners: Object.fromEntries(seen.peerOwners), flagsOnChrome: chromeFlagsPassed, lsofSamples: seen.samples, proxyDiagnostic };
-  result.rows.AB3.pass = Boolean(chromeFlagsPassed) && Object.values(chromeFlagsPassed).every(Boolean) && seen.peers.size === 0 && seen.samples > 0;
+  result.rows.AB3 = {
+    peers: [...seen.peers],
+    peerOwners: Object.fromEntries(seen.peerOwners),
+    flagsOnChrome: chromeFlagsPassed,
+    proxy: proxyFlag,
+    refusedThroughProxy: [...new Set(proxy.attempts.map((attempt) => `${attempt.kind} ${attempt.target}`))],
+    refusedAttempts: proxy.attempts.length,
+    loopbackPageServedDirectly: pageServer.requests.length > 0,
+    lsofSamples: seen.samples,
+  };
+  result.rows.AB3.pass = Boolean(chromeFlagsPassed) && Object.values(chromeFlagsPassed).every(Boolean) && seen.peers.size === 0 && seen.samples > 0 && result.rows.AB3.loopbackPageServedDirectly;
 
   if (result.rows.AB6) {
     const ab6 = result.rows.AB6;
     ab6.listeners = [...seen.listeners];
     ab6.exposed = [...seen.exposed];
-    ab6.pass = ab6.exposed.length === 0 && ab6.listeners.length > 0 && (ab6.evilOrigin ? ab6.evilOrigin.refused === true : false);
+    ab6.pass = ab6.exposed.length === 0 && ab6.listeners.length > 0 && ab6.sameOrigin?.accepted === true && ab6.evilOrigin?.refused === true;
     if (ab6.exposed.length > 0) stopFor(`non-loopback listeners: ${ab6.exposed.join(', ')}`);
   }
   for (const name of ['AB1', 'AB2', 'AB3', 'AB4', 'AB5', 'AB6']) {
@@ -656,6 +706,7 @@ const main = async () => {
   if (!keep) fs.rmSync(root, { recursive: true, force: true });
   result.tempRootRemoved = !fs.existsSync(root);
   result.finishedAt = new Date().toISOString();
+  removeStopHandlers();
 
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);

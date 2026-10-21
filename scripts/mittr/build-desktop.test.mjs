@@ -390,7 +390,7 @@ test('the build checks both pinned drivers and the notices before any build step
   const main = fs.readFileSync(path.join(repoRoot, 'scripts/mittr/build-desktop.mjs'), 'utf8');
   const body = main.slice(main.indexOf('const main = async () => {'));
   const firstStep = body.indexOf("step('1/8 workspace build')");
-  for (const call of ['checkDriverSources(', 'checkNotices(']) {
+  for (const call of ['assertDriverArchitecture(', 'checkDriverSources(', 'checkNotices(']) {
     assert.ok(body.indexOf(call) !== -1 && body.indexOf(call) < firstStep, `${call} is not checked before the build starts`);
   }
   assert.ok(body.indexOf('stageDrivers(') > body.indexOf("step('3/8"), 'the drivers are not staged in step 3');

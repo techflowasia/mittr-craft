@@ -208,7 +208,7 @@ limitations under the License.
 
 ## cua-driver
 
-Bundled from https://github.com/trycua/cua (`scripts/prepare-cua-driver.mjs`).
+Bundled from https://github.com/trycua/cua (`scripts/mittr/drivers.mjs`).
 
 MIT License
 
