@@ -1,4 +1,4 @@
-const INVALID_BODY = 'Invalid request body';
+export const INVALID_BODY = 'Invalid request body';
 
 export const jsonBody = (express, { limit }) => {
   const parse = express.json({ limit });

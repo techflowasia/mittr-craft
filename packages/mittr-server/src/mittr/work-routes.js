@@ -1,33 +1,20 @@
-import { CANNOT_REACH_MITTR, PLATFORM_TIMEOUT_MS } from './platform.js';
-import { isRecord } from './values.js';
+import { CANNOT_REACH_MITTR, PLATFORM_TIMED_OUT, PLATFORM_TIMEOUT_MS, isTimeout, platformErrorText } from './platform.js';
 
 const WORK_ENDPOINT = '/desktop/work';
 
 const NOT_AUTHORIZED = 'Not authorized to read work items';
 const PLATFORM_UNAVAILABLE = 'Mittr platform is unavailable';
-const PLATFORM_TIMED_OUT = 'Mittr platform request timed out';
 const LOAD_FAILED = 'Failed to load work items';
 
 const NOT_CONFIGURED = { configured: false, items: [], userId: null };
 
-const BARE_REASONS = new Set(['unauthorized', 'forbidden']);
-
-const textOf = (value) => (value?.constructor === String && value.trim() ? value : null);
-
 const refusalTextOf = async (response) => {
-  let body = null;
   try {
-    body = await response.json();
+    return platformErrorText(await response.json()) ?? NOT_AUTHORIZED;
   } catch {
     return NOT_AUTHORIZED;
   }
-  if (!isRecord(body)) return NOT_AUTHORIZED;
-  const error = textOf(body.error);
-  if (error && !BARE_REASONS.has(error.trim().toLowerCase())) return error;
-  return textOf(body.message) ?? NOT_AUTHORIZED;
 };
-
-const isTimeout = (error) => error?.name === 'TimeoutError' || error?.name === 'AbortError';
 
 export function registerMittrWorkRoutes(app, {
   broker,

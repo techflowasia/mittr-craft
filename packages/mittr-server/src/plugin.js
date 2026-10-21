@@ -49,6 +49,8 @@ export const SERVER_ONLY_SECRETS = [
   'OPENCHAMBER_APNS_TEAM_ID',
   'OPENCHAMBER_LINEAR_CLIENT_SECRET',
   'OPENCHAMBER_JEV_API_KEY',
+  'JIRA_TOKEN',
+  'PLANE_API_KEY',
 ];
 
 const takeBinRuntimePin = (env) => {

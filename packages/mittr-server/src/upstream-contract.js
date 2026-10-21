@@ -484,7 +484,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'server-only-secrets',
     files: ['packages/web/server', 'packages/web/bin', 'packages/mittr-server/src/plugin.js'],
-    why: "every secret-shaped OPENCHAMBER_ or OPENCODE_ variable, and NGROK_AUTHTOKEN, that upstream's server or CLI reads is either withheld from the engine (SERVER_ONLY_SECRETS in plugin.js) or one upstream means a child to have; a name upstream adds, renames or drops fails here",
+    why: "every secret-shaped OPENCHAMBER_ or OPENCODE_ variable, and NGROK_AUTHTOKEN, that upstream's server or CLI reads is either withheld from the engine (SERVER_ONLY_SECRETS in plugin.js) or one upstream means a child to have; a name upstream adds, renames or drops fails here; JIRA_TOKEN and PLANE_API_KEY are the platform's own names for the work tracking credentials and are withheld too",
     childSecrets: ['OPENCODE_PASSWORD', 'OPENCODE_SERVER_PASSWORD', 'OPENCHAMBER_AGENT_TOOL_TOKEN', 'OPENCHAMBER_SERVICE_TOKEN', 'OPENCHAMBER_GIT_SSH_KEY'],
   },
   {

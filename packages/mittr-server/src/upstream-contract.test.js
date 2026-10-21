@@ -1410,7 +1410,7 @@ const checks = {
     walk('packages/web/bin');
     const known = new Set([...SERVER_ONLY_SECRETS, ...childSecrets]);
     assert.deepEqual([...read].filter((name) => !known.has(name)).sort(), [], 'upstream reads a secret the engine would inherit; withhold it in SERVER_ONLY_SECRETS or record it as a child secret');
-    const ours = new Set(['MITTRCRAFT_UI_PASSWORD']);
+    const ours = new Set(['MITTRCRAFT_UI_PASSWORD', 'JIRA_TOKEN', 'PLANE_API_KEY']);
     assert.deepEqual([...known].filter((name) => !ours.has(name) && !read.has(name)).sort(), [], 'upstream no longer reads a secret recorded here; it was renamed or dropped');
   },
 

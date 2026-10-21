@@ -14,6 +14,7 @@ import { syncDefaultModel } from './default-model.js';
 import { createEnablementStore } from './enablement.js';
 import { ensureMittrCredential, forgetMittrCredential } from './engine-credential.js';
 import { identityFragment, identityPluginDir, materializeIdentityPlugin } from './identity.js';
+import { registerMittrIntegrationsRoutes } from './integrations-routes.js';
 import { mintLocalToken } from './local-token.js';
 import { catalogMcpServers, heldMcpNames, mcpFragment, sweepLegacyUserMcp } from './mcp-fragment.js';
 import { createMittrSettings } from './mittr-settings.js';
@@ -343,6 +344,7 @@ export function setupMittr(context, {
   const quotaService = createMittrQuotaService({ broker, ensureFreshSession, fetchImpl });
   registerMittrQuotaRoutes(app, { service: quotaService });
   registerMittrWorkRoutes(app, { broker, ensureFreshSession, fetchImpl, logger });
+  registerMittrIntegrationsRoutes(app, { express, broker, ensureFreshSession, fetchImpl, logger });
   const unregisterDeepLink = host?.deepLinks?.register({
     host: 'auth',
     // Either way the window is brought forward and re-reads status, so a

@@ -4,12 +4,12 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { CANNOT_REACH_MITTR, PLATFORM_TIMEOUT_MS, READ_FAILED } from './platform.js';
+import { CANNOT_REACH_MITTR, PLATFORM_TIMED_OUT, PLATFORM_TIMEOUT_MS, READ_FAILED, isTimeout, platformErrorText } from './platform.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sourceOf = (name) => fs.readFileSync(path.join(here, name), 'utf8');
 
-const PLATFORM_CALLERS = ['auth-routes.js', 'audit-routes.js', 'catalog-routes.js', 'quota-service.js', 'work-routes.js'];
+const PLATFORM_CALLERS = ['auth-routes.js', 'audit-routes.js', 'catalog-routes.js', 'quota-service.js', 'work-routes.js', 'integrations-routes.js'];
 
 const productionModules = () => fs.readdirSync(here)
   .filter((name) => name.endsWith('.js') && !name.endsWith('.test.js') && name !== 'test-helpers.js');
@@ -18,6 +18,27 @@ test('the shared platform values', () => {
   assert.equal(PLATFORM_TIMEOUT_MS, 15_000);
   assert.equal(CANNOT_REACH_MITTR, 'Cannot reach Mittr');
   assert.equal(READ_FAILED, 'Could not read this week’s quota');
+  assert.equal(PLATFORM_TIMED_OUT, 'Mittr platform request timed out');
+});
+
+test('the platform error text is the error unless that is a bare HTTP reason, then the message', () => {
+  assert.equal(platformErrorText({ error: 'Invalid base URL' }), 'Invalid base URL');
+  assert.equal(platformErrorText({ error: 'Invalid base URL', message: 'other' }), 'Invalid base URL');
+  for (const reason of ['Bad Request', 'Unauthorized', 'forbidden', ' Not Found ', 'Conflict', 'Internal Server Error']) {
+    assert.equal(platformErrorText({ statusCode: 400, error: reason, message: 'baseUrl must be a URL' }), 'baseUrl must be a URL', reason);
+    assert.equal(platformErrorText({ error: reason }), null, reason);
+  }
+  assert.equal(platformErrorText({ message: 'Only a message' }), 'Only a message');
+  assert.equal(platformErrorText({ error: '  ', message: '' }), null);
+  assert.equal(platformErrorText({ message: ['a', 'b'] }), null);
+  for (const body of [null, undefined, 'text', 7, ['x'], {}]) assert.equal(platformErrorText(body), null);
+});
+
+test('a timeout is a TimeoutError or an AbortError and nothing else', () => {
+  assert.equal(isTimeout(new DOMException('slow', 'TimeoutError')), true);
+  assert.equal(isTimeout(new DOMException('stop', 'AbortError')), true);
+  assert.equal(isTimeout(new TypeError('fetch failed')), false);
+  assert.equal(isTimeout(null), false);
 });
 
 test('every platform call uses the one timeout', () => {
