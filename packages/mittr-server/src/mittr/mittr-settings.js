@@ -18,13 +18,16 @@ const PARKED_TOOL_KEYS = Object.freeze({
   agentChromeApprovedHosts: 'chromeApprovedHosts',
 });
 
+const NOT_IN_PROFILE_NAME = /[/\\~\0]/;
+const DOT_NAMES = new Set(['.', '..']);
+
 const isBoolean = (value) => value === true || value === false;
 const isText = (value) => value === String(value);
 const hostOf = (value) => (isText(value) ? value.trim().toLowerCase() : '');
-const isHost = (value) => HOST.test(hostOf(value));
-const profileOf = (value) => {
+export const isHost = (value) => HOST.test(hostOf(value));
+export const profileOf = (value) => {
   const name = isText(value) ? value.trim() : '';
-  return name && !name.startsWith('-') && !name.includes('/') ? name : null;
+  return name && !name.startsWith('-') && !NOT_IN_PROFILE_NAME.test(name) && !DOT_NAMES.has(name) ? name : null;
 };
 
 const TOOL_FIELDS = Object.freeze({

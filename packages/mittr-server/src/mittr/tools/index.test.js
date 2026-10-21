@@ -48,6 +48,7 @@ const setUp = async (t, {
   const state = { upstreamSettings, port, refreshes: 0 };
   const context = {
     app,
+    express,
     dataDir,
     server: { port: () => state.port },
     opencode: {

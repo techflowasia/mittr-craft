@@ -269,7 +269,7 @@ test('a name that resolves to this machine on MittrCraft\'s port is refused, and
 
 test('a stored profile that is a flag, a folder or not one of this Mac\'s profiles is refused', async (t) => {
   const message = 'The chosen Chrome profile is not one of this Mac\'s Chrome profiles; ask the user to choose one in Settings → Integrations → MittrCraft tools → Chrome profile';
-  for (const chromeProfile of ['--headed', '-s', '/Users/person/Library/Application Support/Google/Chrome', 'Profile 1/..']) {
+  for (const chromeProfile of ['--headed', '-s', '/Users/person/Library/Application Support/Google/Chrome', 'Profile 1/..', '..', '~', 'Profile 1\\x', 'Profile\u00001']) {
     const { service, browser, ctx } = setUp(t, { tools: { chromeProfile } });
     await assert.rejects(service.execute('chrome.open', { url: 'https://acme.example.test/' }, ctx), refusal(409, message, { code: 'chrome_profile_required' }), chromeProfile);
     assert.deepEqual(browser.calls, [], chromeProfile);

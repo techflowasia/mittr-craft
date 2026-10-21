@@ -7,12 +7,15 @@ import { I18nProvider } from '../../ui/src/lib/i18n';
 import { dict as enDict } from '../../ui/src/lib/i18n/messages/en';
 import { overlayDictionary, ProductSlot, remoteModelCatalogAllowed, translateProductSessionAuthDescription, useProductModelPicker } from '../../ui/src/lib/product-plugins';
 import { MittrAccountMenu } from './accounts/MittrAccountMenu';
+import { INTEGRATIONS_PAGE } from './integrationsPage';
 import './product-ui-plugin';
 import { SIDEBAR_FOOTER } from './sidebarFooter';
 import { strings } from './strings/en';
 import { mittrT } from './strings/mittrT';
+import { MittrToolsSettingsItem } from './tools/MittrToolsSection';
 import { SidebarProfile } from './ui-auth/SidebarProfile';
 import { MyWorkFooterItem } from './work/MyWorkButton';
+import { WorkTrackingSettingsItem } from './work-tracking/WorkTrackingSection';
 
 const MISLEADING = [
   'an MittrCraft',
@@ -59,6 +62,10 @@ describe('MittrCraft integrations page', () => {
       React.createElement(I18nProvider, null, React.createElement(ProductSlot, { name: 'integrations-page' })),
     );
     expect(html).toContain(`>${mittrT('mittr.workTracking.title')}</h2>`);
+  });
+
+  test('the integrations slot holds Work tracking, then MittrCraft tools', () => {
+    expect(INTEGRATIONS_PAGE).toEqual([WorkTrackingSettingsItem, MittrToolsSettingsItem]);
   });
 });
 

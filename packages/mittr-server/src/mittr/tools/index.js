@@ -13,6 +13,7 @@ import { createComputerControl, createLaunchApp, resolveCuaDriver } from './comp
 import { materializeToolsPlugin, toolsFragment, toolsPluginDir, toolsPluginSource } from './plugin-source.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
 import { CAPTURE_TOOL } from './screenshots.js';
+import { registerMittrToolsSettingsRoutes } from './settings-routes.js';
 import { registerWorkActions } from './work-lookup.js';
 
 export const CHROME_CLOSE_TIMEOUT_MS = 3_000;
@@ -71,7 +72,7 @@ export function setupMittrTools(context, {
   engineFetch = fetch,
   logger = console,
 }) {
-  const { app, dataDir, server, opencode, events, settings: upstreamSettings, control } = context;
+  const { app, express, dataDir, server, opencode, events, settings: upstreamSettings, control } = context;
   const approvals = chromeApprovals ?? createChromeSiteApprovals({
     settings: mittrSettings,
     engine: createEnginePermissions({ opencode, fetchImpl: engineFetch }),
@@ -86,9 +87,10 @@ export function setupMittrTools(context, {
     (error) => logger.warn('[mittr] could not carry the 1.22 tool settings; trying again next start:', error?.message ?? error),
   );
 
+  const chromeDriverOffered = () => personalDesktop() && drivers.chrome() !== null;
   const offered = {
     [MITTR_TOOLS.computer]: () => personalDesktop() && drivers.computer() !== null,
-    [MITTR_TOOLS.chrome]: () => personalDesktop() && drivers.chrome() !== null && drivers.chromePath() !== null,
+    [MITTR_TOOLS.chrome]: () => chromeDriverOffered() && drivers.chromePath() !== null,
     [MITTR_TOOLS.work]: () => signedIn(),
   };
   registerComputerActions(registry, {
@@ -208,6 +210,27 @@ export function setupMittrTools(context, {
     await refresh();
     return switches();
   };
+
+  const settingsView = async () => {
+    await carried;
+    const { tools } = await mittrSettings.read();
+    const chromeOffered = chromeDriverOffered();
+    return {
+      computer: { offered: offered[MITTR_TOOLS.computer](), enabled: tools.computer },
+      chrome: chromeOffered
+        ? { offered: true, chromeInstalled: drivers.chromePath() !== null, enabled: tools.chrome, profile: tools.chromeProfile, headed: tools.chromeHeaded, approvedHosts: tools.chromeApprovedHosts }
+        : { offered: false, chromeInstalled: false, enabled: tools.chrome, profile: null, headed: false, approvedHosts: [] },
+    };
+  };
+
+  registerMittrToolsSettingsRoutes(app, {
+    express,
+    view: settingsView,
+    apply: applySwitches,
+    profiles: () => chrome.profiles(),
+    removeHost: (host) => chrome.removeHost(host),
+    logger,
+  });
 
   const unsubscribeReady = opencode.onReady(() => callback.engineReady());
   const unsubscribeApprovals = subscribeApprovals(events, approvals);

@@ -1908,6 +1908,26 @@ const checks = {
     for (const [route, name] of routes) assert.ok(route.test(chunks), `the generated client no longer has ${name}`);
   },
 
+  'settings-section-primitives': () => {
+    const section = source('packages/ui/src/components/sections/shared/SettingsSection.tsx');
+    for (const name of ['SettingsSection', 'SettingsCheckboxRow', 'SettingsFieldRow']) {
+      has(section, new RegExp(`^export const ${name}: React\\.FC<${name}Props> = \\(\\{`, 'm'), `${name} is no longer exported from SettingsSection`);
+    }
+    for (const name of ['SETTINGS_HELPER_CLASS', 'SETTINGS_OPTION_STACK_CLASS', 'SETTINGS_SELECT_ROW_TRIGGER_CLASS', 'SETTINGS_SELECT_SIZE']) {
+      has(section, new RegExp(`^export const ${name} = `, 'm'), `${name} is no longer exported from SettingsSection`);
+    }
+    has(section, /interface SettingsCheckboxRowProps \{\s*checked: boolean;\s*onChange: \(checked: boolean\) => void;\s*label: React\.ReactNode;\s*description\?: React\.ReactNode;\s*disabled\?: boolean;\s*ariaLabel\?: string;[\s\S]*?info\?: React\.ReactNode;\s*\}/, 'SettingsCheckboxRow no longer takes checked, onChange, label, description, ariaLabel and info');
+    has(section, /interface SettingsFieldRowProps \{\s*label: React\.ReactNode;\s*description\?: React\.ReactNode;[\s\S]*?info\?: React\.ReactNode;/, 'SettingsFieldRow no longer takes label and info');
+    const select = source('packages/ui/src/components/ui/select.tsx');
+    has(select, /export \{\s*Select,\s*SelectContent,[\s\S]*?SelectItem,[\s\S]*?SelectTrigger,\s*SelectValue,\s*\}/, 'select.tsx no longer exports Select, SelectContent, SelectItem, SelectTrigger and SelectValue');
+    has(select, /children\?: React\.ReactNode \| \(\(value: string \| undefined\) => React\.ReactNode\);/, 'SelectValue no longer takes a render function of the chosen value');
+    has(select, /size\?: "sm" \| "default" \| "lg" \| "chip" \| "settings"/, 'SelectTrigger no longer has the settings size');
+    const button = source('packages/ui/src/components/ui/button.tsx');
+    has(button, /^export \{ Button \}/m, 'Button is no longer exported');
+    for (const variant of ['ghost', 'outline']) has(button, new RegExp(`^\\s+${variant}:`, 'm'), `Button lost its ${variant} variant`);
+    has(button, /^\s+sm:/m, 'Button lost its sm size');
+  },
+
   'engine-tool-plugin-api': () => {
     const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
     assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P13 to P18 again, then update the MittrCraft tools plugin and this pin');

@@ -4,6 +4,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
+import { profileOf } from '../mittr-settings.js';
 import { MAX_GOAL_CHARS } from './browser-stepper.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
 import { chromeSessionName } from './chrome-control.js';
@@ -172,11 +173,6 @@ const stopReasonOf = (error) => {
 
 const portOf = (page) => Number(page.port) || (page.protocol === 'https:' ? 443 : 80);
 
-const validProfile = (value) => {
-  const name = textOf(value);
-  return name && !name.startsWith('-') && !name.includes('/') ? name : null;
-};
-
 const siteMoved = (label, host = null) => {
   const extra = { code: 'site_moved' };
   if (host) extra.host = host;
@@ -288,7 +284,7 @@ export function createChromeService({
   const chosenProfile = async (tools, sessionName) => {
     const stored = textOf(tools.chromeProfile);
     if (stored) {
-      const name = validProfile(stored);
+      const name = profileOf(stored);
       if (!name) throw notAProfile();
       if (modes.get(sessionName)?.profile === name) return name;
       const listed = await control.profiles().catch(() => []);
@@ -296,7 +292,7 @@ export function createChromeService({
       return name;
     }
     const listed = await control.profiles().catch(() => []);
-    const only = listed.length === 1 ? validProfile(listed[0]?.directory) : null;
+    const only = listed.length === 1 ? profileOf(listed[0]?.directory) : null;
     if (!only) throw new MittrToolError(PROFILE_REQUIRED, 409, { code: 'chrome_profile_required' });
     await settings.update({ tools: { chromeProfile: only } }).catch(() => undefined);
     return only;
@@ -324,7 +320,7 @@ export function createChromeService({
     const running = await control.sessions().catch(() => []);
     if (!running.includes(sessionName)) return;
     const { tools } = await settings.read();
-    await closeQuietly({ sessionName, profile: validProfile(tools.chromeProfile) ?? DEFAULT_PROFILE, headed: tools.chromeHeaded === true });
+    await closeQuietly({ sessionName, profile: profileOf(tools.chromeProfile) ?? DEFAULT_PROFILE, headed: tools.chromeHeaded === true });
   };
 
   const screenshot = async ({ sessionId, directory, label, currentUrl, runAction, options }) => {

@@ -299,7 +299,7 @@ export const UPSTREAM_CONTRACT = [
       'packages/ui/src/components/sections/integrations/IntegrationsPage.tsx',
       'packages/ui/src/lib/product-plugins.ts',
     ],
-    why: 'the Integrations settings page renders the integrations-page slot once, inside its page layout right after the built-in integrations section and before the third-party integrations; Jira and Plane settings live there',
+    why: 'the Integrations settings page renders the integrations-page slot once, inside its page layout right after the built-in integrations section and before the third-party integrations; Jira and Plane settings, then the Computer and Chrome tool settings, live there',
   },
   {
     id: 'provider-switch-ui',
@@ -653,6 +653,15 @@ export const UPSTREAM_CONTRACT = [
     id: 'engine-permission-api',
     files: ['packages/electron/package.json', 'node_modules/@opencode/client/package.json'],
     why: "the bundled engine is OpenCode 2.0.22, where POST /api/session/:id/permission with { id, action, resources, save, metadata, source } raises the engine's own permission card under the id the server minted (answering { data: { id, effect } }, and dropping message), POST /api/session/:id/permission/:requestID/reply takes { decision } and answers 204, GET /api/session/:id/permission lists that session's open requests, GET and DELETE /api/permission/saved(/:id) list and remove the rules an always answer saves, and a plugin's ctx.permission.hook('evaluate', fn) may turn the effect a project rule gave (allow) into ask; probe P15 and P16 (scripts/mittr/probe-engine-v2.mjs --only agent-tools) must run again before this pin moves",
+  },
+  {
+    id: 'settings-section-primitives',
+    files: [
+      'packages/ui/src/components/sections/shared/SettingsSection.tsx',
+      'packages/ui/src/components/ui/select.tsx',
+      'packages/ui/src/components/ui/button.tsx',
+    ],
+    why: "SettingsSection, SettingsCheckboxRow and SettingsFieldRow are still exported from components/sections/shared/SettingsSection, with the checkbox row's checked, onChange, label, description, ariaLabel and info and the field row's label and info; Select's SelectValue takes a render function of the chosen value, and Button keeps its ghost and outline variants and sm size; the MittrCraft tools section is built from them",
   },
 ];
 

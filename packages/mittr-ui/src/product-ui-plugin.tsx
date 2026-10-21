@@ -2,6 +2,7 @@ import React from 'react';
 
 import { registerProductUiPlugin } from '../../ui/src/lib/product-plugins';
 import { AboutSettingsSignOut, SignOutButton } from './accounts/SignOutButton';
+import { INTEGRATIONS_PAGE } from './integrationsPage';
 import { MittrCraftLogo } from './MittrCraftLogo';
 import { OtherProvidersSwitch } from './providers/OtherProvidersSwitch';
 import { useMittrPickerDecorations } from './providers/useMittrPickerFilter';
@@ -15,7 +16,6 @@ import { MittrSignInGate } from './sign-in/MittrSignInGate';
 import { strings } from './strings/en';
 import { mittrT } from './strings/mittrT';
 import { AdSignIn } from './ui-auth/AdSignIn';
-import { WorkTrackingSettingsItem } from './work-tracking/WorkTrackingSection';
 
 export function MittrRoot({ children }: { children: React.ReactNode }): React.ReactNode {
   return (
@@ -39,7 +39,7 @@ registerProductUiPlugin({
   rootWrapper: MittrRoot,
   slots: {
     'providers-page': OtherProvidersSwitch,
-    'integrations-page': WorkTrackingSettingsItem,
+    'integrations-page': INTEGRATIONS_PAGE,
     'sidebar-footer': SIDEBAR_FOOTER,
     'session-auth-methods': AdSignIn,
     'about-dialog': SignOutButton,
