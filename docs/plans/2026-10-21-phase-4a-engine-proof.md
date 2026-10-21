@@ -102,12 +102,12 @@ Host `probe.example.test`. Each attempt ran in its own session, and the stub cal
 |---|---|---|
 | (a) `context.ask({ permission, patterns, always, metadata })` (1.22's call) | no | threw `TypeError`: `context.ask is not a function` |
 | (b) `context.ask({ action, resources, save, message, metadata })` (the v2 request shape) | no | threw the same `TypeError` |
-| (c) a permission API on the setup `ctx` | no | there is none: `ctx.permission` has `get`, `hook`, `list` and `reply` only |
+| (c) a permission API on the setup `ctx` | no | none found: the probe matched the names `ask`, `create`, `assert` and `request` on `ctx.permission` only, which has `get`, `hook`, `list` and `reply`. `ctx.rpc` and `ctx.event.subscribe` were not examined |
 | (d) `options: { permission: 'mittrcraft_chrome' }` on the tool | no | the tool ran normally |
 | (e) the server creates the request: the tool calls its loopback callback, which calls `POST /api/session/:id/permission` on the engine and waits for the raw `permission.replied` event | yes | resolved with the person's reply |
 
 - **What `options.permission` does.** With a managed rule `{ action: 'mittrcraft_chrome', resource: '*', effect: 'deny' }`, the tool was no longer offered to the model. It hides the tool under a deny rule and raises no prompt.
-- **Attempt (e) is the first that raises the event**, so the reply runs, P15d, P15e and P16 use it. For those runs the managed config held `permissions: [{ action: 'mittrcraft_chrome', resource: '*', effect: 'ask' }]`, because with no rule the engine answers `allow` (see where the rule lives, below). The create body also carried `source: { type: 'tool', messageID, id }` from the tool's context, and the engine accepted it.
+- **Attempt (e) is the first that raises the event**, so the reply runs, P15d, P15e and P16 use it. For those runs the managed config held `permissions: [{ action: 'mittrcraft_chrome', resource: '*', effect: 'ask' }]`, because with no rule the engine answers `allow` (see where the rule lives, below). The create body also carried `source: { type: 'tool', messageID, id }` from the tool's context, and the engine accepted it. Every create call carried `source`; the probe's retry without it was never exercised, so whether `source` is optional is not shown. The route answers inside a `data` envelope (`{ data: { id, effect } }`), which the probe unwrapped.
 
 ### The event, raw and translated (preflight F7)
 
@@ -143,13 +143,14 @@ The runs went in the order once, reject, always, so that `always` could not answ
 - **The engine answers it by itself.** In a new session, the same host got `{ effect: 'allow' }` and no `permission.asked`.
 - **The saved rule can be listed and deleted.** `GET /api/permission/saved` (with or without `?projectID=`) lists it as `{ id, projectID, action: 'mittrcraft_chrome', resource: 'probe.example.test', time }`. `DELETE /api/permission/saved/:id` answered 204.
 - **After the delete, the next ask raised `permission.asked` again.**
-- The rule is saved per project and per host.
+- The saved rule carries `projectID` and the host, so it is presumably per project and per host. This is inferred from the stored fields; approving in one project and asking in another was not tested.
 
 ### P15e: abort while the ask is pending
 
 - `POST /api/session/:id/abort` answered 404. The probe then used `POST /api/session/:id/interrupt`.
 - **What the tool saw:** `context.signal` fired, and its pending callback request threw `AbortError: The operation was aborted.` The server side saw the request close before any reply.
-- **The engine left the request pending.** `GET /api/permission/request` still listed it 1.5 s after the interrupt, and no `permission.replied` came. The probe answered it with `reject` to clean up.
+- **The request was still listed 1.5 s after the interrupt** by `GET /api/permission/request`. That is all the evidence shows. The probe then sent `reject` to clean up, but it did not keep that reply's status, and it looked for a `permission.replied` straight after the reply with no wait, so its finding none proves nothing.
+- **Open for Task 8 to assert:** whether a `permission.replied` ever comes for a request whose turn was interrupted, and whether a `reject` sent after the tool has gone answers 2xx and produces a raw `permission.replied` with `reply: reject`.
 
 ### Where the `ask` rule lives (preflight F9)
 
@@ -167,6 +168,7 @@ Each row is one create call in a fresh session, after rewriting the managed conf
 - **A project-level `allow` suppresses a managed `ask`.** The rule list is the top-level `permissions` key, an ordinary key that sits below project config.
 - **`experimental.policies` cannot hold the rule.** Its entries take `action` `provider.use` or `permission` and `effect` `allow` or `deny` only (`@opencode/schema` 2.0.22 `config/policy.js`). A `permission` policy is matched against `<action>:<resource>`, outranks project config, and can only turn a request into `deny`. The ruling to put `{ effect: 'ask' }` in `experimental.policies` cannot be carried out.
 - **A plugin's `evaluate` hook outranks project config.** The hook got `{ action, agent, effect, metadata, resources, sessionID, source }` with `effect: 'allow'` from the project rule. It set `effect = 'ask'`, and the engine asked.
+- **Open for Task 8:** the hook was tested only against a project `allow`, for one host. How it interacts with a rule the engine saved after `always` is untested: a hook that turns every `allow` into `ask` may ask again after `always`, unless it consults MittrCraft's own approved sites. The request the hook is handed has no `save` and no `message`, so the hook cannot rely on either.
 
 ## P16: auto-accept and safety on a plugin permission
 
@@ -206,7 +208,7 @@ While the engine ran, the probe rewrote the plugin's `index.js` without `mittr_p
 
 ## Timings
 
-- Turns with one tool call settled 44–80 ms after the prompt. Turns that waited for a permission reply settled 273–325 ms after it.
+- Plain tool turns settled 44–83 ms after the prompt. Turns that waited for a permission reply settled 226–325 ms after it, and the abort turn 230 ms.
 - `auto` replied 27 ms after the ask. In `safety` mode the probe's `reject` came 165 ms after the ask, after a reconcile.
 - The hot toggle took 359 ms. Abort reached the plugin in 82 ms and the listener in 83 ms.
 
@@ -235,10 +237,10 @@ None of the plan's Task 1 stop conditions stops the phase.
   - the request is created by the MittrCraft server through `POST /api/session/:id/permission`, not by the plugin, because the tool context has no `ask`. The plugin waits on its callback, and the server waits for the raw `permission.replied` (F7);
   - the engine allows `mittrcraft_chrome` unless a rule says `ask`. A managed `permissions` rule is beaten by a project `allow`, and `experimental.policies` cannot say `ask`. **F9's ruling needs a new decision.** The probe showed that an `evaluate` hook in our engine plugin, turning `allow` into `ask` for `mittrcraft_chrome`, wins over a project `allow`;
   - `message` does not reach the event, so the card shows the engine's own title. The host is in `resources` and `metadata`;
-  - an aborted turn leaves the request pending, so on abort the server must reply `reject` itself;
+  - an aborted turn left the request listed 1.5 s later. Whether a `permission.replied` follows, and whether a `reject` from the server then answers 2xx and ends the request, are open, and Task 8's tests must assert them;
   - deleting an approved site calls `DELETE /api/permission/saved/:id` for the saved rule of that host.
 - **P16: `auto` answers our ask.** On path E, Task 8 needs the A-30 hook in `permission-auto-accept/runtime.js` (+1), so the upstream-touch count goes from 34 to 35.
-- **P17 passed.** Task 4 does not call `context.opencode.refresh('mittr tools changed')`. Rewriting the plugin file is enough, and the 1.22 sentence about a restart is dropped (preflight F27).
+- **P17 passed.** Task 4 does not call `context.opencode.refresh('mittr tools changed')`. The probe rewrote both the plugin file and the managed file (through `refreshManagedConfigFile()`, which always rewrites it), so it does not show which of the two made the engine reload. Task 4 rewrites both, as the probe did, and the 1.22 sentence about a restart is dropped (preflight F27).
 - **P18 passed.** Task 4 forwards `context.signal` to its callback fetch and aborts in-flight actions when that request closes, as upstream's own plugin does.
 - **Outbound.** There is no host to record for the owner.
 
@@ -246,5 +248,5 @@ None of the plan's Task 1 stop conditions stops the phase.
 
 - **Path E's rule placement is open.** Preflight F9 assumed `experimental.policies` could hold `ask`; the 2.0.22 schema cannot. The probe found two working options: a managed `permissions` rule, which a project's own `opencode.json` can override with `allow`, or an `evaluate` hook in our engine plugin, which the project cannot override. The owner or controller picks before Task 8.
 - **The prompt's wording is the engine's.** Our explanatory sentence is dropped from the request, so the approval card does not say why the agent asks. It shows the action name `mittrcraft_chrome` and the host.
-- **A saved approval is per project.** `always` stores `{ projectID, action, resource }`, so approving a site in one project does not approve it in another.
+- **A saved approval is probably per project.** `always` stores `{ projectID, action, resource }`, so approving a site in one project presumably does not approve it in another. This is inferred from the stored fields, not tested.
 - **Code Mode.** Both of our Code Mode probe tools worked through `execute`, images included. This was not measured with a real model.
