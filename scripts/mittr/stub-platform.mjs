@@ -100,6 +100,36 @@ const lastUserText = (body) => {
   return users.length ? textsOf(users[users.length - 1].content).join('\n') : '';
 };
 const toolResults = (body) => messagesOf(body).filter((m) => m?.role === 'tool').map((m) => textsOf(m.content).join('\n'));
+const turnToolResults = (body) => {
+  const messages = messagesOf(body);
+  const lastUser = messages.map((m) => m?.role).lastIndexOf('user');
+  return messages.slice(lastUser + 1).filter((m) => m?.role === 'tool').map((m) => textsOf(m.content).join('\n'));
+};
+
+const DATA_URI = /^data:([^;,]+)(?:;[^,]*)?;base64,(.*)$/s;
+
+export const imagesOf = (body) => {
+  const found = [];
+  const walk = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(walk);
+      return;
+    }
+    if (!value || Object(value) !== value) return;
+    if (value.type === 'image_url' || value.type === 'input_image') {
+      const url = value.image_url === String(value.image_url) ? value.image_url : String(value.image_url?.url ?? '');
+      const match = DATA_URI.exec(url);
+      if (match) {
+        const bytes = Buffer.from(match[2], 'base64');
+        found.push({ mime: match[1], bytes: bytes.length, sha256: crypto.createHash('sha256').update(bytes).digest('hex') });
+      }
+      return;
+    }
+    Object.values(value).forEach(walk);
+  };
+  walk(messagesOf(body));
+  return found;
+};
 const offeredTools = (body) => (Array.isArray(body?.tools) ? body.tools : []).map((t) => t?.function ?? t).filter((t) => t?.name);
 
 export const availableSkills = (system) => {
@@ -114,12 +144,42 @@ const firstStringParam = (tool) => {
   return required.find((name) => props[name]?.type === 'string') ?? Object.keys(props).find((name) => props[name]?.type === 'string') ?? 'name';
 };
 
+const TOOL_PHRASES = [
+  [/^chrome open (\S+)\s*$/i, (m) => ['mittrcraft_chrome', 'chrome.open', { url: m[1] }]],
+  [/^chrome do (.+)$/is, (m) => ['mittrcraft_chrome', 'chrome.do', { goal: m[1].trim() }]],
+  [/^computer list apps\s*$/i, () => ['mittrcraft_computer', 'computer.list_apps', {}]],
+  [/^computer screenshot\s*$/i, () => ['mittrcraft_computer', 'computer.screenshot', {}]],
+  [/^read jira (\S+)\s*$/i, (m) => ['mittrcraft_work', 'jira.get_issue', { key: m[1] }]],
+  [/^read plane (\S+)\s*$/i, (m) => ['mittrcraft_work', 'plane.get_issue', { ref: m[1] }]],
+  [/^capture the page\s*$/i, () => ['openchamber_web', 'browser.capture', {}]],
+  [/^raw (\S+) (\{.*\})\s*$/is, (m) => [m[1], null, JSON.parse(m[2])]],
+  [/^call (\S+) (\S+)(?: (\{.*\}))?\s*$/is, (m) => [m[1], m[2], m[3] ? JSON.parse(m[3]) : {}]],
+];
+
+export const phraseCall = (text) => {
+  const trimmed = String(text ?? '').trim();
+  for (const [pattern, build] of TOOL_PHRASES) {
+    const match = pattern.exec(trimmed);
+    if (match) {
+      const [name, action, parameters] = build(match);
+      return action === null ? { name, arguments: parameters } : { name, arguments: { action, parameters } };
+    }
+  }
+  return null;
+};
+
 export const decideReply = (body, { alias }) => {
   const system = roleText(body, 'system');
   const user = lastUserText(body);
-  const results = toolResults(body);
+  const results = turnToolResults(body);
   const tools = offeredTools(body);
   if (results.length) return { kind: 'text', text: `Stub answer from ${alias}: ${results[results.length - 1].slice(0, 400)}` };
+  if (/^list your tools\s*$/i.test(user.trim())) return { kind: 'text', text: `Tools offered: ${tools.map((t) => t.name).sort().join(', ')}` };
+  const phrased = phraseCall(user);
+  if (phrased) {
+    if (!tools.some((t) => t.name === phrased.name)) return { kind: 'text', text: `Stub answer from ${alias}: ${phrased.name} is not offered.` };
+    return { kind: 'tool', ...phrased };
+  }
   const callPath = `tools[${JSON.stringify(STUB_CONNECTOR_SERVER)}].${STUB_CONNECTOR_TOOL}`;
   if (/\blookup\b/i.test(user) && tools.some((t) => t.name === 'execute') && system.includes(`${callPath}(`)) {
     return { kind: 'tool', name: 'execute', arguments: { code: `return await ${callPath}({ query: "41" })` } };
@@ -128,6 +188,42 @@ export const decideReply = (body, { alias }) => {
   const skillTool = tools.find((t) => t.name === 'skill');
   if (skillWanted && skillTool) return { kind: 'tool', name: 'skill', arguments: { [firstStringParam(skillTool)]: skillWanted } };
   return { kind: 'text', text: `Stub answer from ${alias}.` };
+};
+
+const ASK_EMAIL = 'What email should I use?';
+const EMAIL = /[\w.+-]+@[\w-]+(\.[\w-]+)+/;
+
+const refFor = (snapshot, kind, label, fallback) => {
+  const line = String(snapshot ?? '').split('\n').find((text) => new RegExp(`${kind}[^\\n]*"${label}"`, 'i').test(text));
+  return /\[ref=(e\d+)\]/.exec(line ?? '')?.[1] ?? fallback;
+};
+
+export const nextBrowserStep = ({ goal, snapshot, history }) => {
+  const text = String(goal ?? '');
+  const done = Array.isArray(history) ? history.length : 0;
+  if (/\bemail\b/i.test(text) && !EMAIL.test(text)) return { action: 'ask', question: ASK_EMAIL };
+  const name = /\bname\s+(\S+)/i.exec(text)?.[1] ?? 'Somchai';
+  if (done === 0) return { action: 'fill', ref: refFor(snapshot, 'textbox', 'Name', 'e1'), value: name };
+  if (done === 1) return { action: 'click', ref: refFor(snapshot, 'button', 'Submit', 'e3') };
+  return { action: 'done' };
+};
+
+const ISSUES = {
+  SA: {
+    jira: { 'MRKB-1': { key: 'MRKB-1', summary: 'Fix login', description: 'The login form rejects a valid password.', status: 'In Progress', priority: 'High', assignee: 'Stub SA' } },
+    plane: { 'TF-7': { identifier: 'TF-7', name: 'Draft spec', description: 'Write the first draft.', state: 'Todo', priority: 'medium', dueDate: null } },
+  },
+  SB: {
+    jira: { 'MRKB-1': { key: 'MRKB-1', summary: 'SB sees its own card', description: '', status: 'To Do', priority: 'Low', assignee: 'Stub SB' } },
+    plane: {},
+  },
+};
+
+const planeKeyOf = (ref) => {
+  const text = String(ref ?? '');
+  if (/^[A-Za-z][A-Za-z0-9]*-\d+$/.test(text)) return text.toUpperCase();
+  const match = /\/projects\/([a-z0-9]+)\/issues\/(\d+)/i.exec(text);
+  return match ? `${match[1].toUpperCase()}-${match[2]}` : null;
 };
 
 const readBody = (req) => new Promise((resolve) => {
@@ -203,6 +299,7 @@ export function createStubPlatform({ accounts, shape = 'develop', log = () => {}
     catalogDelayMs: {},
     accessTtlMs: ACCESS_TTL_MS,
     refreshRefused: false,
+    nextStepDelayMs: 0,
     counts: {},
     records: [],
     codes: new Map(),
@@ -258,6 +355,7 @@ export function createStubPlatform({ accounts, shape = 'develop', log = () => {}
     if (body?.catalogDelayMs && typeof body.catalogDelayMs === 'object') state.catalogDelayMs = { ...body.catalogDelayMs };
     if (Number.isFinite(body?.accessTtlMs)) state.accessTtlMs = body.accessTtlMs;
     if (typeof body?.refreshRefused === 'boolean') state.refreshRefused = body.refreshRefused;
+    if (Number.isFinite(body?.nextStepDelayMs)) state.nextStepDelayMs = body.nextStepDelayMs;
     if (body?.resetCounts) {
       state.counts = {};
       state.records = [];
@@ -274,6 +372,7 @@ export function createStubPlatform({ accounts, shape = 'develop', log = () => {}
     catalogDelayMs: { ...state.catalogDelayMs },
     accessTtlMs: state.accessTtlMs,
     refreshRefused: state.refreshRefused,
+    nextStepDelayMs: state.nextStepDelayMs,
     counts: { ...state.counts },
     puts: state.puts.slice(),
     records: state.records.slice(-200),
@@ -292,6 +391,7 @@ export function createStubPlatform({ accounts, shape = 'develop', log = () => {}
       session: req.headers['x-opencode-session-id'] ?? null,
       tools: offeredTools(body).map((t) => t.name),
       skills: availableSkills(system),
+      images: imagesOf(body),
       user: lastUserText(body).slice(0, 300),
       toolResults: toolResults(body).map((text) => text.slice(0, 300)),
       decision: decision.kind === 'tool' ? { tool: decision.name, arguments: decision.arguments } : { text: decision.text },
@@ -366,6 +466,24 @@ export function createStubPlatform({ accounts, shape = 'develop', log = () => {}
       return json(res, 200, catalogOf(accountName));
     }
     if (route === 'GET /desktop/work') return json(res, 200, { items: account.work, hints: [] });
+    if (route === 'POST /desktop/browser/next-step') {
+      if (state.nextStepDelayMs > 0) await new Promise((resolve) => { setTimeout(resolve, state.nextStepDelayMs); });
+      const step = nextBrowserStep(body ?? {});
+      state.records.push({ at: Date.now(), path: '/desktop/browser/next-step', account: accountName, goal: String(body?.goal ?? '').slice(0, 300), historyLength: Array.isArray(body?.history) ? body.history.length : 0, snapshot: String(body?.snapshot ?? '').slice(0, 300), step });
+      return json(res, 200, { step, decidedBy: ['stub'], ms: 1 });
+    }
+    if (req.method === 'GET' && url.pathname.startsWith('/desktop/jira/issues/')) {
+      const key = decodeURIComponent(url.pathname.slice('/desktop/jira/issues/'.length));
+      state.records.push({ at: Date.now(), path: '/desktop/jira/issues', account: accountName, key });
+      const issue = ISSUES[accountName]?.jira[key];
+      return issue ? json(res, 200, issue) : json(res, 404, { error: `No Jira issue ${key}` });
+    }
+    if (route === 'GET /desktop/plane/issues') {
+      const ref = url.searchParams.get('ref') ?? '';
+      state.records.push({ at: Date.now(), path: '/desktop/plane/issues', account: accountName, ref: ref.slice(0, 300) });
+      const issue = ISSUES[accountName]?.plane[planeKeyOf(ref)];
+      return issue ? json(res, 200, issue) : json(res, 404, { error: 'No Plane work item for that ref' });
+    }
     if (route === 'GET /api/quota/me') return json(res, 200, quotaOf(account, state.quotaOut.has(accountName)));
 
     if (route === 'GET /api/integrations') return json(res, 200, integrationsView(state.integrations.get(accountName) ?? {}, state.shape));
