@@ -2,9 +2,72 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { writePrivateAtomic } from './private-file.js';
+import { isPlainObject } from './values.js';
 
 const SETTINGS_FILE = 'mittr-settings.json';
-const DEFAULTS = Object.freeze({ showOtherProviders: false });
+const UPSTREAM_SETTINGS_FILE = 'settings.json';
+const PARKED = 'mittr';
+const HOST = /^[a-z0-9.-]+$/;
+const INVALID_SWITCH = 'showOtherProviders must be true or false';
+
+const PARKED_TOOL_KEYS = Object.freeze({
+  agentComputerToolEnabled: 'computer',
+  agentChromeToolEnabled: 'chrome',
+  agentChromeProfile: 'chromeProfile',
+  agentChromeHeaded: 'chromeHeaded',
+  agentChromeApprovedHosts: 'chromeApprovedHosts',
+});
+
+const isBoolean = (value) => value === true || value === false;
+const isText = (value) => value === String(value);
+const hostOf = (value) => (isText(value) ? value.trim().toLowerCase() : '');
+const isHost = (value) => HOST.test(hostOf(value));
+const profileOf = (value) => (isText(value) && value.trim() ? value.trim() : null);
+
+const TOOL_FIELDS = Object.freeze({
+  computer: isBoolean,
+  chrome: isBoolean,
+  chromeHeaded: isBoolean,
+  chromeProfile: (value) => value === null || profileOf(value) !== null,
+  chromeApprovedHosts: (value) => Array.isArray(value) && value.every(isHost),
+});
+
+const hostsOf = (value) => (Array.isArray(value) ? [...new Set(value.filter(isHost).map(hostOf))] : []);
+
+const toolsOf = (stored) => {
+  const tools = isPlainObject(stored) ? stored : {};
+  return {
+    computer: tools.computer !== false,
+    chrome: tools.chrome !== false,
+    chromeProfile: profileOf(tools.chromeProfile),
+    chromeHeaded: tools.chromeHeaded === true,
+    chromeApprovedHosts: hostsOf(tools.chromeApprovedHosts),
+  };
+};
+
+const settingsOf = (stored) => ({ showOtherProviders: stored.showOtherProviders === true, tools: toolsOf(stored.tools) });
+
+const checkToolPatch = (patch) => {
+  if (!isPlainObject(patch)) throw new TypeError('tools must be an object of tool settings');
+  for (const [key, value] of Object.entries(patch)) {
+    if (!Object.hasOwn(TOOL_FIELDS, key) || !TOOL_FIELDS[key](value)) throw new TypeError(`Unknown or invalid tool setting: ${key}`);
+  }
+};
+
+const checkPatch = (patch) => {
+  if (!isPlainObject(patch) || (!Object.hasOwn(patch, 'showOtherProviders') && !Object.hasOwn(patch, 'tools'))) {
+    throw new TypeError(`${INVALID_SWITCH}, or tools must be given`);
+  }
+  if (Object.hasOwn(patch, 'showOtherProviders') && !isBoolean(patch.showOtherProviders)) throw new TypeError(INVALID_SWITCH);
+  if (Object.hasOwn(patch, 'tools')) checkToolPatch(patch.tools);
+};
+
+const storedFieldsOf = (stored) => {
+  const fields = {};
+  if (Object.hasOwn(stored, 'showOtherProviders')) fields.showOtherProviders = stored.showOtherProviders === true;
+  if (Object.hasOwn(stored, 'tools')) fields.tools = toolsOf(stored.tools);
+  return fields;
+};
 
 /**
  * MittrCraft's own settings, `<dataDir>/mittr-settings.json`, kept apart from
@@ -12,18 +75,25 @@ const DEFAULTS = Object.freeze({ showOtherProviders: false });
  *
  * Reading fails closed: a missing file, one that cannot be read or parsed, or
  * a value that is not exactly `true` all read as the defaults, which keep the
- * engine locked to Mittr. A damaged file is reported once.
+ * engine locked to Mittr. A damaged file is reported once. The agent tool
+ * settings read as 1.22's defaults, field by field.
  *
- * `update(patch)` takes an explicit true or false and returns what it stored.
- * Updates run one at a time, each on what the one before it stored, and each
- * writes a private (0600) temp file and renames it over the old one, so a
- * reader never sees half a file. A damaged file is replaced.
+ * `update(patch)` takes an explicit true or false, a tools patch, or both,
+ * and returns what it stored. Updates run one at a time, each on what the one
+ * before it stored, and each writes a private (0600) temp file and renames it
+ * over the old one, so a reader never sees half a file. A damaged file is
+ * replaced. Only the keys the file holds are written back, so a provider
+ * switch stored before the 1.22 carry leaves no tools key that would stop it.
+ *
+ * `carryParkedToolSettings()` runs in the same queue. Once, while the file has
+ * no tools, it copies the 1.22 tool settings that the first 2.x start parked
+ * under `mittr` in settings.json, and returns them; settings.json is only read.
  */
 export function createMittrSettings({ dataDir, logger = console }) {
   const filePath = path.join(dataDir, SETTINGS_FILE);
   let warned = false;
 
-  const read = async () => {
+  const readStored = async () => {
     let stored;
     try {
       stored = JSON.parse(await fs.readFile(filePath, 'utf8'));
@@ -32,10 +102,12 @@ export function createMittrSettings({ dataDir, logger = console }) {
         warned = true;
         logger.warn(`[mittr] ${filePath} cannot be read; other providers stay hidden:`, error?.message ?? error);
       }
-      return { ...DEFAULTS };
+      return {};
     }
-    return { showOtherProviders: stored?.showOtherProviders === true };
+    return isPlainObject(stored) ? stored : {};
   };
+
+  const read = async () => settingsOf(await readStored());
 
   const write = async (settings) => {
     await fs.mkdir(dataDir, { recursive: true });
@@ -43,19 +115,42 @@ export function createMittrSettings({ dataDir, logger = console }) {
   };
 
   let updating = Promise.resolve();
-  const update = (patch) => {
-    const updated = updating.then(async () => {
-      const showOtherProviders = patch?.showOtherProviders;
-      if (showOtherProviders !== true && showOtherProviders !== false) {
-        throw new TypeError('showOtherProviders must be true or false');
-      }
-      const next = { ...(await read()), showOtherProviders };
-      await write(next);
-      return { ...next };
-    });
-    updating = updated.catch(() => {});
-    return updated;
+  const queued = (work) => {
+    const done = updating.then(work);
+    updating = done.catch(() => {});
+    return done;
   };
 
-  return { read, update };
+  const update = (patch) => queued(async () => {
+    checkPatch(patch);
+    const next = storedFieldsOf(await readStored());
+    if (Object.hasOwn(patch, 'showOtherProviders')) next.showOtherProviders = patch.showOtherProviders;
+    if (Object.hasOwn(patch, 'tools')) next.tools = toolsOf({ ...toolsOf(next.tools), ...patch.tools });
+    await write(next);
+    return settingsOf(next);
+  });
+
+  const readParked = async () => {
+    let settings;
+    try {
+      settings = JSON.parse(await fs.readFile(path.join(dataDir, UPSTREAM_SETTINGS_FILE), 'utf8'));
+    } catch (error) {
+      if (error?.code === 'ENOENT') return {};
+      throw error;
+    }
+    return isPlainObject(settings?.[PARKED]) ? settings[PARKED] : {};
+  };
+
+  const carryParkedToolSettings = () => queued(async () => {
+    const stored = await readStored();
+    if (Object.hasOwn(stored, 'tools')) return null;
+    const parked = await readParked();
+    const carried = Object.entries(PARKED_TOOL_KEYS).filter(([key]) => Object.hasOwn(parked, key));
+    if (carried.length === 0) return null;
+    const tools = toolsOf(Object.fromEntries(carried.map(([key, field]) => [field, parked[key]])));
+    await write({ ...storedFieldsOf(stored), tools });
+    return tools;
+  });
+
+  return { read, update, carryParkedToolSettings };
 }

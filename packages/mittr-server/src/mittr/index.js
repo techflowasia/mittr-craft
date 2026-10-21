@@ -30,6 +30,7 @@ import { registerMittrShim } from './shim-routes.js';
 import { deepLinkScheme } from './sign-in.js';
 import { reconcileSkills, skillIdOf } from './skill-reconciler.js';
 import { registerMittrControlRoutes } from './tools/control-routes.js';
+import { setupMittrTools } from './tools/index.js';
 import { createMittrActionRegistry } from './tools/registry.js';
 import { registerMittrWorkRoutes } from './work-routes.js';
 
@@ -77,7 +78,9 @@ const NO_ACCOUNT_CATALOG = {
  * account change applies that account's cache, then syncs.
  *
  * The same config loads the identity plugin, so the model calls itself
- * MittrCraft, never the engine's own name.
+ * MittrCraft, never the engine's own name, and the MittrCraft tools plugin,
+ * whose calls come back to a loopback callback outside `/api`
+ * (`tools/index.js`).
  *
  * The engine's default model follows the same lists, in the user's OpenCode
  * config, once the models are in the engine config: a fresh install starts on
@@ -99,6 +102,8 @@ export function setupMittr(context, {
   now = Date.now,
   mintShimKey = mintLocalToken,
   companySignIn = false,
+  resourcesDir = null,
+  toolDrivers,
 } = {}) {
   const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig, events, git, uiAuth, control, requestScope } = context;
   const connectorsOff = !host || companySignIn === true || uiAuth?.passwordEnabled?.() === true;
@@ -380,6 +385,18 @@ export function setupMittr(context, {
   }) ?? null;
 
   const mittrSettings = createMittrSettings({ dataDir, logger });
+  const tools = setupMittrTools(context, {
+    registry,
+    mittrSettings,
+    resourcesDir,
+    env,
+    signedIn,
+    personalDesktop: () => !connectorsOff,
+    refresh: () => rewriteProviderLock(),
+    platform: { broker, ensureFreshSession, fetchImpl },
+    drivers: toolDrivers,
+    logger,
+  });
   let models = [];
 
   // The engine introduces itself as MittrCraft through a plugin written on
@@ -411,18 +428,21 @@ export function setupMittr(context, {
   // written only once that refresh has finished.
   let configBuilt = false;
   let pendingRendered = null;
-  const fingerprintOf = (renderedModels, connectors) => JSON.stringify([renderedModels, connectors]);
+  const fingerprintOf = (renderedModels, connectors, toolsSignature) => JSON.stringify([renderedModels, connectors, toolsSignature]);
+  const currentFingerprint = async () => fingerprintOf(models, managedConnectors(), await tools.signature());
   const managedConfig = async () => {
     const rendered = models;
     const connectors = managedConnectors({ log: true });
     const settings = await mittrSettings.read();
     const identity = await identityConfig();
+    const toolsConfig = await tools.render();
     configBuilt = true;
-    pendingRendered = fingerprintOf(rendered, connectors);
+    pendingRendered = fingerprintOf(rendered, connectors, toolsConfig.signature);
     return [
       identity,
       server.port() === null ? {} : mittrProviderFragment({ shimBaseUrl: shimBaseUrl(server.port()), models: rendered }),
       connectors,
+      toolsConfig.fragment,
       ENGINE_SHARE_OFF,
       policiesFragment(settings),
     ].reduce((merged, fragment) => mergeEngineConfig(merged, fragment), {});
@@ -509,7 +529,7 @@ export function setupMittr(context, {
   let writtenModels = null;
   const writeModels = async (items, listKnown) => {
     models = modelListOf(items);
-    if (configBuilt && fingerprintOf(models, managedConnectors()) !== writtenModels) {
+    if (configBuilt && await currentFingerprint() !== writtenModels) {
       await context.managedConfig.refresh();
       writtenModels = pendingRendered;
     }
@@ -541,7 +561,7 @@ export function setupMittr(context, {
   };
   const rewriteIfChanged = () => {
     const written = applying.then(async () => {
-      if (!configBuilt || fingerprintOf(models, managedConnectors()) === writtenModels) return;
+      if (!configBuilt || await currentFingerprint() === writtenModels) return;
       await context.managedConfig.refresh();
       writtenModels = pendingRendered;
     });
@@ -598,9 +618,10 @@ export function setupMittr(context, {
   }
 
   return {
-    engineEnv: () => loopbackProxyExemption(env),
+    engineEnv: () => ({ ...loopbackProxyExemption(env), ...tools.engineEnv() }),
     engineHome: () => store.engineHome({ carryLegacy: false }),
     registry,
+    tools,
     managedConfig,
     applyModels,
     dispose: async () => {
@@ -610,6 +631,7 @@ export function setupMittr(context, {
       clearTimeout(correction);
       correction = null;
       unsubscribeReady();
+      await tools.dispose();
       unregisterDeepLink?.();
       unregisterQuotaProvider?.();
     },

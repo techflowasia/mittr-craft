@@ -9,6 +9,8 @@ const INVALID_VALUE = 'showOtherProviders must be true or false';
 const CANNOT_STORE = 'Cannot store the setting on this machine';
 const NOT_APPLIED = 'The setting is saved, but the engine has not taken it up yet';
 
+const switchOf = ({ showOtherProviders }) => ({ showOtherProviders });
+
 /**
  * The switch that lets the person use providers other than Mittr (R37/R40),
  * under `/api`, so it carries the UI's own auth.
@@ -27,7 +29,7 @@ export function registerProviderLockRoutes(app, { express, mittrSettings, manage
   const readJson = jsonBody(express, { limit: BODY_LIMIT });
 
   app.get(ROUTE, async (_req, res) => {
-    res.json(await mittrSettings.read());
+    res.json(switchOf(await mittrSettings.read()));
   });
 
   app.put(ROUTE, readJson, async (req, res) => {
@@ -38,7 +40,7 @@ export function registerProviderLockRoutes(app, { express, mittrSettings, manage
 
     let stored;
     try {
-      stored = await mittrSettings.update({ showOtherProviders });
+      stored = switchOf(await mittrSettings.update({ showOtherProviders }));
     } catch (error) {
       logger.warn('[mittr] could not store the provider switch:', error?.message ?? error);
       return res.status(500).json({ error: CANNOT_STORE });

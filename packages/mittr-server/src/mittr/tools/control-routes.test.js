@@ -144,13 +144,16 @@ test('the request\'s close aborts the action', async (t) => {
   assert.equal((await request).name, 'AbortError');
 });
 
-const scopeRecorder = (seen) => (registry) => registry.register({
-  action: 'chrome.read', tool: 'mittrcraft_chrome', title: 'Read the Chrome page', description: 'Read', effect: 'read',
-  execute: async (_input, ctx) => {
-    seen.push(ctx.scope);
-    return { ok: true };
-  },
-});
+const scopeRecorder = (seen) => (registry) => {
+  registry.defineTool({ name: 'mittrcraft_work', description: 'Cards', parameters: { type: 'object' } });
+  registry.register({
+    action: 'jira.get_issue', tool: 'mittrcraft_work', title: 'Read a Jira issue', description: 'Read', effect: 'read',
+    execute: async (_input, ctx) => {
+      seen.push(ctx.scope);
+      return { ok: true };
+    },
+  });
+};
 
 test('the action is told whether the request came from this machine', async (t) => {
   const seen = [];
@@ -160,12 +163,12 @@ test('the action is told whether the request came from this machine', async (t) 
   const remote = await setUp(t, { register: scopeRecorder(seen), scope: 'unknown-public' });
 
   for (const call of [local.call, hosted.call, tunnel.call, remote.call]) {
-    assert.equal((await call('POST', ROUTE, { action: 'chrome.read' })).status, 200);
+    assert.equal((await call('POST', ROUTE, { action: 'jira.get_issue' })).status, 200);
   }
   const relayed = await fetch(local.call.base + ROUTE, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.9' },
-    body: JSON.stringify({ action: 'chrome.read' }),
+    body: JSON.stringify({ action: 'jira.get_issue' }),
   });
   assert.equal(relayed.status, 200);
 
@@ -195,4 +198,17 @@ test('a session is named only from this machine', async (t) => {
   assert.equal(relayed.status, 400);
   assert.equal(local.calls.length, 1);
   assert.equal(SESSION_FROM_THIS_MACHINE_ONLY, 'A session can be named only from this machine');
+});
+
+test('a chrome action runs only for a request from this machine', async (t) => {
+  const register = (registry) => registry.register({
+    action: 'chrome.read', tool: 'mittrcraft_chrome', title: 'Read the Chrome page', description: 'Read', effect: 'read',
+    execute: async () => ({ text: 'page' }),
+  });
+  const local = await setUp(t, { register });
+  assert.deepEqual(await local.call('POST', ROUTE, { action: 'chrome.read' }), { status: 200, body: { text: 'page' } });
+  for (const options of [{ host: null }, { scope: 'tunnel' }, { scope: 'unknown-public' }]) {
+    const other = await setUp(t, { register, ...options });
+    assert.deepEqual(await other.call('POST', ROUTE, { action: 'chrome.read' }), { status: 403, body: { error: 'Read the Chrome page can only be used from this machine' } }, JSON.stringify(options));
+  }
 });

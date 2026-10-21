@@ -267,6 +267,25 @@ test('setup with the server context mounts Mittr sign-in and keeps the engine en
   await plugin.dispose();
 });
 
+test('the engine env names the tools callback, and reading it again mints nothing', async (t) => {
+  const home = tempHome(t);
+  const dataDir = prodLayout(home);
+  const engine = fakeEngineContext({ port: 4100 });
+  const plugin = await setupMittrServer({
+    dataDir,
+    logger: recordingLogger(),
+    env: {},
+    homeDir: home,
+    context: { app: express(), express, dataDir, logger: recordingLogger(), host: null, ...engine.context },
+  });
+  t.after(() => plugin.dispose());
+
+  const first = await plugin.engineEnv();
+  assert.equal(first.MITTRCRAFT_TOOLS_URL, 'http://127.0.0.1:4100/mittr-tools/v1/call');
+  assert.match(first.MITTRCRAFT_TOOLS_TOKEN, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal((await plugin.engineEnv()).MITTRCRAFT_TOOLS_TOKEN, first.MITTRCRAFT_TOOLS_TOKEN);
+});
+
 test('setup with the server context serves the hosted web UI with the MittrCraft brand', async (t) => {
   const home = tempHome(t);
   const dataDir = prodLayout(home);

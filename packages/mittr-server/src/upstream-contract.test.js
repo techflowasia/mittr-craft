@@ -1729,6 +1729,58 @@ const checks = {
     }
     has(upstream, /const sendSelection = captureGuestSendSelection\(\);/, 'startGuestSession no longer starts on captureGuestSendSelection()');
   },
+
+  'agent-tool-settings-keys': () => {
+    const registry = JSON.parse(source('packages/web/server/lib/opencode/settings-registry.json'));
+    for (const key of ['agentControlToolEnabled', 'agentWebToolEnabled', 'agentToolsCodeMode']) {
+      assert.ok(Object.hasOwn(registry.fields, key), `the settings registry no longer has ${key}`);
+      has(source('packages/web/server/lib/opencode/settings-helpers.js'), new RegExp(`if \\(typeof candidate\\.${key} === 'boolean'\\) \\{\\s*result\\.${key} = candidate\\.${key};`), `${key} is no longer kept as a boolean`);
+    }
+    const runtime = source('packages/web/server/lib/opencode/settings-runtime.js');
+    const managedKeys = runtime.slice(runtime.indexOf('const MANAGED_PLUGIN_SETTINGS_KEYS = new Set(['), runtime.indexOf(']);', runtime.indexOf('const MANAGED_PLUGIN_SETTINGS_KEYS')));
+    for (const key of ['agentControlToolEnabled', 'agentToolsCodeMode']) assert.ok(managedKeys.includes(`'${key}'`), `a change of ${key} no longer rewrites the managed config`);
+    const managed = source('packages/web/server/lib/opencode/managed-config-file.js');
+    has(managed, /const includeControl = settings\?\.agentControlToolEnabled !== false;/, 'the control tool is no longer on unless set false');
+    has(managed, /const codeMode = settings\?\.agentToolsCodeMode === true;/, 'Code Mode is no longer off unless set true');
+  },
+
+  'managed-config-plugin-order': async (t) => {
+    const managed = source('packages/web/server/lib/opencode/managed-config-file.js');
+    has(managed, /plugins: \[\.\.\.DISABLED_BUILTIN_PLUGINS, \.\.\.pluginDirectories, \.\.\.\(contributed\.plugins \?\? \[\]\)\],/, 'the managed config no longer lists upstream\'s plugins before contributed ones');
+    const { createManagedConfigRuntime, MANAGED_CONFIG_FILE_NAME } = await importUpstream('packages/web/server/lib/opencode/managed-config-file.js');
+    const dataDir = tempDir(t, 'contract-plugin-order-');
+    const runtime = createManagedConfigRuntime({
+      fsPromises: fs.promises,
+      path,
+      dataDir,
+      env: {},
+      agentToolRuntime: { materializePlugin: async () => '/upstream/acme-agent-tool', createChildEnv: () => ({}) },
+      readSettings: async () => ({}),
+      isAgentMemoryAvailable: () => false,
+      contributeConfig: async () => ({ plugins: ['/plugins/acme-tools'] }),
+    });
+    const order = () => JSON.parse(fs.readFileSync(path.join(dataDir, MANAGED_CONFIG_FILE_NAME), 'utf8')).plugins.filter((entry) => entry.startsWith('/'));
+    await runtime.buildManagedChildEnv();
+    assert.deepEqual(order(), ['/upstream/acme-agent-tool', '/plugins/acme-tools']);
+    await runtime.refreshManagedConfigFile();
+    assert.deepEqual(order(), ['/upstream/acme-agent-tool', '/plugins/acme-tools']);
+  },
+
+  'session-idle-aborted-event': async () => {
+    const { translateWireEvent } = await importUpstream('packages/web/server/lib/event-stream/translate-v2.js');
+    const idle = translateWireEvent({ id: 'evt_1', type: 'session.execution.interrupted', data: { sessionID: 'ses_1', reason: 'user' } }).find((event) => event.type === 'session.idle');
+    assert.equal(idle?.properties?.aborted, true, 'an interrupted turn no longer arrives as session.idle with aborted');
+    assert.equal(idle.properties.sessionID, 'ses_1');
+    const finished = translateWireEvent({ id: 'evt_2', type: 'session.execution.succeeded', data: { sessionID: 'ses_1' } }).find((event) => event.type === 'session.idle');
+    assert.equal(finished?.properties?.aborted, undefined, 'a finished turn now reads as aborted');
+    has(source('packages/web/server/lib/event-stream/global-hub.js'), /translated\(\) \{\s*translated \?\?= translateWireEvent\(payload\);\s*return translated;\s*\},/, 'hub subscribers no longer get translated()');
+    has(source('packages/web/server/index.js'), /if \(payload\.type === 'session\.idle' && payload\.properties\?\.aborted === true\) \{\s*agentToolRuntime\?\.abortSession\?\.\(payload\.properties\.sessionID\);/, 'upstream\'s agent tool no longer aborts on the same signal');
+  },
+
+  'engine-tool-plugin-api': () => {
+    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
+    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P13 to P18 again, then update the MittrCraft tools plugin and this pin');
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {

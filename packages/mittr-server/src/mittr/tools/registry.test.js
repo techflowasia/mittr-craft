@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { MittrToolError, NO_TOOL_NAME, createMittrActionRegistry } from './registry.js';
+import { MITTR_TOOLS, MittrToolError, NO_TOOL_NAME, createMittrActionRegistry } from './registry.js';
 
 const UPSTREAM_DEFINITIONS = {
   control: [
@@ -267,4 +267,24 @@ test('MittrToolError carries its status and extra fields', () => {
   assert.equal(error.code, 'site_approval_required');
   assert.equal(error.host, 'a.test');
   assert.equal(new MittrToolError('y').statusCode, 500);
+});
+
+test('a chrome or computer action over http runs only for a request from this machine', async () => {
+  const { registry, runs } = setUp();
+  registry.defineTool({ name: 'mittrcraft_work', description: 'Cards', parameters: { type: 'object' } });
+  registry.register({ action: 'jira.get_issue', tool: 'mittrcraft_work', title: 'Read a Jira issue', description: 'Read', effect: 'read', execute: async () => ({ read: true }) });
+
+  for (const scope of [undefined, {}, { local: false }, { local: 'true' }]) {
+    await assert.rejects(registry.execute('chrome.open', {}, { surface: 'http', scope }), refusal(403, 'Open a page in Chrome can only be used from this machine'), JSON.stringify(scope));
+    await assert.rejects(registry.execute('computer.click', {}, { surface: 'http', scope }), refusal(403, 'Click on the screen can only be used from this machine'), JSON.stringify(scope));
+  }
+  assert.deepEqual(runs, []);
+
+  assert.deepEqual(await registry.execute('chrome.open', {}, { surface: 'http', scope: { local: true } }), { ran: 'chrome.open' });
+  assert.deepEqual(await registry.execute('jira.get_issue', {}, { surface: 'http', scope: { local: false } }), { read: true });
+  assert.deepEqual(await registry.execute('computer.click', {}, { surface: 'agent', tool: COMPUTER }), { ran: 'computer.click' });
+});
+
+test('the MittrCraft tool names are fixed', () => {
+  assert.deepEqual(MITTR_TOOLS, { computer: 'mittrcraft_computer', chrome: 'mittrcraft_chrome', work: 'mittrcraft_work' });
 });

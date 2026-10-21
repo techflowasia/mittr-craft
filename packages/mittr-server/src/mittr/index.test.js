@@ -54,7 +54,7 @@ const serverLikeApp = () => {
 // before it first starts the engine.
 const shimKeys = new Map();
 
-const setUp = async (t, { host = null, uiAuth, companySignIn, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext(), sharedHistoryExists, built = true, engineConfigDir = USER_CONFIG_DIR, engineDataHome, now } = {}) => {
+const setUp = async (t, { host = null, uiAuth, companySignIn, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext(), sharedHistoryExists, built = true, engineConfigDir = USER_CONFIG_DIR, engineDataHome, now, toolDrivers, beforeBuild } = {}) => {
   const app = serverLikeApp();
   const logger = recordingLogger();
   const mintShimKey = () => {
@@ -62,9 +62,10 @@ const setUp = async (t, { host = null, uiAuth, companySignIn, env = DEV_ENV, fet
     shimKeys.set(dataDir, key);
     return key;
   };
-  const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context, ...(uiAuth ? { uiAuth } : {}) }, { env, fetchImpl, sharedHistoryExists, engineConfigDir, engineDataHome, now, mintShimKey, companySignIn });
+  const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context, ...(uiAuth ? { uiAuth } : {}) }, { env, fetchImpl, sharedHistoryExists, engineConfigDir, engineDataHome, now, mintShimKey, companySignIn, toolDrivers });
   t.after(() => mittr.dispose());
   engine.contribute = mittr.managedConfig;
+  beforeBuild?.(mittr);
   if (built) await mittr.managedConfig();
   return { mittr, dataDir, logger, fetchImpl, engine, call: await serve(t, app) };
 };
@@ -533,7 +534,9 @@ const identityDirOf = (dataDir) => path.join(dataDir, 'engine-plugins', 'mittrcr
 
 test('setup hands the server plugin an engine env, a config fragment and a bounded dispose', async (t) => {
   const { mittr, engine, dataDir } = await setUp(t);
-  assert.deepEqual(await mittr.engineEnv(), { NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost' });
+  const { MITTRCRAFT_TOOLS_TOKEN: token, ...env } = await mittr.engineEnv();
+  assert.deepEqual(env, { NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost', MITTRCRAFT_TOOLS_URL: 'http://127.0.0.1:4100/mittr-tools/v1/call' });
+  assert.match(token, /^[A-Za-z0-9_-]{43}$/);
   assert.deepEqual(await mittr.managedConfig(), { plugins: [identityDirOf(dataDir)], share: 'disabled', experimental: { policies: LOCKED } });
   await mittr.dispose();
   assert.equal(engine.readyListeners.size, 0);
@@ -2298,4 +2301,87 @@ test('the hosted signal is fixed at start', async (t) => {
     assert.deepEqual(disk.mcp(), []);
     assert.equal(hostedLines(logger).length, 1);
   }
+});
+
+const TOOL_DRIVERS = { computer: () => '/r/cua-driver/cua-driver', chrome: () => '/r/agent-browser/agent-browser', chromeInstalled: () => true };
+const toolsDirOf = (dataDir) => path.join(dataDir, 'engine-plugins', 'mittrcraft-tools');
+const toolNamesIn = (dataDir) => {
+  const file = path.join(toolsDirOf(dataDir), 'index.js');
+  return fs.existsSync(file) ? [...fs.readFileSync(file, 'utf8').matchAll(/name: "(mittrcraft_[a-z]+)"/g)].map((match) => match[1]) : [];
+};
+const defineFakeTools = (mittr) => {
+  for (const [name, action] of [['mittrcraft_computer', 'computer.list_apps'], ['mittrcraft_chrome', 'chrome.open']]) {
+    mittr.registry.defineTool({ name, description: name, parameters: {} });
+    mittr.registry.register({ action, tool: name, title: action, description: action, effect: 'read', execute: async () => ({ ran: action }) });
+  }
+};
+
+test('the tools plugin is loaded after the identity plugin, and turning Chrome off rewrites the config once through the queue', async (t) => {
+  const engine = fakeEngineContext();
+  const { mittr, dataDir } = await setUp(t, { engine, host: desktopHost(), toolDrivers: TOOL_DRIVERS, beforeBuild: defineFakeTools });
+  assert.deepEqual((await mittr.managedConfig()).plugins, [identityDirOf(dataDir), toolsDirOf(dataDir)]);
+  assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer', 'mittrcraft_chrome']);
+  const before = engine.refreshes.length;
+
+  assert.deepEqual(await mittr.tools.applySwitches({ chrome: false }), { computer: true, chrome: false });
+
+  assert.equal(engine.refreshes.length, before + 1);
+  assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer']);
+  assert.deepEqual(engine.rendered.at(-1).plugins, [identityDirOf(dataDir), toolsDirOf(dataDir)]);
+
+  await mittr.tools.applySwitches({ computer: false });
+  assert.deepEqual(engine.rendered.at(-1).plugins, [identityDirOf(dataDir)], 'with every tool off the plugin is no longer loaded');
+});
+
+test('a change in the offered tools alone rewrites the config on the next model apply', async (t) => {
+  const engine = fakeEngineContext();
+  const chrome = { installed: false };
+  const { mittr, dataDir } = await setUp(t, {
+    engine,
+    host: desktopHost(),
+    toolDrivers: { ...TOOL_DRIVERS, chromeInstalled: () => chrome.installed },
+    beforeBuild: defineFakeTools,
+    fetchImpl: engineAndBroker(),
+  });
+  await mittr.applyModels(MODELS);
+  await mittr.applyModels(MODELS);
+  assert.equal(engine.refreshes.length, 1);
+
+  chrome.installed = true;
+  await mittr.applyModels(MODELS);
+
+  assert.equal(engine.refreshes.length, 2);
+  assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer', 'mittrcraft_chrome']);
+});
+
+test('a hosted runtime, company sign-in or a UI password offers no computer or chrome tool', async (t) => {
+  for (const options of [
+    { host: null },
+    { host: desktopHost(), companySignIn: true },
+    { host: desktopHost(), uiAuth: { passwordEnabled: () => true } },
+  ]) {
+    const { mittr, dataDir } = await setUp(t, { ...options, toolDrivers: TOOL_DRIVERS, beforeBuild: defineFakeTools });
+    assert.deepEqual((await mittr.managedConfig()).plugins, [identityDirOf(dataDir)], JSON.stringify(Object.keys(options)));
+    assert.deepEqual(toolNamesIn(dataDir), []);
+  }
+});
+
+test('the tools callback sits outside /api and answers a call from the engine with its env', async (t) => {
+  const { mittr, call } = await setUp(t, { host: desktopHost(), toolDrivers: TOOL_DRIVERS, beforeBuild: defineFakeTools });
+  const { MITTRCRAFT_TOOLS_URL: url, MITTRCRAFT_TOOLS_TOKEN: token } = await mittr.engineEnv();
+  assert.equal(new URL(url).pathname, '/mittr-tools/v1/call');
+  const response = await fetch(`${call.base}/mittr-tools/v1/call`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ tool: 'mittrcraft_chrome', input: { action: 'open' }, sessionID: 's1' }),
+  });
+  assert.deepEqual(await response.json(), { schemaVersion: 1, ok: true, action: 'chrome.open', data: { ran: 'chrome.open' } });
+});
+
+test('an http control call runs a chrome action only from this machine', async (t) => {
+  const engine = fakeEngineContext();
+  const { call } = await setUp(t, { engine, host: desktopHost(), toolDrivers: TOOL_DRIVERS, beforeBuild: defineFakeTools });
+  assert.deepEqual(await call('POST', '/api/mittr/control', { action: 'chrome.open' }), { status: 200, body: { ran: 'chrome.open' } });
+  engine.scope = 'tunnel';
+  assert.deepEqual(await call('POST', '/api/mittr/control', { action: 'chrome.open' }), { status: 403, body: { error: 'chrome.open can only be used from this machine' } });
 });

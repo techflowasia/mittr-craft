@@ -87,7 +87,9 @@ export const deferred = () => {
  * The user's OpenCode config lives in `userConfigFile`; each write is recorded
  * in `userConfigWrites` with the number of refreshes made before it. Setting
  * `userConfigError` makes reads throw, as upstream does for a file it cannot
- * parse. UI events the plugin broadcasts are recorded in `broadcasts`.
+ * parse. UI events the plugin broadcasts are recorded in `broadcasts`;
+ * `emit(payloads)` hands subscribers one hub event whose `translated()` gives
+ * them, and `upstreamSettings` is what `settings.read()` answers.
  */
 export const USER_CONFIG_DIR = '/engine-config/opencode';
 
@@ -101,6 +103,7 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
   const quotaProviders = [];
   const quotaProviderOptions = [];
   const controlCalls = [];
+  const eventListeners = new Set();
   const engine = {
     port: enginePort,
     url: (route = '/') => {
@@ -156,7 +159,14 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
         };
       },
       quotaResult,
-      events: { broadcast: (type, payload) => broadcasts.push({ type, payload }) },
+      events: {
+        broadcast: (type, payload) => broadcasts.push({ type, payload }),
+        subscribe: (listener) => {
+          eventListeners.add(listener);
+          return () => eventListeners.delete(listener);
+        },
+      },
+      settings: { read: async () => fake.upstreamSettings },
       git: { remoteUrl: async (directory) => (fake.remotes ?? {})[directory] ?? null },
       requestScope: () => fake.scope,
       control: {
@@ -192,6 +202,9 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
     launchedDataHome: null,
     onRestart: null,
     fireReady: () => { for (const listener of readyListeners) listener(); },
+    eventListeners,
+    upstreamSettings: {},
+    emit: (payloads) => { for (const listener of eventListeners) listener({ payload: {}, translated: () => payloads }); },
   };
   return fake;
 };

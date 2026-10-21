@@ -9,6 +9,10 @@ export class MittrToolError extends Error {
 
 export const NO_TOOL_NAME = 'MittrCraft tool call without a tool name';
 
+export const MITTR_TOOLS = Object.freeze({ computer: 'mittrcraft_computer', chrome: 'mittrcraft_chrome', work: 'mittrcraft_work' });
+
+const THIS_MACHINE_ONLY = new Set([MITTR_TOOLS.computer, MITTR_TOOLS.chrome]);
+
 const SURFACES = new Set(['agent', 'voice', 'http']);
 const EFFECTS = new Set(['read', 'change']);
 const ACTION_NAME = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_-]*)+$/;
@@ -110,6 +114,9 @@ export function createMittrActionRegistry({ control, logger = console }) {
       }
       if (!isAvailable(entry)) throw new MittrToolError(`${entry.title} is not available in this install`, 503);
       if (entry.voiceOnly && surface !== 'voice') throw new MittrToolError(`${entry.title} can only be asked for by voice`, 400);
+      if (surface === 'http' && THIS_MACHINE_ONLY.has(entry.tool) && ctx.scope?.local !== true) {
+        throw new MittrToolError(`${entry.title} can only be used from this machine`, 403);
+      }
       return entry.execute(input, ctx);
     },
   };

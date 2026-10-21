@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { TEMPORARY_FILE, writePrivateAtomic } from './private-file.js';
+import { TEMPORARY_FILE, writePrivateAtomic, writePrivateIfChanged } from './private-file.js';
 import { tempDataDir } from './test-helpers.js';
 
 const tempsIn = (dir) => fs.readdirSync(dir).filter((name) => name.endsWith('.tmp'));
@@ -81,4 +81,27 @@ test('the temp name is the one the account store sweeps', () => {
   assert.match(`index.json.${process.pid}-0a1b2c3d.tmp`, TEMPORARY_FILE);
   assert.doesNotMatch('notes.tmp', TEMPORARY_FILE);
   assert.doesNotMatch('index.json', TEMPORARY_FILE);
+});
+
+test('a file that already says the same keeps its mtime and is only made private again', { skip: process.platform === 'win32' }, async (t) => {
+  const file = path.join(tempDataDir(t), 'index.js');
+  fs.writeFileSync(file, 'same', { mode: 0o644 });
+  const past = new Date('2026-01-01T00:00:00Z');
+  fs.utimesSync(file, past, past);
+
+  await writePrivateIfChanged(file, 'same');
+
+  assert.equal(fs.statSync(file).mtimeMs, past.getTime());
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+});
+
+test('a file that says something else, or none at all, is written privately', async (t) => {
+  const dir = tempDataDir(t);
+  const file = path.join(dir, 'index.js');
+  await writePrivateIfChanged(file, 'first');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'first');
+  await writePrivateIfChanged(file, 'second');
+  assert.equal(fs.readFileSync(file, 'utf8'), 'second');
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.deepEqual(tempsIn(dir), []);
 });

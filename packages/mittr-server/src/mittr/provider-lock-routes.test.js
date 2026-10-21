@@ -25,7 +25,7 @@ const setUp = async (t, { refresh = async () => ({ updated: true }), dataDir = t
     mittrSettings,
     managedConfig: {
       refresh: async () => {
-        refreshes.push(await mittrSettings.read());
+        refreshes.push((await mittrSettings.read()).showOtherProviders);
         return refresh();
       },
     },
@@ -54,8 +54,8 @@ test('PUT stores the switch in mittr-settings.json and refreshes the managed con
 
   assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile(dataDir), 'utf8')), { showOtherProviders: true });
   assert.equal(fs.statSync(settingsFile(dataDir)).mode & 0o777, 0o600);
-  assert.deepEqual(await createMittrSettings({ dataDir, logger: recordingLogger() }).read(), { showOtherProviders: true });
-  assert.deepEqual(refreshes, [{ showOtherProviders: true }], 'the refresh renders the stored value');
+  assert.equal((await createMittrSettings({ dataDir, logger: recordingLogger() }).read()).showOtherProviders, true);
+  assert.deepEqual(refreshes, [true], 'the refresh renders the stored value');
   assert.deepEqual(broadcasts, [{ type: PROVIDER_LOCK_CHANGED_EVENT, payload: { showOtherProviders: true } }]);
   assert.equal(PROVIDER_LOCK_CHANGED_EVENT, 'mittr.provider-lock.changed');
 });
@@ -103,4 +103,15 @@ test('a switch that cannot be stored answers 500, refreshes nothing and announce
   assert.deepEqual(refreshes, []);
   assert.deepEqual(broadcasts, []);
   assert.ok(logger.warnings.some((line) => line.includes('could not store')), logger.warnings.join('\n'));
+});
+
+test('the provider switch answers and announces the switch alone, and keeps the stored tools', async (t) => {
+  const { call, dataDir, broadcasts } = await setUp(t);
+  const tools = { computer: false, chrome: true, chromeProfile: null, chromeHeaded: false, chromeApprovedHosts: ['a.test'] };
+  fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ tools }));
+
+  assert.deepEqual((await call('GET', '/api/mittr/provider-lock')).body, { showOtherProviders: false });
+  assert.deepEqual(await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: true }), { status: 200, body: { showOtherProviders: true } });
+  assert.deepEqual(broadcasts.map((entry) => entry.payload), [{ showOtherProviders: true }]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsFile(dataDir), 'utf8')), { showOtherProviders: true, tools });
 });

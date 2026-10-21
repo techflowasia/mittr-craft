@@ -147,7 +147,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'non-api-json-body',
     files: ['packages/web/server/lib/opencode/core-routes.js', 'packages/web/server/index.js'],
-    why: 'the server parses JSON bodies outside /api before plugin routes run, and needs no UI session there, so the Mittr shim gets the engine request parsed',
+    why: 'the server parses JSON bodies outside /api before plugin routes run, and needs no UI session there, so the Mittr shim and the MittrCraft tools callback get the engine request parsed',
   },
   {
     id: 'product-deep-link-scheme',
@@ -593,6 +593,31 @@ export const UPSTREAM_CONTRACT = [
       'packages/ui/src/lib/modelVariants.ts',
     ],
     why: "Go work picks its model, agent and variant as upstream picks them for a session a guest starts; upstream keeps captureGuestSendSelection and its three resolvers private, so packages/mittr-ui/src/work/sendSelection.ts holds a copy, and the four bodies must match upstream's text, with the same imports, for as long as startGuestSession still uses that selection",
+  },
+  {
+    id: 'agent-tool-settings-keys',
+    files: [
+      'packages/web/server/lib/opencode/settings-registry.json',
+      'packages/web/server/lib/opencode/settings-helpers.js',
+      'packages/web/server/lib/opencode/settings-runtime.js',
+      'packages/web/server/lib/opencode/managed-config-file.js',
+    ],
+    why: "upstream's settings registry still has agentControlToolEnabled, agentWebToolEnabled and agentToolsCodeMode, kept as booleans; the control tool is on unless set false and Code Mode is off unless set true, as the managed config reads them, and a change of either rewrites the managed config, so the MittrCraft work tool follows the control switch and every MittrCraft tool follows Code Mode",
+  },
+  {
+    id: 'managed-config-plugin-order',
+    files: ['packages/web/server/lib/opencode/managed-config-file.js'],
+    why: "the managed config lists upstream's own plugin folders, its agent tool among them, before the plugins a server plugin contributes, so the engine sets up the MittrCraft tools plugin after upstream's tools exist",
+  },
+  {
+    id: 'session-idle-aborted-event',
+    files: ['packages/web/server/lib/event-stream/translate-v2.js', 'packages/web/server/lib/event-stream/global-hub.js', 'packages/web/server/index.js'],
+    why: "a turn the person interrupts reaches the plugin context's event stream as a translated session.idle with properties.aborted true and properties.sessionID, the same signal upstream's own agent tool aborts its in-flight actions on, so a cancelled turn stops its MittrCraft tool actions too",
+  },
+  {
+    id: 'engine-tool-plugin-api',
+    files: ['packages/electron/package.json'],
+    why: 'the bundled engine is OpenCode 2.0.22, whose plugin ctx.tool.transform takes tools.add({ name, description, options: { codemode }, input, execute }) with plain JSON Schema input, hands execute a context with sessionID and an abort signal, and applies a rewritten plugin file without a restart; a new engine version needs probe P13 to P18 (scripts/mittr/probe-engine-v2.mjs --only agent-tools) run again before this pin moves',
   },
 ];
 
