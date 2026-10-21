@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import { writeEnginePlugin } from '../private-file.js';
-import { CAPTURE_ACTION, CAPTURE_IMAGE, CAPTURE_TOOL, TOO_LARGE, imageContent } from './screenshots.js';
+import { CAPTURE_ACTION, CAPTURE_IMAGE, CAPTURE_TIMEOUT_MS, CAPTURE_TOOL, TOO_LARGE, imageContent } from './screenshots.js';
 
 export const TOOLS_PLUGIN_ID = 'mittrcraft-tools';
 
@@ -36,10 +36,27 @@ const toolEntry = (tool, codeMode) => `      tools.add({
       })
 `;
 
-const captureHelpers = `
+const captureHelpers = (timeoutMs) => `
 const CAPTURE_TOOL = ${JSON.stringify(CAPTURE_TOOL)}
 const CAPTURE_ACTION = ${JSON.stringify(CAPTURE_ACTION)}
 const CAPTURE_IMAGE = ${JSON.stringify(CAPTURE_IMAGE)}
+const CAPTURE_TIMEOUT_MS = ${Number(timeoutMs)}
+let missingWarned = false
+
+const warnMissing = () => {
+  if (missingWarned) return
+  missingWarned = true
+  console.warn("[mittrcraft] the panel browser tool was not found when the MittrCraft tools loaded; its captures reach the model without their image")
+}
+
+const boundedSignal = (signal) => {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), CAPTURE_TIMEOUT_MS)
+  const stop = () => controller.abort()
+  if (signal?.aborted) controller.abort()
+  else signal?.addEventListener?.("abort", stop, { once: true })
+  return { signal: controller.signal, done: () => { clearTimeout(timer); signal?.removeEventListener?.("abort", stop) } }
+}
 
 const textOf = (content) => (typeof content === "string" ? [{ type: "text", text: content }] : Array.isArray(content) ? content : [])
 
@@ -56,12 +73,15 @@ const withCapture = async (outcome, input, context) => {
   if (!path || !link) return outcome
   const asked = { ...(input ?? {}), ...(input?.parameters ?? {}) }
   const directory = typeof asked.directory === "string" && asked.directory.trim() ? asked.directory : undefined
+  const bounded = boundedSignal(context?.signal)
   try {
-    const { answer } = await post(link, { tool: CAPTURE_TOOL, internal: CAPTURE_IMAGE, path, directory, sessionID: context?.sessionID }, context?.signal)
+    const { answer } = await post(link, { tool: CAPTURE_TOOL, internal: CAPTURE_IMAGE, path, directory, sessionID: context?.sessionID }, bounded.signal)
     const extra = answer?.ok === true ? picture(answer.data?.image, path) : []
     return extra.length === 0 ? outcome : { ...outcome, content: [...textOf(outcome.content), ...extra] }
   } catch {
     return outcome
+  } finally {
+    bounded.done()
   }
 }
 `;
@@ -71,10 +91,12 @@ const captureWrap = `      if (typeof tools.get === "function" && typeof tools.u
           const original = tool.execute
           tool.execute = async (input, context) => withCapture(await original(input, context), input, context)
         })
+      } else {
+        warnMissing()
       }
 `;
 
-export const toolsPluginSource = ({ tools, codeMode, wrapCapture = false }) => {
+export const toolsPluginSource = ({ tools, codeMode, wrapCapture = false, captureTimeoutMs = CAPTURE_TIMEOUT_MS }) => {
   const titles = Object.fromEntries(tools.flatMap((tool) => tool.definitions.map(({ action, title }) => [action, title])));
   return `const SCHEMA_VERSION = ${SCHEMA_VERSION}
 const TITLES = ${JSON.stringify(titles)}
@@ -133,7 +155,7 @@ const call = async (tool, input, context) => {
     return failure({ message: error instanceof Error ? error.message : String(error), kind: "runtime" })
   }
 }
-${wrapCapture ? captureHelpers : ''}
+${wrapCapture ? captureHelpers(captureTimeoutMs) : ''}
 export default {
   id: ${JSON.stringify(TOOLS_PLUGIN_ID)},
   setup: async (ctx) => {

@@ -344,3 +344,85 @@ test('the plugin with the capture wrap still has no import', () => {
   assert.doesNotMatch(source, /\bimport\s*\(/);
   assert.doesNotMatch(source, /OpenChamber|OpenCode/);
 });
+
+test('a capture callback that refuses the token, answers something not JSON, or sends a malformed image leaves the panel result unchanged', async (t) => {
+  const answers = [
+    (res) => { res.statusCode = 401; res.end(JSON.stringify({ error: 'Unauthorized' })); },
+    (res) => { res.statusCode = 502; res.end('<html>bad gateway</html>'); },
+    (res) => res.end(JSON.stringify({ schemaVersion: 1, ok: true, action: 'capture-image', data: { image: { base64: 5, mime: 'image/png' } } })),
+    (res) => res.end(JSON.stringify({ schemaVersion: 1, ok: true, action: 'capture-image', data: { image: { base64: MARKER_PNG } } })),
+    (res) => res.end(JSON.stringify({ schemaVersion: 1, ok: true, action: 'capture-image', data: { image: null } })),
+    (res) => res.end(JSON.stringify({ schemaVersion: 1, ok: true, action: 'capture-image' })),
+    (res) => res.end(JSON.stringify({ ok: true, data: { image: { base64: MARKER_PNG, mime: 'image/png' } } })),
+  ];
+  let served = 0;
+  const base = await listen(t, (req, res) => {
+    req.resume();
+    answers[served++](res);
+  });
+  withConnection(t, `${base}/mittr-tools/v1/call`, 'wrong-token');
+  const panel = panelTool(CAPTURED);
+  await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false, wrapCapture: true }), { web: panel.tool });
+
+  for (let index = 0; index < answers.length; index += 1) {
+    const result = await panel.tool.execute({ action: 'capture' }, { sessionID: 'ses_1', signal: new AbortController().signal });
+    assert.deepEqual(result, { content: panel.content, metadata: { panel: { action: 'browser.capture', ok: true } } }, `answer ${index}`);
+  }
+  assert.equal(served, answers.length);
+});
+
+test('a malformed Mittr image is dropped from the text and not attached', async (t) => {
+  const envelope = { schemaVersion: 1, ok: true, action: 'chrome.open', data: { path: '.openchamber/screenshots/a.png', image: { base64: 5, mime: 'image/png' } } };
+  const base = await listen(t, (req, res) => res.end(JSON.stringify(envelope)));
+  withConnection(t, `${base}/mittr-tools/v1/call`);
+  const { added } = await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false }));
+
+  const result = await added[0].execute({ action: 'open' }, { sessionID: 'ses_1', signal: new AbortController().signal });
+
+  assert.deepEqual(result.content, [{ type: 'text', text: JSON.stringify({ schemaVersion: 1, ok: true, action: 'chrome.open', data: { path: '.openchamber/screenshots/a.png' } }) }]);
+});
+
+test('a capture callback that does not answer in time leaves the panel result unchanged and closes the request', async (t) => {
+  let closed;
+  const requestClosed = new Promise((resolve) => { closed = resolve; });
+  const base = await listen(t, (req) => { req.on('close', closed); });
+  withConnection(t, `${base}/mittr-tools/v1/call`);
+  const panel = panelTool(CAPTURED);
+  await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false, wrapCapture: true, captureTimeoutMs: 50 }), { web: panel.tool });
+
+  const started = Date.now();
+  const result = await panel.tool.execute({ action: 'capture' }, { sessionID: 'ses_1', signal: new AbortController().signal });
+
+  assert.equal(result.content, panel.content);
+  assert.ok(Date.now() - started < 5000);
+  await requestClosed;
+});
+
+test('the capture callback stops when the turn is aborted', async (t) => {
+  let closed;
+  const requestClosed = new Promise((resolve) => { closed = resolve; });
+  const base = await listen(t, (req) => { req.on('close', closed); });
+  withConnection(t, `${base}/mittr-tools/v1/call`);
+  const panel = panelTool(CAPTURED);
+  await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false, wrapCapture: true }), { web: panel.tool });
+  const controller = new AbortController();
+
+  const pending = panel.tool.execute({ action: 'capture' }, { sessionID: 'ses_1', signal: controller.signal });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  controller.abort();
+
+  assert.equal((await pending).content, panel.content);
+  await requestClosed;
+});
+
+test('a missing panel tool is logged once, and a present one is not logged', async (t) => {
+  const warn = t.mock.method(console, 'warn', () => {});
+  const { plugin } = await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false, wrapCapture: true, captureTimeoutMs: 1234 }));
+  await plugin.setup({ tool: { transform: async (fn) => fn({ add: () => {}, get: () => undefined, update: () => {} }) } });
+
+  assert.equal(warn.mock.callCount(), 1);
+  assert.match(warn.mock.calls[0].arguments[0], /panel browser tool was not found/);
+
+  await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false, wrapCapture: true, captureTimeoutMs: 1235 }), { web: panelTool(CAPTURED).tool });
+  assert.equal(warn.mock.callCount(), 1);
+});

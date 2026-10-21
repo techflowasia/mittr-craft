@@ -285,7 +285,8 @@ test('a panel capture with no session directory, outside the folder, or from ano
 
 test('a panel capture over 5 MiB answers that it is too large', async (t) => {
   const { project } = tempProject(t);
-  fs.writeFileSync(path.join(project, CAPTURE), Buffer.alloc(5 * 1024 * 1024 + 1));
+  const png = Buffer.from(MARKER_PNG, 'base64');
+  fs.writeFileSync(path.join(project, CAPTURE), Buffer.concat([png, Buffer.alloc(5 * 1024 * 1024 + 1 - png.length)]));
   const { post } = await setUp(t, { resolveSessionDirectory: async () => project });
   assert.deepEqual((await post(captureCall())).body, { schemaVersion: 1, ok: true, action: 'capture-image', data: { image: { tooLarge: true } } });
 });

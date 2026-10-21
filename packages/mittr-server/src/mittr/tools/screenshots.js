@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 
@@ -9,6 +10,7 @@ export const CAPTURE_TOOL = 'openchamber_web';
 export const CAPTURE_ACTION = 'browser.capture';
 export const CAPTURE_IMAGE = 'capture-image';
 export const TOO_LARGE = 'The image is too large to attach; it is saved at ';
+export const CAPTURE_TIMEOUT_MS = 15_000;
 
 const NOT_A_SCREENSHOT = 'That image is not a saved screenshot of this project';
 
@@ -18,6 +20,17 @@ const MIME_BY_EXTENSION = new Map([
   ['.jpeg', 'image/jpeg'],
   ['.webp', 'image/webp'],
 ]);
+
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const JPEG_SIGNATURE = Buffer.from([0xff, 0xd8, 0xff]);
+
+const MIME_OF_BYTES = [
+  ['image/png', (bytes) => bytes.subarray(0, 8).equals(PNG_SIGNATURE)],
+  ['image/jpeg', (bytes) => bytes.subarray(0, 3).equals(JPEG_SIGNATURE)],
+  ['image/webp', (bytes) => bytes.subarray(0, 4).toString('latin1') === 'RIFF' && bytes.subarray(8, 12).toString('latin1') === 'WEBP'],
+];
+
+const looksLike = (mime, bytes) => MIME_OF_BYTES.some(([candidate, matches]) => candidate === mime && matches(bytes));
 
 export const imageContent = ({ base64, mime, name }) => ({ type: 'file', uri: `data:${mime};base64,${base64}`, mime, name });
 
@@ -30,12 +43,36 @@ const inside = (parent, child) => {
   return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
 };
 
-const realOrNull = async (target) => {
+const realOrNull = async (target, files = fsPromises) => {
   try {
-    return await fsPromises.realpath(target);
+    return await files.realpath(target);
   } catch {
     return null;
   }
+};
+
+const readBounded = async (handle) => {
+  const buffer = Buffer.alloc(MAX_IMAGE_BYTES + 1);
+  let total = 0;
+  while (total < buffer.length) {
+    const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
+    if (bytesRead === 0) break;
+    total += bytesRead;
+  }
+  return buffer.subarray(0, total);
+};
+
+const openInside = async ({ files, realFile }) => {
+  try {
+    return await files.open(realFile, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  } catch {
+    throw notAScreenshot();
+  }
+};
+
+const stillTheSameFile = async ({ files, realFile, opened }) => {
+  const [now, resolved] = await Promise.all([files.lstat(realFile).catch(() => null), realOrNull(realFile, files)]);
+  return now !== null && resolved === realFile && now.dev === opened.dev && now.ino === opened.ino;
 };
 
 export const sameDirectory = async (asked, directory) => {
@@ -44,7 +81,7 @@ export const sameDirectory = async (asked, directory) => {
   return left !== null && left === right;
 };
 
-export const readCapture = async ({ directory, relativePath, folder }) => {
+export const readCapture = async ({ directory, relativePath, folder, files = fsPromises }) => {
   if (relativePath !== String(relativePath) || directory !== String(directory) || !directory) throw notAScreenshot();
   const asked = relativePath.replaceAll('\\', '/');
   const prefix = `${posix(folder)}/`;
@@ -54,12 +91,19 @@ export const readCapture = async ({ directory, relativePath, folder }) => {
   const mime = MIME_BY_EXTENSION.get(path.posix.extname(normalized).toLowerCase());
   if (!mime) throw notAScreenshot();
 
-  const [realDirectory, realFile] = await Promise.all([realOrNull(directory), realOrNull(path.join(directory, normalized))]);
+  const [realDirectory, realFile] = await Promise.all([realOrNull(directory, files), realOrNull(path.join(directory, normalized), files)]);
   if (!realDirectory || !realFile || !inside(path.join(realDirectory, folder), realFile)) throw notAScreenshot();
-  const stat = await fsPromises.stat(realFile);
-  if (!stat.isFile()) throw notAScreenshot();
-  if (stat.size > MAX_IMAGE_BYTES) return { tooLarge: true };
-  return { base64: (await fsPromises.readFile(realFile)).toString('base64'), mime };
+  const handle = await openInside({ files, realFile });
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile() || !(await stillTheSameFile({ files, realFile, opened }))) throw notAScreenshot();
+    const bytes = await readBounded(handle);
+    if (!looksLike(mime, bytes)) throw notAScreenshot();
+    if (bytes.length > MAX_IMAGE_BYTES) return { tooLarge: true };
+    return { base64: bytes.toString('base64'), mime };
+  } finally {
+    await handle.close();
+  }
 };
 
 export const attachableImage = (data) => {

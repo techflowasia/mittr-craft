@@ -1782,8 +1782,13 @@ const checks = {
     const { readCapture } = await import('./mittr/tools/screenshots.js');
     assert.equal(screenshots.SCREENSHOT_DIRECTORY, path.join('.openchamber', 'screenshots'), 'the screenshot folder moved');
     const directory = tempDir(t, 'contract-capture-');
-    const bytes = Buffer.from('acme-image');
+    const signatures = {
+      'image/png': Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]),
+      'image/jpeg': Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00]),
+      'image/webp': Buffer.concat([Buffer.from('RIFF'), Buffer.from([4, 0, 0, 0]), Buffer.from('WEBP')]),
+    };
     for (const [mime, extension] of [['image/png', '.png'], ['image/jpeg', '.jpg'], ['image/webp', '.webp']]) {
+      const bytes = signatures[mime];
       const written = await screenshots.writeScreenshot({ directory, base64: bytes.toString('base64'), mime, label: 'Acme Page' });
       assert.ok(written.path.startsWith('.openchamber/screenshots/acme-page-') && written.path.endsWith(extension), `writeScreenshot no longer saves ${mime} as ${extension} under the folder with the label slug: ${written.path}`);
       assert.equal(written.absolutePath, path.join(directory, written.path), 'writeScreenshot no longer saves at the reported path under the project');
@@ -1808,7 +1813,10 @@ const checks = {
     has(runtime, /name: 'openchamber_web',/, 'the panel tool is no longer openchamber_web');
     has(runtime, /if \(valid\) return \{ content, metadata: \{ openchamber: /, 'the agent tool no longer returns its envelope as text content');
     has(runtime, /const args = \{ \.\.\.flattened, \.\.\.\(parameters \?\? \{\}\), action: requestedAction \}/, 'the agent tool no longer merges flattened inputs under parameters');
-    has(source('packages/web/server/lib/opencode/managed-config-file.js'), /const includeWeb = settings\?\.agentWebToolEnabled !== false;/, 'the web tool is no longer on unless set false');
+    const managed = source('packages/web/server/lib/opencode/managed-config-file.js');
+    has(managed, /const includeWeb = settings\?\.agentWebToolEnabled !== false;/, 'the web tool is no longer on unless set false');
+    has(managed, /directories\.push\(await agentToolRuntime\.materializePlugin\(\{ includeControl, includeWeb, includeMemory, includeNotify, codeMode \}\)\);/, 'the panel tool no longer comes from the agent tool plugin in upstream\'s own plugin directories');
+    has(managed, /plugins: \[\.\.\.DISABLED_BUILTIN_PLUGINS, \.\.\.pluginDirectories, \.\.\.\(contributed\.plugins \?\? \[\]\)\],/, 'upstream\'s agent tool plugin no longer comes before the MittrCraft tools plugin, so tools.get may not find openchamber_web');
     const settingsRuntime = source('packages/web/server/lib/opencode/settings-runtime.js');
     const managedKeys = settingsRuntime.slice(settingsRuntime.indexOf('const MANAGED_PLUGIN_SETTINGS_KEYS = new Set(['), settingsRuntime.indexOf(']);', settingsRuntime.indexOf('const MANAGED_PLUGIN_SETTINGS_KEYS')));
     assert.ok(managedKeys.includes("'agentWebToolEnabled'"), 'a change of agentWebToolEnabled no longer rewrites the managed config');

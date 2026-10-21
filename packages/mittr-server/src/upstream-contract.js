@@ -632,7 +632,7 @@ export const UPSTREAM_CONTRACT = [
       'packages/web/server/lib/opencode/managed-config-file.js',
       'packages/web/server/lib/opencode/settings-runtime.js',
     ],
-    why: "upstream's control service answers browser.capture with a project-relative path under SCREENSHOT_DIRECTORY and no image bytes, saved under the input's directory when one is given and the session's otherwise, and the agent tool's openchamber_web returns that envelope as text content; it is offered unless agentWebToolEnabled is false, and a change of that switch rewrites the managed config, so the MittrCraft tools plugin wraps openchamber_web while the switch is on and adds the saved image after upstream's text, only for a capture saved in the session's own project",
+    why: "upstream's control service answers browser.capture with a project-relative path under SCREENSHOT_DIRECTORY and no image bytes, saved under the input's directory when one is given and the session's otherwise, and the agent tool's openchamber_web returns that envelope as text content; it is offered unless agentWebToolEnabled is false, a change of that switch rewrites the managed config, and the managed config lists upstream's agent tool plugin before the plugins a server plugin contributes, so openchamber_web exists when the MittrCraft tools plugin's transform runs (tools.get finds it); the MittrCraft tools plugin wraps openchamber_web while the switch is on and adds the saved image after upstream's text, only for a capture saved in the session's own project",
   },
 ];
 
