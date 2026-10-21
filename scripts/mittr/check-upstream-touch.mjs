@@ -49,7 +49,7 @@ export const HOOKS_FILE = 'brand/upstream-hooks.json';
 const OWNED_PREFIXES = ['brand/', 'scripts/mittr/', 'patches/', 'docs/'];
 const OWNED_PACKAGE = /^packages\/mittr-[^/]+\//;
 const LOCKFILES = new Set(['bun.lock']);
-const TEST_FILE = /(^|\/)__tests__\/|\.(test|spec)\.[cm]?[jt]sx?$/;
+export const TEST_FILE = /(^|\/)__tests__\/|\.(test|spec)\.[cm]?[jt]sx?$/;
 const HOOK_SUBJECT = /^hook\([^)]+\): /;
 const PATCH_DIR = 'patches/upstream';
 
@@ -58,7 +58,7 @@ export const ACKNOWLEDGED_COMMITS = {
     'widened the packages/mittr-ui block that hook(knip) 4075f0a0e added to knip.json, inside a fix(mittr-ui) commit made before this check existed',
 };
 
-const isOwned = (file) => OWNED_PACKAGE.test(file) || OWNED_PREFIXES.some((prefix) => file.startsWith(prefix));
+export const isOwned = (file) => OWNED_PACKAGE.test(file) || OWNED_PREFIXES.some((prefix) => file.startsWith(prefix));
 
 const PATCH_SUFFIX = '.patch';
 
