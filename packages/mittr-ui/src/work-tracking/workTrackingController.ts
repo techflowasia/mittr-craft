@@ -112,6 +112,7 @@ export function createWorkTrackingController({ api, currentUserId, listenAccount
   let current = WORK_TRACKING_LOADING;
   let generation = 0;
   let reloadedForMismatch = false;
+  let pendingNotice: string | null = null;
   let disposed = false;
   const listeners = new Set<() => void>();
 
@@ -125,7 +126,7 @@ export function createWorkTrackingController({ api, currentUserId, listenAccount
 
   const withoutTask = (task: WorkTrackingTask): readonly WorkTrackingTask[] => current.busy.filter((entry) => entry !== task);
 
-  const load = async (notice: string | null = null): Promise<void> => {
+  const load = async (): Promise<void> => {
     if (disposed) return;
     generation += 1;
     const request = generation;
@@ -143,16 +144,25 @@ export function createWorkTrackingController({ api, currentUserId, listenAccount
     if (config.userId !== currentUserId()) {
       if (reloadedForMismatch) return;
       reloadedForMismatch = true;
-      await load(notice);
+      await load();
       return;
     }
     reloadedForMismatch = false;
+    const notice = pendingNotice;
+    pendingNotice = null;
     set(workTrackingStateFor(config, notice));
   };
 
   const reloadForChangedAccount = (): Promise<void> => {
     reloadedForMismatch = false;
-    return load(mittrT('mittr.workTracking.accountChanged'));
+    pendingNotice = mittrT('mittr.workTracking.accountChanged');
+    return load();
+  };
+
+  const noteRefusedForChangedAccount = (): void => {
+    const notice = mittrT('mittr.workTracking.accountChanged');
+    if (current.status === 'ready') patch({ notice });
+    else pendingNotice = notice;
   };
 
   const ready = (): string | null => (current.status === 'ready' ? current.loadedFor : null);
@@ -168,8 +178,12 @@ export function createWorkTrackingController({ api, currentUserId, listenAccount
     try {
       config = await api.save(body);
     } catch (error) {
-      if (request !== generation) return null;
-      if (error instanceof IntegrationsRequestError && error.status === 409) {
+      const accountChanged = error instanceof IntegrationsRequestError && error.status === 409;
+      if (request !== generation) {
+        if (accountChanged) noteRefusedForChangedAccount();
+        return null;
+      }
+      if (accountChanged) {
         await reloadForChangedAccount();
         return null;
       }
@@ -232,6 +246,7 @@ export function createWorkTrackingController({ api, currentUserId, listenAccount
     },
     refresh: () => {
       reloadedForMismatch = false;
+      pendingNotice = null;
       return load();
     },
     editJira: (changes) => editing({ jira: { ...current.jira, ...changes } }),

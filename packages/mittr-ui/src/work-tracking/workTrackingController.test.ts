@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
+import { listenAnyAccountChange } from '../sign-in/accountChange';
+import { setSignedInAccount, signedInAccount } from '../sign-in/signedInAccount';
 import { mittrT } from '../strings/mittrT';
 import {
   IntegrationsRequestError,
@@ -46,6 +48,30 @@ const setup = (account: { current: string | null } = { current: 'u-a' }) => {
     await settle();
   };
   return { controller, loads, saves, tests, settle, accountChanged, accountListeners, account, loaded };
+};
+
+const setupReal = (initial: string) => {
+  const before = signedInAccount();
+  setSignedInAccount(initial);
+  const loads: Deferred<IntegrationsConfig>[] = [];
+  const saves: Array<Deferred<IntegrationsConfig> & { body: IntegrationsSaveBody }> = [];
+  const api: IntegrationsApi = {
+    load: () => new Promise((resolve, reject) => { loads.push({ resolve, reject }); }),
+    save: (body) => new Promise((resolve, reject) => { saves.push({ resolve, reject, body }); }),
+    testJira: async () => ({ ok: false }),
+    testPlane: async () => ({ ok: false }),
+  };
+  const controller = createWorkTrackingController({ api, currentUserId: signedInAccount, listenAccountChanged: listenAnyAccountChange });
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const loaded = async (config: IntegrationsConfig) => {
+    loads[loads.length - 1].resolve(config);
+    await settle();
+  };
+  const restore = () => {
+    controller.dispose();
+    setSignedInAccount(before);
+  };
+  return { controller, loads, saves, settle, loaded, restore };
 };
 
 describe('work tracking controller', () => {
@@ -125,31 +151,86 @@ describe('work tracking controller', () => {
     expect(saves).toHaveLength(0);
   });
 
-  test('a save names the account the form was loaded for, not the one the window has learned of since', async () => {
-    const { controller, saves, loads, loaded, account, settle } = setup();
-    void controller.refresh();
-    await loaded(configFor('u-a'));
-    controller.editJira({ token: 'typed-for-a' });
+  test('a save names the account the form was loaded for, even when the window learns of another account while it is on its way', async () => {
+    const real = setupReal('u-a');
+    try {
+      const { controller, saves, loads, loaded, settle } = real;
+      void controller.refresh();
+      await loaded(configFor('u-a'));
+      controller.editJira({ token: 'typed-for-a' });
 
-    account.current = 'u-b';
-    const saving = controller.saveJira();
-    expect(saves).toHaveLength(1);
-    expect(saves[0].body).toEqual({
-      jira: { baseUrl: 'https://u-a.atlassian.net', email: 'u-a@acme.test', token: 'typed-for-a' },
-      expectUserId: 'u-a',
-    });
+      const saving = controller.saveJira();
+      expect(saves).toHaveLength(1);
+      expect(saves[0].body).toEqual({
+        jira: { baseUrl: 'https://u-a.atlassian.net', email: 'u-a@acme.test', token: 'typed-for-a' },
+        expectUserId: 'u-a',
+      });
 
-    saves[0].reject(new IntegrationsRequestError('The Mittr account changed. Open the settings again.', 409));
-    await settle();
-    expect(loads).toHaveLength(2);
-    expect(controller.state().status).toBe('loading');
-    await loaded(configFor('u-b'));
-    expect(await saving).toBeNull();
+      setSignedInAccount('u-b');
+      expect(loads).toHaveLength(2);
+      expect(controller.state().status).toBe('loading');
+      expect(await controller.saveJira()).toBeNull();
+      expect(saves).toHaveLength(1);
 
-    const state = controller.state();
-    expect(state.loadedFor).toBe('u-b');
-    expect(state.jira.token).toBe('');
-    expect(state.notice).toBe(mittrT('mittr.workTracking.accountChanged'));
+      saves[0].reject(new IntegrationsRequestError('The Mittr account changed. Open the settings again.', 409));
+      await settle();
+      expect(await saving).toBeNull();
+      await loaded(configFor('u-b'));
+
+      const state = controller.state();
+      expect(state.loadedFor).toBe('u-b');
+      expect(state.jira.token).toBe('');
+      expect(state.notice).toBe(mittrT('mittr.workTracking.accountChanged'));
+    } finally {
+      real.restore();
+    }
+  });
+
+  test('a save refused because the server is already on another account shows the notice once the window has caught up', async () => {
+    const real = setupReal('u-a');
+    try {
+      const { controller, saves, loads, loaded, settle } = real;
+      void controller.refresh();
+      await loaded(configFor('u-a'));
+      controller.editJira({ token: 'typed-for-a' });
+      controller.editPlane({ apiKey: 'plane-key-for-a' });
+
+      const saving = controller.saveJira();
+      expect(saves[0].body.expectUserId).toBe('u-a');
+      saves[0].reject(new IntegrationsRequestError('The Mittr account changed. Open the settings again.', 409));
+      await settle();
+      expect(loads).toHaveLength(2);
+      await loaded(configFor('u-b'));
+      expect(loads).toHaveLength(3);
+      await loaded(configFor('u-b'));
+      expect(await saving).toBeNull();
+      expect(loads).toHaveLength(3);
+      expect(controller.state().status).toBe('loading');
+      expect(controller.state().loadedFor).toBeNull();
+
+      setSignedInAccount('u-b');
+      expect(loads).toHaveLength(4);
+      await loaded(configFor('u-b'));
+
+      const state = controller.state();
+      expect(state.status).toBe('ready');
+      expect(state.loadedFor).toBe('u-b');
+      expect(state.notice).toBe(mittrT('mittr.workTracking.accountChanged'));
+      expect(state.jira).toEqual({ baseUrl: 'https://u-b.atlassian.net', email: 'u-b@acme.test', token: '' });
+      expect(state.plane.apiKey).toBe('');
+      expect(JSON.stringify(state)).not.toContain('for-a');
+
+      controller.editJira({ token: 'typed-for-b' });
+      expect(controller.state().notice).toBeNull();
+      void controller.saveJira();
+      expect(saves).toHaveLength(2);
+      expect(saves[1].body).toEqual({
+        jira: { baseUrl: 'https://u-b.atlassian.net', email: 'u-b@acme.test', token: 'typed-for-b' },
+        expectUserId: 'u-b',
+      });
+    } finally {
+      real.restore();
+    }
   });
 
   test('a refused save for a changed account reloads and says so', async () => {
