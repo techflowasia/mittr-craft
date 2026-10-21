@@ -123,8 +123,8 @@ test('tools read as 1.22 defaults, and each invalid field reads as its default',
 
 test('a bad host in the stored list is dropped on read', async (t) => {
   const dataDir = tempDataDir(t);
-  fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ tools: { chromeApprovedHosts: ['Docs.Example.Test', 'docs.example.test', 'bad host', 'a.test:8080', 'evil.test/path', 7, null, 'ok-1.test'] } }));
-  assert.deepEqual((await createMittrSettings({ dataDir, logger: recordingLogger() }).read()).tools.chromeApprovedHosts, ['docs.example.test', 'ok-1.test']);
+  fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ tools: { chromeApprovedHosts: ['Docs.Example.Test', 'docs.example.test', 'bad host', 'a.test:8080', 'evil.test/path', 7, null, 'ok-1.test', '[2001:DB8::1]', '2001:db8::1', '[::1]:8080', '[fe80::1%en0]', '[]'] } }));
+  assert.deepEqual((await createMittrSettings({ dataDir, logger: recordingLogger() }).read()).tools.chromeApprovedHosts, ['docs.example.test', 'ok-1.test', '[2001:db8::1]']);
 });
 
 test('a tools update merges onto what is stored and returns it', async (t) => {

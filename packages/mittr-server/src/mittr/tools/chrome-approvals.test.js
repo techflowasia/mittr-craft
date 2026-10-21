@@ -373,6 +373,21 @@ test('awaitDecision rejects on abort and settles on a recorded reply', async (t)
   await assert.rejects(approvals.record('ses_1', HOST, 'yes'), TypeError);
 });
 
+test('Always on an IPv6 page saves its host in the form the page address gives', async (t) => {
+  const settings = createMittrSettings({ dataDir: tempDataDir(t) });
+  const logger = quietLogger();
+  const approvals = createChromeApprovals({ settings, logger });
+  const host = new URL('http://[2001:DB8:0::1]:8080/').hostname.toLowerCase();
+  assert.equal(host, '[2001:db8::1]');
+
+  await approvals.record('ses_1', host, 'always');
+
+  assert.deepEqual((await settings.read()).tools.chromeApprovedHosts, [host]);
+  assert.equal(await approvals.isApproved('ses_2', host), true);
+  assert.deepEqual(logger.lines, []);
+  assert.deepEqual(await approvals.removeHost(host), []);
+});
+
 test('removeHost removes the site from settings and from every session grant', async (t) => {
   const settings = createMittrSettings({ dataDir: tempDataDir(t) });
   const approvals = createChromeApprovals({ settings });

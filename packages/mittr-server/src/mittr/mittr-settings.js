@@ -7,7 +7,7 @@ import { isPlainObject } from './values.js';
 const SETTINGS_FILE = 'mittr-settings.json';
 const UPSTREAM_SETTINGS_FILE = 'settings.json';
 const PARKED = 'mittr';
-const HOST = /^[a-z0-9.-]+$/;
+const HOST = /^(?:[a-z0-9.-]+|\[[0-9a-f:]+\])$/;
 const INVALID_SWITCH = 'showOtherProviders must be true or false';
 
 const PARKED_TOOL_KEYS = Object.freeze({
