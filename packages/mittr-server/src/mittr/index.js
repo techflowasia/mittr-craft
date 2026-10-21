@@ -100,7 +100,7 @@ export function setupMittr(context, {
   mintShimKey = mintLocalToken,
   companySignIn = false,
 } = {}) {
-  const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig, events, git, uiAuth, control } = context;
+  const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig, events, git, uiAuth, control, requestScope } = context;
   const connectorsOff = !host || companySignIn === true || uiAuth?.passwordEnabled?.() === true;
   if (connectorsOff) logger.log(HOSTED_CONNECTORS_OFF);
   const broker = resolveBroker(env);
@@ -358,8 +358,8 @@ export function setupMittr(context, {
   registerMittrQuotaRoutes(app, { service: quotaService });
   registerMittrWorkRoutes(app, { broker, ensureFreshSession, fetchImpl, logger });
   registerMittrIntegrationsRoutes(app, { express, broker, ensureFreshSession, fetchImpl, logger });
-  const registry = createMittrActionRegistry({ control });
-  registerMittrControlRoutes(app, { express, registry });
+  const registry = createMittrActionRegistry({ control, logger });
+  registerMittrControlRoutes(app, { express, registry, host, requestScope });
   const unregisterDeepLink = host?.deepLinks?.register({
     host: 'auth',
     // Either way the window is brought forward and re-reads status, so a
@@ -600,6 +600,7 @@ export function setupMittr(context, {
   return {
     engineEnv: () => loopbackProxyExemption(env),
     engineHome: () => store.engineHome({ carryLegacy: false }),
+    registry,
     managedConfig,
     applyModels,
     dispose: async () => {

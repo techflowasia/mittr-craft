@@ -775,17 +775,22 @@ const checks = {
     has(service, /const CONTROL_ACTIONS = new Set\(OPENCHAMBER_ALL_ACTIONS\);/, 'the control service no longer runs exactly the full action list');
 
     const { createMittrActionRegistry } = await import('./mittr/tools/registry.js');
-    const registry = createMittrActionRegistry({ control: { definitions: () => lists } });
+    const registry = createMittrActionRegistry({ control: { all } });
     registry.defineTool({ name: 'contract_probe', description: 'probe', parameters: { type: 'object' } });
-    for (const { action } of [...lists.control, ...lists.web]) {
+    for (const action of all) {
       assert.throws(() => registry.register({ action, tool: 'contract_probe', title: 'T', description: 'D', effect: 'read', execute: async () => ({}) }), /is an upstream action/, `a Mittr action could take upstream's ${action}`);
     }
-    const toolsDir = path.join(repoRoot, 'packages/mittr-server/src/mittr/tools');
-    const mittrActions = fs.readdirSync(toolsDir)
-      .filter((name) => name.endsWith('.js') && !name.endsWith('.test.js'))
-      .flatMap((name) => [...fs.readFileSync(path.join(toolsDir, name), 'utf8').matchAll(/\baction: '([^']+)'/g)].map((match) => match[1]));
-    for (const action of mittrActions) {
-      assert.ok(!actions.OPENCHAMBER_ALL_ACTIONS.includes(action), `the Mittr action ${action} is an upstream action name`);
+    const { setupMittr } = await import('./mittr/index.js');
+    const { fakeEngineContext } = await import('./mittr/test-helpers.js');
+    const express = (await import('express')).default;
+    const quiet = { log: () => {}, warn: () => {}, error: () => {} };
+    const mittr = setupMittr(
+      { app: express(), express, dataDir: tempDir(t, 'contract-mittr-'), logger: quiet, host: null, ...fakeEngineContext().context },
+      { env: {}, fetchImpl: async () => { throw new Error('no network in the contract'); } },
+    );
+    t.after(() => mittr.dispose());
+    for (const { action } of mittr.registry.definitions({ includeVoiceOnly: true })) {
+      assert.ok(!all.includes(action), `the Mittr action ${action} is an upstream action name`);
     }
 
     const screenshots = await importUpstream('packages/web/server/lib/openchamber-control/screenshots.js');
@@ -806,6 +811,34 @@ const checks = {
     has(routes, /req\.once\('aborted', abortOnDisconnect\);\s*res\.once\('close', abortOnDisconnect\);/, 'the control route no longer aborts the action when the request closes');
     has(routes, /\.\.\.\(controlError\.partial === true \? \{\s*partial: true,\s*partialAction: controlError\.partialAction,\s*sessionId: controlError\.sessionId,\s*directory: controlError\.directory,\s*\} : \{\}\),/, 'the control route no longer answers the partial-result fields');
     has(source('packages/web/server/lib/openchamber-control/error.js'), /Number\(error\?\.statusCode\) \|\| Number\(error\?\.status\) \|\| fallbackStatus/, 'asControlError no longer takes the status from statusCode, then status');
+    const controlError = source('packages/web/server/lib/openchamber-control/error.js');
+    has(controlError, /this\.name = 'OpenChamberControlError';/, 'the control error no longer names itself OpenChamberControlError, which the route reads to keep partial-result fields');
+    has(controlError, /if \(error instanceof OpenChamberControlError\) return error;/, 'asControlError no longer keeps the control error, partial fields and all, and rebuilds every other error');
+    const { OpenChamberControlError } = await importUpstream('packages/web/server/lib/openchamber-control/error.js');
+    assert.equal(new OpenChamberControlError('x', 500, { partial: true }).name, 'OpenChamberControlError');
+
+    const tunnelAuth = source('packages/web/server/lib/opencode/tunnel-auth.js');
+    has(tunnelAuth, /if \(activeTunnelHost && reqHost === activeTunnelHost\) \{\s*return 'tunnel';\s*\}\s*if \(isLocalHost\(reqHost, req\)\) \{\s*return 'local';\s*\}/, 'classifyRequestScope no longer answers tunnel for the tunnel host before local');
+
+    const plugin = [
+      `import { createMittrActionRegistry } from ${JSON.stringify(pathToFileURL(path.join(repoRoot, 'packages/mittr-server/src/mittr/tools/registry.js')).href)};`,
+      `import { registerMittrControlRoutes } from ${JSON.stringify(pathToFileURL(path.join(repoRoot, 'packages/mittr-server/src/mittr/tools/control-routes.js')).href)};`,
+      'export default (context) => {',
+      '  const registry = createMittrActionRegistry({ control: context.control });',
+      "  registry.defineTool({ name: 'acme_probe', description: 'probe', parameters: { type: 'object' } });",
+      "  registry.register({ action: 'acme.ping', tool: 'acme_probe', title: 'Ping', description: 'Ping', effect: 'read', execute: async (_input, ctx) => ({ pong: true, scope: ctx.scope }) });",
+      '  registerMittrControlRoutes(context.app, { express: context.express, registry, host: context.host, requestScope: context.requestScope });',
+      '};',
+    ].join('\n');
+    const probe = (uiPassword, action) => probeRealServer(t, plugin, { uiPassword, method: 'POST', route: '/api/mittr/control', body: { action } });
+    const refused = probe('contract-password', 'acme.ping');
+    assert.equal(refused.status, 401, `an unauthenticated /api/mittr/control answered ${refused.status}`);
+    assert.ok(!refused.text.includes('pong'), 'an unauthenticated request ran the action');
+    const open = probe('', 'acme.ping');
+    assert.deepEqual({ status: open.status, body: JSON.parse(open.text) }, { status: 200, body: { pong: true, scope: { local: false } } }, 'an open server does not run a Mittr action through the real control context');
+    const upstream = probe('', 'projects.list');
+    assert.equal(upstream.status, 200, `the real control service did not answer projects.list: ${upstream.text}`);
+    assert.ok(Array.isArray(JSON.parse(upstream.text).projects), 'the real control service no longer answers projects.list with projects');
   },
 
   'mcp-user-layers': (t) => {

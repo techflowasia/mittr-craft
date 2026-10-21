@@ -294,10 +294,23 @@ test('the catalog routes keep a disable in the data dir of this machine, for any
 test('the control route runs an upstream action through the server\'s control service', async (t) => {
   const engine = fakeEngineContext();
   engine.controlAnswer = async () => ({ sessions: [{ id: 's1' }] });
-  const { call } = await setUp(t, { engine });
+  const { call } = await setUp(t, { engine, host: { secretStore: null, deepLinks: deepLinkHost() } });
 
   assert.deepEqual(await call('POST', '/api/mittr/control', { action: 'session.list', input: {}, contextDirectory: '/p', contextSessionId: 's1' }), { status: 200, body: { sessions: [{ id: 's1' }] } });
   assert.deepEqual(engine.controlCalls.map(([action, input, directory, { contextSessionId }]) => [action, input, directory, contextSessionId]), [['session.list', {}, '/p', 's1']]);
+
+  engine.scope = 'tunnel';
+  assert.equal((await call('POST', '/api/mittr/control', { action: 'session.list', contextSessionId: 's1' })).status, 400);
+  assert.equal(engine.controlCalls.length, 1);
+});
+
+test('on hosted web the control route names no session', async (t) => {
+  const engine = fakeEngineContext();
+  const { call } = await setUp(t, { engine, host: null });
+
+  assert.equal((await call('POST', '/api/mittr/control', { action: 'session.list', contextSessionId: 's1' })).status, 400);
+  assert.equal((await call('POST', '/api/mittr/control', { action: 'session.list' })).status, 200);
+  assert.equal(engine.controlCalls.length, 1);
 });
 
 test('startup gives one catalog request', async (t) => {

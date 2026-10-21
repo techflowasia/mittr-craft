@@ -7,23 +7,30 @@ export class MittrToolError extends Error {
   }
 }
 
+export const NO_TOOL_NAME = 'MittrCraft tool call without a tool name';
+
 const SURFACES = new Set(['agent', 'voice', 'http']);
 const EFFECTS = new Set(['read', 'change']);
+const ACTION_NAME = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_-]*)+$/;
 
 const bareName = (action) => {
   const separator = action.indexOf('.');
   return separator === -1 ? action : action.slice(separator + 1);
 };
 
-const upstreamActionsOf = (control) => {
-  const { control: controlDefinitions, web } = control.definitions();
-  return new Set([...controlDefinitions, ...web].map(({ action }) => action));
-};
-
-export function createMittrActionRegistry({ control }) {
-  const upstreamActions = upstreamActionsOf(control);
+export function createMittrActionRegistry({ control, logger = console }) {
+  const upstreamActions = new Set(control.all);
   const tools = new Map();
   const actions = new Map();
+
+  const isAvailable = (entry) => {
+    try {
+      return Boolean(entry.available());
+    } catch {
+      logger.warn(`[mittr] ${entry.action} could not tell whether it is available; treated as unavailable`);
+      return false;
+    }
+  };
 
   const agentActionsOf = (toolName) => [...actions.values()].filter((entry) => entry.tool === toolName && !entry.voiceOnly);
 
@@ -49,10 +56,13 @@ export function createMittrActionRegistry({ control }) {
     },
 
     register({ action, tool, title, description, effect, voiceOnly = false, available = () => true, execute }) {
+      if (!ACTION_NAME.test(action)) throw new Error(`${action} is not a lowercase, dot-separated action name`);
       if (actions.has(action)) throw new Error(`${action} is already registered`);
       if (upstreamActions.has(action)) throw new Error(`${action} is an upstream action`);
       if (!tools.has(tool)) throw new Error(`${tool} is not a defined tool`);
       if (!EFFECTS.has(effect)) throw new Error(`${action} has no effect of read or change`);
+      if (!(execute instanceof Function)) throw new Error(`${action} has no execute function`);
+      if (!(available instanceof Function)) throw new Error(`${action} has an available that is not a function`);
       actions.set(action, { action, tool, title, description, effect, voiceOnly: voiceOnly === true, available, execute });
     },
 
@@ -61,7 +71,7 @@ export function createMittrActionRegistry({ control }) {
         .map((tool) => ({
           ...tool,
           definitions: agentActionsOf(tool.name)
-            .filter((entry) => entry.available())
+            .filter(isAvailable)
             .map(({ action, title, description }) => ({ action, title, description })),
         }))
         .filter((tool) => tool.definitions.length > 0);
@@ -70,7 +80,15 @@ export function createMittrActionRegistry({ control }) {
     definitions({ tool, includeVoiceOnly = false } = {}) {
       return [...actions.values()]
         .filter((entry) => (tool === undefined || entry.tool === tool) && (includeVoiceOnly || !entry.voiceOnly))
-        .map(({ action, tool: toolName, title, description, effect, voiceOnly }) => ({ action, tool: toolName, title, description, effect, voiceOnly }));
+        .map((entry) => ({
+          action: entry.action,
+          tool: entry.tool,
+          title: entry.title,
+          description: entry.description,
+          effect: entry.effect,
+          voiceOnly: entry.voiceOnly,
+          available: isAvailable(entry),
+        }));
     },
 
     has(action) {
@@ -83,13 +101,14 @@ export function createMittrActionRegistry({ control }) {
       const { surface } = ctx;
       if (!SURFACES.has(surface)) throw new MittrToolError(`Unknown surface "${surface}"`, 400);
       const entry = actions.get(action);
-      if (surface === 'agent' && (!entry || entry.tool !== ctx.tool || entry.voiceOnly)) {
-        throw new MittrToolError(unknownAction(action, ctx.tool), 400);
+      if (surface === 'agent') {
+        if (!ctx.tool) throw new MittrToolError(NO_TOOL_NAME, 500);
+        if (!entry || entry.tool !== ctx.tool || entry.voiceOnly) throw new MittrToolError(unknownAction(action, ctx.tool), 400);
       }
       if (!entry) {
         return control.execute(action, input, ctx.directory, { signal: ctx.signal, contextSessionId: ctx.sessionId });
       }
-      if (!entry.available()) throw new MittrToolError(`${entry.title} is not available in this install`, 503);
+      if (!isAvailable(entry)) throw new MittrToolError(`${entry.title} is not available in this install`, 503);
       if (entry.voiceOnly && surface !== 'voice') throw new MittrToolError(`${entry.title} can only be asked for by voice`, 400);
       return entry.execute(input, ctx);
     },

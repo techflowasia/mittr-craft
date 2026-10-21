@@ -3,13 +3,14 @@ import test from 'node:test';
 
 import express from 'express';
 
+import { OpenChamberControlError } from '../../../../web/server/lib/openchamber-control/error.js';
 import { deferred, serve } from '../test-helpers.js';
-import { registerMittrControlRoutes } from './control-routes.js';
+import { SESSION_FROM_THIS_MACHINE_ONLY, registerMittrControlRoutes } from './control-routes.js';
 import { MittrToolError, createMittrActionRegistry } from './registry.js';
 
 const ROUTE = '/api/mittr/control';
 
-const setUp = async (t, { answer = async () => ({ sessions: [] }), register = () => {} } = {}) => {
+const setUp = async (t, { answer = async () => ({ sessions: [] }), register = () => {}, host = {}, scope = 'local' } = {}) => {
   const calls = [];
   const control = {
     execute: async (...args) => {
@@ -18,12 +19,13 @@ const setUp = async (t, { answer = async () => ({ sessions: [] }), register = ()
     },
     resolveSessionDirectory: async () => null,
     definitions: () => ({ control: [{ action: 'session.list', title: 'List sessions', description: 'List' }], web: [] }),
+    all: ['session.list'],
   };
   const registry = createMittrActionRegistry({ control });
   registry.defineTool({ name: 'mittrcraft_chrome', description: 'Drive Chrome', parameters: { type: 'object' } });
   register(registry);
   const app = express();
-  registerMittrControlRoutes(app, { express, registry });
+  registerMittrControlRoutes(app, { express, registry, host, requestScope: () => scope });
   return { calls, call: await serve(t, app) };
 };
 
@@ -69,17 +71,19 @@ test('the http route answers the error status and code', async (t) => {
   });
 });
 
-test('an upstream failure keeps its status and partial result, and a plain error is a 500', async (t) => {
+test('an upstream failure keeps its status, and its partial result only from the control service\'s own error, and a plain error is a 500', async (t) => {
   let failure = null;
   const { call } = await setUp(t, { answer: async () => { throw failure; } });
+  const partial = { partial: true, partialAction: 'fork-created', sessionId: 'ses_fork', directory: '/repo' };
 
-  failure = Object.assign(new Error('dispatch failed'), {
-    statusCode: 502, partial: true, partialAction: 'fork-created', sessionId: 'ses_fork', directory: '/repo', goalConfigured: true,
-  });
+  failure = new OpenChamberControlError('dispatch failed', 502, { ...partial, goalConfigured: true });
   assert.deepEqual(await call('POST', ROUTE, { action: 'session.list' }), {
     status: 502,
-    body: { error: 'dispatch failed', partial: true, partialAction: 'fork-created', sessionId: 'ses_fork', directory: '/repo' },
+    body: { error: 'dispatch failed', ...partial },
   });
+
+  failure = Object.assign(new Error('dispatch failed'), { statusCode: 502, ...partial });
+  assert.deepEqual(await call('POST', ROUTE, { action: 'session.list' }), { status: 502, body: { error: 'dispatch failed' } });
 
   failure = Object.assign(new Error('busy'), { status: 409, code: 'ECONNRESET' });
   assert.deepEqual(await call('POST', ROUTE, { action: 'session.list' }), { status: 409, body: { error: 'busy' } });
@@ -138,4 +142,57 @@ test('the request\'s close aborts the action', async (t) => {
 
   assert.equal(await aborted.promise, true);
   assert.equal((await request).name, 'AbortError');
+});
+
+const scopeRecorder = (seen) => (registry) => registry.register({
+  action: 'chrome.read', tool: 'mittrcraft_chrome', title: 'Read the Chrome page', description: 'Read', effect: 'read',
+  execute: async (_input, ctx) => {
+    seen.push(ctx.scope);
+    return { ok: true };
+  },
+});
+
+test('the action is told whether the request came from this machine', async (t) => {
+  const seen = [];
+  const local = await setUp(t, { register: scopeRecorder(seen) });
+  const hosted = await setUp(t, { register: scopeRecorder(seen), host: null });
+  const tunnel = await setUp(t, { register: scopeRecorder(seen), scope: 'tunnel' });
+  const remote = await setUp(t, { register: scopeRecorder(seen), scope: 'unknown-public' });
+
+  for (const call of [local.call, hosted.call, tunnel.call, remote.call]) {
+    assert.equal((await call('POST', ROUTE, { action: 'chrome.read' })).status, 200);
+  }
+  const relayed = await fetch(local.call.base + ROUTE, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.9' },
+    body: JSON.stringify({ action: 'chrome.read' }),
+  });
+  assert.equal(relayed.status, 200);
+
+  assert.deepEqual(seen, [{ local: true }, { local: false }, { local: false }, { local: false }, { local: false }]);
+});
+
+test('a session is named only from this machine', async (t) => {
+  const local = await setUp(t);
+  const hosted = await setUp(t, { host: null });
+  const tunnel = await setUp(t, { scope: 'tunnel' });
+  const body = { action: 'session.list', contextDirectory: '/p', contextSessionId: 's1' };
+
+  assert.equal((await local.call('POST', ROUTE, body)).status, 200);
+  assert.equal(local.calls[0][3].contextSessionId, 's1');
+
+  for (const { call, calls } of [hosted, tunnel]) {
+    assert.deepEqual(await call('POST', ROUTE, body), { status: 400, body: { error: SESSION_FROM_THIS_MACHINE_ONLY } });
+    assert.equal(calls.length, 0);
+    assert.equal((await call('POST', ROUTE, { action: 'session.list', contextDirectory: '/p' })).status, 200);
+    assert.equal(calls[0][3].contextSessionId, undefined);
+  }
+  const relayed = await fetch(local.call.base + ROUTE, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', forwarded: 'for=203.0.113.9' },
+    body: JSON.stringify(body),
+  });
+  assert.equal(relayed.status, 400);
+  assert.equal(local.calls.length, 1);
+  assert.equal(SESSION_FROM_THIS_MACHINE_ONLY, 'A session can be named only from this machine');
 });
