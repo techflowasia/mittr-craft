@@ -238,6 +238,8 @@ export function setupMittr(context, {
   let audit = null;
   const syncCatalog = () => catalog.sync();
   let accountSync = null;
+  let startupSyncDone = false;
+  let startupSyncRunning = false;
   const syncAfterAccountChange = () => {
     const outcome = syncCatalog();
     accountSync = { key: activeAccountKey(), outcome };
@@ -457,8 +459,6 @@ export function setupMittr(context, {
   // something to show.
   // It counts as done once it succeeds or finds nobody signed in, so a later
   // ready retries a first sync that found the platform unreachable.
-  let startupSyncDone = false;
-  let startupSyncRunning = false;
   const startupSync = async () => {
     if (startupSyncDone || startupSyncRunning) return;
     startupSyncRunning = true;
