@@ -204,9 +204,9 @@ test('a partial block is forwarded without the fields it leaves out', async (t) 
   assert.deepEqual(fetchImpl.calls[0].body, { jira: { email: 'a@x' }, plane: { workspaceSlugs: ['mittr'] } });
 });
 
-test('the Jira test passes the platform result through with the account', async (t) => {
+test('the Jira test answers the platform result with the account', async (t) => {
   const result = { ok: true, displayName: 'Ada', email: 'a@x' };
-  const { call, fetchImpl } = await setUp(t, { fetchImpl: fakeFetch(() => json(result)) });
+  const { call, fetchImpl } = await setUp(t, { fetchImpl: fakeFetch(() => json({ ...result, accountId: 'acc-1' })) });
   const reply = await call('POST', '/api/mittr/integrations/jira/test');
   assert.deepEqual(reply, { status: 200, body: { ...result, userId: 'u-a' } });
   assert.equal(fetchImpl.calls[0].url, 'https://api-dev.mittr.asia/api/integrations/jira/test');
@@ -214,18 +214,27 @@ test('the Jira test passes the platform result through with the account', async 
   assert.equal(fetchImpl.calls[0].body, undefined);
 });
 
-test('the Plane test passes per-workspace results through', async (t) => {
+test('the Plane test answers per-workspace results with only the fields the window reads', async (t) => {
   const result = {
     ok: false,
     error: 'craft: 401',
     workspaces: [
       { slug: 'mittr', ok: true, count: 4, projects: [{ id: 'p1', name: 'Mittr' }] },
       { slug: 'craft', ok: false, error: 'Invalid API key' },
+      'junk',
     ],
   };
   const { call, fetchImpl } = await setUp(t, { fetchImpl: fakeFetch(() => json(result)) });
   const reply = await call('POST', '/api/mittr/integrations/plane/test');
-  assert.deepEqual(reply, { status: 200, body: { ...result, userId: 'u-a' } });
+  assert.deepEqual(reply, {
+    status: 200,
+    body: {
+      ok: false,
+      error: 'craft: 401',
+      workspaces: [{ slug: 'mittr', ok: true, count: 4 }, { slug: 'craft', ok: false, error: 'Invalid API key' }, null],
+      userId: 'u-a',
+    },
+  });
   assert.equal(fetchImpl.calls[0].url, 'https://api-dev.mittr.asia/api/integrations/plane/test');
 });
 
@@ -240,7 +249,15 @@ test('a platform without workspaceSlugs passes its single slug through unchanged
   assert.equal(Object.hasOwn(reply.body.plane, 'workspaceSlugs'), false);
   const plane = { ok: true, count: 2, projects: [{ id: 'p1', name: 'Mittr' }] };
   const tested = await setUp(t, { fetchImpl: fakeFetch(() => json(plane)) });
-  assert.deepEqual((await tested.call('POST', '/api/mittr/integrations/plane/test')).body, { ...plane, userId: 'u-a' });
+  assert.deepEqual((await tested.call('POST', '/api/mittr/integrations/plane/test')).body, { ok: true, count: 2, userId: 'u-a' });
+});
+
+test('a test reply keeps only ok, error, displayName, email, count and workspaces', async (t) => {
+  const platform = { ok: true, displayName: 'Ada', email: 'a@x', count: 3, accountId: 'acc-1', avatarUrl: 'https://x/a.png', token: 'leak', userId: 'u-other' };
+  const { call } = await setUp(t, { fetchImpl: fakeFetch(() => json(platform)) });
+  for (const route of ['/api/mittr/integrations/jira/test', '/api/mittr/integrations/plane/test']) {
+    assert.deepEqual((await call('POST', route)).body, { ok: true, displayName: 'Ada', email: 'a@x', count: 3, userId: 'u-a' });
+  }
 });
 
 test('nobody signed in answers 401 and asks the platform nothing', async (t) => {

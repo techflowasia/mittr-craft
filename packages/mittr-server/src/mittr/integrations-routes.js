@@ -39,8 +39,14 @@ const planeOut = (block) => {
 
 const configReply = (body, userId) => ({ jira: jiraOut(body?.jira), plane: planeOut(body?.plane), userId });
 
+const TEST_FIELDS = ['ok', 'error', 'displayName', 'email', 'count'];
+const WORKSPACE_TEST_FIELDS = ['slug', 'ok', 'count', 'error'];
+
 const testReply = (body, userId) => {
-  const reply = isRecord(body) ? { ...body } : {};
+  const reply = isRecord(body) ? pick(body, TEST_FIELDS) : {};
+  if (Array.isArray(body?.workspaces)) {
+    reply.workspaces = body.workspaces.map((entry) => (isRecord(entry) ? pick(entry, WORKSPACE_TEST_FIELDS) : null));
+  }
   reply.userId = userId;
   return reply;
 };
