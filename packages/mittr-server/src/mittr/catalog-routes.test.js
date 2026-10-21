@@ -205,6 +205,45 @@ test('a sync still in flight when the account switches files its answer under th
   assert.deepEqual(models, []);
 });
 
+test('a switch while the session refreshes stores nothing under either account and applies nothing', async (t) => {
+  const dataDir = tempDataDir(t);
+  const cacheA = createCatalogCache({ filePath: catalogCachePath(dataDir, '000000000000000a') });
+  const cacheB = createCatalogCache({ filePath: catalogCachePath(dataDir, '000000000000000b') });
+  cacheB.write({ ...PAYLOAD, bundleVersion: 3, subject: { userId: 'u-b' }, models: { configured: true, items: [{ alias: 'b1' }] }, mcp: { configured: true, items: [] }, skills: { configured: true, items: [] }, knowledge: { configured: false, items: [] } });
+  const before = fs.readFileSync(catalogCachePath(dataDir, '000000000000000b'), 'utf8');
+  let active = cacheA;
+  const refresh = deferred();
+  const payloadA = { ...PAYLOAD, mcp: [{ name: 'a-tool', config: { type: 'remote', url: 'https://a.example/mcp', headers: { authorization: 'A-SECRET' } } }] };
+  const fetchImpl = fakeFetch(() => json(payloadA));
+  const app = express();
+  const models = [];
+  const catalogs = [];
+  const routes = registerMittrCatalogRoutes(app, {
+    express,
+    broker: BROKER,
+    ensureFreshSession: () => refresh.promise,
+    cache: () => active,
+    enablement: createEnablementStore({ filePath: path.join(dataDir, 'mittr-enablement.json') }),
+    onModels: async (items) => { models.push(items); },
+    onCatalog: async (catalog) => { catalogs.push(catalog); },
+    fetchImpl,
+    logger: recordingLogger(),
+  });
+
+  const pending = routes.sync();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  active = cacheB;
+  refresh.resolve(SESSION);
+
+  assert.equal((await pending).status, 409);
+  assert.equal(fetchImpl.calls.length, 0);
+  assert.equal(cacheB.read().bundleVersion, 3);
+  assert.equal(fs.readFileSync(catalogCachePath(dataDir, '000000000000000b'), 'utf8'), before);
+  assert.equal(cacheA.read(), null);
+  assert.deepEqual(models, []);
+  assert.deepEqual(catalogs, []);
+});
+
 test('syncs run one after another, so an older answer never lands over a newer one', async (t) => {
   const answers = [deferred(), deferred()];
   const { sync, ownCache, models } = await setUp(t, { fetchImpl: fakeFetch((_call, n) => answers[n - 1].promise) });

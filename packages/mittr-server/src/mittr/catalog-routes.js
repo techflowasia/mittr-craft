@@ -13,6 +13,7 @@ const CATALOG_ENDPOINT = '/desktop/catalog';
 const NOT_SIGNED_IN = 'Not signed in to Mittr';
 const REFUSED = 'Mittr refused the catalog request';
 const CANNOT_STORE = 'Cannot store the Mittr catalog on this machine';
+const ACCOUNT_CHANGED = 'The Mittr account changed during the sync';
 
 // The platform's refusal code (`desktop_entitlement_required`) is passed on
 // when it is a plain code, so the window can say why; anything else is not.
@@ -98,11 +99,12 @@ export function registerMittrCatalogRoutes(app, {
   const failure = (status, error, extra = {}) => ({ status, body: { error, ...extra } });
 
   const runSync = async ({ onStored } = {}) => {
+    const target = cache();
     // Refreshed first: a sync is often the first call after a long idle, just
     // when the access token has run out on a session that is still good.
     const session = await ensureFreshSession();
+    if (cache() !== target) return failure(409, ACCOUNT_CHANGED);
     if (!session?.accessToken) return failure(401, NOT_SIGNED_IN);
-    const target = cache();
 
     let response;
     try {
