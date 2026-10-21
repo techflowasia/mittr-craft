@@ -8,7 +8,7 @@ export type GoWorkSelection = { providerID: string; modelID: string; agentName?:
 
 export type GoWorkProject = { id: string; path: string; label?: string };
 
-export type GoWorkRefusal = 'no-project' | 'no-model' | 'no-mittr-model';
+export type GoWorkRefusal = 'account-changed' | 'no-project' | 'no-model' | 'no-mittr-model';
 
 export type GoWorkPlan =
   | { ok: true; title: string; prompt: string; directory: string; selection: GoWorkSelection }
@@ -24,10 +24,12 @@ export type GoWorkDeps = {
   initialize: (sessionId: string) => void;
   sendMessage: (prompt: string, selection: GoWorkSelection, sessionId: string, directory: string) => Promise<void>;
   closeDialog: () => void;
+  reload: () => void;
   toast: GoWorkToast;
 };
 
 const REFUSAL_TEXT = {
+  'account-changed': 'mittr.work.accountChanged',
   'no-project': 'mittr.work.projectMenu.empty',
   'no-model': 'mittr.work.error.noModelSelected',
   'no-mittr-model': 'mittr.work.error.noMittrModel',
@@ -55,12 +57,14 @@ export function mittrAvailable(
   return !catalogAliases.every((alias) => agentEntryStatus(agentStatus.get(alias), alias)?.blocked === true);
 }
 
-export function planGoWork({ item, project, selection, available }: {
+export function planGoWork({ item, project, selection, available, listIsForCurrentAccount }: {
   item: WorkItem;
   project: GoWorkProject | null;
   selection: GoWorkSelection | null;
   available: boolean | null;
+  listIsForCurrentAccount: boolean;
 }): GoWorkPlan {
+  if (!listIsForCurrentAccount) return { ok: false, reason: 'account-changed' };
   const directory = project?.path.trim() ?? '';
   if (!directory) return { ok: false, reason: 'no-project' };
   if (!selection) return { ok: false, reason: 'no-model' };
@@ -71,6 +75,7 @@ export function planGoWork({ item, project, selection, available }: {
 export async function runGoWork(plan: GoWorkPlan, deps: GoWorkDeps): Promise<'started' | 'failed'> {
   if (!plan.ok) {
     deps.toast.error(mittrT(REFUSAL_TEXT[plan.reason]));
+    if (plan.reason === 'account-changed') deps.reload();
     return 'failed';
   }
   let session: Awaited<ReturnType<GoWorkDeps['createSession']>>;

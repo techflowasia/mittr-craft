@@ -18,6 +18,7 @@ export type MyWorkController = {
   state(): MyWorkState;
   subscribe(fn: () => void): () => void;
   refresh(): Promise<void>;
+  listIsForCurrentAccount(): boolean;
   dispose(): void;
 };
 
@@ -25,6 +26,7 @@ export const MY_WORK_LOADING: MyWorkState = { status: 'loading', items: [] };
 
 export function createMyWorkController({ fetchWork, currentUserId, listenAccountChanged }: MyWorkControllerDeps): MyWorkController {
   let current = MY_WORK_LOADING;
+  let loadedFor: string | null = null;
   let latest = 0;
   let reloadedForMismatch = false;
   let disposed = false;
@@ -56,6 +58,7 @@ export function createMyWorkController({ fetchWork, currentUserId, listenAccount
       return;
     }
     reloadedForMismatch = false;
+    loadedFor = reply.userId;
     set(reply.configured ? { status: 'ready', items: reply.items } : { status: 'not-connected', items: [] });
   };
 
@@ -74,6 +77,7 @@ export function createMyWorkController({ fetchWork, currentUserId, listenAccount
       reloadedForMismatch = false;
       return load();
     },
+    listIsForCurrentAccount: () => current.status === 'ready' && loadedFor === currentUserId(),
     dispose: () => {
       if (disposed) return;
       disposed = true;

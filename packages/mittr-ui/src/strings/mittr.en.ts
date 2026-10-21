@@ -109,6 +109,7 @@ export const mittrEn = {
   'mittr.work.projectMenu.empty': 'Add a project first',
   'mittr.work.error.noModelSelected': 'No model is selected yet',
   'mittr.work.error.noMittrModel': 'No Mittr model is available to you this week.',
+  'mittr.work.accountChanged': "The Mittr account changed, so this shows that account's work now. Nothing was started.",
   'mittr.workTracking.title': 'Work tracking',
   'mittr.workTracking.info': 'Connect Jira or Plane so My work can show items assigned to you. This is your own connection — nothing here needs an admin.',
   'mittr.workTracking.status.connected': 'Connected',

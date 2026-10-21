@@ -106,6 +106,23 @@ describe('My work controller', () => {
     expect(controller.state()).toEqual({ status: 'loading', items: [] });
   });
 
+  test('the list is for the current account only while it is ready and loaded for that account', async () => {
+    const { controller, pending, settle, account } = setup({ current: 'u-a' });
+    expect(controller.listIsForCurrentAccount()).toBe(false);
+    void controller.refresh();
+    expect(controller.listIsForCurrentAccount()).toBe(false);
+    pending[0].resolve({ configured: true, items: [item('a-1')], userId: 'u-a' });
+    await settle();
+    expect(controller.listIsForCurrentAccount()).toBe(true);
+    account.current = 'u-b';
+    expect(controller.state().items.map((shown) => shown.id)).toEqual(['a-1']);
+    expect(controller.listIsForCurrentAccount()).toBe(false);
+    void controller.refresh();
+    pending[1].resolve({ configured: false, items: [], userId: null });
+    await settle();
+    expect(controller.listIsForCurrentAccount()).toBe(false);
+  });
+
   test('a slow first reply never overwrites a newer one', async () => {
     const { controller, pending, settle } = setup();
     void controller.refresh();

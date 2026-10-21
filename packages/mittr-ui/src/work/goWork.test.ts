@@ -47,6 +47,7 @@ const fakeDeps = (overrides: Partial<GoWorkDeps> = {}) => {
       calls.push(['sendMessage', prompt, selection, sessionId, directory]);
     },
     closeDialog: () => { calls.push(['closeDialog']); },
+    reload: () => { calls.push(['reload']); },
     toast: {
       success: (message) => { calls.push(['toast.success', message]); },
       error: (message, options) => { calls.push(['toast.error', message, options?.description]); },
@@ -61,6 +62,7 @@ const okPlan = (overrides: Partial<Parameters<typeof planGoWork>[0]> = {}): GoWo
   project: PROJECT,
   selection: MITTR,
   available: true,
+  listIsForCurrentAccount: true,
   ...overrides,
 });
 
@@ -98,6 +100,24 @@ describe('Go work', () => {
     expect(okPlan({ project: { id: 'p', path: '  ' } })).toEqual({ ok: false, reason: 'no-project' });
     expect(okPlan({ selection: null, available: false })).toEqual({ ok: false, reason: 'no-model' });
     expect(okPlan({ available: false })).toEqual({ ok: false, reason: 'no-mittr-model' });
+  });
+
+  test('a list loaded for another account is refused before anything else', () => {
+    expect(okPlan({ listIsForCurrentAccount: false, project: null, selection: null, available: false })).toEqual({ ok: false, reason: 'account-changed' });
+  });
+
+  test('a list loaded for another account starts no session, says the account changed and reloads the list', async () => {
+    const { deps, calls, names } = fakeDeps();
+    expect(await runGoWork(okPlan({ listIsForCurrentAccount: false }), deps)).toBe('failed');
+    expect(names()).not.toContain('createSession');
+    expect(names()).not.toContain('sendMessage');
+    expect(calls).toEqual([['toast.error', mittrT('mittr.work.accountChanged'), undefined], ['reload']]);
+  });
+
+  test('other refusals do not reload the list', async () => {
+    const { deps, names } = fakeDeps();
+    await runGoWork(okPlan({ project: null }), deps);
+    expect(names()).not.toContain('reload');
   });
 
   test('no model selected creates no session', async () => {

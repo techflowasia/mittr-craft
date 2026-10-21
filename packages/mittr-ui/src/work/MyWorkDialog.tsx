@@ -330,7 +330,7 @@ function useMyWorkController(): MyWorkController | null {
   return controller;
 }
 
-const sessionGoWorkDeps = (closeDialog: () => void): GoWorkDeps => ({
+const sessionGoWorkDeps = (closeDialog: () => void, reload: () => void): GoWorkDeps => ({
   createSession: (title, directory, selection) => sessionActions.createSession(
     title,
     directory,
@@ -358,6 +358,7 @@ const sessionGoWorkDeps = (closeDialog: () => void): GoWorkDeps => ({
     closeDialog();
     useUIStore.getState().closeMainSurfaces();
   },
+  reload,
   toast: {
     success: (message) => { toast.success(message); },
     error: (message, options) => { toast.error(message, options); },
@@ -366,7 +367,7 @@ const sessionGoWorkDeps = (closeDialog: () => void): GoWorkDeps => ({
 
 type GoWorkBinding = { startingItemId: string | null; goWork: (item: WorkItem, project: GoWorkProject) => void };
 
-function useGoWork(onClose: () => void): GoWorkBinding {
+function useGoWork(onClose: () => void, controller: MyWorkController | null): GoWorkBinding {
   const quota = useQuotaMe(true);
   const agentStatus = quota.status === 'ok' ? quota.quota.agentStatus : null;
   const [startingItemId, setStartingItemId] = React.useState<string | null>(null);
@@ -375,9 +376,9 @@ function useGoWork(onClose: () => void): GoWorkBinding {
     const plan = () => {
       const selection = captureSendSelection();
       const available = mittrAvailable(selection, mittrCatalogAliases(useConfigStore.getState().providers), agentStatus);
-      return planGoWork({ item, project, selection, available });
+      return planGoWork({ item, project, selection, available, listIsForCurrentAccount: controller?.listIsForCurrentAccount() ?? false });
     };
-    void startGoWork(running, setStartingItemId, item.id, plan, sessionGoWorkDeps(onClose));
+    void startGoWork(running, setStartingItemId, item.id, plan, sessionGoWorkDeps(onClose, () => { void controller?.refresh(); }));
   };
   return { startingItemId, goWork };
 }
@@ -385,7 +386,7 @@ function useGoWork(onClose: () => void): GoWorkBinding {
 function MyWorkPanel({ onClose }: { onClose: () => void }): React.ReactNode {
   const t = useMittrT();
   const controller = useMyWorkController();
-  const { startingItemId, goWork } = useGoWork(onClose);
+  const { startingItemId, goWork } = useGoWork(onClose, controller);
   const state = React.useSyncExternalStore(
     controller ? controller.subscribe : subscribeNothing,
     () => (controller ? controller.state() : MY_WORK_LOADING),
