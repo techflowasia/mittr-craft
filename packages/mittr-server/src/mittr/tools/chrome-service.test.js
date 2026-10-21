@@ -6,7 +6,7 @@ import test from 'node:test';
 import { MARKER_PNG } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
 import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
 import { writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
-import { fakeFetch, json, tempDataDir } from '../test-helpers.js';
+import { deferred, fakeFetch, json, tempDataDir } from '../test-helpers.js';
 import { BANNER_FILE, CONFIG_FILE, chromeSessionName, createChromeControl } from './chrome-control.js';
 import { createBrowserStepper } from './browser-stepper.js';
 import { NO_APPROVALS, chromeToolDescription, chromeToolParameters, createChromeService, registerChromeActions } from './chrome-service.js';
@@ -380,6 +380,54 @@ test('the service waits for the start-up sweep before it drives Chrome', async (
   release();
   await opening;
   assert.equal(browser.commands().some(([command]) => command === 'open'), true);
+});
+
+test('a Chrome action running when every Chrome is closed keeps no session after it and ends with the account change', async (t) => {
+  const base = fakeBrowser();
+  const opening = deferred();
+  const release = deferred();
+  const browser = {
+    ...base,
+    execute: async (binary, argv, options) => {
+      if (commandOf(argv)[0] === 'open') {
+        opening.resolve();
+        await release.promise;
+      }
+      return base.execute(binary, argv, options);
+    },
+  };
+  const { service, ctx } = setUp(t, { browser });
+  const opened = service.execute('chrome.open', { url: 'http://acme.example.test/' }, ctx);
+  await opening.promise;
+
+  await service.closeAll();
+  release.resolve();
+
+  await assert.rejects(opened, refusal(409, 'The Mittr account changed'));
+  assert.deepEqual(base.commands(), [['profiles'], ['close', '--all'], ['open', 'http://acme.example.test/'], ['close']]);
+  assert.equal(base.urls.has(SES_1), false);
+  await assert.rejects(service.execute('chrome.read', {}, ctx), refusal(400, 'No page is open in this session; call chrome.open first'));
+});
+
+test('a Chrome action waiting for the person when every Chrome is closed launches nothing after the answer', async (t) => {
+  const asking = deferred();
+  const answer = deferred();
+  const approvals = {
+    ...allowHosts(),
+    ask: async () => {
+      asking.resolve();
+      return answer.promise;
+    },
+  };
+  const { service, browser, ctx } = setUp(t, { approvals });
+  const opened = service.execute('chrome.open', { url: 'http://acme.example.test/' }, ctx);
+  await asking.promise;
+
+  await service.closeAll();
+  answer.resolve('once');
+
+  await assert.rejects(opened, refusal(409, 'The Mittr account changed'));
+  assert.equal(browser.commands().some(([command]) => command === 'open'), false);
 });
 
 test('a screenshot is saved and its scratch folder is removed even when the driver fails', async (t) => {

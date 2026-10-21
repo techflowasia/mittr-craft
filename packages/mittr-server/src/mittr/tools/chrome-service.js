@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { profileOf } from '../mittr-settings.js';
+import { ACCOUNT_CHANGED } from '../platform.js';
 import { MAX_GOAL_CHARS } from './browser-stepper.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
 import { chromeSessionName } from './chrome-control.js';
@@ -212,6 +213,7 @@ export function createChromeService({
 }) {
   const conversationGrants = new Set();
   const modes = new Map();
+  let generation = 0;
 
   const isHostAllowed = async (sessionId, host) => conversationGrants.has(sessionId) || Boolean(await approvals.isApproved(sessionId, host));
 
@@ -240,8 +242,18 @@ export function createChromeService({
     throw notYetAllowed(host);
   };
 
+  const closeQuietly = (options) => control.run(['close'], { ...options, signal: undefined }).catch(() => undefined);
+
+  const drive = async (command, options) => {
+    if (options.generation !== generation) throw new MittrToolError(ACCOUNT_CHANGED, 409);
+    const result = await control.run(command, options);
+    if (options.generation === generation) return result;
+    await closeQuietly(options);
+    throw new MittrToolError(ACCOUNT_CHANGED, 409);
+  };
+
   const ensureStillApproved = async (sessionId, options) => {
-    const landed = textOf((await control.run(['get', 'url'], options))?.url);
+    const landed = textOf((await drive(['get', 'url'], options))?.url);
     if (landed === NO_PAGE) return;
     if (!landed) throw siteMoved('an address the driver did not report');
     let page = null;
@@ -298,8 +310,6 @@ export function createChromeService({
     return only;
   };
 
-  const closeQuietly = (options) => control.run(['close'], { ...options, signal: undefined }).catch(() => undefined);
-
   const reopenIfChanged = async (options) => {
     const launched = modes.get(options.sessionName);
     if (!launched || (launched.headed === options.headed && launched.profile === options.profile)) return;
@@ -348,7 +358,7 @@ export function createChromeService({
   const landedPage = async (sessionId, options) => {
     if (options.signal?.aborted || !modes.has(options.sessionName)) return null;
     try {
-      const landed = textOf((await control.run(['get', 'url'], options))?.url);
+      const landed = textOf((await drive(['get', 'url'], options))?.url);
       const page = new URL(landed);
       if (page.protocol !== 'http:' && page.protocol !== 'https:') return null;
       if (await isOwnAddress(page)) return null;
@@ -372,7 +382,7 @@ export function createChromeService({
       if (cancelled()) return finish('stopped', { reason: CALL_CANCELLED });
       let page;
       try {
-        page = await execute('chrome.snapshot', {}, ctx);
+        page = await perform('chrome.snapshot', {}, ctx, options.generation);
       } catch (error) {
         return chromeStopped(error);
       }
@@ -394,7 +404,7 @@ export function createChromeService({
       }
       const taken = { step: line, decidedBy: reply.decidedBy, ms: reply.ms };
       try {
-        await execute(STEP_ACTIONS[step.action], { ref: step.ref, value: step.value }, ctx);
+        await perform(STEP_ACTIONS[step.action], { ref: step.ref, value: step.value }, ctx, options.generation);
       } catch (error) {
         if (error?.code === 'site_moved') steps.push(taken);
         return chromeStopped(error);
@@ -405,7 +415,7 @@ export function createChromeService({
     return finish('step_limit', { reason: `stopped after ${limit} steps` });
   };
 
-  const execute = async (action, input = {}, ctx = {}) => {
+  const perform = async (action, input, ctx, started) => {
     const sessionId = textOf(ctx.sessionId);
     if (!sessionId) throw new MittrToolError('The Chrome tool needs the calling session', 400);
     const planned = commandFor(action, input, ctx);
@@ -427,12 +437,13 @@ export function createChromeService({
       profile: await chosenProfile(tools, sessionName),
       headed: ctx.headed === true || tools.chromeHeaded === true,
       signal: ctx.signal,
+      generation: started,
     };
     await reopenIfChanged(options);
 
     const runAction = async (command) => {
       try {
-        const result = await control.run(command, options);
+        const result = await drive(command, options);
         remember(options);
         return result;
       } catch (error) {
@@ -449,7 +460,7 @@ export function createChromeService({
       return opened;
     }
 
-    const currentUrl = textOf((await control.run(['get', 'url'], options))?.url);
+    const currentUrl = textOf((await drive(['get', 'url'], options))?.url);
     if (!currentUrl || currentUrl === NO_PAGE) throw new MittrToolError(NO_PAGE_OPEN, 400);
     const current = pageOf(currentUrl);
     await refuseOwnAddress(current);
@@ -462,6 +473,8 @@ export function createChromeService({
     await ensureStillApproved(sessionId, options);
     return result;
   };
+
+  const execute = (action, input = {}, ctx = {}) => perform(action, input, ctx, generation);
 
   const forgetConversation = (sessionId) => {
     conversationGrants.delete(sessionId);
@@ -479,6 +492,7 @@ export function createChromeService({
       await closeRunning(id).catch(() => undefined);
     },
     closeAll: async ({ signal } = {}) => {
+      generation += 1;
       modes.clear();
       await control.closeAll({ signal });
     },
