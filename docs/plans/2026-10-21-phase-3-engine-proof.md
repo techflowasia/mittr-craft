@@ -6,7 +6,7 @@ Date: 2026-10-21. Script: `node scripts/mittr/probe-engine-v2.mjs --only skills-
 
 - Catalog skills reach the engine in both layouts, nested `skills/mittr/<name>/` and flat `skills/mittr-<name>/`. A new skill shows up within about 0.3 s, with no restart. The plan's stop rule does not trip. **Task 8 uses the flat layout `mittr-<name>/` (ruling R119), because nested ids drop `mittr/` and a developer's own skill hid a catalog skill of the same name. It needs no refresh after a change.**
 - A connector in the managed config file connects within about 0.3 s. Its tool runs once when asked, and it stops within about 0.3 s when the entry is removed, all with no restart.
-- **Settings → MCP does not list a connector that lives only in the managed file.** P10b failed, as preflight finding 14 expected. **Task 9 therefore takes the user-config path as its main path:** org entries are written through `context.opencode.userConfig` and reconciled per account before each restart (ruling R120). A connector the person deletes in Settings → MCP comes back at the next reconcile; the off switch is the catalog toggle.
+- **Settings → MCP does not list a connector that lives only in the managed file.** P10b failed, as preflight finding 14 expected. **Under ruling R128, Task 9 puts catalog connectors only in the managed config file**, for the signed-in account only, and never in the person's user config. They run, but Settings → MCP does not list them; the off switch is the catalog toggle. They are off on hosted web under ruling R132 (see Config reads).
 - Nothing tried to leave the machine.
 
 ## Results
@@ -67,7 +67,7 @@ The probe ran `listMcpConfigs` in a separate node process with the server's env:
 - **Listed: no.** The list was empty. `customPath` was null; the user path was `<home>/.config/opencode/opencode.json` and the project path was `<work>/.opencode/opencode.json`.
 - **Editable: not applicable.** The page cannot edit what it does not list.
 - **Diagnostic: with `OPENCODE_CONFIG` set to the managed file**, as the plan first described it, the entry is listed with `scope: user`, and an edit would be written into the managed file, which the server rewrites at every start.
-- **Settings → MCP has no read-only state.** `McpGrid.tsx` gives every card a Delete action, and `McpPage.tsx` edits every listed entry. So a user-config org entry, which is Task 9's main path now, will show as an ordinary editable connector.
+- **Settings → MCP has no read-only state.** `McpGrid.tsx` gives every card a Delete action, and `McpPage.tsx` edits every listed entry. Any listing of catalog connectors there would need a read-only, redacted hook. Under R128 there is none, so catalog connectors are not listed.
 
 ### P11: fan-out across projects
 
@@ -128,12 +128,12 @@ None of the plan's Task 6 stop conditions stops the phase.
   - Why: a nested skill's engine id is `<name>`, not `mittr/<name>`, and a developer's own skill of the same name hid the catalog skill, as the clash case showed.
   - The frontmatter `name:` does not have to equal the folder name.
 - **P9 passed.** Task 8 does not call `context.opencode.refresh('mittr catalog skills changed')` after a change.
-- **P10 passed, but P10b failed.** The plan's rule for "P10 or P10b fails" applies, and so does preflight finding 14's ruling. **Task 9 takes the user-config path as its main path:**
-  - org entries are written through `context.opencode.userConfig` and reconciled per account before each restart;
-  - owned names are recorded in `<dataDir>/mittr-mcp-owned.json` (finding 15);
-  - Task 17 checks a catalog connector as a user entry in Settings → MCP.
-  - A connector the person deletes in Settings → MCP comes back at the next reconcile. The supported off switch is the catalog toggle (ruling R120).
-  - The managed-file path works for the engine. It is not enough, because Settings → MCP would not list the connector.
+- **P10 passed, but P10b failed.** Ruling R127 first moved Task 9 to user-config entries. Ruling R128 reversed that, because writing org secrets into the person's user config was a security downgrade. **Task 9 takes the managed-only path:**
+  - catalog connectors go only in the managed config file (mode 0600, written through a temp file and a rename, handed to the engine child alone), for the active account only, and are rewritten before each account-switch restart;
+  - nothing is written to the person's user config, and no owned-names record is kept. The only user-config write is the sweep of 1.22's legacy `mcp["mittr/…"]` keys;
+  - catalog connectors are not listed in Settings → MCP, so they cannot be edited or deleted there. The supported off switch is the catalog toggle;
+  - they render only in the desktop app. On any hosted runtime (no desktop host, a UI password, or company sign-in), mittr-server renders none under ruling R132.
+  - **Owner decisions at the gate:** whether to add a read-only, redacted Settings → MCP listing hook (+1 upstream touch), and how secrets are protected on hosted web (I3).
 - **P11 gave one process per project.** No owner note is due under the plan's rule.
 - **P12 passed.** Removing an entry stops its processes with no restart.
 - **Outbound.** There is no host to record for the owner.
@@ -142,7 +142,8 @@ None of the plan's Task 6 stop conditions stops the phase.
 
 - **Code Mode.** OpenCode 2.0.22 offers MCP tools only through `execute`. A model that does not use Code Mode well will not reach catalog connector tools. This was not measured with a real model.
 - **First turn after a change.** About 0.5 s after a connector was added, 4 of 11 turns did not see its tool yet. About 0.5 s after one was removed, 1 of 11 turns still saw it. A person who sends a message the instant a connector arrives or leaves may get one turn with the old tool list.
-- **Settings → MCP shows org connectors as editable.** On Task 9's user-config path, an org connector looks like the person's own: it can be edited or deleted. The next reconcile puts it back. The page has no read-only state to say otherwise.
+- **Settings → MCP does not list org connectors.** Under R128 they live only in the managed config, so the page never shows them, and the Mittr catalog list is the only place they appear. A read-only, redacted listing needs a hook (+1 touch), and the owner decides that at the gate.
+- **Desktop tunnel.** A tunnel opened on the desktop after start, without a UI password, lets remote clients with a connect link reach the same `GET /api/config`. R132 decides hosted at start and does not cover this. It is an owner note under I3.
 - **Process count.** Every project or worktree directory the person opens starts its own process for each local org connector. That is 1 per project per connector, kept while the location lives. Upstream's guide says a location lives for an hour without session events.
 - **Skill name clashes.** A nested catalog skill shares one id space with the developer's own skills. This is why Task 8 uses the flat `mittr-<name>/` layout.
 - **Built-in skills.** The engine ships built-in `opencode` ("OpenCode") and `report` skills, and the model sees both. `report` says it publishes the issue with the GitHub CLI.
