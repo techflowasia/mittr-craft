@@ -78,9 +78,7 @@ const NO_ACCOUNT_CATALOG = {
  * account change applies that account's cache, then syncs.
  *
  * The same config loads the identity plugin, so the model calls itself
- * MittrCraft, never the engine's own name, and the MittrCraft tools plugin,
- * whose calls come back to a loopback callback outside `/api`
- * (`tools/index.js`).
+ * MittrCraft, never the engine's own name.
  *
  * The engine's default model follows the same lists, in the user's OpenCode
  * config, once the models are in the engine config: a fresh install starts on

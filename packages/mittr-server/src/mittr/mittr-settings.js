@@ -81,19 +81,13 @@ const storedFieldsOf = (stored) => {
  *
  * Reading fails closed: a missing file, one that cannot be read or parsed, or
  * a value that is not exactly `true` all read as the defaults, which keep the
- * engine locked to Mittr. A damaged file is reported once. The agent tool
- * settings read as 1.22's defaults, field by field.
+ * engine locked to Mittr. A damaged file is reported once.
  *
  * `update(patch)` takes an explicit true or false, a tools patch, or both,
  * and returns what it stored. Updates run one at a time, each on what the one
  * before it stored, and each writes a private (0600) temp file and renames it
  * over the old one, so a reader never sees half a file. A damaged file is
- * replaced. Only the keys the file holds are written back, so a provider
- * switch stored before the 1.22 carry leaves no tools key that would stop it.
- *
- * `carryParkedToolSettings()` runs in the same queue. Once, while the file has
- * no tools, it copies the 1.22 tool settings that the first 2.x start parked
- * under `mittr` in settings.json, and returns them; settings.json is only read.
+ * replaced.
  */
 export function createMittrSettings({ dataDir, logger = console }) {
   const filePath = path.join(dataDir, SETTINGS_FILE);
