@@ -281,6 +281,14 @@ export const UPSTREAM_CONTRACT = [
     why: "the providers page opens on the provider grid, which renders the providers-page slot once, inside its page layout above the provider cards; the provider switch lives there",
   },
   {
+    id: 'integrations-page-slot',
+    files: [
+      'packages/ui/src/components/sections/integrations/IntegrationsPage.tsx',
+      'packages/ui/src/lib/product-plugins.ts',
+    ],
+    why: 'the Integrations settings page renders the integrations-page slot once, inside its page layout right after the built-in integrations section and before the third-party integrations; Jira and Plane settings live there',
+  },
+  {
     id: 'provider-switch-ui',
     files: ['packages/ui/src/components/ui/switch.tsx', 'packages/ui/src/components/sections/shared/SettingsSection.tsx'],
     why: 'the provider switch is drawn with Switch (checked, onCheckedChange, disabled, loading) in a SettingsFieldRow with a visible description',

@@ -213,6 +213,15 @@ describe('product UI plugin root and slots', () => {
     expect(renderToStaticMarkup(tree())).toBe('<p>late</p>');
   });
 
+  test('the integrations page slot renders its components', () => {
+    expect(renderToStaticMarkup(createElement(ProductSlot, { name: 'integrations-page' }))).toBe('');
+
+    const settings: ProductSlotComponent<'integrations-page'> = () => createElement('section', null, 'acme tracker');
+    registerProductUiPlugin({ id: 'acme', slots: { 'integrations-page': settings } });
+
+    expect(renderToStaticMarkup(createElement(ProductSlot, { name: 'integrations-page' }))).toBe('<section>acme tracker</section>');
+  });
+
   test('model picker decorations default to pass-through', () => {
     const decorations = readModelPicker(true);
 

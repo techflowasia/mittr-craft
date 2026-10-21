@@ -28,6 +28,7 @@ export type ProductSlotProps = {
   'about-dialog': Record<never, never>;
   'about-settings': Record<never, never>;
   'providers-page': Record<never, never>;
+  'integrations-page': Record<never, never>;
   'session-auth-methods': SessionAuthMethodsProps;
   'assistant-message-footer': { message: { info: Message; parts: Part[] }; isLatestTurn: boolean };
 };

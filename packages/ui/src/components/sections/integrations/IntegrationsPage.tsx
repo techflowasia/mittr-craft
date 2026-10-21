@@ -2,6 +2,7 @@ import React from 'react';
 import { SettingsPageLayout } from '@/components/sections/shared/SettingsPageLayout';
 import { SettingsSection } from '@/components/sections/shared/SettingsSection';
 import { useI18n } from '@/lib/i18n';
+import { ProductSlot } from '@/lib/product-plugins';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import { GuestIntegrationCard, GuestIntegrationsSection } from './GuestIntegrationsSection';
@@ -49,6 +50,7 @@ export const IntegrationsPage: React.FC = () => {
           {builtInGuests.map((guest) => <GuestIntegrationCard key={`${runtimeKey}:${guest.id}`} guest={guest} />)}
         </SettingsSection>
       ) : null}
+      <ProductSlot name="integrations-page" />
       <ThirdPartyIntegrationsSection divider={hasBuiltIn} />
       <CatalogExtensionsSection />
       <GuestIntegrationsSection />

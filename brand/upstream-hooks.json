@@ -209,6 +209,12 @@
       "why": "A product plugin could mark a model entry as unavailable, but the picker still let it be chosen, so a build that knows an entry cannot answer (its quota is used up) could draw a mark on the row yet not stop a click, Enter or Space from choosing it; the list now takes isEntryBlocked, and without it every row behaves as before."
     }
   ],
+  "packages/ui/src/components/sections/integrations/IntegrationsPage.tsx": [
+    {
+      "hook": "integrations-page",
+      "why": "A downstream build had no place for its own integration settings on the Integrations page, so adding them (a work tracker's connection) would have meant editing the page's sections; a slot right after the built-in integrations section renders nothing when no plugin fills it, and the page is unchanged."
+    }
+  ],
   "packages/ui/src/components/sections/openchamber/AboutSettings.tsx": [
     {
       "hook": "updater-ui",
@@ -295,6 +301,10 @@
     {
       "hook": "session-auth-description-runtime",
       "why": "The context sessionAuthDescription is given now carries the runtime the sign-in gate is in as well as passwordEnabled."
+    },
+    {
+      "hook": "integrations-page",
+      "why": "The integrations-page slot is a named slot like the others: a downstream build adds its own integration settings to the Integrations page without editing the page's sections, and with no plugin it renders nothing."
     }
   ],
   "packages/ui/src/lib/quota/providers/index.ts": [

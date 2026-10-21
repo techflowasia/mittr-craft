@@ -872,6 +872,20 @@ const checks = {
     has(source('packages/ui/src/lib/product-plugins.ts'), /'providers-page': Record<never, never>;/);
   },
 
+  'integrations-page-slot': () => {
+    const page = source('packages/ui/src/components/sections/integrations/IntegrationsPage.tsx');
+    has(page, /^import \{ ProductSlot \} from '@\/lib\/product-plugins';$/m, 'IntegrationsPage no longer imports ProductSlot');
+    assert.equal(lineCount(page, '<ProductSlot '), 1, 'IntegrationsPage renders ProductSlot more than once, or not at all');
+    const layout = page.indexOf('<SettingsPageLayout');
+    const builtIn = page.indexOf("title={t('settings.integrations.firstParty.title')}");
+    const builtInEnd = page.indexOf('</SettingsSection>', builtIn);
+    const slot = page.indexOf('<ProductSlot name="integrations-page" />');
+    const thirdParty = page.indexOf('<ThirdPartyIntegrationsSection');
+    assert.ok(layout >= 0 && builtIn > layout && builtInEnd > builtIn && slot > builtInEnd && thirdParty > slot, 'the integrations-page slot is no longer inside the page layout, right after the built-in integrations section and before the third-party integrations');
+    has(page.slice(builtInEnd, slot), /^<\/SettingsSection>\s*\) : null\}\s*$/, 'something now sits between the built-in integrations section and the integrations-page slot');
+    has(source('packages/ui/src/lib/product-plugins.ts'), /'integrations-page': Record<never, never>;/);
+  },
+
   'provider-switch-ui': () => {
     const control = source('packages/ui/src/components/ui/switch.tsx');
     has(control, /^export \{ Switch \};$/m);
