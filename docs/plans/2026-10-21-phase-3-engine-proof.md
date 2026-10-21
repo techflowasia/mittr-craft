@@ -103,6 +103,27 @@ Measured in fix round 3 of Task 9 (`probe-engine-v2.mjs --only config-exposure`)
 - **Hosted web is off under ruling R132.** On any hosted runtime (no desktop host, a UI password, or company sign-in), mittr-server renders no catalog connector into the managed config and logs one line at start. The catalog list and its toggles still work.
 - **Owner decision (I3).** Either add a generic proxy response-redaction hook for `mcp.servers.*.headers`, `environment` and `oauth.client_secret` (+1 upstream touch), or keep catalog connectors off hosted web. The same read also returns everything else in the managed config to hosted UI sessions.
 
+## Project layer
+
+Measured in the final review's fix round (`probe-engine-v2.mjs --only project-layer`). The question was whether a repository's own config can take an org connector's secret header to a host of its choosing.
+
+- **The managed config** held `mittr-probe`, a remote connector to a closed loopback port A, with header `x-probe-secret: <marker>`. A control entry, `mittr-probe-control`, pointed at the recording listener with the same header.
+- **Three project dirs**, each a fresh git repo, named `mittr-probe` in their own config, with the url of a loopback listener (port B) that records request headers. A session was started and one turn was run in each.
+
+| Project config | Entry | Engine used | Port B got the marker |
+|---|---|---|---|
+| `opencode.json` at the root | `{ type: 'remote', url: <port B> }` | the project's url, connected | no |
+| `.opencode/opencode.json` | `{ type: 'remote', url: <port B> }` | the project's url, connected | no |
+| `opencode.json` at the root | `{ url: <port B> }` (no `type`) | the managed url, refused | no request at all |
+
+- **The engine does send a managed connector's headers.** The control received `x-probe-secret` with the marker, so the "no" above is a real no.
+- **A project entry of the same name replaces the org entry for that project.** It does not merge into it. The project's url is used and the managed `headers` are dropped with the rest of the org entry.
+- **An entry with only a `url` is not taken.** That project's document is not listed in `GET /api/config`, and the engine kept the managed entry.
+- `GET /api/config` for a project lists the managed document, which still carries the header (see Config reads), beside the project's own.
+- Nothing tried to leave the machine. The evidence JSON is kept outside the repository and holds no marker.
+
+**What it means.** No org secret reaches a host named by a project config, so ruling R139's header and environment rule does not apply, and nothing in the product changes.
+
 ## Outbound connections
 
 There were none.
@@ -145,5 +166,6 @@ None of the plan's Task 6 stop conditions stops the phase.
 - **Settings → MCP does not list org connectors.** Under R128 they live only in the managed config, so the page never shows them, and the Mittr catalog list is the only place they appear. A read-only, redacted listing needs a hook (+1 touch), and the owner decides that at the gate.
 - **Desktop tunnel.** A tunnel opened on the desktop after start, without a UI password, lets remote clients with a connect link reach the same `GET /api/config`. R132 decides hosted at start and does not cover this. It is an owner note under I3.
 - **Process count.** Every project or worktree directory the person opens starts its own process for each local org connector. That is 1 per project per connector, kept while the location lives. Upstream's guide says a location lives for an hour without session events.
+- **A repository can replace an org connector.** A project config that names the same `mittr-…` connector with its own `type` and `url` takes its place in that project. The person then reaches the repository's server under the org connector's name, without the org's headers. R130's held-name check cannot see project layers, and org connector names are predictable.
 - **Skill name clashes.** A nested catalog skill shares one id space with the developer's own skills. This is why Task 8 uses the flat `mittr-<name>/` layout.
 - **Built-in skills.** The engine ships built-in `opencode` ("OpenCode") and `report` skills, and the model sees both. `report` says it publishes the issue with the GitHub CLI.

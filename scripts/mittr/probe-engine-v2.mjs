@@ -44,6 +44,8 @@ import { catalogMcpEntity } from '../../packages/mittr-server/src/mittr/mcp-frag
 import { policiesFor } from '../../packages/mittr-server/src/mittr/policies.js';
 import { toMcpEntity } from '../../packages/web/server/lib/opencode/config-v2.js';
 
+import { handleMessage as stubMcpReply } from './stub-mcp-server.mjs';
+
 export const mcpEntityFromCatalog = (raw) => catalogMcpEntity(raw, toMcpEntity);
 
 // What a user who owns OPENCODE_CONFIG might allow on their own (R45 probe):
@@ -1762,6 +1764,153 @@ const probeConfigExposure = async ({ home, configFile, baseConfig, connect, curr
   };
 };
 
+export const headerReport = (requests, marker) => ({
+  requests: requests.length,
+  paths: [...new Set(requests.map((request) => `${request.method} ${request.path}`))].sort(),
+  headerNames: [...new Set(requests.flatMap((request) => Object.keys(request.headers)))].sort(),
+  markerHeaderReceived: requests.some((request) => request.headers['x-probe-secret'] === marker),
+  markerAnywhere: requests.some((request) => JSON.stringify(request.headers).includes(marker)),
+});
+
+const startRecordingMcp = async () => {
+  const port = await unusedPort();
+  const recorder = { port, requests: [] };
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', (part) => { raw += part; });
+    req.on('end', () => {
+      recorder.requests.push({ at: Date.now(), method: req.method, path: req.url, headers: { ...req.headers } });
+      if (req.method !== 'POST') {
+        res.writeHead(405, { allow: 'POST' });
+        res.end();
+        return;
+      }
+      let message = null;
+      try { message = JSON.parse(raw); } catch { message = null; }
+      const reply = Array.isArray(message) ? message.map((m) => stubMcpReply(m)).filter(Boolean) : stubMcpReply(message);
+      if (reply === null || (Array.isArray(reply) && reply.length === 0)) {
+        res.writeHead(202);
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(reply));
+    });
+  });
+  const sockets = new Set();
+  server.on('connection', (socket) => { sockets.add(socket); socket.on('close', () => sockets.delete(socket)); });
+  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+  recorder.close = () => new Promise((resolve) => {
+    for (const socket of sockets) socket.destroy();
+    server.closeAllConnections?.();
+    server.close(resolve);
+  });
+  return recorder;
+};
+
+const PROJECT_LAYOUTS = [
+  { name: 'root-file', file: 'opencode.json', path: '/mcp', entry: (url) => ({ type: 'remote', url }) },
+  { name: 'dot-dir', file: '.opencode/opencode.json', path: '/mcp-dot', entry: (url) => ({ type: 'remote', url }) },
+  { name: 'url-only', file: 'opencode.json', path: '/mcp-url-only', entry: (url) => ({ url }) },
+];
+const CONTROL_NAME = 'mittr-probe-control';
+const CONTROL_PATH = '/control';
+
+const probeProjectLayer = async ({ home, configFile, baseConfig, connect, current, recorder }) => {
+  const closedPort = await unusedPort();
+  const markers = { header: `p3-project-${randomBytes(8).toString('hex')}` };
+  const managedUrl = `http://127.0.0.1:${closedPort}/mcp`;
+  const configDir = path.join(home, '.config', 'opencode');
+  fs.mkdirSync(configDir, { recursive: true });
+  writeJsonAtomic(configFile, {
+    ...baseConfig(),
+    mcp: {
+      servers: {
+        [MCP_NAME]: mcpEntityFromCatalog({ type: 'remote', url: managedUrl, headers: { 'x-probe-secret': markers.header } }),
+        [CONTROL_NAME]: mcpEntityFromCatalog({ type: 'remote', url: `http://127.0.0.1:${recorder.port}${CONTROL_PATH}`, headers: { 'x-probe-secret': markers.header } }),
+      },
+    },
+  });
+  const projects = PROJECT_LAYOUTS.map((layout) => {
+    const dir = path.join(home, 'projects', layout.name);
+    fs.mkdirSync(path.dirname(path.join(dir, layout.file)), { recursive: true });
+    spawnSync('git', ['init', '-q'], { cwd: dir, env: { PATH: '/usr/bin:/bin', HOME: home }, encoding: 'utf8' });
+    const url = `http://127.0.0.1:${recorder.port}${layout.path}`;
+    fs.writeFileSync(path.join(dir, layout.file), `${JSON.stringify({ mcp: { servers: { [MCP_NAME]: layout.entry(url) } } }, null, 2)}\n`, { mode: 0o600 });
+    return { ...layout, dir, url };
+  });
+  const client = await connect({ OPENCODE_CONFIG_DIR: configDir });
+  const { engine, collector } = current();
+  const rel = underHome(home);
+  const settled = async (directory) => {
+    let servers = [];
+    await waitFor(async () => {
+      servers = await listMcp(client, directory).catch(() => []);
+      return servers.some((server) => server.name === MCP_NAME && server.status && server.status !== 'pending');
+    }, HOT_WINDOW_MS, 250);
+    return servers;
+  };
+  const documentsFor = async (directory) => {
+    try {
+      const entries = await client.config.get({ location: { directory } });
+      return (entries.data ?? entries).map((entry) => ({
+        type: entry.type ?? null,
+        source: rel(entry.source?.path ?? entry.path ?? entry.source ?? null),
+        url: entry.info?.mcp?.servers?.[MCP_NAME]?.url ?? null,
+        hasHeaders: Boolean(entry.info?.mcp?.servers?.[MCP_NAME]?.headers),
+      })).filter((entry) => entry.url !== null || entry.hasHeaders);
+    } catch (error) {
+      return `error: ${errorText(error)}`;
+    }
+  };
+  const controlStatus = await settled(engine.work);
+  await waitFor(() => recorder.requests.some((request) => request.path.split('?')[0] === CONTROL_PATH), HOT_WINDOW_MS, 250);
+  const control = {
+    directory: rel(engine.work),
+    mcpStatus: controlStatus,
+    managedHeaderSent: headerReport(recorder.requests.filter((request) => request.path.split('?')[0] === CONTROL_PATH), markers.header),
+    probeUrlRequests: recorder.requests.filter((request) => request.path.split('?')[0] !== CONTROL_PATH).length,
+  };
+  const results = [];
+  for (const project of projects) {
+    const before = recorder.requests.length;
+    const { sessionID, createError } = await newSession(client, project.dir, 'stub', 'm1');
+    const turn = sessionID ? await promptAndSettle({ client, collector, sessionID, text: `Say hello (${project.name}).`, timeoutMs: 20_000 }) : null;
+    const mcpStatus = await settled(project.dir);
+    await sleep(1000);
+    const requests = recorder.requests.slice(before).filter((request) => request.path.split('?')[0] === project.path);
+    const report = headerReport(requests, markers.header);
+    const status = mcpStatus.find((server) => server.name === MCP_NAME) ?? null;
+    const { entry: layoutEntry } = project;
+    results.push({
+      layout: project.name,
+      projectFile: rel(path.join(project.dir, project.file)),
+      sessionStarted: Boolean(sessionID),
+      createError,
+      turnIdle: Boolean(turn?.idleAt),
+      promptError: turn?.promptError ?? null,
+      mcpStatus,
+      projectEntry: layoutEntry('<port B url>'),
+      urlUsed: report.requests > 0 ? 'project' : (status?.status === 'connected' ? 'unknown' : 'managed'),
+      documents: await documentsFor(project.dir),
+      recorder: report,
+    });
+  }
+  const markerReachedRecorder = results.some((result) => result.recorder.markerAnywhere);
+  return {
+    markers,
+    managedUrl: managedUrl.replace(String(closedPort), '<closed port A>'),
+    closedPort,
+    closedPortListening: Boolean(listenerOn(closedPort)),
+    recorderPort: recorder.port,
+    control,
+    projects: results,
+    markerReachedRecorder,
+    pass: control.managedHeaderSent.markerHeaderReceived && results.every((result) => result.sessionStarted && result.mcpStatus.some((server) => server.name === MCP_NAME)),
+  };
+};
+
 const main = async () => {
   const args = process.argv.slice(2);
   const jsonIndex = args.indexOf('--json');
@@ -1773,8 +1922,8 @@ const main = async () => {
   const keep = args.includes('--keep');
   const onlyIndex = args.indexOf('--only');
   const only = onlyIndex === -1 ? null : args[onlyIndex + 1];
-  if (only !== null && !['P7', 'outbound', 'shim', 'skills-mcp', 'config-exposure'].includes(only)) {
-    console.error('--only takes P7, outbound, shim, skills-mcp or config-exposure');
+  if (only !== null && !['P7', 'outbound', 'shim', 'skills-mcp', 'config-exposure', 'project-layer'].includes(only)) {
+    console.error('--only takes P7, outbound, shim, skills-mcp, config-exposure or project-layer');
     return 2;
   }
   const scenarios = only === 'skills-mcp' ? SKILLS_MCP_SCENARIOS : (only ? [only] : SCENARIOS);
@@ -1796,6 +1945,7 @@ const main = async () => {
   let stopSampler = null;
   let platform = null;
   let shim = null;
+  let recorder = null;
   const shimLog = [];
   const stubs = {};
   const marker = `mittr-probe-${randomBytes(6).toString('hex')}`;
@@ -1820,6 +1970,7 @@ const main = async () => {
     await stopSampler?.().catch(() => {});
     for (const s of Object.values(stubs)) await s.close?.();
     await shim?.close();
+    await recorder?.close();
     await platform?.close();
     await proxy?.close();
     if (!keep) fs.rmSync(home, { recursive: true, force: true });
@@ -1880,7 +2031,23 @@ const main = async () => {
       startWith: async (extraEnv) => ({ client: await connect(extraEnv), collector, engine }),
     });
 
-    if (only === 'config-exposure') {
+    if (only === 'project-layer') {
+      result.reserved57133Listening = Boolean(listenerOn(57133));
+      recorder = await startRecordingMcp();
+      const found = await probeProjectLayer({
+        home, configFile, recorder,
+        baseConfig: () => ({
+          providers: { stub: providerEntry('Stub', `http://127.0.0.1:${stubs.stub.port}/v1`, ['m1']) },
+          ...ENGINE_SHARE_OFF,
+          experimental: { policies: policiesFor({ showOtherProviders: false, providerId: 'stub' }) },
+        }),
+        connect, current: () => ({ engine, collector }),
+      });
+      result.enginePort = engine.port;
+      exposureMarkers = found.markers;
+      const { markers: _markers, ...scenario } = found;
+      result.scenarios['project-layer'] = scenario;
+    } else if (only === 'config-exposure') {
       result.reserved57133Listening = Boolean(listenerOn(57133));
       const found = await probeConfigExposure({
         home, configFile,
@@ -2049,7 +2216,7 @@ const main = async () => {
     const logText = readLogs(home, logFile);
     const peers = [...outbound.loopbackPeers]
       .map(([pair, firstSeen]) => ({ ports: pair.split('->').map(Number), firstSeen }))
-      .filter(({ ports: [local, remote] }) => engines.every((e) => e.port !== local && e.port !== remote) && remote !== stubs.stub.port && remote !== stubs.other.port && remote !== proxy.port && remote !== shim?.port);
+      .filter(({ ports: [local, remote] }) => engines.every((e) => e.port !== local && e.port !== remote) && remote !== stubs.stub.port && remote !== stubs.other.port && remote !== proxy.port && remote !== shim?.port && remote !== recorder?.port);
     result.outbound = {
       lsofSamples: outbound.samples,
       lsofIntervalMs: 250,
@@ -2074,7 +2241,7 @@ const main = async () => {
     await cleanup();
   }
 
-  if (only === 'config-exposure' && result.enginePort) result.engineProcessesAfterCleanup = engineProcesses(result.enginePort).length;
+  if ((only === 'config-exposure' || only === 'project-layer') && result.enginePort) result.engineProcessesAfterCleanup = engineProcesses(result.enginePort).length;
   if (only === 'skills-mcp') {
     result.leftoverStubProcesses = leftovers;
     if (SKILLS_MCP_SCENARIOS.every((name) => result.scenarios[name])) result.stopConditions = skillsMcpStopConditions(result.scenarios);

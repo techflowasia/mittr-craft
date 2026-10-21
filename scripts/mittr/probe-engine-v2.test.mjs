@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import {
   codeModeCall,
   failuresOf,
+  headerReport,
   loopbackPeersFromLsof,
   mcpEntityFromCatalog,
   offeredTools,
@@ -178,4 +179,22 @@ test('markerHits says which marker a body holds, and withoutMarkers replaces eve
   assert.deepEqual(markerHits('{"headers":{"x":"p3-secret-aa"}}', markers), { header: true, environment: false });
   assert.deepEqual(markerHits('', markers), { header: false, environment: false });
   assert.deepEqual(withoutMarkers({ a: 'p3-secret-aa', b: ['x p3-env-bb y', { c: 'p3-secret-aa' }], markers }, markers), { a: '<marker>', b: ['x <marker> y', { c: '<marker>' }], markers: { header: '<marker>', environment: '<marker>' } });
+});
+
+test('headerReport says whether a recorded request carried the marker header, without keeping its value', () => {
+  const requests = [
+    { method: 'POST', path: '/mcp?codemode=false', headers: { 'content-type': 'application/json', 'x-probe-secret': 'm-1' } },
+    { method: 'GET', path: '/mcp?codemode=false', headers: { accept: 'text/event-stream' } },
+  ];
+  const report = headerReport(requests, 'm-1');
+  assert.deepEqual(report, {
+    requests: 2,
+    paths: ['GET /mcp?codemode=false', 'POST /mcp?codemode=false'],
+    headerNames: ['accept', 'content-type', 'x-probe-secret'],
+    markerHeaderReceived: true,
+    markerAnywhere: true,
+  });
+  assert.equal(JSON.stringify(report).includes('m-1'), false);
+  assert.equal(headerReport([requests[1]], 'm-1').markerAnywhere, false);
+  assert.equal(headerReport([{ method: 'POST', path: '/mcp', headers: { 'x-other': 'm-1' } }], 'm-1').markerHeaderReceived, false);
 });
