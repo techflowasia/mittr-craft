@@ -5,7 +5,7 @@ import { MITTR_TOOLS, MittrToolError } from './registry.js';
 
 export const WORK_TOOL_DESCRIPTION = 'jira.get_issue reads one Jira card by key (e.g. MRKB-2122) and plane.get_issue reads one Plane work item by its link or key (e.g. MITRAI-12), both through whatever this account already connected on the Integrations settings page — nothing else to set up. A Plane link is a sign-in page to a plain fetch; read it with plane.get_issue.';
 
-export const WORK_TOOL_PARAMETERS = Object.freeze({
+const WORK_TOOL_PARAMETERS = Object.freeze({
   key: { type: 'string', description: 'Jira issue key (e.g. MRKB-2122), for jira.get_issue' },
   ref: { type: 'string', description: 'Plane work item link or key (e.g. MITRAI-12), for plane.get_issue' },
 });

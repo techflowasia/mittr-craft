@@ -4,9 +4,9 @@ import { isRecord } from '../values.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
 
 export const CHROME_PERMISSION = MITTR_TOOLS.chrome;
-export const DECISION_WAIT_MS = 10_000;
-export const PENDING_POLL_MS = 5_000;
-export const DENY_RETRY_MS = 500;
+const DECISION_WAIT_MS = 10_000;
+const PENDING_POLL_MS = 5_000;
+const DENY_RETRY_MS = 500;
 const EARLY_LIMIT = 64;
 const ENGINE_TIMEOUT_MS = 5_000;
 

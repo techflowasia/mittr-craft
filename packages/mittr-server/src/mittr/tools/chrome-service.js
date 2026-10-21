@@ -148,7 +148,7 @@ const ipv4OfMapped = (host) => {
   return [high >> 8, high & 255, low >> 8, low & 255].join('.');
 };
 
-export const normalizedHost = (hostname) => ipv4OfMapped(String(hostname).toLowerCase().replace(/^\[(.*)\]$/, '$1').replace(/\.+$/, ''));
+const normalizedHost = (hostname) => ipv4OfMapped(String(hostname).toLowerCase().replace(/^\[(.*)\]$/, '$1').replace(/\.+$/, ''));
 
 const isLoopbackOrUnspecified = (address) => {
   const host = normalizedHost(address);
