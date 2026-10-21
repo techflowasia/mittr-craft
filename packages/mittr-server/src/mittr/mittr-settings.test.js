@@ -111,8 +111,10 @@ test('tools read as 1.22 defaults, and each invalid field reads as its default',
   const settings = createMittrSettings({ dataDir, logger: recordingLogger() });
   fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ tools: { computer: false, chrome: 'no', chromeProfile: 'Profile 1', chromeHeaded: 1, chromeApprovedHosts: 'a.test' } }));
   assert.deepEqual((await settings.read()).tools, { ...DEFAULT_TOOLS, computer: false, chromeProfile: 'Profile 1' });
-  fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ tools: { chromeProfile: '  ', chromeHeaded: true } }));
-  assert.deepEqual((await settings.read()).tools, { ...DEFAULT_TOOLS, chromeHeaded: true });
+  for (const chromeProfile of ['  ', '--headed', '/Users/person/Library/Application Support/Google/Chrome', 'Profile 1/../..']) {
+    fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ tools: { chromeProfile, chromeHeaded: true } }));
+    assert.deepEqual((await settings.read()).tools, { ...DEFAULT_TOOLS, chromeHeaded: true }, chromeProfile);
+  }
   for (const tools of [null, [], 'x', 3]) {
     fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ tools }));
     assert.deepEqual((await settings.read()).tools, DEFAULT_TOOLS, JSON.stringify(tools));
@@ -157,6 +159,8 @@ test('an invalid tools patch is refused and writes nothing', async (t) => {
     [{ chrome: 'off' }, 'chrome'],
     [{ computer: null }, 'computer'],
     [{ chromeProfile: '' }, 'chromeProfile'],
+    [{ chromeProfile: '--headed' }, 'chromeProfile'],
+    [{ chromeProfile: '~/Library/Application Support/Google/Chrome' }, 'chromeProfile'],
     [{ chromeHeaded: 1 }, 'chromeHeaded'],
     [{ chromeApprovedHosts: ['a b'] }, 'chromeApprovedHosts'],
     [{ chromeApprovedHosts: 'a.test' }, 'chromeApprovedHosts'],

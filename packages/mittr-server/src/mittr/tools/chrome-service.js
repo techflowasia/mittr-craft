@@ -1,4 +1,6 @@
+import dns from 'node:dns';
 import fsPromises from 'node:fs/promises';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -6,7 +8,20 @@ import { MITTR_TOOLS, MittrToolError } from './registry.js';
 import { chromeSessionName } from './chrome-control.js';
 import { NO_SCREENSHOT_DIRECTORY, fitsAttachment, imageOf, saveScreenshot } from './screenshots.js';
 
-export const CHROME_TOOL_DESCRIPTION = "Use a Chrome session that starts from the user's own Chrome profile, for sites the user is already signed in to in Chrome (Plane, Jira, internal tools) and for web work that should not take over MittrCraft's browser panel. To look at the app being built, use openchamber_web instead. Use one action per call: chrome.open a page, then either chrome.do with the goal to let MittrCraft work through the page step by step on its own (fastest for filling forms and clicking through flows), or chrome.snapshot to get refs and act on them yourself. If chrome.do stops to ask, ask the user; do not guess. The first time you open a site the user is asked whether you may use their sign-in there. If a page asks you to sign in, stop and tell the user which site — never type a password or fill a sign-in form.";
+const DESCRIPTION_SENTENCES = Object.freeze([
+  [() => true, "Use a Chrome session that starts from the user's own Chrome profile, for sites the user is already signed in to in Chrome (Plane, Jira, internal tools) and for web work that should not take over MittrCraft's browser panel."],
+  [({ webTool }) => webTool, 'To look at the app being built, use openchamber_web instead.'],
+  [({ doTask }) => doTask, 'Use one action per call: chrome.open a page, then either chrome.do with the goal to let MittrCraft work through the page step by step on its own (fastest for filling forms and clicking through flows), or chrome.snapshot to get refs and act on them yourself.'],
+  [({ doTask }) => !doTask, 'Use one action per call: chrome.open a page, then chrome.snapshot to get refs and act on them yourself.'],
+  [({ doTask }) => doTask, 'If chrome.do stops to ask, ask the user; do not guess.'],
+  [() => true, 'The first time you open a site the user is asked whether you may use their sign-in there.'],
+  [() => true, 'If a page asks you to sign in, stop and tell the user which site — never type a password or fill a sign-in form.'],
+]);
+
+export const chromeToolDescription = ({ webTool = false, doTask = false } = {}) => DESCRIPTION_SENTENCES
+  .filter(([applies]) => applies({ webTool, doTask }))
+  .map(([, sentence]) => sentence)
+  .join(' ');
 
 const CHROME_PARAMETERS = Object.freeze({
   url: { type: 'string', description: 'http(s) URL for chrome.open' },
@@ -44,6 +59,9 @@ const NO_PAGE = 'about:blank';
 const DEFAULT_PROFILE = 'Default';
 const OWN_ADDRESS = 'That address is MittrCraft itself';
 const PROFILE_REQUIRED = 'No Chrome profile is chosen yet; ask the user to choose one in Settings → Integrations → MittrCraft tools → Chrome profile';
+const NOT_A_PROFILE = 'The chosen Chrome profile is not one of this Mac\'s Chrome profiles; ask the user to choose one in Settings → Integrations → MittrCraft tools → Chrome profile';
+const NO_PAGE_OPEN = 'No page is open in this session; call chrome.open first';
+const OWN_LOOKUP_TIMEOUT_MS = 1_500;
 
 const textOf = (value) => (value === String(value) && value.trim() ? value.trim() : null);
 
@@ -98,28 +116,86 @@ const CHROME_COMMANDS = {
   'chrome.wait': (input) => (textOf(input.text) ? ['wait', '--text', plainArg(input.text, 'text')] : ['wait', refOf(input.ref)]),
 };
 
-const LOOPBACK_NAMES = new Set(['localhost', '[::1]', '0.0.0.0', '[::]', '[::ffff:7f00:1]']);
+const ipv4OfMapped = (host) => {
+  const dotted = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(host);
+  if (dotted) return dotted[1];
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+  if (!hex) return host;
+  const high = Number.parseInt(hex[1], 16);
+  const low = Number.parseInt(hex[2], 16);
+  return [high >> 8, high & 255, low >> 8, low & 255].join('.');
+};
 
-const isLoopbackName = (hostname) => LOOPBACK_NAMES.has(hostname) || hostname.endsWith('.localhost') || /^127\.\d+\.\d+\.\d+$/.test(hostname);
+export const normalizedHost = (hostname) => ipv4OfMapped(String(hostname).toLowerCase().replace(/^\[(.*)\]$/, '$1').replace(/\.+$/, ''));
+
+const isLoopbackOrUnspecified = (address) => {
+  const host = normalizedHost(address);
+  return host === 'localhost' || host.endsWith('.localhost') || /^127\.\d+\.\d+\.\d+$/.test(host) || host === '0.0.0.0' || host === '::1' || host === '::';
+};
 
 const portOf = (page) => Number(page.port) || (page.protocol === 'https:' ? 443 : 80);
 
-const siteMoved = (host) => new MittrToolError(
-  `The page moved to ${host}, which the user has not allowed; nothing from it is returned. Call chrome.open with that page's URL to ask the user`,
-  409,
-  { code: 'site_moved', host },
-);
+const validProfile = (value) => {
+  const name = textOf(value);
+  return name && !name.startsWith('-') && !name.includes('/') ? name : null;
+};
 
-export function createChromeService({ control, settings, approvals = NO_APPROVALS, writeScreenshot, ownPorts = () => [], scratchRoot = os.tmpdir() }) {
+const siteMoved = (label, host = null) => {
+  const extra = { code: 'site_moved' };
+  if (host) extra.host = host;
+  return new MittrToolError(
+    `The page moved to ${label}, which the user has not allowed; nothing from it is returned. Call chrome.open with that page's URL to ask the user`,
+    409,
+    extra,
+  );
+};
+
+const lookupAll = (host) => dns.promises.lookup(host, { all: true });
+
+const withinTimeout = (work, ms) => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => reject(new Error('timed out')), ms);
+  work.then(
+    (value) => {
+      clearTimeout(timer);
+      resolve(value);
+    },
+    (error) => {
+      clearTimeout(timer);
+      reject(error);
+    },
+  );
+});
+
+export function createChromeService({
+  control,
+  settings,
+  approvals = NO_APPROVALS,
+  writeScreenshot,
+  ownPorts = () => [],
+  lookup = lookupAll,
+  ready = Promise.resolve(),
+  scratchRoot = os.tmpdir(),
+}) {
   const conversationGrants = new Set();
   const modes = new Map();
 
   const isHostAllowed = async (sessionId, host) => conversationGrants.has(sessionId) || Boolean(await approvals.isApproved(sessionId, host));
 
-  const isOwnAddress = (page) => isLoopbackName(page.hostname.toLowerCase()) && ownPorts().includes(portOf(page));
+  const isOwnAddress = async (page) => {
+    if (!ownPorts().includes(portOf(page))) return false;
+    const host = normalizedHost(page.hostname);
+    if (isLoopbackOrUnspecified(host)) return true;
+    if (net.isIP(host)) return false;
+    try {
+      const addresses = await withinTimeout(Promise.resolve().then(() => lookup(host)), OWN_LOOKUP_TIMEOUT_MS);
+      return !Array.isArray(addresses) || addresses.length === 0 || addresses.some((entry) => isLoopbackOrUnspecified(String(entry?.address ?? '')));
+    } catch {
+      return true;
+    }
+  };
 
-  const refuseOwnAddress = (page) => {
-    if (isOwnAddress(page)) throw new MittrToolError(OWN_ADDRESS, 400);
+  const refuseOwnAddress = async (page) => {
+    if (await isOwnAddress(page)) throw new MittrToolError(OWN_ADDRESS, 400);
   };
 
   const ensureApproved = async (sessionId, host, ctx) => {
@@ -134,24 +210,25 @@ export function createChromeService({ control, settings, approvals = NO_APPROVAL
 
   const ensureStillApproved = async (sessionId, options) => {
     const landed = textOf((await control.run(['get', 'url'], options))?.url);
-    if (!landed || landed === NO_PAGE) return;
+    if (landed === NO_PAGE) return;
+    if (!landed) throw siteMoved('an address the driver did not report');
     let page = null;
     try {
       page = new URL(landed);
     } catch {
       page = null;
     }
-    const web = page?.protocol === 'http:' || page?.protocol === 'https:';
-    if (web) refuseOwnAddress(page);
-    const host = page?.hostname.toLowerCase() || landed;
-    if (web && await isHostAllowed(sessionId, host)) return;
-    throw siteMoved(host);
+    if (!page) throw siteMoved('an address that is not a URL');
+    if (page.protocol !== 'http:' && page.protocol !== 'https:') throw siteMoved(`a ${page.protocol} page`, page.protocol);
+    await refuseOwnAddress(page);
+    const host = page.hostname.toLowerCase();
+    if (await isHostAllowed(sessionId, host)) return;
+    throw siteMoved(host, host);
   };
 
   const commandFor = (action, input, ctx) => {
     if (action === 'chrome.open') {
-      const url = required(input.url, 'url');
-      return { url, page: pageOf(url) };
+      return { page: pageOf(required(input.url, 'url')) };
     }
     if (action === 'chrome.screenshot') {
       const directory = textOf(ctx.directory);
@@ -164,11 +241,20 @@ export function createChromeService({ control, settings, approvals = NO_APPROVAL
     return { command: build(input) };
   };
 
-  const chosenProfile = async (tools) => {
+  const notAProfile = () => new MittrToolError(NOT_A_PROFILE, 409, { code: 'chrome_profile_required' });
+
+  const chosenProfile = async (tools, sessionName) => {
     const stored = textOf(tools.chromeProfile);
-    if (stored) return stored;
+    if (stored) {
+      const name = validProfile(stored);
+      if (!name) throw notAProfile();
+      if (modes.get(sessionName)?.profile === name) return name;
+      const listed = await control.profiles().catch(() => []);
+      if (!listed.some((entry) => textOf(entry?.directory) === name)) throw notAProfile();
+      return name;
+    }
     const listed = await control.profiles().catch(() => []);
-    const only = listed.length === 1 ? textOf(listed[0]?.directory) : null;
+    const only = listed.length === 1 ? validProfile(listed[0]?.directory) : null;
     if (!only) throw new MittrToolError(PROFILE_REQUIRED, 409, { code: 'chrome_profile_required' });
     await settings.update({ tools: { chromeProfile: only } }).catch(() => undefined);
     return only;
@@ -178,9 +264,12 @@ export function createChromeService({ control, settings, approvals = NO_APPROVAL
 
   const reopenIfChanged = async (options) => {
     const launched = modes.get(options.sessionName);
-    if (launched && (launched.headed !== options.headed || launched.profile !== options.profile)) await closeQuietly(launched);
-    modes.set(options.sessionName, { sessionName: options.sessionName, profile: options.profile, headed: options.headed });
+    if (!launched || (launched.headed === options.headed && launched.profile === options.profile)) return;
+    modes.delete(options.sessionName);
+    await closeQuietly(launched);
   };
+
+  const remember = (options) => modes.set(options.sessionName, { sessionName: options.sessionName, profile: options.profile, headed: options.headed });
 
   const closeRunning = async (sessionId) => {
     const sessionName = chromeSessionName(sessionId);
@@ -193,7 +282,7 @@ export function createChromeService({ control, settings, approvals = NO_APPROVAL
     const running = await control.sessions().catch(() => []);
     if (!running.includes(sessionName)) return;
     const { tools } = await settings.read();
-    await closeQuietly({ sessionName, profile: textOf(tools.chromeProfile) ?? DEFAULT_PROFILE, headed: tools.chromeHeaded === true });
+    await closeQuietly({ sessionName, profile: validProfile(tools.chromeProfile) ?? DEFAULT_PROFILE, headed: tools.chromeHeaded === true });
   };
 
   const screenshot = async ({ sessionId, directory, label, currentUrl, runAction, options }) => {
@@ -229,10 +318,15 @@ export function createChromeService({ control, settings, approvals = NO_APPROVAL
       return { closed: true };
     }
     if (!control.chromeInstalled()) throw new MittrToolError('Google Chrome is not installed on this Mac; ask the user to install it', 503);
+    await ready;
+    const sessionName = chromeSessionName(sessionId);
+    if (!planned.page && !modes.has(sessionName) && !(await control.sessions().catch(() => [])).includes(sessionName)) {
+      throw new MittrToolError(NO_PAGE_OPEN, 400);
+    }
     const { tools } = await settings.read();
     const options = {
-      sessionName: chromeSessionName(sessionId),
-      profile: await chosenProfile(tools),
+      sessionName,
+      profile: await chosenProfile(tools, sessionName),
       headed: ctx.headed === true || tools.chromeHeaded === true,
       signal: ctx.signal,
     };
@@ -240,7 +334,9 @@ export function createChromeService({ control, settings, approvals = NO_APPROVAL
 
     const runAction = async (command) => {
       try {
-        return await control.run(command, options);
+        const result = await control.run(command, options);
+        remember(options);
+        return result;
       } catch (error) {
         if (ctx.signal?.aborted) await closeQuietly(options);
         throw error;
@@ -248,17 +344,17 @@ export function createChromeService({ control, settings, approvals = NO_APPROVAL
     };
 
     if (planned.page) {
-      refuseOwnAddress(planned.page);
+      await refuseOwnAddress(planned.page);
       await ensureApproved(sessionId, planned.page.hostname.toLowerCase(), ctx);
-      const opened = await runAction(['open', planned.url]);
+      const opened = await runAction(['open', planned.page.href]);
       await ensureStillApproved(sessionId, options);
       return opened;
     }
 
     const currentUrl = textOf((await control.run(['get', 'url'], options))?.url);
-    if (!currentUrl || currentUrl === NO_PAGE) throw new MittrToolError('No page is open in this session; call chrome.open first', 400);
+    if (!currentUrl || currentUrl === NO_PAGE) throw new MittrToolError(NO_PAGE_OPEN, 400);
     const current = pageOf(currentUrl);
-    refuseOwnAddress(current);
+    await refuseOwnAddress(current);
     await ensureApproved(sessionId, current.hostname.toLowerCase(), ctx);
 
     if (planned.directory) return screenshot({ sessionId, directory: planned.directory, label: input.label, currentUrl, runAction, options });
@@ -304,7 +400,7 @@ export function createChromeService({ control, settings, approvals = NO_APPROVAL
 }
 
 export function registerChromeActions(registry, { service, available }) {
-  registry.defineTool({ name: MITTR_TOOLS.chrome, description: CHROME_TOOL_DESCRIPTION, parameters: CHROME_PARAMETERS });
+  registry.defineTool({ name: MITTR_TOOLS.chrome, description: chromeToolDescription(), parameters: CHROME_PARAMETERS });
   for (const definition of DEFINITIONS) {
     registry.register({
       ...definition,

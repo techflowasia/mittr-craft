@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { createToolsCallback } from './callback.js';
 import { CHROME_EXECUTABLE, createChromeControl, resolveAgentBrowser, resolveChrome } from './chrome-control.js';
-import { NO_APPROVALS, createChromeService, registerChromeActions } from './chrome-service.js';
+import { NO_APPROVALS, chromeToolDescription, createChromeService, registerChromeActions } from './chrome-service.js';
 import { registerComputerActions } from './computer-actions.js';
 import { createComputerControl, createLaunchApp, resolveCuaDriver } from './computer-control.js';
 import { materializeToolsPlugin, toolsFragment, toolsPluginDir, toolsPluginSource } from './plugin-source.js';
@@ -87,13 +87,24 @@ export function setupMittrTools(context, {
     writeScreenshot: control.writeScreenshot,
     offered: offered[MITTR_TOOLS.computer],
   });
-  const chromeControl = createChromeControl({ binary: drivers.chrome(), dataDir, chromePath: drivers.chromePath() ?? CHROME_EXECUTABLE, env });
+  const chromeControl = createChromeControl({
+    binary: drivers.chrome(),
+    dataDir,
+    chromePath: drivers.chromePath() ?? CHROME_EXECUTABLE,
+    locateChrome: () => drivers.chromePath(),
+    env,
+  });
+  let markSwept;
+  const swept = new Promise((resolve) => {
+    markSwept = resolve;
+  });
   const chrome = createChromeService({
     control: chromeControl,
     settings: mittrSettings,
     approvals: chromeApprovals,
     writeScreenshot: control.writeScreenshot,
     ownPorts: () => [server.port(), enginePortOf(opencode)].filter(Number.isInteger),
+    ready: swept,
   });
   registerChromeActions(registry, { service: chrome, available: () => chromeControl.available && offered[MITTR_TOOLS.chrome]() });
   const switchedOn = {
@@ -139,8 +150,12 @@ export function setupMittrTools(context, {
 
   const signature = async () => {
     const switches = await readSwitches();
-    const tools = registry.tools().filter((tool) => included(tool.name, switches));
     const wrap = wrapCapture(switches);
+    const tools = registry.tools()
+      .filter((tool) => included(tool.name, switches))
+      .map((tool) => (tool.name === MITTR_TOOLS.chrome
+        ? { ...tool, description: chromeToolDescription({ webTool: wrap, doTask: tool.definitions.some(({ action }) => action === 'chrome.do') }) }
+        : tool));
     if (tools.length === 0 && !wrap) return '';
     return toolsPluginSource({ tools, codeMode: switches.upstream?.agentToolsCodeMode === true, wrapCapture: wrap });
   };
@@ -187,6 +202,7 @@ export function setupMittrTools(context, {
     const closing = chrome.closeAll({ signal: controller.signal });
     return settledWithin(closing, CHROME_CLOSE_TIMEOUT_MS).finally(() => controller.abort());
   };
+  void closeEveryChrome().then(markSwept);
 
   let disposed = null;
 

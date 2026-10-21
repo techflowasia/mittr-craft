@@ -304,10 +304,11 @@ else if (command === 'screenshot') { fs.writeFileSync(rest[0], Buffer.from(optio
 else reply({ ran: command, args: rest });
 `;
 
-export const stubAgentBrowser = (t, { profiles = [{ directory: 'Default', name: 'Person' }], hang = [], png = '' } = {}) => {
+export const stubAgentBrowser = (t, { profiles = [{ directory: 'Default', name: 'Person' }], hang = [], png = '', running = {} } = {}) => {
   const dir = tempDataDir(t);
   const file = path.join(dir, 'agent-browser');
   fs.writeFileSync(path.join(dir, 'options.json'), JSON.stringify({ profiles, hang, png }));
+  fs.writeFileSync(path.join(dir, 'urls.json'), JSON.stringify(running));
   fs.writeFileSync(file, `#!${process.execPath}\n${AGENT_BROWSER_STUB}`, { mode: 0o755 });
   const calls = () => {
     const log = path.join(dir, 'calls.jsonl');

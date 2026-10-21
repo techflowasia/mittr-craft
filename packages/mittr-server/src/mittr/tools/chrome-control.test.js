@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -86,6 +87,33 @@ test('an inherited AGENT_BROWSER_AUTO_CONNECT or PROVIDER never reaches the driv
   }
   assert.equal(fs.readFileSync(path.join(dataDir, CONFIG_FILE), 'utf8'), '{}\n');
   assert.equal(fs.statSync(path.join(dataDir, CONFIG_FILE)).mode & 0o777, 0o600);
+});
+
+test('in the product, with no gate marker, an inherited AGENT_BROWSER_ARGS or CFFIXED_USER_HOME never reaches the driver', async (t) => {
+  const { CFFIXED_USER_HOME: _marker, ...product } = INHERITED;
+  const { control, calls } = controlIn(t, { env: { ...product, AGENT_BROWSER_ARGS: '--proxy-server=proxy.example.test:8080\n--user-data-dir=/Users/person/Library/Application Support/Google/Chrome' } });
+  await control.run(['get', 'url'], { sessionName: 'mc-0123456789', profile: 'Default' });
+  assert.equal(Object.hasOwn(calls[0].env, 'AGENT_BROWSER_ARGS'), false);
+  assert.equal(Object.hasOwn(calls[0].env, 'CFFIXED_USER_HOME'), false);
+  assert.equal(JSON.stringify(calls[0]).includes('proxy.example.test'), false);
+});
+
+test('Chrome installed after the start is found when the first path is gone', async (t) => {
+  const installed = new Set(['/Users/person/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']);
+  const recorded = recordingExecute();
+  const control = createChromeControl({
+    binary: BINARY,
+    dataDir: tempDataDir(t),
+    execute: recorded.execute,
+    env: {},
+    exists: (file) => installed.has(file),
+    locateChrome: () => [...installed][0] ?? null,
+  });
+  assert.equal(control.chromeInstalled(), true);
+  await control.closeAll();
+  assert.equal(recorded.calls[0].env.AGENT_BROWSER_EXECUTABLE_PATH, '/Users/person/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+  installed.clear();
+  assert.equal(control.chromeInstalled(), false);
 });
 
 test('the namespace is the data folder\'s name, so prod and Dev never share a Chrome', async (t) => {
@@ -177,9 +205,15 @@ test('the driver is the real agent-browser binary in the data folder, cancelled 
   assert.ok(Date.now() - started < 5_000, 'the cancelled driver was killed, not waited for');
 });
 
-test('a session name keeps only safe characters', () => {
-  assert.equal(chromeSessionName('ses_3c1f9a2b7ffe0123456789abcd'), 'mc-ses_3c1f9a2b7ffe0123456789abcd');
-  assert.equal(chromeSessionName('ses/../--headed x'), 'mc-ses--headedx');
+test('a session name is mc- and ten hex characters of the session id\'s sha256, the same every time', () => {
+  const name = chromeSessionName('ses_3c1f9a2b7ffe0123456789abcd');
+  assert.equal(name, `mc-${crypto.createHash('sha256').update('ses_3c1f9a2b7ffe0123456789abcd').digest('hex').slice(0, 10)}`);
+  assert.match(name, /^mc-[0-9a-f]{10}$/);
+  assert.equal(chromeSessionName('ses_3c1f9a2b7ffe0123456789abcd'), name);
+  assert.notEqual(chromeSessionName('ses_other'), name);
+  assert.match(chromeSessionName('ses/../--headed x'), /^mc-[0-9a-f]{10}$/);
+  const longest = `/Users/${'u'.repeat(24)}/.agent-browser/namespaces/mittrcraft-dev/run/${name}.sock`;
+  assert.ok(Buffer.byteLength(longest) < 103, `${Buffer.byteLength(longest)} bytes`);
 });
 
 test('agent-browser comes from the set folder only, else the app resources', (t) => {

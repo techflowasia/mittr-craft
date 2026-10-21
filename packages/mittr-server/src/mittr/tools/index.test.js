@@ -10,7 +10,7 @@ import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-
 import { SCREENSHOT_DIRECTORY, writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { createMittrSettings } from '../mittr-settings.js';
 import { SCREEN_RECORDING_NOT_GRANTED, deferred, listen, stubAgentBrowser, stubCuaDriver, tempDataDir, until } from '../test-helpers.js';
-import { CHROME_EXECUTABLE } from './chrome-control.js';
+import { CHROME_EXECUTABLE, chromeSessionName } from './chrome-control.js';
 import { NO_APPROVALS } from './chrome-service.js';
 import { CHROME_CLOSE_TIMEOUT_MS, bundledDrivers, setupMittrTools } from './index.js';
 import { MITTR_TOOLS, createMittrActionRegistry } from './registry.js';
@@ -211,7 +211,10 @@ test('the panel tool\'s capture is wrapped while upstream\'s web tool is on, eve
 
   const withTools = await setUp(t, { upstreamSettings: { agentWebToolEnabled: false } });
   await withTools.tools.managedConfig();
-  assert.doesNotMatch(withTools.pluginSource(), /tools\.update\(CAPTURE_TOOL,|const CAPTURE_TOOL/);
+  assert.doesNotMatch(withTools.pluginSource(), /openchamber_web/, 'neither the capture wrap nor the Chrome description names the panel tool while it is off');
+  const webOn = await setUp(t);
+  await webOn.tools.managedConfig();
+  assert.match(webOn.pluginSource(), /To look at the app being built, use openchamber_web instead\./);
   assert.deepEqual(toolNamesIn(withTools.pluginSource()), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_work']);
 });
 
@@ -457,7 +460,7 @@ test('a deleted session closes its Chrome', async (t) => {
   const { chrome, driver, emit, chromeApprovals } = await chromeSetUp(t);
   assert.equal((await chrome('open', { url: 'http://acme.example.test/' })).ok, true);
   emit([{ type: 'session.deleted', properties: { sessionID: 'ses_1', info: { id: 'ses_1' } } }]);
-  await until(() => driver.commands().some(({ session, command }) => session === 'mc-ses_1' && command[0] === 'close'));
+  await until(() => driver.commands().some(({ session, command }) => session === chromeSessionName('ses_1') && command[0] === 'close'));
   assert.deepEqual(chromeApprovals.record.forgotten, ['ses_1']);
 });
 
@@ -483,8 +486,19 @@ test('dispose closes every Chrome within 3 seconds even when the driver hangs', 
   const elapsed = Date.now() - started;
   assert.equal(CHROME_CLOSE_TIMEOUT_MS, 3_000);
   assert.ok(elapsed >= CHROME_CLOSE_TIMEOUT_MS - 100 && elapsed < CHROME_CLOSE_TIMEOUT_MS + 1_500, `dispose took ${elapsed} ms`);
-  assert.deepEqual(driver.commands().map(({ command }) => command), [['close', '--all']]);
+  assert.deepEqual(driver.commands().map(({ command }) => command), [['close', '--all'], ['close', '--all']], 'the start-up sweep and the dispose');
   const again = Date.now();
   await tools.dispose();
   assert.ok(Date.now() - again < 500, 'a second dispose does not close again');
+});
+
+test('a Chrome left by an earlier run is closed at start, so its old profile or mode is never reused', async (t) => {
+  const driver = stubAgentBrowser(t, { running: { [chromeSessionName('ses_1')]: 'http://acme.example.test/' } });
+  const { chrome, mittrSettings } = await chromeSetUp(t, { driver });
+  await mittrSettings.update({ tools: { chromeProfile: 'Default', chromeHeaded: false } });
+  assert.deepEqual((await chrome('read')).error, { message: 'No page is open in this session; call chrome.open first', kind: 'usage' });
+  const commands = driver.commands().map(({ command }) => command.join(' '));
+  assert.equal(commands[0], 'close --all', 'the sweep runs before any Chrome action');
+  assert.equal(commands.includes('get url'), false, 'the earlier run\'s Chrome was not asked for its page');
+  assert.equal((await chrome('open', { url: 'http://acme.example.test/' })).ok, true);
 });

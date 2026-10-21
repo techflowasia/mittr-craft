@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import path from 'node:path';
@@ -21,7 +22,9 @@ const EMPTY_CONFIG = '{}\n';
 const NOT_BUNDLED = 'The Chrome tool is not bundled in this build of MittrCraft';
 const CANCELLED = 'The Chrome action was cancelled';
 
-const PASSED_ENV = new Set(['PATH', 'HOME', 'TMPDIR', 'LANG', 'CFFIXED_USER_HOME', 'AGENT_BROWSER_ARGS']);
+const PASSED_ENV = new Set(['PATH', 'HOME', 'TMPDIR', 'LANG', 'CFFIXED_USER_HOME']);
+const GATE_MARKER = 'CFFIXED_USER_HOME';
+const GATE_ONLY_ENV = new Set(['AGENT_BROWSER_ARGS']);
 
 export const resolveAgentBrowser = ({ resourcesDir, env, exists }) => bundledDriverPath({
   dirFromEnv: env.MITTRCRAFT_BUNDLED_AGENT_BROWSER_DIR,
@@ -58,13 +61,15 @@ export const AGENT_BANNER_SCRIPT = `(() => {
 })();
 `;
 
-export const chromeSessionName = (sessionId) => `mc-${String(sessionId).replace(/[^A-Za-z0-9_-]/g, '')}`;
+export const chromeSessionName = (sessionId) => `mc-${crypto.createHash('sha256').update(String(sessionId)).digest('hex').slice(0, 10)}`;
 
-const driverEnv = ({ env, chromePath, namespace }) => ({
-  ...Object.fromEntries(Object.entries(env).filter(([key, value]) => (PASSED_ENV.has(key) || key.startsWith('LC_')) && value === String(value))),
-  AGENT_BROWSER_EXECUTABLE_PATH: chromePath,
-  AGENT_BROWSER_NAMESPACE: namespace,
-});
+const isText = (value) => value === String(value);
+
+const passedEnv = (env) => {
+  const gate = isText(env[GATE_MARKER]) && env[GATE_MARKER] !== '';
+  return Object.fromEntries(Object.entries(env).filter(([key, value]) => isText(value)
+    && (PASSED_ENV.has(key) || key.startsWith('LC_') || (gate && GATE_ONLY_ENV.has(key)))));
+};
 
 const executeBinary = (binary, argv, { env, cwd, signal }) => new Promise((resolve, reject) => {
   execFile(binary, argv, { env, cwd, signal, killSignal: 'SIGKILL', maxBuffer: MAX_BUFFER_BYTES }, (error, stdout) => {
@@ -93,13 +98,21 @@ export const createChromeControl = ({
   binary,
   dataDir,
   chromePath = CHROME_EXECUTABLE,
+  locateChrome = () => null,
   exists = fs.existsSync,
   execute = executeBinary,
   env = process.env,
 }) => {
   const configPath = path.join(dataDir, CONFIG_FILE);
   const bannerPath = path.join(dataDir, BANNER_FILE);
-  const childEnv = driverEnv({ env, chromePath, namespace: path.basename(dataDir) });
+  const inherited = passedEnv(env);
+  const namespace = path.basename(dataDir);
+  let chromeAt = chromePath;
+  const currentChrome = () => {
+    if (!exists(chromeAt)) chromeAt = locateChrome() ?? chromeAt;
+    return chromeAt;
+  };
+  const childEnv = () => ({ ...inherited, AGENT_BROWSER_EXECUTABLE_PATH: currentChrome(), AGENT_BROWSER_NAMESPACE: namespace });
 
   const prepare = async ({ headed }) => {
     await fsPromises.mkdir(dataDir, { recursive: true });
@@ -112,7 +125,7 @@ export const createChromeControl = ({
     await prepare({ headed });
     let stdout;
     try {
-      stdout = await execute(binary, ['--config', configPath, ...argv], { env: childEnv, cwd: dataDir, signal });
+      stdout = await execute(binary, ['--config', configPath, ...argv], { env: childEnv(), cwd: dataDir, signal });
     } catch (error) {
       throw error?.name === 'AbortError' ? new MittrToolError(CANCELLED, 499) : error;
     }
@@ -151,7 +164,7 @@ export const createChromeControl = ({
 
   return {
     available: Boolean(binary),
-    chromeInstalled: () => exists(chromePath),
+    chromeInstalled: () => exists(currentChrome()),
     run,
     profiles,
     sessions,

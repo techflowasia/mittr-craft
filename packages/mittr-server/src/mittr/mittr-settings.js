@@ -22,7 +22,10 @@ const isBoolean = (value) => value === true || value === false;
 const isText = (value) => value === String(value);
 const hostOf = (value) => (isText(value) ? value.trim().toLowerCase() : '');
 const isHost = (value) => HOST.test(hostOf(value));
-const profileOf = (value) => (isText(value) && value.trim() ? value.trim() : null);
+const profileOf = (value) => {
+  const name = isText(value) ? value.trim() : '';
+  return name && !name.startsWith('-') && !name.includes('/') ? name : null;
+};
 
 const TOOL_FIELDS = Object.freeze({
   computer: isBoolean,

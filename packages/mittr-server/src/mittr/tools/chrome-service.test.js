@@ -7,11 +7,12 @@ import { MARKER_PNG } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
 import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
 import { writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { tempDataDir } from '../test-helpers.js';
-import { BANNER_FILE, CONFIG_FILE, createChromeControl } from './chrome-control.js';
-import { CHROME_TOOL_DESCRIPTION, NO_APPROVALS, createChromeService, registerChromeActions } from './chrome-service.js';
+import { BANNER_FILE, CONFIG_FILE, chromeSessionName, createChromeControl } from './chrome-control.js';
+import { NO_APPROVALS, chromeToolDescription, createChromeService, registerChromeActions } from './chrome-service.js';
 import { MITTR_TOOLS, createMittrActionRegistry } from './registry.js';
 
 const BINARY = '/r/agent-browser/agent-browser';
+const SES_1 = chromeSessionName('ses_1');
 
 const commandOf = (argv) => {
   const capped = argv.indexOf('--max-output');
@@ -30,7 +31,7 @@ const fakeBrowser = ({ profiles = [{ directory: 'Default', name: 'Person' }], re
     const reply = (data) => JSON.stringify({ success: true, data });
     if (signal?.aborted) throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' });
     if (command === 'profiles') return reply(profiles);
-    if (command === 'session') return reply({ sessions: running });
+    if (command === 'session') return reply({ sessions: [...new Set([...running, ...urls.keys()])] });
     if (command === 'close') {
       if (rest[0] === '--all') urls.clear();
       else urls.delete(session);
@@ -86,13 +87,13 @@ const fakeSettings = (tools = {}) => {
   };
 };
 
-const setUp = (t, { browser = fakeBrowser(), approvals = allowHosts('acme.example.test'), tools, ownPorts = () => [4100, 4096], installed = true } = {}) => {
+const setUp = (t, { browser = fakeBrowser(), approvals = allowHosts('acme.example.test'), tools, ownPorts = () => [4100, 4096], installed = true, lookup = async () => [{ address: '192.0.2.10', family: 4 }] } = {}) => {
   const dataDir = tempDataDir(t);
   const scratchRoot = tempDataDir(t);
   const project = fs.realpathSync(tempDataDir(t));
   const control = createChromeControl({ binary: BINARY, dataDir, execute: browser.execute, env: {}, exists: () => installed });
   const settings = fakeSettings(tools);
-  const service = createChromeService({ control, settings, approvals, writeScreenshot, ownPorts, scratchRoot });
+  const service = createChromeService({ control, settings, approvals, writeScreenshot, ownPorts, lookup, scratchRoot });
   const ctx = { sessionId: 'ses_1', directory: project, surface: 'agent', tool: MITTR_TOOLS.chrome };
   return { browser, service, settings, approvals, dataDir, scratchRoot, project, ctx };
 };
@@ -107,8 +108,10 @@ const refusal = (statusCode, message, extra = {}) => (error) => {
 test('chrome.open runs agent-browser with the session, profile and json flags', async (t) => {
   const { service, browser, dataDir, ctx } = setUp(t);
   assert.deepEqual(await service.execute('chrome.open', { url: 'https://acme.example.test/' }, ctx), { url: 'https://acme.example.test/', title: 'Acme' });
-  const base = ['--config', path.join(dataDir, CONFIG_FILE), '--session', 'mc-ses_1', '--profile', 'Default', '--json', '--max-output', '12000'];
-  assert.deepEqual(browser.calls, [[...base, 'open', 'https://acme.example.test/'], [...base, 'get', 'url']]);
+  const config = ['--config', path.join(dataDir, CONFIG_FILE)];
+  const base = [...config, '--session', SES_1, '--profile', 'Default', '--json', '--max-output', '12000'];
+  assert.deepEqual(browser.calls, [[...config, '--json', 'profiles'], [...base, 'open', 'https://acme.example.test/'], [...base, 'get', 'url']]);
+  assert.match(SES_1, /^mc-[0-9a-f]{10}$/);
 });
 
 test('a value starting with - is refused for every chrome action', async (t) => {
@@ -167,35 +170,124 @@ test('every action asks the fence for the page it acts on, and a site not yet al
   const approvals = allowHosts();
   const { service, browser, ctx } = setUp(t, { approvals });
   await assert.rejects(service.execute('chrome.open', { url: 'https://Acme.Example.test/x' }, ctx), refusal(403, 'The user has not yet allowed using their Chrome sign-in on acme.example.test', { code: 'site_approval_required', host: 'acme.example.test' }));
-  assert.deepEqual(browser.commands(), []);
+  const launches = () => browser.commands().filter(([command]) => command !== 'profiles');
+  assert.deepEqual(launches(), []);
 
   approvals.record.reply = 'reject';
   await assert.rejects(service.execute('chrome.open', { url: 'https://acme.example.test/x' }, { ...ctx, approvalAnswered: true }), refusal(403, 'The user did not allow using their Chrome sign-in on acme.example.test'));
-  assert.deepEqual(browser.commands(), []);
+  assert.deepEqual(launches(), []);
   approvals.record.reply = 'once';
   await service.execute('chrome.open', { url: 'https://acme.example.test/x' }, { ...ctx, approvalAnswered: true });
   assert.deepEqual(approvals.record.decisions, [['ses_1', 'acme.example.test'], ['ses_1', 'acme.example.test']]);
-  assert.deepEqual(browser.commands(), [['open', 'https://acme.example.test/x'], ['get', 'url']]);
+  assert.deepEqual(launches(), [['open', 'https://acme.example.test/x'], ['get', 'url']]);
 
   const other = setUp(t, { approvals: allowHosts() });
-  other.browser.urls.set('mc-ses_1', 'https://acme.example.test/x');
+  other.browser.urls.set(SES_1, 'https://acme.example.test/x');
   await assert.rejects(other.service.execute('chrome.read', {}, other.ctx), refusal(403, 'The user has not yet allowed using their Chrome sign-in on acme.example.test', { code: 'site_approval_required' }));
-  assert.deepEqual(other.browser.commands(), [['get', 'url']], 'nothing is read from a page the user has not allowed');
+  assert.deepEqual(other.browser.commands(), [['session', 'list'], ['profiles'], ['get', 'url']], 'nothing is read from a page the user has not allowed');
 });
 
 test('chrome.open and the fence refuse MittrCraft\'s own ports whatever the approvals', async (t) => {
   const browser = fakeBrowser({ clickTo: 'http://127.0.0.1:4100/api/config' });
   const approvals = { ...allowHosts(), isApproved: async () => true };
   const { service, ctx } = setUp(t, { browser, approvals });
-  for (const url of ['http://127.0.0.1:4100/', 'http://localhost:4096/session', 'http://[::1]:4100/', 'http://app.localhost:4096/']) {
+  for (const url of [
+    'http://127.0.0.1:4100/',
+    'http://localhost:4096/session',
+    'http://[::1]:4100/',
+    'http://app.localhost:4096/',
+    'http://localhost.:4100/',
+    'http://APP.LOCALHOST..:4096/',
+    'http://[::ffff:127.0.0.2]:4100/',
+    'http://[::ffff:0.0.0.0]:4096/',
+    'http://[::]:4100/',
+    'http://0.0.0.0:4100/',
+    'http://127.1.2.3:4096/',
+    'http://2130706433:4100/',
+    'http://0x7f000001:4100/',
+  ]) {
     await assert.rejects(service.execute('chrome.open', { url }, ctx), refusal(400, 'That address is MittrCraft itself'), url);
   }
-  assert.deepEqual(browser.commands(), []);
+  assert.deepEqual(browser.commands().filter(([command]) => command !== 'profiles'), []);
 
   await service.execute('chrome.open', { url: 'http://127.0.0.1:5173/' }, ctx);
   await assert.rejects(service.execute('chrome.click', { ref: '@e2' }, ctx), refusal(400, 'That address is MittrCraft itself'));
   await assert.rejects(service.execute('chrome.read', {}, ctx), refusal(400, 'That address is MittrCraft itself'));
   assert.equal(browser.commands().some(([command]) => command === 'read'), false);
+});
+
+test('a name that resolves to this machine on MittrCraft\'s port is refused, and so is one that cannot be resolved', async (t) => {
+  const asked = [];
+  const answers = {
+    'lvh.example.test': [{ address: '127.0.0.1', family: 4 }],
+    'mixed.example.test': [{ address: '192.0.2.1', family: 4 }, { address: '::1', family: 6 }],
+    'mapped.example.test': [{ address: '::ffff:127.0.0.1', family: 6 }],
+    'public.example.test': [{ address: '192.0.2.1', family: 4 }],
+  };
+  const lookup = async (host) => {
+    asked.push(host);
+    if (!answers[host]) throw Object.assign(new Error('not found'), { code: 'ENOTFOUND' });
+    return answers[host];
+  };
+  const approvals = { ...allowHosts(), isApproved: async () => true };
+  const { service, browser, ctx } = setUp(t, { approvals, lookup });
+  for (const host of ['lvh.example.test', 'mixed.example.test', 'mapped.example.test', 'missing.example.test']) {
+    await assert.rejects(service.execute('chrome.open', { url: `http://${host}:4100/` }, ctx), refusal(400, 'That address is MittrCraft itself'), host);
+  }
+  assert.equal(browser.commands().some(([command]) => command === 'open'), false);
+  await service.execute('chrome.open', { url: 'http://public.example.test:4100/' }, ctx);
+  await service.execute('chrome.open', { url: 'http://lvh.example.test:5173/' }, ctx);
+  assert.deepEqual(asked, ['lvh.example.test', 'mixed.example.test', 'mapped.example.test', 'missing.example.test', 'public.example.test', 'public.example.test'], 'only MittrCraft\'s ports are looked up');
+
+  const slow = setUp(t, { approvals, lookup: () => new Promise(() => {}) });
+  await assert.rejects(slow.service.execute('chrome.open', { url: 'http://slow.example.test:4096/' }, slow.ctx), refusal(400, 'That address is MittrCraft itself'));
+});
+
+test('a stored profile that is a flag, a folder or not one of this Mac\'s profiles is refused', async (t) => {
+  const message = 'The chosen Chrome profile is not one of this Mac\'s Chrome profiles; ask the user to choose one in Settings → Integrations → MittrCraft tools → Chrome profile';
+  for (const chromeProfile of ['--headed', '-s', '/Users/person/Library/Application Support/Google/Chrome', 'Profile 1/..']) {
+    const { service, browser, ctx } = setUp(t, { tools: { chromeProfile } });
+    await assert.rejects(service.execute('chrome.open', { url: 'https://acme.example.test/' }, ctx), refusal(409, message, { code: 'chrome_profile_required' }), chromeProfile);
+    assert.deepEqual(browser.calls, [], chromeProfile);
+  }
+  const unlisted = setUp(t, { tools: { chromeProfile: 'Profile 9' } });
+  await assert.rejects(unlisted.service.execute('chrome.open', { url: 'https://acme.example.test/' }, unlisted.ctx), refusal(409, message, { code: 'chrome_profile_required' }));
+  assert.deepEqual(unlisted.browser.commands(), [['profiles']]);
+  const listedFolder = setUp(t, { tools: { chromeProfile: null }, browser: fakeBrowser({ profiles: [{ directory: '/tmp/elsewhere', name: 'Odd' }] }) });
+  await assert.rejects(listedFolder.service.execute('chrome.open', { url: 'https://acme.example.test/' }, listedFolder.ctx), refusal(409, 'No Chrome profile is chosen yet; ask the user to choose one in Settings → Integrations → MittrCraft tools → Chrome profile'));
+  assert.deepEqual(listedFolder.settings.state.updates, []);
+});
+
+test('the URL the fence checked is the URL the driver opens', async (t) => {
+  const { service, browser, ctx } = setUp(t);
+  await service.execute('chrome.open', { url: ' https://ACME.example.test/a b?q=1#x ' }, ctx);
+  assert.deepEqual(browser.commands().find(([command]) => command === 'open'), ['open', 'https://acme.example.test/a%20b?q=1#x']);
+});
+
+test('a landing the driver does not report, or that is not a web page, returns nothing and names only its scheme', async (t) => {
+  for (const [landed, message, host] of [
+    [undefined, 'The page moved to an address the driver did not report, which the user has not allowed; nothing from it is returned. Call chrome.open with that page\'s URL to ask the user', undefined],
+    ['file:///Users/person/secret.txt', 'The page moved to a file: page, which the user has not allowed; nothing from it is returned. Call chrome.open with that page\'s URL to ask the user', 'file:'],
+    ['data:text/html,<h1>secret</h1>', 'The page moved to a data: page, which the user has not allowed; nothing from it is returned. Call chrome.open with that page\'s URL to ask the user', 'data:'],
+  ]) {
+    const browser = fakeBrowser();
+    const moving = {
+      ...browser,
+      execute: async (binary, argv, options) => {
+        if (commandOf(argv)[0] === 'click') browser.urls.set(SES_1, landed);
+        if (commandOf(argv)[0] === 'get' && browser.urls.get(SES_1) === undefined && browser.urls.has(SES_1)) return JSON.stringify({ success: true, data: {} });
+        return browser.execute(binary, argv, options);
+      },
+    };
+    const { service, ctx } = setUp(t, { browser: moving });
+    await service.execute('chrome.open', { url: 'https://acme.example.test/' }, ctx);
+    await assert.rejects(service.execute('chrome.click', { ref: '@e2' }, ctx), (error) => {
+      refusal(409, message, { code: 'site_moved' })(error);
+      assert.equal(error.host, host);
+      assert.equal(error.message.includes('secret'), false);
+      return true;
+    }, String(landed));
+  }
 });
 
 test('the only profile is chosen and stored, two profiles ask the user', async (t) => {
@@ -211,7 +303,7 @@ test('the only profile is chosen and stored, two profiles ask the user', async (
 });
 
 test('a headed request closes the headless session first and adds the banner', async (t) => {
-  const { service, browser, dataDir, ctx, settings } = setUp(t);
+  const { service, browser, dataDir, ctx, settings } = setUp(t, { browser: fakeBrowser({ profiles: [{ directory: 'Default', name: 'Home' }, { directory: 'Profile 1', name: 'Work' }] }) });
   const noPage = refusal(400, 'No page is open in this session; call chrome.open first');
   await service.execute('chrome.open', { url: 'https://acme.example.test/' }, ctx);
   const opened = browser.calls.length;
@@ -231,7 +323,7 @@ test('a headed request closes the headless session first and adds the banner', a
   settings.state.tools.chromeHeaded = true;
   const before = browser.calls.length;
   await assert.rejects(service.execute('chrome.read', {}, ctx), noPage);
-  const reopened = browser.calls.slice(before);
+  const reopened = browser.calls.slice(before).filter((argv) => commandOf(argv)[0] !== 'profiles');
   assert.deepEqual(commandOf(reopened[0]), ['close'], 'a new profile closes the Chrome on the old one');
   assert.equal(optionOf(reopened[0], '--profile'), 'Default');
   assert.equal(optionOf(reopened[1], '--profile'), 'Profile 1');
@@ -241,7 +333,29 @@ test('a headed request closes the headless session first and adds the banner', a
 test('a first headed request on a session this run never started launches nothing to close', async (t) => {
   const { service, browser, ctx } = setUp(t);
   await service.execute('chrome.open', { url: 'https://acme.example.test/' }, { ...ctx, headed: true });
-  assert.deepEqual(browser.commands(), [['open', 'https://acme.example.test/'], ['get', 'url']]);
+  assert.deepEqual(browser.commands(), [['profiles'], ['open', 'https://acme.example.test/'], ['get', 'url']]);
+});
+
+test('a page action on a session this run never opened answers no page open without launching Chrome', async (t) => {
+  const { service, browser, ctx } = setUp(t);
+  for (const action of ['chrome.snapshot', 'chrome.read', 'chrome.screenshot']) {
+    await assert.rejects(service.execute(action, {}, ctx), refusal(400, 'No page is open in this session; call chrome.open first'), action);
+  }
+  assert.deepEqual(browser.commands(), [['session', 'list'], ['session', 'list'], ['session', 'list']]);
+});
+
+test('the service waits for the start-up sweep before it drives Chrome', async (t) => {
+  let release;
+  const ready = new Promise((resolve) => { release = resolve; });
+  const browser = fakeBrowser();
+  const control = createChromeControl({ binary: BINARY, dataDir: tempDataDir(t), execute: browser.execute, env: {}, exists: () => true });
+  const service = createChromeService({ control, settings: fakeSettings(), approvals: allowHosts('acme.example.test'), writeScreenshot, ready });
+  const opening = service.execute('chrome.open', { url: 'https://acme.example.test/' }, { sessionId: 'ses_1' });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(browser.calls, []);
+  release();
+  await opening;
+  assert.equal(browser.commands().some(([command]) => command === 'open'), true);
 });
 
 test('a screenshot is saved and its scratch folder is removed even when the driver fails', async (t) => {
@@ -324,11 +438,11 @@ test('a turn cancelled mid-action closes that session\'s Chrome', async (t) => {
   await service.execute('chrome.open', { url: 'https://acme.example.test/' }, ctx);
   await assert.rejects(service.execute('chrome.read', {}, { ...ctx, signal: controller.signal }), refusal(499, 'The Chrome action was cancelled'));
   assert.deepEqual(commandOf(browser.calls.at(-1)), ['close']);
-  assert.equal(optionOf(browser.calls.at(-1), '--session'), 'mc-ses_1');
+  assert.equal(optionOf(browser.calls.at(-1), '--session'), SES_1);
 });
 
 test('chrome.close and a deleted session close only a Chrome that is running, and forget the session\'s grants', async (t) => {
-  const browser = fakeBrowser({ running: ['mc-ses_old'] });
+  const browser = fakeBrowser({ running: [chromeSessionName('ses_old')] });
   const { service, approvals, ctx } = setUp(t, { browser });
   assert.deepEqual(await service.execute('chrome.close', {}, ctx), { closed: true });
   assert.deepEqual(browser.commands(), [['session', 'list']], 'nothing is launched to close a Chrome that never ran');
@@ -337,12 +451,12 @@ test('chrome.close and a deleted session close only a Chrome that is running, an
   service.allowForConversation('ses_1');
   await service.closeSession('ses_1');
   assert.deepEqual(browser.commands().at(-1), ['close']);
-  assert.equal(optionOf(browser.calls.at(-1), '--session'), 'mc-ses_1');
+  assert.equal(optionOf(browser.calls.at(-1), '--session'), SES_1);
   assert.equal(await service.isHostAllowed('ses_1', 'other.example.test'), false);
   assert.deepEqual(approvals.record.forgotten, ['ses_1', 'ses_1']);
 
   await service.closeSession('ses_old');
-  assert.equal(optionOf(browser.calls.at(-1), '--session'), 'mc-ses_old', 'a Chrome left from an earlier run is closed too');
+  assert.equal(optionOf(browser.calls.at(-1), '--session'), chromeSessionName('ses_old'), 'a Chrome left from an earlier run is closed too');
   await service.closeSession('');
 });
 
@@ -385,8 +499,18 @@ test('profiles and removeHost answer through the driver and the approvals', asyn
 });
 
 test('the tool description says never to type a password', () => {
-  assert.ok(CHROME_TOOL_DESCRIPTION.endsWith('If a page asks you to sign in, stop and tell the user which site — never type a password or fill a sign-in form.'));
-  assert.match(CHROME_TOOL_DESCRIPTION, /To look at the app being built, use openchamber_web instead\./);
+  const verbatim = "Use a Chrome session that starts from the user's own Chrome profile, for sites the user is already signed in to in Chrome (Plane, Jira, internal tools) and for web work that should not take over MittrCraft's browser panel. To look at the app being built, use openchamber_web instead. Use one action per call: chrome.open a page, then either chrome.do with the goal to let MittrCraft work through the page step by step on its own (fastest for filling forms and clicking through flows), or chrome.snapshot to get refs and act on them yourself. If chrome.do stops to ask, ask the user; do not guess. The first time you open a site the user is asked whether you may use their sign-in there. If a page asks you to sign in, stop and tell the user which site — never type a password or fill a sign-in form.";
+  assert.equal(chromeToolDescription({ webTool: true, doTask: true }), verbatim);
+  for (const options of [{}, { webTool: true }, { doTask: true }]) {
+    assert.ok(chromeToolDescription(options).endsWith('If a page asks you to sign in, stop and tell the user which site — never type a password or fill a sign-in form.'), JSON.stringify(options));
+  }
+});
+
+test('the description names chrome.do only once it exists, and openchamber_web only while that tool is on', () => {
+  assert.equal(chromeToolDescription(), "Use a Chrome session that starts from the user's own Chrome profile, for sites the user is already signed in to in Chrome (Plane, Jira, internal tools) and for web work that should not take over MittrCraft's browser panel. Use one action per call: chrome.open a page, then chrome.snapshot to get refs and act on them yourself. The first time you open a site the user is asked whether you may use their sign-in there. If a page asks you to sign in, stop and tell the user which site — never type a password or fill a sign-in form.");
+  assert.match(chromeToolDescription({ webTool: true }), /To look at the app being built, use openchamber_web instead\./);
+  assert.doesNotMatch(chromeToolDescription({ webTool: true }), /chrome\.do/);
+  assert.doesNotMatch(chromeToolDescription({ doTask: true }), /openchamber_web/);
 });
 
 test('the Chrome actions are registered on mittrcraft_chrome, with their effects', (t) => {
@@ -409,7 +533,7 @@ test('the Chrome actions are registered on mittrcraft_chrome, with their effects
     ['chrome.close', 'change'],
   ]);
   const [tool] = registry.tools();
-  assert.equal(tool.description, CHROME_TOOL_DESCRIPTION);
+  assert.equal(tool.description, chromeToolDescription());
   assert.deepEqual(Object.keys(tool.parameters), ['url', 'ref', 'value', 'key', 'text', 'selector', 'label']);
   offered.value = false;
   assert.deepEqual(registry.tools(), []);
