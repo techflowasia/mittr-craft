@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { ENGINE_SHARE_OFF } from '../engine-outbound.js';
-import { createAccountStore } from './account-store.js';
+import { createAccountStore, keyOf } from './account-store.js';
 import { createAccountSwitcher } from './accounts-switch.js';
 import { createAnsweredByLog, createAnsweredByWatcher, registerAnsweredByRoute } from './answered-by.js';
 import { registerMittrAuditRoutes } from './audit-routes.js';
@@ -26,6 +26,7 @@ import { createMittrQuotaService } from './quota-service.js';
 import { chooseSecretStore } from './secret-store.js';
 import { registerMittrShim } from './shim-routes.js';
 import { deepLinkScheme } from './sign-in.js';
+import { reconcileSkills, skillIdOf } from './skill-reconciler.js';
 
 const SIGNED_IN_EVENT = 'mittrcraft:signed-in';
 const SIGN_IN_FAILED_EVENT = 'mittrcraft:sign-in-failed';
@@ -104,6 +105,7 @@ export function setupMittr(context, {
     logger,
     sharedHistoryExists,
     onLegacyCarried: () => {
+      applySkillsQuietly();
       const { items, known } = activeModelList();
       void onModels(items, { listKnown: known });
     },
@@ -136,6 +138,30 @@ export function setupMittr(context, {
 
   const activeCatalogModels = () => activeCatalogCache().read()?.models ?? null;
 
+  const enablement = createEnablementStore({ filePath: path.join(dataDir, 'mittr-enablement.json') });
+  const skillsRoot = engineConfigDir ? path.join(engineConfigDir, 'skills') : null;
+  const activeAccountKey = () => {
+    const active = store.list({ carryLegacy: false }).find((account) => account.active);
+    return active?.userId ? keyOf(active.userId) : null;
+  };
+  const applySkills = (catalog = activeCatalogCache().read()) => {
+    const result = reconcileSkills({ catalog, enablement, skillsRoot, accountKey: activeAccountKey() });
+    for (const failure of result.failed) logger.warn(`[mittr] catalog skill '${failure.name}' was not applied: ${failure.error}`);
+    return result;
+  };
+  const applySkillsQuietly = (catalog) => {
+    try {
+      applySkills(catalog);
+    } catch (error) {
+      logger.warn('[mittr] could not apply the catalog skills:', error?.message ?? error);
+    }
+  };
+  const applySkillsAfterToggle = (kind, name) => {
+    if (kind !== 'skills') return;
+    const { failed } = applySkills();
+    if (failed.some((failure) => failure.name === skillIdOf(name))) throw new Error(`catalog skill '${skillIdOf(name)}' was not applied`);
+  };
+
   const answeredByLog = createAnsweredByLog({ perSession: 10, sessions: 100 });
 
   // Both are defined below and first called once setup has returned.
@@ -152,6 +178,7 @@ export function setupMittr(context, {
     store,
     opencode,
     applyCache: () => {
+      applySkillsQuietly();
       const { items, known } = activeModelList();
       return onModels(items, { listKnown: known });
     },
@@ -214,7 +241,6 @@ export function setupMittr(context, {
   });
   registerAnsweredByRoute(app, { log: answeredByLog });
 
-  const enablement = createEnablementStore({ filePath: path.join(dataDir, 'mittr-enablement.json') });
   const catalog = registerMittrCatalogRoutes(app, {
     express,
     broker,
@@ -222,6 +248,8 @@ export function setupMittr(context, {
     cache: activeCatalogCache,
     enablement,
     onModels: (items) => onModels(items, { listKnown: true }),
+    onCatalog: (stored) => applySkillsQuietly(stored),
+    onEnablementChange: applySkillsAfterToggle,
     fetchImpl,
     logger,
   });
@@ -447,6 +475,7 @@ export function setupMittr(context, {
   // models; the platform's current one follows the engine's first ready,
   // without holding up the start. The engine's first config build reads
   // these, and its start the default.
+  applySkillsQuietly();
   const startList = activeModelList();
   models = modelListOf(startList.items);
   if (startList.known) followDefaultModel(models);

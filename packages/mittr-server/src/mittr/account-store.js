@@ -21,7 +21,7 @@ const INDEX_FILE = 'index.json';
 const LEGACY_SESSION_FILE = 'mittr-session';
 const ACCOUNT_HOME = /^[0-9a-f]{16}$/;
 
-const keyOf = (userId) => createHash('sha256').update(userId).digest('hex').slice(0, 16);
+export const keyOf = (userId) => createHash('sha256').update(userId).digest('hex').slice(0, 16);
 
 const emptyIndex = () => ({ active: null, accounts: [] });
 

@@ -300,6 +300,11 @@ export const UPSTREAM_CONTRACT = [
     why: 'the bundled engine (OpenCode 2.0.22) runs the first rg on PATH, else <XDG_CACHE_HOME>/opencode/bin/rg, and only then downloads ripgrep 15.1.0 from github.com; engineEnv puts the app\'s bundled rg at that second place on every start, so the engine never downloads one',
   },
   {
+    id: 'engine-skill-folders',
+    files: ['packages/electron/package.json'],
+    why: 'the bundled engine (OpenCode 2.0.22) reads skills from <config dir>/skills, scanning {*.md,**/SKILL.md} with dot folders included, and a SKILL.md takes its folder name as the skill id; catalog skills are written there as mittr-<name>/ and probe --only skills-mcp (scripts/mittr/probe-engine-v2.mjs) shows them listed within about 0.3 s with no restart, so a new engine version needs that probe run again',
+  },
+  {
     id: 'engine-share-config',
     files: ['node_modules/@opencode/schema/dist/config.js'],
     why: 'the engine config takes share: "manual" | "auto" | "disabled"; the managed config sets "disabled" so no engine session is ever shared',

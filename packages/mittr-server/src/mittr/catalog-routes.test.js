@@ -319,15 +319,16 @@ test('an enablement body that is too large or not JSON is refused before it is r
   assert.deepEqual(await broken.json(), { error: 'Invalid request body' });
 });
 
-test('a change is announced for its kind', async (t) => {
-  const { call, changes } = await setUp(t);
-  await call('PUT', '/api/mittr/catalog/enablement', { kind: 'skills', name: 'card-analysis', enabled: false });
-  assert.deepEqual(changes, ['skills']);
+test('a change is announced for its kind and name', async (t) => {
+  const named = [];
+  const { call } = await setUp(t, { onEnablementChange: async (kind, name) => { named.push([kind, name]); } });
+  assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'skills', name: 'card-analysis', enabled: false }), { status: 200, body: { ok: true } });
+  assert.deepEqual(named, [['skills', 'card-analysis']]);
 });
 
-test('the choice is stored even when announcing it fails', async (t) => {
+test('the choice is stored even when applying it fails, and the answer says it is not applied yet', async (t) => {
   const { call, enablement, logger } = await setUp(t, { onEnablementChange: async () => { throw new Error('config write failed'); } });
-  assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'mcp', name: 'stub-law', enabled: false }), { status: 200, body: { ok: true } });
+  assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'mcp', name: 'stub-law', enabled: false }), { status: 200, body: { ok: true, applied: false } });
   assert.equal(enablement.isEnabled('mcp', 'stub-law'), false);
   assert.equal(logger.warnings.length, 1);
 });

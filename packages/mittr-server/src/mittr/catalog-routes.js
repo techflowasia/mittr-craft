@@ -183,9 +183,10 @@ export function registerMittrCatalogRoutes(app, {
       return res.status(500).json({ error: 'Cannot store the choice on this machine' });
     }
     try {
-      await onEnablementChange(kind);
+      await onEnablementChange(kind, name);
     } catch (error) {
       logger.warn('[mittr] applying the catalog enablement failed:', error?.message ?? error);
+      return res.json({ ok: true, applied: false });
     }
     return res.json({ ok: true });
   });

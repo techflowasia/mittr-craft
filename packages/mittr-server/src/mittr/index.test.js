@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -52,7 +53,7 @@ const serverLikeApp = () => {
 // before it first starts the engine.
 const shimKeys = new Map();
 
-const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext(), sharedHistoryExists, built = true, engineConfigDir = USER_CONFIG_DIR, now } = {}) => {
+const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext(), sharedHistoryExists, built = true, engineConfigDir = USER_CONFIG_DIR, engineDataHome, now } = {}) => {
   const app = serverLikeApp();
   const logger = recordingLogger();
   const mintShimKey = () => {
@@ -60,7 +61,7 @@ const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() =
     shimKeys.set(dataDir, key);
     return key;
   };
-  const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context }, { env, fetchImpl, sharedHistoryExists, engineConfigDir, now, mintShimKey });
+  const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context }, { env, fetchImpl, sharedHistoryExists, engineConfigDir, engineDataHome, now, mintShimKey });
   t.after(() => mittr.dispose());
   engine.contribute = mittr.managedConfig;
   if (built) await mittr.managedConfig();
@@ -1410,4 +1411,200 @@ test('the engine hears a withdrawn model before the models are applied, however 
   assert.equal(response.status, 403);
   assert.equal((await response.json()).error.code, 'agent_not_granted');
   await until(() => engine.refreshes.length > refreshesBefore);
+});
+
+const keyOf = (userId) => crypto.createHash('sha256').update(userId).digest('hex').slice(0, 16);
+const catalogSkill = (name, version = '1.0.0') => ({ name, version, files: [{ path: 'SKILL.md', content: `---\nname: ${name}\ndescription: ${name}\n---\nBody\n` }] });
+const cachedWithSkills = (skills) => ({
+  bundleVersion: 7,
+  subject: null,
+  models: { configured: true, items: [{ alias: 'a1', label: 'a1' }] },
+  mcp: { configured: true, items: [] },
+  skills: { configured: true, items: skills },
+  knowledge: { configured: true, items: [] },
+});
+const MY_SKILL = '---\nname: mine\ndescription: mine\n---\nMine\n';
+const engineConfigHome = (t) => {
+  const dir = path.join(tempDataDir(t), 'opencode');
+  fs.mkdirSync(path.join(dir, 'skills', 'mine'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'skills', 'mine', 'SKILL.md'), MY_SKILL);
+  return dir;
+};
+const orgSkillsIn = (engineConfigDir) => {
+  const root = path.join(engineConfigDir, 'skills');
+  return fs.existsSync(root) ? fs.readdirSync(root).filter((name) => name.startsWith('mittr-')).sort() : [];
+};
+const accountMarkerIn = (engineConfigDir) => {
+  try {
+    return fs.readFileSync(path.join(engineConfigDir, 'skills', '.mittr-account'), 'utf8').trim();
+  } catch {
+    return null;
+  }
+};
+const mySkillIn = (engineConfigDir) => fs.readFileSync(path.join(engineConfigDir, 'skills', 'mine', 'SKILL.md'), 'utf8');
+const writeAccountIndex = (dataDir, accounts, active) => {
+  fs.mkdirSync(path.join(dataDir, 'mittr-accounts'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'mittr-accounts', 'index.json'), JSON.stringify({ active, accounts }));
+};
+const recordingSecretStore = () => {
+  const sealing = sealingStore();
+  const uses = [];
+  return {
+    uses,
+    available: () => { uses.push('available'); return true; },
+    encrypt: (text) => { uses.push('encrypt'); return sealing.encrypt(text); },
+    decrypt: (data) => { uses.push('decrypt'); return sealing.decrypt(data); },
+  };
+};
+const withSkills = (catalog, skills) => ({ ...catalog, skills });
+
+test('setup installs the first account\'s catalog skills from its cache without opening the keychain', async (t) => {
+  const dataDir = tempDataDir(t);
+  const engineConfigDir = engineConfigHome(t);
+  writeAccountIndex(dataDir, [{ userId: 'u-a', displayName: 'A', home: null, signedIn: true }], 'u-a');
+  fs.writeFileSync(path.join(dataDir, 'mittr-catalog.json'), JSON.stringify(cachedWithSkills([catalogSkill('card-analysis')])));
+  const opened = [];
+  const secretStore = {
+    available: () => true,
+    encrypt: () => { opened.push('encrypt'); throw new Error('the keychain was asked to seal'); },
+    decrypt: () => { opened.push('decrypt'); throw new Error('the keychain was asked to open'); },
+  };
+
+  await setUp(t, { dataDir, engineConfigDir, host: { secretStore, deepLinks: deepLinkHost() } });
+
+  assert.deepEqual(orgSkillsIn(engineConfigDir), ['mittr-card-analysis']);
+  assert.equal(accountMarkerIn(engineConfigDir), keyOf('u-a'));
+  assert.equal(mySkillIn(engineConfigDir), MY_SKILL);
+  assert.deepEqual(opened, []);
+});
+
+test('a pending 1.x session removes the org skills at setup, and its carry installs its own', async (t) => {
+  const dataDir = tempDataDir(t);
+  const engineConfigDir = engineConfigHome(t);
+  const secretStore = recordingSecretStore();
+  fs.writeFileSync(path.join(dataDir, 'mittr-session'), sealingStore().encrypt(JSON.stringify(session)));
+  fs.writeFileSync(path.join(dataDir, 'mittr-catalog.json'), JSON.stringify(cachedWithSkills([catalogSkill('card-analysis')])));
+  fs.mkdirSync(path.join(engineConfigDir, 'skills', 'mittr-left-behind'));
+  fs.writeFileSync(path.join(engineConfigDir, 'skills', 'mittr-left-behind', 'SKILL.md'), 'old');
+  fs.writeFileSync(path.join(engineConfigDir, 'skills', 'mittr-left-behind', '.mittr-version'), '1\n');
+  fs.writeFileSync(path.join(engineConfigDir, 'skills', '.mittr-account'), `${keyOf('someone-else')}\n`);
+
+  const { call } = await setUp(t, { dataDir, engineConfigDir, fetchImpl: platform(), host: { secretStore, deepLinks: deepLinkHost() } });
+
+  assert.deepEqual(orgSkillsIn(engineConfigDir), []);
+  assert.equal(accountMarkerIn(engineConfigDir), null);
+  assert.deepEqual(secretStore.uses, []);
+
+  assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: true, userId: 'u-a', displayName: 'A' });
+  assert.deepEqual(orgSkillsIn(engineConfigDir), ['mittr-card-analysis']);
+  assert.equal(accountMarkerIn(engineConfigDir), keyOf('u-a'));
+  assert.equal(mySkillIn(engineConfigDir), MY_SKILL);
+});
+
+test('a sync installs the account\'s catalog skills, and signing out of the last account removes them', async (t) => {
+  const engineConfigDir = engineConfigHome(t);
+  const fetchImpl = platform({ catalogs: { 'at-1': withSkills(CATALOG_A, [catalogSkill('card-analysis'), catalogSkill('notes')]) } });
+  const { call } = await setUp(t, { engineConfigDir, fetchImpl });
+
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => orgSkillsIn(engineConfigDir).length === 2);
+  assert.deepEqual(orgSkillsIn(engineConfigDir), ['mittr-card-analysis', 'mittr-notes']);
+  assert.equal(accountMarkerIn(engineConfigDir), keyOf('u-a'));
+
+  assert.equal((await call('DELETE', '/api/mittr/auth/session')).status, 200);
+  assert.deepEqual(orgSkillsIn(engineConfigDir), []);
+  assert.equal(accountMarkerIn(engineConfigDir), null);
+  assert.equal(mySkillIn(engineConfigDir), MY_SKILL);
+});
+
+test('a switch reconciles the new account\'s skills before the engine restarts', async (t) => {
+  const engineConfigDir = engineConfigHome(t);
+  const fetchImpl = platform({
+    sessions: [session, sessionB],
+    catalogs: {
+      'at-1': withSkills(CATALOG_A, [catalogSkill('card-analysis')]),
+      'at-b': withSkills(CATALOG_B, [catalogSkill('planning')]),
+    },
+  });
+  const dataHomeOf = (home) => `/engine-data/${home ?? 'shared'}`;
+  const engine = fakeEngineContext();
+  engine.launchedDataHome = dataHomeOf('none');
+  const atRestart = [];
+  const { mittr, call } = await setUp(t, { engineConfigDir, engine, fetchImpl, engineDataHome: dataHomeOf });
+  engine.onRestart = () => {
+    atRestart.push({ skills: orgSkillsIn(engineConfigDir), marker: accountMarkerIn(engineConfigDir) });
+    engine.launchedDataHome = dataHomeOf(mittr.engineHome());
+  };
+
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => orgSkillsIn(engineConfigDir).join() === 'mittr-card-analysis');
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => orgSkillsIn(engineConfigDir).join() === 'mittr-planning');
+  assert.equal(accountMarkerIn(engineConfigDir), keyOf('u-b'));
+  assert.deepEqual(atRestart.at(-1), { skills: [], marker: null });
+
+  const held = deferred();
+  const restarts = atRestart.length;
+  fetchImpl.calls.length = 0;
+  engine.onRestart = () => {
+    atRestart.push({ skills: orgSkillsIn(engineConfigDir), marker: accountMarkerIn(engineConfigDir) });
+    engine.launchedDataHome = dataHomeOf(mittr.engineHome());
+    return held.promise;
+  };
+  const switched = call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' });
+  await until(() => atRestart.length > restarts);
+  assert.deepEqual(atRestart.at(-1), { skills: ['mittr-card-analysis'], marker: keyOf('u-a') });
+  assert.equal(catalogCalls(fetchImpl).length, 0);
+  held.resolve();
+  assert.equal((await switched).status, 200);
+  assert.equal(mySkillIn(engineConfigDir), MY_SKILL);
+});
+
+test('turning a catalog skill off removes it at once, and turning it on brings it back', async (t) => {
+  const engineConfigDir = engineConfigHome(t);
+  const fetchImpl = platform({ catalogs: { 'at-1': withSkills(CATALOG_A, [catalogSkill('card-analysis'), catalogSkill('notes')]) } });
+  const { call } = await setUp(t, { engineConfigDir, fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => orgSkillsIn(engineConfigDir).length === 2);
+
+  assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'skills', name: 'card-analysis', enabled: false }), { status: 200, body: { ok: true } });
+  assert.deepEqual(orgSkillsIn(engineConfigDir), ['mittr-notes']);
+
+  assert.equal((await call('POST', '/api/mittr/catalog/sync')).status, 200);
+  assert.deepEqual(orgSkillsIn(engineConfigDir), ['mittr-notes']);
+
+  assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'skills', name: 'card-analysis', enabled: true }), { status: 200, body: { ok: true } });
+  assert.deepEqual(orgSkillsIn(engineConfigDir), ['mittr-card-analysis', 'mittr-notes']);
+});
+
+test('a toggle whose skills cannot be applied answers applied false, and the next sync applies them', async (t) => {
+  const engineConfigDir = path.join(tempDataDir(t), 'opencode');
+  fs.mkdirSync(engineConfigDir, { recursive: true });
+  const fetchImpl = platform({ catalogs: { 'at-1': withSkills(CATALOG_A, [catalogSkill('card-analysis')]) } });
+  fs.writeFileSync(path.join(engineConfigDir, 'skills'), 'not a folder');
+  const { call, logger } = await setUp(t, { engineConfigDir, fetchImpl });
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => catalogCalls(fetchImpl).length === 1);
+
+  assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'skills', name: 'card-analysis', enabled: true }), { status: 200, body: { ok: true, applied: false } });
+  assert.ok(logger.warnings.some((line) => line.includes('applying the catalog enablement failed')));
+
+  fs.rmSync(path.join(engineConfigDir, 'skills'));
+  assert.equal((await call('POST', '/api/mittr/catalog/sync')).status, 200);
+  assert.deepEqual(orgSkillsIn(engineConfigDir), ['mittr-card-analysis']);
+});
+
+test('a toggled skill that could not be written answers applied false and names the skill in the log', async (t) => {
+  const engineConfigDir = engineConfigHome(t);
+  const fetchImpl = platform({ catalogs: { 'at-1': withSkills(CATALOG_A, [catalogSkill('mine'), catalogSkill('notes')]) } });
+  const { call, logger } = await setUp(t, { engineConfigDir, fetchImpl });
+  fs.mkdirSync(path.join(engineConfigDir, 'skills', 'mittr-mine'));
+  fs.writeFileSync(path.join(engineConfigDir, 'skills', 'mittr-mine', 'SKILL.md'), MY_SKILL);
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => orgSkillsIn(engineConfigDir).includes('mittr-notes'));
+  assert.ok(logger.warnings.some((line) => line.includes("'mittr-mine'")));
+
+  assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'skills', name: 'mine', enabled: true }), { status: 200, body: { ok: true, applied: false } });
+  assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'skills', name: 'notes', enabled: true }), { status: 200, body: { ok: true } });
+  assert.equal(fs.readFileSync(path.join(engineConfigDir, 'skills', 'mittr-mine', 'SKILL.md'), 'utf8'), MY_SKILL);
 });
