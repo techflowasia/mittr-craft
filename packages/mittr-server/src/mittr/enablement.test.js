@@ -101,3 +101,35 @@ test('the directory is created when it is missing', (t) => {
   createEnablementStore({ filePath }).setEnabled('mcp', 'jira', false);
   assert.equal(createEnablementStore({ filePath }).isEnabled('mcp', 'jira'), false);
 });
+
+test('the store switches only mcp and skills, and writes no prototype-like key', (t) => {
+  const dir = tempDataDir(t);
+  const store = createEnablementStore({ filePath: fileIn(dir) });
+  for (const kind of ['models', 'knowledge', '__proto__', 'constructor', 'toString', '', undefined, 7]) {
+    assert.throws(() => store.setEnabled(kind, 'x', false), /Only mcp and skills/, String(kind));
+    assert.equal(store.isEnabled(kind, 'x'), true, String(kind));
+  }
+  assert.equal(fs.existsSync(fileIn(dir)), false);
+
+  store.setEnabled('skills', '__proto__', false);
+  store.setEnabled('skills', 'constructor', false);
+  assert.equal(Object.getPrototypeOf(Object.prototype), null);
+  assert.equal({}.disabled, undefined);
+  assert.equal({}.at, undefined);
+  const stored = JSON.parse(fs.readFileSync(fileIn(dir), 'utf8'));
+  assert.deepEqual(Object.keys(stored).sort(), ['skills']);
+  assert.deepEqual(Object.keys(stored.skills).sort(), ['__proto__', 'constructor']);
+  assert.equal(store.isEnabled('mcp', '__proto__'), true);
+  assert.equal(store.isEnabled('skills', '__proto__'), false);
+});
+
+test('a file that carries a prototype key for a kind is not trusted for it', (t) => {
+  const dir = tempDataDir(t);
+  fs.writeFileSync(fileIn(dir), '{"__proto__":{"jira":{"disabled":true}},"mcp":{"law":{"disabled":true}}}');
+  const store = createEnablementStore({ filePath: fileIn(dir) });
+  assert.equal(store.isEnabled('mcp', 'jira'), true);
+  assert.equal(store.isEnabled('mcp', 'law'), false);
+  store.setEnabled('mcp', 'other', false);
+  assert.equal({}.jira, undefined);
+  assert.equal(store.isEnabled('mcp', 'jira'), true);
+});

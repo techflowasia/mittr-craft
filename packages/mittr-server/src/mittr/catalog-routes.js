@@ -130,10 +130,12 @@ export function registerMittrCatalogRoutes(app, {
           logger.warn('[mittr] applying the Mittr models failed:', error?.message ?? error);
         }
       }
-      try {
-        await onCatalog(stored);
-      } catch (error) {
-        logger.warn('[mittr] applying the Mittr catalog failed:', error?.message ?? error);
+      if (cache() === target) {
+        try {
+          await onCatalog(stored);
+        } catch (error) {
+          logger.warn('[mittr] applying the Mittr catalog failed:', error?.message ?? error);
+        }
       }
     }
     return { status: 200, body: { bundleVersion: catalog.bundleVersion } };

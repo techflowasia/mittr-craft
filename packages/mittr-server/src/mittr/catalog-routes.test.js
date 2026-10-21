@@ -454,6 +454,30 @@ test('the catalog hears nobody when the account changed while the sync was out',
 
   assert.equal((await pending).status, 200);
   assert.deepEqual(catalogs, []);
+  assert.equal(cacheA.read().bundleVersion, 7);
+  assert.equal(cacheB.read(), null);
+});
+
+test('the catalog hears nobody when the account changed while the models were being applied', async (t) => {
+  const dataDir = tempDataDir(t);
+  const cacheA = createCatalogCache({ filePath: catalogCachePath(dataDir, '000000000000000a') });
+  const cacheB = createCatalogCache({ filePath: catalogCachePath(dataDir, '000000000000000b') });
+  let active = cacheA;
+  const applied = [];
+  const { sync, catalogs } = await setUp(t, {
+    dataDir,
+    cache: () => active,
+    onModels: async (items) => {
+      applied.push(items);
+      active = cacheB;
+    },
+  });
+
+  assert.equal((await sync()).status, 200);
+  assert.equal(applied.length, 1);
+  assert.deepEqual(catalogs, []);
+  assert.equal(cacheA.read().bundleVersion, 7);
+  assert.equal(cacheB.read(), null);
 });
 
 test('a catalog listener that throws does not turn the sync into a rejection', async (t) => {
