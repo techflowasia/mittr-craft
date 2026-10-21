@@ -557,6 +557,20 @@ export const UPSTREAM_CONTRACT = [
     why: "Go work starts its session through createSession(title, directory, metadata, selectionTransition, selection, navigation), which creates the session on selection's model ({ providerID, id, variant }) and agent, opens it when navigation is 'open' and answers null when the create fails; the session is then set up with initializeNewOpenChamberSession(sessionId, agents), and closeMainSurfaces() brings the chat forward, as upstream does for a guest session it opens",
   },
   {
+    id: 'work-tracking-settings-ui',
+    files: [
+      'packages/ui/src/components/sections/shared/SettingsSection.tsx',
+      'packages/ui/src/components/ui/input.tsx',
+      'packages/ui/src/components/ui/button.tsx',
+      'packages/ui/src/components/ui/index.ts',
+      'packages/ui/src/components/icon/sprite.ts',
+      'packages/ui/src/lib/i18n/index.ts',
+      'packages/ui/src/lib/i18n/messages/en.ts',
+      'packages/ui/src/lib/i18n/messages/en.settings.ts',
+    ],
+    why: "Work tracking is a SettingsSection (title, info, contentClassName) holding SettingsStackedField cells (label, className) and a SettingsControlGroup (title, description, contentClassName), with SETTINGS_HELPER_CLASS for its quiet lines; its fields are Inputs that pass type, value and aria-label through, so the token and key are password fields, its actions are default, outline and ghost sm Buttons, results go to toast, it draws the loader-4, stack, close, add, checkbox-circle and error-warning icons, and it reads upstream's own common.loading and settings.common.actions.saveChanges through useI18n",
+  },
+  {
     id: 'guest-send-selection',
     files: [
       'packages/ui/src/lib/guests/start-session.ts',

@@ -21,8 +21,8 @@ import { useUIStore } from '../../../ui/src/stores/useUIStore';
 import * as sessionActions from '../../../ui/src/sync/session-actions';
 import { useSessionUIStore } from '../../../ui/src/sync/session-ui-store';
 import { useQuotaMe } from '../quota/quotaMeStore';
-import { listenAccountChanged } from '../sign-in/accountChange';
-import { signedInAccount, watchSignedInAccount } from '../sign-in/signedInAccount';
+import { listenAnyAccountChange } from '../sign-in/accountChange';
+import { signedInAccount } from '../sign-in/signedInAccount';
 import { useMittrT } from '../strings/mittrT';
 import { createMyWorkController, MY_WORK_LOADING, type MyWorkController, type MyWorkState } from './myWorkController';
 import { mittrAvailable, mittrCatalogAliases, planGoWork, startGoWork, type GoWorkDeps } from './goWork';
@@ -313,15 +313,6 @@ const browserStorage = (): Storage | null => {
   } catch {
     return null;
   }
-};
-
-const listenAnyAccountChange = (onChange: () => void): (() => void) => {
-  const stopOtherWindows = listenAccountChanged(onChange);
-  const stopThisWindow = watchSignedInAccount(onChange);
-  return () => {
-    stopOtherWindows();
-    stopThisWindow();
-  };
 };
 
 const subscribeNothing = (): (() => void) => () => {};

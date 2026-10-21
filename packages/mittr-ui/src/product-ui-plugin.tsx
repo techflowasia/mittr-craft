@@ -15,6 +15,7 @@ import { MittrSignInGate } from './sign-in/MittrSignInGate';
 import { strings } from './strings/en';
 import { mittrT } from './strings/mittrT';
 import { AdSignIn } from './ui-auth/AdSignIn';
+import { WorkTrackingSettingsItem } from './work-tracking/WorkTrackingSection';
 
 export function MittrRoot({ children }: { children: React.ReactNode }): React.ReactNode {
   return (
@@ -38,6 +39,7 @@ registerProductUiPlugin({
   rootWrapper: MittrRoot,
   slots: {
     'providers-page': OtherProvidersSwitch,
+    'integrations-page': WorkTrackingSettingsItem,
     'sidebar-footer': SIDEBAR_FOOTER,
     'session-auth-methods': AdSignIn,
     'about-dialog': SignOutButton,

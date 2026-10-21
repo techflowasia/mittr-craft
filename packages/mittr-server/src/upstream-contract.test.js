@@ -1574,6 +1574,33 @@ const checks = {
     has(source('packages/ui/src/stores/useUIStore.ts'), /^ {2}closeMainSurfaces: \(\) => void;$/m, 'closeMainSurfaces() is gone');
   },
 
+  'work-tracking-settings-ui': () => {
+    const section = source('packages/ui/src/components/sections/shared/SettingsSection.tsx');
+    has(section, /^export const SettingsSection: React\.FC<SettingsSectionProps> = \(\{/m, 'SettingsSection is gone');
+    has(section, /interface SettingsSectionProps \{[^}]*\n {2}title\?: React\.ReactNode;[^}]*\n {2}info\?: React\.ReactNode;[^}]*\n {2}contentClassName\?: string;/s, 'SettingsSection no longer takes title, info and contentClassName');
+    has(section, /^export const SettingsStackedField: React\.FC<SettingsStackedFieldProps> = \(\{/m, 'SettingsStackedField is gone');
+    has(section, /interface SettingsStackedFieldProps \{\s*label: React\.ReactNode;[^}]*\n {2}className\?: string;/s, 'SettingsStackedField no longer takes label and className');
+    has(section, /^export const SettingsControlGroup: React\.FC<SettingsControlGroupProps> = \(\{/m, 'SettingsControlGroup is gone');
+    has(section, /interface SettingsControlGroupProps \{\s*title\?: React\.ReactNode;\s*description\?: React\.ReactNode;[^}]*\n {2}contentClassName\?: string;/s, 'SettingsControlGroup no longer takes title, description and contentClassName');
+    has(section, /^export const SETTINGS_HELPER_CLASS = /m, 'SETTINGS_HELPER_CLASS is gone');
+    const input = source('packages/ui/src/components/ui/input.tsx');
+    has(input, /^function Input\(\{ className, type, \.\.\.props \}: React\.ComponentProps<"input">\) \{$/m, 'Input no longer takes the input element props');
+    has(input, /^\s+type=\{type\}$/m, 'Input no longer passes its type through');
+    has(input, /^\s+\{\.\.\.props\}\n\s+\/>$/m, 'Input no longer passes the rest of its props through last');
+    has(input, /^export \{ Input \}$/m);
+    const button = source('packages/ui/src/components/ui/button.tsx');
+    for (const variant of ['default', 'outline', 'ghost']) has(button, new RegExp(`^\\s+${variant}:`, 'm'), `Button lost the ${variant} variant`);
+    has(button, /^\s+sm: "/m, 'Button lost the sm size');
+    has(source('packages/ui/src/components/ui/index.ts'), /^export \{ toast \} from '\.\/toast'/m, 'toast is no longer exported from components/ui');
+    const sprite = source('packages/ui/src/components/icon/sprite.ts');
+    for (const name of ['loader-4', 'stack', 'close', 'add', 'checkbox-circle', 'error-warning']) {
+      has(sprite, new RegExp(`^ {2}"${name}": `, 'm'), `the ${name} icon is gone`);
+    }
+    has(source('packages/ui/src/lib/i18n/index.ts'), /^export \{ useI18n \} from '\.\/useI18n';$/m, 'useI18n is no longer exported from lib/i18n');
+    has(source('packages/ui/src/lib/i18n/messages/en.ts'), /^ {2}'common\.loading': /m, 'common.loading is gone');
+    has(source('packages/ui/src/lib/i18n/messages/en.settings.ts'), /^ {2}'settings\.common\.actions\.saveChanges': /m, 'settings.common.actions.saveChanges is gone');
+  },
+
   'guest-send-selection': () => {
     const upstream = source('packages/ui/src/lib/guests/start-session.ts');
     const ours = source('packages/mittr-ui/src/work/sendSelection.ts');

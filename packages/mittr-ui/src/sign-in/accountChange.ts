@@ -1,3 +1,5 @@
+import { watchSignedInAccount } from './signedInAccount';
+
 const ACCOUNT_CHANGED_CHANNEL = 'mittr.account.changed';
 
 const thisWindow = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -20,6 +22,15 @@ export function listenAccountChanged(onChange: () => void): () => void {
   return () => {
     channel.onmessage = null;
     channel.close();
+  };
+}
+
+export function listenAnyAccountChange(onChange: () => void): () => void {
+  const stopOtherWindows = listenAccountChanged(onChange);
+  const stopThisWindow = watchSignedInAccount(onChange);
+  return () => {
+    stopOtherWindows();
+    stopThisWindow();
   };
 }
 

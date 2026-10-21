@@ -53,6 +53,15 @@ describe('MittrCraft UI plugin', () => {
   });
 });
 
+describe('MittrCraft integrations page', () => {
+  test('the integrations page carries Work tracking', () => {
+    const html = renderToStaticMarkup(
+      React.createElement(I18nProvider, null, React.createElement(ProductSlot, { name: 'integrations-page' })),
+    );
+    expect(html).toContain(`>${mittrT('mittr.workTracking.title')}</h2>`);
+  });
+});
+
 describe('MittrCraft model picker and providers page', () => {
   test('the picker shows only Mittr until the switch is known to be on', () => {
     const shown: Record<string, boolean> = {};

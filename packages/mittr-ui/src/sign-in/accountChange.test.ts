@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import { announceAccountChanged, beginSignInWait, gateHeld, holdGate, listenAccountChanged, onGateRelease, reloadOrDefer } from './accountChange';
+import { announceAccountChanged, beginSignInWait, gateHeld, holdGate, listenAccountChanged, listenAnyAccountChange, onGateRelease, reloadOrDefer } from './accountChange';
+import { setSignedInAccount, signedInAccount } from './signedInAccount';
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
@@ -20,6 +21,31 @@ describe('account change across windows', () => {
     } finally {
       stop();
       other.close();
+    }
+  });
+
+  test('a window hears both another window\'s change and its own signed-in account changing', async () => {
+    const before = signedInAccount();
+    const heard: string[] = [];
+    const stop = listenAnyAccountChange(() => heard.push('heard'));
+    const other = new BroadcastChannel('mittr.account.changed');
+    try {
+      other.postMessage('another-window');
+      await settle();
+      expect(heard).toEqual(['heard']);
+
+      setSignedInAccount('u-any-change');
+      expect(heard).toEqual(['heard', 'heard']);
+
+      stop();
+      setSignedInAccount(before);
+      other.postMessage('another-window');
+      await settle();
+      expect(heard).toEqual(['heard', 'heard']);
+    } finally {
+      stop();
+      other.close();
+      setSignedInAccount(before);
     }
   });
 });
