@@ -16,6 +16,9 @@ import { z } from 'zod';
  * - `managedConfig()`: an OpenCode config fragment written into the managed
  *   config layer beside OpenChamber's own plugins, read again on every start
  *   and every managed-config refresh;
+ * - `neverAutoAnswer(permission)`: true for a permission request that must
+ *   always reach the user; the auto-accept runtime then holds it in every
+ *   mode, and a plugin whose check throws holds it too;
  * - `dispose()`: run on shutdown, before OpenCode stops.
  *
  * Without the variable nothing loads.
