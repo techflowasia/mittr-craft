@@ -154,6 +154,7 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
   return {
     engineEnv: async () => ({ ...baseEngineEnv(mittr.engineHome()), ...(await mittr.engineEnv()), ...withheldNow() }),
     managedConfig: mittr.managedConfig,
+    neverAutoAnswer: mittr.neverAutoAnswer,
     dispose: async () => {
       try {
         await mittr.dispose();

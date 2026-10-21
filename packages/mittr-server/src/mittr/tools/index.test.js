@@ -54,6 +54,7 @@ const setUp = async (t, {
   resolveSessionDirectory = async (id) => `/work/${id}`,
   chromeApprovals = NO_APPROVALS,
   enginePort = 4096,
+  engineBase = null,
 } = {}) => {
   const registry = createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, execute: async () => ({}) } });
   const readyListeners = new Set();
@@ -66,7 +67,9 @@ const setUp = async (t, {
     dataDir,
     server: { port: () => state.port },
     opencode: {
-      url: (route = '/') => `http://127.0.0.1:${enginePort}${route}`,
+      url: (route = '/') => `${engineBase ?? `http://127.0.0.1:${enginePort}`}${route}`,
+      authHeaders: () => ({ authorization: 'Basic acme' }),
+      defaultDirectory: () => '/work',
       onReady: (listener) => {
         readyListeners.add(listener);
         return () => readyListeners.delete(listener);
@@ -117,7 +120,8 @@ const setUp = async (t, {
   const pluginSource = () => fs.readFileSync(path.join(dataDir, 'engine-plugins', 'mittrcraft-tools', 'index.js'), 'utf8');
   const fireReady = () => { for (const listener of readyListeners) listener(); };
   const emit = (payloads) => { for (const listener of eventListeners) listener({ payload: {}, translated: () => payloads }); };
-  return { tools, state, logger, dataDir, mittrSettings, registry, call, pluginSource, fireReady, emit, runs, readyListeners, eventListeners };
+  const emitRaw = (payload) => { for (const listener of eventListeners) listener({ payload, translated: () => [] }); };
+  return { tools, state, logger, dataDir, mittrSettings, registry, call, pluginSource, fireReady, emit, emitRaw, runs, readyListeners, eventListeners };
 };
 
 const toolNamesIn = (source) => [...source.matchAll(/name: "(mittrcraft_[a-z]+)"/g)].map((match) => match[1]);
@@ -325,10 +329,10 @@ test('a plugin that cannot be rewritten keeps the one already on disk', { skip: 
   assert.ok(logger.lines.some((line) => line.startsWith('[mittr] could not rewrite the MittrCraft tools plugin; the engine keeps the one already written, and the next config write tries again:')), logger.lines.join('\n'));
 });
 
-test('dispose stops listening for engine starts and events', async (t) => {
+test('dispose stops listening for engine starts, events and Chrome site answers', async (t) => {
   const { tools, readyListeners, eventListeners } = await setUp(t);
   assert.equal(readyListeners.size, 1);
-  assert.equal(eventListeners.size, 1);
+  assert.equal(eventListeners.size, 2);
   await tools.dispose();
   assert.equal(readyListeners.size, 0);
   assert.equal(eventListeners.size, 0);
@@ -409,7 +413,9 @@ const everySite = () => {
   return {
     record,
     isApproved: async () => true,
-    awaitDecision: async () => null,
+    ask: async () => 'reject',
+    asked: () => {},
+    replied: () => {},
     forgetSession: (sessionId) => record.forgotten.push(sessionId),
     forgetAll: () => { record.forgotAll += 1; },
     removeHost: async (host) => [host],
@@ -501,4 +507,98 @@ test('a Chrome left by an earlier run is closed at start, so its old profile or 
   assert.equal(commands[0], 'close --all', 'the sweep runs before any Chrome action');
   assert.equal(commands.includes('get url'), false, 'the earlier run\'s Chrome was not asked for its page');
   assert.equal((await chrome('open', { url: 'http://acme.example.test/' })).ok, true);
+});
+
+const fakeEngineServer = async (t, { effect = 'ask' } = {}) => {
+  const seen = [];
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    seen.push({ method: req.method, path: req.path, body: req.body, auth: req.get('authorization') ?? null });
+    next();
+  });
+  app.post('/api/session/:id/permission', (_req, res) => res.json({ data: effect === 'ask' ? { id: 'per_1', effect } : { effect } }));
+  app.post('/api/session/:id/permission/:pid/reply', (_req, res) => res.status(204).end());
+  app.get('/api/session/:id/permission', (_req, res) => res.json({ data: [{ id: 'per_1' }] }));
+  app.get('/api/permission/saved', (_req, res) => res.json({ data: [] }));
+  return { base: await listen(t, app), seen };
+};
+
+const engineChromeSetUp = async (t, options = {}) => {
+  const engine = await fakeEngineServer(t, options);
+  const setup = await chromeSetUp(t, { engineBase: engine.base });
+  return { ...setup, engine };
+};
+
+const realApprovals = async (t, options) => {
+  const engine = await fakeEngineServer(t, options);
+  const project = fs.realpathSync(tempDataDir(t));
+  const driver = stubAgentBrowser(t, { png: MARKER_PNG });
+  const setup = await setUp(t, { drivers: { ...ALL_DRIVERS, chrome: () => driver.file }, chromeApprovals: null, engineBase: engine.base, resolveSessionDirectory: async () => project });
+  const chrome = (action, parameters = {}, extra = {}) => setup.call({ tool: 'mittrcraft_chrome', input: { action, parameters }, sessionID: 'ses_1', ...extra });
+  return { ...setup, engine, driver, project, chrome };
+};
+
+test('an engine call for a site not yet allowed raises the engine\'s own question and waits for the person\'s raw reply', async (t) => {
+  const { chrome, engine, emitRaw, driver, project } = await realApprovals(t);
+  const opened = chrome('open', { url: 'http://acme.example.test/' }, { messageID: 'msg_1', callID: 'call_1' });
+  await until(() => engine.seen.some(({ path: route }) => route === '/api/session/ses_1/permission'));
+  assert.equal(driver.commands().some(({ command }) => command[0] === 'open'), false, 'nothing opens before the person answers');
+  emitRaw({ type: 'permission.replied', data: { sessionID: 'ses_1', requestID: 'per_1', reply: 'once' } });
+  const answer = await opened;
+  assert.equal(answer.ok, true);
+  const created = engine.seen.find(({ method, path: route }) => method === 'POST' && route === '/api/session/ses_1/permission');
+  assert.deepEqual(created.body, {
+    action: 'mittrcraft_chrome',
+    resources: ['acme.example.test'],
+    save: ['acme.example.test'],
+    message: 'Allow the agent to use your Chrome sign-in on acme.example.test?',
+    metadata: { host: 'acme.example.test' },
+    source: { type: 'tool', messageID: 'msg_1', id: 'call_1' },
+  });
+  assert.equal(created.auth, 'Basic acme');
+  assert.ok(project);
+});
+
+test('a translated reply alone decides nothing: only the raw reply carries the answer', async (t) => {
+  const { chrome, engine, eventListeners, driver } = await realApprovals(t);
+  const opened = chrome('open', { url: 'http://acme.example.test/' });
+  await until(() => engine.seen.some(({ path: route }) => route === '/api/session/ses_1/permission'));
+  for (const listener of eventListeners) listener({ payload: {}, translated: () => [{ type: 'permission.replied', properties: { sessionID: 'ses_1', requestID: 'per_1' } }] });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(driver.commands().some(({ command }) => command[0] === 'open'), false);
+  for (const listener of eventListeners) listener({ payload: { type: 'permission.replied', data: { sessionID: 'ses_1', requestID: 'per_1', reply: 'reject' } }, translated: () => [] });
+  assert.deepEqual((await opened).error, { message: 'The user did not allow using their Chrome sign-in on acme.example.test', kind: 'usage' });
+});
+
+test('an account switch withdraws an open Chrome question with a reject', async (t) => {
+  const { chrome, engine, tools } = await realApprovals(t);
+  const opened = chrome('open', { url: 'http://acme.example.test/' });
+  await until(() => engine.seen.some(({ path: route }) => route === '/api/session/ses_1/permission'));
+  await tools.accountChanged();
+  assert.deepEqual((await opened).error, { message: 'Cancelled while waiting for the user', kind: 'usage' });
+  assert.deepEqual(engine.seen.filter(({ path: route }) => route.endsWith('/reply')).map(({ path: route, body }) => [route, body]), [['/api/session/ses_1/permission/per_1/reply', { decision: 'reject' }]]);
+});
+
+test('a Chrome call over http from another machine raises no question', async (t) => {
+  const { registry, engine } = await realApprovals(t);
+  await assert.rejects(
+    registry.execute('chrome.open', { url: 'http://acme.example.test/' }, { surface: 'http', sessionId: 'ses_1', scope: { local: false } }),
+    (error) => error.statusCode === 403 && /can only be used from this machine/.test(error.message),
+  );
+  assert.deepEqual(engine.seen, []);
+});
+
+test('the plugin asks the engine to always ask about Chrome sites, only while the Chrome tool is in it', async (t) => {
+  const { pluginSource, tools } = await engineChromeSetUp(t);
+  await tools.managedConfig();
+  assert.match(pluginSource(), /const ASK_ALWAYS = \["mittrcraft_chrome"\]/);
+  await tools.applySwitches({ chrome: false });
+  assert.doesNotMatch(pluginSource(), /ASK_ALWAYS/);
+});
+
+test('only the Chrome question is never answered automatically', async (t) => {
+  const { tools } = await setUp(t);
+  assert.equal(tools.neverAutoAnswer({ action: 'mittrcraft_chrome', resources: ['acme.example.test'] }), true);
+  assert.equal(tools.neverAutoAnswer({ action: 'bash', resources: ['ls'] }), false);
 });

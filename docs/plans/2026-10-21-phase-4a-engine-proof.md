@@ -170,6 +170,16 @@ Each row is one create call in a fresh session, after rewriting the managed conf
 - **A plugin's `evaluate` hook outranks project config.** The hook got `{ action, agent, effect, metadata, resources, sessionID, source }` with `effect: 'allow'` from the project rule. It set `effect = 'ask'`, and the engine asked.
 - **Open for Task 8:** the hook was tested only against a project `allow`, for one host. How it interacts with a rule the engine saved after `always` is untested: a hook that turns every `allow` into `ask` may ask again after `always`, unless it consults MittrCraft's own approved sites. The request the hook is handed has no `save` and no `message`, so the hook cannot rely on either.
 
+### P15f: what Task 8 asked of the live engine
+
+Added for Task 8 and run twice on the same set-up (`--only agent-tools`, every scenario PASS, exit 0, no outbound attempt, port guard 146 checked and 0 refused, 57133 not listening). Each row is a server-created request, as in attempt (e).
+
+- **The evaluate hook alone makes the engine ask.** With no rule in any layer, `hooked.example.test` got `{ effect: 'ask' }` and a `permission.asked`.
+- **The hook asks again after `always`.** After `always` saved a rule for `hooked.example.test`, a new session's ask got `ask` and a `permission.asked`, not `allow`. The hook cannot tell a saved rule from a project `allow`, so it is MittrCraft's own approved list, checked by the server before it raises anything, that keeps an always-allowed site from being asked about again.
+- **A saved rule belongs to one project.** In two git repositories, `always` in the first left the second asking (`ask`), while a new session in the first got `allow`. A `GET /api/permission/saved` without that project's directory did not list the rule.
+- **A fresh location answers `deny` first.** The first create in a newly started project location answered `deny`, and the next, about 400 ms later, `ask`. A turn's own session is already running, so the Chrome tool does not meet this.
+- **After an interrupt the request stays until the server answers it.** `POST /api/session/:id/interrupt` answered 200. 1.5 s later the request was still listed and the engine had sent no `permission.replied`. A `reject` from the server then answered 204, a raw `permission.replied` with `reply: 'reject'` followed, and the request left the list.
+
 ## P16: auto-accept and safety on a plugin permission
 
 The probe ran upstream's `createPermissionAutoAcceptRuntime` against the engine, feeding it every `/api/event` frame as the global hub does (raw payload plus a lazy `translated()`).

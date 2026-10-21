@@ -644,6 +644,16 @@ export const UPSTREAM_CONTRACT = [
     files: ['packages/web/server/lib/permission-auto-accept/runtime.js', 'packages/web/server/lib/server-plugins.js', 'packages/web/server/index.js'],
     why: "a server plugin's neverAutoAnswer(permission) reaches upstream's permission auto-accept runtime, which then holds a marked request for the person in auto and safety sessions alike (no reply is sent and the safety classifier is not asked), announces it as left for the user, and never reports it as answered automatically, so the Chrome site question always reaches the person",
   },
+  {
+    id: 'permission-event-shape',
+    files: ['packages/web/server/lib/event-stream/translate-v2.js', 'packages/web/server/lib/event-stream/global-hub.js', 'node_modules/@opencode/schema/dist/permission.js'],
+    why: "a hub event hands plugins the raw wire payload beside translated(); the raw permission.asked carries data { id, sessionID, action, resources, save, metadata }, and only the raw permission.replied carries data.reply (once, always or reject) with requestID and sessionID, while the translated replied event keeps only properties { sessionID, requestID }, so the server reads the Chrome site answer from the raw payload",
+  },
+  {
+    id: 'engine-permission-api',
+    files: ['packages/electron/package.json', 'node_modules/@opencode/client/package.json'],
+    why: "the bundled engine is OpenCode 2.0.22, where POST /api/session/:id/permission with { action, resources, save, metadata, source } raises the engine's own permission card (answering { data: { id, effect } }, and dropping message), POST /api/session/:id/permission/:requestID/reply takes { decision } and answers 204, GET /api/session/:id/permission lists that session's open requests, GET and DELETE /api/permission/saved(/:id) list and remove the rules an always answer saves, and a plugin's ctx.permission.hook('evaluate', fn) may turn the effect a project rule gave (allow) into ask; probe P15 and P16 (scripts/mittr/probe-engine-v2.mjs --only agent-tools) must run again before this pin moves",
+  },
 ];
 
 // The dictionaries are TypeScript with extensionless imports, which only Bun

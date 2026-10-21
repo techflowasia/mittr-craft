@@ -2509,6 +2509,124 @@ const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
     turn: brief(abortRun),
   };
 
+  const WARM_HOST = 'warm.example.test';
+  const createAsk = async (sessionID, host) => call('POST', `/api/session/${encodeURIComponent(sessionID)}/permission`, { action: PROBE_PERMISSION, resources: [host], save: [host], metadata: { host } });
+  const askedEventFor = (requestID) => waitFor(() => events.events.find((e) => e.type === 'permission.asked' && e.data?.id === requestID), 1500, 50);
+  const repliedEventFor = (requestID, ms) => waitFor(() => events.events.find((e) => e.type === 'permission.replied' && e.data?.requestID === requestID), ms, 50);
+  const savedRulesFor = async (host) => {
+    const listed = await call('GET', '/api/permission/saved');
+    return (Array.isArray(listed.json) ? listed.json : []).filter((rule) => rule.action === PROBE_PERMISSION && rule.resource === host);
+  };
+  const clearSavedFor = async (host) => {
+    for (const rule of await savedRulesFor(host)) await call('DELETE', `/api/permission/saved/${encodeURIComponent(rule.id)}`);
+  };
+  const sessionIn = async (directory) => (await newSession(client, directory, 'stub', 'm1')).sessionID;
+  const withdraw = async (sessionID, created) => {
+    if (created.json?.effect === 'ask' && created.json.id) await replyTo(sessionID, created.json.id, 'reject');
+  };
+  const useManagedRules = async (permissions) => {
+    managed.permissions = permissions;
+    managed.policies = [];
+    await managedRuntime.refreshManagedConfigFile();
+    fs.rmSync(projectFile, { force: true });
+    await sleep(CONFIG_SETTLE_MS);
+  };
+
+  await useManagedRules([]);
+  const hookNoRule = await (async () => {
+    const sessionID = await sessionIn(work);
+    const created = await createAsk(sessionID, HOOKED_HOST);
+    const asked = created.json?.id ? Boolean(await askedEventFor(created.json.id)) : false;
+    await withdraw(sessionID, created);
+    return { host: HOOKED_HOST, status: created.status, effect: created.json?.effect ?? null, askedEvent: asked };
+  })();
+  const hookAfterAlways = await (async () => {
+    const first = await sessionIn(work);
+    const created = await createAsk(first, HOOKED_HOST);
+    const always = created.json?.id ? await replyTo(first, created.json.id, 'always') : null;
+    await sleep(300);
+    const savedRules = (await savedRulesFor(HOOKED_HOST)).length;
+    const second = await sessionIn(work);
+    const later = await createAsk(second, HOOKED_HOST);
+    const laterAsked = later.json?.id ? Boolean(await askedEventFor(later.json.id)) : false;
+    await withdraw(second, later);
+    await clearSavedFor(HOOKED_HOST);
+    return { host: HOOKED_HOST, firstEffect: created.json?.effect ?? null, alwaysStatus: always?.status ?? null, savedRules, laterEffect: later.json?.effect ?? null, laterAskedEvent: laterAsked };
+  })();
+
+  await useManagedRules(managedAsk);
+  const crossProject = await (async () => {
+    const dirs = ['work-a', 'work-b'].map((name) => path.join(home, name));
+    for (const [index, dir] of dirs.entries()) {
+      fs.mkdirSync(dir, { recursive: true });
+      const gitEnv = { PATH: '/usr/bin:/bin', HOME: home, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'probe', GIT_AUTHOR_EMAIL: 'probe@example.test', GIT_COMMITTER_NAME: 'probe', GIT_COMMITTER_EMAIL: 'probe@example.test' };
+      spawnSync('git', ['init', '-q'], { cwd: dir, env: gitEnv, encoding: 'utf8' });
+      spawnSync('git', ['commit', '-q', '--allow-empty', '-m', `probe project ${index}`], { cwd: dir, env: gitEnv, encoding: 'utf8' });
+    }
+    const inA = await sessionIn(dirs[0]);
+    const inB = await sessionIn(dirs[1]);
+    const warmUp = async (sessionID) => {
+      const started = Date.now();
+      const effects = [];
+      while (Date.now() - started < 8000) {
+        const created = await createAsk(sessionID, WARM_HOST);
+        effects.push(created.json?.effect ?? null);
+        await withdraw(sessionID, created);
+        if (created.json?.effect === 'ask') break;
+        await sleep(250);
+      }
+      return { effects, afterMs: Date.now() - started };
+    };
+    const warm = [await warmUp(inA), await warmUp(inB)];
+    const asked = await createAsk(inA, PROBE_HOST);
+    const always = asked.json?.id ? await replyTo(inA, asked.json.id, 'always') : null;
+    await sleep(300);
+    const rules = await savedRulesFor(PROBE_HOST);
+    const otherProject = await createAsk(inB, PROBE_HOST);
+    await withdraw(inB, otherProject);
+    const againInA = await sessionIn(dirs[0]);
+    const sameProject = await createAsk(againInA, PROBE_HOST);
+    await withdraw(againInA, sameProject);
+    await clearSavedFor(PROBE_HOST);
+    return {
+      host: PROBE_HOST,
+      warm,
+      sessionsCreated: Boolean(inA && inB && againInA),
+      firstEffect: asked.json?.effect ?? null,
+      alwaysStatus: always?.status ?? null,
+      savedRules: rules.length,
+      savedRuleHasProject: rules.every((rule) => typeof rule.projectID === 'string' && rule.projectID.length > 0),
+      otherProjectEffect: otherProject.json?.effect ?? null,
+      sameProjectEffect: sameProject.json?.effect ?? null,
+    };
+  })();
+
+  const interruptRun = await turn({
+    label: 'P15f interrupt',
+    pick: askTool('e'),
+    onAsked: async ({ sessionID, event }) => {
+      if (!event) return { asked: false };
+      const interrupted = await call('POST', `/api/session/${encodeURIComponent(sessionID)}/interrupt`);
+      await sleep(1500);
+      const stillListedAfterInterrupt = (await pendingList()).ids.includes(event.data.id);
+      const replyAfterInterrupt = await repliedEventFor(event.data.id, 10);
+      const reject = await replyTo(sessionID, event.data.id, 'reject');
+      const replied = await repliedEventFor(event.data.id, 3000);
+      const stillListedAfterReject = (await pendingList()).ids.includes(event.data.id);
+      return {
+        asked: true,
+        interruptStatus: interrupted.status,
+        stillListedAfterInterrupt,
+        engineRepliedOnInterrupt: Boolean(replyAfterInterrupt),
+        rejectStatus: reject.status,
+        repliedRaw: rawEvent(replied),
+        stillListedAfterReject,
+      };
+    },
+  });
+  await sleep(500);
+  const P15f = { hookNoRule, hookAfterAlways, crossProject, interrupt: interruptRun.askedResult, interruptTurn: brief(interruptRun) };
+
   const path15 = permissionPathFor({ raised: raisedE || ['a', 'b', 'c', 'd'].some((v) => variants[v].raised), learned, engineAnswersLater: P15d.engineAnsweredLaterAsk, deletedAndAskedAgain: P15d.askedAgainAfterDelete === true });
   const firstRaised = ['a', 'b', 'c', 'd', 'e'].find((v) => variants[v].raised) ?? null;
   scenarios.P15 = {
@@ -2524,6 +2642,7 @@ const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
     translatedRepliedFields: runs.once.onAsked?.repliedTranslated?.[0] ? Object.keys(runs.once.onAsked.repliedTranslated[0].properties).sort() : null,
     P15d,
     P15e,
+    P15f,
     ruleMatrix,
     askRuleDuringDecisions: { layer: 'managed config permissions', rules: managedAsk },
     evaluateHookCalls: hookRecords,

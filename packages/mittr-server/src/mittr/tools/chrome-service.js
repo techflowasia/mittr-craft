@@ -47,9 +47,15 @@ const DEFINITIONS = Object.freeze([
   { action: 'chrome.close', effect: 'change', title: 'Close the Chrome session', description: 'Close this session\'s Chrome; no parameters' },
 ]);
 
+const notYetAllowed = (host) => new MittrToolError(`The user has not yet allowed using their Chrome sign-in on ${host}`, 403, { code: 'site_approval_required', host });
+
 export const NO_APPROVALS = Object.freeze({
   isApproved: async () => false,
-  awaitDecision: async () => null,
+  ask: async ({ host }) => {
+    throw notYetAllowed(host);
+  },
+  asked: () => {},
+  replied: () => {},
   forgetSession: () => {},
   forgetAll: () => {},
   removeHost: async () => [],
@@ -200,12 +206,10 @@ export function createChromeService({
 
   const ensureApproved = async (sessionId, host, ctx) => {
     if (await isHostAllowed(sessionId, host)) return;
-    if (ctx.approvalAnswered === true) {
-      const reply = await approvals.awaitDecision(sessionId, host, ctx.signal);
-      if (reply === 'once' || reply === 'always') return;
-      if (reply === 'reject') throw new MittrToolError(`The user did not allow using their Chrome sign-in on ${host}`, 403);
-    }
-    throw new MittrToolError(`The user has not yet allowed using their Chrome sign-in on ${host}`, 403, { code: 'site_approval_required', host });
+    const reply = await approvals.ask({ sessionId, host, directory: textOf(ctx.directory), source: ctx.source, signal: ctx.signal });
+    if (reply === 'once' || reply === 'always') return;
+    if (reply === 'reject') throw new MittrToolError(`The user did not allow using their Chrome sign-in on ${host}`, 403);
+    throw notYetAllowed(host);
   };
 
   const ensureStillApproved = async (sessionId, options) => {

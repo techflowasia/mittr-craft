@@ -4,8 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createToolsCallback } from './callback.js';
+import { CHROME_PERMISSION, createChromeSiteApprovals, createEnginePermissions, isChromePermission, subscribeApprovals } from './chrome-approvals.js';
 import { CHROME_EXECUTABLE, createChromeControl, resolveAgentBrowser, resolveChrome } from './chrome-control.js';
-import { NO_APPROVALS, chromeToolDescription, createChromeService, registerChromeActions } from './chrome-service.js';
+import { chromeToolDescription, createChromeService, registerChromeActions } from './chrome-service.js';
 import { registerComputerActions } from './computer-actions.js';
 import { createComputerControl, createLaunchApp, resolveCuaDriver } from './computer-control.js';
 import { materializeToolsPlugin, toolsFragment, toolsPluginDir, toolsPluginSource } from './plugin-source.js';
@@ -64,10 +65,17 @@ export function setupMittrTools(context, {
   refresh,
   platform,
   drivers = bundledDrivers({ resourcesDir, env }),
-  chromeApprovals = NO_APPROVALS,
+  chromeApprovals = null,
+  engineFetch = fetch,
   logger = console,
 }) {
   const { app, dataDir, server, opencode, events, settings: upstreamSettings, control } = context;
+  const approvals = chromeApprovals ?? createChromeSiteApprovals({
+    settings: mittrSettings,
+    engine: createEnginePermissions({ opencode, fetchImpl: engineFetch }),
+    defaultDirectory: () => opencode.defaultDirectory?.() ?? null,
+    logger,
+  });
 
   const carried = mittrSettings.carryParkedToolSettings().then(
     (tools) => {
@@ -101,7 +109,7 @@ export function setupMittrTools(context, {
   const chrome = createChromeService({
     control: chromeControl,
     settings: mittrSettings,
-    approvals: chromeApprovals,
+    approvals,
     writeScreenshot: control.writeScreenshot,
     ownPorts: () => [server.port(), enginePortOf(opencode)].filter(Number.isInteger),
     ready: swept,
@@ -157,7 +165,8 @@ export function setupMittrTools(context, {
         ? { ...tool, description: chromeToolDescription({ webTool: wrap, doTask: tool.definitions.some(({ action }) => action === 'chrome.do') }) }
         : tool));
     if (tools.length === 0 && !wrap) return '';
-    return toolsPluginSource({ tools, codeMode: switches.upstream?.agentToolsCodeMode === true, wrapCapture: wrap });
+    const askPermissions = tools.some((tool) => tool.name === MITTR_TOOLS.chrome) ? [CHROME_PERMISSION] : [];
+    return toolsPluginSource({ tools, codeMode: switches.upstream?.agentToolsCodeMode === true, wrapCapture: wrap, askPermissions });
   };
 
   const render = async () => {
@@ -190,6 +199,7 @@ export function setupMittrTools(context, {
   };
 
   const unsubscribeReady = opencode.onReady(() => callback.engineReady());
+  const unsubscribeApprovals = subscribeApprovals(events, approvals);
   const unsubscribeEvents = events.subscribe((event) => {
     for (const payload of event?.translated?.() ?? []) {
       if (payload.type === 'session.idle' && payload.properties?.aborted === true) callback.abortSession(payload.properties.sessionID);
@@ -217,6 +227,7 @@ export function setupMittrTools(context, {
     applySwitches,
     switches,
     chrome,
+    neverAutoAnswer: isChromePermission,
     accountChanged: () => {
       chrome.forgetEveryGrant();
       return closeEveryChrome();
@@ -225,6 +236,7 @@ export function setupMittrTools(context, {
       disposed ??= (async () => {
         unsubscribeReady();
         unsubscribeEvents();
+        unsubscribeApprovals();
         await closeEveryChrome();
       })();
       return disposed;

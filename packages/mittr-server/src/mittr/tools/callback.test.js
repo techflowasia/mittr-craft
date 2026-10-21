@@ -93,6 +93,16 @@ test('a call runs the calling tool\'s action with the session directory, the ses
   assert.equal(Object.hasOwn(calls[0].ctx, 'scope'), false, 'an engine call claims no request scope');
 });
 
+test('a call that names its message and tool call hands them on as the source of a site question', async (t) => {
+  const { post, calls } = await setUp(t);
+  await post({ ...OPEN, messageID: 'msg_1', callID: 'call_1' });
+  await post({ ...OPEN, messageID: 'msg_1' });
+  await post({ ...OPEN, messageID: 7, callID: 'call_1' });
+  assert.deepEqual(calls[0].ctx.source, { type: 'tool', messageID: 'msg_1', id: 'call_1' });
+  assert.equal(Object.hasOwn(calls[1].ctx, 'source'), false);
+  assert.equal(Object.hasOwn(calls[2].ctx, 'source'), false);
+});
+
 test('a call carrying the previous start\'s token is refused', async (t) => {
   const { callback, post } = await setUp(t);
   const first = callback.engineEnv(4100).MITTRCRAFT_TOOLS_TOKEN;

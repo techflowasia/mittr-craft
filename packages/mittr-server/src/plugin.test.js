@@ -286,6 +286,22 @@ test('the engine env names the tools callback, and reading it again mints nothin
   assert.equal((await plugin.engineEnv()).MITTRCRAFT_TOOLS_TOKEN, first.MITTRCRAFT_TOOLS_TOKEN);
 });
 
+test('the server plugin marks the Chrome site question, and only it, as never answered automatically', async (t) => {
+  const home = tempHome(t);
+  const dataDir = prodLayout(home);
+  const plugin = await setupMittrServer({
+    dataDir,
+    logger: recordingLogger(),
+    env: {},
+    homeDir: home,
+    context: { app: express(), express, dataDir, logger: recordingLogger(), host: null, ...fakeEngineContext({ port: 4100 }).context },
+  });
+  t.after(() => plugin.dispose());
+
+  assert.equal(plugin.neverAutoAnswer({ action: 'mittrcraft_chrome', resources: ['acme.example.test'] }), true);
+  assert.equal(plugin.neverAutoAnswer({ action: 'bash', resources: ['ls'] }), false);
+});
+
 test('setup with the server context serves the hosted web UI with the MittrCraft brand', async (t) => {
   const home = tempHome(t);
   const dataDir = prodLayout(home);

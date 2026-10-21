@@ -23,7 +23,7 @@ const COMPUTER = {
   definitions: [{ action: 'computer.list_apps', title: 'List apps', description: 'Lists apps.' }],
 };
 
-const loadPlugin = async (source, { web } = {}) => {
+const loadPlugin = async (source, { web, permission } = {}) => {
   const plugin = (await import(`data:text/javascript,${encodeURIComponent(source)}`)).default;
   const added = [];
   const looked = [];
@@ -38,7 +38,9 @@ const loadPlugin = async (source, { web } = {}) => {
       fn(web);
     },
   };
-  await plugin.setup({ tool: { transform: async (fn) => fn(tools) } });
+  const ctx = { tool: { transform: async (fn) => fn(tools) } };
+  if (permission) ctx.permission = permission;
+  await plugin.setup(ctx);
   return { plugin, added, looked };
 };
 
@@ -425,4 +427,60 @@ test('a missing panel tool is logged once, and a present one is not logged', asy
 
   await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false, wrapCapture: true, captureTimeoutMs: 1235 }), { web: panelTool(CAPTURED).tool });
   assert.equal(warn.mock.callCount(), 1);
+});
+
+const hookRecorder = () => {
+  const hooks = [];
+  return { hooks, permission: { hook: async (name, fn) => { hooks.push({ name, fn }); } } };
+};
+
+test('the engine always asks about a permission the plugin names, even when a project rule allows it', async () => {
+  const { hooks, permission } = hookRecorder();
+  await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false, askPermissions: ['acme_chrome'] }), { permission });
+  assert.deepEqual(hooks.map(({ name }) => name), ['evaluate']);
+  const evaluate = (request) => {
+    hooks[0].fn(request);
+    return request.effect;
+  };
+  assert.equal(evaluate({ action: 'acme_chrome', resources: ['api.example.test'], metadata: { host: 'api.example.test' }, sessionID: 'ses_1', effect: 'allow' }), 'ask');
+  assert.equal(evaluate({ action: 'acme_chrome', resources: ['api.example.test'], effect: 'deny' }), 'deny');
+  assert.equal(evaluate({ action: 'acme_chrome', resources: ['api.example.test'], effect: 'ask' }), 'ask');
+  assert.equal(evaluate({ action: 'acme_chrome', resources: ['*'], effect: 'allow' }), 'allow');
+  assert.equal(evaluate({ action: 'acme_chrome', resources: [], effect: 'allow' }), 'allow');
+  assert.equal(evaluate({ action: 'bash', resources: ['ls'], effect: 'allow' }), 'allow');
+  assert.doesNotThrow(() => hooks[0].fn(undefined));
+});
+
+test('without a permission to ask about the plugin registers no permission hook', async () => {
+  const { hooks, permission } = hookRecorder();
+  const source = toolsPluginSource({ tools: [CHROME], codeMode: false });
+  await loadPlugin(source, { permission });
+  assert.deepEqual(hooks, []);
+  assert.doesNotMatch(source, /evaluate/);
+});
+
+test('an engine without the permission hook still gets the tools, and the plugin says so', async (t) => {
+  const warnings = [];
+  const original = console.warn;
+  console.warn = (...args) => warnings.push(args.join(' '));
+  t.after(() => { console.warn = original; });
+  const { added } = await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false, askPermissions: ['acme_chrome'] }));
+  assert.equal(added.length, 1);
+  const failing = await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false, askPermissions: ['acme_chrome'] }), { permission: { hook: async () => { throw new Error('no hooks here'); } } });
+  assert.equal(failing.added.length, 1);
+  assert.equal(warnings.length, 2);
+  for (const warning of warnings) assert.match(warning, /cannot be told to ask before a MittrCraft tool uses a site; MittrCraft still refuses every site the user has not allowed/);
+});
+
+test('a call names its message and tool call, so the site question sits on that call', async (t) => {
+  const seen = [];
+  const base = await listen(t, async (req, res) => {
+    seen.push(JSON.parse(await readBody(req)));
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ schemaVersion: 1, ok: true, action: 'chrome.open', data: {} }));
+  });
+  withConnection(t, `${base}/mittr-tools/v1/call`);
+  const { added } = await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false }));
+  await added[0].execute({ action: 'open' }, { sessionID: 'ses_1', messageID: 'msg_1', id: 'call_1', signal: new AbortController().signal });
+  assert.deepEqual(seen, [{ tool: 'acme_chrome', input: { action: 'open' }, sessionID: 'ses_1', messageID: 'msg_1', callID: 'call_1' }]);
 });

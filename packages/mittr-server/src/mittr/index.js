@@ -624,6 +624,7 @@ export function setupMittr(context, {
     registry,
     tools,
     managedConfig,
+    neverAutoAnswer: tools.neverAutoAnswer,
     applyModels,
     dispose: async () => {
       disposed = true;

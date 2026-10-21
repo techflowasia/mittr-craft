@@ -18,6 +18,12 @@ const argumentsOf = ({ parameters, ...flattened }, action) => {
   return args;
 };
 
+const sourceOf = (body) => {
+  const messageID = textOrUndefined(body.messageID);
+  const id = textOrUndefined(body.callID);
+  return messageID && id ? { type: 'tool', messageID, id } : undefined;
+};
+
 const errorOf = (error) => {
   const status = Number(error?.statusCode) || Number(error?.status) || 500;
   const failure = {
@@ -129,14 +135,17 @@ export function createToolsCallback({ crypto, registry, resolveSessionDirectory,
       const resolved = registry.resolve(input.action, tool);
       if (resolved.error) throw new MittrToolError(resolved.error, 400);
       action = resolved.action;
-      const data = await registry.execute(action, argumentsOf(input, action), {
+      const ctx = {
         directory: await directoryOf(sessionId),
         sessionId,
         signal: controller.signal,
         surface: 'agent',
         tool,
         via: 'engine',
-      });
+      };
+      const source = sourceOf(body);
+      if (source) ctx.source = source;
+      const data = await registry.execute(action, argumentsOf(input, action), ctx);
       return res.json({ schemaVersion: SCHEMA_VERSION, ok: true, action, data: attachableImage(data) });
     } catch (error) {
       const failure = errorOf(error);

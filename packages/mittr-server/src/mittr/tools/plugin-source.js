@@ -86,6 +86,29 @@ const withCapture = async (outcome, input, context) => {
 }
 `;
 
+const askHelpers = (permissions) => `
+const ASK_ALWAYS = ${JSON.stringify(permissions)}
+
+const oneResource = (request) => Array.isArray(request?.resources) && request.resources.length === 1 && typeof request.resources[0] === "string" && request.resources[0] !== "*"
+
+const askAlways = (request) => {
+  if (ASK_ALWAYS.includes(request?.action) && request.effect === "allow" && oneResource(request)) request.effect = "ask"
+}
+
+const warnNoAsk = () => console.warn("[mittrcraft] the engine cannot be told to ask before a MittrCraft tool uses a site; MittrCraft still refuses every site the user has not allowed")
+`;
+
+const askHook = `    if (typeof ctx.permission?.hook === "function") {
+      try {
+        await ctx.permission.hook("evaluate", askAlways)
+      } catch {
+        warnNoAsk()
+      }
+    } else {
+      warnNoAsk()
+    }
+`;
+
 const captureWrap = `      if (typeof tools.get === "function" && typeof tools.update === "function" && tools.get(CAPTURE_TOOL)) {
         tools.update(CAPTURE_TOOL, (tool) => {
           const original = tool.execute
@@ -96,7 +119,8 @@ const captureWrap = `      if (typeof tools.get === "function" && typeof tools.u
       }
 `;
 
-export const toolsPluginSource = ({ tools, codeMode, wrapCapture = false, captureTimeoutMs = CAPTURE_TIMEOUT_MS }) => {
+export const toolsPluginSource = ({ tools, codeMode, wrapCapture = false, captureTimeoutMs = CAPTURE_TIMEOUT_MS, askPermissions = [] }) => {
+  const asks = askPermissions.length > 0;
   const titles = Object.fromEntries(tools.flatMap((tool) => tool.definitions.map(({ action, title }) => [action, title])));
   return `const SCHEMA_VERSION = ${SCHEMA_VERSION}
 const TITLES = ${JSON.stringify(titles)}
@@ -148,20 +172,20 @@ const call = async (tool, input, context) => {
   const link = connection()
   if (!link) return failure({ message: "The MittrCraft tools connection is unavailable", kind: "runtime" })
   try {
-    const { status, content, answer } = await post(link, { tool, input: input ?? {}, sessionID: context.sessionID }, context.signal)
+    const { status, content, answer } = await post(link, { tool, input: input ?? {}, sessionID: context.sessionID, messageID: context.messageID, callID: context.id }, context.signal)
     if (answer) return result(contentOf(content, answer), answer.action, answer.ok)
     return failure({ message: "MittrCraft returned an invalid response", kind: "runtime", status })
   } catch (error) {
     return failure({ message: error instanceof Error ? error.message : String(error), kind: "runtime" })
   }
 }
-${wrapCapture ? captureHelpers(captureTimeoutMs) : ''}
+${wrapCapture ? captureHelpers(captureTimeoutMs) : ''}${asks ? askHelpers(askPermissions) : ''}
 export default {
   id: ${JSON.stringify(TOOLS_PLUGIN_ID)},
   setup: async (ctx) => {
     await ctx.tool.transform((tools) => {
 ${wrapCapture ? captureWrap : ''}${tools.map((tool) => toolEntry(tool, codeMode)).join('')}    })
-  },
+${asks ? askHook : ''}  },
 }
 `;
 };

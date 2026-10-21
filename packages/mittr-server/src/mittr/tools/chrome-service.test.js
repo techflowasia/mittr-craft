@@ -9,7 +9,7 @@ import { writeScreenshot } from '../../../../web/server/lib/openchamber-control/
 import { tempDataDir } from '../test-helpers.js';
 import { BANNER_FILE, CONFIG_FILE, chromeSessionName, createChromeControl } from './chrome-control.js';
 import { NO_APPROVALS, chromeToolDescription, createChromeService, registerChromeActions } from './chrome-service.js';
-import { MITTR_TOOLS, createMittrActionRegistry } from './registry.js';
+import { MITTR_TOOLS, MittrToolError, createMittrActionRegistry } from './registry.js';
 
 const BINARY = '/r/agent-browser/agent-browser';
 const SES_1 = chromeSessionName('ses_1');
@@ -59,15 +59,16 @@ const fakeBrowser = ({ profiles = [{ directory: 'Default', name: 'Person' }], re
 };
 
 const allowHosts = (...hosts) => {
-  const record = { forgotten: [], forgotAll: 0, decisions: [] };
+  const record = { forgotten: [], forgotAll: 0, asks: [] };
   const allowed = new Set(hosts);
   return {
     record,
     isApproved: async (_sessionId, host) => allowed.has(host),
-    awaitDecision: async (sessionId, host) => {
-      record.decisions.push([sessionId, host]);
-      if (record.reply === 'once') allowed.add(host);
-      return record.reply ?? null;
+    ask: async ({ sessionId, host, directory, source, signal }) => {
+      record.asks.push({ sessionId, host, directory, source, aborted: signal?.aborted === true });
+      if (record.reply === 'cancel') throw new MittrToolError('Cancelled while waiting for the user', 499);
+      if (record.reply === 'once' || record.reply === 'always') allowed.add(host);
+      return record.reply ?? 'reject';
     },
     forgetSession: (sessionId) => record.forgotten.push(sessionId),
     forgetAll: () => { record.forgotAll += 1; },
@@ -166,25 +167,47 @@ test('chrome.open whose redirect leaves the approved host answers site_moved', a
   await assert.rejects(service.execute('chrome.open', { url: 'https://acme.example.test/login' }, ctx), refusal(409, 'The page moved to sso.example.test, which the user has not allowed; nothing from it is returned. Call chrome.open with that page\'s URL to ask the user', { code: 'site_moved', host: 'sso.example.test' }));
 });
 
-test('every action asks the fence for the page it acts on, and a site not yet allowed opens nothing', async (t) => {
+test('Don\'t allow answers the refusal and opens nothing: the server itself asks for a site not yet allowed', async (t) => {
   const approvals = allowHosts();
-  const { service, browser, ctx } = setUp(t, { approvals });
-  await assert.rejects(service.execute('chrome.open', { url: 'https://Acme.Example.test/x' }, ctx), refusal(403, 'The user has not yet allowed using their Chrome sign-in on acme.example.test', { code: 'site_approval_required', host: 'acme.example.test' }));
+  const { service, browser, ctx, project } = setUp(t, { approvals });
+  const source = { type: 'tool', messageID: 'msg_1', id: 'call_1' };
+  await assert.rejects(service.execute('chrome.open', { url: 'https://Acme.Example.test/x' }, { ...ctx, source }), refusal(403, 'The user did not allow using their Chrome sign-in on acme.example.test'));
   const launches = () => browser.commands().filter(([command]) => command !== 'profiles');
   assert.deepEqual(launches(), []);
+  assert.deepEqual(approvals.record.asks, [{ sessionId: 'ses_1', host: 'acme.example.test', directory: project, source, aborted: false }]);
+});
 
-  approvals.record.reply = 'reject';
-  await assert.rejects(service.execute('chrome.open', { url: 'https://acme.example.test/x' }, { ...ctx, approvalAnswered: true }), refusal(403, 'The user did not allow using their Chrome sign-in on acme.example.test'));
-  assert.deepEqual(launches(), []);
+test('Allow once lets the call through and the next call asks nothing', async (t) => {
+  const approvals = allowHosts();
+  const { service, browser, ctx } = setUp(t, { approvals });
   approvals.record.reply = 'once';
-  await service.execute('chrome.open', { url: 'https://acme.example.test/x' }, { ...ctx, approvalAnswered: true });
-  assert.deepEqual(approvals.record.decisions, [['ses_1', 'acme.example.test'], ['ses_1', 'acme.example.test']]);
-  assert.deepEqual(launches(), [['open', 'https://acme.example.test/x'], ['get', 'url']]);
+  await service.execute('chrome.open', { url: 'https://acme.example.test/x' }, ctx);
+  await service.execute('chrome.read', {}, ctx);
+  assert.equal(approvals.record.asks.length, 1);
+  assert.deepEqual(browser.commands().filter(([command]) => command !== 'profiles'), [['open', 'https://acme.example.test/x'], ['get', 'url'], ['get', 'url'], ['read'], ['get', 'url']]);
+});
 
-  const other = setUp(t, { approvals: allowHosts() });
-  other.browser.urls.set(SES_1, 'https://acme.example.test/x');
-  await assert.rejects(other.service.execute('chrome.read', {}, other.ctx), refusal(403, 'The user has not yet allowed using their Chrome sign-in on acme.example.test', { code: 'site_approval_required' }));
-  assert.deepEqual(other.browser.commands(), [['session', 'list'], ['profiles'], ['get', 'url']], 'nothing is read from a page the user has not allowed');
+test('an aborted turn stops waiting and opens nothing', async (t) => {
+  const approvals = allowHosts();
+  const { service, browser, ctx } = setUp(t, { approvals });
+  approvals.record.reply = 'cancel';
+  await assert.rejects(service.execute('chrome.open', { url: 'https://acme.example.test/x' }, ctx), refusal(499, 'Cancelled while waiting for the user'));
+  assert.deepEqual(browser.commands().filter(([command]) => command !== 'profiles'), []);
+});
+
+test('every action asks about the page it acts on, and nothing is read from a page the user did not allow', async (t) => {
+  const approvals = allowHosts();
+  const { service, browser, ctx } = setUp(t, { approvals });
+  browser.urls.set(SES_1, 'https://acme.example.test/x');
+  await assert.rejects(service.execute('chrome.read', {}, ctx), refusal(403, 'The user did not allow using their Chrome sign-in on acme.example.test'));
+  assert.deepEqual(browser.commands(), [['session', 'list'], ['profiles'], ['get', 'url']]);
+  assert.deepEqual(approvals.record.asks.map(({ host }) => host), ['acme.example.test']);
+});
+
+test('without an approvals source every site is refused as not yet allowed', async (t) => {
+  const { service, browser, ctx } = setUp(t, { approvals: NO_APPROVALS });
+  await assert.rejects(service.execute('chrome.open', { url: 'https://acme.example.test/x' }, ctx), refusal(403, 'The user has not yet allowed using their Chrome sign-in on acme.example.test', { code: 'site_approval_required', host: 'acme.example.test' }));
+  assert.deepEqual(browser.commands().filter(([command]) => command !== 'profiles'), []);
 });
 
 test('chrome.open and the fence refuse MittrCraft\'s own ports whatever the approvals', async (t) => {

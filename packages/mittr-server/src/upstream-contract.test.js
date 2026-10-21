@@ -1872,6 +1872,42 @@ const checks = {
     has(source('packages/web/server/index.js'), /neverAutoAnswer: \(permission\) => serverPlugins\?\.neverAutoAnswer\?\.\(permission\) === true,/, 'the server no longer hands the plugins\' neverAutoAnswer to the auto-accept runtime');
   },
 
+  'permission-event-shape': async () => {
+    const { translateWireEvent } = await importUpstream('packages/web/server/lib/event-stream/translate-v2.js');
+    const asked = translateWireEvent({ id: 'evt_1', type: 'permission.asked', data: { id: 'per_1', sessionID: 'ses_1', action: 'mittrcraft_chrome', resources: ['acme.example.test'], save: ['acme.example.test'], metadata: { host: 'acme.example.test' } } })
+      .find((event) => event.type === 'permission.asked');
+    assert.deepEqual(
+      { id: asked?.properties?.id, sessionID: asked?.properties?.sessionID, action: asked?.properties?.action, resources: asked?.properties?.resources },
+      { id: 'per_1', sessionID: 'ses_1', action: 'mittrcraft_chrome', resources: ['acme.example.test'] },
+      'the translated permission.asked no longer keeps id, sessionID, action and resources',
+    );
+    const replied = translateWireEvent({ id: 'evt_2', type: 'permission.replied', data: { sessionID: 'ses_1', requestID: 'per_1', reply: 'always' } })
+      .find((event) => event.type === 'permission.replied');
+    assert.equal(replied?.properties?.requestID, 'per_1', 'the translated permission.replied no longer carries requestID');
+    assert.equal(Object.hasOwn(replied?.properties ?? {}, 'reply'), false, 'the translated permission.replied now carries the reply; the raw read may be simplified');
+    const { Permission } = await import(pathToFileURL(path.join(repoRoot, 'node_modules/@opencode/schema/dist/permission.js')).href);
+    assert.equal(Permission.Event.Replied.type, 'permission.replied');
+    assert.deepEqual(Object.keys(Permission.Event.Replied.fields.data.fields).sort(), ['reply', 'requestID', 'sessionID'], 'the raw permission.replied data no longer carries reply, requestID and sessionID');
+    assert.deepEqual([...Permission.Reply.literals].sort(), ['always', 'once', 'reject'], 'a permission reply is no longer once, always or reject');
+    has(source('packages/web/server/lib/event-stream/global-hub.js'), /return \{\s*envelope,\s*payload,\s*directory,/, 'hub subscribers no longer get the raw payload');
+  },
+
+  'engine-permission-api': () => {
+    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
+    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P15 and P16 again, then update the Chrome site question and this pin');
+    const dist = path.join(repoRoot, 'node_modules/@opencode/client/dist/chunks');
+    const chunks = fs.readdirSync(dist).filter((name) => name.endsWith('.js')).map((name) => fs.readFileSync(path.join(dist, name), 'utf8')).join('\n');
+    const routes = [
+      [/method: "POST",\s*path: `\/api\/session\/\$\{encodeURIComponent\(input\.sessionID\)\}\/permission`,\s*body: \{\s*id: input\["id"\],\s*action: input\["action"\],\s*resources: input\["resources"\],\s*save: input\["save"\],\s*metadata: input\["metadata"\],\s*source: input\["source"\],/, 'POST /api/session/:id/permission with action, resources, save, metadata and source'],
+      [/method: "POST",\s*path: `\/api\/session\/\$\{encodeURIComponent\(input\.sessionID\)\}\/permission\/\$\{encodeURIComponent\(input\.requestID\)\}\/reply`,\s*body: \{ decision: input\["decision"\], message: input\["message"\] \},\s*successStatus: 204,/, 'POST /api/session/:id/permission/:requestID/reply with { decision } and 204'],
+      [/method: "GET",\s*path: `\/api\/session\/\$\{encodeURIComponent\(input\.sessionID\)\}\/permission`,/, 'GET /api/session/:id/permission'],
+      [/method: "GET",\s*path: `\/api\/permission\/saved`,/, 'GET /api/permission/saved'],
+      [/method: "DELETE",\s*path: `\/api\/permission\/saved\/\$\{encodeURIComponent\(input\.id\)\}`,\s*successStatus: 204,/, 'DELETE /api/permission/saved/:id with 204'],
+      [/method: "POST",\s*path: `\/api\/session\/\$\{encodeURIComponent\(input\.sessionID\)\}\/interrupt`,/, 'POST /api/session/:id/interrupt'],
+    ];
+    for (const [route, name] of routes) assert.ok(route.test(chunks), `the generated client no longer has ${name}`);
+  },
+
   'engine-tool-plugin-api': () => {
     const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
     assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P13 to P18 again, then update the MittrCraft tools plugin and this pin');
