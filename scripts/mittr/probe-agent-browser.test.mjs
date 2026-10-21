@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
 
-import { CHROME_FLAGS, chromeArgs, exposedListeners, installStopHandlers, pathsUnder, peersOf, sandboxProfile, upgradeRefused } from './probe-agent-browser.mjs';
+import { CHROME_FLAGS, chromeArgs, exposedListeners, installStopHandlers, pathsUnder, peersOf, sandboxProfile, sweepTargets, upgradeRefused } from './probe-agent-browser.mjs';
 
 const lsof = [
   'COMMAND     PID     USER   FD     TYPE DEVICE SIZE/OFF     NODE NAME',
@@ -102,4 +102,25 @@ test('a clean-up that fails still exits, and the handlers can be removed', async
   assert.equal(other.listenerCount('SIGINT'), 1);
   remove();
   assert.equal(other.listenerCount('SIGINT') + other.listenerCount('SIGTERM'), 0);
+});
+
+test('the survivor sweep targets only this run\'s live groups, their descendants and its own temp root', () => {
+  const root = '/private/var/folders/xy/T/p4ab.MINE';
+  const staged = '/repo/packages/electron/.product/agent-browser/agent-browser';
+  const chrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  const table = [
+    { pid: 10, ppid: 1, command: 'node probe-agent-browser.mjs' },
+    { pid: 20, ppid: 10, command: `${staged} open http://127.0.0.1:5000/` },
+    { pid: 21, ppid: 20, command: `${staged}` },
+    { pid: 30, ppid: 1, command: `${chrome} --user-data-dir=${root}/tmp/agent-browser-profile-1` },
+    { pid: 31, ppid: 30, command: `${chrome} Helper --type=renderer` },
+    { pid: 40, ppid: 1, command: `${staged}` },
+    { pid: 50, ppid: 1, command: `${chrome} --user-data-dir=/private/var/folders/xy/T/p4ab.OTHER/tmp/agent-browser-profile-2` },
+    { pid: 51, ppid: 50, command: `${chrome} Helper --type=renderer` },
+    { pid: 60, ppid: 1, command: chrome },
+    { pid: 61, ppid: 60, command: `${chrome} Helper --type=gpu-process` },
+  ];
+  const targets = sweepTargets(table, { liveGroups: new Set([20]), root, self: 10 }).map((row) => row.pid).sort((a, b) => a - b);
+  assert.deepEqual(targets, [20, 21, 30, 31]);
+  assert.deepEqual(sweepTargets(table, { liveGroups: new Set(), root: '/private/var/folders/xy/T/p4ab.NONE', self: 10 }), []);
 });

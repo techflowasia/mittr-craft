@@ -180,6 +180,21 @@ const ourProcesses = (table, markers) => {
   return [...ours.values()];
 };
 
+export const sweepTargets = (table, { liveGroups, root, self = process.pid }) => {
+  const targets = new Map(table.filter((row) => row.pid !== self && (liveGroups.has(row.pid) || row.command.includes(root))).map((row) => [row.pid, row]));
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const row of table) {
+      if (row.pid !== self && !targets.has(row.pid) && targets.has(row.ppid)) {
+        targets.set(row.pid, row);
+        grew = true;
+      }
+    }
+  }
+  return [...targets.values()];
+};
+
 const pidsOf = async (name) => {
   const { stdout } = await execText('pgrep', ['-x', name]);
   return stdout.split('\n').map((line) => Number(line.trim())).filter(Boolean);
@@ -453,18 +468,18 @@ const main = async () => {
 
   const killSurvivors = async () => {
     const killed = [];
-    for (const pid of live) {
+    const liveGroups = new Set(live);
+    const table = await processTable();
+    for (const pid of liveGroups) {
       try {
         process.kill(-pid, 'SIGKILL');
       } catch {}
     }
-    for (const proc of ourProcesses(await processTable(), markers)) {
-      if (proc.command.includes(root) || proc.command.startsWith(STAGED_AGENT_BROWSER) || proc.command.startsWith(path.dirname(path.dirname(path.dirname(CHROME))))) {
-        try {
-          process.kill(proc.pid, 'SIGKILL');
-          killed.push({ pid: proc.pid, command: proc.command.replaceAll(root, '<temp>').slice(0, 160) });
-        } catch {}
-      }
+    for (const proc of sweepTargets(table, { liveGroups, root })) {
+      try {
+        process.kill(proc.pid, 'SIGKILL');
+        killed.push({ pid: proc.pid, command: proc.command.replaceAll(root, '<temp>').slice(0, 160) });
+      } catch {}
     }
     return killed;
   };
