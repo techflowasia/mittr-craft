@@ -1,4 +1,5 @@
 import { callPlatform, platformErrorText } from '../platform.js';
+import { isRecord } from '../values.js';
 import { pinAccount, sessionKeyOf } from './account-guard.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
 
@@ -65,14 +66,14 @@ export function createWorkLookup({
   const read = async (route, failed, { signal } = {}) => {
     const ensureSameAccount = pinAccount({ activeAccountKey, engineOnActiveHome });
     ensureSameAccount();
-    const session = await ensureFreshSession();
+    const session = await ensureFreshSession().catch(() => null);
     if (!session?.accessToken) throw new MittrToolError(NOT_SIGNED_IN, 401);
     ensureSameAccount(sessionKeyOf(session));
     const { response, body, failure } = await callPlatform(fetchImpl, urlFor(route), { accessToken: session.accessToken, signal });
     if (failure) throw new MittrToolError(failure.error, failure.status);
     ensureSameAccount();
     if (!response.ok) throw new MittrToolError(platformErrorText(body) ?? failed, response.status);
-    if (body === null || body === undefined) throw new MittrToolError(NO_ISSUE, 502);
+    if (!isRecord(body)) throw new MittrToolError(NO_ISSUE, 502);
     return body;
   };
 

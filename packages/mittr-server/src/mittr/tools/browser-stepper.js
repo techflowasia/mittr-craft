@@ -59,7 +59,7 @@ export function createBrowserStepper({
 
     const nextStep = async ({ goal, snapshot, history, values }, signal) => {
       ensureSameAccount();
-      const session = await ensureFreshSession();
+      const session = await ensureFreshSession().catch(() => null);
       if (!session?.accessToken) throw new MittrToolError(SIGN_IN_FIRST, 401);
       ensureSameAccount(sessionKeyOf(session));
       const request = { goal, snapshot, history: history.map((line) => line.slice(0, MAX_HISTORY_ITEM_CHARS)) };

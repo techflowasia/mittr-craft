@@ -81,6 +81,12 @@ test('no session answers sign in first and calls nothing', async () => {
   assert.equal(fetchImpl.calls.length, 0);
 });
 
+test('a session refresh that fails answers sign in first and calls nothing', async () => {
+  const { stepper, fetchImpl } = stepperWith(() => json({}), { session: () => { throw new Error('refresh token rejected'); } });
+  await assert.rejects(stepper.nextStep(ASK), refusal(401, 'Sign in to Mittr first'));
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
 test('a slow platform answers 504 after the step timeout, and an unreachable one 502', async () => {
   const fetchImpl = async (_url, init) => new Promise((_resolve, reject) => {
     if (init.signal.aborted) reject(init.signal.reason);

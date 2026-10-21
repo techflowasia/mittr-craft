@@ -132,6 +132,18 @@ test('a platform answer with no message names the card and keeps the platform st
 test('an answer that is ok but empty is a bad gateway', async () => {
   const { run } = worker(() => new Response('', { status: 200 }));
   await assert.rejects(run('jira.get_issue', { key: 'MRKB-9' }), refusal(502, 'The Mittr platform returned no issue'));
+  for (const body of [[], 'card', 7, true, null]) {
+    const odd = worker(() => json(body));
+    await assert.rejects(odd.run('plane.get_issue', { ref: 'MITRAI-9' }), refusal(502, 'The Mittr platform returned no issue'), JSON.stringify(body));
+  }
+});
+
+test('a session refresh that fails answers 401 sign in and calls nothing', async () => {
+  const { run, fetchImpl } = worker(() => json(ISSUE), { session: () => { throw new Error('refresh token rejected: rt-secret-1'); } });
+  for (const [action, input] of [['jira.get_issue', { key: 'MRKB-1' }], ['plane.get_issue', { ref: 'MITRAI-1' }]]) {
+    await assert.rejects(run(action, input), refusal(401, 'Not signed in to Mittr. Sign in to continue.'));
+  }
+  assert.equal(fetchImpl.calls.length, 0);
 });
 
 test('a platform that does not answer in time is 504 and one that is down is 502', async () => {
