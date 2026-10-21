@@ -367,7 +367,7 @@ export function setupMittr(context, {
   registerMittrWorkRoutes(app, { broker, ensureFreshSession, fetchImpl, logger });
   registerMittrIntegrationsRoutes(app, { express, broker, ensureFreshSession, fetchImpl, logger });
   const registry = createMittrActionRegistry({ control, logger });
-  registerMittrControlRoutes(app, { express, registry, host, requestScope });
+  registerMittrControlRoutes(app, { express, registry, host, requestScope, ControlError: control.ControlError });
   const unregisterDeepLink = host?.deepLinks?.register({
     host: 'auth',
     // Either way the window is brought forward and re-reads status, so a

@@ -25,7 +25,7 @@ const setUp = async (t, { answer = async () => ({ sessions: [] }), register = ()
   registry.defineTool({ name: 'mittrcraft_chrome', description: 'Drive Chrome', parameters: { type: 'object' } });
   register(registry);
   const app = express();
-  registerMittrControlRoutes(app, { express, registry, host, requestScope: () => scope });
+  registerMittrControlRoutes(app, { express, registry, host, requestScope: () => scope, ControlError: OpenChamberControlError });
   return { calls, call: await serve(t, app) };
 };
 
@@ -83,6 +83,9 @@ test('an upstream failure keeps its status, and its partial result only from the
   });
 
   failure = Object.assign(new Error('dispatch failed'), { statusCode: 502, ...partial });
+  assert.deepEqual(await call('POST', ROUTE, { action: 'session.list' }), { status: 502, body: { error: 'dispatch failed' } });
+
+  failure = Object.assign(new Error('dispatch failed'), { name: new OpenChamberControlError('x').name, statusCode: 502, ...partial });
   assert.deepEqual(await call('POST', ROUTE, { action: 'session.list' }), { status: 502, body: { error: 'dispatch failed' } });
 
   failure = Object.assign(new Error('busy'), { status: 409, code: 'ECONNRESET' });

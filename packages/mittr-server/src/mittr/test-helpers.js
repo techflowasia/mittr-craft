@@ -7,6 +7,7 @@ import path from 'node:path';
 import { buildResult, toUsageWindow } from '../../../web/server/lib/quota/utils/formatters.js';
 import { toMcpEntity } from '../../../web/server/lib/opencode/config-v2.js';
 import { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } from '../../../web/server/lib/openchamber-control/actions.js';
+import { OpenChamberControlError } from '../../../web/server/lib/openchamber-control/error.js';
 import { SCREENSHOT_DIRECTORY, writeScreenshot } from '../../../web/server/lib/openchamber-control/screenshots.js';
 import { mergeEngineConfig } from '../../../web/server/lib/server-plugins.js';
 
@@ -177,6 +178,7 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
         resolveSessionDirectory: async () => null,
         definitions: () => ({ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS }),
         all: OPENCHAMBER_ALL_ACTIONS,
+        ControlError: OpenChamberControlError,
         writeScreenshot,
         SCREENSHOT_DIRECTORY,
       },

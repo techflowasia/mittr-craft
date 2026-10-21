@@ -6,13 +6,14 @@ import { MittrToolError } from './registry.js';
 const ROUTE = '/api/mittr/control';
 const BODY_LIMIT = '1mb';
 const ACTION_FAILED = 'Action failed';
-const UPSTREAM_CONTROL_ERROR = 'OpenChamberControlError';
 export const SESSION_FROM_THIS_MACHINE_ONLY = 'A session can be named only from this machine';
 
-const asToolError = (error) => {
+const isControlError = (error, ControlError) => typeof ControlError === 'function' && error instanceof ControlError;
+
+const asToolError = (error, ControlError) => {
   if (error instanceof MittrToolError) return error;
   const message = error instanceof Error && error.message ? error.message : ACTION_FAILED;
-  const partial = error?.name === UPSTREAM_CONTROL_ERROR && error.partial === true ? {
+  const partial = isControlError(error, ControlError) && error.partial === true ? {
     partial: true,
     partialAction: error.partialAction,
     sessionId: error.sessionId,
@@ -43,7 +44,7 @@ export const isLocalRequest = (req, { host, requestScope }) => Boolean(host)
   && isLoopbackPeer(req.socket?.remoteAddress)
   && !cameThroughProxy(req.headers);
 
-export function registerMittrControlRoutes(app, { express, registry, host, requestScope }) {
+export function registerMittrControlRoutes(app, { express, registry, host, requestScope, ControlError }) {
   app.post(ROUTE, jsonBody(express, { limit: BODY_LIMIT }), async (req, res) => {
     const controller = new AbortController();
     const abortOnDisconnect = () => {
@@ -66,7 +67,7 @@ export function registerMittrControlRoutes(app, { express, registry, host, reque
       });
       return res.json(data);
     } catch (error) {
-      const failure = asToolError(error);
+      const failure = asToolError(error, ControlError);
       return res.status(failure.statusCode).json(failureBody(failure));
     } finally {
       req.off('aborted', abortOnDisconnect);

@@ -301,9 +301,14 @@ test('the control route runs an upstream action through the server\'s control se
   assert.deepEqual(await call('POST', '/api/mittr/control', { action: 'session.list', input: {}, contextDirectory: '/p', contextSessionId: 's1' }), { status: 200, body: { sessions: [{ id: 's1' }] } });
   assert.deepEqual(engine.controlCalls.map(([action, input, directory, { contextSessionId }]) => [action, input, directory, contextSessionId]), [['session.list', {}, '/p', 's1']]);
 
+  const partial = { partial: true, partialAction: 'fork-created', sessionId: 'ses_fork', directory: '/repo' };
+  engine.controlAnswer = async () => { throw new engine.context.control.ControlError('dispatch failed', 502, partial); };
+  assert.deepEqual(await call('POST', '/api/mittr/control', { action: 'session.list' }), { status: 502, body: { error: 'dispatch failed', ...partial } });
+  engine.controlAnswer = async () => ({ sessions: [{ id: 's1' }] });
+
   engine.scope = 'tunnel';
   assert.equal((await call('POST', '/api/mittr/control', { action: 'session.list', contextSessionId: 's1' })).status, 400);
-  assert.equal(engine.controlCalls.length, 1);
+  assert.equal(engine.controlCalls.length, 2);
 });
 
 test('on hosted web the control route names no session', async (t) => {
