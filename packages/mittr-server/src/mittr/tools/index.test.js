@@ -99,20 +99,17 @@ const setUp = async (t, {
   };
   t.after(() => tools.dispose());
   const base = await listen(t, app);
-  const call = async (body) => {
-    const { MITTRCRAFT_TOOLS_URL: url, MITTRCRAFT_TOOLS_TOKEN: token } = tools.engineEnv();
-    const response = await fetch(url.replace('http://127.0.0.1:4100', base), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-      body: JSON.stringify(body),
-    });
-    return response.json();
-  };
+  const post = (body, token = tools.engineEnv().MITTRCRAFT_TOOLS_TOKEN) => fetch(`${base}/mittr-tools/v1/call`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+  const call = async (body) => (await post(body)).json();
   const pluginSource = () => fs.readFileSync(path.join(dataDir, 'engine-plugins', 'mittrcraft-tools', 'index.js'), 'utf8');
   const fireReady = () => { for (const listener of readyListeners) listener(); };
   const emit = (payloads) => { for (const listener of eventListeners) listener({ payload: {}, translated: () => payloads }); };
   const emitRaw = (payload) => { for (const listener of eventListeners) listener({ payload, translated: () => [] }); };
-  return { tools, state, logger, dataDir, mittrSettings, registry, call, pluginSource, fireReady, emit, emitRaw, runs, readyListeners, eventListeners };
+  return { tools, state, logger, dataDir, mittrSettings, registry, call, post, pluginSource, fireReady, emit, emitRaw, runs, readyListeners, eventListeners };
 };
 
 const toolNamesIn = (source) => [...source.matchAll(/name: "(mittrcraft_[a-z]+)"/g)].map((match) => match[1]);
@@ -318,6 +315,26 @@ test('each engine start gets the token minted before it, and the start before th
 
   state.port = null;
   assert.deepEqual(tools.engineEnv(), {}, 'before the server listens there is no callback to name');
+});
+
+test('an account switch retires the running engine\'s token at once, and the next engine start brings its own', async (t) => {
+  const { tools, fireReady, post } = await setUp(t);
+  const lookup = { tool: 'mittrcraft_work', input: { action: 'jira.get_issue', parameters: { key: 'MRKB-1' } } };
+  const engineA = tools.engineEnv().MITTRCRAFT_TOOLS_TOKEN;
+  fireReady();
+  assert.equal((await (await post(lookup, engineA)).json()).ok, true);
+
+  const switched = tools.accountChanged();
+  const refused = await post(lookup, engineA);
+  assert.equal(refused.status, 401);
+  assert.deepEqual(await refused.json(), { error: 'Unauthorized' });
+  await switched;
+
+  const engineB = tools.engineEnv().MITTRCRAFT_TOOLS_TOKEN;
+  assert.notEqual(engineB, engineA);
+  fireReady();
+  assert.equal((await (await post(lookup, engineB)).json()).ok, true);
+  assert.equal((await post(lookup, engineA)).status, 401);
 });
 
 test('1.22 tool settings parked under mittr reach the first plugin', async (t) => {

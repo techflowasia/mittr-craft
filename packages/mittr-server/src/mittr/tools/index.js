@@ -270,6 +270,7 @@ export function setupMittrTools(context, {
     chrome,
     neverAutoAnswer: isChromePermission,
     accountChanged: () => {
+      callback.retire();
       chrome.forgetEveryGrant();
       return closeEveryChrome();
     },

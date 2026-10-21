@@ -50,6 +50,10 @@ export function createToolsCallback({ crypto, registry, resolveSessionDirectory,
     pending = mint();
   };
 
+  const retire = () => {
+    active = null;
+  };
+
   const sameToken = (provided, expected) => {
     if (!expected) return false;
     const given = Buffer.from(provided);
@@ -161,6 +165,7 @@ export function createToolsCallback({ crypto, registry, resolveSessionDirectory,
   return {
     engineEnv,
     engineReady,
+    retire,
     abortSession,
     register(app) {
       app.post(TOOLS_CALLBACK_ROUTE, handle);

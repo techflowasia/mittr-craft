@@ -117,6 +117,20 @@ test('a call carrying the previous start\'s token is refused', async (t) => {
   assert.equal((await post(OPEN, { token: second })).status, 200);
 });
 
+test('a retired token is refused at once, and the next start\'s token still works', async (t) => {
+  const { callback, post } = await setUp(t);
+  const running = callback.engineEnv(4100).MITTRCRAFT_TOOLS_TOKEN;
+  callback.engineReady();
+  const next = callback.engineEnv(4100).MITTRCRAFT_TOOLS_TOKEN;
+
+  callback.retire();
+
+  assert.deepEqual(await post(OPEN, { token: running }), { status: 401, body: { error: 'Unauthorized' } });
+  assert.equal((await post(OPEN, { token: next })).status, 200);
+  callback.engineReady();
+  assert.equal((await post(OPEN, { token: next })).status, 200);
+});
+
 test('a compatibility read between two starts changes nothing', async (t) => {
   const { callback, post } = await setUp(t);
   const started = callback.engineEnv(4100).MITTRCRAFT_TOOLS_TOKEN;
