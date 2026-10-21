@@ -45,11 +45,13 @@ const connectorView = (item) => {
   return view;
 };
 
+const enablementName = (kind, name) => (kind === 'skills' ? name.trim() : name);
+
 const withEnablement = (collection, kind, enablement) => ({
   configured: collection.configured,
   items: collection.items.map((item) => {
     if (!isRecord(item)) return kind === 'mcp' ? {} : item;
-    const enabled = kind === 'models' || enablement.isEnabled(kind, String(item.name ?? item.alias ?? ''));
+    const enabled = kind === 'models' || enablement.isEnabled(kind, enablementName(kind, String(item.name ?? item.alias ?? '')));
     return { ...(kind === 'mcp' ? connectorView(item) : item), enabled };
   }),
 });
@@ -217,10 +219,12 @@ export function registerMittrCatalogRoutes(app, {
   });
 
   app.put('/api/mittr/catalog/enablement', jsonBody(express, { limit: ENABLEMENT_BODY_LIMIT }), async (req, res) => {
-    const { kind, name, enabled } = isRecord(req.body) ? req.body : {};
-    if (typeof kind !== 'string' || !SWITCHABLE_KINDS.includes(kind) || typeof name !== 'string' || !name) {
+    const { kind, name: given, enabled } = isRecord(req.body) ? req.body : {};
+    if (typeof kind !== 'string' || !SWITCHABLE_KINDS.includes(kind) || typeof given !== 'string') {
       return res.status(400).json({ error: BAD_ENABLEMENT });
     }
+    const name = enablementName(kind, given);
+    if (!name) return res.status(400).json({ error: BAD_ENABLEMENT });
     try {
       enablement.setEnabled(kind, name, enabled !== false);
     } catch (error) {

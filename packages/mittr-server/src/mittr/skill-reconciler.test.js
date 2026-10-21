@@ -129,6 +129,16 @@ test('the last withdrawn skill takes the account marker with it', (t) => {
   untouched();
 });
 
+test('a skill whose name has spaces around it is switched off under its trimmed name', (t) => {
+  const { root, untouched } = skillsHome(t);
+  const catalog = catalogOf([{ ...skill('card-analysis'), name: '  card-analysis ' }]);
+  assert.deepEqual(run(root, catalog), { ...NOTHING, installed: ['mittr-card-analysis'] });
+
+  assert.deepEqual(run(root, catalog, { enablement: enablementOf(['card-analysis']) }), { ...NOTHING, removed: ['mittr-card-analysis'] });
+  assert.equal(exists(root, 'mittr-card-analysis'), false);
+  untouched();
+});
+
 test('a disabled skill is removed and stays removed across syncs', (t) => {
   const { root, untouched } = skillsHome(t);
   const catalog = catalogOf([skill('card-analysis'), skill('notes')]);

@@ -419,6 +419,22 @@ test('the catalog lists enabled per item', async (t) => {
   assert.equal(body.skills.configured, true);
 });
 
+test('a skill whose name has spaces around it is switched under its trimmed name, as the reconciler reads it', async (t) => {
+  const { sync, call, enablement, changes } = await setUp(t, { fetchImpl: fakeFetch(() => json({ ...PAYLOAD, skills: [{ name: '  card-analysis ' }] })) });
+  await sync();
+
+  assert.equal((await call('PUT', '/api/mittr/catalog/enablement', { kind: 'skills', name: '  card-analysis ', enabled: false })).status, 200);
+  assert.equal(enablement.isEnabled('skills', 'card-analysis'), false);
+  assert.deepEqual(changes, ['skills']);
+  const { body } = await call('GET', '/api/mittr/catalog');
+  assert.deepEqual(body.skills.items.map((item) => [item.name, item.enabled]), [['  card-analysis ', false]]);
+
+  enablement.setEnabled('skills', 'card-analysis', true);
+  const after = await call('GET', '/api/mittr/catalog');
+  assert.deepEqual(after.body.skills.items.map((item) => item.enabled), [true]);
+  assert.equal((await call('PUT', '/api/mittr/catalog/enablement', { kind: 'skills', name: '   ', enabled: false })).status, 400);
+});
+
 test('the catalog answers each connector without its config: name, human fields, type, enabled and a remote host only', async (t) => {
   const mcp = [
     { name: 'law', title: 'Thai law', description: 'Statutes', config: { type: 'remote', url: 'https://user:SEKRET-PW@law.example.test:8443/mcp/SEKRET-PATH?key=SEKRET-Q', headers: { authorization: 'Bearer SEKRET-H' }, oauth: { clientSecret: 'SEKRET-O' } } },
