@@ -2554,6 +2554,7 @@ async function main(options = {}) {
         resolveSessionDirectory: openChamberControlService.resolveSessionDirectory,
         definitions: () => ({ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS }),
         all: OPENCHAMBER_ALL_ACTIONS,
+        ControlError: OpenChamberControlError,
         writeScreenshot,
         SCREENSHOT_DIRECTORY,
       },

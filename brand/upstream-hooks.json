@@ -389,6 +389,10 @@
       "why": "The control and web definitions leave out actions the control service still runs (memory, notify, the scheduler status), so a downstream action could take one of those names and shadow it; the plugin context's control now also hands plugins the service's full action list as all, so a plugin refuses every upstream name."
     },
     {
+      "hook": "server-plugins",
+      "why": "A downstream route that answers control errors as upstream's control route does keeps the partial-result fields only from the control service's own error, and could tell that error apart only by writing upstream's class name as a string, which then ships in the downstream build; the plugin context's control now also hands plugins the error class itself as ControlError, so a plugin matches it with instanceof."
+    },
+    {
       "hook": "permission-auto-accept",
       "why": "A downstream build has permission requests that must always reach the person, such as a question about signing in to a site, whatever permission mode the session is in, and the auto-accept runtime had no way to leave one for the user: an auto session answered it within milliseconds and a safety session handed it to the classifier. A server plugin may now return neverAutoAnswer(permission), and a request any plugin marks (or whose check throws) is held for the user in every mode, announced as left for the user, and never counted as answered automatically. With no plugin that marks a request nothing changes."
     }

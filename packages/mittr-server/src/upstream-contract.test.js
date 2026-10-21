@@ -770,8 +770,9 @@ const checks = {
     const server = source('packages/web/server/index.js');
     has(server, /^import \{ OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS \} from '\.\/lib\/openchamber-control\/actions\.js';$/m, 'index.js no longer imports the agent tool and web action definitions');
     has(server, /^import \{ SCREENSHOT_DIRECTORY, writeScreenshot \} from '\.\/lib\/openchamber-control\/screenshots\.js';$/m, 'index.js no longer imports the screenshot writer');
+    has(server, /^import \{ OpenChamberControlError \} from '\.\/lib\/openchamber-control\/error\.js';$/m, 'index.js no longer imports the control error class');
     has(server, /^const openChamberControlService = createOpenChamberControlService\(\{$/m, 'index.js no longer builds one control service');
-    has(pluginContext(server), /control: \{\s*execute: openChamberControlService\.execute,\s*resolveSessionDirectory: openChamberControlService\.resolveSessionDirectory,\s*definitions: \(\) => \(\{ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS \}\),\s*all: OPENCHAMBER_ALL_ACTIONS,\s*writeScreenshot,\s*SCREENSHOT_DIRECTORY,\s*\},/, 'the plugin context no longer hands plugins the control service, its definitions and the screenshot writer as control');
+    has(pluginContext(server), /control: \{\s*execute: openChamberControlService\.execute,\s*resolveSessionDirectory: openChamberControlService\.resolveSessionDirectory,\s*definitions: \(\) => \(\{ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS \}\),\s*all: OPENCHAMBER_ALL_ACTIONS,\s*ControlError: OpenChamberControlError,\s*writeScreenshot,\s*SCREENSHOT_DIRECTORY,\s*\},/, 'the plugin context no longer hands plugins the control service, its definitions, its error class and the screenshot writer as control');
 
     const service = source('packages/web/server/lib/openchamber-control/service.js');
     has(service, /const execute = async \(action, input = \{\}, contextDirectory, options = \{\}\) => \{/, 'the control service execute no longer takes (action, input, contextDirectory, options)');
@@ -830,10 +831,12 @@ const checks = {
     has(routes, /\.\.\.\(controlError\.partial === true \? \{\s*partial: true,\s*partialAction: controlError\.partialAction,\s*sessionId: controlError\.sessionId,\s*directory: controlError\.directory,\s*\} : \{\}\),/, 'the control route no longer answers the partial-result fields');
     has(source('packages/web/server/lib/openchamber-control/error.js'), /Number\(error\?\.statusCode\) \|\| Number\(error\?\.status\) \|\| fallbackStatus/, 'asControlError no longer takes the status from statusCode, then status');
     const controlError = source('packages/web/server/lib/openchamber-control/error.js');
-    has(controlError, /this\.name = 'OpenChamberControlError';/, 'the control error no longer names itself OpenChamberControlError, which the route reads to keep partial-result fields');
+    has(controlError, /^export class OpenChamberControlError extends Error \{$/m, 'error.js no longer exports the control error class the plugin context hands over, which the route matches to keep partial-result fields');
     has(controlError, /if \(error instanceof OpenChamberControlError\) return error;/, 'asControlError no longer keeps the control error, partial fields and all, and rebuilds every other error');
-    const { OpenChamberControlError } = await importUpstream('packages/web/server/lib/openchamber-control/error.js');
-    assert.equal(new OpenChamberControlError('x', 500, { partial: true }).name, 'OpenChamberControlError');
+    const { OpenChamberControlError, asControlError } = await importUpstream('packages/web/server/lib/openchamber-control/error.js');
+    const kept = new OpenChamberControlError('x', 502, { partial: true });
+    assert.equal(asControlError(kept, 'y'), kept, 'asControlError no longer hands back the control error itself');
+    assert.ok(asControlError(new Error('z'), 'y') instanceof OpenChamberControlError, 'asControlError no longer rebuilds another error as the control error class');
 
     const tunnelAuth = source('packages/web/server/lib/opencode/tunnel-auth.js');
     has(tunnelAuth, /if \(activeTunnelHost && reqHost === activeTunnelHost\) \{\s*return 'tunnel';\s*\}\s*if \(isLocalHost\(reqHost, req\)\) \{\s*return 'local';\s*\}/, 'classifyRequestScope no longer answers tunnel for the tunnel host before local');
@@ -845,7 +848,8 @@ const checks = {
       '  const registry = createMittrActionRegistry({ control: context.control });',
       "  registry.defineTool({ name: 'acme_probe', description: 'probe', parameters: { type: 'object' } });",
       "  registry.register({ action: 'acme.ping', tool: 'acme_probe', title: 'Ping', description: 'Ping', effect: 'read', execute: async (_input, ctx) => ({ pong: true, scope: ctx.scope }) });",
-      '  registerMittrControlRoutes(context.app, { express: context.express, registry, host: context.host, requestScope: context.requestScope });',
+      "  registry.register({ action: 'acme.partial', tool: 'acme_probe', title: 'Partial', description: 'Partial', effect: 'read', execute: async () => { throw new context.control.ControlError('half done', 502, { partial: true, partialAction: 'acme-made', sessionId: 'ses_acme', directory: '/acme' }); } });",
+      '  registerMittrControlRoutes(context.app, { express: context.express, registry, host: context.host, requestScope: context.requestScope, ControlError: context.control.ControlError });',
       '};',
     ].join('\n');
     const probe = (uiPassword, action) => probeRealServer(t, plugin, { uiPassword, method: 'POST', route: '/api/mittr/control', body: { action } });
@@ -854,6 +858,8 @@ const checks = {
     assert.ok(!refused.text.includes('pong'), 'an unauthenticated request ran the action');
     const open = probe('', 'acme.ping');
     assert.deepEqual({ status: open.status, body: JSON.parse(open.text) }, { status: 200, body: { pong: true, scope: { local: false } } }, 'an open server does not run a Mittr action through the real control context');
+    const partial = probe('', 'acme.partial');
+    assert.deepEqual({ status: partial.status, body: JSON.parse(partial.text) }, { status: 502, body: { error: 'half done', partial: true, partialAction: 'acme-made', sessionId: 'ses_acme', directory: '/acme' } }, 'the route no longer keeps the partial-result fields of the error class the real control context hands over');
     const upstream = probe('', 'projects.list');
     assert.equal(upstream.status, 200, `the real control service did not answer projects.list: ${upstream.text}`);
     assert.ok(Array.isArray(JSON.parse(upstream.text).projects), 'the real control service no longer answers projects.list with projects');
