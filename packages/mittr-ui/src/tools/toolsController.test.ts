@@ -9,6 +9,7 @@ type Deferred<T> = { resolve: (value: T) => void; reject: (error: Error) => void
 const toolsWith = (chrome: Partial<MittrTools['chrome']> = {}, computer: Partial<MittrTools['computer']> = {}): MittrTools => ({
   computer: { offered: true, enabled: true, ...computer },
   chrome: { offered: true, chromeInstalled: true, enabled: true, profile: 'Default', headed: false, approvedHosts: ['jira.acme.test', 'plane.acme.test'], ...chrome },
+  canChange: true,
 });
 
 const PROFILES: ChromeProfile[] = [{ directory: 'Default', name: 'Person' }, { directory: 'Profile 1', name: 'Work' }];
@@ -64,6 +65,29 @@ describe('MittrCraft tools controller', () => {
     await settle();
     expect(profiles).toHaveLength(1);
     expect(controller.state().profiles).toEqual({ status: 'loading' });
+    profiles[0].resolve(PROFILES);
+    await settle();
+
+    const added = [...PROFILES, { directory: 'Profile 2', name: 'New' }];
+    const off = controller.setChrome(false);
+    saves[1].resolve(toolsWith({ enabled: false }));
+    await off;
+    await settle();
+    expect(profiles).toHaveLength(1);
+    const on = controller.setChrome(true);
+    saves[2].resolve(toolsWith());
+    await on;
+    await settle();
+    expect(profiles).toHaveLength(2);
+    profiles[1].resolve(added);
+    await settle();
+    expect(controller.state().profiles).toEqual({ status: 'ready', list: added });
+
+    const headed = controller.setHeaded(true);
+    saves[3].resolve(toolsWith({ headed: true }));
+    await headed;
+    await settle();
+    expect(profiles).toHaveLength(2);
   });
 
   test('a failed write reloads the stored state', async () => {

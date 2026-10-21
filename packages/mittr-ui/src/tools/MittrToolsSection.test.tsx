@@ -41,8 +41,11 @@ const toolsWith = (chrome: Partial<MittrTools['chrome']> = {}, computer: Partial
   tools: {
     computer: { offered: true, enabled: true, ...computer },
     chrome: { offered: true, chromeInstalled: true, enabled: true, profile: 'Default', headed: false, approvedHosts: ['jira.acme.test', 'plane.acme.test'], ...chrome },
+    canChange: true,
   },
 });
+
+const remoteOf = (state: ToolsLoad): ToolsLoad => (state.status === 'ready' ? { ...state, tools: { ...state.tools, canChange: false } } : state);
 
 const LISTED: ProfilesLoad = { status: 'ready', list: [{ directory: 'Default', name: 'Person' }, { directory: 'Profile 1', name: 'Work' }] };
 
@@ -65,6 +68,25 @@ describe('MittrCraft tools section', () => {
     expect(html).toContain(`>${mittrT('mittr.tools.chrome.headed')}</span>`);
     expect(html).toContain(`>${mittrT('mittr.tools.chrome.sites')}<`);
     expect(html).toContain(mittrT('mittr.tools.chrome.taskNote'));
+    expect(html).toContain('a copy of this profile, including your sign-ins, is kept in this Mac&#x27;s temporary folder.');
+    expect(mittrT('mittr.tools.chrome.profileCopy')).toContain('including your sign-ins');
+    expect(html).toContain(mittrT('mittr.tools.chrome.sitesScope'));
+    expect(mittrT('mittr.tools.chrome.sitesScope')).toContain('on this Mac');
+  });
+
+  test('a client that is not this Mac sees one line instead of controls', () => {
+    const html = view(remoteOf(toolsWith()));
+    expect(html).toContain('>MittrCraft tools</h2>');
+    expect(html).toContain(mittrT('mittr.tools.changeOnThisMac'));
+    expect(mittrT('mittr.tools.changeOnThisMac')).toBe('These settings can be changed only on this Mac.');
+    expect(html).not.toContain('role="button"');
+    expect(html).not.toContain('role="checkbox"');
+    expect(html).not.toContain('role="combobox"');
+    expect(html).not.toContain('data-slot="button"');
+    expect(html).not.toContain(PICKER);
+    expect(html).not.toContain(mittrT('mittr.tools.chrome.siteRemoveShort'));
+    expect(html).not.toContain('jira.acme.test');
+    expect(view(remoteOf(toolsWith({ offered: false }, { offered: false })))).toBe('');
   });
 
   test('a tool this install cannot run shows no switch', () => {

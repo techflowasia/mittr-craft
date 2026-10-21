@@ -25,6 +25,7 @@ const respond = (status: number, body: JsonValue | 'not json') => {
 const TOOLS = {
   computer: { offered: true, enabled: true },
   chrome: { offered: true, chromeInstalled: true, enabled: true, profile: 'Default', headed: false, approvedHosts: ['jira.acme.test'] },
+  canChange: true,
 };
 
 const refusedWith = async (work: Promise<object>, message: string, status: number | null) => {
@@ -49,6 +50,7 @@ describe('MittrCraft tools API', () => {
 
   test('a reply that is not the tools shape is a failure, never empty tools', async () => {
     await refusedWith(respond(200, { computer: { offered: true } }).api.load(), mittrT('mittr.tools.errors.loadFailed'), 200);
+    await refusedWith(respond(200, { computer: TOOLS.computer, chrome: TOOLS.chrome }).api.load(), mittrT('mittr.tools.errors.loadFailed'), 200);
     await refusedWith(respond(200, 'not json').api.load(), mittrT('mittr.tools.errors.loadFailed'), 200);
     await refusedWith(respond(500, { error: 'Cannot store the tool setting on this machine' }).api.save({ chrome: false }), 'Cannot store the tool setting on this machine', 500);
     const offline: ToolsFetch = async () => { throw new TypeError('network down'); };

@@ -42,6 +42,9 @@ const setUp = async (t, {
   stored = null,
   saved = [],
   refresh = null,
+  scope = 'local',
+  host = {},
+  peer = null,
 } = {}) => {
   const dataDir = tempDataDir(t);
   if (stored) fs.writeFileSync(path.join(dataDir, 'mittr-settings.json'), JSON.stringify(stored));
@@ -49,9 +52,17 @@ const setUp = async (t, {
   const engine = engineStub(saved);
   const logger = quietLogger();
   const app = express();
+  if (peer) {
+    app.use((req, _res, next) => {
+      Object.defineProperty(req, 'socket', { value: { remoteAddress: peer } });
+      next();
+    });
+  }
   const context = {
     app,
     express,
+    host,
+    requestScope: () => scope,
     dataDir,
     server: { port: () => 4100 },
     opencode: {
@@ -65,7 +76,7 @@ const setUp = async (t, {
     control: { resolveSessionDirectory: async (id) => `/work/${id}`, writeScreenshot, SCREENSHOT_DIRECTORY },
   };
   const mittrSettings = createMittrSettings({ dataDir, logger });
-  const state = { refreshes: 0 };
+  const state = { refreshes: 0, broken: false };
   let tools = null;
   tools = setupMittrTools(context, {
     registry: createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, execute: async () => ({}) } }),
@@ -74,13 +85,16 @@ const setUp = async (t, {
     personalDesktop: () => personalDesktop,
     refresh: async () => {
       state.refreshes += 1;
-      if (refresh) await refresh();
+      if (refresh) await refresh(state);
       await tools.managedConfig();
     },
     drivers: {
       computer: () => computer,
       chrome: () => (chrome === 'stub' ? driver.file : chrome),
-      chromePath: () => (chromeInstalled ? CHROME_APP : null),
+      chromePath: () => {
+        if (state.broken) throw new Error('cannot look for Chrome');
+        return chromeInstalled ? CHROME_APP : null;
+      },
     },
     engineFetch: engine.fetchImpl,
     platform: {},
@@ -100,6 +114,7 @@ const setUp = async (t, {
 const OFFERED = {
   computer: { offered: true, enabled: true },
   chrome: { offered: true, chromeInstalled: true, enabled: true, profile: null, headed: false, approvedHosts: [] },
+  canChange: true,
 };
 
 const NOT_OFFERED_CHROME = { offered: false, chromeInstalled: false, enabled: true, profile: null, headed: false, approvedHosts: [] };
@@ -108,10 +123,10 @@ test('GET lists what this install offers', async (t) => {
   assert.deepEqual(await (await setUp(t)).call('GET', '/api/mittr/tools'), { status: 200, body: OFFERED });
 
   const hosted = await setUp(t, { personalDesktop: false, stored: { tools: { chromeProfile: 'Default', chromeApprovedHosts: ['jira.acme.test'] } } });
-  assert.deepEqual((await hosted.call('GET', '/api/mittr/tools')).body, { computer: { offered: false, enabled: true }, chrome: NOT_OFFERED_CHROME });
+  assert.deepEqual((await hosted.call('GET', '/api/mittr/tools')).body, { computer: { offered: false, enabled: true }, chrome: NOT_OFFERED_CHROME, canChange: true });
 
   const noDrivers = await setUp(t, { computer: null, chrome: null });
-  assert.deepEqual((await noDrivers.call('GET', '/api/mittr/tools')).body, { computer: { offered: false, enabled: true }, chrome: NOT_OFFERED_CHROME });
+  assert.deepEqual((await noDrivers.call('GET', '/api/mittr/tools')).body, { computer: { offered: false, enabled: true }, chrome: NOT_OFFERED_CHROME, canChange: true });
 
   const noChrome = await setUp(t, { chromeInstalled: false });
   assert.deepEqual((await noChrome.call('GET', '/api/mittr/tools')).body.chrome, { ...OFFERED.chrome, chromeInstalled: false });
@@ -120,7 +135,55 @@ test('GET lists what this install offers', async (t) => {
   assert.deepEqual((await stored.call('GET', '/api/mittr/tools')).body, {
     computer: { offered: true, enabled: false },
     chrome: { ...OFFERED.chrome, profile: 'Profile 1', headed: true, approvedHosts: ['jira.acme.test'] },
+    canChange: true,
   });
+});
+
+test('GET says whether this request may change the settings', async (t) => {
+  for (const [options, label] of [
+    [{ scope: 'tunnel' }, 'a tunnel request'],
+    [{ scope: 'remote' }, 'a remote request'],
+    [{ peer: '192.0.2.7' }, 'a peer that is not loopback'],
+    [{ host: null }, 'no desktop host'],
+  ]) {
+    const { call } = await setUp(t, options);
+    assert.deepEqual((await call('GET', '/api/mittr/tools')).body, { ...OFFERED, canChange: false }, label);
+  }
+  const { call } = await setUp(t);
+  const relayed = await fetch(`${call.base}/api/mittr/tools`, { headers: { 'x-forwarded-for': '198.51.100.4' } });
+  assert.equal((await relayed.json()).canChange, false);
+});
+
+test('only this Mac may change a switch, the profile or the window, or remove a site', async (t) => {
+  const stored = { tools: { chromeApprovedHosts: ['jira.acme.test'] } };
+  const saved = [{ id: 'rule_jira', action: CHROME_PERMISSION, resource: 'jira.acme.test' }];
+  const refused = { status: 403, body: { error: 'These settings can be changed only on this Mac' } };
+  const cases = [
+    [{ scope: 'tunnel' }, {}],
+    [{ peer: '192.0.2.7' }, {}],
+    [{}, { 'x-forwarded-for': '198.51.100.4' }],
+    [{}, { forwarded: 'for=198.51.100.4' }],
+  ];
+  for (const [options, headers] of cases) {
+    const { call, state, storedTools, engine, driver } = await setUp(t, { ...options, stored, saved });
+    const send = async (method, route, body) => {
+      const response = await fetch(call.base + route, {
+        method,
+        headers: { 'content-type': 'application/json', ...headers },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      return { status: response.status, body: await response.json() };
+    };
+    const label = JSON.stringify({ options, headers });
+    for (const body of [{ chrome: false }, { computer: false }, { chromeHeaded: true }, { chromeProfile: 'Profile 1' }]) {
+      assert.deepEqual(await send('PUT', '/api/mittr/tools', body), refused, `${label} ${JSON.stringify(body)}`);
+    }
+    assert.deepEqual(await send('DELETE', '/api/mittr/tools/chrome/approved-hosts/jira.acme.test'), refused, label);
+    assert.deepEqual(storedTools(), stored.tools, label);
+    assert.equal(state.refreshes, 0, label);
+    assert.deepEqual(engine.calls.filter(({ method }) => method === 'DELETE'), [], label);
+    assert.deepEqual(driver.commands().filter(({ command }) => command[0] === 'profiles'), [], label);
+  }
 });
 
 test('PUT changes a switch and refreshes the tools', async (t) => {
@@ -188,6 +251,19 @@ test('a setting saved but not given to agents answers 500 with what is stored', 
   assert.deepEqual(answer.body.computer, { offered: true, enabled: false });
   assert.equal(storedTools().computer, false);
   assert.ok(logger.lines.some((line) => line.includes('was saved but not given to agents')));
+});
+
+test('a failure to read the settings back answers a JSON error, never the default page', async (t) => {
+  const { call, storedTools } = await setUp(t, {
+    refresh: async (state) => {
+      state.broken = true;
+      throw new Error('engine config busy');
+    },
+  });
+
+  assert.deepEqual(await call('PUT', '/api/mittr/tools', { computer: false }), { status: 500, body: { error: 'Could not check whether the tool setting was saved; open the settings again' } });
+  assert.equal(storedTools().computer, false);
+  assert.deepEqual(await call('GET', '/api/mittr/tools'), { status: 500, body: { error: 'Could not read the tool settings' } });
 });
 
 test('GET profiles lists this Mac\'s Chrome profiles by folder and name only', async (t) => {

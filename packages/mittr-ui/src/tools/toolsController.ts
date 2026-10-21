@@ -88,7 +88,7 @@ export function createToolsController({ api }: { api: ToolsApi }): ToolsControll
     if (request === generation) show(tools, { freshProfiles: true });
   };
 
-  const write = async (shown: MittrTools, send: () => Promise<MittrTools | null>, fallback: string): Promise<ToolsOutcome> => {
+  const write = async (shown: MittrTools, send: () => Promise<MittrTools | null>, fallback: string, freshProfiles = false): Promise<ToolsOutcome> => {
     generation += 1;
     const request = generation;
     set({ ...current, tools: { status: 'ready', tools: shown } });
@@ -100,14 +100,15 @@ export function createToolsController({ api }: { api: ToolsApi }): ToolsControll
       void load();
       return { tone: 'error', text: messageOf(error instanceof Error ? error : null, fallback) };
     }
-    if (answered && request === generation) show(answered, { freshProfiles: false });
+    if (answered && request === generation) show(answered, { freshProfiles });
     return null;
   };
 
   const change = (patch: ToolsPatch, shownOf: (tools: MittrTools) => MittrTools): Promise<ToolsOutcome> => {
     const tools = readyTools();
     if (disposed || !tools) return Promise.resolve(null);
-    return write(shownOf(tools), () => api.save(patch), mittrT('mittr.tools.errors.saveFailed'));
+    const turnsChromeOn = patch.chrome === true && !tools.chrome.enabled;
+    return write(shownOf(tools), () => api.save(patch), mittrT('mittr.tools.errors.saveFailed'), turnsChromeOn);
   };
 
   const removeHost = (host: string): Promise<ToolsOutcome> => {

@@ -225,6 +225,8 @@ export function setupMittrTools(context, {
 
   registerMittrToolsSettingsRoutes(app, {
     express,
+    host: context.host,
+    requestScope: context.requestScope,
     view: settingsView,
     apply: applySwitches,
     profiles: () => chrome.profiles(),

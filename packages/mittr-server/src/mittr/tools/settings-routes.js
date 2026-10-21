@@ -1,6 +1,7 @@
 import { jsonBody } from '../json-body.js';
 import { isHost, profileOf } from '../mittr-settings.js';
 import { isPlainObject } from '../values.js';
+import { isLocalRequest } from './control-routes.js';
 
 const ROUTE = '/api/mittr/tools';
 const PROFILES_ROUTE = `${ROUTE}/chrome/profiles`;
@@ -14,6 +15,9 @@ const CHROME_NOT_OFFERED = 'The Chrome tool is not available in this install';
 const CANNOT_LIST = 'Could not list the Chrome profiles on this Mac';
 const CANNOT_REMOVE = 'Could not remove the site';
 const NOT_A_SITE = 'That is not a site name';
+const ONLY_ON_THIS_MAC = 'These settings can be changed only on this Mac';
+const CANNOT_READ = 'Could not read the tool settings';
+const CANNOT_CHECK = 'Could not check whether the tool setting was saved; open the settings again';
 
 const isBoolean = (value) => value === true || value === false;
 
@@ -49,36 +53,54 @@ const storedAll = (patch, view) => {
   return Object.entries(patch).every(([key, value]) => stored[key] === value);
 };
 
-export function registerMittrToolsSettingsRoutes(app, { express, view, apply, profiles, removeHost, logger = console }) {
+export function registerMittrToolsSettingsRoutes(app, { express, host, requestScope, view, apply, profiles, removeHost, logger = console }) {
   const readJson = jsonBody(express, { limit: BODY_LIMIT });
+  const local = (req) => isLocalRequest(req, { host, requestScope });
+
+  const fromThisMac = (req, res, next) => (local(req) ? next() : res.status(403).json({ error: ONLY_ON_THIS_MAC }));
 
   const chromeProfiles = async () => listedProfiles(await profiles());
 
-  app.get(ROUTE, async (_req, res) => {
-    res.json(await view());
+  const viewOrNull = () => view().catch((error) => {
+    logger.warn('[mittr] could not read the tool settings:', error?.message ?? error);
+    return null;
   });
 
-  app.put(ROUTE, readJson, async (req, res) => {
+  app.get(ROUTE, async (req, res) => {
+    const current = await viewOrNull();
+    if (!current) return res.status(500).json({ error: CANNOT_READ });
+    return res.json({ ...current, canChange: local(req) });
+  });
+
+  app.put(ROUTE, fromThisMac, readJson, async (req, res) => {
     const refusal = refusalOf(req.body);
     if (refusal) return res.status(400).json({ error: refusal });
     const patch = req.body;
     if (Object.hasOwn(patch, 'chromeProfile')) {
-      const listed = (await view()).chrome.offered ? await chromeProfiles().catch(() => []) : [];
+      const listed = (await viewOrNull())?.chrome.offered ? await chromeProfiles().catch(() => []) : [];
       if (!listed.some(({ directory }) => directory === patch.chromeProfile)) return res.status(400).json({ error: invalid('chromeProfile') });
     }
     try {
       await apply(patch);
     } catch (error) {
-      const current = await view();
+      const current = await viewOrNull();
+      if (!current) {
+        logger.warn('[mittr] a tool setting change failed:', error?.message ?? error);
+        return res.status(500).json({ error: CANNOT_CHECK });
+      }
       const saved = storedAll(patch, current);
       logger.warn(`[mittr] a tool setting change ${saved ? 'was saved but not given to agents' : 'could not be saved'}:`, error?.message ?? error);
-      return res.status(500).json({ error: saved ? NOT_APPLIED : CANNOT_STORE, ...current });
+      return res.status(500).json({ error: saved ? NOT_APPLIED : CANNOT_STORE, ...current, canChange: true });
     }
-    return res.json(await view());
+    const current = await viewOrNull();
+    if (!current) return res.status(500).json({ error: CANNOT_CHECK });
+    return res.json({ ...current, canChange: true });
   });
 
   app.get(PROFILES_ROUTE, async (_req, res) => {
-    if (!(await view()).chrome.offered) return res.status(503).json({ error: CHROME_NOT_OFFERED });
+    const current = await viewOrNull();
+    if (!current) return res.status(500).json({ error: CANNOT_READ });
+    if (!current.chrome.offered) return res.status(503).json({ error: CHROME_NOT_OFFERED });
     try {
       return res.json({ profiles: await chromeProfiles() });
     } catch (error) {
@@ -87,12 +109,14 @@ export function registerMittrToolsSettingsRoutes(app, { express, view, apply, pr
     }
   });
 
-  app.delete(HOST_ROUTE, async (req, res) => {
-    const host = String(req.params.host ?? '').trim().toLowerCase();
-    if (!isHost(host)) return res.status(400).json({ error: NOT_A_SITE });
-    if (!(await view()).chrome.offered) return res.status(503).json({ error: CHROME_NOT_OFFERED });
+  app.delete(HOST_ROUTE, fromThisMac, async (req, res) => {
+    const site = String(req.params.host ?? '').trim().toLowerCase();
+    if (!isHost(site)) return res.status(400).json({ error: NOT_A_SITE });
+    const current = await viewOrNull();
+    if (!current) return res.status(500).json({ error: CANNOT_READ });
+    if (!current.chrome.offered) return res.status(503).json({ error: CHROME_NOT_OFFERED });
     try {
-      return res.json({ hosts: await removeHost(host) });
+      return res.json({ hosts: await removeHost(site) });
     } catch (error) {
       logger.warn('[mittr] could not remove an allowed Chrome site:', error?.message ?? error);
       return res.status(500).json({ error: CANNOT_REMOVE });

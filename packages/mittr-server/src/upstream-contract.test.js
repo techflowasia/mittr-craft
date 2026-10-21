@@ -527,6 +527,24 @@ const checks = {
     const probeStatus = (uiPassword) => probeRealServer(t, plugin, { uiPassword, route: '/api/contract-probe' }).status;
     assert.equal(probeStatus(''), 200, 'the probe route is not reachable on an open server');
     assert.equal(probeStatus('contract-password'), 401, 'a plugin /api route answered without a UI session');
+
+    const tools = [
+      `import { registerMittrToolsSettingsRoutes } from ${JSON.stringify(pathToFileURL(path.join(repoRoot, 'packages/mittr-server/src/mittr/tools/settings-routes.js')).href)};`,
+      'const view = async () => ({ computer: { offered: true, enabled: true }, chrome: { offered: true, chromeInstalled: true, enabled: true, profile: null, headed: false, approvedHosts: [] } });',
+      'export default (context) => registerMittrToolsSettingsRoutes(context.app, {',
+      '  express: context.express, host: context.host, requestScope: context.requestScope, view,',
+      "  apply: async () => { throw new Error('applied'); }, profiles: async () => [], removeHost: async () => ['removed.example.test'],",
+      '});',
+    ].join('\n');
+    const toolsProbe = (uiPassword, method, route, body) => probeRealServer(t, tools, { uiPassword, method, route, body });
+    for (const [method, route, body] of [['GET', '/api/mittr/tools'], ['PUT', '/api/mittr/tools', { chrome: false }], ['DELETE', '/api/mittr/tools/chrome/approved-hosts/acme.example.test']]) {
+      const refused = toolsProbe('contract-password', method, route, body);
+      assert.equal(refused.status, 401, `an unauthenticated ${method} ${route} answered ${refused.status}`);
+      assert.ok(!/offered|removed|applied|only on this Mac/.test(refused.text), `an unauthenticated ${method} ${route} reached the route`);
+    }
+    const open = toolsProbe('', 'GET', '/api/mittr/tools');
+    assert.equal(open.status, 200, `the tools settings route is not reachable on an open server: ${open.text}`);
+    assert.equal(JSON.parse(open.text).canChange, false, 'a web server with no desktop host says its tool settings can be changed');
   },
 
   'non-api-json-body': (t) => {
@@ -1916,6 +1934,11 @@ const checks = {
     for (const name of ['SETTINGS_HELPER_CLASS', 'SETTINGS_OPTION_STACK_CLASS', 'SETTINGS_SELECT_ROW_TRIGGER_CLASS', 'SETTINGS_SELECT_SIZE']) {
       has(section, new RegExp(`^export const ${name} = `, 'm'), `${name} is no longer exported from SettingsSection`);
     }
+    has(section, /interface SettingsSectionProps \{[\s\S]*?title\?: React\.ReactNode;[\s\S]*?info\?: React\.ReactNode;[\s\S]*?children: React\.ReactNode;/, 'SettingsSection no longer takes title, info and children');
+    has(section, /typeof title === 'string' \|\| typeof title === 'number' \? \(\s*<h2 className=\{SETTINGS_SECTION_TITLE_CLASS\}>\{title\}<\/h2>/, 'SettingsSection no longer draws a string title as its h2');
+    has(section, /\{info != null \? <SettingsInfoHint>\{info\}<\/SettingsInfoHint> : null\}/, 'SettingsSection no longer puts info behind the info hint');
+    has(source('packages/ui/src/components/ui/index.ts'), /^export \{ toast \} from '\.\/toast'/m, 'components/ui no longer exports toast');
+    has(source('packages/ui/src/lib/i18n/messages/en.ts'), /^  'common\.loading': '[^']+',$/m, 'the English dictionary no longer has common.loading');
     has(section, /interface SettingsCheckboxRowProps \{\s*checked: boolean;\s*onChange: \(checked: boolean\) => void;\s*label: React\.ReactNode;\s*description\?: React\.ReactNode;\s*disabled\?: boolean;\s*ariaLabel\?: string;[\s\S]*?info\?: React\.ReactNode;\s*\}/, 'SettingsCheckboxRow no longer takes checked, onChange, label, description, ariaLabel and info');
     has(section, /interface SettingsFieldRowProps \{\s*label: React\.ReactNode;\s*description\?: React\.ReactNode;[\s\S]*?info\?: React\.ReactNode;/, 'SettingsFieldRow no longer takes label and info');
     const select = source('packages/ui/src/components/ui/select.tsx');

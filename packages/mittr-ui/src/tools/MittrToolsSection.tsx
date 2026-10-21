@@ -74,7 +74,7 @@ function ProfileRow({ chrome, profiles, actions }: ChromeProps): React.ReactNode
     );
   };
   return (
-    <SettingsFieldRow label={label} info={mt('mittr.tools.chrome.profileInfo')}>
+    <SettingsFieldRow label={label} description={mt('mittr.tools.chrome.profileCopy')}>
       {body()}
     </SettingsFieldRow>
   );
@@ -83,7 +83,7 @@ function ProfileRow({ chrome, profiles, actions }: ChromeProps): React.ReactNode
 function SitesRow({ chrome, actions }: Omit<ChromeProps, 'profiles'>): React.ReactNode {
   const t = useMittrT();
   return (
-    <SettingsFieldRow label={t('mittr.tools.chrome.sites')} info={t('mittr.tools.chrome.sitesInfo')}>
+    <SettingsFieldRow label={t('mittr.tools.chrome.sites')} description={t('mittr.tools.chrome.sitesScope')}>
       {chrome.approvedHosts.length === 0 ? (
         <span className={SETTINGS_HELPER_CLASS}>{t('mittr.tools.chrome.sitesEmpty')}</span>
       ) : (
@@ -147,6 +147,8 @@ export function MittrToolsSectionView({ state, profiles, actions }: MittrToolsSe
     <SettingsSection title={t('mittr.tools.title')} info={t('mittr.tools.info')}>
       {state.status === 'error' ? (
         <LoadFailure text={state.error} onRetry={actions.retry} />
+      ) : !state.tools.canChange ? (
+        <p className={SETTINGS_HELPER_CLASS}>{t('mittr.tools.changeOnThisMac')}</p>
       ) : (
         <div className={SETTINGS_OPTION_STACK_CLASS}>
           {state.tools.computer.offered ? (

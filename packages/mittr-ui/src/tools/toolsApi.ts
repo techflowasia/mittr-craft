@@ -20,7 +20,7 @@ const chromePayload = z.object({
   approvedHosts: z.array(z.string()),
 });
 
-const toolsPayload = z.object({ computer: computerPayload, chrome: chromePayload });
+const toolsPayload = z.object({ computer: computerPayload, chrome: chromePayload, canChange: z.boolean() });
 
 const profilePayload = z.object({ directory: z.string().min(1), name: z.string() });
 
