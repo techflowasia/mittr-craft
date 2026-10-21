@@ -2,16 +2,22 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  codeModeCall,
   failuresOf,
   loopbackPeersFromLsof,
+  mcpEntityFromCatalog,
+  offeredTools,
   nonLoopbackFromLog,
   nonLoopbackFromLsof,
   openCodeMentions,
   refusedByPolicy,
   shimCallsFor,
+  skillsMcpStopConditions,
   stopConditionFor,
   textsOf,
+  toolToCall,
 } from './probe-engine-v2.mjs';
+import { STUB_ANSWER, argValue, handleMessage } from './stub-mcp-server.mjs';
 
 test('refusedByPolicy needs an unanswered turn that failed with provider.no-route', () => {
   const noRoute = { type: 'session.execution.failed', error: { type: 'provider.no-route' } };
@@ -74,4 +80,85 @@ test('shimCallsFor keeps only the shim call lines of one session', () => {
 test('textsOf collects every text field in order', () => {
   assert.deepEqual(textsOf({ parts: [{ type: 'text', text: 'partial ' }, { type: 'step', nested: { text: 'two' } }], text: 3 }), ['partial ', 'two']);
   assert.deepEqual(textsOf(null), []);
+});
+
+test('a local 1.x connector becomes a v2 entry', () => {
+  const entry = mcpEntityFromCatalog({ type: 'local', command: ['node', 'x.mjs'], enabled: true });
+  assert.equal(entry.type, 'local');
+  assert.deepEqual(entry.command, ['node', 'x.mjs']);
+  assert.equal(entry.disabled, false);
+  assert.equal('enabled' in entry, false);
+});
+
+test('a remote connector keeps its url and headers', () => {
+  const entry = mcpEntityFromCatalog({ type: 'remote', url: 'https://example.invalid/mcp', headers: { 'x-key': 'v' } });
+  assert.equal(entry.type, 'remote');
+  assert.equal(entry.url, 'https://example.invalid/mcp');
+  assert.deepEqual(entry.headers, { 'x-key': 'v' });
+});
+
+test('an entry without a type is refused', () => {
+  assert.equal(mcpEntityFromCatalog({ command: ['node', 'x.mjs'], enabled: true }), null);
+});
+
+test('offeredTools names every tool in a chat request', () => {
+  const body = { tools: [{ type: 'function', function: { name: 'skill' } }, { type: 'function', function: { name: 'mittr-probe_lookup' } }, { name: 'bare' }] };
+  assert.deepEqual(offeredTools(body), ['skill', 'mittr-probe_lookup', 'bare']);
+  assert.deepEqual(offeredTools({}), []);
+  assert.deepEqual(offeredTools(null), []);
+});
+
+test('toolToCall picks the wanted tool until a tool result is in the conversation', () => {
+  const tools = [{ type: 'function', function: { name: 'read' } }, { type: 'function', function: { name: 'mittr-probe_lookup' } }];
+  assert.equal(toolToCall({ tools, messages: [{ role: 'user', content: 'go' }] }, /lookup$/), 'mittr-probe_lookup');
+  assert.equal(toolToCall({ tools, messages: [{ role: 'user', content: 'go' }, { role: 'tool', content: 'stub-law-41' }] }, /lookup$/), null);
+  assert.equal(toolToCall({ tools: [tools[0]], messages: [{ role: 'user', content: 'go' }] }, /lookup$/), null);
+  assert.equal(toolToCall({ tools, messages: [] }, null), null);
+});
+
+test('the stub MCP server answers initialize, tools/list and tools/call, and ignores notifications', () => {
+  const calls = [];
+  const init = handleMessage({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26' } });
+  assert.equal(init.result.protocolVersion, '2025-03-26');
+  assert.deepEqual(init.result.capabilities, { tools: { listChanged: false } });
+  assert.equal(handleMessage({ jsonrpc: '2.0', method: 'notifications/initialized' }), null);
+  assert.deepEqual(handleMessage({ jsonrpc: '2.0', id: 2, method: 'tools/list' }).result.tools.map((t) => t.name), ['lookup']);
+  const answer = handleMessage({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'lookup', arguments: { query: '41' } } }, { onCall: (p) => calls.push(p) });
+  assert.deepEqual(answer.result, STUB_ANSWER);
+  assert.deepEqual(answer.result, { content: [{ type: 'text', text: 'stub-law-41' }] });
+  assert.equal(calls.length, 1);
+  assert.equal(handleMessage({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'other' } }, { onCall: (p) => calls.push(p) }).error.code, -32602);
+  assert.equal(calls.length, 1);
+  assert.equal(handleMessage({ jsonrpc: '2.0', id: 5, method: 'resources/list' }).error.code, -32601);
+  assert.equal(argValue(['node', 'stub', '--log', '/tmp/x', '--marker', 'm'], '--log'), '/tmp/x');
+  assert.equal(argValue(['node', 'stub'], '--log'), null);
+});
+
+test('skills-mcp stop conditions follow the brief', () => {
+  const pass = { pass: true };
+  const all = { P8: { pass: true, nested: true, flat: true }, P9: pass, P10: pass, P10b: pass, P11: { pass: true, perProject: [1, 1, 1] }, P12: pass };
+  const none = skillsMcpStopConditions(all);
+  assert.ok(Object.values(none).every((c) => c.stop === false && c.action === 'none'));
+  assert.equal(skillsMcpStopConditions({ ...all, P8: { pass: false, nested: false, flat: false } }).P8.stop, true);
+  assert.match(skillsMcpStopConditions({ ...all, P8: { pass: true, nested: false, flat: true } }).P8.action, /mittr-<name>.*\.mittr-version.*drops the mittr\/ folder/);
+  assert.match(skillsMcpStopConditions({ ...all, P9: { pass: false } }).P9.action, /refresh\('mittr catalog skills changed'\)/);
+  const fallback = skillsMcpStopConditions({ ...all, P10b: { pass: false } });
+  assert.match(fallback.P10b.action, /userConfig/);
+  assert.equal(fallback.P10b.stop, false);
+  assert.match(skillsMcpStopConditions({ ...all, P10: { pass: false } }).P10.action, /userConfig/);
+  const fanOut = skillsMcpStopConditions({ ...all, P11: { pass: false, perProject: [2, 1, 1] } }).P11;
+  assert.equal(fanOut.stop, false);
+  assert.match(fanOut.action, /owner note/);
+  assert.equal(skillsMcpStopConditions({ ...all, P12: { pass: false } }).P12.stop, false);
+});
+
+test('codeModeCall runs a catalog tool through execute until a tool result is in the conversation', () => {
+  const catalog = '# Code Mode\n- mittr-probe (1 tool)\n  - tools["mittr-probe"].lookup({\n  query?: string,\n}): Promise<unknown>';
+  const tools = [{ type: 'function', function: { name: 'execute' } }];
+  const body = { tools, messages: [{ role: 'system', content: [{ type: 'text', text: catalog }] }, { role: 'user', content: 'go' }] };
+  assert.deepEqual(codeModeCall(body, 'mittr-probe', 'lookup'), { name: 'execute', arguments: { code: 'return await tools["mittr-probe"].lookup({ query: "41" })' } });
+  assert.deepEqual(codeModeCall({ ...body, messages: [{ role: 'system', content: catalog }] }, 'mittr-probe', 'lookup')?.name, 'execute');
+  assert.equal(codeModeCall({ ...body, messages: [...body.messages, { role: 'tool', content: 'stub-law-41' }] }, 'mittr-probe', 'lookup'), null);
+  assert.equal(codeModeCall({ ...body, messages: [{ role: 'system', content: '# Code Mode' }] }, 'mittr-probe', 'lookup'), null);
+  assert.equal(codeModeCall({ ...body, tools: [] }, 'mittr-probe', 'lookup'), null);
 });

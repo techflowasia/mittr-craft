@@ -36,7 +36,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { identityLine, identityPluginSource } from '../../packages/mittr-opencode/src/identity-plugin.js';
 import { ENGINE_OUTBOUND_OFF, ENGINE_SHARE_OFF } from '../../packages/mittr-server/src/engine-outbound.js';
 import { toEngineRefusal } from '../../packages/mittr-server/src/mittr/exhausted.js';
+import { catalogMcpEntity } from '../../packages/mittr-server/src/mittr/mcp-fragment.js';
 import { policiesFor } from '../../packages/mittr-server/src/mittr/policies.js';
+import { toMcpEntity } from '../../packages/web/server/lib/opencode/config-v2.js';
+
+export const mcpEntityFromCatalog = (raw) => catalogMcpEntity(raw, toMcpEntity);
 
 // What a user who owns OPENCODE_CONFIG might allow on their own (R45 probe):
 // every provider, the other stub by name, and the hosted provider by name.
@@ -211,6 +215,16 @@ const answer = (stub, record, req, res) => {
     res.end(JSON.stringify(RATE_LIMIT_BODY));
     return;
   }
+  const call = stub.mode === 'tool' && stub.pickCall ? stub.pickCall(record.body) : null;
+  record.calledTool = call?.name ?? null;
+  if (call) {
+    sse(res, [
+      chunk(model, { role: 'assistant', tool_calls: [{ index: 0, id: `call_${stub.requests.length}`, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.arguments) } }] }),
+      chunk(model, {}, 'tool_calls', { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 }),
+      '[DONE]',
+    ]);
+    return;
+  }
   if (record.body?.stream) {
     sse(res, [
       chunk(model, { role: 'assistant', content: stub.reply }),
@@ -229,7 +243,7 @@ const answer = (stub, record, req, res) => {
 
 const startStub = async (name) => {
   const port = await freePort();
-  const stub = { name, port, requests: [], mode: 'ok', reply: `hello from ${name}` };
+  const stub = { name, port, requests: [], mode: 'ok', pickCall: null, reply: `hello from ${name}` };
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (part) => { raw += part; });
@@ -395,8 +409,18 @@ const stopEngine = async (engine) => {
   engine.stopped = !groupAlive(engine.pid);
 };
 
+const listenerOn = (port) => (spawnSync('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN'], { encoding: 'utf8' }).stdout ?? '').trim();
+
+const unusedPort = async () => {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const port = await freePort();
+    if (!listenerOn(port)) return port;
+  }
+  throw new Error('no loopback port free of other listeners');
+};
+
 const startEngine = async ({ home, configFile, logFile, proxyPort, hookLog, onSpawn, extraEnv = {}, outboundEnv = ENGINE_OUTBOUND_OFF }) => {
-  const port = await freePort();
+  const port = await unusedPort();
   const password = randomBytes(24).toString('hex');
   const work = path.join(home, 'work');
   fs.mkdirSync(work, { recursive: true });
@@ -794,6 +818,49 @@ export const textsOf = (value, found = []) => {
     }
   }
   return found;
+};
+
+export const offeredTools = (body) => (Array.isArray(body?.tools) ? body.tools : [])
+  .map((tool) => tool?.function?.name ?? tool?.name)
+  .filter(Boolean);
+
+export const toolToCall = (body, pattern) => {
+  if (!pattern || hasToolResult(body)) return null;
+  return offeredTools(body).find((name) => pattern.test(name)) ?? null;
+};
+
+const hasToolResult = (body) => (Array.isArray(body?.messages) ? body.messages : []).some((message) => message?.role === 'tool');
+
+const systemPlainText = (body) => (Array.isArray(body?.messages) ? body.messages : [])
+  .filter((message) => message?.role === 'system')
+  .map((message) => (Array.isArray(message.content) ? textsOf(message.content).join('\n') : String(message.content ?? '')))
+  .join('\n');
+
+export const codeModeCall = (body, server, tool) => {
+  if (hasToolResult(body) || !offeredTools(body).includes('execute')) return null;
+  const callPath = `tools[${JSON.stringify(server)}].${tool}`;
+  if (!systemPlainText(body).includes(`${callPath}(`)) return null;
+  return { name: 'execute', arguments: { code: `return await ${callPath}({ query: "41" })` } };
+};
+
+const NO_ACTION = { action: 'none', stop: false };
+const MCP_FALLBACK = 'Task 9 takes its named fallback: user-scope entries are written through context.opencode.userConfig and reconciled per account before each restart';
+
+export const skillsMcpStopConditions = (scenarios) => {
+  const { P8 = {}, P9 = {}, P10 = {}, P10b = {}, P11 = {}, P12 = {} } = scenarios;
+  const conditions = {};
+  if (!P8.nested && !P8.flat) conditions.P8 = { action: 'stop and report: catalog skills cannot reach the engine', stop: true };
+  else if (!P8.nested) conditions.P8 = { action: 'Task 8 writes <skills>/mittr-<name>/ with the .mittr-version marker as the ownership mark, and drops the mittr/ folder', stop: false };
+  else conditions.P8 = NO_ACTION;
+  conditions.P9 = P9.pass ? NO_ACTION : { action: "after a change Task 8 calls context.opencode.refresh('mittr catalog skills changed'), as 1.22 did, and the note records the restart cost", stop: false };
+  conditions.P10 = P10.pass ? NO_ACTION : { action: MCP_FALLBACK, stop: false };
+  conditions.P10b = P10b.pass ? NO_ACTION : { action: MCP_FALLBACK, stop: false };
+  const perProject = Array.isArray(P11.perProject) ? P11.perProject : [];
+  conditions.P11 = P11.pass && perProject.every((n) => n <= 1)
+    ? NO_ACTION
+    : { action: 'owner note: the engine runs more than one connector process per project', stop: false };
+  conditions.P12 = P12.pass ? NO_ACTION : { action: 'owner note: a removed connector is not stopped while the engine runs, so Task 9 cannot rely on a hot removal', stop: false };
+  return conditions;
 };
 
 export const shimCallsFor = (logLines, sessionID) => logLines
@@ -1220,6 +1287,390 @@ const probeOutbound = async ({ OpenCode, home, configFile, hookLog, stubs, proxy
   };
 };
 
+const STUB_MCP = path.join(REPO, 'scripts/mittr/stub-mcp-server.mjs');
+const SKILLS_MCP_SCENARIOS = ['P8', 'P9', 'P10', 'P10b', 'P11', 'P12'];
+const HOT_WINDOW_MS = 10_000;
+const MCP_NAME = 'mittr-probe';
+const LOOKUP = /lookup/;
+
+const writeSkill = (dir, name, description) => {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n\nAnswer with the word ${name}.\n`, { mode: 0o600 });
+};
+
+const listSkills = async (client, directory) => {
+  const out = await client.skill.list({ location: { directory } });
+  return (out.data ?? out).map((skill) => ({ id: skill.id, name: skill.name, path: skill.path }));
+};
+
+const listMcp = async (client, directory) => {
+  const out = await client.mcp.list({ location: { directory } });
+  return (out.data ?? out).map((server) => ({ name: server.name, status: server.status?.status ?? null, error: server.status?.error ?? null }));
+};
+
+const markerProcesses = (marker) => {
+  const out = spawnSync('pgrep', ['-fl', `stub-mcp-server.*${marker}`], { encoding: 'utf8' }).stdout ?? '';
+  return out.split('\n').filter(Boolean).map((line) => {
+    const [pid, ...rest] = line.trim().split(' ');
+    return { pid: Number(pid), command: rest.join(' ').split(' ')[0] };
+  }).filter((p) => p.pid && p.pid !== process.pid);
+};
+
+const readStubLog = (file) => (fs.existsSync(file)
+  ? fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line))
+  : []);
+
+const isAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const promptApproving = async ({ client, collector, sessionID, text, timeoutMs = 30_000 }) => {
+  const mark = Date.now();
+  let promptError = null;
+  const permissions = [];
+  const sent = client.session.prompt({ sessionID, text }).catch((error) => { promptError = errorText(error); });
+  const idle = await waitFor(async () => {
+    const pending = await client.permission.list({ sessionID }).catch(() => []);
+    for (const request of (Array.isArray(pending) ? pending : pending?.data ?? [])) {
+      if (permissions.some((p) => p.id === request.id)) continue;
+      permissions.push({ id: request.id, action: request.action, resources: request.resources });
+      await client.permission.reply({ sessionID, requestID: request.id, decision: 'once' }).catch(() => {});
+    }
+    return sessionEvents(collector.events, sessionID, mark).find(isIdleEvent);
+  }, timeoutMs, 250);
+  await Promise.race([sent, sleep(1000)]);
+  return { mark, promptError, idleAt: idle?.at ?? null, permissions };
+};
+
+const toolTurn = async ({ client, collector, stub, directory, label, awaitConnected = false }) => {
+  const connectAt = Date.now();
+  const connected = awaitConnected
+    ? await waitFor(async () => (await listMcp(client, directory).catch(() => [])).some((s) => s.name === MCP_NAME && s.status === 'connected'), HOT_WINDOW_MS, 250)
+    : null;
+  const connectedAfterMs = connected ? Date.now() - connectAt : null;
+  const { sessionID, createError } = await newSession(client, directory, 'stub', 'm1');
+  if (!sessionID) return { createError };
+  stub.mode = 'tool';
+  stub.pickCall = (body) => {
+    const direct = toolToCall(body, LOOKUP);
+    return direct ? { name: direct, arguments: { query: '41' } } : codeModeCall(body, MCP_NAME, 'lookup');
+  };
+  const run = await promptApproving({ client, collector, sessionID, text: `Use the lookup tool for law 41 (${label}).` });
+  stub.mode = 'ok';
+  stub.pickCall = null;
+  const requests = stub.forSession(sessionID);
+  const toolResults = requests.flatMap((r) => (r.body?.messages ?? []).filter((m) => m.role === 'tool')).map((m) => textsOf(m).join('') || String(m.content ?? ''));
+  return {
+    sessionID,
+    connectedAfterMs,
+    requests: requests.length,
+    offered: [...new Set(requests.flatMap((r) => offeredTools(r.body)))].sort(),
+    inCodeModeCatalog: requests.some((r) => systemPlainText(r.body).includes(`tools[${JSON.stringify(MCP_NAME)}].lookup(`)),
+    calledTool: requests.map((r) => r.calledTool).find(Boolean) ?? null,
+    catalogEntry: (() => {
+      const text = requests[0] ? systemPlainText(requests[0].body) : '';
+      const at = text.indexOf(`- ${MCP_NAME} (`);
+      return at === -1 ? null : text.slice(at, text.indexOf('\n- ', at + 2) === -1 ? at + 300 : text.indexOf('\n- ', at + 2));
+    })(),
+    codeModeHeading: requests[0] ? systemPlainText(requests[0].body).includes('# Code Mode') : null,
+    executeArguments: requests.flatMap((r) => (r.body?.messages ?? []).flatMap((m) => m.tool_calls ?? [])).map((c) => c.function?.arguments ?? null).slice(0, 2),
+    toolResultHead: toolResults.map((t) => t.slice(0, 200)).slice(0, 2),
+    toolResultSeen: toolResults.some((t) => t.includes('stub-law-41')),
+    permissions: run.permissions,
+    idle: Boolean(run.idleAt),
+    promptError: run.promptError,
+    events: summarizeEvents(sessionEvents(collector.events, sessionID, run.mark)).slice(0, 20),
+  };
+};
+
+const toolTurnUntilOffered = async ({ since, ...input }) => {
+  const attempts = [];
+  for (;;) {
+    const turn = await toolTurn({ ...input, awaitConnected: input.awaitConnected && attempts.length === 0 });
+    attempts.push({ afterMs: Date.now() - since, inCodeModeCatalog: turn.inCodeModeCatalog, calledTool: turn.calledTool });
+    if (turn.calledTool || turn.inCodeModeCatalog || Date.now() - since >= HOT_WINDOW_MS) return { ...turn, attempts };
+    await sleep(500);
+  }
+};
+
+const toolTurnUntilGone = async ({ since, ...input }) => {
+  const attempts = [];
+  for (;;) {
+    const turn = await toolTurn(input);
+    const offered = turn.inCodeModeCatalog || (turn.offered ?? []).some((name) => LOOKUP.test(name));
+    attempts.push({ afterMs: Date.now() - since, offered, calledTool: turn.calledTool, toolResultHead: turn.toolResultHead ?? [] });
+    if (!offered || Date.now() - since >= HOT_WINDOW_MS) return { ...turn, offered, attempts };
+    await sleep(500);
+  }
+};
+
+const underHome = (home) => (value) => (value?.startsWith(home) ? `<home>${value.slice(home.length)}` : value);
+
+const runAsServer = ({ home, directory, managedFile = null }) => {
+  const env = {
+    PATH: '/usr/bin:/bin',
+    HOME: home,
+    TMPDIR: path.join(home, 'tmp'),
+    XDG_CONFIG_HOME: path.join(home, '.config'),
+    XDG_DATA_HOME: path.join(home, '.local/share'),
+    XDG_STATE_HOME: path.join(home, '.local/state'),
+    XDG_CACHE_HOME: path.join(home, '.cache'),
+  };
+  if (managedFile) env.OPENCODE_CONFIG = managedFile;
+  const mcpUrl = pathToFileURL(path.join(REPO, 'packages/web/server/lib/opencode/mcp.js')).href;
+  const sharedUrl = pathToFileURL(path.join(REPO, 'packages/web/server/lib/opencode/shared.js')).href;
+  const script = [
+    `const { listMcpConfigs } = await import(${JSON.stringify(mcpUrl)});`,
+    `const { readConfigLayers, getJsonEntrySource } = await import(${JSON.stringify(sharedUrl)});`,
+    `const directory = ${JSON.stringify(directory)};`,
+    'const layers = readConfigLayers(directory);',
+    "const list = listMcpConfigs(directory).map((e) => ({ name: e.name, type: e.type, scope: e.scope, sectionKey: e.sectionKey, legacy: e.legacy, source: getJsonEntrySource(layers, 'mcp', e.name).path }));",
+    'process.stdout.write(JSON.stringify({ paths: layers.paths, list }));',
+  ].join('\n');
+  const out = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env, cwd: REPO, encoding: 'utf8', timeout: 30_000 });
+  const rel = underHome(home);
+  try {
+    const parsed = JSON.parse(out.stdout);
+    return {
+      env: { OPENCODE_CONFIG: managedFile ? rel(managedFile) : null },
+      paths: Object.fromEntries(Object.entries(parsed.paths).map(([k, v]) => [k, rel(v)])),
+      list: parsed.list.map((e) => ({ ...e, source: rel(e.source) })),
+    };
+  } catch {
+    return { error: `${out.status} ${String(out.stderr).slice(0, 600)}` };
+  }
+};
+
+const probeSkillsMcp = async ({ home, configFile, baseConfig, stub, connect, current, marker, stubLog }) => {
+  const configDir = path.join(home, '.config', 'opencode');
+  const skillsRoot = path.join(configDir, 'skills');
+  const engineEnv = { OPENCODE_CONFIG_DIR: configDir, PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin` };
+  const layouts = {
+    nested: { dir: path.join(skillsRoot, 'mittr', 'probe-skill'), name: 'probe-skill', description: 'Probe skill' },
+    flat: { dir: path.join(skillsRoot, 'mittr-probe-skill'), name: 'mittr-probe-skill', description: 'Probe skill flat' },
+    mismatch: { dir: path.join(skillsRoot, 'mittr-probe-mismatch'), name: 'probe-mismatch-name', description: 'Probe skill mismatched name' },
+    developerCollide: { dir: path.join(skillsRoot, 'probe-collide'), name: 'probe-collide', description: 'Developer collide' },
+    catalogCollide: { dir: path.join(skillsRoot, 'mittr', 'probe-collide'), name: 'probe-collide', description: 'Catalog collide' },
+  };
+  for (const layout of Object.values(layouts)) writeSkill(layout.dir, layout.name, layout.description);
+  writeJsonAtomic(configFile, baseConfig());
+  const client = await connect(engineEnv);
+  const { engine, collector } = current();
+  const work = engine.work;
+  const enginePid = engine.pid;
+  const engineAlive = () => current().engine === engine && engine.child.exitCode === null && engine.child.signalCode === null && isAlive(enginePid);
+  const rel = underHome(home);
+  const scenarios = {};
+
+  const listedAt = Date.now();
+  let skills = [];
+  await waitFor(async () => {
+    skills = await listSkills(client, work).catch((error) => `error: ${errorText(error)}`);
+    return Array.isArray(skills) && skills.some((s) => String(s.path).startsWith(skillsRoot));
+  }, HOT_WINDOW_MS, 250);
+  const firstListedAfterMs = Date.now() - listedAt;
+  const ours = Array.isArray(skills) ? skills.filter((s) => String(s.path).startsWith(skillsRoot)).map((s) => ({ ...s, path: rel(s.path) })) : skills;
+  const skillTurn = await newSession(client, work, 'stub', 'm1');
+  let skillRequest = null;
+  if (skillTurn.sessionID) {
+    await promptApproving({ client, collector, sessionID: skillTurn.sessionID, text: 'Which skills do you have?' });
+    skillRequest = stub.forSession(skillTurn.sessionID).at(0) ?? null;
+  }
+  const requestText = skillRequest ? `${JSON.stringify(skillRequest.body?.tools ?? [])}\n${systemPlainText(skillRequest.body)}` : '';
+  const skillTool = (skillRequest?.body?.tools ?? []).find((t) => t?.function?.name === 'skill');
+  const found = (layout) => {
+    const listed = Array.isArray(ours) ? ours.find((s) => s.path === rel(path.join(layout.dir, 'SKILL.md'))) ?? null : null;
+    return {
+      folder: rel(layout.dir),
+      frontmatterName: layout.name,
+      listed: Boolean(listed),
+      id: listed?.id ?? null,
+      listedName: listed?.name ?? null,
+      inRequest: requestText.includes(layout.name),
+      inSkillToolDescription: String(skillTool?.function?.description ?? '').includes(layout.name),
+      inAvailableSkillsAs: (() => {
+        const block = (requestText.match(/<available_skills>[\s\S]*?<\/available_skills>/) ?? [''])[0];
+        const entry = [...block.matchAll(/<skill>\s*<id>([^<]*)<\/id>\s*<name>([^<]*)<\/name>/g)].find((m) => m[2] === layout.name);
+        return entry ? { id: entry[1], name: entry[2] } : null;
+      })(),
+    };
+  };
+  const availableSkills = (requestText.match(/<available_skills>[\s\S]*?<\/available_skills>/) ?? [null])[0];
+  const collide = {
+    listed: Array.isArray(ours) ? ours.filter((s) => s.id === 'probe-collide' || s.name === 'probe-collide') : ours,
+    developerInRequest: requestText.includes('Developer collide'),
+    catalogInRequest: requestText.includes('Catalog collide'),
+  };
+  const nested = found(layouts.nested);
+  const flat = found(layouts.flat);
+  const mismatch = found(layouts.mismatch);
+  const reaches = (f) => f.listed || f.inRequest;
+  scenarios.P8 = {
+    pass: reaches(nested) || reaches(flat),
+    nested: reaches(nested),
+    flat: reaches(flat),
+    mismatchedNameAccepted: reaches(mismatch),
+    idForm: { nested: nested.id ?? nested.inAvailableSkillsAs?.id ?? null, flat: flat.id ?? flat.inAvailableSkillsAs?.id ?? null },
+    observed: {
+      nested,
+      flat,
+      mismatch,
+      collision: collide,
+      firstListedAfterMs,
+      availableSkillsOurs: availableSkills ? availableSkills.split('<skill>').filter((part) => /Probe skill|collide/.test(part)).map((part) => part.replace(/\s+/g, ' ').trim()) : null,
+      skillsUnderConfigDir: ours,
+      skillsListedTotal: Array.isArray(skills) ? skills.length : skills,
+      offeredTools: skillRequest ? offeredTools(skillRequest.body) : null,
+      skillToolDescriptionHead: skillTool ? String(skillTool.function.description).slice(0, 400) : null,
+      requestSeen: Boolean(skillRequest),
+      createError: skillTurn.createError,
+    },
+  };
+
+  const hot = {
+    nested: { dir: path.join(skillsRoot, 'mittr', 'probe-hot'), name: 'probe-hot', description: 'Probe skill added hot' },
+    flat: { dir: path.join(skillsRoot, 'mittr-probe-hot'), name: 'mittr-probe-hot', description: 'Probe skill flat added hot' },
+  };
+  const hotAt = Date.now();
+  for (const layout of Object.values(hot)) writeSkill(layout.dir, layout.name, layout.description);
+  const seenAt = {};
+  await waitFor(async () => {
+    const now = await listSkills(client, work).catch(() => []);
+    for (const [key, layout] of Object.entries(hot)) {
+      if (seenAt[key] === undefined && now.some((s) => s.path === path.join(layout.dir, 'SKILL.md'))) seenAt[key] = Date.now() - hotAt;
+    }
+    return Object.keys(seenAt).length === Object.keys(hot).length;
+  }, HOT_WINDOW_MS, 250);
+  const layoutsThatWork = ['nested', 'flat'].filter((key) => scenarios.P8[key]);
+  scenarios.P9 = {
+    pass: layoutsThatWork.length > 0 && layoutsThatWork.every((key) => seenAt[key] !== undefined) && engineAlive(),
+    observed: {
+      pickedUpAfterMs: { nested: seenAt.nested ?? null, flat: seenAt.flat ?? null },
+      windowMs: HOT_WINDOW_MS,
+      enginePidBefore: enginePid,
+      enginePidAfter: current().engine.pid,
+      engineAlive: engineAlive(),
+    },
+  };
+
+  const raw = { type: 'local', command: ['node', STUB_MCP, '--log', stubLog, '--marker', marker] };
+  const entity = mcpEntityFromCatalog(raw);
+  const withMcp = () => ({ ...baseConfig(), mcp: { servers: { [MCP_NAME]: entity } } });
+  const mcpAt = Date.now();
+  writeJsonAtomic(configFile, withMcp());
+  let lastStatus = null;
+  const connected = await waitFor(async () => {
+    lastStatus = await listMcp(client, work).catch((error) => `error: ${errorText(error)}`);
+    return Array.isArray(lastStatus) && lastStatus.some((s) => s.name === MCP_NAME && s.status === 'connected');
+  }, HOT_WINDOW_MS, 250);
+  const connectedAfterMs = connected ? Date.now() - mcpAt : null;
+  const callsBefore = readStubLog(stubLog).filter((e) => e.event === 'call').length;
+  const turn = await toolTurnUntilOffered({ client, collector, stub, directory: work, label: 'P10', since: mcpAt });
+  await sleep(500);
+  const callsDuring = readStubLog(stubLog).filter((e) => e.event === 'call').length - callsBefore;
+  scenarios.P10 = {
+    pass: Boolean(connected) && callsDuring === 1 && turn.toolResultSeen && engineAlive(),
+    observed: {
+      entity: { type: entity?.type, command: entity?.command?.map((part) => rel(part)), disabled: entity?.disabled ?? null },
+      connectedAfterMs,
+      status: lastStatus,
+      stubCalls: callsDuring,
+      turn,
+      enginePidUnchanged: current().engine.pid === enginePid,
+      engineAlive: engineAlive(),
+    },
+  };
+
+  const asServer = runAsServer({ home, directory: work });
+  const asChild = runAsServer({ home, directory: work, managedFile: configFile });
+  const listedAsServer = Array.isArray(asServer.list) && asServer.list.some((e) => e.name === MCP_NAME);
+  const listedAsChild = Array.isArray(asChild.list) && asChild.list.some((e) => e.name === MCP_NAME);
+  scenarios.P10b = {
+    pass: listedAsServer,
+    expected: 'not listed (preflight F14)',
+    listed: listedAsServer,
+    editable: listedAsServer,
+    observed: {
+      serverEnv: asServer,
+      routeMergesEngineStatus: false,
+      pageReadOnlyState: false,
+      diagnosticWithManagedFileInServerEnv: {
+        listed: listedAsChild,
+        entry: Array.isArray(asChild.list) ? asChild.list.find((e) => e.name === MCP_NAME) ?? null : null,
+        editsWouldWriteTo: Array.isArray(asChild.list) ? asChild.list.find((e) => e.name === MCP_NAME)?.source ?? null : null,
+        result: asChild,
+      },
+    },
+  };
+
+  const projects = ['p1', 'p2', 'p3'].map((name) => {
+    const dir = path.join(home, 'projects', name);
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  });
+  const stubPids = () => new Set(readStubLog(stubLog).filter((e) => e.event === 'start').map((e) => e.pid));
+  const liveStubs = () => [...stubPids()].filter(isAlive);
+  const liveBefore = liveStubs();
+  const seen = new Set(liveBefore);
+  const perProject = [];
+  const projectTurns = [];
+  for (const dir of projects) {
+    const callsBeforeProject = readStubLog(stubLog).filter((e) => e.event === 'call').length;
+    const projectTurn = await toolTurnUntilOffered({ client, collector, stub, directory: dir, label: path.basename(dir), awaitConnected: true, since: Date.now() });
+    await sleep(500);
+    const live = liveStubs();
+    const fresh = live.filter((pid) => !seen.has(pid));
+    for (const pid of live) seen.add(pid);
+    perProject.push(fresh.length);
+    const projectCalls = readStubLog(stubLog).filter((e) => e.event === 'call').slice(callsBeforeProject);
+    projectTurns.push({ project: rel(dir), newStubProcesses: fresh.length, connectedAfterMs: projectTurn.connectedAfterMs, stubCalls: projectCalls.length, stubCallCwds: projectCalls.map((e) => rel(e.cwd)), turnsUntilOffered: projectTurn.attempts.length, calledTool: projectTurn.calledTool, toolResultSeen: projectTurn.toolResultSeen, permissions: projectTurn.permissions.length, promptError: projectTurn.promptError ?? projectTurn.createError ?? null });
+  }
+  const liveAfter = liveStubs();
+  const n = liveAfter.filter((pid) => !liveBefore.includes(pid)).length;
+  const starts = readStubLog(stubLog).filter((e) => e.event === 'start').map((e) => ({ pid: e.pid, cwd: rel(e.cwd), alive: isAlive(e.pid) }));
+  scenarios.P11 = {
+    pass: n <= 3 && projectTurns.every((t) => t.stubCalls === 1 && t.toolResultSeen),
+    n,
+    perProject,
+    observed: {
+      liveBeforeP11: liveBefore.length,
+      liveAfterP11: liveAfter.length,
+      pgrepMarkerCount: markerProcesses(marker).length,
+      pgrepCommands: [...new Set(markerProcesses(marker).map((p) => path.basename(p.command)))],
+      projectTurns,
+      starts,
+    },
+  };
+
+  const removeAt = Date.now();
+  writeJsonAtomic(configFile, baseConfig());
+  const gone = await waitFor(() => markerProcesses(marker).length === 0, HOT_WINDOW_MS, 250);
+  const goneAfterMs = gone ? Date.now() - removeAt : null;
+  const statusAfter = await listMcp(client, work).catch((error) => `error: ${errorText(error)}`);
+  const removedTurn = await toolTurnUntilGone({ client, collector, stub, directory: work, label: 'P12', since: removeAt });
+  const stillOffered = removedTurn.offered;
+  scenarios.P12 = {
+    pass: Boolean(gone) && !stillOffered,
+    observed: {
+      processesGoneAfterMs: goneAfterMs,
+      liveAfterWindow: markerProcesses(marker).length,
+      statusAfter,
+      toolStillOffered: stillOffered,
+      turnsUntilGone: removedTurn.attempts,
+      liveAtEnd: markerProcesses(marker).length,
+      enginePidUnchanged: current().engine.pid === enginePid,
+      engineAlive: engineAlive(),
+    },
+  };
+  scenarios.stubLog = readStubLog(stubLog).map((e) => ({ event: e.event, pid: e.pid, cwd: rel(e.cwd), at: e.at - mcpAt, signal: e.signal ?? null }));
+  return scenarios;
+};
+
 const main = async () => {
   const args = process.argv.slice(2);
   const jsonIndex = args.indexOf('--json');
@@ -1231,15 +1682,15 @@ const main = async () => {
   const keep = args.includes('--keep');
   const onlyIndex = args.indexOf('--only');
   const only = onlyIndex === -1 ? null : args[onlyIndex + 1];
-  if (only !== null && only !== 'P7' && only !== 'outbound' && only !== 'shim') {
-    console.error('--only takes P7, outbound or shim');
+  if (only !== null && !['P7', 'outbound', 'shim', 'skills-mcp'].includes(only)) {
+    console.error('--only takes P7, outbound, shim or skills-mcp');
     return 2;
   }
-  const scenarios = only ? [only] : SCENARIOS;
+  const scenarios = only === 'skills-mcp' ? SKILLS_MCP_SCENARIOS : (only ? [only] : SCENARIOS);
   if (!fs.existsSync(ENGINE)) throw new Error(`engine binary missing: ${ENGINE} (run prepare:opencode-cli)`);
 
   const { OpenCode } = await import('@opencode/client');
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'p2.'));
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'p2.')));
   const configFile = path.join(home, 'opencode.managed.json');
   const logFile = path.join(home, 'engine.out.log');
   const hookLog = path.join(home, 'hooks.jsonl');
@@ -1256,12 +1707,24 @@ const main = async () => {
   let shim = null;
   const shimLog = [];
   const stubs = {};
+  const marker = `mittr-probe-${randomBytes(6).toString('hex')}`;
+  const stubLog = path.join(home, 'stub-mcp.jsonl');
+  const leftovers = { killed: [], afterCleanup: null };
   let cleaned = false;
   const cleanup = async () => {
     if (cleaned) return;
     cleaned = true;
     await collector?.stop().catch(() => {});
     for (const started of engines) await stopEngine(started).catch(() => {});
+    for (const { pid } of markerProcesses(marker)) {
+      leftovers.killed.push(pid);
+      try { process.kill(pid, 'SIGTERM'); } catch {}
+    }
+    if (leftovers.killed.length > 0) await sleep(1000);
+    for (const { pid } of markerProcesses(marker)) {
+      try { process.kill(pid, 'SIGKILL'); } catch {}
+    }
+    leftovers.afterCleanup = markerProcesses(marker).length;
     await stopSampler?.().catch(() => {});
     for (const s of Object.values(stubs)) await s.close?.();
     await shim?.close();
@@ -1325,7 +1788,22 @@ const main = async () => {
       startWith: async (extraEnv) => ({ client: await connect(extraEnv), collector, engine }),
     });
 
-    if (only === 'P7') {
+    if (only === 'skills-mcp') {
+      result.reserved57133Listening = Boolean(listenerOn(57133));
+      result.marker = marker;
+      const baseConfig = () => ({
+        providers: { stub: providerEntry('Stub', `http://127.0.0.1:${stubs.stub.port}/v1`, ['m1']) },
+        ...ENGINE_SHARE_OFF,
+        experimental: { policies: policiesFor({ showOtherProviders: false, providerId: 'stub' }) },
+      });
+      const found = await probeSkillsMcp({
+        home, configFile, baseConfig, stub: stubs.stub, marker, stubLog,
+        connect, current: () => ({ engine, collector }),
+      });
+      result.stubLog = found.stubLog;
+      for (const name of SKILLS_MCP_SCENARIOS) result.scenarios[name] = found[name];
+      result.enginePid = engine.pid;
+    } else if (only === 'P7') {
       result.scenarios.P7 = await userPolicy();
     } else if (only === 'shim') {
       platform = await startPlatform();
@@ -1489,6 +1967,10 @@ const main = async () => {
     await cleanup();
   }
 
+  if (only === 'skills-mcp') {
+    result.leftoverStubProcesses = leftovers;
+    if (SKILLS_MCP_SCENARIOS.every((name) => result.scenarios[name])) result.stopConditions = skillsMcpStopConditions(result.scenarios);
+  }
   for (const name of ['P1', 'P2', 'P2b', 'P3', 'P4', 'P5', 'P6', 'P7']) {
     if (!result.scenarios[name]) continue;
     result.stopConditions[name] = stopConditionFor(name, { pass: result.scenarios[name].pass, fallbackPass: result.retryHookFallback?.pass ?? null });
