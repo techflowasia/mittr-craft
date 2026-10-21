@@ -1,16 +1,16 @@
+import { CANNOT_REACH_MITTR, READ_FAILED } from './platform.js';
 import { MITTR_PROVIDER_ID } from './policies.js';
 
 const WEEKLY = 'weekly';
 const NO_MODEL = 'No model available this week';
-const READ_FAILED = 'Could not read this week’s quota';
 
 const KIND_NAMES = { chat: 'Chat', image: 'Images', stt: 'Voice input', tts: 'Spoken replies' };
 const SPEECH = new Set(['stt', 'tts']);
 
 const FAILURES = {
   not_signed_in: 'Sign in to Mittr to see this week’s quota',
-  unreachable: 'Cannot reach Mittr',
-  upstream_timeout: 'Cannot reach Mittr',
+  unreachable: CANNOT_REACH_MITTR,
+  upstream_timeout: CANNOT_REACH_MITTR,
   not_available: 'Mittr does not report a quota for this account',
   not_permitted: 'This week’s quota is not available to you',
 };

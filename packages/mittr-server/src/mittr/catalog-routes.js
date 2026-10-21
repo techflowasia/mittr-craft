@@ -1,4 +1,5 @@
 import { parseCatalog } from './catalog.js';
+import { CANNOT_REACH_MITTR, PLATFORM_TIMEOUT_MS } from './platform.js';
 import { MITTR_PROVIDER_ID } from './policies.js';
 
 // The platform's desktop catalog: the organisation's roster for the person
@@ -6,11 +7,7 @@ import { MITTR_PROVIDER_ID } from './policies.js';
 // the platform that path belongs to its auth middleware.
 const CATALOG_ENDPOINT = '/desktop/catalog';
 
-// A platform that stops answering must not hold every later sync behind it.
-const PLATFORM_TIMEOUT_MS = 15_000;
-
 const NOT_SIGNED_IN = 'Not signed in to Mittr';
-const UNREACHABLE = 'Cannot reach Mittr';
 const REFUSED = 'Mittr refused the catalog request';
 const CANNOT_STORE = 'Cannot store the Mittr catalog on this machine';
 
@@ -75,7 +72,7 @@ export function registerMittrCatalogRoutes(app, {
       });
     } catch (error) {
       logger.error('[mittr] catalog sync failed:', error?.message ?? error);
-      return failure(502, UNREACHABLE);
+      return failure(502, CANNOT_REACH_MITTR);
     }
 
     if (!response.ok) {

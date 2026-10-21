@@ -1,4 +1,4 @@
-const READ_FAILED = 'Could not read this week’s quota';
+import { READ_FAILED } from './platform.js';
 
 export function registerMittrQuotaRoutes(app, { service }) {
   app.get('/api/mittr/quota/me', async (_req, res) => {

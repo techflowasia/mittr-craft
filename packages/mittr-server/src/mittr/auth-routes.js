@@ -1,3 +1,5 @@
+import { jsonBody } from './json-body.js';
+import { CANNOT_REACH_MITTR, PLATFORM_TIMEOUT_MS } from './platform.js';
 import { parseSession } from './session.js';
 import { TRANSACTION_TTL_MS, authRedirectUri, createTransaction, verifyCallback } from './sign-in.js';
 
@@ -15,13 +17,7 @@ export const REFRESH_MARGIN_MS = 60_000;
 
 const BODY_LIMIT = '8kb';
 
-// A platform that stops answering must not hold a sign-in, or every model call
-// waiting on a refresh, open for good.
-const PLATFORM_TIMEOUT_MS = 15_000;
-
 const CANNOT_STORE = 'Cannot store the Mittr sign-in on this machine';
-
-const UNREACHABLE = 'Cannot reach Mittr';
 
 export const ACCOUNTS_DAMAGED = 'Your Mittr account list on this computer is damaged. Choose Repair to set it aside and sign in again.';
 
@@ -58,11 +54,7 @@ export function registerMittrAuthRoutes(app, {
 
   // Each route brings its own body parser: the server parses no JSON under
   // `/api`, so a route that assumed a parsed body would read undefined.
-  const parseJson = express.json({ limit: BODY_LIMIT });
-  const readJson = (req, res, next) => parseJson(req, res, (error) => {
-    if (!error) return next();
-    return res.status(error.status ?? 400).json({ error: 'Invalid request body' });
-  });
+  const readJson = jsonBody(express, { limit: BODY_LIMIT });
 
   // Refused before any browser trip or exchange: no keychain on this host, or
   // an account list that cannot be written without losing who had which home.
@@ -114,7 +106,7 @@ export function registerMittrAuthRoutes(app, {
       lastFailure = null;
       sessionEnded = false;
     }
-    else if (!result.stale) lastFailure = result.body.error === UNREACHABLE ? 'unreachable' : 'failed';
+    else if (!result.stale) lastFailure = result.body.error === CANNOT_REACH_MITTR ? 'unreachable' : 'failed';
     return result;
   };
 
@@ -145,7 +137,7 @@ export function registerMittrAuthRoutes(app, {
       });
     } catch (error) {
       logger.error('[mittr] sign-in exchange failed:', error?.message ?? error);
-      return failure(502, UNREACHABLE);
+      return failure(502, CANNOT_REACH_MITTR);
     }
 
     if (!response.ok) {

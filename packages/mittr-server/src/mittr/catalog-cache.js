@@ -1,11 +1,10 @@
-import { randomBytes } from 'node:crypto';
 import nodeFs from 'node:fs';
 import path from 'node:path';
 
 import { CATALOG_COLLECTIONS } from './catalog.js';
+import { writePrivateAtomic } from './private-file.js';
 
 const ACCOUNT_HOME = /^[0-9a-f]{16}$/;
-const PRIVATE = 0o600;
 const NOT_A_CATALOG = 'unexpected shape';
 
 const reasonOf = (error) => {
@@ -63,15 +62,7 @@ export function createCatalogCache({ filePath, logger = console, fs = nodeFs }) 
   const write = (catalog) => {
     const text = JSON.stringify(catalog, null, 2);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const temporary = `${filePath}.${process.pid}-${randomBytes(4).toString('hex')}.tmp`;
-    try {
-      fs.writeFileSync(temporary, text, { encoding: 'utf8', mode: PRIVATE });
-      if (process.platform !== 'win32') fs.chmodSync(temporary, PRIVATE);
-      fs.renameSync(temporary, filePath);
-    } catch (error) {
-      fs.rmSync(temporary, { force: true });
-      throw error;
-    }
+    writePrivateAtomic(filePath, text, { fs });
     warned = false;
   };
 

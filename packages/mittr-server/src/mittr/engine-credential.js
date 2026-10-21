@@ -2,7 +2,7 @@ import { MITTR_PROVIDER_ID } from './policies.js';
 
 const CONNECT_KEY_ROUTE = `/api/integration/${MITTR_PROVIDER_ID}/connect/key`;
 const CREDENTIALS_ROUTE = '/api/credential';
-const REQUEST_TIMEOUT_MS = 10_000;
+const ENGINE_REQUEST_TIMEOUT_MS = 10_000;
 // The engine picks a provider up from its config watcher and rejects a key for
 // it with 404 until then; upstream's provider form waits the same way.
 const NOT_REGISTERED_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000];
@@ -27,7 +27,7 @@ const isCurrent = (entry, key) => entry.active === true && entry.value?.type ===
 const removeStaleMittrKeys = async ({ opencode, key, fetchImpl }) => {
   const listed = await fetchImpl(opencode.url(CREDENTIALS_ROUTE), {
     headers: opencode.authHeaders(),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    signal: AbortSignal.timeout(ENGINE_REQUEST_TIMEOUT_MS),
   });
   if (!listed.ok) {
     await listed.body?.cancel();
@@ -43,7 +43,7 @@ const removeStaleMittrKeys = async ({ opencode, key, fetchImpl }) => {
     const removed = await fetchImpl(opencode.url(`${CREDENTIALS_ROUTE}/${encodeURIComponent(entry.id)}`), {
       method: 'DELETE',
       headers: opencode.authHeaders(),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(ENGINE_REQUEST_TIMEOUT_MS),
     });
     await removed.body?.cancel();
     if (!removed.ok) kept += 1;
@@ -76,7 +76,7 @@ export async function ensureMittrCredential({ opencode, key, fetchImpl = (...arg
       method: 'POST',
       headers,
       body: JSON.stringify({ key }),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(ENGINE_REQUEST_TIMEOUT_MS),
     });
     await response.body?.cancel();
     if (response.ok) break;

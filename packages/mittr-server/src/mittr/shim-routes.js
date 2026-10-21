@@ -3,13 +3,13 @@ import crypto from 'node:crypto';
 import { createQuotaStreamRewriter, readQuotaExhausted, toEngineRefusal } from './exhausted.js';
 import { cameThroughProxy, isLoopbackPeer } from './loopback-guard.js';
 import { describeModelRefusal } from './model-refusal.js';
+import { CANNOT_REACH_MITTR } from './platform.js';
 import { createStreamMarkupWatcher, describeMarkup } from './response-markup.js';
 
 /** Where the engine's `mittr` provider points: `http://127.0.0.1:<server port>` + this. */
 export const SHIM_PREFIX = '/mittr-shim/v1';
 
 const NOT_SIGNED_IN = 'Not signed in to Mittr. Sign in to continue.';
-const UNREACHABLE = 'Cannot reach Mittr';
 const TIMED_OUT = 'Mittr did not answer in time';
 const NO_MODEL_LIST = 'The Mittr model list is not available';
 const SWITCHING = 'The Mittr account is changing. Send the message again in a moment.';
@@ -261,7 +261,7 @@ export function registerMittrShim(app, {
       if (engineGone) return undefined;
       if (limit.timedOut()) return res.status(504).set(NO_RETRY).json({ error: TIMED_OUT });
       logger.error('[mittr] shim could not reach Mittr:', error?.message ?? error);
-      return res.status(502).json({ error: UNREACHABLE });
+      return res.status(502).json({ error: CANNOT_REACH_MITTR });
     }
     logCall(upstream.status, sessionId);
 
@@ -273,7 +273,7 @@ export function registerMittrShim(app, {
       } catch (error) {
         if (engineGone) return undefined;
         logger.error('[mittr] shim lost the answer from Mittr:', error?.message ?? error);
-        return limit.timedOut() ? res.status(504).set(NO_RETRY).json({ error: TIMED_OUT }) : res.status(502).json({ error: UNREACHABLE });
+        return limit.timedOut() ? res.status(504).set(NO_RETRY).json({ error: TIMED_OUT }) : res.status(502).json({ error: CANNOT_REACH_MITTR });
       } finally {
         limit.stop();
       }

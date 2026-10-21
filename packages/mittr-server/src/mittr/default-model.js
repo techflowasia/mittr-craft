@@ -1,8 +1,8 @@
+import { isRecord } from './values.js';
+
 // The engine's two spellings of a model choice: `provider/model#variant`, or
 // `{ providerID, model, variant }`.
 const SHORT_SELECTION = /^([^/#]+)\/([^#]+)(?:#[^#]+)?$/;
-
-const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 // `null` for no default, `undefined` for one this code cannot read.
 const readSelection = (model) => {
@@ -13,7 +13,7 @@ const readSelection = (model) => {
     const match = SHORT_SELECTION.exec(trimmed);
     return match ? { providerId: match[1], modelId: match[2] } : undefined;
   }
-  if (isPlainObject(model) && typeof model.providerID === 'string' && typeof model.model === 'string') {
+  if (isRecord(model) && typeof model.providerID === 'string' && typeof model.model === 'string') {
     return { providerId: model.providerID, modelId: model.model };
   }
   return undefined;

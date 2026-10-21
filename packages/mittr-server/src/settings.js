@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import registry from '../../web/server/lib/opencode/settings-registry.json' with { type: 'json' };
+import { isPlainObject } from './mittr/values.js';
 
 /**
  * Top-level `settings.json` keys upstream reads: the settings registry, plus
@@ -72,9 +73,6 @@ const SPELLINGS = [
   ['MITTRCRAFT', 'OPENCHAMBER'],
 ];
 const upstreamNameOf = (key) => SPELLINGS.reduce((name, [ours, theirs]) => name.split(ours).join(theirs), key);
-
-// A JSON object, as opposed to an array, a primitive or null.
-const isPlainObject = (value) => value != null && Object.getPrototypeOf(value) === Object.prototype;
 
 const exists = async (target) => {
   try {

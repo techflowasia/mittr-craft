@@ -1,6 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { writePrivateAtomic } from './private-file.js';
+
 const SETTINGS_FILE = 'mittr-settings.json';
 const DEFAULTS = Object.freeze({ showOtherProviders: false });
 
@@ -37,14 +39,7 @@ export function createMittrSettings({ dataDir, logger = console }) {
 
   const write = async (settings) => {
     await fs.mkdir(dataDir, { recursive: true });
-    const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-    try {
-      await fs.writeFile(tmp, `${JSON.stringify(settings, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
-      await fs.rename(tmp, filePath);
-    } catch (error) {
-      await fs.rm(tmp, { force: true }).catch(() => {});
-      throw error;
-    }
+    writePrivateAtomic(filePath, `${JSON.stringify(settings, null, 2)}\n`);
   };
 
   let updating = Promise.resolve();

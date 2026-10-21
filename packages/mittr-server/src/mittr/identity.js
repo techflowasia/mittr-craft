@@ -1,10 +1,10 @@
-import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
 // A relative path on purpose: Bun links no workspace package into the root
 // node_modules, and the server plugin bundle inlines this module.
 import { identityPluginSource } from '../../../mittr-opencode/src/identity-plugin.js';
+import { writePrivateAtomic } from './private-file.js';
 
 const PRODUCT_NAME = 'MittrCraft';
 const PLUGIN_DIR = path.join('engine-plugins', 'mittrcraft-identity');
@@ -24,15 +24,7 @@ const writePrivate = async (file, text) => {
     await fs.chmod(file, 0o600);
     return;
   }
-  const tmp = `${file}.tmp-${process.pid}-${randomUUID()}`;
-  try {
-    await fs.writeFile(tmp, text, { encoding: 'utf8', mode: 0o600 });
-    await fs.chmod(tmp, 0o600);
-    await fs.rename(tmp, file);
-  } catch (error) {
-    await fs.rm(tmp, { force: true }).catch(() => {});
-    throw error;
-  }
+  writePrivateAtomic(file, text);
 };
 
 /** Where the identity plugin lives in the data dir. */

@@ -526,3 +526,13 @@ test('stale temporary files from an interrupted write are swept when the store o
   assert.equal(fs.existsSync(stale), false);
   assert.equal(fs.existsSync(unrelated), true);
 });
+
+test('a temp left by the shared private write is swept when the store opens', (t) => {
+  const dataDir = tempDataDir(t);
+  const crashing = { ...fs, renameSync: () => { throw new Error('interrupted'); }, rmSync: () => {} };
+  assert.throws(() => storeIn(dataDir, { fs: crashing })().write(sessionFor('u1', 'A')), /interrupted/);
+  const leftovers = fs.readdirSync(accountsDir(dataDir)).filter((name) => name.endsWith('.tmp'));
+  assert.ok(leftovers.length > 0, 'the interrupted write left a temp file');
+  storeIn(dataDir)();
+  assert.deepEqual(fs.readdirSync(accountsDir(dataDir)).filter((name) => name.endsWith('.tmp')), []);
+});

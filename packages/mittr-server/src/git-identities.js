@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+import { isPlainObject } from './mittr/values.js';
+
 /**
  * Upstream keeps git identities in `<dataDir>/git-identities.json`. While that
  * file is missing, its first read takes a lock in `~/.config/openchamber` and
@@ -16,7 +18,6 @@ import path from 'node:path';
 const FILE_NAME = 'git-identities.json';
 const MAX_PROFILES = 256;
 
-const isPlainObject = (value) => value != null && Object.getPrototypeOf(value) === Object.prototype;
 const nonEmpty = (value) => typeof value === 'string' && value.length > 0;
 
 export const legacyGitIdentitiesFile = (homeDir) => path.join(homeDir, '.config', 'mittrcraft', FILE_NAME);

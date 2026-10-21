@@ -1,10 +1,11 @@
 import { createAuditRecord } from './audit-record.js';
 import { serializeAuditRecord } from './audit-serializer.js';
+import { jsonBody } from './json-body.js';
+import { PLATFORM_TIMEOUT_MS } from './platform.js';
 import { resolveRepositoryIdentity } from './repository-identity.js';
 
 const AUDIT_ENDPOINT = '/desktop/audit';
 const MAX_OPEN_RECORDS = 200;
-const PLATFORM_TIMEOUT_MS = 15_000;
 const REMOTE_LOOKUP_TIMEOUT_MS = 5_000;
 const MAX_CLEARED_SESSIONS = 1000;
 
@@ -35,13 +36,7 @@ export function registerMittrAuditRoutes(app, {
     Promise.resolve().then(() => git.remoteUrl(directory)).then(resolve, reject).finally(() => clearTimeout(timer));
   });
 
-  const readJson = (limit) => {
-    const parse = express.json({ limit });
-    return (req, res, next) => parse(req, res, (error) => {
-      if (!error) return next();
-      return res.status(error.status ?? 400).json({ error: 'Invalid request body' });
-    });
-  };
+  const readJson = (limit) => jsonBody(express, { limit });
 
   const recordFor = (sessionId) => {
     if (open.has(sessionId)) return open.get(sessionId).record;

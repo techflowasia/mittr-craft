@@ -1,4 +1,5 @@
-const REQUEST_TIMEOUT_MS = 10_000;
+import { PLATFORM_TIMEOUT_MS } from './platform.js';
+
 const QUOTA_ENDPOINT = '/api/quota/me';
 const KINDS = new Set(['chat', 'image', 'stt', 'tts']);
 const SOURCES = new Set(['default', 'group', 'user', 'none']);
@@ -91,7 +92,7 @@ export const createMittrQuotaService = ({
   broker,
   ensureFreshSession,
   fetchImpl = (...args) => fetch(...args),
-  timeoutMs = REQUEST_TIMEOUT_MS,
+  timeoutMs = PLATFORM_TIMEOUT_MS,
 } = {}) => {
   const configured = Boolean(broker?.baseUrl) && typeof ensureFreshSession === 'function';
 

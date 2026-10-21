@@ -1,3 +1,5 @@
+import { jsonBody } from './json-body.js';
+
 export const PROVIDER_LOCK_CHANGED_EVENT = 'mittr.provider-lock.changed';
 
 const ROUTE = '/api/mittr/provider-lock';
@@ -22,11 +24,7 @@ const NOT_APPLIED = 'The setting is saved, but the engine has not taken it up ye
  * again writes it now.
  */
 export function registerProviderLockRoutes(app, { express, mittrSettings, managedConfig, events, logger = console }) {
-  const parseJson = express.json({ limit: BODY_LIMIT });
-  const readJson = (req, res, next) => parseJson(req, res, (error) => {
-    if (!error) return next();
-    return res.status(error.status ?? 400).json({ error: 'Invalid request body' });
-  });
+  const readJson = jsonBody(express, { limit: BODY_LIMIT });
 
   app.get(ROUTE, async (_req, res) => {
     res.json(await mittrSettings.read());

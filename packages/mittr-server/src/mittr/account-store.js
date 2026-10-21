@@ -1,9 +1,11 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import nodeFs from 'node:fs';
 import path from 'node:path';
 
 import { NO_ACCOUNT_HOME } from '../engine-home.js';
+import { TEMPORARY_FILE, writePrivateAtomic } from './private-file.js';
 import { parseSession } from './session.js';
+import { isRecord } from './values.js';
 
 /**
  * Every Mittr account signed in on this machine, in the layout 1.x wrote:
@@ -25,14 +27,13 @@ const emptyIndex = () => ({ active: null, accounts: [] });
 
 export const accountIndexPath = (dataDir) => path.join(dataDir, ACCOUNTS_DIR, INDEX_FILE);
 
-const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 // The shape 1.x and this store write. Anything else is a damaged index: safe
 // to read as no accounts, never safe to write over.
-const isWellFormedIndex = (value) => isPlainObject(value)
+const isWellFormedIndex = (value) => isRecord(value)
   && (value.active === null || typeof value.active === 'string')
   && Array.isArray(value.accounts)
-  && value.accounts.every((entry) => isPlainObject(entry)
+  && value.accounts.every((entry) => isRecord(entry)
     && typeof entry.userId === 'string' && entry.userId !== ''
     && (entry.home === null || (typeof entry.home === 'string' && ACCOUNT_HOME.test(entry.home))));
 
@@ -57,7 +58,6 @@ export const parseAccountIndex = (raw, { strict = false } = {}) => {
   return { active, accounts };
 };
 
-const TEMPORARY_FILE = /\.\d+-[0-9a-f]{8}\.tmp$/;
 const SESSION_FILE = /^([0-9a-f]{16})\.session$/;
 
 export function createAccountStore({
@@ -83,15 +83,7 @@ export function createAccountStore({
   // leaves the old file whole rather than a truncated one.
   const writePrivate = (filePath, content) => {
     fs.mkdirSync(root, { recursive: true });
-    const temporary = `${filePath}.${process.pid}-${randomBytes(4).toString('hex')}.tmp`;
-    try {
-      fs.writeFileSync(temporary, content, { mode: 0o600 });
-      if (process.platform !== 'win32') fs.chmodSync(temporary, 0o600);
-      fs.renameSync(temporary, filePath);
-    } catch (error) {
-      fs.rmSync(temporary, { force: true });
-      throw error;
-    }
+    writePrivateAtomic(filePath, content, { fs });
   };
 
   // Missing means no accounts yet; anything else that cannot be read throws.
