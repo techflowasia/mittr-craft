@@ -4,6 +4,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
+import { MAX_GOAL_CHARS } from './browser-stepper.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
 import { chromeSessionName } from './chrome-control.js';
 import { NO_SCREENSHOT_DIRECTORY, fitsAttachment, imageOf, saveScreenshot } from './screenshots.js';
@@ -77,6 +78,7 @@ const NO_PAGE_OPEN = 'No page is open in this session; call chrome.open first';
 const OWN_LOOKUP_TIMEOUT_MS = 1_500;
 const NO_STEPPER = 'chrome.do needs the Mittr platform; ask the user to sign in to Mittr, or work step by step with chrome.snapshot';
 const CALL_CANCELLED = 'the call was cancelled';
+const GOAL_TOO_LONG = `goal is too long for chrome.do; say it in at most ${MAX_GOAL_CHARS} characters`;
 const DEFAULT_TASK_STEPS = 15;
 const MAX_TASK_STEPS = 40;
 const STEP_ACTIONS = Object.freeze({ click: 'chrome.click', fill: 'chrome.fill', select: 'chrome.select' });
@@ -272,7 +274,9 @@ export function createChromeService({
     if (action === 'chrome.close') return {};
     if (action === 'chrome.do') {
       if (!stepper) throw new MittrToolError(NO_STEPPER, 503);
-      return { task: { goal: required(input.goal, 'goal'), limit: taskStepLimit(input.maxSteps) } };
+      const goal = required(input.goal, 'goal');
+      if (goal.length > MAX_GOAL_CHARS) throw new MittrToolError(GOAL_TOO_LONG, 400);
+      return { task: { goal, limit: taskStepLimit(input.maxSteps), pinned: stepper.begin() } };
     }
     const build = CHROME_COMMANDS[action];
     if (!build) throw new MittrToolError(`Unsupported Chrome action: ${action}`, 400);
@@ -358,23 +362,27 @@ export function createChromeService({
     }
   };
 
-  const doTask = async ({ goal, limit }, ctx, options) => {
+  const doTask = async ({ goal, limit, pinned }, ctx, options) => {
     const steps = [];
     const history = [];
     let values;
     const finish = async (outcome, extra = {}) => ({ outcome, ...extra, steps, url: await landedPage(ctx.sessionId, options) });
     const cancelled = () => ctx.signal?.aborted === true;
+    const chromeStopped = (error) => {
+      if (!cancelled() && steps.length === 0 && error instanceof MittrToolError && error.statusCode >= 400 && error.statusCode < 499) throw error;
+      return finish('stopped', cancelled() ? { reason: CALL_CANCELLED } : stopReasonOf(error));
+    };
     for (let index = 0; index < limit; index += 1) {
       if (cancelled()) return finish('stopped', { reason: CALL_CANCELLED });
       let page;
       try {
         page = await execute('chrome.snapshot', {}, ctx);
       } catch (error) {
-        return finish('stopped', cancelled() ? { reason: CALL_CANCELLED } : stopReasonOf(error));
+        return chromeStopped(error);
       }
       let reply;
       try {
-        reply = await stepper.nextStep({ goal, snapshot: textOf(page?.snapshot) ?? '', history, values }, ctx.signal);
+        reply = await pinned.nextStep({ goal, snapshot: textOf(page?.snapshot) ?? '', history, values }, ctx.signal);
       } catch (error) {
         return finish('stopped', cancelled() ? { reason: CALL_CANCELLED } : stopReasonOf(error));
       }
@@ -393,7 +401,7 @@ export function createChromeService({
         await execute(STEP_ACTIONS[step.action], { ref: step.ref, value: step.value }, ctx);
       } catch (error) {
         if (error?.code === 'site_moved') steps.push(taken);
-        return finish('stopped', cancelled() ? { reason: CALL_CANCELLED } : stopReasonOf(error));
+        return chromeStopped(error);
       }
       history.push(line);
       steps.push(taken);

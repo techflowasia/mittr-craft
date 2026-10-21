@@ -8,6 +8,7 @@ import express from 'express';
 import { MARKER_PNG } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
 import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
 import { SCREENSHOT_DIRECTORY, writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
+import { keyOf } from '../account-store.js';
 import { createMittrSettings } from '../mittr-settings.js';
 import { SCREEN_RECORDING_NOT_GRANTED, deferred, fakeFetch, json, listen, stubAgentBrowser, stubCuaDriver, tempDataDir, until } from '../test-helpers.js';
 import { CHROME_EXECUTABLE, chromeSessionName } from './chrome-control.js';
@@ -609,7 +610,7 @@ test('only the Chrome question is never answered automatically', async (t) => {
 
 const ACCESS_TOKEN = 'at-chrome-do-0b5e7c';
 
-const fakePlatform = (respond, { onActiveHome = () => true } = {}) => {
+const fakePlatform = (respond, { onActiveHome = () => true, accountKey = () => keyOf('u-1') } = {}) => {
   const fetchImpl = fakeFetch(respond);
   return {
     fetchImpl,
@@ -618,6 +619,7 @@ const fakePlatform = (respond, { onActiveHome = () => true } = {}) => {
       ensureFreshSession: async () => ({ accessToken: ACCESS_TOKEN, subject: { userId: 'u-1' } }),
       fetchImpl,
       engineOnActiveHome: () => onActiveHome(),
+      activeAccountKey: () => accountKey(),
     },
   };
 };
@@ -684,4 +686,18 @@ test('an account change between steps ends chrome.do stopped with the steps take
   const again = await chrome('do', { goal: 'Click through' });
   assert.deepEqual(again.data.reason, 'The Mittr account changed');
   assert.equal(platform.fetchImpl.calls.length, 2, 'no page is sent while the engine is on another account');
+});
+
+test('a chrome.do whose account was switched away ends stopped even once the engine runs on the new account', async (t) => {
+  const active = { key: keyOf('u-1') };
+  const platform = fakePlatform((_call, count) => {
+    if (count === 1) active.key = keyOf('u-2');
+    return json({ step: { action: 'click', ref: `e${count}`, target: `link "${count}"` }, decidedBy: ['jev'], ms: 3 });
+  }, { onActiveHome: () => true, accountKey: () => active.key });
+  const { chrome, driver } = await chromeSetUp(t, { platform: platform.deps });
+  assert.equal((await chrome('open', { url: 'http://acme.example.test/' })).ok, true);
+  const answer = await chrome('do', { goal: 'Click through' });
+  assert.deepEqual(answer.data, { outcome: 'stopped', reason: 'The Mittr account changed', steps: [], url: 'http://acme.example.test/' });
+  assert.equal(platform.fetchImpl.calls.length, 1);
+  assert.equal(driver.commands().some(({ command }) => command[0] === 'click'), false, 'a step chosen across the switch is not run');
 });

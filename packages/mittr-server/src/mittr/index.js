@@ -396,7 +396,7 @@ export function setupMittr(context, {
     signedIn,
     personalDesktop: () => !connectorsOff,
     refresh: () => rewriteProviderLock(),
-    platform: { broker, ensureFreshSession, fetchImpl, engineOnActiveHome },
+    platform: { broker, ensureFreshSession, fetchImpl, engineOnActiveHome, activeAccountKey },
     drivers: toolDrivers,
     logger,
   });

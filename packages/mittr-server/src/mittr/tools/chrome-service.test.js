@@ -578,9 +578,14 @@ test('the chrome.do parameters are offered only with chrome.do', () => {
   assert.deepEqual(chromeToolParameters({ doTask: true }).maxSteps, { type: 'integer', minimum: 1, maximum: 40, description: 'For chrome.do: most steps to take before stopping (default 15)' });
 });
 
+const pinnable = (fake) => Object.assign(fake, { begins: 0, begin: () => {
+  fake.begins += 1;
+  return { nextStep: (...args) => fake.nextStep(...args) };
+} });
+
 const stepperOf = (replies) => {
   const calls = [];
-  return {
+  return pinnable({
     calls,
     nextStep: async (body, signal) => {
       calls.push({ ...structuredClone(body), aborted: signal?.aborted === true });
@@ -588,7 +593,7 @@ const stepperOf = (replies) => {
       if (next instanceof Error) throw next;
       return next;
     },
-  };
+  });
 };
 
 const reply = (step, extra = {}) => ({ step, decidedBy: ['jev'], ms: 12, ...extra });
@@ -615,6 +620,7 @@ test('a form goal fills the name, submits and ends done with every step listed',
     'get', 'snapshot', 'get',
     'get',
   ], 'every snapshot and step is checked before and after it, like a direct call');
+  assert.equal(stepper.begins, 1, 'the account is pinned once, when chrome.do starts');
   assert.deepEqual(since().filter(([command]) => command === 'fill' || command === 'click'), [['fill', '@e1', 'Somchai'], ['click', '@e2']]);
   assert.deepEqual(stepper.calls.map(({ goal, snapshot, history, values }) => ({ goal, snapshot, history, values })), [
     { goal: 'Send the form as Somchai', snapshot: '- textbox "Name" [ref=e1]\n- button "Send" [ref=e2]', history: [], values: undefined },
@@ -647,13 +653,13 @@ test('the same step three times stops as stuck', async (t) => {
 
 const endless = () => {
   const calls = [];
-  return {
+  return pinnable({
     calls,
     nextStep: async (body) => {
       calls.push(body);
       return reply({ action: 'click', ref: `e${calls.length}`, target: `link "${calls.length}"` });
     },
-  };
+  });
 };
 
 test('maxSteps 50 is capped at 40', async (t) => {
@@ -669,7 +675,7 @@ test('maxSteps 50 is capped at 40', async (t) => {
 
 const platformStepper = (respond) => {
   const fetchImpl = fakeFetch(respond);
-  const stepper = createBrowserStepper({ broker: { baseUrl: 'https://platform.example.test' }, ensureFreshSession: async () => ({ accessToken: 'at-1' }), fetchImpl, engineOnActiveHome: () => true });
+  const stepper = createBrowserStepper({ broker: { baseUrl: 'https://platform.example.test' }, ensureFreshSession: async () => ({ accessToken: 'at-1' }), fetchImpl, engineOnActiveHome: () => true, activeAccountKey: () => null });
   return { stepper, fetchImpl };
 };
 
@@ -703,16 +709,24 @@ test('a step without a ref is not run', async (t) => {
   assert.deepEqual(await checked.service.execute('chrome.do', { goal: 'Send it' }, checked.ctx), { outcome: 'stopped', reason: 'The Mittr platform returned no usable step', steps: [], url: 'https://acme.example.test/form' });
   assert.equal(checked.since().some(([command]) => command === 'click'), false);
 
-  const unchecked = await doSetUp(t, { replies: [reply({ action: 'click', target: 'button "Send"' })] });
+  const unchecked = await doSetUp(t, { replies: [FILL_NAME, reply({ action: 'click', target: 'button "Send"' })] });
   const result = await unchecked.service.execute('chrome.do', { goal: 'Send it' }, unchecked.ctx);
-  assert.deepEqual(result, { outcome: 'stopped', reason: 'ref must be an element ref from chrome.snapshot, such as @e3', steps: [], url: 'https://acme.example.test/form' });
+  assert.deepEqual(result, { outcome: 'stopped', reason: 'ref must be an element ref from chrome.snapshot, such as @e3', steps: [FILLED], url: 'https://acme.example.test/form' });
   assert.equal(unchecked.since().some(([command]) => command === 'click'), false);
+
+  const first = await doSetUp(t, { replies: [reply({ action: 'click', target: 'button "Send"' })] });
+  await assert.rejects(first.service.execute('chrome.do', { goal: 'Send it' }, first.ctx), refusal(400, 'ref must be an element ref from chrome.snapshot, such as @e3'));
+  assert.equal(first.since().some(([command]) => command === 'click'), false);
 });
 
-test('a step value that looks like a driver flag is refused, not run', async (t) => {
+test('a step value that looks like a driver flag is refused, not run, and a refusal before any step reaches the agent itself', async (t) => {
   const { service, ctx, since } = await doSetUp(t, { replies: [reply({ action: 'fill', ref: 'e1', target: 'textbox "Name"', value: '--headed' })] });
-  assert.deepEqual(await service.execute('chrome.do', { goal: 'Fill it' }, ctx), { outcome: 'stopped', reason: 'value cannot start with "-"', steps: [], url: 'https://acme.example.test/form' });
+  await assert.rejects(service.execute('chrome.do', { goal: 'Fill it' }, ctx), refusal(400, 'value cannot start with "-"'));
   assert.equal(since().some(([command]) => command === 'fill'), false);
+
+  const later = await doSetUp(t, { replies: [CLICK_SEND, reply({ action: 'fill', ref: 'e1', target: 'textbox "Name"', value: '-x' })] });
+  assert.deepEqual(await later.service.execute('chrome.do', { goal: 'Fill it' }, later.ctx), { outcome: 'stopped', reason: 'value cannot start with "-"', steps: [SENT], url: 'https://acme.example.test/form' });
+  assert.equal(later.since().some(([command]) => command === 'fill'), false);
 });
 
 test('a site the person withdraws during chrome.do raises the question again before the next step', async (t) => {
@@ -732,13 +746,13 @@ test('a site the person withdraws during chrome.do raises the question again bef
   const fill = stepper.nextStep;
   stepper.nextStep = async (body, signal) => {
     const answer = await fill(body, signal);
-    if (stepper.calls.length === 1) allowed.delete('acme.example.test');
+    if (stepper.calls.length === 2) allowed.delete('acme.example.test');
     return answer;
   };
   const { service, ctx, since } = await doSetUp(t, { approvals, stepper });
-  assert.deepEqual(await service.execute('chrome.do', { goal: 'Send the form as Somchai' }, ctx), { outcome: 'stopped', reason: 'The user did not allow using their Chrome sign-in on acme.example.test', steps: [], url: null });
+  assert.deepEqual(await service.execute('chrome.do', { goal: 'Send the form as Somchai' }, ctx), { outcome: 'stopped', reason: 'The user did not allow using their Chrome sign-in on acme.example.test', steps: [FILLED], url: null });
   assert.deepEqual(asks, [{ sessionId: 'ses_1', host: 'acme.example.test' }]);
-  assert.equal(since().some(([command]) => command === 'fill'), false);
+  assert.equal(since().some(([command]) => command === 'click'), false);
 });
 
 test('chrome.do asks first about a page not yet allowed, and refuses MittrCraft itself before asking the platform', async (t) => {
@@ -758,6 +772,7 @@ test('chrome.do needs a goal and an open page', async (t) => {
   const stepper = stepperOf([]);
   const { service, browser, ctx } = setUp(t, { stepper });
   await assert.rejects(service.execute('chrome.do', {}, ctx), refusal(400, 'goal is required'));
+  await assert.rejects(service.execute('chrome.do', { goal: 'g'.repeat(4_001) }, ctx), refusal(400, 'goal is too long for chrome.do; say it in at most 4000 characters'));
   await assert.rejects(service.execute('chrome.do', { goal: 'Send it' }, ctx), refusal(400, 'No page is open in this session; call chrome.open first'));
   assert.deepEqual(browser.commands(), [['session', 'list']]);
   assert.equal(stepper.calls.length, 0);

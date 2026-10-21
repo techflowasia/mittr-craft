@@ -1,17 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { keyOf } from '../account-store.js';
 import { ACCOUNT_CHANGED, BROWSER_STEP_TIMEOUT_MS, CANNOT_REACH_MITTR } from '../platform.js';
 import { fakeFetch, json } from '../test-helpers.js';
-import { createBrowserStepper } from './browser-stepper.js';
+import { MAX_GOAL_CHARS, MAX_HISTORY_ITEM_CHARS, MAX_STEP_TEXT_CHARS, createBrowserStepper } from './browser-stepper.js';
 
 const BROKER = { baseUrl: 'https://platform.example.test' };
 const SESSION = { accessToken: 'at-step-1', subject: { userId: 'u-1' } };
+const KEY_1 = keyOf('u-1');
+const KEY_2 = keyOf('u-2');
 
-const stepperWith = (respond, { session = SESSION, onActiveHome = () => true, ...options } = {}) => {
+const stepperWith = (respond, { session = SESSION, onActiveHome = () => true, accountKey = () => KEY_1, ...options } = {}) => {
   const fetchImpl = fakeFetch(respond);
-  const stepper = createBrowserStepper({ broker: BROKER, ensureFreshSession: async () => session, fetchImpl, engineOnActiveHome: () => onActiveHome(), ...options });
-  return { stepper, fetchImpl };
+  const created = createBrowserStepper({
+    broker: BROKER,
+    ensureFreshSession: async () => (session instanceof Function ? session() : session),
+    fetchImpl,
+    engineOnActiveHome: () => onActiveHome(),
+    activeAccountKey: () => accountKey(),
+    ...options,
+  });
+  return { stepper: created.begin(), fetchImpl };
 };
 
 const refusal = (statusCode, message) => (error) => {
@@ -76,7 +86,7 @@ test('a slow platform answers 504 after the step timeout, and an unreachable one
     if (init.signal.aborted) reject(init.signal.reason);
     init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true });
   });
-  const slow = createBrowserStepper({ broker: BROKER, ensureFreshSession: async () => SESSION, fetchImpl, engineOnActiveHome: () => true, timeoutMs: 20 });
+  const slow = createBrowserStepper({ broker: BROKER, ensureFreshSession: async () => SESSION, fetchImpl, engineOnActiveHome: () => true, activeAccountKey: () => KEY_1, timeoutMs: 20 }).begin();
   await assert.rejects(slow.nextStep(ASK), refusal(504, 'The Mittr platform took too long to choose a step'));
   const { stepper } = stepperWith(() => { throw new TypeError('fetch failed'); });
   await assert.rejects(stepper.nextStep(ASK), refusal(502, CANNOT_REACH_MITTR));
@@ -97,7 +107,7 @@ test('a cancelled call stops waiting for the platform', async () => {
     if (init.signal.aborted) reject(init.signal.reason);
     init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true });
   });
-  const stepper = createBrowserStepper({ broker: BROKER, ensureFreshSession: async () => SESSION, fetchImpl, engineOnActiveHome: () => true });
+  const stepper = createBrowserStepper({ broker: BROKER, ensureFreshSession: async () => SESSION, fetchImpl, engineOnActiveHome: () => true, activeAccountKey: () => KEY_1 }).begin();
   const asked = stepper.nextStep(ASK, controller.signal);
   controller.abort();
   await assert.rejects(asked, (error) => error.statusCode === 499);
@@ -118,12 +128,68 @@ test('a page is never sent while the engine is not on the active account, and a 
   assert.equal(ACCOUNT_CHANGED, 'The Mittr account changed');
 });
 
+test('a switch to another account stops the pinned run even after the engine is on the new account again', async () => {
+  const active = { key: KEY_1 };
+  const { stepper, fetchImpl } = stepperWith(() => json({ step: { action: 'click', ref: 'e1' } }), { accountKey: () => active.key });
+  await stepper.nextStep(ASK);
+  active.key = KEY_2;
+  await assert.rejects(stepper.nextStep(ASK), refusal(409, ACCOUNT_CHANGED));
+  active.key = KEY_1;
+  assert.equal((await stepper.nextStep(ASK)).step.action, 'click', 'the pin is the account the run started on');
+  assert.equal(fetchImpl.calls.length, 2);
+});
+
+test('a switch during the token refresh posts nothing', async () => {
+  const active = { key: KEY_1 };
+  const { stepper, fetchImpl } = stepperWith(() => json({ step: { action: 'done' } }), {
+    accountKey: () => active.key,
+    session: async () => {
+      active.key = KEY_2;
+      return { accessToken: 'at-step-2', subject: { userId: 'u-2' } };
+    },
+  });
+  await assert.rejects(stepper.nextStep(ASK), refusal(409, ACCOUNT_CHANGED));
+  assert.equal(fetchImpl.calls.length, 0);
+
+  const refreshedForOther = stepperWith(() => json({ step: { action: 'done' } }), { session: { accessToken: 'at-step-2', subject: { userId: 'u-2' } } });
+  await assert.rejects(refreshedForOther.stepper.nextStep(ASK), refusal(409, ACCOUNT_CHANGED));
+  assert.equal(refreshedForOther.fetchImpl.calls.length, 0, 'a session that is not the pinned account sends nothing');
+});
+
+test('history items are clipped to the platform\'s limit', async () => {
+  const { stepper, fetchImpl } = stepperWith(() => json({ step: { action: 'done' } }));
+  const long = `fill textbox "Message" = "${'x'.repeat(1_500)}"`;
+  const history = [long, 'click button "Send"'];
+  await stepper.nextStep({ ...ASK, history });
+  assert.equal(MAX_HISTORY_ITEM_CHARS, 1_000);
+  assert.deepEqual(fetchImpl.calls[0].body.history, [long.slice(0, 1_000), 'click button "Send"']);
+  assert.equal(history[0], long);
+  assert.equal(MAX_GOAL_CHARS, 4_000);
+});
+
+test('ask and stop text is a bounded string with a plain fallback', async () => {
+  const cases = [
+    [{ action: 'ask' }, { action: 'ask', question: 'The Mittr platform asked for your input' }],
+    [{ action: 'ask', question: ['x'] }, { action: 'ask', question: 'The Mittr platform asked for your input' }],
+    [{ action: 'ask', question: 'q'.repeat(5_000) }, { action: 'ask', question: 'q'.repeat(MAX_STEP_TEXT_CHARS) }],
+    [{ action: 'stop', reason: '  ' }, { action: 'stop', reason: 'The Mittr platform stopped' }],
+    [{ action: 'stop', reason: 7, extra: 'x' }, { action: 'stop', reason: 'The Mittr platform stopped' }],
+    [{ action: 'stop', reason: 'blocked by a payment page' }, { action: 'stop', reason: 'blocked by a payment page' }],
+  ];
+  for (const [step, expected] of cases) {
+    const { stepper } = stepperWith(() => json({ step }));
+    assert.deepEqual((await stepper.nextStep(ASK)).step, expected, JSON.stringify(step).slice(0, 60));
+  }
+});
+
 test('without a platform, a session source or an account guard there is no stepper', () => {
   const ensureFreshSession = async () => SESSION;
   const engineOnActiveHome = () => true;
-  assert.equal(createBrowserStepper({ broker: { baseUrl: null }, ensureFreshSession, engineOnActiveHome }), null);
-  assert.equal(createBrowserStepper({ broker: BROKER, engineOnActiveHome }), null);
-  assert.equal(createBrowserStepper({ broker: BROKER, ensureFreshSession }), null);
+  const activeAccountKey = () => KEY_1;
+  assert.equal(createBrowserStepper({ broker: { baseUrl: null }, ensureFreshSession, engineOnActiveHome, activeAccountKey }), null);
+  assert.equal(createBrowserStepper({ broker: BROKER, engineOnActiveHome, activeAccountKey }), null);
+  assert.equal(createBrowserStepper({ broker: BROKER, ensureFreshSession, activeAccountKey }), null);
+  assert.equal(createBrowserStepper({ broker: BROKER, ensureFreshSession, engineOnActiveHome }), null);
   assert.equal(createBrowserStepper(), null);
 });
 
