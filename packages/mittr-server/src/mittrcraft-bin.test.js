@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -15,26 +16,33 @@ const SERVER_CLI = path.join(repoRoot, 'packages/web/bin/cli.js');
 const PLUGIN = path.join(repoRoot, 'packages/mittr-server/src/plugin.js');
 const PRODUCT_ENV = readProductEnv(path.join(repoRoot, 'brand/product.prod.json'));
 
+const RG_STUB_DIR = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-rg-stub-')));
+fs.writeFileSync(path.join(RG_STUB_DIR, 'rg'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+process.on('exit', () => fs.rmSync(RG_STUB_DIR, { recursive: true, force: true }));
+
+const withStubRipgrep = (env) => ({ ...env, PATH: [RG_STUB_DIR, env.PATH].filter(Boolean).join(path.delimiter) });
+
 const runIsolated = (t, entry, args, extraEnv = {}) => {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-bin-')));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(OPENCHAMBER_|OPENCODE_|XDG_|MITTR)/.test(name)));
+  const isolatedEnv = {
+    ...inherited,
+    HOME: home,
+    USERPROFILE: home,
+    OPENCHAMBER_DATA_DIR: path.join(home, 'data'),
+    XDG_CONFIG_HOME: path.join(home, '.config'),
+    XDG_DATA_HOME: path.join(home, '.local', 'share'),
+    XDG_STATE_HOME: path.join(home, '.local', 'state'),
+    XDG_CACHE_HOME: path.join(home, '.cache'),
+    NO_COLOR: '1',
+    ...extraEnv,
+  };
   const result = spawnSync(process.execPath, [entry, ...args], {
     encoding: 'utf8',
     cwd: home,
     timeout: 60_000,
-    env: {
-      ...inherited,
-      HOME: home,
-      USERPROFILE: home,
-      OPENCHAMBER_DATA_DIR: path.join(home, 'data'),
-      XDG_CONFIG_HOME: path.join(home, '.config'),
-      XDG_DATA_HOME: path.join(home, '.local', 'share'),
-      XDG_STATE_HOME: path.join(home, '.local', 'state'),
-      XDG_CACHE_HOME: path.join(home, '.cache'),
-      NO_COLOR: '1',
-      ...extraEnv,
-    },
+    env: Object.hasOwn(extraEnv, 'PATH') ? isolatedEnv : withStubRipgrep(isolatedEnv),
   });
   return { ...result, home };
 };
@@ -239,7 +247,7 @@ test('a packed layout without .git gets the default data dir and the bin touches
     encoding: 'utf8',
     cwd: home,
     timeout: 60_000,
-    env: { ...inherited, HOME: home, USERPROFILE: home },
+    env: withStubRipgrep({ ...inherited, HOME: home, USERPROFILE: home }),
   });
 
   assert.equal(result.status, 0, result.stderr);
@@ -269,7 +277,7 @@ const runPackedEnvProbe = (t, extraEnv = {}) => {
     encoding: 'utf8',
     cwd: home,
     timeout: 60_000,
-    env: { ...inherited, HOME: home, USERPROFILE: home, ...extraEnv },
+    env: withStubRipgrep({ ...inherited, HOME: home, USERPROFILE: home, ...extraEnv }),
   });
   assert.equal(result.status, 0, result.stderr);
   return { home, seen: JSON.parse(result.stdout) };
@@ -352,5 +360,87 @@ test('the npm pack of this package ships the bin with the product env beside it'
   const packed = JSON.parse(result.stdout)[0].files.map((file) => file.path);
   for (const file of ['bin/mittrcraft.mjs', 'bin/product-env.json', 'src/cli-env.js', 'src/plugin.js', 'src/web-brand.js', 'src/web-brand.json']) {
     assert.ok(packed.includes(file), `${file} is not in the pack`);
+  }
+});
+
+const RG_MISSING_MESSAGE = 'ripgrep (rg) is not installed on this server. Install it, or set MITTRCRAFT_ALLOW_RIPGREP_DOWNLOAD=1 to let the engine download it from github.com.';
+const RG_DOWNLOAD_NOTICE = '[mittr] rg is missing; the engine will download it from github.com on first use';
+
+const isListening = (port) => new Promise((resolve) => {
+  const socket = net.connect({ port, host: '127.0.0.1' });
+  socket.once('connect', () => {
+    socket.destroy();
+    resolve(true);
+  });
+  socket.once('error', () => resolve(false));
+});
+
+const freePort = () => new Promise((resolve, reject) => {
+  const probe = net.createServer();
+  probe.once('error', reject);
+  probe.listen(0, '127.0.0.1', () => {
+    const { port } = probe.address();
+    probe.close(() => resolve(port));
+  });
+});
+
+const runPackedServe = (t, { pathValue, extraEnv = {}, args = ['serve'] }) => {
+  const { root, packageDir } = packedBin(t, 'mittrcraft-packed-rg-');
+  fs.mkdirSync(path.join(root, 'packages', 'web', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'packages', 'web', 'bin', 'cli.js'), "console.log('server started');\n");
+  fs.writeFileSync(path.join(root, 'packages', 'web', 'package.json'), '{"type":"module"}\n');
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-bin-')));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(OPENCHAMBER_|OPENCODE_|XDG_|MITTR|PATH$)/.test(name)));
+  return spawnSync(process.execPath, [path.join(packageDir, 'bin', 'mittrcraft.mjs'), ...args], {
+    encoding: 'utf8',
+    cwd: home,
+    timeout: 60_000,
+    env: { ...inherited, HOME: home, USERPROFILE: home, PATH: pathValue, ...extraEnv },
+  });
+};
+
+test('a hosted start without rg refuses before listening', async (t) => {
+  const port = await freePort();
+  assert.equal(await isListening(port), false, `port ${port} is not free`);
+  const emptyPath = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-nopath-')));
+  t.after(() => fs.rmSync(emptyPath, { recursive: true, force: true }));
+
+  const result = runIsolated(t, BIN, ['serve', '--foreground', '--port', String(port)], { PATH: emptyPath });
+
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr.trim(), RG_MISSING_MESSAGE);
+  assert.equal(await isListening(port), false);
+  assert.deepEqual(fs.readdirSync(result.home), []);
+});
+
+test('rg on PATH starts normally', (t) => {
+  const result = runPackedServe(t, { pathValue: RG_STUB_DIR });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'server started\n');
+  assert.equal(result.stderr, '');
+});
+
+test('the opt-in allows the download with one log line', (t) => {
+  const emptyPath = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-nopath-')));
+  t.after(() => fs.rmSync(emptyPath, { recursive: true, force: true }));
+
+  const result = runPackedServe(t, { pathValue: emptyPath, extraEnv: { MITTRCRAFT_ALLOW_RIPGREP_DOWNLOAD: '1' } });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'server started\n');
+  assert.equal(result.stderr, `${RG_DOWNLOAD_NOTICE}\n`);
+});
+
+test('commands that start no server need no rg', (t) => {
+  const emptyPath = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-nopath-')));
+  t.after(() => fs.rmSync(emptyPath, { recursive: true, force: true }));
+
+  for (const args of [['--help'], ['status'], ['stop']]) {
+    const result = runPackedServe(t, { pathValue: emptyPath, args });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '', args.join(' '));
   }
 });

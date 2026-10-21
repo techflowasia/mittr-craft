@@ -96,6 +96,8 @@ Upstream's "sign out everywhere" (`POST /api/auth/reset`) rotates the secret tha
 
 It refuses to start when a `MITTR_AD_*` setting is present but `OPENCHAMBER_SERVER_PLUGINS` does not load this plugin.
 
+Install ripgrep on the server; MittrCraft does not let the engine fetch it from github.com unless you opt in with `MITTRCRAFT_ALLOW_RIPGREP_DOWNLOAD=1`. Without an `rg` on the `PATH` that `mittrcraft` runs with, a command that would start the server exits with an error before anything listens. With the opt-in, it starts, logs `[mittr] rg is missing; the engine will download it from github.com on first use` once, and the engine downloads `rg` on first use. The desktop app ships its own `rg` and is not affected.
+
 Run from a source checkout (a `.git` above the package), it also refuses to start unless `OPENCHAMBER_DATA_DIR` or `MITTRCRAFT_DATA_DIR` is set. With that data dir the engine, its config and the registry follow it, as above, so a developer's machine never runs a server on the installed app's data or engine folders. A packed install has no `.git` and keeps the `~/.config/mittrcraft` default.
 
 The bin is shipped only as this package: `npm pack` carries `bin/` whole, `product-env.json` included, and a test checks it. The desktop app packs only the plugin bundle, not this bin, and upstream's Docker image copies only `packages/web`.

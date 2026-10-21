@@ -10,6 +10,10 @@ const COMPANY_SIGN_IN_VARIABLE = /^MITTR_AD_/;
 const DARWIN_ONLY = new Set(['OPENCHAMBER_POLICY_FILE']);
 const PLAIN_SIGN_IN_SECRETS = ['MITTR_AD_CLIENT_SECRET', 'MITTR_AD_BIND_PASSWORD'];
 export const BIN_BUN_BINARY = 'MITTRCRAFT_BIN_BUN_BINARY';
+export const RIPGREP_MISSING_MESSAGE = 'ripgrep (rg) is not installed on this server. Install it, or set MITTRCRAFT_ALLOW_RIPGREP_DOWNLOAD=1 to let the engine download it from github.com.';
+export const RIPGREP_DOWNLOAD_NOTICE = '[mittr] rg is missing; the engine will download it from github.com on first use';
+const HELP_OR_VERSION_FLAGS = new Set(['--help', '-h', '--version', '-v']);
+const COMMANDS_WITHOUT_SERVER = new Set(['stop', 'status', 'logs', 'startup', 'schedule', 'session', 'models', 'projects', 'control']);
 
 const isUnset = (value) => typeof value !== 'string' || value.trim() === '';
 
@@ -50,6 +54,28 @@ const findCheckoutRoot = (startDir) => {
     if (parent === dir) return null;
     dir = parent;
   }
+};
+
+export const findRipgrep = (pathValue, { fs: fileSystem = fs } = {}) => {
+  if (isUnset(pathValue)) return null;
+  for (const dir of String(pathValue).split(path.delimiter)) {
+    if (dir === '') continue;
+    const candidate = path.join(dir, 'rg');
+    try {
+      if (!fileSystem.statSync(candidate).isFile()) continue;
+      fileSystem.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+};
+
+export const startsServer = (argv) => {
+  if (argv.some((arg) => HELP_OR_VERSION_FLAGS.has(arg))) return false;
+  const command = argv.find((arg) => !arg.startsWith('-'));
+  return !COMMANDS_WITHOUT_SERVER.has(command);
 };
 
 export const prepareCliEnvironment = ({ env, homeDir, pluginPath, productEnv, packageDir, platform = process.platform, nodePath = process.execPath, bunVersion = process.versions.bun }) => {
@@ -101,7 +127,11 @@ export const prepareCliEnvironment = ({ env, homeDir, pluginPath, productEnv, pa
       refusal: `mittrcraft: this copy runs on Bun, which hands ${plainSecrets.join(' and ')} to every program the server starts, agents' commands included. Run mittrcraft with Node, or put each secret in a file named by ${plainSecrets.map((name) => `${name}_FILE`).join(' and ')} and unset ${plainSecrets.length > 1 ? 'the plain variables' : 'the plain variable'}.`,
     };
   }
-  return { env: next, refusal: null };
+  return {
+    env: next,
+    refusal: null,
+    ripgrep: { found: findRipgrep(next.PATH), downloadAllowed: next.MITTRCRAFT_ALLOW_RIPGREP_DOWNLOAD === '1' },
+  };
 };
 
 export const readProductEnv = (productFile) => JSON.parse(fs.readFileSync(productFile, 'utf8')).env ?? {};
