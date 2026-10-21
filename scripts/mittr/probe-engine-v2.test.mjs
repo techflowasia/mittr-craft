@@ -16,6 +16,8 @@ import {
   stopConditionFor,
   textsOf,
   toolToCall,
+  markerHits,
+  withoutMarkers,
 } from './probe-engine-v2.mjs';
 import { STUB_ANSWER, argValue, handleMessage } from './stub-mcp-server.mjs';
 
@@ -169,4 +171,11 @@ test('failuresOf takes a scenario that went as expected over its pass verdict', 
   assert.deepEqual(run({ pass: false, asExpected: true }), []);
   assert.deepEqual(run({ pass: true, asExpected: false }), ['P10b: FAIL']);
   assert.deepEqual(run({ pass: false }), ['P10b: FAIL']);
+});
+
+test('markerHits says which marker a body holds, and withoutMarkers replaces every one', () => {
+  const markers = { header: 'p3-secret-aa', environment: 'p3-env-bb' };
+  assert.deepEqual(markerHits('{"headers":{"x":"p3-secret-aa"}}', markers), { header: true, environment: false });
+  assert.deepEqual(markerHits('', markers), { header: false, environment: false });
+  assert.deepEqual(withoutMarkers({ a: 'p3-secret-aa', b: ['x p3-env-bb y', { c: 'p3-secret-aa' }], markers }, markers), { a: '<marker>', b: ['x <marker> y', { c: '<marker>' }], markers: { header: '<marker>', environment: '<marker>' } });
 });

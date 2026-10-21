@@ -23,6 +23,10 @@
  *     [--only outbound]     run the engine with the server's outbound switches
  *                           and once without them (the control), and record
  *                           every attempt to leave the machine
+ *     [--only config-exposure]
+ *                           put secret markers in a managed-config MCP entry
+ *                           and record which engine config and MCP reads the
+ *                           UI makes answer them
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -1672,6 +1676,92 @@ const probeSkillsMcp = async ({ home, configFile, baseConfig, stub, connect, cur
   return scenarios;
 };
 
+export const markerHits = (text, markers) => Object.fromEntries(Object.entries(markers).map(([name, value]) => [name, String(text).includes(value)]));
+
+export const withoutMarkers = (value, markers) => JSON.parse(Object.values(markers).reduce((text, marker) => text.split(marker).join('<marker>'), JSON.stringify(value)));
+
+const EXPOSURE_READS = [
+  { name: 'config.get', path: '/api/config' },
+  { name: 'config.shell', path: '/api/config/shell' },
+  { name: 'mcp.list', path: '/api/mcp' },
+];
+
+const engineProcesses = (port) => (spawnSync('pgrep', ['-f', `opencode serve --hostname 127.0.0.1 --port ${port}`], { encoding: 'utf8' }).stdout ?? '')
+  .split('\n').filter(Boolean).map(Number).filter((pid) => pid && pid !== process.pid);
+
+const probeConfigExposure = async ({ home, configFile, baseConfig, connect, current }) => {
+  const closedPort = await unusedPort();
+  const markers = {
+    header: `p3-secret-${randomBytes(8).toString('hex')}`,
+    environment: `p3-env-${randomBytes(8).toString('hex')}`,
+  };
+  const configDir = path.join(home, '.config', 'opencode');
+  fs.mkdirSync(configDir, { recursive: true });
+  writeJsonAtomic(configFile, {
+    ...baseConfig(),
+    mcp: {
+      servers: {
+        'mittr-probe': mcpEntityFromCatalog({ type: 'remote', url: `http://127.0.0.1:${closedPort}/mcp`, headers: { 'x-probe-secret': markers.header } }),
+        'mittr-probe-local': mcpEntityFromCatalog({ type: 'local', command: ['/usr/bin/false'], environment: { PROBE_ENV_SECRET: markers.environment } }),
+      },
+    },
+  });
+  const client = await connect({ OPENCODE_CONFIG_DIR: configDir });
+  const { engine } = current();
+  const work = engine.work;
+  let servers = [];
+  await waitFor(async () => {
+    servers = await listMcp(client, work).catch(() => []);
+    return ['mittr-probe', 'mittr-probe-local'].every((name) => servers.some((server) => server.name === name && server.status && server.status !== 'pending'));
+  }, HOT_WINDOW_MS, 250);
+  const reads = [];
+  for (const read of EXPOSURE_READS) {
+    for (const query of ['', `?directory=${encodeURIComponent(work)}`]) {
+      const res = await fetch(`${engine.base}${read.path}${query}`, { headers: engine.headers });
+      const body = await res.text();
+      reads.push({ name: read.name, path: `${read.path}${query ? '?directory=<work>' : ''}`, status: res.status, bytes: body.length, hits: markerHits(body, markers) });
+    }
+  }
+  const sdk = {};
+  const viaSdk = async (name, run) => {
+    try {
+      const text = JSON.stringify(await run());
+      sdk[name] = { hits: markerHits(text, markers), bytes: text.length };
+    } catch (error) {
+      sdk[name] = { error: errorText(error) };
+    }
+  };
+  await viaSdk('config.get', () => client.config.get({ location: { directory: work } }));
+  await viaSdk('mcp.list', () => client.mcp.list({ location: { directory: work } }));
+  let documents = null;
+  try {
+    const entries = await client.config.get({ location: { directory: work } });
+    const rel = underHome(home);
+    documents = (entries.data ?? entries).map((entry) => ({
+      type: entry.type ?? null,
+      source: rel(entry.source?.path ?? entry.path ?? entry.source ?? null),
+      hasMcp: Boolean(entry.info?.mcp),
+      mcpServers: Object.keys(entry.info?.mcp?.servers ?? {}).sort(),
+      hits: markerHits(JSON.stringify(entry), markers),
+    }));
+  } catch (error) {
+    documents = `error: ${errorText(error)}`;
+  }
+  const exposedBy = [...reads.filter((read) => Object.values(read.hits).some(Boolean)).map((read) => `GET ${read.path}`), ...Object.entries(sdk).filter(([, value]) => value.hits && Object.values(value.hits).some(Boolean)).map(([name]) => `sdk ${name}`)];
+  return {
+    markers,
+    closedPort,
+    closedPortListening: Boolean(listenerOn(closedPort)),
+    mcpStatus: servers,
+    reads,
+    sdk,
+    documents,
+    exposedBy,
+    exposed: exposedBy.length > 0,
+    pass: true,
+  };
+};
+
 const main = async () => {
   const args = process.argv.slice(2);
   const jsonIndex = args.indexOf('--json');
@@ -1683,8 +1773,8 @@ const main = async () => {
   const keep = args.includes('--keep');
   const onlyIndex = args.indexOf('--only');
   const only = onlyIndex === -1 ? null : args[onlyIndex + 1];
-  if (only !== null && !['P7', 'outbound', 'shim', 'skills-mcp'].includes(only)) {
-    console.error('--only takes P7, outbound, shim or skills-mcp');
+  if (only !== null && !['P7', 'outbound', 'shim', 'skills-mcp', 'config-exposure'].includes(only)) {
+    console.error('--only takes P7, outbound, shim, skills-mcp or config-exposure');
     return 2;
   }
   const scenarios = only === 'skills-mcp' ? SKILLS_MCP_SCENARIOS : (only ? [only] : SCENARIOS);
@@ -1711,6 +1801,7 @@ const main = async () => {
   const marker = `mittr-probe-${randomBytes(6).toString('hex')}`;
   const stubLog = path.join(home, 'stub-mcp.jsonl');
   const leftovers = { killed: [], afterCleanup: null };
+  let exposureMarkers = null;
   let cleaned = false;
   const cleanup = async () => {
     if (cleaned) return;
@@ -1789,7 +1880,22 @@ const main = async () => {
       startWith: async (extraEnv) => ({ client: await connect(extraEnv), collector, engine }),
     });
 
-    if (only === 'skills-mcp') {
+    if (only === 'config-exposure') {
+      result.reserved57133Listening = Boolean(listenerOn(57133));
+      const found = await probeConfigExposure({
+        home, configFile,
+        baseConfig: () => ({
+          providers: { stub: providerEntry('Stub', `http://127.0.0.1:${stubs.stub.port}/v1`, ['m1']) },
+          ...ENGINE_SHARE_OFF,
+          experimental: { policies: policiesFor({ showOtherProviders: false, providerId: 'stub' }) },
+        }),
+        connect, current: () => ({ engine, collector }),
+      });
+      result.enginePort = engine.port;
+      exposureMarkers = found.markers;
+      const { markers: _markers, ...scenario } = found;
+      result.scenarios['config-exposure'] = scenario;
+    } else if (only === 'skills-mcp') {
       result.reserved57133Listening = Boolean(listenerOn(57133));
       result.marker = marker;
       const baseConfig = () => ({
@@ -1968,6 +2074,7 @@ const main = async () => {
     await cleanup();
   }
 
+  if (only === 'config-exposure' && result.enginePort) result.engineProcessesAfterCleanup = engineProcesses(result.enginePort).length;
   if (only === 'skills-mcp') {
     result.leftoverStubProcesses = leftovers;
     if (SKILLS_MCP_SCENARIOS.every((name) => result.scenarios[name])) result.stopConditions = skillsMcpStopConditions(result.scenarios);
@@ -1983,7 +2090,7 @@ const main = async () => {
   result.blocked = Object.values(result.stopConditions).some((c) => c.stop);
   if (keep) result.keptHome = home;
   fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
+  fs.writeFileSync(out, `${JSON.stringify(exposureMarkers ? withoutMarkers(result, exposureMarkers) : result, null, 2)}\n`);
   const verdicts = Object.fromEntries(scenarios.map((name) => [name, result.scenarios[name] ? (result.scenarios[name].pass ? 'PASS' : 'FAIL') : 'MISSING']));
   console.log(JSON.stringify({ verdicts, blocked: result.blocked, failures: result.failures, outbound: result.outbound }, null, 2));
   console.log(`wrote ${out}`);
