@@ -3,10 +3,12 @@ import { describe, expect, test } from 'bun:test';
 import {
   cardKeyOf,
   countByLane,
+  chipPressed,
   displayLanes,
   groupItems,
   groupStartsOpen,
   lanesOf,
+  resolveFilter,
   scopeByLane,
   stateRankColor,
   type WorkItem,
@@ -133,6 +135,44 @@ describe('my work Plane workspaces', () => {
   test('a saved plane filter still means every workspace', () => {
     expect(scopeByLane(two, 'plane').map((entry) => entry.id)).toEqual(['t1', 'm1', 't2']);
   });
+
+  test('every chip counts what its filter scopes, including a leftover Plane chip', () => {
+    const mixed = [...two, item('p1', 'plane', 'Todo')];
+    const lanes = displayLanes(mixed);
+    expect(lanes.map((lane) => [lane.key, lane.count])).toEqual([
+      ['jira', 1],
+      ['plane', 4],
+      ['plane:mittr', 1],
+      ['plane:techflow', 2],
+    ]);
+    for (const lane of lanes) expect(lane.count).toBe(scopeByLane(mixed, lane.key).length);
+    const collapsed = [item('p1', 'plane', 'Todo'), item('t1', 'plane', 'Todo', 'techflow')];
+    for (const lane of displayLanes(collapsed)) expect(lane.count).toBe(scopeByLane(collapsed, lane.key).length);
+  });
+
+  test('a stale, junk or valid saved filter resolves against the items', () => {
+    expect(resolveFilter('all', two)).toBe('all');
+    expect(resolveFilter('jira', two)).toBe('jira');
+    expect(resolveFilter('plane', two)).toBe('plane');
+    expect(resolveFilter('plane:mittr', two)).toBe('plane:mittr');
+    expect(resolveFilter('plane:gone', two)).toBe('all');
+    expect(resolveFilter('junk', two)).toBe('all');
+    expect(resolveFilter('', two)).toBe('all');
+    expect(resolveFilter('plane', [item('j1', 'jira', 'Todo')])).toBe('all');
+    expect(resolveFilter('jira', [item('p1', 'plane', 'Todo')])).toBe('all');
+  });
+
+  test('the Plane chip is pressed for plane and for any named workspace', () => {
+    expect(chipPressed('plane', 'plane')).toBe(true);
+    expect(chipPressed('plane', 'plane:techflow')).toBe(true);
+    expect(chipPressed('plane', 'jira')).toBe(false);
+    expect(chipPressed('plane', 'all')).toBe(false);
+    expect(chipPressed('plane:mittr', 'plane:mittr')).toBe(true);
+    expect(chipPressed('plane:mittr', 'plane:techflow')).toBe(false);
+    expect(chipPressed('plane:mittr', 'plane')).toBe(false);
+    expect(chipPressed('jira', 'jira')).toBe(true);
+    expect(chipPressed('jira', 'plane')).toBe(false);
+  });
 });
 
 describe('my work card keys', () => {
@@ -140,6 +180,17 @@ describe('my work card keys', () => {
     const jira = { ...item('j1', 'jira', 'Todo'), key: null, url: 'https://x.atlassian.net/browse/MRKB-2122' };
     expect(cardKeyOf(jira)).toBe('MRKB-2122');
     expect(cardKeyOf({ ...item('p1', 'plane', 'Todo'), key: null })).toBeNull();
+  });
+
+  test('a keyless Plane item never reads a key from its URL', () => {
+    const plane = { ...item('p1', 'plane', 'Todo'), key: null, url: 'https://plane.example.test/techflow/browse/PROJ-1/' };
+    expect(cardKeyOf(plane)).toBeNull();
+  });
+
+  test('a Jira item without a URL has no key', () => {
+    const jira = { ...item('j1', 'jira', 'Todo'), key: null } as Partial<WorkItem>;
+    delete jira.url;
+    expect(cardKeyOf(jira as WorkItem)).toBeNull();
   });
 
   test('the key the platform sends wins over the URL', () => {

@@ -51,16 +51,24 @@ export const lanesOf = (items: WorkItem[]): Lane[] => {
 export const displayLanes = (items: WorkItem[]): Lane[] => {
   const lanes = lanesOf(items);
   const planeLanes = lanes.filter((lane) => lane.source === 'plane');
+  if (planeLanes.length === 0) return lanes;
+  const planeCount = planeLanes.reduce((total, lane) => total + lane.count, 0);
   const workspaces = new Set(planeLanes.map((lane) => lane.workspace).filter((workspace) => workspace !== null));
-  if (planeLanes.length === 0 || workspaces.size > 1) return lanes;
-  const merged: Lane = {
-    key: 'plane',
-    source: 'plane',
-    workspace: null,
-    count: planeLanes.reduce((total, lane) => total + lane.count, 0),
-  };
+  if (workspaces.size > 1) {
+    return lanes.map((lane) => (lane.key === 'plane' ? { ...lane, count: planeCount } : lane));
+  }
+  const merged: Lane = { key: 'plane', source: 'plane', workspace: null, count: planeCount };
   return lanes.flatMap((lane) => (lane.source !== 'plane' ? [lane] : lane === planeLanes[0] ? [merged] : []));
 };
+
+export const resolveFilter = (saved: string, items: WorkItem[]): string => {
+  if (saved === 'all') return saved;
+  if (saved === 'plane') return items.some((item) => sourceOf(item) === 'plane') ? saved : 'all';
+  return lanesOf(items).some((lane) => lane.key === saved) ? saved : 'all';
+};
+
+export const chipPressed = (chipKey: string, filter: string): boolean =>
+  chipKey === 'plane' ? filter === 'plane' || filter.startsWith('plane:') : chipKey === filter;
 
 export const stateRank = (state: string): number => {
   const s = state.toLowerCase();
@@ -119,6 +127,7 @@ const JIRA_KEY_PATTERN = /\/browse\/([A-Z][A-Z0-9]*-\d+)/;
 export const cardKeyOf = (item: WorkItem): string | null => {
   const sent = item.key?.trim();
   if (sent) return sent;
-  const match = item.url.match(JIRA_KEY_PATTERN);
+  if (sourceOf(item) !== 'jira') return null;
+  const match = item.url?.match(JIRA_KEY_PATTERN);
   return match ? match[1] : null;
 };
