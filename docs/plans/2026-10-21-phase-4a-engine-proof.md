@@ -250,3 +250,51 @@ None of the plan's Task 1 stop conditions stops the phase.
 - **The prompt's wording is the engine's.** Our explanatory sentence is dropped from the request, so the approval card does not say why the agent asks. It shows the action name `mittrcraft_chrome` and the host.
 - **A saved approval is probably per project.** `always` stores `{ projectID, action, resource }`, so approving a site in one project presumably does not approve it in another. This is inferred from the stored fields, not tested.
 - **Code Mode.** Both of our Code Mode probe tools worked through `execute`, images included. This was not measured with a real model.
+
+## Drivers
+
+Date: 2026-10-21. Build: `node scripts/mittr/build-desktop.mjs --flavor dev`, exit 0. Probe: `node scripts/mittr/probe-agent-browser.mjs --json <out>` under the isolated shell, 22 s, the last of five runs. The evidence JSON is kept outside the repository and holds no token or password; temp paths are written as `<temp>`.
+
+### What is packed
+
+The pins are in `scripts/mittr/drivers.json`. The build reads both files from `packages/electron/.cache/` (or the paths in `MITTRCRAFT_AGENT_BROWSER_BINARY` and `MITTRCRAFT_CUA_DRIVER_ARCHIVE`) and checks them before any build step. It never downloads them: a missing or different file stops the build and names the asset, the release URL and the owner's yes. Step 3 stages `agent-browser` with mode 755, extracts `CuaDriver.app` with the system `tar`, links `cua-driver` to `./CuaDriver.app/Contents/MacOS/cua-driver` as 1.22 did, and checks the app with `codesign --verify --deep --strict`. Step 8 checks the packed copies.
+
+| Item | Pinned | In the packed `MittrCraft Dev.app` |
+|---|---|---|
+| `agent-browser` 0.38.1 | sha256 `2e612872…e892e0d`, 15,768,448 bytes | re-signed by the builder: ad-hoc, hardened runtime, identifier `agent-browser-5555…`, sha256 `a1eb1ce6…39c5ba`, 15,696,864 bytes. Without its signature: sha256 `0b47b1d7…19e6a0`, 15,646,064 bytes, which is the pinned `resignedStrippedSha256`, measured at the first build and the same at the second. `--version` prints `agent-browser 0.38.1`. |
+| `cua-driver` 0.28.2 | archive sha256 `e273181b…fc3fbb1`, binary sha256 `9a7731f7…6b81` | not re-signed: `mac.signIgnore` holds `/Contents/Resources/cua-driver/` in both builder files. Binary sha256 `9a7731f7…6b81`, `Identifier=com.trycua.driver`, `TeamIdentifier=YCK386LBJ7`, Developer ID Application: Cua AI, Inc., notarized (`spctl` accepts it). `--version` prints `cua-driver 0.28.2`. |
+| `THIRD_PARTY_NOTICES.md` | `brand/THIRD_PARTY_NOTICES.md` | in `Contents/Resources`, the same bytes. |
+
+The whole app still passes `codesign --verify --deep --strict` with the nested app left as it came. The brand-leak scan reported `1404 files: 255 translation keys, 4126 translated, 129 allowlisted, 0 unexplained, 0 unused allowlist entries`, so `brand/leak-allowlist.json` is unchanged.
+
+The notices file has two sections. The agent-browser section holds the release's `LICENSE` (Apache-2.0), fetched once with the owner's yes from `https://raw.githubusercontent.com/vercel-labs/agent-browser/v0.38.1/LICENSE`, sha256 `014bb31e83d5c2e76aea1cc6e82217346ab41362f32cb355ad0f5c10aa0aeaff`. The repository was read from the npm metadata of agent-browser 0.38.1 (`vercel-labs/agent-browser`, Apache-2.0). The same tag has no `NOTICE` (404). The cua-driver section is 1.22's, copied unchanged. The build checks the licence text against the pin.
+
+Which app a macOS permission prompt would name was read from files, without asking macOS: the packed `CuaDriver.app` is named `Cua Driver` (`CFBundleName` and `CFBundleDisplayName`), with `LSUIElement` true. The host is `MittrCraft Dev`, `dev.mittrcraft.desktop.dev`, ad-hoc signed, with no team. Started through LaunchServices, a prompt would name Cua Driver. Started as a child of the server, it would probably be charged to MittrCraft Dev. Which one happens is for Part B to record.
+
+### Probe verdicts
+
+The probe runs the staged copy at `packages/electron/.product/agent-browser/agent-browser` (mode 755, the pinned sha256), never the cache file. It uses a fresh temp HOME with `CFFIXED_USER_HOME`, `TMPDIR` and the XDG folders inside it, a clean environment, `AGENT_BROWSER_EXECUTABLE_PATH` set to Google Chrome 155.0.8059.85, and `AGENT_BROWSER_PROFILE=Default` for a throwaway profile seeded under the temp HOME. Every page is on `127.0.0.1`. An `lsof` sampler covered agent-browser and every Chrome process it started, every 250 ms (73 samples). A watcher looked for new `SecurityAgent` and `UserNotificationCenter` processes. The owner's Chrome was running throughout and was not touched.
+
+| Row | Verdict | Evidence |
+|---|---|---|
+| AB1 profile isolation | PASS | `CFFIXED_USER_HOME` moves the Cocoa home, Application Support, Caches and Preferences into the temp HOME (with HOME alone, the Cocoa home stays the real one). The first call, `agent-browser --json profiles`, ran under `sandbox-exec` denying the real `~/Library/Application Support/Google`, `~/Library/Preferences/com.google.*`, `~/Library/Caches/Google` and `~/.agent-browser`. It exited 0 and listed only the seeded profile, and a system-log query for sandbox denials naming agent-browser found none. `lsof` saw no path under any of those folders, no command line named one, and the `stat -f %m` of each folder and preference file was the same before and after. Chrome made its `RLZ` folder in the temp HOME's Application Support. |
+| AB2 keychain | PASS | The channel is `--args <args>  Browser launch args, comma or newline separated (or AGENT_BROWSER_ARGS)`. The probe set `AGENT_BROWSER_ARGS`, one flag per line, and Chrome's command line carried `--use-mock-keychain` and `--password-store=basic`. No `SecurityAgent` appeared. `security find-generic-password -s "Chrome Safe Storage"` on the login keychain exited 0 before and 0 after; its value was never read. |
+| AB3 quiet network | FAIL | Every flag reached Chrome, and Chrome's network-service process still opened connections to Google in the first seconds after `open`, over about 2 s: ten peers on ports 443, 80 and 5228. With a loopback proxy that refuses everything (a diagnostic, not part of the verdict), there were no direct peers, the loopback page still loaded, and the refused hosts were `clients2.google.com`, `www.gstatic.com`, `www.google.com`, `accounts.google.com`, `update.googleapis.com`, `content-autofill.googleapis.com`, `android.clients.google.com` and `optimizationguide-pa.googleapis.com`. |
+| AB4 Chrome 155 driven | PASS | `open`, `snapshot -i` (textbox `Name`, button `Send`), `fill @e3`, `click @e2`, `get url` (`/done?name=mittr+probe`), `screenshot` (a PNG) and `read` (`Received: mittr probe`) all worked. Chrome ran with `--headless=new`. |
+| AB5 clean-up | PASS | After `close --all`, no process with the staged path or the temp folder in its command line was left (`pgrep -f` found none), and nothing had to be killed. The profile copy was at `<temp>/tmp/agent-browser-profile-<uuid>`, and close removed it. |
+| AB6 listeners | PASS | Every listener of agent-browser and its Chrome was on `127.0.0.1`. Streaming is on by default for each session, on its own port. A WebSocket upgrade to that port with `Origin: http://evil.example.test` was refused with `403 Forbidden`. `stream disable` exists per session and exited 0. |
+
+### What the probe changed, and what binds later tasks
+
+- **A Chrome flag cannot hold a comma.** agent-browser 0.38.1 splits `--args` and `AGENT_BROWSER_ARGS` at every comma as well as every newline, with no escape. The first full run passed `--disable-features=MediaRouter,DialMediaRouteProvider` and Chrome got `DialMediaRouteProvider` as a page to open. The probe passes `--disable-features=MediaRouter`; the DIAL provider is part of the media router. agent-browser adds its own `--disable-features=Translate` before ours. Chromium reads the last value of a repeated switch, so translation is probably no longer switched off; this was not measured. Task 7 must pass flags the same way.
+- **Every command needs the same launch options.** The second full run gave `--profile` to `open` only. The next command relaunched Chrome without the profile copy. The probe sets `AGENT_BROWSER_PROFILE` for every command instead. Task 7 does the same.
+- **The socket path is limited to 103 bytes.** With `TMPDIR` under `/var/folders`, the session name `mittr-probe` was too long. The probe uses `p4`.
+- **AB1, AB4 and AB6 passed**, so Tasks 7 to 9 go on, and the gate's Part A Chrome rows are not stopped by them.
+- **AB3 failed.** The hosts are above. Before any Part A Chrome row, the owner decides between accepting Chrome's own connections to Google from a throwaway profile, or routing agent Chrome through a refusing loopback proxy (agent-browser has `--proxy` and `AGENT_BROWSER_PROXY`), which the diagnostic showed keeps every peer on loopback.
+- **The profile copy.** A copy of the chosen profile sits in `TMPDIR` while an agent Chrome is open, as in 1.22, and `close --all` removes it.
+
+### Owner notes
+
+- **The licences screen.** 2.1.1 has no licences screen, so A-27's "the licences screen lists both" cannot hold. The notices ship as `Contents/Resources/THIRD_PARTY_NOTICES.md`. This is an inventory deviation for phase 5.
+- **macOS permissions.** `signIgnore` keeps `CuaDriver.app` signed by Cua AI, Inc., unlike 1.22, whose packed copy was re-signed ad hoc. Whether macOS asks under "Cua Driver" or "MittrCraft Dev" depends on how the server starts the driver, and is recorded in Part B before any grant.
+- **The packed agent-browser is re-signed.** It is no longer byte-for-byte the release, so A-27 compares it against the pinned unsigned hash. The builder also turned on the hardened runtime for it; `--version` runs.
