@@ -349,7 +349,7 @@ test('the shim is mounted with a key of its own, and hands Mittr the account tok
 
   const signedOut = await askShim(call, key);
   assert.equal(signedOut.status, 401);
-  assert.deepEqual(await signedOut.json(), { error: 'Not signed in to Mittr. Sign in to continue.' });
+  assert.deepEqual(await signedOut.json(), { error: { type: 'mittr_unavailable', code: 'not_signed_in', message: 'Not signed in to Mittr. Sign in to continue.' } });
 
   assert.equal((await signIn(call)).status, 200);
   const response = await askShim(call, key);
@@ -370,7 +370,7 @@ test('each run mints a new shim key, and the last run\'s key no longer opens the
   assert.notEqual(newKey, oldKey);
   assert.equal((await askShim(second.call, oldKey)).status, 401);
   assert.equal((await askShim(second.call, newKey)).status, 401);
-  assert.deepEqual(await (await askShim(second.call, newKey)).json(), { error: 'Not signed in to Mittr. Sign in to continue.' });
+  assert.deepEqual(await (await askShim(second.call, newKey)).json(), { error: { type: 'mittr_unavailable', code: 'not_signed_in', message: 'Not signed in to Mittr. Sign in to continue.' } });
   assert.ok(first.call);
 });
 
@@ -395,7 +395,7 @@ test('a sign-out while a refresh is in flight answers the engine 401 and calls n
 
   const response = await pending;
   assert.equal(response.status, 401);
-  assert.deepEqual(await response.json(), { error: 'Not signed in to Mittr. Sign in to continue.' });
+  assert.deepEqual(await response.json(), { error: { type: 'mittr_unavailable', code: 'not_signed_in', message: 'Not signed in to Mittr. Sign in to continue.' } });
   assert.equal(fetchImpl.calls.some((request) => request.url.endsWith('/chat/completions')), false);
   assert.deepEqual((await call('GET', '/api/mittr/auth/status')).body, { signedIn: false });
 });
@@ -896,7 +896,7 @@ test('with no catalog to read, the shim says the model list is unavailable inste
   await until(() => catalogCalls(fetchImpl).length === 1);
   const unavailable = await listShimModels(call, dataDir);
   assert.equal(unavailable.status, 503);
-  assert.deepEqual(await unavailable.json(), { error: 'The Mittr model list is not available' });
+  assert.deepEqual(await unavailable.json(), { error: { type: 'mittr_unavailable', code: 'model_list_unavailable', message: 'The Mittr model list is not available' } });
 });
 
 test('signing out of the last account takes the Mittr models out of the engine config', async (t) => {

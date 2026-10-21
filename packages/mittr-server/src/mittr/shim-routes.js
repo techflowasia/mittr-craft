@@ -9,10 +9,13 @@ import { createStreamMarkupWatcher, describeMarkup } from './response-markup.js'
 /** Where the engine's `mittr` provider points: `http://127.0.0.1:<server port>` + this. */
 export const SHIM_PREFIX = '/mittr-shim/v1';
 
-const NOT_SIGNED_IN = 'Not signed in to Mittr. Sign in to continue.';
-const TIMED_OUT = 'Mittr did not answer in time';
-const NO_MODEL_LIST = 'The Mittr model list is not available';
-const SWITCHING = 'The Mittr account is changing. Send the message again in a moment.';
+const unavailable = (code, message) => ({ error: { type: 'mittr_unavailable', code, message } });
+
+const NOT_SIGNED_IN = unavailable('not_signed_in', 'Not signed in to Mittr. Sign in to continue.');
+const TIMED_OUT = unavailable('platform_timeout', 'Mittr did not answer in time');
+const NO_MODEL_LIST = unavailable('model_list_unavailable', 'The Mittr model list is not available');
+const SWITCHING = unavailable('switching_account', 'The Mittr account is changing. Send the message again in a moment.');
+const PLATFORM_UNREACHABLE = unavailable('platform_unreachable', CANNOT_REACH_MITTR);
 
 // On an answer the shim itself gives up on, where asking again at once cannot
 // help: the engine would otherwise retry it several times over.
@@ -200,7 +203,7 @@ export function registerMittrShim(app, {
   const guard = (req, res, next) => {
     if (!isLoopbackPeer(req.socket?.remoteAddress) || cameThroughProxy(req.headers)) return res.status(403).json({ error: 'Forbidden' });
     if (!presentsKey(req.headers.authorization)) return res.status(401).json({ error: 'Unauthorized' });
-    if (!engineOnActiveHome()) return res.status(503).set(NO_RETRY).json({ error: SWITCHING });
+    if (!engineOnActiveHome()) return res.status(503).set(NO_RETRY).json(SWITCHING);
     return next();
   };
 
@@ -240,8 +243,8 @@ export function registerMittrShim(app, {
       logger.error('[mittr] shim could not read the Mittr sign-in:', error?.message ?? error);
     }
     if (engineGone) return undefined;
-    if (!session?.accessToken) return res.status(401).json({ error: NOT_SIGNED_IN });
-    if (!engineOnActiveHome()) return res.status(503).set(NO_RETRY).json({ error: SWITCHING });
+    if (!session?.accessToken) return res.status(401).json(NOT_SIGNED_IN);
+    if (!engineOnActiveHome()) return res.status(503).set(NO_RETRY).json(SWITCHING);
     inFlight.add(res);
 
     let upstream;
@@ -259,9 +262,9 @@ export function registerMittrShim(app, {
       limit.stop();
       logCall(limit.timedOut() ? 'timeout' : 'failed', sessionId);
       if (engineGone) return undefined;
-      if (limit.timedOut()) return res.status(504).set(NO_RETRY).json({ error: TIMED_OUT });
+      if (limit.timedOut()) return res.status(504).set(NO_RETRY).json(TIMED_OUT);
       logger.error('[mittr] shim could not reach Mittr:', error?.message ?? error);
-      return res.status(502).json({ error: CANNOT_REACH_MITTR });
+      return res.status(502).json(PLATFORM_UNREACHABLE);
     }
     logCall(upstream.status, sessionId);
 
@@ -273,7 +276,7 @@ export function registerMittrShim(app, {
       } catch (error) {
         if (engineGone) return undefined;
         logger.error('[mittr] shim lost the answer from Mittr:', error?.message ?? error);
-        return limit.timedOut() ? res.status(504).set(NO_RETRY).json({ error: TIMED_OUT }) : res.status(502).json({ error: CANNOT_REACH_MITTR });
+        return limit.timedOut() ? res.status(504).set(NO_RETRY).json(TIMED_OUT) : res.status(502).json(PLATFORM_UNREACHABLE);
       } finally {
         limit.stop();
       }
@@ -362,7 +365,7 @@ export function registerMittrShim(app, {
     } catch (error) {
       // An empty list would read as "you have no models", which is not what happened.
       logger.error('[mittr] shim could not read the model list:', error?.message ?? error);
-      return res.status(503).set(NO_RETRY).json({ error: NO_MODEL_LIST });
+      return res.status(503).set(NO_RETRY).json(NO_MODEL_LIST);
     }
     return res.json({ object: 'list', data: list.map(({ alias }) => ({ id: alias, object: 'model' })) });
   };

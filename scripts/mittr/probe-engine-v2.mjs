@@ -720,6 +720,11 @@ const startPlatform = async () => {
         res.on('close', answered);
         return;
       }
+      if (record.mode === 'drop') {
+        answered();
+        req.socket.destroy();
+        return;
+      }
       sse(res, [
         chunk(model, { role: 'assistant', content: 'hello from the platform' }),
         chunk(model, {}, 'stop', { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 }),
@@ -744,15 +749,23 @@ const startPlatform = async () => {
 
 const startShim = async ({ platform, logLines }) => {
   const { default: express } = await import('express');
-  const { SHIM_PREFIX, registerMittrShim } = await import('../../packages/mittr-server/src/mittr/shim-routes.js');
+  const { SHIM_PREFIX, registerMittrShim, sessionIdOf } = await import('../../packages/mittr-server/src/mittr/shim-routes.js');
   const localToken = `mc_local_${randomBytes(32).toString('hex')}`;
   const record = (...args) => logLines.push({ at: Date.now(), line: args.map(String).join(' ') });
+  const signedIn = { accessToken: 'probe-platform-token' };
+  const state = { session: signedIn, onActiveHome: true };
+  const requests = [];
   const app = express();
+  app.use(SHIM_PREFIX, (req, _res, next) => {
+    requests.push({ at: Date.now(), method: req.method, path: req.path, sessionId: sessionIdOf(req.headers) });
+    next();
+  });
   app.use(express.json({ limit: '50mb' }));
   registerMittrShim(app, {
     upstreamV1: `http://127.0.0.1:${platform.port}/v1`,
     localToken,
-    ensureFreshSession: async () => ({ accessToken: 'probe-platform-token' }),
+    ensureFreshSession: async () => state.session,
+    engineOnActiveHome: () => state.onActiveHome,
     env: { MITTRCRAFT_SHIM_LOG: '1' },
     logger: { log: record, warn: record, error: record },
     upstreamTimeoutMs: SHIM_TIMEOUT_MS,
@@ -764,6 +777,9 @@ const startShim = async ({ platform, logLines }) => {
   return {
     port,
     localToken,
+    state,
+    requests,
+    setState: (change) => Object.assign(state, { session: signedIn, onActiveHome: true }, change),
     baseURL: `http://127.0.0.1:${port}${SHIM_PREFIX}`,
     close: () => new Promise((resolve) => { server.closeAllConnections?.(); server.close(resolve); }),
   };
@@ -784,8 +800,9 @@ export const shimCallsFor = (logLines, sessionID) => logLines
   .map(({ line }) => line)
   .filter((line) => line.startsWith('[mittr] shim POST /chat/completions ') && line.endsWith(` session=${sessionID}`));
 
-const probeShimTurn = async ({ client, collector, platform, shimLog, work, mode, label, windowMs = 20_000 }) => {
+const probeShimTurn = async ({ client, collector, platform, shim, shimLog, work, mode, label, shimState = {}, windowMs = 20_000 }) => {
   platform.mode = mode;
+  shim.setState(shimState);
   const { sessionID, createError } = await newSession(client, work, 'mittr', 'm1');
   if (!sessionID) {
     platform.mode = 'ok';
@@ -799,6 +816,7 @@ const probeShimTurn = async ({ client, collector, platform, shimLog, work, mode,
     await waitFor(() => sessionEvents(collector.events, sessionID, run.mark).find(isIdleEvent), 5000);
   }
   platform.mode = 'ok';
+  shim.setState({});
   const events = sessionEvents(collector.events, sessionID, run.mark);
   const requests = platform.since(run.mark);
   const firstAnsweredAt = requests[0]?.answeredAt ?? null;
@@ -817,6 +835,7 @@ const probeShimTurn = async ({ client, collector, platform, shimLog, work, mode,
     observed: {
       sessionID,
       platformRequests: requests.length,
+      shimRequests: shim.requests.filter((request) => request.sessionId === sessionID && request.path === '/chat/completions').length,
       platformRequestTimesMs: requests.map((r) => r.at - run.mark),
       platformAuthorization: [...new Set(requests.map((r) => (r.authorization === 'Bearer probe-platform-token' ? r.authorization : 'other')))],
       shimCalls: shimCallsFor(shimLog, sessionID).map((line) => line.replace(` session=${sessionID}`, '')),
@@ -845,7 +864,7 @@ const probeShim = async ({ client, collector, platform, shim, shimLog, work }) =
   } catch (error) {
     connectError = errorText(error);
   }
-  const turn = (mode, label) => probeShimTurn({ client, collector, platform, shimLog, work, mode, label });
+  const turn = (mode, label, shimState, windowMs) => probeShimTurn({ client, collector, platform, shim, shimLog, work, mode, label, shimState, windowMs });
   const control = await turn('ok', 'answer through the shim');
   const P2 = await turn('refuse', 'quota refusal through the shim');
   const P2b = await turn('midstream', 'mid-stream quota refusal through the shim');
@@ -854,6 +873,9 @@ const probeShim = async ({ client, collector, platform, shim, shimLog, work }) =
   const stall = await turn('stall', 'stream silent after the first delta');
   const entitlement = await turn('forbidden-entitlement', 'refused for want of an entitlement');
   const staleCatalog = await turn('forbidden-stale', 'refused because the agent was withdrawn');
+  const notSignedIn = await turn('ok', 'no Mittr sign-in to read', { session: null });
+  const switching = await turn('ok', 'engine on another account home', { onActiveHome: false });
+  const unreachable = await turn('drop', 'platform drops the connection', {}, 150_000);
   const once = ({ observed }) => observed.platformRequests === 1 && observed.shimCalls.length === 1 && !observed.retrySeen;
   const quotaBody = ({ observed }) => String(observed.assistantError?.responseBody ?? '').includes('llm_quota_exhausted')
     || String(observed.assistantError?.message ?? '').includes('llm_quota_exhausted');
@@ -863,11 +885,30 @@ const probeShim = async ({ client, collector, platform, shim, shimLog, work }) =
     && observed.assistantTexts.includes('partial ');
   const forbidden = ({ observed }, code) => once({ observed }) && observed.idleAfterAnswerMs !== null && observed.idleAfterAnswerMs <= 2000
     && observed.assistantError?.status === 403 && String(observed.assistantError?.responseBody ?? '').includes(code);
+  const envelopeOf = ({ observed }) => {
+    try {
+      const { error } = JSON.parse(observed.assistantError?.responseBody ?? '');
+      return error?.type === 'mittr_unavailable' ? error : null;
+    } catch {
+      return null;
+    }
+  };
+  const readsAsEnvelope = ({ observed }, code, status) => {
+    const envelope = envelopeOf({ observed });
+    return envelope !== null && envelope.code === code && observed.assistantError?.status === status
+      && observed.assistantError?.message === envelope.message;
+  };
+  const shimOwn = (turnResult, code, status) => !turnResult.observed.retrySeen
+    && turnResult.observed.shimRequests === 1 && turnResult.observed.platformRequests === 0
+    && readsAsEnvelope(turnResult, code, status);
   const scenarios = {
     control: verdict(control, control.observed.platformRequests === 1 && !control.observed.assistantError && control.observed.assistantTexts.some((t) => t.includes('hello from the platform'))),
     P2: verdict(P2, once(P2) && P2.observed.idleAfterAnswerMs !== null && P2.observed.idleAfterAnswerMs <= 2000 && P2.observed.assistantError?.status === 402 && quotaBody(P2)),
     P2b: verdict(P2b, once(P2b) && P2b.observed.idleAfterAnswerMs !== null && P2b.observed.idleAfterAnswerMs <= 2000 && P2b.observed.assistantError?.type === 'provider.quota' && quotaBody(P2b)),
-    hang: verdict(hang, once(hang) && hang.observed.shimCalls[0] === '[mittr] shim POST /chat/completions timeout'),
+    hang: verdict(hang, once(hang) && hang.observed.shimCalls[0] === '[mittr] shim POST /chat/completions timeout' && readsAsEnvelope(hang, 'platform_timeout', 504)),
+    notSignedIn: verdict(notSignedIn, shimOwn(notSignedIn, 'not_signed_in', 401)),
+    switching: verdict(switching, shimOwn(switching, 'switching_account', 503)),
+    unreachable: verdict(unreachable, unreachable.observed.platformRequests >= 1 && readsAsEnvelope(unreachable, 'platform_unreachable', 502)),
     cut: verdict(cut, cutOff(cut)),
     stall: verdict(stall, cutOff(stall) && stall.observed.shimOtherLines.includes('[mittr] shim cut the answer: Mittr went silent')),
     entitlement: verdict(entitlement, forbidden(entitlement, 'desktop_entitlement_required') && entitlement.observed.shimOtherLines.includes('[mittr] model refused: entitlement')),
@@ -877,6 +918,7 @@ const probeShim = async ({ client, collector, platform, shim, shimLog, work }) =
     pass: connectError === null && Object.values(scenarios).every((scenario) => scenario.pass),
     connectError,
     shimTimeoutMs: SHIM_TIMEOUT_MS,
+    engineErrorTypes: Object.fromEntries(['notSignedIn', 'switching', 'unreachable', 'hang'].map((name) => [name, scenarios[name].observed.assistantError?.type ?? null])),
     scenarios,
   };
 };
@@ -1296,6 +1338,7 @@ const main = async () => {
       });
       const client = await connect();
       result.scenarios.shim = await probeShim({ client, collector, platform, shim, shimLog, work: engine.work });
+      result.scenarios.shim.ports = { platform: platform.port, shim: shim.port, engine: engine.port };
     } else if (only === 'outbound') {
       result.scenarios.outbound = await probeOutbound({
         OpenCode, home, configFile, hookLog, stubs, proxy,

@@ -77,6 +77,11 @@ export const mittrEn = {
   'mittr.model.refused.entitlement': 'Your organisation has not given you MittrCraft access. Ask an admin.',
   'mittr.model.refused.staleCatalog': 'This agent is no longer available to you. Your model list is being refreshed; pick another.',
   'mittr.answer.cutOff': 'The answer was cut off. Send your message again.',
+  'mittr.shim.not_signed_in': 'Sign in to Mittr to continue.',
+  'mittr.shim.switching_account': 'MittrCraft is switching accounts. Send your message again in a moment.',
+  'mittr.shim.platform_unreachable': 'MittrCraft cannot reach Mittr right now. Check your connection and send your message again.',
+  'mittr.shim.platform_timeout': 'Mittr took too long to answer. Send your message again.',
+  'mittr.shim.model_list_unavailable': 'Your Mittr model list is not ready yet. Send your message again in a moment.',
   'mittr.providers.noRoute': "This provider is off. Turn on 'Show models from other providers' or pick a Mittr model.",
   'mittr.providers.noRouteMittr': "This Mittr model isn't available to you right now. Pick another Mittr model.",
 };

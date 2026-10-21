@@ -662,7 +662,7 @@ test('while the engine runs on another account\'s home the shim refuses, and for
 
   assert.equal(response.status, 503);
   assert.equal(response.headers.get('x-should-retry'), 'false');
-  assert.deepEqual(await response.json(), { error: 'The Mittr account is changing. Send the message again in a moment.' });
+  assert.deepEqual(await response.json(), { error: { type: 'mittr_unavailable', code: 'switching_account', message: 'The Mittr account is changing. Send the message again in a moment.' } });
   assert.equal(brokerCalls.some((url) => url.includes('/chat/completions')), false);
 });
 
@@ -690,7 +690,7 @@ test('while the engine is still on the shared home after a failed 1.x carry, the
   });
 
   assert.equal(response.status, 401);
-  assert.deepEqual(await response.json(), { error: 'Not signed in to Mittr. Sign in to continue.' });
+  assert.deepEqual(await response.json(), { error: { type: 'mittr_unavailable', code: 'not_signed_in', message: 'Not signed in to Mittr. Sign in to continue.' } });
   assert.equal(brokerCalls.some((url) => url.includes('/chat/completions')), false);
 });
 

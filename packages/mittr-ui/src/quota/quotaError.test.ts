@@ -156,12 +156,56 @@ describe('the chat error text', () => {
     expect(/failed to send message/i.test(text ?? '')).toBe(false);
   });
 
+  const SHIM_FAILURES = [
+    { code: 'not_signed_in', status: 401, engineType: 'provider.auth', message: 'Not signed in to Mittr. Sign in to continue.', text: 'Sign in to Mittr to continue.' },
+    { code: 'switching_account', status: 503, engineType: 'provider.internal', message: 'The Mittr account is changing. Send the message again in a moment.', text: 'MittrCraft is switching accounts. Send your message again in a moment.' },
+    { code: 'platform_unreachable', status: 502, engineType: 'provider.internal', message: 'Cannot reach Mittr', text: 'MittrCraft cannot reach Mittr right now. Check your connection and send your message again.' },
+    { code: 'platform_timeout', status: 504, engineType: 'provider.internal', message: 'Mittr did not answer in time', text: 'Mittr took too long to answer. Send your message again.' },
+    { code: 'model_list_unavailable', status: 503, engineType: 'provider.internal', message: 'The Mittr model list is not available', text: 'Your Mittr model list is not ready yet. Send your message again in a moment.' },
+  ] as const;
+
+  const shimBody = (code: string, message: string) => JSON.stringify({ error: { type: 'mittr_unavailable', code, message } });
+
+  test('each shim failure code reads as product text', () => {
+    for (const { code, status, engineType, message, text } of SHIM_FAILURES) {
+      const read = mittrMessageError({ type: engineType, status, providerID: 'mittr', responseBody: shimBody(code, message), message: '' });
+      expect(read).toBe(text);
+      expect(read).toBe(mittrT(`mittr.shim.${code}`));
+      expect(/failed to send message/i.test(read ?? '')).toBe(false);
+      expect(/try again/i.test(read ?? '')).toBe(false);
+    }
+  });
+
+  test('a shim failure is read from the body, whatever type the engine stored', () => {
+    for (const { code, status, message, text } of SHIM_FAILURES) {
+      for (const engineType of ['provider.auth', 'provider.internal', 'APIError', 'anything']) {
+        expect(mittrMessageError({ type: engineType, status, providerID: 'mittr', responseBody: shimBody(code, message), message: 'Opencode failed to send message' })).toBe(text);
+      }
+    }
+  });
+
+  test('a shim failure code is read only on the Mittr provider and only inside the shim envelope', () => {
+    const body = shimBody('not_signed_in', 'Not signed in to Mittr. Sign in to continue.');
+    expect(mittrMessageError({ type: 'provider.auth', status: 401, providerID: 'other', responseBody: body, message: '' })).toBeNull();
+    expect(mittrMessageError({ type: 'provider.auth', status: 401, responseBody: body, message: '' })).toBeNull();
+    expect(mittrMessageError({ type: 'provider.auth', status: 401, providerID: 'mittr', responseBody: shimBody('unknown_code', 'x'), message: '' })).toBeNull();
+    expect(mittrMessageError({ type: 'provider.auth', status: 401, providerID: 'mittr', responseBody: JSON.stringify({ error: { type: 'invalid_request_error', code: 'not_signed_in' } }), message: '' })).toBeNull();
+    expect(mittrMessageError({ type: 'provider.auth', status: 401, providerID: 'mittr', responseBody: JSON.stringify({ error: 'Not signed in to Mittr. Sign in to continue.' }), message: '' })).toBeNull();
+    expect(mittrMessageError({ type: 'provider.auth', status: 401, providerID: 'mittr', responseBody: '<html>nope</html>', message: '' })).toBeNull();
+  });
+
+  test('the registered plugin rewords every shim failure', () => {
+    for (const { code, status, engineType, message, text } of SHIM_FAILURES) {
+      expect(translateProductMessageError({ type: engineType, status, providerID: 'mittr', responseBody: shimBody(code, message), message: '' })).toBe(text);
+    }
+  });
+
   test('other invalid-request errors keep upstream text', () => {
     expect(mittrMessageError({ type: 'provider.invalid-request', message: 'bad', status: 400, responseBody: JSON.stringify({ error: { type: 'invalid_request_error', code: 'model_not_found' } }) })).toBeNull();
   });
 
   test('none of the new texts contains the words that make the engine retry', () => {
-    for (const key of ['mittr.model.refused.entitlement', 'mittr.model.refused.staleCatalog', 'mittr.answer.cutOff'] as const) {
+    for (const key of ['mittr.model.refused.entitlement', 'mittr.model.refused.staleCatalog', 'mittr.answer.cutOff', 'mittr.shim.not_signed_in', 'mittr.shim.switching_account', 'mittr.shim.platform_unreachable', 'mittr.shim.platform_timeout', 'mittr.shim.model_list_unavailable'] as const) {
       expect(/try again/i.test(mittrT(key))).toBe(false);
     }
   });

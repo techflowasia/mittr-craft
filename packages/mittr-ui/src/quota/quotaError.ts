@@ -9,6 +9,15 @@ const INSUFFICIENT_QUOTA = 'insufficient_quota';
 const NO_ROUTE = 'provider.no-route';
 const FORBIDDEN = 403;
 const STREAM_CUT_OFF = 'stream_cut_off';
+const SHIM_UNAVAILABLE = 'mittr_unavailable';
+
+const SHIM_FAILURE_TEXTS = {
+  not_signed_in: 'mittr.shim.not_signed_in',
+  switching_account: 'mittr.shim.switching_account',
+  platform_unreachable: 'mittr.shim.platform_unreachable',
+  platform_timeout: 'mittr.shim.platform_timeout',
+  model_list_unavailable: 'mittr.shim.model_list_unavailable',
+} as const;
 
 const MODEL_REFUSAL_TEXTS = {
   desktop_entitlement_required: 'mittr.model.refused.entitlement',
@@ -104,6 +113,16 @@ const isCutOff = ({ responseBody }: MessageError): boolean => {
   return parsed.ok && isRecord(parsed.value) && isRecord(parsed.value.error) && parsed.value.error.code === STREAM_CUT_OFF;
 };
 
+const isShimFailureCode = (code: unknown): code is keyof typeof SHIM_FAILURE_TEXTS => typeof code === 'string' && Object.hasOwn(SHIM_FAILURE_TEXTS, code);
+
+const shimFailureText = ({ providerID, responseBody }: MessageError): string | null => {
+  if (providerID !== MITTR_PROVIDER_ID) return null;
+  const parsed = parseJson(responseBody);
+  if (!parsed.ok || !isRecord(parsed.value) || !isRecord(parsed.value.error)) return null;
+  const { type, code } = parsed.value.error;
+  return type === SHIM_UNAVAILABLE && isShimFailureCode(code) ? mittrT(SHIM_FAILURE_TEXTS[code]) : null;
+};
+
 export function mittrMessageError(error: MessageError): string | null {
   const quota = quotaExhaustedFromError(error);
   if (quota) {
@@ -114,6 +133,8 @@ export function mittrMessageError(error: MessageError): string | null {
   const refusal = modelRefusalText(error);
   if (refusal !== null) return refusal;
   if (isCutOff(error)) return mittrT('mittr.answer.cutOff');
+  const shimFailure = shimFailureText(error);
+  if (shimFailure !== null) return shimFailure;
   if (error.type === NO_ROUTE) {
     return error.providerID === MITTR_PROVIDER_ID ? mittrT('mittr.providers.noRouteMittr') : mittrT('mittr.providers.noRoute');
   }

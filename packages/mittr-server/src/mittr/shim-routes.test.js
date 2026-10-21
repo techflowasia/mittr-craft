@@ -89,6 +89,8 @@ const shim = async (t, {
   return { peer, request, handle };
 };
 
+const unavailable = (code, message) => ({ error: { type: 'mittr_unavailable', code, message } });
+
 const readAll = async (response) => Buffer.from(await response.arrayBuffer()).toString('utf8');
 
 test('forwards with the account token and streams chunks as they arrive', async (t) => {
@@ -199,7 +201,7 @@ test('not signed in', async (t) => {
   const { request } = await shim(t, { upstreamV1: upstream.v1, ensureFreshSession: async () => null });
   const response = await request('/chat/completions');
   assert.equal(response.status, 401);
-  assert.deepEqual(await response.json(), { error: 'Not signed in to Mittr. Sign in to continue.' });
+  assert.deepEqual(await response.json(), unavailable('not_signed_in', 'Not signed in to Mittr. Sign in to continue.'));
   assert.equal(upstream.requests.length, 0);
 });
 
@@ -209,7 +211,7 @@ test('a sign-in that cannot be read is answered as not signed in, not left hangi
   const { request } = await shim(t, { upstreamV1: upstream.v1, logger, ensureFreshSession: async () => { throw new Error('index unreadable'); } });
   const response = await request('/chat/completions');
   assert.equal(response.status, 401);
-  assert.deepEqual(await response.json(), { error: 'Not signed in to Mittr. Sign in to continue.' });
+  assert.deepEqual(await response.json(), unavailable('not_signed_in', 'Not signed in to Mittr. Sign in to continue.'));
   assert.equal(upstream.requests.length, 0);
   assert.equal(logger.lines.error.length, 1);
 });
@@ -225,7 +227,7 @@ test('upstream unreachable', async (t) => {
   const { request } = await shim(t, { upstreamV1, logger: recordingLogger() });
   const response = await request('/chat/completions');
   assert.equal(response.status, 502);
-  assert.deepEqual(await response.json(), { error: 'Cannot reach Mittr' });
+  assert.deepEqual(await response.json(), unavailable('platform_unreachable', 'Cannot reach Mittr'));
   // A network blip may pass: the engine keeps its own retry here.
   assert.equal(response.headers.get('x-should-retry'), null);
 });
@@ -236,7 +238,7 @@ test('an upstream that does not answer in time is given up on', async (t) => {
   const response = await request('/chat/completions');
   assert.equal(response.status, 504);
   assert.equal(response.headers.get('x-should-retry'), 'false');
-  assert.deepEqual(await response.json(), { error: 'Mittr did not answer in time' });
+  assert.deepEqual(await response.json(), unavailable('platform_timeout', 'Mittr did not answer in time'));
 });
 
 const ENGINE_INVALID_REQUEST_TYPES = new Set(['model_not_found', 'invalid_prompt', 'invalid_request', 'invalid_request_error', 'validationexception']);
@@ -593,6 +595,65 @@ test('a model list that cannot be read is an error, never an empty list', async 
   const response = await request('/models', { method: 'GET' });
   assert.equal(response.status, 503);
   assert.equal(response.headers.get('x-should-retry'), 'false');
+  assert.deepEqual(await response.json(), unavailable('model_list_unavailable', 'The Mittr model list is not available'));
+});
+
+test('shim own failures use the error envelope', async (t) => {
+  const failures = [
+    {
+      code: 'not_signed_in',
+      status: 401,
+      message: 'Not signed in to Mittr. Sign in to continue.',
+      retry: null,
+      answer: async () => (await shim(t, { ensureFreshSession: async () => null })).request('/chat/completions'),
+    },
+    {
+      code: 'switching_account',
+      status: 503,
+      message: 'The Mittr account is changing. Send the message again in a moment.',
+      retry: 'false',
+      answer: async () => (await shim(t, { engineOnActiveHome: () => false })).request('/chat/completions'),
+    },
+    {
+      code: 'platform_unreachable',
+      status: 502,
+      message: 'Cannot reach Mittr',
+      retry: null,
+      answer: async () => (await shim(t, { fetchImpl: async () => { throw new Error('connection refused'); }, logger: recordingLogger() })).request('/chat/completions'),
+    },
+    {
+      code: 'platform_timeout',
+      status: 504,
+      message: 'Mittr did not answer in time',
+      retry: 'false',
+      answer: async () => {
+        const upstream = await platform(t, () => {});
+        return (await shim(t, { upstreamV1: upstream.v1, upstreamTimeoutMs: 100 })).request('/chat/completions');
+      },
+    },
+    {
+      code: 'model_list_unavailable',
+      status: 503,
+      message: 'The Mittr model list is not available',
+      retry: 'false',
+      answer: async () => (await shim(t, { logger: recordingLogger(), listModels: () => { throw new Error('cache unreadable'); } })).request('/models', { method: 'GET' }),
+    },
+  ];
+  for (const { code, status, message, retry, answer } of failures) {
+    const response = await answer();
+    assert.equal(response.status, status, code);
+    assert.equal(response.headers.get('x-should-retry'), retry, code);
+    assert.deepEqual(await response.json(), unavailable(code, message), code);
+  }
+});
+
+test('the loopback guard and the refusal bodies keep their shapes', async (t) => {
+  const { request, peer } = await shim(t);
+  assert.deepEqual(await (await request('/chat/completions', { token: null })).json(), { error: 'Unauthorized' });
+  assert.deepEqual(await (await request('/embeddings')).json(), { error: 'Not found' });
+  assert.deepEqual(await (await request('/chat/completions', { body: [] })).json(), { error: 'Invalid request body' });
+  peer.address = '10.0.0.5';
+  assert.deepEqual(await (await request('/chat/completions')).json(), { error: 'Forbidden' });
 });
 
 test('a path the shim does not serve is answered here, behind the same guard', async (t) => {
