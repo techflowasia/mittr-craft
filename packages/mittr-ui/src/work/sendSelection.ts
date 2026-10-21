@@ -60,5 +60,3 @@ export const captureSendSelection = () => {
   }
   return { providerID, modelID, agentName, variant: resolveDefaultVariant(providerID, modelID) };
 };
-
-export type SendSelection = NonNullable<ReturnType<typeof captureSendSelection>>;

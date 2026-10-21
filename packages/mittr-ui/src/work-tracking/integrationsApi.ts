@@ -2,6 +2,7 @@ import type { JsonValue } from '@openchamber/sdk';
 import { z } from 'zod';
 
 import { runtimeFetch } from '../../../ui/src/lib/runtime-fetch';
+import { errorTextOf, readJsonReply } from '../errorReply';
 import { mittrT } from '../strings/mittrT';
 
 const INTEGRATIONS_ENDPOINT = '/api/mittr/integrations';
@@ -97,23 +98,8 @@ const testPayload = z.object({
   userId: z.string().nullable().optional().catch(undefined),
 });
 
-const errorPayload = z.object({ error: z.string().refine((value) => value.trim().length > 0) });
-
 const EMPTY_JIRA: JiraConfig = { baseUrl: '', email: '', hasToken: false, configured: false };
 const EMPTY_PLANE: PlaneConfig = { baseUrl: '', workspaceSlug: '', hasApiKey: false, configured: false };
-
-const readJson = async (response: IntegrationsResponse): Promise<JsonValue | undefined> => {
-  try {
-    return await response.json();
-  } catch {
-    return undefined;
-  }
-};
-
-const failureText = (body: JsonValue | undefined, fallback: string): string => {
-  const parsed = errorPayload.safeParse(body);
-  return parsed.success ? parsed.data.error : fallback;
-};
 
 const planeOf = ({ workspaceSlugs, ...rest }: z.infer<typeof planePayload>): PlaneConfig =>
   (workspaceSlugs ? { ...rest, workspaceSlugs } : rest);
@@ -154,8 +140,8 @@ export function createIntegrationsApi(fetchImpl: IntegrationsFetch = runtimeFetc
     } catch {
       throw new IntegrationsRequestError(fallback, null);
     }
-    const body = await readJson(response);
-    if (!response.ok) throw new IntegrationsRequestError(failureText(body, fallback), response.status);
+    const body = await readJsonReply(response);
+    if (!response.ok) throw new IntegrationsRequestError(errorTextOf(body, fallback), response.status);
     const config = readConfig(body);
     if (!config) throw new IntegrationsRequestError(fallback, response.status);
     return config;
@@ -169,8 +155,8 @@ export function createIntegrationsApi(fetchImpl: IntegrationsFetch = runtimeFetc
     } catch {
       return { ok: false, error: fallback };
     }
-    const body = await readJson(response);
-    if (!response.ok) return { ok: false, error: failureText(body, fallback) };
+    const body = await readJsonReply(response);
+    if (!response.ok) return { ok: false, error: errorTextOf(body, fallback) };
     return readTest(body) ?? { ok: false, error: fallback };
   };
 

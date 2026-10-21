@@ -8,7 +8,8 @@ import { DEFAULT_LOCALE } from '../../../ui/src/lib/i18n/runtime';
 import { useI18nStore } from '../../../ui/src/lib/i18n/store';
 import { mittrT } from '../strings/mittrT';
 import type { MyWorkState } from './myWorkController';
-import { GoWorkMenu, MyWorkDialogView, WorkRow, type MyWorkDialogViewProps, type WorkProject } from './MyWorkDialog';
+import type { GoWorkProject } from './goWork';
+import { GoWorkMenu, MyWorkDialogView, WorkRow, type MyWorkDialogViewProps } from './MyWorkDialog';
 import { stateRankColor, type WorkItem } from './workItems';
 import { createWorkPrefs } from './workPrefs';
 
@@ -201,7 +202,7 @@ describe('My work panel', () => {
   });
 
   test("Go work's menu lists the projects and starts the card in the one chosen", () => {
-    const projects: WorkProject[] = [
+    const projects: GoWorkProject[] = [
       { id: 'p-1', path: '/work/app', label: 'Shop app' },
       { id: 'p-2', path: '/work/tools' },
     ];

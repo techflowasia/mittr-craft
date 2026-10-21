@@ -25,7 +25,7 @@ import { listenAnyAccountChange } from '../sign-in/accountChange';
 import { signedInAccount } from '../sign-in/signedInAccount';
 import { useMittrT } from '../strings/mittrT';
 import { createMyWorkController, MY_WORK_LOADING, type MyWorkController, type MyWorkState } from './myWorkController';
-import { mittrAvailable, mittrCatalogAliases, planGoWork, startGoWork, type GoWorkDeps } from './goWork';
+import { mittrAvailable, mittrCatalogAliases, planGoWork, startGoWork, type GoWorkDeps, type GoWorkProject } from './goWork';
 import { captureSendSelection } from './sendSelection';
 import { fetchMyWork } from './workApi';
 import {
@@ -44,8 +44,6 @@ import {
 } from './workItems';
 import { createWorkPrefs, type WorkPrefs } from './workPrefs';
 
-export type WorkProject = { id: string; path: string; label?: string };
-
 export type MyWorkDialogViewProps = {
   state: MyWorkState;
   filter: LaneFilter;
@@ -55,17 +53,17 @@ export type MyWorkDialogViewProps = {
   onFilter: (filter: LaneFilter) => void;
   onRefresh: () => void;
   onOpenUrl: (url: string) => void;
-  onGoWork?: (item: WorkItem, project: WorkProject) => void;
+  onGoWork?: (item: WorkItem, project: GoWorkProject) => void;
   startingItemId?: string | null;
-  projects: readonly WorkProject[];
+  projects: readonly GoWorkProject[];
 };
 
 const NOTE_CLASS = 'rounded-lg border border-dashed border-border p-4 typography-meta text-muted-foreground';
 
 type GoWorkMenuProps = {
   item: WorkItem;
-  projects: readonly WorkProject[];
-  onGoWork: (item: WorkItem, project: WorkProject) => void;
+  projects: readonly GoWorkProject[];
+  onGoWork: (item: WorkItem, project: GoWorkProject) => void;
   starting: boolean;
 };
 
@@ -366,14 +364,14 @@ const sessionGoWorkDeps = (closeDialog: () => void): GoWorkDeps => ({
   },
 });
 
-type GoWorkBinding = { startingItemId: string | null; goWork: (item: WorkItem, project: WorkProject) => void };
+type GoWorkBinding = { startingItemId: string | null; goWork: (item: WorkItem, project: GoWorkProject) => void };
 
 function useGoWork(onClose: () => void): GoWorkBinding {
   const quota = useQuotaMe(true);
   const agentStatus = quota.status === 'ok' ? quota.quota.agentStatus : null;
   const [startingItemId, setStartingItemId] = React.useState<string | null>(null);
   const running = React.useRef(false);
-  const goWork = (item: WorkItem, project: WorkProject) => {
+  const goWork = (item: WorkItem, project: GoWorkProject) => {
     const plan = () => {
       const selection = captureSendSelection();
       const available = mittrAvailable(selection, mittrCatalogAliases(useConfigStore.getState().providers), agentStatus);

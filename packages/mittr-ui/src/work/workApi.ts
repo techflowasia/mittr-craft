@@ -2,6 +2,7 @@ import type { JsonValue } from '@openchamber/sdk';
 import { z } from 'zod';
 
 import { runtimeFetch } from '../../../ui/src/lib/runtime-fetch';
+import { errorTextOf, readJsonReply } from '../errorReply';
 import { mittrT } from '../strings/mittrT';
 import type { WorkItem } from './workItems';
 
@@ -36,17 +37,6 @@ const replyPayload = z.object({
   userId: z.string().nullable(),
 });
 
-const errorPayload = z.object({ error: z.string().refine((text) => text.trim().length > 0) });
-
-const failureText = async (response: WorkResponse): Promise<string> => {
-  try {
-    const parsed = errorPayload.safeParse(await response.json());
-    return parsed.success ? parsed.data.error : mittrT('mittr.work.error');
-  } catch {
-    return mittrT('mittr.work.error');
-  }
-};
-
 const readReply = async (response: WorkResponse): Promise<MyWorkReply | null> => {
   try {
     const parsed = replyPayload.safeParse(await response.json());
@@ -65,7 +55,7 @@ export async function fetchMyWork(fetchImpl: WorkFetch = runtimeFetch): Promise<
   } catch {
     throw new Error(mittrT('mittr.work.error'));
   }
-  if (!response.ok) throw new Error(await failureText(response));
+  if (!response.ok) throw new Error(errorTextOf(await readJsonReply(response), mittrT('mittr.work.error')));
   const reply = await readReply(response);
   if (!reply) throw new Error(mittrT('mittr.work.error'));
   return reply;
