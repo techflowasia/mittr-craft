@@ -264,7 +264,7 @@ export function registerMittrShim(app, {
       if (engineGone) return undefined;
       if (limit.timedOut()) return res.status(504).set(NO_RETRY).json(TIMED_OUT);
       logger.error('[mittr] shim could not reach Mittr:', error?.message ?? error);
-      return res.status(502).json(PLATFORM_UNREACHABLE);
+      return res.status(502).set(NO_RETRY).json(PLATFORM_UNREACHABLE);
     }
     logCall(upstream.status, sessionId);
 
@@ -276,7 +276,7 @@ export function registerMittrShim(app, {
       } catch (error) {
         if (engineGone) return undefined;
         logger.error('[mittr] shim lost the answer from Mittr:', error?.message ?? error);
-        return limit.timedOut() ? res.status(504).set(NO_RETRY).json(TIMED_OUT) : res.status(502).json(PLATFORM_UNREACHABLE);
+        return limit.timedOut() ? res.status(504).set(NO_RETRY).json(TIMED_OUT) : res.status(502).set(NO_RETRY).json(PLATFORM_UNREACHABLE);
       } finally {
         limit.stop();
       }

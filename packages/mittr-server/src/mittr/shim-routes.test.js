@@ -228,8 +228,39 @@ test('upstream unreachable', async (t) => {
   const response = await request('/chat/completions');
   assert.equal(response.status, 502);
   assert.deepEqual(await response.json(), unavailable('platform_unreachable', 'Cannot reach Mittr'));
-  // A network blip may pass: the engine keeps its own retry here.
-  assert.equal(response.headers.get('x-should-retry'), null);
+  assert.equal(response.headers.get('x-should-retry'), 'false');
+});
+
+test('a body that breaks off mid-answer is a 502 the engine does not retry', async (t) => {
+  const upstream = await platform(t, (_req, res) => {
+    res.writeHead(200, { 'content-type': 'application/json', 'content-length': '100' });
+    res.write('{"choices":');
+    setTimeout(() => res.socket.destroy(), 20);
+  });
+  const { request } = await shim(t, { upstreamV1: upstream.v1, logger: recordingLogger() });
+  const response = await request('/chat/completions', { body: { ...REQUEST, stream: false } });
+  assert.equal(response.status, 502);
+  assert.equal(response.headers.get('x-should-retry'), 'false');
+  assert.deepEqual(await response.json(), unavailable('platform_unreachable', 'Cannot reach Mittr'));
+});
+
+test('a 502 or 5xx the platform itself sends passes through with the platform headers', async (t) => {
+  const upstream = await platform(t, (req, res, sent) => {
+    if (sent.body.model === 'with-header') return answerJson(502, { error: 'bad gateway' }, { 'x-should-retry': 'true', 'retry-after': '2' })(req, res);
+    return answerJson(502, { error: 'bad gateway' })(req, res);
+  });
+  const { request } = await shim(t, { upstreamV1: upstream.v1 });
+
+  const withHeader = await request('/chat/completions', { body: { ...REQUEST, model: 'with-header', stream: false } });
+  assert.equal(withHeader.status, 502);
+  assert.equal(withHeader.headers.get('x-should-retry'), 'true');
+  assert.equal(withHeader.headers.get('retry-after'), '2');
+  assert.deepEqual(await withHeader.json(), { error: 'bad gateway' });
+
+  const bare = await request('/chat/completions', { body: { ...REQUEST, model: 'bare', stream: false } });
+  assert.equal(bare.status, 502);
+  assert.equal(bare.headers.get('x-should-retry'), null);
+  assert.deepEqual(await bare.json(), { error: 'bad gateway' });
 });
 
 test('an upstream that does not answer in time is given up on', async (t) => {
@@ -618,7 +649,7 @@ test('shim own failures use the error envelope', async (t) => {
       code: 'platform_unreachable',
       status: 502,
       message: 'Cannot reach Mittr',
-      retry: null,
+      retry: 'false',
       answer: async () => (await shim(t, { fetchImpl: async () => { throw new Error('connection refused'); }, logger: recordingLogger() })).request('/chat/completions'),
     },
     {
@@ -648,7 +679,33 @@ test('shim own failures use the error envelope', async (t) => {
 });
 
 test('the loopback guard and the refusal bodies keep their shapes', async (t) => {
-  const { request, peer } = await shim(t);
+  const upstream = await platform(t, (req, res, sent) => {
+    if (sent.body.model === 'quota') return answerJson(429, QUOTA_BODY)(req, res);
+    if (sent.body.model === 'withdrawn') return answerJson(403, { error: { code: 'agent_not_granted', message: 'agent_not_granted' } })(req, res);
+    return answerStream([frame({ content: 'Hel' })])(req, res);
+  });
+  const { request, peer } = await shim(t, { upstreamV1: upstream.v1, onRefusal: () => ({ withdrawn: true }), upstreamTimeoutMs: 150 });
+
+  const quota = await request('/chat/completions', { body: { ...REQUEST, model: 'quota', stream: false } });
+  assert.equal(quota.status, 402);
+  assert.equal(quota.headers.get('x-should-retry'), 'false');
+  const quotaBody = await quota.json();
+  assert.deepEqual(Object.keys(quotaBody), ['error']);
+  assert.deepEqual(Object.keys(quotaBody.error).sort(), ['code', 'kind', 'message', 'resets_at', 'type']);
+  assert.equal(quotaBody.error.type, 'insufficient_quota');
+  assert.equal(quotaBody.error.code, 'llm_quota_exhausted');
+
+  const withdrawn = await request('/chat/completions', { body: { ...REQUEST, model: 'withdrawn', stream: false } });
+  assert.equal(withdrawn.status, 403);
+  assert.deepEqual(await withdrawn.json(), { error: { message: 'agent_not_granted', type: 'invalid_request_error', code: 'agent_not_granted' } });
+
+  const stalled = await platform(t, (_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write(frame({ content: 'Hel' }));
+  });
+  const { request: stalledRequest } = await shim(t, { upstreamV1: stalled.v1, upstreamTimeoutMs: 150, logger: recordingLogger() });
+  assertEndsAsCutOff(await readAll(await stalledRequest('/chat/completions')));
+
   assert.deepEqual(await (await request('/chat/completions', { token: null })).json(), { error: 'Unauthorized' });
   assert.deepEqual(await (await request('/embeddings')).json(), { error: 'Not found' });
   assert.deepEqual(await (await request('/chat/completions', { body: [] })).json(), { error: 'Invalid request body' });

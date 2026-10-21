@@ -875,7 +875,7 @@ const probeShim = async ({ client, collector, platform, shim, shimLog, work }) =
   const staleCatalog = await turn('forbidden-stale', 'refused because the agent was withdrawn');
   const notSignedIn = await turn('ok', 'no Mittr sign-in to read', { session: null });
   const switching = await turn('ok', 'engine on another account home', { onActiveHome: false });
-  const unreachable = await turn('drop', 'platform drops the connection', {}, 150_000);
+  const unreachable = await turn('drop', 'platform drops the connection');
   const once = ({ observed }) => observed.platformRequests === 1 && observed.shimCalls.length === 1 && !observed.retrySeen;
   const quotaBody = ({ observed }) => String(observed.assistantError?.responseBody ?? '').includes('llm_quota_exhausted')
     || String(observed.assistantError?.message ?? '').includes('llm_quota_exhausted');
@@ -908,7 +908,7 @@ const probeShim = async ({ client, collector, platform, shim, shimLog, work }) =
     hang: verdict(hang, once(hang) && hang.observed.shimCalls[0] === '[mittr] shim POST /chat/completions timeout' && readsAsEnvelope(hang, 'platform_timeout', 504)),
     notSignedIn: verdict(notSignedIn, shimOwn(notSignedIn, 'not_signed_in', 401)),
     switching: verdict(switching, shimOwn(switching, 'switching_account', 503)),
-    unreachable: verdict(unreachable, unreachable.observed.platformRequests >= 1 && readsAsEnvelope(unreachable, 'platform_unreachable', 502)),
+    unreachable: verdict(unreachable, unreachable.observed.platformRequests === 1 && unreachable.observed.shimRequests === 1 && !unreachable.observed.retrySeen && readsAsEnvelope(unreachable, 'platform_unreachable', 502)),
     cut: verdict(cut, cutOff(cut)),
     stall: verdict(stall, cutOff(stall) && stall.observed.shimOtherLines.includes('[mittr] shim cut the answer: Mittr went silent')),
     entitlement: verdict(entitlement, forbidden(entitlement, 'desktop_entitlement_required') && entitlement.observed.shimOtherLines.includes('[mittr] model refused: entitlement')),
