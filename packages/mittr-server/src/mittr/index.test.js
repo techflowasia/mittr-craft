@@ -1888,11 +1888,19 @@ test('no connector header, env value or argument reaches a log line, an error or
   assert.ok(noConnectorWrites(engine));
 });
 
-test('GET /api/mittr/catalog answers no connector header or env value', { todo: 'reported to the owner: the catalog route returns each mcp item as cached, config included' }, async (t) => {
+test('GET /api/mittr/catalog answers no connector header, env value, argument or url path', async (t) => {
   const fetchImpl = platform({ catalogs: { 'at-1': SECRET_CATALOG } });
   const { call } = await setUp(t, { fetchImpl });
   assert.equal((await signIn(call)).status, 200);
   await until(() => catalogCalls(fetchImpl).length === 1);
-  const answer = JSON.stringify(await call('GET', '/api/mittr/catalog'));
-  for (const secret of SECRETS) assert.equal(answer.includes(secret), false, secret);
+  const catalog = await call('GET', '/api/mittr/catalog');
+  const answer = JSON.stringify(catalog);
+  for (const secret of [...SECRETS, '/mcp', '/other']) assert.equal(answer.includes(secret), false, secret);
+  assert.deepEqual(catalog.body.mcp.items, [
+    { name: 'remote', type: 'remote', host: 'acme.example', enabled: true },
+    { name: 'local', type: 'local', enabled: true },
+    { name: 'broken', enabled: true },
+    { name: 'Remote', type: 'remote', host: 'acme.example', enabled: true },
+    { name: 'foo', type: 'local', enabled: true },
+  ]);
 });

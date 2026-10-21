@@ -24,12 +24,32 @@ const SWITCHABLE_KINDS = ['mcp', 'skills'];
 const BAD_ENABLEMENT = 'kind must be mcp or skills, and name is required';
 const ENABLEMENT_BODY_LIMIT = '8kb';
 
+const CONNECTOR_TEXT_FIELDS = ['name', 'title', 'displayName', 'label', 'description'];
+const CONNECTOR_TYPES = ['local', 'remote'];
+
+const hostOf = (url) => {
+  try {
+    return new URL(url).host || null;
+  } catch {
+    return null;
+  }
+};
+
+const connectorView = (item) => {
+  const view = Object.fromEntries(CONNECTOR_TEXT_FIELDS.filter((field) => typeof item[field] === 'string').map((field) => [field, item[field]]));
+  const source = isRecord(item.config) ? item.config : item;
+  if (CONNECTOR_TYPES.includes(source.type)) view.type = source.type;
+  const host = source.type === 'remote' && typeof source.url === 'string' ? hostOf(source.url) : null;
+  if (host) view.host = host;
+  return view;
+};
+
 const withEnablement = (collection, kind, enablement) => ({
   configured: collection.configured,
   items: collection.items.map((item) => {
-    if (!isRecord(item)) return item;
+    if (!isRecord(item)) return kind === 'mcp' ? {} : item;
     const enabled = kind === 'models' || enablement.isEnabled(kind, String(item.name ?? item.alias ?? ''));
-    return { ...item, enabled };
+    return { ...(kind === 'mcp' ? connectorView(item) : item), enabled };
   }),
 });
 

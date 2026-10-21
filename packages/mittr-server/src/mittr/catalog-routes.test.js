@@ -264,6 +264,32 @@ test('the catalog lists enabled per item', async (t) => {
   assert.equal(body.skills.configured, true);
 });
 
+test('the catalog answers each connector without its config: name, human fields, type, enabled and a remote host only', async (t) => {
+  const mcp = [
+    { name: 'law', title: 'Thai law', description: 'Statutes', config: { type: 'remote', url: 'https://user:SEKRET-PW@law.example.test:8443/mcp/SEKRET-PATH?key=SEKRET-Q', headers: { authorization: 'Bearer SEKRET-H' }, oauth: { clientSecret: 'SEKRET-O' } } },
+    { name: 'docs', description: 'Docs', owner: { token: 'SEKRET-NESTED' }, config: { type: 'local', command: ['docs-mcp', '--token=SEKRET-ARG'], environment: { DOCS_KEY: 'SEKRET-E' }, cwd: '/SEKRET-CWD' } },
+    { name: 'flat', type: 'remote', url: 'https://flat.example.test/SEKRET-FLAT', headers: { a: 'SEKRET-FLAT-H' } },
+    { name: 'odd', config: { type: 'remote', url: 'not a url SEKRET-BAD' } },
+    { name: 'bare' },
+  ];
+  const { sync, call, enablement } = await setUp(t, { fetchImpl: fakeFetch(() => json({ ...PAYLOAD, mcp })) });
+  await sync();
+  enablement.setEnabled('mcp', 'docs', false);
+
+  const { body } = await call('GET', '/api/mittr/catalog');
+  assert.deepEqual(body.mcp, {
+    configured: true,
+    items: [
+      { name: 'law', title: 'Thai law', description: 'Statutes', type: 'remote', host: 'law.example.test:8443', enabled: true },
+      { name: 'docs', description: 'Docs', type: 'local', enabled: false },
+      { name: 'flat', type: 'remote', host: 'flat.example.test', enabled: true },
+      { name: 'odd', type: 'remote', enabled: true },
+      { name: 'bare', enabled: true },
+    ],
+  });
+  assert.equal(JSON.stringify(body).includes('SEKRET'), false);
+});
+
 test('a skill and a connector of one name are enabled separately', async (t) => {
   const { sync, call, enablement } = await setUp(t, { fetchImpl: fakeFetch(() => json({ ...PAYLOAD, mcp: [{ name: 'law' }], skills: [{ name: 'law' }] })) });
   await sync();
