@@ -42,6 +42,7 @@ const skillsHome = (t) => {
 const read = (root, ...parts) => nodeFs.readFileSync(path.join(root, ...parts), 'utf8');
 const exists = (root, ...parts) => nodeFs.existsSync(path.join(root, ...parts));
 const entries = (root) => nodeFs.readdirSync(root).sort();
+const workOf = (root) => path.join(path.dirname(root), '.mittr-skills-work');
 const run = (root, catalog, { accountKey = KEY_A, enablement = allEnabled, fs } = {}) => reconcileSkills({ catalog, enablement, skillsRoot: root, accountKey, ...(fs ? { fs } : {}) });
 const NOTHING = { installed: [], updated: [], removed: [], failed: [] };
 
@@ -214,7 +215,7 @@ test('without a skills folder to manage nothing is done', () => {
 });
 
 test('a file path that leaves the skill is refused and nothing of that skill is written', (t) => {
-  for (const bad of ['../x.md', '/etc/x.md', '.hidden/x.md', 'x.sh', 'a/../x.md', './x.md', 'a\\x.md']) {
+  for (const bad of ['../x.md', '/etc/x.md', '.hidden/x.md', 'x.sh', 'a/../x.md', './x.md', 'a\\x.md', 'refs/SKILL.md', 'refs/skill.md', 'skill.md', 'SKILL.MD', 'C:/x.md', 'C:x.md', 'x.md:s.md', 'a\0.md']) {
     const { root, untouched } = skillsHome(t);
     const result = run(root, catalogOf([
       skill('bad', '1', [{ path: 'SKILL.md', content: skillText('bad') }, { path: bad, content: 'escape' }]),
@@ -226,6 +227,19 @@ test('a file path that leaves the skill is refused and nothing of that skill is 
     assert.equal(nodeFs.existsSync(path.join(path.dirname(root), 'x.md')), false, bad);
     untouched();
   }
+});
+
+test('two files whose paths differ only in case refuse the whole skill', (t) => {
+  const { root, untouched } = skillsHome(t);
+  const result = run(root, catalogOf([
+    skill('bad', '1', [{ path: 'SKILL.md', content: skillText('bad') }, { path: 'refs/notes.md', content: 'a' }, { path: 'Refs/Notes.md', content: 'b' }]),
+    skill('twice', '1', [{ path: 'SKILL.md', content: skillText('twice') }, { path: 'SKILL.md', content: skillText('again') }]),
+    skill('good'),
+  ]));
+
+  assert.deepEqual(result, { ...NOTHING, installed: ['mittr-good'] });
+  assert.deepEqual(entries(root), ['.mittr-account', 'mine', 'mittr-good', 'mittr-mine']);
+  untouched();
 });
 
 test('a developer\'s own skills beside the org skills are never touched', (t) => {
@@ -317,7 +331,9 @@ test('another account\'s skill that cannot be removed is never taken as this acc
 
   const result = run(root, catalogOf([skill('card-analysis'), skill('planning')]), { accountKey: KEY_B, fs: failing });
 
-  assert.deepEqual(result, { installed: ['mittr-planning'], updated: [], removed: ['mittr-notes'], failed: [{ name: 'mittr-card-analysis', error: 'busy' }] });
+  assert.deepEqual({ ...result, failed: [] }, { installed: ['mittr-planning'], updated: [], removed: ['mittr-notes'], failed: [] });
+  assert.deepEqual(result.failed.map((failure) => failure.name), ['mittr-card-analysis']);
+  assert.match(result.failed[0].error, /^another account's catalog skill could not be removed.*: busy$/);
   assert.equal(exists(root, '.mittr-account'), false);
   assert.equal(read(root, 'mittr-card-analysis', '.mittr-version').trim(), '1.0.0');
 
@@ -334,10 +350,161 @@ test('what an interrupted run left behind is cleared, and nothing else', (t) => 
     nodeFs.writeFileSync(path.join(root, leftover, 'SKILL.md'), 'half');
   }
   nodeFs.mkdirSync(path.join(root, '.staging-other'));
+  nodeFs.mkdirSync(path.join(workOf(root), '.mittr-staging-mittr-z-abc123'), { recursive: true });
 
   run(root, catalogOf([]));
 
   assert.deepEqual(entries(root), ['.staging-other', 'mine', 'mittr-mine']);
+  assert.equal(nodeFs.existsSync(workOf(root)), false);
+  untouched();
+});
+
+test('staging happens beside the skills folder, so nothing half-written is ever under it', (t) => {
+  const { root, untouched } = skillsHome(t);
+  run(root, catalogOf([skill('card-analysis', '1.0.0')]));
+  const seen = [];
+  const look = () => seen.push(...nodeFs.readdirSync(root).filter((name) => name.startsWith('.mittr-') && name !== '.mittr-account'));
+  const watching = {
+    ...nodeFs,
+    writeFileSync: (target, ...rest) => {
+      look();
+      if (String(target).includes('mittr-notes')) throw new Error('disk full');
+      return nodeFs.writeFileSync(target, ...rest);
+    },
+    renameSync: (from, to) => {
+      look();
+      assert.equal(path.dirname(from) === workOf(root) || path.dirname(to) === workOf(root), true);
+      return nodeFs.renameSync(from, to);
+    },
+  };
+
+  const result = run(root, catalogOf([skill('card-analysis', '2.0.0'), skill('notes')]), { fs: watching });
+
+  assert.deepEqual(result.updated, ['mittr-card-analysis']);
+  assert.deepEqual(result.failed.map((failure) => failure.name), ['mittr-notes']);
+  assert.deepEqual(seen, []);
+  assert.deepEqual(entries(root), ['.mittr-account', 'mine', 'mittr-card-analysis', 'mittr-mine']);
+  assert.equal(nodeFs.existsSync(workOf(root)), false);
+  untouched();
+});
+
+test('a skills folder on another device stages inside it instead', (t) => {
+  const { root, untouched } = skillsHome(t);
+  const stagedIn = [];
+  const otherDevice = {
+    ...nodeFs,
+    statSync: (target, ...rest) => {
+      const stat = nodeFs.statSync(target, ...rest);
+      return target === workOf(root) ? { dev: stat.dev + 1 } : stat;
+    },
+    mkdtempSync: (prefix, ...rest) => {
+      stagedIn.push(path.dirname(prefix));
+      return nodeFs.mkdtempSync(prefix, ...rest);
+    },
+  };
+
+  run(root, catalogOf([skill('card-analysis', '1.0.0')]), { fs: otherDevice });
+  const result = run(root, catalogOf([skill('card-analysis', '2.0.0')]), { fs: otherDevice });
+
+  assert.deepEqual(result, { ...NOTHING, updated: ['mittr-card-analysis'] });
+  assert.deepEqual(stagedIn, [root, root]);
+  assert.deepEqual(entries(root), ['.mittr-account', 'mine', 'mittr-card-analysis', 'mittr-mine']);
+  assert.equal(nodeFs.existsSync(workOf(root)), false);
+  untouched();
+});
+
+test('a set-aside folder that cannot be cleared does not fail an update that is in place', (t) => {
+  const { root, untouched } = skillsHome(t);
+  run(root, catalogOf([skill('card-analysis', '1.0.0')]));
+  const stubborn = {
+    ...nodeFs,
+    rmSync: (target, options) => {
+      if (path.basename(String(target)).startsWith('.mittr-old-')) throw new Error('busy');
+      return nodeFs.rmSync(target, options);
+    },
+  };
+
+  const result = run(root, catalogOf([skill('card-analysis', '2.0.0')]), { fs: stubborn });
+
+  assert.deepEqual(result, { ...NOTHING, updated: ['mittr-card-analysis'] });
+  assert.equal(read(root, 'mittr-card-analysis', '.mittr-version').trim(), '2.0.0');
+  run(root, catalogOf([skill('card-analysis', '2.0.0')]));
+  assert.equal(nodeFs.existsSync(workOf(root)), false);
+  untouched();
+});
+
+test('a symlinked account marker counts as none and is replaced, never written through', (t) => {
+  const { root, untouched } = skillsHome(t);
+  const outside = path.join(path.dirname(root), 'outside.txt');
+  nodeFs.writeFileSync(outside, KEY_A);
+  nodeFs.symlinkSync(outside, path.join(root, '.mittr-account'));
+  nodeFs.mkdirSync(path.join(root, 'mittr-old-set'));
+  nodeFs.writeFileSync(path.join(root, 'mittr-old-set', '.mittr-version'), '1\n');
+
+  const result = run(root, catalogOf([skill('card-analysis')]), { accountKey: KEY_A });
+
+  assert.deepEqual(result, { ...NOTHING, removed: ['mittr-old-set'], installed: ['mittr-card-analysis'] });
+  assert.equal(nodeFs.readFileSync(outside, 'utf8'), KEY_A);
+  assert.equal(nodeFs.lstatSync(path.join(root, '.mittr-account')).isFile(), true);
+  assert.equal(read(root, '.mittr-account').trim(), KEY_A);
+  untouched();
+});
+
+test('1.22\'s org skills under mittr/ are removed on every run, whatever the account', (t) => {
+  for (const accountKey of [KEY_A, null]) {
+    const { root, untouched } = skillsHome(t);
+    const legacy = path.join(root, 'mittr');
+    for (const name of ['card-analysis', '.staging-notes-abc']) {
+      nodeFs.mkdirSync(path.join(legacy, name), { recursive: true });
+      nodeFs.writeFileSync(path.join(legacy, name, 'SKILL.md'), 'old');
+      nodeFs.writeFileSync(path.join(legacy, name, '.mittr-version'), '1\n');
+    }
+
+    const result = run(root, catalogOf([]), { accountKey });
+
+    assert.deepEqual(result.removed.sort(), ['mittr/.staging-notes-abc', 'mittr/card-analysis'], String(accountKey));
+    assert.equal(nodeFs.existsSync(legacy), false, String(accountKey));
+    untouched();
+  }
+});
+
+test('a developer\'s own entries in mittr/ keep it, and only 1.22\'s skills go', (t) => {
+  const { root, untouched } = skillsHome(t);
+  const legacy = path.join(root, 'mittr');
+  nodeFs.mkdirSync(path.join(legacy, 'card-analysis'), { recursive: true });
+  nodeFs.writeFileSync(path.join(legacy, 'card-analysis', '.mittr-version'), '1\n');
+  nodeFs.mkdirSync(path.join(legacy, 'my-skill'));
+  nodeFs.writeFileSync(path.join(legacy, 'my-skill', 'SKILL.md'), 'mine');
+  nodeFs.writeFileSync(path.join(legacy, 'notes.md'), 'notes');
+  nodeFs.mkdirSync(path.join(legacy, 'linked-version'));
+  nodeFs.symlinkSync(path.join(legacy, 'notes.md'), path.join(legacy, 'linked-version', '.mittr-version'));
+  const elsewhere = path.join(path.dirname(root), 'elsewhere');
+  nodeFs.mkdirSync(elsewhere);
+  nodeFs.writeFileSync(path.join(elsewhere, '.mittr-version'), '1\n');
+  nodeFs.symlinkSync(elsewhere, path.join(legacy, 'linked'));
+
+  const result = run(root, catalogOf([]));
+
+  assert.deepEqual(result.removed, ['mittr/card-analysis']);
+  assert.deepEqual(nodeFs.readdirSync(legacy).sort(), ['linked', 'linked-version', 'my-skill', 'notes.md']);
+  assert.equal(read(legacy, 'my-skill', 'SKILL.md'), 'mine');
+  assert.equal(read(elsewhere, '.mittr-version'), '1\n');
+  untouched();
+});
+
+test('an empty mittr/ is removed, and a mittr file or link is left alone', (t) => {
+  const { root, untouched } = skillsHome(t);
+  nodeFs.mkdirSync(path.join(root, 'mittr'));
+  run(root, catalogOf([]));
+  assert.equal(nodeFs.existsSync(path.join(root, 'mittr')), false);
+
+  const elsewhere = path.join(path.dirname(root), 'elsewhere');
+  nodeFs.mkdirSync(path.join(elsewhere, 'card-analysis'), { recursive: true });
+  nodeFs.writeFileSync(path.join(elsewhere, 'card-analysis', '.mittr-version'), '1\n');
+  nodeFs.symlinkSync(elsewhere, path.join(root, 'mittr'));
+  run(root, catalogOf([]));
+  assert.equal(nodeFs.lstatSync(path.join(root, 'mittr')).isSymbolicLink(), true);
+  assert.equal(nodeFs.existsSync(path.join(elsewhere, 'card-analysis', '.mittr-version')), true);
   untouched();
 });
 

@@ -1478,6 +1478,27 @@ test('setup installs the first account\'s catalog skills from its cache without 
   assert.deepEqual(opened, []);
 });
 
+test('setup has the account\'s skills in place before it returns, so before the engine\'s first config build and start', async (t) => {
+  const dataDir = tempDataDir(t);
+  const engineConfigDir = engineConfigHome(t);
+  writeAccountIndex(dataDir, [{ userId: 'u-a', displayName: 'A', home: null, signedIn: true }], 'u-a');
+  fs.writeFileSync(path.join(dataDir, 'mittr-catalog.json'), JSON.stringify(cachedWithSkills([catalogSkill('card-analysis')])));
+  const engine = fakeEngineContext();
+  const order = [];
+  const mittr = setupMittr({ app: serverLikeApp(), express, dataDir, logger: recordingLogger(), ...engine.context }, { env: DEV_ENV, fetchImpl: fakeFetch(() => json(session)), engineConfigDir });
+  t.after(() => mittr.dispose());
+  order.push(`returned:${orgSkillsIn(engineConfigDir).join()}`);
+  await mittr.managedConfig();
+  order.push('first config build');
+  await mittr.engineEnv();
+  order.push('first start env');
+  engine.fireReady();
+
+  assert.deepEqual(order, ['returned:mittr-card-analysis', 'first config build', 'first start env']);
+  assert.deepEqual(engine.restarts, []);
+  assert.equal(accountMarkerIn(engineConfigDir), keyOf('u-a'));
+});
+
 test('a pending 1.x session removes the org skills at setup, and its carry installs its own', async (t) => {
   const dataDir = tempDataDir(t);
   const engineConfigDir = engineConfigHome(t);
