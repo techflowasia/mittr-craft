@@ -171,6 +171,7 @@ test('a name the person\'s own config already holds is left out with one line th
   assert.equal(logger.warnings.length, 4);
   assert.deepEqual(logger.warnings.map((line) => line.match(/'([^']+)'/)[1]), ['docs', 'old', 'notes', 'law']);
   assert.equal(logger.warnings.some((line) => /org-secret|own-secret|-mcp|mine\.example/.test(line)), false);
+  assert.equal(logger.warnings.some((line) => /OpenCode|OpenChamber/.test(line)), false);
 });
 
 test('names held elsewhere are read from parsed configs, plain JSON, or the quoted name in a JSONC text', () => {

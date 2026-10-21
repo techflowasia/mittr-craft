@@ -8,7 +8,7 @@ const NOT_SERVER_KEYS = new Set(['servers', 'timeout']);
 const NO_NAME = 'it has no name';
 const NOT_RUNNABLE = 'its config is not a connector the engine can run';
 const clashing = (serverName) => `another catalog connector already uses the name ${serverName}`;
-const heldElsewhere = (serverName) => `an MCP server named ${serverName} is already in the person's own OpenCode config`;
+const heldElsewhere = (serverName) => `an MCP server named ${serverName} is already in the person's own engine config`;
 
 const isNonEmptyText = (item) => item === String(item) && item !== '';
 
