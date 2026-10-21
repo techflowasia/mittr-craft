@@ -492,6 +492,29 @@ test('a developer\'s own entries in mittr/ keep it, and only 1.22\'s skills go',
   untouched();
 });
 
+test('an unreadable mittr/ is reported, and the rest of the run still happens', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, (t) => {
+  const { root, untouched } = skillsHome(t);
+  run(root, catalogOf([skill('card-analysis')]), { accountKey: KEY_A });
+  const legacy = path.join(root, 'mittr');
+  nodeFs.mkdirSync(path.join(legacy, 'notes'), { recursive: true });
+  nodeFs.writeFileSync(path.join(legacy, 'notes', '.mittr-version'), '1\n');
+  nodeFs.chmodSync(legacy, 0o000);
+  let result;
+  try {
+    result = run(root, catalogOf([skill('planning')]), { accountKey: KEY_B });
+  } finally {
+    nodeFs.chmodSync(legacy, 0o755);
+  }
+
+  assert.deepEqual(result.removed, ['mittr-card-analysis']);
+  assert.deepEqual(result.installed, ['mittr-planning']);
+  assert.deepEqual(result.failed.map((failure) => failure.name), ['mittr']);
+  assert.match(result.failed[0].error, /EACCES/);
+  assert.equal(read(root, '.mittr-account').trim(), KEY_B);
+  assert.equal(nodeFs.existsSync(path.join(legacy, 'notes', '.mittr-version')), true);
+  untouched();
+});
+
 test('an empty mittr/ is removed, and a mittr file or link is left alone', (t) => {
   const { root, untouched } = skillsHome(t);
   nodeFs.mkdirSync(path.join(root, 'mittr'));

@@ -120,12 +120,16 @@ const removeLegacyOrgSkills = (fs, root, result) => {
     return;
   }
   if (!isDir) return;
-  for (const entry of listFolder(fs, legacy).filter((candidate) => holdsVersion(fs, legacy, candidate))) {
-    const id = `${LEGACY_ORG_DIR}/${entry.name}`;
-    if (tryRemove(fs, path.join(legacy, entry.name))) result.removed.push(id);
-    else result.failed.push({ name: id, error: 'a 1.22 catalog skill could not be removed' });
+  try {
+    for (const entry of listFolder(fs, legacy).filter((candidate) => holdsVersion(fs, legacy, candidate))) {
+      const id = `${LEGACY_ORG_DIR}/${entry.name}`;
+      if (tryRemove(fs, path.join(legacy, entry.name))) result.removed.push(id);
+      else result.failed.push({ name: id, error: 'a 1.22 catalog skill could not be removed' });
+    }
+    if (listFolder(fs, legacy).length === 0) fs.rmdirSync(legacy);
+  } catch (error) {
+    result.failed.push({ name: LEGACY_ORG_DIR, error: `the 1.22 catalog skills folder could not be cleared: ${errorText(error)}` });
   }
-  if (listFolder(fs, legacy).length === 0) tryRemove(fs, legacy);
 };
 
 const isLeftover = (entry) => entry.isDirectory()
