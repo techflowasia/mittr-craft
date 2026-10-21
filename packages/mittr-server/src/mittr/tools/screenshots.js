@@ -38,6 +38,10 @@ const SIGNATURE_BASE64_LENGTH = 16;
 
 export const fitsAttachment = (base64) => Buffer.byteLength(base64, 'base64') <= MAX_IMAGE_BYTES;
 
+export const screenshotHint = (savedPath, base64) => (fitsAttachment(base64)
+  ? `The image is attached for you to view directly; write ![](${savedPath}) in your reply to also show it to the user.`
+  : `Write ![](${savedPath}) in your reply to show it to the user.`);
+
 export const imageOf = ({ base64, mime }) => {
   if (base64 !== String(base64) || !base64 || !IMAGE_MIMES.has(mime)) return null;
   return looksLike(mime, Buffer.from(base64.slice(0, SIGNATURE_BASE64_LENGTH), 'base64')) ? { base64, mime } : null;

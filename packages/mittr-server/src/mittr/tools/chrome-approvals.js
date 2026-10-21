@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 
-import { isRecord } from '../values.js';
+import { isRecord, trimmedText } from '../values.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
 
 export const CHROME_PERMISSION = MITTR_TOOLS.chrome;
@@ -15,7 +15,6 @@ const REPLIES = new Set(['once', 'always', 'reject']);
 const LOST = Symbol('lost');
 
 const keyFor = (sessionId, host) => `${sessionId}\n${host}`;
-const textOf = (value) => (value === String(value) && value.trim() ? value.trim() : null);
 
 export const isChromePermission = (permission) => permission?.action === CHROME_PERMISSION;
 
@@ -151,7 +150,7 @@ export function createEnginePermissions({ opencode, fetchImpl = fetch, timeoutMs
   };
 }
 
-const savedFor = (rules, host) => rules.filter((rule) => rule?.action === CHROME_PERMISSION && rule.resource === host && textOf(rule.id));
+const savedFor = (rules, host) => rules.filter((rule) => rule?.action === CHROME_PERMISSION && rule.resource === host && trimmedText(rule.id));
 
 const couldNotAsk = (host) => new MittrToolError(`MittrCraft could not ask the user about ${host}; try again in a moment`, 503);
 
@@ -307,7 +306,7 @@ export function createChromeSiteApprovals({
       throw couldNotAsk(entry.host);
     }
     if (answer?.effect !== 'ask') return answer?.effect ?? null;
-    const answeredId = textOf(answer.id);
+    const answeredId = trimmedText(answer.id);
     if (answeredId !== id) {
       if (answeredId) await engine.reply(entry.sessionId, answeredId, 'reject').catch(() => undefined);
       logger.warn('[mittr] the engine raised the Chrome site question under an id MittrCraft did not give it; the question was withdrawn');
@@ -429,7 +428,7 @@ export const subscribeApprovals = (events, approvals) => events.subscribe((event
   const raw = event?.payload;
   const data = raw?.data;
   if (raw?.type !== 'permission.replied' || !isRecord(data)) return;
-  const requestId = textOf(data.requestID);
-  const sessionId = textOf(data.sessionID);
+  const requestId = trimmedText(data.requestID);
+  const sessionId = trimmedText(data.sessionID);
   if (requestId && sessionId) approvals.replied(requestId, sessionId, data.reply);
 });

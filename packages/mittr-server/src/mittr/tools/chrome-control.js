@@ -5,7 +5,7 @@ import fsPromises from 'node:fs/promises';
 import path from 'node:path';
 
 import { writePrivateIfChanged } from '../private-file.js';
-import { isRecord } from '../values.js';
+import { isRecord, isText } from '../values.js';
 import { bundledDriverPath } from './computer-control.js';
 import { MittrToolError } from './registry.js';
 
@@ -62,8 +62,6 @@ export const AGENT_BANNER_SCRIPT = `(() => {
 `;
 
 export const chromeSessionName = (sessionId) => `mc-${crypto.createHash('sha256').update(String(sessionId)).digest('hex').slice(0, 10)}`;
-
-const isText = (value) => value === String(value);
 
 const passedEnv = (env) => {
   const gate = isText(env[GATE_MARKER]) && env[GATE_MARKER] !== '';

@@ -6,10 +6,11 @@ import path from 'node:path';
 
 import { profileOf } from '../mittr-settings.js';
 import { ACCOUNT_CHANGED } from '../platform.js';
+import { trimmedText } from '../values.js';
 import { MAX_GOAL_CHARS } from './browser-stepper.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
 import { chromeSessionName } from './chrome-control.js';
-import { NO_SCREENSHOT_DIRECTORY, fitsAttachment, imageOf, saveScreenshot } from './screenshots.js';
+import { NO_SCREENSHOT_DIRECTORY, imageOf, saveScreenshot, screenshotHint } from './screenshots.js';
 
 const DESCRIPTION_SENTENCES = Object.freeze([
   [() => true, "Use a Chrome session that starts from the user's own Chrome profile, for sites the user is already signed in to in Chrome (Plane, Jira, internal tools) and for web work that should not take over MittrCraft's browser panel."],
@@ -85,10 +86,8 @@ const DEFAULT_TASK_STEPS = 15;
 const MAX_TASK_STEPS = 40;
 const STEP_ACTIONS = Object.freeze({ click: 'chrome.click', fill: 'chrome.fill', select: 'chrome.select' });
 
-const textOf = (value) => (value === String(value) && value.trim() ? value.trim() : null);
-
 const required = (value, name) => {
-  const text = textOf(value);
+  const text = trimmedText(value);
   if (!text) throw new MittrToolError(`${name} is required`, 400);
   return text;
 };
@@ -107,13 +106,13 @@ const pageOf = (url) => {
 };
 
 const refOf = (value) => {
-  const match = /^@?(e\d+)$/.exec(textOf(value) ?? '');
+  const match = /^@?(e\d+)$/.exec(trimmedText(value) ?? '');
   if (!match) throw new MittrToolError('ref must be an element ref from chrome.snapshot, such as @e3', 400);
   return `@${match[1]}`;
 };
 
 const keyOf = (value) => {
-  const key = textOf(value) ?? '';
+  const key = trimmedText(value) ?? '';
   if (!/^[A-Za-z0-9]+(\+[A-Za-z0-9]+)*$/.test(key)) {
     throw new MittrToolError('key must be a key name such as Enter, Tab or Control+a', 400);
   }
@@ -128,14 +127,14 @@ const plainArg = (value, name, { allowEmpty = false } = {}) => {
 };
 
 const CHROME_COMMANDS = {
-  'chrome.snapshot': (input) => (textOf(input.selector) ? ['snapshot', '-i', '-s', plainArg(input.selector, 'selector')] : ['snapshot', '-i']),
+  'chrome.snapshot': (input) => (trimmedText(input.selector) ? ['snapshot', '-i', '-s', plainArg(input.selector, 'selector')] : ['snapshot', '-i']),
   'chrome.read': () => ['read'],
   'chrome.click': (input) => ['click', refOf(input.ref)],
   'chrome.fill': (input) => ['fill', refOf(input.ref), plainArg(input.value, 'value', { allowEmpty: true })],
   'chrome.type': (input) => ['type', refOf(input.ref), plainArg(input.value, 'value', { allowEmpty: true })],
   'chrome.press': (input) => ['press', keyOf(input.key)],
   'chrome.select': (input) => ['select', refOf(input.ref), plainArg(input.value, 'value')],
-  'chrome.wait': (input) => (textOf(input.text) ? ['wait', '--text', plainArg(input.text, 'text')] : ['wait', refOf(input.ref)]),
+  'chrome.wait': (input) => (trimmedText(input.text) ? ['wait', '--text', plainArg(input.text, 'text')] : ['wait', refOf(input.ref)]),
 };
 
 const ipv4OfMapped = (host) => {
@@ -161,14 +160,14 @@ const taskStepLimit = (value) => {
 };
 
 const stepLine = (step) => {
-  const target = textOf(step.target) ?? `@${step.ref}`;
+  const target = trimmedText(step.target) ?? `@${step.ref}`;
   return step.action === 'click' ? `click ${target}` : `${step.action} ${target} = "${step.value}"`;
 };
 
 const stopReasonOf = (error) => {
   const stopped = { reason: error instanceof Error && error.message ? error.message : 'no step could be chosen' };
-  if (textOf(error?.code)) stopped.code = error.code;
-  if (textOf(error?.host)) stopped.host = error.host;
+  if (trimmedText(error?.code)) stopped.code = error.code;
+  if (trimmedText(error?.host)) stopped.host = error.host;
   return stopped;
 };
 
@@ -236,7 +235,7 @@ export function createChromeService({
 
   const ensureApproved = async (sessionId, host, ctx) => {
     if (await isHostAllowed(sessionId, host)) return;
-    const reply = await approvals.ask({ sessionId, host, directory: textOf(ctx.directory), source: ctx.source, signal: ctx.signal });
+    const reply = await approvals.ask({ sessionId, host, directory: trimmedText(ctx.directory), source: ctx.source, signal: ctx.signal });
     if (reply === 'once' || reply === 'always') return;
     if (reply === 'reject') throw new MittrToolError(`The user did not allow using their Chrome sign-in on ${host}`, 403);
     throw notYetAllowed(host);
@@ -253,7 +252,7 @@ export function createChromeService({
   };
 
   const ensureStillApproved = async (sessionId, options) => {
-    const landed = textOf((await drive(['get', 'url'], options))?.url);
+    const landed = trimmedText((await drive(['get', 'url'], options))?.url);
     if (landed === NO_PAGE) return;
     if (!landed) throw siteMoved('an address the driver did not report');
     let page = null;
@@ -275,7 +274,7 @@ export function createChromeService({
       return { page: pageOf(required(input.url, 'url')) };
     }
     if (action === 'chrome.screenshot') {
-      const directory = textOf(ctx.directory);
+      const directory = trimmedText(ctx.directory);
       if (!directory) throw new MittrToolError(NO_SCREENSHOT_DIRECTORY, 400);
       return { directory };
     }
@@ -294,13 +293,13 @@ export function createChromeService({
   const notAProfile = () => new MittrToolError(NOT_A_PROFILE, 409, { code: 'chrome_profile_required' });
 
   const chosenProfile = async (tools, sessionName) => {
-    const stored = textOf(tools.chromeProfile);
+    const stored = trimmedText(tools.chromeProfile);
     if (stored) {
       const name = profileOf(stored);
       if (!name) throw notAProfile();
       if (modes.get(sessionName)?.profile === name) return name;
       const listed = await control.profiles().catch(() => []);
-      if (!listed.some((entry) => textOf(entry?.directory) === name)) throw notAProfile();
+      if (!listed.some((entry) => trimmedText(entry?.directory) === name)) throw notAProfile();
       return name;
     }
     const listed = await control.profiles().catch(() => []);
@@ -341,12 +340,10 @@ export function createChromeService({
       await ensureStillApproved(sessionId, options);
       const image = imageOf({ base64: (await fsPromises.readFile(file)).toString('base64'), mime: 'image/png' });
       if (!image) throw new MittrToolError('The Chrome screenshot is not a PNG image', 502);
-      const saved = await saveScreenshot({ control: { writeScreenshot }, directory, base64: image.base64, mime: image.mime, label: textOf(label) ?? 'chrome' });
+      const saved = await saveScreenshot({ control: { writeScreenshot }, directory, base64: image.base64, mime: image.mime, label: trimmedText(label) ?? 'chrome' });
       return {
         path: saved.path,
-        hint: fitsAttachment(image.base64)
-          ? `The image is attached for you to view directly; write ![](${saved.path}) in your reply to also show it to the user.`
-          : `Write ![](${saved.path}) in your reply to show it to the user.`,
+        hint: screenshotHint(saved.path, image.base64),
         url: currentUrl,
         image: saved.image,
       };
@@ -358,7 +355,7 @@ export function createChromeService({
   const landedPage = async (sessionId, options) => {
     if (options.signal?.aborted || !modes.has(options.sessionName)) return null;
     try {
-      const landed = textOf((await drive(['get', 'url'], options))?.url);
+      const landed = trimmedText((await drive(['get', 'url'], options))?.url);
       const page = new URL(landed);
       if (page.protocol !== 'http:' && page.protocol !== 'https:') return null;
       if (await isOwnAddress(page)) return null;
@@ -388,7 +385,7 @@ export function createChromeService({
       }
       let reply;
       try {
-        reply = await pinned.nextStep({ goal, snapshot: textOf(page?.snapshot) ?? '', history, values }, ctx.signal);
+        reply = await pinned.nextStep({ goal, snapshot: trimmedText(page?.snapshot) ?? '', history, values }, ctx.signal);
       } catch (error) {
         return finish('stopped', cancelled() ? { reason: CALL_CANCELLED } : stopReasonOf(error));
       }
@@ -416,7 +413,7 @@ export function createChromeService({
   };
 
   const perform = async (action, input, ctx, started) => {
-    const sessionId = textOf(ctx.sessionId);
+    const sessionId = trimmedText(ctx.sessionId);
     if (!sessionId) throw new MittrToolError('The Chrome tool needs the calling session', 400);
     const planned = commandFor(action, input, ctx);
 
@@ -460,7 +457,7 @@ export function createChromeService({
       return opened;
     }
 
-    const currentUrl = textOf((await drive(['get', 'url'], options))?.url);
+    const currentUrl = trimmedText((await drive(['get', 'url'], options))?.url);
     if (!currentUrl || currentUrl === NO_PAGE) throw new MittrToolError(NO_PAGE_OPEN, 400);
     const current = pageOf(currentUrl);
     await refuseOwnAddress(current);
@@ -486,7 +483,7 @@ export function createChromeService({
     profiles: async () => (control.available ? control.profiles() : []),
     removeHost: async (host) => approvals.removeHost(required(host, 'host').toLowerCase()),
     closeSession: async (sessionId) => {
-      const id = textOf(sessionId);
+      const id = trimmedText(sessionId);
       if (!id) return;
       forgetConversation(id);
       await closeRunning(id).catch(() => undefined);
@@ -501,11 +498,11 @@ export function createChromeService({
       approvals.forgetAll();
     },
     allowForConversation: (sessionId) => {
-      const id = textOf(sessionId);
+      const id = trimmedText(sessionId);
       if (id) conversationGrants.add(id);
     },
     endConversation: (sessionId) => {
-      const id = textOf(sessionId);
+      const id = trimmedText(sessionId);
       if (id) forgetConversation(id);
     },
     isHostAllowed,

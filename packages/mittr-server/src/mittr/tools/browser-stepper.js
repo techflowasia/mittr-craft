@@ -1,5 +1,5 @@
 import { BROWSER_STEP_TIMEOUT_MS, callPlatform, platformErrorText } from '../platform.js';
-import { isRecord } from '../values.js';
+import { isRecord, isText, trimmedText } from '../values.js';
 import { pinAccount, sessionKeyOf } from './account-guard.js';
 import { MittrToolError } from './registry.js';
 
@@ -18,9 +18,7 @@ const TOO_SLOW = 'The Mittr platform took too long to choose a step';
 const ASKED_FALLBACK = 'The Mittr platform asked for your input';
 const STOPPED_FALLBACK = 'The Mittr platform stopped';
 
-const isText = (value) => value === String(value);
-
-const boundedText = (value, fallback) => (isText(value) && value.trim() ? value.trim().slice(0, MAX_STEP_TEXT_CHARS) : fallback);
+const boundedText = (value, fallback) => trimmedText(value)?.slice(0, MAX_STEP_TEXT_CHARS) ?? fallback;
 
 const usableStep = (step) => isRecord(step)
   && STEP_ACTIONS.has(step.action)

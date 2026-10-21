@@ -1,6 +1,6 @@
 import { jsonBody } from '../json-body.js';
 import { cameThroughProxy, isLoopbackPeer } from '../loopback-guard.js';
-import { isRecord } from '../values.js';
+import { isRecord, isText } from '../values.js';
 import { MittrToolError } from './registry.js';
 
 const ROUTE = '/api/mittr/control';
@@ -22,7 +22,7 @@ const asToolError = (error, ControlError) => {
   return new MittrToolError(message, Number(error?.statusCode) || Number(error?.status) || 500, partial);
 };
 
-const textOrUndefined = (value) => (value === String(value) ? value : undefined);
+const textOrUndefined = (value) => (isText(value) ? value : undefined);
 
 const failureBody = (failure) => {
   const body = { error: failure.message };

@@ -1,5 +1,5 @@
 import { cameThroughProxy, isLoopbackPeer } from '../loopback-guard.js';
-import { isRecord } from '../values.js';
+import { isRecord, trimmedText } from '../values.js';
 import { MittrToolError } from './registry.js';
 import { CAPTURE_IMAGE, CAPTURE_TOOL, attachableImage, readCapture, sameDirectory } from './screenshots.js';
 
@@ -9,7 +9,7 @@ const SCHEMA_VERSION = 1;
 const UNKNOWN = 'unknown';
 const BEARER = 'Bearer ';
 
-const textOrUndefined = (value) => (value === String(value) && value.trim() ? value.trim() : undefined);
+const textOrUndefined = (value) => trimmedText(value) ?? undefined;
 
 const argumentsOf = ({ parameters, ...flattened }, action) => {
   const args = { ...flattened };

@@ -1,6 +1,6 @@
-import { isRecord } from '../values.js';
+import { isRecord, trimmedText } from '../values.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
-import { NO_SCREENSHOT_DIRECTORY, fitsAttachment, imageOf, saveScreenshot } from './screenshots.js';
+import { NO_SCREENSHOT_DIRECTORY, imageOf, saveScreenshot, screenshotHint } from './screenshots.js';
 
 export const APP_NAME_PATTERN = /^[\w .()&-]{1,80}$/;
 
@@ -32,10 +32,8 @@ const missingGrant = (text, ownGrant) => {
   return /permissions grant/i.test(text) ? ownGrant : null;
 };
 
-const plainText = (value) => (value === String(value) && value.trim() ? value.trim() : null);
-
 const appNameOf = (input, action) => {
-  const name = plainText(input.app);
+  const name = trimmedText(input.app);
   if (!name) throw new MittrToolError(`app is required for ${action}`, 400);
   if (!APP_NAME_PATTERN.test(name) || /^[-.]/.test(name) || !/\w/.test(name)) throw new MittrToolError('app must be a plain app name', 400);
   return name;
@@ -121,23 +119,20 @@ export function registerComputerActions(registry, { control, launchApp, writeScr
   };
 
   const screenshot = async (_input, ctx) => {
-    const directory = plainText(ctx.directory);
+    const directory = trimmedText(ctx.directory);
     if (!directory) throw new MittrToolError(NO_SCREENSHOT_DIRECTORY, 400);
     const result = await driver('get_desktop_state', {}, ctx, SCREEN_RECORDING);
-    const base64 = plainText(result?.screenshot_png_b64);
+    const base64 = trimmedText(result?.screenshot_png_b64);
     if (!base64) {
       const grant = missingGrant(JSON.stringify(result ?? null), SCREEN_RECORDING);
       throw grant ? grantRefusal(grant) : new MittrToolError('The desktop screenshot came back without an image', 502);
     }
-    const image = imageOf({ base64, mime: plainText(result.screenshot_mime_type) ?? 'image/png' });
+    const image = imageOf({ base64, mime: trimmedText(result.screenshot_mime_type) ?? 'image/png' });
     if (!image) throw new MittrToolError('The desktop screenshot is not a PNG, JPEG or WebP image', 502);
     const saved = await saveScreenshot({ control: { writeScreenshot }, directory, base64: image.base64, mime: image.mime, label: 'desktop' });
-    const attached = fitsAttachment(image.base64);
     return {
       path: saved.path,
-      hint: attached
-        ? `The image is attached for you to view directly; write ![](${saved.path}) in your reply to also show it to the user.`
-        : `Write ![](${saved.path}) in your reply to show it to the user.`,
+      hint: screenshotHint(saved.path, image.base64),
       width: result.screen_width ?? null,
       height: result.screen_height ?? null,
       image: saved.image,

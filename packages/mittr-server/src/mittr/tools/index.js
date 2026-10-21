@@ -14,11 +14,9 @@ import { materializeToolsPlugin, toolsFragment, toolsPluginDir, toolsPluginSourc
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
 import { CAPTURE_TOOL } from './screenshots.js';
 import { registerMittrToolsSettingsRoutes } from './settings-routes.js';
-import { registerWorkActions } from './work-lookup.js';
+import { NOT_SIGNED_IN, registerWorkActions } from './work-lookup.js';
 
 export const CHROME_CLOSE_TIMEOUT_MS = 3_000;
-
-const NOT_SIGNED_IN = 'Not signed in to Mittr. Sign in to continue.';
 
 const TITLES = Object.freeze({
   [MITTR_TOOLS.computer]: 'The Computer tool',

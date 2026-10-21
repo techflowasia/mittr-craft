@@ -1,5 +1,5 @@
 import { callPlatform, platformErrorText } from '../platform.js';
-import { isRecord } from '../values.js';
+import { isRecord, trimmedText } from '../values.js';
 import { pinAccount, sessionKeyOf } from './account-guard.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
 
@@ -18,7 +18,7 @@ const JIRA_KEY = /^[A-Za-z][A-Za-z0-9_]{1,19}-[0-9]{1,9}$/;
 const PLANE_KEY = /^[A-Za-z][A-Za-z0-9]{0,11}-[0-9]{1,9}$/;
 const UNSAFE_CHARACTER = /[\s\u0000-\u001f\u007f]/;
 
-const NOT_SIGNED_IN = 'Not signed in to Mittr. Sign in to continue.';
+export const NOT_SIGNED_IN = 'Not signed in to Mittr. Sign in to continue.';
 const NO_ISSUE = 'The Mittr platform returned no issue';
 
 const DEFINITIONS = Object.freeze([
@@ -26,10 +26,8 @@ const DEFINITIONS = Object.freeze([
   { action: 'plane.get_issue', title: 'Read a Plane work item', description: 'Read one Plane work item by its link or key (e.g. MITRAI-12): name, description, state, priority, due date', effect: 'read' },
 ]);
 
-const plainText = (value) => (value === String(value) && value.trim() ? value.trim() : null);
-
 const jiraKeyOf = (input) => {
-  const key = plainText(input.key);
+  const key = trimmedText(input.key);
   if (!key) throw new MittrToolError('key is required for jira.get_issue', 400);
   if (!JIRA_KEY.test(key)) throw new MittrToolError('key must be a Jira issue key such as MRKB-2122', 400);
   return key.toUpperCase();
@@ -46,7 +44,7 @@ const isWebLink = (text) => {
 };
 
 const planeRefOf = (input) => {
-  const ref = plainText(input.ref);
+  const ref = trimmedText(input.ref);
   if (!ref) throw new MittrToolError('ref is required for plane.get_issue', 400);
   if (PLANE_KEY.test(ref)) return ref.toUpperCase();
   if (isWebLink(ref)) return ref;
