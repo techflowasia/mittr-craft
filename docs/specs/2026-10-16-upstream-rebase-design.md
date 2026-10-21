@@ -169,7 +169,7 @@ Other downstreams that survive a fast upstream all keep the delta small, explici
   - the Talk button and voice bar (composer-action slot, plus a portal from the root wrapper);
   - Mittr settings pages, through upstream's settings registration if one exists, otherwise a slot.
 - **`packages/mittr-extensions`** holds built-in SDK extensions. My work becomes a `page` + `attach` + `commands` extension whose `integration.apiOrigin` is the Mittr API. The server plugin keeps the extension's credential fresh from the active Mittr account.
-- **`packages/mittr-opencode`** holds the OpenCode 2 plugin: identity (the model answers as MittrCraft) and Mittr agent tools (Chrome / computer use) with OpenCode's permission prompt and `codemode:false`. It also generates the MCP/skills config.
+- **`packages/mittr-opencode`** holds the OpenCode 2 plugin: identity (the model answers as MittrCraft) and Mittr agent tools (Chrome / computer use) with OpenCode's permission prompt and `codemode:false`. It also generates the MCP/skills config. The identity plugin's source lives in `packages/mittr-server/src/mittr/identity-plugin.js`, so the server's npm pack carries it, and `packages/mittr-opencode/src/identity-plugin.js` re-exports it.
 
 ### 5.5 Sign-in callback
 

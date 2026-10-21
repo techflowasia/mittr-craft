@@ -689,7 +689,7 @@ Upstream files added: 2. Running total: 23.
   - pushes one part with `You are MittrCraft. When asked who you are or which product this is, answer MittrCraft. Never call yourself OpenCode or OpenChamber.`;
   - leaves paths like `.opencode/` untouched.
   - If Task 2 P2 needed it, it also registers the `retry` hook scoped to `mittr`.
-- mittr-server imports `identityPluginSource` by relative path (`../../../mittr-opencode/src/identity-plugin.js`), which the plugin bundle inlines. Bun links no workspace package into the root `node_modules`, so `@mittrcraft/opencode` would not resolve.
+- mittr-server imports `identityPluginSource` by relative path (`../../../mittr-opencode/src/identity-plugin.js`), which the plugin bundle inlines. Bun links no workspace package into the root `node_modules`, so `@mittrcraft/opencode` would not resolve. Since the phase 3 post-gate fixes, the source lives in `packages/mittr-server/src/mittr/identity-plugin.js`, which `identity.js` imports from its own folder, so the server's npm pack carries it; `packages/mittr-opencode/src/identity-plugin.js` re-exports it.
 - `materializeIdentityPlugin({ dataDir }) -> Promise<string>` writes `<dataDir>/engine-plugins/mittrcraft-identity/{package.json,index.js}` (mode 0600; `package.json` `{"type":"module","exports":{".":"./index.js"}}`) and returns that directory.
   - `identityFragment(dir) -> { plugins: [dir] }`.
   - The engine cannot read inside `app.asar`, so the source is written to the data dir, as upstream does for its agent tool.

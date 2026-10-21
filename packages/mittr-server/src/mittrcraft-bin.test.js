@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -378,7 +379,8 @@ test('the npm pack of this package, beside only a sibling web and its own depend
   const unpack = spawnSync('tar', ['-xzf', tarball, '-C', packageDir, '--strip-components=1'], { encoding: 'utf8' });
   assert.equal(unpack.status, 0, unpack.stderr);
   fs.mkdirSync(path.join(packageDir, 'node_modules'));
-  fs.symlinkSync(fs.realpathSync(path.join(repoRoot, 'packages/mittr-server/node_modules/ldapjs')), path.join(packageDir, 'node_modules', 'ldapjs'), 'dir');
+  const ldapjs = path.dirname(createRequire(path.join(repoRoot, 'packages/mittr-server/package.json')).resolve('ldapjs/package.json'));
+  fs.symlinkSync(ldapjs, path.join(packageDir, 'node_modules', 'ldapjs'), 'dir');
 
   const web = path.join(root, 'packages', 'web');
   fs.mkdirSync(path.join(web, 'bin'), { recursive: true });
