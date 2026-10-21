@@ -6,7 +6,7 @@ import { MittrToolError } from './registry.js';
 
 const CUA_DRIVER = 'cua-driver';
 export const OPEN_COMMAND = '/usr/bin/open';
-const DRIVER_TIMEOUT_MS = 15_000;
+const CHILD_TIMEOUT_MS = 15_000;
 
 const NOT_BUNDLED = 'Computer use is not bundled in this build of MittrCraft';
 const CANCELLED = 499;
@@ -25,56 +25,80 @@ export const resolveCuaDriver = ({ resourcesDir, env, exists }) => bundledDriver
   exists,
 });
 
-const cancelled = (tool) => new MittrToolError(`cua-driver ${tool} was cancelled`, CANCELLED);
+const MIB = 1024 * 1024;
+const MAX_DRIVER_OUTPUT_BYTES = 64 * MIB;
 
-const runDriver = ({ spawn, binary, tool, args, timeoutMs, signal }) => new Promise((resolve, reject) => {
+const sizeText = (bytes) => (bytes >= MIB && bytes % MIB === 0 ? `${bytes / MIB} MiB` : `${bytes} bytes`);
+
+const cancelled = (label) => new MittrToolError(`${label} was cancelled`, CANCELLED);
+
+const runChild = ({ spawn, command, args, stdio, label, timeoutMs, signal, maxOutputBytes = Number.POSITIVE_INFINITY }) => new Promise((resolve, reject) => {
   if (signal?.aborted) {
-    reject(cancelled(tool));
+    reject(cancelled(label));
     return;
   }
-  const child = spawn(binary, [tool, JSON.stringify(args ?? {})], { stdio: ['ignore', 'pipe', 'pipe'], signal, killSignal: 'SIGKILL' });
+  const child = spawn(command, args, { stdio, signal, killSignal: 'SIGKILL' });
   const stdout = [];
   const stderr = [];
-  const timer = setTimeout(() => {
+  let outputBytes = 0;
+  let stopped = false;
+  const stop = (error) => {
+    if (stopped) return;
+    stopped = true;
+    clearTimeout(timer);
     child.kill('SIGKILL');
-    reject(new Error(`cua-driver ${tool} timed out after ${timeoutMs}ms`));
-  }, timeoutMs);
-  child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)));
-  child.stderr.on('data', (chunk) => stderr.push(Buffer.from(chunk)));
+    reject(error);
+  };
+  const timer = setTimeout(() => stop(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  child.stdout?.on('data', (chunk) => {
+    outputBytes += chunk.length;
+    if (outputBytes > maxOutputBytes) stop(new Error(`${label} answered more than ${sizeText(maxOutputBytes)} and was stopped`));
+    else stdout.push(Buffer.from(chunk));
+  });
+  child.stderr?.on('data', (chunk) => stderr.push(Buffer.from(chunk)));
   child.on('error', (error) => {
     clearTimeout(timer);
-    reject(error?.name === 'AbortError' ? cancelled(tool) : error);
+    reject(error?.name === 'AbortError' ? cancelled(label) : error);
   });
   child.on('close', (code) => {
     clearTimeout(timer);
-    const output = Buffer.concat(stdout).toString('utf8');
-    if (code !== 0) {
-      reject(new Error(Buffer.concat(stderr).toString('utf8').trim() || `cua-driver ${tool} exited with code ${code}`));
-      return;
-    }
-    try {
-      resolve(JSON.parse(output));
-    } catch {
-      reject(new Error(`cua-driver ${tool} did not return JSON: ${output.slice(0, 200)}`));
-    }
+    const failure = Buffer.concat(stderr).toString('utf8').trim();
+    if (code !== 0) reject(new Error(failure || `${label} exited with code ${code}`));
+    else resolve(Buffer.concat(stdout).toString('utf8'));
   });
 });
 
-export const createComputerControl = ({ binary, spawn = spawnChild, timeoutMs = DRIVER_TIMEOUT_MS }) => ({
+export const createComputerControl = ({ binary, spawn = spawnChild, timeoutMs = CHILD_TIMEOUT_MS, maxOutputBytes = MAX_DRIVER_OUTPUT_BYTES }) => ({
   available: Boolean(binary),
   request: async (tool, args, { signal } = {}) => {
     if (!binary) throw new MittrToolError(NOT_BUNDLED, 503);
-    return runDriver({ spawn, binary, tool, args, timeoutMs, signal });
+    const label = `cua-driver ${tool}`;
+    const output = await runChild({
+      spawn,
+      command: binary,
+      args: [tool, JSON.stringify(args ?? {})],
+      stdio: ['ignore', 'pipe', 'pipe'],
+      label,
+      timeoutMs,
+      signal,
+      maxOutputBytes,
+    });
+    try {
+      return JSON.parse(output);
+    } catch {
+      throw new Error(`${label} did not return JSON: ${output.slice(0, 200)}`);
+    }
   },
 });
 
-export const createLaunchApp = ({ spawn = spawnChild } = {}) => (name) => new Promise((resolve, reject) => {
-  const child = spawn(OPEN_COMMAND, ['-a', name], { stdio: ['ignore', 'ignore', 'pipe'] });
-  const stderr = [];
-  child.stderr.on('data', (chunk) => stderr.push(Buffer.from(chunk)));
-  child.on('error', reject);
-  child.on('close', (code) => {
-    if (code === 0) resolve();
-    else reject(new Error(Buffer.concat(stderr).toString('utf8').trim() || `open -a "${name}" exited with code ${code}`));
+export const createLaunchApp = ({ spawn = spawnChild, timeoutMs = CHILD_TIMEOUT_MS } = {}) => async (name, { signal } = {}) => {
+  await runChild({
+    spawn,
+    command: OPEN_COMMAND,
+    args: ['-a', name],
+    stdio: ['ignore', 'ignore', 'pipe'],
+    label: `open -a "${name}"`,
+    timeoutMs,
+    signal,
   });
-});
+};

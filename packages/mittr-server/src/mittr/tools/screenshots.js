@@ -33,6 +33,16 @@ const MIME_OF_BYTES = [
 
 const looksLike = (mime, bytes) => MIME_OF_BYTES.some(([candidate, matches]) => candidate === mime && matches(bytes));
 
+const IMAGE_MIMES = new Set(MIME_BY_EXTENSION.values());
+const SIGNATURE_BASE64_LENGTH = 16;
+
+export const fitsAttachment = (base64) => Buffer.byteLength(base64, 'base64') <= MAX_IMAGE_BYTES;
+
+export const imageOf = ({ base64, mime }) => {
+  if (base64 !== String(base64) || !base64 || !IMAGE_MIMES.has(mime)) return null;
+  return looksLike(mime, Buffer.from(base64.slice(0, SIGNATURE_BASE64_LENGTH), 'base64')) ? { base64, mime } : null;
+};
+
 export const imageContent = ({ base64, mime, name }) => ({ type: 'file', uri: `data:${mime};base64,${base64}`, mime, name });
 
 const notAScreenshot = () => new MittrToolError(NOT_A_SCREENSHOT, 400);
@@ -109,7 +119,7 @@ export const readCapture = async ({ directory, relativePath, folder, files = fsP
 
 export const attachableImage = (data) => {
   if (!isRecord(data) || !isRecord(data.image) || data.image.base64 !== String(data.image.base64)) return data;
-  if (Buffer.byteLength(data.image.base64, 'base64') <= MAX_IMAGE_BYTES) return data;
+  if (fitsAttachment(data.image.base64)) return data;
   return { ...data, image: { tooLarge: true } };
 };
 

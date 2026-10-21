@@ -7,7 +7,7 @@ import test from 'node:test';
 import { MARKER_PNG, PROVEN_IMAGE_PART } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
 import { SCREENSHOT_DIRECTORY, writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { MittrToolError } from './registry.js';
-import { MAX_IMAGE_BYTES, attachableImage, imageContent, readCapture, saveScreenshot } from './screenshots.js';
+import { MAX_IMAGE_BYTES, attachableImage, fitsAttachment, imageContent, imageOf, readCapture, saveScreenshot } from './screenshots.js';
 
 const REFUSAL = 'That image is not a saved screenshot of this project';
 const PNG = Buffer.from(MARKER_PNG, 'base64');
@@ -176,4 +176,23 @@ test('a screenshot without a session directory is refused and nothing is written
     return true;
   });
   assert.deepEqual(writes, []);
+});
+
+test('an image handed over in memory is one only when its type is allowed and its bytes say so', () => {
+  for (const [bytes, mime] of [[PNG, 'image/png'], [JPEG, 'image/jpeg'], [WEBP, 'image/webp']]) {
+    assert.deepEqual(imageOf({ base64: bytes.toString('base64'), mime }), { base64: bytes.toString('base64'), mime }, mime);
+  }
+  for (const [base64, mime] of [
+    [PNG.toString('base64'), 'image/gif'],
+    [PNG.toString('base64'), 'image/jpeg'],
+    [JPEG.toString('base64'), 'image/png'],
+    [Buffer.from('not an image').toString('base64'), 'image/png'],
+    ['', 'image/png'],
+    [undefined, 'image/png'],
+    [PNG.toString('base64'), undefined],
+  ]) {
+    assert.equal(imageOf({ base64, mime }), null, `${mime} ${String(base64).slice(0, 12)}`);
+  }
+  assert.equal(fitsAttachment(pngOfSize(MAX_IMAGE_BYTES).toString('base64')), true);
+  assert.equal(fitsAttachment(pngOfSize(MAX_IMAGE_BYTES + 1).toString('base64')), false);
 });

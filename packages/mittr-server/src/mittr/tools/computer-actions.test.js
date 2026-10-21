@@ -44,6 +44,8 @@ test('the computer tool carries 1.22\'s description, titles and app parameter', 
   assert.equal(tool.name, 'mittrcraft_computer');
   assert.equal(tool.description, COMPUTER_TOOL_DESCRIPTION);
   assert.ok(COMPUTER_TOOL_DESCRIPTION.startsWith("Look at and act on the user's whole desktop, not just MittrCraft's own panels"));
+  assert.ok(COMPUTER_TOOL_DESCRIPTION.includes('computer.screenshot to see the current desktop — the image is attached to the result for you to read directly when it is small enough to attach (the result says if it is not; then it is only saved as a file), so there is no need to open it with a file-reading tool.'));
+  assert.equal(registry.definitions({ tool: MITTR_TOOLS.computer }).at(-1).description, 'Screenshot the whole desktop and see it directly when the image is small enough to attach; it is also saved as a file in the project whose path is returned; no parameters');
   assert.deepEqual(Object.keys(tool.parameters), ['app']);
   assert.deepEqual(registry.definitions({ tool: MITTR_TOOLS.computer }).map(({ action, title, effect }) => [action, title, effect]), [
     ['computer.list_apps', 'List desktop apps', 'read'],
@@ -80,7 +82,7 @@ test('list_apps answers no apps when the driver lists none', async () => {
 test('an app name outside the plain-name pattern is refused before open runs', async () => {
   const opened = [];
   const { run } = setUp({ launchApp: async (name) => opened.push(name) });
-  for (const app of ['Calc; rm -rf ~', '../x', '-a', 'a'.repeat(81), ' -a', '$(id)', 'Calc\nulator']) {
+  for (const app of ['Calc; rm -rf ~', '../x', '-a', 'a'.repeat(81), ' -a', '$(id)', 'Calc\nulator', '.', '..', '...', '.hidden', '()&', '- -']) {
     await assert.rejects(run('computer.open_app', { app }), refusedWith(400, 'app must be a plain app name'), JSON.stringify(app));
   }
   for (const app of [undefined, '', '   ', 7]) {
@@ -248,4 +250,59 @@ test('a computer action asked for over http from another machine runs nothing', 
   await assert.rejects(run('computer.list_apps', {}, { surface: 'http', scope: { local: false } }), refusedWith(403, 'List desktop apps can only be used from this machine'));
   assert.deepEqual(requests, []);
   assert.deepEqual(await run('computer.list_apps', {}, { surface: 'http', scope: { local: true } }), { apps: [] });
+});
+
+test('open_app hands the turn\'s signal to open, and a cancelled open stays cancelled', async () => {
+  const { signal } = new AbortController();
+  const calls = [];
+  const opened = setUp({ launchApp: async (name, options) => calls.push([name, options.signal]) });
+  await opened.run('computer.open_app', { app: 'Notes' }, { signal });
+  assert.deepEqual(calls, [['Notes', signal]]);
+
+  const cancelled = new MittrToolError('open -a "Notes" was cancelled', 499);
+  const { run } = setUp({ launchApp: async () => { throw cancelled; } });
+  await assert.rejects(run('computer.open_app', { app: 'Notes' }), (error) => error === cancelled);
+});
+
+test('a grant named as not granted in its own clause is the one asked for', async (t) => {
+  const project = fs.realpathSync(tempDataDir(t));
+  const accessibility = 'MittrCraft needs the Accessibility permission for CuaDriver. Turn it on in System Settings → Privacy & Security → Accessibility.';
+  const screenRecording = 'MittrCraft needs the Screen Recording permission for CuaDriver. Turn it on in System Settings → Privacy & Security → Screen Recording.';
+  const listing = setUp({ answers: { list_apps: new Error('Accessibility granted, Screen Recording not granted') } });
+  await assert.rejects(listing.run('computer.list_apps'), refusedWith(403, screenRecording));
+  const shooting = setUp({ answers: { get_desktop_state: new Error('Screen Recording granted, Accessibility not granted') } });
+  await assert.rejects(shooting.run('computer.screenshot', {}, { directory: project }), refusedWith(403, accessibility));
+});
+
+test('a screenshot answered without an image because of a missing grant names the grant', async (t) => {
+  const project = fs.realpathSync(tempDataDir(t));
+  const message = 'MittrCraft needs the Screen Recording permission for CuaDriver. Turn it on in System Settings → Privacy & Security → Screen Recording.';
+  for (const answer of [{ error: 'Screen Recording permission not granted' }, { screen_recording: false, message: SCREEN_RECORDING_NOT_GRANTED }]) {
+    const { run } = setUp({ answers: { get_desktop_state: answer } });
+    await assert.rejects(run('computer.screenshot', {}, { directory: project }), refusedWith(403, message), JSON.stringify(answer));
+  }
+  assert.equal(fs.existsSync(path.join(project, '.openchamber')), false);
+
+  const listing = setUp({ answers: { list_apps: { apps: [], error: 'Accessibility is NOT granted for this process.' } } });
+  assert.deepEqual(await listing.run('computer.list_apps'), { apps: [] });
+});
+
+test('a screenshot that is not a PNG, JPEG or WebP image is neither saved nor returned', async (t) => {
+  const project = fs.realpathSync(tempDataDir(t));
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 0]).toString('base64');
+  for (const answer of [
+    { screenshot_png_b64: MARKER_PNG, screenshot_mime_type: 'image/gif' },
+    { screenshot_png_b64: MARKER_PNG, screenshot_mime_type: 'text/html' },
+    { screenshot_png_b64: jpeg, screenshot_mime_type: 'image/png' },
+    { screenshot_png_b64: Buffer.from('<svg/>').toString('base64') },
+  ]) {
+    const { run } = setUp({ answers: { get_desktop_state: answer } });
+    await assert.rejects(run('computer.screenshot', {}, { directory: project }), refusedWith(502, 'The desktop screenshot is not a PNG, JPEG or WebP image'), JSON.stringify(answer));
+  }
+  assert.equal(fs.existsSync(path.join(project, '.openchamber')), false);
+
+  const { run } = setUp({ answers: { get_desktop_state: { screenshot_png_b64: jpeg, screenshot_mime_type: 'image/jpeg' } } });
+  const saved = await run('computer.screenshot', {}, { directory: project });
+  assert.match(saved.path, /^\.openchamber\/screenshots\/desktop-.+\.jpg$/);
+  assert.deepEqual(saved.image, { base64: jpeg, mime: 'image/jpeg' });
 });

@@ -1,10 +1,10 @@
 import { isRecord } from '../values.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
-import { MAX_IMAGE_BYTES, NO_SCREENSHOT_DIRECTORY, saveScreenshot } from './screenshots.js';
+import { NO_SCREENSHOT_DIRECTORY, fitsAttachment, imageOf, saveScreenshot } from './screenshots.js';
 
 export const APP_NAME_PATTERN = /^[\w .()&-]{1,80}$/;
 
-export const COMPUTER_TOOL_DESCRIPTION = "Look at and act on the user's whole desktop, not just MittrCraft's own panels — use only when a task genuinely needs another app. Use one action per call. computer.list_apps first to see what is running and get an exact app name; if the app you need is not running, computer.open_app launches it by name; computer.bring_to_front activates a running app by that name; computer.screenshot to see the current desktop — the image is attached to the result for you to read directly, so there is no need to open it with a file-reading tool. Clicking or typing into other apps is not available yet. This is a live, real desktop the user can see moving in front of them — never use it for anything the user has not clearly asked for.";
+export const COMPUTER_TOOL_DESCRIPTION = "Look at and act on the user's whole desktop, not just MittrCraft's own panels — use only when a task genuinely needs another app. Use one action per call. computer.list_apps first to see what is running and get an exact app name; if the app you need is not running, computer.open_app launches it by name; computer.bring_to_front activates a running app by that name; computer.screenshot to see the current desktop — the image is attached to the result for you to read directly when it is small enough to attach (the result says if it is not; then it is only saved as a file), so there is no need to open it with a file-reading tool. Clicking or typing into other apps is not available yet. This is a live, real desktop the user can see moving in front of them — never use it for anything the user has not clearly asked for.";
 
 const COMPUTER_PARAMETERS = Object.freeze({
   app: { type: 'string', description: 'App name (as list_apps reports it, or its ordinary name to launch it), for computer.bring_to_front and computer.open_app' },
@@ -20,15 +20,16 @@ const grantRefusal = (grant) => new MittrToolError(
   403,
 );
 
+const grantsNamedIn = (text) => GRANTS.filter((grant) => text.toLowerCase().includes(grant.toLowerCase()));
+
+const preferring = (grants, ownGrant) => (grants.includes(ownGrant) ? ownGrant : grants[0] ?? null);
+
 const missingGrant = (text, ownGrant) => {
   if (!/grant|permission/i.test(text)) return null;
-  const lower = text.toLowerCase();
-  const notGranted = GRANTS.find((grant) => new RegExp(`${grant}[^.\\n]*not granted`, 'i').test(text));
-  if (notGranted) return notGranted;
-  const named = GRANTS.filter((grant) => lower.includes(grant.toLowerCase()));
-  if (named.includes(ownGrant)) return ownGrant;
-  if (named.length > 0) return named[0];
-  return lower.includes('permissions grant') ? ownGrant : null;
+  const notGranted = text.split(/[.,;\n]+/).filter((clause) => /not granted/i.test(clause)).flatMap(grantsNamedIn);
+  const grant = preferring(notGranted, ownGrant) ?? preferring(grantsNamedIn(text), ownGrant);
+  if (grant) return grant;
+  return /permissions grant/i.test(text) ? ownGrant : null;
 };
 
 const plainText = (value) => (value === String(value) && value.trim() ? value.trim() : null);
@@ -36,7 +37,7 @@ const plainText = (value) => (value === String(value) && value.trim() ? value.tr
 const appNameOf = (input, action) => {
   const name = plainText(input.app);
   if (!name) throw new MittrToolError(`app is required for ${action}`, 400);
-  if (!APP_NAME_PATTERN.test(name) || name.startsWith('-')) throw new MittrToolError('app must be a plain app name', 400);
+  if (!APP_NAME_PATTERN.test(name) || /^[-.]/.test(name) || !/\w/.test(name)) throw new MittrToolError('app must be a plain app name', 400);
   return name;
 };
 
@@ -64,7 +65,7 @@ const DEFINITIONS = Object.freeze([
   {
     action: 'computer.screenshot',
     title: 'Screenshot the desktop',
-    description: 'Screenshot the whole desktop and see it directly — the image is attached to the result, and also saved as a file in the project whose path is returned; no parameters',
+    description: 'Screenshot the whole desktop and see it directly when the image is small enough to attach; it is also saved as a file in the project whose path is returned; no parameters',
     effect: 'read',
   },
 ]);
@@ -88,11 +89,12 @@ export function registerComputerActions(registry, { control, launchApp, writeScr
     })),
   });
 
-  const openApp = async (input) => {
+  const openApp = async (input, ctx) => {
     const name = appNameOf(input, 'computer.open_app');
     try {
-      await launchApp(name);
+      await launchApp(name, { signal: ctx.signal });
     } catch (error) {
+      if (error instanceof MittrToolError) throw error;
       throw new MittrToolError(`Could not open "${name}": ${error instanceof Error ? error.message : String(error)}`, 502);
     }
     return { launched: true, app: name };
@@ -123,10 +125,14 @@ export function registerComputerActions(registry, { control, launchApp, writeScr
     if (!directory) throw new MittrToolError(NO_SCREENSHOT_DIRECTORY, 400);
     const result = await driver('get_desktop_state', {}, ctx, SCREEN_RECORDING);
     const base64 = plainText(result?.screenshot_png_b64);
-    if (!base64) throw new MittrToolError('The desktop screenshot came back without an image', 502);
-    const mime = plainText(result.screenshot_mime_type) ?? 'image/png';
-    const saved = await saveScreenshot({ control: { writeScreenshot }, directory, base64, mime, label: 'desktop' });
-    const attached = Buffer.byteLength(base64, 'base64') <= MAX_IMAGE_BYTES;
+    if (!base64) {
+      const grant = missingGrant(JSON.stringify(result ?? null), SCREEN_RECORDING);
+      throw grant ? grantRefusal(grant) : new MittrToolError('The desktop screenshot came back without an image', 502);
+    }
+    const image = imageOf({ base64, mime: plainText(result.screenshot_mime_type) ?? 'image/png' });
+    if (!image) throw new MittrToolError('The desktop screenshot is not a PNG, JPEG or WebP image', 502);
+    const saved = await saveScreenshot({ control: { writeScreenshot }, directory, base64: image.base64, mime: image.mime, label: 'desktop' });
+    const attached = fitsAttachment(image.base64);
     return {
       path: saved.path,
       hint: attached

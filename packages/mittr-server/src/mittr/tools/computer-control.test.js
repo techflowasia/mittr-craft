@@ -27,10 +27,9 @@ const fakeSpawn = (respond = () => ({})) => {
         child.emit('error', error);
         return;
       }
-      if (code === null) return;
       if (stdout) child.stdout.emit('data', Buffer.from(stdout));
       if (stderr) child.stderr.emit('data', Buffer.from(stderr));
-      child.emit('close', code);
+      if (code !== null) child.emit('close', code);
     });
     return child;
   };
@@ -179,4 +178,49 @@ test('an app open cannot find rejects with what open wrote', async () => {
   await assert.rejects(createLaunchApp({ spawn })('Nope'), { message: 'Unable to find application named \'Nope\'' });
   const quiet = fakeSpawn(() => ({ code: 1 }));
   await assert.rejects(createLaunchApp({ spawn: quiet.spawn })('Nope'), { message: 'open -a "Nope" exited with code 1' });
+});
+
+test('opening an app carries the turn\'s signal and is killed when its time is up', async () => {
+  const { signal } = new AbortController();
+  const answered = fakeSpawn();
+  await createLaunchApp({ spawn: answered.spawn })('Calculator', { signal });
+  assert.equal(answered.calls[0].options.signal, signal);
+  assert.equal(answered.calls[0].options.killSignal, 'SIGKILL');
+
+  const stuck = fakeSpawn(() => ({ code: null }));
+  await assert.rejects(createLaunchApp({ spawn: stuck.spawn, timeoutMs: 20 })('Calculator'), { message: 'open -a "Calculator" timed out after 20ms' });
+  assert.deepEqual(stuck.calls[0].child.kills, ['SIGKILL']);
+});
+
+test('an aborted turn kills open and rejects as cancelled', async (t) => {
+  const stub = stubCuaDriver(t);
+  const children = [];
+  const spawn = (_command, _args, options) => {
+    const child = childProcess.spawn(stub, ['hang'], options);
+    children.push(child);
+    return child;
+  };
+  const controller = new AbortController();
+  const pending = createLaunchApp({ spawn })('Calculator', { signal: controller.signal });
+  await new Promise((resolve) => children[0].once('spawn', resolve));
+  const exited = new Promise((resolve) => children[0].once('exit', (_code, signal) => resolve(signal)));
+
+  controller.abort();
+
+  await assert.rejects(pending, (error) => error instanceof MittrToolError && error.statusCode === 499 && error.message === 'open -a "Calculator" was cancelled');
+  assert.equal(await exited, 'SIGKILL');
+});
+
+test('a turn aborted before opening runs nothing', async () => {
+  const { spawn, calls } = fakeSpawn();
+  await assert.rejects(createLaunchApp({ spawn })('Calculator', { signal: AbortSignal.abort() }), { statusCode: 499 });
+  assert.deepEqual(calls, []);
+});
+
+test('a driver that answers more than the output cap is stopped and says so', async () => {
+  const { spawn, calls } = fakeSpawn(({ args }) => (args[0] === 'small' ? { stdout: '{"a":1}' } : { stdout: 'x'.repeat(64), code: null }));
+  const control = createComputerControl({ binary: '/d', spawn, maxOutputBytes: 32 });
+  await assert.rejects(control.request('get_desktop_state'), { message: 'cua-driver get_desktop_state answered more than 32 bytes and was stopped' });
+  assert.deepEqual(calls[0].child.kills, ['SIGKILL']);
+  assert.deepEqual(await control.request('small'), { a: 1 });
 });
