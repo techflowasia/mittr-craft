@@ -9,7 +9,7 @@ import { MARKER_PNG } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
 import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
 import { SCREENSHOT_DIRECTORY, writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { createMittrSettings } from '../mittr-settings.js';
-import { SCREEN_RECORDING_NOT_GRANTED, deferred, listen, stubAgentBrowser, stubCuaDriver, tempDataDir, until } from '../test-helpers.js';
+import { SCREEN_RECORDING_NOT_GRANTED, deferred, fakeFetch, json, listen, stubAgentBrowser, stubCuaDriver, tempDataDir, until } from '../test-helpers.js';
 import { CHROME_EXECUTABLE, chromeSessionName } from './chrome-control.js';
 import { NO_APPROVALS } from './chrome-service.js';
 import { CHROME_CLOSE_TIMEOUT_MS, bundledDrivers, setupMittrTools } from './index.js';
@@ -55,6 +55,7 @@ const setUp = async (t, {
   chromeApprovals = NO_APPROVALS,
   enginePort = 4096,
   engineBase = null,
+  platform,
 } = {}) => {
   const registry = createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, execute: async () => ({}) } });
   const readyListeners = new Set();
@@ -103,6 +104,7 @@ const setUp = async (t, {
     },
     drivers,
     chromeApprovals,
+    platform,
     logger,
   });
   const runs = registerFakeTools(registry, { hang });
@@ -603,4 +605,83 @@ test('only the Chrome question is never answered automatically', async (t) => {
   const { tools } = await setUp(t);
   assert.equal(tools.neverAutoAnswer({ action: 'mittrcraft_chrome', resources: ['acme.example.test'] }), true);
   assert.equal(tools.neverAutoAnswer({ action: 'bash', resources: ['ls'] }), false);
+});
+
+const ACCESS_TOKEN = 'at-chrome-do-0b5e7c';
+
+const fakePlatform = (respond, { onActiveHome = () => true } = {}) => {
+  const fetchImpl = fakeFetch(respond);
+  return {
+    fetchImpl,
+    deps: {
+      broker: { baseUrl: 'https://platform.example.test' },
+      ensureFreshSession: async () => ({ accessToken: ACCESS_TOKEN, subject: { userId: 'u-1' } }),
+      fetchImpl,
+      engineOnActiveHome: () => onActiveHome(),
+    },
+  };
+};
+
+const chromeToolIn = (source) => {
+  const start = source.indexOf('name: "mittrcraft_chrome"');
+  return start === -1 ? '' : source.slice(start, source.indexOf('tools.add(', start) === -1 ? undefined : source.indexOf('tools.add(', start));
+};
+
+test('no account makes chrome.do unavailable', async (t) => {
+  const account = { signedIn: true };
+  const { deps } = fakePlatform(() => json({ step: { action: 'done' } }));
+  const { tools, registry, pluginSource, chrome } = await chromeSetUp(t, { signedIn: () => account.signedIn, platform: deps });
+  await tools.managedConfig();
+  const chromeTool = () => registry.tools().find(({ name }) => name === MITTR_TOOLS.chrome);
+  assert.equal(chromeTool().definitions.some(({ action }) => action === 'chrome.do'), true);
+  assert.match(chromeToolIn(pluginSource()), /then either chrome\.do with the goal/);
+  assert.match(chromeToolIn(pluginSource()), /"goal":\{"type":"string"/);
+
+  account.signedIn = false;
+  await tools.managedConfig();
+  assert.equal(chromeTool().definitions.some(({ action }) => action === 'chrome.do'), false);
+  assert.doesNotMatch(chromeToolIn(pluginSource()), /chrome\.do|"goal"|"maxSteps"/);
+  assert.equal((await chrome('open', { url: 'http://acme.example.test/' })).ok, true);
+  assert.equal((await chrome('do', { goal: 'Send it' })).error.message, 'Do a task on the Chrome page is not available in this install');
+
+  const unconfigured = await chromeSetUp(t, { platform: { ...deps, broker: { baseUrl: null } } });
+  assert.equal(unconfigured.registry.tools().find(({ name }) => name === MITTR_TOOLS.chrome).definitions.some(({ action }) => action === 'chrome.do'), false);
+});
+
+test('the access token appears in no log line or result', async (t) => {
+  const platform = fakePlatform((_call, count) => {
+    if (count === 1) return json({ step: { action: 'click', ref: 'e2', target: 'button "Send"' }, decidedBy: ['jev'], ms: 9 });
+    if (count === 2) return json({ step: { action: 'done' }, decidedBy: ['jev'], ms: 4 });
+    return json({ message: 'Unauthorized desktop session' }, 401);
+  });
+  const { chrome, logger, driver } = await chromeSetUp(t, { platform: platform.deps });
+  assert.equal((await chrome('open', { url: 'http://acme.example.test/' })).ok, true);
+  const done = await chrome('do', { goal: 'Send it' });
+  assert.deepEqual(done.data, { outcome: 'done', steps: [{ step: 'click button "Send"', decidedBy: ['jev'], ms: 9 }], url: 'http://acme.example.test/' });
+  const refused = await chrome('do', { goal: 'Send it again' });
+  assert.deepEqual(refused.data, { outcome: 'stopped', reason: 'Unauthorized desktop session', steps: [], url: 'http://acme.example.test/' });
+  assert.deepEqual(platform.fetchImpl.calls.map(({ headers }) => headers.authorization), [`Bearer ${ACCESS_TOKEN}`, `Bearer ${ACCESS_TOKEN}`, `Bearer ${ACCESS_TOKEN}`]);
+  assert.equal(driver.commands().some(({ command }) => command[0] === 'click' && command[1] === '@e2'), true);
+  for (const text of [JSON.stringify(done), JSON.stringify(refused), ...logger.lines]) {
+    assert.equal(text.includes(ACCESS_TOKEN), false, text);
+    assert.equal(text.includes('Send it'), false, text);
+  }
+});
+
+test('an account change between steps ends chrome.do stopped with the steps taken, and the next page is not sent', async (t) => {
+  const state = { settled: true };
+  const platform = fakePlatform((_call, count) => {
+    if (count === 2) state.settled = false;
+    return json({ step: { action: 'click', ref: `e${count}`, target: `link "${count}"` }, decidedBy: ['jev'], ms: 3 });
+  }, { onActiveHome: () => state.settled });
+  const { chrome, driver } = await chromeSetUp(t, { platform: platform.deps });
+  assert.equal((await chrome('open', { url: 'http://acme.example.test/' })).ok, true);
+  const answer = await chrome('do', { goal: 'Click through' });
+  assert.deepEqual(answer.data, { outcome: 'stopped', reason: 'The Mittr account changed', steps: [{ step: 'click link "1"', decidedBy: ['jev'], ms: 3 }], url: 'http://acme.example.test/' });
+  assert.equal(platform.fetchImpl.calls.length, 2);
+  assert.deepEqual(driver.commands().filter(({ command }) => command[0] === 'click').map(({ command }) => command), [['click', '@e1']]);
+  state.settled = false;
+  const again = await chrome('do', { goal: 'Click through' });
+  assert.deepEqual(again.data.reason, 'The Mittr account changed');
+  assert.equal(platform.fetchImpl.calls.length, 2, 'no page is sent while the engine is on another account');
 });

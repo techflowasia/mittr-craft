@@ -308,13 +308,15 @@ export function setupMittr(context, {
     logger,
   });
 
+  const engineOnActiveHome = () => !signedIn() || switcher.engineOnTarget();
+
   // A new key every run: one that leaked from an earlier run opens nothing.
   const localToken = mintShimKey();
   shim = registerMittrShim(app, {
     upstreamV1: broker.upstreamV1,
     localToken,
     ensureFreshSession,
-    engineOnActiveHome: () => !signedIn() || switcher.engineOnTarget(),
+    engineOnActiveHome,
     // Never an empty list for a catalog that cannot be read: the shim then
     // says the list is unavailable instead of "you have no models".
     listModels: () => {
@@ -394,7 +396,7 @@ export function setupMittr(context, {
     signedIn,
     personalDesktop: () => !connectorsOff,
     refresh: () => rewriteProviderLock(),
-    platform: { broker, ensureFreshSession, fetchImpl },
+    platform: { broker, ensureFreshSession, fetchImpl, engineOnActiveHome },
     drivers: toolDrivers,
     logger,
   });

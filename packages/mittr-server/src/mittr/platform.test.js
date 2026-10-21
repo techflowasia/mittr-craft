@@ -4,23 +4,27 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { CANNOT_REACH_MITTR, PLATFORM_TIMED_OUT, PLATFORM_TIMEOUT_MS, READ_FAILED, callPlatform, isTimeout, platformErrorText } from './platform.js';
+import { ACCOUNT_CHANGED, BROWSER_STEP_TIMEOUT_MS, CANNOT_REACH_MITTR, PLATFORM_CANCELLED, PLATFORM_TIMED_OUT, PLATFORM_TIMEOUT_MS, READ_FAILED, callPlatform, isTimeout, platformErrorText } from './platform.js';
 import { fakeFetch, json } from './test-helpers.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sourceOf = (name) => fs.readFileSync(path.join(here, name), 'utf8');
 
 const PLATFORM_CALLERS = ['auth-routes.js', 'audit-routes.js', 'catalog-routes.js', 'quota-service.js'];
-const SHARED_CALLERS = ['work-routes.js', 'integrations-routes.js'];
+const SHARED_CALLERS = ['work-routes.js', 'integrations-routes.js', 'tools/browser-stepper.js'];
 
-const productionModules = () => fs.readdirSync(here)
-  .filter((name) => name.endsWith('.js') && !name.endsWith('.test.js') && name !== 'test-helpers.js');
+const productionModules = () => ['', 'tools'].flatMap((folder) => fs.readdirSync(path.join(here, folder))
+  .filter((name) => name.endsWith('.js') && !name.endsWith('.test.js') && name !== 'test-helpers.js')
+  .map((name) => path.posix.join(folder, name)));
 
 test('the shared platform values', () => {
   assert.equal(PLATFORM_TIMEOUT_MS, 15_000);
   assert.equal(CANNOT_REACH_MITTR, 'Cannot reach Mittr');
   assert.equal(READ_FAILED, 'Could not read this week’s quota');
   assert.equal(PLATFORM_TIMED_OUT, 'Mittr platform request timed out');
+  assert.equal(BROWSER_STEP_TIMEOUT_MS, 30_000);
+  assert.equal(PLATFORM_CANCELLED, 'The Mittr platform request was cancelled');
+  assert.equal(ACCOUNT_CHANGED, 'The Mittr account changed');
 });
 
 test('the platform error text is the error unless that is a bare HTTP reason, then the message', () => {
@@ -57,8 +61,11 @@ test('every platform call uses the one timeout', () => {
   }
 });
 
-test('the work and work tracking routes reach the platform only through callPlatform, which uses the one timeout', () => {
-  assert.match(sourceOf('platform.js'), /AbortSignal\.timeout\(PLATFORM_TIMEOUT_MS\)/);
+test('the work, work tracking and browser step callers reach the platform only through callPlatform, which uses the one timeout unless told otherwise', () => {
+  assert.match(sourceOf('platform.js'), /AbortSignal\.timeout\(timeoutMs\)/);
+  assert.match(sourceOf('platform.js'), /timeoutMs = PLATFORM_TIMEOUT_MS/);
+  assert.match(sourceOf('tools/browser-stepper.js'), /timeoutMs = BROWSER_STEP_TIMEOUT_MS/);
+  assert.doesNotMatch(sourceOf('tools/browser-stepper.js'), /30_?000/);
   for (const name of SHARED_CALLERS) {
     const source = sourceOf(name);
     assert.match(source, /callPlatform\(fetchImpl,/, name);
@@ -83,6 +90,19 @@ test('callPlatform sends the token, a JSON body when there is one and the one ti
   assert.equal(plain.calls[0].method, 'GET');
   assert.deepEqual(plain.calls[0].headers, { authorization: 'Bearer at-1' });
   assert.equal(plain.calls[0].body, undefined);
+});
+
+test('callPlatform takes its own timeout and the caller\'s signal, and a cancelled call is not a timeout', async () => {
+  const waiting = async (_url, init) => new Promise((_resolve, reject) => {
+    init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true });
+  });
+  const started = Date.now();
+  assert.deepEqual(await callPlatform(waiting, 'https://p.example/x', { accessToken: 'at', timeoutMs: 20 }), { failure: { status: 504, error: PLATFORM_TIMED_OUT } });
+  assert.ok(Date.now() - started < PLATFORM_TIMEOUT_MS);
+  const controller = new AbortController();
+  const cancelled = callPlatform(waiting, 'https://p.example/x', { accessToken: 'at', signal: controller.signal });
+  controller.abort();
+  assert.deepEqual(await cancelled, { failure: { status: 499, error: PLATFORM_CANCELLED } });
 });
 
 test('callPlatform answers 504 for a timeout and 502 for anything else, never throwing', async () => {

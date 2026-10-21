@@ -23,7 +23,7 @@ export const chromeToolDescription = ({ webTool = false, doTask = false } = {}) 
   .map(([, sentence]) => sentence)
   .join(' ');
 
-const CHROME_PARAMETERS = Object.freeze({
+const PAGE_PARAMETERS = Object.freeze({
   url: { type: 'string', description: 'http(s) URL for chrome.open' },
   ref: { type: 'string', description: 'Element ref from the last chrome.snapshot, such as @e3' },
   value: { type: 'string', description: 'Text for chrome.fill or chrome.type, or the option for chrome.select' },
@@ -32,6 +32,13 @@ const CHROME_PARAMETERS = Object.freeze({
   selector: { type: 'string', description: 'CSS selector to read only part of the page in chrome.snapshot' },
   label: { type: 'string', description: 'Short name for a chrome.screenshot image' },
 });
+
+const TASK_PARAMETERS = Object.freeze({
+  goal: { type: 'string', description: 'For chrome.do: what to get done on the open page, in the user\'s own words and with every value it needs' },
+  maxSteps: { type: 'integer', minimum: 1, maximum: 40, description: 'For chrome.do: most steps to take before stopping (default 15)' },
+});
+
+export const chromeToolParameters = ({ doTask = false } = {}) => (doTask ? { ...PAGE_PARAMETERS, ...TASK_PARAMETERS } : { ...PAGE_PARAMETERS });
 
 const DEFINITIONS = Object.freeze([
   { action: 'chrome.open', effect: 'read', title: 'Open a page in Chrome', description: 'Open url in a Chrome session that starts from the user\'s chosen Chrome profile, so sites they are signed in to stay signed in. The first use on a site asks the user' },
@@ -44,6 +51,7 @@ const DEFINITIONS = Object.freeze([
   { action: 'chrome.select', effect: 'change', title: 'Choose an option in Chrome', description: 'Choose value in the dropdown with ref, by value or visible label' },
   { action: 'chrome.wait', effect: 'read', title: 'Wait in Chrome', description: 'Wait until text appears on the page, or until the element with ref appears' },
   { action: 'chrome.screenshot', effect: 'read', title: 'Screenshot the Chrome page', description: 'Save the visible page as an image in the project and see it directly when it is small enough to attach; pass label to name it' },
+  { action: 'chrome.do', effect: 'change', title: 'Do a task on the Chrome page', description: 'Give goal in plain words and MittrCraft works through the open page on its own, one step at a time (click, fill, choose), until the goal is done, it needs to ask the user, or maxSteps runs out. Returns every step it took and where it stopped. chrome.open the page first' },
   { action: 'chrome.close', effect: 'change', title: 'Close the Chrome session', description: 'Close this session\'s Chrome; no parameters' },
 ]);
 
@@ -67,6 +75,11 @@ const PROFILE_REQUIRED = 'No Chrome profile is chosen yet; ask the user to choos
 const NOT_A_PROFILE = 'The chosen Chrome profile is not one of this Mac\'s Chrome profiles; ask the user to choose one in Settings → Integrations → MittrCraft tools → Chrome profile';
 const NO_PAGE_OPEN = 'No page is open in this session; call chrome.open first';
 const OWN_LOOKUP_TIMEOUT_MS = 1_500;
+const NO_STEPPER = 'chrome.do needs the Mittr platform; ask the user to sign in to Mittr, or work step by step with chrome.snapshot';
+const CALL_CANCELLED = 'the call was cancelled';
+const DEFAULT_TASK_STEPS = 15;
+const MAX_TASK_STEPS = 40;
+const STEP_ACTIONS = Object.freeze({ click: 'chrome.click', fill: 'chrome.fill', select: 'chrome.select' });
 
 const textOf = (value) => (value === String(value) && value.trim() ? value.trim() : null);
 
@@ -138,6 +151,23 @@ const isLoopbackOrUnspecified = (address) => {
   return host === 'localhost' || host.endsWith('.localhost') || /^127\.\d+\.\d+\.\d+$/.test(host) || host === '0.0.0.0' || host === '::1' || host === '::';
 };
 
+const taskStepLimit = (value) => {
+  const asked = Number(value);
+  return Number.isInteger(asked) && asked > 0 ? Math.min(asked, MAX_TASK_STEPS) : DEFAULT_TASK_STEPS;
+};
+
+const stepLine = (step) => {
+  const target = textOf(step.target) ?? `@${step.ref}`;
+  return step.action === 'click' ? `click ${target}` : `${step.action} ${target} = "${step.value}"`;
+};
+
+const stopReasonOf = (error) => {
+  const stopped = { reason: error instanceof Error && error.message ? error.message : 'no step could be chosen' };
+  if (textOf(error?.code)) stopped.code = error.code;
+  if (textOf(error?.host)) stopped.host = error.host;
+  return stopped;
+};
+
 const portOf = (page) => Number(page.port) || (page.protocol === 'https:' ? 443 : 80);
 
 const validProfile = (value) => {
@@ -180,6 +210,7 @@ export function createChromeService({
   lookup = lookupAll,
   ready = Promise.resolve(),
   scratchRoot = os.tmpdir(),
+  stepper = null,
 }) {
   const conversationGrants = new Set();
   const modes = new Map();
@@ -239,6 +270,10 @@ export function createChromeService({
       return { directory };
     }
     if (action === 'chrome.close') return {};
+    if (action === 'chrome.do') {
+      if (!stepper) throw new MittrToolError(NO_STEPPER, 503);
+      return { task: { goal: required(input.goal, 'goal'), limit: taskStepLimit(input.maxSteps) } };
+    }
     const build = CHROME_COMMANDS[action];
     if (!build) throw new MittrToolError(`Unsupported Chrome action: ${action}`, 400);
     return { command: build(input) };
@@ -310,6 +345,62 @@ export function createChromeService({
     }
   };
 
+  const landedPage = async (sessionId, options) => {
+    if (options.signal?.aborted || !modes.has(options.sessionName)) return null;
+    try {
+      const landed = textOf((await control.run(['get', 'url'], options))?.url);
+      const page = new URL(landed);
+      if (page.protocol !== 'http:' && page.protocol !== 'https:') return null;
+      if (await isOwnAddress(page)) return null;
+      return (await isHostAllowed(sessionId, page.hostname.toLowerCase())) ? landed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const doTask = async ({ goal, limit }, ctx, options) => {
+    const steps = [];
+    const history = [];
+    let values;
+    const finish = async (outcome, extra = {}) => ({ outcome, ...extra, steps, url: await landedPage(ctx.sessionId, options) });
+    const cancelled = () => ctx.signal?.aborted === true;
+    for (let index = 0; index < limit; index += 1) {
+      if (cancelled()) return finish('stopped', { reason: CALL_CANCELLED });
+      let page;
+      try {
+        page = await execute('chrome.snapshot', {}, ctx);
+      } catch (error) {
+        return finish('stopped', cancelled() ? { reason: CALL_CANCELLED } : stopReasonOf(error));
+      }
+      let reply;
+      try {
+        reply = await stepper.nextStep({ goal, snapshot: textOf(page?.snapshot) ?? '', history, values }, ctx.signal);
+      } catch (error) {
+        return finish('stopped', cancelled() ? { reason: CALL_CANCELLED } : stopReasonOf(error));
+      }
+      if (cancelled()) return finish('stopped', { reason: CALL_CANCELLED });
+      if (reply.values) values = reply.values;
+      const { step } = reply;
+      if (step.action === 'done') return finish('done');
+      if (step.action === 'ask') return finish('ask', { question: step.question });
+      if (step.action === 'stop') return finish('stopped', { reason: step.reason });
+      const line = stepLine(step);
+      if (history.length >= 2 && history.slice(-2).every((previous) => previous === line)) {
+        return finish('stuck', { reason: `the same step was chosen three times: ${line}` });
+      }
+      const taken = { step: line, decidedBy: reply.decidedBy, ms: reply.ms };
+      try {
+        await execute(STEP_ACTIONS[step.action], { ref: step.ref, value: step.value }, ctx);
+      } catch (error) {
+        if (error?.code === 'site_moved') steps.push(taken);
+        return finish('stopped', cancelled() ? { reason: CALL_CANCELLED } : stopReasonOf(error));
+      }
+      history.push(line);
+      steps.push(taken);
+    }
+    return finish('step_limit', { reason: `stopped after ${limit} steps` });
+  };
+
   const execute = async (action, input = {}, ctx = {}) => {
     const sessionId = textOf(ctx.sessionId);
     if (!sessionId) throw new MittrToolError('The Chrome tool needs the calling session', 400);
@@ -360,6 +451,7 @@ export function createChromeService({
     await refuseOwnAddress(current);
     await ensureApproved(sessionId, current.hostname.toLowerCase(), ctx);
 
+    if (planned.task) return doTask(planned.task, { ...ctx, sessionId }, options);
     if (planned.directory) return screenshot({ sessionId, directory: planned.directory, label: input.label, currentUrl, runAction, options });
 
     const result = await runAction(planned.command);
@@ -402,13 +494,13 @@ export function createChromeService({
   };
 }
 
-export function registerChromeActions(registry, { service, available }) {
-  registry.defineTool({ name: MITTR_TOOLS.chrome, description: chromeToolDescription(), parameters: CHROME_PARAMETERS });
+export function registerChromeActions(registry, { service, available, doTask = () => false }) {
+  registry.defineTool({ name: MITTR_TOOLS.chrome, description: chromeToolDescription(), parameters: chromeToolParameters({ doTask: true }) });
   for (const definition of DEFINITIONS) {
     registry.register({
       ...definition,
       tool: MITTR_TOOLS.chrome,
-      available,
+      available: definition.action === 'chrome.do' ? () => available() && doTask() : available,
       execute: (input, ctx) => service.execute(definition.action, input, ctx),
     });
   }
