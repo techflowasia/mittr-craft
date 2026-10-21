@@ -54,10 +54,21 @@ test('a failed write leaves no temp file and rethrows', (t) => {
   assert.deepEqual(tempsIn(dir), []);
 });
 
-test('two writes in one millisecond use different temp names', (t) => {
+test('a cleanup that fails too does not replace the original error', (t) => {
   const dir = tempDataDir(t);
   const file = path.join(dir, 'secret.json');
-  t.mock.method(Date, 'now', () => 1_700_000_000_000);
+  const original = Object.assign(new Error('disk full'), { code: 'ENOSPC' });
+  const failing = {
+    ...fs,
+    writeFileSync: () => { throw original; },
+    rmSync: () => { throw Object.assign(new Error('cleanup failed'), { code: 'EBUSY' }); },
+  };
+  assert.throws(() => writePrivateAtomic(file, 'next', { fs: failing }), (error) => error === original);
+});
+
+test('two quick writes get different temp names', (t) => {
+  const dir = tempDataDir(t);
+  const file = path.join(dir, 'secret.json');
   const names = [];
   const recording = { ...fs, renameSync: (from, to) => { names.push(path.basename(from)); fs.renameSync(from, to); } };
   for (let i = 0; i < 50; i += 1) writePrivateAtomic(file, `v${i}`, { fs: recording });

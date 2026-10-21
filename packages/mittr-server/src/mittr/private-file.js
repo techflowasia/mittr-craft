@@ -10,7 +10,11 @@ export const writePrivateAtomic = (filePath, data, { fs = nodeFs, mode = 0o600 }
     if (process.platform !== 'win32') fs.chmodSync(temporary, mode);
     fs.renameSync(temporary, filePath);
   } catch (error) {
-    fs.rmSync(temporary, { force: true });
+    try {
+      fs.rmSync(temporary, { force: true });
+    } catch {
+      throw error;
+    }
     throw error;
   }
 };

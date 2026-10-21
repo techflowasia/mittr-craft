@@ -27,7 +27,6 @@ const emptyIndex = () => ({ active: null, accounts: [] });
 
 export const accountIndexPath = (dataDir) => path.join(dataDir, ACCOUNTS_DIR, INDEX_FILE);
 
-
 // The shape 1.x and this store write. Anything else is a damaged index: safe
 // to read as no accounts, never safe to write over.
 const isWellFormedIndex = (value) => isRecord(value)
