@@ -28,6 +28,7 @@ import { chooseSecretStore } from './secret-store.js';
 import { registerMittrShim } from './shim-routes.js';
 import { deepLinkScheme } from './sign-in.js';
 import { reconcileSkills, skillIdOf } from './skill-reconciler.js';
+import { registerMittrWorkRoutes } from './work-routes.js';
 
 const SIGNED_IN_EVENT = 'mittrcraft:signed-in';
 const SIGN_IN_FAILED_EVENT = 'mittrcraft:sign-in-failed';
@@ -341,6 +342,7 @@ export function setupMittr(context, {
 
   const quotaService = createMittrQuotaService({ broker, ensureFreshSession, fetchImpl });
   registerMittrQuotaRoutes(app, { service: quotaService });
+  registerMittrWorkRoutes(app, { broker, ensureFreshSession, fetchImpl, logger });
   const unregisterDeepLink = host?.deepLinks?.register({
     host: 'auth',
     // Either way the window is brought forward and re-reads status, so a

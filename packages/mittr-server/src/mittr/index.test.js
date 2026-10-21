@@ -1335,6 +1335,28 @@ test('this week\'s quota is read with the account token, and a signed-out read i
   assert.equal(request.headers.Authorization, 'Bearer at-1');
 });
 
+const isWorkCall = (request) => request.url.endsWith('/desktop/work');
+const WORK_ITEMS = [{ id: 'j-1', title: 'Fix the audit', project: 'MRKB', phase: null, state: 'To Do', priority: null, due: null, estimate: null, url: 'https://jira.example/browse/MRKB-2122', updatedAt: '2026-10-19T08:00:00.000Z', source: 'jira', key: 'MRKB-2122' }];
+
+test('My work answers not configured when signed out, then reads the signed-in account\'s items with its token', async (t) => {
+  const fetchImpl = fakeEngineFetch({
+    other: (request) => {
+      if (isWorkCall(request)) return json({ items: WORK_ITEMS });
+      if (isCatalogCall(request)) return json(CATALOG_A);
+      return json(session);
+    },
+  });
+  const { call } = await setUp(t, { fetchImpl });
+  assert.deepEqual(await call('GET', '/api/mittr/work'), { status: 200, body: { configured: false, items: [], userId: null } });
+  assert.equal(fetchImpl.calls.filter(isWorkCall).length, 0);
+
+  assert.equal((await signIn(call)).status, 200);
+  assert.deepEqual(await call('GET', '/api/mittr/work'), { status: 200, body: { configured: true, items: WORK_ITEMS, userId: 'u-a' } });
+  const [request] = fetchImpl.calls.filter(isWorkCall);
+  assert.equal(request.url, 'https://api-dev.mittr.asia/desktop/work');
+  assert.equal(request.headers.authorization, 'Bearer at-1');
+});
+
 test('a server that cannot add usage providers still starts, with one warning', async (t) => {
   const engine = fakeEngineContext();
   engine.context.registerQuotaProvider = () => { throw new Error('already registered'); };

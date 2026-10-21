@@ -9,7 +9,7 @@ import { CANNOT_REACH_MITTR, PLATFORM_TIMEOUT_MS, READ_FAILED } from './platform
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sourceOf = (name) => fs.readFileSync(path.join(here, name), 'utf8');
 
-const PLATFORM_CALLERS = ['auth-routes.js', 'audit-routes.js', 'catalog-routes.js', 'quota-service.js'];
+const PLATFORM_CALLERS = ['auth-routes.js', 'audit-routes.js', 'catalog-routes.js', 'quota-service.js', 'work-routes.js'];
 
 const productionModules = () => fs.readdirSync(here)
   .filter((name) => name.endsWith('.js') && !name.endsWith('.test.js') && name !== 'test-helpers.js');
