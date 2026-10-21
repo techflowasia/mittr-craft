@@ -403,10 +403,10 @@ export function createStubPlatform({ accounts, shape = 'develop', log = () => {}
     if (route === 'POST /api/integrations/plane/test') {
       const plane = state.integrations.get(accountName)?.plane;
       if (!plane?.apiKey) return json(res, 200, { ok: false, error: 'Plane is not configured' });
-      if (state.shape === 'main') return json(res, 200, { ok: true, count: 2 });
+      if (state.shape === 'main') return json(res, 200, { ok: true, count: 2, workspaceId: 'stub-not-for-clients' });
       const slugs = plane.workspaceSlugs ?? (plane.workspaceSlug ? [plane.workspaceSlug] : []);
-      const workspaces = slugs.map((slug, index) => ({ slug, ok: true, count: index + 2 }));
-      return json(res, 200, { ok: true, count: workspaces.reduce((total, w) => total + w.count, 0), workspaces });
+      const workspaces = slugs.map((slug, index) => ({ slug, ok: true, count: index + 2, id: `stub-ws-${index}`, projects: ['stub-not-for-clients'] }));
+      return json(res, 200, { ok: true, count: workspaces.reduce((total, w) => total + w.count, 0), workspaces, workspaceId: 'stub-not-for-clients' });
     }
 
     if (route === 'POST /v1/chat/completions') {

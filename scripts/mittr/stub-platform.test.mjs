@@ -89,6 +89,8 @@ test('integrations answer workspaceSlugs only in the develop shape', async () =>
       const tested = await fetch(`${base}/api/integrations/plane/test`, { method: 'POST', headers: { authorization: `Bearer ${sa.accessToken}` } }).then((r) => r.json());
       assert.equal(tested.ok, true);
       assert.equal(Array.isArray(tested.workspaces), shape === 'develop');
+      assert.equal(tested.workspaceId, 'stub-not-for-clients');
+      if (shape === 'develop') assert.deepEqual(tested.workspaces[0].projects, ['stub-not-for-clients']);
       assert.equal(platform.snapshot().puts.length, 1);
     } finally {
       await platform.close();
