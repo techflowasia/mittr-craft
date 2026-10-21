@@ -313,9 +313,12 @@ Upstream files added: 0. Running total: 34.
   - `definitions({ tool, includeVoiceOnly = false } = {}) -> Array<{ action, tool, title, description, effect, voiceOnly }>`;
   - `has(action) -> boolean`;
   - `resolve(requested, toolName) -> { action } | { error }`: a bare name such as `open` resolves inside the calling tool's actions only; an unknown one answers `Unknown action "<x>" for <tool>; it has: <list>`;
-  - `execute(action, input, ctx) -> Promise<unknown>`, `ctx = { directory?, sessionId?, signal?, approvalAnswered?, headed?, surface: 'agent' | 'voice' | 'http' }`:
+  - `useSwitches(refusalOf)`: `setupMittrTools` hands over its switch check, `refusalOf(toolName) -> Promise<MittrToolError | null>`;
+  - `execute(action, input, ctx) -> Promise<unknown>`, `ctx = { directory?, sessionId?, signal?, headed?, source?, scope?, tool?, surface: 'agent' | 'voice' | 'http' }`; there is no `approvalAnswered`:
     - a Mittr action whose `available()` is false throws `MittrToolError('<title> is not available in this install', 503)`;
     - a `voiceOnly` action from a surface other than `voice` throws 400;
+    - a Computer or Chrome action over `http` without `scope.local === true` throws 403;
+    - a Mittr action whose tool is switched off throws the agent callback's own 403 refusal, on every surface (R159): the Computer and Chrome switches for their tools, upstream's control switch for the work tool;
     - any other action goes to `control.execute(action, input, ctx.directory, { signal: ctx.signal, contextSessionId: ctx.sessionId })`.
 - `registerMittrControlRoutes(app, { express, registry })`: `POST /api/mittr/control`, body `{ action, input, contextDirectory?, contextSessionId? }` through `jsonBody(express, { limit: '1mb' })`, under the server's UI auth like upstream's control route.
   - It answers the data, or the error's status with `{ error, code?, host?, partial? … }` as upstream's route does (`asControlError` behaviour copied, not imported).
@@ -549,12 +552,14 @@ Take **one** path, as Task 1 ruled: **E** (the engine's own prompt) or **M** (Mi
   - `always` adds the host to `tools.chromeApprovedHosts`, and `once` or `always` grants it to that session;
   - `removeHost` removes it from settings and every session grant;
   - `awaitDecision` rejects with `Cancelled while waiting for the user` on abort.
-- The site fence's `ensureApproved(host)`:
+- The site fence's `ensureApproved(host)`, as built under R149 and R155:
   - an approved host passes;
-  - the first call answers 403 `{ code: 'site_approval_required', host }`, `The user has not yet allowed using their Chrome sign-in on <host>`;
-  - the plugin then asks the person and calls again with `approvalAnswered: true`, which awaits the decision. `reject` answers 403 `The user did not allow using their Chrome sign-in on <host>`.
+  - otherwise every Chrome call, from any surface, raises the engine's permission card in the calling session under a request id the server mints and binds, and waits for the person;
+  - the wait has no timeout. It ends on the person's raw reply, on the card disappearing (403 `The user's answer for <host> did not arrive; ask again`), or on the call's abort;
+  - `once` or `always` lets the call through; `reject` answers 403 `The user did not allow using their Chrome sign-in on <host>`;
+  - no call answers `site_approval_required` for a caller to act on, and no call carries `approvalAnswered`. The code remains only as the refusal when no approvals source is wired or a reply is not one of the three.
 - **Path E:**
-  - the plugin's `mittrcraft_chrome` execute raises the prompt with the call Task 1 P15 proved, with resources `[host]`, save `[host]`, message `Allow the agent to use your Chrome sign-in on <host>?` and metadata `{ host }`, then posts again with `approvalAnswered: true`;
+  - the server, not the plugin, raises the prompt with the call Task 1 P15 proved, with the id it minted, resources `[host]`, save `[host]`, message `Allow the agent to use your Chrome sign-in on <host>?` and metadata `{ host }`; the plugin posts each call once;
   - `subscribeApprovals(events, approvals)` records `permission.asked` (`action === CHROME_PERMISSION`) and `permission.replied` (field names as P15 recorded) into `approvals`;
   - `removeHost` also deletes the engine's saved rule through the route P15d found, if the engine saves one;
   - the managed fragment adds the permission rule `CHROME_PERMISSION: 'ask'` in the v2 shape P15 recorded, if the engine needs it to ask;
@@ -830,9 +835,12 @@ Upstream files added: 0. Running total: 34 + T5 + T8.
   - `registry.definitions({ includeVoiceOnly: true })` and `registry.tools()` give the schemas.
   - `registry.execute(action, input, { directory, sessionId, signal, headed: true, surface: 'voice' })` runs any Mittr or upstream action. `headed: true` opens Chrome visibly for voice, as 1.22's `510964a11` did.
   - `effect: 'read' | 'change'` on every Mittr action feeds P4-V8's "text read in a turn cannot change work in the same turn"; 4B keeps 1.22's refusal list.
-  - `MittrToolError` carries `code` (`site_approval_required`, `site_moved`, `chrome_profile_required`) and `host`, which the voice loop turns into its one spoken question.
+  - `MittrToolError` carries `code` (`site_moved`, `chrome_profile_required`) and `host`.
+  - A Chrome call on a site not yet allowed does not answer a code: it raises the engine's card in the session `sessionId` names, under a server-minted id, and waits for the person with no timeout (Task 8). `site_approval_required` and `approvalAnswered` are not part of this contract.
+  - **4B decision:** whether voice asks or refuses. Either `registry.execute` gains an option to refuse with `site_approval_required` when the caller cannot show a card, and voice asks its one spoken question and calls `chrome.allow_site`; or voice raises its own question first. Until then, a voice `chrome.open` on a new site waits on a card in the session it names.
+  - A tool switched off in Settings is refused on the voice surface too (R159), with the callback's refusal.
 - **Chrome conversation (Task 7):** `chrome.allowForConversation(sessionId)`, `chrome.endConversation(sessionId)` and `chrome.isHostAllowed(sessionId, host)`. A grant is never stored; removing a site in Settings removes it.
-- **Switches (Task 4):** `setupMittrTools(...).switches() -> { computer, chrome }` beside upstream's `agentControlToolEnabled` / `agentWebToolEnabled`. Together these are the four switches the voice loop honours.
+- **Switches (Task 4):** `setupMittrTools(...).switches() -> { computer, chrome }` beside upstream's `agentControlToolEnabled` / `agentWebToolEnabled`. Together these are the four switches the voice loop honours; `registry.execute` already enforces the first three (Computer, Chrome, and the control switch for the work tool) on every surface (R159).
 - **HTTP (Task 3):** `POST /api/mittr/control` for anything that cannot call in-process.
 
 ---
