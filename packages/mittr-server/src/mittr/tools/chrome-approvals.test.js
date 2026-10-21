@@ -600,3 +600,49 @@ test('each waiting call stops on its own turn\'s abort, and the shared question 
   assert.equal(await second, 'once');
   assert.equal(engine.state.creates.length, 1);
 });
+
+test('a call that joins a question whose last caller just left starts its own question', async (t) => {
+  const { engine, approvals } = setUp(t);
+  let releaseCreate;
+  const gate = new Promise((resolve) => { releaseCreate = resolve; });
+  const create = engine.create;
+  let held = true;
+  engine.create = async (sessionId, request) => {
+    if (held) {
+      held = false;
+      await gate;
+    }
+    return create(sessionId, request);
+  };
+  const firstTurn = new AbortController();
+  const first = askFor(approvals, 'ses_1', { signal: firstTurn.signal });
+  await until(() => engine.state.creates.length === 0 && !held);
+  firstTurn.abort();
+  const second = askFor(approvals, 'ses_1');
+  releaseCreate();
+  await assert.rejects(first, (error) => error.statusCode === 499);
+  await until(() => engine.state.pending.size === 1 && engine.state.creates.length === 2);
+  await engine.answer(engine.pendingIds()[0], 'once');
+  assert.equal(await second, 'once');
+});
+
+test('a create that raised the card but then failed closes it with a reject', async (t) => {
+  const { engine, approvals } = setUp(t);
+  const create = engine.create;
+  engine.create = async (sessionId, request) => {
+    await create(sessionId, request);
+    throw Object.assign(new Error('The operation timed out'), { name: 'TimeoutError' });
+  };
+  await assert.rejects(askFor(approvals, 'ses_1'), (error) => error.statusCode === 503);
+  assert.deepEqual(engine.state.replies.map(({ requestId, decision }) => [requestId, decision]), [['per_m1', 'reject']]);
+  assert.deepEqual(engine.pendingIds(), []);
+});
+
+test('a reply held twice for the same id keeps the newer one for the whole wait', async (t) => {
+  const { engine, approvals, hub } = setUp(t, { decisionWaitMs: 60 });
+  hub.emitRaw('permission.replied', { sessionID: 'ses_1', requestID: 'per_m1', reply: 'reject' });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  hub.emitRaw('permission.replied', { sessionID: 'ses_1', requestID: 'per_m1', reply: 'once' });
+  await new Promise((resolve) => setTimeout(resolve, 35));
+  assert.equal(await askFor(approvals, 'ses_1'), 'once');
+});

@@ -222,6 +222,11 @@ export function createChromeSiteApprovals({
   };
 
   const holdEarly = (requestId, sessionId, reply) => {
+    const repeated = early.get(requestId);
+    if (repeated) {
+      clearTimeout(repeated.timer);
+      early.delete(requestId);
+    }
     if (early.size >= EARLY_LIMIT) {
       const [oldest, held] = early.entries().next().value;
       clearTimeout(held.timer);
@@ -298,6 +303,7 @@ export function createChromeSiteApprovals({
       answer = await engine.create(entry.sessionId, requestFor(id, entry.host, source));
     } catch (error) {
       logger.warn(`[mittr] the engine did not raise the Chrome site question: ${error?.status ?? 'no answer'}`);
+      await engine.reply(entry.sessionId, id, 'reject').catch(() => undefined);
       throw couldNotAsk(entry.host);
     }
     if (answer?.effect !== 'ask') return answer?.effect ?? null;
@@ -386,7 +392,7 @@ export function createChromeSiteApprovals({
     if (signal?.aborted) return Promise.reject(new MittrToolError(CANCELLED, 499));
     const key = keyFor(sessionId, host);
     let entry = asking.get(key);
-    if (!entry || entry.done) {
+    if (!entry || entry.done || entry.controller.signal.aborted) {
       entry = { sessionId, host, requestId: null, done: false, callers: 0, controller: new AbortController() };
       const started = entry;
       asking.set(key, started);
