@@ -92,6 +92,17 @@ The entry was removed from the managed file.
 - **Timing.** In 1 of 11 runs, the turn right after the removal still listed the connector in the Code Mode catalog, though its processes had already exited. That run had no retry; the probe now retries a turn every 0.5 s within the 10 s window, and records each try.
 - Engine PID 73975 was unchanged.
 
+## Config reads
+
+Measured in fix round 3 of Task 9 (`probe-engine-v2.mjs --only config-exposure`), with a managed config holding a remote connector with a secret header and a local connector with a secret environment value. Neither connector reached a host.
+
+- **`GET /api/config` returns the managed config's `mcp` secrets.** With or without `?directory=`, and through `client.config.get()`, the answer lists the managed file as a config document and carries its `mcp.servers.*.headers` and `environment` verbatim.
+- **`GET /api/config/shell`, `GET /api/mcp` and `client.mcp.list()` do not.** `mcp.list` gives only each server's name, status and error.
+- **The server's generic `/api` proxy passes `GET /api/config` through unchanged**, so every UI session that can reach the server can read it.
+- **On the desktop app the UI is the person's own.** The window talks to its own loopback server, so the person reads back only the connectors of the account they signed in with.
+- **Hosted web is off under ruling R132.** On any hosted runtime (no desktop host, a UI password, or company sign-in), mittr-server renders no catalog connector into the managed config and logs one line at start. The catalog list and its toggles still work.
+- **Owner decision (I3).** Either add a generic proxy response-redaction hook for `mcp.servers.*.headers`, `environment` and `oauth.client_secret` (+1 upstream touch), or keep catalog connectors off hosted web. The same read also returns everything else in the managed config to hosted UI sessions.
+
 ## Outbound connections
 
 There were none.

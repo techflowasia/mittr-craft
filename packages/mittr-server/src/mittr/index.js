@@ -34,6 +34,7 @@ const SIGN_IN_FAILED_EVENT = 'mittrcraft:sign-in-failed';
 const RESYNC_INTERVAL_MS = 60_000;
 const MANAGED_CONFIG_FILE_NAME = 'opencode.managed.json';
 const QUIET_LOGGER = { warn: () => {} };
+const HOSTED_CONNECTORS_OFF = '[mittr] catalog connectors are off on hosted web until an administrator decides how their secrets are protected';
 
 const modelListOf = (items) => items.map(({ alias, label }) => ({ alias, label }));
 
@@ -93,8 +94,11 @@ export function setupMittr(context, {
   engineDataHome = null,
   now = Date.now,
   mintShimKey = mintLocalToken,
+  companySignIn = false,
 } = {}) {
-  const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig, events, git } = context;
+  const { app, express, dataDir, logger = console, host = null, server, opencode, mergeEngineConfig, events, git, uiAuth } = context;
+  const connectorsOff = !host || companySignIn === true || uiAuth?.passwordEnabled?.() === true;
+  if (connectorsOff) logger.log(HOSTED_CONNECTORS_OFF);
   const broker = resolveBroker(env);
   const scheme = deepLinkScheme(env);
   const { encrypt, decrypt, refusal } = chooseSecretStore({ host, logger });
@@ -212,7 +216,7 @@ export function setupMittr(context, {
   };
   const connectorInputs = () => ({ collection: activeCatalogCache().read()?.mcp, enablement, toEntity: opencode.mcpEntity, held: ownMcpNames() });
   const managedConnectors = ({ log = false } = {}) => {
-    if (activeAccountKey() === null) return {};
+    if (connectorsOff || activeAccountKey() === null) return {};
     try {
       return mcpFragment({ ...connectorInputs(), logger: log ? logger : QUIET_LOGGER });
     } catch (error) {
@@ -221,7 +225,7 @@ export function setupMittr(context, {
     }
   };
   const connectorLeftOut = (name) => {
-    if (activeAccountKey() === null) return false;
+    if (connectorsOff || activeAccountKey() === null) return false;
     return catalogMcpServers(connectorInputs()).leftOut.some((entry) => entry.name === name);
   };
 
@@ -528,6 +532,7 @@ export function setupMittr(context, {
   };
   const applyConnectorsAfterToggle = async (name) => {
     sweepLegacyConnectorsQuietly();
+    if (connectorsOff) return;
     await rewriteProviderLock();
     if (connectorLeftOut(name)) throw new Error(`catalog connector '${name}' was not applied`);
   };

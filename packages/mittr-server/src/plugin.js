@@ -146,6 +146,7 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
     engineConfigDir: engineConfigDir({ bases, env }),
     engineDataHome: (accountHome) => engineEnv({ bases, accountHome, rule: ENGINE_DB_RULE }).XDG_DATA_HOME,
     mintShimKey,
+    companySignIn: companySignIn.enabled,
   });
   return {
     engineEnv: async () => ({ ...baseEngineEnv(mittr.engineHome()), ...(await mittr.engineEnv()), ...withheldNow() }),

@@ -54,7 +54,7 @@ const serverLikeApp = () => {
 // before it first starts the engine.
 const shimKeys = new Map();
 
-const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext(), sharedHistoryExists, built = true, engineConfigDir = USER_CONFIG_DIR, engineDataHome, now } = {}) => {
+const setUp = async (t, { host = null, uiAuth, companySignIn, env = DEV_ENV, fetchImpl = fakeFetch(() => json(session)), dataDir = tempDataDir(t), engine = fakeEngineContext(), sharedHistoryExists, built = true, engineConfigDir = USER_CONFIG_DIR, engineDataHome, now } = {}) => {
   const app = serverLikeApp();
   const logger = recordingLogger();
   const mintShimKey = () => {
@@ -62,7 +62,7 @@ const setUp = async (t, { host = null, env = DEV_ENV, fetchImpl = fakeFetch(() =
     shimKeys.set(dataDir, key);
     return key;
   };
-  const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context }, { env, fetchImpl, sharedHistoryExists, engineConfigDir, engineDataHome, now, mintShimKey });
+  const mittr = setupMittr({ app, express, dataDir, logger, host, ...engine.context, ...(uiAuth ? { uiAuth } : {}) }, { env, fetchImpl, sharedHistoryExists, engineConfigDir, engineDataHome, now, mintShimKey, companySignIn });
   t.after(() => mittr.dispose());
   engine.contribute = mittr.managedConfig;
   if (built) await mittr.managedConfig();
@@ -1638,6 +1638,8 @@ const MY_SERVERS = { mine: { type: 'local', command: ['my-own-mcp'] }, 'mittr-fo
 const noConnectorWrites = (engine) => engine.userConfigWrites.every(({ config }) => Object.keys(config.mcp?.servers ?? {}).every((name) => Object.hasOwn(MY_SERVERS, name))
   && Object.keys(config.mcp ?? {}).every((name) => !name.startsWith('mittr-')));
 
+const desktopHost = () => ({ secretStore: sealingStore(), deepLinks: deepLinkHost() });
+
 const managedFileOnDisk = (t, engine) => {
   const runtime = createManagedConfigRuntime({
     fsPromises: fs.promises,
@@ -1692,7 +1694,7 @@ test('a sync writes the account\'s connectors into the managed file, and signing
   const engine = fakeEngineContext({ userConfigFile: { mcp: { servers: MY_SERVERS } } });
   const disk = managedFileOnDisk(t, engine);
   const fetchImpl = platform({ catalogs: { 'at-1': withMcp(CATALOG_A, [mcpConnector('docs', 'docs-mcp'), mcpConnector('law', 'law-mcp')]) } });
-  const { call } = await setUp(t, { engine, fetchImpl });
+  const { call } = await setUp(t, { host: desktopHost(), engine, fetchImpl });
 
   assert.equal((await signIn(call)).status, 200);
   await until(() => disk.mcp().length === 2);
@@ -1715,7 +1717,7 @@ test('a switch has only the new account\'s connectors in the managed file before
   const disk = managedFileOnDisk(t, engine);
   engine.launchedDataHome = dataHomeOf('none');
   const atRestart = [];
-  const { mittr, call } = await setUp(t, { engine, fetchImpl, engineDataHome: dataHomeOf });
+  const { mittr, call } = await setUp(t, { host: desktopHost(), engine, fetchImpl, engineDataHome: dataHomeOf });
   engine.onRestart = () => {
     atRestart.push(disk.mcp());
     engine.launchedDataHome = dataHomeOf(mittr.engineHome());
@@ -1742,7 +1744,7 @@ test('a catalog whose only change is a connector rewrites the managed file once'
   const fetchImpl = platform({ catalog: () => json(offered) });
   const engine = fakeEngineContext();
   const disk = managedFileOnDisk(t, engine);
-  const { mittr, call } = await setUp(t, { engine, fetchImpl });
+  const { mittr, call } = await setUp(t, { host: desktopHost(), engine, fetchImpl });
   assert.equal((await signIn(call)).status, 200);
   await until(async () => (await mittrModelsOf(mittr)).length === 2);
   assert.equal((await call('POST', '/api/mittr/catalog/sync')).status, 200);
@@ -1760,7 +1762,7 @@ test('turning a catalog connector off takes it out of the managed file at once, 
   const engine = fakeEngineContext();
   const disk = managedFileOnDisk(t, engine);
   const fetchImpl = platform({ catalogs: { 'at-1': withMcp(CATALOG_A, [mcpConnector('docs', 'docs-mcp'), mcpConnector('law', 'law-mcp')]) } });
-  const { call } = await setUp(t, { engine, fetchImpl });
+  const { call } = await setUp(t, { host: desktopHost(), engine, fetchImpl });
   assert.equal((await signIn(call)).status, 200);
   await until(() => disk.mcp().length === 2);
 
@@ -1777,7 +1779,7 @@ test('a toggle answers applied false when the connector is left out or the manag
   const engine = fakeEngineContext({ userConfigFile: { mcp: { servers: MY_SERVERS } } });
   const disk = managedFileOnDisk(t, engine);
   const fetchImpl = platform({ catalogs: { 'at-1': withMcp(CATALOG_A, [mcpConnector('foo', 'org-foo'), mcpConnector('docs', 'docs-mcp')]) } });
-  const { call, logger } = await setUp(t, { engine, fetchImpl });
+  const { call, logger } = await setUp(t, { host: desktopHost(), engine, fetchImpl });
   assert.equal((await signIn(call)).status, 200);
   await until(() => disk.mcp().includes('mittr-docs'));
   assert.deepEqual(disk.mcp(), ['mittr-docs']);
@@ -1804,7 +1806,7 @@ test('a name the person\'s own user config or engine config folder already holds
   const engine = fakeEngineContext({ userConfigFile: { mcp: { servers: MY_SERVERS, 'mittr/legacy': legacy } } });
   const disk = managedFileOnDisk(t, engine);
   const fetchImpl = platform({ catalogs: { 'at-1': withMcp(CATALOG_A, ['foo', 'bar', 'docs'].map((name) => mcpConnector(name, `org-${name}`, 'org-secret'))) } });
-  const { call, logger } = await setUp(t, { engine, fetchImpl, engineConfigDir });
+  const { call, logger } = await setUp(t, { host: desktopHost(), engine, fetchImpl, engineConfigDir });
 
   assert.equal((await signIn(call)).status, 200);
   await until(() => disk.mcp().length > 0);
@@ -1826,7 +1828,7 @@ test('a name the person\'s own OPENCODE_CONFIG file or OPENCODE_CONFIG_CONTENT h
   const engine = fakeEngineContext();
   const disk = managedFileOnDisk(t, engine);
   const fetchImpl = platform({ catalogs: { 'at-1': withMcp(CATALOG_A, ['own', 'content', 'docs'].map((name) => mcpConnector(name, `org-${name}`))) } });
-  const { call, logger } = await setUp(t, { dataDir, engine, fetchImpl, env: { ...DEV_ENV, OPENCODE_CONFIG: ownFile, OPENCODE_CONFIG_CONTENT: content } });
+  const { call, logger } = await setUp(t, { host: desktopHost(), dataDir, engine, fetchImpl, env: { ...DEV_ENV, OPENCODE_CONFIG: ownFile, OPENCODE_CONFIG_CONTENT: content } });
 
   assert.equal((await signIn(call)).status, 200);
   await until(() => disk.mcp().length > 0);
@@ -1845,7 +1847,7 @@ test('an OPENCODE_CONFIG that names the managed file itself does not hide the ca
   const engine = fakeEngineContext();
   const disk = managedFileOnDisk(t, engine);
   const fetchImpl = platform({ catalogs: { 'at-1': withMcp(CATALOG_A, [mcpConnector('docs', 'org-docs')]) } });
-  const { call } = await setUp(t, { dataDir, engine, fetchImpl, env: { ...DEV_ENV, OPENCODE_CONFIG: managedFile } });
+  const { call } = await setUp(t, { host: desktopHost(), dataDir, engine, fetchImpl, env: { ...DEV_ENV, OPENCODE_CONFIG: managedFile } });
   assert.equal((await signIn(call)).status, 200);
   await until(() => disk.mcp().length > 0);
   assert.deepEqual(disk.mcp(), ['mittr-docs']);
@@ -1885,7 +1887,7 @@ test('no connector header, env value or argument reaches a log line, an error or
   const engine = fakeEngineContext({ userConfigFile: { mcp: { servers: MY_SERVERS } } });
   const disk = managedFileOnDisk(t, engine);
   const fetchImpl = platform({ catalogs: { 'at-1': SECRET_CATALOG } });
-  const { call, logger, dataDir } = await setUp(t, { engine, fetchImpl });
+  const { call, logger, dataDir } = await setUp(t, { host: desktopHost(), engine, fetchImpl });
   const answers = [];
   const ask = async (method, route, body) => {
     const answer = await call(method, route, body);
@@ -1937,4 +1939,88 @@ test('GET /api/mittr/catalog answers no connector header, env value, argument or
     { name: 'Remote', type: 'remote', host: 'acme.example', enabled: true },
     { name: 'foo', type: 'local', enabled: true },
   ]);
+});
+
+const HOSTED_LINE = '[mittr] catalog connectors are off on hosted web until an administrator decides how their secrets are protected';
+const hostedLines = (logger) => [...logger.lines, ...logger.warnings, ...logger.errors].filter((line) => line === HOSTED_LINE);
+const HOSTED_CATALOG = withSkills(withMcp(CATALOG_A, [mcpConnector('docs', 'docs-mcp')]), [catalogSkill('notes')]);
+
+test('a hosted runtime renders no catalog connector and logs once', async (t) => {
+  for (const [runtime, options] of [
+    ['the server with no desktop host', { host: null }],
+    ['a desktop server with a UI password', { host: desktopHost(), uiAuth: { passwordEnabled: () => true } }],
+    ['a desktop server with company sign-in', { host: desktopHost(), companySignIn: true }],
+  ]) {
+    const engineConfigDir = engineConfigHome(t);
+    const engine = fakeEngineContext();
+    const disk = managedFileOnDisk(t, engine);
+    const fetchImpl = platform({ catalogs: { 'at-1': HOSTED_CATALOG } });
+    const { mittr, call, logger } = await setUp(t, { ...options, engine, engineConfigDir, fetchImpl });
+
+    assert.equal((await signIn(call)).status, 200, runtime);
+    await until(() => disk.read() !== null && orgSkillsIn(engineConfigDir).includes('mittr-notes'));
+    assert.equal((await call('POST', '/api/mittr/catalog/sync')).status, 200, runtime);
+    assert.deepEqual(disk.mcp(), [], runtime);
+    assert.deepEqual(Object.keys(disk.read().providers?.mittr?.models ?? {}).sort(), ['a1', 'a2'], runtime);
+    assert.deepEqual(orgSkillsIn(engineConfigDir), ['mittr-notes'], runtime);
+
+    assert.deepEqual((await call('GET', '/api/mittr/catalog')).body.mcp.items, [{ name: 'docs', type: 'local', enabled: true }], runtime);
+    assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'mcp', name: 'docs', enabled: false }), { status: 200, body: { ok: true } }, runtime);
+    assert.deepEqual((await call('GET', '/api/mittr/catalog')).body.mcp.items, [{ name: 'docs', type: 'local', enabled: false }], runtime);
+    assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'mcp', name: 'docs', enabled: true }), { status: 200, body: { ok: true } }, runtime);
+    assert.equal((await mittr.managedConfig()).mcp, undefined, runtime);
+    assert.deepEqual(disk.mcp(), [], runtime);
+    assert.equal(hostedLines(logger).length, 1, runtime);
+  }
+});
+
+test('the desktop runtime still renders the account\'s connectors', async (t) => {
+  const engineConfigDir = engineConfigHome(t);
+  const engine = fakeEngineContext();
+  const disk = managedFileOnDisk(t, engine);
+  const fetchImpl = platform({ catalogs: { 'at-1': HOSTED_CATALOG } });
+  const { call, logger } = await setUp(t, { host: desktopHost(), uiAuth: { passwordEnabled: () => false }, engine, engineConfigDir, fetchImpl });
+
+  assert.equal((await signIn(call)).status, 200);
+  await until(() => disk.mcp().length === 1);
+  assert.deepEqual(disk.mcp(), ['mittr-docs']);
+  assert.deepEqual(orgSkillsIn(engineConfigDir), ['mittr-notes']);
+  assert.deepEqual(await call('PUT', '/api/mittr/catalog/enablement', { kind: 'mcp', name: 'docs', enabled: false }), { status: 200, body: { ok: true } });
+  assert.deepEqual(disk.mcp(), []);
+  assert.deepEqual(hostedLines(logger), []);
+});
+
+test('the hosted signal is fixed at start', async (t) => {
+  let passwordOn = true;
+  for (const options of [{ host: null }, { host: desktopHost(), uiAuth: { passwordEnabled: () => passwordOn } }]) {
+    passwordOn = true;
+    const env = { ...DEV_ENV };
+    const engine = fakeEngineContext();
+    const disk = managedFileOnDisk(t, engine);
+    const fetchImpl = platform({ catalogs: { 'at-1': HOSTED_CATALOG } });
+    const { mittr, call, logger } = await setUp(t, { ...options, env, engine, fetchImpl });
+
+    passwordOn = false;
+    Object.assign(env, { OPENCHAMBER_RUNTIME: 'desktop', OPENCHAMBER_DESKTOP: '1', ELECTRON_RUN_AS_NODE: '1', MITTRCRAFT_DESKTOP: '1' });
+    delete env.MITTRCRAFT_BROKER_URL;
+    const desktopHeaders = {
+      'content-type': 'application/json',
+      'user-agent': 'Mozilla/5.0 MittrCraft/2.0.0 Electron/38.0.0',
+      origin: 'openchamber-ui://app',
+      'x-openchamber-runtime': 'desktop',
+      'x-forwarded-for': '127.0.0.1',
+    };
+    const send = (method, route, body) => fetch(call.base + route, { method, headers: desktopHeaders, body: body === undefined ? undefined : JSON.stringify(body) });
+
+    assert.equal((await signIn(call)).status, 200);
+    await until(() => disk.read() !== null);
+    assert.equal((await send('POST', '/api/mittr/catalog/sync')).status, 200);
+    assert.equal((await send('PUT', '/api/mittr/catalog/enablement', { kind: 'mcp', name: 'docs', enabled: false })).status, 200);
+    assert.equal((await send('PUT', '/api/mittr/catalog/enablement', { kind: 'mcp', name: 'docs', enabled: true })).status, 200);
+    await engine.context.managedConfig.refresh();
+
+    assert.equal((await mittr.managedConfig()).mcp, undefined);
+    assert.deepEqual(disk.mcp(), []);
+    assert.equal(hostedLines(logger).length, 1);
+  }
 });

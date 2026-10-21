@@ -331,6 +331,26 @@ test('setup with Microsoft sign-in configured requires it for browser sessions',
   assert.deepEqual(registered, []);
 });
 
+test('a desktop server that requires company sign-in keeps the catalog connectors off, and one that does not keeps them on', async (t) => {
+  const offLine = '[mittr] catalog connectors are off on hosted web until an administrator decides how their secrets are protected';
+  for (const [signInEnv, expected] of [[ENTRA_ENV, 1], [{}, 0]]) {
+    const home = tempHome(t);
+    const dataDir = prodLayout(home);
+    const logger = recordingLogger();
+    const { uiAuth } = uiAuthContext();
+    const host = { secretStore: { encrypt: (text) => Buffer.from(text), decrypt: (data) => Buffer.from(data).toString() }, deepLinks: { register: () => () => {} } };
+    const plugin = await setupMittrServer({
+      dataDir,
+      logger,
+      env: { ...signInEnv, MITTRCRAFT_BROKER_URL: 'https://api.mittr.asia', MITTRCRAFT_BROKER_FIXED: '1', MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft' },
+      homeDir: home,
+      context: { app: express(), express, dataDir, logger, host, requestScope: () => 'local', uiAuth, ...fakeEngineContext({ port: null }).context },
+    });
+    assert.equal(logger.lines.filter((line) => line === offLine).length, expected);
+    await plugin.dispose();
+  }
+});
+
 test('setup with partial Microsoft settings refuses to start', async (t) => {
   const home = tempHome(t);
   const dataDir = prodLayout(home);
