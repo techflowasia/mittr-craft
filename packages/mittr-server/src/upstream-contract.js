@@ -617,7 +617,22 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'engine-tool-plugin-api',
     files: ['packages/electron/package.json'],
-    why: 'the bundled engine is OpenCode 2.0.22, whose plugin ctx.tool.transform takes tools.add({ name, description, options: { codemode }, input, execute }) with plain JSON Schema input, hands execute a context with sessionID and an abort signal, and applies a rewritten plugin file without a restart; a new engine version needs probe P13 to P18 (scripts/mittr/probe-engine-v2.mjs --only agent-tools) run again before this pin moves',
+    why: "the bundled engine is OpenCode 2.0.22, whose plugin ctx.tool.transform takes tools.add({ name, description, options: { codemode }, input, execute }) with plain JSON Schema input, hands execute a context with sessionID and an abort signal, lets a later plugin replace upstream's openchamber_web execute through tools.get and tools.update, sends a tool result's { type: 'file', uri: 'data:<mime>;base64,…', mime, name } content part to the model as an image (directly and through Code Mode, with the default model input), and applies a rewritten plugin file without a restart; a new engine version needs probe P13 to P18 (scripts/mittr/probe-engine-v2.mjs --only agent-tools) run again before this pin moves",
+  },
+  {
+    id: 'screenshot-directory',
+    files: ['packages/web/server/lib/openchamber-control/screenshots.js'],
+    why: "upstream's SCREENSHOT_DIRECTORY is .openchamber/screenshots, and writeScreenshot saves under it at the project-relative posix path it reports, with a .png, .jpg or .webp extension, so the MittrCraft tools read a capture back from the session's project (readCapture) at exactly that path, and save their own screenshots through the same writer",
+  },
+  {
+    id: 'web-capture-result',
+    files: [
+      'packages/web/server/lib/openchamber-control/service.js',
+      'packages/web/server/lib/agent-tool/runtime.js',
+      'packages/web/server/lib/opencode/managed-config-file.js',
+      'packages/web/server/lib/opencode/settings-runtime.js',
+    ],
+    why: "upstream's control service answers browser.capture with a project-relative path under SCREENSHOT_DIRECTORY and no image bytes, saved under the input's directory when one is given and the session's otherwise, and the agent tool's openchamber_web returns that envelope as text content; it is offered unless agentWebToolEnabled is false, and a change of that switch rewrites the managed config, so the MittrCraft tools plugin wraps openchamber_web while the switch is on and adds the saved image after upstream's text, only for a capture saved in the session's own project",
   },
 ];
 

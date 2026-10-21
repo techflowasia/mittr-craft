@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
+import { MARKER_PNG, PROVEN_IMAGE_PART } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
 import { listen, tempDataDir } from '../test-helpers.js';
 import { TOOLS_PLUGIN_ID, materializeToolsPlugin, toolsFragment, toolsPluginDir, toolsPluginSource } from './plugin-source.js';
 
@@ -22,11 +23,54 @@ const COMPUTER = {
   definitions: [{ action: 'computer.list_apps', title: 'List apps', description: 'Lists apps.' }],
 };
 
-const loadPlugin = async (source) => {
+const loadPlugin = async (source, { web } = {}) => {
   const plugin = (await import(`data:text/javascript,${encodeURIComponent(source)}`)).default;
   const added = [];
-  await plugin.setup({ tool: { transform: async (fn) => fn({ add: (tool) => added.push(tool) }) } });
-  return { plugin, added };
+  const looked = [];
+  const tools = {
+    add: (tool) => added.push(tool),
+    get: (name) => {
+      looked.push(name);
+      return name === 'openchamber_web' ? web : undefined;
+    },
+    update: (name, fn) => {
+      if (name !== 'openchamber_web' || !web) throw new Error(`no tool ${name}`);
+      fn(web);
+    },
+  };
+  await plugin.setup({ tool: { transform: async (fn) => fn(tools) } });
+  return { plugin, added, looked };
+};
+
+const CAPTURE_PATH = '.openchamber/screenshots/home-2026-10-21T01-02-03-456.png';
+
+const panelTool = (envelope) => {
+  const content = JSON.stringify(envelope);
+  const calls = [];
+  return {
+    calls,
+    content,
+    tool: {
+      name: 'openchamber_web',
+      execute: async (input, context) => {
+        calls.push({ input, context });
+        return { content, metadata: { panel: { action: envelope.action, ok: envelope.ok } } };
+      },
+    },
+  };
+};
+
+const CAPTURED = { schemaVersion: 1, ok: true, action: 'browser.capture', data: { path: CAPTURE_PATH, hint: 'Write the path.' } };
+
+const imageServer = async (t, answer) => {
+  const seen = [];
+  const base = await listen(t, async (req, res) => {
+    const body = JSON.parse(await readBody(req));
+    seen.push({ authorization: req.headers.authorization, body });
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify(answer(body)));
+  });
+  return { base, seen };
 };
 
 const withConnection = (t, url, token = 'tok-1') => {
@@ -176,5 +220,127 @@ test('the plugin is written privately under the data dir, and an unchanged one i
 
 test('the plugin names MittrCraft and none of the engine host\'s own names', () => {
   const source = toolsPluginSource({ tools: [CHROME, COMPUTER], codeMode: false });
+  assert.doesNotMatch(source, /OpenChamber|OpenCode/);
+});
+
+test('a Mittr action\'s image reaches the model as an image part after the envelope text without the image', async (t) => {
+  const envelope = { schemaVersion: 1, ok: true, action: 'chrome.open', data: { path: '.openchamber/screenshots/probe.png', url: 'http://a.test/', image: { base64: MARKER_PNG, mime: 'image/png' } } };
+  const base = await listen(t, (req, res) => res.end(JSON.stringify(envelope)));
+  withConnection(t, `${base}/mittr-tools/v1/call`);
+  const { added } = await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false }));
+
+  const result = await added[0].execute({ action: 'open' }, { sessionID: 'ses_1', signal: new AbortController().signal });
+
+  assert.equal(result.content.length, 2);
+  assert.equal(result.content[0].type, 'text');
+  assert.deepEqual(JSON.parse(result.content[0].text), { schemaVersion: 1, ok: true, action: 'chrome.open', data: { path: '.openchamber/screenshots/probe.png', url: 'http://a.test/' } });
+  assert.deepEqual(result.content[1], PROVEN_IMAGE_PART);
+  assert.deepEqual(result.metadata, { mittrcraft: { schemaVersion: 1, action: 'chrome.open', description: 'Open a page', ok: true } });
+});
+
+test('a Mittr image too large to attach becomes a sentence saying where it is saved', async (t) => {
+  const envelope = { schemaVersion: 1, ok: true, action: 'chrome.open', data: { path: '.openchamber/screenshots/big.png', image: { tooLarge: true } } };
+  const base = await listen(t, (req, res) => res.end(JSON.stringify(envelope)));
+  withConnection(t, `${base}/mittr-tools/v1/call`);
+  const { added } = await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false }));
+
+  const result = await added[0].execute({ action: 'open' }, { sessionID: 'ses_1', signal: new AbortController().signal });
+
+  assert.deepEqual(result.content, [
+    { type: 'text', text: JSON.stringify({ schemaVersion: 1, ok: true, action: 'chrome.open', data: { path: '.openchamber/screenshots/big.png' } }) },
+    { type: 'text', text: 'The image is too large to attach; it is saved at .openchamber/screenshots/big.png' },
+  ]);
+});
+
+test('without wrapCapture the panel tool is left alone', async () => {
+  const panel = panelTool(CAPTURED);
+  const { looked } = await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false }), { web: panel.tool });
+  assert.deepEqual(looked, []);
+  assert.equal(toolsPluginSource({ tools: [CHROME], codeMode: false }).includes('openchamber_web'), false);
+});
+
+test('a capture of the panel tool gets the saved image after its own text', async (t) => {
+  const { base, seen } = await imageServer(t, () => ({ schemaVersion: 1, ok: true, action: 'capture-image', data: { image: { base64: MARKER_PNG, mime: 'image/png' } } }));
+  withConnection(t, `${base}/mittr-tools/v1/call`);
+  const panel = panelTool(CAPTURED);
+  const { added } = await loadPlugin(toolsPluginSource({ tools: [], codeMode: false, wrapCapture: true }), { web: panel.tool });
+  const signal = new AbortController().signal;
+
+  const result = await panel.tool.execute({ action: 'capture', parameters: { label: 'home' } }, { sessionID: 'ses_1', signal });
+
+  assert.equal(added.length, 0);
+  assert.equal(panel.calls.length, 1);
+  assert.deepEqual(panel.calls[0].input, { action: 'capture', parameters: { label: 'home' } });
+  assert.deepEqual(seen, [{ authorization: 'Bearer tok-1', body: { tool: 'openchamber_web', internal: 'capture-image', path: CAPTURE_PATH, sessionID: 'ses_1' } }]);
+  assert.deepEqual(result.content, [
+    { type: 'text', text: panel.content },
+    { type: 'file', uri: `data:image/png;base64,${MARKER_PNG}`, mime: 'image/png', name: 'home-2026-10-21T01-02-03-456.png' },
+  ]);
+  assert.deepEqual(result.metadata, { panel: { action: 'browser.capture', ok: true } });
+});
+
+test('a panel capture too large to attach says where it is saved', async (t) => {
+  const { base } = await imageServer(t, () => ({ schemaVersion: 1, ok: true, action: 'capture-image', data: { image: { tooLarge: true } } }));
+  withConnection(t, `${base}/mittr-tools/v1/call`);
+  const panel = panelTool(CAPTURED);
+  await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false, wrapCapture: true }), { web: panel.tool });
+
+  const result = await panel.tool.execute({ action: 'capture' }, { sessionID: 'ses_1', signal: new AbortController().signal });
+
+  assert.deepEqual(result.content, [
+    { type: 'text', text: panel.content },
+    { type: 'text', text: `The image is too large to attach; it is saved at ${CAPTURE_PATH}` },
+  ]);
+});
+
+test('a capture asked for another directory names it to the callback', async (t) => {
+  const { base, seen } = await imageServer(t, () => ({ schemaVersion: 1, ok: false, action: 'capture-image', error: { message: 'That image is not a saved screenshot of this project', kind: 'usage' } }));
+  withConnection(t, `${base}/mittr-tools/v1/call`);
+  const panel = panelTool(CAPTURED);
+  await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false, wrapCapture: true }), { web: panel.tool });
+
+  const flat = await panel.tool.execute({ action: 'capture', directory: '/elsewhere' }, { sessionID: 'ses_1', signal: new AbortController().signal });
+  const nested = await panel.tool.execute({ action: 'capture', directory: '/flat', parameters: { directory: '/nested' } }, { sessionID: 'ses_1', signal: new AbortController().signal });
+
+  assert.deepEqual(seen.map(({ body }) => body.directory), ['/elsewhere', '/nested']);
+  assert.equal(flat.content, panel.content);
+  assert.equal(nested.content, panel.content);
+});
+
+test('a failed upstream capture passes through unchanged', async (t) => {
+  const { base, seen } = await imageServer(t, () => ({ schemaVersion: 1, ok: true, action: 'capture-image', data: { image: { base64: MARKER_PNG, mime: 'image/png' } } }));
+  withConnection(t, `${base}/mittr-tools/v1/call`);
+  const context = { sessionID: 'ses_1', signal: new AbortController().signal };
+
+  for (const envelope of [
+    { schemaVersion: 1, ok: false, action: 'browser.capture', error: { message: 'The in-app browser is not available on this server', kind: 'runtime' } },
+    { schemaVersion: 1, ok: true, action: 'browser.open', data: { path: CAPTURE_PATH } },
+    { schemaVersion: 1, ok: true, action: 'browser.capture', data: {} },
+  ]) {
+    const panel = panelTool(envelope);
+    await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false, wrapCapture: true }), { web: panel.tool });
+    const result = await panel.tool.execute({ action: 'capture' }, context);
+    assert.deepEqual(result, { content: panel.content, metadata: { panel: { action: envelope.action, ok: envelope.ok } } });
+  }
+  assert.deepEqual(seen, []);
+
+  const panel = panelTool(CAPTURED);
+  await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false, wrapCapture: true }), { web: panel.tool });
+  process.env.MITTRCRAFT_TOOLS_URL = 'http://127.0.0.1:9/mittr-tools/v1/call';
+  assert.equal((await panel.tool.execute({ action: 'capture' }, context)).content, panel.content);
+  delete process.env.MITTRCRAFT_TOOLS_TOKEN;
+  assert.equal((await panel.tool.execute({ action: 'capture' }, context)).content, panel.content);
+});
+
+test('with wrapCapture and no panel tool the plugin still loads its own tools', async () => {
+  const { added, looked } = await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false, wrapCapture: true }));
+  assert.deepEqual(looked, ['openchamber_web']);
+  assert.deepEqual(added.map((tool) => tool.name), ['acme_chrome']);
+});
+
+test('the plugin with the capture wrap still has no import', () => {
+  const source = toolsPluginSource({ tools: [CHROME], codeMode: false, wrapCapture: true });
+  assert.doesNotMatch(source, /^\s*import\b/m);
+  assert.doesNotMatch(source, /\bimport\s*\(/);
   assert.doesNotMatch(source, /OpenChamber|OpenCode/);
 });

@@ -1777,6 +1777,43 @@ const checks = {
     has(source('packages/web/server/index.js'), /if \(payload\.type === 'session\.idle' && payload\.properties\?\.aborted === true\) \{\s*agentToolRuntime\?\.abortSession\?\.\(payload\.properties\.sessionID\);/, 'upstream\'s agent tool no longer aborts on the same signal');
   },
 
+  'screenshot-directory': async (t) => {
+    const screenshots = await importUpstream('packages/web/server/lib/openchamber-control/screenshots.js');
+    const { readCapture } = await import('./mittr/tools/screenshots.js');
+    assert.equal(screenshots.SCREENSHOT_DIRECTORY, path.join('.openchamber', 'screenshots'), 'the screenshot folder moved');
+    const directory = tempDir(t, 'contract-capture-');
+    const bytes = Buffer.from('acme-image');
+    for (const [mime, extension] of [['image/png', '.png'], ['image/jpeg', '.jpg'], ['image/webp', '.webp']]) {
+      const written = await screenshots.writeScreenshot({ directory, base64: bytes.toString('base64'), mime, label: 'Acme Page' });
+      assert.ok(written.path.startsWith('.openchamber/screenshots/acme-page-') && written.path.endsWith(extension), `writeScreenshot no longer saves ${mime} as ${extension} under the folder with the label slug: ${written.path}`);
+      assert.equal(written.absolutePath, path.join(directory, written.path), 'writeScreenshot no longer saves at the reported path under the project');
+      assert.deepEqual(await readCapture({ directory, relativePath: written.path, folder: screenshots.SCREENSHOT_DIRECTORY }), { base64: bytes.toString('base64'), mime }, `a ${mime} capture upstream saved no longer reads back`);
+    }
+  },
+
+  'web-capture-result': async (t) => {
+    const { createOpenChamberControlService } = await importUpstream('packages/web/server/lib/openchamber-control/service.js');
+    const { SCREENSHOT_DIRECTORY } = await importUpstream('packages/web/server/lib/openchamber-control/screenshots.js');
+    const service = createOpenChamberControlService({ browserControl: { request: async () => ({ base64: Buffer.from('acme').toString('base64'), mime: 'image/png', url: 'http://acme.example.test/' }) } });
+    const session = tempDir(t, 'contract-web-session-');
+    const elsewhere = tempDir(t, 'contract-web-elsewhere-');
+    const own = await service.execute('browser.capture', { label: 'acme' }, session);
+    assert.ok(own.path.startsWith(`${SCREENSHOT_DIRECTORY.split(path.sep).join('/')}/acme-`), `a capture no longer answers a project-relative path under the screenshot folder: ${own.path}`);
+    assert.equal(Object.hasOwn(own, 'base64'), false, 'a capture now answers its image bytes');
+    assert.ok(fs.existsSync(path.join(session, own.path)), 'a capture is no longer saved under the session directory');
+    const other = await service.execute('browser.capture', { directory: elsewhere }, session);
+    assert.ok(fs.existsSync(path.join(elsewhere, other.path)) && !fs.existsSync(path.join(session, other.path)), 'a capture no longer saves under the directory the input names');
+
+    const runtime = source('packages/web/server/lib/agent-tool/runtime.js');
+    has(runtime, /name: 'openchamber_web',/, 'the panel tool is no longer openchamber_web');
+    has(runtime, /if \(valid\) return \{ content, metadata: \{ openchamber: /, 'the agent tool no longer returns its envelope as text content');
+    has(runtime, /const args = \{ \.\.\.flattened, \.\.\.\(parameters \?\? \{\}\), action: requestedAction \}/, 'the agent tool no longer merges flattened inputs under parameters');
+    has(source('packages/web/server/lib/opencode/managed-config-file.js'), /const includeWeb = settings\?\.agentWebToolEnabled !== false;/, 'the web tool is no longer on unless set false');
+    const settingsRuntime = source('packages/web/server/lib/opencode/settings-runtime.js');
+    const managedKeys = settingsRuntime.slice(settingsRuntime.indexOf('const MANAGED_PLUGIN_SETTINGS_KEYS = new Set(['), settingsRuntime.indexOf(']);', settingsRuntime.indexOf('const MANAGED_PLUGIN_SETTINGS_KEYS')));
+    assert.ok(managedKeys.includes("'agentWebToolEnabled'"), 'a change of agentWebToolEnabled no longer rewrites the managed config');
+  },
+
   'engine-tool-plugin-api': () => {
     const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
     assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P13 to P18 again, then update the MittrCraft tools plugin and this pin');

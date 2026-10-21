@@ -5,7 +5,9 @@ import test from 'node:test';
 
 import express from 'express';
 
+import { MARKER_PNG } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
 import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
+import { SCREENSHOT_DIRECTORY, writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { createMittrSettings } from '../mittr-settings.js';
 import { deferred, listen, tempDataDir } from '../test-helpers.js';
 import { CHROME_EXECUTABLE, bundledDrivers, setupMittrTools } from './index.js';
@@ -47,6 +49,7 @@ const setUp = async (t, {
   upstreamSettings = {},
   port = 4100,
   hang,
+  resolveSessionDirectory = async (id) => `/work/${id}`,
 } = {}) => {
   const registry = createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, execute: async () => ({}) } });
   const runs = registerFakeTools(registry, { hang });
@@ -77,7 +80,7 @@ const setUp = async (t, {
         return state.upstreamSettings;
       },
     },
-    control: { resolveSessionDirectory: async (id) => `/work/${id}` },
+    control: { resolveSessionDirectory, writeScreenshot, SCREENSHOT_DIRECTORY },
   };
   const logger = recordingLogger();
   const mittrSettings = createMittrSettings({ dataDir, logger });
@@ -180,11 +183,43 @@ test('Code Mode follows upstream\'s setting', async (t) => {
   assert.equal(pluginSource().includes('codemode: false'), false);
 });
 
-test('with no tool to offer the managed config adds nothing', async (t) => {
-  const { tools, dataDir } = await setUp(t, { personalDesktop: () => false, signedIn: () => false });
+test('with no tool to offer and the panel browser tool off the managed config adds nothing', async (t) => {
+  const { tools, dataDir } = await setUp(t, { personalDesktop: () => false, signedIn: () => false, upstreamSettings: { agentWebToolEnabled: false } });
   assert.deepEqual(await tools.managedConfig(), {});
   assert.equal(await tools.signature(), '');
   assert.equal(fs.existsSync(path.join(dataDir, 'engine-plugins')), false);
+});
+
+test('the panel tool\'s capture is wrapped while upstream\'s web tool is on, even with no Mittr tool to offer', async (t) => {
+  const { tools, state, dataDir, pluginSource } = await setUp(t, { personalDesktop: () => false, signedIn: () => false });
+  assert.deepEqual(await tools.managedConfig(), { plugins: [path.join(dataDir, 'engine-plugins', 'mittrcraft-tools')] });
+  assert.deepEqual(toolNamesIn(pluginSource()), []);
+  assert.match(pluginSource(), /tools\.update\(CAPTURE_TOOL,/);
+  const wrapped = await tools.signature();
+
+  state.upstreamSettings = { agentWebToolEnabled: false };
+  assert.equal(await tools.signature(), '');
+
+  state.upstreamSettings = new Error('locked');
+  assert.equal(await tools.signature(), wrapped, 'an unreadable settings file reads as upstream\'s default, web tool on');
+
+  const withTools = await setUp(t, { upstreamSettings: { agentWebToolEnabled: false } });
+  await withTools.tools.managedConfig();
+  assert.doesNotMatch(withTools.pluginSource(), /openchamber_web/);
+  assert.deepEqual(toolNamesIn(withTools.pluginSource()), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_work']);
+});
+
+test('the callback answers a panel capture\'s image from the session\'s project, and refuses it while the web tool is off', async (t) => {
+  const project = fs.realpathSync(tempDataDir(t));
+  const saved = await writeScreenshot({ directory: project, base64: MARKER_PNG, mime: 'image/png', label: 'home' });
+  const { call, state, runs } = await setUp(t, { resolveSessionDirectory: async (id) => (id === 'ses_1' ? project : null) });
+  const body = { tool: 'openchamber_web', internal: 'capture-image', path: saved.path, sessionID: 'ses_1' };
+
+  assert.deepEqual(await call(body), { schemaVersion: 1, ok: true, action: 'capture-image', data: { image: { base64: MARKER_PNG, mime: 'image/png' } } });
+
+  state.upstreamSettings = { agentWebToolEnabled: false };
+  assert.deepEqual(await call(body), { schemaVersion: 1, ok: false, action: 'capture-image', error: { message: 'The in-app browser tool is turned off in Settings', kind: 'usage' } });
+  assert.deepEqual(runs, []);
 });
 
 test('the signature changes when the offered tools change, and only then', async (t) => {

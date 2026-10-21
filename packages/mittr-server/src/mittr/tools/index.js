@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createToolsCallback } from './callback.js';
 import { materializeToolsPlugin, toolsFragment, toolsPluginDir, toolsPluginSource } from './plugin-source.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
+import { CAPTURE_TOOL } from './screenshots.js';
 
 export const CHROME_EXECUTABLE = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
@@ -79,7 +80,10 @@ export function setupMittrTools(context, {
 
   const included = (name, switches) => Object.hasOwn(offered, name) && offered[name]() && switchedOn[name](switches);
 
+  const wrapCapture = ({ upstream }) => upstream?.agentWebToolEnabled !== false;
+
   const refusalFor = async (name) => {
+    if (name === CAPTURE_TOOL) return wrapCapture(await readSwitches()) ? null : new MittrToolError('The in-app browser tool is turned off in Settings', 403);
     if (!Object.hasOwn(offered, name)) return new MittrToolError('This tool is not available in this install', 503);
     if (!offered[name]()) {
       return name === MITTR_TOOLS.work ? new MittrToolError(NOT_SIGNED_IN, 401) : new MittrToolError(`${TITLES[name]} is not available in this install`, 503);
@@ -90,13 +94,22 @@ export function setupMittrTools(context, {
       : new MittrToolError(`${TITLES[name]} is turned off in Settings → Integrations`, 403);
   };
 
-  const callback = createToolsCallback({ crypto, registry, resolveSessionDirectory: control.resolveSessionDirectory, refusalFor, logger });
+  const callback = createToolsCallback({
+    crypto,
+    registry,
+    resolveSessionDirectory: control.resolveSessionDirectory,
+    refusalFor,
+    screenshotFolder: control.SCREENSHOT_DIRECTORY,
+    logger,
+  });
   callback.register(app);
 
   const signature = async () => {
     const switches = await readSwitches();
     const tools = registry.tools().filter((tool) => included(tool.name, switches));
-    return tools.length === 0 ? '' : toolsPluginSource({ tools, codeMode: switches.upstream?.agentToolsCodeMode === true });
+    const wrap = wrapCapture(switches);
+    if (tools.length === 0 && !wrap) return '';
+    return toolsPluginSource({ tools, codeMode: switches.upstream?.agentToolsCodeMode === true, wrapCapture: wrap });
   };
 
   const render = async () => {

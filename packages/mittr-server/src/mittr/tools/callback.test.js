@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import express from 'express';
 
+import { MARKER_PNG } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
 import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
+import { SCREENSHOT_DIRECTORY } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { deferred, listen, until } from '../test-helpers.js';
 import { TOOLS_CALLBACK_ROUTE, createToolsCallback } from './callback.js';
 import { MittrToolError, createMittrActionRegistry } from './registry.js';
@@ -34,9 +39,10 @@ const setUp = async (t, { refusalFor = async () => null, resolveSessionDirectory
   registry.register({ action: 'chrome.fail', tool: 'acme_chrome', title: 'Fail', description: 'Fails.', effect: 'change', execute: actions.fail ?? (async () => { throw new MittrToolError('Not allowed on a.test', 403, { code: 'site_approval_required', host: 'a.test' }); }) });
   registry.register({ action: 'chrome.crash', tool: 'acme_chrome', title: 'Crash', description: 'Crashes.', effect: 'change', execute: async () => { throw new Error('driver went away'); } });
   registry.register({ action: 'other.ping', tool: 'acme_other', title: 'Ping', description: 'Pings.', effect: 'read', execute: async () => ({ pong: true }) });
+  if (actions.shot) registry.register({ action: 'chrome.shot', tool: 'acme_chrome', title: 'Shot', description: 'Shoots.', effect: 'read', execute: actions.shot });
 
   const logger = recordingLogger();
-  const callback = createToolsCallback({ crypto, registry, resolveSessionDirectory, refusalFor, logger });
+  const callback = createToolsCallback({ crypto, registry, resolveSessionDirectory, refusalFor, screenshotFolder: SCREENSHOT_DIRECTORY, logger });
   const peer = { address: null };
   const app = express();
   app.use((req, res, next) => {
@@ -226,4 +232,79 @@ test('the engine closing the call aborts the action', async (t) => {
   assert.equal(await hang.aborted, true);
   assert.equal(await call, 'AbortError');
   await until(() => callback.abortSession('ses_1') === 0);
+});
+
+const tempProject = (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-capture-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const project = path.join(root, 'project');
+  fs.mkdirSync(path.join(project, SCREENSHOT_DIRECTORY), { recursive: true });
+  return { root, project };
+};
+
+const CAPTURE = '.openchamber/screenshots/home-2026-10-21T01-02-03-456.png';
+const captureCall = (extra = {}) => ({ tool: 'openchamber_web', internal: 'capture-image', path: CAPTURE, sessionID: 'ses_1', ...extra });
+const NOT_A_SCREENSHOT = { message: 'That image is not a saved screenshot of this project', kind: 'usage' };
+
+test('a panel capture saved in the session\'s screenshots folder answers its image', async (t) => {
+  const { project } = tempProject(t);
+  fs.writeFileSync(path.join(project, CAPTURE), Buffer.from(MARKER_PNG, 'base64'));
+  const { post, calls } = await setUp(t, { resolveSessionDirectory: async (id) => (id === 'ses_1' ? project : null) });
+
+  assert.deepEqual((await post(captureCall())).body, { schemaVersion: 1, ok: true, action: 'capture-image', data: { image: { base64: MARKER_PNG, mime: 'image/png' } } });
+  assert.equal((await post(captureCall({ directory: project }))).body.ok, true);
+  assert.equal((await post(captureCall({ directory: `${project}/./` }))).body.ok, true);
+  assert.equal(calls.length, 0);
+});
+
+test('an upstream capture saved under another directory passes through without an image', async (t) => {
+  const { root, project } = tempProject(t);
+  const other = path.join(root, 'other');
+  fs.mkdirSync(path.join(other, SCREENSHOT_DIRECTORY), { recursive: true });
+  fs.writeFileSync(path.join(other, CAPTURE), Buffer.from(MARKER_PNG, 'base64'));
+  fs.writeFileSync(path.join(project, CAPTURE), Buffer.from(MARKER_PNG, 'base64'));
+  const { post, logger } = await setUp(t, { resolveSessionDirectory: async () => project });
+
+  assert.deepEqual((await post(captureCall({ directory: other }))).body, { schemaVersion: 1, ok: false, action: 'capture-image', error: NOT_A_SCREENSHOT });
+  assert.deepEqual((await post(captureCall({ directory: 'relative/dir' }))).body.error, NOT_A_SCREENSHOT);
+  assert.deepEqual(logger.lines, ['[mittr] tool capture-image failed: 400', '[mittr] tool capture-image failed: 400']);
+  for (const line of logger.lines) assert.equal(line.includes(project) || line.includes('home-'), false, line);
+});
+
+test('a panel capture with no session directory, outside the folder, or from another tool is refused', async (t) => {
+  const { project } = tempProject(t);
+  fs.writeFileSync(path.join(project, 'x.png'), Buffer.from(MARKER_PNG, 'base64'));
+  const noSession = await setUp(t, { resolveSessionDirectory: async () => null });
+  assert.deepEqual((await noSession.post(captureCall())).body.error, NOT_A_SCREENSHOT);
+
+  const { post } = await setUp(t, { resolveSessionDirectory: async () => project });
+  assert.deepEqual((await post(captureCall({ path: '../x.png' }))).body.error, NOT_A_SCREENSHOT);
+  assert.deepEqual((await post(captureCall({ path: 'x.png' }))).body.error, NOT_A_SCREENSHOT);
+  assert.deepEqual((await post(captureCall({ tool: 'acme_chrome' }))).body, { schemaVersion: 1, ok: false, action: 'capture-image', error: { message: 'Only the panel browser tool asks for a capture image', kind: 'usage' } });
+});
+
+test('a panel capture over 5 MiB answers that it is too large', async (t) => {
+  const { project } = tempProject(t);
+  fs.writeFileSync(path.join(project, CAPTURE), Buffer.alloc(5 * 1024 * 1024 + 1));
+  const { post } = await setUp(t, { resolveSessionDirectory: async () => project });
+  assert.deepEqual((await post(captureCall())).body, { schemaVersion: 1, ok: true, action: 'capture-image', data: { image: { tooLarge: true } } });
+});
+
+test('a panel capture is refused while the panel tool is switched off', async (t) => {
+  const { project } = tempProject(t);
+  fs.writeFileSync(path.join(project, CAPTURE), Buffer.from(MARKER_PNG, 'base64'));
+  const { post } = await setUp(t, {
+    resolveSessionDirectory: async () => project,
+    refusalFor: async (tool) => (tool === 'openchamber_web' ? new MittrToolError('off', 403) : null),
+  });
+  assert.deepEqual((await post(captureCall())).body, { schemaVersion: 1, ok: false, action: 'capture-image', error: { message: 'off', kind: 'usage' } });
+});
+
+test('a Mittr action\'s image over 5 MiB is answered as too large and its path is kept', async (t) => {
+  const big = Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64');
+  const { post } = await setUp(t, { actions: { shot: async () => ({ path: '.openchamber/screenshots/a.png', image: { base64: big, mime: 'image/png' } }) } });
+  assert.deepEqual((await post({ ...OPEN, input: { action: 'shot' } })).body, { schemaVersion: 1, ok: true, action: 'chrome.shot', data: { path: '.openchamber/screenshots/a.png', image: { tooLarge: true } } });
+
+  const small = await setUp(t, { actions: { shot: async () => ({ path: '.openchamber/screenshots/b.png', image: { base64: MARKER_PNG, mime: 'image/png' } }) } });
+  assert.deepEqual((await small.post({ ...OPEN, input: { action: 'shot' } })).body.data, { path: '.openchamber/screenshots/b.png', image: { base64: MARKER_PNG, mime: 'image/png' } });
 });
