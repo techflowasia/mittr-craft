@@ -50,6 +50,18 @@
     {
       "from": ".product/ripgrep",
       "to": "ripgrep"
+    },
+    {
+      "from": ".product/agent-browser",
+      "to": "agent-browser"
+    },
+    {
+      "from": ".product/cua-driver",
+      "to": "cua-driver"
+    },
+    {
+      "from": "../../brand/THIRD_PARTY_NOTICES.md",
+      "to": "THIRD_PARTY_NOTICES.md"
     }
   ],
   "afterPack": null,
@@ -58,7 +70,10 @@
     "extendInfo": {
       "CFBundleIconName": null,
       "NSLocalNetworkUsageDescription": "MittrCraft needs access to devices and services on your local network."
-    }
+    },
+    "signIgnore": [
+      "/Contents/Resources/cua-driver/"
+    ]
   },
   "win": {
     "icon": "../../brand/icons/icon.ico"

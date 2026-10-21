@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { resolveBunExecutable } from '../lib/bun-executable.mjs';
 import { findNeedles } from './brand-leak-scan.mjs';
 import {
+  AGENT_BROWSER_STAGING,
+  CUA_DRIVER_STAGING,
   LICENCE_RESOURCE,
   RIPGREP_STAGING,
   applyVisibleStrings,
@@ -362,4 +364,35 @@ test('the build checks the pinned ripgrep archive before any build step, and sto
 
   const cached = path.join(repoRoot, 'packages/electron/.cache/ripgrep/ripgrep-15.1.0-aarch64-apple-darwin.tar.gz');
   if (fs.existsSync(cached)) assert.equal(checkRipgrepArchive({ env: {} }).archive, cached);
+});
+
+test('the dev and prod builder files pack both drivers and the notices', () => {
+  const upstream = readJson('packages/electron/package.json').build;
+  for (const flavor of ['dev', 'prod']) {
+    const overlay = readJson(`brand/electron-builder.${flavor}.json`);
+    const merged = mergeBuilderConfig(upstream, overlay);
+    const resources = Object.fromEntries(merged.extraResources.map((entry) => [entry.to, entry.from]));
+    assert.equal(resources['agent-browser'], AGENT_BROWSER_STAGING, flavor);
+    assert.equal(resources['cua-driver'], CUA_DRIVER_STAGING, flavor);
+    assert.equal(resources['THIRD_PARTY_NOTICES.md'], '../../brand/THIRD_PARTY_NOTICES.md', flavor);
+    assert.equal(path.resolve(repoRoot, 'packages/electron', resources['THIRD_PARTY_NOTICES.md']), path.join(repoRoot, 'brand', 'THIRD_PARTY_NOTICES.md'));
+    assert.deepEqual(merged.mac.signIgnore, ['/Contents/Resources/cua-driver/'], flavor);
+    assert.equal(merged.mac.hardenedRuntime, upstream.mac.hardenedRuntime, flavor);
+  }
+  assert.equal(AGENT_BROWSER_STAGING, '.product/agent-browser');
+  assert.equal(CUA_DRIVER_STAGING, '.product/cua-driver');
+  const ignore = new RegExp(readJson('brand/electron-builder.dev.json').mac.signIgnore[0]);
+  assert.equal(ignore.test('/x/dist/mac-arm64/MittrCraft Dev.app/Contents/Resources/cua-driver/CuaDriver.app/Contents/MacOS/cua-driver'), true);
+  assert.equal(ignore.test('/x/dist/mac-arm64/MittrCraft Dev.app/Contents/Resources/agent-browser/agent-browser'), false);
+});
+
+test('the build checks both pinned drivers and the notices before any build step, and checks the packed ones at the end', () => {
+  const main = fs.readFileSync(path.join(repoRoot, 'scripts/mittr/build-desktop.mjs'), 'utf8');
+  const body = main.slice(main.indexOf('const main = async () => {'));
+  const firstStep = body.indexOf("step('1/8 workspace build')");
+  for (const call of ['checkDriverSources(', 'checkNotices(']) {
+    assert.ok(body.indexOf(call) !== -1 && body.indexOf(call) < firstStep, `${call} is not checked before the build starts`);
+  }
+  assert.ok(body.indexOf('stageDrivers(') > body.indexOf("step('3/8"), 'the drivers are not staged in step 3');
+  assert.ok(body.indexOf('verifyPackedDrivers(') > body.indexOf("step('8/8"), 'the packed drivers are not checked in step 8');
 });

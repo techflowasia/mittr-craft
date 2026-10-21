@@ -43,6 +43,7 @@ import { z } from 'zod';
 
 import { matcherFor } from '../../packages/mittr-server/src/brand-matcher.js';
 import { resolveBunExecutable } from '../lib/bun-executable.mjs';
+import { AGENT_BROWSER_RESOURCE_DIR, CUA_DRIVER_RESOURCE_DIR, NOTICES_RESOURCE, checkDriverSources, checkNotices, stageDrivers, verifyPackedDrivers } from './drivers.mjs';
 import { RIPGREP_RESOURCE_DIR, defaultRipgrepArchive, readPinnedArchive, readRipgrepPin, stageRipgrep, verifyPackedRipgrep } from './ripgrep.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -57,6 +58,8 @@ const webServerSource = path.join(repoRoot, 'packages', 'web', 'server');
 const FLAVORS = ['dev', 'prod'];
 
 export const RIPGREP_STAGING = `.product/${RIPGREP_RESOURCE_DIR}`;
+export const AGENT_BROWSER_STAGING = `.product/${AGENT_BROWSER_RESOURCE_DIR}`;
+export const CUA_DRIVER_STAGING = `.product/${CUA_DRIVER_RESOURCE_DIR}`;
 
 // The web server is packed straight from its workspace source, so its
 // visible strings are replaced in a staged copy that is packed in its place.
@@ -391,6 +394,8 @@ const main = async () => {
   }
   const flavor = parseFlavor(process.argv.slice(2));
   const { pin: ripgrepPin, archive: ripgrepArchive } = checkRipgrepArchive();
+  const drivers = checkDriverSources();
+  checkNotices({ pins: drivers.pins });
   const startedAt = Date.now();
   const bun = resolveBunExecutable();
 
@@ -416,7 +421,7 @@ const main = async () => {
   const pluginMetafile = path.join(pluginMetaDir, 'meta.json');
   buildServerPlugin({ bun, outfile: serverPluginBundle, metafile: pluginMetafile });
 
-  step('3/8 product files, server copy and ripgrep');
+  step('3/8 product files, server copy, ripgrep, drivers and notices');
   fs.rmSync(stagingDir, { recursive: true, force: true });
   fs.mkdirSync(stagingDir, { recursive: true });
   fs.copyFileSync(productSource, path.join(stagingDir, 'product.json'));
@@ -426,6 +431,8 @@ const main = async () => {
   fs.cpSync(webServerSource, path.join(electronDir, STAGED_SERVER), { recursive: true });
   const ripgrep = stageRipgrep({ archive: ripgrepArchive, pin: ripgrepPin, outDir: path.join(electronDir, RIPGREP_STAGING) });
   console.log(`[mittr] ripgrep ${ripgrepPin.version} staged for the engine: ${path.relative(repoRoot, ripgrep.binary)}`);
+  const staged = stageDrivers({ pins: drivers.pins, agentBrowserBinary: drivers.agentBrowserBinary, cuaArchive: drivers.cuaArchive, outDir: stagingDir });
+  console.log(`[mittr] agent-browser ${drivers.pins.agentBrowser.version} and cua-driver ${drivers.pins.cuaDriver.version} staged: ${path.relative(repoRoot, staged.agentBrowser)}, ${path.relative(repoRoot, staged.cuaApp)}`);
   const product = readProduct({ appPath: stagingDir });
   for (const entry of productOverride.serverPlugins ?? []) {
     if (!fs.existsSync(path.join(electronDir, entry))) throw new Error(`server plugin ${entry} was not built`);
@@ -471,12 +478,14 @@ const main = async () => {
   console.log(dmg ?? `[mittr] no dmg on ${process.platform}; see packages/electron/dist`);
 
   if (process.platform === 'darwin') {
-    step('8/8 licence and brand-leak scan');
+    step('8/8 licence, brand-leak scan, ripgrep, drivers and notices');
     const appPath = findPackedApp({ productName: builderConfig.productName, distDir: path.join(electronDir, 'dist'), startedAt });
     if (!appPath) throw new Error(`no ${builderConfig.productName}.app was produced in packages/electron/dist`);
     verifyPackedApp({ appPath, scan: runLeakScan });
     verifyPackedRipgrep({ appPath, pin: ripgrepPin });
+    const packedDrivers = verifyPackedDrivers({ appPath, pins: drivers.pins });
     console.log(`[mittr] ${LICENCE_RESOURCE} and ripgrep ${ripgrepPin.version} are packed and the brand-leak scan passed: ${appPath}`);
+    console.log(`[mittr] agent-browser ${packedDrivers.agentBrowserVersion}, cua-driver ${packedDrivers.cuaDriverVersion} (team ${packedDrivers.cuaTeamIdentifier}) and ${NOTICES_RESOURCE} are packed`);
   }
 };
 
