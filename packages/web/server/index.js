@@ -157,7 +157,7 @@ import { createScheduledTaskService } from './lib/scheduled-tasks/service.js';
 import { createOpenChamberControlService } from './lib/openchamber-control/service.js';
 import { createPluginNotificationEmitter } from './lib/notifications/emit-route.js';
 import { OpenChamberControlError } from './lib/openchamber-control/error.js';
-import { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } from './lib/openchamber-control/actions.js';
+import { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } from './lib/openchamber-control/actions.js';
 import { SCREENSHOT_DIRECTORY, writeScreenshot } from './lib/openchamber-control/screenshots.js';
 import { createSessionLinker } from './lib/openchamber-sessions/session-link.js';
 import { createFileOpenRequester } from './lib/openchamber-control/file-open.js';
@@ -2552,6 +2552,7 @@ async function main(options = {}) {
         execute: openChamberControlService.execute,
         resolveSessionDirectory: openChamberControlService.resolveSessionDirectory,
         definitions: () => ({ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS }),
+        all: OPENCHAMBER_ALL_ACTIONS,
         writeScreenshot,
         SCREENSHOT_DIRECTORY,
       },

@@ -383,6 +383,10 @@
     {
       "hook": "server-plugins",
       "why": "A downstream build adds its own actions next to the control contract and reaches the same service the CLI and agent tool use, instead of copying it, so the plugin context's control hands plugins the control service's execute and resolveSessionDirectory, the agent tool's control and web action definitions, and the screenshot writer with its folder."
+    },
+    {
+      "hook": "server-plugins",
+      "why": "The control and web definitions leave out actions the control service still runs (memory, notify, the scheduler status), so a downstream action could take one of those names and shadow it; the plugin context's control now also hands plugins the service's full action list as all, so a plugin refuses every upstream name."
     }
   ],
   "packages/web/server/lib/enterprise-mode.js": [

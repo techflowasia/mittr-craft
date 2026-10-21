@@ -252,7 +252,7 @@ export const UPSTREAM_CONTRACT = [
       'packages/web/server/lib/openchamber-control/routes.js',
       'packages/web/server/lib/openchamber-control/error.js',
     ],
-    why: "the plugin context's control is the server's own control service, unchanged: execute(action, input, contextDirectory, { signal, contextSessionId }) and resolveSessionDirectory(sessionID), definitions() with the agent tool's control list and the web list, and writeScreenshot with SCREENSHOT_DIRECTORY (.openchamber/screenshots, a slug of the label and a stamp); no Mittr action takes an upstream action's name, and /api/mittr/control answers errors as upstream's control route does (status from statusCode or status, the partial-result fields, the request's close aborting the action)",
+    why: "the plugin context's control is the server's own control service, unchanged: execute(action, input, contextDirectory, { signal, contextSessionId }) and resolveSessionDirectory(sessionID), definitions() with the agent tool's control list and the web list, all with every action the service runs (memory, notify and the scheduler status among them), and writeScreenshot with SCREENSHOT_DIRECTORY (.openchamber/screenshots, a slug of the label and a stamp); no Mittr action takes an upstream action's name, and /api/mittr/control answers errors as upstream's control route does (status from statusCode or status, the partial-result fields, the request's close aborting the action)",
   },
   {
     id: 'engine-integration-connect-key',

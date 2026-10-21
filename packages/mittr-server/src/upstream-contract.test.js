@@ -750,10 +750,10 @@ const checks = {
 
   'plugin-context-control': async (t) => {
     const server = source('packages/web/server/index.js');
-    has(server, /^import \{ OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS \} from '\.\/lib\/openchamber-control\/actions\.js';$/m, 'index.js no longer imports the agent tool and web action definitions');
+    has(server, /^import \{ OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS \} from '\.\/lib\/openchamber-control\/actions\.js';$/m, 'index.js no longer imports the agent tool and web action definitions');
     has(server, /^import \{ SCREENSHOT_DIRECTORY, writeScreenshot \} from '\.\/lib\/openchamber-control\/screenshots\.js';$/m, 'index.js no longer imports the screenshot writer');
     has(server, /^const openChamberControlService = createOpenChamberControlService\(\{$/m, 'index.js no longer builds one control service');
-    has(pluginContext(server), /control: \{\s*execute: openChamberControlService\.execute,\s*resolveSessionDirectory: openChamberControlService\.resolveSessionDirectory,\s*definitions: \(\) => \(\{ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS \}\),\s*writeScreenshot,\s*SCREENSHOT_DIRECTORY,\s*\},/, 'the plugin context no longer hands plugins the control service, its definitions and the screenshot writer as control');
+    has(pluginContext(server), /control: \{\s*execute: openChamberControlService\.execute,\s*resolveSessionDirectory: openChamberControlService\.resolveSessionDirectory,\s*definitions: \(\) => \(\{ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS \}\),\s*all: OPENCHAMBER_ALL_ACTIONS,\s*writeScreenshot,\s*SCREENSHOT_DIRECTORY,\s*\},/, 'the plugin context no longer hands plugins the control service, its definitions and the screenshot writer as control');
 
     const service = source('packages/web/server/lib/openchamber-control/service.js');
     has(service, /const execute = async \(action, input = \{\}, contextDirectory, options = \{\}\) => \{/, 'the control service execute no longer takes (action, input, contextDirectory, options)');
@@ -769,6 +769,10 @@ const checks = {
       }
     }
     assert.ok(lists.control.some(({ action }) => action === 'session.list') && lists.web.some(({ action }) => action === 'browser.open'), 'the definitions no longer hold session.list and browser.open');
+    const all = actions.OPENCHAMBER_ALL_ACTIONS;
+    assert.ok([...lists.control, ...lists.web].every(({ action }) => all.includes(action)), 'the full action list no longer holds every control and web definition');
+    for (const action of ['schedule.status', 'memory.save', 'notify.send']) assert.ok(all.includes(action), `the full action list no longer holds ${action}`);
+    has(service, /const CONTROL_ACTIONS = new Set\(OPENCHAMBER_ALL_ACTIONS\);/, 'the control service no longer runs exactly the full action list');
 
     const { createMittrActionRegistry } = await import('./mittr/tools/registry.js');
     const registry = createMittrActionRegistry({ control: { definitions: () => lists } });
