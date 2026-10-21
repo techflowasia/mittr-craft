@@ -1,9 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-// A relative path on purpose: Bun links no workspace package into the root
-// node_modules, and the server plugin bundle inlines this module.
-import { identityPluginSource } from '../../../mittr-opencode/src/identity-plugin.js';
+import { identityPluginSource } from './identity-plugin.js';
 import { writePrivateAtomic } from './private-file.js';
 
 const PRODUCT_NAME = 'MittrCraft';

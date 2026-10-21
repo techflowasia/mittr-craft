@@ -363,6 +363,41 @@ test('the npm pack of this package ships the bin with the product env beside it'
   }
 });
 
+test('the npm pack of this package, beside only a sibling web and its own dependencies, loads its server plugin on serve', (t) => {
+  const { root, packageDir } = tempLayout(t, 'mittrcraft-packed-plugin-');
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(npm_|OPENCHAMBER_|OPENCODE_|XDG_|MITTR)/i.test(name)));
+  const packEnv = { ...inherited, HOME: root, USERPROFILE: root, npm_config_cache: path.join(root, 'npm-cache'), npm_config_update_notifier: 'false' };
+  const pack = spawnSync('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', root], {
+    encoding: 'utf8',
+    cwd: path.join(repoRoot, 'packages/mittr-server'),
+    timeout: 60_000,
+    env: packEnv,
+  });
+  assert.equal(pack.status, 0, pack.stderr);
+  const tarball = path.join(root, JSON.parse(pack.stdout)[0].filename);
+  const unpack = spawnSync('tar', ['-xzf', tarball, '-C', packageDir, '--strip-components=1'], { encoding: 'utf8' });
+  assert.equal(unpack.status, 0, unpack.stderr);
+  fs.mkdirSync(path.join(packageDir, 'node_modules'));
+  fs.symlinkSync(fs.realpathSync(path.join(repoRoot, 'packages/mittr-server/node_modules/ldapjs')), path.join(packageDir, 'node_modules', 'ldapjs'), 'dir');
+
+  const web = path.join(root, 'packages', 'web');
+  fs.mkdirSync(path.join(web, 'bin'), { recursive: true });
+  fs.symlinkSync(path.join(repoRoot, 'packages/web/server'), path.join(web, 'server'), 'dir');
+  fs.writeFileSync(path.join(web, 'package.json'), '{"type":"module"}\n');
+  fs.writeFileSync(path.join(web, 'bin', 'cli.js'), [
+    "import { pathToFileURL } from 'node:url';",
+    'const plugins = JSON.parse(process.env.OPENCHAMBER_SERVER_PLUGINS);',
+    'for (const plugin of plugins) await import(pathToFileURL(plugin).href);',
+    "console.log(JSON.stringify({ loaded: plugins }));",
+    '',
+  ].join('\n'));
+  assert.equal(fs.existsSync(path.join(root, 'packages', 'mittr-opencode')), false);
+
+  const result = runIsolated(t, path.join(packageDir, 'bin', 'mittrcraft.mjs'), ['serve', '--port', '9']);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout.trim().split('\n').at(-1)), { loaded: [path.join(packageDir, 'src', 'plugin.js')] });
+});
+
 const RG_MISSING_MESSAGE = 'ripgrep (rg) is not installed on this server. Install it, or set MITTRCRAFT_ALLOW_RIPGREP_DOWNLOAD=1 to let the engine download it from github.com.';
 const RG_DOWNLOAD_NOTICE = '[mittr] rg is missing; the engine will download it from github.com on first use';
 
