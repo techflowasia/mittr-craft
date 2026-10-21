@@ -5,7 +5,6 @@ import { isRecord } from './values.js';
 const INTEGRATIONS_ENDPOINT = '/api/integrations';
 const MOUNT = '/api/mittr/integrations';
 const BODY_LIMIT = '16kb';
-const BLOCKS = ['jira', 'plane'];
 
 const NOT_REACHABLE = 'Mittr platform is not reachable from this install';
 const SIGN_IN_FIRST = 'Sign in to Mittr first';
@@ -14,7 +13,31 @@ const REQUEST_FAILED = 'Request failed';
 
 const refusal = (status, error) => ({ refusal: { status, error } });
 
-const configReply = (body, userId) => ({ jira: body?.jira, plane: body?.plane, userId });
+const JIRA_FIELDS = ['baseUrl', 'email', 'hasToken', 'configured'];
+const PLANE_FIELDS = ['baseUrl', 'workspaceSlug', 'hasApiKey', 'configured'];
+const JIRA_INPUT_FIELDS = ['baseUrl', 'email', 'token'];
+const PLANE_INPUT_FIELDS = ['baseUrl', 'workspaceSlug', 'workspaceSlugs', 'apiKey'];
+
+const BLOCKS = [['jira', JIRA_INPUT_FIELDS], ['plane', PLANE_INPUT_FIELDS]];
+
+const pick = (source, fields) => {
+  const picked = {};
+  for (const name of fields) {
+    if (source[name] !== undefined) picked[name] = source[name];
+  }
+  return picked;
+};
+
+const jiraOut = (block) => (isRecord(block) ? pick(block, JIRA_FIELDS) : undefined);
+
+const planeOut = (block) => {
+  if (!isRecord(block)) return undefined;
+  const picked = pick(block, PLANE_FIELDS);
+  if (Array.isArray(block.workspaceSlugs)) picked.workspaceSlugs = block.workspaceSlugs;
+  return picked;
+};
+
+const configReply = (body, userId) => ({ jira: jiraOut(body?.jira), plane: planeOut(body?.plane), userId });
 
 const testReply = (body, userId) => {
   const reply = isRecord(body) ? { ...body } : {};
@@ -85,10 +108,10 @@ export function registerMittrIntegrationsRoutes(app, {
     const expected = body?.expectUserId;
     if (!isRecord(body) || expected?.constructor !== String || !expected) return refusal(400, INVALID_BODY);
     const forwarded = {};
-    for (const name of BLOCKS) {
+    for (const [name, fields] of BLOCKS) {
       if (!Object.hasOwn(body, name)) continue;
       if (!isRecord(body[name])) return refusal(400, INVALID_BODY);
-      forwarded[name] = body[name];
+      forwarded[name] = pick(body[name], fields);
     }
     if (expected !== userId) return refusal(409, ACCOUNT_CHANGED);
     return { body: forwarded, reply: configReply };

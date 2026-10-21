@@ -8,7 +8,7 @@ import express from 'express';
 
 import { registerMittrIntegrationsRoutes } from './integrations-routes.js';
 import { CANNOT_REACH_MITTR, PLATFORM_TIMED_OUT } from './platform.js';
-import { fakeFetch, json, serve, tempDataDir } from './test-helpers.js';
+import { fakeFetch, json, serve } from './test-helpers.js';
 
 const BROKER = { baseUrl: 'https://api-dev.mittr.asia', upstreamV1: 'https://api-dev.mittr.asia/v1' };
 const ACCESS = 'at-secret-token-9f3a';
@@ -37,11 +37,6 @@ const setUp = async (t, {
   registerMittrIntegrationsRoutes(app, { express, broker, ensureFreshSession, fetchImpl, logger });
   return { call: await serve(t, app), fetchImpl, logger };
 };
-
-const filesUnder = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-  const full = path.join(dir, entry.name);
-  return entry.isDirectory() ? filesUnder(full) : [full];
-});
 
 test("GET answers the platform's config with the account it is for", async (t) => {
   const { call, fetchImpl } = await setUp(t);
@@ -143,8 +138,7 @@ test('omitting the token keeps the saved one', async (t) => {
   assert.equal(Object.hasOwn(fetchImpl.calls[0].body.jira, 'token'), false);
 });
 
-test('the token never reaches the log, the disk or the reply', async (t) => {
-  const dataDir = tempDataDir(t);
+test('the token never reaches the log or the reply, and the module cannot write a file', async (t) => {
   const refusals = [json({ error: 'Bad Request', message: 'Invalid base URL' }, 400), new Response('<html>nope</html>', { status: 502 })];
   const fetchImpl = fakeFetch((_call, n) => (n === 1 ? json(CONFIG) : n === 2 ? json({ ok: true, displayName: 'A' }) : refusals[n - 3] ?? json(CONFIG)));
   const { call, logger } = await setUp(t, { fetchImpl });
@@ -164,10 +158,50 @@ test('the token never reaches the log, the disk or the reply', async (t) => {
   for (const secret of [JIRA_SECRET, PLANE_SECRET, ACCESS]) {
     assert.equal(JSON.stringify(replies).includes(secret), false, `a reply carries ${secret}`);
     assert.equal(logger.lines.some((line) => line.includes(secret)), false, `the log carries ${secret}`);
-    for (const file of filesUnder(dataDir)) assert.equal(fs.readFileSync(file, 'utf8').includes(secret), false, `${file} carries ${secret}`);
   }
   const source = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'integrations-routes.js'), 'utf8');
   assert.doesNotMatch(source, /node:fs|writeFile|appendFile|localStorage/);
+});
+
+test('a platform reply that echoes secrets has them dropped from the config', async (t) => {
+  const echoed = {
+    jira: { ...CONFIG.jira, token: JIRA_SECRET, webhookPath: '/hooks/jira/abc' },
+    plane: { ...CONFIG.plane, apiKey: PLANE_SECRET, hasWebhookSecret: true, webhookPath: '/hooks/plane/abc' },
+  };
+  const { call } = await setUp(t, { fetchImpl: fakeFetch(() => json(echoed)) });
+  const expected = { ...CONFIG, userId: 'u-a' };
+  assert.deepEqual((await call('GET', '/api/mittr/integrations')).body, expected);
+  const saved = await call('PUT', '/api/mittr/integrations', { expectUserId: 'u-a', jira: { email: 'a@x' } });
+  assert.deepEqual(saved.body, expected);
+  const text = JSON.stringify([expected, saved.body]);
+  for (const name of [JIRA_SECRET, PLANE_SECRET, 'hasWebhookSecret', 'webhookPath']) assert.equal(text.includes(name), false, name);
+});
+
+test('workspaceSlugs is answered only when the platform sends a list', async (t) => {
+  for (const workspaceSlugs of ['mittr', null, { 0: 'mittr' }]) {
+    const { call } = await setUp(t, { fetchImpl: fakeFetch(() => json({ ...CONFIG, plane: { ...CONFIG.plane, workspaceSlugs } })) });
+    assert.equal(Object.hasOwn((await call('GET', '/api/mittr/integrations')).body.plane, 'workspaceSlugs'), false);
+  }
+});
+
+test('PUT forwards only the known fields of jira and plane, and never a webhook secret', async (t) => {
+  const { call, fetchImpl } = await setUp(t);
+  await call('PUT', '/api/mittr/integrations', {
+    expectUserId: 'u-a',
+    jira: { baseUrl: 'https://x.atlassian.net', email: 'a@x', token: JIRA_SECRET, webhookSecret: 'hook-1', hasToken: false, configured: false },
+    plane: { baseUrl: 'https://plane.example', workspaceSlug: 'mittr', workspaceSlugs: ['mittr', 'craft'], apiKey: PLANE_SECRET, webhookSecret: 'hook-2', hasApiKey: false, webhookPath: '/x' },
+  });
+  assert.deepEqual(fetchImpl.calls[0].body, {
+    jira: { baseUrl: 'https://x.atlassian.net', email: 'a@x', token: JIRA_SECRET },
+    plane: { baseUrl: 'https://plane.example', workspaceSlug: 'mittr', workspaceSlugs: ['mittr', 'craft'], apiKey: PLANE_SECRET },
+  });
+  assert.equal(JSON.stringify(fetchImpl.calls[0].body).includes('hook-'), false);
+});
+
+test('a partial block is forwarded without the fields it leaves out', async (t) => {
+  const { call, fetchImpl } = await setUp(t);
+  await call('PUT', '/api/mittr/integrations', { expectUserId: 'u-a', jira: { email: 'a@x', token: undefined }, plane: { workspaceSlugs: ['mittr'] } });
+  assert.deepEqual(fetchImpl.calls[0].body, { jira: { email: 'a@x' }, plane: { workspaceSlugs: ['mittr'] } });
 });
 
 test('the Jira test passes the platform result through with the account', async (t) => {

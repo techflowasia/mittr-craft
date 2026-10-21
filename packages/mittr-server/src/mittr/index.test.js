@@ -1357,6 +1357,11 @@ test('My work answers not configured when signed out, then reads the signed-in a
   assert.equal(request.headers.authorization, 'Bearer at-1');
 });
 
+const filesUnder = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+  const full = path.join(dir, entry.name);
+  return entry.isDirectory() ? filesUnder(full) : [full];
+});
+
 const isIntegrationsCall = (request) => new URL(request.url).pathname === '/api/integrations';
 const WORK_TRACKING = {
   jira: { baseUrl: 'https://x.atlassian.net', email: 'a@x', hasToken: true, configured: true },
@@ -1371,19 +1376,30 @@ test('Work tracking settings answer signed out, then go to the signed-in account
       return json(session);
     },
   });
-  const { call } = await setUp(t, { fetchImpl });
+  const { call, dataDir, logger } = await setUp(t, { fetchImpl });
   assert.deepEqual(await call('GET', '/api/mittr/integrations'), { status: 401, body: { error: 'Sign in to Mittr first' } });
   assert.equal(fetchImpl.calls.filter(isIntegrationsCall).length, 0);
 
   assert.equal((await signIn(call)).status, 200);
   assert.deepEqual(await call('GET', '/api/mittr/integrations'), { status: 200, body: { ...WORK_TRACKING, userId: 'u-a' } });
   const jira = { baseUrl: 'https://x.atlassian.net', email: 'a@x', token: 'jira-secret-123' };
-  assert.equal((await call('PUT', '/api/mittr/integrations', { expectUserId: 'u-a', jira })).status, 200);
+  const plane = { baseUrl: 'https://plane.example', workspaceSlug: 'mittr', apiKey: 'plane-secret-456' };
+  assert.equal((await call('PUT', '/api/mittr/integrations', { expectUserId: 'u-a', jira, plane })).status, 200);
   assert.equal((await call('PUT', '/api/mittr/integrations', { expectUserId: 'u-b', jira })).status, 409);
   const [read, write] = fetchImpl.calls.filter(isIntegrationsCall);
   assert.equal(read.headers.authorization, 'Bearer at-1');
-  assert.deepEqual(write.body, { jira });
+  assert.deepEqual(write.body, { jira, plane });
   assert.equal(fetchImpl.calls.filter(isIntegrationsCall).length, 2);
+
+  const written = filesUnder(dataDir);
+  assert.ok(written.length > 0, 'setup wrote nothing, so the scan proves nothing');
+  for (const file of written) {
+    const text = fs.readFileSync(file, 'utf8');
+    for (const secret of ['jira-secret-123', 'plane-secret-456']) assert.equal(text.includes(secret), false, `${file} carries ${secret}`);
+  }
+  for (const line of [...logger.lines, ...logger.warnings, ...logger.errors]) {
+    for (const secret of ['jira-secret-123', 'plane-secret-456']) assert.equal(line.includes(secret), false, 'the log carries a secret');
+  }
 });
 
 test('a server that cannot add usage providers still starts, with one warning', async (t) => {
