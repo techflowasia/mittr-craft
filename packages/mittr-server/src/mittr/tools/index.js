@@ -16,6 +16,14 @@ const TITLES = Object.freeze({
   [MITTR_TOOLS.work]: 'The work tool',
 });
 
+const readTextOrNull = (file) => {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+};
+
 const bundledBinary = ({ dirFromEnv, resourcesDir, name, exists }) => {
   const fromEnv = String(dirFromEnv ?? '').trim();
   const candidates = [fromEnv ? path.join(fromEnv, name) : null, resourcesDir ? path.join(resourcesDir, name, name) : null];
@@ -98,12 +106,13 @@ export function setupMittrTools(context, {
       return { fragment: toolsFragment(await materializeToolsPlugin({ dataDir, source })), signature: source };
     } catch (error) {
       const dir = toolsPluginDir(dataDir);
-      if (fs.existsSync(path.join(dir, 'index.js'))) {
-        logger.warn('[mittr] could not rewrite the MittrCraft tools plugin; keeping the one already written:', error?.message ?? error);
-        return { fragment: toolsFragment(dir), signature: source };
+      const written = readTextOrNull(path.join(dir, 'index.js'));
+      if (written !== null) {
+        logger.warn('[mittr] could not rewrite the MittrCraft tools plugin; the engine keeps the one already written, and the next config write tries again:', error?.message ?? error);
+        return { fragment: toolsFragment(dir), signature: written };
       }
-      logger.warn('[mittr] could not write the MittrCraft tools plugin; trying again on the next config write:', error?.message ?? error);
-      return { fragment: {}, signature: source };
+      logger.warn('[mittr] could not write the MittrCraft tools plugin; the engine config leaves the tools out, and the next config write tries again:', error?.message ?? error);
+      return { fragment: {}, signature: '' };
     }
   };
 

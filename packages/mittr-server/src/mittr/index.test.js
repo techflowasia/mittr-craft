@@ -2385,3 +2385,45 @@ test('an http control call runs a chrome action only from this machine', async (
   engine.scope = 'tunnel';
   assert.deepEqual(await call('POST', '/api/mittr/control', { action: 'chrome.open' }), { status: 403, body: { error: 'chrome.open can only be used from this machine' } });
 });
+
+test('a tools plugin whose first write failed is written by the next config write', async (t) => {
+  const engine = fakeEngineContext();
+  const dataDir = tempDataDir(t);
+  const { mittr } = await setUp(t, {
+    engine,
+    dataDir,
+    host: desktopHost(),
+    toolDrivers: TOOL_DRIVERS,
+    fetchImpl: engineAndBroker(),
+    beforeBuild: (built) => {
+      defineFakeTools(built);
+      fs.mkdirSync(path.join(dataDir, 'engine-plugins'), { recursive: true });
+      fs.writeFileSync(toolsDirOf(dataDir), 'in the way');
+    },
+  });
+  await mittr.applyModels(MODELS);
+  assert.equal(engine.refreshes.length, 1);
+  assert.deepEqual(engine.rendered.at(-1).plugins, [identityDirOf(dataDir)]);
+
+  fs.rmSync(toolsDirOf(dataDir));
+  await mittr.applyModels(MODELS);
+
+  assert.equal(engine.refreshes.length, 2);
+  assert.deepEqual(engine.rendered.at(-1).plugins, [identityDirOf(dataDir), toolsDirOf(dataDir)]);
+  assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer', 'mittrcraft_chrome']);
+});
+
+test('a switch change never restarts or reloads the engine, and an unchanged switch leaves the plugin file alone', async (t) => {
+  const engine = fakeEngineContext();
+  const { mittr, dataDir } = await setUp(t, { engine, host: desktopHost(), toolDrivers: TOOL_DRIVERS, beforeBuild: defineFakeTools });
+  await mittr.tools.applySwitches({ chrome: false });
+  assert.deepEqual(engine.restarts, []);
+
+  const file = path.join(toolsDirOf(dataDir), 'index.js');
+  const past = new Date('2026-01-01T00:00:00Z');
+  fs.utimesSync(file, past, past);
+  await mittr.tools.applySwitches({ chrome: false, computer: true });
+
+  assert.equal(fs.statSync(file).mtimeMs, past.getTime(), 'the plugin file was written again');
+  assert.deepEqual(engine.restarts, []);
+});

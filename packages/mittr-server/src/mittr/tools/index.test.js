@@ -209,7 +209,7 @@ test('the callback refuses a tool that is switched off, and one this install can
   });
   assert.deepEqual(runs, []);
   assert.deepEqual(await call({ tool: 'mittrcraft_work', input: { action: 'get_issue' }, sessionID: 's1' }), { schemaVersion: 1, ok: true, action: 'jira.get_issue', data: { ran: 'jira.get_issue' } });
-  assert.deepEqual(runs.map(({ ctx }) => [ctx.directory, ctx.sessionId, ctx.surface, ctx.tool, ctx.scope]), [['/work/s1', 's1', 'agent', 'mittrcraft_work', { local: true }]]);
+  assert.deepEqual(runs.map(({ ctx }) => [ctx.directory, ctx.sessionId, ctx.surface, ctx.tool, ctx.via, ctx.scope]), [['/work/s1', 's1', 'agent', 'mittrcraft_work', 'engine', undefined]]);
 });
 
 test('the work tool answers a signed-out call with sign in first', async (t) => {
@@ -272,10 +272,13 @@ test('a plugin that cannot be rewritten keeps the one already on disk', { skip: 
   try {
     await tools.applySwitches({ computer: false });
     assert.deepEqual(await tools.managedConfig(), config);
+    const rendered = await tools.render();
+    assert.equal(rendered.signature, fs.readFileSync(path.join(dir, 'index.js'), 'utf8'), 'the signature is what the engine loads');
+    assert.notEqual(rendered.signature, await tools.signature(), 'the wanted plugin is not recorded as written');
   } finally {
     fs.chmodSync(dir, 0o700);
   }
-  assert.ok(logger.lines.some((line) => line.startsWith('[mittr] could not rewrite the MittrCraft tools plugin; keeping the one already written:')), logger.lines.join('\n'));
+  assert.ok(logger.lines.some((line) => line.startsWith('[mittr] could not rewrite the MittrCraft tools plugin; the engine keeps the one already written, and the next config write tries again:')), logger.lines.join('\n'));
 });
 
 test('dispose stops listening for engine starts and events', async (t) => {
@@ -308,4 +311,12 @@ test('the bundled drivers come from the env folder first, then the app resources
   assert.equal(installed.chromeInstalled(), true);
   assert.deepEqual(checked, [CHROME_EXECUTABLE]);
   assert.equal(CHROME_EXECUTABLE, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+});
+
+test('a plugin that cannot be written leaves the tools out and records nothing as written', async (t) => {
+  const { tools, dataDir, logger } = await setUp(t);
+  fs.mkdirSync(path.join(dataDir, 'engine-plugins'), { recursive: true });
+  fs.writeFileSync(path.join(dataDir, 'engine-plugins', 'mittrcraft-tools'), 'in the way');
+  assert.deepEqual(await tools.render(), { fragment: {}, signature: '' });
+  assert.ok(logger.lines.some((line) => line.startsWith('[mittr] could not write the MittrCraft tools plugin; the engine config leaves the tools out, and the next config write tries again:')), logger.lines.join('\n'));
 });

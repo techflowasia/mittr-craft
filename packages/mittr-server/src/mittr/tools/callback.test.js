@@ -83,7 +83,8 @@ test('a call runs the calling tool\'s action with the session directory, the ses
   assert.deepEqual(calls[0].input, { action: 'chrome.open', url: 'http://a.test/', ref: 'e1' });
   const { signal, ...ctx } = calls[0].ctx;
   assert.ok(signal instanceof AbortSignal);
-  assert.deepEqual(ctx, { directory: '/work/ses_1', sessionId: 'ses_1', surface: 'agent', tool: 'acme_chrome', scope: { local: true } });
+  assert.deepEqual(ctx, { directory: '/work/ses_1', sessionId: 'ses_1', surface: 'agent', tool: 'acme_chrome', via: 'engine' });
+  assert.equal(Object.hasOwn(calls[0].ctx, 'scope'), false, 'an engine call claims no request scope');
 });
 
 test('a call carrying the previous start\'s token is refused', async (t) => {

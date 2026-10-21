@@ -115,7 +115,7 @@ export function createToolsCallback({ crypto, registry, resolveSessionDirectory,
         signal: controller.signal,
         surface: 'agent',
         tool,
-        scope: { local: true },
+        via: 'engine',
       });
       return res.json({ schemaVersion: SCHEMA_VERSION, ok: true, action, data });
     } catch (error) {
