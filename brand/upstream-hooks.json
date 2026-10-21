@@ -387,6 +387,10 @@
     {
       "hook": "server-plugins",
       "why": "The control and web definitions leave out actions the control service still runs (memory, notify, the scheduler status), so a downstream action could take one of those names and shadow it; the plugin context's control now also hands plugins the service's full action list as all, so a plugin refuses every upstream name."
+    },
+    {
+      "hook": "permission-auto-accept",
+      "why": "A downstream build has permission requests that must always reach the person, such as a question about signing in to a site, whatever permission mode the session is in, and the auto-accept runtime had no way to leave one for the user: an auto session answered it within milliseconds and a safety session handed it to the classifier. A server plugin may now return neverAutoAnswer(permission), and a request any plugin marks (or whose check throws) is held for the user in every mode, announced as left for the user, and never counted as answered automatically. With no plugin that marks a request nothing changes."
     }
   ],
   "packages/web/server/lib/enterprise-mode.js": [
@@ -459,6 +463,12 @@
       "why": "The V1 session top-up rewrites the migration cursor in OpenCode's database before the managed OpenCode starts, and it always looked for that database at ~/.local/share/opencode/opencode.db."
     }
   ],
+  "packages/web/server/lib/permission-auto-accept/runtime.js": [
+    {
+      "hook": "permission-auto-accept",
+      "why": "A downstream build has permission requests that must always reach the person, such as a question about signing in to a site, whatever permission mode the session is in, and the auto-accept runtime had no way to leave one for the user: an auto session answered it within milliseconds and a safety session handed it to the classifier. A server plugin may now return neverAutoAnswer(permission), and a request any plugin marks (or whose check throws) is held for the user in every mode, announced as left for the user, and never counted as answered automatically. With no plugin that marks a request nothing changes."
+    }
+  ],
   "packages/web/server/lib/quota/providers/index.js": [
     {
       "hook": "quota-server",
@@ -487,6 +497,10 @@
     {
       "hook": "server-plugins",
       "why": "A build's server plugin needed more of the server than the app, data dir and logger (the express module, the bound port, settings, UI events, the managed OpenCode and its readiness, git, request scope and shutdown) and had no way to add engine config, so a downstream build would have had to edit upstream's server for each provider, policy or plugin it adds."
+    },
+    {
+      "hook": "permission-auto-accept",
+      "why": "A downstream build has permission requests that must always reach the person, such as a question about signing in to a site, whatever permission mode the session is in, and the auto-accept runtime had no way to leave one for the user: an auto session answered it within milliseconds and a safety session handed it to the classifier. A server plugin may now return neverAutoAnswer(permission), and a request any plugin marks (or whose check throws) is held for the user in every mode, announced as left for the user, and never counted as answered automatically. With no plugin that marks a request nothing changes."
     }
   ],
   "packages/web/server/lib/ui-auth/ui-auth.js": [

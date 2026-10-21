@@ -138,6 +138,35 @@ describe('server plugins', () => {
     expect(warnings).toEqual([expect.stringContaining('stuck')]);
   });
 
+  it('neverAutoAnswer is true when any plugin answers true', async () => {
+    const specifiers = await writePlugins(
+      'export default () => ({ neverAutoAnswer: (permission) => permission.action === "acme_browser" });',
+      'export default () => ({});',
+      'export default () => ({ neverAutoAnswer: () => false });',
+    );
+
+    const plugins = await loadServerPlugins({ specifiers, context: context() });
+
+    expect(plugins.neverAutoAnswer({ action: 'acme_browser' })).toBe(true);
+    expect(plugins.neverAutoAnswer({ action: 'bash' })).toBe(false);
+  });
+
+  it('a plugin that throws in neverAutoAnswer holds the request', async () => {
+    const specifiers = await writePlugins(
+      'export default () => ({ neverAutoAnswer: () => { throw new Error("acme failed"); } });',
+    );
+
+    const plugins = await loadServerPlugins({ specifiers, context: context() });
+
+    expect(plugins.neverAutoAnswer({ action: 'bash' })).toBe(true);
+  });
+
+  it('without a plugin that marks requests none is held', async () => {
+    const plugins = await loadServerPlugins({ specifiers: await writePlugins('export default () => ({});'), context: context() });
+
+    expect(plugins.neverAutoAnswer({ action: 'acme_browser' })).toBe(false);
+  });
+
   it('context is handed through unchanged', async () => {
     const [specifier] = await writePlugins(
       `export default (context) => { context.seen.push(context); return {}; };`,

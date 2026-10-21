@@ -1102,6 +1102,7 @@ const permissionAutoAcceptRuntime = createPermissionAutoAcceptRuntime({
   evaluatePermission: (permission, directory) => routingRuntime.evaluatePermission(permission, directory),
   onPermissionReplied: (permissionId) => routingRuntime.forgetPermission(permissionId),
   resolveLegacyEnabledMode: async () => ((await routingRuntime.legacySafetyNetEnabled()) ? 'safety' : 'auto'),
+  neverAutoAnswer: (permission) => serverPlugins?.neverAutoAnswer?.(permission) === true,
 });
 permissionAutoAcceptRuntime.start();
 // A request the safety net held still needs the user, so only one that was

@@ -1830,6 +1830,48 @@ const checks = {
     assert.ok(managedKeys.includes("'agentWebToolEnabled'"), 'a change of agentWebToolEnabled no longer rewrites the managed config');
   },
 
+  'permission-never-auto-answer': async (t) => {
+    const { createPermissionAutoAcceptRuntime } = await importUpstream('packages/web/server/lib/permission-auto-accept/runtime.js');
+    const { loadServerPlugins } = await importUpstream('packages/web/server/lib/server-plugins.js');
+    const plugin = path.join(tempDir(t, 'contract-never-auto-'), 'mark.mjs');
+    fs.writeFileSync(plugin, 'export default () => ({ neverAutoAnswer: (permission) => permission?.action === "mittrcraft_chrome" });');
+    const plugins = await loadServerPlugins({ specifiers: [plugin], context: { app: {}, dataDir: '/data', logger: console } });
+    let listener = null;
+    const fetched = [];
+    const broadcasts = [];
+    const asked = [];
+    const runtime = createPermissionAutoAcceptRuntime({
+      globalEventHub: { subscribeEvent: (next) => { listener = next; return () => {}; }, subscribeStatus: () => () => {} },
+      buildOpenCodeUrl: (route) => `http://engine.example.test${route}`,
+      getOpenCodeAuthHeaders: () => ({}),
+      readSettingsFromDiskMigrated: async () => ({ permissionAutoAccept: { sessions: { fast: 'auto', careful: 'safety' } } }),
+      persistSettings: async () => {},
+      broadcastGlobalUiEvent: (event) => broadcasts.push(event),
+      evaluatePermission: async (permission) => {
+        asked.push(permission.id);
+        return { action: 'accept' };
+      },
+      neverAutoAnswer: (permission) => plugins.neverAutoAnswer(permission) === true,
+      fetchImpl: async (url) => {
+        fetched.push(String(url));
+        return new Response('[]');
+      },
+      retryDelaysMs: [0],
+    });
+    runtime.start();
+    await runtime.load();
+    for (const [id, sessionID] of [['per_fast', 'fast'], ['per_careful', 'careful']]) {
+      const payload = { type: 'permission.asked', properties: { id, sessionID, action: 'mittrcraft_chrome', resources: ['acme.example.test'] } };
+      listener({ payload, directory: '/project', translated: () => [payload] });
+    }
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    assert.deepEqual(fetched.filter((url) => url.includes('/reply')), [], 'a marked request was answered automatically');
+    assert.deepEqual(asked, [], 'the safety classifier was asked about a marked request');
+    assert.deepEqual(broadcasts.filter((event) => event.type === 'openchamber:permission-auto-accept.left-for-user').map((event) => event.properties.permissionId).sort(), ['per_careful', 'per_fast'], 'a marked request is no longer announced as left for the user');
+    assert.equal(await runtime.isPermissionAutoAnswered('fast', '/project', 'per_fast'), false, 'a marked request in an auto session counts as answered automatically');
+    has(source('packages/web/server/index.js'), /neverAutoAnswer: \(permission\) => serverPlugins\?\.neverAutoAnswer\?\.\(permission\) === true,/, 'the server no longer hands the plugins\' neverAutoAnswer to the auto-accept runtime');
+  },
+
   'engine-tool-plugin-api': () => {
     const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
     assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P13 to P18 again, then update the MittrCraft tools plugin and this pin');

@@ -98,6 +98,14 @@ export const loadServerPlugins = async ({ specifiers, context }) => {
       }
       return config;
     },
+    neverAutoAnswer: (permission) => plugins.some((plugin) => {
+      if (!(plugin.neverAutoAnswer instanceof Function)) return false;
+      try {
+        return plugin.neverAutoAnswer(permission) === true;
+      } catch {
+        return true;
+      }
+    }),
     // Last set up, first disposed; one plugin that fails to stop does not keep
     // the others running.
     dispose: async () => {

@@ -53,6 +53,7 @@ export function createPermissionAutoAcceptRuntime({
   // What a pre-modes `true` becomes: `safety` when the old global safety-net
   // switch was on, else `auto`. Asked only while converting such a policy.
   resolveLegacyEnabledMode = async () => 'auto',
+  neverAutoAnswer = () => false,
   fetchImpl = fetch,
   retryDelaysMs = RETRY_DELAYS_MS,
   requestTimeoutMs = REQUEST_TIMEOUT_MS,
@@ -68,6 +69,7 @@ export function createPermissionAutoAcceptRuntime({
   // request the safety net held (the user must hear about it) from one it
   // accepted.
   const outcomes = new Map();
+  const leftForUser = new Set();
 
   // `sessions` keeps the on/off shape clients from before the modes read;
   // `modes` is the policy itself.
@@ -232,10 +234,11 @@ export function createPermissionAutoAcceptRuntime({
   const isSessionAutoAccepting = async (sessionId, directory) => isAutoAnsweringMode(await resolveSessionMode(sessionId, directory));
 
   /** `replied`, `held` (left for the user by the safety net), or `ignored` (an `ask` session). */
-  const replyOnce = async (permission, directory) => {
+  const replyOnce = async (permission, directory, marked) => {
     if (!permission?.id || !permission?.sessionID) return 'ignored';
     const mode = await resolveSessionMode(permission.sessionID, directory);
     if (mode === 'ask') return 'ignored';
+    if (marked) return 'held';
     if (mode === 'safety') {
       const verdict = evaluatePermission ? await evaluatePermission(permission, directory) : null;
       if (verdict?.action !== 'accept') return 'held';
@@ -250,10 +253,24 @@ export function createPermissionAutoAcceptRuntime({
     return 'replied';
   };
 
-  const rememberOutcome = (permissionId, outcome) => {
+  const rememberOutcome = (permissionId, outcome, marked) => {
     outcomes.delete(permissionId);
     outcomes.set(permissionId, outcome);
-    if (outcomes.size > OUTCOME_CACHE_LIMIT) outcomes.delete(outcomes.keys().next().value);
+    if (marked) leftForUser.add(permissionId);
+    else leftForUser.delete(permissionId);
+    if (outcomes.size > OUTCOME_CACHE_LIMIT) {
+      const oldest = outcomes.keys().next().value;
+      outcomes.delete(oldest);
+      leftForUser.delete(oldest);
+    }
+  };
+
+  const isMarkedForUser = (permission) => {
+    try {
+      return neverAutoAnswer(permission) === true;
+    } catch {
+      return true;
+    }
   };
 
   /** Resolves to whether the request was handled here (replied to, or deliberately held). */
@@ -262,18 +279,19 @@ export function createPermissionAutoAcceptRuntime({
     const key = permission.id;
     const existing = inFlight.get(key);
     if (existing) return existing;
+    const marked = isMarkedForUser(permission);
     const outcome = (async () => {
       for (const delay of retryDelaysMs) {
         if (delay > 0) await wait(delay);
         try {
-          return await replyOnce(permission, directory);
+          return await replyOnce(permission, directory, marked);
         } catch (error) {
           if (error?.status === 404) return 'replied';
         }
       }
       return 'failed';
     })();
-    rememberOutcome(key, outcome);
+    rememberOutcome(key, outcome, marked);
     // A client hides a `safety` or `auto` session's request until it hears
     // here that the request was not answered for the user.
     void outcome.then((result) => {
@@ -294,7 +312,7 @@ export function createPermissionAutoAcceptRuntime({
    */
   const isPermissionAutoAnswered = async (sessionId, directory, permissionId) => {
     const mode = await resolveSessionMode(sessionId, directory);
-    if (mode === 'auto') return true;
+    if (mode === 'auto' && !leftForUser.has(permissionId)) return true;
     if (mode === 'ask') return false;
     const outcome = permissionId ? outcomes.get(permissionId) : undefined;
     return outcome ? (await outcome) === 'replied' : false;

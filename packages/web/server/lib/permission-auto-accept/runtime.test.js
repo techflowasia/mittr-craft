@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createPermissionAutoAcceptRuntime } from './runtime.js';
 
-const createRuntime = ({ stored, fetchImpl, retryDelaysMs = [0], evaluatePermission, onPermissionReplied, resolveLegacyEnabledMode, broadcastGlobalUiEvent } = {}) => {
+const createRuntime = ({ stored, fetchImpl, retryDelaysMs = [0], evaluatePermission, onPermissionReplied, resolveLegacyEnabledMode, broadcastGlobalUiEvent, neverAutoAnswer } = {}) => {
   let settings = stored ?? { permissionAutoAccept: { sessions: {} } };
   let eventHandler;
   let statusHandler;
@@ -20,6 +20,7 @@ const createRuntime = ({ stored, fetchImpl, retryDelaysMs = [0], evaluatePermiss
     onPermissionReplied,
     resolveLegacyEnabledMode,
     broadcastGlobalUiEvent,
+    neverAutoAnswer,
   });
   runtime.start();
   return {
@@ -333,5 +334,100 @@ describe('permission auto-accept runtime', () => {
     emit({ type: 'permission.asked', properties: { id: 'p', sessionID: 'manual', permission: 'bash', metadata: {} } });
     await flush();
     expect(evaluatePermission).not.toHaveBeenCalled();
+  });
+
+  describe('a permission a plugin marks as never auto-answered', () => {
+    const marksBrowser = (permission) => permission?.action === 'acme_browser';
+    const asked = (id, sessionID) => ({ type: 'permission.asked', properties: { id, sessionID, action: 'acme_browser', resources: ['api.example.test'], metadata: { host: 'api.example.test' } } });
+    const replyUrls = (fetchImpl) => fetchImpl.mock.calls.map(([url]) => String(url)).filter((url) => url.includes('/reply'));
+
+    it('a request the plugin marks is held in every mode', async () => {
+      const fetchImpl = vi.fn(async () => new Response('[]'));
+      const evaluatePermission = vi.fn(async () => ({ action: 'accept' }));
+      const { runtime, emit } = createRuntime({
+        stored: { permissionAutoAccept: { sessions: { fast: 'auto', careful: 'safety', manual: 'ask' } } },
+        fetchImpl,
+        evaluatePermission,
+        neverAutoAnswer: marksBrowser,
+      });
+      await runtime.load();
+      emit(asked('a', 'fast'));
+      emit(asked('s', 'careful'));
+      emit(asked('m', 'manual'));
+      emit({ type: 'permission.asked', properties: { id: 'other', sessionID: 'fast', action: 'bash', resources: ['ls'] } });
+      await flush();
+      expect(replyUrls(fetchImpl)).toEqual(['http://opencode.test/api/session/fast/permission/other/reply']);
+      expect(evaluatePermission).not.toHaveBeenCalled();
+    });
+
+    it('held requests are broadcast as left for the user', async () => {
+      const broadcastGlobalUiEvent = vi.fn();
+      const { runtime, emit } = createRuntime({
+        stored: { permissionAutoAccept: { sessions: { fast: 'auto', careful: 'safety', manual: 'ask' } } },
+        broadcastGlobalUiEvent,
+        neverAutoAnswer: marksBrowser,
+      });
+      await runtime.load();
+      emit(asked('a', 'fast'));
+      emit(asked('s', 'careful'));
+      emit(asked('m', 'manual'));
+      await flush();
+      const leftForUser = broadcastGlobalUiEvent.mock.calls
+        .map(([event]) => event)
+        .filter((event) => event.type === 'openchamber:permission-auto-accept.left-for-user')
+        .map((event) => event.properties.permissionId);
+      expect(leftForUser).toEqual(['a', 's']);
+    });
+
+    it('isPermissionAutoAnswered is false for a held request in auto mode', async () => {
+      const { runtime, emit } = createRuntime({
+        stored: { permissionAutoAccept: { sessions: { fast: 'auto' } } },
+        neverAutoAnswer: marksBrowser,
+      });
+      await runtime.load();
+      emit(asked('a', 'fast'));
+      emit({ type: 'permission.asked', properties: { id: 'other', sessionID: 'fast', action: 'bash', resources: ['ls'] } });
+      await flush();
+      await expect(runtime.isPermissionAutoAnswered('fast', '/project', 'a')).resolves.toBe(false);
+      await expect(runtime.isPermissionAutoAnswered('fast', '/project', 'other')).resolves.toBe(true);
+    });
+
+    it('isPermissionAutoAnswered is false for a marked request asked in auto mode before its outcome resolves', async () => {
+      const { runtime, emit } = createRuntime({
+        stored: { permissionAutoAccept: { sessions: { fast: 'auto' } } },
+        neverAutoAnswer: marksBrowser,
+      });
+      await runtime.load();
+      const answered = runtime.isPermissionAutoAnswered('fast', '/project', 'a');
+      emit(asked('a', 'fast'));
+      await expect(answered).resolves.toBe(false);
+    });
+
+    it('a check that throws leaves the request for the user', async () => {
+      const fetchImpl = vi.fn(async () => new Response('[]'));
+      const { runtime, emit } = createRuntime({
+        stored: { permissionAutoAccept: { sessions: { fast: 'auto' } } },
+        fetchImpl,
+        neverAutoAnswer: () => { throw new Error('acme failed'); },
+      });
+      await runtime.load();
+      emit(asked('a', 'fast'));
+      await flush();
+      expect(replyUrls(fetchImpl)).toEqual([]);
+      await expect(runtime.isPermissionAutoAnswered('fast', '/project', 'a')).resolves.toBe(false);
+    });
+
+    it('without the option nothing changes', async () => {
+      const fetchImpl = vi.fn(async () => new Response('[]'));
+      const { runtime, emit } = createRuntime({
+        stored: { permissionAutoAccept: { sessions: { fast: 'auto' } } },
+        fetchImpl,
+      });
+      await runtime.load();
+      emit(asked('a', 'fast'));
+      await flush();
+      expect(replyUrls(fetchImpl)).toEqual(['http://opencode.test/api/session/fast/permission/a/reply']);
+      await expect(runtime.isPermissionAutoAnswered('fast', '/project', 'a')).resolves.toBe(true);
+    });
   });
 });
