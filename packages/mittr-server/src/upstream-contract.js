@@ -615,6 +615,11 @@ export const UPSTREAM_CONTRACT = [
     why: "a turn the person interrupts reaches the plugin context's event stream as a translated session.idle with properties.aborted true and properties.sessionID, the same signal upstream's own agent tool aborts its in-flight actions on, so a cancelled turn stops its MittrCraft tool actions too",
   },
   {
+    id: 'session-deleted-event',
+    files: ['packages/web/server/lib/event-stream/translate-v2.js', 'packages/web/server/lib/event-stream/global-hub.js', 'packages/web/server/index.js'],
+    why: "a deleted session reaches the plugin context's event stream as a translated session.deleted whose properties.info.id is the session's id, so the server closes that session's agent Chrome and forgets its site grants without the engine plugin posting anything",
+  },
+  {
     id: 'engine-tool-plugin-api',
     files: ['packages/electron/package.json'],
     why: "the bundled engine is OpenCode 2.0.22, whose plugin ctx.tool.transform takes tools.add({ name, description, options: { codemode }, input, execute }) with plain JSON Schema input, hands execute a context with sessionID and an abort signal, lets a later plugin replace upstream's openchamber_web execute through tools.get and tools.update, sends a tool result's { type: 'file', uri: 'data:<mime>;base64,…', mime, name } content part to the model as an image (directly and through Code Mode, with the default model input), and applies a rewritten plugin file without a restart; a new engine version needs probe P13 to P18 (scripts/mittr/probe-engine-v2.mjs --only agent-tools) run again before this pin moves",

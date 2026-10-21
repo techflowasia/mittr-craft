@@ -301,6 +301,7 @@ export function setupMittr(context, {
       shim?.abortInFlight();
       answeredByLog.clear();
       audit?.clear();
+      void tools.accountChanged();
       return switcher.switchTo(nextUserId);
     },
     switchSettled: () => switcher.settledOnTarget(),

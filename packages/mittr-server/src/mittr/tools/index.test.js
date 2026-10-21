@@ -9,8 +9,10 @@ import { MARKER_PNG } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
 import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
 import { SCREENSHOT_DIRECTORY, writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { createMittrSettings } from '../mittr-settings.js';
-import { SCREEN_RECORDING_NOT_GRANTED, deferred, listen, stubCuaDriver, tempDataDir } from '../test-helpers.js';
-import { CHROME_EXECUTABLE, bundledDrivers, setupMittrTools } from './index.js';
+import { SCREEN_RECORDING_NOT_GRANTED, deferred, listen, stubAgentBrowser, stubCuaDriver, tempDataDir, until } from '../test-helpers.js';
+import { CHROME_EXECUTABLE } from './chrome-control.js';
+import { NO_APPROVALS } from './chrome-service.js';
+import { CHROME_CLOSE_TIMEOUT_MS, bundledDrivers, setupMittrTools } from './index.js';
 import { MITTR_TOOLS, createMittrActionRegistry } from './registry.js';
 
 const recordingLogger = () => {
@@ -19,11 +21,11 @@ const recordingLogger = () => {
   return { lines, log: record, warn: record, error: record };
 };
 
-const ALL_DRIVERS = { computer: () => '/r/cua-driver/cua-driver', chrome: () => '/r/agent-browser/agent-browser', chromeInstalled: () => true };
+const ALL_DRIVERS = { computer: () => '/r/cua-driver/cua-driver', chrome: () => '/r/agent-browser/agent-browser', chromePath: () => CHROME_EXECUTABLE };
 
 const registerFakeTools = (registry, { hang } = {}) => {
   const runs = [];
-  for (const [name, action] of [[MITTR_TOOLS.chrome, 'chrome.open'], [MITTR_TOOLS.work, 'jira.get_issue']]) {
+  for (const [name, action] of [[MITTR_TOOLS.work, 'jira.get_issue']]) {
     registry.defineTool({ name, description: `${name} description`, parameters: { value: { type: 'string' } } });
     registry.register({
       action,
@@ -50,6 +52,8 @@ const setUp = async (t, {
   port = 4100,
   hang,
   resolveSessionDirectory = async (id) => `/work/${id}`,
+  chromeApprovals = NO_APPROVALS,
+  enginePort = 4096,
 } = {}) => {
   const registry = createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, execute: async () => ({}) } });
   const readyListeners = new Set();
@@ -62,6 +66,7 @@ const setUp = async (t, {
     dataDir,
     server: { port: () => state.port },
     opencode: {
+      url: (route = '/') => `http://127.0.0.1:${enginePort}${route}`,
       onReady: (listener) => {
         readyListeners.add(listener);
         return () => readyListeners.delete(listener);
@@ -94,6 +99,7 @@ const setUp = async (t, {
       await tools.managedConfig();
     },
     drivers,
+    chromeApprovals,
     logger,
   });
   const runs = registerFakeTools(registry, { hang });
@@ -111,7 +117,7 @@ const setUp = async (t, {
   const pluginSource = () => fs.readFileSync(path.join(dataDir, 'engine-plugins', 'mittrcraft-tools', 'index.js'), 'utf8');
   const fireReady = () => { for (const listener of readyListeners) listener(); };
   const emit = (payloads) => { for (const listener of eventListeners) listener({ payload: {}, translated: () => payloads }); };
-  return { tools, state, logger, dataDir, mittrSettings, call, pluginSource, fireReady, emit, runs, readyListeners, eventListeners };
+  return { tools, state, logger, dataDir, mittrSettings, registry, call, pluginSource, fireReady, emit, runs, readyListeners, eventListeners };
 };
 
 const toolNamesIn = (source) => [...source.matchAll(/name: "(mittrcraft_[a-z]+)"/g)].map((match) => match[1]);
@@ -151,7 +157,7 @@ test('an unbundled driver offers no tool for it', async (t) => {
   await noComputer.tools.managedConfig();
   assert.deepEqual(toolNamesIn(noComputer.pluginSource()), ['mittrcraft_chrome', 'mittrcraft_work']);
 
-  for (const drivers of [{ ...ALL_DRIVERS, chrome: () => null }, { ...ALL_DRIVERS, chromeInstalled: () => false }]) {
+  for (const drivers of [{ ...ALL_DRIVERS, chrome: () => null }, { ...ALL_DRIVERS, chromePath: () => null }]) {
     const noChrome = await setUp(t, { drivers });
     await noChrome.tools.managedConfig();
     assert.deepEqual(toolNamesIn(noChrome.pluginSource()), ['mittrcraft_computer', 'mittrcraft_work']);
@@ -205,7 +211,7 @@ test('the panel tool\'s capture is wrapped while upstream\'s web tool is on, eve
 
   const withTools = await setUp(t, { upstreamSettings: { agentWebToolEnabled: false } });
   await withTools.tools.managedConfig();
-  assert.doesNotMatch(withTools.pluginSource(), /openchamber_web/);
+  assert.doesNotMatch(withTools.pluginSource(), /tools\.update\(CAPTURE_TOOL,|const CAPTURE_TOOL/);
   assert.deepEqual(toolNamesIn(withTools.pluginSource()), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_work']);
 });
 
@@ -264,7 +270,7 @@ test('an aborted turn aborts its in-flight action', async (t) => {
       started.resolve();
     }),
   });
-  const pending = call({ tool: 'mittrcraft_chrome', input: { action: 'open' }, sessionID: 'ses_9' });
+  const pending = call({ tool: 'mittrcraft_work', input: { action: 'get_issue' }, sessionID: 'ses_9' });
   await started.promise;
 
   emit([{ type: 'session.idle', properties: { sessionID: 'ses_9' } }, { type: 'session.idle', properties: { sessionID: 'ses_other', aborted: true } }]);
@@ -346,10 +352,9 @@ test('a set driver folder is the only place a driver is looked for, otherwise th
   assert.equal(bundledDrivers({ resourcesDir: null, env: {}, exists: fs.existsSync }).computer(), null);
 
   const checked = [];
-  const installed = bundledDrivers({ resourcesDir: null, env: {}, exists: (file) => { checked.push(file); return true; } });
-  assert.equal(installed.chromeInstalled(), true);
-  assert.deepEqual(checked, [CHROME_EXECUTABLE]);
-  assert.equal(CHROME_EXECUTABLE, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+  const installed = bundledDrivers({ resourcesDir: null, env: { HOME: '/Users/person' }, exists: (file) => { checked.push(file); return file.startsWith('/Users/'); } });
+  assert.equal(installed.chromePath(), '/Users/person/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+  assert.deepEqual(checked, [CHROME_EXECUTABLE, '/Users/person/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']);
 });
 
 test('a plugin that cannot be written leaves the tools out and records nothing as written', async (t) => {
@@ -394,4 +399,92 @@ test('a missing grant reaches the agent as a plain sentence', async (t) => {
     error: { message: 'MittrCraft needs the Screen Recording permission for CuaDriver. Turn it on in System Settings → Privacy & Security → Screen Recording.', kind: 'usage' },
   });
   assert.equal(SCREEN_RECORDING_NOT_GRANTED, 'Screen Recording is NOT granted for this process.');
+});
+
+const everySite = () => {
+  const record = { forgotten: [], forgotAll: 0 };
+  return {
+    record,
+    isApproved: async () => true,
+    awaitDecision: async () => null,
+    forgetSession: (sessionId) => record.forgotten.push(sessionId),
+    forgetAll: () => { record.forgotAll += 1; },
+    removeHost: async (host) => [host],
+  };
+};
+
+const chromeSetUp = async (t, { driver = stubAgentBrowser(t, { png: MARKER_PNG }), ...options } = {}) => {
+  const project = fs.realpathSync(tempDataDir(t));
+  const chromeApprovals = everySite();
+  const setup = await setUp(t, {
+    drivers: { ...ALL_DRIVERS, chrome: () => driver.file },
+    chromeApprovals,
+    resolveSessionDirectory: async () => project,
+    ...options,
+  });
+  const chrome = (action, parameters = {}, sessionID = 'ses_1') => setup.call({ tool: 'mittrcraft_chrome', input: { action, parameters }, sessionID });
+  return { ...setup, driver, project, chrome, chromeApprovals };
+};
+
+test('the Chrome tool runs the bundled agent-browser for an engine call and saves its screenshot in the session\'s project', async (t) => {
+  const { chrome, driver, project, dataDir, mittrSettings } = await chromeSetUp(t);
+  assert.deepEqual(await chrome('open', { url: 'http://acme.example.test/' }), { schemaVersion: 1, ok: true, action: 'chrome.open', data: { url: 'http://acme.example.test/', title: 'Acme' } });
+  assert.deepEqual((await chrome('snapshot')).data, { ran: 'snapshot', args: ['-i'] });
+  const shot = await chrome('screenshot', { label: 'home' });
+  assert.equal(shot.ok, true);
+  assert.match(shot.data.path, /^\.openchamber\/screenshots\/home-.+\.png$/);
+  assert.deepEqual(shot.data.image, { base64: MARKER_PNG, mime: 'image/png' });
+  assert.deepEqual(fs.readFileSync(path.join(project, shot.data.path)), Buffer.from(MARKER_PNG, 'base64'));
+
+  assert.equal((await mittrSettings.read()).tools.chromeProfile, 'Default', 'the only profile was chosen and stored');
+  for (const { env, cwd, args } of driver.calls()) {
+    assert.equal(env.AGENT_BROWSER_NAMESPACE, path.basename(dataDir));
+    assert.equal(env.AGENT_BROWSER_EXECUTABLE_PATH, CHROME_EXECUTABLE);
+    assert.equal(cwd, fs.realpathSync(dataDir));
+    assert.deepEqual(args.slice(0, 2), ['--config', path.join(dataDir, 'mittr-agent-browser.json')]);
+  }
+});
+
+test('chrome.open of this server\'s or the engine\'s own port is refused whatever the approvals', async (t) => {
+  const { chrome, driver } = await chromeSetUp(t, { port: 4100, enginePort: 4096 });
+  for (const url of ['http://127.0.0.1:4100/', 'http://localhost:4096/global/health']) {
+    assert.deepEqual((await chrome('open', { url })).error, { message: 'That address is MittrCraft itself', kind: 'usage' }, url);
+  }
+  assert.equal(driver.commands().some(({ command }) => command[0] === 'open'), false);
+});
+
+test('a deleted session closes its Chrome', async (t) => {
+  const { chrome, driver, emit, chromeApprovals } = await chromeSetUp(t);
+  assert.equal((await chrome('open', { url: 'http://acme.example.test/' })).ok, true);
+  emit([{ type: 'session.deleted', properties: { sessionID: 'ses_1', info: { id: 'ses_1' } } }]);
+  await until(() => driver.commands().some(({ session, command }) => session === 'mc-ses_1' && command[0] === 'close'));
+  assert.deepEqual(chromeApprovals.record.forgotten, ['ses_1']);
+});
+
+test('an account switch closes every agent Chrome and forgets every session grant', async (t) => {
+  const { chrome, driver, tools, chromeApprovals } = await chromeSetUp(t);
+  assert.equal((await chrome('open', { url: 'http://acme.example.test/' }, 'ses_1')).ok, true);
+  assert.equal((await chrome('open', { url: 'http://acme.example.test/' }, 'ses_2')).ok, true);
+  tools.chrome.allowForConversation('ses_1');
+
+  await tools.accountChanged();
+
+  assert.deepEqual(driver.commands().at(-1), { session: null, command: ['close', '--all'] });
+  assert.equal(chromeApprovals.record.forgotAll, 1);
+  chromeApprovals.isApproved = async () => false;
+  assert.equal(await tools.chrome.isHostAllowed('ses_1', 'acme.example.test'), false);
+});
+
+test('dispose closes every Chrome within 3 seconds even when the driver hangs', async (t) => {
+  const driver = stubAgentBrowser(t, { hang: ['close'] });
+  const { tools } = await chromeSetUp(t, { driver });
+  const started = Date.now();
+  await tools.dispose();
+  const elapsed = Date.now() - started;
+  assert.equal(CHROME_CLOSE_TIMEOUT_MS, 3_000);
+  assert.ok(elapsed >= CHROME_CLOSE_TIMEOUT_MS - 100 && elapsed < CHROME_CLOSE_TIMEOUT_MS + 1_500, `dispose took ${elapsed} ms`);
+  assert.deepEqual(driver.commands().map(({ command }) => command), [['close', '--all']]);
+  const again = Date.now();
+  await tools.dispose();
+  assert.ok(Date.now() - again < 500, 'a second dispose does not close again');
 });

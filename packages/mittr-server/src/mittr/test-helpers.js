@@ -274,3 +274,48 @@ export const stubCuaDriver = (t, answers = {}) => {
   ].join('\n'), { mode: 0o755 });
   return file;
 };
+
+const AGENT_BROWSER_STUB = `
+const fs = require('node:fs');
+const path = require('node:path');
+const dir = path.dirname(process.argv[1]);
+const args = process.argv.slice(2);
+const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith('AGENT_BROWSER_') || key.endsWith('_PROXY')));
+fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ args, env, cwd: process.cwd() }) + '\\n');
+const options = JSON.parse(fs.readFileSync(path.join(dir, 'options.json'), 'utf8'));
+const capped = args.indexOf('--max-output');
+const [command, ...rest] = capped === -1 ? args.slice(args.indexOf('--json') + 1) : args.slice(capped + 2);
+const session = args.includes('--session') ? args[args.indexOf('--session') + 1] : null;
+const urls = path.join(dir, 'urls.json');
+const read = () => (fs.existsSync(urls) ? JSON.parse(fs.readFileSync(urls, 'utf8')) : {});
+const write = (value) => fs.writeFileSync(urls, JSON.stringify(value));
+const reply = (data) => process.stdout.write(JSON.stringify({ success: true, data }));
+if (options.hang.includes(command)) setTimeout(() => {}, 60000);
+else if (command === 'profiles') reply(options.profiles);
+else if (command === 'session') reply({ sessions: Object.keys(read()) });
+else if (command === 'close') {
+  const open = read();
+  if (rest[0] === '--all') write({});
+  else { delete open[session]; write(open); }
+  reply({ closed: true });
+} else if (command === 'open') { write({ ...read(), [session]: rest[0] }); reply({ url: rest[0], title: 'Acme' }); }
+else if (command === 'get') reply({ url: read()[session] ?? 'about:blank' });
+else if (command === 'screenshot') { fs.writeFileSync(rest[0], Buffer.from(options.png, 'base64')); reply({ path: rest[0] }); }
+else reply({ ran: command, args: rest });
+`;
+
+export const stubAgentBrowser = (t, { profiles = [{ directory: 'Default', name: 'Person' }], hang = [], png = '' } = {}) => {
+  const dir = tempDataDir(t);
+  const file = path.join(dir, 'agent-browser');
+  fs.writeFileSync(path.join(dir, 'options.json'), JSON.stringify({ profiles, hang, png }));
+  fs.writeFileSync(file, `#!${process.execPath}\n${AGENT_BROWSER_STUB}`, { mode: 0o755 });
+  const calls = () => {
+    const log = path.join(dir, 'calls.jsonl');
+    return fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line)) : [];
+  };
+  const commands = () => calls().map(({ args }) => {
+    const capped = args.indexOf('--max-output');
+    return { session: args.includes('--session') ? args[args.indexOf('--session') + 1] : null, command: capped === -1 ? args.slice(args.indexOf('--json') + 1) : args.slice(capped + 2) };
+  });
+  return { file, calls, commands };
+};

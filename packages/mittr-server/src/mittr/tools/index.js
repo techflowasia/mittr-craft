@@ -1,15 +1,18 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { createToolsCallback } from './callback.js';
+import { CHROME_EXECUTABLE, createChromeControl, resolveAgentBrowser, resolveChrome } from './chrome-control.js';
+import { NO_APPROVALS, createChromeService, registerChromeActions } from './chrome-service.js';
 import { registerComputerActions } from './computer-actions.js';
-import { bundledDriverPath, createComputerControl, createLaunchApp, resolveCuaDriver } from './computer-control.js';
+import { createComputerControl, createLaunchApp, resolveCuaDriver } from './computer-control.js';
 import { materializeToolsPlugin, toolsFragment, toolsPluginDir, toolsPluginSource } from './plugin-source.js';
 import { MITTR_TOOLS, MittrToolError } from './registry.js';
 import { CAPTURE_TOOL } from './screenshots.js';
 
-export const CHROME_EXECUTABLE = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+export const CHROME_CLOSE_TIMEOUT_MS = 3_000;
 
 const NOT_SIGNED_IN = 'Not signed in to Mittr. Sign in to continue.';
 
@@ -17,6 +20,24 @@ const TITLES = Object.freeze({
   [MITTR_TOOLS.computer]: 'The Computer tool',
   [MITTR_TOOLS.chrome]: 'The Chrome tool',
   [MITTR_TOOLS.work]: 'The work tool',
+});
+
+const enginePortOf = (opencode) => {
+  try {
+    return Number(new URL(opencode.url('/')).port) || null;
+  } catch {
+    return null;
+  }
+};
+
+const settledWithin = (work, ms) => new Promise((resolve) => {
+  const timer = setTimeout(resolve, ms);
+  timer.unref?.();
+  const done = () => {
+    clearTimeout(timer);
+    resolve();
+  };
+  work.then(done, done);
 });
 
 const readTextOrNull = (file) => {
@@ -29,8 +50,8 @@ const readTextOrNull = (file) => {
 
 export const bundledDrivers = ({ resourcesDir, env, exists = fs.existsSync }) => ({
   computer: () => resolveCuaDriver({ resourcesDir, env, exists }),
-  chrome: () => bundledDriverPath({ dirFromEnv: env.MITTRCRAFT_BUNDLED_AGENT_BROWSER_DIR, resourcesDir, name: 'agent-browser', exists }),
-  chromeInstalled: () => exists(CHROME_EXECUTABLE),
+  chrome: () => resolveAgentBrowser({ resourcesDir, env, exists }),
+  chromePath: () => resolveChrome({ home: env.HOME || os.homedir(), exists }),
 });
 
 export function setupMittrTools(context, {
@@ -43,6 +64,7 @@ export function setupMittrTools(context, {
   refresh,
   platform,
   drivers = bundledDrivers({ resourcesDir, env }),
+  chromeApprovals = NO_APPROVALS,
   logger = console,
 }) {
   const { app, dataDir, server, opencode, events, settings: upstreamSettings, control } = context;
@@ -56,7 +78,7 @@ export function setupMittrTools(context, {
 
   const offered = {
     [MITTR_TOOLS.computer]: () => personalDesktop() && drivers.computer() !== null,
-    [MITTR_TOOLS.chrome]: () => personalDesktop() && drivers.chrome() !== null && drivers.chromeInstalled(),
+    [MITTR_TOOLS.chrome]: () => personalDesktop() && drivers.chrome() !== null && drivers.chromePath() !== null,
     [MITTR_TOOLS.work]: () => signedIn(),
   };
   registerComputerActions(registry, {
@@ -65,6 +87,15 @@ export function setupMittrTools(context, {
     writeScreenshot: control.writeScreenshot,
     offered: offered[MITTR_TOOLS.computer],
   });
+  const chromeControl = createChromeControl({ binary: drivers.chrome(), dataDir, chromePath: drivers.chromePath() ?? CHROME_EXECUTABLE, env });
+  const chrome = createChromeService({
+    control: chromeControl,
+    settings: mittrSettings,
+    approvals: chromeApprovals,
+    writeScreenshot: control.writeScreenshot,
+    ownPorts: () => [server.port(), enginePortOf(opencode)].filter(Number.isInteger),
+  });
+  registerChromeActions(registry, { service: chrome, available: () => chromeControl.available && offered[MITTR_TOOLS.chrome]() });
   const switchedOn = {
     [MITTR_TOOLS.computer]: ({ tools }) => tools.computer !== false,
     [MITTR_TOOLS.chrome]: ({ tools }) => tools.chrome !== false,
@@ -147,8 +178,17 @@ export function setupMittrTools(context, {
   const unsubscribeEvents = events.subscribe((event) => {
     for (const payload of event?.translated?.() ?? []) {
       if (payload.type === 'session.idle' && payload.properties?.aborted === true) callback.abortSession(payload.properties.sessionID);
+      if (payload.type === 'session.deleted') void chrome.closeSession(payload.properties?.info?.id);
     }
   });
+
+  const closeEveryChrome = () => {
+    const controller = new AbortController();
+    const closing = chrome.closeAll({ signal: controller.signal });
+    return settledWithin(closing, CHROME_CLOSE_TIMEOUT_MS).finally(() => controller.abort());
+  };
+
+  let disposed = null;
 
   return {
     engineEnv: () => {
@@ -160,9 +200,18 @@ export function setupMittrTools(context, {
     managedConfig: async () => (await render()).fragment,
     applySwitches,
     switches,
-    dispose: async () => {
-      unsubscribeReady();
-      unsubscribeEvents();
+    chrome,
+    accountChanged: () => {
+      chrome.forgetEveryGrant();
+      return closeEveryChrome();
+    },
+    dispose: () => {
+      disposed ??= (async () => {
+        unsubscribeReady();
+        unsubscribeEvents();
+        await closeEveryChrome();
+      })();
+      return disposed;
     },
   };
 }

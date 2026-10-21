@@ -1777,6 +1777,14 @@ const checks = {
     has(source('packages/web/server/index.js'), /if \(payload\.type === 'session\.idle' && payload\.properties\?\.aborted === true\) \{\s*agentToolRuntime\?\.abortSession\?\.\(payload\.properties\.sessionID\);/, 'upstream\'s agent tool no longer aborts on the same signal');
   },
 
+  'session-deleted-event': async () => {
+    const { translateWireEvent } = await importUpstream('packages/web/server/lib/event-stream/translate-v2.js');
+    const deleted = translateWireEvent({ id: 'evt_3', type: 'session.deleted', data: { sessionID: 'ses_1' } }).find((event) => event.type === 'session.deleted');
+    assert.equal(deleted?.properties?.info?.id, 'ses_1', 'a deleted session no longer arrives as session.deleted with properties.info.id');
+    has(source('packages/web/server/lib/event-stream/global-hub.js'), /translated\(\) \{\s*translated \?\?= translateWireEvent\(payload\);\s*return translated;\s*\},/, 'hub subscribers no longer get translated()');
+    has(source('packages/web/server/index.js'), /subscribe: \(listener\) => globalMessageStreamHub\.subscribeEvent\(listener\),/, 'the plugin context no longer subscribes plugins to the global event hub');
+  },
+
   'screenshot-directory': async (t) => {
     const screenshots = await importUpstream('packages/web/server/lib/openchamber-control/screenshots.js');
     const { readCapture } = await import('./mittr/tools/screenshots.js');
