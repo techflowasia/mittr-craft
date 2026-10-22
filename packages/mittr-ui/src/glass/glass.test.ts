@@ -144,6 +144,7 @@ describe('glass.css', () => {
     }
     const dialog = rules.find((rule) => rule.within.length === 0 && rule.selectors.includes('html.mittr-glass [role="dialog"]'));
     expect(dialog?.body).toMatch(/border-radius:\s*26px/);
+    expect(rules.some((rule) => rule.selectors.some((selector) => selector.includes('[role="dialog"]')) && /overflow\s*:/.test(rule.body))).toBe(false);
     expect(dialog?.body).toMatch(BLUR);
     expect(rules.some((rule) => rule.selectors.some((selector) => selector.includes('[role="menu"]')) && /border-radius:\s*16px/.test(rule.body))).toBe(true);
   });

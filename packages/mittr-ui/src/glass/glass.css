@@ -199,7 +199,6 @@ html.mittr-glass .oc-glass-backdrop {
 }
 
 html.mittr-glass [role="dialog"] {
-  overflow: hidden;
   border-color: var(--mittr-glass-edge);
   border-radius: 26px;
   background-color: var(--mittr-glass-dialog);
