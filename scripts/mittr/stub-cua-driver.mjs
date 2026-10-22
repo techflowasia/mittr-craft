@@ -14,8 +14,19 @@ const APPS = [
   { name: 'Calculator', pid: 0, running: false, bundle_id: 'com.apple.calculator' },
 ];
 
+export const SEVERAL_WINDOWS = [
+  { window_id: 3965, title: 'Calculator' },
+  { window_id: 3964, title: '' },
+  { window_id: 3963, title: '' },
+  { window_id: 3962, title: '' },
+  { window_id: 3961, title: '' },
+];
+
 export const answer = (tool, args, { mode }) => {
   if (tool === 'list_apps') return { apps: APPS };
+  if (tool === 'bring_to_front' && mode === 'several-windows' && args.window_id === undefined) {
+    return { code: 'ambiguous_window_target', candidates: SEVERAL_WINDOWS };
+  }
   if (tool === 'bring_to_front') return { process_activated: true, exact_window_effect: { verified: true } };
   if (tool === 'get_desktop_state') {
     if (mode === 'screen-recording-error') throw new Error(SCREEN_RECORDING_REFUSAL);

@@ -39,6 +39,20 @@ const appNameOf = (input, action) => {
   return name;
 };
 
+const notBroughtForward = (name) => new MittrToolError(`Could not bring ${name} to the front.`, 502);
+
+const broughtForward = (result, name) => {
+  if (result?.process_activated !== true) throw notBroughtForward(name);
+  return { activated: true, windowVerified: result.exact_window_effect?.verified === true };
+};
+
+const mainWindowOf = (candidates, name) => {
+  const titled = (Array.isArray(candidates) ? candidates : [])
+    .filter((candidate) => isRecord(candidate) && Number.isInteger(candidate.window_id) && trimmedText(candidate.title))
+    .map((candidate) => ({ windowId: candidate.window_id, title: trimmedText(candidate.title) }));
+  return titled.find((window) => window.title.toLowerCase() === name.toLowerCase()) ?? titled[0] ?? null;
+};
+
 const appsOf = (listed) => (isRecord(listed) && Array.isArray(listed.apps) ? listed.apps.filter(isRecord) : []);
 
 const DEFINITIONS = Object.freeze([
@@ -106,19 +120,15 @@ export function registerComputerActions(registry, { control, launchApp, writeScr
     const listed = appsOf(await driver('list_apps', {}, ctx, ACCESSIBILITY));
     const match = listed.find((app) => app.running === true && String(app.name).toLowerCase() === name.toLowerCase());
     if (!match) throw new MittrToolError(`No running app named "${name}"`, 404);
-    const result = await driver('bring_to_front', { pid: match.pid }, ctx, ACCESSIBILITY);
-    if (result?.code === AMBIGUOUS_WINDOW) {
-      return {
-        activated: false,
-        reason: AMBIGUOUS_WINDOW,
-        candidates: (Array.isArray(result.candidates) ? result.candidates : []).map((candidate) => ({ windowId: candidate.window_id, title: candidate.title || null })),
-        hint: 'Several windows belong to this app; this action does not pick one for you yet.',
-      };
-    }
-    return {
-      activated: result?.process_activated === true,
-      windowVerified: result?.exact_window_effect?.verified === true,
-    };
+    const bring = (args) => driver('bring_to_front', args, ctx, ACCESSIBILITY).catch((error) => {
+      if (error instanceof MittrToolError) throw error;
+      throw notBroughtForward(match.name);
+    });
+    const result = await bring({ pid: match.pid });
+    if (result?.code !== AMBIGUOUS_WINDOW) return broughtForward(result, match.name);
+    const window = mainWindowOf(result.candidates, match.name);
+    if (!window) throw new MittrToolError(`Could not bring ${match.name} to the front: it has several windows and none of them has a title to pick it by.`, 409);
+    return { ...broughtForward(await bring({ pid: match.pid, window_id: window.windowId }), match.name), window };
   };
 
   const screenshot = async (_input, ctx) => {

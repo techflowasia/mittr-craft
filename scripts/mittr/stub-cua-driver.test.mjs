@@ -6,7 +6,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { STUB_PNG, answer } from './stub-cua-driver.mjs';
+import { SEVERAL_WINDOWS, STUB_PNG, answer } from './stub-cua-driver.mjs';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'stub-cua-driver.mjs');
 
@@ -27,6 +27,13 @@ test('get_desktop_state answers a fixed PNG, and the error mode answers the Scre
   assert.deepEqual(Buffer.from(state.screenshot_png_b64, 'base64'), STUB_PNG);
   assert.deepEqual(STUB_PNG.subarray(0, 8), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   assert.throws(() => answer('get_desktop_state', {}, { mode: 'screen-recording-error' }), /Screen Recording is NOT granted/);
+});
+
+test('the several-windows mode answers a pid-only bring_to_front as the real driver does for one titled and four untitled windows', () => {
+  assert.deepEqual(answer('bring_to_front', { pid: 4243 }, { mode: 'several-windows' }), { code: 'ambiguous_window_target', candidates: SEVERAL_WINDOWS });
+  assert.deepEqual(SEVERAL_WINDOWS.map(({ title }) => title), ['Calculator', '', '', '', '']);
+  assert.deepEqual(answer('bring_to_front', { pid: 4243, window_id: 3965 }, { mode: 'several-windows' }), { process_activated: true, exact_window_effect: { verified: true } });
+  assert.deepEqual(answer('bring_to_front', { pid: 4243 }, { mode: 'normal' }), { process_activated: true, exact_window_effect: { verified: true } });
 });
 
 test('the executable records each call with its arguments and prints JSON', async () => {

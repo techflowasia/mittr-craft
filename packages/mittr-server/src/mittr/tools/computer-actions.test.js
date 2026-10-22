@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { MARKER_PNG } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
 import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
@@ -122,19 +123,89 @@ test('bring_to_front reports an unverified window as not verified', async () => 
   assert.deepEqual(await run('computer.bring_to_front', { app: 'Notes' }), { activated: true, windowVerified: false });
 });
 
-test('bring_to_front with several windows reports the candidates and activates nothing', async () => {
-  const { run } = setUp({
+const CALCULATOR_WINDOWS = [
+  { window_id: 3965, title: 'Calculator' },
+  { window_id: 3964, title: '' },
+  { window_id: 3963, title: null },
+  { window_id: 3962 },
+  { window_id: 3961, title: '   ' },
+];
+
+const severalWindows = (candidates, picked = { process_activated: true, exact_window_effect: { verified: true } }) => (args) => (
+  args.window_id === undefined ? { code: 'ambiguous_window_target', candidates } : picked
+);
+
+test('bring_to_front picks the titled main window when the app also has untitled helper windows', async () => {
+  const { run, requests } = setUp({
     answers: {
-      list_apps: { apps: [{ name: 'Finder', pid: 4, running: true }] },
-      bring_to_front: { code: 'ambiguous_window_target', candidates: [{ window_id: 11, title: 'Downloads' }, { window_id: 12, title: '' }] },
+      list_apps: { apps: [{ name: 'Calculator', pid: 55452, running: true }] },
+      bring_to_front: severalWindows(CALCULATOR_WINDOWS),
     },
   });
-  assert.deepEqual(await run('computer.bring_to_front', { app: 'Finder' }), {
-    activated: false,
-    reason: 'ambiguous_window_target',
-    candidates: [{ windowId: 11, title: 'Downloads' }, { windowId: 12, title: null }],
-    hint: 'Several windows belong to this app; this action does not pick one for you yet.',
+  assert.deepEqual(await run('computer.bring_to_front', { app: 'Calculator' }), {
+    activated: true,
+    windowVerified: true,
+    window: { windowId: 3965, title: 'Calculator' },
   });
+  assert.deepEqual(requests.map(({ tool, args }) => [tool, args]), [
+    ['list_apps', {}],
+    ['bring_to_front', { pid: 55452 }],
+    ['bring_to_front', { pid: 55452, window_id: 3965 }],
+  ]);
+});
+
+test('bring_to_front prefers the window titled with the app\'s name, then the first titled one', async () => {
+  const named = setUp({
+    answers: {
+      list_apps: { apps: [{ name: 'Finder', pid: 4, running: true }] },
+      bring_to_front: severalWindows([{ window_id: 11, title: 'Downloads' }, { window_id: 12, title: '' }, { window_id: 13, title: 'finder' }]),
+    },
+  });
+  assert.deepEqual((await named.run('computer.bring_to_front', { app: 'Finder' })).window, { windowId: 13, title: 'finder' });
+  const first = setUp({
+    answers: {
+      list_apps: { apps: [{ name: 'Finder', pid: 4, running: true }] },
+      bring_to_front: severalWindows([{ window_id: 12, title: '' }, { window_id: 11, title: 'Downloads' }, { window_id: 14, title: 'Documents' }]),
+    },
+  });
+  assert.deepEqual((await first.run('computer.bring_to_front', { app: 'Finder' })).window, { windowId: 11, title: 'Downloads' });
+});
+
+test('bring_to_front with only untitled windows refuses in a plain sentence and sends nothing more', async () => {
+  const { run, requests } = setUp({
+    answers: {
+      list_apps: { apps: [{ name: 'Calculator', pid: 55452, running: true }] },
+      bring_to_front: severalWindows(CALCULATOR_WINDOWS.slice(1)),
+    },
+  });
+  await assert.rejects(
+    run('computer.bring_to_front', { app: 'calculator' }),
+    refusedWith(409, 'Could not bring Calculator to the front: it has several windows and none of them has a title to pick it by.'),
+  );
+  assert.deepEqual(requests.map(({ tool }) => tool), ['list_apps', 'bring_to_front']);
+});
+
+test('bring_to_front never answers ok when nothing came to the front', async () => {
+  const notActivated = [
+    { process_activated: false },
+    {},
+    null,
+    severalWindows(CALCULATOR_WINDOWS, { process_activated: false }),
+    severalWindows(CALCULATOR_WINDOWS, { code: 'ambiguous_window_target', candidates: CALCULATOR_WINDOWS }),
+    severalWindows(CALCULATOR_WINDOWS, new Error('bring_to_front: exact window 3965 for pid 55452 was not verified as frontmost and focused (request_accepted=true, process_activated=false)')),
+    new Error('bring_to_front: pid 55452, did not become frontmost (request_accepted=true)'),
+  ];
+  for (const answer of notActivated) {
+    const bringToFront = answer instanceof Function
+      ? (args) => {
+        const reply = answer(args);
+        if (reply instanceof Error) throw reply;
+        return reply;
+      }
+      : answer;
+    const { run } = setUp({ answers: { list_apps: { apps: [{ name: 'Calculator', pid: 55452, running: true }] }, bring_to_front: bringToFront } });
+    await assert.rejects(run('computer.bring_to_front', { app: 'Calculator' }), refusedWith(502, 'Could not bring Calculator to the front.'), String(answer));
+  }
 });
 
 test('bring_to_front refuses an app that is not running, or a name that is not plain', async () => {
@@ -353,4 +424,32 @@ test('a tool that stops being offered between two requests of one action sends n
     refusedWith(503, TURNED_OFF_MID_ACTION),
   );
   assert.deepEqual(stubCuaDriverCalls(binary).filter(({ command }) => command === 'call').map(({ tool }) => tool), ['list_apps']);
+});
+
+test('through the daemon and the gate\'s stub driver, bring_to_front brings the titled window forward past four untitled helpers', async (t) => {
+  const dir = tempDataDir(t);
+  const state = path.join(dir, 'state');
+  fs.mkdirSync(state);
+  fs.writeFileSync(path.join(state, 'mode'), 'several-windows\n');
+  const stub = fileURLToPath(new URL('../../../../../scripts/mittr/stub-cua-driver.mjs', import.meta.url));
+  const binary = path.join(dir, 'cua-driver');
+  fs.writeFileSync(binary, `#!/bin/sh\nexec "${process.execPath}" "${stub}" "$@" --state "${state}"\n`, { mode: 0o755 });
+  const dataDir = path.join(dir, 'data');
+  fs.mkdirSync(dataDir);
+  const daemon = createDriverDaemon({ binary, dataDir, env: { PATH: process.env.PATH, HOME: dataDir }, probeIntervalMs: 10 });
+  t.after(() => daemon.stop());
+  const control = createComputerControl({ binary, daemon });
+  const registry = createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, execute: async () => ({}) } });
+  registerComputerActions(registry, { control, launchApp: async () => {}, writeScreenshot, offered: () => true });
+  assert.deepEqual(await registry.execute('computer.bring_to_front', { app: 'Finder' }, { surface: 'agent', tool: MITTR_TOOLS.computer }), {
+    activated: true,
+    windowVerified: true,
+    window: { windowId: 3965, title: 'Calculator' },
+  });
+  const calls = fs.readFileSync(path.join(state, 'calls.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(calls.filter(({ tool }) => tool).map(({ tool, args }) => [tool, args]), [
+    ['list_apps', {}],
+    ['bring_to_front', { pid: 4101 }],
+    ['bring_to_front', { pid: 4101, window_id: 3965 }],
+  ]);
 });
