@@ -682,6 +682,25 @@ export const UPSTREAM_CONTRACT = [
     id: 'speech-config-store',
     files: ['packages/ui/src/stores/useConfigStore.ts', 'packages/web/server/lib/dictation/runtime.js', 'packages/web/server/lib/dictation/service.js'],
     why: "upstream's config store holds sttProvider ('local' | 'openai-compatible', default 'local'), sttServerUrl, voiceProvider (default 'browser', with 'openai-compatible'), openaiCompatibleUrl and their setters setSttProvider, setSttServerUrl, setSttModel, setVoiceProvider, setOpenaiCompatibleUrl, setOpenaiCompatibleTtsModel, setOpenaiCompatibleVoice and setTtsChunkedMode, plus refreshVoiceApiKeys({ force }), each saved under its own localStorage key; GET /api/dictation/status?provider=local lists models with installed, so Mittr speech is chosen, stopped and first set up through them",
+  },  {
+    id: 'session-sync-hooks',
+    files: ['packages/ui/src/sync/sync-context.tsx', 'packages/ui/src/sync/session-ui-store.ts', 'packages/ui/src/sync/notification-store.ts', 'packages/ui/src/stores/useDirectoryStore.ts'],
+    why: "the voice root reads the viewed session from useSessionUIStore (currentSessionId, currentSessionDirectory) and the directory store's currentDirectory, and narrates its finish, a waiting permission, an error or a stop from useSessionStatus(sessionID, directory) (type 'busy'), useSessionPermissions(sessionID, directory) and useLatestSessionError(sessionId); the two sync hooks need the SyncProvider, so the narrator renders inside the composer-actions slot",
+  },
+  {
+    id: 'dictation-capture-supported',
+    files: ['packages/ui/src/lib/dictation/use-dictation-audio-source.ts', 'packages/ui/src/lib/desktop.ts'],
+    why: 'Talk shows only where the footer shows dictation: isDictationCaptureSupported() (a window with getUserMedia and an AudioContext) outside isVSCodeRuntime()',
+  },
+  {
+    id: 'context-panel-browser',
+    files: ['packages/ui/src/stores/useUIStore.ts'],
+    why: "a voice turn tells the assistant whether the in-app browser is open: useUIStore's contextPanelByDirectory, keyed by normalizeContextPanelDirectoryKey(directory), holds isOpen, tabs (each with an id and a mode, 'browser' among them) and activeTabId",
+  },
+  {
+    id: 'voice-bar-ui',
+    files: ['packages/ui/src/components/icon/sprite.ts', 'packages/ui/src/components/ui/button.tsx'],
+    why: 'the Talk button and the voice bar draw the loader-4 and stop icons and use a destructive sm Button for End',
   },
 ];
 

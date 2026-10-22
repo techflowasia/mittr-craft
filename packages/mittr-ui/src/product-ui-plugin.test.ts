@@ -8,12 +8,14 @@ import { dict as enDict } from '../../ui/src/lib/i18n/messages/en';
 import { overlayDictionary, ProductSlot, remoteModelCatalogAllowed, translateProductSessionAuthDescription, useProductModelPicker } from '../../ui/src/lib/product-plugins';
 import { MittrAccountMenu } from './accounts/MittrAccountMenu';
 import { INTEGRATIONS_PAGE } from './integrationsPage';
-import './product-ui-plugin';
+import { MITTRCRAFT_UI_PLUGIN } from './product-ui-plugin';
 import { SIDEBAR_FOOTER } from './sidebarFooter';
 import { strings } from './strings/en';
 import { mittrT } from './strings/mittrT';
 import { MittrToolsSettingsItem } from './tools/MittrToolsSection';
 import { SidebarProfile } from './ui-auth/SidebarProfile';
+import { ComposerVoiceActions } from './voice/ComposerVoiceActions';
+import { useMittrDictationBlock } from './voice/useMittrDictationBlock';
 import { MyWorkFooterItem } from './work/MyWorkButton';
 import { WorkTrackingSettingsItem } from './work-tracking/WorkTrackingSection';
 
@@ -174,5 +176,12 @@ describe('MittrCraft chat messages', () => {
     );
     expect(footer(true)).toContain(mittrT('mittr.quota.exhausted.retry'));
     expect(footer(false)).toBe('');
+  });
+});
+
+describe('MittrCraft voice in the composer', () => {
+  test("the composer-actions slot holds the Talk button and the dictation block is the plugin's", () => {
+    expect(MITTRCRAFT_UI_PLUGIN.slots?.['composer-actions']).toBe(ComposerVoiceActions);
+    expect(MITTRCRAFT_UI_PLUGIN.composer?.useDictationBlock).toBe(useMittrDictationBlock);
   });
 });

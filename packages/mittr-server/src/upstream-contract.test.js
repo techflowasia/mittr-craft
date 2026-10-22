@@ -2016,6 +2016,39 @@ const checks = {
     has(source('packages/web/server/lib/dictation/runtime.js'), /app\.get\('\/api\/dictation\/status', async \(req, res\) => \{/, 'GET /api/dictation/status is gone');
     has(source('packages/web/server/lib/dictation/service.js'), /installed: await isLocalSttModelInstalled\(modelsDir, id\),/, 'the dictation status no longer says which local models are installed');
   },
+  'session-sync-hooks': () => {
+    const sync = source('packages/ui/src/sync/sync-context.tsx');
+    has(sync, /^export function useSessionStatus\(sessionID: string, directory\?: string\) \{$/m, 'useSessionStatus changed its signature');
+    has(sync, /^export function useSessionPermissions\(sessionID: string, directory\?: string, options\?: \{ bootstrap\?: boolean \}\) \{$/m, 'useSessionPermissions changed its signature');
+    has(sync, /if \(!ctx\) throw new Error\("useSyncRuntime must be used within <SyncProvider>"\)/, 'the sync hooks no longer need the SyncProvider; the narrator may move to the voice root');
+    const ui = source('packages/ui/src/sync/session-ui-store.ts');
+    has(ui, /^  currentSessionId: string \| null$/m, 'the session UI store lost currentSessionId');
+    has(ui, /^  currentSessionDirectory: string \| null$/m, 'the session UI store lost currentSessionDirectory');
+    has(source('packages/ui/src/sync/notification-store.ts'), /^export function useLatestSessionError\(sessionId: string\): ErrorNotification \| null \{$/m, 'useLatestSessionError changed its signature');
+    has(source('packages/ui/src/stores/useDirectoryStore.ts'), /^  currentDirectory: string;$/m, 'the directory store lost currentDirectory');
+  },
+
+  'dictation-capture-supported': () => {
+    has(source('packages/ui/src/lib/dictation/use-dictation-audio-source.ts'), /^export const isDictationCaptureSupported = \(\): boolean => \{$/m, 'isDictationCaptureSupported changed its signature');
+    has(source('packages/ui/src/lib/desktop.ts'), /^export const isVSCodeRuntime = \(\): boolean => \{$/m, 'isVSCodeRuntime changed its signature');
+  },
+
+  'context-panel-browser': () => {
+    const store = source('packages/ui/src/stores/useUIStore.ts');
+    has(store, /^export const normalizeContextPanelDirectoryKey = \(value: string\): string => /m, 'normalizeContextPanelDirectoryKey is gone');
+    has(store, /type ContextPanelDirectoryState = \{\s*isOpen: boolean;[\s\S]*?tabs: ContextPanelTab\[\];\s*activeTabId: string \| null;/, 'a context panel state no longer has isOpen, tabs and activeTabId');
+    has(store, /type ContextPanelTab = \{\s*id: string;\s*mode: ContextPanelMode;/, 'a context panel tab no longer has an id and a mode');
+    has(store, /contextPanelModeSchema = z\.enum\(\[[^\]]*'browser'/, "'browser' is no longer a context panel mode");
+    has(store, /^  contextPanelByDirectory: Record<string, ContextPanelDirectoryState>;$/m, 'contextPanelByDirectory changed shape');
+  },
+
+  'voice-bar-ui': () => {
+    const sprite = source('packages/ui/src/components/icon/sprite.ts');
+    for (const name of ['loader-4', 'stop']) assert.ok(sprite.includes(`"${name}"`), `the icon sprite lost ${name}`);
+    const button = source('packages/ui/src/components/ui/button.tsx');
+    has(button, /^\s+destructive:/m, 'Button lost its destructive variant');
+    has(button, /^\s+sm:/m, 'Button lost its sm size');
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {
