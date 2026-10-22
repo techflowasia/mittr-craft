@@ -942,6 +942,48 @@ describe('VoiceSession account change', () => {
   });
 });
 
+describe('VoiceSession conversation refusals', () => {
+  test('a turn refused because the conversation ended closes the microphone and ends Talk with the bar line', async () => {
+    const h = harness();
+    await started(h);
+    await say(h);
+    h.channels[0]?.push({ type: 'error', code: 'conversation_ended' });
+    await flush();
+    await flush();
+    expect(h.synthCalls).toHaveLength(0);
+    expect(h.session.getSnapshot().phase).toBe('idle');
+    expect(h.session.getSnapshot().error).toBe('mittr.voice.talk.error.conversationEnded');
+    expect(h.counts.destroyed).toBe(1);
+    expect(h.counts.closed).toBe(1);
+    expect(h.counts.ended).toBe(1);
+  });
+
+  test('a transcription refused because the conversation ended does the same and sends no turn', async () => {
+    const h = harness({ transcribe: refusing('conversation_ended') });
+    await started(h);
+    await say(h);
+    await flush();
+    expect(h.turns).toHaveLength(0);
+    expect(h.synthCalls).toHaveLength(0);
+    expect(h.session.getSnapshot().phase).toBe('idle');
+    expect(h.session.getSnapshot().error).toBe('mittr.voice.talk.error.conversationEnded');
+    expect(h.counts.destroyed).toBe(1);
+  });
+
+  test('a turn the server did not hear asks to try again and keeps listening', async () => {
+    const h = harness();
+    await started(h);
+    await say(h);
+    h.channels[0]?.push({ type: 'error', code: 'not_heard' });
+    await flush();
+    await flush();
+    expect(h.synthCalls.map((c) => c.text)).toEqual([spokenText('timeout', 'en')]);
+    expect(h.session.getSnapshot().phase).not.toBe('idle');
+    expect(h.session.getSnapshot().error).toBeNull();
+    expect(h.counts.destroyed).toBe(0);
+  });
+});
+
 describe('VoiceSession weekly quota', () => {
   const RESETS_AT = '2026-10-04T17:00:00.000Z';
 

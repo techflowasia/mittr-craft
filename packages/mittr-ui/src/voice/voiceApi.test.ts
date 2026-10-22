@@ -100,17 +100,23 @@ describe('turn', () => {
     });
   });
 
-  test('leaves directory, session and the panel out when there are none and clamps long text', async () => {
+  test('leaves directory, session and the panel out when there are none and clamps long history', async () => {
     const fake = fetchReturning(sse([line({ type: 'done' })]));
     const api = createVoiceApi(fake.impl);
     const long = 'a'.repeat(TEXT_LIMIT + 10);
-    await collect(api.turn(request({ said: long, history: [{ role: 'user', text: long }] }), signal()));
+    await collect(api.turn(request({ said: 'hi', history: [{ role: 'user', text: long }] }), signal()));
     const body = bodyOf(fake.calls[0]);
     expect('directory' in body).toBe(false);
     expect('sessionId' in body).toBe(false);
     expect('panelOpen' in body).toBe(false);
-    expect(body.said).toHaveLength(TEXT_LIMIT);
     expect(body.history[0].text).toHaveLength(TEXT_LIMIT);
+  });
+
+  test('what was said goes whole up to the server\'s limit, so its receipt still matches', async () => {
+    const fake = fetchReturning(sse([line({ type: 'done' })]));
+    const said = 'b'.repeat(2500);
+    await collect(createVoiceApi(fake.impl).turn(request({ said }), signal()));
+    expect(bodyOf(fake.calls[0]).said).toBe(said);
   });
 
   test('reads text, running actions, tool results and done, even split mid-line', async () => {
@@ -175,9 +181,20 @@ describe('turn', () => {
   });
 
   test('a refused request yields its error code from the body', async () => {
-    const api = createVoiceApi(fetchReturning(json({ code: 'not_signed_in' }, 401), json({ error: 'conversation_ended' }, 409)).impl);
+    const api = createVoiceApi(fetchReturning(json({ code: 'not_signed_in' }, 401), json({ error: 'Mittr says no' }, 500)).impl);
     expect(await collect(api.turn(request(), signal()))).toEqual([{ type: 'error', code: 'not_signed_in' }]);
     expect(await collect(api.turn(request(), signal()))).toEqual([{ type: 'error', code: 'upstream_failed' }]);
+  });
+
+  test('the server\'s two conversation refusals reach the session as themselves', async () => {
+    const api = createVoiceApi(fetchReturning(
+      json({ error: 'conversation_ended', reasonCode: 'conversation_ended' }, 409),
+      json({ error: 'not_heard', reasonCode: 'not_heard' }, 409),
+    ).impl);
+    expect(await collect(api.turn(request(), signal()))).toEqual([{ type: 'error', code: 'conversation_ended' }]);
+    expect(await collect(api.turn(request(), signal()))).toEqual([{ type: 'error', code: 'not_heard' }]);
+    const ended = createVoiceApi(fetchReturning(json({ error: 'conversation_ended', reasonCode: 'conversation_ended' }, 409)).impl);
+    expect(await rejection(ended.transcribe(new Blob([]), 'conv_1', signal()))).toMatchObject({ code: 'conversation_ended' });
   });
 
   test('a stream that ends without done is a failure', async () => {

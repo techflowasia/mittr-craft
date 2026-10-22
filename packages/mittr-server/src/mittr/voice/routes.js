@@ -26,6 +26,9 @@ const MESSAGES = Object.freeze({
   bad_request: 'A WAV file in the audio field is required',
 });
 
+const ENDED = Object.freeze({ error: 'conversation_ended', reasonCode: 'conversation_ended' });
+const NOT_HEARD = Object.freeze({ error: 'not_heard', reasonCode: 'not_heard' });
+
 const isOptionalText = (value) => value === undefined || value === null || value === String(value);
 
 export const readTurnBody = (body) => {
@@ -106,7 +109,7 @@ export function registerVoiceRoutes(app, { express, conversation, runTurn, clien
 
   app.post('/api/mittr/voice/transcribe', onlyHere, express.raw({ type: 'multipart/form-data', limit: AUDIO_LIMIT }), async (req, res) => {
     const conversationId = trimmedText(req.headers[CONVERSATION_HEADER]);
-    if (!conversationId || conversationId !== conversation.current()) return res.status(409).json({ error: 'conversation_ended' });
+    if (!conversationId || conversationId !== conversation.current()) return res.status(409).json(ENDED);
     const controller = closeSignal(res);
     try {
       const audio = await readAudioField(req);
@@ -116,7 +119,7 @@ export function registerVoiceRoutes(app, { express, conversation, runTurn, clien
       if (controller.signal.aborted) return undefined;
       state?.clear('stt');
       const heard = conversation.hear(conversationId, text);
-      if (!heard) return res.status(409).json({ error: 'conversation_ended' });
+      if (!heard) return res.status(409).json(ENDED);
       return res.json({ text, heard });
     } catch (error) {
       if (controller.signal.aborted || res.headersSent) return undefined;
@@ -149,8 +152,8 @@ export function registerVoiceRoutes(app, { express, conversation, runTurn, clien
   app.post('/api/mittr/voice/turn', onlyHere, jsonBody(express, { limit: BODY_LIMIT }), async (req, res) => {
     const input = readTurnBody(req.body);
     if (!input) return res.status(400).json({ error: 'bad_request' });
-    if (input.conversationId !== conversation.current()) return res.status(409).json({ error: 'conversation_ended' });
-    if (!conversation.take(input.conversationId, input.heard, input.said)) return res.status(409).json({ error: 'not_heard' });
+    if (input.conversationId !== conversation.current()) return res.status(409).json(ENDED);
+    if (!conversation.take(input.conversationId, input.heard, input.said)) return res.status(409).json(NOT_HEARD);
 
     stopLive();
     const controller = new AbortController();

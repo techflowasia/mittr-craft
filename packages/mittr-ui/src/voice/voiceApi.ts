@@ -30,6 +30,8 @@ const FAILURES = [
   'bad_request',
   'llm_quota_exhausted',
   'account_changed',
+  'conversation_ended',
+  'not_heard',
 ] as const;
 
 export type VoiceTurnFailure = (typeof FAILURES)[number];
@@ -232,7 +234,7 @@ interface TurnBody {
 
 function turnBody(request: VoiceTurnRequest): string {
   const body: TurnBody = {
-    said: clampText(request.said),
+    said: request.said,
     history: request.history.slice(-HISTORY_LIMIT).map((entry) => ({ role: entry.role, text: clampText(entry.text) })),
     locale: request.locale,
     conversationId: request.conversationId,

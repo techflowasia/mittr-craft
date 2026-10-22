@@ -93,16 +93,16 @@ test('a transcription in the live conversation answers its text and a receipt th
   assert.equal(Object.hasOwn(turns[0], 'heard'), false);
 
   const reused = await post('/api/mittr/voice/turn', turnBody(conversationId, heard.body.heard));
-  assert.deepEqual([reused.status, reused.body], [409, { error: 'not_heard' }]);
+  assert.deepEqual([reused.status, reused.body], [409, { error: 'not_heard', reasonCode: 'not_heard' }]);
 });
 
 test('a turn without a fresh heard receipt answers 409 and runs nothing', async (t) => {
   const { post, turns, conversation } = await setUp(t);
   const { conversationId } = (await post('/api/mittr/voice/start')).body;
-  assert.deepEqual((await post('/api/mittr/voice/turn', turnBody(conversationId, 'made-up'))).body, { error: 'not_heard' });
+  assert.deepEqual((await post('/api/mittr/voice/turn', turnBody(conversationId, 'made-up'))).body, { error: 'not_heard', reasonCode: 'not_heard' });
   const heard = conversation.hear(conversationId, 'something else');
-  assert.deepEqual((await post('/api/mittr/voice/turn', turnBody(conversationId, heard))).body, { error: 'not_heard' });
-  assert.deepEqual((await post('/api/mittr/voice/turn', turnBody('another', 'x'))).body, { error: 'conversation_ended' });
+  assert.deepEqual((await post('/api/mittr/voice/turn', turnBody(conversationId, heard))).body, { error: 'not_heard', reasonCode: 'not_heard' });
+  assert.deepEqual((await post('/api/mittr/voice/turn', turnBody('another', 'x'))).body, { error: 'conversation_ended', reasonCode: 'conversation_ended' });
   assert.equal((await post('/api/mittr/voice/turn', { said: 'x' })).status, 400);
   assert.deepEqual(turns, []);
 });
@@ -111,7 +111,24 @@ test('a transcription for an ended conversation answers 409', async (t) => {
   const { post } = await setUp(t);
   const { conversationId } = (await post('/api/mittr/voice/start')).body;
   assert.equal((await post('/api/mittr/voice/end', { conversationId })).status, 204);
-  assert.deepEqual((await post('/api/mittr/voice/transcribe', audioForm(), { [CONVERSATION_HEADER]: conversationId })).body, { error: 'conversation_ended' });
+  assert.deepEqual((await post('/api/mittr/voice/transcribe', audioForm(), { [CONVERSATION_HEADER]: conversationId })).body, { error: 'conversation_ended', reasonCode: 'conversation_ended' });
+});
+
+test('a transcript longer than 2000 characters, up to 4000, gets its turn with the receipt it was heard with', async (t) => {
+  const long = `${'open the shop and read the report aloud '.repeat(62)}`.trim();
+  assert.ok(long.length > 2000 && long.length <= 4000, String(long.length));
+  const { post, turns } = await setUp(t, {
+    client: { transcribe: async () => long, synthesize: async () => ({ audio: Buffer.from('x'), contentType: 'audio/mpeg' }) },
+  });
+  const { conversationId } = (await post('/api/mittr/voice/start')).body;
+  const heard = await post('/api/mittr/voice/transcribe', audioForm(), { [CONVERSATION_HEADER]: conversationId });
+  assert.equal(heard.body.text, long);
+  const turn = await post('/api/mittr/voice/turn', turnBody(conversationId, heard.body.heard, { said: heard.body.text }));
+  assert.equal(turn.status, 200);
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].said, long);
+  const tooLong = await post('/api/mittr/voice/turn', turnBody(conversationId, 'x', { said: 'a'.repeat(4001) }));
+  assert.equal(tooLong.status, 400);
 });
 
 test('a speech refusal answers its status and reason, and a quota one blocks the state', async (t) => {

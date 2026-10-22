@@ -197,6 +197,7 @@ export const mittrEn = {
   'mittr.voice.talk.error.micDenied': 'Microphone access was denied.',
   'mittr.voice.talk.error.noMic': 'No microphone was found.',
   'mittr.voice.talk.error.queueFailed': 'MittrCraft could not add that to the session queue.',
+  'mittr.voice.talk.error.conversationEnded': 'Talk ended in another window or after a restart.',
   'mittr.voice.accountChanged': 'The Mittr account changed.',
   'mittr.speech.kind.stt': 'Voice input',
   'mittr.speech.kind.tts': 'Spoken replies',

@@ -86,10 +86,21 @@ const FAILURE_SPOKEN = {
   bad_request: 'unavailable',
   llm_quota_exhausted: 'unavailable',
   account_changed: 'unavailable',
+  conversation_ended: 'unavailable',
+  not_heard: 'timeout',
 } satisfies Record<VoiceTurnFailure, SpokenKey>;
 
 const QUOTA = 'llm_quota_exhausted';
 const ACCOUNT_CHANGED = 'account_changed';
+const CONVERSATION_ENDED = 'conversation_ended';
+
+const CLOSING_LINE = {
+  account_changed: 'mittr.voice.accountChanged',
+  conversation_ended: 'mittr.voice.talk.error.conversationEnded',
+} satisfies Record<typeof ACCOUNT_CHANGED | typeof CONVERSATION_ENDED, MittrKey>;
+
+const closingFailure = (failure: VoiceTurnFailure | null): failure is keyof typeof CLOSING_LINE =>
+  failure === ACCOUNT_CHANGED || failure === CONVERSATION_ENDED;
 
 type HeardFailure = { failure: VoiceTurnFailure; resetsAt?: string | null };
 
@@ -347,9 +358,9 @@ export class VoiceSession {
     this.set({ quota: { kind, resetsAt: blockedUntil } });
   }
 
-  private closeForAccountChange(): void {
+  private closeWithLine(failure: keyof typeof CLOSING_LINE): void {
     this.end();
-    this.set({ error: 'mittr.voice.accountChanged' });
+    this.set({ error: CLOSING_LINE[failure] });
   }
 
   narrate(text: string, tag?: string): void {
@@ -487,6 +498,7 @@ export class VoiceSession {
         if (code === 'empty_transcript') return { text: '', heard: '' };
         if (code === QUOTA && cause instanceof TranscribeError) return { failure: QUOTA, resetsAt: cause.resetsAt };
         if (code === ACCOUNT_CHANGED) return { failure: ACCOUNT_CHANGED };
+        if (code === CONVERSATION_ENDED) return { failure: CONVERSATION_ENDED };
         if (code === 'not_signed_in' || code === 'not_configured' || code === 'upstream_timeout') return { failure: code };
         return { failure: 'upstream_failed' };
       },
@@ -520,8 +532,8 @@ export class VoiceSession {
         this.closeForQuota('stt', whole.resetsAt);
         return;
       }
-      if (whole.failure === ACCOUNT_CHANGED) {
-        this.closeForAccountChange();
+      if (closingFailure(whole.failure)) {
+        this.closeWithLine(whole.failure);
         return;
       }
       if (whole.failure === 'not_signed_in') this.set({ error: 'mittr.voice.talk.error.notSignedIn' });
@@ -589,8 +601,8 @@ export class VoiceSession {
       failure = 'upstream_failed';
     }
     if (signal.aborted) return;
-    if (failure === ACCOUNT_CHANGED) {
-      this.closeForAccountChange();
+    if (closingFailure(failure)) {
+      this.closeWithLine(failure);
       return;
     }
     this.markReplied(exchange);
