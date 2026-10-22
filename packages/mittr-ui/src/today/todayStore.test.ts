@@ -32,8 +32,8 @@ const NO_PAGES: TodayPages = {
   openGuestPageId: null,
 };
 
-const setup = (restoreCandidate: string | null = null) => {
-  const selection = feed(NO_SELECTION);
+const setup = (restoreCandidate: string | null = null, startedOn: TodaySelection = NO_SELECTION) => {
+  const selection = feed(startedOn);
   const pages = feed(NO_PAGES);
   let rowClick: () => void = () => {};
   let surfacesClosed = 0;
@@ -41,6 +41,7 @@ const setup = (restoreCandidate: string | null = null) => {
     subscribeSelection: selection.subscribe,
     subscribePages: pages.subscribe,
     restoreCandidate: () => restoreCandidate,
+    currentSelection: () => startedOn,
     closeMainSurfaces: () => { surfacesClosed += 1; },
     listenSessionRowClicks: (onClick) => {
       rowClick = onClick;
@@ -146,5 +147,32 @@ describe('Today open state', () => {
     store.dispose();
     expect(selection.count()).toBe(0);
     expect(pages.count()).toBe(0);
+  });
+});
+
+describe('Today after start', () => {
+  test('Minor 9: only the very first automatic draft keeps Today open; a later New session from nothing closes it', () => {
+    const { store, selection } = setup();
+    selection.set({ newSessionDraft: { open: true, draftId: 1 } });
+    expect(store.open()).toBe(true);
+    selection.set({ newSessionDraft: { open: false, draftId: 1 } });
+    expect(store.open()).toBe(true);
+    selection.set({ newSessionDraft: { open: true, draftId: 2 } });
+    expect(store.open()).toBe(false);
+  });
+
+  test('Minor 9: a change elsewhere in the session store does not use up the first-draft exemption', () => {
+    const { store, selection } = setup();
+    selection.set({});
+    selection.set({ newSessionDraft: { open: true, draftId: 1 } });
+    expect(store.open()).toBe(true);
+  });
+
+  test('Minor 9: a restore that happened before Today started is not waited for again', () => {
+    const { store, selection } = setup('ses_last', { currentSessionId: 'ses_last', newSessionDraft: { open: false, draftId: 0 } });
+    expect(store.open()).toBe(true);
+    selection.set({ currentSessionId: null });
+    selection.set({ currentSessionId: 'ses_last' });
+    expect(store.open()).toBe(false);
   });
 });

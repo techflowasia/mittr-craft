@@ -4,6 +4,7 @@ import { getRuntimeKey } from '../../../ui/src/lib/runtime-switch';
 import { useUIStore } from '../../../ui/src/stores/useUIStore';
 import { readLastActiveSession } from '../../../ui/src/sync/last-session-cache';
 import { useSessionUIStore } from '../../../ui/src/sync/session-ui-store';
+import { isSessionOpenClick } from './todayRowClick';
 
 export type TodaySelection = {
   currentSessionId: string | null;
@@ -26,6 +27,7 @@ type TodayStoreDeps = {
   subscribeSelection: Subscribe<TodaySelection>;
   subscribePages: Subscribe<TodayPages>;
   restoreCandidate: () => string | null;
+  currentSelection?: () => TodaySelection;
   closeMainSurfaces: () => void;
   listenSessionRowClicks: (onClick: () => void) => () => void;
 };
@@ -49,7 +51,10 @@ const pageOpen = (pages: TodayPages): boolean =>
 
 export function createTodayStore(deps: TodayStoreDeps): TodayStore {
   let isOpen = true;
+  const startedOn = deps.currentSelection?.() ?? null;
   let restorePending = deps.restoreCandidate();
+  if (restorePending !== null && startedOn?.currentSessionId === restorePending) restorePending = null;
+  let bootDraftPending = !startedOn || (startedOn.currentSessionId === null && !startedOn.newSessionDraft.open);
   const listeners = new Set<() => void>();
 
   const set = (next: boolean): void => {
@@ -59,6 +64,12 @@ export function createTodayStore(deps: TodayStoreDeps): TodayStore {
   };
 
   const onSelection = (state: TodaySelection, prev: TodaySelection): void => {
+    const changed = state.currentSessionId !== prev.currentSessionId
+      || state.newSessionDraft.open !== prev.newSessionDraft.open
+      || state.newSessionDraft.draftId !== prev.newSessionDraft.draftId;
+    if (!changed) return;
+    const bootDraft = bootDraftPending;
+    bootDraftPending = false;
     const selected = state.currentSessionId !== null && state.currentSessionId !== prev.currentSessionId;
     if (selected) {
       const restored = prev.currentSessionId === null && restorePending !== null && state.currentSessionId === restorePending;
@@ -67,7 +78,7 @@ export function createTodayStore(deps: TodayStoreDeps): TodayStore {
       return;
     }
     const draftOpened = state.newSessionDraft.open && state.newSessionDraft.draftId !== prev.newSessionDraft.draftId;
-    const automaticFirstDraft = prev.currentSessionId === null && !prev.newSessionDraft.open;
+    const automaticFirstDraft = bootDraft && prev.currentSessionId === null && !prev.newSessionDraft.open;
     if (draftOpened && !automaticFirstDraft) set(false);
   };
 
@@ -102,7 +113,7 @@ export function createTodayStore(deps: TodayStoreDeps): TodayStore {
 const listenSessionRowClicks = (onClick: () => void): (() => void) => {
   if (!('document' in globalThis)) return () => {};
   const handler = (event: MouseEvent) => {
-    if (event.target instanceof Element && event.target.closest('[data-session-row]')) onClick();
+    if (isSessionOpenClick(event.target)) onClick();
   };
   document.addEventListener('click', handler, true);
   return () => document.removeEventListener('click', handler, true);
@@ -115,6 +126,7 @@ export function todayStore(): TodayStore {
     subscribeSelection: (listener) => useSessionUIStore.subscribe(listener),
     subscribePages: (listener) => useUIStore.subscribe(listener),
     restoreCandidate: () => readLastActiveSession(getRuntimeKey())?.sessionId ?? null,
+    currentSelection: () => useSessionUIStore.getState(),
     closeMainSurfaces: () => useUIStore.getState().closeMainSurfaces(),
     listenSessionRowClicks,
   });

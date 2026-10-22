@@ -2051,6 +2051,13 @@ const checks = {
     has(scheduled, /state: \{[^}]*lastStatus\?: ScheduledTaskStatus;/, 'a scheduled task state no longer carries lastStatus');
   },
   'today-navigation': () => {
+    const node = source('packages/ui/src/components/session/sidebar/sessions/SessionNodeItem.tsx');
+    const title = /<button\s+type="button"\s+aria-pressed=\{selectionModeEnabled \? isRowSelected : undefined\}([\s\S]*?)onClick=\{\(event\) => handleRowSelect\(event\)\}/.exec(node);
+    assert.ok(title, 'the row title button no longer selects the row, or no longer marks selection mode with aria-pressed');
+    assert.ok(!title[1].includes('aria-label'), 'the row title button now carries an aria-label');
+    has(node, /const handleRowBackgroundClick = [\s\S]*?closest\('button, a, input, \[role="menuitem"\], \[role="menu"\]'\)\) return;\s*handleRowSelect\(event\);/, 'a click on the row around its controls no longer selects it');
+    has(node, /const subsessionChevron = hasChildren \? \(\s*<span\s+role="button"/, 'the subsession chevron is no longer a span with role="button"');
+    for (const label of ['aria-label={workActionLabel}', "aria-label={t('sessions.sidebar.session.menu.label')}"]) has(node, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `a row action lost ${label}`);
     const store = source('packages/ui/src/sync/session-ui-store.ts');
     has(store, /draftId: nextDraftId\+\+,\s*open: true,/, 'opening a draft no longer takes a new draftId');
     has(store, /set\(\{\s*newSessionDraft: nextDraft,\s*currentSessionId: null,/, 'opening a draft no longer clears the selected session in the same update');
