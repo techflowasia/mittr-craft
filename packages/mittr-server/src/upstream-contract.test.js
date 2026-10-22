@@ -1991,6 +1991,13 @@ const checks = {
     has(source('packages/ui/src/lib/i18n/messages/en.ts'), /^  'common\.loading': '[^']+',$/m, 'the English dictionary no longer has common.loading');
     has(section, /interface SettingsCheckboxRowProps \{\s*checked: boolean;\s*onChange: \(checked: boolean\) => void;\s*label: React\.ReactNode;\s*description\?: React\.ReactNode;\s*disabled\?: boolean;\s*ariaLabel\?: string;[\s\S]*?info\?: React\.ReactNode;\s*\}/, 'SettingsCheckboxRow no longer takes checked, onChange, label, description, ariaLabel and info');
     has(section, /interface SettingsFieldRowProps \{\s*label: React\.ReactNode;\s*description\?: React\.ReactNode;[\s\S]*?info\?: React\.ReactNode;/, 'SettingsFieldRow no longer takes label and info');
+    for (const name of ['SettingsRadioGroup', 'SettingsRadioOption']) {
+      has(section, new RegExp(`^export const ${name}: React\\.FC<${name}Props> = \\(\\{`, 'm'), `${name} is no longer exported from SettingsSection`);
+    }
+    has(section, /interface SettingsRadioOptionProps \{\s*selected: boolean;\s*onSelect: \(\) => void;\s*label: React\.ReactNode;\s*description\?: React\.ReactNode;\s*ariaLabel\?: string;\s*disabled\?: boolean;/, 'SettingsRadioOption no longer takes selected, onSelect, label, ariaLabel and disabled');
+    has(section, /role="button"[\s\S]{0,80}aria-pressed=\{selected\}\s*aria-disabled=\{disabled \|\| undefined\}/, 'SettingsRadioOption no longer reports its choice and its lock');
+    has(section, /interface SettingsRadioGroupProps \{\s*'aria-label': string;\s*children: React\.ReactNode;/, 'SettingsRadioGroup no longer takes aria-label and children');
+    has(section, /<div role="radiogroup" aria-label=\{ariaLabel\}/, 'SettingsRadioGroup no longer draws a radiogroup');
     const select = source('packages/ui/src/components/ui/select.tsx');
     has(select, /export \{\s*Select,\s*SelectContent,[\s\S]*?SelectItem,[\s\S]*?SelectTrigger,\s*SelectValue,\s*\}/, 'select.tsx no longer exports Select, SelectContent, SelectItem, SelectTrigger and SelectValue');
     has(select, /children\?: React\.ReactNode \| \(\(value: string \| undefined\) => React\.ReactNode\);/, 'SelectValue no longer takes a render function of the chosen value');

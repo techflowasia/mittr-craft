@@ -8,6 +8,7 @@ import { I18nProvider } from '../../ui/src/lib/i18n';
 import { dict as enDict } from '../../ui/src/lib/i18n/messages/en';
 import { overlayDictionary, ProductSlot, remoteModelCatalogAllowed, translateProductSessionAuthDescription, useProductModelPicker } from '../../ui/src/lib/product-plugins';
 import { MittrAccountMenu } from './accounts/MittrAccountMenu';
+import { SuggestionStyleSettingsItem } from './chat/SuggestionStyleSection';
 import { INTEGRATIONS_PAGE } from './integrationsPage';
 import { MittrRoot } from './MittrRoot';
 import { MITTRCRAFT_UI_PLUGIN } from './product-ui-plugin';
@@ -71,8 +72,8 @@ describe('MittrCraft integrations page', () => {
     expect(html).toContain(`>${mittrT('mittr.workTracking.title')}</h2>`);
   });
 
-  test('the integrations slot holds Work tracking, MittrCraft tools, then MittrCraft voice', () => {
-    expect(INTEGRATIONS_PAGE).toEqual([WorkTrackingSettingsItem, MittrToolsSettingsItem, MittrVoiceSettingsItem]);
+  test('the integrations slot holds Work tracking, MittrCraft tools, MittrCraft suggestions, then MittrCraft voice', () => {
+    expect(INTEGRATIONS_PAGE).toEqual([WorkTrackingSettingsItem, MittrToolsSettingsItem, SuggestionStyleSettingsItem, MittrVoiceSettingsItem]);
     expect(MITTRCRAFT_UI_PLUGIN.slots?.['integrations-page']).toBe(INTEGRATIONS_PAGE);
   });
 });

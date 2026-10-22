@@ -1,5 +1,6 @@
+import { SuggestionStyleSettingsItem } from './chat/SuggestionStyleSection';
 import { MittrToolsSettingsItem } from './tools/MittrToolsSection';
 import { MittrVoiceSettingsItem } from './voice/MittrVoiceSection';
 import { WorkTrackingSettingsItem } from './work-tracking/WorkTrackingSection';
 
-export const INTEGRATIONS_PAGE = [WorkTrackingSettingsItem, MittrToolsSettingsItem, MittrVoiceSettingsItem];
+export const INTEGRATIONS_PAGE = [WorkTrackingSettingsItem, MittrToolsSettingsItem, SuggestionStyleSettingsItem, MittrVoiceSettingsItem];

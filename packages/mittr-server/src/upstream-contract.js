@@ -673,7 +673,7 @@ export const UPSTREAM_CONTRACT = [
       'packages/ui/src/components/ui/index.ts',
       'packages/ui/src/lib/i18n/messages/en.ts',
     ],
-    why: "SettingsSection, SettingsCheckboxRow and SettingsFieldRow are still exported from components/sections/shared/SettingsSection, the section with its title (a string drawn as its h2), info (behind the info hint) and children, with the checkbox row's checked, onChange, label, description, ariaLabel and info and the field row's label and info; Select's SelectValue takes a render function of the chosen value, and Button keeps its ghost and outline variants and sm size, components/ui exports toast, and the English dictionary has common.loading; the MittrCraft tools section is built from them",
+    why: "SettingsSection, SettingsCheckboxRow and SettingsFieldRow are still exported from components/sections/shared/SettingsSection, the section with its title (a string drawn as its h2), info (behind the info hint) and children, with the checkbox row's checked, onChange, label, description, ariaLabel and info and the field row's label and info; Select's SelectValue takes a render function of the chosen value, and Button keeps its ghost and outline variants and sm size, components/ui exports toast, and the English dictionary has common.loading; SettingsRadioGroup takes aria-label and children and draws a radiogroup, and SettingsRadioOption takes selected, onSelect, label, ariaLabel and disabled and draws a button with aria-pressed and aria-disabled; the MittrCraft tools and suggestions sections are built from them",
   },  {
     id: 'composer-actions-slot',
     files: ['packages/ui/src/lib/product-plugins.ts', 'packages/ui/src/components/chat/composer/ui/ComposerFooter.tsx'],
