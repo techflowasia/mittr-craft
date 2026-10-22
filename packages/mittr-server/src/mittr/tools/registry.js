@@ -45,6 +45,13 @@ export function createMittrActionRegistry({ control, logger = console }) {
     }
   };
 
+  const refuseIfSwitchedOff = async (action, surface) => {
+    const entry = actions.get(action);
+    if (!entry && surface !== 'voice') return;
+    const refusal = await switchRefusal(entry ? entry.switchedBy : upstreamSwitchOf(action));
+    if (refusal) throw refusal;
+  };
+
   const agentActionsOf = (toolName) => [...actions.values()].filter((entry) => entry.tool === toolName && !entry.voiceOnly);
 
   const unknownAction = (requested, toolName) => {
@@ -110,6 +117,10 @@ export function createMittrActionRegistry({ control, logger = console }) {
 
     resolve,
 
+    checkSwitch(action, { surface } = {}) {
+      return refuseIfSwitchedOff(action, surface);
+    },
+
     useSwitches(refusalOf) {
       if (!(refusalOf instanceof Function)) throw new Error('useSwitches takes a function');
       switchRefusal = refusalOf;
@@ -124,10 +135,7 @@ export function createMittrActionRegistry({ control, logger = console }) {
         if (!entry || entry.tool !== ctx.tool || entry.voiceOnly) throw new MittrToolError(unknownAction(action, ctx.tool), 400);
       }
       if (!entry) {
-        if (surface === 'voice') {
-          const refusal = await switchRefusal(upstreamSwitchOf(action));
-          if (refusal) throw refusal;
-        }
+        await refuseIfSwitchedOff(action, surface);
         return control.execute(action, input, ctx.directory, { signal: ctx.signal, contextSessionId: ctx.sessionId });
       }
       if (!isAvailable(entry)) throw new MittrToolError(`${entry.title} is not available in this install`, 503);
@@ -135,8 +143,7 @@ export function createMittrActionRegistry({ control, logger = console }) {
       if (SCOPED_SURFACES.has(surface) && THIS_MACHINE_ONLY.has(entry.tool) && ctx.scope?.local !== true) {
         throw new MittrToolError(`${entry.title} can only be used from this machine`, 403);
       }
-      const refusal = await switchRefusal(entry.switchedBy);
-      if (refusal) throw refusal;
+      await refuseIfSwitchedOff(action, surface);
       return entry.execute(input, ctx);
     },
   };

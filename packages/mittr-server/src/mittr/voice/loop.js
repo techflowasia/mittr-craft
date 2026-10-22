@@ -263,6 +263,7 @@ export const runVoiceTurn = async ({ said, history = [], locale, directory, sess
 
   const dispatch = async (action, input, toolSignal) => {
     if (action === 'session.send') {
+      await registry.checkSwitch(action, { surface: 'voice' });
       const queued = await queueOrSend(input, toolSignal);
       if (queued) return queued;
     }
