@@ -9,10 +9,12 @@ const PENDING_POLL_MS = 5_000;
 const DENY_RETRY_MS = 500;
 const EARLY_LIMIT = 64;
 const ENGINE_TIMEOUT_MS = 5_000;
+export const UNANSWERED_WAIT_MS = 240_000;
 
 const CANCELLED = 'Cancelled while waiting for the user';
 const REPLIES = new Set(['once', 'always', 'reject']);
 const LOST = Symbol('lost');
+const UNANSWERED = Symbol('unanswered');
 
 const keyFor = (sessionId, host) => `${sessionId}\n${host}`;
 
@@ -152,6 +154,12 @@ export function createEnginePermissions({ opencode, fetchImpl = fetch, timeoutMs
 
 const savedFor = (rules, host) => rules.filter((rule) => rule?.action === CHROME_PERMISSION && rule.resource === host && trimmedText(rule.id));
 
+const notAnswered = (host) => new MittrToolError(
+  `The person did not answer the request to use Chrome on ${host}. Do not ask again unless they ask you to.`,
+  408,
+  { code: 'not_answered', host },
+);
+
 const couldNotAsk = (host) => new MittrToolError(`MittrCraft could not ask the user about ${host}; try again in a moment`, 503);
 
 const ID_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
@@ -180,6 +188,7 @@ export function createChromeSiteApprovals({
   engine,
   defaultDirectory = () => null,
   decisionWaitMs = DECISION_WAIT_MS,
+  answerWaitMs = UNANSWERED_WAIT_MS,
   pollMs = PENDING_POLL_MS,
   denyRetryMs = DENY_RETRY_MS,
   mintId = mintPermissionId,
@@ -281,6 +290,12 @@ export function createChromeSiteApprovals({
     later(check, pollMs);
   });
 
+  const unanswered = (done) => new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(UNANSWERED), answerWaitMs);
+    timer.unref?.();
+    done.addEventListener('abort', () => clearTimeout(timer), { once: true });
+  });
+
   const requestFor = (id, host, source) => {
     const request = {
       id,
@@ -336,13 +351,15 @@ export function createChromeSiteApprovals({
     const decision = approvals.awaitDecision(entry.sessionId, entry.host, signal);
     decision.catch(() => {});
     const done = new AbortController();
+    const capped = unanswered(done.signal);
     let outcome = null;
     try {
       await raiseQuestion(entry, { directory, source, signal });
       const watched = entry.requestId;
       const lost = watched ? watchForLoss(entry.sessionId, watched, done.signal) : new Promise(() => {});
-      outcome = await Promise.race([decision, lost]);
+      outcome = await Promise.race([decision, lost, capped]);
       if (outcome === LOST) throw new MittrToolError(`The user's answer for ${entry.host} did not arrive; ask again`, 403);
+      if (outcome === UNANSWERED) throw notAnswered(entry.host);
       return outcome;
     } catch (error) {
       if (!isCancelled(error) && !signal.aborted) throw error;

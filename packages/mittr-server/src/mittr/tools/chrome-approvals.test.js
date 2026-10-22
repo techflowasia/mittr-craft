@@ -9,6 +9,7 @@ import { createMittrSettings } from '../mittr-settings.js';
 import { listen, tempDataDir, until } from '../test-helpers.js';
 import {
   CHROME_PERMISSION,
+  UNANSWERED_WAIT_MS,
   chromeQuestion,
   createChromeApprovals,
   createChromeSiteApprovals,
@@ -100,7 +101,7 @@ const quietLogger = () => {
   return { lines, log: record, warn: record, error: record };
 };
 
-const setUp = (t, { engineOptions, decisionWaitMs = 50, pollMs = 10 } = {}) => {
+const setUp = (t, { engineOptions, decisionWaitMs = 50, pollMs = 10, answerWaitMs } = {}) => {
   const hub = fakeHub();
   const engine = fakeEngine(hub, engineOptions);
   const settings = createMittrSettings({ dataDir: tempDataDir(t) });
@@ -110,7 +111,7 @@ const setUp = (t, { engineOptions, decisionWaitMs = 50, pollMs = 10 } = {}) => {
     minted += 1;
     return `per_m${minted}`;
   };
-  const approvals = createChromeSiteApprovals({ settings, engine, defaultDirectory: () => '/work/acme', decisionWaitMs, pollMs, denyRetryMs: 5, mintId, logger });
+  const approvals = createChromeSiteApprovals({ settings, engine, defaultDirectory: () => '/work/acme', decisionWaitMs, pollMs, denyRetryMs: 5, mintId, logger, answerWaitMs });
   const unsubscribe = subscribeApprovals(hub, approvals);
   t.after(unsubscribe);
   return { hub, engine, settings, approvals, logger };
@@ -262,6 +263,66 @@ test('an answer whose event never arrives is reported after the wait, not taken 
   engine.state.pending.delete(requestId);
   await assert.rejects(asked, (error) => error.statusCode === 403 && error.message === `The user's answer for ${HOST} did not arrive; ask again`);
   assert.equal(await approvals.isApproved('ses_1', HOST), false);
+});
+
+const NOT_ANSWERED = `The person did not answer the request to use Chrome on ${HOST}. Do not ask again unless they ask you to.`;
+
+const notAnswered = (error) => error.statusCode === 408 && error.message === NOT_ANSWERED && error.code === 'not_answered' && error.host === HOST;
+
+test('the server stops waiting for an answer a minute before the engine\'s own five-minute limit', () => {
+  assert.equal(UNANSWERED_WAIT_MS, 4 * 60_000);
+});
+
+test('an unanswered question ends at the cap: the server closes its card with a reject and every waiting call gets a plain final answer', async (t) => {
+  const { engine, approvals, settings } = setUp(t, { answerWaitMs: 60 });
+  const first = askFor(approvals, 'ses_1');
+  const requestId = await nextRequest(engine);
+  const second = askFor(approvals, 'ses_1');
+  await assert.rejects(first, notAnswered);
+  await assert.rejects(second, notAnswered);
+  assert.deepEqual(engine.state.creates.length, 1);
+  assert.deepEqual(engine.state.replies, [{ sessionId: 'ses_1', requestId, decision: 'reject', status: 204 }]);
+  assert.deepEqual(engine.pendingIds(), []);
+  assert.equal(await approvals.isApproved('ses_1', HOST), false);
+  assert.deepEqual((await settings.read()).tools.chromeApprovedHosts, []);
+});
+
+test('an answer that arrives after the cap changes nothing, and the next call asks afresh', async (t) => {
+  const { engine, approvals, settings, hub } = setUp(t, { answerWaitMs: 60 });
+  const asked = askFor(approvals, 'ses_1');
+  const requestId = await nextRequest(engine);
+  await assert.rejects(asked, notAnswered);
+  for (const reply of ['always', 'once']) hub.emitRaw('permission.replied', { sessionID: 'ses_1', requestID: requestId, reply });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(await approvals.isApproved('ses_1', HOST), false);
+  assert.deepEqual((await settings.read()).tools.chromeApprovedHosts, []);
+  const again = askFor(approvals, 'ses_1');
+  const nextId = await nextRequest(engine);
+  assert.notEqual(nextId, requestId);
+  await engine.answer(nextId, 'once');
+  assert.equal(await again, 'once');
+  assert.deepEqual(engine.state.creates.length, 2);
+});
+
+test('an answer before the cap still decides, and an abort before it still cancels on its own', async (t) => {
+  const { engine, approvals } = setUp(t, { answerWaitMs: 400 });
+  const answered = askFor(approvals, 'ses_1');
+  await engine.answer(await nextRequest(engine), 'once');
+  assert.equal(await answered, 'once');
+  const controller = new AbortController();
+  const aborted = askFor(approvals, 'ses_2', { signal: controller.signal });
+  await nextRequest(engine);
+  controller.abort();
+  await assert.rejects(aborted, (error) => error.statusCode === 499);
+});
+
+test('an account switch before the cap still withdraws the question as cancelled', async (t) => {
+  const { engine, approvals } = setUp(t, { answerWaitMs: 400 });
+  const asked = askFor(approvals, 'ses_1');
+  await nextRequest(engine);
+  approvals.forgetAll();
+  await assert.rejects(asked, (error) => error.statusCode === 499);
+  assert.deepEqual(engine.pendingIds(), []);
 });
 
 test('a reply for another session or an unknown request records nothing', async (t) => {
