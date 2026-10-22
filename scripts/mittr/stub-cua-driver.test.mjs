@@ -16,9 +16,10 @@ const run = (args) => new Promise((resolve) => {
 
 const stateDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'stub-cua-'));
 
-test('list_apps answers Finder and MittrCraft Dev running and Calculator not running', () => {
+test('list_apps answers Finder, MittrCraft Dev and the gate app running and Calculator not running', () => {
   const { apps } = answer('list_apps', {}, { mode: 'normal' });
-  assert.deepEqual(apps.map(({ name, running }) => [name, running]), [['Finder', true], ['MittrCraft Dev', true], ['Calculator', false]]);
+  assert.deepEqual(apps.map(({ name, running }) => [name, running]), [['Finder', true], ['MittrCraft Dev', true], ['MittrCraft Gate', true], ['Calculator', false]]);
+  assert.equal(apps.find(({ name }) => name === 'MittrCraft Gate').bundle_id, 'dev.mittrcraft.desktop.dev.gate');
 });
 
 test('get_desktop_state answers a fixed PNG, and the error mode answers the Screen Recording text', () => {
@@ -40,7 +41,7 @@ test('the executable records each call with its arguments and prints JSON', asyn
   const dir = stateDir();
   const listed = await run(['--state', dir, 'list_apps', '{}']);
   assert.equal(listed.code, 0);
-  assert.equal(JSON.parse(listed.stdout).apps.length, 3);
+  assert.equal(JSON.parse(listed.stdout).apps.length, 4);
   const front = await run(['--state', dir, 'bring_to_front', '{"pid":4243}']);
   assert.deepEqual(JSON.parse(front.stdout), { process_activated: true, exact_window_effect: { verified: true } });
   fs.writeFileSync(path.join(dir, 'mode'), 'screen-recording-error\n');
@@ -67,7 +68,7 @@ test('the executable also runs as a daemon on the socket it is given and answers
   while (!fs.existsSync(socketPath) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
   const listed = await run(['--state', dir, 'call', 'list_apps', '{}', '--socket', socketPath]);
   assert.equal(listed.code, 0);
-  assert.equal(JSON.parse(listed.stdout).apps.length, 3);
+  assert.equal(JSON.parse(listed.stdout).apps.length, 4);
   fs.writeFileSync(path.join(dir, 'mode'), 'screen-recording-error\n');
   const refused = await run(['--state', dir, 'call', 'get_desktop_state', '{}', '--socket', socketPath]);
   assert.equal(refused.code, 1);

@@ -23,6 +23,8 @@ import {
   planVisibleStrings,
   readBrand,
   readVisibleStrings,
+  stageProductFile,
+  stringsToCheck,
   stagedServerFiles,
   verifyPackedApp,
 } from './build-desktop.mjs';
@@ -417,8 +419,8 @@ test('a gate build is the Dev build under its own bundle id, name and data folde
     MITTRCRAFT_ENGINE_HOME: '~/.config/mittrcraft-gate/engine',
   });
   assert.deepEqual(gate.product.ensureDirs, ['~/.config/mittrcraft-gate/projects', '~/.config/mittrcraft-gate/themes', '~/.config/mittrcraft-gate/speech-models']);
-  const { appName: _name, linuxDesktopName: _linux, appUserModelId: _id, env: _env, ensureDirs: _dirs, ...rest } = gate.product;
-  const { appName: _devName, linuxDesktopName: _devLinux, appUserModelId: _devId, env: _devEnv, ensureDirs: _devDirs, ...devRest } = dev.product;
+  const { appName: _name, linuxDesktopName: _linux, appUserModelId: _id, env: _env, ensureDirs: _dirs, desktopPort: _port, ...rest } = gate.product;
+  const { appName: _devName, linuxDesktopName: _devLinux, appUserModelId: _devId, env: _devEnv, ensureDirs: _devDirs, desktopPort: _devPort, ...devRest } = dev.product;
   assert.deepEqual(rest, devRest);
 
   assert.equal(gate.overlay.appId, 'dev.mittrcraft.desktop.dev.gate');
@@ -457,4 +459,41 @@ test('the build takes --gate only with the Dev flavor', () => {
   assert.deepEqual(parseBuildArgs(['--flavor', 'prod']), { flavor: 'prod', gate: false });
   assert.throws(() => parseBuildArgs(['--flavor', 'prod', '--gate']), /--gate builds only from --flavor dev/);
   assert.throws(() => parseBuildArgs(['--gate']), /Usage: node scripts\/mittr\/build-desktop\.mjs --flavor dev\|prod \[--gate\]/);
+});
+
+test('a gate build has its own default server port, never Dev 1.x\'s 57133', () => {
+  const dev = readBrand({ flavor: 'dev' });
+  const gate = readBrand({ flavor: 'dev', gate: true });
+  assert.equal(dev.product.desktopPort, 57133);
+  assert.equal(gate.product.desktopPort, 57188);
+  assert.notEqual(gate.product.desktopPort, readBrand({ flavor: 'prod' }).product.desktopPort);
+});
+
+test('a Dev or prod build packs its product file byte for byte, and only a gate build writes its own', (t) => {
+  const brand = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-brand-'));
+  t.after(() => fs.rmSync(brand, { recursive: true, force: true }));
+  for (const name of ['product.dev.json', 'electron-builder.dev.json', 'visible-strings.json', 'visible-strings.dev.json']) {
+    fs.copyFileSync(path.join(repoRoot, 'brand', name), path.join(brand, name));
+  }
+  const odd = `{ "appName":"MittrCraft Dev",\t"x": "\\u00e9" ,\n${fs.readFileSync(path.join(repoRoot, 'brand', 'product.dev.json'), 'utf8').trim().slice(1)}`;
+  fs.writeFileSync(path.join(brand, 'product.dev.json'), odd);
+  for (const gate of [false, true]) {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-stage-'));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+    const { product } = readBrand({ flavor: 'dev', gate, dir: brand });
+    stageProductFile({ flavor: 'dev', gate, product, outDir, dir: brand });
+    const staged = fs.readFileSync(path.join(outDir, 'product.json'), 'utf8');
+    if (gate) assert.deepEqual(JSON.parse(staged), product);
+    else assert.equal(staged, odd);
+  }
+});
+
+test('--check-strings checks the gate build\'s own strings when asked, and Dev and prod otherwise', () => {
+  const labels = (argv) => stringsToCheck(argv).map(({ label }) => label);
+  assert.deepEqual(labels([]), ['dev', 'prod']);
+  assert.deepEqual(labels(['--flavor', 'prod']), ['prod']);
+  assert.deepEqual(labels(['--gate']), ['dev gate']);
+  assert.deepEqual(labels(['--flavor', 'dev', '--gate']), ['dev gate']);
+  assert.deepEqual(stringsToCheck(['--gate'])[0].entries, readBrand({ flavor: 'dev', gate: true }).visibleStrings);
+  assert.throws(() => stringsToCheck(['--flavor', 'prod', '--gate']), /--gate builds only from --flavor dev/);
 });

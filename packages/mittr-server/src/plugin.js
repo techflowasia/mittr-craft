@@ -27,13 +27,12 @@ import { registerBrandedWeb } from './web-brand.js';
  */
 
 const BACKUP_MARKER = '.pre-2x-backup-done';
-const DEV_DATA_DIRS = new Set(['mittrcraft-dev', 'mittrcraft-gate']);
+const DEV_PRODUCTS = new Map([['mittrcraft-dev', 'MittrCraft Dev'], ['mittrcraft-gate', 'MittrCraft Gate']]);
 
 // Downloaded speech models: hundreds of megabytes the app fetches again on
 // demand, and nothing a user wrote.
 const REFETCHABLE = ['speech-models'];
 
-const flavorOf = (dataDir) => (DEV_DATA_DIRS.has(path.basename(dataDir)) ? 'dev' : 'prod');
 
 const COMPANY_SIGN_IN_VARIABLE = /^MITTR_AD_/;
 
@@ -83,9 +82,10 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
   const companySignInEnv = readSecretFiles(takenSignInEnv);
   // Without its own engine root a Dev build would resolve prod's engine
   // folders, and back up, migrate and run on the installed app's database.
-  if (flavorOf(dataDir) === 'dev' && !String(env.MITTRCRAFT_ENGINE_HOME ?? '').trim()) {
+  const devProduct = DEV_PRODUCTS.get(path.basename(dataDir));
+  if (devProduct && !String(env.MITTRCRAFT_ENGINE_HOME ?? '').trim()) {
     throw new Error(
-      `MittrCraft Dev (data dir ${dataDir}) needs MITTRCRAFT_ENGINE_HOME; refusing to start on the prod engine folders`,
+      `${devProduct} (data dir ${dataDir}) needs MITTRCRAFT_ENGINE_HOME; refusing to start on the prod engine folders`,
     );
   }
   const bases = engineBases({ homeDir, env });

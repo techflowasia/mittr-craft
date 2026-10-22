@@ -194,10 +194,11 @@ test('setup refuses a Dev or gate data dir without its own engine root', async (
     writeFile(path.join(dataDir, 'settings.json'), JSON.stringify({ voiceStepCap: 1 }));
     writeFile(path.join(home, '.local', 'share', 'mittrcraft', 'engine', 'opencode', 'opencode.db'), 'prod sessions');
 
+    const product = folder === 'mittrcraft-gate' ? 'MittrCraft Gate' : 'MittrCraft Dev';
     for (const env of [{}, { MITTRCRAFT_ENGINE_HOME: '  ' }]) {
       await assert.rejects(
         setupMittrServer({ dataDir, logger: recordingLogger(), env, homeDir: home }),
-        /MITTRCRAFT_ENGINE_HOME/,
+        { message: `${product} (data dir ${dataDir}) needs MITTRCRAFT_ENGINE_HOME; refusing to start on the prod engine folders` },
         folder,
       );
     }

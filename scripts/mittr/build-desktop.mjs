@@ -5,7 +5,7 @@
  *
  *   node scripts/mittr/build-desktop.mjs --flavor dev|prod
  *   node scripts/mittr/build-desktop.mjs --flavor dev --gate
- *   node scripts/mittr/build-desktop.mjs --check-strings [--flavor dev|prod]
+ *   node scripts/mittr/build-desktop.mjs --check-strings [--flavor dev|prod] [--gate]
  *
  * It runs upstream's `package` chain one step at a time so the visible-string
  * replacement can sit between the last build step and electron-builder, and it
@@ -62,7 +62,7 @@ const USAGE = `Usage: node scripts/mittr/build-desktop.mjs --flavor ${FLAVORS.jo
 
 const DEV_NAME = 'MittrCraft Dev';
 const DEV_FOLDER = 'mittrcraft-dev';
-const GATE = Object.freeze({ appName: 'MittrCraft Gate', idSuffix: '.gate', folder: 'mittrcraft-gate' });
+const GATE = Object.freeze({ appName: 'MittrCraft Gate', idSuffix: '.gate', folder: 'mittrcraft-gate', desktopPort: 57188 });
 
 export const RIPGREP_STAGING = `.product/${RIPGREP_RESOURCE_DIR}`;
 export const AGENT_BROWSER_STAGING = `.product/${AGENT_BROWSER_RESOURCE_DIR}`;
@@ -291,6 +291,7 @@ const gateProduct = (product) => ({
   ...product,
   appName: GATE.appName,
   linuxDesktopName: `${GATE.folder}.desktop`,
+  desktopPort: GATE.desktopPort,
   appUserModelId: { packaged: gateId(product.appUserModelId.packaged), dev: gateId(product.appUserModelId.dev) },
   env: Object.fromEntries(Object.entries(product.env).map(([key, value]) => [key, gatePath(value)])),
   ensureDirs: product.ensureDirs.map(gatePath),
@@ -328,6 +329,12 @@ export const readBrand = ({ flavor, gate = false, dir = brandDir }) => {
     visibleStrings: readVisibleStrings(flavor, dir),
   };
   return gate ? gateBrand(brand) : brand;
+};
+
+export const stageProductFile = ({ flavor, gate, product, outDir, dir = brandDir }) => {
+  const target = path.join(outDir, 'product.json');
+  if (gate) fs.writeFileSync(target, `${JSON.stringify(product, null, 2)}\n`);
+  else fs.copyFileSync(path.join(dir, `product.${flavor}.json`), target);
 };
 
 const step = (label) => console.log(`\n[mittr] ${label}`);
@@ -372,21 +379,29 @@ const findDmg = ({ productName, startedAt }) => {
  * `dist-bundle`, as they were before the last build patched them) and the
  * server source, writes nothing, and lists every entry whose count is off.
  */
+export const stringsToCheck = (argv, dir = brandDir) => {
+  const named = argv.some((arg) => arg.startsWith('--flavor'));
+  if (argv.includes('--gate')) {
+    const { flavor } = parseBuildArgs(named ? argv : ['--flavor', 'dev', ...argv]);
+    return [{ label: `${flavor} gate`, entries: readBrand({ flavor, gate: true, dir }).visibleStrings }];
+  }
+  return (named ? [parseFlavor(argv)] : FLAVORS).map((flavor) => ({ label: flavor, entries: readBrand({ flavor, dir }).visibleStrings }));
+};
+
 const checkStrings = (argv) => {
-  const flavors = argv.some((arg) => arg.startsWith('--flavor')) ? [parseFlavor(argv)] : FLAVORS;
   let failed = false;
-  for (const flavor of flavors) {
+  for (const { label, entries } of stringsToCheck(argv)) {
     const { results, mismatches } = planVisibleStrings({
-      entries: readVisibleStrings(flavor),
+      entries,
       rootDir: electronDir,
       sources: { [`${STAGED_SERVER}/`]: webServerSource },
     });
     if (mismatches.length === 0) {
-      console.log(`[mittr] ${flavor}: all ${results.length} visible-string entries match`);
+      console.log(`[mittr] ${label}: all ${results.length} visible-string entries match`);
       continue;
     }
     failed = true;
-    console.error(`[mittr] ${flavor}: ${mismatches.length} of ${results.length} visible-string entries do not match\n${describeMismatches(mismatches)}`);
+    console.error(`[mittr] ${label}: ${mismatches.length} of ${results.length} visible-string entries do not match\n${describeMismatches(mismatches)}`);
   }
   return failed ? 1 : 0;
 };
@@ -481,7 +496,7 @@ const main = async () => {
   step('3/8 product files, server copy, ripgrep, drivers and notices');
   fs.rmSync(stagingDir, { recursive: true, force: true });
   fs.mkdirSync(stagingDir, { recursive: true });
-  fs.writeFileSync(path.join(stagingDir, 'product.json'), `${JSON.stringify(productOverride, null, 2)}\n`);
+  stageProductFile({ flavor, gate, product: productOverride, outDir: stagingDir });
   if (productOverride.splashSvg) {
     fs.copyFileSync(path.join(brandDir, productOverride.splashSvg), path.join(stagingDir, productOverride.splashSvg));
   }

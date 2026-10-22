@@ -11,6 +11,7 @@ export const SCREEN_RECORDING_REFUSAL = 'Screen Recording is NOT granted for thi
 const APPS = [
   { name: 'Finder', pid: 4101, running: true, bundle_id: 'com.apple.finder' },
   { name: 'MittrCraft Dev', pid: 4243, running: true, bundle_id: 'dev.mittrcraft.desktop.dev' },
+  { name: 'MittrCraft Gate', pid: 4244, running: true, bundle_id: 'dev.mittrcraft.desktop.dev.gate' },
   { name: 'Calculator', pid: 0, running: false, bundle_id: 'com.apple.calculator' },
 ];
 
