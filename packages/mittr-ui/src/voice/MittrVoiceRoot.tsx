@@ -22,6 +22,8 @@ import { VoiceQuotaText } from './VoiceQuotaText';
 import { browserPlayer, voiceFetch } from './voiceRuntime';
 import type { VoiceTurnContext } from './voiceSession';
 
+const VOICE_BAR_PLACE: React.CSSProperties = { bottom: '12rem' };
+
 function browserPanelOpen(directory: string): boolean {
   const panel = useUIStore.getState().contextPanelByDirectory[normalizeContextPanelDirectoryKey(directory)];
   return !!panel?.isOpen && panel.tabs.some((tab) => tab.id === panel.activeTabId && tab.mode === 'browser');
@@ -95,7 +97,7 @@ export function MittrVoiceRoot({ createController = browserController }: { creat
   if (!open && !snapshot.error && !snapshot.quota) return null;
 
   return createPortal(
-    <div className="pointer-events-none fixed bottom-48 right-4 z-40 flex flex-col items-end gap-2">
+    <div className="pointer-events-none fixed right-4 z-40 flex flex-col items-end gap-2" style={VOICE_BAR_PLACE}>
       {open ? (
         <>
           <VoiceBar snapshot={snapshot} onEnd={controller.end} className="pointer-events-auto" />

@@ -76,7 +76,7 @@ export function TalkButton({
       className={cn(className, open && 'text-primary')}
     >
       {phase === 'starting' ? (
-        <Icon name="loader-4" aria-hidden="true" className={cn(iconClassName, 'motion-safe:animate-spin')} />
+        <Icon name="loader-4" aria-hidden="true" className={cn(iconClassName, 'animate-spin motion-reduce:animate-none')} />
       ) : (
         <TalkIcon className={cn(iconClassName, 'text-current')} />
       )}

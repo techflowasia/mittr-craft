@@ -18,10 +18,10 @@ const STATE = {
 } satisfies Record<OpenPhase, MittrKey>;
 
 const DOT = {
-  starting: 'bg-muted-foreground',
-  listening: 'bg-[var(--status-success)]',
-  thinking: 'bg-[var(--status-warning)]',
-  speaking: 'bg-[var(--primary-base)]',
+  starting: 'var(--muted-foreground)',
+  listening: 'var(--status-success)',
+  thinking: 'var(--status-warning)',
+  speaking: 'var(--primary-base)',
 } satisfies Record<OpenPhase, string>;
 
 export interface VoiceBarProps {
@@ -61,7 +61,8 @@ export function VoiceBar({ snapshot, onEnd, className }: VoiceBarProps): React.R
         <span role="status" aria-atomic="true" className="flex min-w-0 flex-1 items-center gap-2 typography-meta">
           <span
             aria-hidden="true"
-            className={cn('size-2 shrink-0 rounded-full', DOT[phase], snapshot.hearing && 'motion-safe:animate-pulse')}
+            className={cn('size-2 shrink-0 rounded-full', snapshot.hearing && 'animate-pulse motion-reduce:animate-none')}
+            style={{ backgroundColor: DOT[phase] }}
           />
           <span className="truncate">{t(STATE[phase])}</span>
         </span>
@@ -72,7 +73,7 @@ export function VoiceBar({ snapshot, onEnd, className }: VoiceBarProps): React.R
       </div>
       {snapshot.running ? (
         <p className="flex items-center gap-1.5 typography-micro text-muted-foreground">
-          <Icon name="loader-4" aria-hidden="true" className="size-3.5 motion-safe:animate-spin" />
+          <Icon name="loader-4" aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />
           <span className="min-w-0 [overflow-wrap:anywhere]">{t('mittr.voice.talk.running', { label: snapshot.running })}</span>
         </p>
       ) : null}

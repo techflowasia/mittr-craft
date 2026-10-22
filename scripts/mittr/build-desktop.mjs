@@ -456,6 +456,12 @@ export const checkRipgrepArchive = ({ env = process.env } = {}) => {
   return { pin, archive };
 };
 
+const checkMittrUiClasses = () => {
+  const assets = path.join(repoRoot, 'packages', 'web', 'dist', 'assets');
+  const sheets = fs.readdirSync(assets).filter((name) => name.endsWith('.css')).flatMap((name) => ['--css', path.join(assets, name)]);
+  run(process.execPath, [path.join(repoRoot, 'scripts', 'mittr', 'check-mittr-ui-classes.mjs'), ...sheets], repoRoot);
+};
+
 const runLeakScan = (appPath) => {
   const result = spawnSync(process.execPath, [path.join(repoRoot, 'scripts', 'mittr', 'brand-leak-scan.mjs'), appPath], { cwd: repoRoot, stdio: 'inherit' });
   if (result.error) throw result.error;
@@ -490,6 +496,7 @@ const main = async () => {
 
   step('1/8 workspace build');
   run(bun, ['run', 'build'], repoRoot);
+  checkMittrUiClasses();
 
   step('2/8 server plugin bundle');
   fs.rmSync(pluginsDir, { recursive: true, force: true });

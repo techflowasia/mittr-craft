@@ -44,7 +44,7 @@ type WorkTrackingSectionViewProps = { state: WorkTrackingState; actions: WorkTra
 
 const CARD_CLASS = 'space-y-3 rounded-xl border border-[var(--interactive-border)] bg-[var(--surface-elevated)] p-4';
 const FIELDS_CLASS = 'grid gap-3 @xl:grid-cols-2';
-const WIDE_FIELD_CLASS = '@xl:col-span-2';
+const WIDE_FIELD_CLASS = 'col-span-full';
 const ALERT_CLASS = 'rounded-lg border border-[var(--status-error-border)] bg-[var(--status-error-background)] px-3 py-2 typography-micro text-[var(--status-error)]';
 const NOTICE_CLASS = 'rounded-lg border border-[var(--status-warning-border)] bg-[var(--status-warning-background)] px-3 py-2 typography-micro text-[var(--status-warning)]';
 const WORKSPACE_ERROR_ID = 'mittr-plane-workspace-error';
