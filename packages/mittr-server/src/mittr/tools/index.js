@@ -236,13 +236,21 @@ export function setupMittrTools(context, {
     }
   };
 
+  const tellCurrentSwitches = async () => {
+    try {
+      tellSwitchListeners(await switches());
+    } catch (error) {
+      logger.warn('[mittr] the tool switches could not be read back:', error?.message ?? error);
+    }
+  };
+
   const applySwitches = async (patch) => {
     await carried;
     await mittrSettings.update({ tools: patch });
     try {
       await refresh();
     } finally {
-      tellSwitchListeners(await switches());
+      await tellCurrentSwitches();
     }
     const now = await switches();
     if (now.computer === false) await settledWithin(computerControl.stop(), COMPUTER_STOP_TIMEOUT_MS);

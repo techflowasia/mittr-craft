@@ -133,6 +133,19 @@ test('turning Chrome off removes its tool from the plugin and refreshes the mana
   assert.deepEqual(await tools.switches(), { computer: true, chrome: false, widgets: true });
 });
 
+test('Minor 11: when the refresh fails and the switches cannot be read back, the refresh error is the one answered', async (t) => {
+  const { tools, mittrSettings, logger } = await setUp(t);
+  const update = mittrSettings.update.bind(mittrSettings);
+  mittrSettings.update = async (patch) => {
+    const stored = await update(patch);
+    mittrSettings.read = async () => { throw new Error('settings unreadable'); };
+    return stored;
+  };
+  tools.managedConfig = async () => { throw new Error('refresh failed'); };
+  await assert.rejects(tools.applySwitches({ chrome: false }), /refresh failed/);
+  assert.ok(logger.lines.some((line) => line.includes('settings unreadable')));
+});
+
 test('a switch that cannot be stored refreshes nothing', async (t) => {
   const { tools, state } = await setUp(t);
   await assert.rejects(tools.applySwitches({ chrome: 'off' }), /Unknown or invalid tool setting: chrome/);
