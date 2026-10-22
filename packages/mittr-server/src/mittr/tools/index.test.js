@@ -13,6 +13,7 @@ import { createMittrSettings } from '../mittr-settings.js';
 import { SCREEN_RECORDING_NOT_GRANTED, deferred, fakeFetch, json, listen, stubAgentBrowser, stubCuaDriver, stubCuaDriverCalls, tempDataDir, until } from '../test-helpers.js';
 import { CHROME_EXECUTABLE, chromeSessionName } from './chrome-control.js';
 import { NO_APPROVALS } from './chrome-service.js';
+import { registerMittrControlRoutes } from './control-routes.js';
 import { CHROME_CLOSE_TIMEOUT_MS, bundledDrivers, setupMittrTools } from './index.js';
 import { MITTR_TOOLS, createMittrActionRegistry } from './registry.js';
 
@@ -109,7 +110,7 @@ const setUp = async (t, {
   const fireReady = () => { for (const listener of readyListeners) listener(); };
   const emit = (payloads) => { for (const listener of eventListeners) listener({ payload: {}, translated: () => payloads }); };
   const emitRaw = (payload) => { for (const listener of eventListeners) listener({ payload, translated: () => [] }); };
-  return { tools, state, logger, dataDir, mittrSettings, registry, call, post, pluginSource, fireReady, emit, emitRaw, runs, readyListeners, eventListeners };
+  return { app, base, tools, state, logger, dataDir, mittrSettings, registry, call, post, pluginSource, fireReady, emit, emitRaw, runs, readyListeners, eventListeners };
 };
 
 const toolNamesIn = (source) => [...source.matchAll(/name: "(mittrcraft_[a-z]+)"/g)].map((match) => match[1]);
@@ -529,7 +530,7 @@ const everySite = () => {
 
 const chromeSetUp = async (t, { driver = stubAgentBrowser(t, { png: MARKER_PNG }), ...options } = {}) => {
   const project = fs.realpathSync(tempDataDir(t));
-  const chromeApprovals = everySite();
+  const chromeApprovals = options.chromeApprovals ?? everySite();
   const setup = await setUp(t, {
     drivers: { ...ALL_DRIVERS, chrome: () => driver.file },
     chromeApprovals,
@@ -565,6 +566,30 @@ test('chrome.open of this server\'s or the engine\'s own port is refused whateve
     assert.deepEqual((await chrome('open', { url })).error, { message: 'That address is MittrCraft itself', kind: 'usage' }, url);
   }
   assert.equal(driver.commands().some(({ command }) => command[0] === 'open'), false);
+});
+
+test('a local http control call that names the voice session gets the normal card, not the spoken Chrome allow', async (t) => {
+  const asks = [];
+  const chromeApprovals = { ...everySite(), isApproved: async () => false, ask: async (request) => { asks.push(request.sessionId); return 'reject'; } };
+  const { app, base, tools, registry, driver } = await chromeSetUp(t, { chromeApprovals });
+  registerMittrControlRoutes(app, { express, registry, host: {}, requestScope: () => 'local', ControlError: class extends Error {} });
+  tools.chrome.allowForConversation('voice');
+
+  const response = await fetch(`${base}/api/mittr/control`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'chrome.open', input: { url: 'http://acme.example.test/' }, contextSessionId: 'voice' }),
+  });
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: 'The user did not allow using their Chrome sign-in on acme.example.test' });
+  assert.deepEqual(asks, ['voice']);
+  assert.equal(driver.commands().some(({ command }) => command[0] === 'open'), false);
+  assert.equal(await tools.chrome.isHostAllowed('voice', 'acme.example.test'), false);
+  assert.equal(await tools.chrome.isHostAllowed('voice', 'acme.example.test', 'voice'), true);
+
+  const spoken = await registry.execute('chrome.open', { url: 'http://acme.example.test/' }, { surface: 'voice', sessionId: 'voice', directory: '/work', headed: true, scope: { local: true } });
+  assert.equal(spoken.url, 'http://acme.example.test/');
+  assert.deepEqual(asks, ['voice']);
 });
 
 test('a deleted session closes its Chrome', async (t) => {

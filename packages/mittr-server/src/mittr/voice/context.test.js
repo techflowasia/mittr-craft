@@ -29,8 +29,8 @@ const fakeChrome = ({ page = null, allowed = [] } = {}) => {
       if (page instanceof Error) throw page;
       return page;
     },
-    isHostAllowed: async (sessionId, host) => {
-      calls.push(['isHostAllowed', sessionId, host]);
+    isHostAllowed: async (sessionId, host, surface) => {
+      calls.push(['isHostAllowed', sessionId, host, surface]);
       return allowed.includes(host);
     },
   };
@@ -72,7 +72,7 @@ test('the context hides the Chrome page of a site the voice has not been allowed
   const text = await build({ chrome })({ directory: '/work/app' });
   assert.match(text, /^Chrome: a page on a site not yet allowed$/m);
   assert.equal(text.includes('private.test'), false);
-  assert.deepEqual(chrome.calls, [['currentPage', 'voice'], ['isHostAllowed', 'voice', 'private.test']]);
+  assert.deepEqual(chrome.calls, [['currentPage', 'voice'], ['isHostAllowed', 'voice', 'private.test', 'voice']]);
 });
 
 test('the context reports no Chrome page without starting Chrome', async () => {

@@ -126,7 +126,7 @@ const readChromePage = async (chrome) => {
   const page = await chrome.currentPage(VOICE_SESSION_ID);
   if (!page) return null;
   const host = hostOf(page.url);
-  const allowed = host ? await chrome.isHostAllowed(VOICE_SESSION_ID, host) === true : false;
+  const allowed = host ? await chrome.isHostAllowed(VOICE_SESSION_ID, host, 'voice') === true : false;
   return allowed ? { allowed, url: page.url, title: page.title } : { allowed: false };
 };
 

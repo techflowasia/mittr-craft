@@ -215,7 +215,7 @@ export function createChromeService({
   let generation = 0;
   let closing = null;
 
-  const isHostAllowed = async (sessionId, host) => conversationGrants.has(sessionId) || Boolean(await approvals.isApproved(sessionId, host));
+  const isHostAllowed = async (sessionId, host, surface) => (surface === 'voice' && conversationGrants.has(sessionId)) || Boolean(await approvals.isApproved(sessionId, host));
 
   const isOwnAddress = async (page) => {
     if (!ownPorts().includes(portOf(page))) return false;
@@ -235,7 +235,7 @@ export function createChromeService({
   };
 
   const ensureApproved = async (sessionId, host, ctx) => {
-    if (await isHostAllowed(sessionId, host)) return;
+    if (await isHostAllowed(sessionId, host, ctx.surface)) return;
     if (ctx.surface === 'voice') throw notYetAllowed(host);
     const reply = await approvals.ask({ sessionId, host, directory: trimmedText(ctx.directory), source: ctx.source, signal: ctx.signal });
     if (reply === 'once' || reply === 'always') return;
@@ -253,7 +253,7 @@ export function createChromeService({
     throw new MittrToolError(ACCOUNT_CHANGED, 409);
   };
 
-  const ensureStillApproved = async (sessionId, options) => {
+  const ensureStillApproved = async (sessionId, options, surface) => {
     const landed = trimmedText((await drive(['get', 'url'], options))?.url);
     if (landed === NO_PAGE) return;
     if (!landed) throw siteMoved('an address the driver did not report');
@@ -267,7 +267,7 @@ export function createChromeService({
     if (page.protocol !== 'http:' && page.protocol !== 'https:') throw siteMoved(`a ${page.protocol} page`, page.protocol);
     await refuseOwnAddress(page);
     const host = page.hostname.toLowerCase();
-    if (await isHostAllowed(sessionId, host)) return;
+    if (await isHostAllowed(sessionId, host, surface)) return;
     throw siteMoved(host, host);
   };
 
@@ -334,12 +334,12 @@ export function createChromeService({
     await closeQuietly({ sessionName, profile: profileOf(tools.chromeProfile) ?? DEFAULT_PROFILE, headed: tools.chromeHeaded === true });
   };
 
-  const screenshot = async ({ sessionId, directory, label, currentUrl, runAction, options }) => {
+  const screenshot = async ({ sessionId, surface, directory, label, currentUrl, runAction, options }) => {
     const scratch = await fsPromises.mkdtemp(path.join(scratchRoot, 'mittrcraft-chrome-'));
     try {
       const file = path.join(scratch, 'page.png');
       await runAction(['screenshot', file]);
-      await ensureStillApproved(sessionId, options);
+      await ensureStillApproved(sessionId, options, surface);
       const image = imageOf({ base64: (await fsPromises.readFile(file)).toString('base64'), mime: 'image/png' });
       if (!image) throw new MittrToolError('The Chrome screenshot is not a PNG image', 502);
       const saved = await saveScreenshot({ control: { writeScreenshot }, directory, base64: image.base64, mime: image.mime, label: trimmedText(label) ?? 'chrome' });
@@ -354,14 +354,14 @@ export function createChromeService({
     }
   };
 
-  const landedPage = async (sessionId, options) => {
+  const landedPage = async (sessionId, options, surface) => {
     if (options.signal?.aborted || !modes.has(options.sessionName)) return null;
     try {
       const landed = trimmedText((await drive(['get', 'url'], options))?.url);
       const page = new URL(landed);
       if (page.protocol !== 'http:' && page.protocol !== 'https:') return null;
       if (await isOwnAddress(page)) return null;
-      return (await isHostAllowed(sessionId, page.hostname.toLowerCase())) ? landed : null;
+      return (await isHostAllowed(sessionId, page.hostname.toLowerCase(), surface)) ? landed : null;
     } catch {
       return null;
     }
@@ -371,7 +371,7 @@ export function createChromeService({
     const steps = [];
     const history = [];
     let values;
-    const finish = async (outcome, extra = {}) => ({ outcome, ...extra, steps, url: await landedPage(ctx.sessionId, options) });
+    const finish = async (outcome, extra = {}) => ({ outcome, ...extra, steps, url: await landedPage(ctx.sessionId, options, ctx.surface) });
     const cancelled = () => ctx.signal?.aborted === true;
     const chromeStopped = (error) => {
       if (!cancelled() && steps.length === 0 && error instanceof MittrToolError && error.statusCode >= 400 && error.statusCode < 499) throw error;
@@ -456,7 +456,7 @@ export function createChromeService({
       await refuseOwnAddress(planned.page);
       await ensureApproved(sessionId, planned.page.hostname.toLowerCase(), ctx);
       const opened = await runAction(['open', planned.page.href]);
-      await ensureStillApproved(sessionId, options);
+      await ensureStillApproved(sessionId, options, ctx.surface);
       return opened;
     }
 
@@ -467,10 +467,10 @@ export function createChromeService({
     await ensureApproved(sessionId, current.hostname.toLowerCase(), ctx);
 
     if (planned.task) return doTask(planned.task, { ...ctx, sessionId }, options);
-    if (planned.directory) return screenshot({ sessionId, directory: planned.directory, label: input.label, currentUrl, runAction, options });
+    if (planned.directory) return screenshot({ sessionId, surface: ctx.surface, directory: planned.directory, label: input.label, currentUrl, runAction, options });
 
     const result = await runAction(planned.command);
-    await ensureStillApproved(sessionId, options);
+    await ensureStillApproved(sessionId, options, ctx.surface);
     return result;
   };
 
