@@ -1963,6 +1963,16 @@ const checks = {
   },
 };
 
+const voiceServerChecks = {
+  'agent-tool-progress': () => {
+    const template = source('packages/web/server/lib/agent-tool/runtime.js');
+    has(template, /const progress = \(extra\) => context\.progress\(\{\s*\$\{name\}: \{\s*schemaVersion: \$\{TOOL_SCHEMA_VERSION\},\s*action: args\.action,\s*description: title,\s*\.\.\.extra,/, 'the agent tool template no longer reports progress with schemaVersion, action and description');
+    has(template, /await progress\(\)\s*\n\s*const endpoint = process\.env\.OPENCHAMBER_AGENT_TOOL_URL/, 'the agent tool template no longer reports progress before its callback');
+    has(template, /await progress\(\{ ok: valid && result\.ok === true \}\)/, 'the agent tool template no longer reports progress with ok after its callback');
+  },
+};
+Object.assign(checks, voiceServerChecks);
+
 test('every contract item has a check, and every check an item', () => {
   assert.deepEqual(UPSTREAM_CONTRACT.map((entry) => entry.id).sort(), Object.keys(checks).sort());
   for (const entry of UPSTREAM_CONTRACT) {

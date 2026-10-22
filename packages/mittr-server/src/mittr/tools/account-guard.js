@@ -8,6 +8,7 @@ export const sessionKeyOf = (session) => {
 };
 
 export const pinAccount = ({ activeAccountKey, engineOnActiveHome }) => {
+  if (!(engineOnActiveHome instanceof Function)) throw new Error('pinAccount needs engineOnActiveHome');
   const pinned = activeAccountKey();
   return (sessionKey = pinned) => {
     if (activeAccountKey() !== pinned || sessionKey !== pinned || engineOnActiveHome() !== true) {

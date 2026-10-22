@@ -6,7 +6,7 @@ import test from 'node:test';
 import express from 'express';
 
 import { MARKER_PNG } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
-import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
+import { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
 import { SCREENSHOT_DIRECTORY, writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { keyOf } from '../account-store.js';
 import { createMittrSettings } from '../mittr-settings.js';
@@ -40,7 +40,7 @@ const setUp = async (t, {
   engineBase = null,
   platform = fakePlatform((call) => (hang ? hang(call.signal) : json(CARD))).deps,
 } = {}) => {
-  const registry = createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, execute: async () => ({}) } });
+  const registry = createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, definitions: () => ({ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS }), execute: async () => ({}) } });
   const readyListeners = new Set();
   const eventListeners = new Set();
   const app = express();
@@ -252,7 +252,7 @@ test('a switched-off tool is refused over http and by voice with the callback\'s
   const { tools, registry, state } = await setUp(t);
   await tools.applySwitches({ chrome: false, computer: false });
   state.upstreamSettings = { agentControlToolEnabled: false };
-  const surfaces = [{ surface: 'http', scope: { local: true } }, { surface: 'voice' }];
+  const surfaces = [{ surface: 'http', scope: { local: true } }, { surface: 'voice', scope: { local: true } }];
   const refusals = [
     ['chrome.open', { url: 'http://acme.example.test/' }, 'The Chrome tool is turned off in Settings → Integrations'],
     ['computer.list_apps', {}, 'The Computer tool is turned off in Settings → Integrations'],
@@ -272,6 +272,19 @@ test('a switched-off tool is refused over http and by voice with the callback\'s
   state.upstreamSettings = {};
   for (const ctx of surfaces) {
     assert.deepEqual(await registry.execute('jira.get_issue', { key: 'MRKB-1' }, ctx), CARD, ctx.surface);
+  }
+});
+
+test('by voice, the control and in-app browser switches refuse their upstream actions with the Settings wording', async (t) => {
+  const { registry, state } = await setUp(t);
+  state.upstreamSettings = { agentControlToolEnabled: false, agentWebToolEnabled: false };
+  const voice = { surface: 'voice', scope: { local: true }, directory: '/work/s1' };
+  for (const [action, message] of [['session.send', 'The control tool is turned off in Settings'], ['browser.open', 'The in-app browser tool is turned off in Settings']]) {
+    await assert.rejects(registry.execute(action, {}, voice), (error) => {
+      assert.equal(error.message, message, action);
+      assert.equal(error.statusCode, 403);
+      return true;
+    });
   }
 });
 

@@ -718,3 +718,11 @@ export const compareEnglishSnapshot = (snapshot, { overrides, upstream }) => {
   }
   return problems;
 };
+
+UPSTREAM_CONTRACT.push(
+  {
+    id: 'agent-tool-progress',
+    files: ['packages/web/server/lib/agent-tool/runtime.js'],
+    why: 'upstream\'s generated agent tool reports context.progress({ <tool>: { schemaVersion, action, description } }) before its callback and again with ok after, and the MittrCraft tools plugin does the same',
+  },
+);

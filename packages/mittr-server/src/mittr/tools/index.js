@@ -11,7 +11,7 @@ import { chromeToolDescription, chromeToolParameters, createChromeService, regis
 import { registerComputerActions } from './computer-actions.js';
 import { createComputerControl, createLaunchApp, resolveCuaDriver } from './computer-control.js';
 import { materializeToolsPlugin, toolsFragment, toolsPluginDir, toolsPluginSource } from './plugin-source.js';
-import { MITTR_TOOLS, MittrToolError } from './registry.js';
+import { MITTR_TOOLS, MittrToolError, UPSTREAM_SWITCHES } from './registry.js';
 import { CAPTURE_TOOL } from './screenshots.js';
 import { registerMittrToolsSettingsRoutes } from './settings-routes.js';
 import { NOT_SIGNED_IN, registerWorkActions } from './work-lookup.js';
@@ -23,7 +23,11 @@ const TITLES = Object.freeze({
   [MITTR_TOOLS.computer]: 'The Computer tool',
   [MITTR_TOOLS.chrome]: 'The Chrome tool',
   [MITTR_TOOLS.work]: 'The work tool',
+  [UPSTREAM_SWITCHES.control]: 'The control tool',
+  [UPSTREAM_SWITCHES.web]: 'The in-app browser tool',
 });
+
+const UPSTREAM_SWITCHED = new Set(Object.values(UPSTREAM_SWITCHES));
 
 const enginePortOf = (opencode) => {
   try {
@@ -131,6 +135,8 @@ export function setupMittrTools(context, {
     [MITTR_TOOLS.computer]: ({ tools }) => tools.computer !== false,
     [MITTR_TOOLS.chrome]: ({ tools }) => tools.chrome !== false,
     [MITTR_TOOLS.work]: ({ upstream }) => upstream?.agentControlToolEnabled !== false,
+    [UPSTREAM_SWITCHES.control]: ({ upstream }) => upstream?.agentControlToolEnabled !== false,
+    [UPSTREAM_SWITCHES.web]: ({ upstream }) => upstream?.agentWebToolEnabled !== false,
   };
 
   const readSwitches = async () => {
@@ -148,6 +154,7 @@ export function setupMittrTools(context, {
 
   const switchRefusal = async (name) => {
     if (!Object.hasOwn(switchedOn, name) || switchedOn[name](await readSwitches())) return null;
+    if (UPSTREAM_SWITCHED.has(name)) return new MittrToolError(`${TITLES[name]} is turned off in Settings`, 403);
     return name === MITTR_TOOLS.work
       ? new MittrToolError(`${TITLES[name]} is off while the control tool is turned off in Settings`, 403)
       : new MittrToolError(`${TITLES[name]} is turned off in Settings → Integrations`, 403);
