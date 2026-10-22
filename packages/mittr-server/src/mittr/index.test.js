@@ -2494,6 +2494,19 @@ test('a hosted runtime registers no voice route', async (t) => {
     const answer = await fetch(`${call.base}${route}`, { method: 'POST' });
     assert.equal(answer.status, 404, route);
   }
+  assert.equal((await fetch(`${call.base}/api/mittr/voice/settings`)).status, 404);
+});
+
+test('on this Mac the voice settings are served and a change is stored', async (t) => {
+  const { call } = await setUp(t, { host: { secretStore: sealingStore() } });
+  const changed = await call('PUT', '/api/mittr/voice/settings', { stepCap: 7 });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.body.stepCap, 7);
+  assert.equal(changed.body.canChange, true);
+  const read = await call('GET', '/api/mittr/voice/settings');
+  assert.equal(read.status, 200);
+  assert.equal(read.body.stepCap, 7);
+  assert.equal(typeof read.body.replyMaxChars, 'number');
 });
 
 test('a second Talk start, an end and an account switch each end the conversation and its Chrome allow', async (t) => {

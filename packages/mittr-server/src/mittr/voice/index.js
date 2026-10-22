@@ -3,6 +3,7 @@ import { registerVoiceActions } from './actions.js';
 import { createVoiceConversation } from './conversation.js';
 import { runVoiceTurn } from './loop.js';
 import { registerVoiceRoutes } from './routes.js';
+import { registerVoiceSettingsRoutes } from './settings-routes.js';
 import { MITTR_TOOLS } from '../tools/registry.js';
 import { VOICE_SESSION_ID } from './tools.js';
 
@@ -66,6 +67,8 @@ export function setupMittrVoice(context, { registry, tools, speech, mittrSetting
     host,
     logger,
   });
+
+  registerVoiceSettingsRoutes(app, { express, host, requestScope, mittrSettings, logger });
 
   return { conversation, accountChanged, dispose: () => conversation.endAll() };
 }
