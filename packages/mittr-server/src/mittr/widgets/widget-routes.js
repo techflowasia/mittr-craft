@@ -1,24 +1,20 @@
-import { pinAccount } from '../tools/account-guard.js';
+import { jsonBody } from '../json-body.js';
 import { isLocalRequest } from '../tools/control-routes.js';
 import { MittrToolError } from '../tools/registry.js';
-import { NOT_SIGNED_IN } from './widget-actions.js';
+import { widgetAccountOf } from './widget-actions.js';
 import { WIDGETS_OFF } from './widget-runner.js';
 
 export const WIDGETS_ROUTE = '/api/mittr/widgets';
 export const ONLY_ON_THIS_MAC = 'Widgets can be seen and changed only on this Mac';
 
+const BODY_LIMIT = 1024;
+
 const noWidget = (id) => new MittrToolError(`There is no widget ${id}`, 404);
 
-export function registerWidgetRoutes(app, { host, requestScope, store, runner, activeAccountKey, engineOnActiveHome, switchedOn, logger = console }) {
+export function registerWidgetRoutes(app, { express, host, requestScope, store, runner, activeAccountKey, engineOnActiveHome, switchedOn, logger = console }) {
   const fromThisMac = (req, res, next) => (isLocalRequest(req, { host, requestScope }) ? next() : res.status(403).json({ error: ONLY_ON_THIS_MAC }));
-
-  const accountOf = () => {
-    const ensureSameAccount = pinAccount({ activeAccountKey, engineOnActiveHome });
-    const key = activeAccountKey();
-    if (!key) throw new MittrToolError(NOT_SIGNED_IN, 401);
-    ensureSameAccount(key);
-    return key;
-  };
+  const readJson = jsonBody(express, { limit: BODY_LIMIT });
+  const accountOf = () => widgetAccountOf({ activeAccountKey, engineOnActiveHome });
 
   const answer = (work) => async (req, res) => {
     try {
@@ -30,23 +26,23 @@ export function registerWidgetRoutes(app, { host, requestScope, store, runner, a
     }
   };
 
-  app.get(WIDGETS_ROUTE, fromThisMac, answer(() => {
+  app.get(WIDGETS_ROUTE, fromThisMac, answer(async () => {
     const key = activeAccountKey();
-    return { widgets: key ? store.list(key) : [], canChange: true };
+    return { widgets: key ? store.list(key) : [], switchedOn: await switchedOn() };
   }));
 
-  app.post(`${WIDGETS_ROUTE}/:id/enable`, fromThisMac, answer(async (req) => {
+  app.post(`${WIDGETS_ROUTE}/:id/enable`, fromThisMac, readJson, answer(async (req) => {
     const key = accountOf();
     if (!(await switchedOn())) throw new MittrToolError(WIDGETS_OFF, 409);
-    const widget = store.setEnabled(key, req.params.id, true);
+    const widget = store.turnOn(key, req.params.id, { revision: req.body?.revision });
     if (!widget) throw noWidget(req.params.id);
-    void runner.tick();
+    void runner.tickQuietly();
     return { widget };
   }));
 
   app.post(`${WIDGETS_ROUTE}/:id/disable`, fromThisMac, answer((req) => {
     const key = accountOf();
-    const widget = store.setEnabled(key, req.params.id, false);
+    const widget = store.turnOff(key, req.params.id);
     if (!widget) throw noWidget(req.params.id);
     runner.stop(req.params.id);
     return { widget };

@@ -1,10 +1,11 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { writePrivateAtomic } from '../private-file.js';
 import { MittrToolError } from '../tools/registry.js';
 import { isPlainObject, isText, trimmedText } from '../values.js';
+import { filesUnchanged, fingerprintsOf, isDirectory, sourceFiles } from './widget-files.js';
 import { jsonPathParts } from './widget-sources.js';
 
 export const MIN_REFRESH_MINUTES = 5;
@@ -12,6 +13,9 @@ export const MAX_REFRESH_MINUTES = 24 * 60;
 export const DEFAULT_REFRESH_MINUTES = 15;
 export const MAX_WIDGETS = 20;
 export const ONLY_THE_PERSON_TURNS_ON = 'Only the person can turn a widget on, from Today';
+export const CHANGED_SINCE_SEEN = 'This widget changed since you looked; check it again';
+export const SAY_WHAT_YOU_SAW = 'Turning a widget on needs the revision of the widget you saw';
+export const OFF_BECAUSE = Object.freeze({ changed: 'changed', files: 'files' });
 
 const DIR = 'widgets';
 const ACCOUNT_KEY = /^[0-9a-f]{16}$/;
@@ -77,14 +81,6 @@ const extractOf = (value) => {
   return extract;
 };
 
-const isDirectory = (dir) => {
-  try {
-    return fs.statSync(dir).isDirectory();
-  } catch {
-    return false;
-  }
-};
-
 const urlOf = (value) => {
   const text = trimmedText(value);
   let page = null;
@@ -135,18 +131,30 @@ const alertOf = (value, display) => {
 
 export const sourceSignature = (source) => JSON.stringify(source);
 
+export const sourceRevision = (source) => createHash('sha256').update(sourceSignature(source)).digest('hex');
+
+const isApproved = (widget) => widget.enabled === true && isText(widget.approvedRevision) && widget.approvedRevision === sourceRevision(widget.source);
+
+const switchedOff = (widget, offReason) => {
+  const { approvedRevision: _revision, approvedFiles: _files, offReason: _reason, ...rest } = widget;
+  return offReason ? { ...rest, enabled: false, alerting: false, offReason } : { ...rest, enabled: false, alerting: false };
+};
+
 export const widgetView = (widget) => {
   const view = {
     id: widget.id,
     title: widget.title,
     display: widget.display,
     source: structuredClone(widget.source),
+    revision: sourceRevision(widget.source),
+    files: sourceFiles(widget.source),
     refreshMinutes: widget.refreshMinutes,
   };
   if (widget.alert) view.alert = { ...widget.alert };
-  view.enabled = widget.enabled === true;
+  view.enabled = isApproved(widget);
+  if (!view.enabled && Object.values(OFF_BECAUSE).includes(widget.offReason)) view.offReason = widget.offReason;
   if (widget.last) view.last = { ...widget.last };
-  view.alerting = widget.alerting === true;
+  view.alerting = view.enabled && widget.alerting === true;
   return view;
 };
 
@@ -202,6 +210,7 @@ export function createWidgetStore({ dataDir, now = Date.now, newId = newWidgetId
 
     create: (key, input, { directory } = {}) => {
       if (!isPlainObject(input)) throw refused('Give the widget as an object');
+      if (Object.hasOwn(input, 'enabled')) throw new MittrToolError(ONLY_THE_PERSON_TURNS_ON, 403);
       const widgets = read(key);
       if (widgets.length >= MAX_WIDGETS) throw new MittrToolError(`There are already ${MAX_WIDGETS} widgets; remove one first`, 409);
       const display = displayOf(input.display);
@@ -232,22 +241,23 @@ export function createWidgetStore({ dataDir, now = Date.now, newId = newWidgetId
         const display = Object.hasOwn(patch, 'display') ? displayOf(patch.display) : widget.display;
         const source = Object.hasOwn(patch, 'source') ? sourceOf(patch.source, { directory: widget.source.cwd ?? directory }) : widget.source;
         const alert = Object.hasOwn(patch, 'alert') ? alertOf(patch.alert, display) : alertOf(widget.alert ?? undefined, display);
+        const refreshMinutes = Object.hasOwn(patch, 'refreshMinutes') ? refreshOf(patch.refreshMinutes) : widget.refreshMinutes;
         const sourceChanged = sourceSignature(source) !== sourceSignature(widget.source);
         const meaningChanged = sourceChanged || display !== widget.display;
-        return {
-          widget: {
-            ...widget,
-            title: Object.hasOwn(patch, 'title') ? titleOf(patch.title) : widget.title,
-            display,
-            source,
-            refreshMinutes: Object.hasOwn(patch, 'refreshMinutes') ? refreshOf(patch.refreshMinutes) : widget.refreshMinutes,
-            alert,
-            enabled: sourceChanged ? false : widget.enabled === true,
-            alerting: meaningChanged || JSON.stringify(alert) !== JSON.stringify(widget.alert ?? null) ? false : widget.alerting === true,
-            last: meaningChanged ? null : widget.last ?? null,
-            updatedAt: now(),
-          },
+        const turnsOff = sourceChanged || refreshMinutes < widget.refreshMinutes;
+        const next = {
+          ...widget,
+          title: Object.hasOwn(patch, 'title') ? titleOf(patch.title) : widget.title,
+          display,
+          source,
+          refreshMinutes,
+          alert,
+          alerting: meaningChanged || JSON.stringify(alert) !== JSON.stringify(widget.alert ?? null) ? false : widget.alerting === true,
+          last: meaningChanged ? null : widget.last ?? null,
+          updatedAt: now(),
         };
+        if (!turnsOff) return { widget: next };
+        return { widget: switchedOff(next, isApproved(widget) || widget.offReason ? OFF_BECAUSE.changed : null) };
       });
       if (!result) throw new MittrToolError(`There is no widget ${id}`, 404);
       return widgetView(result.widget);
@@ -261,14 +271,46 @@ export function createWidgetStore({ dataDir, now = Date.now, newId = newWidgetId
       return true;
     },
 
-    setEnabled: (key, id, enabled) => {
-      const result = change(key, id, (widget) => ({ widget: { ...widget, enabled: enabled === true, alerting: enabled === true ? widget.alerting === true : false, updatedAt: now() } }));
+    turnOn: (key, id, { revision } = {}) => {
+      if (!isText(revision) || !revision) throw refused(SAY_WHAT_YOU_SAW);
+      const result = change(key, id, (widget) => {
+        const current = sourceRevision(widget.source);
+        if (revision !== current) throw new MittrToolError(CHANGED_SINCE_SEEN, 409);
+        const { offReason: _reason, ...rest } = widget;
+        return {
+          widget: {
+            ...rest,
+            enabled: true,
+            approvedRevision: current,
+            approvedFiles: fingerprintsOf(sourceFiles(widget.source)),
+            alerting: isApproved(widget) ? widget.alerting === true : false,
+            updatedAt: now(),
+          },
+        };
+      });
       return result ? widgetView(result.widget) : null;
+    },
+
+    turnOff: (key, id) => {
+      const result = change(key, id, (widget) => ({ widget: { ...switchedOff(widget, null), updatedAt: now() } }));
+      return result ? widgetView(result.widget) : null;
+    },
+
+    stopChangedFiles: (key) => {
+      const widgets = read(key);
+      const stopped = [];
+      const next = widgets.map((widget) => {
+        if (!isApproved(widget) || filesUnchanged(widget.approvedFiles, sourceFiles(widget.source))) return widget;
+        stopped.push(widget.id);
+        return { ...switchedOff(widget, OFF_BECAUSE.files), updatedAt: now() };
+      });
+      if (stopped.length > 0) write(key, next);
+      return stopped;
     },
 
     record: (key, id, { signature, last, alerting }) => {
       const result = change(key, id, (widget) => {
-        if (widget.enabled !== true || sourceSignature(widget.source) !== signature) return null;
+        if (!isApproved(widget) || sourceSignature(widget.source) !== signature) return null;
         const next = alerting === true;
         return { widget: { ...widget, last, alerting: next }, rose: next && widget.alerting !== true };
       });

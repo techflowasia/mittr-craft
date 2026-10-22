@@ -38,6 +38,7 @@ const setUp = async (t, { scope = 'local', peer = null } = {}) => {
     });
   }
   registerWidgetRoutes(app, {
+    express,
     host: {},
     requestScope: () => scope,
     store,
@@ -61,22 +62,26 @@ test('GET lists the active account\'s widgets exactly as stored, and that this M
         title: 'Dev build',
         display: 'status',
         source: { type: 'command', command: 'cat status.txt', cwd: project, extract: { regex: 'state=(\\w+)' } },
+        revision: widget.revision,
+        files: [],
         refreshMinutes: 10,
         enabled: false,
         alerting: false,
       }],
-      canChange: true,
+      switchedOn: true,
     },
   });
   state.key = BOB;
-  assert.deepEqual((await call('GET', '/api/mittr/widgets')).body, { widgets: [], canChange: true });
+  assert.deepEqual((await call('GET', '/api/mittr/widgets')).body, { widgets: [], switchedOn: true });
   state.key = null;
-  assert.deepEqual((await call('GET', '/api/mittr/widgets')).body, { widgets: [], canChange: true });
+  assert.deepEqual((await call('GET', '/api/mittr/widgets')).body, { widgets: [], switchedOn: true });
+  state.switchOn = false;
+  assert.equal((await call('GET', '/api/mittr/widgets')).body.switchedOn, false);
 });
 
 test('the person turns a widget on, it refreshes, and turns it off again', async (t) => {
   const { call, store, state, widget } = await setUp(t);
-  const on = await call('POST', `/api/mittr/widgets/${widget.id}/enable`);
+  const on = await call('POST', `/api/mittr/widgets/${widget.id}/enable`, { revision: widget.revision });
   assert.equal(on.status, 200);
   assert.equal(on.body.widget.enabled, true);
   assert.equal(store.get(ALICE, widget.id).enabled, true);
@@ -94,7 +99,7 @@ test('the person turns a widget on, it refreshes, and turns it off again', async
 test('turning on or refreshing while the widgets switch is off is refused', async (t) => {
   const { call, store, state, widget } = await setUp(t);
   state.switchOn = false;
-  assert.deepEqual(await call('POST', `/api/mittr/widgets/${widget.id}/enable`), { status: 409, body: { error: 'The widgets tool is turned off in Settings → Integrations' } });
+  assert.deepEqual(await call('POST', `/api/mittr/widgets/${widget.id}/enable`, { revision: widget.revision }), { status: 409, body: { error: 'The widgets tool is turned off in Settings → Integrations' } });
   assert.equal(store.get(ALICE, widget.id).enabled, false);
   assert.equal(state.runs, 0);
 });
@@ -103,11 +108,11 @@ test('a widget of another account, or none, answers 404', async (t) => {
   const { call, state, widget } = await setUp(t);
   state.key = BOB;
   for (const [method, route] of [['POST', 'enable'], ['POST', 'disable'], ['POST', 'refresh']]) {
-    assert.equal((await call(method, `/api/mittr/widgets/${widget.id}/${route}`)).status, 404, route);
+    assert.equal((await call(method, `/api/mittr/widgets/${widget.id}/${route}`, { revision: widget.revision })).status, 404, route);
   }
   assert.equal((await call('DELETE', `/api/mittr/widgets/${widget.id}`)).status, 404);
   state.key = null;
-  assert.equal((await call('POST', `/api/mittr/widgets/${widget.id}/enable`)).status, 401);
+  assert.equal((await call('POST', `/api/mittr/widgets/${widget.id}/enable`, { revision: widget.revision })).status, 401);
 });
 
 test('DELETE removes the widget', async (t) => {

@@ -96,7 +96,7 @@ test('agents get the widgets tool while its switch is on, and lose it when it go
 test('Review Focus 2: Mittr changes the command of a widget the person turned on, and nothing runs until the person turns it on again', async (t) => {
   const { call, registry, widgets, state, create, project } = await setUp(t);
   const { widget } = await create();
-  assert.equal((await call('POST', `/api/mittr/widgets/${widget.id}/enable`)).body.widget.enabled, true);
+  assert.equal((await call('POST', `/api/mittr/widgets/${widget.id}/enable`, { revision: widget.revision })).body.widget.enabled, true);
   await until(() => state.runs.length === 1);
 
   await registry.execute('widget.update', { id: widget.id, source: { type: 'command', command: 'cat other.txt', cwd: project } }, { surface: 'agent', tool: MITTR_TOOLS.widgets });
@@ -108,16 +108,42 @@ test('Review Focus 2: Mittr changes the command of a widget the person turned on
   assert.equal((await call('POST', `/api/mittr/widgets/${widget.id}/refresh`)).status, 409);
   assert.equal(state.runs.length, 1);
 
-  await call('POST', `/api/mittr/widgets/${widget.id}/enable`);
+  assert.equal((await call('POST', `/api/mittr/widgets/${widget.id}/enable`, { revision: widget.revision })).status, 409);
+  await call('POST', `/api/mittr/widgets/${widget.id}/enable`, { revision: listed[0].revision });
   await until(() => state.runs.length === 2);
   assert.equal(state.runs[1].source.command, 'cat other.txt');
+});
+
+test('C1: the person turns on the command they saw; when Mittr changed it in between, the click is refused and the new command stays off', async (t) => {
+  const { call, registry, widgets, state, create, project } = await setUp(t);
+  const { widget: seen } = await create();
+  await registry.execute('widget.update', { id: seen.id, source: { type: 'command', command: 'cat other.txt', cwd: project } }, { surface: 'agent', tool: MITTR_TOOLS.widgets });
+
+  assert.deepEqual(await call('POST', `/api/mittr/widgets/${seen.id}/enable`, { revision: seen.revision }), { status: 409, body: { error: 'This widget changed since you looked; check it again' } });
+  await widgets.runner.tick();
+  const listed = (await call('GET', '/api/mittr/widgets')).body.widgets[0];
+  assert.equal(listed.enabled, false);
+  assert.equal(listed.source.command, 'cat other.txt');
+  assert.notEqual(listed.revision, seen.revision);
+  assert.equal(state.runs.length, 0);
+});
+
+test('C1: turning on with no revision, or as a plain form post a web page could send, is refused', async (t) => {
+  const { call, widgets, state, create } = await setUp(t);
+  const { widget } = await create();
+  assert.equal((await call('POST', `/api/mittr/widgets/${widget.id}/enable`)).status, 400);
+  const asForm = await fetch(`${call.base}/api/mittr/widgets/${widget.id}/enable`, { method: 'POST', headers: { 'content-type': 'text/plain' }, body: JSON.stringify({ revision: widget.revision }) });
+  assert.equal(asForm.status, 400);
+  await widgets.runner.tick();
+  assert.equal((await call('GET', '/api/mittr/widgets')).body.widgets[0].enabled, false);
+  assert.equal(state.runs.length, 0);
 });
 
 test('turning the widgets switch off stops what is running', async (t) => {
   const hold = deferred();
   const { call, tools, state, create } = await setUp(t, { hold });
   const { widget } = await create();
-  await call('POST', `/api/mittr/widgets/${widget.id}/enable`);
+  await call('POST', `/api/mittr/widgets/${widget.id}/enable`, { revision: widget.revision });
   await until(() => state.runs.length === 1);
 
   await tools.applySwitches({ widgets: false });
@@ -131,7 +157,7 @@ test('an account switch stops that account\'s widgets', async (t) => {
   const hold = deferred();
   const { call, widgets, state, create } = await setUp(t, { hold });
   const { widget } = await create();
-  await call('POST', `/api/mittr/widgets/${widget.id}/enable`);
+  await call('POST', `/api/mittr/widgets/${widget.id}/enable`, { revision: widget.revision });
   await until(() => state.runs.length === 1);
 
   widgets.accountChanged();

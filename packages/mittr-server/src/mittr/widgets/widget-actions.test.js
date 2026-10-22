@@ -41,7 +41,9 @@ test('the widgets tool has create, update, remove and list, and no way to turn a
 
 test('an agent makes a widget that starts off and says so', async (t) => {
   const { agent, store, state, project } = setUp(t);
-  const answer = await agent('widget.create', { title: 'Dev build', display: 'status', source: commandSource(project), refreshMinutes: 10, enabled: true });
+  await assert.rejects(agent('widget.create', { title: 'Dev build', display: 'status', source: commandSource(project), refreshMinutes: 10, enabled: true }), { statusCode: 403 });
+  assert.deepEqual(store.list(ALICE), []);
+  const answer = await agent('widget.create', { title: 'Dev build', display: 'status', source: commandSource(project), refreshMinutes: 10 });
   assert.equal(answer.widget.enabled, false);
   assert.match(answer.note, /switched off/);
   assert.equal(store.list(ALICE)[0].enabled, false);
@@ -51,7 +53,7 @@ test('an agent makes a widget that starts off and says so', async (t) => {
 test('Mittr updating a widget\'s command after the person turned it on turns it off on the server', async (t) => {
   const { agent, store, registry, project } = setUp(t);
   const { widget } = await agent('widget.create', { title: 'Dev build', display: 'status', source: commandSource(project) });
-  store.setEnabled(ALICE, widget.id, true);
+  store.turnOn(ALICE, widget.id, { revision: store.get(ALICE, widget.id).revision });
 
   const renamed = await agent('widget.update', { id: widget.id, title: 'Dev build (Jenkins)' });
   assert.equal(renamed.widget.enabled, true);
@@ -60,7 +62,7 @@ test('Mittr updating a widget\'s command after the person turned it on turns it 
   assert.equal(changed.widget.enabled, false);
   assert.equal(store.get(ALICE, widget.id).enabled, false);
 
-  store.setEnabled(ALICE, widget.id, true);
+  store.turnOn(ALICE, widget.id, { revision: store.get(ALICE, widget.id).revision });
   const overHttp = await registry.execute('widget.update', { id: widget.id, source: commandSource(project, 'cat other.txt') }, { surface: 'http', scope: { local: true } });
   assert.equal(overHttp.widget.enabled, false);
   assert.equal(store.get(ALICE, widget.id).enabled, false);

@@ -11,7 +11,7 @@ export const WIDGETS_TOOL_DESCRIPTION = [
   'Make small cards on the person\'s Today page that keep an eye on something: a number, a status (ok, warn or fail) or a short list, refreshed on a schedule.',
   'A source is a URL fetched from this Mac with no cookies (public addresses only), or a shell command run in a project folder with a clean environment.',
   'An extract rule picks the value: extract.json is a JSON path such as build.status, extract.regex is a pattern whose first group is the value, and extract.status maps words to ok, warn or fail.',
-  'A new widget starts switched off and runs nothing: only the person can turn it on, from Today. Changing its source turns it off again.',
+  'A new widget starts switched off and runs nothing: only the person can turn it on, from Today. Changing its source or making it refresh more often turns it off again, and so does a change to a file its command runs from its folder.',
   `Refresh at most every ${MIN_REFRESH_MINUTES} minutes. An alert (above, below or equals) marks the card and notifies the person once each time the value crosses the line.`,
 ].join(' ');
 
@@ -58,18 +58,20 @@ const idOf = (input) => {
   return id;
 };
 
+export const widgetAccountOf = ({ activeAccountKey, engineOnActiveHome }) => {
+  const ensureSameAccount = pinAccount({ activeAccountKey, engineOnActiveHome });
+  const key = activeAccountKey();
+  if (!key) throw new MittrToolError(NOT_SIGNED_IN, 401);
+  ensureSameAccount(key);
+  return key;
+};
+
 const fieldsOf = (input) => Object.fromEntries(Object.entries(input).filter(([name]) => name !== 'id'));
 
 export function registerWidgetActions(registry, { store, activeAccountKey, engineOnActiveHome, changed = () => {} }) {
   registry.defineTool({ name: MITTR_TOOLS.widgets, description: WIDGETS_TOOL_DESCRIPTION, parameters: WIDGETS_TOOL_PARAMETERS });
 
-  const accountOf = () => {
-    const ensureSameAccount = pinAccount({ activeAccountKey, engineOnActiveHome });
-    const key = activeAccountKey();
-    if (!key) throw new MittrToolError(NOT_SIGNED_IN, 401);
-    ensureSameAccount(key);
-    return key;
-  };
+  const accountOf = () => widgetAccountOf({ activeAccountKey, engineOnActiveHome });
 
   const runs = {
     'widget.create': (input, ctx) => {

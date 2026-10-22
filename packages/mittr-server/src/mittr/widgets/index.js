@@ -38,7 +38,7 @@ export function setupMittrWidgets(context, {
   tickMs = TICK_MS,
   logger = console,
 }) {
-  const { app, host, requestScope, dataDir, server, opencode } = context;
+  const { app, express, host, requestScope, dataDir, server, opencode } = context;
   if (!host || !personalDesktop()) return NOTHING;
 
   const store = createWidgetStore({ dataDir, logger });
@@ -64,7 +64,7 @@ export function setupMittrWidgets(context, {
       if (widget?.enabled !== true) runner.stop(id);
     },
   });
-  registerWidgetRoutes(app, { host, requestScope, store, runner, activeAccountKey, engineOnActiveHome, switchedOn, logger });
+  registerWidgetRoutes(app, { express, host, requestScope, store, runner, activeAccountKey, engineOnActiveHome, switchedOn, logger });
 
   const unsubscribe = tools.onSwitchChange((switches) => runner.switchChanged(switches));
   runner.start(tickMs);

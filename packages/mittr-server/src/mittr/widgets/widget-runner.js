@@ -1,7 +1,7 @@
 import { pinAccount } from '../tools/account-guard.js';
 import { MittrToolError } from '../tools/registry.js';
 import { extractValue } from './widget-sources.js';
-import { MIN_REFRESH_MINUTES, sourceSignature } from './widget-store.js';
+import { sourceSignature } from './widget-store.js';
 
 export const TICK_MS = 60_000;
 export const TURN_ON_FIRST = 'Turn the widget on first, from Today';
@@ -26,7 +26,7 @@ export function createWidgetRunner({ store, sources, activeAccountKey, engineOnA
 
   const isDue = (widget, at) => {
     if (widget.enabled !== true || inFlight.has(widget.id)) return false;
-    const every = Math.max(MIN_REFRESH_MINUTES, widget.refreshMinutes) * MINUTE_MS;
+    const every = widget.refreshMinutes * MINUTE_MS;
     return !widget.last || at - widget.last.at >= every;
   };
 
@@ -84,10 +84,15 @@ export function createWidgetRunner({ store, sources, activeAccountKey, engineOnA
     return (await switchedOn()) ? key : null;
   };
 
+  const stopChangedFiles = (key) => {
+    for (const id of store.stopChangedFiles(key)) stop(id);
+  };
+
   const tick = async () => {
     const started = generation;
     const key = await ready();
     if (!key || started !== generation) return;
+    stopChangedFiles(key);
     const at = now();
     const due = store.list(key).filter((widget) => isDue(widget, at));
     await Promise.all(due.map((widget) => run(key, widget).catch((error) => {
@@ -97,6 +102,7 @@ export function createWidgetRunner({ store, sources, activeAccountKey, engineOnA
 
   const refresh = async (key, id) => {
     if (!(await switchedOn())) throw new MittrToolError(WIDGETS_OFF, 409);
+    stopChangedFiles(key);
     const widget = store.get(key, id);
     if (!widget) throw new MittrToolError(`There is no widget ${id}`, 404);
     if (widget.enabled !== true) throw new MittrToolError(TURN_ON_FIRST, 409);
@@ -106,19 +112,24 @@ export function createWidgetRunner({ store, sources, activeAccountKey, engineOnA
     return store.get(key, id);
   };
 
+  const tickQuietly = () => tick().catch((error) => {
+    logger.warn('[mittr] the widgets could not be checked:', error?.name ?? 'Error');
+  });
+
   return {
     tick,
+    tickQuietly,
     refresh,
     stop,
     stopAll,
     accountChanged: stopAll,
     switchChanged: (switches) => {
       if (switches?.widgets === false) stopAll();
-      else void tick();
+      else void tickQuietly();
     },
     start: (intervalMs = TICK_MS) => {
       if (timer) return;
-      timer = setInterval(() => void tick(), intervalMs);
+      timer = setInterval(() => void tickQuietly(), intervalMs);
       timer.unref?.();
     },
     dispose: () => {
