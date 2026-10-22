@@ -102,13 +102,14 @@ describe('glass.css', () => {
     const cleared = rules.filter((rule) => /--background:\s*transparent/.test(rule.body)).flatMap((rule) => rule.selectors);
     expect(cleared.sort()).toEqual([
       'html.mittr-glass #root',
+      'html.mittr-glass #root > :not(.mittr-glass-sky)',
       'html.mittr-glass #root [data-product-region="shell"]',
+      'html.mittr-glass [role="dialog"] > *',
       'html.mittr-glass.mittr-glass-mini #root > :not(.mittr-glass-sky)',
     ]);
     const restored = rules.filter((rule) => /--background:\s*var\(--surface-background\)/.test(rule.body) && guarded(rule)).flatMap((rule) => rule.selectors);
-    expect(restored).toContain('html.mittr-glass #root > *');
     for (const cover of [
-      'html.mittr-glass [data-product-region="shell"] :is(.fixed.inset-0, [class*="bg-background/"], [class*="text-background"])',
+      'html.mittr-glass #root :is(.fixed.inset-0, [class*="bg-background/"], [class*="text-background"])',
       'html.mittr-glass [data-product-region="main"] > .bg-background',
       'html.mittr-glass [data-context-panel] .absolute.inset-0.bg-background',
       'html.mittr-glass.mittr-glass-mini #root :is(.fixed.inset-0, [class*="bg-background/"], [class*="text-background"])',
@@ -132,13 +133,19 @@ describe('glass.css', () => {
     expect(mini.some((rule) => VEIL.test(rule.body) && BLUR.test(rule.body))).toBe(true);
   });
 
-  test('Minor 13: only header and composer buttons and pills are rounded fully, not every button in the app', () => {
+  test('buttons, selects and text inputs are pills everywhere under glass, and dialogs and menus are rounded glass', () => {
     const rounded = rules.filter((rule) => /border-radius:\s*999px/.test(rule.body)).flatMap((rule) => rule.selectors);
-    expect(rounded.sort()).toEqual([
-      'html.mittr-glass .mittr-glass-pill',
-      'html.mittr-glass .oc-glass-composer [data-slot="button"]',
-      'html.mittr-glass [data-product-region="column"] > header [data-slot="button"]',
-    ]);
+    for (const selector of [
+      'html.mittr-glass [data-slot="button"]',
+      'html.mittr-glass [data-slot="select-trigger"]',
+      'html.mittr-glass [data-slot="input"]',
+    ]) {
+      expect(rounded).toContain(selector);
+    }
+    const dialog = rules.find((rule) => rule.within.length === 0 && rule.selectors.includes('html.mittr-glass [role="dialog"]'));
+    expect(dialog?.body).toMatch(/border-radius:\s*26px/);
+    expect(dialog?.body).toMatch(BLUR);
+    expect(rules.some((rule) => rule.selectors.some((selector) => selector.includes('[role="menu"]')) && /border-radius:\s*16px/.test(rule.body))).toBe(true);
   });
 
   test('the solid fallback colours are opaque in both modes', () => {
@@ -147,8 +154,8 @@ describe('glass.css', () => {
     for (const solid of solids) expect(/^#[0-9a-f]{6}$/i.test(solid)).toBe(true);
   });
 
-  test('defines the display font from the system serif stack', () => {
-    expect(css).toContain('--mittr-font-display: ui-serif, "New York", "Noto Serif Thai", Thonburi, serif;');
+  test('defines the display font from serif faces macOS ships, with Thai after Latin so Latin never falls to a Thai sans', () => {
+    expect(css).toContain('--mittr-font-display: "Iowan Old Style", Charter, Georgia, "Noto Serif Thai", Thonburi, serif;');
   });
 
   test('loads nothing from the network', () => {

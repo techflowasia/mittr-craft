@@ -127,6 +127,26 @@ describe('the glass theme switch', () => {
     expect(classes()).toEqual([]);
   });
 
+  test('a first start that follows the system turns to the light sky once, and a later choice stays', async () => {
+    localStorage.removeItem('mittr.glass.lightDefault');
+    const modes: string[] = [];
+    const container = document.createElement('div');
+    const root = createRoot(container);
+    const renderWith = (themeMode: 'system' | 'dark') => act(async () => {
+      root.render(
+        <ThemeSystemContext.Provider value={{ ...contextFor(themeOf('openchamber-dark')), themeMode, setThemeMode: (mode) => { modes.push(mode); } }}>
+          <Probe />
+        </ThemeSystemContext.Provider>,
+      );
+    });
+    await renderWith('system');
+    expect(modes).toEqual(['light']);
+    await renderWith('dark');
+    await renderWith('system');
+    expect(modes).toEqual(['light']);
+    await act(async () => root.unmount());
+  });
+
   test('without a theme context there is no glass', async () => {
     const container = document.createElement('div');
     const root = createRoot(container);

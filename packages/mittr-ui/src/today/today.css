@@ -141,6 +141,11 @@
   list-style: none;
 }
 
+.mittr-today-panel .mittr-today-rows {
+  max-height: min(48vh, 440px);
+  overflow-y: auto;
+}
+
 .mittr-today-rows > li + li {
   border-top: 1px solid var(--mittr-glass-divider, var(--interactive-border, var(--border)));
 }

@@ -1,5 +1,5 @@
 html.mittr-glass {
-  --mittr-font-display: ui-serif, "New York", "Noto Serif Thai", Thonburi, serif;
+  --mittr-font-display: "Iowan Old Style", Charter, Georgia, "Noto Serif Thai", Thonburi, serif;
   --mittr-sky:
     radial-gradient(38% 30% at 52% 22%, rgb(255 255 255 / 0.95), rgb(255 255 255 / 0) 70%),
     radial-gradient(60% 50% at 15% 40%, #a7bbdb 0, rgb(167 187 219 / 0) 70%),
@@ -13,6 +13,7 @@ html.mittr-glass {
   --mittr-glass-divider: rgb(255 255 255 / 0.55);
   --mittr-glass-shadow: 0 1px 2px rgb(30 40 60 / 0.06), 0 12px 32px -12px rgb(30 40 60 / 0.18);
   --mittr-glass-solid: #f4f6fa;
+  --mittr-glass-dialog: rgb(255 255 255 / 0.8);
   --mittr-bubble: #ffffff;
   --mittr-bubble-edge: rgb(30 40 60 / 0.06);
   --mittr-radius-panel: 22px;
@@ -38,6 +39,7 @@ html.mittr-glass.mittr-glass-dark {
   --mittr-glass-divider: rgb(255 255 255 / 0.08);
   --mittr-glass-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -12px rgb(0 0 0 / 0.5);
   --mittr-glass-solid: #151a24;
+  --mittr-glass-dialog: rgb(24 29 40 / 0.86);
   --mittr-bubble: #1f2430;
   --mittr-bubble-edge: rgb(255 255 255 / 0.06);
   --oc-glass-opacity: 62%;
@@ -81,8 +83,8 @@ html.mittr-glass.mittr-glass-dark body {
       --background: transparent;
     }
 
-    html.mittr-glass #root > * {
-      --background: var(--surface-background);
+    html.mittr-glass #root > :not(.mittr-glass-sky) {
+      --background: transparent;
     }
 
     html.mittr-glass #root [data-product-region="shell"],
@@ -90,11 +92,15 @@ html.mittr-glass.mittr-glass-dark body {
       --background: transparent;
     }
 
-    html.mittr-glass [data-product-region="shell"] :is(.fixed.inset-0, [class*="bg-background/"], [class*="text-background"]),
+    html.mittr-glass #root :is(.fixed.inset-0, [class*="bg-background/"], [class*="text-background"]),
     html.mittr-glass [data-product-region="main"] > .bg-background,
     html.mittr-glass [data-context-panel] .absolute.inset-0.bg-background,
     html.mittr-glass.mittr-glass-mini #root :is(.fixed.inset-0, [class*="bg-background/"], [class*="text-background"]) {
       --background: var(--surface-background);
+    }
+
+    html.mittr-glass [role="dialog"] > * {
+      --background: transparent;
     }
 
     html.mittr-glass [data-product-region="main"]:has(> .mittr-today) {
@@ -176,6 +182,36 @@ html.mittr-glass .mittr-glass-pill {
   border-radius: 999px;
 }
 
+html.mittr-glass [data-slot="button"],
+html.mittr-glass [data-slot="select-trigger"],
+html.mittr-glass [data-slot="input"] {
+  border-radius: 999px;
+}
+
+html.mittr-glass :is([role="menu"], [role="listbox"], [data-slot="dropdown-menu-content"], [data-slot="select-content"], [data-slot="popover-content"]) {
+  border-radius: 16px;
+}
+
+html.mittr-glass .oc-glass-backdrop {
+  background-color: rgb(40 55 80 / 0.18);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+html.mittr-glass [role="dialog"] {
+  overflow: hidden;
+  border-color: var(--mittr-glass-edge);
+  border-radius: 26px;
+  background-color: var(--mittr-glass-dialog);
+  box-shadow: 0 24px 60px -20px rgb(30 40 60 / 0.35);
+  -webkit-backdrop-filter: blur(30px) saturate(160%);
+  backdrop-filter: blur(30px) saturate(160%);
+}
+
+html.mittr-glass [role="dialog"] :is(.oc-surface-elevated, [data-slot="input"], [data-slot="select-trigger"]) {
+  background-color: var(--mittr-glass-raised);
+}
+
 @media (prefers-reduced-transparency: reduce) {
   html.mittr-glass .mittr-glass-sky {
     display: none;
@@ -187,7 +223,8 @@ html.mittr-glass .mittr-glass-pill {
   html.mittr-glass [data-context-panel],
   html.mittr-glass [data-product-region="column"] > div > div > nav,
   html.mittr-glass.mittr-glass-mini #root > :not(.mittr-glass-sky),
-  html.mittr-glass .mittr-glass-panel {
+  html.mittr-glass .mittr-glass-panel,
+  html.mittr-glass [role="dialog"] {
     background-color: var(--mittr-glass-solid);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
@@ -205,7 +242,8 @@ html.mittr-glass .mittr-glass-pill {
   html.mittr-glass [data-context-panel],
   html.mittr-glass [data-product-region="column"] > div > div > nav,
   html.mittr-glass.mittr-glass-mini #root > :not(.mittr-glass-sky),
-  html.mittr-glass .mittr-glass-panel {
+  html.mittr-glass .mittr-glass-panel,
+  html.mittr-glass [role="dialog"] {
     background-color: var(--mittr-glass-solid);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;

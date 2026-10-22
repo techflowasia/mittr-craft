@@ -16,8 +16,29 @@ const glassLookFor = (themeId: string | undefined, variant: string | undefined):
   return { on: false, dark: false };
 };
 
+const LIGHT_DEFAULT_KEY = 'mittr.glass.lightDefault';
+
+const claimLightDefault = (): boolean => {
+  try {
+    if (window.localStorage.getItem(LIGHT_DEFAULT_KEY)) return false;
+    window.localStorage.setItem(LIGHT_DEFAULT_KEY, '1');
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export function useGlassTheme(): boolean {
-  const metadata = React.useContext(ThemeSystemContext)?.currentTheme.metadata;
+  const themes = React.useContext(ThemeSystemContext);
+  const metadata = themes?.currentTheme.metadata;
+  const themeMode = themes?.themeMode;
+  const setThemeMode = themes?.setThemeMode;
+
+  React.useEffect(() => {
+    if (themeMode !== 'system' || !setThemeMode) return;
+    if (claimLightDefault()) setThemeMode('light');
+  }, [themeMode, setThemeMode]);
+
   const mini = useMittrSurface() === 'mini-chat';
   const { on, dark } = glassLookFor(metadata?.id, metadata?.variant);
 
