@@ -1,13 +1,19 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after, before } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { repoRoot } from '../../upstream-contract.js';
 import { createSpeechState, formatResetTime, nextWeeklyReset } from './speech-state.js';
 
 const at = (iso) => Date.parse(iso);
+
+let holdsTheLoop = null;
+before(() => {
+  holdsTheLoop = setInterval(() => {}, 60_000);
+});
+after(() => clearInterval(holdsTheLoop));
 
 test('the next weekly reset is the coming Monday 00:00 in Bangkok', () => {
   assert.equal(nextWeeklyReset(at('2026-10-22T05:00:00Z')), '2026-10-25T17:00:00.000Z');
@@ -60,6 +66,14 @@ test('a long-poll behind the revision answers at once, and one with nothing new 
   const unchanged = await state.waitForChange(1, 40);
   assert.equal(unchanged.revision, 1);
   assert.ok(Date.now() - started >= 35);
+  state.close();
+});
+
+test('a long-poll ahead of the revision, as after a server restart, answers at once', async () => {
+  const state = createSpeechState();
+  const started = Date.now();
+  assert.equal((await state.waitForChange(7, 60_000)).revision, 0);
+  assert.ok(Date.now() - started < 1000);
   state.close();
 });
 

@@ -76,7 +76,7 @@ export function createSpeechState({ now = Date.now } = {}) {
     view,
     waitForChange: (since, ms, signal) => {
       const asked = Number(since);
-      if (closed || !Number.isInteger(asked) || asked < revision || signal?.aborted) return Promise.resolve(view());
+      if (closed || !Number.isInteger(asked) || asked !== revision || signal?.aborted) return Promise.resolve(view());
       return new Promise((resolve) => {
         const waiter = {
           settle: () => {

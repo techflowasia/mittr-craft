@@ -45,6 +45,23 @@ describe('the speech state client', () => {
     expect(poll.paths).toEqual([SPEECH_STATE_ENDPOINT, `${SPEECH_STATE_ENDPOINT}?since=1`, `${SPEECH_STATE_ENDPOINT}?since=2`]);
   });
 
+  test('an answer with nothing new waits before it asks again, so a closed server state is not polled in a loop', async () => {
+    const waits: number[] = [];
+    const poll = longPoll([view(3, null), view(3, null), view(3, null)]);
+    const stop = startSpeechStateClient({
+      fetch: poll.fetch,
+      retryMs: 11,
+      wait: async (ms) => {
+        waits.push(ms);
+      },
+      blocks: { block: (_kind, resetsAt) => resetsAt ?? '', clear: () => {} },
+    });
+    await poll.idle;
+    stop();
+    expect(waits).toEqual([11, 11]);
+    expect(poll.paths).toHaveLength(4);
+  });
+
   test('a failed read waits and asks again from the same revision', async () => {
     const blocks: string[] = [];
     const waits: number[] = [];
