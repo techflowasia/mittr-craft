@@ -42,6 +42,8 @@ const commandWidget: Widget = {
   title: 'Jenkins dev build',
   display: 'status',
   source: { type: 'command', command: COMMAND, cwd: '/work/app' },
+  revision: 'rev-command',
+  files: [],
   refreshMinutes: 15,
   enabled: false,
   alerting: false,
@@ -52,6 +54,8 @@ const urlWidget: Widget = {
   title: 'Headphone price',
   display: 'number',
   source: { type: 'url', url: 'https://shop.example.test/item/42?ref=a&b=1' },
+  revision: 'rev-url',
+  files: [],
   refreshMinutes: 60,
   alert: { op: 'below', value: 11500 },
   enabled: true,
@@ -61,19 +65,19 @@ const urlWidget: Widget = {
 
 const calls: string[] = [];
 const handlers = {
-  onEnable: (id: string) => { calls.push(`enable:${id}`); },
+  onEnable: (id: string, revision: string) => { calls.push(`enable:${id}:${revision}`); },
   onDisable: (id: string) => { calls.push(`disable:${id}`); },
   onRefresh: (id: string) => { calls.push(`refresh:${id}`); },
   onRemove: (id: string) => { calls.push(`remove:${id}`); },
 };
 
-const markup = (widget: Widget) => renderToStaticMarkup(<WidgetCard widget={widget} busy={false} {...handlers} />);
+const markup = (widget: Widget, extra: { switchedOn?: boolean; now?: number } = {}) => renderToStaticMarkup(<WidgetCard widget={widget} busy={false} now={AT} {...extra} {...handlers} />);
 
 const mount = async (widget: Widget) => {
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
-  await act(async () => root.render(<WidgetCard widget={widget} busy={false} {...handlers} />));
+  await act(async () => root.render(<WidgetCard widget={widget} busy={false} now={AT} {...handlers} />));
   const click = async (label: string) => {
     const button = [...container.querySelectorAll('button')].find((candidate) => candidate.textContent === label);
     if (!button) throw new Error(`no ${label} button`);
@@ -87,7 +91,7 @@ const timeOf = (at: number) => new Intl.DateTimeFormat('en-US', { hour: '2-digit
 
 describe('a widget card', () => {
   test('a card that is off shows the exact command, where it runs and how often, and a Turn on button', () => {
-    const html = renderToStaticMarkup(<WidgetCard widget={commandWidget} busy={false} {...handlers} />);
+    const html = markup(commandWidget);
     expect(html).toContain('Jenkins dev build');
     expect(html).toContain(`<code class="mittr-widget-source">${COMMAND.replace(/&/g, '&amp;').replace(/>/g, '&gt;')}</code>`);
     expect(html).toContain('in /work/app');
@@ -103,12 +107,47 @@ describe('a widget card', () => {
     expect(html).toContain('>Turn on</button>');
   });
 
-  test('Turn on calls the enable route for that widget', async () => {
+  test('C1: Turn on sends the revision of the source this card shows', async () => {
     calls.length = 0;
     const view = await mount(commandWidget);
     await view.click('Turn on');
-    expect(calls).toEqual(['enable:wid_0123456789abcdef']);
+    expect(calls).toEqual(['enable:wid_0123456789abcdef:rev-command']);
     await view.close();
+  });
+
+  test('I2: a command that runs files in its folder says so before and after it is on', () => {
+    const files = { ...commandWidget, source: { type: 'command' as const, command: 'npm run status', cwd: '/work/app' }, files: ['/work/app/package.json', '/elsewhere/tool.sh'] };
+    for (const html of [markup(files), markup({ ...files, enabled: true, last: { at: AT, value: { kind: 'text', value: 'ok' } } })]) {
+      expect(html).toContain('It also runs files in that folder, which can change: package.json, /elsewhere/tool.sh. If one changes, the widget turns itself off.');
+    }
+    expect(markup(commandWidget)).not.toContain('It also runs files');
+  });
+
+  test('a card switched off on the server says why', () => {
+    expect(markup({ ...commandWidget, offReason: 'files' })).toContain('A file this command runs has changed, so it turned itself off.');
+    expect(markup({ ...commandWidget, offReason: 'changed' })).toContain('Mittr changed this widget, so it is off');
+    expect(markup(commandWidget)).not.toContain('role="status"');
+  });
+
+  test('Minor 3: a card that is on still shows what it runs, where and how often, behind one line', () => {
+    const html = markup({ ...commandWidget, enabled: true, last: { at: AT, value: { kind: 'text', value: 'ok' } } });
+    expect(html).toContain('<summary class="mittr-widget-note">What it runs, every 15 min</summary>');
+    expect(html).toContain('in /work/app');
+    expect(html).toContain('mittr-widget-source');
+  });
+
+  test('Minor 2: with the widgets switch off, Turn on and Refresh now are disabled', () => {
+    expect(/<button[^>]*disabled=""[^>]*>Turn on<\/button>/.test(markup(commandWidget, { switchedOn: false }))).toBe(true);
+    expect(/<button[^>]*disabled=""[^>]*>Refresh now<\/button>/.test(markup(urlWidget, { switchedOn: false }))).toBe(true);
+    expect(/disabled=""[^>]*>Turn on/.test(markup(commandWidget))).toBe(false);
+  });
+
+  test('Minor 14: an update from another day shows its date, one from today only its time', () => {
+    expect(markup(urlWidget)).toContain(`Updated ${timeOf(AT)}`);
+    const dayLater = AT + 26 * 60 * 60 * 1000;
+    const html = markup(urlWidget, { now: dayLater });
+    expect(html).toContain(`Updated ${new Intl.DateTimeFormat('en-US', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(AT)}`);
+    expect(html).toContain('Oct');
   });
 
   test('a card that is on shows its value and when it last updated', () => {

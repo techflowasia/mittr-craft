@@ -21,9 +21,12 @@ const widgetPayload = z.object({
     z.object({ type: z.literal('url'), url: z.string() }),
     z.object({ type: z.literal('command'), command: z.string(), cwd: z.string() }),
   ]),
+  revision: z.string().min(1),
+  files: z.array(z.string()).catch([]),
   refreshMinutes: z.number().int().min(5),
   alert: z.object({ op: z.enum(['above', 'below', 'equals']), value: z.union([z.number(), z.string()]) }).optional(),
   enabled: z.boolean(),
+  offReason: z.enum(['changed', 'files']).optional().catch(undefined),
   last: z.union([
     z.object({ at: z.number(), error: z.string() }),
     z.object({ at: z.number(), value: widgetValue }),
@@ -33,7 +36,7 @@ const widgetPayload = z.object({
 
 const listPayload = z.object({
   widgets: z.array(widgetPayload.nullable().catch(null)),
-  canChange: z.boolean(),
+  switchedOn: z.boolean(),
 });
 
 const onePayload = z.object({ widget: widgetPayload });
@@ -44,15 +47,17 @@ export type Widget = z.output<typeof widgetPayload>;
 
 export type WidgetValue = z.output<typeof widgetValue>;
 
-export type WidgetsList = { widgets: Widget[]; canChange: boolean };
+export type WidgetsList = { widgets: Widget[]; switchedOn: boolean };
 
 type WidgetsResponse = { ok: boolean; status: number; json: () => Promise<JsonValue> };
 
-export type WidgetsFetch = (path: string, init?: { method: string }) => Promise<WidgetsResponse>;
+type WidgetsInit = { method: string; headers?: Record<string, string>; body?: string };
+
+export type WidgetsFetch = (path: string, init?: WidgetsInit) => Promise<WidgetsResponse>;
 
 export type WidgetsApi = {
   list(): Promise<WidgetsList | 'absent'>;
-  enable(id: string): Promise<Widget>;
+  enable(id: string, revision: string): Promise<Widget>;
   disable(id: string): Promise<Widget>;
   refresh(id: string): Promise<Widget>;
   remove(id: string): Promise<string>;
@@ -70,27 +75,29 @@ export class WidgetsRequestError extends Error {
 
 const NOT_HERE = 404;
 
+export const CHANGED_SINCE_SEEN = 409;
+
 export function createWidgetsApi(fetchImpl: WidgetsFetch = runtimeFetch): WidgetsApi {
-  const send = async (path: string, method: string, fallback: string): Promise<{ status: number; body: JsonValue | undefined; ok: boolean }> => {
+  const send = async (path: string, method: string, fallback: string, body?: JsonValue): Promise<{ status: number; body: JsonValue | undefined; ok: boolean }> => {
     let response: WidgetsResponse;
     try {
-      response = await fetchImpl(path, { method });
+      response = await fetchImpl(path, body === undefined ? { method } : { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
     } catch {
       throw new WidgetsRequestError(fallback, null);
     }
     return { status: response.status, ok: response.ok, body: await readJsonReply(response) };
   };
 
-  const request = async <T>(path: string, method: string, schema: z.ZodType<T>, fallback: string): Promise<T> => {
-    const reply = await send(path, method, fallback);
+  const request = async <T>(path: string, method: string, schema: z.ZodType<T>, fallback: string, body?: JsonValue): Promise<T> => {
+    const reply = await send(path, method, fallback, body);
     if (!reply.ok) throw new WidgetsRequestError(errorTextOf(reply.body, fallback), reply.status);
     const parsed = schema.safeParse(reply.body);
     if (!parsed.success) throw new WidgetsRequestError(fallback, reply.status);
     return parsed.data;
   };
 
-  const action = (id: string, verb: 'enable' | 'disable' | 'refresh'): Promise<Widget> =>
-    request(`${WIDGETS_ENDPOINT}/${encodeURIComponent(id)}/${verb}`, 'POST', onePayload, mittrT('mittr.widgets.errors.actionFailed'))
+  const action = (id: string, verb: 'enable' | 'disable' | 'refresh', body?: JsonValue): Promise<Widget> =>
+    request(`${WIDGETS_ENDPOINT}/${encodeURIComponent(id)}/${verb}`, 'POST', onePayload, mittrT('mittr.widgets.errors.actionFailed'), body)
       .then(({ widget }) => widget);
 
   return {
@@ -101,9 +108,9 @@ export function createWidgetsApi(fetchImpl: WidgetsFetch = runtimeFetch): Widget
       if (!reply.ok) throw new WidgetsRequestError(errorTextOf(reply.body, fallback), reply.status);
       const parsed = listPayload.safeParse(reply.body);
       if (!parsed.success) throw new WidgetsRequestError(fallback, reply.status);
-      return { widgets: parsed.data.widgets.flatMap((widget) => (widget ? [widget] : [])), canChange: parsed.data.canChange };
+      return { widgets: parsed.data.widgets.flatMap((widget) => (widget ? [widget] : [])), switchedOn: parsed.data.switchedOn };
     },
-    enable: (id) => action(id, 'enable'),
+    enable: (id, revision) => action(id, 'enable', { revision }),
     disable: (id) => action(id, 'disable'),
     refresh: (id) => action(id, 'refresh'),
     remove: async (id) => (await request(`${WIDGETS_ENDPOINT}/${encodeURIComponent(id)}`, 'DELETE', removedPayload, mittrT('mittr.widgets.errors.actionFailed'))).id,

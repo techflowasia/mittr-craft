@@ -4,14 +4,16 @@ import type { Widget, WidgetsApi } from './widgetsApi';
 
 export type WidgetsState =
   | { status: 'loading' }
+  | { status: 'absent' }
   | { status: 'error'; error: string }
-  | { status: 'ready'; widgets: Widget[]; busy: string[] };
+  | { status: 'ready'; widgets: Widget[]; busy: string[]; switchedOn: boolean };
 
 export type WidgetsController = {
   state(): WidgetsState;
   subscribe(fn: () => void): () => void;
   load(): Promise<void>;
-  enable(id: string): Promise<string | null>;
+  reload(): Promise<void>;
+  enable(id: string, revision: string): Promise<string | null>;
   disable(id: string): Promise<string | null>;
   refresh(id: string): Promise<string | null>;
   remove(id: string): Promise<string | null>;
@@ -46,7 +48,7 @@ export function createWidgetsController({ api }: { api: WidgetsApi }): WidgetsCo
       const list = await api.list();
       if (request !== generation) return;
       const busy = current.status === 'ready' ? current.busy : [];
-      set(list === 'absent' ? { status: 'ready', widgets: [], busy } : { status: 'ready', widgets: list.widgets, busy });
+      set(list === 'absent' ? { status: 'absent' } : { status: 'ready', widgets: list.widgets, busy, switchedOn: list.switchedOn });
     } catch (error) {
       if (request === generation) set({ status: 'error', error: error instanceof Error ? error.message : mittrT('mittr.widgets.errors.loadFailed') });
     }
@@ -54,7 +56,7 @@ export function createWidgetsController({ api }: { api: WidgetsApi }): WidgetsCo
 
   const update = (change: (widgets: Widget[], busy: string[]) => { widgets: Widget[]; busy: string[] }): void => {
     if (current.status !== 'ready') return;
-    set({ status: 'ready', ...change(current.widgets, current.busy) });
+    set({ status: 'ready', switchedOn: current.switchedOn, ...change(current.widgets, current.busy) });
   };
 
   const run = async (id: string, send: () => Promise<Widget | null>): Promise<string | null> => {
@@ -82,7 +84,11 @@ export function createWidgetsController({ api }: { api: WidgetsApi }): WidgetsCo
       return () => { listeners.delete(fn); };
     },
     load,
-    enable: (id) => run(id, () => api.enable(id)),
+    reload: () => {
+      set(WIDGETS_LOADING);
+      return load();
+    },
+    enable: (id, revision) => run(id, () => api.enable(id, revision)),
     disable: (id) => run(id, () => api.disable(id)),
     refresh: (id) => run(id, () => api.refresh(id)),
     remove: (id) => run(id, async () => {

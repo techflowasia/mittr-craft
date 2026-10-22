@@ -1,6 +1,7 @@
 import React from 'react';
 
 import { toast } from '../../../ui/src/components/ui';
+import { listenAnyAccountChange } from '../sign-in/accountChange';
 import { Button } from '../../../ui/src/components/ui/button';
 import { useMittrT } from '../strings/mittrT';
 import { setTodayAlerts } from '../today/todaySections';
@@ -13,7 +14,7 @@ const POLL_MS = 60_000;
 
 export type WidgetsActions = {
   retry: () => void;
-  enable: (id: string) => void;
+  enable: (id: string, revision: string) => void;
   disable: (id: string) => void;
   refresh: (id: string) => void;
   remove: (id: string) => void;
@@ -21,7 +22,7 @@ export type WidgetsActions = {
 
 export function WidgetsSectionView({ state, actions }: { state: WidgetsState; actions: WidgetsActions }): React.ReactNode {
   const t = useMittrT();
-  if (state.status === 'loading') return null;
+  if (state.status === 'loading' || state.status === 'absent') return null;
   if (state.status === 'error') {
     return (
       <div className="mittr-widgets-failure">
@@ -33,11 +34,13 @@ export function WidgetsSectionView({ state, actions }: { state: WidgetsState; ac
   if (state.widgets.length === 0) return <p className="mittr-today-empty">{t('mittr.widgets.empty')}</p>;
   return (
     <div className="mittr-widgets">
+      {state.switchedOn ? null : <p className="mittr-widget-reason" role="status">{t('mittr.widgets.switchedOff')}</p>}
       {state.widgets.map((widget) => (
         <WidgetCard
           key={widget.id}
           widget={widget}
           busy={state.busy.includes(widget.id)}
+          switchedOn={state.switchedOn}
           onEnable={actions.enable}
           onDisable={actions.disable}
           onRefresh={actions.refresh}
@@ -58,7 +61,7 @@ const NO_ACTIONS: WidgetsActions = { retry: () => {}, enable: () => {}, disable:
 
 const actionsOf = (controller: WidgetsController): WidgetsActions => ({
   retry: () => { void controller.load(); },
-  enable: (id) => { void controller.enable(id).then(showRefusal); },
+  enable: (id, revision) => { void controller.enable(id, revision).then(showRefusal); },
   disable: (id) => { void controller.disable(id).then(showRefusal); },
   refresh: (id) => { void controller.refresh(id).then(showRefusal); },
   remove: (id) => { void controller.remove(id).then(showRefusal); },
@@ -71,8 +74,10 @@ function useWidgetsController(): WidgetsController | null {
     setController(created);
     void created.load();
     const timer = setInterval(() => { void created.load(); }, POLL_MS);
+    const stopListening = listenAnyAccountChange(() => { void created.reload(); });
     return () => {
       clearInterval(timer);
+      stopListening();
       created.dispose();
     };
   }, []);

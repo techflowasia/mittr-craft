@@ -3,12 +3,12 @@ import { describe, expect, test } from 'bun:test';
 
 import { createWidgetsApi, WidgetsRequestError, type WidgetsFetch } from './widgetsApi';
 
-type Call = { path: string; method: string };
+type Call = { path: string; method: string; body?: string; contentType?: string };
 
 const respond = (status: number, body: JsonValue | 'not json') => {
   const calls: Call[] = [];
   const fetchImpl: WidgetsFetch = async (path, init) => {
-    calls.push({ path, method: init?.method ?? 'GET' });
+    calls.push({ path, method: init?.method ?? 'GET', ...(init?.body === undefined ? {} : { body: init.body, contentType: init.headers?.['content-type'] }) });
     return {
       ok: status >= 200 && status < 300,
       status,
@@ -26,6 +26,8 @@ const COMMAND_WIDGET = {
   title: 'Jenkins dev build',
   display: 'status',
   source: { type: 'command', command: 'curl -s https://ci.example.test/job/dev/lastBuild/api/json | jq -r .result', cwd: '/work/app', extract: { regex: '(\\w+)', status: { ok: ['SUCCESS'], fail: ['FAILURE'] } } },
+  revision: 'rev-command',
+  files: ['/work/app/package.json'],
   refreshMinutes: 15,
   enabled: false,
   alerting: false,
@@ -36,6 +38,8 @@ const URL_WIDGET = {
   title: 'Headphone price',
   display: 'number',
   source: { type: 'url', url: 'https://shop.example.test/item/42', extract: { json: 'price' } },
+  revision: 'rev-url',
+  files: [],
   refreshMinutes: 60,
   alert: { op: 'below', value: 11500 },
   enabled: true,
@@ -52,13 +56,15 @@ const refusedWith = async (work: Promise<object | string>, message: string, stat
 
 describe('the widgets API', () => {
   test('the list is read from GET /api/mittr/widgets with each widget as the server shapes it', async () => {
-    const { api, calls } = respond(200, { widgets: [COMMAND_WIDGET, URL_WIDGET], canChange: true });
+    const { api, calls } = respond(200, { widgets: [COMMAND_WIDGET, URL_WIDGET], switchedOn: true });
     const list = await api.list();
     expect(calls).toEqual([{ path: '/api/mittr/widgets', method: 'GET' }]);
     if (list === 'absent') throw new Error('expected a list');
-    expect(list.canChange).toBe(true);
-    expect(list.widgets.map((widget) => widget.id)).toEqual(['wid_0123456789abcdef', 'wid_fedcba9876543210']);
     const [command, url] = list.widgets;
+    expect(list.switchedOn).toBe(true);
+    expect(command.revision).toBe('rev-command');
+    expect(command.files).toEqual(['/work/app/package.json']);
+    expect(list.widgets.map((widget) => widget.id)).toEqual(['wid_0123456789abcdef', 'wid_fedcba9876543210']);
     expect(command.source).toMatchObject({ type: 'command', command: COMMAND_WIDGET.source.command, cwd: '/work/app' });
     expect(url.source).toMatchObject({ type: 'url', url: 'https://shop.example.test/item/42' });
     expect(url.last).toEqual({ at: 1792650000000, value: { kind: 'number', value: 12990 } });
@@ -66,13 +72,13 @@ describe('the widgets API', () => {
   });
 
   test('a widget the UI cannot read is left out, the rest stay', async () => {
-    const { api } = respond(200, { widgets: [COMMAND_WIDGET, { id: 'wid_broken' }], canChange: true });
+    const { api } = respond(200, { widgets: [COMMAND_WIDGET, { id: 'wid_broken' }], switchedOn: true });
     const list = await api.list();
     expect(list === 'absent' ? [] : list.widgets.map((widget) => widget.id)).toEqual(['wid_0123456789abcdef']);
   });
 
   test('a last run that failed carries its error', async () => {
-    const { api } = respond(200, { widgets: [{ ...URL_WIDGET, last: { at: 5, error: 'Timed out after 20 s' } }], canChange: true });
+    const { api } = respond(200, { widgets: [{ ...URL_WIDGET, last: { at: 5, error: 'Timed out after 20 s' } }], switchedOn: true });
     const list = await api.list();
     expect(list === 'absent' ? null : list.widgets[0].last).toEqual({ at: 5, error: 'Timed out after 20 s' });
   });
@@ -86,8 +92,8 @@ describe('the widgets API', () => {
     await refusedWith(respond(200, { nothing: true }).api.list(), 'Could not load your widgets', 200);
   });
 
-  test('turn on, turn off and refresh POST to the widget and answer the widget', async () => {
-    for (const verb of ['enable', 'disable', 'refresh'] as const) {
+  test('turn off and refresh POST to the widget and answer the widget', async () => {
+    for (const verb of ['disable', 'refresh'] as const) {
       const { api, calls } = respond(200, { widget: { ...COMMAND_WIDGET, enabled: verb !== 'disable' } });
       const widget = await api[verb]('wid_0123456789abcdef');
       expect(calls).toEqual([{ path: `/api/mittr/widgets/wid_0123456789abcdef/${verb}`, method: 'POST' }]);
@@ -95,9 +101,28 @@ describe('the widgets API', () => {
     }
   });
 
+  test('C1: turn on sends, as JSON, the revision of the widget the person saw', async () => {
+    const { api, calls } = respond(200, { widget: { ...COMMAND_WIDGET, enabled: true } });
+    expect((await api.enable('wid_0123456789abcdef', 'rev-command')).enabled).toBe(true);
+    expect(calls).toEqual([{ path: '/api/mittr/widgets/wid_0123456789abcdef/enable', method: 'POST', body: '{"revision":"rev-command"}', contentType: 'application/json' }]);
+    await refusedWith(
+      respond(409, { error: 'This widget changed since you looked; check it again' }).api.enable('wid_0123456789abcdef', 'rev-old'),
+      'This widget changed since you looked; check it again',
+      409,
+    );
+  });
+
+  test('why a widget is off and the switch state are read, and an unknown reason is dropped', async () => {
+    const { api } = respond(200, { widgets: [{ ...COMMAND_WIDGET, offReason: 'files' }, { ...URL_WIDGET, id: 'wid_x', offReason: 'other' }], switchedOn: false });
+    const list = await api.list();
+    if (list === 'absent') throw new Error('expected a list');
+    expect(list.switchedOn).toBe(false);
+    expect(list.widgets.map((widget) => widget.offReason)).toEqual(['files', undefined]);
+  });
+
   test('the server refusal text reaches the person', async () => {
     await refusedWith(
-      respond(409, { error: 'The widgets tool is turned off in Settings → Integrations' }).api.enable('wid_0123456789abcdef'),
+      respond(409, { error: 'The widgets tool is turned off in Settings → Integrations' }).api.enable('wid_0123456789abcdef', 'rev-command'),
       'The widgets tool is turned off in Settings → Integrations',
       409,
     );
