@@ -127,7 +127,7 @@ describe('MainLayout product surface', () => {
     const html = await layout();
     expect(html).toContain('data-product-region="shell"');
     expect(html).toContain('data-product-region="column"');
-    expect(html).toMatch(/<main[^>]*data-product-region="main"/);
+    expect(/<main[^>]*data-product-region="main"/.test(html)).toBe(true);
   });
 
   test('with no plugin the slot renders nothing', async () => {

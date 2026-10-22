@@ -185,7 +185,7 @@ describe('ChatMessage product hooks', () => {
 
   test('the assistant message body carries the bubble marker and the user message does not', async () => {
     const reply = await render({ info: assistant(), parts: [textPart('msg_reply', 'Here it is')] }, turn(true));
-    expect(reply).toMatch(/data-assistant-bubble=""[^>]*>[\s\S]*Here it is/);
+    expect(/data-assistant-bubble=""[^>]*>[\s\S]*Here it is/.test(reply)).toBe(true);
     const ask = await render({ info: user, parts: [textPart('msg_ask', 'Question')] }, turn(true));
     expect(ask).toContain('Question');
     expect(ask).not.toContain('data-assistant-bubble');
