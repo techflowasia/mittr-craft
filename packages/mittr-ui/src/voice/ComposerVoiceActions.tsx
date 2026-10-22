@@ -6,7 +6,8 @@ import type { ProductSlotProps } from '../../../ui/src/lib/product-plugins';
 import { useMittrSurface } from '../mittrSurface';
 import { ComposerTalkButton } from './TalkButton';
 import { useTalkState } from './talkStore';
-import { useNarratorClaim, VoiceNarrator } from './VoiceNarrator';
+import { useNarratorClaim } from './narratorClaim';
+import { VoiceNarrator } from './VoiceNarrator';
 import { useMittrDictationBlock } from './useMittrDictationBlock';
 
 export function ComposerVoiceActions({ footerIconButtonClass, iconSizeClass }: ProductSlotProps['composer-actions']): React.ReactNode {

@@ -6,7 +6,7 @@ import { buildSettingsSearchResults } from '../../../ui/src/lib/settings/search'
 import { dict as enDict } from '../../../ui/src/lib/i18n/messages/en';
 import { overlayDictionary } from '../../../ui/src/lib/product-plugins';
 import { useQuotaStore } from '../../../ui/src/stores/useQuotaStore';
-import { MittrRoot } from '../product-ui-plugin';
+import { MittrRoot } from '../MittrRoot';
 import { MittrSignInGate } from '../sign-in/MittrSignInGate';
 import { SelectMittrUsage } from './SelectMittrUsage';
 import { selectMittrUsage } from './registerMittrUsage';

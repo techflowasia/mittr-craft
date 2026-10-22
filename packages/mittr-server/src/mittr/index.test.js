@@ -2512,7 +2512,7 @@ test('on this Mac the voice settings are served and a change is stored', async (
 test('a second Talk start, an end and an account switch each end the conversation and its Chrome allow', async (t) => {
   const fetchImpl = platform({ sessions: [session, sessionB] });
   const { mittr, call } = await setUp(t, { fetchImpl, host: { secretStore: sealingStore() } });
-  const allowed = () => mittr.tools.chrome.isHostAllowed('voice', 'other.example.test');
+  const allowed = () => mittr.tools.chrome.isHostAllowed('voice', 'other.example.test', 'voice');
   const start = async () => (await call('POST', '/api/mittr/voice/start')).body.conversationId;
 
   const first = await start();

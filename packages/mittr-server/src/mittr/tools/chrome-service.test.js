@@ -534,18 +534,20 @@ test('chrome.close and a deleted session close only a Chrome that is running, an
 
 test('a conversation grant allows every host for that session until the conversation ends', async (t) => {
   const { service, approvals } = setUp(t, { approvals: allowHosts('acme.example.test') });
-  assert.equal(await service.isHostAllowed('ses_1', 'other.example.test'), false);
+  assert.equal(await service.isHostAllowed('ses_1', 'other.example.test', 'voice'), false);
   service.allowForConversation('ses_1');
-  assert.equal(await service.isHostAllowed('ses_1', 'other.example.test'), true);
-  assert.equal(await service.isHostAllowed('ses_2', 'other.example.test'), false);
+  assert.equal(await service.isHostAllowed('ses_1', 'other.example.test', 'voice'), true);
+  assert.equal(await service.isHostAllowed('ses_1', 'other.example.test', 'http'), false);
+  assert.equal(await service.isHostAllowed('ses_1', 'other.example.test', 'agent'), false);
+  assert.equal(await service.isHostAllowed('ses_2', 'other.example.test', 'voice'), false);
   assert.equal(await service.isHostAllowed('ses_2', 'acme.example.test'), true);
   service.endConversation('ses_1');
-  assert.equal(await service.isHostAllowed('ses_1', 'other.example.test'), false);
+  assert.equal(await service.isHostAllowed('ses_1', 'other.example.test', 'voice'), false);
   assert.deepEqual(approvals.record.forgotten, ['ses_1']);
 
   service.allowForConversation('ses_3');
   service.forgetEveryGrant();
-  assert.equal(await service.isHostAllowed('ses_3', 'other.example.test'), false);
+  assert.equal(await service.isHostAllowed('ses_3', 'other.example.test', 'voice'), false);
   assert.equal(approvals.record.forgotAll, 1);
 });
 
@@ -919,9 +921,9 @@ test('an always-allowed site opens from voice with no question', async (t) => {
 test('removing a site in Settings ends the voice conversation\'s Chrome allow', async (t) => {
   const { service } = setUp(t, { approvals: allowHosts('acme.example.test') });
   service.allowForConversation('voice');
-  assert.equal(await service.isHostAllowed('voice', 'other.example.test'), true);
+  assert.equal(await service.isHostAllowed('voice', 'other.example.test', 'voice'), true);
   await service.removeHost('acme.example.test');
-  assert.equal(await service.isHostAllowed('voice', 'other.example.test'), false);
+  assert.equal(await service.isHostAllowed('voice', 'other.example.test', 'voice'), false);
 });
 
 test('a call begun while closeAll runs waits and starts in the new generation', async (t) => {

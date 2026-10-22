@@ -75,8 +75,10 @@ export function startSpeechStateClient(deps: SpeechStateClientDeps): () => void 
         await wait(retryMs, signal);
         continue;
       }
-      if (view.revision !== since) applySpeechState(view, blocks);
+      const changed = view.revision !== since;
+      if (changed) applySpeechState(view, blocks);
       since = view.revision;
+      if (!changed) await wait(retryMs, signal);
     }
   })();
   return () => controller.abort();

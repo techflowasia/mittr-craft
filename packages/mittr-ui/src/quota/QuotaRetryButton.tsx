@@ -14,7 +14,7 @@ export function QuotaRetryButtonView({ busy, onRetry }: { busy: boolean; onRetry
   return (
     <div className="mt-1">
       <Button type="button" variant="outline" size="xs" disabled={busy} aria-busy={busy} onClick={onRetry}>
-        <Icon name={busy ? 'loader-4' : 'refresh'} aria-hidden="true" className={busy ? 'motion-safe:animate-spin' : undefined} />
+        <Icon name={busy ? 'loader-4' : 'refresh'} aria-hidden="true" className={busy ? 'animate-spin motion-reduce:animate-none' : undefined} />
         {t('mittr.quota.exhausted.retry')}
       </Button>
     </div>

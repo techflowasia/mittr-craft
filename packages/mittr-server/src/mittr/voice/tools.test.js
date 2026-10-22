@@ -85,6 +85,12 @@ test('the voice-only actions appear in mittrcraft_voice and nowhere else', () =>
   }
 });
 
+test('nothing the model reads names the upstream products', () => {
+  const text = JSON.stringify(buildVoiceTools({ upstream: UPSTREAM, registry: setUpRegistry(), switches: ALL_ON }));
+  assert.doesNotMatch(text, /OpenCode|OpenChamber/);
+  assert.match(text, /Agent name; new sessions default to the build agent/);
+});
+
 test('wait, timeout, lastAssistant and returnResult are never offered', () => {
   for (const tool of buildVoiceTools({ upstream: UPSTREAM, registry: setUpRegistry(), switches: ALL_ON })) {
     for (const name of VOICE_STRIPPED_INPUTS) assert.equal(Object.hasOwn(tool.parameters.properties, name), false, `${tool.name} ${name}`);

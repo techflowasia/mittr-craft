@@ -739,6 +739,11 @@ export const UPSTREAM_CONTRACT = [
     why: "the voice root reads the viewed session from useSessionUIStore (currentSessionId, currentSessionDirectory) and the directory store's currentDirectory, and narrates its finish, a waiting permission, an error or a stop from useSessionStatus(sessionID, directory) (type 'busy'), useSessionPermissions(sessionID, directory) and useLatestSessionError(sessionId); the two sync hooks need the SyncProvider, so the narrator renders inside the composer-actions slot",
   },
   {
+    id: 'session-interrupted-outcome',
+    files: ['packages/ui/src/lib/opencode/events.ts', 'packages/ui/src/lib/opencode/model.ts', 'packages/ui/src/sync/event-reducer.ts', 'packages/ui/src/sync/sync-context.tsx'],
+    why: "2.1.1 reports a stopped turn as session.execution.interrupted, which the UI turns into a session.patched with outcome 'interrupted' and time.idle, then a session.idle with outcome 'interrupted' and no error; the reducer copies outcome and time.idle onto the Session record and useSession(sessionID, directory) reads it, so the narrator says a stop (and a failed outcome an error) from the viewed session's record, not from a MessageAbortedError",
+  },
+  {
     id: 'dictation-capture-supported',
     files: ['packages/ui/src/lib/dictation/use-dictation-audio-source.ts', 'packages/ui/src/lib/desktop.ts'],
     why: 'Talk shows only where the footer shows dictation: isDictationCaptureSupported() (a window with getUserMedia and an AudioContext) outside isVSCodeRuntime()',

@@ -2,7 +2,6 @@ import React from 'react';
 import { createPortal } from 'react-dom';
 
 import { isVSCodeRuntime } from '../../../ui/src/lib/desktop';
-import { runtimeFetch } from '../../../ui/src/lib/runtime-fetch';
 import { useConfigStore } from '../../../ui/src/stores/useConfigStore';
 import { useDirectoryStore } from '../../../ui/src/stores/useDirectoryStore';
 import { normalizeContextPanelDirectoryKey, useUIStore } from '../../../ui/src/stores/useUIStore';
@@ -13,28 +12,17 @@ import { listenAnyAccountChange } from '../sign-in/accountChange';
 import { signedInAccount } from '../sign-in/signedInAccount';
 import { useMittrT } from '../strings/mittrT';
 import { startConversationListening } from './listen';
-import { createAudioPlayer } from './player';
 import { queueSpokenPrompt, queuedPromptCount } from './queue';
 import { startSpeechStateClient } from './speechStateClient';
 import { createUpstreamSpeech, storageFirstRunMark } from './upstreamSpeech';
-import { createVoiceApi, type VoiceFetch } from './voiceApi';
+import { createVoiceApi } from './voiceApi';
 import { VoiceBar } from './VoiceBar';
 import { createVoiceController, type SavedSpeechChoices, type VoiceController } from './voiceController';
 import { VoiceQuotaText } from './VoiceQuotaText';
-import type { VoicePlayback, VoiceTurnContext } from './voiceSession';
+import { browserPlayer, voiceFetch } from './voiceRuntime';
+import type { VoiceTurnContext } from './voiceSession';
 
-export const voiceFetch: VoiceFetch = (input, init) => runtimeFetch(input, init);
-
-export function browserPlayer(): VoicePlayback {
-  const context = new AudioContext();
-  void context.resume().catch(() => {});
-  return {
-    player: createAudioPlayer(context),
-    close: () => {
-      void context.close().catch(() => {});
-    },
-  };
-}
+const VOICE_BAR_PLACE: React.CSSProperties = { bottom: '12rem' };
 
 function browserPanelOpen(directory: string): boolean {
   const panel = useUIStore.getState().contextPanelByDirectory[normalizeContextPanelDirectoryKey(directory)];
@@ -109,7 +97,7 @@ export function MittrVoiceRoot({ createController = browserController }: { creat
   if (!open && !snapshot.error && !snapshot.quota) return null;
 
   return createPortal(
-    <div className="pointer-events-none fixed bottom-48 right-4 z-40 flex flex-col items-end gap-2">
+    <div className="pointer-events-none fixed right-4 z-40 flex flex-col items-end gap-2" style={VOICE_BAR_PLACE}>
       {open ? (
         <>
           <VoiceBar snapshot={snapshot} onEnd={controller.end} className="pointer-events-auto" />

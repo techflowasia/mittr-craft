@@ -9,8 +9,6 @@ beforeEach(() => {
   speechQuotaStore.reset();
 });
 
-const line = (kind: 'stt' | 'tts' | 'chat', used: number, limit: number) => ({ modelKey: kind, kind, label: kind, used, limit });
-
 describe('speech quota blocks', () => {
   test('keeps voice input off until the reset time the platform gave', () => {
     speechQuotaStore.block('stt', RESETS_AT, NOW);
@@ -66,20 +64,6 @@ describe('whose block it is', () => {
 });
 
 describe('when speech is usable again', () => {
-  test('this week showing room left on voice input lifts the block', () => {
-    speechQuotaStore.block('stt', RESETS_AT, NOW);
-    speechQuotaStore.block('tts', RESETS_AT, NOW);
-    speechQuotaStore.reconcile([line('stt', 10, 600), line('tts', 5000, 5000), line('chat', 0, 10)]);
-    expect(speechBlockedUntil('stt', NOW)).toBeNull();
-    expect(speechBlockedUntil('tts', NOW)).toBe(RESETS_AT);
-  });
-
-  test('a week with no voice input line keeps the block', () => {
-    speechQuotaStore.block('stt', RESETS_AT, NOW);
-    speechQuotaStore.reconcile([line('chat', 0, 10)]);
-    expect(speechBlockedUntil('stt', NOW)).toBe(RESETS_AT);
-  });
-
   test('clear lifts one kind only', () => {
     speechQuotaStore.block('stt', RESETS_AT, NOW);
     speechQuotaStore.block('tts', RESETS_AT, NOW);

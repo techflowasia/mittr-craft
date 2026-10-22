@@ -1,21 +1,27 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+
+import { translateWireEvent, type SyncEvent } from '../../../ui/src/lib/opencode/events';
+import { applyDirectoryEvent } from '../../../ui/src/sync/event-reducer';
+import { INITIAL_STATE, type State } from '../../../ui/src/sync/types';
 import {
   createNarrationWatch,
+  endingOf,
   noteUtterance,
-  resetSpokenLanguage,
-  spokenLanguage,
   spokenLanguageOf,
   spokenText,
   type SessionObservation,
 } from './narration';
 
-afterEach(() => resetSpokenLanguage());
+afterEach(() => {
+  noteUtterance('');
+});
 
 const view = (patch: Partial<SessionObservation> = {}): SessionObservation => ({
   sessionId: 's1',
   busy: false,
   permissionIds: [],
   error: null,
+  ended: null,
   ...patch,
 });
 
@@ -28,11 +34,11 @@ describe('spoken language', () => {
   });
 
   test('follows the last utterance and starts in English', () => {
-    expect(spokenLanguage()).toBe('en');
-    noteUtterance('เปิด Chrome ให้หน่อย');
-    expect(spokenLanguage()).toBe('th');
-    noteUtterance('thanks');
-    expect(spokenLanguage()).toBe('en');
+    expect(spokenText('stopped')).toBe('The work has stopped.');
+    expect(noteUtterance('เปิด Chrome ให้หน่อย')).toBe('th');
+    expect(spokenText('stopped')).toBe('งานหยุดแล้ว');
+    expect(noteUtterance('thanks')).toBe('en');
+    expect(spokenText('stopped')).toBe('The work has stopped.');
   });
 
   test('each narration is one sentence in the language of the last utterance', () => {
@@ -117,5 +123,68 @@ describe('createNarrationWatch', () => {
     const watch = createNarrationWatch();
     expect(watch.observe(view({ sessionId: null }))).toEqual([]);
     expect(watch.observe(view({ sessionId: null, busy: true }))).toEqual([]);
+  });
+});
+
+describe('narration fed the 2.1.1 session events', () => {
+  const durable = { aggregateID: 'ses_1', seq: 2, version: 1 as const };
+  const wire = { id: 'evt_9', created: 2000, location: { directory: '/repo' } };
+  const busyState = (): State => ({
+    ...INITIAL_STATE,
+    session: [{
+      id: 'ses_1',
+      projectID: 'proj_1',
+      directory: '/repo',
+      title: 'One',
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      outcome: 'succeeded',
+      time: { created: 1, updated: 1, idle: 500 },
+    }],
+    message: {},
+    part: {},
+    session_status: { ses_1: { type: 'busy' } },
+    permission: {},
+    form: {},
+    sessionEventRevision: {},
+    sessionDeletedRevision: {},
+  });
+  const observed = (state: State): SessionObservation => ({
+    sessionId: 'ses_1',
+    busy: state.session_status.ses_1?.type === 'busy',
+    permissionIds: [],
+    error: null,
+    ended: endingOf(state.session.find((session) => session.id === 'ses_1')),
+  });
+  const narrated = (events: SyncEvent[]) => {
+    const state = busyState();
+    const watch = createNarrationWatch();
+    watch.observe(observed(state));
+    for (const event of events) applyDirectoryEvent(state, event);
+    return watch.observe(observed(state));
+  };
+
+  test('a stop arrives as an interrupted idle and is narrated as stopped', () => {
+    const events = translateWireEvent({ ...wire, type: 'session.execution.interrupted', durable, data: { sessionID: 'ses_1', reason: 'user' } });
+    expect(events.find((event) => event.type === 'session.idle')).toEqual({ type: 'session.idle', properties: { sessionID: 'ses_1', outcome: 'interrupted' } });
+    expect(narrated(events)).toEqual(['stopped']);
+  });
+
+  test('a finished turn is narrated as done', () => {
+    expect(narrated(translateWireEvent({ ...wire, type: 'session.execution.succeeded', durable, data: { sessionID: 'ses_1' } }))).toEqual(['done']);
+  });
+
+  test('a failed turn is narrated once as an error, whichever of its outcome or its error is seen first', () => {
+    const watch = createNarrationWatch();
+    watch.observe(view({ busy: true, ended: { at: 500, outcome: 'succeeded' } }));
+    expect(watch.observe(view({ busy: false, ended: { at: 2000, outcome: 'failed' } }))).toEqual(['error']);
+    expect(watch.observe(view({ busy: false, ended: { at: 2000, outcome: 'failed' }, error: { at: 2001, aborted: false } }))).toEqual([]);
+  });
+
+  test('an outcome left from an earlier turn does not decide this one', () => {
+    const watch = createNarrationWatch();
+    watch.observe(view({ busy: false, ended: { at: 500, outcome: 'interrupted' } }));
+    watch.observe(view({ busy: true, ended: { at: 500, outcome: 'interrupted' } }));
+    expect(watch.observe(view({ busy: false, ended: { at: 500, outcome: 'interrupted' } }))).toEqual(['done']);
   });
 });

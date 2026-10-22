@@ -143,6 +143,32 @@ type WorkGroupProps = Pick<MyWorkDialogViewProps, 'prefs' | 'onOpenUrl' | 'onGoW
   label: string | null;
 };
 
+type WorkStateCollapsibleProps = {
+  initiallyOpen: boolean;
+  onOpenChange: (open: boolean) => void;
+  header: React.ReactNode;
+  children: React.ReactNode;
+};
+
+function WorkStateCollapsible({ initiallyOpen, onOpenChange, header, children }: WorkStateCollapsibleProps): React.ReactNode {
+  const [open, setOpen] = React.useState(initiallyOpen);
+  const change = (next: boolean) => {
+    setOpen(next);
+    onOpenChange(next);
+  };
+  return (
+    <Collapsible open={open} onOpenChange={change}>
+      <CollapsibleTrigger>
+        <span className="flex items-center gap-2 typography-meta text-muted-foreground">
+          <Icon name="arrow-right-s" className={cn('h-3.5 w-3.5 shrink-0 transition-transform', open && 'rotate-90')} />
+          {header}
+        </span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>{children}</CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function WorkGroup({ group, label, prefs, onOpenUrl, onGoWork, startingItemId, projects }: WorkGroupProps): React.ReactNode {
   const t = useMittrT();
   return (
@@ -158,33 +184,30 @@ function WorkGroup({ group, label, prefs, onOpenUrl, onGoWork, startingItemId, p
         const groupKey = `${group.key}:${stateGroup.state}`;
         const color = stateRankColor(stateGroup.rank);
         return (
-          <Collapsible
+          <WorkStateCollapsible
             key={groupKey}
-            defaultOpen={prefs.groupOpen(groupKey, stateGroup.rank)}
-            onOpenChange={(open: boolean) => prefs.setGroupOpen(groupKey, open)}
-          >
-            <CollapsibleTrigger className="group">
-              <span className="flex items-center gap-2 typography-meta text-muted-foreground">
-                <Icon name="arrow-right-s" className="h-3.5 w-3.5 shrink-0 transition-transform group-data-[panel-open]:rotate-90" />
+            initiallyOpen={prefs.groupOpen(groupKey, stateGroup.rank)}
+            onOpenChange={(open) => prefs.setGroupOpen(groupKey, open)}
+            header={(
+              <>
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
                 <span>{stateGroup.state || '—'}</span>
                 <span className="rounded-full bg-muted px-1.5 py-0.5 typography-micro">{stateGroup.items.length}</span>
-              </span>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="space-y-1 pt-1">
-                {stateGroup.items.map((item) => (
-                  <WorkRow
-                    key={item.id}
-                    item={item}
-                    color={color}
-                    onOpenUrl={onOpenUrl}
-                    goWork={onGoWork ? <GoWorkMenu item={item} projects={projects} onGoWork={onGoWork} starting={startingItemId === item.id} /> : null}
-                  />
-                ))}
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
+              </>
+            )}
+          >
+            <div className="space-y-1 pt-1">
+              {stateGroup.items.map((item) => (
+                <WorkRow
+                  key={item.id}
+                  item={item}
+                  color={color}
+                  onOpenUrl={onOpenUrl}
+                  goWork={onGoWork ? <GoWorkMenu item={item} projects={projects} onGoWork={onGoWork} starting={startingItemId === item.id} /> : null}
+                />
+              ))}
+            </div>
+          </WorkStateCollapsible>
         );
       })}
     </div>

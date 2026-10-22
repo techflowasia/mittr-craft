@@ -148,6 +148,23 @@ test('a send to a busy session is queued with the session\'s own model', async (
   assert.deepEqual(upstreamCalls, []);
 });
 
+test('control tool off mid-turn: a send to a busy session is refused and nothing is queued', async () => {
+  const described = [];
+  const { run, deps, upstreamCalls, stepCalls } = setUp({
+    describeSession: async (id) => {
+      described.push(id);
+      return { found: true, id, directory: '/work/other', status: 'busy', sendConfig: { providerID: 'mittr', modelID: 'fast' } };
+    },
+    steps: [[toolCall('c1', 'mittrcraft', { action: 'session.send', sessionId: 'ses_2', prompt: 'add tests' }), done], [done]],
+  });
+  deps.registry.useSwitches(async (name) => (name === 'control' ? new MittrToolError('The control tool is turned off in Settings', 403) : null));
+  const events = await run();
+  assert.equal(events.some((event) => event.type === 'queue'), false);
+  assert.deepEqual(described, []);
+  assert.deepEqual(upstreamCalls, []);
+  assert.equal(JSON.parse(stepCalls[1].body.messages.at(-1).content).error, 'The control tool is turned off in Settings');
+});
+
 test('a busy session whose model is unknown is not queued, and an unknown status sends nothing', async () => {
   for (const status of ['busy', 'unknown']) {
     const { run, upstreamCalls, stepCalls } = setUp({

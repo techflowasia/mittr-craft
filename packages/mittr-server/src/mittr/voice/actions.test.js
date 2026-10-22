@@ -51,6 +51,14 @@ test('session.stop interrupts the session in its own directory', async () => {
   await assert.rejects(registry.execute('session.stop', {}, voice()), (error) => error.statusCode === 400);
 });
 
+test('read_reply never cuts an emoji in half at the setting', async () => {
+  const { registry, voice } = setUp({ messages: [{ role: 'assistant', text: `${'a'.repeat(999)}\u{1F600}b` }], replyMaxChars: 1000 });
+  const reply = await registry.execute('session.read_reply', { sessionId: 'ses_1' }, voice());
+  assert.equal(reply.text, 'a'.repeat(999));
+  assert.equal(reply.truncated, true);
+  assert.equal(/[\ud800-\udbff]$/.test(reply.text), false);
+});
+
 test('read_reply speaks the latest answer without Markdown, cut at the setting', async () => {
   const long = setUp({ messages: [{ text: `**${'word '.repeat(400)}**` }], replyMaxChars: 1000 });
   const reply = await long.registry.execute('session.read_reply', { sessionId: 'ses_1' }, long.voice());

@@ -45,6 +45,8 @@ export const pcmFormatOf = (contentType) => {
 
 const isHighSurrogate = (code) => code >= 0xd800 && code <= 0xdbff;
 
+export const clampSpeech = (text, max) => (text.length <= max ? text : text.slice(0, isHighSurrogate(text.charCodeAt(max - 1)) ? max - 1 : max));
+
 const cutOf = (text, max) => {
   const limit = isHighSurrogate(text.charCodeAt(max - 1)) ? max - 1 : max;
   for (let index = limit - 1; index > 0; index -= 1) {
