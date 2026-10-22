@@ -1933,6 +1933,49 @@ const checks = {
     for (const [route, name] of routes) assert.ok(route.test(chunks), `the generated client no longer has ${name}`);
   },
 
+  'session-assist-suggestion-style': async () => {
+    const { buildAssistSystemPrompt, registerSuggestionStyle } = await importUpstream('packages/web/server/lib/session-assist/prompt.js');
+    const targets = [{ recap: true, suggestion: true }, { recap: true, suggestion: false }, { recap: false, suggestion: true }];
+    const before = targets.map((target) => buildAssistSystemPrompt(target));
+    const upstreamLine = 'Only suggest work the coding agent can perform in the session.';
+    assert.ok(before[0].includes(upstreamLine), 'the built-in suggestion instructions moved; read the upstream change before trusting the style');
+    let rules = ['suggestion: contract probe rule.'];
+    const unregister = registerSuggestionStyle({ suggestionRules: () => rules });
+    try {
+      const styled = buildAssistSystemPrompt(targets[0]);
+      assert.ok(styled.includes('suggestion: contract probe rule.'), 'a registered style no longer reaches the prompt');
+      assert.ok(!styled.includes(upstreamLine), 'a registered style no longer replaces the built-in suggestion instructions');
+      assert.ok(styled.startsWith('Return exactly one JSON object with string fields: "recap", "suggestion".'), 'the JSON shape line moved');
+      for (const line of before[0].split('\n').filter((text) => text.startsWith('recap ') || text.startsWith('Language: '))) {
+        assert.ok(styled.includes(line), 'a registered style no longer keeps the recap and language instructions');
+      }
+      assert.equal(buildAssistSystemPrompt(targets[1]), before[1], 'a recap-only prompt no longer ignores the style');
+      rules = ['suggestion: second probe rule.'];
+      assert.ok(buildAssistSystemPrompt(targets[2]).includes('suggestion: second probe rule.'), 'the rules are no longer read for every prompt');
+      rules = [];
+      assert.equal(buildAssistSystemPrompt(targets[2]), before[2], 'empty rules no longer leave the built-in instructions');
+      assert.throws(() => registerSuggestionStyle({ suggestionRules: () => rules }), 'a second style no longer throws');
+    } finally {
+      unregister();
+    }
+    assert.deepEqual(targets.map((target) => buildAssistSystemPrompt(target)), before, 'unregistering no longer restores the prompt');
+    const server = source('packages/web/server/index.js');
+    has(pluginContext(server), /^\s+registerSuggestionStyle,$/m, 'the server plugin context no longer hands plugins registerSuggestionStyle');
+    has(server, /import \{ registerSuggestionStyle \} from '\.\/lib\/session-assist\/prompt\.js';/);
+  },
+
+  'session-assist-suggestion-runtime': () => {
+    const runtime = source('packages/web/server/lib/session-assist/runtime.js');
+    has(runtime, /import \{ buildAssistPrompt, buildAssistSystemPrompt \} from '\.\/prompt\.js';/);
+    has(runtime, /const generateAssist = async [\s\S]*?const system = buildAssistSystemPrompt\(targets\);/, 'the runtime no longer builds the system prompt for each generation');
+    has(runtime, /suggestion: settings\.sessionSuggestionEnabled !== false,/, 'the runtime no longer reads sessionSuggestionEnabled');
+    has(runtime, /suggestion: enabledTargets\.suggestion && allowed\.suggestion,/, 'a switched-off suggestion is no longer left out of the prompt');
+    has(runtime, /const hasCyrillic = \(text\) => \/\[\\u0400-\\u04FF\]\/\.test\(text\);/);
+    has(runtime, /const hasCjk = \(text\) => \/\[\\u3040-\\u30FF\\u4E00-\\u9FFF\\uAC00-\\uD7AF\]\/\.test\(text\);/);
+    has(runtime, /if \(suggestion && scriptMismatch\(suggestion\)\) suggestion = '';/, 'the runtime no longer drops a suggestion in another script');
+    has(runtime, /if \(!enabled\.suggestion \|\| !allowed\.suggestion\) suggestion = '';/, 'a suggestion switched off during generation is no longer dropped');
+  },
+
   'settings-section-primitives': () => {
     const section = source('packages/ui/src/components/sections/shared/SettingsSection.tsx');
     for (const name of ['SettingsSection', 'SettingsCheckboxRow', 'SettingsFieldRow']) {

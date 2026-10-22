@@ -419,6 +419,10 @@
     {
       "hook": "permission-auto-accept",
       "why": "A downstream build has permission requests that must always reach the person, such as a question about signing in to a site, whatever permission mode the session is in, and the auto-accept runtime had no way to leave one for the user: an auto session answered it within milliseconds and a safety session handed it to the classifier. A server plugin may now return neverAutoAnswer(permission), and a request any plugin marks (or whose check throws) is held for the user in every mode, announced as left for the user, and never counted as answered automatically. With no plugin that marks a request nothing changes."
+    },
+    {
+      "hook": "session-assist-suggestion",
+      "why": "A downstream build that wants a next-prompt suggestion after every reply, not only while requested work is unfinished, had no way to change the suggestion instructions short of editing the prompt. A server plugin may now register a suggestion style through registerSuggestionStyle on the plugin context; its suggestionRules() take the place of the suggestion instructions alone, while the recap, the JSON shape, the language rule, the suggestion switch and the runtime filters stay upstream's, and rules that throw or are not a non-empty list of text leave the built-in instructions. With no style registered the prompt is byte-identical."
     }
   ],
   "packages/web/server/lib/enterprise-mode.js": [
@@ -529,6 +533,12 @@
     {
       "hook": "permission-auto-accept",
       "why": "A downstream build has permission requests that must always reach the person, such as a question about signing in to a site, whatever permission mode the session is in, and the auto-accept runtime had no way to leave one for the user: an auto session answered it within milliseconds and a safety session handed it to the classifier. A server plugin may now return neverAutoAnswer(permission), and a request any plugin marks (or whose check throws) is held for the user in every mode, announced as left for the user, and never counted as answered automatically. With no plugin that marks a request nothing changes."
+    }
+  ],
+  "packages/web/server/lib/session-assist/prompt.js": [
+    {
+      "hook": "session-assist-suggestion",
+      "why": "A downstream build that wants a next-prompt suggestion after every reply, not only while requested work is unfinished, had no way to change the suggestion instructions short of editing the prompt. A server plugin may now register a suggestion style through registerSuggestionStyle on the plugin context; its suggestionRules() take the place of the suggestion instructions alone, while the recap, the JSON shape, the language rule, the suggestion switch and the runtime filters stay upstream's, and rules that throw or are not a non-empty list of text leave the built-in instructions. With no style registered the prompt is byte-identical."
     }
   ],
   "packages/web/server/lib/ui-auth/ui-auth.js": [

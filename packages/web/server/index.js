@@ -86,6 +86,7 @@ import { configureOpenCodeCredentials, openCodeCredentialSource } from './lib/op
 import { toMcpEntity } from './lib/opencode/config-v2.js';
 import { createOpenCodeWatcherRuntime } from './lib/opencode/watcher.js';
 import { createSessionAssistRuntime } from './lib/session-assist/runtime.js';
+import { registerSuggestionStyle } from './lib/session-assist/prompt.js';
 import { createSessionGoalRuntime } from './lib/session-goal/runtime.js';
 import { createContextObligatoryRuntime } from './lib/context-obligatory/runtime.js';
 import { createLinearSessionStatusRuntime } from './lib/linear/status-runtime.js';
@@ -2562,6 +2563,7 @@ async function main(options = {}) {
       mergeEngineConfig,
       registerQuotaProvider,
       quotaResult: { buildResult: buildQuotaResult, toUsageWindow },
+      registerSuggestionStyle,
       host: options.pluginHost ?? null,
       requestScope: (req) => tunnelAuthController.classifyRequestScope(req),
       uiAuth: {

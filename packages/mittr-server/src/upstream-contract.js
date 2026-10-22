@@ -645,6 +645,16 @@ export const UPSTREAM_CONTRACT = [
     why: "a server plugin's neverAutoAnswer(permission) reaches upstream's permission auto-accept runtime, which then holds a marked request for the person in auto and safety sessions alike (no reply is sent and the safety classifier is not asked), announces it as left for the user, and never reports it as answered automatically, so the Chrome site question always reaches the person",
   },
   {
+    id: 'session-assist-suggestion-style',
+    files: ['packages/web/server/lib/session-assist/prompt.js', 'packages/web/server/index.js'],
+    why: "a server plugin registers one suggestion style through registerSuggestionStyle on the plugin context; its suggestionRules(), read again for every prompt, take the place of buildAssistSystemPrompt's suggestion instructions alone, the recap, the JSON shape and the language rule stay upstream's, and with no style registered, after unregistering, or when the rules throw or are not a non-empty list of text, the prompt is upstream's own, so the MittrCraft next-step suggestions switch back to upstream's unfinished-work-only suggestions",
+  },
+  {
+    id: 'session-assist-suggestion-runtime',
+    files: ['packages/web/server/lib/session-assist/runtime.js'],
+    why: "the session assist runtime builds its system prompt with buildAssistSystemPrompt(targets) for each generation, asks for a suggestion only while sessionSuggestionEnabled is not false, and drops a suggestion in Cyrillic or CJK script when the person's own words have none, so the next-step style keeps upstream's switch and script filter",
+  },
+  {
     id: 'permission-event-shape',
     files: ['packages/web/server/lib/event-stream/translate-v2.js', 'packages/web/server/lib/event-stream/global-hub.js', 'node_modules/@opencode/schema/dist/permission.js'],
     why: "a hub event hands plugins the raw wire payload beside translated(); the raw permission.asked carries data { id, sessionID, action, resources, save, metadata }, and only the raw permission.replied carries data.reply (once, always or reject) with requestID and sessionID, while the translated replied event keeps only properties { sessionID, requestID }, so the server reads the Chrome site answer from the raw payload",
