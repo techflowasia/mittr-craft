@@ -1996,6 +1996,24 @@ const checks = {
       assert.ok(at >= 0 && at < slot, `${page} is no longer inside <main> before the main-surface slot`);
     }
   },
+  'glass-look-anchors': () => {
+    has(source('packages/ui/src/contexts/theme-system-context.ts'), /export const ThemeSystemContext = createContext<ThemeContextValue \| undefined>\(undefined\);/, 'ThemeSystemContext moved or changed its value type');
+    has(source('packages/ui/src/contexts/theme-system-context.ts'), /^ {2}currentTheme: Theme;$/m, 'the theme context no longer carries currentTheme');
+    const themes = source('packages/ui/src/lib/theme/themes/index.ts');
+    has(themes, /^export const DEFAULT_LIGHT_THEME_ID = 'openchamber-light' as const;$/m, 'the default light theme id changed');
+    has(themes, /^export const DEFAULT_DARK_THEME_ID = 'openchamber-dark' as const;$/m, 'the default dark theme id changed');
+    has(source('packages/ui/src/components/layout/MainLayout.tsx'), /<\/Sidebar>\s*<div className="[^"]*" data-page-scroll-lock="true" data-product-region="column">\s*<Header \/>/, 'the sidebar is no longer right before the column, or the column no longer starts with the header');
+    const sidebar = source('packages/ui/src/components/layout/Sidebar.tsx');
+    has(sidebar, /return \(\s*<aside\s+ref=\{sidebarRef\}/, 'Sidebar no longer renders an <aside> as its root');
+    has(sidebar, /<\/aside>\s*\);\s*\};\s*$/, 'Sidebar renders something after its <aside>');
+    has(source('packages/ui/src/components/layout/Header.tsx'), /return \(\s*<>\s*<header\s+ref=\{headerRef\}/, 'Header no longer renders a <header> first');
+    const input = source('packages/ui/src/components/chat/ChatInput.tsx');
+    has(input, /const chatInputRadius = isMobile \? '1\.5rem' : 'var\(--radius-xl\)';/, 'the desktop composer radius is no longer var(--radius-xl)');
+    has(input, /'oc-glass-composer',/, 'the composer box is no longer .oc-glass-composer');
+    const css = source('packages/ui/src/styles/design-system.css');
+    has(css, /@layer base \{\s*:root \{[\s\S]*?--oc-glass-blur: 22px;\s*--oc-glass-opacity: 52%;\s*--oc-glass-popover-opacity: 50%;/, 'the --oc-glass-* variables are no longer on :root in @layer base');
+    has(css, /:root\.desktop-runtime body,\s*:root\.desktop-runtime #root \{\s*background: var\(--background\) !important;/, 'the desktop no longer paints #root with var(--background)');
+  },
   'message-queue-add': () => {
     const queue = source('packages/ui/src/stores/messageQueueStore.ts');
     has(queue, /export const createMessageQueueTarget = \(\s*sessionId: string,\s*directory: string \| null \| undefined,\s*runtimeKey: string = getRuntimeKey\(\),\s*\): MessageQueueTarget \| null => \{/, 'createMessageQueueTarget changed its signature');

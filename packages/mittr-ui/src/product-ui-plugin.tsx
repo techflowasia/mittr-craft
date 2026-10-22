@@ -3,6 +3,7 @@ import React from 'react';
 import { registerProductUiPlugin, type ProductUiPlugin } from '../../ui/src/lib/product-plugins';
 import { AboutSettingsSignOut, SignOutButton } from './accounts/SignOutButton';
 import { INTEGRATIONS_PAGE } from './integrationsPage';
+import { GlassSky } from './glass/GlassSky';
 import { MittrCraftLogo } from './MittrCraftLogo';
 import { MittrSurfaceContext, type MittrSurface } from './mittrSurface';
 import { OtherProvidersSwitch } from './providers/OtherProvidersSwitch';
@@ -24,6 +25,7 @@ import { useMittrDictationBlock } from './voice/useMittrDictationBlock';
 export function MittrRoot({ children, surface }: { children: React.ReactNode; surface: MittrSurface }): React.ReactNode {
   return (
     <MittrSurfaceContext.Provider value={surface}>
+      <GlassSky />
       <MittrSignInGate>
         <SelectMittrUsage />
         <MittrVoiceMount surface={surface} />

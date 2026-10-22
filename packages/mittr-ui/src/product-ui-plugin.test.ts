@@ -3,12 +3,13 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { ProviderLogo } from '../../ui/src/components/ui/ProviderLogo';
+import { ThemeSystemProvider } from '../../ui/src/contexts/ThemeSystemContext';
 import { I18nProvider } from '../../ui/src/lib/i18n';
 import { dict as enDict } from '../../ui/src/lib/i18n/messages/en';
 import { overlayDictionary, ProductSlot, remoteModelCatalogAllowed, translateProductSessionAuthDescription, useProductModelPicker } from '../../ui/src/lib/product-plugins';
 import { MittrAccountMenu } from './accounts/MittrAccountMenu';
 import { INTEGRATIONS_PAGE } from './integrationsPage';
-import { MITTRCRAFT_UI_PLUGIN } from './product-ui-plugin';
+import { MITTRCRAFT_UI_PLUGIN, MittrRoot } from './product-ui-plugin';
 import { SIDEBAR_FOOTER } from './sidebarFooter';
 import { strings } from './strings/en';
 import { mittrT } from './strings/mittrT';
@@ -185,5 +186,16 @@ describe('MittrCraft voice in the composer', () => {
   test("the composer-actions slot holds the Talk button and the dictation block is the plugin's", () => {
     expect(MITTRCRAFT_UI_PLUGIN.slots?.['composer-actions']).toBe(ComposerVoiceActions);
     expect(MITTRCRAFT_UI_PLUGIN.composer?.useDictationBlock).toBe(useMittrDictationBlock);
+  });
+});
+
+describe('MittrCraft glass look', () => {
+  test('the root draws the sky on the main window and the mini chat under the default theme', () => {
+    for (const surface of ['main', 'mini-chat'] as const) {
+      const html = renderToStaticMarkup(
+        React.createElement(I18nProvider, null, React.createElement(ThemeSystemProvider, null, React.createElement(MittrRoot, { surface, children: null }))),
+      );
+      expect(html).toContain('class="mittr-glass-sky"');
+    }
   });
 });

@@ -673,6 +673,19 @@ export const UPSTREAM_CONTRACT = [
     id: 'main-surface-slot',
     files: ['packages/ui/src/lib/product-plugins.ts', 'packages/ui/src/components/layout/MainLayout.tsx'],
     why: "product-plugins.ts has the main-surface slot with no props; MainLayout renders it once, inside an ErrorBoundary, as the last child of <main>, after every full-page surface, so Today sits inside every upstream provider over the chat area while the sidebar and header stay usable; the layout root carries data-product-region=\"shell\", the right column \"column\" and <main> \"main\"",
+  },
+  {
+    id: 'glass-look-anchors',
+    files: [
+      'packages/ui/src/contexts/theme-system-context.ts',
+      'packages/ui/src/lib/theme/themes/index.ts',
+      'packages/ui/src/components/layout/MainLayout.tsx',
+      'packages/ui/src/components/layout/Sidebar.tsx',
+      'packages/ui/src/components/layout/Header.tsx',
+      'packages/ui/src/components/chat/ChatInput.tsx',
+      'packages/ui/src/styles/design-system.css',
+    ],
+    why: "the glass look is on only while ThemeSystemContext's currentTheme.metadata id and variant are DEFAULT_LIGHT_THEME_ID 'openchamber-light' (light) or DEFAULT_DARK_THEME_ID 'openchamber-dark' (dark); glass.css finds the sidebar as the <aside> Sidebar renders as its root right before the data-product-region=\"column\" wrapper, and the header as the <header> Header renders as its root first in that column; the desktop composer box is .oc-glass-composer with its radius var(--radius-xl); design-system.css keeps the --oc-glass-* variables on :root in @layer base and paints #root with var(--background) on the desktop, so a --background set on #root clears it for the sky",
   },  {
     id: 'message-queue-add',
     files: ['packages/ui/src/stores/messageQueueStore.ts'],

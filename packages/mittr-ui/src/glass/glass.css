@@ -1,0 +1,156 @@
+html.mittr-glass {
+  --mittr-font-display: ui-serif, "New York", "Noto Serif Thai", Thonburi, serif;
+  --mittr-sky:
+    radial-gradient(38% 30% at 52% 22%, rgb(255 255 255 / 0.95), rgb(255 255 255 / 0) 70%),
+    radial-gradient(60% 50% at 15% 40%, #a7bbdb 0, rgb(167 187 219 / 0) 70%),
+    radial-gradient(55% 45% at 85% 35%, #afc2df 0, rgb(175 194 223 / 0) 70%),
+    radial-gradient(80% 50% at 50% 100%, #e4e7ec 0, rgb(228 231 236 / 0) 70%),
+    linear-gradient(180deg, #b8c8e2, #cfd8e6 60%, #e6e8ec);
+  --mittr-glass-tint: rgb(255 255 255 / 0.55);
+  --mittr-glass-veil: rgb(255 255 255 / 0.45);
+  --mittr-glass-raised: rgb(255 255 255 / 0.72);
+  --mittr-glass-edge: rgb(255 255 255 / 0.6);
+  --mittr-glass-divider: rgb(255 255 255 / 0.55);
+  --mittr-glass-shadow: 0 1px 2px rgb(30 40 60 / 0.06), 0 12px 32px -12px rgb(30 40 60 / 0.18);
+  --mittr-glass-solid: #f4f6fa;
+  --mittr-bubble: #ffffff;
+  --mittr-bubble-edge: rgb(30 40 60 / 0.06);
+  --mittr-radius-panel: 22px;
+  --mittr-radius-bubble: 20px;
+  --mittr-glass-blur: 26px;
+  --oc-glass-blur: 26px;
+  --oc-glass-opacity: 58%;
+  --oc-glass-popover-opacity: 72%;
+  --oc-glass-saturation: 1.5;
+}
+
+html.mittr-glass.mittr-glass-dark {
+  --mittr-sky:
+    radial-gradient(40% 32% at 52% 20%, rgb(74 101 160 / 0.45), rgb(74 101 160 / 0) 70%),
+    radial-gradient(60% 50% at 15% 40%, #1b2a4a 0, rgb(27 42 74 / 0) 70%),
+    radial-gradient(55% 45% at 85% 35%, #1e2f52 0, rgb(30 47 82 / 0) 70%),
+    radial-gradient(80% 50% at 50% 100%, #141c2e 0, rgb(20 28 46 / 0) 70%),
+    linear-gradient(180deg, #0c1427, #111a30 60%, #161d2c);
+  --mittr-glass-tint: rgb(18 22 31 / 0.72);
+  --mittr-glass-veil: rgb(14 18 28 / 0.68);
+  --mittr-glass-raised: rgb(31 36 48 / 0.82);
+  --mittr-glass-edge: rgb(255 255 255 / 0.1);
+  --mittr-glass-divider: rgb(255 255 255 / 0.08);
+  --mittr-glass-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -12px rgb(0 0 0 / 0.5);
+  --mittr-glass-solid: #151a24;
+  --mittr-bubble: #1f2430;
+  --mittr-bubble-edge: rgb(255 255 255 / 0.06);
+  --oc-glass-opacity: 62%;
+  --oc-glass-popover-opacity: 76%;
+  --oc-glass-saturation: 1.3;
+}
+
+html.mittr-glass .mittr-glass-sky {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--mittr-sky);
+}
+
+html.mittr-glass #root {
+  --background: transparent;
+  background-color: transparent;
+}
+
+html.mittr-glass [data-product-region="shell"] {
+  background-color: transparent;
+}
+
+html.mittr-glass [data-product-region="shell"] aside:has(+ [data-product-region="column"]),
+html.mittr-glass [data-product-region="column"] > header {
+  background-color: var(--mittr-glass-tint);
+  -webkit-backdrop-filter: blur(var(--mittr-glass-blur)) saturate(150%);
+  backdrop-filter: blur(var(--mittr-glass-blur)) saturate(150%);
+}
+
+html.mittr-glass [data-product-region="shell"] aside:has(+ [data-product-region="column"]) {
+  border-right-color: var(--mittr-glass-edge);
+}
+
+html.mittr-glass [data-product-region="column"] {
+  background-color: var(--mittr-glass-veil);
+  -webkit-backdrop-filter: blur(var(--mittr-glass-blur)) saturate(150%);
+  backdrop-filter: blur(var(--mittr-glass-blur)) saturate(150%);
+}
+
+html.mittr-glass [data-product-region="column"]:has(.mittr-today) {
+  background-color: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+html.mittr-glass [data-product-region="column"] .border-border {
+  border-color: var(--mittr-glass-divider);
+}
+
+html.mittr-glass [data-product-region="main"] {
+  --radius-xl: 24px;
+  background-color: transparent;
+}
+
+html.mittr-glass [data-product-region="shell"] [data-slot="button"] {
+  border-radius: 999px;
+}
+
+html.mittr-glass .oc-glass-composer {
+  box-shadow: var(--mittr-glass-shadow);
+}
+
+html.mittr-glass [data-assistant-bubble] {
+  background-color: var(--mittr-bubble);
+  border: 1px solid var(--mittr-bubble-edge);
+  border-radius: var(--mittr-radius-bubble);
+  padding: 12px 16px;
+  box-shadow: var(--mittr-glass-shadow);
+}
+
+html.mittr-glass .mittr-glass-panel {
+  background-color: var(--mittr-glass-tint);
+  border: 1px solid var(--mittr-glass-edge);
+  border-radius: var(--mittr-radius-panel);
+  box-shadow: var(--mittr-glass-shadow);
+  -webkit-backdrop-filter: blur(var(--mittr-glass-blur)) saturate(150%);
+  backdrop-filter: blur(var(--mittr-glass-blur)) saturate(150%);
+}
+
+html.mittr-glass .mittr-glass-pill {
+  border-radius: 999px;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  html.mittr-glass .mittr-glass-sky {
+    display: none;
+  }
+
+  html.mittr-glass [data-product-region="shell"] aside:has(+ [data-product-region="column"]),
+  html.mittr-glass [data-product-region="column"] > header,
+  html.mittr-glass [data-product-region="column"],
+  html.mittr-glass [data-product-region="column"]:has(.mittr-today),
+  html.mittr-glass .mittr-glass-panel {
+    background-color: var(--mittr-glass-solid);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  html.mittr-glass .mittr-glass-sky {
+    display: none;
+  }
+
+  html.mittr-glass [data-product-region="shell"] aside:has(+ [data-product-region="column"]),
+  html.mittr-glass [data-product-region="column"] > header,
+  html.mittr-glass [data-product-region="column"],
+  html.mittr-glass [data-product-region="column"]:has(.mittr-today),
+  html.mittr-glass .mittr-glass-panel {
+    background-color: var(--mittr-glass-solid);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
