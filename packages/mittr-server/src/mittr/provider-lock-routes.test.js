@@ -107,7 +107,7 @@ test('a switch that cannot be stored answers 500, refreshes nothing and announce
 
 test('the provider switch answers and announces the switch alone, and keeps the stored tools', async (t) => {
   const { call, dataDir, broadcasts } = await setUp(t);
-  const tools = { computer: false, chrome: true, chromeProfile: null, chromeHeaded: false, chromeApprovedHosts: ['a.test'] };
+  const tools = { computer: false, chrome: true, chromeProfile: null, chromeHeaded: false, chromeApprovedHosts: ['a.test'], widgets: true };
   fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ tools }));
 
   assert.deepEqual((await call('GET', '/api/mittr/provider-lock')).body, { showOtherProviders: false });

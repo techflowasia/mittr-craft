@@ -352,5 +352,43 @@ test('a voice-only action answers the switch it names, not its tool\'s', async (
 });
 
 test('the MittrCraft tool names are fixed', () => {
-  assert.deepEqual(MITTR_TOOLS, { computer: 'mittrcraft_computer', chrome: 'mittrcraft_chrome', work: 'mittrcraft_work' });
+  assert.deepEqual(MITTR_TOOLS, { computer: 'mittrcraft_computer', chrome: 'mittrcraft_chrome', work: 'mittrcraft_work', widgets: 'mittrcraft_widgets' });
+});
+
+test('an action kept off voice is refused by voice and runs for agents and http', async () => {
+  const { registry } = setUp();
+  const runs = [];
+  registry.defineTool({ name: MITTR_TOOLS.widgets, description: 'Widgets', parameters: {} });
+  registry.register({
+    action: 'widget.list', tool: MITTR_TOOLS.widgets, title: 'List the widgets', description: 'List', effect: 'read', surfaces: ['agent', 'http'],
+    execute: async (input, ctx) => {
+      runs.push(ctx.surface);
+      return { widgets: [] };
+    },
+  });
+
+  await assert.rejects(registry.execute('widget.list', {}, { surface: 'voice', scope: { local: true } }), refusal(400, 'List the widgets can not be asked for by voice'));
+  assert.deepEqual(runs, []);
+  assert.deepEqual(await registry.execute('widget.list', {}, { surface: 'agent', tool: MITTR_TOOLS.widgets }), { widgets: [] });
+  assert.deepEqual(await registry.execute('widget.list', {}, { surface: 'http', scope: { local: true } }), { widgets: [] });
+  assert.deepEqual(runs, ['agent', 'http']);
+  assert.deepEqual(registry.tools().find((tool) => tool.name === MITTR_TOOLS.widgets).definitions.map(({ action }) => action), ['widget.list']);
+});
+
+test('a widgets action over http runs only for a request from this machine', async () => {
+  const { registry } = setUp();
+  registry.defineTool({ name: MITTR_TOOLS.widgets, description: 'Widgets', parameters: {} });
+  registry.register({ action: 'widget.list', tool: MITTR_TOOLS.widgets, title: 'List the widgets', description: 'List', effect: 'read', surfaces: ['agent', 'http'], execute: async () => ({ widgets: [] }) });
+
+  for (const scope of [undefined, {}, { local: false }]) {
+    await assert.rejects(registry.execute('widget.list', {}, { surface: 'http', scope }), refusal(403, 'List the widgets can only be used from this machine'));
+  }
+});
+
+test('register takes surfaces only from agent, voice and http, and at least one', () => {
+  const { registry } = setUp();
+  const base = { tool: CHROME, title: 'T', description: 'D', effect: 'read', execute: async () => ({}) };
+  assert.throws(() => registry.register({ ...base, action: 'chrome.a', surfaces: [] }), /surfaces/);
+  assert.throws(() => registry.register({ ...base, action: 'chrome.b', surfaces: ['agent', 'phone'] }), /surfaces/);
+  assert.throws(() => registry.register({ ...base, action: 'chrome.c', surfaces: 'agent' }), /surfaces/);
 });

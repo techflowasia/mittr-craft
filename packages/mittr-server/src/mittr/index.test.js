@@ -2320,16 +2320,16 @@ test('the tools plugin is loaded after the identity plugin, and turning Chrome o
   const engine = fakeEngineContext();
   const { mittr, dataDir } = await setUp(t, { engine, host: desktopHost(), toolDrivers: TOOL_DRIVERS });
   assert.deepEqual((await mittr.managedConfig()).plugins, [identityDirOf(dataDir), toolsDirOf(dataDir)]);
-  assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer', 'mittrcraft_chrome']);
+  assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_widgets']);
   const before = engine.refreshes.length;
 
-  assert.deepEqual(await mittr.tools.applySwitches({ chrome: false }), { computer: true, chrome: false });
+  assert.deepEqual(await mittr.tools.applySwitches({ chrome: false }), { computer: true, chrome: false, widgets: true });
 
   assert.equal(engine.refreshes.length, before + 1);
-  assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer']);
+  assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer', 'mittrcraft_widgets']);
   assert.deepEqual(engine.rendered.at(-1).plugins, [identityDirOf(dataDir), toolsDirOf(dataDir)]);
 
-  await mittr.tools.applySwitches({ computer: false });
+  await mittr.tools.applySwitches({ computer: false, widgets: false });
   assert.deepEqual(engine.rendered.at(-1).plugins, [identityDirOf(dataDir), toolsDirOf(dataDir)], 'with every Mittr tool off the plugin still wraps the panel capture');
   assert.deepEqual(toolNamesIn(dataDir), []);
 
@@ -2354,7 +2354,7 @@ test('a change in the offered tools alone rewrites the config on the next model 
   await mittr.applyModels(MODELS);
 
   assert.equal(engine.refreshes.length, 2);
-  assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer', 'mittrcraft_chrome']);
+  assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_widgets']);
 });
 
 test('a hosted runtime, company sign-in or a UI password offers no computer or chrome tool', async (t) => {
@@ -2413,7 +2413,7 @@ test('a tools plugin whose first write failed is written by the next config writ
 
   assert.equal(engine.refreshes.length, 2);
   assert.deepEqual(engine.rendered.at(-1).plugins, [identityDirOf(dataDir), toolsDirOf(dataDir)]);
-  assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer', 'mittrcraft_chrome']);
+  assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_widgets']);
 });
 
 test('a switch change never restarts or reloads the engine, and an unchanged switch leaves the plugin file alone', async (t) => {

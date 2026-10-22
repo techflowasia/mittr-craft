@@ -124,12 +124,12 @@ test('turning Chrome off removes its tool from the plugin and refreshes the mana
   const { tools, state, pluginSource, dataDir } = await setUp(t);
   await tools.managedConfig();
 
-  assert.deepEqual(await tools.applySwitches({ chrome: false }), { computer: true, chrome: false });
+  assert.deepEqual(await tools.applySwitches({ chrome: false }), { computer: true, chrome: false, widgets: true });
 
   assert.equal(state.refreshes, 1);
   assert.deepEqual(toolNamesIn(pluginSource()), ['mittrcraft_computer', 'mittrcraft_work']);
   assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'mittr-settings.json'), 'utf8')).tools.chrome, false);
-  assert.deepEqual(await tools.switches(), { computer: true, chrome: false });
+  assert.deepEqual(await tools.switches(), { computer: true, chrome: false, widgets: true });
 });
 
 test('a switch that cannot be stored refreshes nothing', async (t) => {
@@ -360,7 +360,7 @@ test('1.22 tool settings parked under mittr reach the first plugin', async (t) =
   const { tools, pluginSource, logger } = await setUp(t, { dataDir });
   await tools.managedConfig();
   assert.deepEqual(toolNamesIn(pluginSource()), ['mittrcraft_computer', 'mittrcraft_work']);
-  assert.deepEqual(await tools.switches(), { computer: true, chrome: false });
+  assert.deepEqual(await tools.switches(), { computer: true, chrome: false, widgets: true });
   assert.ok(logger.lines.includes('[mittr] carried the 1.22 Computer and Chrome tool settings'), logger.lines.join('\n'));
 });
 

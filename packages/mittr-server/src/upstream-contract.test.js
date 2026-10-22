@@ -2295,6 +2295,33 @@ const voiceServerChecks = {
 };
 Object.assign(checks, voiceServerChecks);
 
+checks['notification-emit-route'] = async () => {
+  const route = source('packages/web/server/lib/notifications/emit-route.js');
+  has(route, /const NOTIFICATION_EMIT_PATH = '\/api\/notifications\/emit';/);
+  has(route, /registerApiRoute: \(\) => \{\s*app\.post\(NOTIFICATION_EMIT_PATH, jsonBody, respond\);/);
+  const bootstrap = source('packages/web/server/lib/opencode/bootstrap-runtime.js');
+  has(bootstrap, /notificationEmitRoutes\.registerApiRoute\(\);/, 'the notification route is no longer registered for API callers');
+  has(source('packages/web/server/lib/ui-auth/ui-auth.js'), /if \(hasUiAuthProviders\(\)\) \{\s*return requireProviderSession\(req, res, next, \{ allowClientAuth: true \}\);\s*\}\s*if \(!requireClientAuth\) \{\s*return next\(\);/, 'a local request with no UI password no longer passes API auth');
+  const { createPluginNotificationEmitter } = await importUpstream('packages/web/server/lib/notifications/emit-route.js');
+  const desktop = [];
+  const ui = [];
+  const emitter = createPluginNotificationEmitter({
+    readSettingsFromDiskMigrated: async () => ({}),
+    emitDesktopNotification: (payload) => {
+      desktop.push(payload);
+      return true;
+    },
+    broadcastUiNotification: (payload, options) => ui.push({ payload, options }),
+  });
+  assert.deepEqual(await emitter.emit({ title: 'Acme price', body: 'Now 9, below 10', tag: 'acme-widget-1' }), { status: 200, body: { delivered: true } });
+  assert.equal(desktop.length, 1);
+  assert.equal(desktop[0].title, 'Acme price');
+  assert.equal(desktop[0].body, 'Now 9, below 10');
+  assert.equal(desktop[0].tag, 'acme-widget-1');
+  assert.equal(desktop[0].kind, 'plugin');
+  assert.equal(ui[0].options.desktopNotificationDelivered, true);
+};
+
 test('every contract item has a check, and every check an item', () => {
   assert.deepEqual(UPSTREAM_CONTRACT.map((entry) => entry.id).sort(), Object.keys(checks).sort());
   for (const entry of UPSTREAM_CONTRACT) {

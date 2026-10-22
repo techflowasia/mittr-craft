@@ -147,9 +147,9 @@ const ipv4OfMapped = (host) => {
   return [high >> 8, high & 255, low >> 8, low & 255].join('.');
 };
 
-const normalizedHost = (hostname) => ipv4OfMapped(String(hostname).toLowerCase().replace(/^\[(.*)\]$/, '$1').replace(/\.+$/, ''));
+export const normalizedHost = (hostname) => ipv4OfMapped(String(hostname).toLowerCase().replace(/^\[(.*)\]$/, '$1').replace(/\.+$/, ''));
 
-const isLoopbackOrUnspecified = (address) => {
+export const isLoopbackOrUnspecified = (address) => {
   const host = normalizedHost(address);
   return host === 'localhost' || host.endsWith('.localhost') || /^127\.\d+\.\d+\.\d+$/.test(host) || host === '0.0.0.0' || host === '::1' || host === '::';
 };
@@ -171,7 +171,7 @@ const stopReasonOf = (error) => {
   return stopped;
 };
 
-const portOf = (page) => Number(page.port) || (page.protocol === 'https:' ? 443 : 80);
+export const portOf = (page) => Number(page.port) || (page.protocol === 'https:' ? 443 : 80);
 
 const siteMoved = (label, host = null) => {
   const extra = { code: 'site_moved' };
@@ -183,7 +183,7 @@ const siteMoved = (label, host = null) => {
   );
 };
 
-const lookupAll = (host) => dns.promises.lookup(host, { all: true });
+export const lookupAll = (host) => dns.promises.lookup(host, { all: true });
 
 const withinTimeout = (work, ms) => new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(new Error('timed out')), ms);
@@ -198,6 +198,19 @@ const withinTimeout = (work, ms) => new Promise((resolve, reject) => {
     },
   );
 });
+
+export const ownAddressCheck = ({ ownPorts, lookup = lookupAll }) => async (page) => {
+  if (!ownPorts().includes(portOf(page))) return false;
+  const host = normalizedHost(page.hostname);
+  if (isLoopbackOrUnspecified(host)) return true;
+  if (net.isIP(host)) return false;
+  try {
+    const addresses = await withinTimeout(Promise.resolve().then(() => lookup(host)), OWN_LOOKUP_TIMEOUT_MS);
+    return !Array.isArray(addresses) || addresses.length === 0 || addresses.some((entry) => isLoopbackOrUnspecified(String(entry?.address ?? '')));
+  } catch {
+    return true;
+  }
+};
 
 export function createChromeService({
   control,
@@ -217,18 +230,7 @@ export function createChromeService({
 
   const isHostAllowed = async (sessionId, host) => conversationGrants.has(sessionId) || Boolean(await approvals.isApproved(sessionId, host));
 
-  const isOwnAddress = async (page) => {
-    if (!ownPorts().includes(portOf(page))) return false;
-    const host = normalizedHost(page.hostname);
-    if (isLoopbackOrUnspecified(host)) return true;
-    if (net.isIP(host)) return false;
-    try {
-      const addresses = await withinTimeout(Promise.resolve().then(() => lookup(host)), OWN_LOOKUP_TIMEOUT_MS);
-      return !Array.isArray(addresses) || addresses.length === 0 || addresses.some((entry) => isLoopbackOrUnspecified(String(entry?.address ?? '')));
-    } catch {
-      return true;
-    }
-  };
+  const isOwnAddress = ownAddressCheck({ ownPorts, lookup });
 
   const refuseOwnAddress = async (page) => {
     if (await isOwnAddress(page)) throw new MittrToolError(OWN_ADDRESS, 400);

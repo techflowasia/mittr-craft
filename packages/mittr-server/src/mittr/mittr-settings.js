@@ -75,6 +75,7 @@ const TOOL_FIELDS = Object.freeze({
   chromeHeaded: isBoolean,
   chromeProfile: (value) => value === null || profileOf(value) !== null,
   chromeApprovedHosts: (value) => Array.isArray(value) && value.every(isHost),
+  widgets: isBoolean,
 });
 
 const hostsOf = (value) => (Array.isArray(value) ? [...new Set(value.filter(isHost).map(hostOf))] : []);
@@ -87,6 +88,7 @@ const toolsOf = (stored) => {
     chromeProfile: profileOf(tools.chromeProfile),
     chromeHeaded: tools.chromeHeaded === true,
     chromeApprovedHosts: hostsOf(tools.chromeApprovedHosts),
+    widgets: tools.widgets !== false,
   };
 };
 

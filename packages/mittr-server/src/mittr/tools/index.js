@@ -23,13 +23,14 @@ const TITLES = Object.freeze({
   [MITTR_TOOLS.computer]: 'The Computer tool',
   [MITTR_TOOLS.chrome]: 'The Chrome tool',
   [MITTR_TOOLS.work]: 'The work tool',
+  [MITTR_TOOLS.widgets]: 'The widgets tool',
   [UPSTREAM_SWITCHES.control]: 'The control tool',
   [UPSTREAM_SWITCHES.web]: 'The in-app browser tool',
 });
 
 const UPSTREAM_SWITCHED = new Set(Object.values(UPSTREAM_SWITCHES));
 
-const enginePortOf = (opencode) => {
+export const enginePortOf = (opencode) => {
   try {
     return Number(new URL(opencode.url('/')).port) || null;
   } catch {
@@ -96,6 +97,7 @@ export function setupMittrTools(context, {
     [MITTR_TOOLS.computer]: () => personalDesktop() && drivers.computer() !== null && computerControl.available,
     [MITTR_TOOLS.chrome]: () => chromeDriverOffered() && drivers.chromePath() !== null,
     [MITTR_TOOLS.work]: () => signedIn(),
+    [MITTR_TOOLS.widgets]: () => personalDesktop(),
   };
   registerComputerActions(registry, {
     control: computerControl,
@@ -135,6 +137,7 @@ export function setupMittrTools(context, {
     [MITTR_TOOLS.computer]: ({ tools }) => tools.computer !== false,
     [MITTR_TOOLS.chrome]: ({ tools }) => tools.chrome !== false,
     [MITTR_TOOLS.work]: ({ upstream }) => upstream?.agentControlToolEnabled !== false,
+    [MITTR_TOOLS.widgets]: ({ tools }) => tools.widgets !== false,
     [UPSTREAM_SWITCHES.control]: ({ upstream }) => upstream?.agentControlToolEnabled !== false,
     [UPSTREAM_SWITCHES.web]: ({ upstream }) => upstream?.agentWebToolEnabled !== false,
   };
@@ -214,13 +217,33 @@ export function setupMittrTools(context, {
 
   const switches = async () => {
     const { tools } = await readSwitches();
-    return { computer: tools.computer, chrome: tools.chrome };
+    return { computer: tools.computer, chrome: tools.chrome, widgets: tools.widgets };
+  };
+
+  const switchListeners = new Set();
+  const onSwitchChange = (listener) => {
+    switchListeners.add(listener);
+    return () => switchListeners.delete(listener);
+  };
+
+  const tellSwitchListeners = (now) => {
+    for (const listener of switchListeners) {
+      try {
+        listener(now);
+      } catch (error) {
+        logger.warn('[mittr] a tool switch listener failed:', error?.message ?? error);
+      }
+    }
   };
 
   const applySwitches = async (patch) => {
     await carried;
     await mittrSettings.update({ tools: patch });
-    await refresh();
+    try {
+      await refresh();
+    } finally {
+      tellSwitchListeners(await switches());
+    }
     const now = await switches();
     if (now.computer === false) await settledWithin(computerControl.stop(), COMPUTER_STOP_TIMEOUT_MS);
     return now;
@@ -235,6 +258,7 @@ export function setupMittrTools(context, {
       chrome: chromeOffered
         ? { offered: true, chromeInstalled: drivers.chromePath() !== null, enabled: tools.chrome, profile: tools.chromeProfile, headed: tools.chromeHeaded, approvedHosts: tools.chromeApprovedHosts }
         : { offered: false, chromeInstalled: false, enabled: tools.chrome, profile: null, headed: false, approvedHosts: [] },
+      widgets: { offered: offered[MITTR_TOOLS.widgets](), enabled: tools.widgets },
     };
   };
 
@@ -277,6 +301,7 @@ export function setupMittrTools(context, {
     managedConfig: async () => (await render()).fragment,
     applySwitches,
     switches,
+    onSwitchChange,
     chrome,
     neverAutoAnswer: isChromePermission,
     accountChanged: () => {

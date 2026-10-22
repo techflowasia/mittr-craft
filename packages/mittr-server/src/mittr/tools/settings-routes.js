@@ -26,6 +26,7 @@ const SETTINGS = Object.freeze({
   chrome: isBoolean,
   chromeHeaded: isBoolean,
   chromeProfile: (value) => profileOf(value) === value,
+  widgets: isBoolean,
 });
 
 const invalid = (key) => `Unknown or invalid tool setting: ${key}`;
@@ -49,6 +50,7 @@ const storedAll = (patch, view) => {
     chrome: view.chrome.enabled,
     chromeHeaded: view.chrome.headed,
     chromeProfile: view.chrome.profile,
+    widgets: view.widgets.enabled,
   };
   return Object.entries(patch).every(([key, value]) => stored[key] === value);
 };
