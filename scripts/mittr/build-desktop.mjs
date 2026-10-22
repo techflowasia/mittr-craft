@@ -4,6 +4,7 @@
  * steps plus the files under `brand/`.
  *
  *   node scripts/mittr/build-desktop.mjs --flavor dev|prod
+ *   node scripts/mittr/build-desktop.mjs --flavor dev --gate
  *   node scripts/mittr/build-desktop.mjs --check-strings [--flavor dev|prod]
  *
  * It runs upstream's `package` chain one step at a time so the visible-string
@@ -57,6 +58,11 @@ const serverPluginBundle = path.join(pluginsDir, 'mittr-server.mjs');
 const webServerSource = path.join(repoRoot, 'packages', 'web', 'server');
 
 const FLAVORS = ['dev', 'prod'];
+const USAGE = `Usage: node scripts/mittr/build-desktop.mjs --flavor ${FLAVORS.join('|')} [--gate]`;
+
+const DEV_NAME = 'MittrCraft Dev';
+const DEV_FOLDER = 'mittrcraft-dev';
+const GATE = Object.freeze({ appName: 'MittrCraft Gate', idSuffix: '.gate', folder: 'mittrcraft-gate' });
 
 export const RIPGREP_STAGING = `.product/${RIPGREP_RESOURCE_DIR}`;
 export const AGENT_BROWSER_STAGING = `.product/${AGENT_BROWSER_RESOURCE_DIR}`;
@@ -266,10 +272,62 @@ export const readVisibleStrings = (flavor, dir = brandDir) => {
 const parseFlavor = (argv) => {
   const index = argv.indexOf('--flavor');
   const flavor = index === -1 ? argv.find((arg) => arg.startsWith('--flavor='))?.slice('--flavor='.length) : argv[index + 1];
-  if (!FLAVORS.includes(flavor)) {
-    throw new Error(`Usage: node scripts/mittr/build-desktop.mjs --flavor ${FLAVORS.join('|')}`);
-  }
+  if (!FLAVORS.includes(flavor)) throw new Error(USAGE);
   return flavor;
+};
+
+export const parseBuildArgs = (argv) => {
+  const flavor = parseFlavor(argv);
+  const gate = argv.includes('--gate');
+  if (gate && flavor !== 'dev') throw new Error(`--gate builds only from --flavor dev\n${USAGE}`);
+  return { flavor, gate };
+};
+
+const gateName = (text) => text.replaceAll(DEV_NAME, GATE.appName);
+const gatePath = (text) => gateName(text.replace(new RegExp(`/${DEV_FOLDER}(?=/|$)`, 'g'), `/${GATE.folder}`));
+const gateId = (id) => `${id}${GATE.idSuffix}`;
+
+const gateProduct = (product) => ({
+  ...product,
+  appName: GATE.appName,
+  linuxDesktopName: `${GATE.folder}.desktop`,
+  appUserModelId: { packaged: gateId(product.appUserModelId.packaged), dev: gateId(product.appUserModelId.dev) },
+  env: Object.fromEntries(Object.entries(product.env).map(([key, value]) => [key, gatePath(value)])),
+  ensureDirs: product.ensureDirs.map(gatePath),
+});
+
+const gateOverlay = (overlay) => {
+  const { entry } = overlay.linux.desktop;
+  return {
+    ...overlay,
+    appId: gateId(overlay.appId),
+    productName: GATE.appName,
+    protocols: overlay.protocols.map((protocol) => ({ ...protocol, name: gateName(protocol.name) })),
+    mac: {
+      ...overlay.mac,
+      extendInfo: { ...overlay.mac.extendInfo, NSLocalNetworkUsageDescription: gateName(overlay.mac.extendInfo.NSLocalNetworkUsageDescription) },
+    },
+    linux: {
+      ...overlay.linux,
+      executableName: GATE.folder,
+      desktop: { ...overlay.linux.desktop, entry: { ...entry, Name: gateName(entry.Name), Comment: gateName(entry.Comment), Icon: GATE.folder, StartupWMClass: GATE.folder } },
+    },
+  };
+};
+
+const gateBrand = ({ product, overlay, visibleStrings }) => ({
+  product: gateProduct(product),
+  overlay: gateOverlay(overlay),
+  visibleStrings: visibleStrings.map((entry) => ({ ...entry, to: gateName(entry.to) })),
+});
+
+export const readBrand = ({ flavor, gate = false, dir = brandDir }) => {
+  const brand = {
+    product: readJson(path.join(dir, `product.${flavor}.json`)),
+    overlay: readJson(path.join(dir, `electron-builder.${flavor}.json`)),
+    visibleStrings: readVisibleStrings(flavor, dir),
+  };
+  return gate ? gateBrand(brand) : brand;
 };
 
 const step = (label) => console.log(`\n[mittr] ${label}`);
@@ -285,7 +343,7 @@ const run = (command, args, cwd, env = process.env) => {
 // The product file and the builder config describe one app; a mismatch ships
 // an app that registers a scheme its bundle does not declare, or a name its
 // installer does not use.
-const assertConsistent = ({ product, builderConfig }) => {
+export const assertConsistent = ({ product, builderConfig }) => {
   const schemes = (builderConfig.protocols ?? []).flatMap((entry) => entry.schemes ?? []);
   const stagedFiles = (builderConfig.files ?? [])
     .filter((entry) => isPlainObject(entry) && entry.from === '.product')
@@ -393,7 +451,7 @@ const main = async () => {
     process.exitCode = checkStrings(process.argv.slice(2));
     return;
   }
-  const flavor = parseFlavor(process.argv.slice(2));
+  const { flavor, gate } = parseBuildArgs(process.argv.slice(2));
   const { pin: ripgrepPin, archive: ripgrepArchive } = checkRipgrepArchive();
   assertDriverArchitecture(resolveTargetArchitecture().node);
   const drivers = checkDriverSources();
@@ -401,10 +459,7 @@ const main = async () => {
   const startedAt = Date.now();
   const bun = resolveBunExecutable();
 
-  const productSource = path.join(brandDir, `product.${flavor}.json`);
-  const productOverride = readJson(productSource);
-  const builderOverlay = readJson(path.join(brandDir, `electron-builder.${flavor}.json`));
-  const visibleStrings = readVisibleStrings(flavor);
+  const { product: productOverride, overlay: builderOverlay, visibleStrings } = readBrand({ flavor, gate });
 
   const { readProduct } = await import(pathToFileURL(path.join(electronDir, 'product.mjs')).href);
   const upstreamBuild = readJson(path.join(electronDir, 'package.json')).build;
@@ -426,7 +481,7 @@ const main = async () => {
   step('3/8 product files, server copy, ripgrep, drivers and notices');
   fs.rmSync(stagingDir, { recursive: true, force: true });
   fs.mkdirSync(stagingDir, { recursive: true });
-  fs.copyFileSync(productSource, path.join(stagingDir, 'product.json'));
+  fs.writeFileSync(path.join(stagingDir, 'product.json'), `${JSON.stringify(productOverride, null, 2)}\n`);
   if (productOverride.splashSvg) {
     fs.copyFileSync(path.join(brandDir, productOverride.splashSvg), path.join(stagingDir, productOverride.splashSvg));
   }

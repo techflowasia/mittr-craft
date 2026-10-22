@@ -13,12 +13,15 @@ import {
   LICENCE_RESOURCE,
   RIPGREP_STAGING,
   applyVisibleStrings,
+  assertConsistent,
   assertPluginBundleFresh,
   buildServerPlugin,
   checkRipgrepArchive,
   findPackedApp,
   mergeBuilderConfig,
+  parseBuildArgs,
   planVisibleStrings,
+  readBrand,
   readVisibleStrings,
   stagedServerFiles,
   verifyPackedApp,
@@ -395,4 +398,63 @@ test('the build checks both pinned drivers and the notices before any build step
   }
   assert.ok(body.indexOf('stageDrivers(') > body.indexOf("step('3/8"), 'the drivers are not staged in step 3');
   assert.ok(body.indexOf('verifyPackedDrivers(') > body.indexOf("step('8/8"), 'the packed drivers are not checked in step 8');
+});
+
+test('a gate build is the Dev build under its own bundle id, name and data folder', () => {
+  const dev = readBrand({ flavor: 'dev' });
+  const gate = readBrand({ flavor: 'dev', gate: true });
+  assert.deepEqual(dev, { product: readJson('brand/product.dev.json'), overlay: readJson('brand/electron-builder.dev.json'), visibleStrings: readVisibleStrings('dev') });
+
+  assert.equal(gate.product.appName, 'MittrCraft Gate');
+  assert.equal(gate.product.linuxDesktopName, 'mittrcraft-gate.desktop');
+  assert.deepEqual(gate.product.appUserModelId, { packaged: 'dev.mittrcraft.desktop.dev.gate', dev: 'dev.mittrcraft.desktop.dev.gate' });
+  assert.deepEqual(gate.product.env, {
+    ...dev.product.env,
+    OPENCHAMBER_DATA_DIR: '~/.config/mittrcraft-gate',
+    OPENCODE_CONFIG_DIR: '~/.config/mittrcraft-gate/engine/opencode',
+    OPENCHAMBER_POLICY_FILE: '/Library/Application Support/MittrCraft Gate/policy.json',
+    OPENCHAMBER_MANAGED_PROCESS_REGISTRY: '~/.config/mittrcraft-gate/managed-opencode',
+    MITTRCRAFT_ENGINE_HOME: '~/.config/mittrcraft-gate/engine',
+  });
+  assert.deepEqual(gate.product.ensureDirs, ['~/.config/mittrcraft-gate/projects', '~/.config/mittrcraft-gate/themes', '~/.config/mittrcraft-gate/speech-models']);
+  const { appName: _name, linuxDesktopName: _linux, appUserModelId: _id, env: _env, ensureDirs: _dirs, ...rest } = gate.product;
+  const { appName: _devName, linuxDesktopName: _devLinux, appUserModelId: _devId, env: _devEnv, ensureDirs: _devDirs, ...devRest } = dev.product;
+  assert.deepEqual(rest, devRest);
+
+  assert.equal(gate.overlay.appId, 'dev.mittrcraft.desktop.dev.gate');
+  assert.equal(gate.overlay.productName, 'MittrCraft Gate');
+  assert.deepEqual(gate.overlay.protocols, [{ name: 'MittrCraft Gate', schemes: ['mittrcraft-dev'] }]);
+  assert.equal(gate.overlay.mac.extendInfo.NSLocalNetworkUsageDescription, 'MittrCraft Gate needs access to devices and services on your local network.');
+  assert.equal(gate.overlay.linux.executableName, 'mittrcraft-gate');
+  assert.deepEqual(gate.overlay.linux.desktop.entry, { Name: 'MittrCraft Gate', Comment: 'Desktop runtime for MittrCraft Gate', Icon: 'mittrcraft-gate', StartupWMClass: 'mittrcraft-gate' });
+  assert.deepEqual(gate.overlay.extraResources, dev.overlay.extraResources);
+  assert.deepEqual(gate.overlay.files, dev.overlay.files);
+
+  for (const text of [JSON.stringify(gate.product), JSON.stringify(gate.overlay), JSON.stringify(gate.visibleStrings)]) {
+    assert.equal(text.includes('MittrCraft Dev'), false, text);
+    assert.equal(/mittrcraft-dev(?![:"]|\\")/.test(text), false, text);
+  }
+  assert.deepEqual(gate.visibleStrings.map(({ file, from, count }) => ({ file, from, count })), dev.visibleStrings.map(({ file, from, count }) => ({ file, from, count })));
+  assert.deepEqual(
+    gate.visibleStrings.filter((entry, index) => entry.to !== dev.visibleStrings[index].to).map(({ to }) => to),
+    ['="MittrCraft Gate",', '{className:"text-lg font-semibold",children:"MittrCraft Gate"}'],
+  );
+
+  const upstream = readJson('packages/electron/package.json').build;
+  assert.doesNotThrow(() => assertConsistent({ product: gate.product, builderConfig: mergeBuilderConfig(upstream, gate.overlay) }));
+});
+
+test('a gate build keeps Dev\'s sign-in scheme, the only one the dev platform hands a code to besides prod\'s', () => {
+  const gate = readBrand({ flavor: 'dev', gate: true });
+  assert.equal(gate.product.deepLinkProtocol, 'mittrcraft-dev');
+  assert.equal(gate.product.env.MITTRCRAFT_DEEP_LINK_SCHEME, 'mittrcraft-dev');
+  assert.equal(gate.product.envDefaults.MITTRCRAFT_BROKER_URL, 'https://api-dev.mittr.asia');
+});
+
+test('the build takes --gate only with the Dev flavor', () => {
+  assert.deepEqual(parseBuildArgs(['--flavor', 'dev', '--gate']), { flavor: 'dev', gate: true });
+  assert.deepEqual(parseBuildArgs(['--gate', '--flavor=dev']), { flavor: 'dev', gate: true });
+  assert.deepEqual(parseBuildArgs(['--flavor', 'prod']), { flavor: 'prod', gate: false });
+  assert.throws(() => parseBuildArgs(['--flavor', 'prod', '--gate']), /--gate builds only from --flavor dev/);
+  assert.throws(() => parseBuildArgs(['--gate']), /Usage: node scripts\/mittr\/build-desktop\.mjs --flavor dev\|prod \[--gate\]/);
 });

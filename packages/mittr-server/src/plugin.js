@@ -27,13 +27,13 @@ import { registerBrandedWeb } from './web-brand.js';
  */
 
 const BACKUP_MARKER = '.pre-2x-backup-done';
-const DEV_DATA_DIR = 'mittrcraft-dev';
+const DEV_DATA_DIRS = new Set(['mittrcraft-dev', 'mittrcraft-gate']);
 
 // Downloaded speech models: hundreds of megabytes the app fetches again on
 // demand, and nothing a user wrote.
 const REFETCHABLE = ['speech-models'];
 
-const flavorOf = (dataDir) => (path.basename(dataDir) === DEV_DATA_DIR ? 'dev' : 'prod');
+const flavorOf = (dataDir) => (DEV_DATA_DIRS.has(path.basename(dataDir)) ? 'dev' : 'prod');
 
 const COMPANY_SIGN_IN_VARIABLE = /^MITTR_AD_/;
 

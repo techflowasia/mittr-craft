@@ -187,21 +187,24 @@ test('setup on the Dev layout backs up the data dir once, with the engine inside
   for (const key of ['XDG_DATA_HOME', 'XDG_STATE_HOME']) assert.equal(env[key], path.join(engineHome, 'accounts', '_none'), key);
 });
 
-test('setup refuses a Dev data dir without its own engine root', async (t) => {
-  const home = tempHome(t);
-  const dataDir = path.join(home, '.config', 'mittrcraft-dev');
-  writeFile(path.join(dataDir, 'settings.json'), JSON.stringify({ voiceStepCap: 1 }));
-  writeFile(path.join(home, '.local', 'share', 'mittrcraft', 'engine', 'opencode', 'opencode.db'), 'prod sessions');
+test('setup refuses a Dev or gate data dir without its own engine root', async (t) => {
+  for (const folder of ['mittrcraft-dev', 'mittrcraft-gate']) {
+    const home = tempHome(t);
+    const dataDir = path.join(home, '.config', folder);
+    writeFile(path.join(dataDir, 'settings.json'), JSON.stringify({ voiceStepCap: 1 }));
+    writeFile(path.join(home, '.local', 'share', 'mittrcraft', 'engine', 'opencode', 'opencode.db'), 'prod sessions');
 
-  for (const env of [{}, { MITTRCRAFT_ENGINE_HOME: '  ' }]) {
-    await assert.rejects(
-      setupMittrServer({ dataDir, logger: recordingLogger(), env, homeDir: home }),
-      /MITTRCRAFT_ENGINE_HOME/,
-    );
+    for (const env of [{}, { MITTRCRAFT_ENGINE_HOME: '  ' }]) {
+      await assert.rejects(
+        setupMittrServer({ dataDir, logger: recordingLogger(), env, homeDir: home }),
+        /MITTRCRAFT_ENGINE_HOME/,
+        folder,
+      );
+    }
+    assert.deepEqual(fs.readdirSync(path.join(home, '.local', 'share', 'mittrcraft')), ['engine']);
+    assert.deepEqual(fs.readdirSync(path.join(home, '.config')), [folder]);
+    assert.deepEqual(fs.readdirSync(dataDir), ['settings.json']);
   }
-  assert.deepEqual(fs.readdirSync(path.join(home, '.local', 'share', 'mittrcraft')), ['engine']);
-  assert.deepEqual(fs.readdirSync(path.join(home, '.config')), ['mittrcraft-dev']);
-  assert.deepEqual(fs.readdirSync(dataDir), ['settings.json']);
 });
 
 test('setup rejects when backup copy fails', async (t) => {
