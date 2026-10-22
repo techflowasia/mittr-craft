@@ -13,6 +13,7 @@ import { QuotaRetryButton } from './quota/QuotaRetryButton';
 import { mittrMessageError } from './quota/quotaError';
 import './quota/registerMittrUsage';
 import { SelectMittrUsage } from './quota/SelectMittrUsage';
+import { TodayPage } from './today/TodayPage';
 import { SIDEBAR_FOOTER } from './sidebarFooter';
 import { MittrSignInGate } from './sign-in/MittrSignInGate';
 import { strings } from './strings/en';
@@ -55,6 +56,7 @@ export const MITTRCRAFT_UI_PLUGIN: ProductUiPlugin = {
     'about-settings': AboutSettingsSignOut,
     'assistant-message-footer': [AnsweredByNotice, QuotaRetryButton],
     'composer-actions': ComposerVoiceActions,
+    'main-surface': TodayPage,
   },
   composer: { useDictationBlock: useMittrDictationBlock },
   modelPicker: { useDecorations: useMittrPickerDecorations },

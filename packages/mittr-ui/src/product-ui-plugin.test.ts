@@ -14,6 +14,8 @@ import { SIDEBAR_FOOTER } from './sidebarFooter';
 import { strings } from './strings/en';
 import { mittrT } from './strings/mittrT';
 import { MittrToolsSettingsItem } from './tools/MittrToolsSection';
+import { TodayFooterItem } from './today/TodayButton';
+import { TodayPage } from './today/TodayPage';
 import { SidebarProfile } from './ui-auth/SidebarProfile';
 import { ComposerVoiceActions } from './voice/ComposerVoiceActions';
 import { MittrVoiceSettingsItem } from './voice/MittrVoiceSection';
@@ -104,10 +106,13 @@ describe('MittrCraft account controls', () => {
     expect(slotHtml('sidebar-footer')).toContain(`aria-label="${mittrT('mittr.accounts.menu.label')}"`);
   });
 
-  test('the footer slot holds the account menu, then My work', () => {
-    expect(SIDEBAR_FOOTER).toEqual([MittrAccountMenu, MyWorkFooterItem, SidebarProfile]);
+  test('the footer slot holds Today first, then the account menu, then My work', () => {
+    expect(SIDEBAR_FOOTER).toEqual([TodayFooterItem, MittrAccountMenu, MyWorkFooterItem, SidebarProfile]);
     const html = slotHtml('sidebar-footer');
+    const today = html.indexOf(`aria-label="${mittrT('mittr.today.open')}"`);
     const accounts = html.indexOf(`aria-label="${mittrT('mittr.accounts.menu.label')}"`);
+    expect(today).toBeGreaterThanOrEqual(0);
+    expect(accounts).toBeGreaterThan(today);
     const myWork = html.indexOf(`aria-label="${mittrT('mittr.work.open')}"`);
     expect(accounts).toBeGreaterThanOrEqual(0);
     expect(myWork).toBeGreaterThan(accounts);
@@ -186,6 +191,12 @@ describe('MittrCraft voice in the composer', () => {
   test("the composer-actions slot holds the Talk button and the dictation block is the plugin's", () => {
     expect(MITTRCRAFT_UI_PLUGIN.slots?.['composer-actions']).toBe(ComposerVoiceActions);
     expect(MITTRCRAFT_UI_PLUGIN.composer?.useDictationBlock).toBe(useMittrDictationBlock);
+  });
+});
+
+describe('MittrCraft Today', () => {
+  test('the main-surface slot holds the Today page', () => {
+    expect(MITTRCRAFT_UI_PLUGIN.slots?.['main-surface']).toBe(TodayPage);
   });
 });
 

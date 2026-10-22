@@ -2014,6 +2014,51 @@ const checks = {
     has(css, /@layer base \{\s*:root \{[\s\S]*?--oc-glass-blur: 22px;\s*--oc-glass-opacity: 52%;\s*--oc-glass-popover-opacity: 50%;/, 'the --oc-glass-* variables are no longer on :root in @layer base');
     has(css, /:root\.desktop-runtime body,\s*:root\.desktop-runtime #root \{\s*background: var\(--background\) !important;/, 'the desktop no longer paints #root with var(--background)');
   },
+  'today-sources': () => {
+    has(source('packages/ui/src/stores/useGlobalSessionsStore.ts'), /^ {2}activeSessions: Session\[\];$/m, 'the global sessions store no longer keeps activeSessions');
+    has(source('packages/ui/src/stores/globalSessionStructure.ts'), /export const resolveGlobalSessionDirectory = \(session: Session\): string \| null =>/, 'resolveGlobalSessionDirectory changed');
+    const status = source('packages/ui/src/sync/global-session-status.ts');
+    has(status, /type GlobalSessionStatusEntry = \{ status: SessionStatus; directory: string \};/, 'a global status entry is no longer { status, directory }');
+    has(status, /^ {2}statusById: Map<string, GlobalSessionStatusEntry>;$/m, 'the global status store no longer keeps statusById');
+    const blocking = source('packages/ui/src/sync/global-blocking-requests.ts');
+    has(blocking, /export type BlockingPermissionRequest = Pick<PermissionRequest, 'id' \| 'sessionID' \| 'action' \| 'resources'>;/, 'a blocking permission no longer keeps id, sessionID, action and resources');
+    has(blocking, /export type BlockingFormRequest = Pick<FormRequest, 'id' \| 'sessionID' \| 'title'>;/, 'a blocking form no longer keeps id, sessionID and title');
+    has(blocking, /export type PendingBlockingRequests = \{\s*directory: string;\s*permissions: readonly BlockingPermissionRequest\[\];\s*forms: readonly BlockingFormRequest\[\];\s*\};/, 'PendingBlockingRequests changed shape');
+    has(blocking, /^ {2}bySession: ReadonlyMap<string, PendingBlockingRequests>;$/m, 'the blocking index is no longer bySession');
+    has(source('packages/ui/src/sync/sync-context.tsx'), /applyGlobalSessionStatusEvents\(directory, events\)\s*applyGlobalBlockingRequestEvents\(directory, events\)/, 'the dispatcher no longer feeds the blocking index for every directory');
+    const notifications = source('packages/ui/src/sync/notification-store.ts');
+    has(notifications, /session: \{\s*unseenCount: Record<string, number>\s*unseenHasError: Record<string, boolean>\s*\}/, 'the notification index no longer has session unseenCount and unseenHasError');
+    const goals = source('packages/ui/src/lib/sessionGoalMetadata.ts');
+    has(goals, /export type SessionGoalStatus = 'active' \| 'paused' \| 'blocked' \| 'budgetLimited' \| 'complete';/, 'the goal statuses changed');
+    has(goals, /export function getSessionGoal\(session: Session \| null \| undefined\): SessionGoalPayload \| null \{/, 'getSessionGoal changed its signature');
+    has(goals, /export function formatGoalTokens\(count: number\): string \{/, 'formatGoalTokens is gone');
+    const scheduled = source('packages/ui/src/lib/scheduledTasksApi.ts');
+    has(scheduled, /export type ScheduledTaskStatus = 'idle' \| 'running' \| 'success' \| 'error';/, 'a scheduled task no longer reports running');
+    has(scheduled, /export const fetchScheduledTasks = async \(projectID: string\): Promise<ScheduledTask\[\]> => \{/, 'fetchScheduledTasks changed its signature');
+    has(scheduled, /state: \{[^}]*lastStatus\?: ScheduledTaskStatus;/, 'a scheduled task state no longer carries lastStatus');
+  },
+  'today-navigation': () => {
+    const store = source('packages/ui/src/sync/session-ui-store.ts');
+    has(store, /draftId: nextDraftId\+\+,\s*open: true,/, 'opening a draft no longer takes a new draftId');
+    has(store, /set\(\{\s*newSessionDraft: nextDraft,\s*currentSessionId: null,/, 'opening a draft no longer clears the selected session in the same update');
+    has(store, /if \(options\?\.initialPrompt\) \{\s*useInputStore\.getState\(\)\.setPendingInputText\(options\.initialPrompt\)/, 'a draft no longer puts initialPrompt into the composer');
+    has(store, /^ {2}openNewSessionDraft: \(options\?: Partial<NewSessionDraftState> & \{ automatic\?: boolean \}\) => void$/m, 'openNewSessionDraft changed its options');
+    has(store, /^ {2}initialPrompt\?: string$/m, 'a draft no longer takes initialPrompt');
+    const restore = source('packages/ui/src/sync/last-session-restore.ts');
+    has(restore, /if \(useSessionUIStore\.getState\(\)\.currentSessionId\) return 'none';\s*const runtimeKey = getRuntimeKey\(\);\s*const persisted = readLastActiveSession\(runtimeKey\);/, 'the launch restore no longer reads readLastActiveSession(getRuntimeKey()) only while nothing is selected');
+    has(restore, /void latest\.setCurrentSession\(\s*session\.id,/, 'the launch restore no longer selects the remembered session');
+    has(source('packages/ui/src/sync/last-session-cache.ts'), /export function readLastActiveSession\(\s*runtimeKey: string,/, 'readLastActiveSession changed');
+    has(source('packages/ui/src/components/chat/ChatContainer.tsx'), /if \(live\.currentSessionId \|\| live\.newSessionDraft\.open\) return;[\s\S]{0,200}openNewSessionDraft\(\{ automatic: true \}\);/, 'the automatic first draft no longer waits for no session and no draft');
+    has(source('packages/ui/src/components/session/sidebar/sessions/SessionNodeItem.tsx'), /data-session-row=\{session\.id\}/, 'a sidebar session row lost data-session-row');
+    const ui = source('packages/ui/src/stores/useUIStore.ts');
+    for (const field of ['isScheduledTasksDialogOpen: boolean;', 'isArchivePageOpen: boolean;', 'isUsageStatsPageOpen: boolean;', 'openGuestPageId: string | null;', 'worktreesPageProjectId: string | null;', 'spacesPageProjectId: string | null;', 'runOverviewKey: string | null;', 'closeMainSurfaces: () => void;', 'setSettingsDialogOpen: (open: boolean) => void;', 'setSettingsPage: (slug: string) => void;', 'setScheduledTasksDialogOpen: (open: boolean) => void;']) {
+      assert.ok(ui.includes(field), `useUIStore no longer has ${field}`);
+    }
+    has(source('packages/ui/src/sync/input-store.ts'), /setPendingInputText: \(text: string \| null, mode\?:/, 'setPendingInputText changed');
+    const en = source('packages/ui/src/lib/i18n/messages/en.ts');
+    has(en, /'chat\.chatInput\.toast\.noModelSelected': /, 'the composer no-model refusal key is gone');
+    has(en, /'chat\.chatInput\.toast\.messageSendFailed': /, 'the composer send-failed key is gone');
+  },
   'message-queue-add': () => {
     const queue = source('packages/ui/src/stores/messageQueueStore.ts');
     has(queue, /export const createMessageQueueTarget = \(\s*sessionId: string,\s*directory: string \| null \| undefined,\s*runtimeKey: string = getRuntimeKey\(\),\s*\): MessageQueueTarget \| null => \{/, 'createMessageQueueTarget changed its signature');

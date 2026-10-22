@@ -119,6 +119,14 @@ html.mittr-glass .mittr-glass-panel {
   backdrop-filter: blur(var(--mittr-glass-blur)) saturate(150%);
 }
 
+html.mittr-glass .mittr-today {
+  background-color: transparent;
+}
+
+html.mittr-glass .mittr-today-kind {
+  background-color: var(--mittr-glass-raised);
+}
+
 html.mittr-glass .mittr-glass-pill {
   border-radius: 999px;
 }

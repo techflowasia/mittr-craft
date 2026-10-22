@@ -1,7 +1,6 @@
 import React from 'react';
 
 import { Icon } from '../../../ui/src/components/icon/Icon';
-import { toast } from '../../../ui/src/components/ui';
 import { Button } from '../../../ui/src/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../../ui/src/components/ui/collapsible';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../../ui/src/components/ui/dialog';
@@ -17,17 +16,11 @@ import { openExternalUrl } from '../../../ui/src/lib/url';
 import { cn, formatDirectoryName } from '../../../ui/src/lib/utils';
 import { useConfigStore } from '../../../ui/src/stores/useConfigStore';
 import { useProjectsStore } from '../../../ui/src/stores/useProjectsStore';
-import { useUIStore } from '../../../ui/src/stores/useUIStore';
-import * as sessionActions from '../../../ui/src/sync/session-actions';
-import { useSessionUIStore } from '../../../ui/src/sync/session-ui-store';
 import { useQuotaMe } from '../quota/quotaMeStore';
-import { listenAnyAccountChange } from '../sign-in/accountChange';
-import { signedInAccount } from '../sign-in/signedInAccount';
 import { useMittrT } from '../strings/mittrT';
-import { createMyWorkController, MY_WORK_LOADING, type MyWorkController, type MyWorkState } from './myWorkController';
-import { mittrAvailable, mittrCatalogAliases, planGoWork, startGoWork, type GoWorkDeps, type GoWorkProject } from './goWork';
+import { MY_WORK_LOADING, type MyWorkController, type MyWorkState } from './myWorkController';
+import { mittrAvailable, mittrCatalogAliases, planGoWork, startGoWork, type GoWorkProject } from './goWork';
 import { captureSendSelection } from './sendSelection';
-import { fetchMyWork } from './workApi';
 import {
   cardKeyOf,
   chipPressed,
@@ -43,6 +36,7 @@ import {
   type WorkItem,
 } from './workItems';
 import { createWorkPrefs, type WorkPrefs } from './workPrefs';
+import { sessionGoWorkDeps, useMyWorkController } from './workSession';
 
 export type MyWorkDialogViewProps = {
   state: MyWorkState;
@@ -315,55 +309,7 @@ const browserStorage = (): Storage | null => {
 
 const subscribeNothing = (): (() => void) => () => {};
 
-function useMyWorkController(): MyWorkController | null {
-  const [controller, setController] = React.useState<MyWorkController | null>(null);
-  React.useEffect(() => {
-    const created = createMyWorkController({
-      fetchWork: () => fetchMyWork(),
-      currentUserId: signedInAccount,
-      listenAccountChanged: listenAnyAccountChange,
-    });
-    setController(created);
-    void created.refresh();
-    return () => created.dispose();
-  }, []);
-  return controller;
-}
 
-const sessionGoWorkDeps = (closeDialog: () => void, reload: () => void): GoWorkDeps => ({
-  createSession: (title, directory, selection) => sessionActions.createSession(
-    title,
-    directory,
-    undefined,
-    undefined,
-    { model: { providerID: selection.providerID, id: selection.modelID, variant: selection.variant }, agent: selection.agentName },
-    'open',
-  ),
-  initialize: (sessionId) => {
-    useSessionUIStore.getState().initializeNewOpenChamberSession(sessionId, useConfigStore.getState().agents);
-  },
-  sendMessage: (prompt, selection, sessionId, directory) => useSessionUIStore.getState().sendMessage(
-    prompt,
-    selection.providerID,
-    selection.modelID,
-    selection.agentName,
-    undefined,
-    undefined,
-    undefined,
-    selection.variant,
-    undefined,
-    { sessionId, directory },
-  ),
-  closeDialog: () => {
-    closeDialog();
-    useUIStore.getState().closeMainSurfaces();
-  },
-  reload,
-  toast: {
-    success: (message) => { toast.success(message); },
-    error: (message, options) => { toast.error(message, options); },
-  },
-});
 
 type GoWorkBinding = { startingItemId: string | null; goWork: (item: WorkItem, project: GoWorkProject) => void };
 
