@@ -1,37 +1,20 @@
-import React from 'react';
-
 import { registerProductUiPlugin, type ProductUiPlugin } from '../../ui/src/lib/product-plugins';
 import { AboutSettingsSignOut, SignOutButton } from './accounts/SignOutButton';
 import { INTEGRATIONS_PAGE } from './integrationsPage';
 import { MittrCraftLogo } from './MittrCraftLogo';
-import { MittrSurfaceContext, type MittrSurface } from './mittrSurface';
+import { MittrRoot } from './MittrRoot';
 import { OtherProvidersSwitch } from './providers/OtherProvidersSwitch';
 import { useMittrPickerDecorations } from './providers/useMittrPickerFilter';
 import { AnsweredByNotice } from './quota/AnsweredByNotice';
 import { QuotaRetryButton } from './quota/QuotaRetryButton';
 import { mittrMessageError } from './quota/quotaError';
 import './quota/registerMittrUsage';
-import { SelectMittrUsage } from './quota/SelectMittrUsage';
 import { SIDEBAR_FOOTER } from './sidebarFooter';
-import { MittrSignInGate } from './sign-in/MittrSignInGate';
 import { strings } from './strings/en';
 import { mittrT } from './strings/mittrT';
 import { AdSignIn } from './ui-auth/AdSignIn';
 import { ComposerVoiceActions } from './voice/ComposerVoiceActions';
-import { MittrVoiceMount } from './voice/MittrVoiceRoot';
 import { useMittrDictationBlock } from './voice/useMittrDictationBlock';
-
-export function MittrRoot({ children, surface }: { children: React.ReactNode; surface: MittrSurface }): React.ReactNode {
-  return (
-    <MittrSurfaceContext.Provider value={surface}>
-      <MittrSignInGate>
-        <SelectMittrUsage />
-        <MittrVoiceMount surface={surface} />
-        {children}
-      </MittrSignInGate>
-    </MittrSurfaceContext.Provider>
-  );
-}
 
 // Registered on import, which the entry points do before their first render:
 // the model picker takes its decorations once and keeps them.

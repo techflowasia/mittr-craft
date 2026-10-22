@@ -4,7 +4,7 @@ import { useLatestSessionError } from '../../../ui/src/sync/notification-store';
 import { useSessionUIStore } from '../../../ui/src/sync/session-ui-store';
 import { useSession, useSessionPermissions, useSessionStatus } from '../../../ui/src/sync/sync-context';
 import { createNarrationWatch, endingOf, spokenText, type NarrationWatch } from './narration';
-import { claimNarrator, releaseNarrator, useTalkState } from './talkStore';
+import { useTalkState } from './talkStore';
 
 export function VoiceNarrator(): null {
   const sessionId = useSessionUIStore((state) => state.currentSessionId);
@@ -36,14 +36,4 @@ export function VoiceNarrator(): null {
   }, [narrate, sessionId, busy, permissionKey, errorAt, aborted, endedAt, outcome]);
 
   return null;
-}
-
-export function useNarratorClaim(): boolean {
-  const id = React.useId();
-  const narrator = useTalkState((state) => state.narrator);
-  React.useEffect(() => {
-    if (narrator === null) claimNarrator(id);
-  }, [id, narrator]);
-  React.useEffect(() => () => releaseNarrator(id), [id]);
-  return narrator === id;
 }

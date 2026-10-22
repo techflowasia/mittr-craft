@@ -16,7 +16,6 @@ import { cn } from '../../../ui/src/lib/utils';
 import { useConfigStore } from '../../../ui/src/stores/useConfigStore';
 import { MittrErrorBoundary } from '../MittrErrorBoundary';
 import { useMittrT, type MittrKey } from '../strings/mittrT';
-import { browserPlayer, voiceFetch } from './MittrVoiceRoot';
 import { createUpstreamSpeech, mittrDictationOn, mittrReadAloudOn } from './upstreamSpeech';
 import { createVoiceApi, type VoiceReadinessReason } from './voiceApi';
 import {
@@ -27,6 +26,7 @@ import {
   type VoiceSettingsOutcome,
 } from './voiceSettingsController';
 import { createVoiceSettingsApi, REPLY_MAX_CHARS_RANGE, STEP_CAP_RANGE } from './voiceSettingsApi';
+import { browserPlayer, voiceFetch } from './voiceRuntime';
 
 export type VoiceSettingsActions = {
   retry: () => void;
