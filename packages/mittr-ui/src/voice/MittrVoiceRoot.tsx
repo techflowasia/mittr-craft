@@ -23,9 +23,9 @@ import { createVoiceController, type SavedSpeechChoices, type VoiceController } 
 import { VoiceQuotaText } from './VoiceQuotaText';
 import type { VoicePlayback, VoiceTurnContext } from './voiceSession';
 
-const voiceFetch: VoiceFetch = (input, init) => runtimeFetch(input, init);
+export const voiceFetch: VoiceFetch = (input, init) => runtimeFetch(input, init);
 
-function browserPlayer(): VoicePlayback {
+export function browserPlayer(): VoicePlayback {
   const context = new AudioContext();
   void context.resume().catch(() => {});
   return {

@@ -15,6 +15,7 @@ import { mittrT } from './strings/mittrT';
 import { MittrToolsSettingsItem } from './tools/MittrToolsSection';
 import { SidebarProfile } from './ui-auth/SidebarProfile';
 import { ComposerVoiceActions } from './voice/ComposerVoiceActions';
+import { MittrVoiceSettingsItem } from './voice/MittrVoiceSection';
 import { useMittrDictationBlock } from './voice/useMittrDictationBlock';
 import { MyWorkFooterItem } from './work/MyWorkButton';
 import { WorkTrackingSettingsItem } from './work-tracking/WorkTrackingSection';
@@ -66,8 +67,9 @@ describe('MittrCraft integrations page', () => {
     expect(html).toContain(`>${mittrT('mittr.workTracking.title')}</h2>`);
   });
 
-  test('the integrations slot holds Work tracking, then MittrCraft tools', () => {
-    expect(INTEGRATIONS_PAGE).toEqual([WorkTrackingSettingsItem, MittrToolsSettingsItem]);
+  test('the integrations slot holds Work tracking, MittrCraft tools, then MittrCraft voice', () => {
+    expect(INTEGRATIONS_PAGE).toEqual([WorkTrackingSettingsItem, MittrToolsSettingsItem, MittrVoiceSettingsItem]);
+    expect(MITTRCRAFT_UI_PLUGIN.slots?.['integrations-page']).toBe(INTEGRATIONS_PAGE);
   });
 });
 

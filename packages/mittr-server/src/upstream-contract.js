@@ -702,6 +702,11 @@ export const UPSTREAM_CONTRACT = [
     files: ['packages/ui/src/components/icon/sprite.ts', 'packages/ui/src/components/ui/button.tsx'],
     why: 'the Talk button and the voice bar draw the loader-4 and stop icons and use a destructive sm Button for End',
   },
+  {
+    id: 'settings-number-input',
+    files: ['packages/ui/src/components/ui/number-input.tsx', 'packages/ui/src/components/sections/shared/SettingsSection.tsx'],
+    why: "NumberInput is still exported from components/ui/number-input with value, onValueChange, min, max and step, and SettingsSection still exports SETTINGS_NUMBER_STEPPER_ROW_CLASS, SETTINGS_FIELDS_STACK_CLASS and SETTINGS_OPTION_STACK_CLASS; the MittrCraft voice section draws its two limits (actions per spoken request, longest answer read aloud) with them",
+  },
 ];
 
 // The dictionaries are TypeScript with extensionless imports, which only Bun
