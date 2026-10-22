@@ -113,7 +113,7 @@ const setUp = async (t, {
 
 const OFFERED = {
   computer: { offered: true, enabled: true },
-  chrome: { offered: true, chromeInstalled: true, enabled: true, profile: null, headed: false, approvedHosts: [] },
+  chrome: { offered: true, chromeInstalled: true, enabled: true, profile: null, headed: true, approvedHosts: [] },
   widgets: { offered: true, enabled: true },
   canChange: true,
 };

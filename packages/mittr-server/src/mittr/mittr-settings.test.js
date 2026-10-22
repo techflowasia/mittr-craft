@@ -13,7 +13,7 @@ const recordingLogger = () => {
 
 const settingsFile = (dataDir) => path.join(dataDir, 'mittr-settings.json');
 
-const DEFAULT_TOOLS = { computer: true, chrome: true, chromeProfile: null, chromeHeaded: false, chromeApprovedHosts: [], widgets: true };
+const DEFAULT_TOOLS = { computer: true, chrome: true, chromeProfile: null, chromeHeaded: true, chromeApprovedHosts: [], widgets: true };
 const DEFAULT_VOICE = { stepCap: 8, replyMaxChars: 8000 };
 const stored = (showOtherProviders, tools = DEFAULT_TOOLS, voice = DEFAULT_VOICE) => ({ showOtherProviders, tools, voice });
 
@@ -116,6 +116,8 @@ test('tools read as 1.22 defaults, and each invalid field reads as its default',
     fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ tools: { chromeProfile, chromeHeaded: true } }));
     assert.deepEqual((await settings.read()).tools, { ...DEFAULT_TOOLS, chromeHeaded: true }, chromeProfile);
   }
+  fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ tools: { chromeHeaded: false } }));
+  assert.equal((await settings.read()).tools.chromeHeaded, false);
   for (const tools of [null, [], 'x', 3]) {
     fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ tools }));
     assert.deepEqual((await settings.read()).tools, DEFAULT_TOOLS, JSON.stringify(tools));

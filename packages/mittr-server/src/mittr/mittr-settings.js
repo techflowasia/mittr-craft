@@ -86,7 +86,7 @@ const toolsOf = (stored) => {
     computer: tools.computer !== false,
     chrome: tools.chrome !== false,
     chromeProfile: profileOf(tools.chromeProfile),
-    chromeHeaded: tools.chromeHeaded === true,
+    chromeHeaded: tools.chromeHeaded !== false,
     chromeApprovedHosts: hostsOf(tools.chromeApprovedHosts),
     widgets: tools.widgets !== false,
   };
