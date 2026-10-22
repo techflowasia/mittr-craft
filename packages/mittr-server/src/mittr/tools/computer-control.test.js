@@ -5,8 +5,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { SCREEN_RECORDING_NOT_GRANTED, stubCuaDriver, tempDataDir } from '../test-helpers.js';
-import { OPEN_COMMAND, createComputerControl, createLaunchApp, resolveCuaDriver } from './computer-control.js';
+import { SCREEN_RECORDING_NOT_GRANTED, stubCuaDriver, stubCuaDriverCalls, tempDataDir, until } from '../test-helpers.js';
+import {
+  DRIVER_DOWN,
+  MAX_SOCKET_PATH_BYTES,
+  OPEN_COMMAND,
+  QUIET_DRIVER_ENV,
+  createComputerControl,
+  createDriverDaemon,
+  createLaunchApp,
+  daemonLaunch,
+  driverAppBundle,
+  driverEnv,
+  driverSocketPath,
+  resolveCuaDriver,
+} from './computer-control.js';
 import { MittrToolError } from './registry.js';
 
 const fakeSpawn = (respond = () => ({})) => {
@@ -18,11 +31,13 @@ const fakeSpawn = (respond = () => ({})) => {
     child.kills = [];
     child.kill = (signal) => {
       child.kills.push(signal);
+      if (child.exitOnKill) setImmediate(() => child.emit('close', null, signal));
       return true;
     };
     calls.push({ command, args, options, child });
     setImmediate(() => {
-      const { stdout = '', stderr = '', code = 0, error } = respond({ command, args, options }) ?? {};
+      const { stdout = '', stderr = '', code = 0, error, exitOnKill = false } = respond({ command, args, options }) ?? {};
+      child.exitOnKill = exitOnKill;
       if (error) {
         child.emit('error', error);
         return;
@@ -36,12 +51,56 @@ const fakeSpawn = (respond = () => ({})) => {
   return { spawn, calls };
 };
 
+const SOCKET = '/data/cua/d.sock';
+const QUIET_ENV = { ...QUIET_DRIVER_ENV, CUA_DRIVER_TELEMETRY_HOME: '/data/cua' };
+
+const fakeDaemon = ({ socketPath = SOCKET, ensure = async () => {}, restart = async () => {} } = {}) => {
+  const record = { ensured: 0, restarted: 0, stopped: 0 };
+  return {
+    record,
+    usable: true,
+    socketPath,
+    env: QUIET_ENV,
+    ensure: async () => {
+      record.ensured += 1;
+      await ensure();
+    },
+    restart: async () => {
+      record.restarted += 1;
+      await restart();
+    },
+    stop: async () => {
+      record.stopped += 1;
+    },
+  };
+};
+
+const control = (options) => createComputerControl({ binary: '/d', daemon: fakeDaemon(), ...options });
+
 const packedDriver = (t) => {
   const resourcesDir = path.join(tempDataDir(t), 'Resources');
   fs.mkdirSync(path.join(resourcesDir, 'cua-driver'), { recursive: true });
   fs.writeFileSync(path.join(resourcesDir, 'cua-driver', 'cua-driver'), '');
   return resourcesDir;
 };
+
+const realDaemon = (t, binary, options = {}) => {
+  const dataDir = tempDataDir(t);
+  const daemon = createDriverDaemon({ binary, dataDir, env: { PATH: process.env.PATH, HOME: dataDir }, probeIntervalMs: 10, ...options });
+  t.after(() => daemon.stop());
+  return { daemon, dataDir };
+};
+
+const isAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const serves = (binary) => stubCuaDriverCalls(binary).filter(({ command }) => command === 'serve');
 
 test('the packed driver is found in the app resources when no driver folder is set', (t) => {
   const resourcesDir = packedDriver(t);
@@ -62,35 +121,190 @@ test('a driver folder that is set is the only place looked at', (t) => {
   assert.equal(resolveCuaDriver({ resourcesDir, env }), path.join(envDir, 'cua-driver'));
 });
 
-test('a driver tool runs the binary with the tool and its JSON arguments, without a shell', async () => {
+test('a driver tool is a call to MittrCraft\'s own daemon socket with the tool and its JSON arguments, without a shell', async () => {
   const { spawn, calls } = fakeSpawn(() => ({ stdout: '{"apps":[]}' }));
-  const control = createComputerControl({ binary: '/r/cua-driver/cua-driver', spawn });
-  assert.equal(control.available, true);
+  const daemon = fakeDaemon();
+  const computer = createComputerControl({ binary: '/r/cua-driver/cua-driver', spawn, daemon });
+  assert.equal(computer.available, true);
 
-  assert.deepEqual(await control.request('bring_to_front', { pid: 42 }), { apps: [] });
-  assert.deepEqual(await control.request('list_apps'), { apps: [] });
+  assert.deepEqual(await computer.request('bring_to_front', { pid: 42 }), { apps: [] });
+  assert.deepEqual(await computer.request('list_apps'), { apps: [] });
 
   assert.deepEqual(calls.map(({ command, args }) => [command, args]), [
-    ['/r/cua-driver/cua-driver', ['bring_to_front', '{"pid":42}']],
-    ['/r/cua-driver/cua-driver', ['list_apps', '{}']],
+    ['/r/cua-driver/cua-driver', ['call', 'bring_to_front', '{"pid":42}', '--socket', SOCKET]],
+    ['/r/cua-driver/cua-driver', ['call', 'list_apps', '{}', '--socket', SOCKET]],
   ]);
   for (const { options } of calls) {
     assert.notEqual(options.shell, true);
     assert.deepEqual(options.stdio, ['ignore', 'pipe', 'pipe']);
+    assert.deepEqual(options.env, QUIET_ENV);
   }
+  assert.equal(daemon.record.ensured, 2);
+});
+
+test('the driver env keeps only the plain process variables and always turns telemetry and the update check off', () => {
+  const env = driverEnv({
+    dataDir: '/data',
+    env: {
+      PATH: '/usr/bin:/bin',
+      HOME: '/Users/person',
+      TMPDIR: '/tmp/x',
+      LANG: 'th_TH.UTF-8',
+      LC_ALL: 'th_TH.UTF-8',
+      CFFIXED_USER_HOME: '/tmp/gate',
+      CUA_DRIVER_RS_TELEMETRY_ENABLED: '1',
+      CUA_TELEMETRY_ENABLED: 'true',
+      CUA_DRIVER_RS_UPDATE_CHECK: 'on',
+      CUA_DRIVER_TELEMETRY_HOME: '/Users/person/.cua-driver',
+      CUA_DRIVER_EMBEDDED: '1',
+      CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS: '1',
+      CUA_DRIVER_PERMISSION_MODE: 'unrestricted',
+      MITTRCRAFT_TOOLS_TOKEN: 'secret',
+      NODE_OPTIONS: '--require /x.js',
+      HTTPS_PROXY: 'http://proxy.example.test',
+      XDG_RUNTIME_DIR: '/run/x',
+    },
+  });
+  assert.deepEqual(env, {
+    PATH: '/usr/bin:/bin',
+    HOME: '/Users/person',
+    TMPDIR: '/tmp/x',
+    LANG: 'th_TH.UTF-8',
+    LC_ALL: 'th_TH.UTF-8',
+    CFFIXED_USER_HOME: '/tmp/gate',
+    CUA_DRIVER_RS_TELEMETRY_ENABLED: '0',
+    CUA_TELEMETRY_ENABLED: '0',
+    CUA_DRIVER_RS_UPDATE_CHECK: '0',
+    CUA_DRIVER_TELEMETRY_HOME: '/data/cua',
+  });
+});
+
+test('the daemon socket lives in MittrCraft\'s data folder, and a data folder too long for a socket starts nothing', async (t) => {
+  assert.equal(driverSocketPath('/Users/person/.config/mittrcraft-dev'), '/Users/person/.config/mittrcraft-dev/cua/d.sock');
+  assert.ok(Buffer.byteLength(driverSocketPath('/Users/person/.config/mittrcraft-dev')) <= MAX_SOCKET_PATH_BYTES);
+
+  const dataDir = tempDataDir(t);
+  const fine = createDriverDaemon({ binary: '/d', dataDir });
+  assert.equal(fine.socketPath, path.join(dataDir, 'cua', 'd.sock'));
+  assert.equal(fine.env.CUA_DRIVER_TELEMETRY_HOME, path.join(dataDir, 'cua'));
+
+  const long = `/${'a'.repeat(MAX_SOCKET_PATH_BYTES - '/cua/d.sock'.length)}`;
+  assert.equal(Buffer.byteLength(driverSocketPath(long)), MAX_SOCKET_PATH_BYTES + 1);
+  const { spawn, calls } = fakeSpawn();
+  const probed = [];
+  const tooLong = createDriverDaemon({ binary: '/d', dataDir: long, spawn, probe: async (socket) => { probed.push(socket); return false; }, makeFolder: () => {} });
+  await assert.rejects(tooLong.ensure(), (error) => error instanceof MittrToolError && error.statusCode === 503 && error.message.includes(`longer than ${MAX_SOCKET_PATH_BYTES} bytes`));
+  assert.deepEqual(calls, []);
+  assert.deepEqual(probed, []);
+
+  assert.equal(createDriverDaemon({ binary: '/d', dataDir: 'relative' }).usable, false);
+  assert.equal(createComputerControl({ binary: '/d', dataDir: null }).available, false);
+});
+
+test('the packed CuaDriver.app is started through LaunchServices with telemetry off and its own socket; a bare driver is started directly', () => {
+  const env = { HOME: '/Users/person', ...QUIET_ENV };
+  assert.deepEqual(daemonLaunch({ binary: '/R/cua-driver/cua-driver', app: '/R/cua-driver/CuaDriver.app', socketPath: SOCKET, env }), {
+    command: OPEN_COMMAND,
+    args: [
+      '-W', '-n', '-g', '-a', '/R/cua-driver/CuaDriver.app',
+      '--env', 'HOME=/Users/person',
+      '--env', 'CUA_DRIVER_RS_TELEMETRY_ENABLED=0',
+      '--env', 'CUA_TELEMETRY_ENABLED=0',
+      '--env', 'CUA_DRIVER_RS_UPDATE_CHECK=0',
+      '--env', 'CUA_DRIVER_TELEMETRY_HOME=/data/cua',
+      '--args', 'serve', '--socket', SOCKET,
+    ],
+  });
+  assert.deepEqual(daemonLaunch({ binary: '/stub/cua-driver', app: null, socketPath: SOCKET, env }), { command: '/stub/cua-driver', args: ['serve', '--socket', SOCKET] });
+});
+
+test('the app bundle is found only behind a link into CuaDriver.app/Contents/MacOS', (t) => {
+  const resources = fs.realpathSync(tempDataDir(t));
+  const macos = path.join(resources, 'cua-driver', 'CuaDriver.app', 'Contents', 'MacOS');
+  fs.mkdirSync(macos, { recursive: true });
+  fs.writeFileSync(path.join(macos, 'cua-driver'), '');
+  fs.symlinkSync('./CuaDriver.app/Contents/MacOS/cua-driver', path.join(resources, 'cua-driver', 'cua-driver'));
+  assert.equal(driverAppBundle(path.join(resources, 'cua-driver', 'cua-driver')), path.join(resources, 'cua-driver', 'CuaDriver.app'));
+
+  const other = path.join(resources, 'Other.app', 'Contents', 'MacOS');
+  fs.mkdirSync(other, { recursive: true });
+  fs.writeFileSync(path.join(other, 'cua-driver'), '');
+  assert.equal(driverAppBundle(path.join(other, 'cua-driver')), null);
+  assert.equal(driverAppBundle(stubCuaDriver(t)), null);
+  assert.equal(driverAppBundle(path.join(resources, 'missing')), null);
+});
+
+test('starting through LaunchServices waits on the socket, keeps the open process as the daemon handle, and stops through the socket', async (t) => {
+  const dataDir = tempDataDir(t);
+  const socketPath = driverSocketPath(dataDir);
+  let listening = false;
+  const probed = [];
+  const { spawn, calls } = fakeSpawn(({ command, args }) => {
+    if (command === OPEN_COMMAND) {
+      setTimeout(() => { listening = true; }, 30);
+      return { code: null, exitOnKill: true };
+    }
+    if (args[0] === 'stop') listening = false;
+    return {};
+  });
+  const daemon = createDriverDaemon({
+    binary: '/R/cua-driver/cua-driver',
+    dataDir,
+    env: { HOME: '/Users/person', CUA_DRIVER_RS_TELEMETRY_ENABLED: '1' },
+    spawn,
+    appBundle: () => '/R/cua-driver/CuaDriver.app',
+    probe: async (socket) => { probed.push(socket); return listening; },
+    probeIntervalMs: 5,
+    stopTimeoutMs: 20,
+  });
+
+  await daemon.ensure();
+  assert.equal(daemon.running(), true);
+  assert.equal(fs.statSync(path.join(dataDir, 'cua')).mode & 0o777, 0o700);
+  const [launcher] = calls;
+  assert.equal(launcher.command, OPEN_COMMAND);
+  assert.ok(launcher.args.includes('CUA_DRIVER_RS_TELEMETRY_ENABLED=0'));
+  assert.ok(!launcher.args.includes('CUA_DRIVER_RS_TELEMETRY_ENABLED=1'));
+  assert.deepEqual(launcher.args.slice(-3), ['serve', '--socket', socketPath]);
+  assert.deepEqual(launcher.options.env, driverEnv({ env: { HOME: '/Users/person' }, dataDir }));
+
+  await daemon.stop();
+  assert.equal(daemon.running(), false);
+  assert.deepEqual(calls.slice(1).map(({ command, args }) => [command, args]), [['/R/cua-driver/cua-driver', ['stop', '--socket', socketPath]]]);
+  assert.deepEqual(launcher.child.kills, ['SIGKILL']);
+  assert.deepEqual([...new Set(probed)], [socketPath]);
+});
+
+test('a daemon that never answers is killed when its time is up and the tool says the driver did not start', async (t) => {
+  const dataDir = tempDataDir(t);
+  const { spawn, calls } = fakeSpawn(({ args }) => (args[0] === 'serve' ? { code: null, exitOnKill: true } : {}));
+  const daemon = createDriverDaemon({ binary: '/d', dataDir, spawn, probe: async () => false, appBundle: () => null, startTimeoutMs: 30, probeIntervalMs: 5 });
+  await assert.rejects(daemon.ensure(), { message: `cua-driver serve did not answer on ${driverSocketPath(dataDir)} within 30ms` });
+  assert.deepEqual(calls[0].child.kills, ['SIGKILL']);
+
+  const computer = createComputerControl({ binary: '/d', daemon, spawn });
+  await assert.rejects(computer.request('list_apps'), (error) => error instanceof MittrToolError && error.statusCode === 503 && error.message === DRIVER_DOWN);
+  assert.equal(calls.filter(({ args }) => args[0] === 'call').length, 0);
+});
+
+test('a daemon that exits before it answers rejects with what it wrote', async (t) => {
+  const { spawn } = fakeSpawn(() => ({ stderr: 'LSOpenURLsWithRole() failed\n', code: 1 }));
+  const daemon = createDriverDaemon({ binary: '/d', dataDir: tempDataDir(t), spawn, probe: async () => false, appBundle: () => null, probeIntervalMs: 5 });
+  await assert.rejects(daemon.ensure(), { message: 'LSOpenURLsWithRole() failed' });
+  assert.equal(daemon.running(), false);
 });
 
 test('a driver that exits with an error rejects with what it wrote, and one that answers no JSON says so', async () => {
-  const failing = createComputerControl({ binary: '/d', spawn: fakeSpawn(() => ({ stderr: ` ${SCREEN_RECORDING_NOT_GRANTED}\n`, code: 1 })).spawn });
+  const failing = control({ spawn: fakeSpawn(() => ({ stderr: ` ${SCREEN_RECORDING_NOT_GRANTED}\n`, code: 1 })).spawn });
   await assert.rejects(failing.request('get_desktop_state'), { message: SCREEN_RECORDING_NOT_GRANTED });
 
-  const silent = createComputerControl({ binary: '/d', spawn: fakeSpawn(() => ({ code: 3 })).spawn });
+  const silent = control({ spawn: fakeSpawn(() => ({ code: 3 })).spawn });
   await assert.rejects(silent.request('list_apps'), { message: 'cua-driver list_apps exited with code 3' });
 
-  const garbled = createComputerControl({ binary: '/d', spawn: fakeSpawn(() => ({ stdout: `<${'x'.repeat(300)}` })).spawn });
+  const garbled = control({ spawn: fakeSpawn(() => ({ stdout: `<${'x'.repeat(300)}` })).spawn });
   await assert.rejects(garbled.request('list_apps'), { message: `cua-driver list_apps did not return JSON: <${'x'.repeat(199)}` });
 
-  const missing = createComputerControl({ binary: '/d', spawn: fakeSpawn(() => ({ error: Object.assign(new Error('spawn /d ENOENT'), { code: 'ENOENT' }) })).spawn });
+  const missing = control({ spawn: fakeSpawn(() => ({ error: Object.assign(new Error('spawn /d ENOENT'), { code: 'ENOENT' }) })).spawn });
   await assert.rejects(missing.request('list_apps'), { message: 'spawn /d ENOENT' });
 });
 
@@ -107,43 +321,45 @@ test('an answer split across chunks is read whole, multi-byte names included', a
     });
     return child;
   };
-  assert.deepEqual(await createComputerControl({ binary: '/d', spawn }).request('list_apps'), { apps: [{ name: 'ไฟล์' }] });
+  assert.deepEqual(await control({ spawn }).request('list_apps'), { apps: [{ name: 'ไฟล์' }] });
 });
 
 test('a driver that never answers is killed when its time is up', async () => {
   const { spawn, calls } = fakeSpawn(() => ({ code: null }));
-  const control = createComputerControl({ binary: '/d', spawn, timeoutMs: 20 });
-  await assert.rejects(control.request('get_desktop_state'), { message: 'cua-driver get_desktop_state timed out after 20ms' });
+  await assert.rejects(control({ spawn, timeoutMs: 20 }).request('get_desktop_state'), { message: 'cua-driver get_desktop_state timed out after 20ms' });
   assert.deepEqual(calls[0].child.kills, ['SIGKILL']);
 });
 
 test('no driver means the control is unavailable and runs nothing', async () => {
   const { spawn, calls } = fakeSpawn();
-  const control = createComputerControl({ binary: null, spawn });
-  assert.equal(control.available, false);
-  await assert.rejects(control.request('list_apps'), (error) => error instanceof MittrToolError && error.statusCode === 503);
+  const computer = createComputerControl({ binary: null, spawn, dataDir: '/data' });
+  assert.equal(computer.available, false);
+  await assert.rejects(computer.request('list_apps'), (error) => error instanceof MittrToolError && error.statusCode === 503);
   assert.deepEqual(calls, []);
 });
 
 test('the turn\'s signal reaches the driver process', async () => {
   const { spawn, calls } = fakeSpawn(() => ({ stdout: '{}' }));
   const { signal } = new AbortController();
-  await createComputerControl({ binary: '/d', spawn }).request('list_apps', {}, { signal });
+  await control({ spawn }).request('list_apps', {}, { signal });
   assert.equal(calls[0].options.signal, signal);
   assert.equal(calls[0].options.killSignal, 'SIGKILL');
 });
 
-test('an aborted turn kills the running driver and rejects as cancelled', async (t) => {
+test('an aborted turn kills the running driver call and rejects as cancelled', async (t) => {
   const children = [];
+  let spawned;
+  const running = new Promise((resolve) => { spawned = resolve; });
   const spawn = (...args) => {
     const child = childProcess.spawn(...args);
     children.push(child);
+    child.once('spawn', spawned);
     return child;
   };
-  const control = createComputerControl({ binary: stubCuaDriver(t), spawn });
+  const computer = control({ binary: stubCuaDriver(t), spawn });
   const controller = new AbortController();
-  const pending = control.request('hang', {}, { signal: controller.signal });
-  await new Promise((resolve) => children[0].once('spawn', resolve));
+  const pending = computer.request('hang', {}, { signal: controller.signal });
+  await running;
   const exited = new Promise((resolve) => children[0].once('exit', (code, signal) => resolve(signal)));
 
   controller.abort();
@@ -152,17 +368,114 @@ test('an aborted turn kills the running driver and rejects as cancelled', async 
   assert.equal(await exited, 'SIGKILL');
 });
 
-test('a turn aborted before the call starts no driver', async () => {
+test('a turn aborted while the daemon starts rejects as cancelled, and one aborted before the call starts nothing', async () => {
   const { spawn, calls } = fakeSpawn();
-  await assert.rejects(createComputerControl({ binary: '/d', spawn }).request('list_apps', {}, { signal: AbortSignal.abort() }), { statusCode: 499 });
+  await assert.rejects(control({ spawn }).request('list_apps', {}, { signal: AbortSignal.abort() }), { statusCode: 499 });
+  assert.deepEqual(calls, []);
+
+  const controller = new AbortController();
+  const slow = fakeDaemon({ ensure: () => new Promise((resolve) => { setTimeout(resolve, 50); }) });
+  const pending = createComputerControl({ binary: '/d', spawn, daemon: slow }).request('list_apps', {}, { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(pending, (error) => error instanceof MittrToolError && error.statusCode === 499);
   assert.deepEqual(calls, []);
 });
 
-test('a stub driver answers its tools through the real process', async (t) => {
-  const control = createComputerControl({ binary: stubCuaDriver(t, { list_apps: { apps: [{ name: 'Calculator', pid: 7 }] } }) });
-  assert.deepEqual(await control.request('list_apps'), { apps: [{ name: 'Calculator', pid: 7 }] });
-  await assert.rejects(control.request('get_desktop_state'), { message: SCREEN_RECORDING_NOT_GRANTED });
-  await assert.rejects(control.request('garbled'), { message: 'cua-driver garbled did not return JSON: not json' });
+test('a stub daemon is started once, answers every tool through its socket, and is reused', async (t) => {
+  const binary = stubCuaDriver(t, { list_apps: { apps: [{ name: 'Calculator', pid: 7 }] } });
+  const { daemon, dataDir } = realDaemon(t, binary);
+  const computer = createComputerControl({ binary, daemon });
+
+  const [first, second] = await Promise.all([computer.request('list_apps'), computer.request('list_apps')]);
+  assert.deepEqual(first, { apps: [{ name: 'Calculator', pid: 7 }] });
+  assert.deepEqual(second, first);
+  assert.deepEqual(await computer.request('list_apps'), first);
+  await assert.rejects(computer.request('get_desktop_state'), { message: SCREEN_RECORDING_NOT_GRANTED });
+  await assert.rejects(computer.request('garbled'), { message: 'cua-driver garbled did not return JSON: not json' });
+
+  const calls = stubCuaDriverCalls(binary);
+  assert.equal(serves(binary).length, 1);
+  const socketPath = path.join(dataDir, 'cua', 'd.sock');
+  assert.deepEqual([...new Set(calls.map((entry) => entry.socketPath))], [socketPath]);
+  for (const entry of calls) {
+    assert.equal(entry.env.CUA_DRIVER_RS_TELEMETRY_ENABLED, '0');
+    assert.equal(entry.env.CUA_TELEMETRY_ENABLED, '0');
+    assert.equal(entry.env.CUA_DRIVER_RS_UPDATE_CHECK, '0');
+    assert.equal(entry.env.CUA_DRIVER_TELEMETRY_HOME, path.join(dataDir, 'cua'));
+  }
+});
+
+test('a dead daemon is started again once and the call goes through; when it cannot start again the tool says so plainly', async (t) => {
+  const binary = stubCuaDriver(t, { list_apps: { apps: [] } });
+  const { daemon } = realDaemon(t, binary);
+  const computer = createComputerControl({ binary, daemon });
+  assert.deepEqual(await computer.request('list_apps'), { apps: [] });
+  const [{ pid }] = serves(binary);
+
+  process.kill(pid, 'SIGKILL');
+  await until(() => !isAlive(pid));
+  assert.deepEqual(await computer.request('list_apps'), { apps: [] });
+  assert.equal(serves(binary).length, 2);
+
+  fs.writeFileSync(path.join(path.dirname(binary), 'serve-fails'), '');
+  process.kill(serves(binary)[1].pid, 'SIGKILL');
+  await until(() => !daemon.running());
+  await assert.rejects(computer.request('list_apps'), (error) => error instanceof MittrToolError && error.statusCode === 503 && error.message === DRIVER_DOWN);
+  assert.equal(serves(binary).length, 3);
+});
+
+test('a call that finds MittrCraft\'s daemon gone restarts it once and is sent again; twice gone says so plainly', async () => {
+  const gone = `Cua Driver daemon is not running on ${SOCKET}.\nStart it first with: cua-driver serve --socket ${SOCKET}`;
+  const answers = [{ stderr: gone, code: 1 }, { stdout: '{"apps":[]}' }];
+  const once = fakeSpawn(() => answers.shift());
+  const daemon = fakeDaemon();
+  assert.deepEqual(await createComputerControl({ binary: '/d', spawn: once.spawn, daemon }).request('list_apps'), { apps: [] });
+  assert.equal(daemon.record.restarted, 1);
+  assert.equal(once.calls.length, 2);
+
+  const twice = fakeSpawn(() => ({ stderr: gone, code: 1 }));
+  const down = fakeDaemon();
+  await assert.rejects(createComputerControl({ binary: '/d', spawn: twice.spawn, daemon: down }).request('list_apps'), (error) => error instanceof MittrToolError && error.statusCode === 503 && error.message === DRIVER_DOWN);
+  assert.equal(down.record.restarted, 1);
+  assert.equal(twice.calls.length, 2);
+
+  const other = fakeSpawn(() => ({ stderr: 'Cua Driver daemon is not running on /Users/person/Library/Caches/cua-driver/cua-driver.sock.', code: 1 }));
+  const untouched = fakeDaemon();
+  await assert.rejects(createComputerControl({ binary: '/d', spawn: other.spawn, daemon: untouched }).request('list_apps'), { message: 'Cua Driver daemon is not running on /Users/person/Library/Caches/cua-driver/cua-driver.sock.' });
+  assert.equal(untouched.record.restarted, 0);
+  assert.equal(other.calls.length, 1);
+});
+
+test('stopping the stub daemon shuts it down through its own socket and a later call starts a fresh one', async (t) => {
+  const binary = stubCuaDriver(t, { list_apps: { apps: [] } });
+  const { daemon, dataDir } = realDaemon(t, binary);
+  const computer = createComputerControl({ binary, daemon });
+  await computer.request('list_apps');
+  const [{ pid }] = serves(binary);
+
+  await computer.stop();
+  await until(() => !isAlive(pid));
+  assert.equal(daemon.running(), false);
+  assert.equal(fs.existsSync(path.join(dataDir, 'cua', 'd.sock')), false);
+  assert.deepEqual(stubCuaDriverCalls(binary).filter(({ command }) => command === 'stop').map(({ socketPath }) => socketPath), [path.join(dataDir, 'cua', 'd.sock')]);
+  await computer.stop();
+
+  await computer.request('list_apps');
+  assert.equal(serves(binary).length, 2);
+});
+
+test('a daemon left on MittrCraft\'s socket by an earlier run is stopped before a fresh one starts', async (t) => {
+  const binary = stubCuaDriver(t, { list_apps: { apps: [] } });
+  const { daemon: earlier, dataDir } = realDaemon(t, binary);
+  await earlier.ensure();
+  const [{ pid }] = serves(binary);
+
+  const later = createDriverDaemon({ binary, dataDir, env: { PATH: process.env.PATH, HOME: dataDir }, probeIntervalMs: 10 });
+  t.after(() => later.stop());
+  await later.ensure();
+  await until(() => !isAlive(pid));
+  assert.equal(serves(binary).length, 2);
+  assert.equal(stubCuaDriverCalls(binary).filter(({ command }) => command === 'stop').length, 1);
 });
 
 test('open_app runs open -a without a shell', async () => {
@@ -218,9 +531,9 @@ test('a turn aborted before opening runs nothing', async () => {
 });
 
 test('a driver that answers more than the output cap is stopped and says so', async () => {
-  const { spawn, calls } = fakeSpawn(({ args }) => (args[0] === 'small' ? { stdout: '{"a":1}' } : { stdout: 'x'.repeat(64), code: null }));
-  const control = createComputerControl({ binary: '/d', spawn, maxOutputBytes: 32 });
-  await assert.rejects(control.request('get_desktop_state'), { message: 'cua-driver get_desktop_state answered more than 32 bytes and was stopped' });
+  const { spawn, calls } = fakeSpawn(({ args }) => (args[1] === 'small' ? { stdout: '{"a":1}' } : { stdout: 'x'.repeat(64), code: null }));
+  const computer = control({ spawn, maxOutputBytes: 32 });
+  await assert.rejects(computer.request('get_desktop_state'), { message: 'cua-driver get_desktop_state answered more than 32 bytes and was stopped' });
   assert.deepEqual(calls[0].child.kills, ['SIGKILL']);
-  assert.deepEqual(await control.request('small'), { a: 1 });
+  assert.deepEqual(await computer.request('small'), { a: 1 });
 });

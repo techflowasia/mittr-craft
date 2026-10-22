@@ -91,8 +91,9 @@ export function setupMittrTools(context, {
     [MITTR_TOOLS.chrome]: () => chromeDriverOffered() && drivers.chromePath() !== null,
     [MITTR_TOOLS.work]: () => signedIn(),
   };
+  const computerControl = createComputerControl({ binary: drivers.computer(), dataDir, env });
   registerComputerActions(registry, {
-    control: createComputerControl({ binary: drivers.computer() }),
+    control: computerControl,
     launchApp: createLaunchApp(),
     writeScreenshot: control.writeScreenshot,
     offered: offered[MITTR_TOOLS.computer],
@@ -211,7 +212,9 @@ export function setupMittrTools(context, {
     await carried;
     await mittrSettings.update({ tools: patch });
     await refresh();
-    return switches();
+    const now = await switches();
+    if (now.computer === false) await computerControl.stop();
+    return now;
   };
 
   const settingsView = async () => {
@@ -270,14 +273,14 @@ export function setupMittrTools(context, {
     accountChanged: () => {
       callback.retire();
       chrome.forgetEveryGrant();
-      return closeEveryChrome();
+      return Promise.all([closeEveryChrome(), computerControl.stop()]).then(() => {});
     },
     dispose: () => {
       disposed ??= (async () => {
         unsubscribeReady();
         unsubscribeEvents();
         unsubscribeApprovals();
-        await closeEveryChrome();
+        await Promise.all([closeEveryChrome(), computerControl.stop()]);
       })();
       return disposed;
     },

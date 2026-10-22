@@ -256,23 +256,89 @@ export const fakeEngineFetch = ({ entries = [], answer = () => null, other = () 
 
 export const SCREEN_RECORDING_NOT_GRANTED = 'Screen Recording is NOT granted for this process.';
 
+const CUA_DRIVER_STUB = `
+const fs = require('node:fs');
+const net = require('node:net');
+const path = require('node:path');
+const dir = path.dirname(process.argv[1]);
+const argv = process.argv.slice(2);
+const at = argv.indexOf('--socket');
+const socketPath = at === -1 ? null : argv[at + 1];
+const [command, ...rest] = at === -1 ? argv : argv.filter((_, index) => index !== at && index !== at + 1);
+const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith('CUA_') || key === 'HOME'));
+const log = (entry) => fs.appendFileSync(path.join(dir, 'calls.jsonl'), JSON.stringify({ ...entry, socketPath, pid: process.pid, env }) + '\\n');
+const notRunning = () => {
+  process.stderr.write('Cua Driver daemon is not running on ' + socketPath + '.\\nStart it first with: cua-driver serve --socket ' + socketPath + '\\n');
+  process.exit(1);
+};
+const ask = (request, answered) => {
+  const socket = net.connect({ path: socketPath });
+  let buffer = '';
+  socket.on('error', notRunning);
+  socket.on('connect', () => socket.write(JSON.stringify(request) + '\\n'));
+  socket.on('data', (chunk) => { buffer += chunk; });
+  socket.on('end', () => answered(JSON.parse(buffer)));
+};
+const answerFor = (tool) => {
+  const file = path.join(dir, tool + '.json');
+  return fs.existsSync(file) ? { ok: true, result: JSON.parse(fs.readFileSync(file, 'utf8')) } : { ok: false, error: ${JSON.stringify(SCREEN_RECORDING_NOT_GRANTED)} };
+};
+if (command === 'hang') setTimeout(() => {}, 30000);
+else if (command === 'serve') {
+  log({ command });
+  if (fs.existsSync(path.join(dir, 'serve-fails'))) {
+    process.stderr.write('serve could not start\\n');
+    process.exit(1);
+  }
+  fs.rmSync(socketPath, { force: true });
+  const server = net.createServer((socket) => {
+    let buffer = '';
+    socket.on('data', (chunk) => {
+      buffer += chunk;
+      const end = buffer.indexOf('\\n');
+      if (end === -1) return;
+      const request = JSON.parse(buffer.slice(0, end));
+      if (request.method === 'shutdown') {
+        socket.end(JSON.stringify({ ok: true }));
+        server.close();
+        fs.rmSync(socketPath, { force: true });
+        setImmediate(() => process.exit(0));
+      } else socket.end(JSON.stringify(answerFor(request.name)));
+    });
+  });
+  server.listen(socketPath);
+} else if (command === 'stop') {
+  log({ command });
+  ask({ method: 'shutdown' }, () => process.exit(0));
+} else if (command === 'call') {
+  const [tool] = rest;
+  log({ command, tool, args: rest[1] });
+  if (tool === 'hang') setTimeout(() => {}, 30000);
+  else if (tool === 'garbled') process.stdout.write('not json');
+  else ask({ method: 'call', name: tool, args: JSON.parse(rest[1] || '{}') }, (response) => {
+    if (response.ok) process.stdout.write(JSON.stringify(response.result));
+    else {
+      process.stderr.write(response.error + '\\n');
+      process.exitCode = 1;
+    }
+  });
+} else {
+  process.stderr.write('stub cua-driver does not know ' + command + '\\n');
+  process.exit(64);
+}
+`;
+
 export const stubCuaDriver = (t, answers = {}) => {
   const dir = tempDataDir(t);
   for (const [tool, answer] of Object.entries(answers)) fs.writeFileSync(path.join(dir, `${tool}.json`), JSON.stringify(answer));
   const file = path.join(dir, 'cua-driver');
-  fs.writeFileSync(file, [
-    '#!/bin/sh',
-    'case "$1" in',
-    '  hang) exec /bin/sleep 30 ;;',
-    '  garbled) printf "not json"; exit 0 ;;',
-    'esac',
-    'answer="$(/usr/bin/dirname "$0")/$1.json"',
-    'if [ -f "$answer" ]; then /bin/cat "$answer"; exit 0; fi',
-    `echo "${SCREEN_RECORDING_NOT_GRANTED}" >&2`,
-    'exit 1',
-    '',
-  ].join('\n'), { mode: 0o755 });
+  fs.writeFileSync(file, `#!${process.execPath}\n${CUA_DRIVER_STUB}`, { mode: 0o755 });
   return file;
+};
+
+export const stubCuaDriverCalls = (file) => {
+  const log = path.join(path.dirname(file), 'calls.jsonl');
+  return fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').map((line) => JSON.parse(line)) : [];
 };
 
 const AGENT_BROWSER_STUB = `

@@ -10,7 +10,7 @@ import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-
 import { SCREENSHOT_DIRECTORY, writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { keyOf } from '../account-store.js';
 import { createMittrSettings } from '../mittr-settings.js';
-import { SCREEN_RECORDING_NOT_GRANTED, deferred, fakeFetch, json, listen, stubAgentBrowser, stubCuaDriver, tempDataDir, until } from '../test-helpers.js';
+import { SCREEN_RECORDING_NOT_GRANTED, deferred, fakeFetch, json, listen, stubAgentBrowser, stubCuaDriver, stubCuaDriverCalls, tempDataDir, until } from '../test-helpers.js';
 import { CHROME_EXECUTABLE, chromeSessionName } from './chrome-control.js';
 import { NO_APPROVALS } from './chrome-service.js';
 import { CHROME_CLOSE_TIMEOUT_MS, bundledDrivers, setupMittrTools } from './index.js';
@@ -445,6 +445,52 @@ test('a missing grant reaches the agent as a plain sentence', async (t) => {
     error: { message: 'MittrCraft needs the Screen Recording permission for CuaDriver. Turn it on in System Settings → Privacy & Security → Screen Recording.', kind: 'usage' },
   });
   assert.equal(SCREEN_RECORDING_NOT_GRANTED, 'Screen Recording is NOT granted for this process.');
+});
+
+const daemonAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const startedDaemon = async (t) => {
+  const project = fs.realpathSync(tempDataDir(t));
+  const driver = stubCuaDriver(t, { list_apps: { apps: [] } });
+  const setup = await setUp(t, { drivers: { ...ALL_DRIVERS, computer: () => driver }, resolveSessionDirectory: async () => project });
+  assert.equal((await setup.call({ tool: 'mittrcraft_computer', input: { action: 'list_apps' }, sessionID: 'ses_1' })).ok, true);
+  const serves = stubCuaDriverCalls(driver).filter(({ command }) => command === 'serve');
+  assert.equal(serves.length, 1);
+  assert.equal(serves[0].socketPath, path.join(setup.dataDir, 'cua', 'd.sock'));
+  assert.equal(daemonAlive(serves[0].pid), true);
+  return { ...setup, driver, pid: serves[0].pid };
+};
+
+const stoppedOn = (driver, socketPath) => stubCuaDriverCalls(driver).filter(({ command }) => command === 'stop').map((call) => call.socketPath).every((stopped) => stopped === socketPath);
+
+test('the computer tool\'s daemon is stopped when the Computer switch goes off, and not when only Chrome does', async (t) => {
+  const { tools, driver, pid, dataDir } = await startedDaemon(t);
+  await tools.applySwitches({ chrome: false });
+  assert.equal(daemonAlive(pid), true);
+  await tools.applySwitches({ computer: false });
+  await until(() => !daemonAlive(pid));
+  assert.ok(stoppedOn(driver, path.join(dataDir, 'cua', 'd.sock')));
+});
+
+test('the computer tool\'s daemon is stopped when the server is disposed on quit', async (t) => {
+  const { tools, pid } = await startedDaemon(t);
+  await tools.dispose();
+  await until(() => !daemonAlive(pid));
+});
+
+test('the computer tool\'s daemon is stopped on an account switch and the next call starts a fresh one', async (t) => {
+  const { tools, call, driver, pid } = await startedDaemon(t);
+  await tools.accountChanged();
+  await until(() => !daemonAlive(pid));
+  assert.equal((await call({ tool: 'mittrcraft_computer', input: { action: 'list_apps' }, sessionID: 'ses_1' })).ok, true);
+  assert.equal(stubCuaDriverCalls(driver).filter(({ command }) => command === 'serve').length, 2);
 });
 
 const everySite = () => {
