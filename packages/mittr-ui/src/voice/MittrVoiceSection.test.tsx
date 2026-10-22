@@ -8,9 +8,9 @@ import { useI18nStore } from '../../../ui/src/lib/i18n/store';
 import { MittrErrorBoundary } from '../MittrErrorBoundary';
 import { mittrT } from '../strings/mittrT';
 import { MittrVoiceSectionView, MittrVoiceSettingsItem, type VoiceSettingsActions } from './MittrVoiceSection';
-import type { SpeechOffer } from './upstreamSpeech';
+import { createUpstreamSpeech, type SpeechConfig, type SpeechOffer } from './upstreamSpeech';
 import type { VoiceReadiness } from './voiceApi';
-import type { VoiceSettingsControllerState, VoiceSettingsLoad } from './voiceSettingsController';
+import { createVoiceSettingsController, type VoiceSettingsControllerState, type VoiceSettingsLoad } from './voiceSettingsController';
 
 const waitForLocale = async (locale: string) => {
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -47,9 +47,9 @@ const OFFER: SpeechOffer = {
 
 const READY: VoiceReadiness = { listen: true, speak: true, voice: true, signedIn: true, here: true, voiceSilenceMs: 900, reason: null };
 
-const loaded = (change: { offer?: Partial<SpeechOffer>; canChange?: boolean; readiness?: Partial<VoiceReadiness> | null } = {}): VoiceSettingsLoad => ({
+const loaded = (change: { offer?: { offered: boolean }; canChange?: boolean; readiness?: Partial<VoiceReadiness> | null } = {}): VoiceSettingsLoad => ({
   status: 'ready',
-  offer: { ...OFFER, ...change.offer },
+  offer: change.offer?.offered === false ? { ...OFFER, offered: false, baseUrl: null } : OFFER,
   limits: change.offer?.offered === false ? null : { stepCap: 8, replyMaxChars: 8000, canChange: change.canChange ?? true },
   readiness: change.readiness === null ? null : { ...READY, ...change.readiness },
 });
@@ -83,6 +83,22 @@ describe('MittrCraft voice section', () => {
   test('a hosted runtime renders no Mittr speech switch', () => {
     expect(view(loaded({ offer: { offered: false } }))).toBe('');
     expect(view({ status: 'loading' })).toBe('');
+  });
+
+  test('the exact body a hosted server sends renders nothing', async () => {
+    const hosted = { offered: false, baseUrl: null, model: 'mittr', voice: 'mittr', installed: { stt: false, openaiCompatible: false }, carryDictation: false };
+    const controller = createVoiceSettingsController({
+      api: { load: async () => ({ stepCap: 8, replyMaxChars: 8000, canChange: true }), save: async () => ({ stepCap: 8, replyMaxChars: 8000, canChange: true }) },
+      speech: createUpstreamSpeech({
+        config: (): SpeechConfig => { throw new Error('a hosted runtime changes no speech settings'); },
+        fetch: async () => new Response(JSON.stringify(hosted)),
+      }),
+      readiness: async () => READY,
+      synthesize: async () => ({ contentType: 'audio/pcm; rate=24000', body: new ReadableStream() }),
+      createPlayer: () => { throw new Error('nothing plays'); },
+    });
+    await controller.load();
+    expect(view(controller.state().load)).toBe('');
   });
 
   test('the reason line shows when the platform has no speech models', () => {

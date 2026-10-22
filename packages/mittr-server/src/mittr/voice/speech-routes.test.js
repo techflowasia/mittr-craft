@@ -319,6 +319,13 @@ test('the speech settings say what is offered, where, and which kinds hold our k
   assert.equal((await send('GET', '/api/mittr/speech', { bearer: null })).body.carryDictation, false);
 });
 
+test('a server whose port is not known yet offers no Mittr speech either', async (t) => {
+  const { send } = await setUp(t, { port: null, carried: true });
+  assert.deepEqual((await send('GET', '/api/mittr/speech', { bearer: null })).body, {
+    offered: false, baseUrl: null, model: 'mittr', voice: 'mittr', installed: { stt: false, openaiCompatible: false }, carryDictation: false,
+  });
+});
+
 test('the speech key and the carry change only on this Mac', async (t) => {
   for (const options of [{ scope: 'tunnel' }, { host: null }]) {
     const { send, dataDir, carry } = await setUp(t, { carried: true, ...options });
@@ -335,7 +342,9 @@ test('the speech key and the carry change only on this Mac', async (t) => {
 
 test('a hosted runtime offers no Mittr speech', async (t) => {
   const { send, client } = await setUp(t, { offered: false, host: null });
-  assert.equal((await send('GET', '/api/mittr/speech', { bearer: null })).body.offered, false);
+  assert.deepEqual((await send('GET', '/api/mittr/speech', { bearer: null })).body, {
+    offered: false, baseUrl: null, model: 'mittr', voice: 'mittr', installed: { stt: false, openaiCompatible: false }, carryDictation: false,
+  });
   assert.equal((await send('POST', '/mittr-speech/v1/audio/speech', { body: speak('hi') })).status, 404);
   assert.equal((await send('POST', '/mittr-speech/v1/audio/transcriptions', { body: wavForm() })).status, 404);
   assert.deepEqual(client.calls, { transcribe: [], synthesize: [] });

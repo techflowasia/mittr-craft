@@ -55,14 +55,17 @@ export function mittrReadAloudOn(state: Pick<SpeechConfig, 'voiceProvider' | 'op
   return state.voiceProvider === 'openai-compatible' && isMittrSpeechUrl(state.openaiCompatibleUrl);
 }
 
-const speechOfferSchema = z.object({
-  offered: z.boolean(),
-  baseUrl: z.string().refine(isMittrSpeechUrl),
+const speechOfferFields = {
   model: z.string(),
   voice: z.string(),
   installed: z.object({ stt: z.boolean(), openaiCompatible: z.boolean() }),
   carryDictation: z.boolean(),
-});
+};
+
+const speechOfferSchema = z.discriminatedUnion('offered', [
+  z.object({ offered: z.literal(true), baseUrl: z.string().refine(isMittrSpeechUrl), ...speechOfferFields }),
+  z.object({ offered: z.literal(false), baseUrl: z.string().nullable(), ...speechOfferFields }),
+]);
 
 export type SpeechOffer = z.infer<typeof speechOfferSchema>;
 

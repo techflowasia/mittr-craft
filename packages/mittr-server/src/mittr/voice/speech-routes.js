@@ -204,13 +204,15 @@ export function registerSpeechRoutes(app, { express, client, keys, state, offere
   const speechView = async () => {
     await forgetStaleSttKey();
     const serverPort = port();
+    const baseUrl = offered && Number.isInteger(serverPort) ? `http://127.0.0.1:${serverPort}${SPEECH_PREFIX}` : null;
+    const here = baseUrl !== null;
     return {
-      offered,
-      baseUrl: offered && Number.isInteger(serverPort) ? `http://127.0.0.1:${serverPort}${SPEECH_PREFIX}` : null,
+      offered: here,
+      baseUrl,
       model: MITTR_SPEECH_MODEL,
       voice: MITTR_SPEECH_VOICE,
-      installed: offered ? keys.installed() : { stt: false, openaiCompatible: false },
-      carryDictation: offered ? await carry.pending() : false,
+      installed: here ? keys.installed() : { stt: false, openaiCompatible: false },
+      carryDictation: here ? await carry.pending() : false,
     };
   };
 

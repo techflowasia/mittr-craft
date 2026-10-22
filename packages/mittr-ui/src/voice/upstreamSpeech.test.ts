@@ -277,6 +277,14 @@ describe('what the server offers', () => {
     expect(await bad.readOffer()).toBeNull();
   });
 
+  test('the body a hosted runtime sends reads as not offered, not as a failure', async () => {
+    const hosted = { offered: false, baseUrl: null, model: 'mittr', voice: 'mittr', installed: { stt: false, openaiCompatible: false }, carryDictation: false };
+    const speech = createUpstreamSpeech({ config: fakeConfig().config, fetch: recordingFetch(() => new Response(JSON.stringify(hosted))).fetch });
+    expect(await speech.readOffer()).toEqual(hosted);
+    const missing = createUpstreamSpeech({ config: fakeConfig().config, fetch: recordingFetch(() => new Response(JSON.stringify({ ...hosted, offered: true }))).fetch });
+    expect(await missing.readOffer()).toBeNull();
+  });
+
   test('a local dictation model counts as installed only when the server says so', async () => {
     const installed = recordingFetch(() => new Response(JSON.stringify({ models: [{ id: 'a', installed: false }, { id: 'b', installed: true }] })));
     expect(await createUpstreamSpeech({ config: fakeConfig().config, fetch: installed.fetch }).readLocalModelInstalled()).toBe(true);

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { mittrT } from '../strings/mittrT';
-import type { SpeechOffer } from './upstreamSpeech';
+import { createUpstreamSpeech, type SpeechConfig, type SpeechOffer } from './upstreamSpeech';
 import type { SynthesizedAudio, VoiceReadiness } from './voiceApi';
 import type { VoiceLimits, VoiceLimitsPatch, VoiceSettingsApi } from './voiceSettingsApi';
 import { VoiceSettingsRequestError } from './voiceSettingsApi';
@@ -84,11 +84,30 @@ describe('MittrCraft voice settings controller', () => {
   });
 
   test('a hosted runtime reads nothing else and holds no limits', async () => {
-    const { controller, loads, settle } = setup({ offer: { ...OFFER, offered: false } });
+    const { controller, loads, settle } = setup({ offer: { ...OFFER, offered: false, baseUrl: null } });
     await controller.load();
     await settle();
     expect(loads).toHaveLength(0);
-    expect(readyOf(controller.state())).toEqual({ status: 'ready', offer: { ...OFFER, offered: false }, limits: null, readiness: null });
+    expect(readyOf(controller.state())).toEqual({ status: 'ready', offer: { ...OFFER, offered: false, baseUrl: null }, limits: null, readiness: null });
+  });
+
+  test('the exact body a hosted server sends reads as nothing to show, not a load failure', async () => {
+    const hosted = { offered: false, baseUrl: null, model: 'mittr', voice: 'mittr', installed: { stt: false, openaiCompatible: false }, carryDictation: false };
+    const speech = createUpstreamSpeech({
+      config: (): SpeechConfig => { throw new Error('a hosted runtime changes no speech settings'); },
+      fetch: async () => new Response(JSON.stringify(hosted)),
+    });
+    const loads: VoiceLimits[] = [];
+    const controller = createVoiceSettingsController({
+      api: { load: async () => { loads.push(LIMITS); return LIMITS; }, save: async () => LIMITS },
+      speech,
+      readiness: async () => READY,
+      synthesize: async () => ({ contentType: 'audio/pcm; rate=24000', body: new ReadableStream() }),
+      createPlayer: () => { throw new Error('nothing plays'); },
+    });
+    await controller.load();
+    expect(loads).toHaveLength(0);
+    expect(controller.state().load).toEqual({ status: 'ready', offer: hosted, limits: null, readiness: null });
   });
 
   test('an offer that cannot be read, or limits that cannot, are a load failure with a retry', async () => {
