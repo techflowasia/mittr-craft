@@ -1,7 +1,7 @@
 import { readQuotaExhausted } from '../exhausted.js';
 import { SPEECH_READINESS_TIMEOUT_MS, SPEECH_TIMEOUT_MS } from '../platform.js';
 import { pinAccount, sessionKeyOf } from '../tools/account-guard.js';
-import { trimmedText } from '../values.js';
+import { isRecord, trimmedText } from '../values.js';
 
 const READINESS_TTL_MS = 30_000;
 
@@ -105,22 +105,17 @@ export function createMittrSpeechClient({ broker, ensureFreshSession, fetchImpl 
     }
     if (isSessionRefused(response.status)) return { cacheable: false, value: { signedIn: false, ready: NOT_READY, reason: 'not_signed_in' } };
     const body = await response.json().catch(() => null);
-    if (!response.ok || body === null || typeof body !== 'object') {
+    if (!response.ok || !isRecord(body)) {
       const code = codeOf(body);
       const reason = code === 'not_configured' || isSpeechMissing(response.status, code) ? 'not_configured' : 'unreachable';
       return { cacheable: reason === 'not_configured', value: { signedIn: true, ready: NOT_READY, reason } };
     }
     const ready = { listen: body.listen?.ready === true, speak: body.speak?.ready === true, voice: body.voice?.ready === true };
-    return {
-      cacheable: true,
-      value: {
-        signedIn: true,
-        ready,
-        ...(Number.isFinite(body.silenceMs) ? { silenceMs: body.silenceMs } : {}),
-        ...(Number.isFinite(body.voiceSilenceMs) ? { voiceSilenceMs: body.voiceSilenceMs } : {}),
-        reason: ready.listen && ready.speak && ready.voice ? null : 'not_configured',
-      },
-    };
+    const value = { signedIn: true, ready };
+    if (Number.isFinite(body.silenceMs)) value.silenceMs = body.silenceMs;
+    if (Number.isFinite(body.voiceSilenceMs)) value.voiceSilenceMs = body.voiceSilenceMs;
+    value.reason = ready.listen && ready.speak && ready.voice ? null : 'not_configured';
+    return { cacheable: true, value };
   };
 
   const readiness = async () => {

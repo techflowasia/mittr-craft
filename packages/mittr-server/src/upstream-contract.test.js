@@ -2081,6 +2081,28 @@ const voiceServerChecks = {
     const probe = source('scripts/mittr/probe-engine-v2.mjs');
     for (const route of ['/permission', 'message.list(', '/interrupt', '/todo']) assert.ok(probe.includes(route), `the voice probe no longer reads ${route}`);
   },
+
+  'session-interrupt-route': () => {
+    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
+    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P22 again before trusting session.stop');
+    has(source('scripts/mittr/probe-engine-v2.mjs'), /\/interrupt/, 'the probe no longer interrupts a session');
+    has(source('packages/mittr-server/src/mittr/voice/actions.js'), /\/api\/session\/\$\{encodeURIComponent\(sessionId\)\}\/interrupt`, \{ method: 'POST', directory/, 'session.stop no longer posts the interrupt in the session directory');
+  },
+
+  'sanitize-for-tts': async () => {
+    const { sanitizeForTTS } = await importUpstream('packages/web/server/lib/text/summarization.js');
+    const { speakable } = await import('./mittr/voice/speakable.js');
+    const fixtures = [
+      '## Done\n\nI fixed **the bug** in `app.js`.',
+      'Run this:\n```bash\nbun test\n```\nthen check.',
+      'See https://example.test/a?b=1 and [the docs](https://docs.example.test).',
+      'Edit /work/app/src/index.ts and ~/notes.md | grep "x" > out',
+      'สวัสดีครับ แก้ไข *เสร็จแล้ว* ที่ `src/main.ts` — ดูที่ https://example.test',
+      '',
+      null,
+    ];
+    for (const text of fixtures) assert.equal(speakable(text), sanitizeForTTS(text), JSON.stringify(text));
+  },
 };
 Object.assign(checks, voiceServerChecks);
 

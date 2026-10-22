@@ -35,11 +35,14 @@ const sendConfigOf = (record, messages) => {
   if (!providerID || !modelID) return null;
   const agent = (Array.isArray(messages) ? messages : []).map((message) => trimmedText(message?.agent)).find(Boolean);
   const variant = trimmedText(model.variant);
-  return { providerID, modelID, ...(agent ? { agent } : {}), ...(variant ? { variant } : {}) };
+  const sendConfig = { providerID, modelID };
+  if (agent) sendConfig.agent = agent;
+  if (variant) sendConfig.variant = variant;
+  return sendConfig;
 };
 
 export const createSessionLookup = ({ control, engine, fetchImpl }) => {
-  const call = createEngineCall({ opencode: engine, ...(fetchImpl ? { fetchImpl } : {}) });
+  const call = createEngineCall({ opencode: engine, fetchImpl });
   const route = (sessionId, rest = '') => `/api/session/${encodeURIComponent(sessionId)}${rest}`;
 
   const describe = async (sessionId, directoryHint) => {

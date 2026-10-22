@@ -12,7 +12,7 @@ const fakeControl = (answers = {}) => {
       calls.push([action, input, directory]);
       const answer = answers[action];
       if (answer instanceof Error) throw answer;
-      return typeof answer === 'function' ? answer(input) : answer;
+      return answer instanceof Function ? answer(input) : answer;
     },
   };
 };

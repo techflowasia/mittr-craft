@@ -2487,3 +2487,47 @@ test('an account switch clears the speech quota blocks', async (t) => {
   assert.deepEqual(mittr.speech.state.view().stt, { blockedUntil: null });
   assert.deepEqual(mittr.speech.state.view().tts, { blockedUntil: null });
 });
+
+test('a hosted runtime registers no voice route', async (t) => {
+  const { call } = await setUp(t);
+  for (const route of ['/api/mittr/voice/start', '/api/mittr/voice/turn', '/api/mittr/voice/end']) {
+    const answer = await fetch(`${call.base}${route}`, { method: 'POST' });
+    assert.equal(answer.status, 404, route);
+  }
+});
+
+test('a second Talk start, an end and an account switch each end the conversation and its Chrome allow', async (t) => {
+  const fetchImpl = platform({ sessions: [session, sessionB] });
+  const { mittr, call } = await setUp(t, { fetchImpl, host: { secretStore: sealingStore() } });
+  const allowed = () => mittr.tools.chrome.isHostAllowed('voice', 'other.example.test');
+  const start = async () => (await call('POST', '/api/mittr/voice/start')).body.conversationId;
+
+  const first = await start();
+  assert.ok(first);
+  mittr.tools.chrome.allowForConversation('voice');
+  assert.equal(await allowed(), true);
+  const second = await start();
+  assert.notEqual(second, first);
+  assert.equal(await allowed(), false);
+
+  mittr.tools.chrome.allowForConversation('voice');
+  const ended = await fetch(`${call.base}/api/mittr/voice/end`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ conversationId: second }) });
+  assert.equal(ended.status, 204);
+  assert.equal(await allowed(), false);
+  assert.equal(mittr.voice.conversation.current(), null);
+
+  assert.equal((await signIn(call)).status, 200);
+  assert.equal((await signIn(call)).status, 200);
+  await start();
+  mittr.tools.chrome.allowForConversation('voice');
+  assert.equal((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' })).status, 200);
+  assert.equal(mittr.voice.conversation.current(), null);
+  assert.equal(await allowed(), false);
+});
+
+test('the voice-only actions are registered on this Mac and reach no agent tool', async (t) => {
+  const { mittr } = await setUp(t, { host: { secretStore: sealingStore() } });
+  const voiceOnly = mittr.registry.definitions({ includeVoiceOnly: true }).filter((entry) => entry.voiceOnly).map(({ action }) => action);
+  assert.deepEqual(voiceOnly, ['session.stop', 'session.read_reply', 'chrome.allow_site']);
+  assert.equal(mittr.registry.tools().some((tool) => tool.name === 'mittrcraft_voice'), false);
+});

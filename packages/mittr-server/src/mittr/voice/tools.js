@@ -20,8 +20,7 @@ export const VOICE_TOOL_RESULT_MAX_CHARS = 20_000;
 export const MESSAGES_MAX_COUNT = 60;
 export const MESSAGES_MAX_CHARS = 200_000;
 export const STEP_TIMEOUT_MS = VOICE_STEP_TIMEOUT_MS;
-export const VOICE_STEP_CAP = Object.freeze({ fallback: 8, min: 1, max: 20 });
-export const VOICE_REPLY_MAX_CHARS = Object.freeze({ fallback: 8000, min: 1000, max: 30000 });
+export { VOICE_REPLY_MAX_CHARS, VOICE_STEP_CAP } from '../mittr-settings.js';
 export const VOICE_STRIPPED_INPUTS = Object.freeze(['wait', 'timeout', 'lastAssistant', 'returnResult']);
 
 export const VOICE_CONTROL_ACTIONS = Object.freeze(CONTROL_ACTION_DEFINITIONS.map(({ action }) => action));
@@ -117,10 +116,10 @@ export const buildVoiceTools = ({ upstream, registry, switches }) => {
       name: VOICE_TOOLS.voice,
       description: VOICE_TOOL_DESCRIPTION,
       definitions: voiceOnly,
-      properties: {
-        ...(on.control ? { sessionId: CONTROL_PARAMETER_PROPERTIES.sessionId, directory: CONTROL_PARAMETER_PROPERTIES.directory } : {}),
-        ...(chrome ? HOST_PARAMETER : {}),
-      },
+      properties: mergeProperties(
+        on.control ? { sessionId: CONTROL_PARAMETER_PROPERTIES.sessionId, directory: CONTROL_PARAMETER_PROPERTIES.directory } : {},
+        chrome ? HOST_PARAMETER : {},
+      ),
     }),
   ];
   const offered = tools.filter((tool) => tool.parameters.properties.action.enum.length > 0);

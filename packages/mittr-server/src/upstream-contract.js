@@ -760,4 +760,14 @@ UPSTREAM_CONTRACT.push(
     files: ['packages/electron/package.json', 'scripts/mittr/probe-engine-v2.mjs'],
     why: 'the bundled engine (2.0.22, probe P19 to P24) answers GET /api/session/:id with model { providerID, id, variant }, /api/session/:id/permission and /api/session/:id/message with the agent on assistant records, all scoped by x-opencode-directory, and has no todo route',
   },
+  {
+    id: 'session-interrupt-route',
+    files: ['packages/electron/package.json', 'scripts/mittr/probe-engine-v2.mjs'],
+    why: 'the bundled engine stops a running session with POST /api/session/:id/interrupt scoped by x-opencode-directory (probe P22), which the voice session.stop sends',
+  },
+  {
+    id: 'sanitize-for-tts',
+    files: ['packages/web/server/lib/text/summarization.js'],
+    why: 'the voice assistant\'s speakable() is upstream\'s sanitizeForTTS vendored unchanged, and gives the same text on Markdown, code, links, paths and Thai',
+  },
 );

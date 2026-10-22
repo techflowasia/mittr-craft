@@ -32,6 +32,7 @@ import { reconcileSkills, skillIdOf } from './skill-reconciler.js';
 import { registerMittrControlRoutes } from './tools/control-routes.js';
 import { setupMittrTools } from './tools/index.js';
 import { createMittrActionRegistry } from './tools/registry.js';
+import { setupMittrVoice } from './voice/index.js';
 import { createMittrSpeechClient } from './voice/speech-client.js';
 import { createSpeechKeys } from './voice/speech-key.js';
 import { registerSpeechRoutes } from './voice/speech-routes.js';
@@ -303,7 +304,7 @@ export function setupMittr(context, {
       shim?.abortInFlight();
       answeredByLog.clear();
       audit?.clear();
-      speech.state.clearAll();
+      voice.accountChanged();
       void tools.accountChanged();
       return switcher.switchTo(nextUserId);
     },
@@ -428,6 +429,14 @@ export function setupMittr(context, {
     }
     void speechRoutes.forgetStaleSttKey();
   }
+  const voice = setupMittrVoice(context, {
+    registry,
+    tools,
+    speech,
+    mittrSettings,
+    platform: { broker, ensureFreshSession, fetchImpl, engineOnActiveHome, activeAccountKey },
+    logger,
+  });
   let models = [];
 
   // The engine introduces itself as MittrCraft through a plugin written on
@@ -654,6 +663,7 @@ export function setupMittr(context, {
     registry,
     tools,
     speech,
+    voice,
     managedConfig,
     neverAutoAnswer: tools.neverAutoAnswer,
     applyModels,
@@ -664,6 +674,7 @@ export function setupMittr(context, {
       clearTimeout(correction);
       correction = null;
       unsubscribeReady();
+      voice.dispose();
       speech.state.close();
       await tools.dispose();
       unregisterDeepLink?.();

@@ -15,6 +15,7 @@ const SHARED_CALLERS = ['work-routes.js', 'integrations-routes.js', 'tools/brows
 
 const STREAMING_CALLERS = {
   'voice/speech-client.js': ['SPEECH_READINESS_TIMEOUT_MS', 'SPEECH_TIMEOUT_MS'],
+  'voice/loop.js': ['VOICE_STEP_TIMEOUT_MS'],
 };
 
 const productionModules = () => ['', 'tools', 'voice'].flatMap((folder) => fs.readdirSync(path.join(here, folder))

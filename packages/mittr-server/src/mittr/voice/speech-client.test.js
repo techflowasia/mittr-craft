@@ -24,7 +24,7 @@ const setUp = (respond, { user = 'u-a', now, session } = {}) => {
     ensureFreshSession: async () => (session === undefined ? sessionOf(people.active) : session),
     activeAccountKey: () => (people.active ? keyOf(people.active) : null),
     fetchImpl,
-    ...(now ? { now } : {}),
+    now: now ?? Date.now,
   });
   return { client, calls, people };
 };
