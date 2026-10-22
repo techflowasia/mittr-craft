@@ -15,6 +15,7 @@ export const THIS_MAC_ONLY = 'These settings can be changed only on this Mac';
 
 const TRANSCRIBE_LIMIT = '25mb';
 const STATE_WAIT_MS = 25_000;
+export const STT_KEY_SETTLE_MS = 30_000;
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const NOT_OUR_KEY = { error: { type: 'invalid_request_error', code: 'invalid_api_key', message: 'Not a MittrCraft speech key' } };
 const CANNOT_REACH = 'The Mittr platform cannot be reached right now';
@@ -93,8 +94,9 @@ const joinParts = (spoken) => {
   return spoken[0];
 };
 
-export function registerSpeechRoutes(app, { express, client, keys, state, offered, requestScope, host, port, carry, upstreamSettings, logger = console }) {
+export function registerSpeechRoutes(app, { express, client, keys, state, offered, requestScope, host, port, carry, upstreamSettings, logger = console, now = Date.now }) {
   const local = (req) => isLocalRequest(req, { host, requestScope });
+  let sttKeyInstalledAt = null;
 
   const abortOnClose = (req, res) => {
     const controller = new AbortController();
@@ -116,6 +118,7 @@ export function registerSpeechRoutes(app, { express, client, keys, state, offere
 
   const forgetStaleSttKey = async () => {
     if (!offered || !keys.installed().stt) return;
+    if (sttKeyInstalledAt !== null && now() - sttKeyInstalledAt < STT_KEY_SETTLE_MS) return;
     const settings = await Promise.resolve().then(() => upstreamSettings?.read()).catch(() => null);
     if (settings?.sttProvider === 'openai-compatible' && isMittrSpeechUrl(settings.sttServerUrl)) return;
     try {
@@ -228,6 +231,7 @@ export function registerSpeechRoutes(app, { express, client, keys, state, offere
     try {
       const install = named.filter((kind) => patch[kind] === true);
       if (install.length > 0) keys.install(install);
+      if (install.includes('stt')) sttKeyInstalledAt = now();
       for (const kind of named.filter((name) => patch[name] === false)) keys.remove(kind);
     } catch (error) {
       logger.warn('[mittr] could not change the speech key:', error?.name ?? 'Error');

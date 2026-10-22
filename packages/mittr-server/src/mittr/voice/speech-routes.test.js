@@ -9,7 +9,7 @@ import { listen, tempDataDir } from '../test-helpers.js';
 import { pcm16ToWav } from './audio.js';
 import { SpeechError } from './speech-client.js';
 import { VOICE_KEYS_FILE, createSpeechKeys, mintSpeechKey } from './speech-key.js';
-import { SPEECH_PREFIX, isSpeechCaller, registerSpeechRoutes } from './speech-routes.js';
+import { SPEECH_PREFIX, STT_KEY_SETTLE_MS, isSpeechCaller, registerSpeechRoutes } from './speech-routes.js';
 import { createSpeechState } from './speech-state.js';
 
 const ACCESS_TOKEN = 'at-secret-platform-token';
@@ -43,7 +43,7 @@ const serverLikeApp = () => {
   return app;
 };
 
-const setUp = async (t, { client = fakeClient(), offered = true, scope = 'local', host = {}, carried = false, dataDir = tempDataDir(t), port = 4100, upstream = {} } = {}) => {
+const setUp = async (t, { client = fakeClient(), offered = true, scope = 'local', host = {}, carried = false, dataDir = tempDataDir(t), port = 4100, upstream = {}, now = Date.now } = {}) => {
   const app = serverLikeApp();
   const keys = createSpeechKeys({ dataDir });
   const state = createSpeechState();
@@ -55,7 +55,7 @@ const setUp = async (t, { client = fakeClient(), offered = true, scope = 'local'
     done: async () => { carry.carried = false; },
   };
   const upstreamSettings = { value: upstream, read: async () => upstreamSettings.value };
-  registerSpeechRoutes(app, { express, client, keys, state, offered, requestScope: () => scope, host, port: () => port, carry, upstreamSettings, logger });
+  registerSpeechRoutes(app, { express, client, keys, state, offered, requestScope: () => scope, host, port: () => port, carry, upstreamSettings, logger, now });
   const base = await listen(t, app);
   const send = async (method, route, { body, headers = {}, bearer = keys.current() } = {}) => {
     const init = { method, headers: { ...headers } };
@@ -349,6 +349,21 @@ test('a hosted runtime offers no Mittr speech', async (t) => {
   assert.equal((await send('POST', '/mittr-speech/v1/audio/transcriptions', { body: wavForm() })).status, 404);
   assert.deepEqual(client.calls, { transcribe: [], synthesize: [] });
   assert.equal((await send('GET', '/api/mittr/voice/readiness', { bearer: null })).body.here, false);
+});
+
+test('a dictation key just installed is not taken back before the new choice is saved', async (t) => {
+  const clock = { at: 1_000_000 };
+  const { send, keys, upstreamSettings } = await setUp(t, { upstream: { sttProvider: 'local', sttServerUrl: '' }, now: () => clock.at });
+  assert.equal((await send('PUT', '/api/mittr/speech/key', { body: { stt: true }, bearer: null })).status, 200);
+  clock.at += STT_KEY_SETTLE_MS - 1;
+  assert.equal((await send('GET', '/api/mittr/speech', { bearer: null })).body.installed.stt, true);
+  assert.equal(keys.installed().stt, true);
+  clock.at += 2;
+  assert.equal((await send('GET', '/api/mittr/speech', { bearer: null })).body.installed.stt, false);
+  upstreamSettings.value = { sttProvider: 'openai-compatible', sttServerUrl: 'http://127.0.0.1:4100/mittr-speech/v1' };
+  assert.equal((await send('PUT', '/api/mittr/speech/key', { body: { stt: true }, bearer: null })).status, 200);
+  clock.at += STT_KEY_SETTLE_MS * 2;
+  assert.equal((await send('GET', '/api/mittr/speech', { bearer: null })).body.installed.stt, true);
 });
 
 test('our dictation key is taken back once dictation no longer points at Mittr speech, and a person\'s own key never', async (t) => {
