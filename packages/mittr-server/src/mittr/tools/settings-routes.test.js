@@ -114,6 +114,7 @@ const setUp = async (t, {
 const OFFERED = {
   computer: { offered: true, enabled: true },
   chrome: { offered: true, chromeInstalled: true, enabled: true, profile: null, headed: false, approvedHosts: [] },
+  widgets: { offered: true, enabled: true },
   canChange: true,
 };
 
@@ -123,18 +124,19 @@ test('GET lists what this install offers', async (t) => {
   assert.deepEqual(await (await setUp(t)).call('GET', '/api/mittr/tools'), { status: 200, body: OFFERED });
 
   const hosted = await setUp(t, { personalDesktop: false, stored: { tools: { chromeProfile: 'Default', chromeApprovedHosts: ['jira.acme.test'] } } });
-  assert.deepEqual((await hosted.call('GET', '/api/mittr/tools')).body, { computer: { offered: false, enabled: true }, chrome: NOT_OFFERED_CHROME, canChange: true });
+  assert.deepEqual((await hosted.call('GET', '/api/mittr/tools')).body, { computer: { offered: false, enabled: true }, chrome: NOT_OFFERED_CHROME, widgets: { offered: false, enabled: true }, canChange: true });
 
   const noDrivers = await setUp(t, { computer: null, chrome: null });
-  assert.deepEqual((await noDrivers.call('GET', '/api/mittr/tools')).body, { computer: { offered: false, enabled: true }, chrome: NOT_OFFERED_CHROME, canChange: true });
+  assert.deepEqual((await noDrivers.call('GET', '/api/mittr/tools')).body, { computer: { offered: false, enabled: true }, chrome: NOT_OFFERED_CHROME, widgets: { offered: true, enabled: true }, canChange: true });
 
   const noChrome = await setUp(t, { chromeInstalled: false });
   assert.deepEqual((await noChrome.call('GET', '/api/mittr/tools')).body.chrome, { ...OFFERED.chrome, chromeInstalled: false });
 
-  const stored = await setUp(t, { stored: { tools: { computer: false, chromeProfile: 'Profile 1', chromeHeaded: true, chromeApprovedHosts: ['jira.acme.test'] } } });
+  const stored = await setUp(t, { stored: { tools: { computer: false, chromeProfile: 'Profile 1', chromeHeaded: true, chromeApprovedHosts: ['jira.acme.test'], widgets: false } } });
   assert.deepEqual((await stored.call('GET', '/api/mittr/tools')).body, {
     computer: { offered: true, enabled: false },
     chrome: { ...OFFERED.chrome, profile: 'Profile 1', headed: true, approvedHosts: ['jira.acme.test'] },
+    widgets: { offered: true, enabled: false },
     canChange: true,
   });
 });
@@ -200,6 +202,20 @@ test('PUT changes a switch and refreshes the tools', async (t) => {
   assert.deepEqual((await call('PUT', '/api/mittr/tools', { computer: false, chrome: true })).body.computer, { offered: true, enabled: false });
   assert.deepEqual(pluginTools(), ['mittrcraft_chrome']);
   assert.equal(state.refreshes, 2);
+});
+
+test('PUT turns the widgets switch off, refreshes the tools and tells whoever listens', async (t) => {
+  const { call, state, storedTools, tools } = await setUp(t);
+  const heard = [];
+  tools.onSwitchChange((now) => heard.push(now));
+
+  const answer = await call('PUT', '/api/mittr/tools', { widgets: false });
+
+  assert.deepEqual(answer, { status: 200, body: { ...OFFERED, widgets: { offered: true, enabled: false } } });
+  assert.equal(storedTools().widgets, false);
+  assert.equal(state.refreshes, 1);
+  assert.deepEqual(heard, [{ computer: true, chrome: true, widgets: false }]);
+  assert.deepEqual(await call('PUT', '/api/mittr/tools', { widgets: 'off' }), { status: 400, body: { error: 'Unknown or invalid tool setting: widgets' } });
 });
 
 test('PUT stores a profile only when this Mac\'s Chrome lists it', async (t) => {

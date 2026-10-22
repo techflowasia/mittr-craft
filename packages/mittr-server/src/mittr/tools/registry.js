@@ -9,16 +9,23 @@ export class MittrToolError extends Error {
 
 export const NO_TOOL_NAME = 'MittrCraft tool call without a tool name';
 
-export const MITTR_TOOLS = Object.freeze({ computer: 'mittrcraft_computer', chrome: 'mittrcraft_chrome', work: 'mittrcraft_work' });
+export const MITTR_TOOLS = Object.freeze({ computer: 'mittrcraft_computer', chrome: 'mittrcraft_chrome', work: 'mittrcraft_work', widgets: 'mittrcraft_widgets' });
 
 export const UPSTREAM_SWITCHES = Object.freeze({ control: 'control', web: 'web' });
 
-const THIS_MACHINE_ONLY = new Set([MITTR_TOOLS.computer, MITTR_TOOLS.chrome]);
+const THIS_MACHINE_ONLY = new Set([MITTR_TOOLS.computer, MITTR_TOOLS.chrome, MITTR_TOOLS.widgets]);
 const SCOPED_SURFACES = new Set(['http', 'voice']);
 
 const SURFACES = new Set(['agent', 'voice', 'http']);
 const EFFECTS = new Set(['read', 'change']);
 const ACTION_NAME = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_-]*)+$/;
+
+const surfacesOf = (action, surfaces) => {
+  if (!Array.isArray(surfaces) || surfaces.length === 0 || !surfaces.every((surface) => SURFACES.has(surface))) {
+    throw new Error(`${action} has surfaces that are not a list of agent, voice and http`);
+  }
+  return new Set(surfaces);
+};
 
 const bareName = (action) => {
   const separator = action.indexOf('.');
@@ -45,7 +52,7 @@ export function createMittrActionRegistry({ control, logger = console }) {
     }
   };
 
-  const agentActionsOf = (toolName) => [...actions.values()].filter((entry) => entry.tool === toolName && !entry.voiceOnly);
+  const agentActionsOf = (toolName) => [...actions.values()].filter((entry) => entry.tool === toolName && !entry.voiceOnly && entry.surfaces.has('agent'));
 
   const unknownAction = (requested, toolName) => {
     const known = agentActionsOf(toolName).map(({ action }) => action);
@@ -68,7 +75,7 @@ export function createMittrActionRegistry({ control, logger = console }) {
       tools.set(name, { name, description, parameters });
     },
 
-    register({ action, tool, title, description, effect, voiceOnly = false, switchedBy = tool, available = () => true, execute }) {
+    register({ action, tool, title, description, effect, voiceOnly = false, switchedBy = tool, available = () => true, surfaces = [...SURFACES], execute }) {
       if (!ACTION_NAME.test(action)) throw new Error(`${action} is not a lowercase, dot-separated action name`);
       if (actions.has(action)) throw new Error(`${action} is already registered`);
       if (upstreamActions.has(action)) throw new Error(`${action} is an upstream action`);
@@ -76,7 +83,7 @@ export function createMittrActionRegistry({ control, logger = console }) {
       if (!EFFECTS.has(effect)) throw new Error(`${action} has no effect of read or change`);
       if (!(execute instanceof Function)) throw new Error(`${action} has no execute function`);
       if (!(available instanceof Function)) throw new Error(`${action} has an available that is not a function`);
-      actions.set(action, { action, tool, title, description, effect, voiceOnly: voiceOnly === true, switchedBy, available, execute });
+      actions.set(action, { action, tool, title, description, effect, voiceOnly: voiceOnly === true, switchedBy, available, surfaces: surfacesOf(action, surfaces), execute });
     },
 
     tools() {
@@ -132,6 +139,7 @@ export function createMittrActionRegistry({ control, logger = console }) {
       }
       if (!isAvailable(entry)) throw new MittrToolError(`${entry.title} is not available in this install`, 503);
       if (entry.voiceOnly && surface !== 'voice') throw new MittrToolError(`${entry.title} can only be asked for by voice`, 400);
+      if (!entry.surfaces.has(surface)) throw new MittrToolError(surface === 'voice' ? `${entry.title} can not be asked for by voice` : `${entry.title} is not offered here`, 400);
       if (SCOPED_SURFACES.has(surface) && THIS_MACHINE_ONLY.has(entry.tool) && ctx.scope?.local !== true) {
         throw new MittrToolError(`${entry.title} can only be used from this machine`, 403);
       }

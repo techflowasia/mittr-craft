@@ -13,7 +13,7 @@ const recordingLogger = () => {
 
 const settingsFile = (dataDir) => path.join(dataDir, 'mittr-settings.json');
 
-const DEFAULT_TOOLS = { computer: true, chrome: true, chromeProfile: null, chromeHeaded: false, chromeApprovedHosts: [] };
+const DEFAULT_TOOLS = { computer: true, chrome: true, chromeProfile: null, chromeHeaded: false, chromeApprovedHosts: [], widgets: true };
 const DEFAULT_VOICE = { stepCap: 8, replyMaxChars: 8000 };
 const stored = (showOtherProviders, tools = DEFAULT_TOOLS, voice = DEFAULT_VOICE) => ({ showOtherProviders, tools, voice });
 
@@ -122,6 +122,19 @@ test('tools read as 1.22 defaults, and each invalid field reads as its default',
   }
 });
 
+test('the widgets switch is on unless stored exactly false, and takes only true or false', async (t) => {
+  const dataDir = tempDataDir(t);
+  const settings = createMittrSettings({ dataDir, logger: recordingLogger() });
+  for (const [widgets, read] of [[false, false], [true, true], ['no', true], [0, true], [null, true]]) {
+    fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ tools: { widgets } }));
+    assert.equal((await settings.read()).tools.widgets, read, JSON.stringify(widgets));
+  }
+  fs.rmSync(settingsFile(dataDir));
+  assert.equal((await settings.update({ tools: { widgets: false } })).tools.widgets, false);
+  assert.equal(JSON.parse(fs.readFileSync(settingsFile(dataDir), 'utf8')).tools.widgets, false);
+  await assert.rejects(settings.update({ tools: { widgets: 'off' } }), /Unknown or invalid tool setting: widgets/);
+});
+
 test('a bad host in the stored list is dropped on read', async (t) => {
   const dataDir = tempDataDir(t);
   fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ tools: { chromeApprovedHosts: ['Docs.Example.Test', 'docs.example.test', 'bad host', 'a.test:8080', 'evil.test/path', 7, null, 'ok-1.test', '[2001:DB8::1]', '2001:db8::1', '[::1]:8080', '[fe80::1%en0]', '[]'] } }));
@@ -200,7 +213,7 @@ test('1.22 tool settings parked under mittr are carried once', async (t) => {
   });
   const before = fs.readFileSync(parked, 'utf8');
   const settings = createMittrSettings({ dataDir, logger: recordingLogger() });
-  const carried = { computer: false, chrome: true, chromeProfile: 'Profile 2', chromeHeaded: true, chromeApprovedHosts: ['jira.example.test'] };
+  const carried = { computer: false, chrome: true, chromeProfile: 'Profile 2', chromeHeaded: true, chromeApprovedHosts: ['jira.example.test'], widgets: true };
   assert.deepEqual(await settings.carryParkedToolSettings(), carried);
   assert.deepEqual(await settings.read(), stored(false, carried));
   assert.equal(await settings.carryParkedToolSettings(), null, 'a second carry finds tools stored and does nothing');

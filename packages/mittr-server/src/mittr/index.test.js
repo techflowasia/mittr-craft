@@ -2323,7 +2323,7 @@ test('the tools plugin is loaded after the identity plugin, and turning Chrome o
   assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer', 'mittrcraft_chrome']);
   const before = engine.refreshes.length;
 
-  assert.deepEqual(await mittr.tools.applySwitches({ chrome: false }), { computer: true, chrome: false });
+  assert.deepEqual(await mittr.tools.applySwitches({ chrome: false }), { computer: true, chrome: false, widgets: true });
 
   assert.equal(engine.refreshes.length, before + 1);
   assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer']);
