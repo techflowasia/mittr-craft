@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -31,28 +32,101 @@ const modeOf = (stateDir) => {
   }
 };
 
+const without = (argv, flag) => {
+  const at = argv.indexOf(flag);
+  return at === -1 ? { value: null, rest: argv } : { value: argv[at + 1], rest: argv.filter((_, index) => index !== at && index !== at + 1) };
+};
+
+const parsed = (raw) => {
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return { unparsed: String(raw) };
+  }
+};
+
+const record = (stateDir, entry) => fs.appendFileSync(path.join(stateDir, 'calls.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`);
+
+const reply = (tool, args, stateDir) => {
+  const mode = modeOf(stateDir);
+  record(stateDir, { tool, args, mode });
+  try {
+    return { ok: true, result: answer(tool, args, { mode }) };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+};
+
+const ask = (socketPath, request, answered) => {
+  const socket = net.connect({ path: socketPath });
+  let buffer = '';
+  socket.on('error', () => {
+    process.stderr.write(`Cua Driver daemon is not running on ${socketPath}.\nStart it first with: cua-driver serve --socket ${socketPath}\n`);
+    process.exitCode = 1;
+  });
+  socket.on('connect', () => socket.write(`${JSON.stringify(request)}\n`));
+  socket.on('data', (chunk) => {
+    buffer += chunk;
+  });
+  socket.on('end', () => answered(JSON.parse(buffer)));
+};
+
+const serve = (socketPath, stateDir) => {
+  record(stateDir, { daemon: 'serve', socketPath, telemetry: process.env.CUA_DRIVER_RS_TELEMETRY_ENABLED ?? null });
+  fs.rmSync(socketPath, { force: true });
+  const server = net.createServer((socket) => {
+    let buffer = '';
+    socket.on('data', (chunk) => {
+      buffer += chunk;
+      const end = buffer.indexOf('\n');
+      if (end === -1) return;
+      const request = JSON.parse(buffer.slice(0, end));
+      if (request.method === 'shutdown') {
+        socket.end(JSON.stringify({ ok: true }));
+        server.close();
+        fs.rmSync(socketPath, { force: true });
+        setImmediate(() => process.exit(0));
+        return;
+      }
+      socket.end(JSON.stringify(reply(request.name, request.args ?? {}, stateDir)));
+    });
+  });
+  server.listen(socketPath);
+};
+
 const main = () => {
   const argv = process.argv.slice(2);
   if (argv[0] === '--version') {
     process.stdout.write(`${STUB_VERSION}\n`);
     return;
   }
-  const stateAt = argv.indexOf('--state');
-  const stateDir = stateAt === -1 ? process.cwd() : argv[stateAt + 1];
-  const rest = stateAt === -1 ? argv : argv.filter((_, index) => index !== stateAt && index !== stateAt + 1);
-  const [tool, raw] = rest;
-  let args = {};
-  try {
-    args = raw ? JSON.parse(raw) : {};
-  } catch {
-    args = { unparsed: String(raw) };
+  const state = without(argv, '--state');
+  const stateDir = state.value ?? process.cwd();
+  const socket = without(state.rest, '--socket');
+  const [command, ...rest] = socket.rest;
+  if (socket.value && command === 'serve') {
+    serve(socket.value, stateDir);
+    return;
   }
-  const mode = modeOf(stateDir);
-  fs.appendFileSync(path.join(stateDir, 'calls.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), tool, args, mode })}\n`);
-  try {
-    process.stdout.write(`${JSON.stringify(answer(tool, args, { mode }))}\n`);
-  } catch (error) {
-    process.stderr.write(`${error.message}\n`);
+  if (socket.value && command === 'stop') {
+    ask(socket.value, { method: 'shutdown' }, () => {});
+    return;
+  }
+  if (socket.value && command === 'call') {
+    ask(socket.value, { method: 'call', name: rest[0], args: parsed(rest[1]) }, (response) => {
+      if (response.ok) process.stdout.write(`${JSON.stringify(response.result)}\n`);
+      else {
+        process.stderr.write(`${response.error}\n`);
+        process.exitCode = 1;
+      }
+    });
+    return;
+  }
+  const [tool, raw] = socket.rest;
+  const { ok, result, error } = reply(tool, parsed(raw), stateDir);
+  if (ok) process.stdout.write(`${JSON.stringify(result)}\n`);
+  else {
+    process.stderr.write(`${error}\n`);
     process.exitCode = 1;
   }
 };

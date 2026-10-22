@@ -49,3 +49,27 @@ test('the executable records each call with its arguments and prints JSON', asyn
   const version = await run(['--version']);
   assert.equal(version.stdout.trim(), 'cua-driver 0.28.2-stub');
 });
+
+test('the executable also runs as a daemon on the socket it is given and answers calls and a stop through it', async () => {
+  const dir = stateDir();
+  const socketPath = path.join(dir, 'd.sock');
+  const daemon = execFile(process.execPath, [SCRIPT, '--state', dir, 'serve', '--socket', socketPath], { env: { ...process.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: '0' } });
+  const exited = new Promise((resolve) => daemon.once('exit', resolve));
+  const deadline = Date.now() + 5000;
+  while (!fs.existsSync(socketPath) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+  const listed = await run(['--state', dir, 'call', 'list_apps', '{}', '--socket', socketPath]);
+  assert.equal(listed.code, 0);
+  assert.equal(JSON.parse(listed.stdout).apps.length, 3);
+  fs.writeFileSync(path.join(dir, 'mode'), 'screen-recording-error\n');
+  const refused = await run(['--state', dir, 'call', 'get_desktop_state', '{}', '--socket', socketPath]);
+  assert.equal(refused.code, 1);
+  assert.match(refused.stderr, /Screen Recording is NOT granted/);
+  assert.equal((await run(['--state', dir, 'stop', '--socket', socketPath])).code, 0);
+  assert.equal(await exited, 0);
+  const gone = await run(['--state', dir, 'call', 'list_apps', '{}', '--socket', socketPath]);
+  assert.equal(gone.code, 1);
+  assert.match(gone.stderr, new RegExp(`daemon is not running on ${socketPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  const calls = fs.readFileSync(path.join(dir, 'calls.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(calls.map((entry) => entry.daemon ?? entry.tool), ['serve', 'list_apps', 'get_desktop_state']);
+  assert.equal(calls[0].telemetry, '0');
+});
