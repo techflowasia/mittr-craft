@@ -745,4 +745,19 @@ UPSTREAM_CONTRACT.push(
     files: ['packages/web/server/lib/tts/base-url.js'],
     why: 'normalizeCustomOpenAIBaseURL accepts http://127.0.0.1:<port>/mittr-speech/v1 on every runtime, enterprise mode included',
   },
+  {
+    id: 'control-voice-actions',
+    files: ['packages/web/server/lib/openchamber-control/actions.js'],
+    why: 'every upstream action the voice assistant offers is still one of the agent tool\'s control or web actions',
+  },
+  {
+    id: 'control-voice-parameters',
+    files: ['packages/web/server/lib/agent-tool/runtime.js'],
+    why: 'every control and web parameter the voice assistant offers is still an input of upstream\'s generated control or web tool, and the work tool\'s inputs are the MittrCraft work tool\'s',
+  },
+  {
+    id: 'engine-voice-reads',
+    files: ['packages/electron/package.json', 'scripts/mittr/probe-engine-v2.mjs'],
+    why: 'the bundled engine (2.0.22, probe P19 to P24) answers GET /api/session/:id with model { providerID, id, variant }, /api/session/:id/permission and /api/session/:id/message with the agent on assistant records, all scoped by x-opencode-directory, and has no todo route',
+  },
 );

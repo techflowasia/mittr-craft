@@ -2047,6 +2047,40 @@ const voiceServerChecks = {
     has(baseUrl, /'127\.0\.0\.1',/, 'loopback is no longer an allowed local speech host');
     has(baseUrl, /if \(isEnterpriseMode\(\) && !isAllowedLocalHost\(parsed\.hostname\)\)/, 'enterprise mode no longer keeps a local speech host');
   },
+
+  'control-voice-actions': async () => {
+    const { VOICE_UPSTREAM_ACTIONS } = await import('./mittr/voice/tools.js');
+    const { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } = await importUpstream('packages/web/server/lib/openchamber-control/actions.js');
+    const upstream = new Set([...OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, ...OPENCHAMBER_WEB_ACTION_DEFINITIONS].map(({ action }) => action));
+    assert.deepEqual(VOICE_UPSTREAM_ACTIONS.filter((action) => !upstream.has(action)), []);
+  },
+
+  'control-voice-parameters': async (t) => {
+    const { CONTROL_PARAMETER_PROPERTIES, WEB_PARAMETER_PROPERTIES } = await import('./mittr/voice/parameters.js');
+    const { createAgentToolRuntime } = await importUpstream('packages/web/server/lib/agent-tool/runtime.js');
+    const dataDir = tempDir(t, 'contract-agent-tool-');
+    const runtime = createAgentToolRuntime({ crypto, fsPromises: fs.promises, path, dataDir, getActivePort: () => 1, executeAction: async () => ({}), resolveSessionDirectory: async () => null });
+    const dir = await runtime.materializePlugin({ includeControl: true, includeWeb: true, includeMemory: false, includeNotify: false });
+    const plugin = (await import(pathToFileURL(path.join(dir, 'index.js')).href)).default;
+    const added = [];
+    await plugin.setup({ tool: { transform: async (fn) => fn({ add: (tool) => added.push(tool), get: () => undefined, update: () => {} }) } });
+    const inputsOf = (name) => Object.keys(added.find((tool) => tool.name === name)?.input?.properties?.parameters?.properties ?? {});
+    const control = inputsOf('openchamber');
+    const web = inputsOf('openchamber_web');
+    assert.ok(control.length > 0 && web.length > 0, 'upstream\'s plugin no longer adds the control and web tools');
+    assert.deepEqual(Object.keys(CONTROL_PARAMETER_PROPERTIES).filter((name) => !control.includes(name)), []);
+    assert.deepEqual(Object.keys(WEB_PARAMETER_PROPERTIES).filter((name) => !web.includes(name)), []);
+    const work = source('packages/mittr-server/src/mittr/tools/work-lookup.js');
+    has(work, /const WORK_TOOL_PARAMETERS = Object\.freeze\(\{\s*key: /, 'the work tool no longer takes key');
+    has(work, /\bref: \{ type: 'string'/, 'the work tool no longer takes ref');
+  },
+
+  'engine-voice-reads': () => {
+    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
+    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe-engine-v2.mjs --only voice (P19 to P24) again, then the voice session lookup and this pin');
+    const probe = source('scripts/mittr/probe-engine-v2.mjs');
+    for (const route of ['/permission', 'message.list(', '/interrupt', '/todo']) assert.ok(probe.includes(route), `the voice probe no longer reads ${route}`);
+  },
 };
 Object.assign(checks, voiceServerChecks);
 
