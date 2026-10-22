@@ -142,11 +142,11 @@ describe('MittrCraft voice settings controller', () => {
     expect(calls).toEqual(['stopDictation', 'stopReadAloud']);
   });
 
-  test('a switch whose key could not be stored is taken back and says so', async () => {
+  test('a switch whose key could not be stored says so and leaves the taking back to the choice itself', async () => {
     const { controller, calls, ready } = setup({ speechResult: false });
     await ready();
     expect(await controller.setReadAloud(true)).toEqual({ tone: 'error', text: mittrT('mittr.voice.settings.errors.switchFailed') });
-    expect(calls).toEqual([`chooseReadAloud ${BASE_URL}`, 'stopReadAloud']);
+    expect(calls).toEqual([`chooseReadAloud ${BASE_URL}`]);
   });
 
   test('a limit is shown at once, saved, then replaced by what the server stored', async () => {

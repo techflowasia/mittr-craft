@@ -44,8 +44,12 @@ function fakeConfig(initial: Partial<Settings> = {}) {
   const config = (): SpeechConfig => ({
     sttProvider: settings.sttProvider,
     sttServerUrl: settings.sttServerUrl,
+    sttModel: settings.sttModel,
     voiceProvider: settings.voiceProvider,
     openaiCompatibleUrl: settings.openaiCompatibleUrl,
+    openaiCompatibleTtsModel: settings.openaiCompatibleTtsModel,
+    openaiCompatibleVoice: settings.openaiCompatibleVoice,
+    ttsChunkedMode: settings.ttsChunkedMode,
     setSttProvider: (value) => {
       writes.push(`sttProvider=${value}`);
       settings.sttProvider = value;
@@ -169,6 +173,26 @@ describe('choosing and stopping Mittr speech', () => {
     const fake = fakeConfig();
     const net = recordingFetch(() => new Response(JSON.stringify({ error: 'These settings can be changed only on this Mac' }), { status: 403 }));
     expect(await createUpstreamSpeech({ config: fake.config, fetch: net.fetch }).chooseMittrDictation(BASE_URL)).toBe(false);
+  });
+
+  test('a choice whose key would not install puts back the provider the person had before', async () => {
+    const own = {
+      sttProvider: 'openai-compatible',
+      sttServerUrl: 'https://stt.example.test/v1',
+      sttModel: 'whisper-1',
+      voiceProvider: 'say',
+      openaiCompatibleUrl: 'https://tts.example.test/v1',
+      openaiCompatibleTtsModel: 'tts-1',
+      openaiCompatibleVoice: 'alloy',
+      ttsChunkedMode: false,
+    } satisfies Partial<Settings>;
+    const fake = fakeConfig(own);
+    const refused = recordingFetch(() => new Response(JSON.stringify({ error: 'The speech key could not be saved' }), { status: 500 }));
+    const speech = createUpstreamSpeech({ config: fake.config, fetch: refused.fetch });
+    expect(await speech.chooseMittrDictation(BASE_URL)).toBe(false);
+    expect(await speech.chooseMittrReadAloud(BASE_URL)).toBe(false);
+    expect({ ...fake.settings }).toEqual({ ...UPSTREAM_DEFAULTS, ...own });
+    expect(fake.refreshes()).toBe(2);
   });
 });
 

@@ -107,7 +107,6 @@ export function createVoiceSettingsController(deps: VoiceSettingsDeps): VoiceSet
       done = false;
     }
     if (done) return null;
-    if (on) await stop().catch(() => false);
     void load();
     return failed;
   };

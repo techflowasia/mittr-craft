@@ -22,8 +22,12 @@ export type SpeechConfig = Pick<
   ConfigState,
   | 'sttProvider'
   | 'sttServerUrl'
+  | 'sttModel'
   | 'voiceProvider'
   | 'openaiCompatibleUrl'
+  | 'openaiCompatibleTtsModel'
+  | 'openaiCompatibleVoice'
+  | 'ttsChunkedMode'
   | 'setSttProvider'
   | 'setSttServerUrl'
   | 'setSttModel'
@@ -118,22 +122,42 @@ export function createUpstreamSpeech(deps: UpstreamSpeechDeps) {
 
   const chooseMittrDictation = async (baseUrl: string): Promise<boolean> => {
     const config = deps.config();
+    const before = { provider: config.sttProvider, url: config.sttServerUrl, model: config.sttModel };
     config.setSttProvider('openai-compatible');
     config.setSttServerUrl(baseUrl);
     config.setSttModel(MITTR_SPEECH_MODEL);
     const installed = await putKey('stt', true);
+    if (!installed) {
+      config.setSttProvider(before.provider);
+      config.setSttServerUrl(before.url);
+      config.setSttModel(before.model);
+    }
     await refreshKeys();
     return installed;
   };
 
   const chooseMittrReadAloud = async (baseUrl: string): Promise<boolean> => {
     const config = deps.config();
+    const before = {
+      provider: config.voiceProvider,
+      url: config.openaiCompatibleUrl,
+      model: config.openaiCompatibleTtsModel,
+      voice: config.openaiCompatibleVoice,
+      chunked: config.ttsChunkedMode,
+    };
     config.setVoiceProvider('openai-compatible');
     config.setOpenaiCompatibleUrl(baseUrl);
     config.setOpenaiCompatibleTtsModel(MITTR_SPEECH_MODEL);
     config.setOpenaiCompatibleVoice(MITTR_SPEECH_VOICE);
     config.setTtsChunkedMode(true);
     const installed = await putKey('openaiCompatible', true);
+    if (!installed) {
+      config.setVoiceProvider(before.provider);
+      config.setOpenaiCompatibleUrl(before.url);
+      config.setOpenaiCompatibleTtsModel(before.model);
+      config.setOpenaiCompatibleVoice(before.voice);
+      config.setTtsChunkedMode(before.chunked);
+    }
     await refreshKeys();
     return installed;
   };
