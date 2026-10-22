@@ -1,6 +1,7 @@
 import { createEngineCall } from '../tools/chrome-approvals.js';
 import { MITTR_TOOLS, MittrToolError, UPSTREAM_SWITCHES } from '../tools/registry.js';
 import { trimmedText } from '../values.js';
+import { clampSpeech } from './audio.js';
 import { VOICE_ACTION_DEFINITIONS, VOICE_TOOL_DESCRIPTION } from './descriptions.js';
 import { speakable } from './speakable.js';
 import { VOICE_SESSION_ID, VOICE_TOOLS } from './tools.js';
@@ -54,7 +55,7 @@ export function registerVoiceActions(registry, { control, engine, chrome, conver
       if (!trimmedText(latest?.text)) return { sessionId, directory, text: null, truncated: false };
       const { voice } = await settings.read();
       const spoken = speakable(latest.text);
-      return { sessionId, directory, text: spoken.slice(0, voice.replyMaxChars), truncated: spoken.length > voice.replyMaxChars };
+      return { sessionId, directory, text: clampSpeech(spoken, voice.replyMaxChars), truncated: spoken.length > voice.replyMaxChars };
     },
   });
 
