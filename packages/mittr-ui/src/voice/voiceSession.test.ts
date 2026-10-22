@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
 import { ListenError, type ConversationListenOptions, type StartConversationListening } from './listen';
-import { resetSpokenLanguage, spokenText } from './narration';
+import { noteUtterance, spokenText } from './narration';
 import type { AudioPlayer } from './player';
 import {
   SynthesizeError,
@@ -212,7 +212,9 @@ async function say(h: Harness) {
   await flush();
 }
 
-afterEach(() => resetSpokenLanguage());
+afterEach(() => {
+  noteUtterance('');
+});
 
 describe('VoiceSession turn loop', () => {
   test('listens with the voice silence and sends what was said with the open directory and session', async () => {

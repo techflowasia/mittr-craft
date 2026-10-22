@@ -4,15 +4,11 @@ import { isStillBlocked, nextWeeklyReset } from './week';
 
 export type SpeechQuotaKind = 'stt' | 'tts';
 
-export type SpeechUsageLine = { kind: string; used: number; limit: number };
-
 export interface SpeechQuotaState {
   owner: string | null;
   stt: string | null;
   tts: string | null;
 }
-
-const SPEECH_KINDS: readonly SpeechQuotaKind[] = ['stt', 'tts'];
 
 const EMPTY: SpeechQuotaState = { owner: null, stt: null, tts: null };
 
@@ -47,11 +43,6 @@ export const speechQuotaStore = {
   },
   clear(kind: SpeechQuotaKind): void {
     write(kind === 'stt' ? { ...state, stt: null } : { ...state, tts: null });
-  },
-  reconcile(lines: readonly SpeechUsageLine[]): void {
-    for (const kind of SPEECH_KINDS) {
-      if (lines.some((line) => line.kind === kind && line.used < line.limit)) speechQuotaStore.clear(kind);
-    }
   },
 };
 

@@ -7,14 +7,14 @@ import {
   createNarrationWatch,
   endingOf,
   noteUtterance,
-  resetSpokenLanguage,
-  spokenLanguage,
   spokenLanguageOf,
   spokenText,
   type SessionObservation,
 } from './narration';
 
-afterEach(() => resetSpokenLanguage());
+afterEach(() => {
+  noteUtterance('');
+});
 
 const view = (patch: Partial<SessionObservation> = {}): SessionObservation => ({
   sessionId: 's1',
@@ -34,11 +34,11 @@ describe('spoken language', () => {
   });
 
   test('follows the last utterance and starts in English', () => {
-    expect(spokenLanguage()).toBe('en');
-    noteUtterance('เปิด Chrome ให้หน่อย');
-    expect(spokenLanguage()).toBe('th');
-    noteUtterance('thanks');
-    expect(spokenLanguage()).toBe('en');
+    expect(spokenText('stopped')).toBe('The work has stopped.');
+    expect(noteUtterance('เปิด Chrome ให้หน่อย')).toBe('th');
+    expect(spokenText('stopped')).toBe('งานหยุดแล้ว');
+    expect(noteUtterance('thanks')).toBe('en');
+    expect(spokenText('stopped')).toBe('The work has stopped.');
   });
 
   test('each narration is one sentence in the language of the last utterance', () => {

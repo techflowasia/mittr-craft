@@ -41,14 +41,6 @@ export function noteUtterance(text: string): SpokenLanguage {
   return lastLanguage;
 }
 
-export function spokenLanguage(): SpokenLanguage {
-  return lastLanguage;
-}
-
-export function resetSpokenLanguage(): void {
-  lastLanguage = 'en';
-}
-
 export function spokenText(key: SpokenKey, language: SpokenLanguage = lastLanguage): string {
   return SPOKEN[language][key];
 }
