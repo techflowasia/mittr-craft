@@ -1970,6 +1970,83 @@ const voiceServerChecks = {
     has(template, /await progress\(\)\s*\n\s*const endpoint = process\.env\.OPENCHAMBER_AGENT_TOOL_URL/, 'the agent tool template no longer reports progress before its callback');
     has(template, /await progress\(\{ ok: valid && result\.ok === true \}\)/, 'the agent tool template no longer reports progress with ok after its callback');
   },
+
+  'dictation-openai-compatible': () => {
+    const service = source('packages/web/server/lib/dictation/service.js');
+    has(service, /options\.provider === 'openai-compatible' \? 'openai-compatible'/, 'dictation no longer has the openai-compatible provider');
+    has(service, /const config = options\.openaiCompatible \|\| \{\}/, 'dictation no longer reads options.openaiCompatible');
+    has(service, /baseURL: config\.baseUrl,\s*model: config\.model,/, 'dictation no longer passes the base URL and model through');
+    has(service, /apiKey: config\.apiKey \|\| readVoiceKey\('stt'\)/, 'dictation no longer fills its key from the stored stt key');
+    const session = source('packages/web/server/lib/dictation/openai-compatible-session.js');
+    has(session, /const OPENAI_COMPATIBLE_SAMPLE_RATE = 16000;/, 'the openai-compatible session no longer works at 16 kHz');
+    has(session, /pcm16ToWav\(committedPcm16, OPENAI_COMPATIBLE_SAMPLE_RATE\)/, 'the openai-compatible session no longer wraps its audio as WAV');
+    has(session, /mimeType: 'audio\/wav'/, 'the openai-compatible session no longer sends audio/wav');
+    has(session, /import \{ transcribeAudio \} from '\.\.\/tts\/stt\.js';/, 'the openai-compatible session no longer posts through tts/stt.js');
+    const stt = source('packages/web/server/lib/tts/stt.js');
+    has(stt, /client\.audio\.transcriptions\.create\(\{\s*file,\s*model,\s*response_format: 'json',/, 'tts/stt.js no longer posts file, model and response_format json');
+  },
+
+  'tts-openai-compatible': () => {
+    const routes = source('packages/web/server/lib/tts/routes.js');
+    has(routes, /app\.post\('\/api\/tts\/speak'/, '/api/tts/speak is gone');
+    has(routes, /const \{ text, voice = 'nova', model = 'gpt-4o-mini-tts', speed = 0\.9, instructions, providerId, modelId, apiKey, baseURL \} = req\.body \|\| \{\};/, '/api/tts/speak no longer takes baseURL');
+    has(routes, /readVoiceKey\(hasCustomBaseURL \? 'openaiCompatible' : 'openai'\)/, '/api/tts/speak no longer fills a custom server\'s key from the stored openaiCompatible key');
+    has(routes, /res\.setHeader\('Content-Type', result\.contentType\);/, '/api/tts/speak no longer answers with the speech server\'s content type');
+    const service = source('packages/web/server/lib/tts/service.js');
+    has(service, /const contentType = response\.headers\.get\('content-type'\) \?\? 'audio\/mpeg';/, 'the TTS service no longer keeps the content type the server gave');
+  },
+
+  'voice-keys-file': (t) => {
+    const index = source('packages/web/server/index.js');
+    has(index, /const OPENCHAMBER_USER_CONFIG_ROOT = process\.env\.OPENCHAMBER_DATA_DIR\s*\?\s*path\.resolve\(process\.env\.OPENCHAMBER_DATA_DIR\)/, 'the server data dir no longer comes from OPENCHAMBER_DATA_DIR');
+    has(index, /const OPENCHAMBER_DATA_DIR = OPENCHAMBER_USER_CONFIG_ROOT;/, 'the server data dir moved');
+    has(index, /dataDir: OPENCHAMBER_DATA_DIR,/, 'the plugin context no longer names the server data dir');
+    const keys = source('packages/web/server/lib/tts/voice-keys.js');
+    has(keys, /const VOICE_KEY_KINDS = \['openai', 'openaiCompatible', 'stt'\];/, 'the voice key kinds changed');
+    has(keys, /const storedKey = z\.string\(\)\.trim\(\)\.min\(1\)\.max\(1024\);/, 'a stored voice key is no longer 1 to 1024 characters');
+    has(keys, /path\.resolve\(process\.env\.OPENCHAMBER_DATA_DIR\)/, 'the voice keys no longer follow OPENCHAMBER_DATA_DIR');
+    has(keys, /path\.join\(resolveDataDir\(\), 'voice-keys\.json'\)/, 'the voice keys file moved');
+
+    const dataDir = tempDir(t, 'contract-voice-keys-');
+    const script = `
+      const { createSpeechKeys } = await import(process.env.CONTRACT_OURS_URL);
+      const { readVoiceKey, describeVoiceKeys } = await import(process.env.CONTRACT_UPSTREAM_URL);
+      const keys = createSpeechKeys({ dataDir: process.env.OPENCHAMBER_DATA_DIR });
+      keys.install(['stt', 'openaiCompatible']);
+      console.log(JSON.stringify({ stt: readVoiceKey('stt') === keys.current(), openaiCompatible: readVoiceKey('openaiCompatible') === keys.current(), described: describeVoiceKeys() }));
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        OPENCHAMBER_DATA_DIR: dataDir,
+        CONTRACT_OURS_URL: pathToFileURL(path.join(repoRoot, 'packages/mittr-server/src/mittr/voice/speech-key.js')).href,
+        CONTRACT_UPSTREAM_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/tts/voice-keys.js')).href,
+      },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout.trim()), { stt: true, openaiCompatible: true, described: { openai: false, openaiCompatible: true, stt: true } });
+    assert.ok(fs.existsSync(path.join(dataDir, 'voice-keys.json')));
+  },
+
+  'loopback-speech-urls': () => {
+    const url = 'http://127.0.0.1:4100/mittr-speech/v1';
+    const script = `
+      const { normalizeCustomOpenAIBaseURL } = await import(process.env.CONTRACT_BASE_URL);
+      console.log(JSON.stringify(normalizeCustomOpenAIBaseURL(${JSON.stringify(url)})));
+    `;
+    const base = { ...process.env, CONTRACT_BASE_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/tts/base-url.js')).href };
+    delete base.OPENCHAMBER_RUNTIME;
+    delete base.OPENCHAMBER_ALLOW_REMOTE_OPENAI_COMPAT_URLS;
+    for (const extra of [{}, { OPENCHAMBER_RUNTIME: 'desktop' }, { OPENCHAMBER_RUNTIME: 'web' }, { OPENCHAMBER_ALLOW_REMOTE_OPENAI_COMPAT_URLS: 'false' }]) {
+      const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: { ...base, ...extra } });
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout.trim()), { value: url }, JSON.stringify(extra));
+    }
+    const baseUrl = source('packages/web/server/lib/tts/base-url.js');
+    has(baseUrl, /'127\.0\.0\.1',/, 'loopback is no longer an allowed local speech host');
+    has(baseUrl, /if \(isEnterpriseMode\(\) && !isAllowedLocalHost\(parsed\.hostname\)\)/, 'enterprise mode no longer keeps a local speech host');
+  },
 };
 Object.assign(checks, voiceServerChecks);
 

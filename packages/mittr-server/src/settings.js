@@ -63,6 +63,7 @@ export const MITTR_SETTINGS_KEYS = Object.freeze(
 const SETTINGS_FILE = 'settings.json';
 const MARKER_FILE = '.pre-2x-settings-done';
 const PARKED = 'mittr';
+const CARRIED_DICTATION = Object.freeze({ key: 'sttProvider', value: 'mittr' });
 
 // 1.x renamed upstream's names to its own; reversing the spelling gives the
 // name upstream reads.
@@ -118,6 +119,11 @@ const convert = (settings, { upstreamKeys, mittrKeys }) => {
   const moved = [];
   for (const [key, value] of Object.entries(settings)) {
     if (key === PARKED && isPlainObject(value)) continue;
+    if (key === CARRIED_DICTATION.key && value === CARRIED_DICTATION.value) {
+      parked[key] = value;
+      moved.push(key);
+      continue;
+    }
     const upstreamName = upstreamNameOf(key);
     if (!upstreamKeys.has(key) && upstreamName !== key && upstreamKeys.has(upstreamName)) {
       renames[upstreamName] = value;

@@ -86,6 +86,7 @@ const storedFieldsOf = (stored) => {
   const fields = {};
   if (Object.hasOwn(stored, 'showOtherProviders')) fields.showOtherProviders = stored.showOtherProviders === true;
   if (Object.hasOwn(stored, 'tools')) fields.tools = toolsOf(stored.tools);
+  if (stored.dictationCarried === true) fields.dictationCarried = true;
   return fields;
 };
 
@@ -166,5 +167,15 @@ export function createMittrSettings({ dataDir, logger = console }) {
     return tools;
   });
 
-  return { read, update, carryParkedToolSettings };
+  const dictationCarryPending = async () => {
+    if ((await readStored()).dictationCarried === true) return false;
+    const parked = await readParked().catch(() => ({}));
+    return parked.sttProvider === 'mittr';
+  };
+
+  const markDictationCarried = () => queued(async () => {
+    await write({ ...storedFieldsOf(await readStored()), dictationCarried: true });
+  });
+
+  return { read, update, carryParkedToolSettings, dictationCarryPending, markDictationCarried };
 }

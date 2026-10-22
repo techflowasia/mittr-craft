@@ -244,3 +244,23 @@ test('a bracketed site is only an IPv6 address in the form a page address gives'
     assert.equal(isHost(host), true, host);
   }
 });
+
+test('a 1.22 Mittr dictation choice is carried once', async (t) => {
+  const dataDir = tempDataDir(t);
+  writeParked(dataDir, { mittr: { sttProvider: 'mittr' } });
+  const settings = createMittrSettings({ dataDir, logger: recordingLogger() });
+  assert.equal(await settings.dictationCarryPending(), true);
+  await settings.update({ showOtherProviders: true });
+  assert.equal(await settings.dictationCarryPending(), true, 'another setting keeps the carry');
+  await settings.markDictationCarried();
+  assert.equal(await settings.dictationCarryPending(), false);
+  await settings.update({ tools: { chrome: false } });
+  const nextStart = createMittrSettings({ dataDir, logger: recordingLogger() });
+  assert.equal(await nextStart.dictationCarryPending(), false);
+  assert.equal((await nextStart.read()).showOtherProviders, true);
+
+  const none = tempDataDir(t);
+  writeParked(none, { mittr: { sttProvider: 'local' } });
+  assert.equal(await createMittrSettings({ dataDir: none, logger: recordingLogger() }).dictationCarryPending(), false);
+  assert.equal(await createMittrSettings({ dataDir: tempDataDir(t), logger: recordingLogger() }).dictationCarryPending(), false);
+});

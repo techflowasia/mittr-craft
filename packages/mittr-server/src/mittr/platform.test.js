@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { ACCOUNT_CHANGED, BROWSER_STEP_TIMEOUT_MS, CANNOT_REACH_MITTR, PLATFORM_CANCELLED, PLATFORM_TIMED_OUT, PLATFORM_TIMEOUT_MS, READ_FAILED, callPlatform, isTimeout, platformErrorText } from './platform.js';
+import { ACCOUNT_CHANGED, BROWSER_STEP_TIMEOUT_MS, CANNOT_REACH_MITTR, PLATFORM_CANCELLED, PLATFORM_TIMED_OUT, PLATFORM_TIMEOUT_MS, READ_FAILED, SPEECH_READINESS_TIMEOUT_MS, SPEECH_TIMEOUT_MS, VOICE_STEP_TIMEOUT_MS, callPlatform, isTimeout, platformErrorText } from './platform.js';
 import { fakeFetch, json } from './test-helpers.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -13,7 +13,11 @@ const sourceOf = (name) => fs.readFileSync(path.join(here, name), 'utf8');
 const PLATFORM_CALLERS = ['auth-routes.js', 'audit-routes.js', 'catalog-routes.js', 'quota-service.js'];
 const SHARED_CALLERS = ['work-routes.js', 'integrations-routes.js', 'tools/browser-stepper.js', 'tools/work-lookup.js'];
 
-const productionModules = () => ['', 'tools'].flatMap((folder) => fs.readdirSync(path.join(here, folder))
+const STREAMING_CALLERS = {
+  'voice/speech-client.js': ['SPEECH_READINESS_TIMEOUT_MS', 'SPEECH_TIMEOUT_MS'],
+};
+
+const productionModules = () => ['', 'tools', 'voice'].flatMap((folder) => fs.readdirSync(path.join(here, folder))
   .filter((name) => name.endsWith('.js') && !name.endsWith('.test.js') && name !== 'test-helpers.js')
   .map((name) => path.posix.join(folder, name)));
 
@@ -123,5 +127,24 @@ test('no module defines its own platform timeout or platform messages', () => {
     assert.doesNotMatch(source, /(?:const|let)\s+(?:UNREACHABLE|READ_FAILED)\s*=/, `${name} defines a platform message`);
     assert.equal(source.includes('Cannot reach Mittr'), false, `${name} spells the unreachable message`);
     assert.equal(source.includes('Could not read this week’s quota'), false, `${name} spells the quota read message`);
+  }
+});
+
+test('the speech and voice platform timeouts', () => {
+  assert.equal(SPEECH_READINESS_TIMEOUT_MS, 10_000);
+  assert.equal(SPEECH_TIMEOUT_MS, 60_000);
+  assert.equal(VOICE_STEP_TIMEOUT_MS, 120_000);
+});
+
+test('every streaming platform caller imports its timeout and uses only it', () => {
+  for (const [name, constants] of Object.entries(STREAMING_CALLERS)) {
+    const source = sourceOf(name);
+    const calls = [...source.matchAll(/AbortSignal\.timeout\(([^)]*)\)/g)].map((match) => match[1].trim());
+    assert.ok(calls.length > 0, `${name} makes a platform call with a timeout`);
+    for (const argument of calls) assert.ok(constants.includes(argument), `${name} passes ${argument}`);
+    for (const constant of constants) {
+      assert.match(source, new RegExp(`import \\{[^}]*\\b${constant}\\b[^}]*\\} from '\\.\\./platform\\.js'`), `${name} imports ${constant}`);
+    }
+    assert.doesNotMatch(source, /\b(?:10_?000|60_?000|120_?000)\b/, `${name} spells a timeout`);
   }
 });

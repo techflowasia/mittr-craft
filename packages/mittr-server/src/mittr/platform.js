@@ -4,6 +4,9 @@ import { isRecord } from './values.js';
 
 export const PLATFORM_TIMEOUT_MS = 15_000;
 export const BROWSER_STEP_TIMEOUT_MS = 30_000;
+export const SPEECH_READINESS_TIMEOUT_MS = 10_000;
+export const SPEECH_TIMEOUT_MS = 60_000;
+export const VOICE_STEP_TIMEOUT_MS = 120_000;
 export const CANNOT_REACH_MITTR = 'Cannot reach Mittr';
 export const PLATFORM_TIMED_OUT = 'Mittr platform request timed out';
 export const READ_FAILED = 'Could not read this week’s quota';

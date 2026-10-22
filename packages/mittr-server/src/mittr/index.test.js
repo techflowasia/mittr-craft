@@ -2443,3 +2443,47 @@ test('an account switch closes every agent Chrome', async (t) => {
 
   await until(() => driver.commands().slice(before).some(({ command }) => command.join(' ') === 'close --all'));
 });
+
+const MITTR_DICTATION = { sttProvider: 'openai-compatible', sttServerUrl: 'http://127.0.0.1:4100/mittr-speech/v1' };
+const voiceKeysOf = (dataDir) => JSON.parse(fs.readFileSync(path.join(dataDir, 'voice-keys.json'), 'utf8'));
+
+test('on this Mac the speech endpoint is offered and this run\'s key replaces the last run\'s, never reaching the engine', async (t) => {
+  const dataDir = tempDataDir(t);
+  fs.writeFileSync(path.join(dataDir, 'voice-keys.json'), JSON.stringify({ stt: `mc_speech_${'0'.repeat(64)}`, openai: 'sk-person-own' }), { mode: 0o600 });
+  const engine = fakeEngineContext();
+  engine.upstreamSettings = MITTR_DICTATION;
+  const { mittr, call } = await setUp(t, { dataDir, engine, host: { secretStore: sealingStore() } });
+  const key = mittr.speech.keys.current();
+  await until(() => voiceKeysOf(dataDir).stt === key);
+  assert.equal(voiceKeysOf(dataDir).openai, 'sk-person-own');
+  assert.deepEqual((await call('GET', '/api/mittr/speech')).body, {
+    offered: true, baseUrl: 'http://127.0.0.1:4100/mittr-speech/v1', model: 'mittr', voice: 'mittr', installed: { stt: true, openaiCompatible: false }, carryDictation: false,
+  });
+  assert.equal(JSON.stringify(mittr.engineEnv()).includes(key), false);
+  const refused = await fetch(`${call.base}/mittr-speech/v1/audio/speech`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${shimKeys.get(dataDir)}` }, body: JSON.stringify({ input: 'hi' }) });
+  assert.equal(refused.status, 401);
+});
+
+test('a hosted runtime offers no Mittr speech and leaves the voice keys alone', async (t) => {
+  const dataDir = tempDataDir(t);
+  const before = JSON.stringify({ stt: `mc_speech_${'0'.repeat(64)}` });
+  fs.writeFileSync(path.join(dataDir, 'voice-keys.json'), before, { mode: 0o600 });
+  const { call } = await setUp(t, { dataDir });
+  assert.equal((await call('GET', '/api/mittr/speech')).body.offered, false);
+  const answer = await fetch(`${call.base}/mittr-speech/v1/audio/speech`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ input: 'hi' }) });
+  assert.equal(answer.status, 404);
+  assert.equal((await call('GET', '/api/mittr/voice/readiness')).body.here, false);
+  assert.equal(fs.readFileSync(path.join(dataDir, 'voice-keys.json'), 'utf8'), before);
+});
+
+test('an account switch clears the speech quota blocks', async (t) => {
+  const fetchImpl = platform({ sessions: [session, sessionB] });
+  const { mittr, call } = await setUp(t, { fetchImpl, host: { secretStore: sealingStore() } });
+  assert.equal((await signIn(call)).status, 200);
+  assert.equal((await signIn(call)).status, 200);
+  mittr.speech.state.block('stt', null);
+  mittr.speech.state.block('tts', null);
+  assert.equal((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' })).status, 200);
+  assert.deepEqual(mittr.speech.state.view().stt, { blockedUntil: null });
+  assert.deepEqual(mittr.speech.state.view().tts, { blockedUntil: null });
+});

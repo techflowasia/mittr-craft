@@ -32,6 +32,10 @@ import { reconcileSkills, skillIdOf } from './skill-reconciler.js';
 import { registerMittrControlRoutes } from './tools/control-routes.js';
 import { setupMittrTools } from './tools/index.js';
 import { createMittrActionRegistry } from './tools/registry.js';
+import { createMittrSpeechClient } from './voice/speech-client.js';
+import { createSpeechKeys } from './voice/speech-key.js';
+import { registerSpeechRoutes } from './voice/speech-routes.js';
+import { createSpeechState } from './voice/speech-state.js';
 import { registerMittrWorkRoutes } from './work-routes.js';
 
 const SIGNED_IN_EVENT = 'mittrcraft:signed-in';
@@ -299,6 +303,7 @@ export function setupMittr(context, {
       shim?.abortInFlight();
       answeredByLog.clear();
       audit?.clear();
+      speech.state.clearAll();
       void tools.accountChanged();
       return switcher.switchTo(nextUserId);
     },
@@ -398,6 +403,31 @@ export function setupMittr(context, {
     drivers: toolDrivers,
     logger,
   });
+  const speechOffered = Boolean(host);
+  const speech = {
+    client: createMittrSpeechClient({ broker, ensureFreshSession, fetchImpl, activeAccountKey }),
+    keys: createSpeechKeys({ dataDir }),
+    state: createSpeechState({ now }),
+  };
+  const speechRoutes = registerSpeechRoutes(app, {
+    express,
+    ...speech,
+    offered: speechOffered,
+    requestScope,
+    host,
+    port: () => server.port(),
+    carry: { pending: () => mittrSettings.dictationCarryPending(), done: () => mittrSettings.markDictationCarried() },
+    upstreamSettings: context.settings,
+    logger,
+  });
+  if (speechOffered) {
+    try {
+      speech.keys.refreshInstalled();
+    } catch (error) {
+      logger.warn('[mittr] could not renew the speech key in voice-keys.json:', error?.name ?? 'Error');
+    }
+    void speechRoutes.forgetStaleSttKey();
+  }
   let models = [];
 
   // The engine introduces itself as MittrCraft through a plugin written on
@@ -623,6 +653,7 @@ export function setupMittr(context, {
     engineHome: () => store.engineHome({ carryLegacy: false }),
     registry,
     tools,
+    speech,
     managedConfig,
     neverAutoAnswer: tools.neverAutoAnswer,
     applyModels,
@@ -633,6 +664,7 @@ export function setupMittr(context, {
       clearTimeout(correction);
       correction = null;
       unsubscribeReady();
+      speech.state.close();
       await tools.dispose();
       unregisterDeepLink?.();
       unregisterQuotaProvider?.();

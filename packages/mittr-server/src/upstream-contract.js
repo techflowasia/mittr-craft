@@ -725,4 +725,24 @@ UPSTREAM_CONTRACT.push(
     files: ['packages/web/server/lib/agent-tool/runtime.js'],
     why: 'upstream\'s generated agent tool reports context.progress({ <tool>: { schemaVersion, action, description } }) before its callback and again with ok after, and the MittrCraft tools plugin does the same',
   },
+  {
+    id: 'dictation-openai-compatible',
+    files: ['packages/web/server/lib/dictation/service.js', 'packages/web/server/lib/dictation/openai-compatible-session.js', 'packages/web/server/lib/tts/stt.js'],
+    why: 'upstream dictation with the openai-compatible provider reads options.openaiCompatible.{baseUrl,model} and the stored stt key, and its session posts a 16 kHz WAV through tts/stt.js, so Mittr speech is a base URL and a key',
+  },
+  {
+    id: 'tts-openai-compatible',
+    files: ['packages/web/server/lib/tts/routes.js', 'packages/web/server/lib/tts/service.js'],
+    why: '/api/tts/speak takes baseURL, fills its key from the stored openaiCompatible key, and answers with the content type the speech server gave',
+  },
+  {
+    id: 'voice-keys-file',
+    files: ['packages/web/server/lib/tts/voice-keys.js', 'packages/web/server/index.js'],
+    why: 'upstream keeps the voice keys in <dataDir>/voice-keys.json, the same data dir the plugin context names, with the kinds openai, openaiCompatible and stt, each a string of 1 to 1024 characters, and reads a key the MittrCraft speech key writer put there',
+  },
+  {
+    id: 'loopback-speech-urls',
+    files: ['packages/web/server/lib/tts/base-url.js'],
+    why: 'normalizeCustomOpenAIBaseURL accepts http://127.0.0.1:<port>/mittr-speech/v1 on every runtime, enterprise mode included',
+  },
 );
