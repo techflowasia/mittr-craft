@@ -668,6 +668,11 @@ export const UPSTREAM_CONTRACT = [
     id: 'composer-actions-slot',
     files: ['packages/ui/src/lib/product-plugins.ts', 'packages/ui/src/components/chat/composer/ui/ComposerFooter.tsx'],
     why: "product-plugins.ts has the composer-actions slot with props { isMobile, footerIconButtonClass, iconSizeClass, dictationActive }, a plugin's composer.useDictationBlock and useProductDictationBlock(), which answers { blocked, reason? }; ComposerFooter renders the slot right after the microphone in the desktop row and beside the mobile microphone, both inside the side-question guard, disables both microphones while the block holds and names its reason on the mobile button, so Talk sits beside the microphone and voice input waits out its quota",
+  },
+  {
+    id: 'main-surface-slot',
+    files: ['packages/ui/src/lib/product-plugins.ts', 'packages/ui/src/components/layout/MainLayout.tsx'],
+    why: "product-plugins.ts has the main-surface slot with no props; MainLayout renders it once, inside an ErrorBoundary, as the last child of <main>, after every full-page surface, so Today sits inside every upstream provider over the chat area while the sidebar and header stay usable; the layout root carries data-product-region=\"shell\", the right column \"column\" and <main> \"main\"",
   },  {
     id: 'message-queue-add',
     files: ['packages/ui/src/stores/messageQueueStore.ts'],

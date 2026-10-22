@@ -32,6 +32,7 @@ export type ProductSlotProps = {
   'session-auth-methods': SessionAuthMethodsProps;
   'assistant-message-footer': { message: { info: Message; parts: Part[] }; isLatestTurn: boolean };
   'composer-actions': { isMobile: boolean; footerIconButtonClass: string; iconSizeClass: string; dictationActive: boolean };
+  'main-surface': Record<never, never>;
 };
 
 export type ProductSlotName = keyof ProductSlotProps;

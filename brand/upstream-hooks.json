@@ -173,6 +173,10 @@
     {
       "hook": "chat-message",
       "why": "An error a product plugin rewords did not say which provider the turn ran on, so a build could not tell a turn its own provider could not route (a model the person may not use right now) from one on a provider that is switched off, and gave both the same advice; the plugin now also receives the provider id, and without a plugin nothing changes."
+    },
+    {
+      "hook": "main-surface",
+      "why": "A downstream build that styles assistant replies as bubbles had no stable hook on the assistant message body, as user messages already have data-user-message-bubble; the assistant body container now carries data-assistant-bubble, which changes nothing on its own."
     }
   ],
   "packages/ui/src/components/chat/ModelControls.tsx": [
@@ -201,6 +205,12 @@
     {
       "hook": "composer-actions",
       "why": "A downstream build adds its own composer action beside the microphone (a voice assistant button) and can hold dictation off with a reason, without editing the footer on every upstream release. With no plugin nothing changes."
+    }
+  ],
+  "packages/ui/src/components/layout/MainLayout.tsx": [
+    {
+      "hook": "main-surface",
+      "why": "A downstream build that wants its own home page over the chat area had no place to render one inside the layout's providers, and no stable names for the layout's regions to style; a main-surface slot renders last inside the main area, the shell, the right column and the main area carry data-product-region names, and with no plugin the slot renders nothing."
     }
   ],
   "packages/ui/src/components/model-picker/ModelEntryStatusPill.tsx": [
@@ -315,6 +325,10 @@
     {
       "hook": "composer-actions",
       "why": "A downstream build adds its own composer action beside the microphone (a voice assistant button) and can hold dictation off with a reason, without editing the footer on every upstream release. With no plugin nothing changes."
+    },
+    {
+      "hook": "main-surface",
+      "why": "The main-surface slot is a named slot like the others, with no props: a downstream build renders its own page inside the main area without editing the layout, and with no plugin it renders nothing."
     }
   ],
   "packages/ui/src/lib/quota/providers/index.ts": [

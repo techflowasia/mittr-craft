@@ -1272,7 +1272,8 @@ const checks = {
     const assistantBody = message.lastIndexOf('<MessageBody');
     const dialog = message.indexOf('<ToolOutputDialog');
     assert.ok(assistantBody >= 0 && slot > assistantBody && dialog > slot, 'the assistant-message-footer slot is no longer right under the assistant message body');
-    has(message, /\) : \(\s*<div className="relative">\s*<MessageBody\s+sessionId=\{message\.info\.sessionID\}/, 'the last MessageBody is no longer the assistant branch');
+    has(message, /\) : \(\s*<div className="relative" data-assistant-bubble="">\s*<MessageBody\s+sessionId=\{message\.info\.sessionID\}/, 'the last MessageBody is no longer the assistant branch, or its container lost data-assistant-bubble');
+    assert.equal(lineCount(message, 'data-assistant-bubble'), 1, 'ChatMessage marks more than one container as the assistant bubble, or none');
     const plugins = source('packages/ui/src/lib/product-plugins.ts');
     has(plugins, /'assistant-message-footer': \{ message: \{ info: Message; parts: Part\[\] \}; isLatestTurn: boolean \};/);
     has(plugins, /type ProductMessageError = \{ type: string; message: string; status\?: number; responseBody\?: string; providerID\?: string \};/);
@@ -1978,6 +1979,22 @@ const checks = {
     const desktop = footer.slice(footer.indexOf(') : ('));
     has(desktop, /<MemoComposerDictation[^>]*disabled=\{dictationBlock\.blocked && !dictationActive\}[^>]*\/> : null\}\s*\{!isBtw \? <ProductSlot name="composer-actions"/, 'the desktop composer-actions slot no longer follows the blockable microphone');
     has(footer, /const dictationStartLabel = dictationBlock\.blocked && dictationBlock\.reason \? dictationBlock\.reason : t\('chat\.dictation\.start'\);/, 'the mobile microphone no longer names the block reason');
+  },
+  'main-surface-slot': () => {
+    has(source('packages/ui/src/lib/product-plugins.ts'), /^  'main-surface': Record<never, never>;$/m, 'the main-surface slot props changed');
+    const layout = source('packages/ui/src/components/layout/MainLayout.tsx');
+    has(layout, /^import \{ ProductSlot \} from '@\/lib\/product-plugins';$/m, 'MainLayout no longer imports ProductSlot');
+    assert.equal(lineCount(layout, '<ProductSlot '), 1, 'MainLayout renders ProductSlot more than once, or not at all');
+    has(layout, /<ErrorBoundary><ProductSlot name="main-surface" \/><\/ErrorBoundary>\s*<\/main>/, 'the main-surface slot is no longer the last child of <main>, inside an ErrorBoundary');
+    has(layout, /<main className="[^"]*" data-page-scroll-lock="true" data-product-region="main">/, '<main> lost data-product-region="main"');
+    has(layout, /data-page-scroll-lock="true"\s+data-product-region="shell"\s+className="main-content-safe-area /, 'the layout root lost data-product-region="shell"');
+    has(layout, /data-product-region="column">\s*<Header \/>/, 'the right column lost data-product-region="column", or no longer starts with the header');
+    const main = layout.slice(layout.indexOf('<main '), layout.indexOf('</main>'));
+    const slot = main.indexOf('<ProductSlot name="main-surface" />');
+    for (const page of ['<ChatView ', '<RunOverview />', '<ScheduledTasksDialog />', '<ArchiveView />', '<UsageStatsView />', '<WorktreesView />', '<SpacesView />', '<PluginPane ']) {
+      const at = main.indexOf(page);
+      assert.ok(at >= 0 && at < slot, `${page} is no longer inside <main> before the main-surface slot`);
+    }
   },
   'message-queue-add': () => {
     const queue = source('packages/ui/src/stores/messageQueueStore.ts');

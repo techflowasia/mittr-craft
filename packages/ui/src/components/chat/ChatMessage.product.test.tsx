@@ -183,6 +183,14 @@ describe('ChatMessage product hooks', () => {
     expect(await render({ info: user, parts: [textPart('msg_ask', 'Question')] }, turn(true))).not.toContain('data-probe');
   });
 
+  test('the assistant message body carries the bubble marker and the user message does not', async () => {
+    const reply = await render({ info: assistant(), parts: [textPart('msg_reply', 'Here it is')] }, turn(true));
+    expect(reply).toMatch(/data-assistant-bubble=""[^>]*>[\s\S]*Here it is/);
+    const ask = await render({ info: user, parts: [textPart('msg_ask', 'Question')] }, turn(true));
+    expect(ask).toContain('Question');
+    expect(ask).not.toContain('data-assistant-bubble');
+  });
+
   test('with no plugin the footer slot renders nothing', async () => {
     const html = await render({ info: assistant(), parts: [textPart('msg_reply', 'Here it is')] }, turn(true));
     expect(html).toContain('Here it is');

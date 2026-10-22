@@ -27,6 +27,7 @@ import { UsageStatsView } from '@/components/views/usage/UsageStatsView';
 import { DiffWorkerProvider } from '@/contexts/DiffWorkerProvider';
 import { RunOverview } from '@/components/multirun/RunOverview';
 import { RunAutoFusion } from '@/lib/multirun/autoFusion';
+import { ProductSlot } from '@/lib/product-plugins';
 
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
@@ -109,6 +110,7 @@ export const MainLayout: React.FC = () => {
         <DiffWorkerProvider>
             <div
                 data-page-scroll-lock="true"
+                data-product-region="shell"
                 className="main-content-safe-area relative flex h-[100dvh] bg-background"
             >
                 <CommandPalette />
@@ -131,7 +133,7 @@ export const MainLayout: React.FC = () => {
                     >
                         <SessionSidebar isVisible={isSidebarOpen} />
                     </Sidebar>
-                    <div className="relative flex flex-1 min-w-0 flex-col overflow-hidden bg-background" data-page-scroll-lock="true">
+                    <div className="relative flex flex-1 min-w-0 flex-col overflow-hidden bg-background" data-page-scroll-lock="true" data-product-region="column">
                         <Header />
                         <div className="relative flex flex-1 min-h-0 overflow-hidden bg-background" data-page-scroll-lock="true">
                             <div className="relative flex flex-1 min-w-0 flex-col overflow-hidden border-t border-border bg-background" data-page-scroll-lock="true">
@@ -141,7 +143,7 @@ export const MainLayout: React.FC = () => {
                                         work-status panel measures this rather than the chat,
                                         which the context panel animates. */}
                                     <div className="relative flex flex-1 min-h-0 min-w-0 overflow-hidden" data-page-scroll-lock="true" data-chat-area="true">
-                                        <main className="flex-1 overflow-hidden bg-background relative" data-page-scroll-lock="true">
+                                        <main className="flex-1 overflow-hidden bg-background relative" data-page-scroll-lock="true" data-product-region="main">
                                             <div className={cn('absolute inset-0', isSurfacePageOpen && 'invisible')}>
                                                 <ErrorBoundary><ChatView active={!isSettingsDialogOpen && !isSurfacePageOpen} /></ErrorBoundary>
                                             </div>
@@ -159,6 +161,7 @@ export const MainLayout: React.FC = () => {
                                                 <ErrorBoundary><PluginPane mode={`plugin:${guestPage.id}`} surface="page" item={null}
                                                     onDismiss={() => useUIStore.getState().setOpenGuestPage(null)} /></ErrorBoundary>
                                             </div>}
+                                            <ErrorBoundary><ProductSlot name="main-surface" /></ErrorBoundary>
                                         </main>
                                         <ContextPanel />
                                     </div>

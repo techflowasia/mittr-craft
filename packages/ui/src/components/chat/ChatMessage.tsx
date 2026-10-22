@@ -885,7 +885,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                             </FadeInOnReveal>
                         )
                     ) : (
-                        <div className="relative">
+                        <div className="relative" data-assistant-bubble="">
                             <MessageBody
                                 sessionId={message.info.sessionID}
                                 messageId={message.info.id}
