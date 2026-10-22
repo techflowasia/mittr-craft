@@ -2036,6 +2036,9 @@ const checks = {
     has(blocking, /export type PendingBlockingRequests = \{\s*directory: string;\s*permissions: readonly BlockingPermissionRequest\[\];\s*forms: readonly BlockingFormRequest\[\];\s*\};/, 'PendingBlockingRequests changed shape');
     has(blocking, /^ {2}bySession: ReadonlyMap<string, PendingBlockingRequests>;$/m, 'the blocking index is no longer bySession');
     has(source('packages/ui/src/sync/sync-context.tsx'), /applyGlobalSessionStatusEvents\(directory, events\)\s*applyGlobalBlockingRequestEvents\(directory, events\)/, 'the dispatcher no longer feeds the blocking index for every directory');
+    const scheduler = source('packages/web/server/lib/scheduled-tasks/runtime.js');
+    has(scheduler, /^const DEFAULT_MAX_RUN_MS = 30 \* 60 \* 1000;$/m, 'the scheduled run limit is no longer 30 minutes');
+    has(scheduler, /lastRunAt: runStartedAt,/, 'a scheduled run no longer records lastRunAt when it starts');
     const notifications = source('packages/ui/src/sync/notification-store.ts');
     has(notifications, /session: \{\s*unseenCount: Record<string, number>\s*unseenHasError: Record<string, boolean>\s*\}/, 'the notification index no longer has session unseenCount and unseenHasError');
     const goals = source('packages/ui/src/lib/sessionGoalMetadata.ts');

@@ -20,6 +20,19 @@ export type TodayActions = {
 
 export type ScheduledRun = { id: string; name: string; projectId: string };
 
+export const SCHEDULED_RUN_MAX_MS = 30 * 60 * 1000;
+
+type ScheduledTaskLike = { id: string; name: string; state?: { lastStatus?: string; lastRunAt?: number } };
+
+export function scheduledRunsOf(projectId: string, tasks: readonly ScheduledTaskLike[], now: number): ScheduledRun[] {
+  return tasks
+    .filter((task) => {
+      const at = task.state?.lastRunAt;
+      return task.state?.lastStatus === 'running' && typeof at === 'number' && now - at >= 0 && now - at < SCHEDULED_RUN_MAX_MS;
+    })
+    .map((task) => ({ id: task.id, name: task.name, projectId }));
+}
+
 export type TodayState = {
   sessions: readonly Session[];
   statusById: ReadonlyMap<string, { status: SessionStatus; directory: string }>;

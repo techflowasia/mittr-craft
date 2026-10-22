@@ -21,7 +21,7 @@ import { sessionGoWorkDeps, useMyWorkController } from '../work/workSession';
 import { ensureWidgetsSection } from '../widgets/widgetsRegistration';
 import './today.css';
 import { coverMainSiblings } from './todayCover';
-import { alerts, running, waiting, workRows, type ScheduledRun, type TodayKind, type TodayRow } from './todayData';
+import { alerts, running, scheduledRunsOf, waiting, workRows, type ScheduledRun, type TodayKind, type TodayRow } from './todayData';
 import { TodayLauncher } from './TodayLauncher';
 import { useTodayExtraAlerts, useTodaySection } from './todaySections';
 import { useToday } from './todayStore';
@@ -170,20 +170,22 @@ function useNow(): number {
 
 function useScheduledRuns(projects: readonly GoWorkProject[]): ScheduledRun[] {
   const [runs, setRuns] = React.useState<ScheduledRun[]>([]);
+  const known = React.useRef(new Map<string, Awaited<ReturnType<typeof fetchScheduledTasks>>>());
   const ids = projects.map((project) => project.id).join('\n');
   React.useEffect(() => {
     let live = true;
     const projectIds = ids ? ids.split('\n') : [];
     const load = async () => {
-      const found = await Promise.all(projectIds.map(async (projectId) => {
+      await Promise.all(projectIds.map(async (projectId) => {
         try {
-          const tasks = await fetchScheduledTasks(projectId);
-          return tasks.filter((task) => task.state?.lastStatus === 'running').map((task) => ({ id: task.id, name: task.name, projectId }));
+          known.current.set(projectId, await fetchScheduledTasks(projectId));
         } catch {
-          return [];
+          return;
         }
       }));
-      if (live) setRuns(found.flat());
+      if (!live) return;
+      const now = Date.now();
+      setRuns(projectIds.flatMap((projectId) => scheduledRunsOf(projectId, known.current.get(projectId) ?? [], now)));
     };
     void load();
     const timer = setInterval(() => { void load(); }, SCHEDULED_POLL_MS);

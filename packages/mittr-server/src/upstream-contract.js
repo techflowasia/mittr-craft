@@ -701,8 +701,9 @@ export const UPSTREAM_CONTRACT = [
       'packages/ui/src/lib/sessionGoalMetadata.ts',
       'packages/ui/src/lib/scheduledTasksApi.ts',
       'packages/ui/src/sync/sync-context.tsx',
+      'packages/web/server/lib/scheduled-tasks/runtime.js',
     ],
-    why: "Today reads every row from live stores: useGlobalSessionsStore's activeSessions (Session with parentID and title, directory through resolveGlobalSessionDirectory), useGlobalSessionStatusStore's statusById of { status, directory } for busy and retry, useGlobalBlockingRequestsStore's bySession of { directory, permissions [{ id, sessionID, action, resources }], forms [{ id, sessionID, title }] }, fed for every directory by the sync dispatcher, useNotificationStore's index.session unseenCount and unseenHasError, getSessionGoal(session) with status paused, blocked, budgetLimited or active and tokensUsed and tokenBudget shown through formatGoalTokens, and fetchScheduledTasks(projectId), whose tasks carry id, name and state.lastStatus 'running' while a run is under way",
+    why: "Today reads every row from live stores: useGlobalSessionsStore's activeSessions (Session with parentID and title, directory through resolveGlobalSessionDirectory), useGlobalSessionStatusStore's statusById of { status, directory } for busy and retry, useGlobalBlockingRequestsStore's bySession of { directory, permissions [{ id, sessionID, action, resources }], forms [{ id, sessionID, title }] }, fed for every directory by the sync dispatcher, useNotificationStore's index.session unseenCount and unseenHasError, getSessionGoal(session) with status paused, blocked, budgetLimited or active and tokensUsed and tokenBudget shown through formatGoalTokens, and fetchScheduledTasks(projectId), whose tasks carry id, name and state.lastStatus 'running' with state.lastRunAt while a run is under way; the scheduler cuts a run off after DEFAULT_MAX_RUN_MS, 30 minutes, so a 'running' older than that is stale",
   },
   {
     id: 'today-navigation',

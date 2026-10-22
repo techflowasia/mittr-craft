@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import type { Session } from '../../../ui/src/lib/opencode/model';
 import type { AgentStatus } from '../quota/quotaMeStore';
 import type { WorkItem } from '../work/workItems';
-import { alerts, running, waiting, workRows, type TodayActions, type TodayState } from './todayData';
+import { alerts, running, SCHEDULED_RUN_MAX_MS, scheduledRunsOf, waiting, workRows, type TodayActions, type TodayState } from './todayData';
 
 const session = (id: string, extra: Partial<Session> = {}): Session => ({
   id,
@@ -152,5 +152,19 @@ describe('Today rows', () => {
     expect(rows.map(({ title }) => title)).toEqual(['Card MRKB-1', 'Card MRKB-3', 'Card MRKB-4']);
     rows[0].open();
     expect(calls).toEqual(['work:MRKB-1']);
+  });
+});
+
+describe('scheduled runs on Today', () => {
+  test('Minor 6: a task counts as running only while its run started within the run time limit', () => {
+    const now = 10_000_000;
+    const tasks = [
+      { id: 'live', name: 'Nightly report', state: { lastStatus: 'running', lastRunAt: now - 60_000 } },
+      { id: 'stuck', name: 'Left after a quit', state: { lastStatus: 'running', lastRunAt: now - SCHEDULED_RUN_MAX_MS - 1 } },
+      { id: 'undated', name: 'No start time', state: { lastStatus: 'running' } },
+      { id: 'done', name: 'Finished', state: { lastStatus: 'success', lastRunAt: now - 1_000 } },
+    ];
+    expect(scheduledRunsOf('proj_1', tasks, now)).toEqual([{ id: 'live', name: 'Nightly report', projectId: 'proj_1' }]);
+    expect(SCHEDULED_RUN_MAX_MS).toBe(30 * 60 * 1000);
   });
 });
