@@ -332,8 +332,6 @@ const browserStorage = (): Storage | null => {
 
 const subscribeNothing = (): (() => void) => () => {};
 
-
-
 type GoWorkBinding = { startingItemId: string | null; goWork: (item: WorkItem, project: GoWorkProject) => void };
 
 function useGoWork(onClose: () => void, controller: MyWorkController | null): GoWorkBinding {
