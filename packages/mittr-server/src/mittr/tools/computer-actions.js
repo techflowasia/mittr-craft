@@ -39,13 +39,6 @@ const appNameOf = (input, action) => {
   return name;
 };
 
-const notBroughtForward = (name) => new MittrToolError(`Could not bring ${name} to the front.`, 502);
-
-const broughtForward = (result, name) => {
-  if (result?.process_activated !== true) throw notBroughtForward(name);
-  return { activated: true, windowVerified: result.exact_window_effect?.verified === true };
-};
-
 const mainWindowOf = (candidates, name) => {
   const titled = (Array.isArray(candidates) ? candidates : [])
     .filter((candidate) => isRecord(candidate) && Number.isInteger(candidate.window_id) && trimmedText(candidate.title))
@@ -84,7 +77,7 @@ const DEFINITIONS = Object.freeze([
 
 export const TURNED_OFF_MID_ACTION = 'The Computer tool was turned off while this action ran, so nothing more was sent to the desktop';
 
-export function registerComputerActions(registry, { control, launchApp, writeScreenshot, offered }) {
+export function registerComputerActions(registry, { control, launchApp, writeScreenshot, offered, logger = console }) {
   const driver = async (tool, args, { signal, computerToken }, ownGrant) => {
     if (!offered()) throw new MittrToolError(TURNED_OFF_MID_ACTION, 503);
     try {
@@ -120,15 +113,25 @@ export function registerComputerActions(registry, { control, launchApp, writeScr
     const listed = appsOf(await driver('list_apps', {}, ctx, ACCESSIBILITY));
     const match = listed.find((app) => app.running === true && String(app.name).toLowerCase() === name.toLowerCase());
     if (!match) throw new MittrToolError(`No running app named "${name}"`, 404);
+    const notBroughtForward = (reason) => {
+      logger.warn(`[mittr] computer.bring_to_front did not bring ${match.name} forward: ${reason}`);
+      return new MittrToolError(`Could not bring ${match.name} to the front.`, 502);
+    };
     const bring = (args) => driver('bring_to_front', args, ctx, ACCESSIBILITY).catch((error) => {
       if (error instanceof MittrToolError) throw error;
-      throw notBroughtForward(match.name);
+      throw notBroughtForward(error instanceof Error ? error.message : String(error));
     });
+    const broughtForward = (result) => {
+      if (result?.process_activated !== true) throw notBroughtForward('the app was not activated');
+      return { activated: true, windowVerified: result.exact_window_effect?.verified === true };
+    };
     const result = await bring({ pid: match.pid });
-    if (result?.code !== AMBIGUOUS_WINDOW) return broughtForward(result, match.name);
+    if (result?.code !== AMBIGUOUS_WINDOW) return broughtForward(result);
     const window = mainWindowOf(result.candidates, match.name);
     if (!window) throw new MittrToolError(`Could not bring ${match.name} to the front: it has several windows and none of them has a title to pick it by.`, 409);
-    return { ...broughtForward(await bring({ pid: match.pid, window_id: window.windowId }), match.name), window };
+    const chosen = broughtForward(await bring({ pid: match.pid, window_id: window.windowId }));
+    if (!chosen.windowVerified) throw notBroughtForward(`window ${window.windowId} was not verified as the one in front`);
+    return { ...chosen, window };
   };
 
   const screenshot = async (_input, ctx) => {

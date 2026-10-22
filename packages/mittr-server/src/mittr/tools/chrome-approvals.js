@@ -351,10 +351,10 @@ export function createChromeSiteApprovals({
     const decision = approvals.awaitDecision(entry.sessionId, entry.host, signal);
     decision.catch(() => {});
     const done = new AbortController();
-    const capped = unanswered(done.signal);
     let outcome = null;
     try {
       await raiseQuestion(entry, { directory, source, signal });
+      const capped = unanswered(done.signal);
       const watched = entry.requestId;
       const lost = watched ? watchForLoss(entry.sessionId, watched, done.signal) : new Promise(() => {});
       outcome = await Promise.race([decision, lost, capped]);
@@ -376,11 +376,19 @@ export function createChromeSiteApprovals({
     const leave = () => {
       if (left) return false;
       left = true;
+      clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
       entry.callers -= 1;
       if (entry.callers > 0) return false;
       entry.controller.abort();
       return true;
+    };
+    const leaveWith = (error) => {
+      if (!leave()) {
+        reject(error);
+        return;
+      }
+      entry.result.then(() => reject(error), () => reject(error));
     };
     const onAbort = () => {
       if (!leave()) {
@@ -389,6 +397,8 @@ export function createChromeSiteApprovals({
       }
       entry.result.then(() => reject(new MittrToolError(CANCELLED, 499)), reject);
     };
+    const timer = setTimeout(() => leaveWith(notAnswered(entry.host)), answerWaitMs);
+    timer.unref?.();
     signal?.addEventListener('abort', onAbort, { once: true });
     entry.result.then(
       (value) => {

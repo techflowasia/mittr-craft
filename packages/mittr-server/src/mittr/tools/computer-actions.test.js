@@ -16,7 +16,7 @@ import { MAX_IMAGE_BYTES } from './screenshots.js';
 const ACCESSIBILITY_NOT_GRANTED = 'Accessibility is NOT granted for this process.';
 const GRANT_COMMAND_ONLY = 'run `cua-driver permissions grant` to request and verify it explicitly.';
 
-const setUp = ({ available = true, offered = () => true, answers = {}, launchApp = async () => {}, save = writeScreenshot } = {}) => {
+const setUp = ({ available = true, offered = () => true, answers = {}, launchApp = async () => {}, save = writeScreenshot, logger = { warn: () => {} } } = {}) => {
   const registry = createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, execute: async () => ({}) } });
   const requests = [];
   const control = {
@@ -28,7 +28,7 @@ const setUp = ({ available = true, offered = () => true, answers = {}, launchApp
       return answer instanceof Function ? answer(args) : answer;
     },
   };
-  registerComputerActions(registry, { control, launchApp, writeScreenshot: save, offered });
+  registerComputerActions(registry, { control, launchApp, writeScreenshot: save, offered, logger });
   const run = (action, input = {}, ctx = {}) => registry.execute(action, input, { surface: 'agent', tool: MITTR_TOOLS.computer, ...ctx });
   return { registry, requests, run };
 };
@@ -169,6 +169,34 @@ test('bring_to_front prefers the window titled with the app\'s name, then the fi
     },
   });
   assert.deepEqual((await first.run('computer.bring_to_front', { app: 'Finder' })).window, { windowId: 11, title: 'Downloads' });
+});
+
+test('the chosen window must be verified as the one in front, or the action answers the plain failure', async () => {
+  const { run } = setUp({
+    answers: {
+      list_apps: { apps: [{ name: 'Calculator', pid: 55452, running: true }] },
+      bring_to_front: severalWindows(CALCULATOR_WINDOWS, { process_activated: true, exact_window_effect: { verified: false } }),
+    },
+  });
+  await assert.rejects(run('computer.bring_to_front', { app: 'Calculator' }), refusedWith(502, 'Could not bring Calculator to the front.'));
+});
+
+test('the driver\'s reason behind the plain failure is logged on the server', async () => {
+  const warnings = [];
+  const reason = 'bring_to_front: pid 55452, did not become frontmost (request_accepted=true)';
+  const { run } = setUp({
+    logger: { warn: (...args) => warnings.push(args.join(' ')) },
+    answers: { list_apps: { apps: [{ name: 'Calculator', pid: 55452, running: true }] }, bring_to_front: new Error(reason) },
+  });
+  await assert.rejects(run('computer.bring_to_front', { app: 'Calculator' }), refusedWith(502, 'Could not bring Calculator to the front.'));
+  assert.deepEqual(warnings, [`[mittr] computer.bring_to_front did not bring Calculator forward: ${reason}`]);
+  const unverified = [];
+  const quiet = setUp({
+    logger: { warn: (...args) => unverified.push(args.join(' ')) },
+    answers: { list_apps: { apps: [{ name: 'Calculator', pid: 55452, running: true }] }, bring_to_front: { process_activated: false } },
+  });
+  await assert.rejects(quiet.run('computer.bring_to_front', { app: 'Calculator' }), refusedWith(502, 'Could not bring Calculator to the front.'));
+  assert.deepEqual(unverified, ['[mittr] computer.bring_to_front did not bring Calculator forward: the app was not activated']);
 });
 
 test('bring_to_front with only untitled windows refuses in a plain sentence and sends nothing more', async () => {

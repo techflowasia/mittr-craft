@@ -98,6 +98,7 @@ export function setupMittrTools(context, {
     launchApp: createLaunchApp({ env }),
     writeScreenshot: control.writeScreenshot,
     offered: offered[MITTR_TOOLS.computer],
+    logger,
   });
   const chromeControl = createChromeControl({
     binary: drivers.chrome(),

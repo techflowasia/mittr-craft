@@ -316,6 +316,40 @@ test('an answer before the cap still decides, and an abort before it still cance
   await assert.rejects(aborted, (error) => error.statusCode === 499);
 });
 
+test('when one of two calls sharing a card aborts, the other still gets the plain answer at the cap', async (t) => {
+  const { engine, approvals } = setUp(t, { answerWaitMs: 80 });
+  const controller = new AbortController();
+  const leaving = askFor(approvals, 'ses_1', { signal: controller.signal });
+  const requestId = await nextRequest(engine);
+  const staying = askFor(approvals, 'ses_1');
+  controller.abort();
+  await assert.rejects(leaving, (error) => error.statusCode === 499);
+  assert.deepEqual(engine.pendingIds(), [requestId]);
+  await assert.rejects(staying, notAnswered);
+  assert.deepEqual(engine.state.replies, [{ sessionId: 'ses_1', requestId, decision: 'reject', status: 204 }]);
+});
+
+test('the cap counts from when the card is raised, and each call waits at most the cap from when it joined', async (t) => {
+  const { engine, approvals } = setUp(t, { answerWaitMs: 100 });
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  engine.state.beforeAnswer = () => sleep(70);
+  const startedAt = Date.now();
+  const first = askFor(approvals, 'ses_1');
+  const requestId = await nextRequest(engine);
+  await sleep(80);
+  const second = askFor(approvals, 'ses_1');
+  await assert.rejects(first, notAnswered);
+  const firstEnded = Date.now() - startedAt;
+  assert.ok(firstEnded < 160, `the first call waited ${firstEnded} ms`);
+  assert.deepEqual(engine.pendingIds(), [requestId], 'the card is still open for the second call');
+  assert.deepEqual(engine.state.replies, []);
+  await assert.rejects(second, notAnswered);
+  const cardClosed = Date.now() - startedAt;
+  assert.ok(cardClosed >= 165, `the card closed after ${cardClosed} ms, before the cap from when it was raised`);
+  assert.deepEqual(engine.state.replies, [{ sessionId: 'ses_1', requestId, decision: 'reject', status: 204 }]);
+  assert.equal(engine.state.creates.length, 1);
+});
+
 test('an account switch before the cap still withdraws the question as cancelled', async (t) => {
   const { engine, approvals } = setUp(t, { answerWaitMs: 400 });
   const asked = askFor(approvals, 'ses_1');
