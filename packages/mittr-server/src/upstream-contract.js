@@ -812,4 +812,9 @@ UPSTREAM_CONTRACT.push(
     files: ['packages/web/server/lib/text/summarization.js'],
     why: 'the voice assistant\'s speakable() is upstream\'s sanitizeForTTS vendored unchanged, and gives the same text on Markdown, code, links, paths and Thai',
   },
+  {
+    id: 'notification-emit-route',
+    files: ['packages/web/server/lib/notifications/emit-route.js', 'packages/web/server/lib/opencode/bootstrap-runtime.js', 'packages/web/server/lib/ui-auth/ui-auth.js'],
+    why: 'a widget alert posts { title, body, tag } to POST /api/notifications/emit on the server\'s own loopback port; the route is registered after API auth, which lets a local request through when no UI password or sign-in provider is set, and its emitter hands the notice to the desktop notification path with kind plugin',
+  },
 );

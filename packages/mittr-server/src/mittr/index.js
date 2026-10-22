@@ -33,6 +33,7 @@ import { registerMittrControlRoutes } from './tools/control-routes.js';
 import { setupMittrTools } from './tools/index.js';
 import { createMittrActionRegistry } from './tools/registry.js';
 import { setupMittrVoice } from './voice/index.js';
+import { setupMittrWidgets } from './widgets/index.js';
 import { createMittrSpeechClient } from './voice/speech-client.js';
 import { createSpeechKeys } from './voice/speech-key.js';
 import { registerSpeechRoutes } from './voice/speech-routes.js';
@@ -305,6 +306,7 @@ export function setupMittr(context, {
       answeredByLog.clear();
       audit?.clear();
       voice.accountChanged();
+      widgets.accountChanged();
       void tools.accountChanged();
       return switcher.switchTo(nextUserId);
     },
@@ -435,6 +437,16 @@ export function setupMittr(context, {
     speech,
     mittrSettings,
     platform: { broker, ensureFreshSession, fetchImpl, engineOnActiveHome, activeAccountKey },
+    logger,
+  });
+  const widgets = setupMittrWidgets(context, {
+    registry,
+    mittrSettings,
+    tools,
+    activeAccountKey,
+    engineOnActiveHome,
+    personalDesktop: () => !connectorsOff,
+    env,
     logger,
   });
   let models = [];
@@ -664,6 +676,7 @@ export function setupMittr(context, {
     tools,
     speech,
     voice,
+    widgets,
     managedConfig,
     neverAutoAnswer: tools.neverAutoAnswer,
     applyModels,
@@ -675,6 +688,7 @@ export function setupMittr(context, {
       correction = null;
       unsubscribeReady();
       voice.dispose();
+      widgets.dispose();
       speech.state.close();
       await tools.dispose();
       unregisterDeepLink?.();

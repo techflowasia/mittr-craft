@@ -30,7 +30,7 @@ const TITLES = Object.freeze({
 
 const UPSTREAM_SWITCHED = new Set(Object.values(UPSTREAM_SWITCHES));
 
-const enginePortOf = (opencode) => {
+export const enginePortOf = (opencode) => {
   try {
     return Number(new URL(opencode.url('/')).port) || null;
   } catch {
