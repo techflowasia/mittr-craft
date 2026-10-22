@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
@@ -7,6 +6,7 @@ import vm from 'node:vm';
 
 import { isLoopbackOrUnspecified, lookupAll, normalizedHost, ownAddressCheck } from '../tools/chrome-service.js';
 import { isRecord, isText } from '../values.js';
+import { isDirectory } from './widget-files.js';
 
 export const COMMAND_TIMEOUT_MS = 20_000;
 export const URL_TIMEOUT_MS = 20_000;
@@ -45,14 +45,6 @@ export const isRefusedAddress = (address) => {
 const notFetched = (what) => new Error(`${what} is on this Mac or a private network, so it is not fetched`);
 
 export const commandEnv = (env) => Object.fromEntries(COMMAND_ENV.filter((name) => isText(env?.[name]) && env[name]).map((name) => [name, env[name]]));
-
-const isDirectory = (dir) => {
-  try {
-    return fs.statSync(dir).isDirectory();
-  } catch {
-    return false;
-  }
-};
 
 const killGroup = (child) => {
   try {
@@ -112,6 +104,7 @@ export const runCommand = ({ command, cwd }, { env = process.env, signal, timeou
 
   const finish = (code) => {
     clearTimeout(timer);
+    killGroup(child);
     signal?.removeEventListener('abort', onAbort);
     if (ended === 'timeout') return reject(new Error(`The command took longer than ${Math.round(timeoutMs / 1000)} s`));
     if (ended === 'aborted') return reject(new Error('The command was stopped'));

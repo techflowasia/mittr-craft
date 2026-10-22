@@ -52,6 +52,23 @@ test('a command that runs too long is stopped, with its children', async (t) => 
   assert.ok(Date.now() - started < 5_000);
 });
 
+test('Minor 12: a child left in the background is stopped when the command ends', async (t) => {
+  const cwd = tempDataDir(t);
+  const { text } = await runCommand({ command: 'sleep 30 >/dev/null 2>&1 & echo $!', cwd });
+  const pid = Number(text.trim());
+  assert.ok(Number.isInteger(pid) && pid > 0);
+  const alive = () => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  for (let wait = 0; wait < 50 && alive(); wait += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(alive(), false);
+});
+
 test('output past 64 KB is cut there and the command stopped', async (t) => {
   const cwd = tempDataDir(t);
   const { text, truncated } = await runCommand({ command: 'yes 0123456789', cwd });
