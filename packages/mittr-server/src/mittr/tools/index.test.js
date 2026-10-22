@@ -493,6 +493,14 @@ test('the computer tool\'s daemon is stopped on an account switch and the next c
   assert.equal(stubCuaDriverCalls(driver).filter(({ command }) => command === 'serve').length, 2);
 });
 
+test('a data folder too long for the driver socket leaves the computer tool out of the plugin and the settings', async (t) => {
+  const dataDir = path.join(tempDataDir(t), 'd'.repeat(100));
+  fs.mkdirSync(dataDir, { recursive: true });
+  const { tools, pluginSource } = await setUp(t, { dataDir });
+  await tools.managedConfig();
+  assert.deepEqual(toolNamesIn(pluginSource()), ['mittrcraft_chrome', 'mittrcraft_work']);
+});
+
 const everySite = () => {
   const record = { forgotten: [], forgotAll: 0 };
   return {

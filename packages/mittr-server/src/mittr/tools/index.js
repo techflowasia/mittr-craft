@@ -17,6 +17,7 @@ import { registerMittrToolsSettingsRoutes } from './settings-routes.js';
 import { NOT_SIGNED_IN, registerWorkActions } from './work-lookup.js';
 
 export const CHROME_CLOSE_TIMEOUT_MS = 3_000;
+export const COMPUTER_STOP_TIMEOUT_MS = 3_000;
 
 const TITLES = Object.freeze({
   [MITTR_TOOLS.computer]: 'The Computer tool',
@@ -85,16 +86,16 @@ export function setupMittrTools(context, {
     (error) => logger.warn('[mittr] could not carry the 1.22 tool settings; trying again next start:', error?.message ?? error),
   );
 
+  const computerControl = createComputerControl({ binary: drivers.computer(), dataDir, env, logger });
   const chromeDriverOffered = () => personalDesktop() && drivers.chrome() !== null;
   const offered = {
-    [MITTR_TOOLS.computer]: () => personalDesktop() && drivers.computer() !== null,
+    [MITTR_TOOLS.computer]: () => personalDesktop() && drivers.computer() !== null && computerControl.available,
     [MITTR_TOOLS.chrome]: () => chromeDriverOffered() && drivers.chromePath() !== null,
     [MITTR_TOOLS.work]: () => signedIn(),
   };
-  const computerControl = createComputerControl({ binary: drivers.computer(), dataDir, env });
   registerComputerActions(registry, {
     control: computerControl,
-    launchApp: createLaunchApp(),
+    launchApp: createLaunchApp({ env }),
     writeScreenshot: control.writeScreenshot,
     offered: offered[MITTR_TOOLS.computer],
   });
@@ -213,7 +214,7 @@ export function setupMittrTools(context, {
     await mittrSettings.update({ tools: patch });
     await refresh();
     const now = await switches();
-    if (now.computer === false) await computerControl.stop();
+    if (now.computer === false) await settledWithin(computerControl.stop(), COMPUTER_STOP_TIMEOUT_MS);
     return now;
   };
 
@@ -273,14 +274,14 @@ export function setupMittrTools(context, {
     accountChanged: () => {
       callback.retire();
       chrome.forgetEveryGrant();
-      return Promise.all([closeEveryChrome(), computerControl.stop()]).then(() => {});
+      return Promise.all([closeEveryChrome(), settledWithin(computerControl.stop(), COMPUTER_STOP_TIMEOUT_MS)]).then(() => {});
     },
     dispose: () => {
       disposed ??= (async () => {
         unsubscribeReady();
         unsubscribeEvents();
         unsubscribeApprovals();
-        await Promise.all([closeEveryChrome(), computerControl.stop()]);
+        await Promise.all([closeEveryChrome(), settledWithin(computerControl.close(), COMPUTER_STOP_TIMEOUT_MS)]);
       })();
       return disposed;
     },

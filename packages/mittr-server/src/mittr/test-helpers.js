@@ -315,13 +315,17 @@ else if (command === 'serve') {
   log({ command, tool, args: rest[1] });
   if (tool === 'hang') setTimeout(() => {}, 30000);
   else if (tool === 'garbled') process.stdout.write('not json');
-  else ask({ method: 'call', name: tool, args: JSON.parse(rest[1] || '{}') }, (response) => {
-    if (response.ok) process.stdout.write(JSON.stringify(response.result));
-    else {
-      process.stderr.write(response.error + '\\n');
-      process.exitCode = 1;
-    }
-  });
+  else {
+    const delayFile = path.join(dir, 'call-delay');
+    const delay = fs.existsSync(delayFile) ? Number(fs.readFileSync(delayFile, 'utf8')) : 0;
+    setTimeout(() => ask({ method: 'call', name: tool, args: JSON.parse(rest[1] || '{}') }, (response) => {
+      if (response.ok) process.stdout.write(JSON.stringify(response.result));
+      else {
+        process.stderr.write(response.error + '\\n');
+        process.exitCode = 1;
+      }
+    }), delay);
+  }
 } else {
   process.stderr.write('stub cua-driver does not know ' + command + '\\n');
   process.exit(64);

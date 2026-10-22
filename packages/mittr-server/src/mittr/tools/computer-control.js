@@ -32,6 +32,8 @@ export const QUIET_DRIVER_ENV = Object.freeze({
 
 const PASSED_ENV = new Set(['PATH', 'HOME', 'TMPDIR', 'LANG', 'CFFIXED_USER_HOME']);
 
+export const launchEnv = (env) => Object.fromEntries(Object.entries(env ?? {}).filter(([key, value]) => isText(value) && (PASSED_ENV.has(key) || key.startsWith('LC_'))));
+
 export const bundledDriverPath = ({ dirFromEnv, resourcesDir, name, exists = fs.existsSync }) => {
   const fromEnv = String(dirFromEnv ?? '').trim();
   const fromResources = resourcesDir ? path.join(resourcesDir, name, name) : null;
@@ -51,7 +53,7 @@ export const driverFolder = (dataDir) => path.join(dataDir, DRIVER_FOLDER);
 export const driverSocketPath = (dataDir) => path.join(driverFolder(dataDir), SOCKET_NAME);
 
 export const driverEnv = ({ env, dataDir }) => ({
-  ...Object.fromEntries(Object.entries(env ?? {}).filter(([key, value]) => isText(value) && (PASSED_ENV.has(key) || key.startsWith('LC_')))),
+  ...launchEnv(env),
   ...QUIET_DRIVER_ENV,
   CUA_DRIVER_TELEMETRY_HOME: driverFolder(dataDir),
 });
@@ -157,6 +159,49 @@ const untilSettled = (work, signal, label) => {
   });
 };
 
+const UNAVAILABLE = 'The Computer tool is not available in this install';
+const CLOSED = 'MittrCraft is closing, so the Computer tool is not running';
+export const DRIVER_STOPPED = 'The Computer tool was stopped while this action waited, so nothing was sent to the desktop';
+const UNSAFE_FOLDER = 'The Computer tool cannot use its driver folder because it is not a plain folder owned by this user';
+const PID_FILE = path.join('Library', 'Caches', CUA_DRIVER, `${CUA_DRIVER}.pid`);
+const PS_COMMAND = '/bin/ps';
+
+export const prepareDriverFolder = (folder) => {
+  try {
+    fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
+  } catch {
+    throw new MittrToolError(UNSAFE_FOLDER, 503);
+  }
+  const stat = fs.lstatSync(folder);
+  const owned = typeof process.getuid !== 'function' || stat.uid === process.getuid();
+  if (stat.isSymbolicLink() || !stat.isDirectory() || !owned) throw new MittrToolError(UNSAFE_FOLDER, 503);
+  fs.chmodSync(folder, 0o700);
+};
+
+export const daemonPidFile = (home) => path.join(home, PID_FILE);
+
+const readPidFile = (file) => {
+  try {
+    const pid = Number.parseInt(fs.readFileSync(file, 'utf8').trim(), 10);
+    return Number.isInteger(pid) && pid > 1 ? pid : null;
+  } catch {
+    return null;
+  }
+};
+
+const pidAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const socketFits = (dataDir) => Buffer.byteLength(driverSocketPath(dataDir)) <= MAX_SOCKET_PATH_BYTES;
+
+const quietLogger = { warn: () => {} };
+
 export const createDriverDaemon = ({
   binary,
   dataDir,
@@ -164,17 +209,34 @@ export const createDriverDaemon = ({
   spawn = spawnChild,
   probe = probeSocket,
   appBundle = driverAppBundle,
-  makeFolder = (folder) => fs.mkdirSync(folder, { recursive: true, mode: 0o700 }),
+  prepareFolder = prepareDriverFolder,
+  readPid = readPidFile,
+  commandOf = null,
+  signalPid = (pid, signal) => process.kill(pid, signal),
+  isAlive = pidAlive,
+  logger = quietLogger,
   startTimeoutMs = DAEMON_START_TIMEOUT_MS,
   stopTimeoutMs = DAEMON_STOP_TIMEOUT_MS,
   probeIntervalMs = PROBE_INTERVAL_MS,
 }) => {
-  const usable = Boolean(binary) && isText(dataDir) && path.isAbsolute(dataDir);
+  const usable = Boolean(binary) && isText(dataDir) && path.isAbsolute(dataDir) && socketFits(dataDir);
   const socketPath = usable ? driverSocketPath(dataDir) : null;
   const childEnv = usable ? driverEnv({ env, dataDir }) : {};
   let current = null;
   let starting = null;
-  let stopping = null;
+  let halting = Promise.resolve();
+  let stopEpoch = 0;
+  let closed = false;
+
+  const commandOfPid = commandOf ?? ((pid) => runChild({
+    spawn,
+    command: PS_COMMAND,
+    args: ['-o', 'command=', '-p', String(pid)],
+    stdio: ['ignore', 'pipe', 'ignore'],
+    env: { PATH: '/usr/bin:/bin' },
+    label: 'ps',
+    timeoutMs: stopTimeoutMs,
+  }).then((text) => text.trim(), () => null));
 
   const stopCommand = () => runChild({
     spawn,
@@ -185,20 +247,57 @@ export const createDriverDaemon = ({
     cwd: driverFolder(dataDir),
     label: 'cua-driver stop',
     timeoutMs: stopTimeoutMs,
-  }).catch(() => {});
+  }).then(() => true, () => false);
 
   const exitedWithin = (generation, ms) => (generation.alive
     ? Promise.race([generation.exited, pause(ms)])
     : Promise.resolve());
 
-  const launch = async () => {
-    if (!usable) throw new MittrToolError(NOT_BUNDLED, 503);
-    if (Buffer.byteLength(socketPath) > MAX_SOCKET_PATH_BYTES) {
-      throw new MittrToolError(`The Computer tool cannot use its driver socket: ${socketPath} is longer than ${MAX_SOCKET_PATH_BYTES} bytes`, 503);
+  const pidGoneWithin = async (pid, ms) => {
+    const deadline = Date.now() + ms;
+    while (isAlive(pid)) {
+      if (Date.now() >= deadline) return false;
+      await pause(probeIntervalMs);
     }
-    makeFolder(driverFolder(dataDir));
+    return true;
+  };
+
+  const stopByPid = async (generation) => {
+    logger.warn('[mittr] cua-driver did not stop through its socket; stopping it by its pid file');
+    const home = childEnv.HOME;
+    const pid = home ? readPid(daemonPidFile(home)) : null;
+    if (pid === null) return;
+    const expected = `${path.join(generation.app, 'Contents', 'MacOS', CUA_DRIVER)} serve --socket ${socketPath}`;
+    if ((await commandOfPid(pid)) !== expected) return;
+    try {
+      signalPid(pid, 'SIGTERM');
+      if (!(await pidGoneWithin(pid, stopTimeoutMs))) signalPid(pid, 'SIGKILL');
+    } catch {
+      return;
+    }
+  };
+
+  const halt = async (generation) => {
+    const answered = (await probe(socketPath)) && (await stopCommand());
+    if (answered) await exitedWithin(generation, stopTimeoutMs);
+    if (generation.app && (!answered || generation.alive)) await stopByPid(generation);
+    if (generation.alive) {
+      generation.child.kill('SIGKILL');
+      await exitedWithin(generation, stopTimeoutMs);
+    }
+  };
+
+  const haltLater = (generation) => {
+    const work = halting.then(() => halt(generation));
+    halting = work.catch(() => {});
+    return work;
+  };
+
+  const launch = async (epoch) => {
+    prepareFolder(driverFolder(dataDir));
     if (await probe(socketPath)) await stopCommand();
-    const { command, args } = daemonLaunch({ binary, app: appBundle(binary), socketPath, env: childEnv });
+    const app = appBundle(binary);
+    const { command, args } = daemonLaunch({ binary, app, socketPath, env: childEnv });
     const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'], env: childEnv, cwd: driverFolder(dataDir) });
     const stderr = [];
     let stderrBytes = 0;
@@ -207,7 +306,7 @@ export const createDriverDaemon = ({
       stderrBytes += chunk.length;
       stderr.push(Buffer.from(chunk));
     });
-    const generation = { child, alive: true, failure: null };
+    const generation = { child, app, epoch, alive: true, failure: null };
     generation.exited = new Promise((resolve) => {
       child.once('close', () => {
         generation.alive = false;
@@ -227,8 +326,7 @@ export const createDriverDaemon = ({
       }
       if (!generation.alive) break;
       if (Date.now() >= deadline) {
-        child.kill('SIGKILL');
-        await stopCommand();
+        await haltLater(generation);
         throw new Error(`cua-driver serve did not answer on ${socketPath} within ${startTimeoutMs}ms`);
       }
       await pause(probeIntervalMs);
@@ -238,40 +336,54 @@ export const createDriverDaemon = ({
     throw new Error(generation.failure?.message || said || 'cua-driver serve exited before it answered');
   };
 
+  const refusal = () => new MittrToolError(closed ? CLOSED : DRIVER_STOPPED, 503);
+
   const ensure = () => {
-    if (current?.alive) return Promise.resolve();
-    starting ??= (async () => {
-      await stopping;
-      current = await launch();
-    })().finally(() => {
-      starting = null;
-    });
+    if (closed) return Promise.reject(new MittrToolError(CLOSED, 503));
+    if (!usable) return Promise.reject(new MittrToolError(UNAVAILABLE, 503));
+    if (current?.alive) return Promise.resolve(current);
+    if (!starting) {
+      const epoch = stopEpoch;
+      starting = (async () => {
+        await halting;
+        if (closed || stopEpoch !== epoch) throw refusal();
+        const generation = await launch(epoch);
+        if (closed || stopEpoch !== epoch) {
+          await haltLater(generation);
+          throw refusal();
+        }
+        current = generation;
+        return generation;
+      })().finally(() => {
+        starting = null;
+      });
+    }
     return starting;
   };
 
-  const stop = () => {
-    stopping ??= (async () => {
-      await starting?.catch(() => {});
-      const generation = current;
-      current = null;
-      if (!generation) return;
-      if (await probe(socketPath)) {
-        await stopCommand();
-        await exitedWithin(generation, stopTimeoutMs);
-      }
-      if (generation.alive) {
-        generation.child.kill('SIGKILL');
-        await exitedWithin(generation, stopTimeoutMs);
-      }
-    })().finally(() => {
-      stopping = null;
-    });
-    return stopping;
+  const stop = async () => {
+    stopEpoch += 1;
+    const generation = current;
+    current = null;
+    const pending = starting;
+    if (generation) await haltLater(generation);
+    await pending?.catch(() => {});
+    await halting;
   };
 
-  const restart = async () => {
+  const close = async () => {
+    closed = true;
     await stop();
-    await ensure();
+  };
+
+  const restart = async (generation) => {
+    if (closed || !generation || generation.epoch !== stopEpoch) return null;
+    if (current === generation) {
+      current = null;
+      await haltLater(generation);
+    }
+    if (closed || generation.epoch !== stopEpoch) return null;
+    return ensure();
   };
 
   return {
@@ -280,19 +392,32 @@ export const createDriverDaemon = ({
     env: childEnv,
     ensure,
     stop,
+    close,
     restart,
     running: () => current?.alive === true,
   };
 };
 
-const daemonGone = (error, socketPath) => String(error?.message ?? '').includes(`daemon is not running on ${socketPath}`);
+const socketNames = (socketPath) => {
+  try {
+    return [socketPath, path.join(fs.realpathSync(path.dirname(socketPath)), path.basename(socketPath))];
+  } catch {
+    return [socketPath];
+  }
+};
+
+const daemonGone = (error, socketPath) => {
+  const text = String(error?.message ?? '');
+  return socketNames(socketPath).some((name) => text.includes(`daemon is not running on ${name}`));
+};
 
 export const createComputerControl = ({
   binary,
   dataDir = null,
   env = process.env,
   spawn = spawnChild,
-  daemon = createDriverDaemon({ binary, dataDir, env, spawn }),
+  logger = quietLogger,
+  daemon = createDriverDaemon({ binary, dataDir, env, spawn, logger }),
   timeoutMs = CHILD_TIMEOUT_MS,
   maxOutputBytes = MAX_DRIVER_OUTPUT_BYTES,
 }) => {
@@ -310,12 +435,17 @@ export const createComputerControl = ({
     maxOutputBytes,
   });
 
+  const down = (reason) => {
+    logger.warn(`[mittr] the Computer tool's desktop driver is not running: ${reason}`);
+    return new MittrToolError(DRIVER_DOWN, 503);
+  };
+
   const started = async (work, signal, label) => {
     try {
-      await untilSettled(work(), signal, label);
+      return await untilSettled(work(), signal, label);
     } catch (error) {
       if (error instanceof MittrToolError) throw error;
-      throw new MittrToolError(DRIVER_DOWN, 503);
+      throw down(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -323,21 +453,23 @@ export const createComputerControl = ({
     available,
     socketPath: daemon.socketPath,
     stop: () => daemon.stop(),
+    close: () => daemon.close(),
     request: async (tool, args, { signal } = {}) => {
-      if (!available) throw new MittrToolError(NOT_BUNDLED, 503);
+      if (!available) throw new MittrToolError(binary ? UNAVAILABLE : NOT_BUNDLED, 503);
       const label = `cua-driver ${tool}`;
       if (signal?.aborted) throw cancelled(label);
-      await started(() => daemon.ensure(), signal, label);
+      const generation = await started(() => daemon.ensure(), signal, label);
       let output;
       try {
         output = await call(tool, args, signal);
       } catch (error) {
         if (!daemonGone(error, daemon.socketPath)) throw error;
-        await started(() => daemon.restart(), signal, label);
+        const next = await started(() => daemon.restart(generation), signal, label);
+        if (!next) throw new MittrToolError(DRIVER_STOPPED, 503);
         try {
           output = await call(tool, args, signal);
         } catch (again) {
-          if (daemonGone(again, daemon.socketPath)) throw new MittrToolError(DRIVER_DOWN, 503);
+          if (daemonGone(again, daemon.socketPath)) throw down('it stopped again right after a restart');
           throw again;
         }
       }
@@ -350,12 +482,13 @@ export const createComputerControl = ({
   };
 };
 
-export const createLaunchApp = ({ spawn = spawnChild, timeoutMs = CHILD_TIMEOUT_MS } = {}) => async (name, { signal } = {}) => {
+export const createLaunchApp = ({ spawn = spawnChild, timeoutMs = CHILD_TIMEOUT_MS, env = process.env } = {}) => async (name, { signal } = {}) => {
   await runChild({
     spawn,
     command: OPEN_COMMAND,
     args: ['-a', name],
     stdio: ['ignore', 'ignore', 'pipe'],
+    env: launchEnv(env),
     label: `open -a "${name}"`,
     timeoutMs,
     signal,
