@@ -213,6 +213,7 @@ export function createChromeService({
   const conversationGrants = new Set();
   const modes = new Map();
   let generation = 0;
+  let closing = null;
 
   const isHostAllowed = async (sessionId, host) => conversationGrants.has(sessionId) || Boolean(await approvals.isApproved(sessionId, host));
 
@@ -235,6 +236,7 @@ export function createChromeService({
 
   const ensureApproved = async (sessionId, host, ctx) => {
     if (await isHostAllowed(sessionId, host)) return;
+    if (ctx.surface === 'voice') throw notYetAllowed(host);
     const reply = await approvals.ask({ sessionId, host, directory: trimmedText(ctx.directory), source: ctx.source, signal: ctx.signal });
     if (reply === 'once' || reply === 'always') return;
     if (reply === 'reject') throw new MittrToolError(`The user did not allow using their Chrome sign-in on ${host}`, 403);
@@ -472,7 +474,21 @@ export function createChromeService({
     return result;
   };
 
-  const execute = (action, input = {}, ctx = {}) => perform(action, input, ctx, generation);
+  const execute = async (action, input = {}, ctx = {}) => {
+    while (closing) await closing;
+    return perform(action, input, ctx, generation);
+  };
+
+  const currentPage = async (sessionId) => {
+    const id = trimmedText(sessionId);
+    const launched = id ? modes.get(chromeSessionName(id)) : undefined;
+    if (!launched) return null;
+    const options = { ...launched, generation };
+    const url = trimmedText((await drive(['get', 'url'], options))?.url);
+    if (!url || url === NO_PAGE) return null;
+    const title = trimmedText((await drive(['get', 'title'], options))?.title);
+    return { url, title: title ?? null };
+  };
 
   const forgetConversation = (sessionId) => {
     conversationGrants.delete(sessionId);
@@ -482,17 +498,27 @@ export function createChromeService({
   return {
     execute,
     profiles: async () => (control.available ? control.profiles() : []),
-    removeHost: async (host) => approvals.removeHost(required(host, 'host').toLowerCase()),
+    removeHost: async (host) => {
+      const removed = await approvals.removeHost(required(host, 'host').toLowerCase());
+      conversationGrants.clear();
+      return removed;
+    },
     closeSession: async (sessionId) => {
       const id = trimmedText(sessionId);
       if (!id) return;
       forgetConversation(id);
       await closeRunning(id).catch(() => undefined);
     },
-    closeAll: async ({ signal } = {}) => {
+    closeAll: ({ signal } = {}) => {
       generation += 1;
       modes.clear();
-      await control.closeAll({ signal });
+      const running = Promise.resolve().then(() => control.closeAll({ signal }));
+      const settled = running.then(() => undefined, () => undefined);
+      closing = settled;
+      void settled.then(() => {
+        if (closing === settled) closing = null;
+      });
+      return running;
     },
     forgetEveryGrant: () => {
       conversationGrants.clear();
@@ -507,6 +533,7 @@ export function createChromeService({
       if (id) forgetConversation(id);
     },
     isHostAllowed,
+    currentPage,
   };
 }
 

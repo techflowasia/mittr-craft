@@ -117,23 +117,26 @@ export function createChromeApprovals({ settings, logger = console }) {
 
 const unwrapped = (value) => (isRecord(value) && Object.hasOwn(value, 'data') ? value.data : value);
 
+export const createEngineCall = ({ opencode, fetchImpl = fetch, timeoutMs = ENGINE_TIMEOUT_MS }) => async (route, { method = 'GET', body, directory, signal } = {}) => {
+  const headers = { accept: 'application/json', ...opencode.authHeaders() };
+  if (body) headers['content-type'] = 'application/json';
+  if (directory) headers['x-opencode-directory'] = encodeURIComponent(directory);
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const init = { method, headers, signal: signal ? AbortSignal.any([signal, timeout]) : timeout };
+  if (body) init.body = JSON.stringify(body);
+  const response = await fetchImpl(opencode.url(route), init);
+  const text = await response.text();
+  if (!response.ok) {
+    const error = new Error(`The engine answered HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  if (!text) return null;
+  return unwrapped(JSON.parse(text));
+};
+
 export function createEnginePermissions({ opencode, fetchImpl = fetch, timeoutMs = ENGINE_TIMEOUT_MS }) {
-  const call = async (route, { method = 'GET', body, directory } = {}) => {
-    const headers = { accept: 'application/json', ...opencode.authHeaders() };
-    if (body) headers['content-type'] = 'application/json';
-    if (directory) headers['x-opencode-directory'] = encodeURIComponent(directory);
-    const init = { method, headers, signal: AbortSignal.timeout(timeoutMs) };
-    if (body) init.body = JSON.stringify(body);
-    const response = await fetchImpl(opencode.url(route), init);
-    const text = await response.text();
-    if (!response.ok) {
-      const error = new Error(`The engine answered HTTP ${response.status}`);
-      error.status = response.status;
-      throw error;
-    }
-    if (!text) return null;
-    return unwrapped(JSON.parse(text));
-  };
+  const call = createEngineCall({ opencode, fetchImpl, timeoutMs });
 
   const session = (sessionId) => `/api/session/${encodeURIComponent(sessionId)}`;
 

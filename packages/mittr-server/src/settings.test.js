@@ -200,3 +200,14 @@ test('no profile-scope registry key has an OpenChamber spelling', () => {
   assert.ok(profileKeys.length > 0);
   assert.deepEqual(profileKeys.filter((key) => /openchamber/i.test(key)), []);
 });
+
+test('a 1.22 sttProvider mittr is parked under mittr, and any other provider stays where upstream reads it', async (t) => {
+  const carried = withDataDir(t, { sttProvider: 'mittr', themeId: 'mittr-light' });
+  const result = await migrateSettingsOnce({ dataDir: carried, ...realKeys });
+  assert.deepEqual(result.moved, ['sttProvider']);
+  assert.deepEqual(readSettings(carried), { themeId: 'mittr-light', mittr: { sttProvider: 'mittr' } });
+
+  const own = withDataDir(t, { sttProvider: 'openai-compatible' });
+  await migrateSettingsOnce({ dataDir: own, ...realKeys });
+  assert.deepEqual(readSettings(own), { sttProvider: 'openai-compatible' });
+});

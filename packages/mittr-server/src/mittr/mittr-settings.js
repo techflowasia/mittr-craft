@@ -20,6 +20,31 @@ const PARKED_TOOL_KEYS = Object.freeze({
   agentChromeApprovedHosts: 'chromeApprovedHosts',
 });
 
+export const VOICE_STEP_CAP = Object.freeze({ fallback: 8, min: 1, max: 20 });
+export const VOICE_REPLY_MAX_CHARS = Object.freeze({ fallback: 8000, min: 1000, max: 30000 });
+
+const PARKED_VOICE_KEYS = Object.freeze({ voiceStepCap: 'stepCap', voiceReplyMaxChars: 'replyMaxChars' });
+
+const inRange = (value, { min, max }) => Number.isInteger(value) && value >= min && value <= max;
+
+const stepCapOf = (value) => (inRange(value, VOICE_STEP_CAP) ? value : VOICE_STEP_CAP.fallback);
+
+const replyMaxCharsOf = (value) => {
+  const number = Number(value);
+  if (value === null || value === '' || !Number.isFinite(number)) return VOICE_REPLY_MAX_CHARS.fallback;
+  return Math.min(VOICE_REPLY_MAX_CHARS.max, Math.max(VOICE_REPLY_MAX_CHARS.min, Math.round(number)));
+};
+
+const voiceOf = (stored) => {
+  const voice = isPlainObject(stored) ? stored : {};
+  return { stepCap: stepCapOf(voice.stepCap), replyMaxChars: replyMaxCharsOf(voice.replyMaxChars) };
+};
+
+const VOICE_FIELDS = Object.freeze({
+  stepCap: (value) => inRange(value, VOICE_STEP_CAP),
+  replyMaxChars: (value) => inRange(value, VOICE_REPLY_MAX_CHARS),
+});
+
 const NOT_IN_PROFILE_NAME = /[/\\~\0]/;
 const DOT_NAMES = new Set(['.', '..']);
 
@@ -65,7 +90,7 @@ const toolsOf = (stored) => {
   };
 };
 
-const settingsOf = (stored) => ({ showOtherProviders: stored.showOtherProviders === true, tools: toolsOf(stored.tools) });
+const settingsOf = (stored) => ({ showOtherProviders: stored.showOtherProviders === true, tools: toolsOf(stored.tools), voice: voiceOf(stored.voice) });
 
 const checkToolPatch = (patch) => {
   if (!isPlainObject(patch)) throw new TypeError('tools must be an object of tool settings');
@@ -74,18 +99,28 @@ const checkToolPatch = (patch) => {
   }
 };
 
+const checkVoicePatch = (patch) => {
+  if (!isPlainObject(patch)) throw new TypeError('voice must be an object of voice settings');
+  for (const [key, value] of Object.entries(patch)) {
+    if (!Object.hasOwn(VOICE_FIELDS, key) || !VOICE_FIELDS[key](value)) throw new TypeError(`Unknown or invalid voice setting: ${key}`);
+  }
+};
+
 const checkPatch = (patch) => {
-  if (!isPlainObject(patch) || (!Object.hasOwn(patch, 'showOtherProviders') && !Object.hasOwn(patch, 'tools'))) {
+  if (!isPlainObject(patch) || !['showOtherProviders', 'tools', 'voice'].some((key) => Object.hasOwn(patch, key))) {
     throw new TypeError(`${INVALID_SWITCH}, or tools must be given`);
   }
   if (Object.hasOwn(patch, 'showOtherProviders') && !isBoolean(patch.showOtherProviders)) throw new TypeError(INVALID_SWITCH);
   if (Object.hasOwn(patch, 'tools')) checkToolPatch(patch.tools);
+  if (Object.hasOwn(patch, 'voice')) checkVoicePatch(patch.voice);
 };
 
 const storedFieldsOf = (stored) => {
   const fields = {};
   if (Object.hasOwn(stored, 'showOtherProviders')) fields.showOtherProviders = stored.showOtherProviders === true;
   if (Object.hasOwn(stored, 'tools')) fields.tools = toolsOf(stored.tools);
+  if (Object.hasOwn(stored, 'voice')) fields.voice = voiceOf(stored.voice);
+  if (stored.dictationCarried === true) fields.dictationCarried = true;
   return fields;
 };
 
@@ -140,6 +175,7 @@ export function createMittrSettings({ dataDir, logger = console }) {
     const next = storedFieldsOf(await readStored());
     if (Object.hasOwn(patch, 'showOtherProviders')) next.showOtherProviders = patch.showOtherProviders;
     if (Object.hasOwn(patch, 'tools')) next.tools = toolsOf({ ...toolsOf(next.tools), ...patch.tools });
+    if (Object.hasOwn(patch, 'voice')) next.voice = voiceOf({ ...voiceOf(next.voice), ...patch.voice });
     await write(next);
     return settingsOf(next);
   });
@@ -166,5 +202,26 @@ export function createMittrSettings({ dataDir, logger = console }) {
     return tools;
   });
 
-  return { read, update, carryParkedToolSettings };
+  const carryParkedVoiceSettings = () => queued(async () => {
+    const stored = await readStored();
+    if (Object.hasOwn(stored, 'voice')) return null;
+    const parked = await readParked();
+    const carried = Object.entries(PARKED_VOICE_KEYS).filter(([key]) => Object.hasOwn(parked, key));
+    if (carried.length === 0) return null;
+    const voice = voiceOf(Object.fromEntries(carried.map(([key, field]) => [field, parked[key]])));
+    await write({ ...storedFieldsOf(stored), voice });
+    return voice;
+  });
+
+  const dictationCarryPending = async () => {
+    if ((await readStored()).dictationCarried === true) return false;
+    const parked = await readParked().catch(() => ({}));
+    return parked.sttProvider === 'mittr';
+  };
+
+  const markDictationCarried = () => queued(async () => {
+    await write({ ...storedFieldsOf(await readStored()), dictationCarried: true });
+  });
+
+  return { read, update, carryParkedToolSettings, carryParkedVoiceSettings, dictationCarryPending, markDictationCarried };
 }

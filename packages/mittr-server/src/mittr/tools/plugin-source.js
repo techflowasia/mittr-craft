@@ -162,11 +162,19 @@ const contentOf = (content, answer) => {
   return [{ type: "text", text: JSON.stringify({ ...answer, data }) }, ...picture(image, data.path)]
 }
 
-const call = async (tool, input, context) => {
-  const requested = typeof input?.action === "string" ? input.action : ""
+const titleOf = (action) => (Object.hasOwn(TITLES, action) ? TITLES[action] : action)
+
+const progress = async (context, action, extra) => {
+  if (typeof context?.progress !== "function") return
+  try {
+    await context.progress({ mittrcraft: { schemaVersion: SCHEMA_VERSION, action, description: titleOf(action), ...extra } })
+  } catch {}
+}
+
+const send = async (tool, input, context, requested) => {
   const result = (content, action, ok) => ({
     content,
-    metadata: { mittrcraft: { schemaVersion: SCHEMA_VERSION, action, description: Object.hasOwn(TITLES, action) ? TITLES[action] : action, ok } },
+    metadata: { mittrcraft: { schemaVersion: SCHEMA_VERSION, action, description: titleOf(action), ok } },
   })
   const failure = (error) => result(JSON.stringify({ schemaVersion: SCHEMA_VERSION, ok: false, action: requested, error }), requested, false)
   const link = connection()
@@ -178,6 +186,15 @@ const call = async (tool, input, context) => {
   } catch (error) {
     return failure({ message: error instanceof Error ? error.message : String(error), kind: "runtime" })
   }
+}
+
+const call = async (tool, input, context) => {
+  const requested = typeof input?.action === "string" ? input.action : ""
+  await progress(context, requested)
+  const outcome = await send(tool, input, context, requested)
+  const { action, ok } = outcome.metadata.mittrcraft
+  await progress(context, action, { ok })
+  return outcome
 }
 ${wrapCapture ? captureHelpers(captureTimeoutMs) : ''}${asks ? askHelpers(askPermissions) : ''}
 export default {

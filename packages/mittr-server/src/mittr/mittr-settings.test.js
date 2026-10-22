@@ -14,7 +14,8 @@ const recordingLogger = () => {
 const settingsFile = (dataDir) => path.join(dataDir, 'mittr-settings.json');
 
 const DEFAULT_TOOLS = { computer: true, chrome: true, chromeProfile: null, chromeHeaded: false, chromeApprovedHosts: [] };
-const stored = (showOtherProviders, tools = DEFAULT_TOOLS) => ({ showOtherProviders, tools });
+const DEFAULT_VOICE = { stepCap: 8, replyMaxChars: 8000 };
+const stored = (showOtherProviders, tools = DEFAULT_TOOLS, voice = DEFAULT_VOICE) => ({ showOtherProviders, tools, voice });
 
 test('missing settings read as switch OFF, with no warning', async (t) => {
   const dataDir = tempDataDir(t);
@@ -243,4 +244,67 @@ test('a bracketed site is only an IPv6 address in the form a page address gives'
     const host = new URL(url).hostname.toLowerCase();
     assert.equal(isHost(host), true, host);
   }
+});
+
+test('a 1.22 Mittr dictation choice is carried once', async (t) => {
+  const dataDir = tempDataDir(t);
+  writeParked(dataDir, { mittr: { sttProvider: 'mittr' } });
+  const settings = createMittrSettings({ dataDir, logger: recordingLogger() });
+  assert.equal(await settings.dictationCarryPending(), true);
+  await settings.update({ showOtherProviders: true });
+  assert.equal(await settings.dictationCarryPending(), true, 'another setting keeps the carry');
+  await settings.markDictationCarried();
+  assert.equal(await settings.dictationCarryPending(), false);
+  await settings.update({ tools: { chrome: false } });
+  const nextStart = createMittrSettings({ dataDir, logger: recordingLogger() });
+  assert.equal(await nextStart.dictationCarryPending(), false);
+  assert.equal((await nextStart.read()).showOtherProviders, true);
+
+  const none = tempDataDir(t);
+  writeParked(none, { mittr: { sttProvider: 'local' } });
+  assert.equal(await createMittrSettings({ dataDir: none, logger: recordingLogger() }).dictationCarryPending(), false);
+  assert.equal(await createMittrSettings({ dataDir: tempDataDir(t), logger: recordingLogger() }).dictationCarryPending(), false);
+});
+
+test('the voice limits read as 1.22 did: a step cap out of range falls back, a reply length is clamped', async (t) => {
+  const dataDir = tempDataDir(t);
+  const settings = createMittrSettings({ dataDir, logger: recordingLogger() });
+  assert.deepEqual((await settings.read()).voice, { stepCap: 8, replyMaxChars: 8000 });
+  for (const [voice, expected] of [
+    [{ stepCap: 0, replyMaxChars: 500 }, { stepCap: 8, replyMaxChars: 1000 }],
+    [{ stepCap: 21, replyMaxChars: 99_999 }, { stepCap: 8, replyMaxChars: 30000 }],
+    [{ stepCap: 2.5, replyMaxChars: 1234.6 }, { stepCap: 8, replyMaxChars: 1235 }],
+    [{ stepCap: '3', replyMaxChars: 'many' }, { stepCap: 8, replyMaxChars: 8000 }],
+    [{ stepCap: 3, replyMaxChars: 2000 }, { stepCap: 3, replyMaxChars: 2000 }],
+  ]) {
+    fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ voice }));
+    assert.deepEqual((await settings.read()).voice, expected, JSON.stringify(voice));
+  }
+});
+
+test('update takes voice limits in range, keeps the other settings, and refuses the rest', async (t) => {
+  const dataDir = tempDataDir(t);
+  const settings = createMittrSettings({ dataDir, logger: recordingLogger() });
+  await settings.update({ showOtherProviders: true, tools: { chrome: false } });
+  assert.deepEqual((await settings.update({ voice: { stepCap: 3 } })).voice, { stepCap: 3, replyMaxChars: 8000 });
+  assert.deepEqual((await settings.update({ voice: { replyMaxChars: 1000 } })).voice, { stepCap: 3, replyMaxChars: 1000 });
+  const after = await settings.read();
+  assert.equal(after.showOtherProviders, true);
+  assert.equal(after.tools.chrome, false);
+  for (const voice of [{ stepCap: 0 }, { stepCap: 21 }, { replyMaxChars: 999 }, { replyMaxChars: 30001 }, { stepCap: 2.5 }, { other: 1 }, []]) {
+    await assert.rejects(settings.update({ voice }), TypeError, JSON.stringify(voice));
+  }
+  assert.deepEqual((await settings.read()).voice, { stepCap: 3, replyMaxChars: 1000 });
+});
+
+test('1.22 voice limits parked under mittr are carried once', async (t) => {
+  const dataDir = tempDataDir(t);
+  writeParked(dataDir, { mittr: { voiceStepCap: 4, voiceReplyMaxChars: 12000, agentChromeToolEnabled: false } });
+  const settings = createMittrSettings({ dataDir, logger: recordingLogger() });
+  assert.deepEqual(await settings.carryParkedVoiceSettings(), { stepCap: 4, replyMaxChars: 12000 });
+  assert.deepEqual((await settings.read()).voice, { stepCap: 4, replyMaxChars: 12000 });
+  await settings.update({ voice: { stepCap: 6 } });
+  assert.equal(await createMittrSettings({ dataDir, logger: recordingLogger() }).carryParkedVoiceSettings(), null);
+  assert.equal((await settings.read()).voice.stepCap, 6);
+  assert.equal(await createMittrSettings({ dataDir: tempDataDir(t), logger: recordingLogger() }).carryParkedVoiceSettings(), null);
 });

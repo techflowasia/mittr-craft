@@ -755,3 +755,56 @@ export const compareEnglishSnapshot = (snapshot, { overrides, upstream }) => {
   }
   return problems;
 };
+
+UPSTREAM_CONTRACT.push(
+  {
+    id: 'agent-tool-progress',
+    files: ['packages/web/server/lib/agent-tool/runtime.js'],
+    why: 'upstream\'s generated agent tool reports context.progress({ <tool>: { schemaVersion, action, description } }) before its callback and again with ok after, and the MittrCraft tools plugin does the same',
+  },
+  {
+    id: 'dictation-openai-compatible',
+    files: ['packages/web/server/lib/dictation/service.js', 'packages/web/server/lib/dictation/openai-compatible-session.js', 'packages/web/server/lib/tts/stt.js'],
+    why: 'upstream dictation with the openai-compatible provider reads options.openaiCompatible.{baseUrl,model} and the stored stt key, and its session posts a 16 kHz WAV through tts/stt.js, so Mittr speech is a base URL and a key',
+  },
+  {
+    id: 'tts-openai-compatible',
+    files: ['packages/web/server/lib/tts/routes.js', 'packages/web/server/lib/tts/service.js'],
+    why: '/api/tts/speak takes baseURL, fills its key from the stored openaiCompatible key, and answers with the content type the speech server gave',
+  },
+  {
+    id: 'voice-keys-file',
+    files: ['packages/web/server/lib/tts/voice-keys.js', 'packages/web/server/index.js'],
+    why: 'upstream keeps the voice keys in <dataDir>/voice-keys.json, the same data dir the plugin context names, with the kinds openai, openaiCompatible and stt, each a string of 1 to 1024 characters, and reads a key the MittrCraft speech key writer put there',
+  },
+  {
+    id: 'loopback-speech-urls',
+    files: ['packages/web/server/lib/tts/base-url.js'],
+    why: 'normalizeCustomOpenAIBaseURL accepts http://127.0.0.1:<port>/mittr-speech/v1 on every runtime, enterprise mode included',
+  },
+  {
+    id: 'control-voice-actions',
+    files: ['packages/web/server/lib/openchamber-control/actions.js'],
+    why: 'every upstream action the voice assistant offers is still one of the agent tool\'s control or web actions',
+  },
+  {
+    id: 'control-voice-parameters',
+    files: ['packages/web/server/lib/agent-tool/runtime.js'],
+    why: 'every control and web parameter the voice assistant offers is still an input of upstream\'s generated control or web tool, and the work tool\'s inputs are the MittrCraft work tool\'s',
+  },
+  {
+    id: 'engine-voice-reads',
+    files: ['packages/electron/package.json', 'scripts/mittr/probe-engine-v2.mjs'],
+    why: 'the bundled engine (2.0.22, probe P19 to P24) answers GET /api/session/:id with model { providerID, id, variant }, /api/session/:id/permission and /api/session/:id/message with the agent on assistant records, all scoped by x-opencode-directory, and has no todo route',
+  },
+  {
+    id: 'session-interrupt-route',
+    files: ['packages/electron/package.json', 'scripts/mittr/probe-engine-v2.mjs'],
+    why: 'the bundled engine stops a running session with POST /api/session/:id/interrupt scoped by x-opencode-directory (probe P22), which the voice session.stop sends',
+  },
+  {
+    id: 'sanitize-for-tts',
+    files: ['packages/web/server/lib/text/summarization.js'],
+    why: 'the voice assistant\'s speakable() is upstream\'s sanitizeForTTS vendored unchanged, and gives the same text on Markdown, code, links, paths and Thai',
+  },
+);

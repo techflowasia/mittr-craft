@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { MITTR_TOOLS, MittrToolError, NO_TOOL_NAME, createMittrActionRegistry } from './registry.js';
+import { MITTR_TOOLS, MittrToolError, NO_TOOL_NAME, UPSTREAM_SWITCHES, createMittrActionRegistry } from './registry.js';
 
 const UPSTREAM_DEFINITIONS = {
   control: [
@@ -136,7 +136,7 @@ test('a voice-only action is refused for agents and http', async () => {
 
   await assert.rejects(registry.execute('session.stop', {}, { surface: 'agent', tool: CHROME }), refusal(400));
   await assert.rejects(registry.execute('session.stop', {}, { surface: 'http' }), refusal(400));
-  assert.deepEqual(await registry.execute('session.stop', {}, { surface: 'voice' }), { stopped: true });
+  assert.deepEqual(await registry.execute('session.stop', {}, { surface: 'voice', scope: { local: true } }), { stopped: true });
   assert.deepEqual(runs, []);
 
   assert.equal(registry.resolve('stop', CHROME).error, 'Unknown action "stop" for mittrcraft_chrome; it has: chrome.open, chrome.read');
@@ -293,14 +293,62 @@ test('a tool its switch refuses answers that refusal on every surface and runs n
     return tool === CHROME ? new MittrToolError('The Chrome tool is turned off in Settings → Integrations', 403) : null;
   });
 
-  for (const ctx of [{ surface: 'agent', tool: CHROME }, { surface: 'voice' }, { surface: 'http', scope: { local: true } }]) {
+  for (const ctx of [{ surface: 'agent', tool: CHROME }, { surface: 'voice', scope: { local: true } }, { surface: 'http', scope: { local: true } }]) {
     await assert.rejects(registry.execute('chrome.open', {}, ctx), refusal(403, 'The Chrome tool is turned off in Settings → Integrations'), ctx.surface);
   }
   assert.deepEqual(runs, []);
-  assert.deepEqual(await registry.execute('computer.click', {}, { surface: 'voice' }), { ran: 'computer.click' });
+  assert.deepEqual(await registry.execute('computer.click', {}, { surface: 'voice', scope: { local: true } }), { ran: 'computer.click' });
   assert.deepEqual(await registry.execute('session.list', {}, { surface: 'voice' }), { sessions: [] });
   assert.equal(control.calls.length, 1);
-  assert.deepEqual(asked, [CHROME, CHROME, CHROME, COMPUTER]);
+  assert.deepEqual(asked, [CHROME, CHROME, CHROME, COMPUTER, UPSTREAM_SWITCHES.control]);
+});
+
+test('a voice chrome call without local scope answers 403 and runs nothing', async () => {
+  const { registry, runs } = setUp();
+
+  for (const scope of [undefined, {}, { local: false }, { local: 'true' }]) {
+    await assert.rejects(registry.execute('chrome.open', {}, { surface: 'voice', scope }), refusal(403, 'Open a page in Chrome can only be used from this machine'), JSON.stringify(scope));
+    await assert.rejects(registry.execute('computer.click', {}, { surface: 'voice', scope }), refusal(403, 'Click on the screen can only be used from this machine'), JSON.stringify(scope));
+  }
+  assert.deepEqual(runs, []);
+  assert.deepEqual(await registry.execute('chrome.open', {}, { surface: 'voice', scope: { local: true } }), { ran: 'chrome.open' });
+});
+
+test('by voice, an upstream action answers its own switch: control off refuses session.send, web off refuses browser.open', async () => {
+  const { registry, control } = setUp();
+  const off = new Set();
+  registry.useSwitches(async (name) => (off.has(name) ? new MittrToolError(`${name} is off`, 403) : null));
+
+  off.add(UPSTREAM_SWITCHES.control);
+  await assert.rejects(registry.execute('session.create', {}, { surface: 'voice' }), refusal(403, 'control is off'));
+  assert.deepEqual(await registry.execute('browser.open', {}, { surface: 'voice' }), { sessions: [] });
+
+  off.clear();
+  off.add(UPSTREAM_SWITCHES.web);
+  await assert.rejects(registry.execute('browser.open', {}, { surface: 'voice' }), refusal(403, 'web is off'));
+  assert.deepEqual(await registry.execute('session.list', {}, { surface: 'voice' }), { sessions: [] });
+
+  assert.deepEqual(control.calls.map(([action]) => action), ['browser.open', 'session.list']);
+});
+
+test('a voice-only action answers the switch it names, not its tool\'s', async () => {
+  const { registry, runs } = setUp();
+  registry.defineTool({ name: 'mittrcraft_voice', description: 'Voice', parameters: { type: 'object' } });
+  registry.register({ action: 'session.stop', tool: 'mittrcraft_voice', switchedBy: UPSTREAM_SWITCHES.control, title: 'Stop', description: 'Stop', effect: 'change', voiceOnly: true, execute: async () => ({ stopped: true }) });
+  registry.register({ action: 'chrome.allow_site', tool: 'mittrcraft_voice', switchedBy: CHROME, title: 'Allow', description: 'Allow', effect: 'change', voiceOnly: true, execute: async () => ({ allowed: true }) });
+  const asked = [];
+  const off = new Set([UPSTREAM_SWITCHES.control]);
+  registry.useSwitches(async (name) => {
+    asked.push(name);
+    return off.has(name) ? new MittrToolError(`${name} is off`, 403) : null;
+  });
+
+  await assert.rejects(registry.execute('session.stop', {}, { surface: 'voice', scope: { local: true } }), refusal(403, 'control is off'));
+  assert.deepEqual(await registry.execute('chrome.allow_site', {}, { surface: 'voice', scope: { local: true } }), { allowed: true });
+  off.add(CHROME);
+  await assert.rejects(registry.execute('chrome.allow_site', {}, { surface: 'voice', scope: { local: true } }), refusal(403, `${CHROME} is off`));
+  assert.deepEqual(asked, [UPSTREAM_SWITCHES.control, CHROME, CHROME]);
+  assert.deepEqual(runs, []);
 });
 
 test('the MittrCraft tool names are fixed', () => {

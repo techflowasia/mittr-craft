@@ -42,7 +42,7 @@ const fakeBrowser = ({ profiles = [{ directory: 'Default', name: 'Person' }], re
       urls.set(session, redirects[rest[0]] ?? rest[0]);
       return reply({ url: rest[0], title: 'Acme', lifecycle: { launched: true } });
     }
-    if (command === 'get') return reply({ url: urls.get(session) ?? 'about:blank' });
+    if (command === 'get') return rest[0] === 'title' ? reply({ title: urls.has(session) ? 'Acme home' : '' }) : reply({ url: urls.get(session) ?? 'about:blank' });
     if (command === 'click') {
       if (clickTo) urls.set(session, clickTo);
       return reply({ clicked: true, secret: 'page text from wherever it landed' });
@@ -890,4 +890,98 @@ test('a chrome.do cancelled between steps stops and reads nothing more', async (
   assert.deepEqual(result, { outcome: 'stopped', reason: 'the call was cancelled', steps: [], url: null });
   assert.equal(stepper.calls.length, 1);
   assert.deepEqual(since().map(([command]) => command), ['get', 'get', 'snapshot', 'get']);
+});
+
+const VOICE = chromeSessionName('voice');
+
+test('a voice chrome call on a new site answers site_approval_required with the host and raises no card', async (t) => {
+  const approvals = allowHosts();
+  const { service, browser, ctx } = setUp(t, { approvals });
+  const voice = { ...ctx, sessionId: 'voice', surface: 'voice' };
+  const notYet = refusal(403, 'The user has not yet allowed using their Chrome sign-in on acme.example.test', { code: 'site_approval_required', host: 'acme.example.test' });
+
+  await assert.rejects(service.execute('chrome.open', { url: 'https://acme.example.test/x' }, voice), notYet);
+  browser.urls.set(VOICE, 'https://acme.example.test/y');
+  await assert.rejects(service.execute('chrome.read', {}, voice), notYet);
+
+  assert.deepEqual(approvals.record.asks, []);
+  assert.equal(browser.commands().some(([command]) => command === 'open' || command === 'read'), false);
+});
+
+test('an always-allowed site opens from voice with no question', async (t) => {
+  const approvals = allowHosts('acme.example.test');
+  const { service, browser, ctx } = setUp(t, { approvals });
+  await service.execute('chrome.open', { url: 'https://acme.example.test/x' }, { ...ctx, sessionId: 'voice', surface: 'voice' });
+  assert.deepEqual(approvals.record.asks, []);
+  assert.equal(browser.urls.get(VOICE), 'https://acme.example.test/x');
+});
+
+test('removing a site in Settings ends the voice conversation\'s Chrome allow', async (t) => {
+  const { service } = setUp(t, { approvals: allowHosts('acme.example.test') });
+  service.allowForConversation('voice');
+  assert.equal(await service.isHostAllowed('voice', 'other.example.test'), true);
+  await service.removeHost('acme.example.test');
+  assert.equal(await service.isHostAllowed('voice', 'other.example.test'), false);
+});
+
+test('a call begun while closeAll runs waits and starts in the new generation', async (t) => {
+  const base = fakeBrowser();
+  const closing = deferred();
+  const release = deferred();
+  const browser = {
+    ...base,
+    execute: async (binary, argv, options) => {
+      if (commandOf(argv).join(' ') === 'close --all') {
+        closing.resolve();
+        await release.promise;
+      }
+      return base.execute(binary, argv, options);
+    },
+  };
+  const { service, ctx } = setUp(t, { browser });
+  const closed = service.closeAll();
+  await closing.promise;
+  const opened = service.execute('chrome.open', { url: 'http://acme.example.test/' }, ctx);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(base.commands(), []);
+
+  release.resolve();
+  await closed;
+  await opened;
+  assert.deepEqual(base.commands().slice(0, 3), [['close', '--all'], ['profiles'], ['open', 'http://acme.example.test/']]);
+  assert.equal(base.urls.get(SES_1), 'http://acme.example.test/');
+});
+
+test('currentPage answers null for a session this server never opened and runs no command', async (t) => {
+  const { service, browser, ctx } = setUp(t);
+  browser.urls.set(VOICE, 'https://acme.example.test/elsewhere');
+  assert.equal(await service.currentPage('voice'), null);
+  assert.deepEqual(browser.calls, []);
+
+  await service.execute('chrome.open', { url: 'https://acme.example.test/x' }, { ...ctx, sessionId: 'voice', surface: 'voice' });
+  const before = browser.calls.length;
+  assert.deepEqual(await service.currentPage('voice'), { url: 'https://acme.example.test/x', title: 'Acme home' });
+  assert.deepEqual(browser.commands().slice(before), [['get', 'url'], ['get', 'title']]);
+
+  await service.closeAll();
+  const afterClose = browser.calls.length;
+  assert.equal(await service.currentPage('voice'), null);
+  assert.equal(browser.calls.length, afterClose);
+});
+
+test('no route, plugin tool or http surface reaches allowForConversation', () => {
+  const root = path.resolve(import.meta.dirname, '../..');
+  const writers = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(file);
+      else if (entry.name.endsWith('.js') && !entry.name.endsWith('.test.js') && /\ballowForConversation\b/.test(fs.readFileSync(file, 'utf8'))) {
+        writers.push(path.relative(root, file).split(path.sep).join('/'));
+      }
+    }
+  };
+  walk(root);
+  assert.ok(writers.includes('mittr/tools/chrome-service.js'));
+  assert.deepEqual(writers.filter((file) => file !== 'mittr/tools/chrome-service.js' && file !== 'mittr/voice/actions.js'), []);
 });

@@ -484,3 +484,32 @@ test('a call names its message and tool call, so the site question sits on that 
   await added[0].execute({ action: 'open' }, { sessionID: 'ses_1', messageID: 'msg_1', id: 'call_1', signal: new AbortController().signal });
   assert.deepEqual(seen, [{ tool: 'acme_chrome', input: { action: 'open' }, sessionID: 'ses_1', messageID: 'msg_1', callID: 'call_1' }]);
 });
+
+test('the plugin reports progress before and after the call', async (t) => {
+  const order = [];
+  const base = await listen(t, async (req, res) => {
+    await readBody(req);
+    order.push('call');
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ schemaVersion: 1, ok: true, action: 'chrome.open', data: {} }));
+  });
+  withConnection(t, `${base}/mittr-tools/v1/call`);
+  const { added } = await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false }));
+  const progress = async (update) => { order.push(update); };
+
+  await added[0].execute({ action: 'chrome.open', url: 'http://a.test/' }, { sessionID: 'ses_1', signal: new AbortController().signal, progress });
+
+  assert.deepEqual(order, [
+    { mittrcraft: { schemaVersion: 1, action: 'chrome.open', description: 'Open a page' } },
+    'call',
+    { mittrcraft: { schemaVersion: 1, action: 'chrome.open', description: 'Open a page', ok: true } },
+  ]);
+
+  order.length = 0;
+  delete process.env.MITTRCRAFT_TOOLS_TOKEN;
+  await added[0].execute({ action: 'chrome.click' }, { sessionID: 'ses_1', signal: new AbortController().signal, progress });
+  assert.deepEqual(order, [
+    { mittrcraft: { schemaVersion: 1, action: 'chrome.click', description: 'Click' } },
+    { mittrcraft: { schemaVersion: 1, action: 'chrome.click', description: 'Click', ok: false } },
+  ]);
+});

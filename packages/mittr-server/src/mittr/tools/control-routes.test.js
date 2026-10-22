@@ -215,3 +215,22 @@ test('a chrome action runs only for a request from this machine', async (t) => {
     assert.deepEqual(await other.call('POST', ROUTE, { action: 'chrome.read' }), { status: 403, body: { error: 'Read the Chrome page can only be used from this machine' } }, JSON.stringify(options));
   }
 });
+
+test('a voice-only allow action asked over http answers 400 and allows nothing', async (t) => {
+  const allowed = [];
+  const { call, calls } = await setUp(t, {
+    register: (registry) => {
+      registry.defineTool({ name: 'mittrcraft_voice', description: 'Voice', parameters: { type: 'object' } });
+      registry.register({
+        action: 'chrome.allow_site', tool: 'mittrcraft_voice', title: 'Allow Chrome for this conversation', description: 'Allow', effect: 'change', voiceOnly: true,
+        execute: async () => {
+          allowed.push('voice');
+          return { allowed: true };
+        },
+      });
+    },
+  });
+  assert.deepEqual(await call('POST', ROUTE, { action: 'chrome.allow_site', input: {} }), { status: 400, body: { error: 'Allow Chrome for this conversation can only be asked for by voice' } });
+  assert.deepEqual(allowed, []);
+  assert.deepEqual(calls, []);
+});
