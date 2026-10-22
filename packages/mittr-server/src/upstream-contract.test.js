@@ -1979,6 +1979,43 @@ const checks = {
     has(desktop, /<MemoComposerDictation[^>]*disabled=\{dictationBlock\.blocked && !dictationActive\}[^>]*\/> : null\}\s*\{!isBtw \? <ProductSlot name="composer-actions"/, 'the desktop composer-actions slot no longer follows the blockable microphone');
     has(footer, /const dictationStartLabel = dictationBlock\.blocked && dictationBlock\.reason \? dictationBlock\.reason : t\('chat\.dictation\.start'\);/, 'the mobile microphone no longer names the block reason');
   },
+  'message-queue-add': () => {
+    const queue = source('packages/ui/src/stores/messageQueueStore.ts');
+    has(queue, /export const createMessageQueueTarget = \(\s*sessionId: string,\s*directory: string \| null \| undefined,\s*runtimeKey: string = getRuntimeKey\(\),\s*\): MessageQueueTarget \| null => \{/, 'createMessageQueueTarget changed its signature');
+    has(queue, /if \(!runtimeKey \|\| !normalizedDirectory \|\| !sessionId\) return null;/, 'createMessageQueueTarget no longer answers null for a missing directory or session');
+    has(queue, /addToQueue: \(target: MessageQueueTarget, message: QueuedMessageInput\) => Promise<void>;/, 'addToQueue changed its signature');
+    has(queue, /getQueueForTarget: \(target: MessageQueueTarget\) => QueuedMessage\[\];/, 'getQueueForTarget changed its signature');
+    has(queue, /export interface QueuedMessageSendConfig \{\s*providerID: string;\s*modelID: string;\s*agent\?: string;\s*variant\?: string;\s*\}/, 'QueuedMessageSendConfig changed its fields');
+    has(queue, /interface QueuedMessageInput \{\s*content: string;[\s\S]*?sendConfig\?: QueuedMessageSendConfig;\s*\}/, 'QueuedMessageInput no longer takes content and sendConfig');
+    has(queue, /if \(!message\.sendConfig\) \{\s*set\(\(state\) => removeMessageLocally\(state, key, id\)\);\s*throw new Error\('A queued message needs a provider and model to be delivered later\.'\);/, 'the server-owned queue no longer refuses a prompt without a sendConfig');
+  },
+
+  'runtime-fetch': () => {
+    has(source('packages/ui/src/lib/runtime-fetch.ts'), /^export const runtimeFetch = async \(rawInput: string \| URL \| Request, init: RuntimeFetchOptions = \{\}\): Promise<Response> => \{$/m, 'runtimeFetch changed its signature');
+  },
+
+  'speech-config-store': () => {
+    const store = source('packages/ui/src/stores/useConfigStore.ts');
+    const contract = store.slice(store.indexOf('interface ConfigStore {'), store.indexOf('export const useConfigStore'));
+    has(contract, /voiceProvider: 'browser' \| 'local' \| 'openai' \| 'openai-compatible' \| 'say';/, 'voiceProvider changed its values');
+    has(contract, /sttProvider: 'local' \| 'openai-compatible';/, 'sttProvider changed its values');
+    for (const field of ['sttServerUrl: string;', 'openaiCompatibleUrl: string;']) assert.ok(contract.includes(field), `the config store lost ${field}`);
+    for (const setter of [
+      'setSttProvider: (provider: \'local\' | \'openai-compatible\') => void;',
+      'setSttServerUrl: (url: string) => void;',
+      'setSttModel: (model: string) => void;',
+      "setVoiceProvider: (provider: 'browser' | 'local' | 'openai' | 'openai-compatible' | 'say') => void;",
+      'setOpenaiCompatibleUrl: (url: string) => void;',
+      'setOpenaiCompatibleTtsModel: (model: string) => void;',
+      'setOpenaiCompatibleVoice: (voice: string) => void;',
+      'setTtsChunkedMode: (enabled: boolean) => void;',
+      'refreshVoiceApiKeys: (options?: { force?: boolean }) => Promise<void>;',
+    ]) assert.ok(contract.includes(setter), `the config store lost ${setter}`);
+    has(store, /const saved = localStorage\.getItem\('sttProvider'\);[\s\S]*?return 'local' as const;/, "sttProvider no longer reads its own localStorage key with 'local' as the default");
+    has(store, /const saved = localStorage\.getItem\('voiceProvider'\);[\s\S]*?return 'browser';/, "voiceProvider no longer reads its own localStorage key with 'browser' as the default");
+    has(source('packages/web/server/lib/dictation/runtime.js'), /app\.get\('\/api\/dictation\/status', async \(req, res\) => \{/, 'GET /api/dictation/status is gone');
+    has(source('packages/web/server/lib/dictation/service.js'), /installed: await isLocalSttModelInstalled\(modelsDir, id\),/, 'the dictation status no longer says which local models are installed');
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {

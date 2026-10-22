@@ -533,7 +533,7 @@ const main = async () => {
   }
   const webDist = path.join(electronDir, 'resources', VAD_WEB_DIST);
   const vadStaged = stageVadAssets({ pins: vadPins, sources: vadSources, outDir: path.join(webDist, VAD_DIR) });
-  const ortChunks = checkBundledOrtVersion({ webDist, pins: vadPins });
+  const ortChunks = checkBundledOrtVersion({ webDist, pins: vadPins, required: true });
   console.log(`[mittr] ${vadStaged.length} VAD files staged beside the renderer: ${path.relative(repoRoot, path.join(webDist, VAD_DIR))}; ${ortChunks.length} bundled ONNX Runtime chunks carry the pinned version`);
 
   step('5/8 visible strings');

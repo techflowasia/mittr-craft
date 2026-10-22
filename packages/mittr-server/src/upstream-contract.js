@@ -668,6 +668,20 @@ export const UPSTREAM_CONTRACT = [
     id: 'composer-actions-slot',
     files: ['packages/ui/src/lib/product-plugins.ts', 'packages/ui/src/components/chat/composer/ui/ComposerFooter.tsx'],
     why: "product-plugins.ts has the composer-actions slot with props { isMobile, footerIconButtonClass, iconSizeClass, dictationActive }, a plugin's composer.useDictationBlock and useProductDictationBlock(), which answers { blocked, reason? }; ComposerFooter renders the slot right after the microphone in the desktop row and beside the mobile microphone, both inside the side-question guard, disables both microphones while the block holds and names its reason on the mobile button, so Talk sits beside the microphone and voice input waits out its quota",
+  },  {
+    id: 'message-queue-add',
+    files: ['packages/ui/src/stores/messageQueueStore.ts'],
+    why: "voice queues a spoken prompt for a busy session through createMessageQueueTarget(sessionId, directory), which answers null for a missing directory or session, and addToQueue(target, { content, sendConfig }), a Promise that the server-owned queue rejects without a sendConfig ({ providerID, modelID, agent?, variant? }); getQueueForTarget(target) gives the count the next turn reports",
+  },
+  {
+    id: 'runtime-fetch',
+    files: ['packages/ui/src/lib/runtime-fetch.ts'],
+    why: 'the voice client, the speech state long-poll and the Mittr speech switches call our routes through runtimeFetch(path, init), which answers a Response',
+  },
+  {
+    id: 'speech-config-store',
+    files: ['packages/ui/src/stores/useConfigStore.ts', 'packages/web/server/lib/dictation/runtime.js', 'packages/web/server/lib/dictation/service.js'],
+    why: "upstream's config store holds sttProvider ('local' | 'openai-compatible', default 'local'), sttServerUrl, voiceProvider (default 'browser', with 'openai-compatible'), openaiCompatibleUrl and their setters setSttProvider, setSttServerUrl, setSttModel, setVoiceProvider, setOpenaiCompatibleUrl, setOpenaiCompatibleTtsModel, setOpenaiCompatibleVoice and setTtsChunkedMode, plus refreshVoiceApiKeys({ force }), each saved under its own localStorage key; GET /api/dictation/status?provider=local lists models with installed, so Mittr speech is chosen, stopped and first set up through them",
   },
 ];
 

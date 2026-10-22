@@ -418,6 +418,7 @@ test('the dev and prod builds stage the VAD files after the web build and verify
   assert.ok(webAssets !== -1 && body.indexOf('stageVadAssets(') > webAssets, 'the VAD files are staged before upstream writes web-dist');
   assert.ok(body.indexOf('stageVadAssets(') < body.indexOf("step('5/8"), 'the VAD files are staged after step 4');
   assert.ok(body.indexOf('checkBundledOrtVersion(') > body.indexOf('stageVadAssets('), 'the bundled ONNX Runtime version is not checked in step 4');
+  assert.match(body, /checkBundledOrtVersion\(\{ webDist, pins: vadPins, required: true \}\)/, 'a build whose renderer carries no ONNX Runtime chunk does not fail');
   assert.ok(body.indexOf('verifyPackedVadAssets(') > body.indexOf("step('8/8"), 'the packed VAD files are not checked in step 8');
 });
 
