@@ -53,13 +53,60 @@ html.mittr-glass .mittr-glass-sky {
   background: var(--mittr-sky);
 }
 
-html.mittr-glass #root {
-  --background: transparent;
-  background-color: transparent;
+html.mittr-glass body {
+  --primary: #9a4310;
+  --primary-base: #9a4310;
+  --primary-hover: #85390c;
+  --markdown-link: #9a4310;
+  --status-error: #963830;
+  --status-warning: #6e5410;
+  --status-success: #3f6327;
+  --status-info: #22599b;
 }
 
-html.mittr-glass [data-product-region="shell"] {
-  background-color: transparent;
+html.mittr-glass.mittr-glass-dark body {
+  --primary: #da7c47;
+  --primary-base: #da7c47;
+  --primary-hover: #eb8c57;
+  --markdown-link: #da7c47;
+  --status-error: #e8735f;
+  --status-warning: #c67f13;
+  --status-success: #76ad4f;
+  --status-info: #479fe6;
+}
+
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  @media (prefers-reduced-transparency: no-preference) {
+    html.mittr-glass #root {
+      --background: transparent;
+    }
+
+    html.mittr-glass #root > * {
+      --background: var(--surface-background);
+    }
+
+    html.mittr-glass #root [data-product-region="shell"],
+    html.mittr-glass.mittr-glass-mini #root > :not(.mittr-glass-sky) {
+      --background: transparent;
+    }
+
+    html.mittr-glass [data-product-region="shell"] :is(.fixed.inset-0, [class*="bg-background/"], [class*="text-background"]),
+    html.mittr-glass [data-product-region="main"] > .bg-background,
+    html.mittr-glass [data-context-panel] .absolute.inset-0.bg-background,
+    html.mittr-glass.mittr-glass-mini #root :is(.fixed.inset-0, [class*="bg-background/"], [class*="text-background"]) {
+      --background: var(--surface-background);
+    }
+
+    html.mittr-glass [data-product-region="main"]:has(> .mittr-today) {
+      background-color: transparent;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+
+    html.mittr-glass .mittr-today {
+      background-color: transparent;
+    }
+  }
 }
 
 html.mittr-glass [data-product-region="shell"] aside:has(+ [data-product-region="column"]),
@@ -73,16 +120,13 @@ html.mittr-glass [data-product-region="shell"] aside:has(+ [data-product-region=
   border-right-color: var(--mittr-glass-edge);
 }
 
-html.mittr-glass [data-product-region="column"] {
+html.mittr-glass [data-product-region="main"],
+html.mittr-glass [data-context-panel],
+html.mittr-glass [data-product-region="column"] > div > div > nav,
+html.mittr-glass.mittr-glass-mini #root > :not(.mittr-glass-sky) {
   background-color: var(--mittr-glass-veil);
   -webkit-backdrop-filter: blur(var(--mittr-glass-blur)) saturate(150%);
   backdrop-filter: blur(var(--mittr-glass-blur)) saturate(150%);
-}
-
-html.mittr-glass [data-product-region="column"]:has(.mittr-today) {
-  background-color: transparent;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
 }
 
 html.mittr-glass [data-product-region="column"] .border-border {
@@ -91,10 +135,10 @@ html.mittr-glass [data-product-region="column"] .border-border {
 
 html.mittr-glass [data-product-region="main"] {
   --radius-xl: 24px;
-  background-color: transparent;
 }
 
-html.mittr-glass [data-product-region="shell"] [data-slot="button"] {
+html.mittr-glass [data-product-region="column"] > header [data-slot="button"],
+html.mittr-glass .oc-glass-composer [data-slot="button"] {
   border-radius: 999px;
 }
 
@@ -119,10 +163,6 @@ html.mittr-glass .mittr-glass-panel {
   backdrop-filter: blur(var(--mittr-glass-blur)) saturate(150%);
 }
 
-html.mittr-glass .mittr-today {
-  background-color: transparent;
-}
-
 html.mittr-glass .mittr-today-kind {
   background-color: var(--mittr-glass-raised);
 }
@@ -143,8 +183,10 @@ html.mittr-glass .mittr-glass-pill {
 
   html.mittr-glass [data-product-region="shell"] aside:has(+ [data-product-region="column"]),
   html.mittr-glass [data-product-region="column"] > header,
-  html.mittr-glass [data-product-region="column"],
-  html.mittr-glass [data-product-region="column"]:has(.mittr-today),
+  html.mittr-glass [data-product-region="main"],
+  html.mittr-glass [data-context-panel],
+  html.mittr-glass [data-product-region="column"] > div > div > nav,
+  html.mittr-glass.mittr-glass-mini #root > :not(.mittr-glass-sky),
   html.mittr-glass .mittr-glass-panel {
     background-color: var(--mittr-glass-solid);
     -webkit-backdrop-filter: none;
@@ -159,8 +201,10 @@ html.mittr-glass .mittr-glass-pill {
 
   html.mittr-glass [data-product-region="shell"] aside:has(+ [data-product-region="column"]),
   html.mittr-glass [data-product-region="column"] > header,
-  html.mittr-glass [data-product-region="column"],
-  html.mittr-glass [data-product-region="column"]:has(.mittr-today),
+  html.mittr-glass [data-product-region="main"],
+  html.mittr-glass [data-context-panel],
+  html.mittr-glass [data-product-region="column"] > div > div > nav,
+  html.mittr-glass.mittr-glass-mini #root > :not(.mittr-glass-sky),
   html.mittr-glass .mittr-glass-panel {
     background-color: var(--mittr-glass-solid);
     -webkit-backdrop-filter: none;

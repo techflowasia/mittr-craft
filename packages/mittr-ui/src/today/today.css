@@ -98,7 +98,7 @@
   border: 1px solid var(--status-warning-border, var(--border));
   border-radius: 999px;
   background-color: var(--status-warning-background, transparent);
-  color: var(--status-warning-foreground, var(--foreground));
+  color: var(--foreground);
   font-size: 0.8125rem;
   line-height: 1.4;
   text-align: left;
@@ -109,7 +109,6 @@
 .mittr-today-alert[data-kind="error"] {
   border-color: var(--status-error-border, var(--border));
   background-color: var(--status-error-background, transparent);
-  color: var(--status-error-foreground, var(--foreground));
 }
 
 .mittr-today-grid {

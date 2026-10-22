@@ -10,6 +10,22 @@ const themeSurface = (id: string): { foreground: string; mutedForeground: string
 
 type Rule = { selectors: string[]; body: string; within: string[] };
 
+const topLevel = (prelude: string): string[] => {
+  const parts: string[] = [];
+  let depth = 0;
+  let from = 0;
+  for (let at = 0; at < prelude.length; at += 1) {
+    if (prelude[at] === '(') depth += 1;
+    if (prelude[at] === ')') depth -= 1;
+    if (prelude[at] === ',' && depth === 0) {
+      parts.push(prelude.slice(from, at).trim());
+      from = at + 1;
+    }
+  }
+  parts.push(prelude.slice(from).trim());
+  return parts;
+};
+
 const parse = (source: string, within: string[] = []): Rule[] => {
   const rules: Rule[] = [];
   let cursor = 0;
@@ -26,7 +42,7 @@ const parse = (source: string, within: string[] = []): Rule[] => {
     }
     const body = source.slice(open + 1, close - 1);
     if (prelude.startsWith('@')) rules.push(...parse(body, [...within, prelude]));
-    else rules.push({ selectors: prelude.split(',').map((selector) => selector.trim()), body, within });
+    else rules.push({ selectors: topLevel(prelude), body, within });
     cursor = close;
   }
   return rules;
@@ -37,10 +53,18 @@ const rules = parse(css);
 const REGIONS = [
   '[data-product-region="shell"] aside:has(+ [data-product-region="column"])',
   '[data-product-region="column"] > header',
-  '[data-product-region="column"]',
-  '[data-product-region="column"]:has(.mittr-today)',
+  '[data-product-region="main"]',
+  '[data-context-panel]',
+  '[data-product-region="column"] > div > div > nav',
+  'html.mittr-glass.mittr-glass-mini #root > :not(.mittr-glass-sky)',
   '.mittr-glass-panel',
 ];
+
+const GUARD = ['@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px)))', '@media (prefers-reduced-transparency: no-preference)'];
+const FALLBACKS = ['@media (prefers-reduced-transparency: reduce)', '@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px)))'];
+const guarded = (rule: Rule): boolean => GUARD.every((condition) => rule.within.includes(condition));
+const VEIL = /background-color:\s*var\(--mittr-glass-veil\)/;
+const BLUR = /(^|[^-])backdrop-filter:\s*blur\(/;
 
 describe('glass.css', () => {
   test('has rules, and every one is scoped under html.mittr-glass', () => {
@@ -57,13 +81,65 @@ describe('glass.css', () => {
       const inside = rules.filter((rule) => rule.within.includes(condition));
       expect(inside.length).toBeGreaterThan(0);
       for (const region of REGIONS) {
-        const covering = inside.filter((rule) => rule.selectors.some((selector) => selector.endsWith(region)));
+        const covering = inside.filter((rule) => rule.selectors.some((selector) => selector === region || selector.endsWith(` ${region}`)));
         expect(covering.some((rule) => /background-color:\s*var\(--mittr-glass-solid\)/.test(rule.body))).toBe(true);
         expect(covering.some((rule) => /(^|[^-])backdrop-filter:\s*none/.test(rule.body))).toBe(true);
       }
       expect(inside.some((rule) => rule.selectors.some((selector) => selector.endsWith('.mittr-glass-sky')) && /display:\s*none/.test(rule.body))).toBe(true);
     });
   }
+
+  test('I4: whatever turns the background see-through exists only while blur works and transparency is welcome', () => {
+    const clearing = rules.filter((rule) => /--background:\s*transparent/.test(rule.body) || /background-color:\s*transparent/.test(rule.body));
+    expect(clearing.length).toBeGreaterThan(0);
+    for (const rule of clearing) expect(guarded(rule)).toBe(true);
+    for (const rule of rules.filter((entry) => FALLBACKS.some((condition) => entry.within.includes(condition)))) {
+      expect(/--background\s*:/.test(rule.body)).toBe(false);
+    }
+  });
+
+  test('I3: the background is cleared only for the main window shell and the mini-chat, and every other part of the app keeps it opaque', () => {
+    const cleared = rules.filter((rule) => /--background:\s*transparent/.test(rule.body)).flatMap((rule) => rule.selectors);
+    expect(cleared.sort()).toEqual([
+      'html.mittr-glass #root',
+      'html.mittr-glass #root [data-product-region="shell"]',
+      'html.mittr-glass.mittr-glass-mini #root > :not(.mittr-glass-sky)',
+    ]);
+    const restored = rules.filter((rule) => /--background:\s*var\(--surface-background\)/.test(rule.body) && guarded(rule)).flatMap((rule) => rule.selectors);
+    expect(restored).toContain('html.mittr-glass #root > *');
+    for (const cover of [
+      'html.mittr-glass [data-product-region="shell"] :is(.fixed.inset-0, [class*="bg-background/"], [class*="text-background"])',
+      'html.mittr-glass [data-product-region="main"] > .bg-background',
+      'html.mittr-glass [data-context-panel] .absolute.inset-0.bg-background',
+      'html.mittr-glass.mittr-glass-mini #root :is(.fixed.inset-0, [class*="bg-background/"], [class*="text-background"])',
+    ]) {
+      expect(restored).toContain(cover);
+    }
+  });
+
+  test('I5: with Today open only the main area drops its frost; the context panel and the rail keep theirs', () => {
+    const dropped = rules.filter((rule) => /background-color:\s*transparent/.test(rule.body)).flatMap((rule) => rule.selectors);
+    expect(dropped.sort()).toEqual(['html.mittr-glass .mittr-today', 'html.mittr-glass [data-product-region="main"]:has(> .mittr-today)']);
+    for (const region of ['[data-product-region="main"]', '[data-context-panel]', '[data-product-region="column"] > div > div > nav']) {
+      const frosted = rules.filter((rule) => rule.within.length === 0 && rule.selectors.includes(`html.mittr-glass ${region}`));
+      expect(frosted.some((rule) => VEIL.test(rule.body) && BLUR.test(rule.body))).toBe(true);
+    }
+    expect(rules.some((rule) => rule.selectors.some((selector) => selector.startsWith('html.mittr-glass [data-product-region="column"]') && !selector.includes('>') && !selector.includes('.border-border')))).toBe(false);
+  });
+
+  test('I6: the mini-chat window is frosted, not raw sky', () => {
+    const mini = rules.filter((rule) => rule.within.length === 0 && rule.selectors.includes('html.mittr-glass.mittr-glass-mini #root > :not(.mittr-glass-sky)'));
+    expect(mini.some((rule) => VEIL.test(rule.body) && BLUR.test(rule.body))).toBe(true);
+  });
+
+  test('Minor 13: only header and composer buttons and pills are rounded fully, not every button in the app', () => {
+    const rounded = rules.filter((rule) => /border-radius:\s*999px/.test(rule.body)).flatMap((rule) => rule.selectors);
+    expect(rounded.sort()).toEqual([
+      'html.mittr-glass .mittr-glass-pill',
+      'html.mittr-glass .oc-glass-composer [data-slot="button"]',
+      'html.mittr-glass [data-product-region="column"] > header [data-slot="button"]',
+    ]);
+  });
 
   test('the solid fallback colours are opaque in both modes', () => {
     const solids = [...css.matchAll(/--mittr-glass-solid:\s*([^;]+);/g)].map((match) => match[1].trim());
@@ -140,14 +216,41 @@ const MODES = [
   },
 ];
 
+type Colours = Record<'primary' | 'error' | 'warning' | 'success' | 'info', string>;
+
+const glassColours = (selector: string): Colours => {
+  const rule = rules.find((entry) => entry.within.length === 0 && entry.selectors.includes(selector));
+  const read = (name: string): string => {
+    const found = new RegExp(`--${name}:\\s*(#[0-9a-f]{6});`, 'i').exec(rule?.body ?? '');
+    if (!found) throw new Error(`${selector} sets no --${name}`);
+    return found[1];
+  };
+  for (const name of ['primary-base', 'markdown-link']) expect(read(name)).toBe(read('primary'));
+  return { primary: read('primary'), error: read('status-error'), warning: read('status-warning'), success: read('status-success'), info: read('status-info') };
+};
+
+const STATUS_TINT = 0.125;
+
+test('I7: Today and widget text is coloured with the status and primary colours the glass checks, never with the on-colour foregrounds', () => {
+  for (const file of ['../today/today.css', '../widgets/widgets.css']) {
+    const source = readFileSync(join(here, file), 'utf8');
+    const colours = [...source.matchAll(/(?:^|[\s;{])color:\s*([^;]+);/g)].map((match) => match[1].trim());
+    expect(colours.length).toBeGreaterThan(0);
+    for (const colour of colours) expect(/--status-[a-z]+-foreground/.test(colour)).toBe(false);
+  }
+});
+
 describe('glass text contrast (WCAG AA, 4.5:1)', () => {
   for (const mode of MODES) {
     const { foreground, mutedForeground } = themeSurface(mode.theme);
     const texts = [hex(foreground), hex(mutedForeground)];
+    const colours = glassColours(mode.name === 'dark' ? 'html.mittr-glass.mittr-glass-dark body' : 'html.mittr-glass body');
+    const raised = mode.name === 'dark' ? { rgb: hex('#1f2430'), alpha: 0.82 } : { rgb: hex('#ffffff'), alpha: 0.72 };
 
     test(`${mode.name}: the tints in the test are the ones in the CSS`, () => {
       for (const tint of mode.tints) expect(css).toContain(tint.css);
       expect(css).toContain(mode.solid);
+      expect(css).toContain(mode.name === 'dark' ? '--mittr-glass-raised: rgb(31 36 48 / 0.82);' : '--mittr-glass-raised: rgb(255 255 255 / 0.72);');
     });
 
     test(`${mode.name}: body and muted text pass on every frosted surface over every sky colour`, () => {
@@ -157,6 +260,27 @@ describe('glass text contrast (WCAG AA, 4.5:1)', () => {
           for (const text of texts) expect(contrast(text, surface)).toBeGreaterThanOrEqual(4.5);
         }
       }
+    });
+
+    test(`${mode.name}: I7 links and status text pass on the panels, the frosted chat, context panel and rail and a raised card, and text passes on an alert pill`, () => {
+      const failures: string[] = [];
+      for (const sky of mode.sky) {
+        const surfaces: Array<[string, Rgb]> = mode.tints.map((tint) => [tint.css.slice(0, tint.css.indexOf(':')), over(tint.rgb, tint.alpha, hex(sky))]);
+        const panel = surfaces[0][1];
+        surfaces.push(['raised card', over(raised.rgb, raised.alpha, panel)]);
+        for (const [name, colour] of Object.entries(colours) as Array<[keyof Colours, string]>) {
+          for (const [surfaceName, surface] of surfaces) {
+            const ratio = contrast(hex(colour), surface);
+            if (ratio < 4.5) failures.push(`${name} ${colour} on ${surfaceName} over ${sky}: ${ratio.toFixed(2)}`);
+          }
+        }
+        for (const colour of [colours.warning, colours.error]) {
+          const pill = over(hex(colour), STATUS_TINT, panel);
+          const ratio = contrast(texts[0], pill);
+          if (ratio < 4.5) failures.push(`text on a ${colour} pill over ${sky}: ${ratio.toFixed(2)}`);
+        }
+      }
+      expect(failures).toEqual([]);
     });
 
     test(`${mode.name}: body text passes straight on the sky, and both pass on the bubble and the solid fallback`, () => {

@@ -40,7 +40,7 @@
   padding: 0 6px;
   border-radius: 6px;
   background-color: var(--status-warning-background, transparent);
-  color: var(--status-warning-foreground, var(--foreground));
+  color: var(--foreground);
   font-size: 0.75rem;
   font-weight: 600;
   line-height: 1.5;
@@ -55,15 +55,15 @@
 }
 
 .mittr-widget-status[data-tone="ok"] {
-  color: var(--status-success-foreground, var(--status-success));
+  color: var(--status-success);
 }
 
 .mittr-widget-status[data-tone="warn"] {
-  color: var(--status-warning-foreground, var(--status-warning));
+  color: var(--status-warning);
 }
 
 .mittr-widget-status[data-tone="fail"] {
-  color: var(--status-error-foreground, var(--status-error));
+  color: var(--status-error);
 }
 
 .mittr-widget-list {
@@ -83,7 +83,7 @@
 
 .mittr-widget-error {
   margin: 0;
-  color: var(--status-error-foreground, var(--status-error));
+  color: var(--status-error);
   font-size: 0.8125rem;
   line-height: 1.5;
   overflow-wrap: anywhere;

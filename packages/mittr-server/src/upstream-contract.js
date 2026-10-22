@@ -684,8 +684,11 @@ export const UPSTREAM_CONTRACT = [
       'packages/ui/src/components/layout/Header.tsx',
       'packages/ui/src/components/chat/ChatInput.tsx',
       'packages/ui/src/styles/design-system.css',
+      'packages/ui/src/components/layout/ContextPanel.tsx',
+      'packages/ui/src/components/layout/ContextPanelRail.tsx',
+      'packages/ui/src/lib/theme/cssGenerator.ts',
     ],
-    why: "the glass look is on only while ThemeSystemContext's currentTheme.metadata id and variant are DEFAULT_LIGHT_THEME_ID 'openchamber-light' (light) or DEFAULT_DARK_THEME_ID 'openchamber-dark' (dark); glass.css finds the sidebar as the <aside> Sidebar renders as its root right before the data-product-region=\"column\" wrapper, and the header as the <header> Header renders as its root first in that column; the desktop composer box is .oc-glass-composer with its radius var(--radius-xl); design-system.css keeps the --oc-glass-* variables on :root in @layer base and paints #root with var(--background) on the desktop, so a --background set on #root clears it for the sky",
+    why: "the glass look is on only while ThemeSystemContext's currentTheme.metadata id and variant are DEFAULT_LIGHT_THEME_ID 'openchamber-light' (light) or DEFAULT_DARK_THEME_ID 'openchamber-dark' (dark); glass.css finds the sidebar as the <aside> Sidebar renders as its root right before the data-product-region=\"column\" wrapper, and the header as the <header> Header renders as its root first in that column; the desktop composer box is .oc-glass-composer with its radius var(--radius-xl); design-system.css keeps the --oc-glass-* variables on :root in @layer base and paints #root with var(--background) on the desktop, so a --background set on #root clears it for the sky; glass.css frosts <main>, the ContextPanel <aside data-context-panel=\"true\"> and the ContextPanelRail <nav>, which MainLayout puts in a div right after the chat column inside the column's second child, and gives covers back their opaque --background from --surface-background, which the theme CSS generator emits with the same value as --background",
   },
   {
     id: 'today-sources',

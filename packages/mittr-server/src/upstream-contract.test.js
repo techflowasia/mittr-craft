@@ -2017,6 +2017,12 @@ const checks = {
     const css = source('packages/ui/src/styles/design-system.css');
     has(css, /@layer base \{\s*:root \{[\s\S]*?--oc-glass-blur: 22px;\s*--oc-glass-opacity: 52%;\s*--oc-glass-popover-opacity: 50%;/, 'the --oc-glass-* variables are no longer on :root in @layer base');
     has(css, /:root\.desktop-runtime body,\s*:root\.desktop-runtime #root \{\s*background: var\(--background\) !important;/, 'the desktop no longer paints #root with var(--background)');
+    has(source('packages/ui/src/components/layout/ContextPanel.tsx'), /<aside\s+ref=\{panelRef\}\s+data-context-panel="true"/, 'the context panel is no longer an <aside data-context-panel="true">');
+    has(source('packages/ui/src/components/layout/ContextPanelRail.tsx'), /return \(\s*<nav\s+aria-label=\{t\('contextRail\.aria\.rail'\)\}/, 'the context rail no longer renders a <nav> root');
+    has(source('packages/ui/src/components/layout/MainLayout.tsx'), /<div className="border-t border-border" data-page-scroll-lock="true">\s*<ErrorBoundary><ContextPanelRail \/><\/ErrorBoundary>\s*<\/div>/, 'the context rail is no longer in its own div beside the chat column');
+    const generator = source('packages/ui/src/lib/theme/cssGenerator.ts');
+    has(generator, /--background: \$\{theme\.colors\.surface\.background\} !important;/, 'the theme no longer sets --background from surface.background');
+    has(generator, /--surface-background: \$\{surface\.background\};/, 'the theme no longer emits --surface-background from surface.background');
   },
   'today-sources': () => {
     has(source('packages/ui/src/stores/useGlobalSessionsStore.ts'), /^ {2}activeSessions: Session\[\];$/m, 'the global sessions store no longer keeps activeSessions');
