@@ -402,6 +402,25 @@ test('the build checks both pinned drivers and the notices before any build step
   assert.ok(body.indexOf('verifyPackedDrivers(') > body.indexOf("step('8/8"), 'the packed drivers are not checked in step 8');
 });
 
+test('the dev and prod builds stage the VAD files after the web build and verify the packed ones', () => {
+  const upstream = readJson('packages/electron/package.json').build;
+  for (const flavor of ['dev', 'prod']) {
+    const merged = mergeBuilderConfig(upstream, readJson(`brand/electron-builder.${flavor}.json`));
+    assert.ok(merged.extraResources.some((entry) => entry.from === 'resources/web-dist' && entry.to === 'web-dist'), `${flavor} no longer packs web-dist as Resources/web-dist`);
+  }
+  const main = fs.readFileSync(path.join(repoRoot, 'scripts/mittr/build-desktop.mjs'), 'utf8');
+  const body = main.slice(main.indexOf('const main = async () => {'));
+  const firstStep = body.indexOf("step('1/8 workspace build')");
+  for (const call of ['readVadPins(', 'checkVadNotices(', 'resolveVadSources(']) {
+    assert.ok(body.indexOf(call) !== -1 && body.indexOf(call) < firstStep, `${call} is not checked before the build starts`);
+  }
+  const webAssets = body.indexOf("run(bun, ['run', 'build:web-assets'], electronDir)");
+  assert.ok(webAssets !== -1 && body.indexOf('stageVadAssets(') > webAssets, 'the VAD files are staged before upstream writes web-dist');
+  assert.ok(body.indexOf('stageVadAssets(') < body.indexOf("step('5/8"), 'the VAD files are staged after step 4');
+  assert.ok(body.indexOf('checkBundledOrtVersion(') > body.indexOf('stageVadAssets('), 'the bundled ONNX Runtime version is not checked in step 4');
+  assert.ok(body.indexOf('verifyPackedVadAssets(') > body.indexOf("step('8/8"), 'the packed VAD files are not checked in step 8');
+});
+
 test('a gate build is the Dev build under its own bundle id, name and data folder', () => {
   const dev = readBrand({ flavor: 'dev' });
   const gate = readBrand({ flavor: 'dev', gate: true });

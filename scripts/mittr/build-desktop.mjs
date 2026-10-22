@@ -47,6 +47,7 @@ import { matcherFor } from '../../packages/mittr-server/src/brand-matcher.js';
 import { resolveBunExecutable } from '../lib/bun-executable.mjs';
 import { AGENT_BROWSER_RESOURCE_DIR, CUA_DRIVER_RESOURCE_DIR, NOTICES_RESOURCE, assertDriverArchitecture, checkDriverSources, checkNotices, stageDrivers, verifyPackedDrivers } from './drivers.mjs';
 import { RIPGREP_RESOURCE_DIR, defaultRipgrepArchive, readPinnedArchive, readRipgrepPin, stageRipgrep, verifyPackedRipgrep } from './ripgrep.mjs';
+import { VAD_DIR, VAD_WEB_DIST, checkBundledOrtVersion, checkVadNotices, readVadPins, resolveVadSources, stageVadAssets, verifyPackedVadAssets } from './vad-assets.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const brandDir = path.join(repoRoot, 'brand');
@@ -471,6 +472,9 @@ const main = async () => {
   assertDriverArchitecture(resolveTargetArchitecture().node);
   const drivers = checkDriverSources();
   checkNotices({ pins: drivers.pins });
+  const vadPins = readVadPins();
+  checkVadNotices({ pins: vadPins });
+  const vadSources = resolveVadSources({ pins: vadPins });
   const startedAt = Date.now();
   const bun = resolveBunExecutable();
 
@@ -527,6 +531,10 @@ const main = async () => {
   } finally {
     fs.rmSync(engineProbeHome, { recursive: true, force: true });
   }
+  const webDist = path.join(electronDir, 'resources', VAD_WEB_DIST);
+  const vadStaged = stageVadAssets({ pins: vadPins, sources: vadSources, outDir: path.join(webDist, VAD_DIR) });
+  const ortChunks = checkBundledOrtVersion({ webDist, pins: vadPins });
+  console.log(`[mittr] ${vadStaged.length} VAD files staged beside the renderer: ${path.relative(repoRoot, path.join(webDist, VAD_DIR))}; ${ortChunks.length} bundled ONNX Runtime chunks carry the pinned version`);
 
   step('5/8 visible strings');
   for (const { file, from, count } of applyVisibleStrings({ entries: visibleStrings, rootDir: electronDir })) {
@@ -556,8 +564,10 @@ const main = async () => {
     verifyPackedApp({ appPath, scan: runLeakScan });
     verifyPackedRipgrep({ appPath, pin: ripgrepPin });
     const packedDrivers = verifyPackedDrivers({ appPath, pins: drivers.pins });
+    const packedVad = verifyPackedVadAssets({ appPath, pins: vadPins });
     console.log(`[mittr] ${LICENCE_RESOURCE} and ripgrep ${ripgrepPin.version} are packed and the brand-leak scan passed: ${appPath}`);
     console.log(`[mittr] agent-browser ${packedDrivers.agentBrowserVersion}, cua-driver ${packedDrivers.cuaDriverVersion} (team ${packedDrivers.cuaTeamIdentifier}) and ${NOTICES_RESOURCE} are packed`);
+    console.log(`[mittr] ${packedVad.length} VAD files are packed under Contents/Resources/${VAD_WEB_DIST}/${VAD_DIR} with their pinned sha256 values`);
   }
 };
 

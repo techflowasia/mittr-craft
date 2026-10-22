@@ -206,6 +206,38 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
+## @ricky0123/vad-web
+
+- Version: 0.0.31 (`scripts/mittr/vad-assets.json`)
+- License: ISC
+- Source: https://github.com/ricky0123/vad
+- Bundled files: `vad.worklet.bundle.min.js`
+
+No license file shipped with this package; see `ISC` terms at its source.
+
+## onnxruntime-web
+
+- Version: 1.30.0 (`scripts/mittr/vad-assets.json`)
+- License: MIT
+- Source: https://github.com/Microsoft/onnxruntime
+- Bundled files: `ort-wasm-simd-threaded.mjs`, `ort-wasm-simd-threaded.wasm`
+
+No license file shipped with this package; see `MIT` terms at its source. The package's own bundle (`dist/ort.bundle.min.mjs`) states:
+
+```
+ONNX Runtime Web v1.30.0
+Copyright (c) Microsoft Corporation. All rights reserved.
+Licensed under the MIT License.
+```
+
+## Silero VAD model
+
+- File: `silero_vad_v5.onnx`, shipped inside @ricky0123/vad-web 0.0.31 (`scripts/mittr/vad-assets.json`)
+- License: MIT
+- Source: https://github.com/snakers4/silero-vad
+
+No license file shipped with this package; see `MIT` terms at its source.
+
 ## cua-driver
 
 Bundled from https://github.com/trycua/cua (`scripts/mittr/drivers.mjs`).
