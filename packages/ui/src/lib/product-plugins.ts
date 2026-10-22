@@ -31,6 +31,7 @@ export type ProductSlotProps = {
   'integrations-page': Record<never, never>;
   'session-auth-methods': SessionAuthMethodsProps;
   'assistant-message-footer': { message: { info: Message; parts: Part[] }; isLatestTurn: boolean };
+  'composer-actions': { isMobile: boolean; footerIconButtonClass: string; iconSizeClass: string; dictationActive: boolean };
 };
 
 export type ProductSlotName = keyof ProductSlotProps;
@@ -48,6 +49,10 @@ export type ModelPickerDecorations = {
 
 type UseModelPickerDecorations = (open: boolean) => ModelPickerDecorations;
 
+export type DictationBlock = { blocked: boolean; reason?: string };
+
+type UseDictationBlock = () => DictationBlock;
+
 type ProductSessionAuthContext = { passwordEnabled: boolean; runtime: SessionAuthRuntime };
 
 type ProductMessageError = { type: string; message: string; status?: number; responseBody?: string; providerID?: string };
@@ -60,6 +65,7 @@ export type ProductUiPlugin = {
   rootWrapper?: React.ComponentType<{ children: React.ReactNode; surface: ProductSurface }>;
   slots?: { [K in ProductSlotName]?: ProductSlotComponent<K> | ProductSlotComponent<K>[] };
   modelPicker?: { useDecorations: UseModelPickerDecorations };
+  composer?: { useDictationBlock: UseDictationBlock };
   messageError?: (error: ProductMessageError) => string | null;
   sessionAuthDescription?: (context: ProductSessionAuthContext) => string | null;
   // false: the window never asks models.dev for model metadata or provider
@@ -76,11 +82,18 @@ const passThroughDecorations: ModelPickerDecorations = {
 
 const usePassThroughDecorations: UseModelPickerDecorations = () => passThroughDecorations;
 
+const notBlocked: DictationBlock = { blocked: false };
+
+const useNoDictationBlock: UseDictationBlock = () => notBlocked;
+
 let plugins: ProductUiPlugin[] = [];
 let substitutions: Substitution[] = [];
 let pickerHooks: UseModelPickerDecorations[] = [];
 let useComposedDecorations: UseModelPickerDecorations = usePassThroughDecorations;
 let pickerHookInUse = false;
+let dictationBlockHooks: UseDictationBlock[] = [];
+let useComposedDictationBlock: UseDictationBlock = useNoDictationBlock;
+let dictationBlockHookInUse = false;
 const overlaid = new Map<Locale, { source: I18nDictionary; result: I18nDictionary }>();
 const listeners = new Set<() => void>();
 
@@ -130,9 +143,45 @@ const updateDecorationHooks = (): void => {
   useComposedDecorations = next.length === 0 ? usePassThroughDecorations : next.reduce(combineDecorationHooks);
 };
 
+const guardDictationBlock = (useBlock: UseDictationBlock): UseDictationBlock => {
+  function useGuardedDictationBlock(): DictationBlock {
+    try {
+      return useBlock();
+    } catch {
+      return notBlocked;
+    }
+  }
+  return useGuardedDictationBlock;
+};
+
+const combineDictationBlocks = (useFirst: UseDictationBlock, useSecond: UseDictationBlock): UseDictationBlock => {
+  function useCombinedDictationBlock(): DictationBlock {
+    const first = useFirst();
+    const second = useSecond();
+    return first.blocked ? first : second;
+  }
+  return useCombinedDictationBlock;
+};
+
+const updateDictationBlockHooks = (): void => {
+  const next = plugins.flatMap((plugin) => (plugin.composer ? [plugin.composer.useDictationBlock] : []));
+  if (next.length === dictationBlockHooks.length && next.every((hook, index) => hook === dictationBlockHooks[index])) {
+    return;
+  }
+  if (dictationBlockHookInUse) {
+    if (import.meta.env?.DEV) {
+      console.warn('[product-plugins] a dictation-block plugin registered after the composer rendered; its block is ignored until reload');
+    }
+    return;
+  }
+  dictationBlockHooks = next;
+  useComposedDictationBlock = next.length === 0 ? useNoDictationBlock : next.map(guardDictationBlock).reduce(combineDictationBlocks);
+};
+
 const changed = (): void => {
   substitutions = compileSubstitutions();
   updateDecorationHooks();
+  updateDictationBlockHooks();
   overlaid.clear();
   listeners.forEach((listener) => listener());
 };
@@ -145,6 +194,7 @@ export function registerProductUiPlugin(plugin: ProductUiPlugin): void {
 export function resetProductUiPluginsForTests(): void {
   plugins = [];
   pickerHookInUse = false;
+  dictationBlockHookInUse = false;
   changed();
 }
 
@@ -238,6 +288,11 @@ export function ProductSlot<K extends ProductSlotName>({ name, ...props }: { nam
 export function useProductModelPicker(open: boolean): ModelPickerDecorations {
   pickerHookInUse = true;
   return useComposedDecorations(open);
+}
+
+export function useProductDictationBlock(): DictationBlock {
+  dictationBlockHookInUse = true;
+  return useComposedDictationBlock();
 }
 
 export function translateProductMessageError(error: ProductMessageError): string | null {

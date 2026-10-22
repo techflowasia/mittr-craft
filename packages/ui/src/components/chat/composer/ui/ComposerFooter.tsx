@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { isDictationCaptureSupported } from '@/lib/dictation/use-dictation-audio-source';
+import { ProductSlot, useProductDictationBlock } from '@/lib/product-plugins';
 import { ModelControls } from '../../ModelControls';
 import { ComposerActionButtons } from './ComposerActionButtons';
 import { ComposerAttachmentControls } from './ComposerAttachmentControls';
@@ -144,6 +145,8 @@ export function ComposerFooter(props: ComposerFooterProps) {
     const dictationEnabled = useConfigStore((state) => state.dictationEnabled);
     const [dictationSupported] = React.useState(() => !isVSCodeRuntime() && isDictationCaptureSupported());
     const showDictation = dictationEnabled && dictationSupported;
+    const dictationBlock = useProductDictationBlock();
+    const dictationStartLabel = dictationBlock.blocked && dictationBlock.reason ? dictationBlock.reason : t('chat.dictation.start');
 
     return (
         <div
@@ -209,12 +212,13 @@ export function ComposerFooter(props: ComposerFooterProps) {
                                         }
                                     }}
                                     onClick={onStartDictation}
-                                    disabled={dictationActive}
-                                    title={t('chat.dictation.start')}
-                                    aria-label={t('chat.dictation.start')}
+                                    disabled={dictationActive || dictationBlock.blocked}
+                                    title={dictationStartLabel}
+                                    aria-label={dictationStartLabel}
                                 >
                                     <Icon name="mic" className={cn(iconSizeClass, 'text-current')} />
                                 </button> : null}
+                                {!isBtw ? <ProductSlot name="composer-actions" isMobile={isMobile} footerIconButtonClass={footerIconButtonClass} iconSizeClass={iconSizeClass} dictationActive={dictationActive} /> : null}
                                 <ComposerActionButtons
                                     isMobile={isMobile}
                                     footerIconButtonClass={footerIconButtonClass}
@@ -283,12 +287,14 @@ export function ComposerFooter(props: ComposerFooterProps) {
                             footerPaddingClass={footerPaddingClass}
                             iconSizeClass={iconSizeClass}
                             sendIconSizeClass={sendIconSizeClass}
+                            disabled={dictationBlock.blocked && !dictationActive}
                             onInsert={onDictationInsert}
                             onInsertAndSend={onDictationInsertAndSend}
                             onSendStart={onDictationSendStart}
                             onStart={onDictationStart}
                             onContentHeightChange={onDictationContentHeightChange}
                         /> : null}
+                        {!isBtw ? <ProductSlot name="composer-actions" isMobile={isMobile} footerIconButtonClass={footerIconButtonClass} iconSizeClass={iconSizeClass} dictationActive={dictationActive} /> : null}
                         {parallelRun ? (
                             // Parallel mode keeps the ordinary send button: the strip above
                             // already shows how many runs start, and submitting the form

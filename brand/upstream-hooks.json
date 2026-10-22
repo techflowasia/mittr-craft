@@ -197,6 +197,12 @@
       "why": "The phone-sized model sheet builds its own rows, so an entry a product plugin marked as unavailable could still be applied there by its row, its effort chips or its more-efforts panel and showed no mark; the sheet now draws the same status pill and disables those buttons for a blocked entry, and without a plugin it is unchanged."
     }
   ],
+  "packages/ui/src/components/chat/composer/ui/ComposerFooter.tsx": [
+    {
+      "hook": "composer-actions",
+      "why": "A downstream build adds its own composer action beside the microphone (a voice assistant button) and can hold dictation off with a reason, without editing the footer on every upstream release. With no plugin nothing changes."
+    }
+  ],
   "packages/ui/src/components/model-picker/ModelEntryStatusPill.tsx": [
     {
       "hook": "model-picker",
@@ -305,6 +311,10 @@
     {
       "hook": "integrations-page",
       "why": "The integrations-page slot is a named slot like the others: a downstream build adds its own integration settings to the Integrations page without editing the page's sections, and with no plugin it renders nothing."
+    },
+    {
+      "hook": "composer-actions",
+      "why": "A downstream build adds its own composer action beside the microphone (a voice assistant button) and can hold dictation off with a reason, without editing the footer on every upstream release. With no plugin nothing changes."
     }
   ],
   "packages/ui/src/lib/quota/providers/index.ts": [

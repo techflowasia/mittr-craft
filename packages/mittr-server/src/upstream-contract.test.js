@@ -1961,6 +1961,24 @@ const checks = {
     const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
     assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P13 to P18 again, then update the MittrCraft tools plugin and this pin');
   },
+  'composer-actions-slot': () => {
+    const plugins = source('packages/ui/src/lib/product-plugins.ts');
+    has(plugins, /^  'composer-actions': \{ isMobile: boolean; footerIconButtonClass: string; iconSizeClass: string; dictationActive: boolean \};$/m, 'the composer-actions slot props changed');
+    has(plugins, /^export type DictationBlock = \{ blocked: boolean; reason\?: string \};$/m, 'DictationBlock changed shape');
+    has(plugins, /^  composer\?: \{ useDictationBlock: UseDictationBlock \};$/m, 'a plugin can no longer give composer.useDictationBlock');
+    has(plugins, /^export function useProductDictationBlock\(\): DictationBlock \{$/m, 'useProductDictationBlock is gone');
+    const footer = source('packages/ui/src/components/chat/composer/ui/ComposerFooter.tsx');
+    has(footer, /^import \{ ProductSlot, useProductDictationBlock \} from '@\/lib\/product-plugins';$/m, 'ComposerFooter no longer imports ProductSlot and useProductDictationBlock');
+    const slotCall = '{!isBtw ? <ProductSlot name="composer-actions" isMobile={isMobile} footerIconButtonClass={footerIconButtonClass} iconSizeClass={iconSizeClass} dictationActive={dictationActive} /> : null}';
+    assert.equal(lineCount(footer, '<ProductSlot '), 2, 'ComposerFooter no longer renders the composer-actions slot once per row');
+    assert.equal(lineCount(footer, slotCall), 2, 'a composer-actions call site lost its side-question guard or its props');
+    assert.equal(lineCount(footer, 'useProductDictationBlock()'), 1, 'ComposerFooter no longer reads the dictation block once');
+    const mobile = footer.slice(footer.indexOf('{isMobile ? ('), footer.indexOf(') : ('));
+    has(mobile, /disabled=\{dictationActive \|\| dictationBlock\.blocked\}\s*title=\{dictationStartLabel\}\s*aria-label=\{dictationStartLabel\}\s*>\s*<Icon name="mic"[^\n]*\n\s*<\/button> : null\}\s*\{!isBtw \? <ProductSlot name="composer-actions"/, 'the mobile composer-actions slot no longer follows the blockable microphone');
+    const desktop = footer.slice(footer.indexOf(') : ('));
+    has(desktop, /<MemoComposerDictation[^>]*disabled=\{dictationBlock\.blocked && !dictationActive\}[^>]*\/> : null\}\s*\{!isBtw \? <ProductSlot name="composer-actions"/, 'the desktop composer-actions slot no longer follows the blockable microphone');
+    has(footer, /const dictationStartLabel = dictationBlock\.blocked && dictationBlock\.reason \? dictationBlock\.reason : t\('chat\.dictation\.start'\);/, 'the mobile microphone no longer names the block reason');
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {
