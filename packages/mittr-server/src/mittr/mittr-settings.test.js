@@ -15,7 +15,7 @@ const settingsFile = (dataDir) => path.join(dataDir, 'mittr-settings.json');
 
 const DEFAULT_TOOLS = { computer: true, chrome: true, chromeProfile: null, chromeHeaded: true, chromeApprovedHosts: [], widgets: true };
 const DEFAULT_VOICE = { stepCap: 8, replyMaxChars: 8000 };
-const stored = (showOtherProviders, tools = DEFAULT_TOOLS, voice = DEFAULT_VOICE) => ({ showOtherProviders, tools, voice });
+const stored = (showOtherProviders, tools = DEFAULT_TOOLS, voice = DEFAULT_VOICE, suggestionStyle = 'next-step') => ({ showOtherProviders, tools, voice, suggestionStyle });
 
 test('missing settings read as switch OFF, with no warning', async (t) => {
   const dataDir = tempDataDir(t);
@@ -322,4 +322,42 @@ test('1.22 voice limits parked under mittr are carried once', async (t) => {
   assert.equal(await createMittrSettings({ dataDir, logger: recordingLogger() }).carryParkedVoiceSettings(), null);
   assert.equal((await settings.read()).voice.stepCap, 6);
   assert.equal(await createMittrSettings({ dataDir: tempDataDir(t), logger: recordingLogger() }).carryParkedVoiceSettings(), null);
+});
+
+test('the suggestion style reads as next-step unless unfinished-only is stored', async (t) => {
+  const dataDir = tempDataDir(t);
+  const settings = createMittrSettings({ dataDir, logger: recordingLogger() });
+  assert.equal((await settings.read()).suggestionStyle, 'next-step');
+  for (const [suggestionStyle, expected] of [
+    ['unfinished-only', 'unfinished-only'],
+    ['next-step', 'next-step'],
+    ['UNFINISHED-ONLY', 'next-step'],
+    ['', 'next-step'],
+    [null, 'next-step'],
+    [false, 'next-step'],
+    [['unfinished-only'], 'next-step'],
+  ]) {
+    fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ suggestionStyle }));
+    assert.equal((await settings.read()).suggestionStyle, expected, JSON.stringify(suggestionStyle));
+  }
+});
+
+test('update stores the suggestion style, keeps the other settings, and refuses any other value', async (t) => {
+  const dataDir = tempDataDir(t);
+  const settings = createMittrSettings({ dataDir, logger: recordingLogger() });
+  for (const suggestionStyle of ['', 'always', 'Next-Step', null, true, 1, ['next-step']]) {
+    await assert.rejects(settings.update({ suggestionStyle }), /^TypeError: suggestionStyle must be next-step or unfinished-only$/, JSON.stringify(suggestionStyle));
+  }
+  assert.equal(fs.existsSync(settingsFile(dataDir)), false);
+
+  await settings.update({ showOtherProviders: true, tools: { chrome: false }, voice: { stepCap: 3 } });
+  assert.equal((await settings.update({ suggestionStyle: 'unfinished-only' })).suggestionStyle, 'unfinished-only');
+  const after = await createMittrSettings({ dataDir, logger: recordingLogger() }).read();
+  assert.deepEqual(after, stored(true, { ...DEFAULT_TOOLS, chrome: false }, { ...DEFAULT_VOICE, stepCap: 3 }, 'unfinished-only'));
+  assert.equal(JSON.parse(fs.readFileSync(settingsFile(dataDir), 'utf8')).suggestionStyle, 'unfinished-only');
+
+  await settings.update({ tools: { computer: false } });
+  assert.equal((await settings.read()).suggestionStyle, 'unfinished-only', 'a tools write keeps the style');
+  assert.equal((await settings.update({ suggestionStyle: 'next-step' })).suggestionStyle, 'next-step');
+  assert.equal((await settings.read()).tools.computer, false);
 });

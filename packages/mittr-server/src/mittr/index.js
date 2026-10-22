@@ -10,6 +10,7 @@ import { registerMittrAuthRoutes } from './auth-routes.js';
 import { resolveBroker } from './broker.js';
 import { catalogCachePath, createCatalogCache } from './catalog-cache.js';
 import { registerMittrCatalogRoutes } from './catalog-routes.js';
+import { registerChatSettingsRoutes } from './chat-settings-routes.js';
 import { syncDefaultModel } from './default-model.js';
 import { createEnablementStore } from './enablement.js';
 import { ensureMittrCredential, forgetMittrCredential } from './engine-credential.js';
@@ -29,6 +30,7 @@ import { chooseSecretStore } from './secret-store.js';
 import { registerMittrShim } from './shim-routes.js';
 import { deepLinkScheme } from './sign-in.js';
 import { reconcileSkills, skillIdOf } from './skill-reconciler.js';
+import { createSuggestionStyle } from './suggestion-style.js';
 import { registerMittrControlRoutes } from './tools/control-routes.js';
 import { setupMittrTools } from './tools/index.js';
 import { createMittrActionRegistry } from './tools/registry.js';
@@ -633,6 +635,9 @@ export function setupMittr(context, {
     events,
     logger,
   });
+  const suggestionStyle = createSuggestionStyle({ register: context.registerSuggestionStyle, logger });
+  void suggestionStyle.load(() => mittrSettings.read());
+  registerChatSettingsRoutes(app, { express, host, requestScope, mittrSettings, suggestionStyle, logger });
 
   // Sets the engine's models; a failure is logged and waits for the next
   // sync or start, never thrown into a route or the server.
@@ -693,6 +698,7 @@ export function setupMittr(context, {
       await tools.dispose();
       unregisterDeepLink?.();
       unregisterQuotaProvider?.();
+      suggestionStyle.dispose();
     },
   };
 }

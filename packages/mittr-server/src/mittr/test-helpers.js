@@ -100,6 +100,7 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
   const userConfigWrites = [];
   const broadcasts = [];
   const quotaProviders = [];
+  const suggestionStyles = [];
   const quotaProviderOptions = [];
   const controlCalls = [];
   const eventListeners = new Set();
@@ -158,6 +159,14 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
         };
       },
       quotaResult,
+      registerSuggestionStyle: (style) => {
+        if (suggestionStyles.length > 0) throw new Error('A suggestion style is already registered');
+        suggestionStyles.push(style);
+        return () => {
+          const at = suggestionStyles.indexOf(style);
+          if (at !== -1) suggestionStyles.splice(at, 1);
+        };
+      },
       events: {
         broadcast: (type, payload) => broadcasts.push({ type, payload }),
         subscribe: (listener) => {
@@ -185,6 +194,7 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
     controlAnswer: async () => ({}),
     scope: 'local',
     quotaProviders,
+    suggestionStyles,
     quotaProviderOptions,
     server,
     broadcasts,

@@ -2544,3 +2544,27 @@ test('the voice-only actions are registered on this Mac and reach no agent tool'
   assert.deepEqual(voiceOnly, ['session.stop', 'session.read_reply', 'chrome.allow_site']);
   assert.equal(mittr.registry.tools().some((tool) => tool.name === 'mittrcraft_voice'), false);
 });
+
+test('next-step suggestions are on at start, follow the stored style, and leave on dispose', async (t) => {
+  const engine = fakeEngineContext();
+  const { mittr, call } = await setUp(t, { engine, host: {} });
+  await until(() => engine.suggestionStyles.length === 1);
+  assert.equal(engine.suggestionStyles[0].suggestionRules()[0], 'suggestion: write ONE immediately sendable next user message addressed TO the coding agent.');
+  assert.deepEqual(await call('GET', '/api/mittr/chat/settings'), { status: 200, body: { suggestionStyle: 'next-step', canChange: true } });
+
+  assert.deepEqual(await call('PUT', '/api/mittr/chat/settings', { suggestionStyle: 'unfinished-only' }), { status: 200, body: { suggestionStyle: 'unfinished-only', canChange: true } });
+  assert.equal(engine.suggestionStyles.length, 0);
+  assert.equal((await call('PUT', '/api/mittr/chat/settings', { suggestionStyle: 'next-step' })).status, 200);
+  assert.equal(engine.suggestionStyles.length, 1);
+  await mittr.dispose();
+  assert.equal(engine.suggestionStyles.length, 0);
+});
+
+test('a stored unfinished-only style registers nothing at start', async (t) => {
+  const engine = fakeEngineContext();
+  const dataDir = tempDataDir(t);
+  fs.writeFileSync(path.join(dataDir, 'mittr-settings.json'), JSON.stringify({ suggestionStyle: 'unfinished-only' }));
+  const { call } = await setUp(t, { engine, dataDir, host: {} });
+  assert.equal((await call('GET', '/api/mittr/chat/settings')).body.suggestionStyle, 'unfinished-only');
+  assert.equal(engine.suggestionStyles.length, 0);
+});
