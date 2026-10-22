@@ -53,7 +53,8 @@ test('the executable records each call with its arguments and prints JSON', asyn
 test('the executable also runs as a daemon on the socket it is given and answers calls and a stop through it', async () => {
   const dir = stateDir();
   const socketPath = path.join(dir, 'd.sock');
-  const daemon = execFile(process.execPath, [SCRIPT, '--state', dir, 'serve', '--socket', socketPath], { env: { ...process.env, CUA_DRIVER_RS_TELEMETRY_ENABLED: '0' } });
+  const quiet = { CUA_DRIVER_RS_TELEMETRY_ENABLED: '0', CUA_TELEMETRY_ENABLED: '0', CUA_DRIVER_RS_UPDATE_CHECK: '0', CUA_DRIVER_TELEMETRY_HOME: path.join(dir, 'cua'), HOME: dir };
+  const daemon = execFile(process.execPath, [SCRIPT, '--state', dir, 'serve', '--socket', socketPath], { env: { PATH: process.env.PATH, ...quiet } });
   const exited = new Promise((resolve) => daemon.once('exit', resolve));
   const deadline = Date.now() + 5000;
   while (!fs.existsSync(socketPath) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
@@ -71,5 +72,5 @@ test('the executable also runs as a daemon on the socket it is given and answers
   assert.match(gone.stderr, new RegExp(`daemon is not running on ${socketPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
   const calls = fs.readFileSync(path.join(dir, 'calls.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
   assert.deepEqual(calls.map((entry) => entry.daemon ?? entry.tool), ['serve', 'list_apps', 'get_desktop_state']);
-  assert.equal(calls[0].telemetry, '0');
+  assert.deepEqual(calls[0].env, quiet);
 });

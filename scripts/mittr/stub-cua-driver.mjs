@@ -32,6 +32,8 @@ const modeOf = (stateDir) => {
   }
 };
 
+const QUIET_KEYS = ['CUA_DRIVER_RS_TELEMETRY_ENABLED', 'CUA_TELEMETRY_ENABLED', 'CUA_DRIVER_RS_UPDATE_CHECK', 'CUA_DRIVER_TELEMETRY_HOME', 'HOME'];
+
 const without = (argv, flag) => {
   const at = argv.indexOf(flag);
   return at === -1 ? { value: null, rest: argv } : { value: argv[at + 1], rest: argv.filter((_, index) => index !== at && index !== at + 1) };
@@ -72,7 +74,11 @@ const ask = (socketPath, request, answered) => {
 };
 
 const serve = (socketPath, stateDir) => {
-  record(stateDir, { daemon: 'serve', socketPath, telemetry: process.env.CUA_DRIVER_RS_TELEMETRY_ENABLED ?? null });
+  record(stateDir, {
+    daemon: 'serve',
+    socketPath,
+    env: Object.fromEntries(QUIET_KEYS.map((key) => [key, process.env[key] ?? null])),
+  });
   fs.rmSync(socketPath, { force: true });
   const server = net.createServer((socket) => {
     let buffer = '';
