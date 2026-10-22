@@ -2049,6 +2049,16 @@ const checks = {
     has(button, /^\s+destructive:/m, 'Button lost its destructive variant');
     has(button, /^\s+sm:/m, 'Button lost its sm size');
   },
+
+  'settings-number-input': () => {
+    const input = source('packages/ui/src/components/ui/number-input.tsx');
+    has(input, /^export \{ NumberInput \}$/m, 'NumberInput is no longer exported');
+    has(input, /interface NumberInputProps[^{]*\{[^}]*\n {2}value\?: number\n {2}onValueChange: \(value: number\) => void\n {2}min\?: number\n {2}max\?: number\n {2}step\?: number\n/s, 'NumberInput no longer takes value, onValueChange, min, max and step');
+    const section = source('packages/ui/src/components/sections/shared/SettingsSection.tsx');
+    for (const name of ['SETTINGS_NUMBER_STEPPER_ROW_CLASS', 'SETTINGS_FIELDS_STACK_CLASS', 'SETTINGS_OPTION_STACK_CLASS']) {
+      has(section, new RegExp(`^export const ${name} = `, 'm'), `${name} is no longer exported`);
+    }
+  },
 };
 
 test('every contract item has a check, and every check an item', () => {
