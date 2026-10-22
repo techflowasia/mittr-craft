@@ -127,6 +127,11 @@ html.mittr-glass .mittr-today-kind {
   background-color: var(--mittr-glass-raised);
 }
 
+html.mittr-glass .mittr-widget {
+  border-color: var(--mittr-glass-edge);
+  background-color: var(--mittr-glass-raised);
+}
+
 html.mittr-glass .mittr-glass-pill {
   border-radius: 999px;
 }

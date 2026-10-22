@@ -1,8 +1,8 @@
 import type { GoWorkProject, GoWorkSelection } from '../work/goWork';
 
-export type LaunchRefusal = 'no-project' | 'no-model' | 'no-mittr-model';
+type LaunchRefusal = 'no-project' | 'no-model' | 'no-mittr-model';
 
-export type LaunchPlan =
+type LaunchPlan =
   | { ok: true; text: string; directory: string; selection: GoWorkSelection; project: GoWorkProject }
   | { ok: false; reason: LaunchRefusal; text: string; project: GoWorkProject | null };
 

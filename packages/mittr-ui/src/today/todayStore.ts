@@ -22,7 +22,7 @@ export type TodayPages = {
 
 type Subscribe<T> = (listener: (state: T, prev: T) => void) => () => void;
 
-export type TodayStoreDeps = {
+type TodayStoreDeps = {
   subscribeSelection: Subscribe<TodaySelection>;
   subscribePages: Subscribe<TodayPages>;
   restoreCandidate: () => string | null;
@@ -30,7 +30,7 @@ export type TodayStoreDeps = {
   listenSessionRowClicks: (onClick: () => void) => () => void;
 };
 
-export type TodayStore = {
+type TodayStore = {
   open(): boolean;
   show(): void;
   hide(): void;

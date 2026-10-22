@@ -185,4 +185,16 @@ describe('MittrCraft tools controller', () => {
     expect(notified).toBe(0);
     expect(await controller.setChrome(false)).toBeNull();
   });
+
+  test('the widgets switch saves widgets and shows the change at once', async () => {
+    const { controller, saves, ready, settle } = setup();
+    await ready({ ...toolsWith(), widgets: { offered: true, enabled: true } });
+    const saving = controller.setWidgets(false);
+    expect(toolsOf(controller.state())?.widgets).toEqual({ offered: true, enabled: false });
+    expect(saves.at(-1)?.patch).toEqual({ widgets: false });
+    saves.at(-1)?.resolve({ ...toolsWith(), widgets: { offered: true, enabled: false } });
+    expect(await saving).toBeNull();
+    await settle();
+    expect(toolsOf(controller.state())?.widgets).toEqual({ offered: true, enabled: false });
+  });
 });

@@ -7,7 +7,7 @@ import { mittrT, type MittrKey } from '../strings/mittrT';
 import type { MyWorkState } from '../work/myWorkController';
 import type { WorkItem } from '../work/workItems';
 
-export type TodayKind = 'approval' | 'question' | 'review' | 'goal' | 'running' | 'scheduled' | 'quota' | 'error' | 'due' | 'work';
+export type TodayKind = 'approval' | 'question' | 'review' | 'goal' | 'running' | 'scheduled' | 'quota' | 'error' | 'due' | 'work' | 'widget';
 
 export type TodayRow = { id: string; kind: TodayKind; title: string; detail: string; open(): void };
 

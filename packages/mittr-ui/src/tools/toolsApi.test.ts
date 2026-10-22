@@ -42,6 +42,14 @@ describe('MittrCraft tools API', () => {
     expect(calls).toEqual([{ path: '/api/mittr/tools', method: 'GET', body: null }]);
   });
 
+  test('the widgets switch is read with the tools and saved as widgets', async () => {
+    const withWidgets = { ...TOOLS, widgets: { offered: true, enabled: false } };
+    const { api, calls } = respond(200, withWidgets);
+    expect(await api.load()).toEqual(withWidgets);
+    expect(await api.save({ widgets: true })).toEqual(withWidgets);
+    expect(calls[1]).toEqual({ path: '/api/mittr/tools', method: 'PUT', body: { widgets: true } });
+  });
+
   test('a change is sent as one PUT and answers the stored tools', async () => {
     const { api, calls } = respond(200, TOOLS);
     expect(await api.save({ chromeHeaded: true })).toEqual(TOOLS);

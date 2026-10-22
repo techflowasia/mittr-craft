@@ -24,6 +24,7 @@ export type ToolsController = {
   setChrome(on: boolean): Promise<ToolsOutcome>;
   setProfile(directory: string): Promise<ToolsOutcome>;
   setHeaded(on: boolean): Promise<ToolsOutcome>;
+  setWidgets(on: boolean): Promise<ToolsOutcome>;
   removeHost(host: string): Promise<ToolsOutcome>;
   dispose(): void;
 };
@@ -133,6 +134,7 @@ export function createToolsController({ api }: { api: ToolsApi }): ToolsControll
     setChrome: (on) => change({ chrome: on }, (tools) => withChrome(tools, { enabled: on })),
     setProfile: (directory) => change({ chromeProfile: directory }, (tools) => withChrome(tools, { profile: directory })),
     setHeaded: (on) => change({ chromeHeaded: on }, (tools) => withChrome(tools, { headed: on })),
+    setWidgets: (on) => change({ widgets: on }, (tools) => (tools.widgets ? { ...tools, widgets: { ...tools.widgets, enabled: on } } : tools)),
     removeHost,
     dispose: () => {
       if (disposed) return;

@@ -20,7 +20,9 @@ const chromePayload = z.object({
   approvedHosts: z.array(z.string()),
 });
 
-const toolsPayload = z.object({ computer: computerPayload, chrome: chromePayload, canChange: z.boolean() });
+const widgetsPayload = z.object({ offered: z.boolean(), enabled: z.boolean() });
+
+const toolsPayload = z.object({ computer: computerPayload, chrome: chromePayload, widgets: widgetsPayload.optional(), canChange: z.boolean() });
 
 const profilePayload = z.object({ directory: z.string().min(1), name: z.string() });
 
@@ -32,7 +34,7 @@ export type MittrTools = z.infer<typeof toolsPayload>;
 
 export type ChromeProfile = z.infer<typeof profilePayload>;
 
-export type ToolsPatch = { computer?: boolean; chrome?: boolean; chromeProfile?: string; chromeHeaded?: boolean };
+export type ToolsPatch = { computer?: boolean; chrome?: boolean; chromeProfile?: string; chromeHeaded?: boolean; widgets?: boolean };
 
 type ToolsResponse = { ok: boolean; status: number; json: () => Promise<JsonValue> };
 

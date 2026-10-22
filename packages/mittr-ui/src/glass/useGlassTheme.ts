@@ -10,7 +10,7 @@ const GLASS_MINI = 'mittr-glass-mini';
 
 type GlassLook = { on: boolean; dark: boolean };
 
-export const glassLookFor = (themeId: string | undefined, variant: string | undefined): GlassLook => {
+const glassLookFor = (themeId: string | undefined, variant: string | undefined): GlassLook => {
   if (themeId === DEFAULT_LIGHT_THEME_ID && variant === 'light') return { on: true, dark: false };
   if (themeId === DEFAULT_DARK_THEME_ID && variant === 'dark') return { on: true, dark: true };
   return { on: false, dark: false };

@@ -18,6 +18,7 @@ import { MY_WORK_LOADING, type MyWorkState } from '../work/myWorkController';
 import { captureSendSelection } from '../work/sendSelection';
 import type { WorkItem } from '../work/workItems';
 import { sessionGoWorkDeps, useMyWorkController } from '../work/workSession';
+import { ensureWidgetsSection } from '../widgets/widgetsRegistration';
 import './today.css';
 import { alerts, running, waiting, workRows, type ScheduledRun, type TodayKind, type TodayRow } from './todayData';
 import { TodayLauncher } from './TodayLauncher';
@@ -217,6 +218,7 @@ function TodayContent({ hide }: { hide: () => void }): React.ReactNode {
   const [myWorkOpen, setMyWorkOpen] = React.useState(false);
   const goWorkRunning = React.useRef(false);
   const agentStatus = quota.status === 'ok' ? quota.quota.agentStatus : null;
+  React.useEffect(() => { void ensureWidgetsSection(); }, []);
 
   const startWork = (item: WorkItem) => {
     const plan = () => {

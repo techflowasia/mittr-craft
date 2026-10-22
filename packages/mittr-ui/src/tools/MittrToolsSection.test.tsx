@@ -34,6 +34,7 @@ const actions: ToolsActions = {
   setProfile: noop,
   setHeaded: noop,
   removeHost: noop,
+  setWidgets: noop,
 };
 
 const toolsWith = (chrome: Partial<MittrTools['chrome']> = {}, computer: Partial<MittrTools['computer']> = {}): ToolsLoad => ({
@@ -87,6 +88,23 @@ describe('MittrCraft tools section', () => {
     expect(html).not.toContain(mittrT('mittr.tools.chrome.siteRemoveShort'));
     expect(html).not.toContain('jira.acme.test');
     expect(view(remoteOf(toolsWith({ offered: false }, { offered: false })))).toBe('');
+  });
+
+  test('the widgets switch shows where the server offers it, alone or with the other tools', () => {
+    const offered = (enabled: boolean): ToolsLoad => {
+      const base = toolsWith();
+      return base.status === 'ready' ? { ...base, tools: { ...base.tools, widgets: { offered: true, enabled } } } : base;
+    };
+    const html = view(offered(true));
+    expect(html).toContain(`>${mittrT('mittr.tools.widgets.label')}</span>`);
+    expect(html).toContain(`aria-label="${mittrT('mittr.tools.widgets.aria')}"`);
+    expect(view(toolsWith())).not.toContain(mittrT('mittr.tools.widgets.label'));
+    const onlyWidgets = offered(false);
+    const alone = onlyWidgets.status === 'ready'
+      ? { ...onlyWidgets, tools: { ...onlyWidgets.tools, computer: { offered: false, enabled: false }, chrome: { ...onlyWidgets.tools.chrome, offered: false } } }
+      : onlyWidgets;
+    expect(view(alone)).toContain('>MittrCraft tools</h2>');
+    expect(view(alone)).toContain(`>${mittrT('mittr.tools.widgets.label')}</span>`);
   });
 
   test('a tool this install cannot run shows no switch', () => {

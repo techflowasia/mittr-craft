@@ -32,6 +32,7 @@ export type ToolsActions = {
   setProfile: (directory: string) => void;
   setHeaded: (on: boolean) => void;
   removeHost: (host: string) => void;
+  setWidgets: (on: boolean) => void;
 };
 
 type ChromeProps = { chrome: MittrTools['chrome']; profiles: ProfilesLoad; actions: ToolsActions };
@@ -142,7 +143,7 @@ type MittrToolsSectionViewProps = { state: ToolsLoad; profiles: ProfilesLoad; ac
 export function MittrToolsSectionView({ state, profiles, actions }: MittrToolsSectionViewProps): React.ReactNode {
   const t = useMittrT();
   if (state.status === 'loading') return null;
-  if (state.status === 'ready' && !state.tools.computer.offered && !state.tools.chrome.offered) return null;
+  if (state.status === 'ready' && !state.tools.computer.offered && !state.tools.chrome.offered && !state.tools.widgets?.offered) return null;
   return (
     <SettingsSection title={t('mittr.tools.title')} info={t('mittr.tools.info')}>
       {state.status === 'error' ? (
@@ -161,6 +162,15 @@ export function MittrToolsSectionView({ state, profiles, actions }: MittrToolsSe
             />
           ) : null}
           {state.tools.chrome.offered ? <ChromeTool chrome={state.tools.chrome} profiles={profiles} actions={actions} /> : null}
+          {state.tools.widgets?.offered ? (
+            <SettingsCheckboxRow
+              checked={state.tools.widgets.enabled}
+              onChange={actions.setWidgets}
+              label={t('mittr.tools.widgets.label')}
+              ariaLabel={t('mittr.tools.widgets.aria')}
+              info={t('mittr.tools.widgets.info')}
+            />
+          ) : null}
         </div>
       )}
     </SettingsSection>
@@ -180,6 +190,7 @@ const NO_ACTIONS: ToolsActions = {
   setProfile: () => {},
   setHeaded: () => {},
   removeHost: () => {},
+  setWidgets: () => {},
 };
 
 const actionsOf = (controller: ToolsController): ToolsActions => ({
@@ -189,6 +200,7 @@ const actionsOf = (controller: ToolsController): ToolsActions => ({
   setProfile: (directory) => { void controller.setProfile(directory).then(showOutcome); },
   setHeaded: (on) => { void controller.setHeaded(on).then(showOutcome); },
   removeHost: (host) => { void controller.removeHost(host).then(showOutcome); },
+  setWidgets: (on) => { void controller.setWidgets(on).then(showOutcome); },
 });
 
 function useToolsController(): ToolsController | null {

@@ -2059,6 +2059,17 @@ const checks = {
     has(en, /'chat\.chatInput\.toast\.noModelSelected': /, 'the composer no-model refusal key is gone');
     has(en, /'chat\.chatInput\.toast\.messageSendFailed': /, 'the composer send-failed key is gone');
   },
+  'today-and-widget-controls': () => {
+    const button = source('packages/ui/src/components/ui/button.tsx');
+    for (const variant of ['default', 'outline', 'ghost', 'destructive']) has(button, new RegExp(`^ {8}${variant}:`, 'm'), `the Button ${variant} variant is gone`);
+    has(button, /^ {8}xs: "/m, 'the Button xs size is gone');
+    const sprite = source('packages/ui/src/components/icon/sprite.ts');
+    for (const name of ['home', 'folder', 'arrow-down-s', 'send-plane-2']) has(sprite, new RegExp(`^ {2}"${name}": `, 'm'), `the ${name} icon is gone`);
+    const menu = source('packages/ui/src/components/ui/dropdown-menu.tsx');
+    for (const name of ['DropdownMenu', 'DropdownMenuContent', 'DropdownMenuItem', 'DropdownMenuLabel', 'DropdownMenuTrigger']) assert.ok(new RegExp(`\\b${name}\\b`).test(menu), `${name} is gone`);
+    const tooltip = source('packages/ui/src/components/ui/tooltip.tsx');
+    for (const name of ['Tooltip', 'TooltipContent', 'TooltipTrigger']) assert.ok(new RegExp(`\\b${name}\\b`).test(tooltip), `${name} is gone`);
+  },
   'message-queue-add': () => {
     const queue = source('packages/ui/src/stores/messageQueueStore.ts');
     has(queue, /export const createMessageQueueTarget = \(\s*sessionId: string,\s*directory: string \| null \| undefined,\s*runtimeKey: string = getRuntimeKey\(\),\s*\): MessageQueueTarget \| null => \{/, 'createMessageQueueTarget changed its signature');

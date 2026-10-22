@@ -714,6 +714,11 @@ export const UPSTREAM_CONTRACT = [
       'packages/ui/src/lib/i18n/messages/en.ts',
     ],
     why: "Today knows the start from a click: the launch restore selects readLastActiveSession(getRuntimeKey()).sessionId with setCurrentSession only while nothing is selected, the automatic first draft opens only while neither a session nor a draft is open, every openNewSessionDraft takes a new draftId and clears currentSessionId in the same update and puts initialPrompt into the composer through setPendingInputText, and a sidebar session row carries data-session-row; Today closes on useUIStore's isScheduledTasksDialogOpen, isArchivePageOpen, isUsageStatsPageOpen, worktreesPageProjectId, spacesPageProjectId, runOverviewKey and openGuestPageId, brings itself back with closeMainSurfaces(), opens settings with setSettingsPage and setSettingsDialogOpen and scheduled tasks with setScheduledTasksDialogOpen; the chat box refuses with the composer's chat.chatInput.toast.noModelSelected and chat.chatInput.toast.messageSendFailed",
+  },
+  {
+    id: 'today-and-widget-controls',
+    files: ['packages/ui/src/components/ui/button.tsx', 'packages/ui/src/components/icon/sprite.ts', 'packages/ui/src/components/ui/dropdown-menu.tsx', 'packages/ui/src/components/ui/tooltip.tsx'],
+    why: 'Today and its widget cards are drawn with the shared Button (variants default, outline, ghost and destructive, size xs), the DropdownMenu project pill, the Tooltip on the Today footer button, and the home, folder, arrow-down-s and send-plane-2 icons',
   },  {
     id: 'message-queue-add',
     files: ['packages/ui/src/stores/messageQueueStore.ts'],
