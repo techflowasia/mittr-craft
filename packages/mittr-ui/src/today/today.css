@@ -8,6 +8,11 @@
   color: var(--foreground);
 }
 
+[data-product-region="main"]:has(> .mittr-today) > :not(.mittr-today),
+[data-product-region="main"]:has(> .mittr-today) > :not(.mittr-today) * {
+  visibility: hidden !important;
+}
+
 .mittr-today-inner {
   display: flex;
   min-height: 100%;

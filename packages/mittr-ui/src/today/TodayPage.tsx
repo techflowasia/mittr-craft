@@ -20,6 +20,7 @@ import type { WorkItem } from '../work/workItems';
 import { sessionGoWorkDeps, useMyWorkController } from '../work/workSession';
 import { ensureWidgetsSection } from '../widgets/widgetsRegistration';
 import './today.css';
+import { coverMainSiblings } from './todayCover';
 import { alerts, running, waiting, workRows, type ScheduledRun, type TodayKind, type TodayRow } from './todayData';
 import { TodayLauncher } from './TodayLauncher';
 import { useTodayExtraAlerts, useTodaySection } from './todaySections';
@@ -109,8 +110,10 @@ export type TodayViewProps = {
 
 export function TodayView({ now, waitingRows, runningRows, alertRows, work, workItems, onConnectWork, onMoreWork, widgets: Widgets, launcher }: TodayViewProps): React.ReactNode {
   const t = useMittrT();
+  const ref = React.useRef<HTMLElement>(null);
+  React.useLayoutEffect(() => (ref.current ? coverMainSiblings(ref.current) : undefined), []);
   return (
-    <section className="mittr-today" aria-label={t('mittr.today.title')}>
+    <section ref={ref} className="mittr-today" aria-label={t('mittr.today.title')}>
       <div className="mittr-today-inner">
         <header className="mittr-today-head">
           <h1 className="mittr-today-date">{dateLine(now)}</h1>

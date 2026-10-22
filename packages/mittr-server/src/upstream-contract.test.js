@@ -1989,6 +1989,10 @@ const checks = {
     has(layout, /<main className="[^"]*" data-page-scroll-lock="true" data-product-region="main">/, '<main> lost data-product-region="main"');
     has(layout, /data-page-scroll-lock="true"\s+data-product-region="shell"\s+className="main-content-safe-area /, 'the layout root lost data-product-region="shell"');
     has(layout, /data-product-region="column">\s*<Header \/>/, 'the right column lost data-product-region="column", or no longer starts with the header');
+    has(source('packages/ui/src/lib/product-plugins.ts'), /return elements\.length === 0 \? null : elements;/, 'ProductSlot no longer renders its components without a wrapper');
+    has(layout, /<main className="[^"]*" data-page-scroll-lock="true" data-product-region="main">\s*<div className=\{cn\('absolute inset-0', isSurfacePageOpen && 'invisible'\)\}>\s*<ErrorBoundary><ChatView /, 'ChatView is no longer held by the first child div of <main>');
+    has(layout, /data-chat-area="true">\s*<main /, '<main> is no longer first in the data-chat-area div');
+    has(layout, /<\/main>\s*<ContextPanel \/>/, 'ContextPanel no longer follows <main>');
     const main = layout.slice(layout.indexOf('<main '), layout.indexOf('</main>'));
     const slot = main.indexOf('<ProductSlot name="main-surface" />');
     for (const page of ['<ChatView ', '<RunOverview />', '<ScheduledTasksDialog />', '<ArchiveView />', '<UsageStatsView />', '<WorktreesView />', '<SpacesView />', '<PluginPane ']) {

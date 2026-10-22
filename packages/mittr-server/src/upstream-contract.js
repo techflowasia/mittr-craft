@@ -672,7 +672,7 @@ export const UPSTREAM_CONTRACT = [
   {
     id: 'main-surface-slot',
     files: ['packages/ui/src/lib/product-plugins.ts', 'packages/ui/src/components/layout/MainLayout.tsx'],
-    why: "product-plugins.ts has the main-surface slot with no props; MainLayout renders it once, inside an ErrorBoundary, as the last child of <main>, after every full-page surface, so Today sits inside every upstream provider over the chat area while the sidebar and header stay usable; the layout root carries data-product-region=\"shell\", the right column \"column\" and <main> \"main\"",
+    why: "product-plugins.ts has the main-surface slot with no props; MainLayout renders it once, inside an ErrorBoundary, as the last child of <main>, after every full-page surface, so Today sits inside every upstream provider over the chat area while the sidebar and header stay usable; the layout root carries data-product-region=\"shell\", the right column \"column\" and <main> \"main\"; ProductSlot renders its components with no wrapper element, so Today is a direct child of <main>, whose first child is the div holding ChatView, and <main> sits first in the data-chat-area div with ContextPanel after it; Today hides and makes inert every other child of <main> while it is open",
   },
   {
     id: 'glass-look-anchors',
