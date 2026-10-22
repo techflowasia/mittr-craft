@@ -144,3 +144,12 @@ describe('the Today chat box', () => {
     await view.close();
   });
 });
+
+describe('the launcher box', () => {
+  test('Minor 15: it shows a ring while its input has the focus, and its input grows with the text', async () => {
+    const { readFileSync } = await import('node:fs');
+    const css = readFileSync(new URL('./today.css', import.meta.url), 'utf8');
+    expect(/\.mittr-today-launcher:has\(\.mittr-today-input:focus-visible\) \{[^}]*box-shadow: 0 0 0 2px var\(--interactive-focus-ring, var\(--ring\)\);/.test(css)).toBe(true);
+    expect(/\.mittr-today-input \{[^}]*max-height: 160px;[^}]*field-sizing: content;/.test(css)).toBe(true);
+  });
+});

@@ -261,6 +261,11 @@
   background-color: var(--surface-elevated, var(--card));
 }
 
+.mittr-today-launcher:has(.mittr-today-input:focus-visible) {
+  border-color: var(--interactive-focus, var(--primary));
+  box-shadow: 0 0 0 2px var(--interactive-focus-ring, var(--ring));
+}
+
 .mittr-today-project {
   display: inline-flex;
   max-width: 40%;
@@ -297,6 +302,7 @@
   line-height: 1.5;
   resize: none;
   outline: none;
+  field-sizing: content;
 }
 
 .mittr-today-input::placeholder {
