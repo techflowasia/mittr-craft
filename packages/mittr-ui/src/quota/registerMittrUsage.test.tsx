@@ -62,9 +62,8 @@ describe('the Mittr usage provider', () => {
   test('the choice is made inside the sign-in gate, so only once someone is signed in', () => {
     const root = MittrRoot({ children: 'app', surface: 'main' });
     if (!React.isValidElement<{ children: React.ReactNode }>(root)) throw new Error('MittrRoot did not return an element');
-    const gate = root.props.children;
+    const gate = React.Children.toArray(root.props.children).find((child) => React.isValidElement(child) && child.type === MittrSignInGate);
     if (!React.isValidElement<{ children: React.ReactNode }>(gate)) throw new Error('MittrRoot did not wrap the sign-in gate');
-    expect(gate.type).toBe(MittrSignInGate);
     const inside = React.Children.toArray(gate.props.children);
     expect(inside).toHaveLength(3);
     expect(inside[2]).toBe('app');
