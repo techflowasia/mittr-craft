@@ -12,6 +12,9 @@ export const OPEN_COMMAND = '/usr/bin/open';
 const CHILD_TIMEOUT_MS = 15_000;
 const DAEMON_START_TIMEOUT_MS = 10_000;
 const DAEMON_STOP_TIMEOUT_MS = 3_000;
+export const QUIT_STOP_COMMAND_TIMEOUT_MS = 1_200;
+export const QUIT_WAIT_MS = 300;
+const QUIT_PROBE_TIMEOUT_MS = 200;
 const PROBE_INTERVAL_MS = 100;
 const PROBE_TIMEOUT_MS = 500;
 const MAX_LAUNCHER_STDERR_BYTES = 16 * 1024;
@@ -235,8 +238,12 @@ export const createDriverDaemon = ({
     stdio: ['ignore', 'pipe', 'ignore'],
     env: { PATH: '/usr/bin:/bin' },
     label: 'ps',
-    timeoutMs: stopTimeoutMs,
+    timeoutMs: timing().wait,
   }).then((text) => text.trim(), () => null));
+
+  const timing = () => (closed
+    ? { command: Math.min(QUIT_STOP_COMMAND_TIMEOUT_MS, stopTimeoutMs), wait: Math.min(QUIT_WAIT_MS, stopTimeoutMs) }
+    : { command: stopTimeoutMs, wait: stopTimeoutMs });
 
   const stopCommand = () => runChild({
     spawn,
@@ -246,7 +253,7 @@ export const createDriverDaemon = ({
     env: childEnv,
     cwd: driverFolder(dataDir),
     label: 'cua-driver stop',
-    timeoutMs: stopTimeoutMs,
+    timeoutMs: timing().command,
   }).then(() => true, () => false);
 
   const exitedWithin = (generation, ms) => (generation.alive
@@ -268,23 +275,39 @@ export const createDriverDaemon = ({
     const pid = home ? readPid(daemonPidFile(home)) : null;
     if (pid === null) return;
     const expected = `${path.join(generation.app, 'Contents', 'MacOS', CUA_DRIVER)} serve --socket ${socketPath}`;
-    if ((await commandOfPid(pid)) !== expected) return;
+    const stillOurs = async () => (await commandOfPid(pid)) === expected;
     try {
+      if (!(await stillOurs())) return;
       signalPid(pid, 'SIGTERM');
-      if (!(await pidGoneWithin(pid, stopTimeoutMs))) signalPid(pid, 'SIGKILL');
+      if (await pidGoneWithin(pid, timing().wait)) return;
+      if (await stillOurs()) signalPid(pid, 'SIGKILL');
     } catch {
       return;
     }
   };
 
   const halt = async (generation) => {
-    const answered = (await probe(socketPath)) && (await stopCommand());
-    if (answered) await exitedWithin(generation, stopTimeoutMs);
+    const answered = (await probe(socketPath, closed ? { timeoutMs: QUIT_PROBE_TIMEOUT_MS } : {})) && (await stopCommand());
+    if (answered) await exitedWithin(generation, timing().wait);
     if (generation.app && (!answered || generation.alive)) await stopByPid(generation);
     if (generation.alive) {
       generation.child.kill('SIGKILL');
-      await exitedWithin(generation, stopTimeoutMs);
+      await exitedWithin(generation, timing().wait);
     }
+  };
+
+  const wakers = new Set();
+  const nap = (ms) => new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      wakers.delete(done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    wakers.add(done);
+  });
+  const wakeAll = () => {
+    for (const done of [...wakers]) done();
   };
 
   const haltLater = (generation) => {
@@ -294,8 +317,11 @@ export const createDriverDaemon = ({
   };
 
   const launch = async (epoch) => {
+    const called = () => closed || stopEpoch !== epoch;
     prepareFolder(driverFolder(dataDir));
+    if (called()) throw refusal();
     if (await probe(socketPath)) await stopCommand();
+    if (called()) throw refusal();
     const app = appBundle(binary);
     const { command, args } = daemonLaunch({ binary, app, socketPath, env: childEnv });
     const child = spawn(command, args, { stdio: ['ignore', 'ignore', 'pipe'], env: childEnv, cwd: driverFolder(dataDir) });
@@ -320,6 +346,10 @@ export const createDriverDaemon = ({
     });
     const deadline = Date.now() + startTimeoutMs;
     for (;;) {
+      if (called()) {
+        await haltLater(generation);
+        throw refusal();
+      }
       if (await probe(socketPath)) {
         if (generation.alive) return generation;
         break;
@@ -329,7 +359,7 @@ export const createDriverDaemon = ({
         await haltLater(generation);
         throw new Error(`cua-driver serve did not answer on ${socketPath} within ${startTimeoutMs}ms`);
       }
-      await pause(probeIntervalMs);
+      await nap(probeIntervalMs);
     }
     await stopCommand();
     const said = Buffer.concat(stderr).toString('utf8').trim();
@@ -338,9 +368,10 @@ export const createDriverDaemon = ({
 
   const refusal = () => new MittrToolError(closed ? CLOSED : DRIVER_STOPPED, 503);
 
-  const ensure = () => {
+  const ensure = (token = stopEpoch) => {
     if (closed) return Promise.reject(new MittrToolError(CLOSED, 503));
     if (!usable) return Promise.reject(new MittrToolError(UNAVAILABLE, 503));
+    if (token !== stopEpoch) return Promise.reject(new MittrToolError(DRIVER_STOPPED, 503));
     if (current?.alive) return Promise.resolve(current);
     if (!starting) {
       const epoch = stopEpoch;
@@ -363,6 +394,7 @@ export const createDriverDaemon = ({
 
   const stop = async () => {
     stopEpoch += 1;
+    wakeAll();
     const generation = current;
     current = null;
     const pending = starting;
@@ -383,13 +415,14 @@ export const createDriverDaemon = ({
       await haltLater(generation);
     }
     if (closed || generation.epoch !== stopEpoch) return null;
-    return ensure();
+    return ensure(generation.epoch);
   };
 
   return {
     usable,
     socketPath,
     env: childEnv,
+    token: () => stopEpoch,
     ensure,
     stop,
     close,
@@ -454,11 +487,12 @@ export const createComputerControl = ({
     socketPath: daemon.socketPath,
     stop: () => daemon.stop(),
     close: () => daemon.close(),
-    request: async (tool, args, { signal } = {}) => {
+    token: () => daemon.token?.() ?? null,
+    request: async (tool, args, { signal, token = null } = {}) => {
       if (!available) throw new MittrToolError(binary ? UNAVAILABLE : NOT_BUNDLED, 503);
       const label = `cua-driver ${tool}`;
       if (signal?.aborted) throw cancelled(label);
-      const generation = await started(() => daemon.ensure(), signal, label);
+      const generation = await started(() => (token === null ? daemon.ensure() : daemon.ensure(token)), signal, label);
       let output;
       try {
         output = await call(tool, args, signal);

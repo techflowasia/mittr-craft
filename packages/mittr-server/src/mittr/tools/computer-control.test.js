@@ -12,6 +12,7 @@ import {
   MAX_SOCKET_PATH_BYTES,
   OPEN_COMMAND,
   QUIET_DRIVER_ENV,
+  QUIT_STOP_COMMAND_TIMEOUT_MS,
   createComputerControl,
   createDriverDaemon,
   createLaunchApp,
@@ -605,6 +606,124 @@ test('a LaunchServices daemon that does not stop through its socket is stopped b
   assert.deepEqual(someoneElse.signals, []);
   const otherSocket = await run(() => '/R/cua-driver/CuaDriver.app/Contents/MacOS/cua-driver serve --socket /Users/person/Library/Caches/cua-driver/cua-driver.sock');
   assert.deepEqual(otherSocket.signals, []);
+});
+
+test('an action token from before a stop starts nothing, even on a fresh control call', async (t) => {
+  const binary = stubCuaDriver(t, { list_apps: { apps: [] } });
+  const { daemon } = realDaemon(t, binary);
+  const computer = createComputerControl({ binary, daemon });
+  const token = computer.token();
+  assert.deepEqual(await computer.request('list_apps', {}, { token }), { apps: [] });
+  await computer.stop();
+  await assert.rejects(computer.request('list_apps', {}, { token }), (error) => error instanceof MittrToolError && error.statusCode === 503 && error.message === DRIVER_STOPPED);
+  assert.equal(serves(binary).length, 1);
+  assert.deepEqual(await computer.request('list_apps', {}, { token: computer.token() }), { apps: [] });
+  assert.equal(serves(binary).length, 2);
+});
+
+test('a stop during a start ends the wait at once and halts what was spawned', async (t) => {
+  const dataDir = tempDataDir(t);
+  const { spawn, calls } = fakeSpawn(({ args }) => (args[0] === 'serve' ? { code: null, exitOnKill: true } : {}));
+  const daemon = createDriverDaemon({ binary: '/d', dataDir, spawn, probe: async () => false, appBundle: () => null, startTimeoutMs: 5_000, probeIntervalMs: 1_000, stopTimeoutMs: 50 });
+  const began = Date.now();
+  const starting = daemon.ensure();
+  await until(() => calls.length === 1);
+  await daemon.stop();
+  await assert.rejects(starting, (error) => error instanceof MittrToolError && error.message === DRIVER_STOPPED);
+  assert.ok(Date.now() - began < 1_000, `took ${Date.now() - began}ms`);
+  assert.deepEqual(calls[0].child.kills, ['SIGKILL']);
+  assert.equal(daemon.running(), false);
+
+  const beforeSpawn = { spawned: 0 };
+  let stopNow;
+  const early = createDriverDaemon({
+    binary: '/d',
+    dataDir: tempDataDir(t),
+    spawn: (...args) => { beforeSpawn.spawned += 1; return fakeSpawn().spawn(...args); },
+    probe: async () => false,
+    appBundle: () => null,
+    prepareFolder: () => { stopNow = early.stop(); },
+  });
+  await assert.rejects(early.ensure(), { message: DRIVER_STOPPED });
+  await stopNow;
+  assert.equal(beforeSpawn.spawned, 0);
+});
+
+test('the pid fallback checks the command again right before SIGKILL', async (t) => {
+  const run = async (commands) => {
+    const dataDir = tempDataDir(t);
+    const socketPath = driverSocketPath(dataDir);
+    const expected = `/R/cua-driver/CuaDriver.app/Contents/MacOS/cua-driver serve --socket ${socketPath}`;
+    let listening = false;
+    const signals = [];
+    let asked = 0;
+    const { spawn } = fakeSpawn(({ command }) => {
+      if (command === OPEN_COMMAND) {
+        setTimeout(() => { listening = true; }, 10);
+        return { code: null, exitOnKill: true };
+      }
+      return { code: 1 };
+    });
+    const daemon = createDriverDaemon({
+      binary: '/R/cua-driver/cua-driver',
+      dataDir,
+      env: { HOME: '/Users/person' },
+      spawn,
+      appBundle: () => '/R/cua-driver/CuaDriver.app',
+      probe: async () => listening,
+      readPid: () => 4242,
+      commandOf: async () => {
+        const answer = commands[Math.min(asked, commands.length - 1)];
+        asked += 1;
+        return answer === 'ours' ? expected : answer;
+      },
+      signalPid: (pid, signal) => signals.push(signal),
+      isAlive: () => true,
+      probeIntervalMs: 5,
+      stopTimeoutMs: 20,
+    });
+    await daemon.ensure();
+    await daemon.stop();
+    return signals;
+  };
+  assert.deepEqual(await run(['ours', 'ours']), ['SIGTERM', 'SIGKILL']);
+  assert.deepEqual(await run(['ours', '/usr/bin/some-new-process']), ['SIGTERM']);
+});
+
+test('at quit a stop that hangs on the socket gives up early, so the pid fallback still runs inside the 3 s cap', async (t) => {
+  const dataDir = tempDataDir(t);
+  const socketPath = driverSocketPath(dataDir);
+  let listening = false;
+  const signals = [];
+  const { spawn, calls } = fakeSpawn(({ command, args }) => {
+    if (command === OPEN_COMMAND) {
+      setTimeout(() => { listening = true; }, 10);
+      return { code: null, exitOnKill: true };
+    }
+    return args[0] === 'stop' ? { code: null, exitOnKill: true } : {};
+  });
+  const daemon = createDriverDaemon({
+    binary: '/R/cua-driver/cua-driver',
+    dataDir,
+    env: { HOME: '/Users/person' },
+    spawn,
+    appBundle: () => '/R/cua-driver/CuaDriver.app',
+    probe: async () => listening,
+    readPid: () => 4242,
+    commandOf: async () => `/R/cua-driver/CuaDriver.app/Contents/MacOS/cua-driver serve --socket ${socketPath}`,
+    signalPid: (pid, signal) => signals.push(signal),
+    isAlive: () => signals.length === 0,
+    probeIntervalMs: 5,
+  });
+  await daemon.ensure();
+  const began = Date.now();
+  await daemon.close();
+  const took = Date.now() - began;
+  assert.ok(QUIT_STOP_COMMAND_TIMEOUT_MS < 3_000);
+  assert.ok(took >= QUIT_STOP_COMMAND_TIMEOUT_MS && took < 3_000, `took ${took}ms`);
+  assert.deepEqual(signals, ['SIGTERM']);
+  const stopCall = calls.find(({ args }) => args[0] === 'stop');
+  assert.deepEqual(stopCall.child.kills, ['SIGKILL']);
 });
 
 test('a daemon that did not start is logged with its reason, and the agent sees only the plain sentence', async (t) => {

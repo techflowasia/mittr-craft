@@ -6,8 +6,9 @@ import test from 'node:test';
 import { MARKER_PNG } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
 import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
 import { writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
-import { SCREEN_RECORDING_NOT_GRANTED, tempDataDir } from '../test-helpers.js';
-import { APP_NAME_PATTERN, COMPUTER_TOOL_DESCRIPTION, registerComputerActions } from './computer-actions.js';
+import { SCREEN_RECORDING_NOT_GRANTED, stubCuaDriver, stubCuaDriverCalls, tempDataDir } from '../test-helpers.js';
+import { APP_NAME_PATTERN, COMPUTER_TOOL_DESCRIPTION, TURNED_OFF_MID_ACTION, registerComputerActions } from './computer-actions.js';
+import { DRIVER_STOPPED, createComputerControl, createDriverDaemon } from './computer-control.js';
 import { MITTR_TOOLS, MittrToolError, createMittrActionRegistry } from './registry.js';
 import { MAX_IMAGE_BYTES } from './screenshots.js';
 
@@ -305,4 +306,51 @@ test('a screenshot that is not a PNG, JPEG or WebP image is neither saved nor re
   const saved = await run('computer.screenshot', {}, { directory: project });
   assert.match(saved.path, /^\.openchamber\/screenshots\/desktop-.+\.jpg$/);
   assert.deepEqual(saved.image, { base64: jpeg, mime: 'image/jpeg' });
+});
+
+const realComputer = (t, between) => {
+  const binary = stubCuaDriver(t, {
+    list_apps: { apps: [{ name: 'Calculator', pid: 501, running: true }] },
+    bring_to_front: { process_activated: true, exact_window_effect: { verified: true } },
+  });
+  const dataDir = tempDataDir(t);
+  const daemon = createDriverDaemon({ binary, dataDir, env: { PATH: process.env.PATH, HOME: dataDir }, probeIntervalMs: 10 });
+  t.after(() => daemon.stop());
+  const control = createComputerControl({ binary, daemon });
+  const wrapped = {
+    available: control.available,
+    token: control.token,
+    request: async (tool, args, options) => {
+      const answer = await control.request(tool, args, options);
+      if (tool === 'list_apps') await between(control);
+      return answer;
+    },
+  };
+  return { binary, daemon, wrapped };
+};
+
+test('a stop that lands between bring_to_front\'s two requests starts no new daemon and sends nothing more', async (t) => {
+  const { binary, daemon, wrapped } = realComputer(t, (control) => control.stop());
+  const registry = createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, execute: async () => ({}) } });
+  registerComputerActions(registry, { control: wrapped, launchApp: async () => {}, writeScreenshot, offered: () => true });
+  await assert.rejects(
+    registry.execute('computer.bring_to_front', { app: 'Calculator' }, { surface: 'agent', tool: MITTR_TOOLS.computer }),
+    refusedWith(503, DRIVER_STOPPED),
+  );
+  const calls = stubCuaDriverCalls(binary);
+  assert.equal(calls.filter(({ command }) => command === 'serve').length, 1);
+  assert.deepEqual(calls.filter(({ command }) => command === 'call').map(({ tool }) => tool), ['list_apps']);
+  assert.equal(daemon.running(), false);
+});
+
+test('a tool that stops being offered between two requests of one action sends nothing more', async (t) => {
+  let offered = true;
+  const { binary, wrapped } = realComputer(t, async () => { offered = false; });
+  const registry = createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, execute: async () => ({}) } });
+  registerComputerActions(registry, { control: wrapped, launchApp: async () => {}, writeScreenshot, offered: () => offered });
+  await assert.rejects(
+    registry.execute('computer.bring_to_front', { app: 'Calculator' }, { surface: 'agent', tool: MITTR_TOOLS.computer }),
+    refusedWith(503, TURNED_OFF_MID_ACTION),
+  );
+  assert.deepEqual(stubCuaDriverCalls(binary).filter(({ command }) => command === 'call').map(({ tool }) => tool), ['list_apps']);
 });

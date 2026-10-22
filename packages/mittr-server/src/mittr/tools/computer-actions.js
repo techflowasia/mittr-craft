@@ -68,10 +68,13 @@ const DEFINITIONS = Object.freeze([
   },
 ]);
 
+export const TURNED_OFF_MID_ACTION = 'The Computer tool was turned off while this action ran, so nothing more was sent to the desktop';
+
 export function registerComputerActions(registry, { control, launchApp, writeScreenshot, offered }) {
-  const driver = async (tool, args, { signal }, ownGrant) => {
+  const driver = async (tool, args, { signal, computerToken }, ownGrant) => {
+    if (!offered()) throw new MittrToolError(TURNED_OFF_MID_ACTION, 503);
     try {
-      return await control.request(tool, args, { signal });
+      return await control.request(tool, args, { signal, token: computerToken });
     } catch (error) {
       const grant = error instanceof MittrToolError ? null : missingGrant(String(error?.message ?? ''), ownGrant);
       throw grant ? grantRefusal(grant) : error;
@@ -149,6 +152,7 @@ export function registerComputerActions(registry, { control, launchApp, writeScr
   registry.defineTool({ name: MITTR_TOOLS.computer, description: COMPUTER_TOOL_DESCRIPTION, parameters: COMPUTER_PARAMETERS });
   const available = () => control.available === true && Boolean(offered());
   for (const definition of DEFINITIONS) {
-    registry.register({ ...definition, tool: MITTR_TOOLS.computer, available, execute: executes[definition.action] });
+    const execute = executes[definition.action];
+    registry.register({ ...definition, tool: MITTR_TOOLS.computer, available, execute: (input, ctx) => execute(input, { ...ctx, computerToken: control.token?.() }) });
   }
 }
