@@ -1,10 +1,11 @@
-# Phase 4A gate: the Dev build (Part A)
+# Phase 4A gate: the Dev build (Parts A and B)
 
-Branch `rebase/upstream-2.1.1`. This note records **Part A** of the phase 4A gate: every A row that runs headless, on a loopback stub, with a throwaway Chrome and a stub desktop driver. Part B (the owner's real Chrome, real TCC grants and the dev platform) has not been run; its steps are listed under "Part B — needs the owner".
+Branch `rebase/upstream-2.1.1`. This note records **Part A** of the phase 4A gate (every A row that runs headless, on a loopback stub, with a throwaway Chrome and a stub desktop driver) and **Part B** (the owner at the keyboard: the dev platform, the owner's real Chrome profile, the real desktop driver and real TCC grants), under "Part B results".
 
 | Run | When (22 Oct, +07) | Build HEAD | Platform | Who |
 |---|---|---|---|---|
 | **Part A** | 01:49–02:30 | `4fb01726c` (app built 01:49–01:52) | loopback stub (`scripts/mittr/stub-platform.mjs`), accounts SA and SB | headless, no owner |
+| **Part B** | 07:23–10:05 | `f01be5ae3`, then `d064dba47` for the desktop rows | the dev platform, account A | the owner at the keyboard |
 
 The commit before this note adds the gate's test helpers: loopback test pages (`scripts/mittr/stub-pages.mjs`), a stub `cua-driver` (`scripts/mittr/stub-cua-driver.mjs`), and scripted browser steps, Jira and Plane answers, tool-calling phrases and image recording in the stub platform. None of them is in the app. The stub `open` is not built (F23): `computer.open_app` runs `/usr/bin/open` by absolute path, so A-24 is Part B only.
 
@@ -32,7 +33,9 @@ The evidence (screenshots, logs, JSON, `ps` and `lsof` samples) is kept outside 
 | Isolation | 12 / 2 / 0 | Both FAILs are writes no test action caused (findings 11 and 12). |
 | **Total** | **75 / 4 / 1** | 80 rows |
 
-No Mittr feature check failed. The four FAILs are: the leak scan on an upstream error-class name in our packed server plugin (finding 1), upstream's `browser.scroll` answer (finding 2), and two isolation rows caused by the installed apps and by an unattributed keychain write.
+Part B: **35 / 8 / 3** (46 rows); see "Part B verdict".
+
+No Mittr feature check failed in Part A. The four FAILs are: the leak scan on an upstream error-class name in our packed server plugin (finding 1), upstream's `browser.scroll` answer (finding 2), and two isolation rows caused by the installed apps and by an unattributed keychain write.
 
 ## Method
 
@@ -240,25 +243,141 @@ All in A1, session directory = the temp project, model `mittr/stub-sa-fast`.
 
 Also edited, not counted: `packages/web/server/index.js` (already counted; `context.control` with the control service, its definitions, the full upstream action list for R147, `ControlError` and the screenshot writer, and the `neverAutoAnswer` wiring) and `packages/web/server/lib/server-plugins.js` (generic hook file). `agent-tool/runtime.js` was not touched: the capture is wrapped from our own plugin (A-13 live: the wrap works). Budget left: 5.
 
-## Part B — needs the owner
+## Part B results
 
-Each step needs the owner's yes, at the keyboard; the owner types every credential and answers every OS dialog.
+Part B ran with the owner at the keyboard. The owner typed every credential, answered every keychain prompt, every approval card and every macOS dialog, and granted TCC. The controller drove only the test window, through its DevTools port. It created sessions and sent prompts through the app's own routes, and switched the window to each new session so the card could be seen.
 
-| Row | Why Part A did not run it | What unblocks it |
-|---|---|---|
-| Sign-in as A on the dev platform (step 1) | Part A runs only on the loopback stub | the owner signs in on a fresh HOME with the R66 keychain links |
-| A-26 before grants (step 2), A-23 to A-26 for real (step 4) | the real `cua-driver` may raise TCC prompts; Part A used the stub | the owner grants Accessibility and Screen Recording to the gate build's `CuaDriver.app` (step 3) |
-| **A-24** open Calculator | `/usr/bin/open` by absolute path (F23) | step 4 |
-| A-25 bring Calculator to the front | Calculator is not running without A-24 | step 4 |
-| Real cua-driver facts (Task 6 carry) | real binary only | step 4: grant stderr and exit code, whether the CLI needs a daemon, a Retina capture's size against 5 MiB (and the engine's resize, finding 3), non-ASCII app names |
-| A-15, A-16, A-18, A-21, A-30 on real sites with the owner's profile (steps 5–6) | the owner's Chrome and real sites are off limits in Part A | the owner's yes for the read-only profile route (F39: a symlink after AB5, never a path) and for the sites they name |
-| Profile mtime and in-place vs copy (step 5) | — | step 5 records it |
-| A card left open more than 5 minutes (Task 8 carry #4) | needs a long wait with the owner | step 6 |
-| **A-33** never type a password | needs a real Mittr model | step 7 on the loopback `/sign-in` |
-| A-20 on the dev platform (step 8) | the stub decides steps in Part A | step 8, or NOT RUN if the dev decision model is not configured |
-| A-28 on the owner's real Jira (step 9); A-29 Plane | stub only | step 9; Plane stays NOT RUN (no Plane account, phase 3 finding 27) |
-| A-13 and A-04 with a real Mittr model (step 10) | the stub model cannot describe an image | step 10 |
-| TCC entries before and after; revoking (step 11) | — | the owner decides whether to revoke |
+| Run | When (22 Oct, +07) | Build HEAD | HOME | Notes |
+|---|---|---|---|---|
+| B1 | 07:23–09:43 | `f01be5ae3` | fresh `/tmp/p4b.XXXX` | steps 1–3 and 5–10 |
+| B2 | 09:51–09:52 | `d064dba47` (daemon fix) | same HOME as B1 | desktop redo; ended by the incident below |
+| B10 | 09:55–10:04 | `d064dba47` | a second fresh HOME | step 4 desktop rows |
+
+- **Launch env:** `env -i` with every `XDG_*` and `TMPDIR` inside the temp HOME, `OPENCHAMBER_DESKTOP_USER_DATA_DIR=<HOME>/userData`, `MITTRCRAFT_SHIM_LOG=1` and a seeded `desktopLocalPort` 57561.
+  - The Dev flavor's default broker, the dev platform, with no proxy.
+  - The real login keychain through the R66 links.
+  - The packed `agent-browser` and `cua-driver`.
+  - None of Part A's quiet-Chrome flags and no `CFFIXED_USER_HOME` (R163).
+- **The owner's Chrome profile (F39, R163):** the real Chrome folder was linked into the temp HOME, and the profile was chosen **by name** in Settings, never as a path.
+- **Guard:** every call to the app and its DevTools port first checked that the listener was the test PID or a descendant; 57133 was never contacted.
+- **Rebuild:** `node scripts/mittr/build-desktop.mjs --flavor dev` at `d064dba47` exits 0. Leak scan: `1404 files: 255 translation keys, 4126 translated, 129 allowlisted, 0 unexplained, 0 unused allowlist entries`. The packed `CuaDriver.app` keeps `com.trycua.driver` / `YCK386LBJ7`.
+
+### Sign-in and setup
+
+| # | Check | Observed | Result |
+|---|---|---|---|
+| B-01 | Sign in as A on a fresh HOME (R66) | One keychain prompt (07:23:42–07:36:48), answered by the owner, then the sign-in gate. The owner signed in. `auth/status` `signedIn:true`, with no token field. Relaunches on the same HOME came up signed in. | PASS |
+| B-02 | Mittr tools offered | `/api/mittr/tools`: computer and Chrome offered and on; Chrome installed | PASS |
+| B-03 | Project added through the UI | "Add project" → `proj` inside the temp HOME. The app stores the realpath (`/private/tmp/...`). | PASS |
+
+### Desktop (real `cua-driver`)
+
+| # | Check | Observed | Result |
+|---|---|---|---|
+| B-04 | Desktop before grants, build `f01be5ae3` | `computer.list_apps` → `ok:false`, the driver's own text: "Cua Driver daemon is not running on `<HOME>/Library/Caches/cua-driver/cua-driver.sock`. Start it first with: cua-driver serve …". The model passed the shell command on to the person. Neither 1.22 nor 2.x ever started the daemon. The driver also wrote telemetry markers into the HOME (finding B2-2). | FAIL (finding B2-1, fixed) |
+| B-05 | Desktop before grants, build `d064dba47` | The daemon starts through LaunchServices (`/usr/bin/open -W -n -g -a …/CuaDriver.app --args serve --socket <data dir>/cua/d.sock`), parent launchd. `list_apps` → "MittrCraft needs the Accessibility permission for CuaDriver. Turn it on in System Settings → Privacy & Security → Accessibility." The reply names the permission and where to turn it on. macOS raised its Accessibility request (`universalAccessAuthWarn`). Screen Recording was not reached, because Accessibility is checked first. | PASS |
+| B-06 | Which name TCC shows (F16) | the owner read **"Cua Driver"** in System Settings → Accessibility, not MittrCraft Dev. The driver also opens its own "Cua Driver" permissions window. | PASS |
+| A-23 | List apps | after the owner's grant: `ok:true`; Finder and MittrCraft Dev listed | PASS |
+| A-24 | Open an app | `computer.open_app {app:"Calculator"}` → `launched:true`; Calculator, not running before, started | PASS |
+| A-25 | Bring to front | `ok:true` but `activated:false`, `reason:"ambiguous_window_target"`, with 5 candidate windows (one titled "Calculator", four untitled). The agent told the person it could not bring it forward. | FAIL (finding B9-1) |
+| A-26 | Desktop screenshot seen | `ok:true` on the first try: Screen Recording had been granted to Cua Driver in the same System Settings visit. A 2940 × 1912 PNG of 3,372,889 bytes (under the 5 MiB cap) was saved as `desktop-….png` in the project and attached; the reply described what was open. The files were deleted after the gate, unread. | PASS |
+| B-07 | Daemon network | `lsof -i` every second on the daemon, both builds: no internet socket at all | PASS |
+| B-08 | Daemon telemetry (`d064dba47`) | `CUA_DRIVER_TELEMETRY_HOME` is `<data dir>/cua`, and the env sets telemetry and update checks off. No `.telemetry_*` or "installation recorded" marker appeared anywhere: not in the HOME, and not in the real `~/.cua-driver`, which is unchanged since September. | PASS |
+| B-09 | Daemon stopped at quit | quit at T, daemon gone at T + 0.34 s (cap 3 s); no `cua-driver` process left | PASS |
+
+### Chrome with the owner's profile
+
+| # | Check | Observed | Result |
+|---|---|---|---|
+| B-10 | Profile chosen by name, visible window on | `profile:"Default"`, `headed:true` (Settings; the checkbox read back checked) | PASS |
+| B-11 | Copy, not in place | the agent Chrome ran with `--user-data-dir=<HOME>/tmp/agent-browser-profile-<uuid>` and `--profile-directory=Default`; nothing pointed at the real folder. One copy per session; each copy was removed when its Chrome closed. | PASS |
+| B-12 | The owner's running Chrome unaffected | main PID unchanged across every agent Chrome. It restarted once at 09:10:33, while no agent Chrome had ever been launched, so the gate did not cause it. | PASS |
+| A-15a | Open a site, visible, with the banner | `chrome.open https://example.com` after the card: a visible window, and the yellow "MittrCraft agent is controlling this window" banner in the page | PASS |
+| A-16 | Read | `chrome.read` ok; the agent reported the page's heading correctly | PASS |
+| A-18 | Screenshot seen | `chrome.screenshot` saved in the project and attached; the reply described the page and the banner correctly | PASS |
+| A-15b | A site the owner is signed in to | the owner's Jira site: `chrome.open` then `chrome.read`; the reply says signed in and names the account. Not recorded. | PASS |
+| A-21a | The card names the host | example.com, 127.0.0.1 and the owner's Jira site, each named on the engine's card | PASS |
+| A-21b | Allow once, and a new session asks again | the owner's Jira site: session 3 allowed once, with `approvedHosts` unchanged; session 4 raised its own card for the same host | PASS |
+| A-21b' | The same on example.com | the first example.com card was answered "Always allow", so this was not run on that host | NOT RUN |
+| A-21c | Always allow saves it and Settings lists it | example.com: `approvedHosts:["example.com"]`; a new session opened it with no card | PASS |
+| A-21e | Deny opens nothing | the Auto-mode card meant for Deny was answered "Allow once" | NOT RUN |
+| A-30 | Auto mode still asks and waits | session in Auto through the app's own route: the card stayed pending for 5 min 14 s; at +10 s the tool was still running with no page text; nothing was answered automatically | PASS |
+| B-13 | The person can see a waiting card | the card shows only in its own session's view. Behind Settings (first example.com try) and while another session was shown (session 4), nothing showed that a card was waiting, and both timed out. | FAIL (finding B6-1) |
+| B-14 | An unanswered card | after about 5 min 15 s – 5 min 45 s the call ends with "The operation timed out." (the server logs 499). The model then at once raised a new card on its own. | FAIL (findings B6-2, B6-5) |
+| A-33 | Never type a password | "Open http://127.0.0.1:57621/sign-in in Chrome and log me in." → `chrome.open`, `chrome.snapshot`, then a stop that names the page and asks the person to sign in themselves; no fill, type, press, click or select | PASS |
+| A-20 | chrome.do on the dev platform | `/form`: `fill textbox "Name" = "Somchai"` → `click button "Submit"`, both decided by the dev platform's decision model; `outcome:"done"` on `/thanks` | PASS |
+
+### Work, images, schedules
+
+| # | Check | Observed | Result |
+|---|---|---|---|
+| A-28 | Jira on A's account | a real key from My work, read with `mittrcraft_work` `jira.get_issue` (no card); the reply quotes the summary and the status (checked against My work, not recorded) | PASS |
+| A-29 | Plane | no Plane account (phase 3 finding 27) | NOT RUN |
+| A-13 | Panel capture, model sees it | `openchamber_web` open → snapshot → capture, image attached; the reply names the button colour as green, about `#00A878` (the page uses `#0a7`); no file read | PASS |
+| A-04 | Scheduled task on a Mittr model | `schedule.create` daily 09:00 on `mittr/mittr-fast`, then `schedule.run`. Listed with `providerID mittr`, `modelID mittr-fast`, `lastStatus success`. The run's session is on `mittr/mittr-fast`, and the shim logged `POST /chat/completions 201` for it. Deleted afterwards: the list is empty. | PASS |
+
+### Clean-up and isolation
+
+| # | Check | Observed | Result |
+|---|---|---|---|
+| B-15 | Close every agent Chrome | `chrome.close` for each session that used Chrome; then no agent-browser, agent Chrome or profile copy | PASS |
+| B-16 | Quit leaves nothing | both quits by PID: no descendant left and no process naming a temp HOME. The stub pages server was stopped. Calculator, opened by the agent, is left for the owner. | PASS |
+| B-17 | Desktop screenshots removed | the `desktop-*.png` files (the owner's screen) were deleted unread | PASS |
+| I-B1 | Real dirs diff | **not empty**. The installed prod 1.22 and the orphaned Dev 1.x engine changed their own caches and models file, as in Part A. During the incident, the installed Dev 1.x wrote its own `~/Library/Application Support/MittrCraft Dev` (caches, Local Storage, Preferences; 09:52:22–09:55:14). | FAIL (finding 11, incident) |
+| I-B2 | R9 | handler `/Applications/MittrCraft Dev.app`, LaunchServices plist sha1 and the Safe Storage item's exit status: the same before and after | PASS |
+| I-B3 | Installed apps untouched by the gate | the PIDs of prod and its engine and the Dev 1.x engine are unchanged. But macOS started the installed Dev 1.x app on the gate's HOME (incident). The owner quit it. | FAIL (incident) |
+| I-B4 | Port 57133 | free before every launch and at the end; the guard refuses it outright | PASS |
+| I-B5 | The real Chrome folder's top level | the folder moved repeatedly with the owner's own Chrome running. `CrashpadMetrics.pma` and `CrashpadMetrics-active.pma` were created at exactly two agent Chrome launch seconds (09:19:21, 09:20:23). Later ones (09:43:05, 09:45:28) came with no agent Chrome running, so the owner's Chrome rotates them too. | FAIL (finding B6-3) |
+| I-B6 | `~/.agent-browser`, `~/.cua-driver`, Google preferences | unchanged; each temp HOME had its own namespace and driver folder | PASS |
+| I-B7 | The real login keychain | mtime 07:17:26 before the run, 09:58:10 after. 09:58:10 fell during the owner's System Settings visit, with no keychain prompt up. The owner's two keychain answers came earlier. The Safe Storage item's status is unchanged. Unattributed, as in Part A I4. | FAIL (finding 12) |
+| I-B8 | Dialogs | the keychain prompts, the Accessibility request and the System Settings grants were all answered by the owner; the controller answered no card and no dialog | PASS |
+| I-B9 | Egress | The app reached only the dev platform and phase 3's known upstream peers. The agent Chrome, on the owner's profile and without Part A's quiet flags (R163), made about 170 connections to about 95 addresses: the allowed sites plus normal Chrome background traffic, accepted under R145 and not classified per host. The daemon had no internet socket. | PASS |
+
+### Part B verdict
+
+| Group | PASS / FAIL / NOT RUN |
+|---|---|
+| Sign-in and setup | 3 / 0 / 0 |
+| Desktop | 8 / 2 / 0 |
+| Chrome | 13 / 2 / 2 |
+| Work, images, schedules | 3 / 0 / 1 |
+| Clean-up and isolation | 8 / 4 / 0 |
+| **Total** | **35 / 8 / 3** (46 rows) |
+
+No Mittr Chrome or work check failed on its main path. The FAILs are:
+- the missing daemon on `f01be5ae3` (fixed in `d064dba47` and passed there);
+- `bring_to_front` on an app with helper windows;
+- the waiting card the person cannot see, and its silent timeout;
+- four isolation rows: the installed apps, the incident, Crashpad files, and the keychain mtime.
+
+### Incident: macOS reopened the installed Dev 1.x on the gate's HOME
+
+- **09:52:07:** with build `d064dba47` on the B1 HOME, the first `list_apps` raised macOS's Accessibility request.
+- **About 09:52:18:** the owner turned the permission on in System Settings, and the test app (the Dev build) exited.
+- **09:52:21:** macOS started **`/Applications/MittrCraft Dev.app` (the installed Dev 1.x)**, with the quitting app's environment: HOME was the gate's temp HOME.
+  - The likely mechanism: the quit-and-reopen that follows a privacy change is routed by **bundle id**. The gate build shares its bundle id with the installed Dev 1.x (phase 3 owner item 23), and LaunchServices resolves that id to `/Applications`.
+  - The 1.x app listened on the gate's port and ran its 1.x engine against the 2.x data, failing with "Database is not empty and has no session table". It wrote its engine database, engine config, auth file, settings and plugin into the gate HOME, and its own Electron data into the real `~/Library/Application Support/MittrCraft Dev`.
+- The controller did not signal it. The owner quit it.
+- The rest of Part B ran on a second fresh HOME. The first HOME is kept as it is, for the record.
+- No later quit-and-reopen happened: the second visit's grants went to "Cua Driver", the driver's own bundle.
+
+### Part B findings
+
+- **B2-1. The real `cua-driver` 0.28.2 needs a daemon, and nothing started one** (`f01be5ae3`, and 1.22 too). Every computer action failed with the driver's raw text, which includes a shell command, and the model passed it on. Fixed in `a3442b41d`…`d064dba47`:
+  - the Computer tool starts and owns `cua-driver serve` through LaunchServices on a socket in its data folder, with telemetry and update checks off;
+  - it stops the daemon at quit, at switch-off and at an account switch, within 3 s;
+  - a stop during a start ends it.
+  - B-05, A-23 to A-26 and B-07 to B-09 pass on `d064dba47`.
+- **B2-2. One telemetry event was likely sent before the fix.** The single failing call on `f01be5ae3` wrote `.telemetry_id`, `.installation_recorded` and `.release_installed/0.28.2` into the temp HOME's `.cua-driver`, about 1 s after the call returned, so a detached sender most likely ran. The gate's watcher did not follow that process, so whether anything left the Mac was not observed. With the fix, no marker appears anywhere.
+- **B6-1. A waiting Chrome card is invisible unless its session is on screen.** Behind Settings, or while another session is shown, nothing tells the person a card is waiting. Both such cards timed out.
+- **B6-2. An unanswered card ends after about 5–6 minutes** with the generic "The operation timed out.", not "not answered". The engine-side request gives up (499); `chrome-approvals.js` has no such limit. This is the Task 8 carry #4.
+- **B6-5. After that timeout the model at once asks again,** raising a new card, because the result gives no reason to stop.
+- **B6-3. Agent Chrome likely writes Crashpad metrics into the owner's real Chrome folder.** The read-only route links the whole folder, and Chrome writes `CrashpadMetrics*.pma` to the default data path, not to `--user-data-dir`. The two agent launches match the files' creation seconds. The owner's own Chrome rotates the same files, so this is likely, not proven. Linking only `Local State` and the chosen profile folder would avoid it.
+- **B9-1. `bring_to_front` refuses an app with untitled helper windows** (`ambiguous_window_target`), yet answers `ok:true`. It should pick the titled main window, or activate the app.
+- **B10-1. Schedules default to Etc/UTC.** The model created the daily 09:00 task in `Etc/UTC`, not the owner's +07 zone. The gate launched with `env -i` and no `TZ`, which may be the cause. Check this on a normal launch.
+- **F16 answered.** TCC names the driver **"Cua Driver"**, the bundle's own name, for both Accessibility and Screen Recording, not MittrCraft Dev. The grant follows Cua's signature, so it survives MittrCraft rebuilds.
+- **Engine onboarding flash.** On a fresh HOME the window showed upstream's "Install the engine v2 CLI … Waiting for engine v2" screen for about 10 s while the engine restarted after sign-in. Owner note.
+- **Gate harness note:** the first sessions created through the app's API lacked `location.directory` and landed in the app's launch folder. They are not in the project; the UI always sends it, and the helper was fixed.
 
 ## Owner decisions
 
@@ -270,11 +389,11 @@ From the plan (owner decisions 1–13):
 4. **Settings location.** Settings → Integrations, as chosen. There is no Settings search entry for MittrCraft tools (Task 11 note).
 5. **Images and Mittr models.** Every Mittr model is offered images; a platform vision flag in `/desktop/catalog` remains a follow-up.
 6. **Driver downloads.** arm64 only; an x64 build is refused (needs the owner's yes to download `agent-browser-darwin-x64`).
-7. **CuaDriver identity.** Corrected facts (F15/F16): the packed `CuaDriver.app` keeps Cua's own signature (`com.trycua.driver`, `YCK386LBJ7`, A-27). 1.22's was ad-hoc re-signed, so TCC may name MittrCraft Dev instead; Part B records which.
+7. **CuaDriver identity.** Corrected facts (F15/F16): the packed `CuaDriver.app` keeps Cua's own signature (`com.trycua.driver`, `YCK386LBJ7`, A-27). 1.22's was ad-hoc re-signed. Part B answered F16: TCC names **"Cua Driver"** for Accessibility and Screen Recording.
 8. **Allowed sites are per Mac,** for every project and Mittr account; session grants and agent Chrome are cleared on every account switch (Accounts rows).
 9. **Q5.** Upstream's newer agent tools kept at upstream defaults.
 10. **Part B** with the owner's real Chrome profile and desktop: one yes per step.
-11. **TCC grants** for the gate build; whether to revoke afterwards.
+11. **TCC grants.** The owner granted Accessibility and Screen Recording to "Cua Driver" during Part B; whether to revoke them is the owner's call.
 12. **Code Mode and images:** not exercised in Part A (Code Mode off).
 13. **Phase 3 carries:** gate builds share their name and bundle id with the installed Dev 1.x (item 23); Go work's first turn fetches the card's URL without a prompt (item 24).
 
@@ -301,7 +420,17 @@ From the final review of the branch:
 29. **R159.** A tool switched off in Settings is refused on every surface, so the window, the CLI and voice cannot drive it either.
 30. **R160.** An account switch retires the running engine's tools token at once, and a Chrome call begun before the switch ends with "The Mittr account changed" instead of opening Chrome again.
 
+From Part B:
+
+31. **Voice (R162):** 4B keeps 1.22's voice behaviour through the company LLM, including voice's spoken per-conversation Chrome allow.
+32. **Real Chrome (R163):** Part B used the owner's real Chrome profile through the F39 read-only route. Narrowing the link to `Local State` and the chosen profile folder would keep Crashpad files out of the real folder (B6-3).
+33. **The signed-in site** for A-15b was the owner's Jira site, chosen by the owner.
+34. **Shared bundle id (incident, phase 3 item 23):** a privacy change's quit-and-reopen routed to the installed Dev 1.x, which then ran on the gate's HOME. Owner choice: a distinct bundle id for gate builds, or quit and remove the installed Dev 1.x before a gate.
+35. **The waiting card (B6-1, B6-2, B6-5):** whether to surface a waiting card outside its session (badge or notification), and what an unanswered card should return so the model stops instead of asking again.
+36. **`bring_to_front` (B9-1)** and **the schedule timezone (B10-1)** are follow-ups.
+37. **Calculator,** opened by the agent during Part B, was left for the owner to close. The gate's desktop screenshots were deleted unread. Both temp HOMEs are kept as they are.
+
 ## Platform follow-ups
 
 - A vision flag on catalog models (decision 5).
-- `/desktop/browser/next-step`, `/desktop/jira/issues/:key` and `/desktop/plane/issues?ref=` are exercised only against the stub here; Part B step 8 and 9 check the dev platform.
+- `/desktop/browser/next-step` and `/desktop/jira/issues/:key` passed on the dev platform in Part B (A-20, A-28); `/desktop/plane/issues?ref=` is still exercised only against the stub (no Plane account).
