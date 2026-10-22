@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   agentToolsStopConditions,
+  busySendOutcome,
   codeModeCall,
   codeModeCatalogHas,
   directToolNames,
@@ -18,12 +19,14 @@ import {
   permissionAskedOf,
   permissionPathFor,
   refusedByPolicy,
+  requestCarries,
   shimCallsFor,
   skillsMcpStopConditions,
   stopConditionFor,
   textsOf,
   toolToCall,
   markerHits,
+  voiceStopConditions,
   withoutMarkers,
 } from './probe-engine-v2.mjs';
 import { MARKER_PNG, MARKER_SHA256 } from './probe-tool-plugin.mjs';
@@ -270,4 +273,31 @@ test('path E needs a raised ask, all three replies learned, and no answer the en
   assert.equal(permissionPathFor({ raised: true, learned, engineAnswersLater: true, deletedAndAskedAgain: false }), 'M');
   assert.equal(permissionPathFor({ raised: false, learned, engineAnswersLater: false, deletedAndAskedAgain: false }), 'M');
   assert.equal(permissionPathFor({ raised: true, learned: { ...learned, always: false }, engineAnswersLater: false, deletedAndAskedAgain: false }), 'M');
+});
+
+test('a send to a busy session is read as steered, queued or never delivered', () => {
+  const text = 'probe busy send';
+  const carrying = { at: 300, body: { messages: [{ role: 'user', content: [{ type: 'text', text }] }] } };
+  const other = { at: 100, body: { messages: [{ role: 'user', content: 'probe hang' }] } };
+  assert.equal(requestCarries(carrying, text), true);
+  assert.equal(requestCarries(other, text), false);
+  assert.deepEqual(busySendOutcome({ requests: [other, carrying], events: [], releasedAt: 200, text }), { delivery: 'steered', carriedAt: 300 });
+  assert.deepEqual(busySendOutcome({ requests: [other, carrying], events: [{ at: 250, type: 'session.execution.succeeded' }], releasedAt: 200, text }), { delivery: 'queued', carriedAt: 300 });
+  assert.deepEqual(busySendOutcome({ requests: [other, { ...carrying, at: 150 }], events: [], releasedAt: 200, text }), { delivery: 'steered-before-release', carriedAt: 150 });
+  assert.deepEqual(busySendOutcome({ requests: [other], events: [], releasedAt: 200, text }), { delivery: 'never', carriedAt: null });
+});
+
+test('voice stop conditions follow the plan and F9', () => {
+  const passing = { P19: { pass: true }, P20: { pass: true }, P21: { pass: true, todoRoute: false }, P22: { pass: true }, P23: { pass: true, delivery: 'steered' }, P24: { pass: true, serverCannotKnow: [] } };
+  const conditions = voiceStopConditions(passing);
+  assert.equal(Object.values(conditions).some((condition) => condition.stop), false);
+  assert.match(conditions.P21.action, /todos unknown/);
+  assert.match(conditions.P23.action, /queues a busy target/);
+  assert.equal(conditions.P24.action, 'none');
+  assert.equal(voiceStopConditions({ ...passing, P20: { pass: false } }).P20.stop, true);
+  assert.match(voiceStopConditions({ ...passing, P20: { pass: false } }).P20.action, /session\.read_reply/);
+  assert.equal(voiceStopConditions({ ...passing, P22: { pass: false } }).P22.stop, true);
+  assert.match(voiceStopConditions({ ...passing, P22: { pass: false } }).P22.action, /session\.stop/);
+  assert.equal(voiceStopConditions({ ...passing, P21: { pass: true, todoRoute: true } }).P21.action, 'none');
+  assert.match(voiceStopConditions({ ...passing, P24: { pass: true, serverCannotKnow: ['runtimeKey'] } }).P24.action, /owner decision/);
 });

@@ -237,6 +237,14 @@ const answer = (stub, record, req, res) => {
     res.end(JSON.stringify(RATE_LIMIT_BODY));
     return;
   }
+  if (stub.mode === 'hang') {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+    res.write(`data: ${chunk(model, { role: 'assistant', content: 'probe working ' })}\n\n`);
+    const held = { record, res, closedAt: null };
+    res.on('close', () => { held.closedAt = Date.now(); });
+    stub.hanging.push(held);
+    return;
+  }
   const call = stub.mode === 'tool' && stub.pickCall ? stub.pickCall(record.body) : null;
   record.calledTool = call?.name ?? null;
   if (call) {
@@ -265,7 +273,14 @@ const answer = (stub, record, req, res) => {
 
 const startStub = async (name) => {
   const port = await freePort();
-  const stub = { name, port, requests: [], mode: 'ok', pickCall: null, reply: `hello from ${name}` };
+  const stub = { name, port, requests: [], mode: 'ok', pickCall: null, reply: `hello from ${name}`, hanging: [] };
+  stub.release = () => {
+    for (const held of stub.hanging.splice(0)) {
+      if (held.closedAt !== null) continue;
+      held.res.write(`data: ${chunk(held.record.body?.model ?? 'm1', {}, 'stop', { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 })}\n\n`);
+      held.res.end('data: [DONE]\n\n');
+    }
+  };
   const server = http.createServer((req, res) => {
     let raw = '';
     req.on('data', (part) => { raw += part; });
@@ -2831,6 +2846,435 @@ const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
   };
 };
 
+export const VOICE_SCENARIOS = ['P19', 'P20', 'P21', 'P22', 'P23', 'P24'];
+const VOICE_PERMISSION = 'mittrcraft_probe_voice';
+const VOICE_HOST = 'voice.example.test';
+const VOICE_TURNS_MAX = 40;
+const VOICE_MESSAGES = 60;
+const BUSY_SEND_TEXT = 'probe busy send';
+
+export const requestCarries = (record, text) => JSON.stringify(record?.body?.messages ?? []).includes(text);
+
+export const busySendOutcome = ({ requests, events, releasedAt, text }) => {
+  const carrying = requests.find((record) => requestCarries(record, text)) ?? null;
+  if (!carrying) return { delivery: 'never', carriedAt: null };
+  if (carrying.at < releasedAt) return { delivery: 'steered-before-release', carriedAt: carrying.at };
+  const idleBetween = events.some((event) => event.at >= releasedAt && event.at <= carrying.at && isIdleEvent(event));
+  return { delivery: idleBetween ? 'queued' : 'steered', carriedAt: carrying.at };
+};
+
+export const voiceStopConditions = (scenarios) => {
+  const { P19 = {}, P20 = {}, P21 = {}, P22 = {}, P23 = {}, P24 = {} } = scenarios;
+  const conditions = {};
+  conditions.P19 = P19.pass ? NO_ACTION : { action: 'owner note: session.list withStatus does not give id, title and status per directory', stop: false };
+  conditions.P20 = P20.pass ? NO_ACTION : { action: 'stop session.read_reply and report', stop: true };
+  conditions.P21 = P21.todoRoute ? NO_ACTION : { action: 'owner note: no todo route in OpenCode 2.0.22; the voice context says "todos unknown"', stop: false };
+  conditions.P22 = P22.pass ? NO_ACTION : { action: 'stop session.stop and report', stop: true };
+  conditions.P23 = {
+    action: P23.delivery === 'queued'
+      ? 'the engine queued the send itself; by F9 voice still queues a busy target through the server-owned queue with the session sendConfig'
+      : `the engine ${P23.delivery ?? 'did not show'} the send; by F9 voice queues a busy target through the server-owned queue with the session sendConfig (provider, model, agent, variant from GET /api/session/:id)`,
+    stop: false,
+  };
+  conditions.P24 = P24.serverCannotKnow?.length ? { action: `owner decision: the queue needs ${P24.serverCannotKnow.join(', ')}`, stop: false } : NO_ACTION;
+  return conditions;
+};
+
+const headerOf = (input, init, name) => {
+  const fromInit = init?.headers instanceof Headers ? init.headers.get(name) : init?.headers?.[name];
+  if (fromInit) return fromInit;
+  return input instanceof Request ? input.headers.get(name) : null;
+};
+
+const p24StoreScript = (ui) => `import { expect, mock, test } from 'bun:test';
+const UI = ${JSON.stringify(ui)};
+const calls = [];
+mock.module(UI + '/lib/runtime-fetch.ts', () => ({
+  runtimeFetch: async (path, init) => {
+    const body = init?.body === undefined ? null : JSON.parse(String(init.body));
+    calls.push({ path, method: init?.method ?? 'GET', bodyKeys: body ? Object.keys(body).sort() : null, itemKeys: body?.item ? Object.keys(body.item).sort() : null, sendConfig: body?.item?.sendConfig ?? null, directory: body?.directory ?? null });
+    const item = { id: 'srv-1', createdAt: 1, content: body?.item?.content ?? '', text: body?.item?.text ?? '', attachments: [], sendConfig: body?.item?.sendConfig ?? { providerID: 'p', modelID: 'm' } };
+    return new Response(JSON.stringify({ revision: 1, session: { sessionId: 'ses_probe', directory: '/probe/work', items: [item], sendingId: null } }), { status: 200 });
+  },
+}));
+const desktop = await import(UI + '/lib/desktop.ts');
+mock.module(UI + '/lib/desktop.ts', () => ({ ...desktop, isVSCodeRuntime: () => false }));
+mock.module(UI + '/lib/runtime-switch.ts', () => ({ getRuntimeKey: () => 'runtime-probe' }));
+mock.module(UI + '/lib/persistence.ts', () => ({ updateDesktopSettings: async () => undefined }));
+const store = await import(UI + '/stores/messageQueueStore.ts');
+test('p24', async () => {
+  const facts = { serverOwned: store.isServerOwnedMessageQueue() };
+  facts.nullTargetForMissingDirectory = store.createMessageQueueTarget('ses_probe', null, 'runtime-probe') === null;
+  facts.nullTargetForMissingSession = store.createMessageQueueTarget('', '/probe/work', 'runtime-probe') === null;
+  const target = store.createMessageQueueTarget('ses_probe', '/probe/work', 'runtime-probe');
+  let threw = null;
+  try { await store.useMessageQueueStore.getState().addToQueue(target, { content: 'probe queued' }); } catch (error) { threw = error.message; }
+  facts.withoutSendConfig = { threw, callsMade: calls.length, leftInQueue: store.useMessageQueueStore.getState().getQueueForTarget(target).length };
+  await store.useMessageQueueStore.getState().addToQueue(target, { content: 'probe queued', sendConfig: { providerID: 'stub', modelID: 'm1', agent: 'build', variant: 'high' } });
+  facts.withSendConfig = { calls: calls.slice(), queue: store.useMessageQueueStore.getState().getQueueForTarget(target).map((m) => ({ id: m.id, sendConfig: m.sendConfig })) };
+  console.log('P24 ' + JSON.stringify(facts));
+  expect(facts.serverOwned).toBe(true);
+});
+`;
+
+const runQueueStore = (home) => {
+  const dir = path.join(home, 'p24');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, 'p24-queue.test.ts');
+  fs.writeFileSync(file, p24StoreScript(path.join(REPO, 'packages/ui/src')));
+  const env = {
+    PATH: process.env.PATH,
+    HOME: home,
+    TMPDIR: path.join(home, 'tmp'),
+    XDG_CONFIG_HOME: path.join(home, '.config'),
+    XDG_DATA_HOME: path.join(home, '.local/share'),
+    XDG_STATE_HOME: path.join(home, '.local/state'),
+    XDG_CACHE_HOME: path.join(home, '.cache'),
+  };
+  const run = spawnSync(process.env.BUN_EXECUTABLE || 'bun', ['test', file], { cwd: path.join(REPO, 'packages/ui'), env, encoding: 'utf8', timeout: 120_000 });
+  const line = `${run.stdout ?? ''}\n${run.stderr ?? ''}`.split('\n').find((text) => text.startsWith('P24 '));
+  return { exit: run.status, facts: line ? JSON.parse(line.slice(4)) : null, tail: line ? null : `${run.stdout ?? ''}${run.stderr ?? ''}`.slice(-800) };
+};
+
+const readSource = (relative, pattern) => {
+  const lines = fs.readFileSync(path.join(REPO, relative), 'utf8').split('\n');
+  return lines.map((text, index) => ({ line: index + 1, text: text.trim() })).filter(({ text }) => pattern.test(text)).map(({ line, text }) => `${relative}:${line} ${text.slice(0, 160)}`);
+};
+
+const probeVoiceReads = async ({ OpenCode, home, stub, proxy, hookLog, logFile, onSpawn, setCollector }) => {
+  const lib = (file) => pathToFileURL(path.join(REPO, 'packages/web/server/lib', file)).href;
+  const { createOpenChamberControlService } = await import(lib('openchamber-control/service.js'));
+  const { createOpenChamberSessionService } = await import(lib('openchamber-sessions/routes.js'));
+  const { createBrowserControlBroker } = await import(lib('browser-control/broker.js'));
+  const rel = underHome(home);
+  const guard = { checked: 0, refused: 0 };
+  const calls = [];
+  const work = path.join(home, 'work');
+  const work2 = path.join(home, 'work2');
+  const gitEnv = { PATH: '/usr/bin:/bin', HOME: home, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'probe', GIT_AUTHOR_EMAIL: 'probe@example.test', GIT_COMMITTER_NAME: 'probe', GIT_COMMITTER_EMAIL: 'probe@example.test' };
+  for (const [index, dir] of [work, work2].entries()) {
+    fs.mkdirSync(dir, { recursive: true });
+    spawnSync('git', ['init', '-q'], { cwd: dir, env: gitEnv, encoding: 'utf8' });
+    spawnSync('git', ['commit', '-q', '--allow-empty', '-m', `probe voice project ${index}`], { cwd: dir, env: gitEnv, encoding: 'utf8' });
+  }
+  const configFile = path.join(home, 'opencode.voice.json');
+  writeJsonAtomic(configFile, {
+    providers: { stub: providerEntry('Stub', `http://127.0.0.1:${stub.port}/v1`, ['m1']) },
+    ...ENGINE_SHARE_OFF,
+    experimental: { policies: policiesFor({ showOtherProviders: false, providerId: 'stub' }) },
+    permissions: [{ action: VOICE_PERMISSION, resource: '*', effect: 'ask' }],
+  });
+  const engine = await startEngine({ home, configFile, logFile, proxyPort: proxy.port, hookLog, onSpawn });
+  const baseGuarded = guardedFetchFor(engine, guard);
+  const guarded = async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    const method = init?.method ?? (input instanceof Request ? input.method : 'GET');
+    const directory = headerOf(input, init, 'x-opencode-directory');
+    const entry = { at: Date.now(), method, path: `${url.pathname}${url.search}`, directory: directory ? rel(decodeURIComponent(directory)) : null };
+    calls.push(entry);
+    const response = await baseGuarded(input, init);
+    entry.status = response.status;
+    return response;
+  };
+  const client = OpenCode.make({ baseUrl: engine.base, headers: engine.headers, fetch: guarded });
+  const events = collectEvents(client);
+  setCollector(events);
+  const authHeaders = () => ({ Authorization: engine.headers.Authorization });
+  const call = async (method, apiPath, { body = null, directory = work } = {}) => {
+    const init = { method, headers: { Authorization: engine.headers.Authorization, 'x-opencode-directory': encodeURIComponent(directory) } };
+    if (body) {
+      init.headers['content-type'] = 'application/json';
+      init.body = JSON.stringify(body);
+    }
+    const res = await guarded(`${engine.base}${apiPath}`, init);
+    const text = await res.text();
+    const parsed = text ? parsedJson(text) : null;
+    const json = parsed && Object.hasOwn(Object(parsed), 'data') ? parsed.data : parsed;
+    return { status: res.status, json, text: parsed === null && text ? text.slice(0, 200) : null };
+  };
+  const validateDirectoryPath = async (candidate) => {
+    const text = String(candidate ?? '').trim();
+    const dir = text ? path.resolve(text) : null;
+    if (!dir) return { ok: false, error: 'Directory parameter is required' };
+    try {
+      return fs.statSync(dir).isDirectory() ? { ok: true, directory: dir } : { ok: false, error: 'Specified path is not a directory' };
+    } catch {
+      return { ok: false, error: 'Directory not found' };
+    }
+  };
+  const sessionService = createOpenChamberSessionService({
+    readSettingsFromDiskMigrated: async () => ({}),
+    sanitizeProjects: (projects) => projects,
+    validateDirectoryPath,
+    buildOpenCodeUrl: (apiPath) => `${engine.base}${apiPath}`,
+    getOpenCodeAuthHeaders: authHeaders,
+    dataDir: path.join(home, 'data'),
+    createOpenCodeClient: ({ baseUrl, headers, directory }) => {
+      const scoped = { ...headers };
+      if (directory) scoped['x-opencode-directory'] = encodeURIComponent(directory);
+      return OpenCode.make({ baseUrl, headers: scoped, fetch: guarded });
+    },
+  });
+  const control = createOpenChamberControlService({
+    browserControl: createBrowserControlBroker({ emitRequest: () => 0, createId: () => `browser-${randomBytes(6).toString('hex')}` }),
+    readSettingsFromDiskMigrated: async () => ({}),
+    buildOpenCodeUrl: (apiPath) => `${engine.base}${apiPath}`,
+    getOpenCodeAuthHeaders: authHeaders,
+    sessionService,
+    createClient: (options) => OpenCode.make({ ...options, fetch: guarded }),
+  });
+  const execute = async (action, input, directory) => {
+    try {
+      return { ok: true, result: await control.execute(action, input, directory) };
+    } catch (error) {
+      return { ok: false, error: { message: String(error?.message ?? error).slice(0, 300), status: error?.status ?? error?.statusCode ?? null } };
+    }
+  };
+  await sleep(500);
+  await waitFor(async () => (await modelIds(client, work).catch(() => [])).includes('stub/m1'), 15_000, 100);
+  const scenarios = {};
+  const idleAfter = (sessionID, mark, ms = 15_000) => waitFor(() => sessionEvents(events.events, sessionID, mark).find(isIdleEvent), ms, 50);
+
+  stub.mode = 'ok';
+  const long = await newSession(client, work, 'stub', 'm1');
+  let turns = 0;
+  let total = 0;
+  const turnTimes = [];
+  const allRecordsOf = async (sessionID) => {
+    const records = [];
+    const pages = [];
+    let cursor = null;
+    for (let index = 0; index < 20; index += 1) {
+      const query = { sessionID, limit: 100 };
+      if (cursor) query.cursor = cursor;
+      const page = await client.message.list(query).catch((error) => ({ error: errorText(error) }));
+      if (page.error) {
+        pages.push({ error: page.error });
+        break;
+      }
+      records.push(...page.data);
+      const cursorKeys = page.cursor ? Object.keys(Object(page.cursor)).sort() : null;
+      pages.push({ count: page.data.length, cursor: cursorKeys });
+      const next = page.cursor?.next ?? null;
+      if (!next || page.data.length === 0) break;
+      cursor = next;
+    }
+    return { records, pages };
+  };
+  const conversationCount = async () => (await allRecordsOf(long.sessionID)).records.filter((m) => m.type === 'user' || m.type === 'assistant').length;
+  while (long.sessionID && turns < VOICE_TURNS_MAX && total < VOICE_MESSAGES) {
+    turns += 1;
+    stub.reply = `probe reply ${turns}`;
+    const run = await promptAndSettle({ client, collector: events, sessionID: long.sessionID, text: `probe turn ${turns}`, timeoutMs: 15_000 });
+    turnTimes.push(run.idleAt ? run.idleAt - run.mark : null);
+    total = await conversationCount();
+  }
+  const walked = await allRecordsOf(long.sessionID);
+  const allRecords = walked.records;
+  stub.reply = 'hello from stub';
+  const lastReply = `probe reply ${turns}`;
+  const defaultPage = await client.message.list({ sessionID: long.sessionID }).catch((error) => ({ error: errorText(error) }));
+  const desc100 = await client.message.list({ sessionID: long.sessionID, limit: 100, order: 'desc' }).catch((error) => ({ error: errorText(error) }));
+  const desc20 = await client.message.list({ sessionID: long.sessionID, limit: 20, order: 'desc' }).catch((error) => ({ error: errorText(error) }));
+  const pageSummary = (page) => (page?.error ? page : { count: page.data?.length ?? null, keys: Object.keys(page ?? {}).sort(), types: [...new Set((page.data ?? []).map((m) => m.type))].sort() });
+  const readMark = calls.length;
+  const read = await execute('session.messages', { sessionId: long.sessionID, directory: work, role: 'assistant', last: true }, work);
+  const readCalls = calls.slice(readMark).map(({ method, path: apiPath, directory, status }) => ({ method, path: apiPath.replace(long.sessionID, '<session>'), directory, status }));
+  const latest = read.ok ? read.result.messages?.[0] ?? null : null;
+  scenarios.P20 = {
+    pass: Boolean(latest) && latest.text === lastReply && read.result.messages.length === 1,
+    turns,
+    messages: total,
+    records: { pages: walked.pages, total: allRecords.length, byType: allRecords.reduce((counts, m) => ({ ...counts, [m.type]: (counts[m.type] ?? 0) + 1 }), {}) },
+    firstPageOrder: defaultPage?.data ? (defaultPage.data[0]?.time?.created <= defaultPage.data.at(-1)?.time?.created ? 'oldest first' : 'newest first') : null,
+    latestOnNoLimitPage: Boolean(defaultPage?.data?.some((m) => m.type === 'assistant' && JSON.stringify(m.content ?? []).includes(`"${lastReply}"`))),
+    turnSettleMs: { min: Math.min(...turnTimes.filter(Number.isFinite)), max: Math.max(...turnTimes.filter(Number.isFinite)) },
+    input: { action: 'session.messages', sessionId: '<session>', directory: '<home>/work', role: 'assistant', last: true },
+    latestIsLastReply: latest?.text === lastReply,
+    latest: latest ? { role: latest.role, model: latest.model, hasCompletedAt: Number.isFinite(latest.completedAt), textLength: latest.text.length } : null,
+    sessionStatus: read.ok ? read.result.sessionStatus : null,
+    error: read.ok ? null : read.error,
+    pagingCalls: readCalls,
+    pages: { noLimit: pageSummary(defaultPage), limit100Desc: pageSummary(desc100), limit20Desc: pageSummary(desc20) },
+  };
+
+  const other = await newSession(client, work2, 'stub', 'm1');
+  const busyB = await newSession(client, work2, 'stub', 'm1');
+  stub.mode = 'hang';
+  const hangMarkB = Date.now();
+  void client.session.prompt({ sessionID: busyB.sessionID, text: 'probe hang B' }).catch(() => {});
+  const heldB = await waitFor(() => stub.hanging.find((held) => held.record.at >= hangMarkB), 10_000, 50);
+  const listOf = async (directory) => {
+    const listed = await execute('session.list', { withStatus: true }, directory);
+    return listed.ok
+      ? { directory: rel(listed.result.directory), sessions: listed.result.sessions.map((s) => ({ id: s.id, title: s.title ?? null, status: s.status?.type ?? null, directory: rel(s.location?.directory ?? s.directory ?? null) })) }
+      : { error: listed.error };
+  };
+  const listA = await listOf(work);
+  const listB = await listOf(work2);
+  const ids = (list) => (list.sessions ?? []).map((s) => s.id);
+  const statusIn = (list, id) => (list.sessions ?? []).find((s) => s.id === id)?.status ?? null;
+  scenarios.P19 = {
+    pass: Boolean(heldB)
+      && ids(listA).includes(long.sessionID) && !ids(listA).includes(busyB.sessionID)
+      && ids(listB).includes(busyB.sessionID) && ids(listB).includes(other.sessionID) && !ids(listB).includes(long.sessionID)
+      && statusIn(listB, busyB.sessionID) === 'busy' && statusIn(listB, other.sessionID) === 'idle' && statusIn(listA, long.sessionID) === 'idle',
+    input: { action: 'session.list', withStatus: true, contextDirectory: ['<home>/work', '<home>/work2'] },
+    sessionsByRole: { long: long.sessionID, other: other.sessionID, busy: busyB.sessionID },
+    work: listA,
+    work2: listB,
+    sessionKeys: listB.sessions ? Object.keys((await client.session.list({}).then((r) => r.data?.[0]).catch(() => null)) ?? {}).sort() : null,
+  };
+
+  const interruptAt = Date.now();
+  const interrupted = await call('POST', `/api/session/${encodeURIComponent(busyB.sessionID)}/interrupt`, { directory: work2 });
+  const idleB = await idleAfter(busyB.sessionID, hangMarkB, 10_000);
+  await sleep(1000);
+  const streamDirs = [...new Set(events.events.filter((e) => e.location?.directory).map((e) => rel(e.location.directory)))].sort();
+  const busyEvents = sessionEvents(events.events, busyB.sessionID, interruptAt).map((e) => ({ type: e.type, status: e.data?.status?.type ?? null, directory: rel(e.location?.directory ?? null), afterMs: e.at - interruptAt }));
+  stub.mode = 'ok';
+  const statusAfter = await execute('session.status', { sessionId: busyB.sessionID, directory: work2 }, work2);
+  scenarios.P22 = {
+    pass: interrupted.status >= 200 && interrupted.status < 300 && Boolean(idleB) && statusAfter.ok && statusAfter.result.sessionStatus?.type === 'idle',
+    citesP18: 'phase 4A P18 proved POST /api/session/:id/interrupt (200) and that it aborts the tool signal',
+    route: 'POST /api/session/:id/interrupt with x-opencode-directory',
+    answer: { status: interrupted.status, json: interrupted.json, text: interrupted.text },
+    stubRequestClosedAfterMs: heldB?.closedAt ? heldB.closedAt - interruptAt : null,
+    idleAfterMs: idleB ? idleB.at - interruptAt : null,
+    statusAfter: statusAfter.ok ? statusAfter.result.sessionStatus : statusAfter.error,
+    eventsForSession: busyEvents.slice(0, 20),
+    oneGlobalStream: { directoriesSeen: streamDirs, bothDirectories: streamDirs.includes('<home>/work') && streamDirs.includes('<home>/work2') },
+  };
+
+  const todoPaths = ['/todo', '/todos'];
+  const todo = {};
+  for (const suffix of todoPaths) {
+    const answer = await call('GET', `/api/session/${encodeURIComponent(long.sessionID)}${suffix}`);
+    todo[`GET /api/session/:id${suffix}`] = { status: answer.status, json: answer.json, text: answer.text };
+  }
+  const sessionRecord = await call('GET', `/api/session/${encodeURIComponent(long.sessionID)}`);
+  const askOnce = () => call('POST', `/api/session/${encodeURIComponent(long.sessionID)}/permission`, { body: { action: VOICE_PERMISSION, resources: [VOICE_HOST], save: [VOICE_HOST], metadata: { host: VOICE_HOST } } });
+  let asked = null;
+  const effects = [];
+  const askStarted = Date.now();
+  while (Date.now() - askStarted < 8000) {
+    asked = await askOnce();
+    effects.push(asked.json?.effect ?? asked.status);
+    if (asked.json?.effect === 'ask') break;
+    await sleep(300);
+  }
+  const pendingSession = await call('GET', `/api/session/${encodeURIComponent(long.sessionID)}/permission`);
+  const pendingGlobal = await call('GET', '/api/permission/request');
+  const listItems = (answer) => (Array.isArray(answer.json) ? answer.json : []);
+  const pendingItem = listItems(pendingSession).find((item) => item.id === asked?.json?.id) ?? null;
+  let replyStatus = null;
+  if (asked?.json?.effect === 'ask' && asked.json.id) {
+    replyStatus = (await call('POST', `/api/session/${encodeURIComponent(long.sessionID)}/permission/${encodeURIComponent(asked.json.id)}/reply`, { body: { decision: 'reject' } })).status;
+  }
+  const todoRoute = Object.values(todo).some((answer) => answer.status === 200);
+  scenarios.P21 = {
+    pass: Boolean(pendingItem),
+    todoRoute,
+    todo,
+    todoInSessionRecord: Object.keys(sessionRecord.json ?? {}).filter((key) => /todo/i.test(key)),
+    v2ToolNote: readSource('packages/ui/src/lib/opencode/tools.ts', /todowrite/),
+    permission: {
+      routes: ['GET /api/session/:id/permission', 'GET /api/permission/request'],
+      header: 'x-opencode-directory (percent-encoded directory)',
+      createEffects: effects,
+      session: { status: pendingSession.status, count: listItems(pendingSession).length, itemKeys: pendingItem ? Object.keys(pendingItem).sort() : null },
+      global: { status: pendingGlobal.status, count: listItems(pendingGlobal).length, containsIt: listItems(pendingGlobal).some((item) => item.id === asked?.json?.id), itemKeys: listItems(pendingGlobal)[0] ? Object.keys(listItems(pendingGlobal)[0]).sort() : null },
+      item: pendingItem ? { action: pendingItem.action, resources: pendingItem.resources, metadata: pendingItem.metadata, sessionMatches: pendingItem.sessionID === long.sessionID } : null,
+      rejectReplyStatus: replyStatus,
+    },
+  };
+
+  const busyC = await newSession(client, work, 'stub', 'm1');
+  const sessionGet = await call('GET', `/api/session/${encodeURIComponent(busyC.sessionID)}`);
+  stub.mode = 'hang';
+  const hangMarkC = Date.now();
+  void client.session.prompt({ sessionID: busyC.sessionID, text: 'probe hang C' }).catch(() => {});
+  const heldC = await waitFor(() => stub.hanging.find((held) => held.record.at >= hangMarkC), 10_000, 50);
+  const statusBefore = await execute('session.status', { sessionId: busyC.sessionID, directory: work }, work);
+  const sendMark = calls.length;
+  const sendAt = Date.now();
+  const sent = await execute('session.send', { sessionId: busyC.sessionID, prompt: BUSY_SEND_TEXT }, work);
+  const sendCalls = calls.slice(sendMark).map(({ method, path: apiPath, status }) => ({ method, path: apiPath.replace(busyC.sessionID, '<session>'), status }));
+  await sleep(2000);
+  const whileHanging = stub.forSession(busyC.sessionID).filter((record) => record.at >= sendAt).map((record) => ({ afterSendMs: record.at - sendAt, carriesSend: requestCarries(record, BUSY_SEND_TEXT) }));
+  const inbox = await call('GET', `/api/session/${encodeURIComponent(busyC.sessionID)}/inbox`);
+  stub.mode = 'ok';
+  stub.reply = 'probe reply after release';
+  const releasedAt = Date.now();
+  stub.release();
+  await waitFor(() => stub.forSession(busyC.sessionID).some((record) => requestCarries(record, BUSY_SEND_TEXT) && record.at >= releasedAt), 10_000, 50);
+  const idleC = await waitFor(() => {
+    const last = stub.forSession(busyC.sessionID).at(-1);
+    return last && last.at >= releasedAt ? sessionEvents(events.events, busyC.sessionID, last.at).find(isIdleEvent) : null;
+  }, 15_000, 50);
+  stub.reply = 'hello from stub';
+  const outcome = busySendOutcome({ requests: stub.forSession(busyC.sessionID), events: sessionEvents(events.events, busyC.sessionID, hangMarkC), releasedAt, text: BUSY_SEND_TEXT });
+  const timeline = sessionEvents(events.events, busyC.sessionID, hangMarkC)
+    .filter((e) => /execution|idle|status|inbox|message\.created|prompt/i.test(e.type))
+    .map((e) => ({ type: e.type, status: e.data?.status?.type ?? null, atMs: e.at - hangMarkC }))
+    .slice(0, 30);
+  const record = sessionGet.json ?? {};
+  const recent = (await client.message.list({ sessionID: busyC.sessionID, limit: 10, order: 'desc' }).catch(() => ({ data: [] }))).data;
+  const userRecord = recent.find((m) => m.type === 'user') ?? null;
+  const assistantRecord = recent.find((m) => m.type === 'assistant') ?? null;
+  scenarios.P23 = {
+    pass: Boolean(heldC) && sent.ok,
+    busyBeforeSend: statusBefore.ok ? statusBefore.result.sessionStatus : statusBefore.error,
+    send: sent.ok ? { promptDispatched: sent.result.promptDispatched, model: sent.result.model, agent: sent.result.agent ?? null, variant: sent.result.variant ?? null, keys: Object.keys(sent.result).sort() } : { error: sent.error },
+    sendCalls,
+    requestsWhileHanging: whileHanging,
+    inbox: { status: inbox.status, count: Array.isArray(inbox.json) ? inbox.json.length : null, itemKeys: Array.isArray(inbox.json) && inbox.json[0] ? Object.keys(inbox.json[0]).sort() : null, deliveries: Array.isArray(inbox.json) ? inbox.json.map((item) => item.delivery ?? null) : null },
+    delivery: outcome.delivery,
+    carriedAfterReleaseMs: outcome.carriedAt ? outcome.carriedAt - releasedAt : null,
+    idleAfterDelivery: Boolean(idleC),
+    timeline,
+    sessionRecord: {
+      route: 'GET /api/session/:id',
+      keys: Object.keys(record).sort(),
+      model: record.model ? { providerID: record.model.providerID ?? null, id: record.model.id ?? null, variant: record.model.variant ?? null, keys: Object.keys(record.model).sort() } : null,
+      agent: record.agent ?? null,
+      sendConfigFrom: { providerID: 'model.providerID', modelID: 'model.id', variant: 'model.variant', agent: 'not on the session record; the latest user or assistant message record' },
+    },
+    messageRecords: {
+      user: userRecord ? { keys: Object.keys(userRecord).sort(), agent: userRecord.agent ?? null, model: userRecord.model ?? null } : null,
+      assistant: assistantRecord ? { keys: Object.keys(assistantRecord).sort(), agent: assistantRecord.agent ?? null, model: assistantRecord.model ?? null } : null,
+    },
+    sendSwitchedBusySession: sendCalls.some((c) => c.method === 'POST' && /\/model$/.test(c.path)) && sendCalls.some((c) => c.method === 'POST' && /\/agent$/.test(c.path)),
+  };
+
+  const store = runQueueStore(home);
+  const facts = store.facts;
+  const sendCall = facts?.withSendConfig?.calls?.[0] ?? null;
+  scenarios.P24 = {
+    pass: store.exit === 0 && Boolean(facts) && Boolean(facts.withoutSendConfig?.threw) && facts.withoutSendConfig.callsMade === 0 && sendCall?.path === '/api/message-queue/sessions/ses_probe/items',
+    signature: 'addToQueue(target: { runtimeKey, directory, sessionId }, { content, text?, agentMention?, attachments?, context?, sendConfig? })',
+    sendConfigType: 'QueuedMessageSendConfig = { providerID, modelID, agent?, variant? }',
+    source: [
+      ...readSource('packages/ui/src/stores/messageQueueStore.ts', /isServerOwnedMessageQueue = |if \(!message\.sendConfig\)|A queued message needs|sessions\/\$\{encodeURIComponent\(sessionId\)\}|MAX_MESSAGES_PER_QUEUE = /),
+      ...readSource('packages/web/server/lib/message-queue/runtime.js', /app\.post\('\/api\/message-queue\/sessions\/:sessionId\/items'/),
+    ],
+    storeRun: store,
+    sendConfigRequired: Boolean(facts?.withoutSendConfig?.threw),
+    route: sendCall ? `${sendCall.method} /api/message-queue/sessions/:id/items` : null,
+    bodyKeys: sendCall?.bodyKeys ?? null,
+    itemKeys: sendCall?.itemKeys ?? null,
+    serverCannotKnow: [],
+    serverSources: { providerID: 'GET /api/session/:id model.providerID', modelID: 'GET /api/session/:id model.id', variant: 'GET /api/session/:id model.variant', agent: 'the latest message record (P23 messageRecords)', directory: 'session.list location.directory', runtimeKey: 'the window (getRuntimeKey), not the server' },
+  };
+
+  return {
+    scenarios,
+    ports: { engine: engine.port, stub: stub.port, proxy: proxy.port },
+    portGuard: guard,
+    engineCalls: calls.length,
+  };
+};
+
 const main = async () => {
   const args = process.argv.slice(2);
   const jsonIndex = args.indexOf('--json');
@@ -2842,11 +3286,11 @@ const main = async () => {
   const keep = args.includes('--keep');
   const onlyIndex = args.indexOf('--only');
   const only = onlyIndex === -1 ? null : args[onlyIndex + 1];
-  if (only !== null && !['P7', 'outbound', 'shim', 'skills-mcp', 'config-exposure', 'project-layer', 'agent-tools'].includes(only)) {
-    console.error('--only takes P7, outbound, shim, skills-mcp, config-exposure, project-layer or agent-tools');
+  if (only !== null && !['P7', 'outbound', 'shim', 'skills-mcp', 'config-exposure', 'project-layer', 'agent-tools', 'voice'].includes(only)) {
+    console.error('--only takes P7, outbound, shim, skills-mcp, config-exposure, project-layer, agent-tools or voice');
     return 2;
   }
-  const scenarios = only === 'skills-mcp' ? SKILLS_MCP_SCENARIOS : only === 'agent-tools' ? AGENT_TOOLS_SCENARIOS : (only ? [only] : SCENARIOS);
+  const scenarios = only === 'skills-mcp' ? SKILLS_MCP_SCENARIOS : only === 'agent-tools' ? AGENT_TOOLS_SCENARIOS : only === 'voice' ? VOICE_SCENARIOS : (only ? [only] : SCENARIOS);
   if (!fs.existsSync(ENGINE)) throw new Error(`engine binary missing: ${ENGINE} (run prepare:opencode-cli)`);
 
   const { OpenCode } = await import('@opencode/client');
@@ -2954,7 +3398,19 @@ const main = async () => {
       startWith: async (extraEnv) => ({ client: await connect(extraEnv), collector, engine }),
     });
 
-    if (only === 'agent-tools') {
+    if (only === 'voice') {
+      result.reserved57133Listening = Boolean(listenerOn(57133));
+      const found = await probeVoiceReads({
+        OpenCode, home, stub: stubs.stub, proxy, hookLog, logFile,
+        onSpawn: (spawned) => { engine = spawned; engines.push(spawned); },
+        setCollector: (started) => { collector = started; },
+      });
+      for (const name of VOICE_SCENARIOS) result.scenarios[name] = found.scenarios[name];
+      result.ports = found.ports;
+      result.portGuard = found.portGuard;
+      result.engineCalls = found.engineCalls;
+      result.enginePid = engine.pid;
+    } else if (only === 'agent-tools') {
       result.reserved57133Listening = Boolean(listenerOn(57133));
       const found = await probeAgentTools({
         OpenCode, home, stub: stubs.stub, proxy, hookLog, logFile, closers,
@@ -3182,6 +3638,10 @@ const main = async () => {
     result.leftoverStubProcesses = leftovers;
     if (AGENT_TOOLS_SCENARIOS.every((name) => result.scenarios[name])) result.stopConditions = agentToolsStopConditions(result.scenarios);
     if (result.enginePort === undefined && result.ports) result.engineProcessesAfterCleanup = engineProcesses(result.ports.engine).length;
+  }
+  if (only === 'voice') {
+    if (VOICE_SCENARIOS.every((name) => result.scenarios[name])) result.stopConditions = voiceStopConditions(result.scenarios);
+    if (result.ports) result.engineProcessesAfterCleanup = engineProcesses(result.ports.engine).length;
   }
   if (only === 'skills-mcp') {
     result.leftoverStubProcesses = leftovers;
