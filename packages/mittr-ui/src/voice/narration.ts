@@ -1,3 +1,4 @@
+import type { Session, SessionOutcome } from '../../../ui/src/lib/opencode/model';
 import type { SpokenLanguage } from './voiceApi';
 
 export type NarrationEvent = 'done' | 'permission' | 'error' | 'stopped';
@@ -57,30 +58,52 @@ export interface SessionError {
   aborted: boolean;
 }
 
+export interface SessionEnding {
+  at: number;
+  outcome: SessionOutcome | null;
+}
+
 export interface SessionObservation {
   sessionId: string | null;
   busy: boolean;
   permissionIds: readonly string[];
   error: SessionError | null;
+  ended: SessionEnding | null;
 }
 
 export interface NarrationWatch {
   observe(view: SessionObservation): NarrationEvent[];
 }
 
+export function endingOf(session: Pick<Session, 'outcome' | 'time'> | null | undefined): SessionEnding | null {
+  const at = session?.time.idle;
+  return at === undefined ? null : { at, outcome: session?.outcome ?? null };
+}
+
 export function createNarrationWatch(): NarrationWatch {
   let current: string | null = null;
   let busy = false;
   let errorAt: number | null = null;
+  let endedAt: number | null = null;
   let erroredThisRun = false;
+  let errorSpokenFromOutcome = false;
   let permissions = new Set<string>();
 
   const baseline = (view: SessionObservation) => {
     current = view.sessionId;
     busy = view.busy;
     errorAt = view.error?.at ?? null;
+    endedAt = view.ended?.at ?? null;
     erroredThisRun = false;
+    errorSpokenFromOutcome = false;
     permissions = new Set(view.permissionIds);
+  };
+
+  const endOf = (ended: SessionEnding | null): NarrationEvent => {
+    const fresh = ended && (endedAt === null || ended.at > endedAt) ? ended.outcome : null;
+    if (fresh === 'interrupted') return 'stopped';
+    if (fresh === 'failed') return 'error';
+    return 'done';
   };
 
   return {
@@ -92,14 +115,28 @@ export function createNarrationWatch(): NarrationWatch {
       const out: NarrationEvent[] = [];
       if (view.permissionIds.some((id) => !permissions.has(id))) out.push('permission');
       permissions = new Set(view.permissionIds);
-      if (!busy && view.busy) erroredThisRun = false;
+      if (!busy && view.busy) {
+        erroredThisRun = false;
+        errorSpokenFromOutcome = false;
+      }
       const error = view.error;
       if (error && (errorAt === null || error.at > errorAt)) {
-        out.push(error.aborted ? 'stopped' : 'error');
+        if (!errorSpokenFromOutcome) out.push(error.aborted ? 'stopped' : 'error');
+        errorSpokenFromOutcome = false;
         erroredThisRun = true;
         errorAt = error.at;
       }
-      if (busy && !view.busy && !erroredThisRun) out.push('done');
+      if (busy && !view.busy) {
+        const ending = endOf(view.ended);
+        if (!erroredThisRun) {
+          out.push(ending);
+          if (ending === 'error') {
+            erroredThisRun = true;
+            errorSpokenFromOutcome = true;
+          }
+        }
+        endedAt = view.ended?.at ?? endedAt;
+      }
       busy = view.busy;
       return out;
     },

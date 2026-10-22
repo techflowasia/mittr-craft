@@ -2028,6 +2028,19 @@ const checks = {
     has(source('packages/ui/src/stores/useDirectoryStore.ts'), /^  currentDirectory: string;$/m, 'the directory store lost currentDirectory');
   },
 
+  'session-interrupted-outcome': () => {
+    const events = source('packages/ui/src/lib/opencode/events.ts');
+    has(events, /case "session\.execution\.interrupted":[\s\S]*?return \[\s*sessionEvent\(event\.data\.sessionID, \{ outcome: "interrupted", time: \{ idle: event\.created, updated: event\.created \} \}\),\s*\{ type: "session\.idle", properties: \{ sessionID: event\.data\.sessionID, outcome: "interrupted" \} \},\s*\]/, 'an interrupted execution no longer becomes an interrupted outcome and idle');
+    has(events, /case "session\.execution\.failed":[\s\S]*?sessionEvent\(event\.data\.sessionID, \{ outcome: "failed", time: \{ idle: event\.created, updated: event\.created \} \}\)/, 'a failed execution no longer records a failed outcome');
+    const model = source('packages/ui/src/lib/opencode/model.ts');
+    has(model, /^export type SessionOutcome = "succeeded" \| "failed" \| "interrupted"$/m, 'SessionOutcome changed its values');
+    has(model, /^export type Session = \{[\s\S]*?^  outcome\?: SessionOutcome$[\s\S]*?^    idle\?: number$/m, 'the Session record lost outcome or time.idle');
+    const reducer = source('packages/ui/src/sync/event-reducer.ts');
+    has(reducer, /if \(patch\.outcome !== undefined\) next\.outcome = patch\.outcome/, 'a session patch no longer copies its outcome');
+    has(reducer, /case "session\.patched": \{[\s\S]*?applySessionPatch\(sessions\[result\.index\], patch\)/, 'session.patched no longer applies the patch to the record');
+    has(source('packages/ui/src/sync/sync-context.tsx'), /^export function useSession\(sessionID\?: string \| null, directory\?: string\) \{$/m, 'useSession changed its signature');
+  },
+
   'dictation-capture-supported': () => {
     has(source('packages/ui/src/lib/dictation/use-dictation-audio-source.ts'), /^export const isDictationCaptureSupported = \(\): boolean => \{$/m, 'isDictationCaptureSupported changed its signature');
     has(source('packages/ui/src/lib/desktop.ts'), /^export const isVSCodeRuntime = \(\): boolean => \{$/m, 'isVSCodeRuntime changed its signature');
