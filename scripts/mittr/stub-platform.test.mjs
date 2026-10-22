@@ -290,3 +290,338 @@ test('Jira and Plane lookups answer per account', async () => {
     await platform.close();
   }
 });
+
+const wavOf = (seconds, rate = 16000, fill = 0) => {
+  const samples = Math.round(seconds * rate);
+  const buffer = Buffer.alloc(44 + samples * 2);
+  buffer.write('RIFF', 0);
+  buffer.writeUInt32LE(36 + samples * 2, 4);
+  buffer.write('WAVE', 8);
+  buffer.write('fmt ', 12);
+  buffer.writeUInt32LE(16, 16);
+  buffer.writeUInt16LE(1, 20);
+  buffer.writeUInt16LE(1, 22);
+  buffer.writeUInt32LE(rate, 24);
+  buffer.writeUInt32LE(rate * 2, 28);
+  buffer.writeUInt16LE(2, 32);
+  buffer.writeUInt16LE(16, 34);
+  buffer.write('data', 36);
+  buffer.writeUInt32LE(samples * 2, 40);
+  for (let i = 0; i < samples; i += 1) buffer.writeInt16LE(fill, 44 + i * 2);
+  return buffer;
+};
+
+const sha = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+
+const transcribe = (base, session, wav) => {
+  const form = new FormData();
+  form.append('audio', new Blob([wav], { type: 'audio/wav' }), 'audio.wav');
+  return fetch(`${base}/desktop/speech/transcribe`, { method: 'POST', headers: { authorization: `Bearer ${session.accessToken}` }, body: form })
+    .then(async (r) => ({ status: r.status, body: await r.json() }));
+};
+
+test('speech readiness answers ready, not configured and voice off', async () => {
+  const { platform, base } = await start();
+  try {
+    const sa = await signIn(base, 'SA');
+    const ready = await get(base, sa, '/desktop/speech/readiness');
+    assert.deepEqual([ready.listen.ready, ready.speak.ready, ready.voice.ready], [true, true, true]);
+    for (const name of ['silenceMs', 'startWaitMs', 'voiceSilenceMs']) assert.ok(Number.isInteger(ready[name]));
+    platform.control({ speech: { readiness: 'not_configured' } });
+    const off = await get(base, sa, '/desktop/speech/readiness');
+    assert.deepEqual([off.listen.ready, off.speak.ready, off.voice.ready], [false, false, false]);
+    platform.control({ speech: { readiness: 'voice_off' } });
+    const voiceOff = await get(base, sa, '/desktop/speech/readiness');
+    assert.deepEqual([voiceOff.listen.ready, voiceOff.speak.ready, voiceOff.voice.ready], [true, true, false]);
+    assert.equal((await fetch(`${base}/desktop/speech/readiness`)).status, 401);
+  } finally {
+    await platform.close();
+  }
+});
+
+test('transcribe maps a fixture sha256 to its transcript and records only facts about the audio', async () => {
+  const { platform, base } = await start();
+  try {
+    const sa = await signIn(base, 'SA');
+    const fixture = wavOf(0.5, 16000, 1200);
+    platform.control({ speech: { transcripts: { [sha(fixture)]: { name: 'sessions-en', transcript: 'what sessions are running' } } } });
+    const heard = await transcribe(base, sa, fixture);
+    assert.equal(heard.status, 201);
+    assert.equal(heard.body.text, 'what sessions are running');
+    assert.ok(Number.isFinite(heard.body.ms));
+    platform.control({ speech: { nextTranscripts: ['yes'] } });
+    assert.equal((await transcribe(base, sa, wavOf(0.3))).body.text, 'yes');
+    const unmatched = await transcribe(base, sa, wavOf(0.2));
+    assert.equal(unmatched.status, 422);
+    assert.deepEqual(unmatched.body, { code: 'empty_transcript' });
+    const records = platform.snapshot().records.filter((r) => r.path === '/desktop/speech/transcribe');
+    assert.deepEqual(records.map((r) => r.matched), ['fixture:sessions-en', 'queued', 'none']);
+    assert.equal(records[0].sha256, sha(fixture));
+    assert.deepEqual(records[0].wav, { rate: 16000, channels: 1, bits: 16, seconds: 0.5 });
+    assert.equal(records[0].account, 'SA');
+    const recorded = JSON.stringify(platform.snapshot().records);
+    assert.equal(recorded.includes('what sessions are running'), false);
+    assert.equal(recorded.includes(sa.accessToken), false);
+  } finally {
+    await platform.close();
+  }
+});
+
+test('transcribe answers the quota, empty and slow modes', async () => {
+  const { platform, base } = await start();
+  try {
+    const sa = await signIn(base, 'SA');
+    const fixture = wavOf(0.2, 16000, 900);
+    platform.control({ speech: { transcripts: { [sha(fixture)]: 'hello' }, stt: 'quota' } });
+    const quota = await transcribe(base, sa, fixture);
+    assert.equal(quota.status, 429);
+    assert.equal(quota.body.code, 'llm_quota_exhausted');
+    assert.equal(quota.body.kind, 'stt');
+    const days = (Date.parse(quota.body.resetsAt) - Date.now()) / 86_400_000;
+    assert.ok(days > 6.9 && days <= 7);
+    platform.control({ speech: { stt: 'empty' } });
+    assert.deepEqual(await transcribe(base, sa, fixture), { status: 422, body: { code: 'empty_transcript' } });
+    platform.control({ speech: { stt: 'slow', slowMs: 300 } });
+    const startedAt = Date.now();
+    const slow = await transcribe(base, sa, fixture);
+    assert.ok(Date.now() - startedAt >= 280);
+    assert.equal(slow.body.text, 'hello');
+    platform.control({ speech: { stt: null } });
+    assert.equal((await transcribe(base, sa, fixture)).status, 201);
+  } finally {
+    await platform.close();
+  }
+});
+
+test('synthesize streams silence in four parts with the platform content type, and answers quota and not configured', async () => {
+  const { platform, base } = await start();
+  try {
+    const sa = await signIn(base, 'SA');
+    platform.control({ speech: { partGapMs: 20 } });
+    const text = 'x'.repeat(200);
+    const response = await fetch(`${base}/desktop/speech/synthesize`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${sa.accessToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'audio/pcm;rate=24000;channels=1');
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    const parts = [];
+    for await (const part of response.body) parts.push(part);
+    const audio = Buffer.concat(parts);
+    assert.equal(audio.length, 24000 * 2);
+    assert.ok(audio.every((byte) => byte === 0));
+    const say = (body) => fetch(`${base}/desktop/speech/synthesize`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${sa.accessToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(async (r) => ({ status: r.status, body: await r.json() }));
+    assert.deepEqual(await say({ text: '   ' }), { status: 400, body: { code: 'bad_request' } });
+    assert.deepEqual(await say({ text: 'y'.repeat(4001) }), { status: 400, body: { code: 'bad_request' } });
+    platform.control({ speech: { tts: 'quota' } });
+    const quota = await say({ text: 'hello' });
+    assert.equal(quota.status, 429);
+    assert.equal(quota.body.kind, 'tts');
+    platform.control({ speech: { tts: 'not_configured' } });
+    assert.deepEqual(await say({ text: 'hello' }), { status: 409, body: { code: 'not_configured' } });
+    const records = platform.snapshot().records.filter((r) => r.path === '/desktop/speech/synthesize');
+    assert.deepEqual(records[0], { ...records[0], account: 'SA', chars: 200, bytes: 48000, parts: 4 });
+    assert.equal(JSON.stringify(records).includes('x'.repeat(50)), false);
+  } finally {
+    await platform.close();
+  }
+});
+
+const VOICE_TOOLS = [
+  { name: 'mittrcraft', description: 'control', parameters: { type: 'object', properties: { action: { type: 'string' } } } },
+  { name: 'mittrcraft_web', description: 'web', parameters: { type: 'object', properties: { action: { type: 'string' } } } },
+  { name: 'mittrcraft_voice', description: 'voice', parameters: { type: 'object', properties: { action: { type: 'string' } } } },
+  { name: 'mittrcraft_end', description: 'end', parameters: { type: 'object', properties: {} } },
+];
+
+const voiceStep = async (base, session, body) => {
+  const response = await fetch(`${base}/desktop/voice/step`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${session.accessToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) return { status: response.status, body: await response.json() };
+  const text = await response.text();
+  const events = text.split('\n\n').filter((block) => block.startsWith('data: ')).map((block) => JSON.parse(block.slice(6)));
+  return { status: response.status, events };
+};
+
+const userTurn = (said, history = []) => ({ locale: 'en', context: 'ctx', tools: VOICE_TOOLS, messages: [...history, { role: 'user', content: said }] });
+const callsOf = (events) => events.filter((e) => e.type === 'tool-call').map((e) => ({ name: e.name, arguments: JSON.parse(e.arguments) }));
+const textOf = (events) => events.filter((e) => e.type === 'text-delta').map((e) => e.text).join('');
+const withResult = (body, events, results) => {
+  const calls = events.filter((e) => e.type === 'tool-call');
+  return {
+    ...body,
+    messages: [
+      ...body.messages,
+      { role: 'assistant', content: textOf(events), toolCalls: calls.map(({ id, name, arguments: args }) => ({ id, name, arguments: args })) },
+      ...calls.map((call, index) => ({ role: 'tool', toolCallId: call.id, name: call.name, content: JSON.stringify(results[index]) })),
+    ],
+  };
+};
+
+const SESSIONS = { sessions: [
+  { id: 'ses_old', title: 'old', time: { created: 1000, updated: 1000 } },
+  { id: 'ses_new', title: 'new', time: { created: 5000, updated: 5000 } },
+] };
+
+test('the voice step lists sessions, then names the count', async () => {
+  const { platform, base } = await start();
+  try {
+    const sa = await signIn(base, 'SA');
+    const first = userTurn('what sessions are running');
+    const one = await voiceStep(base, sa, first);
+    assert.deepEqual(callsOf(one.events), [{ name: 'mittrcraft', arguments: { action: 'session.list' } }]);
+    assert.equal(one.events.at(-1).type, 'done');
+    const two = await voiceStep(base, sa, withResult(first, one.events, [SESSIONS]));
+    assert.deepEqual(callsOf(two.events), []);
+    assert.match(textOf(two.events), /\b2 sessions\b/);
+    const record = platform.snapshot().records.filter((r) => r.path === '/desktop/voice/step')[0];
+    assert.deepEqual(record.tools, ['mittrcraft', 'mittrcraft_web', 'mittrcraft_voice', 'mittrcraft_end']);
+    assert.deepEqual(record.calls, ['session.list']);
+    assert.equal(record.script, 'sessions');
+    assert.equal(JSON.stringify(platform.snapshot().records).includes('what sessions are running'), false);
+  } finally {
+    await platform.close();
+  }
+});
+
+test('the voice step sends to the newest session, reads its reply, and asks before a stop', async () => {
+  const { platform, base } = await start();
+  try {
+    const sa = await signIn(base, 'SA');
+    const send = userTurn("send 'add a README' to the newest session");
+    const listed = await voiceStep(base, sa, send);
+    assert.deepEqual(callsOf(listed.events), [{ name: 'mittrcraft', arguments: { action: 'session.list' } }]);
+    const sent = await voiceStep(base, sa, withResult(send, listed.events, [SESSIONS]));
+    assert.deepEqual(callsOf(sent.events), [{ name: 'mittrcraft', arguments: { action: 'session.send', sessionId: 'ses_new', prompt: 'add a README' } }]);
+    const read = userTurn('what did it answer');
+    const reading = await voiceStep(base, sa, read);
+    assert.deepEqual(callsOf(reading.events), [{ name: 'mittrcraft_voice', arguments: { action: 'session.read_reply', sessionId: 'ses_new' } }]);
+    const answered = await voiceStep(base, sa, withResult(read, reading.events, [{ sessionId: 'ses_new', text: 'Stub reply text', truncated: false }]));
+    assert.match(textOf(answered.events), /Stub reply text/);
+    const stop = await voiceStep(base, sa, userTurn('stop the newest session'));
+    assert.deepEqual(callsOf(stop.events), []);
+    assert.equal(textOf(stop.events), 'Should I stop it?');
+    const yes = userTurn('yes', [{ role: 'user', content: 'stop the newest session' }, { role: 'assistant', content: 'Should I stop it?' }]);
+    const yesList = await voiceStep(base, sa, yes);
+    assert.deepEqual(callsOf(yesList.events), [{ name: 'mittrcraft', arguments: { action: 'session.list' } }]);
+    const stopping = await voiceStep(base, sa, withResult(yes, yesList.events, [SESSIONS]));
+    assert.deepEqual(callsOf(stopping.events), [{ name: 'mittrcraft_voice', arguments: { action: 'session.stop', sessionId: 'ses_new' } }]);
+  } finally {
+    await platform.close();
+  }
+});
+
+test('the voice step asks before using Chrome, then allows, opens and reads the heading', async () => {
+  const { platform, base } = await start();
+  try {
+    const sa = await signIn(base, 'SA');
+    const url = 'http://127.0.0.1:9/form';
+    const ask = userTurn(`open ${url} in Chrome and tell me the heading`);
+    const opening = await voiceStep(base, sa, ask);
+    assert.deepEqual(callsOf(opening.events), [{ name: 'mittrcraft_web', arguments: { action: 'chrome.open', url } }]);
+    const refused = await voiceStep(base, sa, withResult(ask, opening.events, [{ error: 'ask', reasonCode: 'site_approval_required', host: '127.0.0.1' }]));
+    assert.equal(textOf(refused.events), 'May I use Chrome for this conversation?');
+    const yes = userTurn('yes', [{ role: 'user', content: ask.messages[0].content }, { role: 'assistant', content: 'May I use Chrome for this conversation?' }]);
+    const allow = await voiceStep(base, sa, yes);
+    assert.deepEqual(callsOf(allow.events), [{ name: 'mittrcraft_voice', arguments: { action: 'chrome.allow_site', host: '127.0.0.1' } }]);
+    const afterAllow = withResult(yes, allow.events, [{ allowed: true }]);
+    const reopen = await voiceStep(base, sa, afterAllow);
+    assert.deepEqual(callsOf(reopen.events), [{ name: 'mittrcraft_web', arguments: { action: 'chrome.open', url } }]);
+    const afterOpen = withResult(afterAllow, reopen.events, [{ ok: true }]);
+    const reading = await voiceStep(base, sa, afterOpen);
+    assert.deepEqual(callsOf(reading.events), [{ name: 'mittrcraft_web', arguments: { action: 'chrome.read' } }]);
+    const told = await voiceStep(base, sa, withResult(afterOpen, reading.events, [{ text: '# Stub form\n\nName' }]));
+    assert.equal(textOf(told.events), 'The heading is "Stub form".');
+  } finally {
+    await platform.close();
+  }
+});
+
+test('the voice step keeps calling tools on a Thai carry-on, ends on bye, and breaks the rules on request', async () => {
+  const { platform, base } = await start();
+  try {
+    const sa = await signIn(base, 'SA');
+    let body = { ...userTurn('ทำต่อเลย'), locale: 'th' };
+    for (let step = 0; step < 3; step += 1) {
+      const answer = await voiceStep(base, sa, body);
+      assert.deepEqual(callsOf(answer.events), [{ name: 'mittrcraft', arguments: { action: 'session.list' } }]);
+      body = withResult(body, answer.events, [SESSIONS]);
+    }
+    const bye = await voiceStep(base, sa, userTurn('bye'));
+    assert.equal(textOf(bye.events), 'Goodbye.');
+    assert.deepEqual(callsOf(bye.events), [{ name: 'mittrcraft_end', arguments: {} }]);
+    const ended = await voiceStep(base, sa, userTurn('end the conversation'));
+    assert.deepEqual(callsOf(ended.events), [{ name: 'mittrcraft_end', arguments: {} }]);
+    assert.equal(textOf(ended.events), '');
+    platform.control({ speech: { voice: 'rules' } });
+    const rules = await voiceStep(base, sa, userTurn('anything'));
+    assert.deepEqual(callsOf(rules.events).map((c) => c.arguments.action), ['chrome.read', 'session.send']);
+  } finally {
+    await platform.close();
+  }
+});
+
+test('the voice step answers the quota as a frame or a 429, and refuses a body outside the limits as SSE bad_request', async () => {
+  const { platform, base } = await start();
+  try {
+    const sa = await signIn(base, 'SA');
+    platform.control({ speech: { voice: 'quota' } });
+    const frame = await voiceStep(base, sa, userTurn('hello'));
+    assert.equal(frame.status, 200);
+    const error = frame.events.find((e) => e.type === 'error');
+    assert.equal(error.code, 'llm_quota_exhausted');
+    assert.ok(Date.parse(error.resetsAt) > Date.now());
+    platform.control({ speech: { voice: 'quota429' } });
+    const refused = await voiceStep(base, sa, userTurn('hello'));
+    assert.equal(refused.status, 429);
+    assert.equal(refused.body.code, 'llm_quota_exhausted');
+    platform.control({ speech: { voice: null } });
+    const bad = async (body) => {
+      const answer = await voiceStep(base, sa, body);
+      assert.equal(answer.status, 200);
+      assert.deepEqual(answer.events, [{ type: 'error', code: 'bad_request' }]);
+    };
+    await bad({ ...userTurn('hi'), messages: [] });
+    await bad({ ...userTurn('hi'), locale: 'fr' });
+    await bad({ ...userTurn('hi'), context: 'c'.repeat(8001) });
+    await bad({ ...userTurn('hi'), tools: [] });
+    await bad({ ...userTurn('hi'), tools: [...VOICE_TOOLS, VOICE_TOOLS[0]] });
+    await bad({ ...userTurn('hi'), tools: [{ ...VOICE_TOOLS[0], name: 'shell' }] });
+    await bad({ ...userTurn('hi'), tools: [{ ...VOICE_TOOLS[0], description: 'd'.repeat(4001) }] });
+    await bad({ ...userTurn('hi'), messages: [{ role: 'user', content: 'u'.repeat(200_001) }] });
+    await bad({ ...userTurn('hi'), messages: Array.from({ length: 61 }, () => ({ role: 'user', content: 'u' })) });
+    await bad({ ...userTurn('hi'), messages: [{ role: 'user', content: 'u' }, { role: 'tool', toolCallId: 'nope', name: 'mittrcraft', content: '{}' }] });
+    const many = Array.from({ length: 21 }, (_, i) => ({ id: `c${i}`, name: 'mittrcraft', arguments: '{}' }));
+    await bad({ ...userTurn('hi'), messages: [{ role: 'user', content: 'u' }, { role: 'assistant', content: '', toolCalls: many }] });
+    const refusals = platform.snapshot().records.filter((r) => r.path === '/desktop/voice/step' && r.refused === 'bad_request');
+    assert.equal(refusals.length, 11);
+  } finally {
+    await platform.close();
+  }
+});
+
+test('a voice step can be held back, and a session prompt can hold the model or ask for a long answer', async () => {
+  const { platform, base } = await start();
+  try {
+    const sa = await signIn(base, 'SA');
+    platform.control({ speech: { voiceStepDelayMs: 300 } });
+    const startedAt = Date.now();
+    await voiceStep(base, sa, userTurn('hello'));
+    assert.ok(Date.now() - startedAt >= 280);
+    const long = decideReply({ messages: [{ role: 'user', content: 'write a long answer' }] }, { alias: 'a' });
+    assert.equal(long.kind, 'text');
+    assert.ok(long.text.length >= 6000);
+    assert.deepEqual(decideReply({ messages: [{ role: 'user', content: 'hold for 2 seconds' }] }, { alias: 'a' }), { kind: 'text', text: 'Held for 2 seconds.', holdMs: 2000 });
+  } finally {
+    await platform.close();
+  }
+});
