@@ -2568,3 +2568,21 @@ test('a stored unfinished-only style registers nothing at start', async (t) => {
   assert.equal((await call('GET', '/api/mittr/chat/settings')).body.suggestionStyle, 'unfinished-only');
   assert.equal(engine.suggestionStyles.length, 0);
 });
+
+test('the .mittr copy offer reads the person\'s projects from upstream settings, on this Mac only', async (t) => {
+  const engine = fakeEngineContext();
+  const projectDir = fs.realpathSync(tempDataDir(t));
+  fs.mkdirSync(path.join(projectDir, '.mittr', 'agents'), { recursive: true });
+  fs.writeFileSync(path.join(projectDir, '.mittr', 'agents', 'review.md'), 'review');
+  engine.upstreamSettings = { projects: [{ id: 'p', path: projectDir }] };
+  const { call } = await setUp(t, { engine, host: {} });
+  assert.deepEqual(await call('POST', '/api/mittr/project-folder/status', { directory: projectDir }), { status: 200, body: { offer: true, files: ['agents/review.md'] } });
+  engine.scope = 'remote';
+  assert.equal((await call('POST', '/api/mittr/project-folder/status', { directory: projectDir })).status, 403);
+});
+
+test('without a host there is no .mittr copy route', async (t) => {
+  const { call } = await setUp(t);
+  const response = await fetch(`${call.base}/api/mittr/project-folder/status`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"directory":"/x"}' });
+  assert.equal(response.status, 404);
+});

@@ -66,8 +66,8 @@ describe('the Mittr usage provider', () => {
     const gate = React.Children.toArray(root.props.children).find((child) => React.isValidElement(child) && child.type === MittrSignInGate);
     if (!React.isValidElement<{ children: React.ReactNode }>(gate)) throw new Error('MittrRoot did not wrap the sign-in gate');
     const inside = React.Children.toArray(gate.props.children);
-    expect(inside).toHaveLength(3);
-    expect(inside[2]).toBe('app');
+    expect(inside).toHaveLength(4);
+    expect(inside[3]).toBe('app');
     expect(React.isValidElement(inside[0]) && inside[0].type === SelectMittrUsage).toBe(true);
   });
 });

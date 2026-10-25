@@ -1656,6 +1656,20 @@ const checks = {
     has(source('packages/ui/src/lib/api/types.ts'), /^export interface ProjectEntry \{\n {2}id: string;\n {2}path: string;\n {2}label\?: string;$/m, 'a project entry no longer has id, path and an optional label');
   },
 
+  'plugin-context-settings-projects': () => {
+    has(pluginContext(source('packages/web/server/index.js')), /settings: \{ read: \(\) => readSettingsFromDiskMigrated\(\) \},/, 'the plugin context no longer reads upstream settings from disk');
+    const normalization = source('packages/web/server/lib/opencode/settings-normalization-runtime.js');
+    has(normalization, /const resolvedPath = rawPath \? safeRealpathSync\(path\.resolve\(normalizeDirectoryPath\(rawPath\)\)\) : '';/, 'a stored project path is no longer resolved to an absolute real path');
+    has(normalization, /next\.projects = normalizedProjects;/, 'settings no longer keep their projects list');
+  },
+
+  'project-folder-notice-ui': () => {
+    has(source('packages/ui/src/stores/useProjectsStore.ts'), /^interface ProjectsStore \{[^}]*^ {2}activeProjectId: string \| null;$/ms, 'the projects store no longer names the selected project as activeProjectId');
+    const toast = source('packages/ui/src/components/ui/toast.ts');
+    has(toast, /^ {2}info: \(message: string \| React\.ReactNode, data\?: ExternalToast\) => \{\n {4}return sonnerToast\.info\(message, \{\n {6}\.\.\.data,\n {6}action: data\?\.action \|\| \{/m, 'toast.info no longer passes its options, cancel included, and keeps a given action');
+    has(source('packages/ui/src/components/ui/index.ts'), /^export \{ toast \} from '\.\/toast'$/m);
+  },
+
   'open-external-url': () => {
     has(source('packages/ui/src/lib/url.ts'), /^export const openExternalUrl = \(url: string\): Promise<boolean> =>\n {2}isExternalHttpUrl\(url\) \? openValidatedExternalUrl\(url\) : Promise\.resolve\(false\);$/m, 'openExternalUrl(url) no longer answers a Promise<boolean> and opens only web addresses');
   },

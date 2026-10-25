@@ -2,6 +2,7 @@ import React from 'react';
 
 import { GlassSky } from './glass/GlassSky';
 import { MittrSurfaceContext, type MittrSurface } from './mittrSurface';
+import { MittrProjectFolderNotice } from './projectFolder/MittrProjectFolderNotice';
 import { SelectMittrUsage } from './quota/SelectMittrUsage';
 import { MittrSignInGate } from './sign-in/MittrSignInGate';
 import { MittrSmallModelRefresh } from './smallModel/smallModelRefresh';
@@ -14,6 +15,7 @@ export function MittrRoot({ children, surface }: { children: React.ReactNode; su
       <MittrSmallModelRefresh />
       <MittrSignInGate>
         <SelectMittrUsage />
+        <MittrProjectFolderNotice surface={surface} />
         <MittrVoiceMount surface={surface} />
         {children}
       </MittrSignInGate>

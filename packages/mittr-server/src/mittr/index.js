@@ -21,6 +21,7 @@ import { catalogMcpServers, heldMcpNames, mcpFragment, sweepLegacyUserMcp } from
 import { createMittrSettings } from './mittr-settings.js';
 import { createModelRefusalHandler, createThrottle } from './model-refusal.js';
 import { MITTR_PROVIDER_ID, policiesFragment } from './policies.js';
+import { setupMittrProjectFolders } from './project-folder.js';
 import { loopbackProxyExemption, mittrProviderFragment, shimBaseUrl } from './provider-config.js';
 import { registerProviderLockRoutes } from './provider-lock-routes.js';
 import { mittrQuotaProvider } from './quota-provider.js';
@@ -451,6 +452,7 @@ export function setupMittr(context, {
     env,
     logger,
   });
+  setupMittrProjectFolders(context, { logger });
   let models = [];
 
   // The engine introduces itself as MittrCraft through a plugin written on

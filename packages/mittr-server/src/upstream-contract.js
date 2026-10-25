@@ -544,6 +544,16 @@ export const UPSTREAM_CONTRACT = [
     why: 'My work lists the projects to start work in from useProjectsStore, whose projects each carry an id, a path and an optional label',
   },
   {
+    id: 'plugin-context-settings-projects',
+    files: ['packages/web/server/index.js', 'packages/web/server/lib/opencode/settings-normalization-runtime.js'],
+    why: "the .mittr copy offer is made only for one of the person's projects, read from context.settings.read() as projects whose entries each carry an absolute path",
+  },
+  {
+    id: 'project-folder-notice-ui',
+    files: ['packages/ui/src/stores/useProjectsStore.ts', 'packages/ui/src/components/ui/toast.ts', 'packages/ui/src/components/ui/index.ts'],
+    why: "the .mittr copy notice follows the selected project through useProjectsStore's activeProjectId and asks through toast.info, which keeps the notice's own action and cancel buttons",
+  },
+  {
     id: 'open-external-url',
     files: ['packages/ui/src/lib/url.ts'],
     why: 'a My work card opens its Jira or Plane page through openExternalUrl(url), which answers a Promise<boolean> and opens only web addresses',
