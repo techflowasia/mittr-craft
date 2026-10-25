@@ -1,6 +1,7 @@
 import React from 'react';
 
 import './glass.css';
+import './readable.css';
 import { useGlassTheme } from './useGlassTheme';
 
 export function GlassSky(): React.ReactNode {

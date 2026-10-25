@@ -1,0 +1,19 @@
+@layer theme, base, components, utilities;
+
+@layer utilities {
+  html.mittr-glass :where(.text-muted-foreground\/30, .text-muted-foreground\/40, .text-muted-foreground\/45, .text-muted-foreground\/50, .text-muted-foreground\/60, .text-muted-foreground\/70, .text-muted-foreground\/75, .text-muted-foreground\/80):not(svg) {
+    color: var(--muted-foreground);
+  }
+
+  html.mittr-glass :where(.text-foreground\/50, .text-foreground\/60):not(svg) {
+    color: var(--foreground);
+  }
+
+  html.mittr-glass :where(.hover\:text-muted-foreground\/65):hover {
+    color: var(--muted-foreground);
+  }
+
+  html.mittr-glass :where(.placeholder\:text-muted-foreground\/60, .placeholder\:text-muted-foreground\/70)::placeholder {
+    color: var(--muted-foreground);
+  }
+}
