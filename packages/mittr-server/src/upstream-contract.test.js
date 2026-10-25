@@ -2073,6 +2073,22 @@ const checks = {
     has(source('packages/ui/src/lib/theme/themes/index.ts'), /^export const DEFAULT_LIGHT_THEME_ID = 'openchamber-light' as const;\nexport const DEFAULT_DARK_THEME_ID = 'openchamber-dark' as const;$/m);
   },
 
+  'default-fonts-overlay': () => {
+    const effects = source('packages/ui/src/apps/useAppFontEffects.ts');
+    for (const name of ['--font-sans', '--font-heading', '--font-family-sans', '--font-mono', '--font-family-mono']) {
+      has(effects, new RegExp(`root\\.style\\.setProperty\\('${name}', (?:ui|mono)Stack\\);`), `useAppFontEffects no longer writes ${name} as a plain inline value`);
+    }
+    has(effects, /document\.body\.style\.fontFamily = uiStack;/, 'useAppFontEffects no longer sets the body font inline');
+    const options = source('packages/ui/src/lib/fontOptions.ts');
+    has(options, /^export const DEFAULT_UI_FONT: UiFontOption = 'system';$/m);
+    has(options, /^export const DEFAULT_MONO_FONT: MonoFontOption = 'system-mono';$/m);
+    has(options, /^export const isUiFontOption = \(value: unknown\): value is UiFontOption =>$/m);
+    has(options, /^export const isMonoFontOption = \(value: unknown\): value is MonoFontOption =>$/m);
+    const store = source('packages/ui/src/stores/useUIStore.ts');
+    has(store, /^ {2}uiFont: UiFontOption;$/m);
+    has(store, /^ {2}monoFont: MonoFontOption;$/m);
+  },
+
   'glass-look-anchors': () => {
     has(source('packages/ui/src/contexts/theme-system-context.ts'), /export const ThemeSystemContext = createContext<ThemeContextValue \| undefined>\(undefined\);/, 'ThemeSystemContext moved or changed its value type');
     has(source('packages/ui/src/contexts/theme-system-context.ts'), /^ {2}currentTheme: Theme;$/m, 'the theme context no longer carries currentTheme');

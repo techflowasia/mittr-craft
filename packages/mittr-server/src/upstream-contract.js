@@ -700,6 +700,11 @@ export const UPSTREAM_CONTRACT = [
     why: "MittrCraft's default themes are JSON files in <dataDir>/themes, which upstream reads back as custom themes keeping their metadata, and a custom theme replaces the built-in with the same id, so writing openchamber-light and openchamber-dark replaces upstream's defaults without touching its theme list",
   },
   {
+    id: 'default-fonts-overlay',
+    files: ['packages/ui/src/apps/useAppFontEffects.ts', 'packages/ui/src/lib/fontOptions.ts', 'packages/ui/src/stores/useUIStore.ts'],
+    why: "IBM Plex is the default font through html classes whose !important custom properties outrank the font variables useAppFontEffects writes inline on the root (and the body's inline font-family), and only while useUIStore's uiFont and monoFont are upstream's defaults 'system' and 'system-mono' or not a known option",
+  },
+  {
     id: 'glass-look-anchors',
     files: [
       'packages/ui/src/contexts/theme-system-context.ts',

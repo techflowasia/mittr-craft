@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { MittrDefaultFonts } from './fonts/MittrDefaultFonts';
 import { GlassSky } from './glass/GlassSky';
 import { MittrSurfaceContext, type MittrSurface } from './mittrSurface';
 import { MittrProjectFolderNotice } from './projectFolder/MittrProjectFolderNotice';
@@ -12,6 +13,7 @@ export function MittrRoot({ children, surface }: { children: React.ReactNode; su
   return (
     <MittrSurfaceContext.Provider value={surface}>
       <GlassSky />
+      <MittrDefaultFonts />
       <MittrSmallModelRefresh />
       <MittrSignInGate>
         <SelectMittrUsage />
