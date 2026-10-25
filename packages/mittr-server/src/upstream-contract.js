@@ -509,6 +509,16 @@ export const UPSTREAM_CONTRACT = [
     childSecrets: ['OPENCODE_PASSWORD', 'OPENCODE_SERVER_PASSWORD', 'OPENCHAMBER_AGENT_TOOL_TOKEN', 'OPENCHAMBER_SERVICE_TOKEN', 'OPENCHAMBER_GIT_SSH_KEY'],
   },
   {
+    id: 'agent-tool-token-slot',
+    files: ['packages/web/server/lib/agent-tool/runtime.js'],
+    why: "the agent tool plugin moves OPENCHAMBER_AGENT_TOOL_TOKEN out of the engine's environment when it loads and on every call, keeps it in globalThis[Symbol.for('openchamber.agent-tool.token')] and sends the token it finds there, so the engine environment plugin can take the token out first, while every agent tool is off, and the tool still works when it is switched on",
+  },
+  {
+    id: 'engine-child-env',
+    files: ['packages/electron/package.json'],
+    why: "the bundled engine (OpenCode 2.0.22) reads OPENCODE_PASSWORD and OPENCODE_SERVER_PASSWORD once, when serve starts, and hands its shell tool and its terminals an environment built from process.env (terminals also from the C environment), so the engine environment plugin can remove the engine's secrets from both at load; scripts/mittr/prove-engine-child-env.mjs shows a shell command and a terminal see none of them while the engine and both plugin tools keep working, so a new engine version needs that probe run again",
+  },
+  {
     id: 'login-shell-env-before-plugins',
     files: ['packages/web/server/index.js', 'packages/web/server/lib/opencode/env-runtime.js'],
     why: 'the server copies every login-shell variable that process.env lacks into process.env when index.js is imported, before plugins set up, so a variable set only in the login shell is in the environment the plugin takes company sign-in settings from',

@@ -14,6 +14,7 @@ import { registerChatSettingsRoutes } from './chat-settings-routes.js';
 import { registerAppearanceSettingsRoutes } from './appearance-settings-routes.js';
 import { syncDefaultModel } from './default-model.js';
 import { createEnablementStore } from './enablement.js';
+import { engineEnvFragment, engineEnvPluginDir, materializeEngineEnvPlugin } from './engine-env-plugin.js';
 import { ensureMittrCredential, forgetMittrCredential } from './engine-credential.js';
 import { identityFragment, identityPluginDir, materializeIdentityPlugin } from './identity.js';
 import { registerMittrIntegrationsRoutes } from './integrations-routes.js';
@@ -461,19 +462,21 @@ export function setupMittr(context, {
   // plugin an earlier build left stays listed, so a failed write never drops
   // the name; with none on disk the name is all that is lost: the lock and
   // the models still go out, and the next build tries again.
-  const identityConfig = async () => {
+  const enginePluginConfig = async ({ label, write, dirOf, fragmentOf }) => {
     try {
-      return identityFragment(await materializeIdentityPlugin({ dataDir }));
+      return fragmentOf(await write({ dataDir }));
     } catch (error) {
-      const dir = identityPluginDir(dataDir);
+      const dir = dirOf(dataDir);
       if (fs.existsSync(path.join(dir, 'index.js'))) {
-        logger.warn('[mittr] could not rewrite the identity plugin; keeping the one already written:', error?.message ?? error);
-        return identityFragment(dir);
+        logger.warn(`[mittr] could not rewrite the ${label}; keeping the one already written:`, error?.message ?? error);
+        return fragmentOf(dir);
       }
-      logger.warn('[mittr] could not write the identity plugin; trying again on the next config write:', error?.message ?? error);
+      logger.warn(`[mittr] could not write the ${label}; trying again on the next config write:`, error?.message ?? error);
       return {};
     }
   };
+  const engineEnvConfig = () => enginePluginConfig({ label: 'engine environment plugin', write: materializeEngineEnvPlugin, dirOf: engineEnvPluginDir, fragmentOf: engineEnvFragment });
+  const identityConfig = () => enginePluginConfig({ label: 'identity plugin', write: materializeIdentityPlugin, dirOf: identityPluginDir, fragmentOf: identityFragment });
 
   // The port is unknown before listen and may be random, so the URL is built
   // on each write. Without it there is no provider, but the lock stays.
@@ -491,11 +494,13 @@ export function setupMittr(context, {
     const rendered = models;
     const connectors = managedConnectors({ log: true });
     const settings = await mittrSettings.read();
+    const engineEnvPlugin = await engineEnvConfig();
     const identity = await identityConfig();
     const toolsConfig = await tools.render();
     configBuilt = true;
     pendingRendered = fingerprintOf(rendered, connectors, toolsConfig.signature);
     return [
+      engineEnvPlugin,
       identity,
       server.port() === null ? {} : mittrProviderFragment({ shimBaseUrl: shimBaseUrl(server.port()), models: rendered }),
       connectors,

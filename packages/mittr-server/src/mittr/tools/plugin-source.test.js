@@ -5,6 +5,7 @@ import test from 'node:test';
 
 import { MARKER_PNG, PROVEN_IMAGE_PART } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
 import { listen, tempDataDir } from '../test-helpers.js';
+import { TOOLS_TOKEN_SLOT } from '../engine-env-plugin.js';
 import { TOOLS_PLUGIN_ID, materializeToolsPlugin, toolsFragment, toolsPluginDir, toolsPluginSource } from './plugin-source.js';
 
 const CHROME = {
@@ -75,8 +76,15 @@ const imageServer = async (t, answer) => {
   return { base, seen };
 };
 
+const TOKEN_SLOT = Symbol.for(TOOLS_TOKEN_SLOT);
+
+const forgetToken = () => {
+  delete process.env.MITTRCRAFT_TOOLS_TOKEN;
+  delete globalThis[TOKEN_SLOT];
+};
+
 const withConnection = (t, url, token = 'tok-1') => {
-  const before = { url: process.env.MITTRCRAFT_TOOLS_URL, token: process.env.MITTRCRAFT_TOOLS_TOKEN };
+  const before = { url: process.env.MITTRCRAFT_TOOLS_URL, token: process.env.MITTRCRAFT_TOOLS_TOKEN, slot: globalThis[TOKEN_SLOT] };
   process.env.MITTRCRAFT_TOOLS_URL = url;
   process.env.MITTRCRAFT_TOOLS_TOKEN = token;
   t.after(() => {
@@ -84,6 +92,8 @@ const withConnection = (t, url, token = 'tok-1') => {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
+    if (before.slot === undefined) delete globalThis[TOKEN_SLOT];
+    else globalThis[TOKEN_SLOT] = before.slot;
   });
 };
 
@@ -152,6 +162,27 @@ test('a call posts the tool, the input and the session with the token, and retur
   assert.deepEqual(result.metadata, { mittrcraft: { schemaVersion: 1, action: 'chrome.open', description: 'Open a page', ok: true } });
 });
 
+test('loading the plugin takes the token out of the environment the engine hands its processes, and calls still carry it', async (t) => {
+  const seen = [];
+  const base = await listen(t, async (req, res) => {
+    seen.push(req.headers.authorization);
+    await readBody(req);
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ schemaVersion: 1, ok: true, action: 'chrome.open', data: {} }));
+  });
+  withConnection(t, `${base}/mittr-tools/v1/call`, 'tok-kept');
+  const { added } = await loadPlugin(`${toolsPluginSource({ tools: [CHROME], codeMode: false })}\nexport const loaded = "first"\n`);
+  assert.equal(Object.hasOwn(process.env, 'MITTRCRAFT_TOOLS_TOKEN'), false);
+  assert.equal(process.env.MITTRCRAFT_TOOLS_URL, `${base}/mittr-tools/v1/call`);
+
+  const reloaded = await loadPlugin(`${toolsPluginSource({ tools: [CHROME], codeMode: false })}\nexport const loaded = "again"\n`);
+  await added[0].execute({ action: 'chrome.open' }, { sessionID: 'ses_1', signal: new AbortController().signal });
+  await reloaded.added[0].execute({ action: 'chrome.open' }, { sessionID: 'ses_1', signal: new AbortController().signal });
+
+  assert.deepEqual(seen, ['Bearer tok-kept', 'Bearer tok-kept']);
+  assert.equal(Object.hasOwn(process.env, 'MITTRCRAFT_TOOLS_TOKEN'), false);
+});
+
 test('an answer that is not the envelope, a failed call and a missing connection all come back as a failure envelope', async (t) => {
   const base = await listen(t, (req, res) => {
     res.statusCode = req.url === '/broken' ? 502 : 200;
@@ -175,7 +206,7 @@ test('an answer that is not the envelope, a failed call and a missing connection
   assert.equal(unreachable.ok, false);
   assert.equal(unreachable.error.kind, 'runtime');
 
-  delete process.env.MITTRCRAFT_TOOLS_TOKEN;
+  forgetToken();
   const missing = await call();
   assert.deepEqual(JSON.parse(missing.content), { schemaVersion: 1, ok: false, action: 'chrome.click', error: { message: 'The MittrCraft tools connection is unavailable', kind: 'runtime' } });
 });
@@ -330,7 +361,7 @@ test('a failed upstream capture passes through unchanged', async (t) => {
   await loadPlugin(toolsPluginSource({ tools: [CHROME], codeMode: false, wrapCapture: true }), { web: panel.tool });
   process.env.MITTRCRAFT_TOOLS_URL = 'http://127.0.0.1:9/mittr-tools/v1/call';
   assert.equal((await panel.tool.execute({ action: 'capture' }, context)).content, panel.content);
-  delete process.env.MITTRCRAFT_TOOLS_TOKEN;
+  forgetToken();
   assert.equal((await panel.tool.execute({ action: 'capture' }, context)).content, panel.content);
 });
 
@@ -506,7 +537,7 @@ test('the plugin reports progress before and after the call', async (t) => {
   ]);
 
   order.length = 0;
-  delete process.env.MITTRCRAFT_TOOLS_TOKEN;
+  forgetToken();
   await added[0].execute({ action: 'chrome.click' }, { sessionID: 'ses_1', signal: new AbortController().signal, progress });
   assert.deepEqual(order, [
     { mittrcraft: { schemaVersion: 1, action: 'chrome.click', description: 'Click' } },

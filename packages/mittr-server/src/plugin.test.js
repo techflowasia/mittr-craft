@@ -273,7 +273,7 @@ test('setup with the server context mounts Mittr sign-in and keeps the engine en
   assert.equal((await plugin.engineEnv()).OPENCODE_DISABLE_MODELS_FETCH, '1');
   assert.equal((await plugin.engineEnv()).OPENCODE_DISABLE_AUTOUPDATE, '1');
   assert.deepEqual(await plugin.managedConfig(), {
-    plugins: [path.join(dataDir, 'engine-plugins', 'mittrcraft-identity'), path.join(dataDir, 'engine-plugins', 'mittrcraft-tools')],
+    plugins: [path.join(dataDir, 'engine-plugins', 'mittrcraft-engine-env'), path.join(dataDir, 'engine-plugins', 'mittrcraft-identity'), path.join(dataDir, 'engine-plugins', 'mittrcraft-tools')],
     share: 'disabled',
     experimental: {
       policies: [

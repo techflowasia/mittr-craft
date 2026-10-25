@@ -14,6 +14,7 @@ import {
   readEnglishOverrides,
   repoRoot,
 } from './upstream-contract.js';
+import { AGENT_TOOL_TOKEN_SLOT } from './mittr/engine-env-plugin.js';
 import { SERVER_ONLY_SECRETS } from './plugin.js';
 
 const source = (relative) => fs.readFileSync(path.join(repoRoot, relative), 'utf8');
@@ -1544,6 +1545,47 @@ const checks = {
     assert.deepEqual([...read].filter((name) => !known.has(name)).sort(), [], 'upstream reads a secret the engine would inherit; withhold it in SERVER_ONLY_SECRETS or record it as a child secret');
     const ours = new Set(['MITTRCRAFT_UI_PASSWORD', 'JIRA_TOKEN', 'PLANE_API_KEY']);
     assert.deepEqual([...known].filter((name) => !ours.has(name) && !read.has(name)).sort(), [], 'upstream no longer reads a secret recorded here; it was renamed or dropped');
+  },
+
+  'agent-tool-token-slot': async (t) => {
+    const runtime = source('packages/web/server/lib/agent-tool/runtime.js');
+    has(runtime, /const TOKEN_SLOT = Symbol\.for\("openchamber\.agent-tool\.token"\)/, 'the agent tool no longer keeps its token in the slot the engine environment plugin fills');
+    const { createAgentToolRuntime } = await importUpstream('packages/web/server/lib/agent-tool/runtime.js');
+    const dataDir = tempDir(t, 'contract-agent-tool-');
+    const tools = createAgentToolRuntime({ crypto, fsPromises: fs.promises, path, dataDir, getActivePort: () => 3901, executeAction: async () => ({}) });
+    const dir = await tools.materializePlugin({ includeControl: true, includeWeb: false });
+    const slot = Symbol.for(AGENT_TOOL_TOKEN_SLOT);
+    const before = { token: process.env.OPENCHAMBER_AGENT_TOOL_TOKEN, url: process.env.OPENCHAMBER_AGENT_TOOL_URL, slot: globalThis[slot], fetch: globalThis.fetch };
+    const sent = [];
+    try {
+      process.env.OPENCHAMBER_AGENT_TOOL_URL = 'http://127.0.0.1:3901/api/openchamber/agent-tool';
+      process.env.OPENCHAMBER_AGENT_TOOL_TOKEN = 'acme-from-env';
+      const loaded = (await import(`${pathToFileURL(path.join(dir, 'index.js')).href}?contract=${Date.now()}`)).default;
+      assert.equal(Object.hasOwn(process.env, 'OPENCHAMBER_AGENT_TOOL_TOKEN'), false, 'the agent tool leaves its token in the environment the engine hands its processes');
+      assert.equal(globalThis[slot], 'acme-from-env');
+      globalThis[slot] = 'acme-from-slot';
+      const added = {};
+      await loaded.setup({ tool: { transform: (edit) => edit({ add: (tool) => { added[tool.name] = tool; } }) } });
+      globalThis.fetch = async (_url, init) => {
+        sent.push(init.headers.authorization);
+        return new Response(JSON.stringify({ schemaVersion: 1, ok: true, action: 'projects.list', data: {} }));
+      };
+      await added.openchamber.execute({ action: 'projects.list' }, { sessionID: 'ses_1', progress: async () => {} });
+      assert.deepEqual(sent, ['Bearer acme-from-slot'], 'the agent tool no longer sends the token kept in the slot');
+    } finally {
+      globalThis.fetch = before.fetch;
+      if (before.slot === undefined) delete globalThis[slot];
+      else globalThis[slot] = before.slot;
+      for (const [name, value] of [['OPENCHAMBER_AGENT_TOOL_TOKEN', before.token], ['OPENCHAMBER_AGENT_TOOL_URL', before.url]]) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  },
+
+  'engine-child-env': () => {
+    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
+    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run scripts/mittr/prove-engine-child-env.mjs again, then update this pin');
   },
 
   'login-shell-env-before-plugins': () => {

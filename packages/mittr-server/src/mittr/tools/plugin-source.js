@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+import { TOOLS_TOKEN_SLOT, keepFromChildrenSource } from '../engine-env-plugin.js';
 import { writeEnginePlugin } from '../private-file.js';
 import { CAPTURE_ACTION, CAPTURE_IMAGE, CAPTURE_TIMEOUT_MS, CAPTURE_TOOL, TOO_LARGE, imageContent } from './screenshots.js';
 
@@ -127,9 +128,14 @@ const TITLES = ${JSON.stringify(titles)}
 const TOO_LARGE = ${JSON.stringify(TOO_LARGE)}
 const imageContent = ${imageContent}
 
+${keepFromChildrenSource}
+const toolsToken = () => keepFromChildren("MITTRCRAFT_TOOLS_TOKEN", ${JSON.stringify(TOOLS_TOKEN_SLOT)})
+
+toolsToken()
+
 const connection = () => {
   const endpoint = process.env.MITTRCRAFT_TOOLS_URL
-  const token = process.env.MITTRCRAFT_TOOLS_TOKEN
+  const token = toolsToken()
   return endpoint && token ? { endpoint, token } : null
 }
 

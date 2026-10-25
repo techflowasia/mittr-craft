@@ -536,6 +536,7 @@ const LOCKED = [
   { action: 'provider.use', resource: 'mittr', effect: 'allow' },
 ];
 
+const envDirOf = (dataDir) => path.join(dataDir, 'engine-plugins', 'mittrcraft-engine-env');
 const identityDirOf = (dataDir) => path.join(dataDir, 'engine-plugins', 'mittrcraft-identity');
 const toolsDirOf = (dataDir) => path.join(dataDir, 'engine-plugins', 'mittrcraft-tools');
 
@@ -544,7 +545,7 @@ test('setup hands the server plugin an engine env, a config fragment and a bound
   const { MITTRCRAFT_TOOLS_TOKEN: token, ...env } = await mittr.engineEnv();
   assert.deepEqual(env, { NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost', MITTRCRAFT_TOOLS_URL: 'http://127.0.0.1:4100/mittr-tools/v1/call' });
   assert.match(token, /^[A-Za-z0-9_-]{43}$/);
-  assert.deepEqual(await mittr.managedConfig(), { plugins: [identityDirOf(dataDir), toolsDirOf(dataDir)], share: 'disabled', experimental: { policies: LOCKED } });
+  assert.deepEqual(await mittr.managedConfig(), { plugins: [envDirOf(dataDir), identityDirOf(dataDir), toolsDirOf(dataDir)], share: 'disabled', experimental: { policies: LOCKED } });
   await mittr.dispose();
   assert.equal(engine.readyListeners.size, 0);
 });
@@ -831,13 +832,13 @@ const engineAndBroker = (answer) => fakeEngineFetch({ answer, other: () => json(
 test('the lock is in the config from the first build, before any model or port', async (t) => {
   const engine = fakeEngineContext({ port: null });
   const { mittr, dataDir } = await setUp(t, { engine });
-  assert.deepEqual(await mittr.managedConfig(), { plugins: [identityDirOf(dataDir), toolsDirOf(dataDir)], share: 'disabled', experimental: { policies: LOCKED } });
+  assert.deepEqual(await mittr.managedConfig(), { plugins: [envDirOf(dataDir), identityDirOf(dataDir), toolsDirOf(dataDir)], share: 'disabled', experimental: { policies: LOCKED } });
 });
 
 test('the identity plugin is on disk before the config names it', async (t) => {
   const { mittr, dataDir } = await setUp(t, { built: false });
   const config = await mittr.managedConfig();
-  assert.deepEqual(config.plugins, [identityDirOf(dataDir), toolsDirOf(dataDir)]);
+  assert.deepEqual(config.plugins, [envDirOf(dataDir), identityDirOf(dataDir), toolsDirOf(dataDir)]);
   const source = fs.readFileSync(path.join(identityDirOf(dataDir), 'index.js'), 'utf8');
   assert.ok(source.includes("'mittrcraft.identity'") || source.includes('"mittrcraft.identity"'), source.slice(0, 200));
 });
@@ -854,7 +855,7 @@ test('a plugin that cannot be rewritten keeps the one already on disk in the con
     fs.chmodSync(dir, 0o700);
   }
 
-  assert.deepEqual(config.plugins, [dir, toolsDirOf(dataDir)]);
+  assert.deepEqual(config.plugins, [envDirOf(dataDir), dir, toolsDirOf(dataDir)]);
   assert.deepEqual(config.experimental.policies, LOCKED);
   assert.ok(logger.warnings.some((line) => line.startsWith('[mittr] could not rewrite the identity plugin; keeping the one already written')), logger.warnings.join('\n'));
 });
@@ -878,7 +879,7 @@ test('the stored switch ON still denies the hosted opencode provider', async (t)
   fs.writeFileSync(path.join(dataDir, 'mittr-settings.json'), JSON.stringify({ showOtherProviders: true }));
   const { mittr } = await setUp(t, { dataDir });
   assert.deepEqual(await mittr.managedConfig(), {
-    plugins: [identityDirOf(dataDir), toolsDirOf(dataDir)],
+    plugins: [envDirOf(dataDir), identityDirOf(dataDir), toolsDirOf(dataDir)],
     share: 'disabled',
     experimental: { policies: [{ action: 'provider.use', resource: 'opencode', effect: 'deny' }] },
   });
@@ -2319,7 +2320,7 @@ const toolNamesIn = (dataDir) => {
 test('the tools plugin is loaded after the identity plugin, and turning Chrome off rewrites the config once through the queue', async (t) => {
   const engine = fakeEngineContext();
   const { mittr, dataDir } = await setUp(t, { engine, host: desktopHost(), toolDrivers: TOOL_DRIVERS });
-  assert.deepEqual((await mittr.managedConfig()).plugins, [identityDirOf(dataDir), toolsDirOf(dataDir)]);
+  assert.deepEqual((await mittr.managedConfig()).plugins, [envDirOf(dataDir), identityDirOf(dataDir), toolsDirOf(dataDir)]);
   assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_widgets']);
   const before = engine.refreshes.length;
 
@@ -2327,14 +2328,14 @@ test('the tools plugin is loaded after the identity plugin, and turning Chrome o
 
   assert.equal(engine.refreshes.length, before + 1);
   assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer', 'mittrcraft_widgets']);
-  assert.deepEqual(engine.rendered.at(-1).plugins, [identityDirOf(dataDir), toolsDirOf(dataDir)]);
+  assert.deepEqual(engine.rendered.at(-1).plugins, [envDirOf(dataDir), identityDirOf(dataDir), toolsDirOf(dataDir)]);
 
   await mittr.tools.applySwitches({ computer: false, widgets: false });
-  assert.deepEqual(engine.rendered.at(-1).plugins, [identityDirOf(dataDir), toolsDirOf(dataDir)], 'with every Mittr tool off the plugin still wraps the panel capture');
+  assert.deepEqual(engine.rendered.at(-1).plugins, [envDirOf(dataDir), identityDirOf(dataDir), toolsDirOf(dataDir)], 'with every Mittr tool off the plugin still wraps the panel capture');
   assert.deepEqual(toolNamesIn(dataDir), []);
 
   engine.upstreamSettings = { agentWebToolEnabled: false };
-  assert.deepEqual((await mittr.managedConfig()).plugins, [identityDirOf(dataDir)], 'with every tool off and the panel browser tool off the plugin is no longer loaded');
+  assert.deepEqual((await mittr.managedConfig()).plugins, [envDirOf(dataDir), identityDirOf(dataDir)], 'with every tool off and the panel browser tool off the plugin is no longer loaded');
 });
 
 test('a change in the offered tools alone rewrites the config on the next model apply', async (t) => {
@@ -2364,7 +2365,7 @@ test('a hosted runtime, company sign-in or a UI password offers no computer or c
     { host: desktopHost(), uiAuth: { passwordEnabled: () => true } },
   ]) {
     const { mittr, dataDir } = await setUp(t, { ...options, toolDrivers: TOOL_DRIVERS });
-    assert.deepEqual((await mittr.managedConfig()).plugins, [identityDirOf(dataDir), toolsDirOf(dataDir)], JSON.stringify(Object.keys(options)));
+    assert.deepEqual((await mittr.managedConfig()).plugins, [envDirOf(dataDir), identityDirOf(dataDir), toolsDirOf(dataDir)], JSON.stringify(Object.keys(options)));
     assert.deepEqual(toolNamesIn(dataDir), []);
   }
 });
@@ -2406,13 +2407,13 @@ test('a tools plugin whose first write failed is written by the next config writ
   });
   await mittr.applyModels(MODELS);
   assert.equal(engine.refreshes.length, 1);
-  assert.deepEqual(engine.rendered.at(-1).plugins, [identityDirOf(dataDir)]);
+  assert.deepEqual(engine.rendered.at(-1).plugins, [envDirOf(dataDir), identityDirOf(dataDir)]);
 
   fs.rmSync(toolsDirOf(dataDir));
   await mittr.applyModels(MODELS);
 
   assert.equal(engine.refreshes.length, 2);
-  assert.deepEqual(engine.rendered.at(-1).plugins, [identityDirOf(dataDir), toolsDirOf(dataDir)]);
+  assert.deepEqual(engine.rendered.at(-1).plugins, [envDirOf(dataDir), identityDirOf(dataDir), toolsDirOf(dataDir)]);
   assert.deepEqual(toolNamesIn(dataDir), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_widgets']);
 });
 
