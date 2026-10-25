@@ -5,8 +5,16 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const css = readFileSync(join(here, 'glass.css'), 'utf8');
-const themeSurface = (id: string): { foreground: string; mutedForeground: string } =>
-  JSON.parse(readFileSync(join(here, '../../../ui/src/lib/theme/themes', `${id}.json`), 'utf8')).colors.surface;
+type ThemeColours = {
+  primary: { base: string; foreground: string };
+  surface: { background: string; foreground: string; muted: string; mutedForeground: string; elevated: string; elevatedForeground: string; subtle: string };
+  status: Record<'error' | 'warning' | 'success' | 'info' | 'errorForeground' | 'warningForeground' | 'successForeground' | 'infoForeground', string>;
+  markdown: { link: string; linkHover: string };
+};
+const DEFAULT_THEME_DIR = join(here, '../../../mittr-server/src/themes');
+const themeSource = (id: string): string => readFileSync(join(DEFAULT_THEME_DIR, `${id}.json`), 'utf8');
+const themeColours = (id: string): ThemeColours => JSON.parse(themeSource(id)).colors;
+const themeSurface = (id: string): ThemeColours['surface'] => themeColours(id).surface;
 
 type Rule = { selectors: string[]; body: string; within: string[] };
 
@@ -224,17 +232,9 @@ const MODES = [
   },
 ];
 
-type Colours = Record<'primary' | 'error' | 'warning' | 'success' | 'info', string>;
-
-const glassColours = (selector: string): Colours => {
-  const rule = rules.find((entry) => entry.within.length === 0 && entry.selectors.includes(selector));
-  const read = (name: string): string => {
-    const found = new RegExp(`--${name}:\\s*(#[0-9a-f]{6});`, 'i').exec(rule?.body ?? '');
-    if (!found) throw new Error(`${selector} sets no --${name}`);
-    return found[1];
-  };
-  for (const name of ['primary-base', 'markdown-link']) expect(read(name)).toBe(read('primary'));
-  return { primary: read('primary'), error: read('status-error'), warning: read('status-warning'), success: read('status-success'), info: read('status-info') };
+const accentColours = (id: string) => {
+  const { primary, markdown, status } = themeColours(id);
+  return { primary: primary.base, link: markdown.link, linkHover: markdown.linkHover, error: status.error, warning: status.warning, success: status.success, info: status.info };
 };
 
 const STATUS_TINT = 0.125;
@@ -252,7 +252,7 @@ describe('glass text contrast (WCAG AA, 4.5:1)', () => {
   for (const mode of MODES) {
     const { foreground, mutedForeground } = themeSurface(mode.theme);
     const texts = [hex(foreground), hex(mutedForeground)];
-    const colours = glassColours(mode.name === 'dark' ? 'html.mittr-glass.mittr-glass-dark body' : 'html.mittr-glass body');
+    const colours = accentColours(mode.theme);
     const raised = mode.name === 'dark' ? { rgb: hex('#1f2430'), alpha: 0.82 } : { rgb: hex('#ffffff'), alpha: 0.72 };
 
     test(`${mode.name}: the tints in the test are the ones in the CSS`, () => {
@@ -276,7 +276,7 @@ describe('glass text contrast (WCAG AA, 4.5:1)', () => {
         const surfaces: Array<[string, Rgb]> = mode.tints.map((tint) => [tint.css.slice(0, tint.css.indexOf(':')), over(tint.rgb, tint.alpha, hex(sky))]);
         const panel = surfaces[0][1];
         surfaces.push(['raised card', over(raised.rgb, raised.alpha, panel)]);
-        for (const [name, colour] of Object.entries(colours) as Array<[keyof Colours, string]>) {
+        for (const [name, colour] of Object.entries(colours)) {
           for (const [surfaceName, surface] of surfaces) {
             const ratio = contrast(hex(colour), surface);
             if (ratio < 4.5) failures.push(`${name} ${colour} on ${surfaceName} over ${sky}: ${ratio.toFixed(2)}`);
@@ -298,6 +298,54 @@ describe('glass text contrast (WCAG AA, 4.5:1)', () => {
         expect(contrast(text, hex(mode.bubble))).toBeGreaterThanOrEqual(4.5);
         expect(contrast(text, solid)).toBeGreaterThanOrEqual(4.5);
       }
+    });
+  }
+});
+
+describe('the default themes are the one source of the glass colours', () => {
+  test('glass.css sets no primary, link or status colour of its own', () => {
+    const owned = /--(?:primary(?:-base|-hover)?|markdown-link(?:-hover)?|status-[a-z]+(?:-foreground)?)\s*:/;
+    expect(rules.filter((rule) => owned.test(rule.body)).flatMap((rule) => rule.selectors)).toEqual([]);
+  });
+
+  test('both parse as upstream themes under the ids glass keys on, with an opaque splash colour', async () => {
+    const { requireTheme } = await import('../../../ui/src/lib/theme/definition');
+    for (const id of ['openchamber-light', 'openchamber-dark']) {
+      const theme = requireTheme(JSON.parse(themeSource(id)));
+      expect(theme.metadata.id).toBe(id);
+      expect(theme.metadata.variant).toBe(id.endsWith('dark') ? 'dark' : 'light');
+      expect(/^#[0-9a-f]{6}$/i.test(theme.colors.surface.background)).toBe(true);
+    }
+  });
+
+  for (const mode of MODES) {
+    test(`${mode.name}: every text colour passes on the theme's own page, panel, elevated and subtle grounds`, () => {
+      const { surface, status } = themeColours(mode.theme);
+      const accents = accentColours(mode.theme);
+      const texts: Array<[string, string]> = [
+        ['foreground', surface.foreground],
+        ['muted foreground', surface.mutedForeground],
+        ['elevated foreground', surface.elevatedForeground],
+        ...Object.entries(accents),
+      ];
+      const grounds: Array<[string, string]> = [['page', surface.background], ['panel', surface.muted], ['elevated', surface.elevated], ['subtle', surface.subtle]];
+      const failures: string[] = [];
+      for (const [name, colour] of texts) {
+        for (const [ground, fill] of grounds) {
+          const ratio = contrast(hex(colour), hex(fill));
+          if (ratio < 4.5) failures.push(`${name} ${colour} on ${ground} ${fill}: ${ratio.toFixed(2)}`);
+        }
+      }
+      for (const name of ['error', 'warning', 'success', 'info'] as const) {
+        const ratio = contrast(hex(status[`${name}Foreground`]), hex(status[name]));
+        if (ratio < 4.5) failures.push(`${name} foreground on ${name}: ${ratio.toFixed(2)}`);
+      }
+      expect(failures).toEqual([]);
+    });
+
+    test(`${mode.name}: text on a primary fill passes`, () => {
+      const { primary } = themeColours(mode.theme);
+      expect(contrast(hex(primary.foreground), hex(primary.base))).toBeGreaterThanOrEqual(4.5);
     });
   }
 });

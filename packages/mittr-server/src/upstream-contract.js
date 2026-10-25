@@ -695,6 +695,11 @@ export const UPSTREAM_CONTRACT = [
     why: "product-plugins.ts has the main-surface slot with no props; MainLayout renders it once, inside an ErrorBoundary, as the last child of <main>, after every full-page surface, so Today sits inside every upstream provider over the chat area while the sidebar and header stay usable; the layout root carries data-product-region=\"shell\", the right column \"column\" and <main> \"main\"; ProductSlot renders its components with no wrapper element, so Today is a direct child of <main>, whose first child is the div holding ChatView, and <main> sits first in the data-chat-area div with ContextPanel after it; Today hides and makes inert every other child of <main> while it is open",
   },
   {
+    id: 'default-themes-in-data-dir',
+    files: ['packages/web/server/index.js', 'packages/web/server/lib/opencode/theme-runtime.js', 'packages/ui/src/contexts/ThemeSystemContext.tsx', 'packages/ui/src/lib/theme/themes/index.ts'],
+    why: "MittrCraft's default themes are JSON files in <dataDir>/themes, which upstream reads back as custom themes keeping their metadata, and a custom theme replaces the built-in with the same id, so writing openchamber-light and openchamber-dark replaces upstream's defaults without touching its theme list",
+  },
+  {
     id: 'glass-look-anchors',
     files: [
       'packages/ui/src/contexts/theme-system-context.ts',

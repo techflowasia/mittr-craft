@@ -55,28 +55,6 @@ html.mittr-glass .mittr-glass-sky {
   background: var(--mittr-sky);
 }
 
-html.mittr-glass body {
-  --primary: #9a4310;
-  --primary-base: #9a4310;
-  --primary-hover: #85390c;
-  --markdown-link: #9a4310;
-  --status-error: #963830;
-  --status-warning: #6e5410;
-  --status-success: #3f6327;
-  --status-info: #22599b;
-}
-
-html.mittr-glass.mittr-glass-dark body {
-  --primary: #da7c47;
-  --primary-base: #da7c47;
-  --primary-hover: #eb8c57;
-  --markdown-link: #da7c47;
-  --status-error: #e8735f;
-  --status-warning: #c67f13;
-  --status-success: #76ad4f;
-  --status-info: #479fe6;
-}
-
 @supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
   @media (prefers-reduced-transparency: no-preference) {
     html.mittr-glass #root {

@@ -359,7 +359,7 @@ test('the npm pack of this package ships the bin with the product env beside it'
   });
   assert.equal(result.status, 0, result.stderr);
   const packed = JSON.parse(result.stdout)[0].files.map((file) => file.path);
-  for (const file of ['bin/mittrcraft.mjs', 'bin/openchamber.mjs', 'bin/product-env.json', 'src/cli-env.js', 'src/plugin.js', 'src/web-brand.js', 'src/web-brand.json']) {
+  for (const file of ['bin/mittrcraft.mjs', 'bin/openchamber.mjs', 'bin/product-env.json', 'src/cli-env.js', 'src/plugin.js', 'src/web-brand.js', 'src/web-brand.json', 'src/default-themes.js', 'src/themes/openchamber-light.json', 'src/themes/openchamber-dark.json']) {
     assert.ok(packed.includes(file), `${file} is not in the pack`);
   }
 });

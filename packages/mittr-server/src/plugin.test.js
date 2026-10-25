@@ -121,6 +121,20 @@ test('setup backs up the prod layout once, migrates settings and serves the engi
   assert.equal(again.lines.some((line) => line.includes('pre-2x-backup')), false);
 });
 
+test('setup writes MittrCraft\'s default themes into the data dir, and goes on when it cannot', async (t) => {
+  const home = tempHome(t);
+  const dataDir = prodLayout(home);
+  await setupMittrServer({ dataDir, logger: recordingLogger(), env: {}, homeDir: home });
+  assert.deepEqual(fs.readdirSync(path.join(dataDir, 'themes')).sort(), ['openchamber-dark.json', 'openchamber-light.json']);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'themes', 'openchamber-light.json'), 'utf8')).metadata.source, 'mittrcraft-default');
+
+  const blocked = prodLayout(tempHome(t));
+  fs.writeFileSync(path.join(blocked, 'themes'), 'not a folder');
+  const logger = recordingLogger();
+  await setupMittrServer({ dataDir: blocked, logger, env: {}, homeDir: home });
+  assert.equal(logger.lines.some((line) => line.includes('could not write the default themes')), true);
+});
+
 test('the first engine start puts the app\'s bundled rg in the engine cache, so the engine never downloads one, and later starts do not check it again', async (t) => {
   const home = tempHome(t);
   const dataDir = prodLayout(home);

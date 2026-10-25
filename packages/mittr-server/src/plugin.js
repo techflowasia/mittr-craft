@@ -4,6 +4,7 @@ import path from 'node:path';
 import { activeAccountHome } from './accounts.js';
 import { backupOnce } from './backup.js';
 import { BIN_BUN_BINARY } from './cli-env.js';
+import { installDefaultThemes } from './default-themes.js';
 import { ENGINE_DB_RULE, engineBases, engineConfigDir, engineEnv, sharedHistoryExists } from './engine-home.js';
 import { ENGINE_OUTBOUND_OFF } from './engine-outbound.js';
 import { bundledRipgrep, placeEngineRipgrep } from './engine-ripgrep.js';
@@ -113,6 +114,12 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
 
   const identities = await ensureGitIdentityStore({ dataDir, homeDir, logger });
   if (identities.seededFrom) logger.log(`[mittr] git identities copied from ${identities.seededFrom}`);
+
+  try {
+    installDefaultThemes({ dataDir, logger });
+  } catch (error) {
+    logger.warn('[mittr] could not write the default themes; trying again next start:', error?.message ?? error);
+  }
 
   const ripgrep = bundledRipgrep(resourcesDir);
   let ripgrepWarned = false;

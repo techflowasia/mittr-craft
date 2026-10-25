@@ -2064,6 +2064,15 @@ const checks = {
       assert.ok(at >= 0 && at < slot, `${page} is no longer inside <main> before the main-surface slot`);
     }
   },
+  'default-themes-in-data-dir': () => {
+    const server = source('packages/web/server/index.js');
+    has(server, /^const OPENCHAMBER_USER_THEMES_DIR = path\.join\(OPENCHAMBER_USER_CONFIG_ROOT, 'themes'\);$/m, 'custom themes no longer live in <dataDir>/themes');
+    has(server, /^const OPENCHAMBER_DATA_DIR = OPENCHAMBER_USER_CONFIG_ROOT;$/m, 'the plugin data dir is no longer the folder that holds themes');
+    has(source('packages/web/server/lib/opencode/theme-runtime.js'), /metadata: \{\n {8}\.\.\.metadata,\n {8}id: id\.trim\(\),/, 'a custom theme read from disk no longer keeps its metadata and id');
+    has(source('packages/ui/src/contexts/ThemeSystemContext.tsx'), /customThemes\.forEach\(add\);[\s\S]*?themes\.forEach\(add\);/, 'custom themes no longer come before, and so replace, the built-ins with the same id');
+    has(source('packages/ui/src/lib/theme/themes/index.ts'), /^export const DEFAULT_LIGHT_THEME_ID = 'openchamber-light' as const;\nexport const DEFAULT_DARK_THEME_ID = 'openchamber-dark' as const;$/m);
+  },
+
   'glass-look-anchors': () => {
     has(source('packages/ui/src/contexts/theme-system-context.ts'), /export const ThemeSystemContext = createContext<ThemeContextValue \| undefined>\(undefined\);/, 'ThemeSystemContext moved or changed its value type');
     has(source('packages/ui/src/contexts/theme-system-context.ts'), /^ {2}currentTheme: Theme;$/m, 'the theme context no longer carries currentTheme');
