@@ -19,6 +19,7 @@ import { useMittrDictationBlock } from './voice/useMittrDictationBlock';
 import { ContextActivity } from './activity/ContextActivity';
 import { listContinuationEdit } from './composer/listContinuation';
 import { SIDEBAR_SIDE_SOURCE } from './layout/sidebarSideSource';
+import { PLEX_FONT_OPTIONS } from './fonts/plexFontOptions';
 
 // Registered on import, which the entry points do before their first render:
 // the model picker takes its decorations once and keeps them.
@@ -51,6 +52,7 @@ export const MITTRCRAFT_UI_PLUGIN: ProductUiPlugin = {
   remoteModelCatalog: false,
   composerShiftEnter: listContinuationEdit,
   sidebarSide: SIDEBAR_SIDE_SOURCE,
+  fontOptions: PLEX_FONT_OPTIONS,
 };
 
 registerProductUiPlugin(MITTRCRAFT_UI_PLUGIN);

@@ -4,7 +4,9 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { DEFAULT_MONO_FONT, DEFAULT_UI_FONT } from '../../../ui/src/lib/fontOptions';
+import { CODE_FONT_OPTION_MAP, CODE_FONT_OPTIONS, DEFAULT_MONO_FONT, DEFAULT_UI_FONT, isMonoFontOption, isUiFontOption, UI_FONT_OPTION_MAP, UI_FONT_OPTIONS } from '../../../ui/src/lib/fontOptions';
+import { loadMonoFont, loadUiFont } from '../../../ui/src/lib/fontLoader';
+import '../product-ui-plugin';
 import { createFontChoices, plexClassesFor } from './defaultFonts';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -107,5 +109,56 @@ describe('when Plex is the font', () => {
     const choices = createFontChoices(null);
     choices.observe({ uiFont: 'inter', monoFont: DEFAULT_MONO_FONT }, { uiFont: DEFAULT_UI_FONT, monoFont: DEFAULT_MONO_FONT });
     expect(plexClassesFor({ uiFont: 'inter', monoFont: DEFAULT_MONO_FONT }, createFontChoices(null))).toEqual(['mittr-plex-mono']);
+  });
+});
+
+const UI_STACK = '"IBM Plex Sans", "IBM Plex Sans Thai", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const MONO_STACK = '"IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, "IBM Plex Sans Thai", Thonburi, monospace';
+
+describe('IBM Plex in the font pickers', () => {
+  test('both faces are listed first, in the pickers and in the lookups, with the stacks that put Plex before the Thai face', () => {
+    expect(UI_FONT_OPTIONS[0]).toEqual(UI_FONT_OPTION_MAP['ibm-plex-sans']);
+    expect(CODE_FONT_OPTIONS[0]).toEqual(CODE_FONT_OPTION_MAP['ibm-plex-mono']);
+    expect(UI_FONT_OPTION_MAP['ibm-plex-sans'].label).toBe('IBM Plex Sans');
+    expect(CODE_FONT_OPTION_MAP['ibm-plex-mono'].label).toBe('IBM Plex Mono');
+    expect(UI_FONT_OPTION_MAP['ibm-plex-sans'].stack).toBe(UI_STACK);
+    expect(CODE_FONT_OPTION_MAP['ibm-plex-mono'].stack).toBe(MONO_STACK);
+    expect(isUiFontOption('ibm-plex-sans')).toBe(true);
+    expect(isMonoFontOption('ibm-plex-mono')).toBe(true);
+  });
+
+  test('their families are the ones plex.css loads from beside it, and choosing them loads nothing from the network', async () => {
+    for (const family of ['IBM Plex Sans', 'IBM Plex Sans Thai', 'IBM Plex Mono']) expect(css).toContain(`font-family: "${family}";`);
+    expect(UI_FONT_OPTION_MAP['ibm-plex-sans'].source).toBeUndefined();
+    expect(CODE_FONT_OPTION_MAP['ibm-plex-mono'].source).toBeUndefined();
+    const scope = globalThis as unknown as Record<string, unknown>;
+    const previous = { FontFace: scope.FontFace, document: scope.document };
+    const created: string[] = [];
+    scope.FontFace = class { constructor(family: string) { created.push(family); } load() { return Promise.resolve(this); } };
+    scope.document = { fonts: { add: () => undefined, delete: () => undefined } };
+    try {
+      await loadUiFont('ibm-plex-sans');
+      await loadMonoFont('ibm-plex-mono');
+    } finally {
+      scope.FontFace = previous.FontFace;
+      scope.document = previous.document;
+    }
+    expect(created).toEqual([]);
+  });
+
+  test('picking one is a choice of its own: the default-only Plex class steps aside and the picked stack applies', () => {
+    const choices = createFontChoices(memoryStorage());
+    expect(plexClassesFor({ uiFont: 'ibm-plex-sans', monoFont: 'ibm-plex-mono' }, choices)).toEqual([]);
+    expect(plexClassesFor({ uiFont: DEFAULT_UI_FONT, monoFont: 'ibm-plex-mono' }, choices)).toEqual(['mittr-plex-sans']);
+    expect(plexClassesFor({ uiFont: 'ibm-plex-sans', monoFont: DEFAULT_MONO_FONT }, choices)).toEqual(['mittr-plex-mono']);
+    choices.observe({ uiFont: DEFAULT_UI_FONT, monoFont: DEFAULT_MONO_FONT }, { uiFont: 'ibm-plex-sans', monoFont: 'ibm-plex-mono' });
+    choices.observe({ uiFont: 'ibm-plex-sans', monoFont: 'ibm-plex-mono' }, { uiFont: DEFAULT_UI_FONT, monoFont: DEFAULT_MONO_FONT });
+    expect(plexClassesFor({ uiFont: DEFAULT_UI_FONT, monoFont: DEFAULT_MONO_FONT }, choices)).toEqual([]);
+  });
+
+  test('while the setting is untouched the defaults are still the upstream ones and still get Plex', () => {
+    expect(DEFAULT_UI_FONT).toBe('system');
+    expect(DEFAULT_MONO_FONT).toBe('system-mono');
+    expect(plexClassesFor({ uiFont: DEFAULT_UI_FONT, monoFont: DEFAULT_MONO_FONT }, createFontChoices(null))).toEqual(['mittr-plex-sans', 'mittr-plex-mono']);
   });
 });

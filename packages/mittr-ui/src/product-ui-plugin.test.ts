@@ -235,3 +235,10 @@ describe('MittrCraft sidebar side', () => {
     expect(INTEGRATIONS_PAGE.at(-1)).toBe(SidebarSideSettingsItem);
   });
 });
+
+describe('MittrCraft font options', () => {
+  test('the plugin offers the Plex faces to the font pickers', async () => {
+    const { PLEX_FONT_OPTIONS } = await import('./fonts/plexFontOptions');
+    expect(MITTRCRAFT_UI_PLUGIN.fontOptions).toBe(PLEX_FONT_OPTIONS);
+  });
+});
