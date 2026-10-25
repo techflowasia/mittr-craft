@@ -60,6 +60,7 @@ import { ModelControls } from './ModelControls';
 import { parseAgentMentions } from '@/lib/messages/agentMentions';
 import { CONTEXT_METADATA_KEY, draftFromContextPayload } from '@/lib/messages/contextParts';
 import { shouldSubmitEnter } from './composer/keyboardPolicy';
+import { shiftEnterEdit } from './composer/shiftEnterEdit';
 import { getDropdownNavigationKey } from '@/components/ui/dropdown-navigation';
 import { useChatColumnActions, useChatColumnExpandedInput, useChatColumnSession, type ChatColumnSession } from './chatColumnSession';
 import { usePinnedComposerSelection } from './pinnedComposerSelection';
@@ -2407,6 +2408,28 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 useInputStore.getState().setAttachedFiles([...recalled.attachments]);
                 requestAnimationFrame(() => composerRef.current?.setSelection(recalled.text.length, recalled.text.length));
             }
+            return;
+        }
+
+        const productEdit = e.key === 'Enter' && e.shiftKey ? shiftEnterEdit({
+            key: e.key,
+            shiftKey: e.shiftKey,
+            altKey: e.altKey,
+            ctrlKey: e.ctrlKey,
+            metaKey: e.metaKey,
+            isMobile,
+            isDesktopExpanded,
+            enterToSend,
+            enterToSendConfigured,
+            inputMode,
+            autocompleteOpen: isAnyAutocompleteOpen,
+            text: message,
+            selectionStart: composerRef.current?.getSelection().start ?? -1,
+            selectionEnd: composerRef.current?.getSelection().end ?? -1,
+        }) : null;
+        if (productEdit && composerRef.current) {
+            e.preventDefault();
+            composerRef.current.replaceRange(productEdit.from, productEdit.to, productEdit.insert, productEdit.selectionStart, productEdit.selectionEnd);
             return;
         }
 

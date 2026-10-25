@@ -57,6 +57,10 @@ type UseDictationBlock = () => DictationBlock;
 
 type ProductSessionAuthContext = { passwordEnabled: boolean; runtime: SessionAuthRuntime };
 
+export type ComposerTextState = { text: string; selectionStart: number; selectionEnd: number };
+
+export type ComposerEdit = { from: number; to: number; insert: string; selectionStart: number; selectionEnd: number };
+
 type ProductMessageError = { type: string; message: string; status?: number; responseBody?: string; providerID?: string };
 
 export type ProductUiPlugin = {
@@ -73,6 +77,7 @@ export type ProductUiPlugin = {
   // false: the window never asks models.dev for model metadata or provider
   // logos; it uses what the server answers and the logos bundled with the UI.
   remoteModelCatalog?: boolean;
+  composerShiftEnter?: (state: ComposerTextState) => ComposerEdit | null;
 };
 
 type Substitution = { pattern: RegExp; to: string };
@@ -320,6 +325,20 @@ export function translateProductSessionAuthDescription(context: ProductSessionAu
     const description = plugin.sessionAuthDescription?.(context) ?? null;
     if (description !== null) {
       return description;
+    }
+  }
+  return null;
+}
+
+export function productComposerShiftEnter(state: ComposerTextState): ComposerEdit | null {
+  for (const plugin of plugins) {
+    try {
+      const edit = plugin.composerShiftEnter?.(state) ?? null;
+      if (edit !== null) {
+        return edit;
+      }
+    } catch {
+      continue;
     }
   }
   return null;
