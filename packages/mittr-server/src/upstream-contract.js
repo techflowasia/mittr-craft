@@ -913,3 +913,58 @@ UPSTREAM_CONTRACT.push(
     why: 'a widget alert posts { title, body, tag } to POST /api/notifications/emit on the server\'s own loopback port; the route is registered after API auth, which lets a local request through when no UI password or sign-in provider is set, and its emitter hands the notice to the desktop notification path with kind plugin',
   },
 );
+
+UPSTREAM_CONTRACT.push(
+  {
+    id: 'context-raw-messages-slot',
+    files: ['packages/ui/src/lib/product-plugins.ts', 'packages/ui/src/components/layout/ContextSidebarTab.tsx'],
+    why: "product-plugins.ts has the context-raw-messages slot with props { sessionId, directory, messages } and useProductSlotFilled(name); the context panel's ContextPanelContent renders the slot once, inside an ErrorBoundary, in place of its Raw Messages section and after the context breakdown, and passes the session's useSessionMessageRecords list, so the MittrCraft activity timeline takes the place of the flat raw rows while the rest of the panel stays upstream's",
+  },
+  {
+    id: 'activity-timeline-reads',
+    files: [
+      'packages/ui/src/lib/opencode/model.ts',
+      'packages/ui/src/lib/opencode/tools.ts',
+      'packages/ui/src/components/chat/message/messageRole.ts',
+      'packages/ui/src/components/chat/message/parts/taskToolModel.ts',
+      'packages/ui/src/sync/sync-context.tsx',
+      'packages/ui/src/stores/useUIStore.ts',
+      'packages/ui/src/lib/clipboard.ts',
+      'packages/ui/src/components/code/WorkerHighlightedCode.tsx',
+      'packages/ui/src/components/icon/sprite.ts',
+      'packages/ui/src/lib/i18n/index.ts',
+    ],
+    why: "the activity timeline groups messages into turns with deriveMessageRole, reads an assistant record's time.completed, agent, modelID and tokens { input, output }, a shell record's status and time.completed, leaves out idle records, finds a subagent call by isSubagentTool (the subagent tool) and its child session in state.metadata.sessionID (or sessionId, or the input's sessionID) the way readTaskSessionIdFromRecord does, lists children from useAllLiveSessions by parentID, opens one with useUIStore's openContextPanelTab(directory, { mode: 'chat', dedupeKey, label, readOnly }) or, on mobile and VS Code, useSessionUIStore's setCurrentSession, follows timeFormatPreference, copies a record's JSON with copyTextToClipboard ({ ok }), shows it with WorkerHighlightedCode, draws the check and file-copy icons and formats numbers with getCurrentIntlLocale",
+  },
+);
+
+UPSTREAM_CONTRACT.push(
+  {
+    id: 'composer-shift-enter-hook',
+    files: [
+      'packages/ui/src/lib/product-plugins.ts',
+      'packages/ui/src/components/chat/composer/shiftEnterEdit.ts',
+      'packages/ui/src/components/chat/composer/keyboardPolicy.ts',
+      'packages/ui/src/components/chat/ChatInput.tsx',
+      'packages/ui/src/components/chat/composer/editor/ComposerEditor.tsx',
+    ],
+    why: "a product plugin's composerShiftEnter({ text, selectionStart, selectionEnd }) answers { from, to, insert, selectionStart, selectionEnd } or null; shiftEnterEdit asks it only for Enter with Shift and no Alt, Ctrl or Meta, in normal input mode with no picker open, and only when shouldSubmitEnter says the key breaks the line rather than sends; ChatInput asks after the history keys and before the send branch, applies the edit with the editor's replaceRange and consumes the key, so MittrCraft list continuation runs on Shift+Enter while plain Enter and every shortcut stay upstream's",
+  },
+);
+
+UPSTREAM_CONTRACT.push(
+  {
+    id: 'sidebar-side-hook',
+    files: [
+      'packages/ui/src/lib/product-plugins.ts',
+      'packages/ui/src/components/layout/MainLayout.tsx',
+      'packages/ui/src/components/layout/Sidebar.tsx',
+    ],
+    why: "a product plugin's sidebarSide { subscribe, get } answers 'left' or 'right' and useProductSidebarSide() reads it (left when no plugin gives one, or it throws); MainLayout puts data-sidebar-side on the row that holds the sidebar and the column, reverses that row for the right edge while the sidebar stays first in the page, gives the sidebar its side and, on the right, a plain drag strip instead of the titlebar reserve; the Sidebar mirrors its border, inset shadow and resize handle and negates the drag for the right edge, so the MittrCraft setting moves the session list without editing the layout again",
+  },
+  {
+    id: 'header-titlebar-reserve',
+    files: ['packages/ui/src/components/layout/Header.tsx', 'packages/ui/src/components/layout/TitlebarLeftControls.tsx', 'packages/ui/src/components/layout/MainLayout.tsx'],
+    why: "the desktop header is the column's first child, a <header> whose only child is the role=tablist row, and that row's first two children are the aria-hidden spacers sized from --oc-titlebar-left-inset and --oc-titlebar-controls-width, the second one no-drag; TitlebarLeftControls stays pinned over the window's top-left corner and publishes --oc-titlebar-controls-width; so MittrCraft's sidebar-side CSS can make the header keep that reserve while the sidebar is on the right and the corner is the header's",
+  },
+);

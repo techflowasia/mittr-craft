@@ -20,6 +20,8 @@ import {
 import type { TimeFormatPreference } from '@/stores/useUIStore';
 import { formatDateTimeForPreference } from '@/lib/timeFormat';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
+import { ProductSlot, useProductSlotFilled } from '@/lib/product-plugins';
 
 type SessionMessage = { info: Message; parts: Part[] };
 
@@ -275,6 +277,7 @@ export const ContextPanelContent: React.FC = () => {
     currentSessionDirectory ?? undefined,
   );
   const providers = useConfigStore((state) => state.providers);
+  const rawMessagesReplaced = useProductSlotFilled('context-raw-messages');
 
   React.useEffect(() => {
     if (copyResetTimeoutRef.current !== null) {
@@ -529,6 +532,11 @@ export const ContextPanelContent: React.FC = () => {
         </div>
 
         {/* ── Raw messages ── */}
+        {rawMessagesReplaced ? (
+          <ErrorBoundary>
+            <ProductSlot name="context-raw-messages" sessionId={currentSessionId} directory={currentSessionDirectory ?? null} messages={sessionMessages} />
+          </ErrorBoundary>
+        ) : (
         <div>
           <div className="typography-micro text-muted-foreground">{t('contextSidebar.section.rawMessages')}</div>
           <div className="mt-2.5 space-y-1">
@@ -642,6 +650,7 @@ export const ContextPanelContent: React.FC = () => {
             })}
           </div>
         </div>
+        )}
       </div>
     </ScrollableOverlay>
   );

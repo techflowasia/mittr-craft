@@ -150,5 +150,6 @@
   "settings.extensions.toast.hostTooOld": "This extension needs OpenChamber {version} or newer.",
   "pwa.installPrompt.description": "Install OpenChamber for quicker access",
   "settings.usage.page.section.modelQuotas": "Model Quotas",
-  "updateDialog.error.signatureRejected": "The downloaded update was rejected: its code signature does not match this installation. This usually means the running copy was not installed from an official signed release. Install OpenChamber from an official release, then update again."
+  "updateDialog.error.signatureRejected": "The downloaded update was rejected: its code signature does not match this installation. This usually means the running copy was not installed from an official signed release. Install OpenChamber from an official release, then update again.",
+  "sidebar.resize.leftPanelAria": "Resize left panel"
 }

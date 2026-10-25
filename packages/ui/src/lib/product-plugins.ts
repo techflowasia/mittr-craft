@@ -33,6 +33,7 @@ export type ProductSlotProps = {
   'assistant-message-footer': { message: { info: Message; parts: Part[] }; isLatestTurn: boolean };
   'composer-actions': { isMobile: boolean; footerIconButtonClass: string; iconSizeClass: string; dictationActive: boolean };
   'main-surface': Record<never, never>;
+  'context-raw-messages': { sessionId: string; directory: string | null; messages: Array<{ info: Message; parts: Part[] }> };
 };
 
 export type ProductSlotName = keyof ProductSlotProps;
@@ -56,6 +57,14 @@ type UseDictationBlock = () => DictationBlock;
 
 type ProductSessionAuthContext = { passwordEnabled: boolean; runtime: SessionAuthRuntime };
 
+export type ComposerTextState = { text: string; selectionStart: number; selectionEnd: number };
+
+export type ComposerEdit = { from: number; to: number; insert: string; selectionStart: number; selectionEnd: number };
+
+export type ProductSidebarSide = 'left' | 'right';
+
+type ProductSidebarSideSource = { subscribe: (listener: () => void) => () => void; get: () => ProductSidebarSide };
+
 type ProductMessageError = { type: string; message: string; status?: number; responseBody?: string; providerID?: string };
 
 export type ProductUiPlugin = {
@@ -72,6 +81,8 @@ export type ProductUiPlugin = {
   // false: the window never asks models.dev for model metadata or provider
   // logos; it uses what the server answers and the logos bundled with the UI.
   remoteModelCatalog?: boolean;
+  composerShiftEnter?: (state: ComposerTextState) => ComposerEdit | null;
+  sidebarSide?: ProductSidebarSideSource;
 };
 
 type Substitution = { pattern: RegExp; to: string };
@@ -286,6 +297,14 @@ export function ProductSlot<K extends ProductSlotName>({ name, ...props }: { nam
   return elements.length === 0 ? null : elements;
 }
 
+export function useProductSlotFilled(name: ProductSlotName): boolean {
+  const current = useProductUiPlugins();
+  return current.some((plugin) => {
+    const filled = plugin.slots?.[name];
+    return filled !== undefined && (!Array.isArray(filled) || filled.length > 0);
+  });
+}
+
 export function useProductModelPicker(open: boolean): ModelPickerDecorations {
   pickerHookInUse = true;
   return useComposedDecorations(open);
@@ -314,4 +333,47 @@ export function translateProductSessionAuthDescription(context: ProductSessionAu
     }
   }
   return null;
+}
+
+export function productComposerShiftEnter(state: ComposerTextState): ComposerEdit | null {
+  for (const plugin of plugins) {
+    try {
+      const edit = plugin.composerShiftEnter?.(state) ?? null;
+      if (edit !== null) {
+        return edit;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+const sidebarSideSourceOf = (current: ProductUiPlugin[]): ProductSidebarSideSource | undefined => {
+  for (let index = current.length - 1; index >= 0; index -= 1) {
+    const source = current[index].sidebarSide;
+    if (source) {
+      return source;
+    }
+  }
+  return undefined;
+};
+
+export function useProductSidebarSide(): ProductSidebarSide {
+  const source = sidebarSideSourceOf(useProductUiPlugins());
+  const subscribe = React.useCallback((listener: () => void) => {
+    try {
+      return source ? source.subscribe(listener) : () => {};
+    } catch {
+      return () => {};
+    }
+  }, [source]);
+  const read = React.useCallback((): ProductSidebarSide => {
+    try {
+      return source?.get() === 'right' ? 'right' : 'left';
+    } catch {
+      return 'left';
+    }
+  }, [source]);
+  return React.useSyncExternalStore(subscribe, read, read);
 }

@@ -2586,3 +2586,13 @@ test('without a host there is no .mittr copy route', async (t) => {
   const response = await fetch(`${call.base}/api/mittr/project-folder/status`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"directory":"/x"}' });
   assert.equal(response.status, 404);
 });
+
+test('the sidebar side is stored on this Mac and read back after a restart', async (t) => {
+  const dataDir = tempDataDir(t);
+  const { call } = await setUp(t, { dataDir, host: {} });
+  assert.deepEqual(await call('GET', '/api/mittr/appearance/settings'), { status: 200, body: { sidebarSide: 'left', canChange: true } });
+  assert.deepEqual(await call('PUT', '/api/mittr/appearance/settings', { sidebarSide: 'right' }), { status: 200, body: { sidebarSide: 'right', canChange: true } });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'mittr-settings.json'), 'utf8')).sidebarSide, 'right');
+  const again = await setUp(t, { dataDir, host: {} });
+  assert.equal((await again.call('GET', '/api/mittr/appearance/settings')).body.sidebarSide, 'right');
+});

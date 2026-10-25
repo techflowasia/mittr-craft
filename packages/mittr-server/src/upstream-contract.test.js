@@ -2457,6 +2457,114 @@ checks['notification-emit-route'] = async () => {
   assert.equal(ui[0].options.desktopNotificationDelivered, true);
 };
 
+Object.assign(checks, {
+  'context-raw-messages-slot': () => {
+    const plugins = source('packages/ui/src/lib/product-plugins.ts');
+    has(plugins, /^  'context-raw-messages': \{ sessionId: string; directory: string \| null; messages: Array<\{ info: Message; parts: Part\[\] \}> \};$/m, 'the context-raw-messages slot props changed');
+    has(plugins, /export function useProductSlotFilled\(name: ProductSlotName\): boolean \{/, 'useProductSlotFilled is gone');
+    const panel = source('packages/ui/src/components/layout/ContextSidebarTab.tsx');
+    has(panel, /^import \{ ProductSlot, useProductSlotFilled \} from '@\/lib\/product-plugins';$/m, 'ContextSidebarTab no longer imports the slot');
+    assert.equal(lineCount(panel, '<ProductSlot '), 1, 'ContextSidebarTab renders ProductSlot more than once, or not at all');
+    has(panel, /const rawMessagesReplaced = useProductSlotFilled\('context-raw-messages'\);/);
+    has(panel, /const sessionMessages = useSessionMessageRecords\(\s*currentSessionId \?\? '',\s*currentSessionDirectory \?\? undefined,\s*\);/, 'the panel no longer reads the session messages the slot is given');
+    has(panel, /\{rawMessagesReplaced \? \(\s*<ErrorBoundary>\s*<ProductSlot name="context-raw-messages" sessionId=\{currentSessionId\} directory=\{currentSessionDirectory \?\? null\} messages=\{sessionMessages\} \/>\s*<\/ErrorBoundary>\s*\) : \(\s*<div>\s*<div className="typography-micro text-muted-foreground">\{t\('contextSidebar\.section\.rawMessages'\)\}<\/div>/, 'the slot no longer takes the place of the Raw Messages section');
+    const breakdown = panel.indexOf('{/* ── Context breakdown ── */}');
+    const slot = panel.indexOf('<ProductSlot name="context-raw-messages"');
+    assert.ok(breakdown >= 0 && slot > breakdown, 'the slot no longer follows the context breakdown');
+  },
+  'activity-timeline-reads': () => {
+    const model = source('packages/ui/src/lib/opencode/model.ts');
+    const assistant = model.slice(model.indexOf('export type AssistantMessage'), model.indexOf('export type SyntheticMessage'));
+    for (const field of [/completed\?: number/, /agent: string/, /modelID: string/, /tokens\?: TokenUsageInfo/]) has(assistant, field, `the assistant record lost ${field}`);
+    const shell = model.slice(model.indexOf('export type ShellMessage'), model.indexOf('export type CompactionMessage'));
+    has(shell, /time: \{ created: number; completed\?: number \}/);
+    has(shell, /status: "running" \| "exited" \| "timeout" \| "killed"/);
+    has(model, /export type IdleMessage = MessageBase & \{\s*role: "idle"/);
+    const pending = model.slice(model.indexOf('export type ToolStatePending'), model.indexOf('export type ToolStateRunning'));
+    assert.ok(pending.includes('input: ToolInput') && !pending.includes('metadata'), 'a pending tool state now carries metadata, or no input');
+    has(model, /export type \{ JsonValue, ModelRef, PermissionRuleset, TokenUsageInfo \}/);
+    const tools = source('packages/ui/src/lib/opencode/tools.ts');
+    has(tools, /^  subagent: "subagent",$/m);
+    has(tools, /^export const isSubagentTool = is\(OPENCODE_TOOLS\.subagent\)$/m);
+    has(source('packages/ui/src/components/chat/message/parts/taskToolModel.ts'), /return normalizeSessionIdCandidate\(record\.sessionID\) \?\? normalizeSessionIdCandidate\(record\.sessionId\);/, 'the child session is no longer read from sessionID or sessionId');
+    has(source('packages/ui/src/components/chat/message/parts/ToolPart.tsx'), /const metadataSessionId = readTaskSessionIdFromRecord\(metadata\);/, 'a subagent call no longer names its child in its result metadata first');
+    has(source('packages/ui/src/components/chat/message/messageRole.ts'), /export const deriveMessageRole = \(/);
+    has(source('packages/ui/src/sync/sync-context.tsx'), /export function useAllLiveSessions\(\): Session\[\]/);
+    has(model, /parentID\?: string/);
+    const ui = source('packages/ui/src/stores/useUIStore.ts');
+    has(ui, /openContextPanelTab: \(directory: string, tab: ContextPanelTabDescriptor, options\?: \{ reveal\?: boolean \}\) => void;/);
+    const descriptor = ui.slice(ui.indexOf('type ContextPanelTabDescriptor = {'), ui.indexOf('};', ui.indexOf('type ContextPanelTabDescriptor = {')));
+    for (const field of [/mode: ContextPanelMode;/, /dedupeKey\?: string \| null;/, /label\?: string \| null;/, /readOnly\?: boolean;/]) has(descriptor, field, `the context panel tab lost ${field}`);
+    has(source('packages/ui/src/lib/surfaces/modes.ts'), /^  'chat',$/m);
+    has(ui, /^  isMobile: boolean;$/m);
+    has(ui, /^  timeFormatPreference: TimeFormatPreference;$/m);
+    has(source('packages/ui/src/sync/session-ui-store.ts'), /^  setCurrentSession: \(/m);
+    has(source('packages/ui/src/lib/desktop.ts'), /export const isVSCodeRuntime = \(\): boolean =>/);
+    has(source('packages/ui/src/lib/clipboard.ts'), /\| \{ ok: true; method: 'clipboard' \| 'execCommand' \}\s*\| \{ ok: false; error: string \};/);
+    has(source('packages/ui/src/components/code/WorkerHighlightedCode.tsx'), /export const WorkerHighlightedCode: React\.FC<WorkerHighlightedCodeProps>/);
+    const sprite = source('packages/ui/src/components/icon/sprite.ts');
+    for (const name of ['check', 'file-copy']) has(sprite, new RegExp(`^  "?${name}"?: \``, 'm'), `the ${name} icon is gone`);
+    has(source('packages/ui/src/lib/i18n/index.ts'), /export \{ getCurrentIntlLocale \} from '\.\/intl';/);
+  },
+});
+
+checks['composer-shift-enter-hook'] = () => {
+  const plugins = source('packages/ui/src/lib/product-plugins.ts');
+  has(plugins, /^export type ComposerTextState = \{ text: string; selectionStart: number; selectionEnd: number \};$/m);
+  has(plugins, /^export type ComposerEdit = \{ from: number; to: number; insert: string; selectionStart: number; selectionEnd: number \};$/m);
+  has(plugins, /^  composerShiftEnter\?: \(state: ComposerTextState\) => ComposerEdit \| null;$/m);
+  has(plugins, /export function productComposerShiftEnter\(state: ComposerTextState\): ComposerEdit \| null \{/);
+  const gate = source('packages/ui/src/components/chat/composer/shiftEnterEdit.ts');
+  has(gate, /if \(input\.key !== 'Enter' \|\| !input\.shiftKey \|\| input\.altKey \|\| input\.ctrlKey \|\| input\.metaKey\) return null;/);
+  has(gate, /if \(input\.inputMode !== 'normal' \|\| input\.autocompleteOpen\) return null;/);
+  has(gate, /if \(shouldSubmitEnter\(input\)\) return null;/);
+  has(source('packages/ui/src/components/chat/composer/keyboardPolicy.ts'), /export const shouldSubmitEnter = \(input: EnterKeyPolicyInput\): boolean => \{/);
+  const input = source('packages/ui/src/components/chat/ChatInput.tsx');
+  has(input, /^import \{ shiftEnterEdit \} from '\.\/composer\/shiftEnterEdit';$/m);
+  assert.equal(lineCount(input, 'shiftEnterEdit('), 1, 'ChatInput asks shiftEnterEdit more than once, or not at all');
+  const handler = input.slice(input.indexOf('const handleKeyDown = (e: KeyboardEvent) => {'), input.indexOf('const handleAbort = React.useCallback('));
+  const history = handler.indexOf("if (e.key === 'ArrowDown' && canNavigateHistoryDown) {");
+  const ask = handler.indexOf('const productEdit = ');
+  const send = handler.indexOf("if (e.key === 'Enter' && shouldSubmitEnter({");
+  assert.ok(history >= 0 && ask > history && send > ask, 'the Shift+Enter hook no longer sits after the history keys and before the send branch');
+  has(handler, /if \(productEdit && composerRef\.current\) \{\s*e\.preventDefault\(\);\s*composerRef\.current\.replaceRange\(productEdit\.from, productEdit\.to, productEdit\.insert, productEdit\.selectionStart, productEdit\.selectionEnd\);\s*return;\s*\}/);
+  has(input, /handleKeyDown\(event\);\s*return event\.defaultPrevented;/, 'the editor no longer treats a prevented key as consumed');
+  has(source('packages/ui/src/components/chat/composer/editor/ComposerEditor.tsx'), /replaceRange\(from: number, to: number, text: string, selectionStart\?: number, selectionEnd\?: number\): void;/);
+};
+
+Object.assign(checks, {
+  'sidebar-side-hook': () => {
+    const plugins = source('packages/ui/src/lib/product-plugins.ts');
+    has(plugins, /^export type ProductSidebarSide = 'left' \| 'right';$/m);
+    has(plugins, /^type ProductSidebarSideSource = \{ subscribe: \(listener: \(\) => void\) => \(\) => void; get: \(\) => ProductSidebarSide \};$/m);
+    has(plugins, /^  sidebarSide\?: ProductSidebarSideSource;$/m);
+    has(plugins, /export function useProductSidebarSide\(\): ProductSidebarSide \{/);
+    has(plugins, /return source\?\.get\(\) === 'right' \? 'right' : 'left';/, 'an unreadable or unknown side no longer falls back to the left');
+    const layout = source('packages/ui/src/components/layout/MainLayout.tsx');
+    has(layout, /^import \{ useProductSidebarSide \} from '@\/lib\/product-plugins';$/m);
+    has(layout, /const sidebarSide = useProductSidebarSide\(\);/);
+    has(layout, /<div className=\{cn\('flex flex-1 overflow-hidden', sidebarSide === 'right' && 'flex-row-reverse'\)\} data-page-scroll-lock="true" data-sidebar-side=\{sidebarSide\}>\s*<Sidebar\s/, 'the row no longer carries data-sidebar-side or no longer starts with the sidebar');
+    has(layout, /side=\{sidebarSide\}\s*topBar=\{sidebarSide === 'right' \? <div aria-hidden className="app-region-drag shrink-0" style=\{\{ height: 'var\(--oc-header-height, 3rem\)' \}\} \/> : <SidebarTopBar \/>\}/);
+    has(layout, /<\/Sidebar>\s*<div className="[^"]*" data-page-scroll-lock="true" data-product-region="column">/, 'the column no longer follows the sidebar in the row');
+    const sidebar = source('packages/ui/src/components/layout/Sidebar.tsx');
+    has(sidebar, /^    side\?: 'left' \| 'right';$/m);
+    has(sidebar, /const delta = isRightSide \? -pointerDelta : pointerDelta;/);
+    has(sidebar, /isRightSide \? 'border-l' : 'border-r',/);
+    has(sidebar, /isRightSide \? 'absolute left-0' : 'absolute right-0',/);
+  },
+  'header-titlebar-reserve': () => {
+    const header = source('packages/ui/src/components/layout/Header.tsx');
+    has(header, /<header\s+ref=\{headerRef\}[\s\S]*?>\s*\{renderDesktop\(\)\}\s*<\/header>/, 'the header no longer holds only the desktop row');
+    const row = header.slice(header.indexOf('const renderDesktop = () => ('));
+    has(row, /^const renderDesktop = \(\) => \(\s*<div\s+onMouseDown=\{handleDragStart\}[\s\S]*?role="tablist"\s+aria-label=\{t\('header\.navigation\.mainAria'\)\}\s*>\s*\{\/\*[\s\S]*?\*\/\}\s*<div\s+aria-hidden\s+className="shrink-0 self-stretch[^"]*"\s+style=\{\{ width: headerInsetSpacerWidth \}\}\s*\/>\s*\{\/\*[\s\S]*?\*\/\}\s*<div\s+aria-hidden\s+className="app-region-no-drag shrink-0 self-stretch[^"]*"\s+style=\{\{ width: headerControlsSpacerWidth \}\}\s*\/>/, 'the header row no longer starts with the two titlebar spacers');
+    has(header, /: 'var\(--oc-titlebar-left-inset, 0\.75rem\)';/);
+    has(header, /: 'calc\(var\(--oc-titlebar-controls-width, 5\.5rem\) \+ 0\.5rem\)';/);
+    has(source('packages/ui/src/components/layout/TitlebarLeftControls.tsx'), /document\.documentElement\.style\.setProperty\('--oc-titlebar-controls-width', `\$\{Math\.round\(width\)\}px`\);/);
+    has(source('packages/ui/src/components/layout/MainLayout.tsx'), /<TitlebarLeftControls \/>\s*\{\/\*[\s\S]*?\*\/\}\s*<div className=\{cn\('flex flex-1 overflow-hidden'/, 'TitlebarLeftControls is no longer rendered just before the row');
+    has(source('packages/ui/src/components/layout/MainLayout.tsx'), /data-product-region="column">\s*<Header \/>/, 'the header is no longer the column\'s first child');
+  },
+});
+
 test('every contract item has a check, and every check an item', () => {
   assert.deepEqual(UPSTREAM_CONTRACT.map((entry) => entry.id).sort(), Object.keys(checks).sort());
   for (const entry of UPSTREAM_CONTRACT) {

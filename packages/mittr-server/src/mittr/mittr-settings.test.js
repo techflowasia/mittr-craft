@@ -15,7 +15,7 @@ const settingsFile = (dataDir) => path.join(dataDir, 'mittr-settings.json');
 
 const DEFAULT_TOOLS = { computer: true, chrome: true, chromeProfile: null, chromeHeaded: true, chromeApprovedHosts: [], widgets: true };
 const DEFAULT_VOICE = { stepCap: 8, replyMaxChars: 8000 };
-const stored = (showOtherProviders, tools = DEFAULT_TOOLS, voice = DEFAULT_VOICE, suggestionStyle = 'next-step') => ({ showOtherProviders, tools, voice, suggestionStyle });
+const stored = (showOtherProviders, tools = DEFAULT_TOOLS, voice = DEFAULT_VOICE, suggestionStyle = 'next-step', sidebarSide = 'left') => ({ showOtherProviders, tools, voice, suggestionStyle, sidebarSide });
 
 test('missing settings read as switch OFF, with no warning', async (t) => {
   const dataDir = tempDataDir(t);
@@ -360,4 +360,41 @@ test('update stores the suggestion style, keeps the other settings, and refuses 
   assert.equal((await settings.read()).suggestionStyle, 'unfinished-only', 'a tools write keeps the style');
   assert.equal((await settings.update({ suggestionStyle: 'next-step' })).suggestionStyle, 'next-step');
   assert.equal((await settings.read()).tools.computer, false);
+});
+
+test('the sidebar side reads as left unless right is stored', async (t) => {
+  const dataDir = tempDataDir(t);
+  const settings = createMittrSettings({ dataDir, logger: recordingLogger() });
+  assert.equal((await settings.read()).sidebarSide, 'left');
+  for (const [sidebarSide, expected] of [
+    ['right', 'right'],
+    ['left', 'left'],
+    ['RIGHT', 'left'],
+    ['', 'left'],
+    [null, 'left'],
+    [true, 'left'],
+    [['right'], 'left'],
+  ]) {
+    fs.writeFileSync(settingsFile(dataDir), JSON.stringify({ sidebarSide }));
+    assert.equal((await settings.read()).sidebarSide, expected, JSON.stringify(sidebarSide));
+  }
+});
+
+test('update stores the sidebar side, keeps the other settings, and refuses any other value', async (t) => {
+  const dataDir = tempDataDir(t);
+  const settings = createMittrSettings({ dataDir, logger: recordingLogger() });
+  for (const sidebarSide of ['', 'top', 'Right', null, true, 1, ['right']]) {
+    await assert.rejects(settings.update({ sidebarSide }), /^TypeError: sidebarSide must be left or right$/, JSON.stringify(sidebarSide));
+  }
+  assert.equal(fs.existsSync(settingsFile(dataDir)), false);
+
+  await settings.update({ showOtherProviders: true, suggestionStyle: 'unfinished-only' });
+  assert.equal((await settings.update({ sidebarSide: 'right' })).sidebarSide, 'right');
+  const after = await createMittrSettings({ dataDir, logger: recordingLogger() }).read();
+  assert.deepEqual(after, stored(true, DEFAULT_TOOLS, DEFAULT_VOICE, 'unfinished-only', 'right'));
+  assert.equal(JSON.parse(fs.readFileSync(settingsFile(dataDir), 'utf8')).sidebarSide, 'right');
+
+  await settings.update({ tools: { computer: false } });
+  assert.equal((await settings.read()).sidebarSide, 'right', 'a tools write keeps the side');
+  assert.equal((await settings.update({ sidebarSide: 'left' })).sidebarSide, 'left');
 });

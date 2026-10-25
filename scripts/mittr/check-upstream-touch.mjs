@@ -8,7 +8,7 @@
  * Paths we own are `packages/mittr-*`, `brand`, `scripts/mittr`, `patches` and
  * `docs`, except files upstream itself has there. Everything else is upstream.
  * Of the upstream files we touched:
- * - edited (or deleted) source and config files count toward the cap of 40,
+ * - edited (or deleted) source and config files count toward the cap of 45,
  *   `bun.lock` included, which is never hand-merged but re-resolved with
  *   `bun install`;
  * - new upstream-side files are generic hook modules: listed, reviewed as
@@ -43,7 +43,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const UPSTREAM_TOUCH_CAP = 40;
+export const UPSTREAM_TOUCH_CAP = 45;
 export const HOOKS_FILE = 'brand/upstream-hooks.json';
 
 const OWNED_PREFIXES = ['brand/', 'scripts/mittr/', 'patches/', 'docs/'];

@@ -11,6 +11,7 @@ import { resolveBroker } from './broker.js';
 import { catalogCachePath, createCatalogCache } from './catalog-cache.js';
 import { registerMittrCatalogRoutes } from './catalog-routes.js';
 import { registerChatSettingsRoutes } from './chat-settings-routes.js';
+import { registerAppearanceSettingsRoutes } from './appearance-settings-routes.js';
 import { syncDefaultModel } from './default-model.js';
 import { createEnablementStore } from './enablement.js';
 import { ensureMittrCredential, forgetMittrCredential } from './engine-credential.js';
@@ -640,6 +641,7 @@ export function setupMittr(context, {
   const suggestionStyle = createSuggestionStyle({ register: context.registerSuggestionStyle, logger });
   void suggestionStyle.load(() => mittrSettings.read());
   registerChatSettingsRoutes(app, { express, host, requestScope, mittrSettings, suggestionStyle, logger });
+  registerAppearanceSettingsRoutes(app, { express, host, requestScope, mittrSettings, logger });
 
   // Sets the engine's models; a failure is logged and waits for the next
   // sync or start, never thrown into a route or the server.

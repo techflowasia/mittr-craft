@@ -73,7 +73,7 @@ describe('MittrCraft integrations page', () => {
   });
 
   test('the integrations slot holds Work tracking, MittrCraft tools, MittrCraft suggestions, then MittrCraft voice', () => {
-    expect(INTEGRATIONS_PAGE).toEqual([WorkTrackingSettingsItem, MittrToolsSettingsItem, SuggestionStyleSettingsItem, MittrVoiceSettingsItem]);
+    expect(INTEGRATIONS_PAGE.slice(0, 4)).toEqual([WorkTrackingSettingsItem, MittrToolsSettingsItem, SuggestionStyleSettingsItem, MittrVoiceSettingsItem]);
     expect(MITTRCRAFT_UI_PLUGIN.slots?.['integrations-page']).toBe(INTEGRATIONS_PAGE);
   });
 });
@@ -210,5 +210,28 @@ describe('MittrCraft glass look', () => {
       );
       expect(html).toContain('class="mittr-glass-sky"');
     }
+  });
+});
+
+describe('MittrCraft activity timeline', () => {
+  test('the context panel shows the activity timeline in place of the raw messages', async () => {
+    const { ContextActivity } = await import('./activity/ContextActivity');
+    expect(MITTRCRAFT_UI_PLUGIN.slots?.['context-raw-messages']).toBe(ContextActivity);
+  });
+});
+
+describe('MittrCraft list continuation', () => {
+  test('Shift+Enter on a list item opens the next item', async () => {
+    const { listContinuationEdit } = await import('./composer/listContinuation');
+    expect(MITTRCRAFT_UI_PLUGIN.composerShiftEnter).toBe(listContinuationEdit);
+  });
+});
+
+describe('MittrCraft sidebar side', () => {
+  test('the layout reads the stored side and the Integrations page offers the choice', async () => {
+    const { SIDEBAR_SIDE_SOURCE } = await import('./layout/sidebarSideSource');
+    const { SidebarSideSettingsItem } = await import('./layout/SidebarSideSection');
+    expect(MITTRCRAFT_UI_PLUGIN.sidebarSide).toBe(SIDEBAR_SIDE_SOURCE);
+    expect(INTEGRATIONS_PAGE.at(-1)).toBe(SidebarSideSettingsItem);
   });
 });

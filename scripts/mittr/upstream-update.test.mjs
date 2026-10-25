@@ -169,7 +169,7 @@ test('a clean update merges on its own branch, records the base, runs every gate
   assert.deepEqual([...positions].sort((a, b) => a - b), positions);
   assert.ok(runner.calls.at(-1).endsWith('build-desktop.mjs --flavor dev'), 'the Dev build, which runs the leak scan, is the last gate');
 
-  assert.match(output.text(), /upstream files touched: 2 of 40/);
+  assert.match(output.text(), /upstream files touched: 2 of 45/);
   assert.match(output.text(), /walk/i);
 
   assert.deepEqual(runner.isolatedCalls.map((call) => call.replace(/^\S+ /, '')), [
@@ -199,7 +199,7 @@ test('a conflict stops the update and names the hook that owns each file, with i
   assert.ok(!text.includes('A second paragraph'));
   assert.match(text, /bun\.lock[\s\S]*bun install/);
   assert.match(text, /--continue/);
-  assert.match(text, /upstream files touched before this merge: 2 of 40/);
+  assert.match(text, /upstream files touched before this merge: 2 of 45/);
 });
 
 test('after the conflict is resolved and committed, --continue runs the rest', (t) => {
@@ -229,7 +229,7 @@ test('a failing gate stops with the next action and still reports the touch coun
   assert.equal(result.status, 'stopped');
   assert.ok(runner.calls.at(-1).includes('type-check'));
   assert.ok(!runner.calls.some((call) => call.includes('build-desktop')));
-  assert.match(output.text(), /upstream files touched: 2 of 40/);
+  assert.match(output.text(), /upstream files touched: 2 of 45/);
   assert.match(output.text(), new RegExp(`upstream-update\\.mjs ${repo.short} --continue`));
 });
 

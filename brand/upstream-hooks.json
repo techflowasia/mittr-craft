@@ -165,6 +165,12 @@
       "why": "A plugin that words the line under the sign-in title could not tell a local desktop, which has no company sign-in to offer, from a web or remote window, so the gate now also gives it the runtime it is in."
     }
   ],
+  "packages/ui/src/components/chat/ChatInput.tsx": [
+    {
+      "hook": "composer-shift-enter",
+      "why": "A build that edits text on Shift+Enter (continuing a Markdown list) had no way in short of editing the composer's key handler; the handler now asks shiftEnterEdit after the history keys and before the send branch, applies an answer as one editor edit and consumes the key, and with no plugin, or for plain Enter, a key that sends, shell mode or an open picker, nothing changes."
+    }
+  ],
   "packages/ui/src/components/chat/ChatMessage.tsx": [
     {
       "hook": "chat-message",
@@ -201,16 +207,38 @@
       "why": "The phone-sized model sheet builds its own rows, so an entry a product plugin marked as unavailable could still be applied there by its row, its effort chips or its more-efforts panel and showed no mark; the sheet now draws the same status pill and disables those buttons for a blocked entry, and without a plugin it is unchanged."
     }
   ],
+  "packages/ui/src/components/chat/composer/shiftEnterEdit.ts": [
+    {
+      "hook": "composer-shift-enter",
+      "why": "The decision of when a product may answer Shift+Enter lives in one small module: only Enter with Shift and no Alt, Ctrl or Meta, in normal input mode with no picker open, and only when the keyboard policy says the key breaks the line rather than sends; the first plugin with an edit answers."
+    }
+  ],
   "packages/ui/src/components/chat/composer/ui/ComposerFooter.tsx": [
     {
       "hook": "composer-actions",
       "why": "A downstream build adds its own composer action beside the microphone (a voice assistant button) and can hold dictation off with a reason, without editing the footer on every upstream release. With no plugin nothing changes."
     }
   ],
+  "packages/ui/src/components/layout/ContextSidebarTab.tsx": [
+    {
+      "hook": "context-raw-messages",
+      "why": "The context panel's Raw Messages section was a flat list of one-line rows, so a build that shows the session's work as a timeline instead (each prompt with the steps it caused and the subagents they started) would have had to edit the panel; a context-raw-messages slot, given the session id, its directory and the message records the panel already reads, takes the place of that section when a plugin fills it, inside an error boundary, and with no plugin the section is unchanged."
+    }
+  ],
   "packages/ui/src/components/layout/MainLayout.tsx": [
     {
       "hook": "main-surface",
       "why": "A downstream build that wants its own home page over the chat area had no place to render one inside the layout's providers, and no stable names for the layout's regions to style; a main-surface slot renders last inside the main area, the shell, the right column and the main area carry data-product-region names, and with no plugin the slot renders nothing."
+    },
+    {
+      "hook": "sidebar-side",
+      "why": "A build that lets the person put the session list on the right edge of the window had no way to move it short of rebuilding the layout; the row that holds the sidebar and the column now carries data-sidebar-side from useProductSidebarSide, is reversed on screen for the right edge while the sidebar stays first in the page (so the column keeps its state and glass styles keep their anchors), gives the sidebar its side, and on the right puts a plain drag strip where the left edge keeps the titlebar reserve. With no plugin the sidebar is on the left as before."
+    }
+  ],
+  "packages/ui/src/components/layout/Sidebar.tsx": [
+    {
+      "hook": "sidebar-side",
+      "why": "On the right edge the sidebar's border, inset shadow and resize handle belonged on its other side, and dragging the handle toward the content shrank it; a side prop, left by default, mirrors those and negates the drag so the same gesture widens the sidebar on both edges."
     }
   ],
   "packages/ui/src/components/model-picker/ModelEntryStatusPill.tsx": [
@@ -329,6 +357,18 @@
     {
       "hook": "main-surface",
       "why": "The main-surface slot is a named slot like the others, with no props: a downstream build renders its own page inside the main area without editing the layout, and with no plugin it renders nothing."
+    },
+    {
+      "hook": "context-raw-messages",
+      "why": "The context-raw-messages slot is a named slot like the others, with the session id, its directory and its message records as props, and useProductSlotFilled tells a component whether any plugin fills a slot, so a section can step aside for the slot only when something takes its place."
+    },
+    {
+      "hook": "composer-shift-enter",
+      "why": "A product plugin can now give composerShiftEnter, which takes the composer's text and selection and returns one edit (range, insert and selection) or null, and productComposerShiftEnter asks each plugin in turn, skipping one that throws."
+    },
+    {
+      "hook": "sidebar-side",
+      "why": "A product plugin can now give sidebarSide, a { subscribe, get } source of 'left' or 'right', and useProductSidebarSide reads the last one given through useSyncExternalStore, falling back to the left when none is given or it throws, so the hook count stays fixed whatever plugins load."
     }
   ],
   "packages/ui/src/lib/quota/providers/index.ts": [
