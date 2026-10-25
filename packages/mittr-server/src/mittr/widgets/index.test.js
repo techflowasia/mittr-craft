@@ -17,7 +17,7 @@ const ALICE = 'a1a1a1a1a1a1a1a1';
 const BOB = 'b2b2b2b2b2b2b2b2';
 const quiet = { log: () => {}, warn: () => {}, error: () => {} };
 
-const setUp = async (t, { host = {}, personalDesktop = true, hold = null } = {}) => {
+const setUp = async (t, { host = { confirm: async () => true }, personalDesktop = true, hold = null } = {}) => {
   const dataDir = tempDataDir(t);
   const project = fs.realpathSync(tempDataDir(t));
   const app = express();

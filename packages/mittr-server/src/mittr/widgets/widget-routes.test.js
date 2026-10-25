@@ -12,10 +12,10 @@ import { createWidgetStore } from './widget-store.js';
 const ALICE = 'a1a1a1a1a1a1a1a1';
 const BOB = 'b2b2b2b2b2b2b2b2';
 
-const setUp = async (t, { scope = 'local', peer = null } = {}) => {
+const setUp = async (t, { scope = 'local', peer = null, confirm = undefined } = {}) => {
   const dataDir = tempDataDir(t);
   const project = fs.realpathSync(tempDataDir(t));
-  const state = { key: ALICE, switchOn: true, runs: 0 };
+  const state = { key: ALICE, switchOn: true, runs: 0, questions: [], answer: async () => true };
   const store = createWidgetStore({ dataDir });
   const runner = createWidgetRunner({
     store,
@@ -39,7 +39,7 @@ const setUp = async (t, { scope = 'local', peer = null } = {}) => {
   }
   registerWidgetRoutes(app, {
     express,
-    host: {},
+    host: confirm === null ? {} : { confirm: confirm ?? (async (question) => { state.questions.push(question); return state.answer(question); }) },
     requestScope: () => scope,
     store,
     runner,
@@ -96,12 +96,80 @@ test('the person turns a widget on, it refreshes, and turns it off again', async
   assert.equal((await call('POST', `/api/mittr/widgets/${widget.id}/refresh`)).status, 409);
 });
 
+test('turning a widget on asks the person in a native dialog that names the widget, its command and its folder', async (t) => {
+  const { call, store, state, widget, project } = await setUp(t);
+  assert.equal((await call('POST', `/api/mittr/widgets/${widget.id}/enable`, { revision: widget.revision })).status, 200);
+  assert.deepEqual(state.questions, [{
+    title: 'Turn on a widget',
+    message: 'Turn on "Dev build"?',
+    detail: `Every 10 minutes it runs this command in ${project}:\n\ncat status.txt\n\nTurn it on only if you asked for this widget.`,
+    confirmLabel: 'Turn on',
+    cancelLabel: 'Cancel',
+  }]);
+  assert.equal(store.get(ALICE, widget.id).enabled, true);
+});
+
+test('a web widget\'s dialog names its exact address', async (t) => {
+  const { call, store, state } = await setUp(t);
+  const page = store.create(ALICE, { title: 'Status page', display: 'status', source: { type: 'url', url: 'https://status.example.test/api?q=1' }, refreshMinutes: 15 });
+  assert.equal((await call('POST', `/api/mittr/widgets/${page.id}/enable`, { revision: page.revision })).status, 200);
+  assert.equal(state.questions[0].message, 'Turn on "Status page"?');
+  assert.equal(state.questions[0].detail, 'Every 15 minutes it reads https://status.example.test/api?q=1\n\nTurn it on only if you asked for this widget.');
+});
+
+test('a no in the dialog leaves the widget off', async (t) => {
+  const { call, store, state, widget } = await setUp(t);
+  state.answer = async () => false;
+  assert.deepEqual(await call('POST', `/api/mittr/widgets/${widget.id}/enable`, { revision: widget.revision }), { status: 403, body: { error: 'The widget was not turned on' } });
+  assert.equal(state.questions.length, 1);
+  assert.equal(store.get(ALICE, widget.id).enabled, false);
+  assert.equal(state.runs, 0);
+});
+
+test('without a dialog on this Mac, or with one that fails or answers anything but yes, the widget is never turned on', async (t) => {
+  for (const [label, confirm] of [['no host dialog', null], ['a failing dialog', async () => { throw new Error('no display'); }], ['a truthy answer that is not yes', async () => 'yes']]) {
+    const { call, store, widget } = await setUp(t, { confirm });
+    const answer = await call('POST', `/api/mittr/widgets/${widget.id}/enable`, { revision: widget.revision });
+    assert.equal(answer.status, 403, label);
+    assert.equal(store.get(ALICE, widget.id).enabled, false, label);
+  }
+});
+
+test('a widget that changed while the dialog was open is not turned on', async (t) => {
+  const { call, store, state, widget, project } = await setUp(t);
+  state.answer = async () => {
+    store.update(ALICE, widget.id, { source: { type: 'command', command: 'cat other.txt', cwd: project } });
+    return true;
+  };
+  assert.deepEqual(await call('POST', `/api/mittr/widgets/${widget.id}/enable`, { revision: widget.revision }), { status: 409, body: { error: 'This widget changed since you looked; check it again' } });
+  assert.equal(store.get(ALICE, widget.id).enabled, false);
+});
+
+test('a revision that is missing or stale is refused before any dialog', async (t) => {
+  const { call, store, state, widget } = await setUp(t);
+  assert.equal((await call('POST', `/api/mittr/widgets/${widget.id}/enable`, {})).status, 400);
+  assert.equal((await call('POST', `/api/mittr/widgets/${widget.id}/enable`, { revision: 'stale' })).status, 409);
+  assert.deepEqual(state.questions, []);
+  assert.equal(store.get(ALICE, widget.id).enabled, false);
+});
+
+test('an account switch while the dialog was open turns nothing on', async (t) => {
+  const { call, store, state, widget } = await setUp(t);
+  state.answer = async () => {
+    state.key = BOB;
+    return true;
+  };
+  assert.equal((await call('POST', `/api/mittr/widgets/${widget.id}/enable`, { revision: widget.revision })).status, 409);
+  assert.equal(store.get(ALICE, widget.id).enabled, false);
+});
+
 test('turning on or refreshing while the widgets switch is off is refused', async (t) => {
   const { call, store, state, widget } = await setUp(t);
   state.switchOn = false;
   assert.deepEqual(await call('POST', `/api/mittr/widgets/${widget.id}/enable`, { revision: widget.revision }), { status: 409, body: { error: 'The widgets tool is turned off in Settings → Integrations' } });
   assert.equal(store.get(ALICE, widget.id).enabled, false);
   assert.equal(state.runs, 0);
+  assert.deepEqual(state.questions, []);
 });
 
 test('a widget of another account, or none, answers 404', async (t) => {
@@ -135,5 +203,6 @@ test('every widget route answers 403 to a request that is not from this Mac', as
     assert.deepEqual(await send('DELETE', `/api/mittr/widgets/${widget.id}`), refused, label);
     assert.equal(store.get(ALICE, widget.id).enabled, false, label);
     assert.equal(state.runs, 0, label);
+    assert.deepEqual(state.questions, [], label);
   }
 });
