@@ -241,7 +241,7 @@ const createToolEntry = ({ name, description, definitions, parameters, codeMode 
         })
         await progress()
         const endpoint = process.env.OPENCHAMBER_AGENT_TOOL_URL
-        const token = process.env.OPENCHAMBER_AGENT_TOOL_TOKEN
+        const token = keepCallbackToken()
         // No output schema is declared, so a result must never carry an output
         // field: OpenCode rejects that with "Tool result declared output
         // without an output schema". The envelope travels as text content.
@@ -334,6 +334,17 @@ const createPluginSource = ({ includeControl, includeWeb, includeMemory, include
     if (!entries.includes(host)) process.env[key] = [...entries, host].join(",")
   }
 }
+
+const TOKEN_SLOT = Symbol.for("openchamber.agent-tool.token")
+
+const keepCallbackToken = () => {
+  const token = process.env.OPENCHAMBER_AGENT_TOOL_TOKEN
+  if (token !== undefined) globalThis[TOKEN_SLOT] = token
+  delete process.env.OPENCHAMBER_AGENT_TOOL_TOKEN
+  return globalThis[TOKEN_SLOT]
+}
+
+keepCallbackToken()
 
 export default {
   id: ${JSON.stringify(PLUGIN_ID)},

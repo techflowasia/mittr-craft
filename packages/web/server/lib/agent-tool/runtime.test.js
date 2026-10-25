@@ -616,4 +616,66 @@ describe('managed agent tool runtime', () => {
       await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
   });
+
+  const TOKEN_SLOT = Symbol.for('openchamber.agent-tool.token');
+
+  const withCallbackEnv = async (work) => {
+    const previous = { url: process.env.OPENCHAMBER_AGENT_TOOL_URL, token: process.env.OPENCHAMBER_AGENT_TOOL_TOKEN, slot: globalThis[TOKEN_SLOT], fetch: globalThis.fetch };
+    try {
+      return await work();
+    } finally {
+      globalThis.fetch = previous.fetch;
+      if (previous.slot === undefined) delete globalThis[TOKEN_SLOT];
+      else globalThis[TOKEN_SLOT] = previous.slot;
+      if (previous.url === undefined) delete process.env.OPENCHAMBER_AGENT_TOOL_URL;
+      else process.env.OPENCHAMBER_AGENT_TOOL_URL = previous.url;
+      if (previous.token === undefined) delete process.env.OPENCHAMBER_AGENT_TOOL_TOKEN;
+      else process.env.OPENCHAMBER_AGENT_TOOL_TOKEN = previous.token;
+    }
+  };
+
+  const recordCalls = (sent) => {
+    globalThis.fetch = async (endpoint, init) => {
+      sent.push({ endpoint, authorization: init.headers.authorization });
+      return new Response(JSON.stringify({ schemaVersion: 1, ok: true, action: 'projects.list', data: {} }));
+    };
+  };
+
+  it('keeps the callback token out of the environment the engine hands its processes, across a reload', async () => {
+    const { runtime, dataDir } = await createRuntime();
+    const prepared = await prepareManagedEnv(runtime);
+    await withCallbackEnv(async () => {
+      const sent = [];
+      process.env.OPENCHAMBER_AGENT_TOOL_URL = prepared.OPENCHAMBER_AGENT_TOOL_URL;
+      process.env.OPENCHAMBER_AGENT_TOOL_TOKEN = prepared.OPENCHAMBER_AGENT_TOOL_TOKEN;
+      await loadTools(dataDir, 'taken');
+
+      expect(Object.hasOwn(process.env, 'OPENCHAMBER_AGENT_TOOL_TOKEN')).toBe(false);
+      expect(process.env.OPENCHAMBER_AGENT_TOOL_URL).toBe(prepared.OPENCHAMBER_AGENT_TOOL_URL);
+
+      const reloaded = await loadTools(dataDir, 'reloaded');
+      recordCalls(sent);
+      const result = await reloaded.openchamber.execute({ action: 'projects.list' }, { sessionID: 'ses_1', progress: async () => {} });
+
+      expect(JSON.parse(result.content).ok).toBe(true);
+      expect(sent).toEqual([{ endpoint: prepared.OPENCHAMBER_AGENT_TOOL_URL, authorization: `Bearer ${prepared.OPENCHAMBER_AGENT_TOOL_TOKEN}` }]);
+      expect(Object.hasOwn(process.env, 'OPENCHAMBER_AGENT_TOOL_TOKEN')).toBe(false);
+    });
+  });
+
+  it('uses a token already kept for this process when the environment no longer has one', async () => {
+    const { runtime, dataDir } = await createRuntime();
+    const prepared = await prepareManagedEnv(runtime);
+    await withCallbackEnv(async () => {
+      const sent = [];
+      process.env.OPENCHAMBER_AGENT_TOOL_URL = prepared.OPENCHAMBER_AGENT_TOOL_URL;
+      delete process.env.OPENCHAMBER_AGENT_TOOL_TOKEN;
+      globalThis[TOKEN_SLOT] = 'acme-kept-token';
+      const tool = await loadTools(dataDir, 'kept');
+      recordCalls(sent);
+      await tool.openchamber.execute({ action: 'projects.list' }, { sessionID: 'ses_1', progress: async () => {} });
+
+      expect(sent.map(({ authorization }) => authorization)).toEqual(['Bearer acme-kept-token']);
+    });
+  });
 });

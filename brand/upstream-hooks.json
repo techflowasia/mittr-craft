@@ -475,6 +475,12 @@
       "why": "A downstream build that wants a next-prompt suggestion after every reply, not only while requested work is unfinished, had no way to change the suggestion instructions short of editing the prompt. A server plugin may now register a suggestion style through registerSuggestionStyle on the plugin context; its suggestionRules() take the place of the suggestion instructions alone, while the recap, the JSON shape, the language rule, the suggestion switch and the runtime filters stay upstream's, and rules that throw or are not a non-empty list of text leave the built-in instructions. With no style registered the prompt is byte-identical."
     }
   ],
+  "packages/web/server/lib/agent-tool/runtime.js": [
+    {
+      "hook": "agent-tool-token",
+      "why": "The agent tool plugin read its callback token from the engine's environment on every call, so the token stayed there and every process the engine starts (its shell commands, terminals, MCP servers and formatters) inherited it and could call the callback as the agent tool; the plugin now moves the token out of the environment when it loads, keeps it for the engine process alone, and still finds it after the engine reloads the plugin."
+    }
+  ],
   "packages/web/server/lib/enterprise-mode.js": [
     {
       "hook": "enterprise",
