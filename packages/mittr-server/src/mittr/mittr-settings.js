@@ -16,6 +16,14 @@ const INVALID_SUGGESTION_STYLE = 'suggestionStyle must be next-step or unfinishe
 export const SUGGESTION_STYLES = Object.freeze(['next-step', 'unfinished-only']);
 export const DEFAULT_SUGGESTION_STYLE = 'next-step';
 
+const INVALID_SIDEBAR_SIDE = 'sidebarSide must be left or right';
+
+export const SIDEBAR_SIDES = Object.freeze(['left', 'right']);
+export const DEFAULT_SIDEBAR_SIDE = 'left';
+
+const isSidebarSide = (value) => SIDEBAR_SIDES.includes(value);
+const sidebarSideOf = (value) => (isSidebarSide(value) ? value : DEFAULT_SIDEBAR_SIDE);
+
 const isSuggestionStyle = (value) => SUGGESTION_STYLES.includes(value);
 const suggestionStyleOf = (value) => (isSuggestionStyle(value) ? value : DEFAULT_SUGGESTION_STYLE);
 
@@ -104,6 +112,7 @@ const settingsOf = (stored) => ({
   tools: toolsOf(stored.tools),
   voice: voiceOf(stored.voice),
   suggestionStyle: suggestionStyleOf(stored.suggestionStyle),
+  sidebarSide: sidebarSideOf(stored.sidebarSide),
 });
 
 const checkToolPatch = (patch) => {
@@ -121,13 +130,14 @@ const checkVoicePatch = (patch) => {
 };
 
 const checkPatch = (patch) => {
-  if (!isPlainObject(patch) || !['showOtherProviders', 'tools', 'voice', 'suggestionStyle'].some((key) => Object.hasOwn(patch, key))) {
+  if (!isPlainObject(patch) || !['showOtherProviders', 'tools', 'voice', 'suggestionStyle', 'sidebarSide'].some((key) => Object.hasOwn(patch, key))) {
     throw new TypeError(`${INVALID_SWITCH}, or tools must be given`);
   }
   if (Object.hasOwn(patch, 'showOtherProviders') && !isBoolean(patch.showOtherProviders)) throw new TypeError(INVALID_SWITCH);
   if (Object.hasOwn(patch, 'tools')) checkToolPatch(patch.tools);
   if (Object.hasOwn(patch, 'voice')) checkVoicePatch(patch.voice);
   if (Object.hasOwn(patch, 'suggestionStyle') && !isSuggestionStyle(patch.suggestionStyle)) throw new TypeError(INVALID_SUGGESTION_STYLE);
+  if (Object.hasOwn(patch, 'sidebarSide') && !isSidebarSide(patch.sidebarSide)) throw new TypeError(INVALID_SIDEBAR_SIDE);
 };
 
 const storedFieldsOf = (stored) => {
@@ -136,6 +146,7 @@ const storedFieldsOf = (stored) => {
   if (Object.hasOwn(stored, 'tools')) fields.tools = toolsOf(stored.tools);
   if (Object.hasOwn(stored, 'voice')) fields.voice = voiceOf(stored.voice);
   if (Object.hasOwn(stored, 'suggestionStyle')) fields.suggestionStyle = suggestionStyleOf(stored.suggestionStyle);
+  if (Object.hasOwn(stored, 'sidebarSide')) fields.sidebarSide = sidebarSideOf(stored.sidebarSide);
   if (stored.dictationCarried === true) fields.dictationCarried = true;
   return fields;
 };
@@ -149,7 +160,7 @@ const storedFieldsOf = (stored) => {
  * engine locked to Mittr. A damaged file is reported once.
  *
  * `update(patch)` takes an explicit true or false, a tools patch, a voice
- * patch, a suggestion style, or several, and returns what it stored. Updates run one at a time, each on what the one
+ * patch, a suggestion style, a sidebar side, or several, and returns what it stored. Updates run one at a time, each on what the one
  * before it stored, and each writes a private (0600) temp file and renames it
  * over the old one, so a reader never sees half a file. A damaged file is
  * replaced.
@@ -193,6 +204,7 @@ export function createMittrSettings({ dataDir, logger = console }) {
     if (Object.hasOwn(patch, 'tools')) next.tools = toolsOf({ ...toolsOf(next.tools), ...patch.tools });
     if (Object.hasOwn(patch, 'voice')) next.voice = voiceOf({ ...voiceOf(next.voice), ...patch.voice });
     if (Object.hasOwn(patch, 'suggestionStyle')) next.suggestionStyle = patch.suggestionStyle;
+    if (Object.hasOwn(patch, 'sidebarSide')) next.sidebarSide = patch.sidebarSide;
     await write(next);
     return settingsOf(next);
   });

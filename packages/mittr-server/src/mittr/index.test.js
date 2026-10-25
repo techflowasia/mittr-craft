@@ -2568,3 +2568,13 @@ test('a stored unfinished-only style registers nothing at start', async (t) => {
   assert.equal((await call('GET', '/api/mittr/chat/settings')).body.suggestionStyle, 'unfinished-only');
   assert.equal(engine.suggestionStyles.length, 0);
 });
+
+test('the sidebar side is stored on this Mac and read back after a restart', async (t) => {
+  const dataDir = tempDataDir(t);
+  const { call } = await setUp(t, { dataDir, host: {} });
+  assert.deepEqual(await call('GET', '/api/mittr/appearance/settings'), { status: 200, body: { sidebarSide: 'left', canChange: true } });
+  assert.deepEqual(await call('PUT', '/api/mittr/appearance/settings', { sidebarSide: 'right' }), { status: 200, body: { sidebarSide: 'right', canChange: true } });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'mittr-settings.json'), 'utf8')).sidebarSide, 'right');
+  const again = await setUp(t, { dataDir, host: {} });
+  assert.equal((await again.call('GET', '/api/mittr/appearance/settings')).body.sidebarSide, 'right');
+});
