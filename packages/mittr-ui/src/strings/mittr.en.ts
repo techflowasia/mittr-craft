@@ -313,4 +313,12 @@ export const mittrEn = {
   'mittr.activity.copy': 'Copy',
   'mittr.activity.copied': 'Copied',
   'mittr.activity.copyJson': 'Copy JSON',
+  'mittr.sidebarSide.title': 'Sidebar position',
+  'mittr.sidebarSide.info': 'Choose which edge of the window the session list sits on.',
+  'mittr.sidebarSide.left': 'Left',
+  'mittr.sidebarSide.right': 'Right',
+  'mittr.sidebarSide.changeOnThisMac': 'This setting can be changed only on this Mac.',
+  'mittr.sidebarSide.retry': 'Try again',
+  'mittr.sidebarSide.errors.loadFailed': 'Could not load the sidebar position',
+  'mittr.sidebarSide.errors.saveFailed': 'Could not save the sidebar position',
 };

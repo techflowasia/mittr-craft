@@ -1,0 +1,11 @@
+[data-sidebar-side="right"] > [data-product-region="column"] > header > [role="tablist"] > [aria-hidden]:nth-child(1) {
+  width: var(--oc-titlebar-left-inset, 0.75rem) !important;
+}
+
+[data-sidebar-side="right"] > [data-product-region="column"] > header > [role="tablist"] > .app-region-no-drag[aria-hidden]:nth-child(2) {
+  width: calc(var(--oc-titlebar-controls-width, 5.5rem) + 0.5rem) !important;
+}
+
+html.mittr-glass [data-sidebar-side="right"] > aside {
+  border-left-color: var(--mittr-glass-edge);
+}

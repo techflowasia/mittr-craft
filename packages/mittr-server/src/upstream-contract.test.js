@@ -2480,6 +2480,39 @@ checks['composer-shift-enter-hook'] = () => {
   has(source('packages/ui/src/components/chat/composer/editor/ComposerEditor.tsx'), /replaceRange\(from: number, to: number, text: string, selectionStart\?: number, selectionEnd\?: number\): void;/);
 };
 
+Object.assign(checks, {
+  'sidebar-side-hook': () => {
+    const plugins = source('packages/ui/src/lib/product-plugins.ts');
+    has(plugins, /^export type ProductSidebarSide = 'left' \| 'right';$/m);
+    has(plugins, /^type ProductSidebarSideSource = \{ subscribe: \(listener: \(\) => void\) => \(\) => void; get: \(\) => ProductSidebarSide \};$/m);
+    has(plugins, /^  sidebarSide\?: ProductSidebarSideSource;$/m);
+    has(plugins, /export function useProductSidebarSide\(\): ProductSidebarSide \{/);
+    has(plugins, /return source\?\.get\(\) === 'right' \? 'right' : 'left';/, 'an unreadable or unknown side no longer falls back to the left');
+    const layout = source('packages/ui/src/components/layout/MainLayout.tsx');
+    has(layout, /^import \{ useProductSidebarSide \} from '@\/lib\/product-plugins';$/m);
+    has(layout, /const sidebarSide = useProductSidebarSide\(\);/);
+    has(layout, /<div className=\{cn\('flex flex-1 overflow-hidden', sidebarSide === 'right' && 'flex-row-reverse'\)\} data-page-scroll-lock="true" data-sidebar-side=\{sidebarSide\}>\s*<Sidebar\s/, 'the row no longer carries data-sidebar-side or no longer starts with the sidebar');
+    has(layout, /side=\{sidebarSide\}\s*topBar=\{sidebarSide === 'right' \? <div aria-hidden className="app-region-drag shrink-0" style=\{\{ height: 'var\(--oc-header-height, 3rem\)' \}\} \/> : <SidebarTopBar \/>\}/);
+    has(layout, /<\/Sidebar>\s*<div className="[^"]*" data-page-scroll-lock="true" data-product-region="column">/, 'the column no longer follows the sidebar in the row');
+    const sidebar = source('packages/ui/src/components/layout/Sidebar.tsx');
+    has(sidebar, /^    side\?: 'left' \| 'right';$/m);
+    has(sidebar, /const delta = isRightSide \? -pointerDelta : pointerDelta;/);
+    has(sidebar, /isRightSide \? 'border-l' : 'border-r',/);
+    has(sidebar, /isRightSide \? 'absolute left-0' : 'absolute right-0',/);
+  },
+  'header-titlebar-reserve': () => {
+    const header = source('packages/ui/src/components/layout/Header.tsx');
+    has(header, /<header\s+ref=\{headerRef\}[\s\S]*?>\s*\{renderDesktop\(\)\}\s*<\/header>/, 'the header no longer holds only the desktop row');
+    const row = header.slice(header.indexOf('const renderDesktop = () => ('));
+    has(row, /^const renderDesktop = \(\) => \(\s*<div\s+onMouseDown=\{handleDragStart\}[\s\S]*?role="tablist"\s+aria-label=\{t\('header\.navigation\.mainAria'\)\}\s*>\s*\{\/\*[\s\S]*?\*\/\}\s*<div\s+aria-hidden\s+className="shrink-0 self-stretch[^"]*"\s+style=\{\{ width: headerInsetSpacerWidth \}\}\s*\/>\s*\{\/\*[\s\S]*?\*\/\}\s*<div\s+aria-hidden\s+className="app-region-no-drag shrink-0 self-stretch[^"]*"\s+style=\{\{ width: headerControlsSpacerWidth \}\}\s*\/>/, 'the header row no longer starts with the two titlebar spacers');
+    has(header, /: 'var\(--oc-titlebar-left-inset, 0\.75rem\)';/);
+    has(header, /: 'calc\(var\(--oc-titlebar-controls-width, 5\.5rem\) \+ 0\.5rem\)';/);
+    has(source('packages/ui/src/components/layout/TitlebarLeftControls.tsx'), /document\.documentElement\.style\.setProperty\('--oc-titlebar-controls-width', `\$\{Math\.round\(width\)\}px`\);/);
+    has(source('packages/ui/src/components/layout/MainLayout.tsx'), /<TitlebarLeftControls \/>\s*\{\/\*[\s\S]*?\*\/\}\s*<div className=\{cn\('flex flex-1 overflow-hidden'/, 'TitlebarLeftControls is no longer rendered just before the row');
+    has(source('packages/ui/src/components/layout/MainLayout.tsx'), /data-product-region="column">\s*<Header \/>/, 'the header is no longer the column\'s first child');
+  },
+});
+
 test('every contract item has a check, and every check an item', () => {
   assert.deepEqual(UPSTREAM_CONTRACT.map((entry) => entry.id).sort(), Object.keys(checks).sort());
   for (const entry of UPSTREAM_CONTRACT) {

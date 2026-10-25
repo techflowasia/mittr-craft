@@ -18,6 +18,7 @@ import { ComposerVoiceActions } from './voice/ComposerVoiceActions';
 import { useMittrDictationBlock } from './voice/useMittrDictationBlock';
 import { ContextActivity } from './activity/ContextActivity';
 import { listContinuationEdit } from './composer/listContinuation';
+import { SIDEBAR_SIDE_SOURCE } from './layout/sidebarSideSource';
 
 // Registered on import, which the entry points do before their first render:
 // the model picker takes its decorations once and keeps them.
@@ -49,6 +50,7 @@ export const MITTRCRAFT_UI_PLUGIN: ProductUiPlugin = {
   // Mittr models come from the Mittr catalog; models.dev is a third party.
   remoteModelCatalog: false,
   composerShiftEnter: listContinuationEdit,
+  sidebarSide: SIDEBAR_SIDE_SOURCE,
 };
 
 registerProductUiPlugin(MITTRCRAFT_UI_PLUGIN);
