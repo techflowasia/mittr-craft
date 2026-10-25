@@ -16,6 +16,7 @@ import { mittrT } from './strings/mittrT';
 import { AdSignIn } from './ui-auth/AdSignIn';
 import { ComposerVoiceActions } from './voice/ComposerVoiceActions';
 import { useMittrDictationBlock } from './voice/useMittrDictationBlock';
+import { ContextActivity } from './activity/ContextActivity';
 
 // Registered on import, which the entry points do before their first render:
 // the model picker takes its decorations once and keeps them.
@@ -38,6 +39,7 @@ export const MITTRCRAFT_UI_PLUGIN: ProductUiPlugin = {
     'assistant-message-footer': [AnsweredByNotice, QuotaRetryButton],
     'composer-actions': ComposerVoiceActions,
     'main-surface': TodayPage,
+    'context-raw-messages': ContextActivity,
   },
   composer: { useDictationBlock: useMittrDictationBlock },
   modelPicker: { useDecorations: useMittrPickerDecorations },

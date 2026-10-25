@@ -888,3 +888,27 @@ UPSTREAM_CONTRACT.push(
     why: 'a widget alert posts { title, body, tag } to POST /api/notifications/emit on the server\'s own loopback port; the route is registered after API auth, which lets a local request through when no UI password or sign-in provider is set, and its emitter hands the notice to the desktop notification path with kind plugin',
   },
 );
+
+UPSTREAM_CONTRACT.push(
+  {
+    id: 'context-raw-messages-slot',
+    files: ['packages/ui/src/lib/product-plugins.ts', 'packages/ui/src/components/layout/ContextSidebarTab.tsx'],
+    why: "product-plugins.ts has the context-raw-messages slot with props { sessionId, directory, messages } and useProductSlotFilled(name); the context panel's ContextPanelContent renders the slot once, inside an ErrorBoundary, in place of its Raw Messages section and after the context breakdown, and passes the session's useSessionMessageRecords list, so the MittrCraft activity timeline takes the place of the flat raw rows while the rest of the panel stays upstream's",
+  },
+  {
+    id: 'activity-timeline-reads',
+    files: [
+      'packages/ui/src/lib/opencode/model.ts',
+      'packages/ui/src/lib/opencode/tools.ts',
+      'packages/ui/src/components/chat/message/messageRole.ts',
+      'packages/ui/src/components/chat/message/parts/taskToolModel.ts',
+      'packages/ui/src/sync/sync-context.tsx',
+      'packages/ui/src/stores/useUIStore.ts',
+      'packages/ui/src/lib/clipboard.ts',
+      'packages/ui/src/components/code/WorkerHighlightedCode.tsx',
+      'packages/ui/src/components/icon/sprite.ts',
+      'packages/ui/src/lib/i18n/index.ts',
+    ],
+    why: "the activity timeline groups messages into turns with deriveMessageRole, reads an assistant record's time.completed, agent, modelID and tokens { input, output }, a shell record's status and time.completed, leaves out idle records, finds a subagent call by isSubagentTool (the subagent tool) and its child session in state.metadata.sessionID (or sessionId, or the input's sessionID) the way readTaskSessionIdFromRecord does, lists children from useAllLiveSessions by parentID, opens one with useUIStore's openContextPanelTab(directory, { mode: 'chat', dedupeKey, label, readOnly }) or, on mobile and VS Code, useSessionUIStore's setCurrentSession, follows timeFormatPreference, copies a record's JSON with copyTextToClipboard ({ ok }), shows it with WorkerHighlightedCode, draws the check and file-copy icons and formats numbers with getCurrentIntlLocale",
+  },
+);

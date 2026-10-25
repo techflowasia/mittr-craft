@@ -212,3 +212,10 @@ describe('MittrCraft glass look', () => {
     }
   });
 });
+
+describe('MittrCraft activity timeline', () => {
+  test('the context panel shows the activity timeline in place of the raw messages', async () => {
+    const { ContextActivity } = await import('./activity/ContextActivity');
+    expect(MITTRCRAFT_UI_PLUGIN.slots?.['context-raw-messages']).toBe(ContextActivity);
+  });
+});
