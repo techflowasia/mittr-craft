@@ -65,6 +65,10 @@ export type ProductSidebarSide = 'left' | 'right';
 
 type ProductSidebarSideSource = { subscribe: (listener: () => void) => () => void; get: () => ProductSidebarSide };
 
+export type ProductFontOption = { id: string; label: string; description: string; stack: string };
+
+export type ProductFontOptions = { ui?: ProductFontOption[]; mono?: ProductFontOption[] };
+
 type ProductMessageError = { type: string; message: string; status?: number; responseBody?: string; providerID?: string };
 
 export type ProductUiPlugin = {
@@ -83,6 +87,7 @@ export type ProductUiPlugin = {
   remoteModelCatalog?: boolean;
   composerShiftEnter?: (state: ComposerTextState) => ComposerEdit | null;
   sidebarSide?: ProductSidebarSideSource;
+  fontOptions?: ProductFontOptions;
 };
 
 type Substitution = { pattern: RegExp; to: string };
@@ -347,6 +352,10 @@ export function productComposerShiftEnter(state: ComposerTextState): ComposerEdi
     }
   }
   return null;
+}
+
+export function productFontOptions(kind: keyof ProductFontOptions): ProductFontOption[] {
+  return plugins.flatMap((plugin) => plugin.fontOptions?.[kind] ?? []);
 }
 
 const sidebarSideSourceOf = (current: ProductUiPlugin[]): ProductSidebarSideSource | undefined => {

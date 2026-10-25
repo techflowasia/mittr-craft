@@ -303,6 +303,12 @@
       "why": "A build that brings its own model list had no way to keep the window from asking models.dev for model metadata (when the server cannot answer) and for provider logos the UI does not bundle, which tells a third party the app is running; a product plugin that sets remoteModelCatalog to false now stops both, and without one nothing changes."
     }
   ],
+  "packages/ui/src/lib/fontOptions.ts": [
+    {
+      "hook": "font-options",
+      "why": "The font pickers listed only the faces upstream names, so a build that bundles a face of its own (IBM Plex, served from beside the app) could not offer it; the option lists and their lookup maps now keep the same objects but are refilled in place, the plugin's options first, from the font options product plugins give, skipping a built-in or repeated id and an option with no id or stack. A contributed option has no source, so choosing it loads nothing from the network, and with no plugin the lists are upstream's."
+    }
+  ],
   "packages/ui/src/lib/i18n/store.ts": [
     {
       "hook": "ui",
@@ -369,6 +375,10 @@
     {
       "hook": "sidebar-side",
       "why": "A product plugin can now give sidebarSide, a { subscribe, get } source of 'left' or 'right', and useProductSidebarSide reads the last one given through useSyncExternalStore, falling back to the left when none is given or it throws, so the hook count stays fixed whatever plugins load."
+    },
+    {
+      "hook": "font-options",
+      "why": "A product plugin can now give fontOptions, { ui, mono } lists of options with an id, label, description and stack and no source, and productFontOptions(kind) returns every plugin's options of one kind for the font option lists to merge in."
     }
   ],
   "packages/ui/src/lib/quota/providers/index.ts": [

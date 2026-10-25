@@ -2552,6 +2552,26 @@ Object.assign(checks, {
     has(sidebar, /isRightSide \? 'border-l' : 'border-r',/);
     has(sidebar, /isRightSide \? 'absolute left-0' : 'absolute right-0',/);
   },
+  'font-options-hook': () => {
+    const plugins = source('packages/ui/src/lib/product-plugins.ts');
+    has(plugins, /^export type ProductFontOption = \{ id: string; label: string; description: string; stack: string \};$/m, 'a product font option gained a source or lost a field');
+    has(plugins, /^export type ProductFontOptions = \{ ui\?: ProductFontOption\[\]; mono\?: ProductFontOption\[\] \};$/m);
+    has(plugins, /^  fontOptions\?: ProductFontOptions;$/m);
+    has(plugins, /export function productFontOptions\(kind: keyof ProductFontOptions\): ProductFontOption\[\] \{\s*return plugins\.flatMap\(\(plugin\) => plugin\.fontOptions\?\.\[kind\] \?\? \[\]\);/);
+    const options = source('packages/ui/src/lib/fontOptions.ts');
+    has(options, /^import \{ productFontOptions, subscribeProductUiPlugins \} from '\.\/product-plugins';$/m);
+    has(options, /^export const UI_FONT_OPTION_MAP = buildFontMap\(UI_FONT_OPTIONS\);$/m, 'the UI map is no longer built once, in place');
+    has(options, /^export const CODE_FONT_OPTION_MAP = buildFontMap\(CODE_FONT_OPTIONS\);$/m, 'the code map is no longer built once, in place');
+    has(options, /if \(!option\.id \|\| !option\.stack \|\| taken\.has\(option\.id\)\) \{\s*continue;/, 'an option with no id or stack, or a taken id, is no longer skipped');
+    has(options, /added\.push\(\{ id: option\.id as T, label: option\.label, description: option\.description, stack: option\.stack \}\);/, 'a contributed option may carry a source again');
+    has(options, /return \[\.\.\.added, \.\.\.builtIn\];/, 'a contributed option no longer comes before the built-in ones');
+    has(options, /list\.splice\(0, list\.length, \.\.\.next\);/);
+    has(options, /^subscribeProductUiPlugins\(syncProductFonts\);\nsyncProductFonts\(\);$/m, 'the lists no longer follow the plugins');
+    has(options, /type ProductFontId = string & Record<never, never>;/);
+    for (const kind of ['ui', 'mono']) {
+      has(options, new RegExp(`productFontOptions\\('${kind}'\\)`), `the ${kind} list no longer reads the plugin's ${kind} options`);
+    }
+  },
   'header-titlebar-reserve': () => {
     const header = source('packages/ui/src/components/layout/Header.tsx');
     has(header, /<header\s+ref=\{headerRef\}[\s\S]*?>\s*\{renderDesktop\(\)\}\s*<\/header>/, 'the header no longer holds only the desktop row');

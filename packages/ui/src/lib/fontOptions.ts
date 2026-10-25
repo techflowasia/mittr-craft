@@ -1,6 +1,10 @@
-export type UiFontOption = 'inter' | 'fixel' | 'geist-sans' | 'atkinson-hyperlegible' | 'source-sans-3' | 'roboto' | 'noto-sans' | 'dm-sans' | 'manrope' | 'system';
+import { productFontOptions, subscribeProductUiPlugins } from './product-plugins';
 
-export type MonoFontOption = 'jetbrains-mono' | 'fira-code' | 'geist-mono' | 'commit-mono' | 'source-code-pro' | 'cascadia-code' | 'roboto-mono' | 'iosevka' | 'system-mono';
+type ProductFontId = string & Record<never, never>;
+
+export type UiFontOption = 'inter' | 'fixel' | 'geist-sans' | 'atkinson-hyperlegible' | 'source-sans-3' | 'roboto' | 'noto-sans' | 'dm-sans' | 'manrope' | 'system' | ProductFontId;
+
+export type MonoFontOption = 'jetbrains-mono' | 'fira-code' | 'geist-mono' | 'commit-mono' | 'source-code-pro' | 'cascadia-code' | 'roboto-mono' | 'iosevka' | 'system-mono' | ProductFontId;
 
 interface FontFaceSourceBase {
     family: string;
@@ -177,6 +181,45 @@ const buildFontMap = <T extends string>(options: FontOptionDefinition<T>[]) =>
 
 export const UI_FONT_OPTION_MAP = buildFontMap(UI_FONT_OPTIONS);
 export const CODE_FONT_OPTION_MAP = buildFontMap(CODE_FONT_OPTIONS);
+
+const builtInUiFonts = [...UI_FONT_OPTIONS];
+const builtInCodeFonts = [...CODE_FONT_OPTIONS];
+
+const withProductFonts = <T extends string>(
+    contributed: ReturnType<typeof productFontOptions>,
+    builtIn: FontOptionDefinition<T>[],
+): FontOptionDefinition<T>[] => {
+    const taken = new Set<string>(builtIn.map((option) => option.id));
+    const added: FontOptionDefinition<T>[] = [];
+    for (const option of contributed) {
+        if (!option.id || !option.stack || taken.has(option.id)) {
+            continue;
+        }
+        taken.add(option.id);
+        added.push({ id: option.id as T, label: option.label, description: option.description, stack: option.stack });
+    }
+    return [...added, ...builtIn];
+};
+
+const replaceFonts = <T extends string>(
+    list: FontOptionDefinition<T>[],
+    map: Record<T, FontOptionDefinition<T>>,
+    next: FontOptionDefinition<T>[],
+) => {
+    list.splice(0, list.length, ...next);
+    for (const key of Object.keys(map)) {
+        delete map[key as T];
+    }
+    Object.assign(map, buildFontMap(next));
+};
+
+const syncProductFonts = () => {
+    replaceFonts(UI_FONT_OPTIONS, UI_FONT_OPTION_MAP, withProductFonts(productFontOptions('ui'), builtInUiFonts));
+    replaceFonts(CODE_FONT_OPTIONS, CODE_FONT_OPTION_MAP, withProductFonts(productFontOptions('mono'), builtInCodeFonts));
+};
+
+subscribeProductUiPlugins(syncProductFonts);
+syncProductFonts();
 
 export const DEFAULT_UI_FONT: UiFontOption = 'system';
 export const DEFAULT_MONO_FONT: MonoFontOption = 'system-mono';
