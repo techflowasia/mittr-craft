@@ -1,5 +1,6 @@
 import React from 'react';
 
+import './design.css';
 import './glass.css';
 import './readable.css';
 import { useGlassTheme } from './useGlassTheme';

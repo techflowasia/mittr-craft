@@ -705,6 +705,11 @@ export const UPSTREAM_CONTRACT = [
     why: "IBM Plex is the default font through html classes whose !important custom properties outrank the font variables useAppFontEffects writes inline on the root (and the body's inline font-family), and only while useUIStore's uiFont and monoFont are upstream's defaults 'system' and 'system-mono' or not a known option",
   },
   {
+    id: 'design-shape-anchors',
+    files: ['packages/ui/src/components/ui/button.tsx', 'packages/ui/src/lib/typographyWatcher.ts', 'packages/ui/src/lib/theme/cssGenerator.ts', 'packages/ui/src/lib/typography.ts', 'packages/ui/src/styles/design-system.css'],
+    why: "design.css finds the default button by its primary tint class and the data-slot=\"button\" Button renders, outranks the --text-* sizes typographyWatcher writes on :root and the theme generator writes on :root, :root:not(.dark) and .dark from SEMANTIC_TYPOGRAPHY, and replaces the rounded-sm/md/lg/xl radii that @theme inline bakes into each utility",
+  },
+  {
     id: 'glass-look-anchors',
     files: [
       'packages/ui/src/contexts/theme-system-context.ts',

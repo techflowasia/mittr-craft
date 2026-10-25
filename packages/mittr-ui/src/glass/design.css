@@ -1,0 +1,44 @@
+html.mittr-glass {
+  --mittr-elev-1: 0 1px 2px rgb(9 20 36 / 0.06);
+  --mittr-elev-2: 0 4px 14px rgb(9 20 36 / 0.1);
+  --mittr-elev-3: 0 16px 40px rgb(9 20 36 / 0.18);
+  --mittr-sheen: linear-gradient(180deg, #ffffff14, #fff0 42%);
+}
+
+html.mittr-glass.mittr-glass-dark {
+  --mittr-elev-1: 0 1px 2px rgb(9 20 36 / 0.4);
+  --mittr-elev-2: 0 4px 14px rgb(9 20 36 / 0.5);
+  --mittr-elev-3: 0 16px 40px rgb(9 20 36 / 0.62);
+  --mittr-sheen: linear-gradient(180deg, #ffffff17, #fff0 42%);
+}
+
+html.mittr-glass:root {
+  --text-markdown: 0.9375rem;
+  --text-code: 0.8125rem;
+  --text-ui-header: 0.9375rem;
+  --text-ui-label: 0.8125rem;
+  --text-meta: 0.8125rem;
+  --text-micro: 0.75rem;
+  --text-settings-page-title: 1.25rem;
+}
+
+html.mittr-glass .rounded-sm {
+  border-radius: 6px;
+}
+
+html.mittr-glass .rounded-md {
+  border-radius: 10px;
+}
+
+html.mittr-glass .rounded-lg {
+  border-radius: 14px;
+}
+
+html.mittr-glass .rounded-xl {
+  border-radius: 18px;
+}
+
+html.mittr-glass [data-slot="button"][class*="bg-[color-mix(in_srgb,var(--primary-base)_10%,var(--background))]"] {
+  background-image: var(--mittr-sheen);
+  box-shadow: var(--mittr-elev-1);
+}

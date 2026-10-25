@@ -2089,6 +2089,19 @@ const checks = {
     has(store, /^ {2}monoFont: MonoFontOption;$/m);
   },
 
+  'design-shape-anchors': () => {
+    const button = source('packages/ui/src/components/ui/button.tsx');
+    has(button, /^const TINT_PRIMARY = \[\n {2}"bg-\[color-mix\(in_srgb,var\(--primary-base\)_10%,var\(--background\)\)\]",$/m, 'the default button no longer starts with the primary tint class design.css finds it by');
+    has(button, /^ {8}default: TINT_PRIMARY,$/m, 'the default variant is no longer the primary tint');
+    has(button, /data-slot="button"/);
+    has(source('packages/ui/src/lib/typographyWatcher.ts'), /const styleContent = `:root \{\\n\$\{cssVars\}\\n\}\\n`;/, 'typographyWatcher no longer writes the type sizes on :root');
+    const generator = source('packages/ui/src/lib/theme/cssGenerator.ts');
+    has(generator, /styleContent = `:root \{\\n\$\{cssVars\}\\n\}\\n\\n:root:not\(\.dark\) \{\\n\$\{cssVars\}\\n\}`;/, 'the theme generator no longer writes its variables on :root and :root:not(.dark)');
+    has(generator, /vars\.push\(`  --text-micro: \$\{typography\.micro\};`\);/, 'the theme generator no longer writes --text-micro without !important');
+    has(source('packages/ui/src/lib/typography.ts'), /^export const SEMANTIC_TYPOGRAPHY = \{\n {2}markdown: '[\d.]+rem',\n {2}code: '[\d.]+rem',\n {2}uiHeader: '[\d.]+rem',\n {2}uiLabel: '[\d.]+rem',\n {2}meta: '[\d.]+rem',\n {2}micro: '[\d.]+rem',$/m, 'the semantic type sizes changed names or units');
+    has(source('packages/ui/src/styles/design-system.css'), /^@theme inline \{\n {2}--radius-none: 0;\n {2}--radius-sm: [^;]+;[^\n]*\n {2}--radius-md: [^;]+;[^\n]*\n {2}--radius-lg: [^;]+;[^\n]*\n {2}--radius-xl: [^;]+;/m, 'the radius scale no longer sits in @theme inline as sm/md/lg/xl');
+  },
+
   'glass-look-anchors': () => {
     has(source('packages/ui/src/contexts/theme-system-context.ts'), /export const ThemeSystemContext = createContext<ThemeContextValue \| undefined>\(undefined\);/, 'ThemeSystemContext moved or changed its value type');
     has(source('packages/ui/src/contexts/theme-system-context.ts'), /^ {2}currentTheme: Theme;$/m, 'the theme context no longer carries currentTheme');
