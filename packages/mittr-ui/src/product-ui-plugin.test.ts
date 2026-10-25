@@ -219,3 +219,10 @@ describe('MittrCraft activity timeline', () => {
     expect(MITTRCRAFT_UI_PLUGIN.slots?.['context-raw-messages']).toBe(ContextActivity);
   });
 });
+
+describe('MittrCraft list continuation', () => {
+  test('Shift+Enter on a list item opens the next item', async () => {
+    const { listContinuationEdit } = await import('./composer/listContinuation');
+    expect(MITTRCRAFT_UI_PLUGIN.composerShiftEnter).toBe(listContinuationEdit);
+  });
+});

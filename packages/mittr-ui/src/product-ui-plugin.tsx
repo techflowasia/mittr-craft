@@ -17,6 +17,7 @@ import { AdSignIn } from './ui-auth/AdSignIn';
 import { ComposerVoiceActions } from './voice/ComposerVoiceActions';
 import { useMittrDictationBlock } from './voice/useMittrDictationBlock';
 import { ContextActivity } from './activity/ContextActivity';
+import { listContinuationEdit } from './composer/listContinuation';
 
 // Registered on import, which the entry points do before their first render:
 // the model picker takes its decorations once and keeps them.
@@ -47,6 +48,7 @@ export const MITTRCRAFT_UI_PLUGIN: ProductUiPlugin = {
   sessionAuthDescription: ({ passwordEnabled, runtime }) => (passwordEnabled || runtime === 'desktop-local' ? null : mittrT('mittr.uiAuth.gateDescription')),
   // Mittr models come from the Mittr catalog; models.dev is a third party.
   remoteModelCatalog: false,
+  composerShiftEnter: listContinuationEdit,
 };
 
 registerProductUiPlugin(MITTRCRAFT_UI_PLUGIN);

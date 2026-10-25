@@ -2456,6 +2456,30 @@ Object.assign(checks, {
   },
 });
 
+checks['composer-shift-enter-hook'] = () => {
+  const plugins = source('packages/ui/src/lib/product-plugins.ts');
+  has(plugins, /^export type ComposerTextState = \{ text: string; selectionStart: number; selectionEnd: number \};$/m);
+  has(plugins, /^export type ComposerEdit = \{ from: number; to: number; insert: string; selectionStart: number; selectionEnd: number \};$/m);
+  has(plugins, /^  composerShiftEnter\?: \(state: ComposerTextState\) => ComposerEdit \| null;$/m);
+  has(plugins, /export function productComposerShiftEnter\(state: ComposerTextState\): ComposerEdit \| null \{/);
+  const gate = source('packages/ui/src/components/chat/composer/shiftEnterEdit.ts');
+  has(gate, /if \(input\.key !== 'Enter' \|\| !input\.shiftKey \|\| input\.altKey \|\| input\.ctrlKey \|\| input\.metaKey\) return null;/);
+  has(gate, /if \(input\.inputMode !== 'normal' \|\| input\.autocompleteOpen\) return null;/);
+  has(gate, /if \(shouldSubmitEnter\(input\)\) return null;/);
+  has(source('packages/ui/src/components/chat/composer/keyboardPolicy.ts'), /export const shouldSubmitEnter = \(input: EnterKeyPolicyInput\): boolean => \{/);
+  const input = source('packages/ui/src/components/chat/ChatInput.tsx');
+  has(input, /^import \{ shiftEnterEdit \} from '\.\/composer\/shiftEnterEdit';$/m);
+  assert.equal(lineCount(input, 'shiftEnterEdit('), 1, 'ChatInput asks shiftEnterEdit more than once, or not at all');
+  const handler = input.slice(input.indexOf('const handleKeyDown = (e: KeyboardEvent) => {'), input.indexOf('const handleAbort = React.useCallback('));
+  const history = handler.indexOf("if (e.key === 'ArrowDown' && canNavigateHistoryDown) {");
+  const ask = handler.indexOf('const productEdit = ');
+  const send = handler.indexOf("if (e.key === 'Enter' && shouldSubmitEnter({");
+  assert.ok(history >= 0 && ask > history && send > ask, 'the Shift+Enter hook no longer sits after the history keys and before the send branch');
+  has(handler, /if \(productEdit && composerRef\.current\) \{\s*e\.preventDefault\(\);\s*composerRef\.current\.replaceRange\(productEdit\.from, productEdit\.to, productEdit\.insert, productEdit\.selectionStart, productEdit\.selectionEnd\);\s*return;\s*\}/);
+  has(input, /handleKeyDown\(event\);\s*return event\.defaultPrevented;/, 'the editor no longer treats a prevented key as consumed');
+  has(source('packages/ui/src/components/chat/composer/editor/ComposerEditor.tsx'), /replaceRange\(from: number, to: number, text: string, selectionStart\?: number, selectionEnd\?: number\): void;/);
+};
+
 test('every contract item has a check, and every check an item', () => {
   assert.deepEqual(UPSTREAM_CONTRACT.map((entry) => entry.id).sort(), Object.keys(checks).sort());
   for (const entry of UPSTREAM_CONTRACT) {

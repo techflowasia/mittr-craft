@@ -912,3 +912,17 @@ UPSTREAM_CONTRACT.push(
     why: "the activity timeline groups messages into turns with deriveMessageRole, reads an assistant record's time.completed, agent, modelID and tokens { input, output }, a shell record's status and time.completed, leaves out idle records, finds a subagent call by isSubagentTool (the subagent tool) and its child session in state.metadata.sessionID (or sessionId, or the input's sessionID) the way readTaskSessionIdFromRecord does, lists children from useAllLiveSessions by parentID, opens one with useUIStore's openContextPanelTab(directory, { mode: 'chat', dedupeKey, label, readOnly }) or, on mobile and VS Code, useSessionUIStore's setCurrentSession, follows timeFormatPreference, copies a record's JSON with copyTextToClipboard ({ ok }), shows it with WorkerHighlightedCode, draws the check and file-copy icons and formats numbers with getCurrentIntlLocale",
   },
 );
+
+UPSTREAM_CONTRACT.push(
+  {
+    id: 'composer-shift-enter-hook',
+    files: [
+      'packages/ui/src/lib/product-plugins.ts',
+      'packages/ui/src/components/chat/composer/shiftEnterEdit.ts',
+      'packages/ui/src/components/chat/composer/keyboardPolicy.ts',
+      'packages/ui/src/components/chat/ChatInput.tsx',
+      'packages/ui/src/components/chat/composer/editor/ComposerEditor.tsx',
+    ],
+    why: "a product plugin's composerShiftEnter({ text, selectionStart, selectionEnd }) answers { from, to, insert, selectionStart, selectionEnd } or null; shiftEnterEdit asks it only for Enter with Shift and no Alt, Ctrl or Meta, in normal input mode with no picker open, and only when shouldSubmitEnter says the key breaks the line rather than sends; ChatInput asks after the history keys and before the send branch, applies the edit with the editor's replaceRange and consumes the key, so MittrCraft list continuation runs on Shift+Enter while plain Enter and every shortcut stay upstream's",
+  },
+);
