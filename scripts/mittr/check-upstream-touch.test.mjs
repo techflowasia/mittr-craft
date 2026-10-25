@@ -79,7 +79,7 @@ test('lists every upstream file we touched, counts the source and config ones, a
   assert.equal(result.ok, false);
 
   const report = formatTouchReport(result);
-  assert.match(report, /upstream files touched: 3 of 40/);
+  assert.match(report, /upstream files touched: 3 of 45/);
   assert.match(report, /bun\.lock .*re-resolve with `bun install`/);
   assert.match(report, /docs\(mittr\): reword an upstream doc/);
 });
@@ -206,22 +206,22 @@ const touchAs = (t, files) => {
   return repo;
 };
 
-test('40 counted files pass and 41 fail', (t) => {
+test('45 counted files pass and 46 fail', (t) => {
   const repo = fixtureRepo(t);
   const names = (count) => Array.from({ length: count }, (_, index) => `packages/web/f${String(index).padStart(2, '0')}.js`);
-  const base = repo.commit('release v1.0.0', Object.fromEntries(names(41).map((name) => [name, 'x\n'])));
+  const base = repo.commit('release v1.0.0', Object.fromEntries(names(46).map((name) => [name, 'x\n'])));
   repo.commit('chore(brand): record upstream base', { 'brand/UPSTREAM': `${base}\n` });
-  repo.commit('hook(many): touch forty', Object.fromEntries(names(40).map((name) => [name, 'y\n'])));
+  repo.commit('hook(many): touch forty-five', Object.fromEntries(names(45).map((name) => [name, 'y\n'])));
 
-  const forty = checkUpstreamTouch({ cwd: repo.dir, write: false, hooks: null });
-  assert.equal(forty.counted.length, 40);
-  assert.equal(forty.cap, 40);
-  assert.equal(forty.ok, true);
+  const fortyFive = checkUpstreamTouch({ cwd: repo.dir, write: false, hooks: null });
+  assert.equal(fortyFive.counted.length, 45);
+  assert.equal(fortyFive.cap, 45);
+  assert.equal(fortyFive.ok, true);
 
-  repo.commit('hook(one-more): touch the forty-first', { [names(41)[40]]: 'y\n' });
-  const fortyOne = checkUpstreamTouch({ cwd: repo.dir, write: false, hooks: null });
-  assert.equal(fortyOne.counted.length, 41);
-  assert.equal(fortyOne.ok, false);
+  repo.commit('hook(one-more): touch the forty-sixth', { [names(46)[45]]: 'y\n' });
+  const fortySix = checkUpstreamTouch({ cwd: repo.dir, write: false, hooks: null });
+  assert.equal(fortySix.counted.length, 46);
+  assert.equal(fortySix.ok, false);
 });
 
 test('a counted file missing from the hook list fails', (t) => {
@@ -264,7 +264,7 @@ test("the report names each file's hooks and reasons", (t) => {
   assert.equal(result.ok, true);
   assert.match(report, /packages\/web\/b\.js — hook\(a\): let a be configured/);
   assert.match(report, /hook\(c\): let c run once/);
-  assert.match(report, /upstream files touched: 1 of 40/);
+  assert.match(report, /upstream files touched: 1 of 45/);
 });
 
 test('no hook list skips the list checks', (t) => {
