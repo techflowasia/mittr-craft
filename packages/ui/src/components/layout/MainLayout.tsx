@@ -28,6 +28,7 @@ import { DiffWorkerProvider } from '@/contexts/DiffWorkerProvider';
 import { RunOverview } from '@/components/multirun/RunOverview';
 import { RunAutoFusion } from '@/lib/multirun/autoFusion';
 import { ProductSlot } from '@/lib/product-plugins';
+import { useProductSidebarSide } from '@/lib/product-plugins';
 
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
@@ -52,6 +53,7 @@ export const MainLayout: React.FC = () => {
     useSessionListSync({ isVSCode: false });
     useTerminalSessionKeepalive();
     const isSidebarOpen = useUIStore((state) => state.isSidebarOpen);
+    const sidebarSide = useProductSidebarSide();
     // The grant dialog of isolated spaces; the main layout is never VS Code's (decision 16).
     const isolatedSpacesEnabled = useUIStore((state) => state.isolatedSpacesEnabled);
     const setIsMobile = useUIStore((state) => state.setIsMobile);
@@ -124,12 +126,13 @@ export const MainLayout: React.FC = () => {
                     stay put while the sidebar/header animate beneath them. */}
                 <TitlebarLeftControls />
                 {/* Full-height Sidebar beside [Header above (chat | RightSidebar)] */}
-                <div className="flex flex-1 overflow-hidden" data-page-scroll-lock="true">
+                <div className={cn('flex flex-1 overflow-hidden', sidebarSide === 'right' && 'flex-row-reverse')} data-page-scroll-lock="true" data-sidebar-side={sidebarSide}>
                     <Sidebar
                         isOpen={isSidebarOpen}
                         isMobile={isMobile}
                         className="border-border"
-                        topBar={<SidebarTopBar />}
+                        side={sidebarSide}
+                        topBar={sidebarSide === 'right' ? <div aria-hidden className="app-region-drag shrink-0" style={{ height: 'var(--oc-header-height, 3rem)' }} /> : <SidebarTopBar />}
                     >
                         <SessionSidebar isVisible={isSidebarOpen} />
                     </Sidebar>

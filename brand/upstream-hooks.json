@@ -229,6 +229,16 @@
     {
       "hook": "main-surface",
       "why": "A downstream build that wants its own home page over the chat area had no place to render one inside the layout's providers, and no stable names for the layout's regions to style; a main-surface slot renders last inside the main area, the shell, the right column and the main area carry data-product-region names, and with no plugin the slot renders nothing."
+    },
+    {
+      "hook": "sidebar-side",
+      "why": "A build that lets the person put the session list on the right edge of the window had no way to move it short of rebuilding the layout; the row that holds the sidebar and the column now carries data-sidebar-side from useProductSidebarSide, is reversed on screen for the right edge while the sidebar stays first in the page (so the column keeps its state and glass styles keep their anchors), gives the sidebar its side, and on the right puts a plain drag strip where the left edge keeps the titlebar reserve. With no plugin the sidebar is on the left as before."
+    }
+  ],
+  "packages/ui/src/components/layout/Sidebar.tsx": [
+    {
+      "hook": "sidebar-side",
+      "why": "On the right edge the sidebar's border, inset shadow and resize handle belonged on its other side, and dragging the handle toward the content shrank it; a side prop, left by default, mirrors those and negates the drag so the same gesture widens the sidebar on both edges."
     }
   ],
   "packages/ui/src/components/model-picker/ModelEntryStatusPill.tsx": [
@@ -355,6 +365,10 @@
     {
       "hook": "composer-shift-enter",
       "why": "A product plugin can now give composerShiftEnter, which takes the composer's text and selection and returns one edit (range, insert and selection) or null, and productComposerShiftEnter asks each plugin in turn, skipping one that throws."
+    },
+    {
+      "hook": "sidebar-side",
+      "why": "A product plugin can now give sidebarSide, a { subscribe, get } source of 'left' or 'right', and useProductSidebarSide reads the last one given through useSyncExternalStore, falling back to the left when none is given or it throws, so the hook count stays fixed whatever plugins load."
     }
   ],
   "packages/ui/src/lib/quota/providers/index.ts": [

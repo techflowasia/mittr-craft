@@ -17,10 +17,12 @@ interface SidebarProps {
     className?: string;
     /** Fixed strip rendered above the scrollable content (e.g. toggle + project actions). */
     topBar?: React.ReactNode;
+    side?: 'left' | 'right';
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, className, topBar }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, className, topBar, side = 'left' }) => {
     const { t } = useI18n();
+    const isRightSide = side === 'right';
     const sidebarWidth = useUIStore((state) => state.sidebarWidth);
     const setSidebarWidth = useUIStore((state) => state.setSidebarWidth);
     const [isResizing, setIsResizing] = React.useState(false);
@@ -94,7 +96,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
             return;
         }
 
-        const delta = event.clientX - startXRef.current;
+        const pointerDelta = event.clientX - startXRef.current;
+        const delta = isRightSide ? -pointerDelta : pointerDelta;
         const nextWidth = clampSidebarWidth(startWidthRef.current + delta);
         if (resizingWidthRef.current === nextWidth) {
             return;
@@ -128,9 +131,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
         <aside
             ref={sidebarRef}
             className={cn(
-                'relative flex h-full overflow-hidden border-r border-border will-change-[width] motion-reduce:transition-none',
+                'relative flex h-full overflow-hidden border-border will-change-[width] motion-reduce:transition-none',
+                isRightSide ? 'border-l' : 'border-r',
                 'bg-sidebar',
-                !isOpen && 'border-r-0',
+                !isOpen && (isRightSide ? 'border-l-0' : 'border-r-0'),
                 className,
             )}
             style={{
@@ -147,14 +151,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
         >
             {isOpen && (
                 <div
-                    className="pointer-events-none absolute inset-0 z-30 shadow-[inset_-2px_0_10px_-2px_rgb(0_0_0_/_0.06)]"
+                    className={cn(
+                        'pointer-events-none absolute inset-0 z-30',
+                        isRightSide ? 'shadow-[inset_2px_0_10px_-2px_rgb(0_0_0_/_0.06)]' : 'shadow-[inset_-2px_0_10px_-2px_rgb(0_0_0_/_0.06)]',
+                    )}
                     aria-hidden="true"
                 />
             )}
             {isOpen && (
                 <div
                     className={cn(
-                        'absolute right-0 top-0 z-20 h-full w-[3px] cursor-col-resize hover:bg-[var(--interactive-border)]/80 transition-colors',
+                        isRightSide ? 'absolute left-0' : 'absolute right-0',
+                        'top-0 z-20 h-full w-[3px] cursor-col-resize hover:bg-[var(--interactive-border)]/80 transition-colors',
                         isResizing && 'bg-[var(--interactive-border)]'
                     )}
                     onPointerDown={handlePointerDown}
