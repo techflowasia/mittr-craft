@@ -207,6 +207,12 @@
       "why": "A downstream build adds its own composer action beside the microphone (a voice assistant button) and can hold dictation off with a reason, without editing the footer on every upstream release. With no plugin nothing changes."
     }
   ],
+  "packages/ui/src/components/layout/ContextSidebarTab.tsx": [
+    {
+      "hook": "context-raw-messages",
+      "why": "The context panel's Raw Messages section was a flat list of one-line rows, so a build that shows the session's work as a timeline instead (each prompt with the steps it caused and the subagents they started) would have had to edit the panel; a context-raw-messages slot, given the session id, its directory and the message records the panel already reads, takes the place of that section when a plugin fills it, inside an error boundary, and with no plugin the section is unchanged."
+    }
+  ],
   "packages/ui/src/components/layout/MainLayout.tsx": [
     {
       "hook": "main-surface",
@@ -329,6 +335,10 @@
     {
       "hook": "main-surface",
       "why": "The main-surface slot is a named slot like the others, with no props: a downstream build renders its own page inside the main area without editing the layout, and with no plugin it renders nothing."
+    },
+    {
+      "hook": "context-raw-messages",
+      "why": "The context-raw-messages slot is a named slot like the others, with the session id, its directory and its message records as props, and useProductSlotFilled tells a component whether any plugin fills a slot, so a section can step aside for the slot only when something takes its place."
     }
   ],
   "packages/ui/src/lib/quota/providers/index.ts": [

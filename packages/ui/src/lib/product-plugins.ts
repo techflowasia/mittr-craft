@@ -33,6 +33,7 @@ export type ProductSlotProps = {
   'assistant-message-footer': { message: { info: Message; parts: Part[] }; isLatestTurn: boolean };
   'composer-actions': { isMobile: boolean; footerIconButtonClass: string; iconSizeClass: string; dictationActive: boolean };
   'main-surface': Record<never, never>;
+  'context-raw-messages': { sessionId: string; directory: string | null; messages: Array<{ info: Message; parts: Part[] }> };
 };
 
 export type ProductSlotName = keyof ProductSlotProps;
@@ -284,6 +285,14 @@ export function ProductSlot<K extends ProductSlotName>({ name, ...props }: { nam
     ));
   });
   return elements.length === 0 ? null : elements;
+}
+
+export function useProductSlotFilled(name: ProductSlotName): boolean {
+  const current = useProductUiPlugins();
+  return current.some((plugin) => {
+    const filled = plugin.slots?.[name];
+    return filled !== undefined && (!Array.isArray(filled) || filled.length > 0);
+  });
 }
 
 export function useProductModelPicker(open: boolean): ModelPickerDecorations {
