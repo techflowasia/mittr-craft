@@ -14,6 +14,7 @@ import updaterPkg from 'electron-updater';
 import { ElectronSshManager } from './ssh-manager.mjs';
 import { replaceFileWithRetry } from './windows-file-replace.mjs';
 import { createTrayController } from './tray.mjs';
+import { createHostConfirm } from './host-confirm.mjs';
 import { createSafeStorageSecretStore } from './secret-store.mjs';
 import { createDeepLinkRegistry } from './deep-link-registry.mjs';
 import { resolveManagedOpenCodeCwd } from './opencode-cwd.mjs';
@@ -1381,6 +1382,7 @@ const spawnLocalServer = async () => {
     pluginHost: {
       secretStore: createSafeStorageSecretStore({ safeStorage }),
       deepLinks: { register: deepLinkRegistry.register },
+      confirm: createHostConfirm({ dialog, windows: () => BrowserWindow.getAllWindows(), log }),
     },
     getDesktopRuntimeConfig: () => ({
       apiBaseUrl: state.apiBaseUrl || '',

@@ -37,6 +37,12 @@
       "why": "A rebranded build has to change the app name, deep-link scheme, user-model id, default desktop port, help links and update feed without patching each constant by hand."
     }
   ],
+  "packages/electron/host-confirm.mjs": [
+    {
+      "hook": "electron-host",
+      "why": "A plugin's question for the person is shown as a native message box over the visible window, with cancel as the default and the confirm label as the only yes; a question with missing or oversized text, a dialog that fails, and a second question while one is open are all answered no."
+    }
+  ],
   "packages/electron/main.mjs": [
     {
       "hook": "electron",
@@ -57,6 +63,10 @@
     {
       "hook": "electron-host",
       "why": "An in-process server plugin needs keychain-backed secrets and its own deep-link hosts, and the desktop shell offered neither, so it now passes plugins a safeStorage secret store and a deep-link handler registry that the dispatcher consults first, without a plugin editing the app's dispatcher."
+    },
+    {
+      "hook": "electron-host",
+      "why": "A plugin that must not act on a request until the person at this Mac agrees (turning on something that runs on its own) had no way to ask through the operating system, where no other process can answer for them, so the desktop shell now also passes plugins confirm(question), which shows a native dialog with the cancel button as the default."
     }
   ],
   "packages/electron/product-runtime.mjs": [

@@ -338,7 +338,16 @@ const checks = {
     const start = main.indexOf('await startWebUiServer({');
     assert.ok(start >= 0, 'main.mjs no longer calls startWebUiServer with an options object');
     const call = main.slice(start, main.indexOf('\n  });', start));
-    has(call, /pluginHost: \{\s*secretStore: createSafeStorageSecretStore\(\{ safeStorage \}\),\s*deepLinks: \{ register: deepLinkRegistry\.register \},\s*\},/, 'startWebUiServer no longer receives pluginHost');
+    has(call, /pluginHost: \{\s*secretStore: createSafeStorageSecretStore\(\{ safeStorage \}\),\s*deepLinks: \{ register: deepLinkRegistry\.register \},\s*confirm: createHostConfirm\(\{ dialog, windows: \(\) => BrowserWindow\.getAllWindows\(\), log \}\),\s*\},/, 'startWebUiServer no longer receives pluginHost with its confirm');
+    has(main, /import \{ createHostConfirm \} from '\.\/host-confirm\.mjs';/);
+    const { createHostConfirm } = await importUpstream('packages/electron/host-confirm.mjs');
+    const shown = [];
+    const answering = (response) => createHostConfirm({ dialog: { showMessageBox: async (options) => { shown.push(options); return { response }; } }, windows: () => [], log: { warn: () => {} } });
+    const question = { title: 'MittrCraft', message: 'Turn on the widget?', detail: 'https://api.example.test/', confirmLabel: 'Turn on', cancelLabel: 'Cancel' };
+    assert.equal(await answering(1)(question), true);
+    assert.equal(await answering(0)(question), false);
+    assert.deepEqual([shown[0].buttons, shown[0].defaultId, shown[0].cancelId], [['Cancel', 'Turn on'], 0, 0], 'the confirm dialog no longer defaults to cancel');
+    assert.equal(await answering(1)({ ...question, message: '' }), false, 'a question with no text is no longer refused');
     const asked = [];
     const probe = new Proxy({}, { get: (_target, name) => () => { asked.push(String(name)); return true; } });
     const { createSafeStorageSecretStore } = await importUpstream('packages/electron/secret-store.mjs');
