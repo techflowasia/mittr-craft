@@ -18,6 +18,8 @@ for (const [name, value] of Object.entries({
 
 const { createRoot } = await import('react-dom/client');
 const { MittrErrorBoundary } = await import('../MittrErrorBoundary');
+const { MittrRoot } = await import('../MittrRoot');
+const { MittrSignInGate } = await import('../sign-in/MittrSignInGate');
 const { MittrVoiceMount, MittrVoiceRoot } = await import('./MittrVoiceRoot');
 const { createVoiceController } = await import('./voiceController');
 
@@ -57,12 +59,18 @@ const fakeController = () => createVoiceController({
 });
 
 describe('the voice root', () => {
-  test('the bar is only on the main surface', () => {
-    expect(MittrVoiceMount({ surface: 'mini-chat' })).toBeNull();
-    const main = MittrVoiceMount({ surface: 'main' });
-    if (!React.isValidElement<{ children: React.ReactNode }>(main)) throw new Error('the main surface mounts nothing');
-    expect(main.type).toBe(MittrErrorBoundary);
-    const inner = main.props.children;
+  test('the main window and the mini chat each mount the voice root, behind its own error boundary', () => {
+    for (const surface of ['main', 'mini-chat'] as const) {
+      const root = MittrRoot({ children: null, surface });
+      if (!React.isValidElement<{ children: React.ReactNode }>(root)) throw new Error('MittrRoot did not return an element');
+      const gate = React.Children.toArray(root.props.children).find((child) => React.isValidElement(child) && child.type === MittrSignInGate);
+      if (!React.isValidElement<{ children: React.ReactNode }>(gate)) throw new Error('MittrRoot did not wrap the sign-in gate');
+      expect(React.Children.toArray(gate.props.children).some((child) => React.isValidElement(child) && child.type === MittrVoiceMount)).toBe(true);
+    }
+    const mounted = MittrVoiceMount();
+    if (!React.isValidElement<{ children: React.ReactNode }>(mounted)) throw new Error('the voice mount renders nothing');
+    expect(mounted.type).toBe(MittrErrorBoundary);
+    const inner = mounted.props.children;
     expect(React.isValidElement(inner) && inner.type === MittrVoiceRoot).toBe(true);
   });
 

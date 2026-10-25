@@ -18,7 +18,7 @@ export function MittrRoot({ children, surface }: { children: React.ReactNode; su
       <MittrSignInGate>
         <SelectMittrUsage />
         <MittrProjectFolderNotice surface={surface} />
-        <MittrVoiceMount surface={surface} />
+        <MittrVoiceMount />
         {children}
       </MittrSignInGate>
     </MittrSurfaceContext.Provider>

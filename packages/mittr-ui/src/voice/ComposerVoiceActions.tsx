@@ -16,7 +16,7 @@ export function ComposerVoiceActions({ footerIconButtonClass, iconSizeClass }: P
   const block = useMittrDictationBlock();
   const narrating = useNarratorClaim();
   const open = useTalkState((state) => state.phase !== 'idle');
-  if (surface !== 'main' || !supported) return null;
+  if (!surface || !supported) return null;
   return (
     <>
       {narrating && open ? <VoiceNarrator /> : null}

@@ -7,7 +7,6 @@ import { useDirectoryStore } from '../../../ui/src/stores/useDirectoryStore';
 import { normalizeContextPanelDirectoryKey, useUIStore } from '../../../ui/src/stores/useUIStore';
 import { useSessionUIStore } from '../../../ui/src/sync/session-ui-store';
 import { MittrErrorBoundary } from '../MittrErrorBoundary';
-import type { MittrSurface } from '../mittrSurface';
 import { listenAnyAccountChange } from '../sign-in/accountChange';
 import { signedInAccount } from '../sign-in/signedInAccount';
 import { useMittrT } from '../strings/mittrT';
@@ -118,8 +117,7 @@ export function MittrVoiceRoot({ createController = browserController }: { creat
   );
 }
 
-export function MittrVoiceMount({ surface }: { surface: MittrSurface }): React.ReactNode {
-  if (surface !== 'main') return null;
+export function MittrVoiceMount(): React.ReactNode {
   return (
     <MittrErrorBoundary fallback={null}>
       <MittrVoiceRoot />

@@ -68,9 +68,9 @@ describe('the composer voice actions', () => {
     expect(html).toContain('acme-icon-size');
   });
 
-  test('the mini window renders no Talk button', async () => {
+  test('the mini chat composer has Talk too, as in 1.22, and a composer outside MittrCraft\'s windows has none', async () => {
     talkStore.setState({ readiness: READY });
-    expect(await render('mini-chat')).toBe('');
+    expect(await render('mini-chat')).toContain('aria-label="Talk"');
     expect(await render(null)).toBe('');
   });
 
