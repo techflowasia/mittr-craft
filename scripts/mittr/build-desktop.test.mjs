@@ -1,0 +1,519 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+import { resolveBunExecutable } from '../lib/bun-executable.mjs';
+import { findNeedles } from './brand-leak-scan.mjs';
+import {
+  AGENT_BROWSER_STAGING,
+  CUA_DRIVER_STAGING,
+  LICENCE_RESOURCE,
+  RIPGREP_STAGING,
+  applyVisibleStrings,
+  assertConsistent,
+  assertPluginBundleFresh,
+  buildServerPlugin,
+  checkRipgrepArchive,
+  findPackedApp,
+  mergeBuilderConfig,
+  parseBuildArgs,
+  planVisibleStrings,
+  readBrand,
+  readVisibleStrings,
+  stageProductFile,
+  stringsToCheck,
+  stagedServerFiles,
+  verifyPackedApp,
+} from './build-desktop.mjs';
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const readJson = (relative) => JSON.parse(fs.readFileSync(path.join(repoRoot, relative), 'utf8'));
+
+test('the brand overlay keeps upstream packaging and changes only our keys', () => {
+  const upstream = readJson('packages/electron/package.json').build;
+  const merged = mergeBuilderConfig(upstream, readJson('brand/electron-builder.dev.json'));
+
+  assert.equal(merged.appId, 'dev.mittrcraft.desktop.dev');
+  assert.equal(merged.productName, 'MittrCraft Dev');
+  assert.equal(merged.publish, null);
+  assert.equal(merged.afterPack, null);
+  assert.deepEqual(merged.asarUnpack, upstream.asarUnpack);
+  assert.deepEqual(merged.mac.target, upstream.mac.target);
+  assert.equal(merged.mac.entitlements, upstream.mac.entitlements);
+  assert.equal(merged.mac.icon, '../../brand/icons/icon.icns');
+  assert.equal('CFBundleIconName' in merged.mac.extendInfo, false);
+
+  assert.deepEqual(merged.files.slice(0, upstream.files.length), upstream.files);
+  assert.ok(merged.files.includes('product-plugins/**'));
+
+  const resources = Object.fromEntries(merged.extraResources.map((entry) => [entry.to, entry.from]));
+  assert.equal(resources['web-dist'], 'resources/web-dist');
+  assert.equal(resources['opencode-cli'], 'resources/opencode-cli');
+  assert.equal(resources['icons/tray'], '../../brand/icons/tray');
+  assert.equal(resources['icons/tray/status'], 'resources/icons/tray/status');
+  assert.equal(merged.extraResources.length, Object.keys(resources).length);
+});
+
+test('a merge leaves the upstream block untouched', () => {
+  const upstream = { mac: { extendInfo: { CFBundleIconName: 'AppIcon' } }, files: ['a'] };
+  mergeBuilderConfig(upstream, { mac: { extendInfo: { CFBundleIconName: null } }, files: ['b'] });
+  assert.deepEqual(upstream, { mac: { extendInfo: { CFBundleIconName: 'AppIcon' } }, files: ['a'] });
+});
+
+const withBuildOutput = (files, run) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-visible-strings-'));
+  try {
+    for (const [relative, text] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(root, relative)), { recursive: true });
+      fs.writeFileSync(path.join(root, relative), text);
+    }
+    run(root);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+};
+
+test('visible strings replace every exact match in the globbed build output', () => {
+  withBuildOutput({ 'dist-bundle/main.mjs': 'OpenChamber and OpenChamber', 'resources/web-dist/assets/a.js': 'x' }, (root) => {
+    const applied = applyVisibleStrings({
+      entries: [{ file: 'dist-bundle/*.mjs', from: 'OpenChamber', to: 'MittrCraft', count: 2 }],
+      rootDir: root,
+    });
+    assert.deepEqual(applied, [{ file: 'dist-bundle/*.mjs', from: 'OpenChamber', count: 2 }]);
+    assert.equal(fs.readFileSync(path.join(root, 'dist-bundle/main.mjs'), 'utf8'), 'MittrCraft and MittrCraft');
+  });
+});
+
+test('an entry that matches nothing fails the build', () => {
+  withBuildOutput({ 'dist-bundle/main.mjs': 'nothing here' }, (root) => {
+    assert.throws(
+      () => applyVisibleStrings({ entries: [{ file: 'dist-bundle/*.mjs', from: 'OpenChamber', to: 'MittrCraft', count: 1 }], rootDir: root }),
+      /"OpenChamber" in dist-bundle\/\*\.mjs: expected 1, found 0/,
+    );
+  });
+});
+
+test('a match count other than the expected one fails the build and writes nothing', () => {
+  withBuildOutput({ 'dist-bundle/main.mjs': 'OpenChamber and OpenChamber' }, (root) => {
+    assert.throws(
+      () => applyVisibleStrings({ entries: [{ file: 'dist-bundle/*.mjs', from: 'OpenChamber', to: 'MittrCraft', count: 1 }], rootDir: root }),
+      /"OpenChamber" in dist-bundle\/\*\.mjs: expected 1, found 2 \(dist-bundle\/main\.mjs×2\)/,
+    );
+    assert.equal(fs.readFileSync(path.join(root, 'dist-bundle/main.mjs'), 'utf8'), 'OpenChamber and OpenChamber');
+  });
+});
+
+test('an entry outside the build output is refused', () => {
+  withBuildOutput({ 'main.mjs': 'OpenChamber' }, (root) => {
+    assert.throws(
+      () => applyVisibleStrings({ entries: [{ file: 'main.mjs', from: 'OpenChamber', to: 'MittrCraft', count: 1 }], rootDir: root }),
+      /must start with/,
+    );
+  });
+});
+
+test('Dev keeps its engine apart from the installed app', () => {
+  const dev = readJson('brand/product.dev.json').env;
+  const prod = readJson('brand/product.prod.json').env;
+  assert.equal(dev.MITTRCRAFT_ENGINE_HOME, '~/.config/mittrcraft-dev/engine');
+  assert.equal(prod.MITTRCRAFT_ENGINE_HOME, '', 'prod sets the engine root to blank so no inherited value moves it');
+  for (const key of ['OPENCHAMBER_DATA_DIR', 'OPENCODE_CONFIG_DIR', 'OPENCHAMBER_POLICY_FILE', 'OPENCHAMBER_MANAGED_PROCESS_REGISTRY']) {
+    assert.notEqual(dev[key], prod[key], key);
+  }
+});
+
+test('both flavors pack the splash logo their product file names', () => {
+  for (const flavor of ['dev', 'prod']) {
+    const { splashSvg } = readJson(`brand/product.${flavor}.json`);
+    assert.ok(fs.existsSync(path.join(repoRoot, 'brand', splashSvg)), `${flavor}: brand/${splashSvg}`);
+    const staged = readJson(`brand/electron-builder.${flavor}.json`).files
+      .filter((entry) => entry.from === '.product')
+      .flatMap((entry) => entry.filter);
+    assert.ok(staged.includes(splashSvg), flavor);
+  }
+});
+
+// Entries that leave out a link whose own code names nothing upstream, each
+// with the entry that blanks the address the link would open.
+const LEFT_OUT_LINKS = new Map([
+  [
+    '{className:"app-region-no-drag mt-6 inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground",href:',
+    '?"https://github.com/openchamber/openchamber/releases/latest":"https://opencode.ai/download",',
+  ],
+  ['("walkthrough.help.guide"),onClick:()=>{', '="https://docs.openchamber.dev/walkthrough/",'],
+  [
+    '," ",{{id}}.jsx({{id}},{onClick:()=>{{{id}}({{id}})},children:{{id}}("settings.classification.page.docsLink")})]',
+    '="https://docs.openchamber.dev/classification-providers/",',
+  ],
+]);
+
+test('every visible-strings entry replaces an upstream name or link and keeps none, or leaves out a link to one', () => {
+  const entries = readJson('brand/visible-strings.json');
+  for (const entry of entries) {
+    assert.deepEqual(findNeedles(entry.to), [], entry.to);
+    if (LEFT_OUT_LINKS.has(entry.from)) {
+      assert.ok(entry.to.includes('hidden:!0') || entry.to.length < entry.from.length, entry.from);
+      const blanked = entries.find((other) => other.from === LEFT_OUT_LINKS.get(entry.from));
+      assert.deepEqual(findNeedles(blanked?.to ?? 'missing'), [], entry.from);
+      assert.match(blanked?.to ?? '', /^[=?]["":,]*$/, entry.from);
+      continue;
+    }
+    assert.notDeepEqual(findNeedles(entry.from), [], entry.from);
+  }
+});
+
+test('{{id}} in an entry stands for one minified identifier, and the count still holds', () => {
+  const entry = { file: 'dist-bundle/*.mjs', from: 'go(),{{id}}.open({{id}})]', to: ']', count: 2 };
+  withBuildOutput({ 'dist-bundle/main.mjs': '[go(),s.open(jv)];[go(),$a.open(b2)];[go(),s.open(x.y)];' }, (root) => {
+    applyVisibleStrings({ entries: [entry], rootDir: root });
+    assert.equal(fs.readFileSync(path.join(root, 'dist-bundle/main.mjs'), 'utf8'), '[];[];[go(),s.open(x.y)];');
+  });
+  withBuildOutput({ 'dist-bundle/main.mjs': '[go(),s.open(jv)];' }, (root) => {
+    assert.throws(() => applyVisibleStrings({ entries: [entry], rootDir: root }), /expected 2, found 1/);
+  });
+});
+
+test('a flavor file applies after the shared visible strings and may build on them', () => {
+  const brand = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-brand-'));
+  try {
+    fs.writeFileSync(path.join(brand, 'visible-strings.json'), JSON.stringify([
+      { file: 'dist-bundle/*.mjs', from: 'Open OpenChamber', to: 'Open MittrCraft', count: 1 },
+    ]));
+    fs.writeFileSync(path.join(brand, 'visible-strings.dev.json'), JSON.stringify([
+      { file: 'dist-bundle/*.mjs', from: 'openchamber://', to: 'mittrcraft-dev://', count: 1 },
+    ]));
+    assert.deepEqual(readVisibleStrings('prod', brand).map((entry) => entry.to), ['Open MittrCraft']);
+    const dev = readVisibleStrings('dev', brand);
+    assert.deepEqual(dev.map((entry) => entry.to), ['Open MittrCraft', 'mittrcraft-dev://']);
+    withBuildOutput({ 'dist-bundle/main.mjs': '"Open OpenChamber" at openchamber://session/1' }, (root) => {
+      applyVisibleStrings({ entries: dev, rootDir: root });
+      assert.equal(fs.readFileSync(path.join(root, 'dist-bundle/main.mjs'), 'utf8'), '"Open MittrCraft" at mittrcraft-dev://session/1');
+    });
+  } finally {
+    fs.rmSync(brand, { recursive: true, force: true });
+  }
+});
+
+test('each flavor names itself, points the links it emits at its own scheme and still blocks upstream\'s', () => {
+  for (const flavor of ['dev', 'prod']) {
+    const { appName, deepLinkProtocol } = readJson(`brand/product.${flavor}.json`);
+    const entries = readJson(`brand/visible-strings.${flavor}.json`);
+    const isLink = (entry) => /openchamber(:|")/.test(entry.from);
+    assert.ok(entries.some(isLink), flavor);
+    for (const entry of entries.filter(isLink)) {
+      assert.ok(entry.to.includes(`${deepLinkProtocol}:`) || entry.to.includes(`"${deepLinkProtocol}"`), `${flavor}: ${entry.to}`);
+    }
+    // The window title is the app's name, Dev or not.
+    assert.ok(entries.some((entry) => entry.from === '="OpenChamber",' && entry.to === `="${appName}",`), flavor);
+    for (const entry of entries.filter((entry) => !isLink(entry))) {
+      assert.ok(entry.to.includes(`"${appName}"`), `${flavor}: ${entry.to}`);
+    }
+    const blocked = entries.find((entry) => entry.from.includes('"openchamber-ui"'));
+    assert.ok(blocked.to.includes('"openchamber"') && blocked.to.includes(`"${deepLinkProtocol}"`), flavor);
+  }
+});
+
+test('the staged server is packed in place of the workspace copy, except the files upstream unpacks', () => {
+  const upstream = readJson('packages/electron/package.json').build;
+  const entries = stagedServerFiles(upstream.asarUnpack);
+  const serverUnpacked = upstream.asarUnpack.filter((pattern) => pattern.startsWith('node_modules/@openchamber/web/server/'));
+  assert.ok(serverUnpacked.length > 0);
+  assert.equal(entries[0], '!node_modules/@openchamber/web/server{,/**}');
+  for (const pattern of serverUnpacked) assert.ok(entries.includes(pattern), pattern);
+  const mapped = entries.at(-1);
+  assert.deepEqual([mapped.from, mapped.to], ['.product/web/server', 'node_modules/@openchamber/web/server']);
+  assert.ok(mapped.filter.includes('!lib/git/credential-helper.js'));
+  assert.ok(entries.includes('!node_modules/@openchamber/web/{dist,public}{,/**}'));
+});
+
+// The pairing link the desktop builds, the desktop import that reads it back
+// and the mobile gates, as they appear in the built UI. They are a wire
+// contract with mobile clients and keep upstream's scheme until phase 5.
+const PAIRING_CONTRACT = [
+  '`openchamber://connect?${t.toString()}`',
+  'if(n.protocol!=="openchamber:"||n.hostname!=="connect")return null',
+  '!/^openchamber:\\/\\/connect\\/?$/i.test(n.slice(0,t))',
+  'if(/^openchamber:\\/\\//i.test(e)){const s=Ia(e);return s?{pairing:s}:null}',
+];
+
+test('no brand replacement touches the pairing link, its desktop import or the mobile gates', () => {
+  for (const flavor of ['dev', 'prod']) {
+    for (const entry of readVisibleStrings(flavor)) {
+      for (const fragment of PAIRING_CONTRACT) {
+        assert.ok(!fragment.includes(entry.from), `${flavor}: ${JSON.stringify(entry.from)} would rewrite ${fragment}`);
+      }
+      assert.doesNotMatch(entry.from, /:\/\/connect|:\\\/\\\/connect|protocol!==/, `${flavor}: ${entry.from}`);
+    }
+  }
+});
+
+test('every entry whose count is off is reported in one error, and nothing is written', () => {
+  withBuildOutput({ 'dist-bundle/main.mjs': 'Quit OpenChamber', 'resources/web-dist/assets/a.js': '"OpenCode" "OpenCode"' }, (root) => {
+    const entries = [
+      { file: 'dist-bundle/*.mjs', from: 'Quit OpenChamber', to: 'Quit MittrCraft', count: 1 },
+      { file: 'dist-bundle/*.mjs', from: 'About OpenChamber', to: 'About MittrCraft', count: 1 },
+      { file: 'resources/web-dist/assets/*.js', from: '"OpenCode"', to: '"Engine"', count: 1 },
+    ];
+    assert.throws(() => applyVisibleStrings({ entries, rootDir: root }), (error) => {
+      assert.match(error.message, /2 of 3 entries do not match/);
+      assert.match(error.message, /"About OpenChamber" in dist-bundle\/\*\.mjs: expected 1, found 0/);
+      assert.match(error.message, /"\\"OpenCode\\"" in resources\/web-dist\/assets\/\*\.js: expected 1, found 2 \(resources\/web-dist\/assets\/a\.js×2\)/);
+      return true;
+    });
+    assert.equal(fs.readFileSync(path.join(root, 'dist-bundle/main.mjs'), 'utf8'), 'Quit OpenChamber');
+  });
+});
+
+test('a check after a build reads the text the build replaced, and server entries can read the source', () => {
+  withBuildOutput({ 'dist-bundle/main.mjs': 'Quit OpenChamber', 'server-source/lib/a.js': "'OpenCode is restarting'" }, (root) => {
+    const entries = [
+      { file: 'dist-bundle/*.mjs', from: 'Quit OpenChamber', to: 'Quit MittrCraft', count: 1 },
+      { file: '.product/web/server/lib/*.js', from: "'OpenCode is restarting'", to: "'The engine is restarting'", count: 1 },
+    ];
+    applyVisibleStrings({ entries: entries.slice(0, 1), rootDir: root });
+    assert.equal(fs.readFileSync(path.join(root, 'dist-bundle/main.mjs'), 'utf8'), 'Quit MittrCraft');
+
+    const sources = { '.product/web/server/': path.join(root, 'server-source') };
+    const checked = planVisibleStrings({ entries, rootDir: root, sources });
+    assert.deepEqual(checked.mismatches, []);
+    assert.deepEqual(checked.results.map(({ found, files }) => [found, files]), [[1, ['dist-bundle/main.mjs×1']], [1, ['.product/web/server/lib/a.js×1']]]);
+    assert.equal(fs.readFileSync(path.join(root, 'server-source/lib/a.js'), 'utf8'), "'OpenCode is restarting'");
+
+    fs.writeFileSync(path.join(root, 'dist-bundle/main.mjs'), 'rebuilt without the string');
+    assert.equal(planVisibleStrings({ entries: entries.slice(0, 1), rootDir: root }).mismatches.length, 1);
+  });
+});
+
+test('both flavors pack upstream\'s MIT licence without touching an upstream file', () => {
+  const upstream = readJson('packages/electron/package.json').build;
+  assert.match(fs.readFileSync(path.join(repoRoot, 'LICENSE'), 'utf8'), /^MIT License/);
+  for (const flavor of ['dev', 'prod']) {
+    const merged = mergeBuilderConfig(upstream, readJson(`brand/electron-builder.${flavor}.json`));
+    const entry = merged.extraResources.find((item) => item.to === LICENCE_RESOURCE);
+    assert.deepEqual(entry, { from: '../../LICENSE', to: LICENCE_RESOURCE }, flavor);
+    assert.equal(path.resolve(repoRoot, 'packages/electron', entry.from), path.join(repoRoot, 'LICENSE'));
+  }
+});
+
+const fakeApp = (t, { licence = true } = {}) => {
+  const dist = fs.mkdtempSync(path.join(os.tmpdir(), 'packed-app-'));
+  t.after(() => fs.rmSync(dist, { recursive: true, force: true }));
+  const appPath = path.join(dist, 'mac-arm64', 'Fixture Dev.app');
+  fs.mkdirSync(path.join(appPath, 'Contents', 'Resources'), { recursive: true });
+  if (licence) fs.writeFileSync(path.join(appPath, 'Contents', 'Resources', LICENCE_RESOURCE), 'MIT License\n');
+  return { dist, appPath };
+};
+
+test('the build ends by checking the packed licence and running the brand-leak scan, and fails on a leak', (t) => {
+  const { dist, appPath } = fakeApp(t);
+  assert.equal(findPackedApp({ productName: 'Fixture Dev', distDir: dist }), appPath);
+  assert.equal(findPackedApp({ productName: 'Other', distDir: dist }), null);
+
+  const scanned = [];
+  verifyPackedApp({ appPath, scan: (target) => { scanned.push(target); return 0; } });
+  assert.deepEqual(scanned, [appPath]);
+
+  assert.throws(() => verifyPackedApp({ appPath, scan: () => 1 }), /brand-leak scan .* failed \(exit 1\)/);
+  const bare = fakeApp(t, { licence: false });
+  assert.throws(() => verifyPackedApp({ appPath: bare.appPath, scan: () => 0 }), /no LICENSE\.openchamber\.txt/);
+});
+
+test('the server plugin is built from source with the engine outbound switches, and a bundle older than its sources fails the build', (t) => {
+  const out = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-bundle-'));
+  t.after(() => fs.rmSync(out, { recursive: true, force: true }));
+  const bundle = path.join(out, 'mittr-server.mjs');
+  const metafile = path.join(out, 'meta.json');
+
+  buildServerPlugin({ bun: resolveBunExecutable(), outfile: bundle, metafile });
+
+  const text = fs.readFileSync(bundle, 'utf8');
+  assert.ok(text.includes('OPENCODE_DISABLE_MODELS_FETCH') && text.includes('OPENCODE_DISABLE_AUTOUPDATE'));
+  const sources = assertPluginBundleFresh({ bundle, metafile, rootDir: repoRoot });
+  assert.ok(sources.includes('packages/mittr-server/src/engine-outbound.js'), sources.join('\n'));
+  assert.ok(sources.every((source) => !source.includes('node_modules')));
+
+  const past = new Date(1000);
+  fs.utimesSync(bundle, past, past);
+  assert.throws(() => assertPluginBundleFresh({ bundle, metafile, rootDir: repoRoot }), /older than its source packages\/mittr-/);
+
+  fs.rmSync(bundle);
+  assert.throws(() => assertPluginBundleFresh({ bundle, metafile, rootDir: repoRoot }), /was not built/);
+});
+
+test('both flavors pack the staged ripgrep folder as Resources/ripgrep', () => {
+  const upstream = readJson('packages/electron/package.json').build;
+  for (const flavor of ['dev', 'prod']) {
+    const merged = mergeBuilderConfig(upstream, readJson(`brand/electron-builder.${flavor}.json`));
+    assert.ok(merged.extraResources.some((entry) => entry.from === RIPGREP_STAGING && entry.to === 'ripgrep'), flavor);
+    assert.ok(merged.extraResources.some((entry) => entry.to === 'opencode-cli'), `${flavor} lost the engine`);
+  }
+  assert.equal(RIPGREP_STAGING, '.product/ripgrep');
+});
+
+test('the build checks the pinned ripgrep archive before any build step, and stops on a missing or wrong one', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rg-preflight-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const missing = path.join(dir, 'missing.tar.gz');
+  assert.throws(() => checkRipgrepArchive({ env: { MITTRCRAFT_RIPGREP_ARCHIVE: missing } }), (error) => error.message.includes(missing) && /never downloads/.test(error.message));
+  const wrong = path.join(dir, 'wrong.tar.gz');
+  fs.writeFileSync(wrong, 'not the release');
+  assert.throws(() => checkRipgrepArchive({ env: { MITTRCRAFT_RIPGREP_ARCHIVE: wrong } }), /has sha256 [0-9a-f]{64}, not the pinned 378e9732/);
+
+  const main = fs.readFileSync(path.join(repoRoot, 'scripts/mittr/build-desktop.mjs'), 'utf8');
+  const body = main.slice(main.indexOf('const main = async () => {'));
+  assert.ok(body.indexOf('checkRipgrepArchive()') !== -1, 'main does not check the ripgrep archive');
+  assert.ok(body.indexOf('checkRipgrepArchive()') < body.indexOf("step('1/8 workspace build')"), 'the ripgrep archive is checked only after the build starts');
+
+  const cached = path.join(repoRoot, 'packages/electron/.cache/ripgrep/ripgrep-15.1.0-aarch64-apple-darwin.tar.gz');
+  if (fs.existsSync(cached)) assert.equal(checkRipgrepArchive({ env: {} }).archive, cached);
+});
+
+test('the dev and prod builder files pack both drivers and the notices', () => {
+  const upstream = readJson('packages/electron/package.json').build;
+  for (const flavor of ['dev', 'prod']) {
+    const overlay = readJson(`brand/electron-builder.${flavor}.json`);
+    const merged = mergeBuilderConfig(upstream, overlay);
+    const resources = Object.fromEntries(merged.extraResources.map((entry) => [entry.to, entry.from]));
+    assert.equal(resources['agent-browser'], AGENT_BROWSER_STAGING, flavor);
+    assert.equal(resources['cua-driver'], CUA_DRIVER_STAGING, flavor);
+    assert.equal(resources['THIRD_PARTY_NOTICES.md'], '../../brand/THIRD_PARTY_NOTICES.md', flavor);
+    assert.equal(path.resolve(repoRoot, 'packages/electron', resources['THIRD_PARTY_NOTICES.md']), path.join(repoRoot, 'brand', 'THIRD_PARTY_NOTICES.md'));
+    assert.deepEqual(merged.mac.signIgnore, ['/Contents/Resources/cua-driver/'], flavor);
+    assert.equal(merged.mac.hardenedRuntime, upstream.mac.hardenedRuntime, flavor);
+  }
+  assert.equal(AGENT_BROWSER_STAGING, '.product/agent-browser');
+  assert.equal(CUA_DRIVER_STAGING, '.product/cua-driver');
+  const ignore = new RegExp(readJson('brand/electron-builder.dev.json').mac.signIgnore[0]);
+  assert.equal(ignore.test('/x/dist/mac-arm64/MittrCraft Dev.app/Contents/Resources/cua-driver/CuaDriver.app/Contents/MacOS/cua-driver'), true);
+  assert.equal(ignore.test('/x/dist/mac-arm64/MittrCraft Dev.app/Contents/Resources/agent-browser/agent-browser'), false);
+});
+
+test('the build checks both pinned drivers and the notices before any build step, and checks the packed ones at the end', () => {
+  const main = fs.readFileSync(path.join(repoRoot, 'scripts/mittr/build-desktop.mjs'), 'utf8');
+  const body = main.slice(main.indexOf('const main = async () => {'));
+  const firstStep = body.indexOf("step('1/8 workspace build')");
+  for (const call of ['assertDriverArchitecture(', 'checkDriverSources(', 'checkNotices(']) {
+    assert.ok(body.indexOf(call) !== -1 && body.indexOf(call) < firstStep, `${call} is not checked before the build starts`);
+  }
+  assert.ok(body.indexOf('stageDrivers(') > body.indexOf("step('3/8"), 'the drivers are not staged in step 3');
+  assert.ok(body.indexOf('verifyPackedDrivers(') > body.indexOf("step('8/8"), 'the packed drivers are not checked in step 8');
+});
+
+test('the dev and prod builds stage the VAD files after the web build and verify the packed ones', () => {
+  const upstream = readJson('packages/electron/package.json').build;
+  for (const flavor of ['dev', 'prod']) {
+    const merged = mergeBuilderConfig(upstream, readJson(`brand/electron-builder.${flavor}.json`));
+    assert.ok(merged.extraResources.some((entry) => entry.from === 'resources/web-dist' && entry.to === 'web-dist'), `${flavor} no longer packs web-dist as Resources/web-dist`);
+  }
+  const main = fs.readFileSync(path.join(repoRoot, 'scripts/mittr/build-desktop.mjs'), 'utf8');
+  const body = main.slice(main.indexOf('const main = async () => {'));
+  const firstStep = body.indexOf("step('1/8 workspace build')");
+  for (const call of ['readVadPins(', 'checkVadNotices(', 'resolveVadSources(']) {
+    assert.ok(body.indexOf(call) !== -1 && body.indexOf(call) < firstStep, `${call} is not checked before the build starts`);
+  }
+  const webAssets = body.indexOf("run(bun, ['run', 'build:web-assets'], electronDir)");
+  assert.ok(webAssets !== -1 && body.indexOf('stageVadAssets(') > webAssets, 'the VAD files are staged before upstream writes web-dist');
+  assert.ok(body.indexOf('stageVadAssets(') < body.indexOf("step('5/8"), 'the VAD files are staged after step 4');
+  assert.ok(body.indexOf('checkBundledOrtVersion(') > body.indexOf('stageVadAssets('), 'the bundled ONNX Runtime version is not checked in step 4');
+  assert.match(body, /checkBundledOrtVersion\(\{ webDist, pins: vadPins, required: true \}\)/, 'a build whose renderer carries no ONNX Runtime chunk does not fail');
+  assert.ok(body.indexOf('verifyPackedVadAssets(') > body.indexOf("step('8/8"), 'the packed VAD files are not checked in step 8');
+});
+
+test('a gate build is the Dev build under its own bundle id, name and data folder', () => {
+  const dev = readBrand({ flavor: 'dev' });
+  const gate = readBrand({ flavor: 'dev', gate: true });
+  assert.deepEqual(dev, { product: readJson('brand/product.dev.json'), overlay: readJson('brand/electron-builder.dev.json'), visibleStrings: readVisibleStrings('dev') });
+
+  assert.equal(gate.product.appName, 'MittrCraft Gate');
+  assert.equal(gate.product.linuxDesktopName, 'mittrcraft-gate.desktop');
+  assert.deepEqual(gate.product.appUserModelId, { packaged: 'dev.mittrcraft.desktop.dev.gate', dev: 'dev.mittrcraft.desktop.dev.gate' });
+  assert.deepEqual(gate.product.env, {
+    ...dev.product.env,
+    OPENCHAMBER_DATA_DIR: '~/.config/mittrcraft-gate',
+    OPENCODE_CONFIG_DIR: '~/.config/mittrcraft-gate/engine/opencode',
+    OPENCHAMBER_POLICY_FILE: '/Library/Application Support/MittrCraft Gate/policy.json',
+    OPENCHAMBER_MANAGED_PROCESS_REGISTRY: '~/.config/mittrcraft-gate/managed-opencode',
+    MITTRCRAFT_ENGINE_HOME: '~/.config/mittrcraft-gate/engine',
+  });
+  assert.deepEqual(gate.product.ensureDirs, ['~/.config/mittrcraft-gate/projects', '~/.config/mittrcraft-gate/themes', '~/.config/mittrcraft-gate/speech-models']);
+  const { appName: _name, linuxDesktopName: _linux, appUserModelId: _id, env: _env, ensureDirs: _dirs, desktopPort: _port, ...rest } = gate.product;
+  const { appName: _devName, linuxDesktopName: _devLinux, appUserModelId: _devId, env: _devEnv, ensureDirs: _devDirs, desktopPort: _devPort, ...devRest } = dev.product;
+  assert.deepEqual(rest, devRest);
+
+  assert.equal(gate.overlay.appId, 'dev.mittrcraft.desktop.dev.gate');
+  assert.equal(gate.overlay.productName, 'MittrCraft Gate');
+  assert.deepEqual(gate.overlay.protocols, [{ name: 'MittrCraft Gate', schemes: ['mittrcraft-dev'] }]);
+  assert.equal(gate.overlay.mac.extendInfo.NSLocalNetworkUsageDescription, 'MittrCraft Gate needs access to devices and services on your local network.');
+  assert.equal(gate.overlay.linux.executableName, 'mittrcraft-gate');
+  assert.deepEqual(gate.overlay.linux.desktop.entry, { Name: 'MittrCraft Gate', Comment: 'Desktop runtime for MittrCraft Gate', Icon: 'mittrcraft-gate', StartupWMClass: 'mittrcraft-gate' });
+  assert.deepEqual(gate.overlay.extraResources, dev.overlay.extraResources);
+  assert.deepEqual(gate.overlay.files, dev.overlay.files);
+
+  for (const text of [JSON.stringify(gate.product), JSON.stringify(gate.overlay), JSON.stringify(gate.visibleStrings)]) {
+    assert.equal(text.includes('MittrCraft Dev'), false, text);
+    assert.equal(/mittrcraft-dev(?![:"]|\\")/.test(text), false, text);
+  }
+  assert.deepEqual(gate.visibleStrings.map(({ file, from, count }) => ({ file, from, count })), dev.visibleStrings.map(({ file, from, count }) => ({ file, from, count })));
+  assert.deepEqual(
+    gate.visibleStrings.filter((entry, index) => entry.to !== dev.visibleStrings[index].to).map(({ to }) => to),
+    ['="MittrCraft Gate",', '{className:"text-lg font-semibold",children:"MittrCraft Gate"}'],
+  );
+
+  const upstream = readJson('packages/electron/package.json').build;
+  assert.doesNotThrow(() => assertConsistent({ product: gate.product, builderConfig: mergeBuilderConfig(upstream, gate.overlay) }));
+});
+
+test('a gate build keeps Dev\'s sign-in scheme, the only one the dev platform hands a code to besides prod\'s', () => {
+  const gate = readBrand({ flavor: 'dev', gate: true });
+  assert.equal(gate.product.deepLinkProtocol, 'mittrcraft-dev');
+  assert.equal(gate.product.env.MITTRCRAFT_DEEP_LINK_SCHEME, 'mittrcraft-dev');
+  assert.equal(gate.product.envDefaults.MITTRCRAFT_BROKER_URL, 'https://api-dev.mittr.asia');
+});
+
+test('the build takes --gate only with the Dev flavor', () => {
+  assert.deepEqual(parseBuildArgs(['--flavor', 'dev', '--gate']), { flavor: 'dev', gate: true });
+  assert.deepEqual(parseBuildArgs(['--gate', '--flavor=dev']), { flavor: 'dev', gate: true });
+  assert.deepEqual(parseBuildArgs(['--flavor', 'prod']), { flavor: 'prod', gate: false });
+  assert.throws(() => parseBuildArgs(['--flavor', 'prod', '--gate']), /--gate builds only from --flavor dev/);
+  assert.throws(() => parseBuildArgs(['--gate']), /Usage: node scripts\/mittr\/build-desktop\.mjs --flavor dev\|prod \[--gate\]/);
+});
+
+test('a gate build has its own default server port, never Dev 1.x\'s 57133', () => {
+  const dev = readBrand({ flavor: 'dev' });
+  const gate = readBrand({ flavor: 'dev', gate: true });
+  assert.equal(dev.product.desktopPort, 57133);
+  assert.equal(gate.product.desktopPort, 57188);
+  assert.notEqual(gate.product.desktopPort, readBrand({ flavor: 'prod' }).product.desktopPort);
+});
+
+test('a Dev or prod build packs its product file byte for byte, and only a gate build writes its own', (t) => {
+  const brand = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-brand-'));
+  t.after(() => fs.rmSync(brand, { recursive: true, force: true }));
+  for (const name of ['product.dev.json', 'electron-builder.dev.json', 'visible-strings.json', 'visible-strings.dev.json']) {
+    fs.copyFileSync(path.join(repoRoot, 'brand', name), path.join(brand, name));
+  }
+  const odd = `{ "appName":"MittrCraft Dev",\t"x": "\\u00e9" ,\n${fs.readFileSync(path.join(repoRoot, 'brand', 'product.dev.json'), 'utf8').trim().slice(1)}`;
+  fs.writeFileSync(path.join(brand, 'product.dev.json'), odd);
+  for (const gate of [false, true]) {
+    const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-stage-'));
+    t.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
+    const { product } = readBrand({ flavor: 'dev', gate, dir: brand });
+    stageProductFile({ flavor: 'dev', gate, product, outDir, dir: brand });
+    const staged = fs.readFileSync(path.join(outDir, 'product.json'), 'utf8');
+    if (gate) assert.deepEqual(JSON.parse(staged), product);
+    else assert.equal(staged, odd);
+  }
+});
+
+test('--check-strings checks the gate build\'s own strings when asked, and Dev and prod otherwise', () => {
+  const labels = (argv) => stringsToCheck(argv).map(({ label }) => label);
+  assert.deepEqual(labels([]), ['dev', 'prod']);
+  assert.deepEqual(labels(['--flavor', 'prod']), ['prod']);
+  assert.deepEqual(labels(['--gate']), ['dev gate']);
+  assert.deepEqual(labels(['--flavor', 'dev', '--gate']), ['dev gate']);
+  assert.deepEqual(stringsToCheck(['--gate'])[0].entries, readBrand({ flavor: 'dev', gate: true }).visibleStrings);
+  assert.throws(() => stringsToCheck(['--flavor', 'prod', '--gate']), /--gate builds only from --flavor dev/);
+});

@@ -51,6 +51,7 @@ const {
   markWorktreeBootstrapPending,
   setWorktreeBootstrapState,
   startWorktreeBootstrapWatcher,
+  subscribeWorktreeBootstrapState,
   waitForWorktreeBootstrap,
   waitForWorktreeGitReady,
 } = await import('./worktreeBootstrap');
@@ -214,6 +215,26 @@ describe('worktreeBootstrap.waitForWorktreeBootstrap', () => {
     expect(toastErrors).toEqual([{ title: 'worktree.bootstrap.toast.failed', description: 'setup failed' }]);
   });
 
+  test('background watcher uses actionable copy for a structured hydration failure', async () => {
+    bootstrapStatusResult = {
+      status: 'failed', error: 'generic server text', errorCode: 'GIT_LFS_CLIENT_MISSING', updatedAt: 2,
+      hydration: {
+        status: 'client-missing', submodules: [],
+        lfs: [{ path: '.', status: 'client-missing', error: { code: 'GIT_LFS_CLIENT_MISSING', message: 'generic server text' } }],
+      },
+    };
+    markWorktreeBootstrapPending('/repo-wt');
+
+    startWorktreeBootstrapWatcher('/repo-wt', { pollIntervalMs: 0 });
+
+    await waitFor(() => toastErrors.length === 1);
+    expect(getWorktreeBootstrapState('/repo-wt')).toEqual(bootstrapStatusResult);
+    expect(toastErrors).toEqual([{
+      title: 'worktree.bootstrap.toast.failed',
+      description: 'worktree.bootstrap.toast.lfsClientMissing',
+    }]);
+  });
+
   test('background watcher marks failed and toasts when bootstrap times out', async () => {
     bootstrapStatusResult = { status: 'pending', error: null, updatedAt: 2 };
     markWorktreeBootstrapPending('/repo-wt');
@@ -244,5 +265,41 @@ describe('worktreeBootstrap.waitForWorktreeBootstrap', () => {
     await waitFor(() => bootstrapStatusCalls.length === 1);
     expect(bootstrapStatusCalls).toEqual(['/repo-wt']);
     clearWorktreeBootstrapState('/repo-wt');
+  });
+});
+
+describe('worktreeBootstrap subscription', () => {
+  beforeEach(() => {
+    clearWorktreeBootstrapState('/repo-wt');
+  });
+
+  test('notifies subscribers as a directory enters and leaves bootstrap', () => {
+    const pendingSnapshots: boolean[] = [];
+    const unsubscribe = subscribeWorktreeBootstrapState(() => {
+      pendingSnapshots.push(getWorktreeBootstrapState('/repo-wt')?.status === 'pending');
+    });
+
+    try {
+      markWorktreeBootstrapPending('/repo-wt');
+      setWorktreeBootstrapState('/repo-wt', { status: 'ready', error: null, updatedAt: 2 });
+      clearWorktreeBootstrapState('/repo-wt');
+    } finally {
+      unsubscribe();
+    }
+
+    expect(pendingSnapshots).toEqual([true, false, false]);
+  });
+
+  test('stops notifying after unsubscribe', () => {
+    let notifications = 0;
+    const unsubscribe = subscribeWorktreeBootstrapState(() => {
+      notifications += 1;
+    });
+
+    markWorktreeBootstrapPending('/repo-wt');
+    unsubscribe();
+    clearWorktreeBootstrapState('/repo-wt');
+
+    expect(notifications).toBe(1);
   });
 });

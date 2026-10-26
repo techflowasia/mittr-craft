@@ -4,7 +4,7 @@ import type {
   FileSearchQuery,
   FileSearchResult,
   FilesAPI,
-} from '@mittrcraft/ui/lib/api/types';
+} from '@openchamber/ui/lib/api/types';
 
 import { sendBridgeMessage, sendBridgeMessageWithOptions } from './bridge';
 

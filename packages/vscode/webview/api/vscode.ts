@@ -1,4 +1,4 @@
-import type { VSCodeAPI } from '@mittrcraft/ui/lib/api/types';
+import type { VSCodeAPI } from '@openchamber/ui/lib/api/types';
 import { executeVSCodeCommand, openVSCodeExternalUrl, sendBridgeMessage } from './bridge';
 
 export const createVSCodeActionsAPI = (): VSCodeAPI => ({
@@ -7,12 +7,16 @@ export const createVSCodeActionsAPI = (): VSCodeAPI => ({
     return result.result;
   },
 
-  async openAgentManager(): Promise<void> {
-    await executeVSCodeCommand('mittrcraft.openAgentManager');
-  },
-
   async openExternalUrl(url: string): Promise<void> {
     await openVSCodeExternalUrl(url);
+  },
+
+  async addWorkspaceFolder(path: string): Promise<Array<{ name: string; path: string }>> {
+    const result = await sendBridgeMessage<{ workspaceFolders: Array<{ name: string; path: string }> }>(
+      'api:workspace:addFolder',
+      { path },
+    );
+    return Array.isArray(result?.workspaceFolders) ? result.workspaceFolders : [];
   },
 
   async pickFiles(options): Promise<unknown> {

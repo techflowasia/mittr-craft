@@ -51,8 +51,8 @@ export const createOpenCodeAuthStateRuntime = (dependencies) => {
       return {};
     }
 
-    const username = process.env.OPENCODE_SERVER_USERNAME?.trim() || 'opencode';
-    const credentials = Buffer.from(`${username}:${password}`).toString('base64');
+    // OpenCode 2 accepts only this username; OPENCODE_SERVER_USERNAME is ignored.
+    const credentials = Buffer.from(`opencode:${password}`).toString('base64');
     return { Authorization: `Basic ${credentials}` };
   };
 
@@ -66,7 +66,7 @@ export const createOpenCodeAuthStateRuntime = (dependencies) => {
 
     if (rotateManaged) {
       const rotatedPassword = setOpenCodeAuthState(generateSecureOpenCodePassword(), 'rotated');
-      console.log('Rotated secure password for managed local MittrCraft Engine instance');
+      console.log('Rotated secure password for managed local OpenCode instance');
       return rotatedPassword;
     }
 
@@ -77,7 +77,7 @@ export const createOpenCodeAuthStateRuntime = (dependencies) => {
     }
 
     const generatedPassword = setOpenCodeAuthState(generateSecureOpenCodePassword(), 'generated');
-    console.log('Generated secure password for managed local MittrCraft Engine instance');
+    console.log('Generated secure password for managed local OpenCode instance');
     return generatedPassword;
   };
 

@@ -1,6 +1,12 @@
 import React from 'react';
-import { cn, getModifierLabel } from '@/lib/utils';
+import { cn } from '@/lib/utils';
+import {
+  formatShortcutForDisplay,
+  getEffectiveShortcutCombo,
+} from '@/lib/shortcuts';
 import { useUIStore } from '@/stores/useUIStore';
+import { useEnterpriseMode, useJevBlockedByEnterprise } from '@/stores/useEnterprisePolicyStore';
+import { useSettingsDirectory } from '@/hooks/useSettingsDirectory';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useAgentsStore } from '@/stores/useAgentsStore';
 import { useCommandsStore } from '@/stores/useCommandsStore';
@@ -8,27 +14,23 @@ import { useMcpConfigStore } from '@/stores/useMcpConfigStore';
 import { useSnippetsStore } from '@/stores/useSnippetsStore';
 import { useSkillsStore } from '@/stores/useSkillsStore';
 import { useSkillsCatalogStore } from '@/stores/useSkillsCatalogStore';
-import { useConfigStore } from '@/stores/useConfigStore';
 import { Tooltip, TooltipTrigger } from '@/components/ui/tooltip';
 import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { AgentsSidebar } from '@/components/sections/agents/AgentsSidebar';
 import { AgentsPage } from '@/components/sections/agents/AgentsPage';
 import { BehaviorPage } from '@/components/sections/behavior/BehaviorPage';
+import { WebSearchPage } from '@/components/sections/websearch/WebSearchPage';
 import { CommandsSidebar } from '@/components/sections/commands/CommandsSidebar';
 import { CommandsPage } from '@/components/sections/commands/CommandsPage';
-import { McpSidebar } from '@/components/sections/mcp/McpSidebar';
 import { McpPage } from '@/components/sections/mcp/McpPage';
-import { PluginsSidebar, PluginsPage } from '@/components/sections/plugins';
+import { PluginsPage } from '@/components/sections/plugins';
 import { usePluginsStore } from '@/stores/usePluginsStore';
-import { useQuotaStore } from '@/stores/useQuotaStore';
-import { firstThirdPartyUsage } from '@/components/sections/usage/mittrUsage';
-import { MITTR_PROVIDER_ID } from '@/lib/mittr-quota/quota-me-store';
 import { SkillsSidebar } from '@/components/sections/skills/SkillsSidebar';
 import { SkillsPage } from '@/components/sections/skills/SkillsPage';
 import { ProjectsSidebar } from '@/components/sections/projects/ProjectsSidebar';
 import { ProjectsPage } from '@/components/sections/projects/ProjectsPage';
 import { RemoteInstancesPage } from '@/components/sections/remote-instances/RemoteInstancesPage';
-import { ProvidersSidebar } from '@/components/sections/providers/ProvidersSidebar';
 import { ProvidersPage } from '@/components/sections/providers/ProvidersPage';
 import { UsageSidebar } from '@/components/sections/usage/UsageSidebar';
 import { UsagePage } from '@/components/sections/usage/UsagePage';
@@ -38,9 +40,11 @@ import { SnippetsSidebar } from '@/components/sections/snippets/SnippetsSidebar'
 import { SnippetsPage } from '@/components/sections/snippets/SnippetsPage';
 import { GitPage } from '@/components/sections/git-identities/GitPage';
 import { IntegrationsPage } from '@/components/sections/integrations/IntegrationsPage';
-import type { MittrCraftSection } from '@/components/sections/mittrcraft/types';
-import { MittrCraftPage } from '@/components/sections/mittrcraft/MittrCraftPage';
-import { AboutSettings } from '@/components/sections/mittrcraft/AboutSettings';
+import { RoutingPage } from '@/components/sections/routing/RoutingPage';
+import { ExtensionsPage } from '@/components/sections/extensions/ExtensionsPage';
+import type { OpenChamberSection } from '@/components/sections/openchamber/types';
+import { OpenChamberPage } from '@/components/sections/openchamber/OpenChamberPage';
+import { AboutSettings } from '@/components/sections/openchamber/AboutSettings';
 import { SettingsPageLayout } from '@/components/sections/shared/SettingsPageLayout';
 import {
   SETTINGS_SECTION_TITLE_CLASS,
@@ -50,11 +54,6 @@ import { isDesktopLocalOriginActive, isDesktopShell, isVSCodeRuntime, isWebRunti
 import { useI18n } from '@/lib/i18n';
 import { Icon } from "@/components/icon/Icon";
 import { McpIcon } from '@/components/icons/McpIcon';
-import { OpenCodeReloadFooterAction } from '@/components/views/OpenCodeReloadFooterAction';
-import {
-  selectPendingOpenCodeRestartCount,
-  usePendingOpenCodeRestartStore,
-} from '@/stores/usePendingOpenCodeRestartStore';
 import {
   SETTINGS_PAGE_METADATA,
   getSettingsNavIcon,
@@ -66,16 +65,26 @@ import {
 } from '@/lib/settings/metadata';
 import { buildSettingsSearchResults, type SettingsSearchResult } from '@/lib/settings/search';
 
-// UI Kit: fixed settings navigation width
-const SETTINGS_NAV_WIDTH = 256;
+// UI Kit: fixed split-page sidebar width
 const SETTINGS_SPLIT_SIDEBAR_WIDTH = 280;
-const SETTINGS_DETAIL_HISTORY_KEY = '__mittrcraftSettingsDetail';
+const SETTINGS_DETAIL_HISTORY_KEY = '__openchamberSettingsDetail';
+/** How long (in frames, ~0.5 s) a search result or a link waits for its item to render. */
+const PENDING_ITEM_MAX_FRAMES = 30;
 
 type MobileStage = 'nav' | 'page-sidebar' | 'page-content';
 type SettingsDetailHistoryEntry = {
   page: SettingsPageSlug;
   stage: 'page-content';
 };
+
+interface SettingsDetailHistoryCandidate {
+  page?: string | null;
+  stage?: 'page-content' | null;
+}
+
+interface SettingsHistoryState {
+  [SETTINGS_DETAIL_HISTORY_KEY]?: SettingsDetailHistoryCandidate | null;
+}
 
 interface SettingsViewProps {
   onClose?: () => void;
@@ -85,19 +94,24 @@ interface SettingsViewProps {
   isWindowed?: boolean;
   /** Restrict top-level settings navigation to a specific product surface. */
   visiblePageSlugs?: SettingsPageSlug[];
+  /** Lets a native shell hand its hardware back button to the mobile stages:
+      the handler steps one level up and reports whether it consumed the press. */
+  registerBackHandler?: (handler: (() => boolean) | null) => void;
   initialMobileStage?: MobileStage;
 }
 
 const pageOrder: SettingsPageSlug[] = [
-  // 'general' group — MittrCraft
+  // 'general' group — OpenChamber
   'general',
   'appearance',
   'chat',
   'notifications',
   'sessions',
+  'routing',
   'shortcuts',
   'voice',
   'integrations',
+  'extensions',
   'usage',
   'about',
   // 'projects' group — Workspace
@@ -105,8 +119,10 @@ const pageOrder: SettingsPageSlug[] = [
   'remote-instances',
   'tunnel',
   'git',
+  'isolated-spaces',
   // 'opencode' group — OpenCode
   'providers',
+  'web-search',
   'agents',
   'behavior',
   'commands',
@@ -121,12 +137,10 @@ const pageOrder: SettingsPageSlug[] = [
 
 const NAV_GROUP_ORDER = ['general', 'projects', 'opencode', 'content'] as const;
 
-const ADD_PROVIDER_SETTINGS_ID = '__add_provider__';
-
-function buildRuntimeContext(isDesktop: boolean, isMobile: boolean): SettingsRuntimeContext {
+function buildRuntimeContext(isDesktop: boolean, isMobile: boolean, routingAvailable: boolean, enterpriseMode: boolean, jevBlockedByEnterprise: boolean): SettingsRuntimeContext {
   const isVSCode = isVSCodeRuntime();
   const isWeb = !isDesktop && isWebRuntime();
-  return { isVSCode, isWeb, isDesktop, isMobile };
+  return { isVSCode, isWeb, isDesktop, isMobile, routingAvailable, enterpriseMode, jevBlockedByEnterprise };
 }
 
 function isPageAvailable(page: SettingsPageMeta, ctx: SettingsRuntimeContext): boolean {
@@ -134,10 +148,6 @@ function isPageAvailable(page: SettingsPageMeta, ctx: SettingsRuntimeContext): b
     return true;
   }
   return page.isAvailable(ctx);
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function nextUniqueName(baseName: string, existingNames: Iterable<string>): string {
@@ -151,43 +161,30 @@ function nextUniqueName(baseName: string, existingNames: Iterable<string>): stri
   return name;
 }
 
-function getSettingsDetailHistoryEntry(state: unknown): SettingsDetailHistoryEntry | null {
-  if (!isObjectRecord(state)) {
+function getSettingsDetailHistoryEntry(state: SettingsHistoryState | null): SettingsDetailHistoryEntry | null {
+  const detail = state?.[SETTINGS_DETAIL_HISTORY_KEY];
+  if (detail?.page == null || detail.stage !== 'page-content') {
     return null;
   }
 
-  const detail = state[SETTINGS_DETAIL_HISTORY_KEY];
-  if (!isObjectRecord(detail)) {
-    return null;
-  }
-
-  const page = detail.page;
-  const stage = detail.stage;
-  if (typeof page !== 'string' || stage !== 'page-content') {
-    return null;
-  }
-
-  const resolvedPage = resolveSettingsSlug(page);
-  return { page: resolvedPage, stage };
+  return { page: resolveSettingsSlug(detail.page), stage: detail.stage };
 }
 
-function getCurrentHistoryState(): Record<string, unknown> {
-  if (typeof window === 'undefined' || !isObjectRecord(window.history.state)) {
-    return {};
-  }
-  return window.history.state;
+function getCurrentHistoryState(): SettingsHistoryState {
+  const state: SettingsHistoryState | null = window.history.state;
+  return state ?? {};
 }
 
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile, isWindowed, visiblePageSlugs, initialMobileStage = 'nav' }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile, isWindowed, visiblePageSlugs, initialMobileStage = 'nav', registerBackHandler }) => {
   const { t } = useI18n();
   const deviceInfo = useDeviceInfo();
   const isMobile = forceMobile ?? deviceInfo.isMobile;
-  const pendingRestartCount = usePendingOpenCodeRestartStore(selectPendingOpenCodeRestartCount);
 
   const settingsPageRaw = useUIStore((state) => state.settingsPage);
   const isSettingsDialogOpen = useUIStore((state) => state.isSettingsDialogOpen);
   const setSettingsPage = useUIStore((state) => state.setSettingsPage);
+  const openSettingsShortcutOverride = useUIStore((state) => state.shortcutOverrides.open_settings);
   const settingsSlug = resolveSettingsSlug(settingsPageRaw);
 
   const [mobileStage, setMobileStage] = React.useState<MobileStage>(initialMobileStage);
@@ -210,6 +207,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
   const [pendingSearchItemId, setPendingSearchItemId] = React.useState<string | null>(null);
   const [activeSearchResultIndex, setActiveSearchResultIndex] = React.useState(0);
   const containerRef = React.useRef<HTMLDivElement>(null);
+  const shouldFocusMobilePageContentRef = React.useRef(false);
   const searchResultRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
   const activeSearchResultIndexRef = React.useRef(0);
   const keyboardSearchNavigationRef = React.useRef(false);
@@ -221,21 +219,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
     return isDesktopShell() && isDesktopLocalOriginActive();
   }, []);
   const isMac = React.useMemo(() => {
-    return isDesktopShell() && typeof window !== 'undefined'
-      && (window as unknown as { __MITTRCRAFT_PLATFORM__?: string }).__MITTRCRAFT_PLATFORM__ === 'darwin';
+    return isDesktopShell() && window.__OPENCHAMBER_PLATFORM__ === 'darwin';
   }, []);
   const isWindows = React.useMemo(() => {
-    return isDesktopShell() && typeof window !== 'undefined'
-      && (window as unknown as { __MITTRCRAFT_PLATFORM__?: string }).__MITTRCRAFT_PLATFORM__ === 'win32';
+    return isDesktopShell() && window.__OPENCHAMBER_PLATFORM__ === 'win32';
   }, []);
   const isLinux = React.useMemo(() => {
-    return isDesktopShell() && typeof window !== 'undefined'
-      && (window as unknown as { __MITTRCRAFT_PLATFORM__?: string }).__MITTRCRAFT_PLATFORM__ === 'linux';
+    return isDesktopShell() && window.__OPENCHAMBER_PLATFORM__ === 'linux';
   }, []);
 
   // keep platform check available for future window chrome tweaks
 
-  const runtimeCtx = React.useMemo(() => buildRuntimeContext(isDesktopApp, isMobile), [isDesktopApp, isMobile]);
+  const routingAvailable = useUIStore((state) => state.routingFeatureAvailable);
+  const enterpriseMode = useEnterpriseMode();
+  const jevBlockedByEnterprise = useJevBlockedByEnterprise();
+  const runtimeCtx = React.useMemo(
+    () => buildRuntimeContext(isDesktopApp, isMobile, routingAvailable, enterpriseMode, jevBlockedByEnterprise),
+    [isDesktopApp, isMobile, routingAvailable, enterpriseMode, jevBlockedByEnterprise],
+  );
 
   const visiblePages = React.useMemo(() => {
     const allowedPages = visiblePageSlugs ? new Set<SettingsPageSlug>(visiblePageSlugs) : null;
@@ -255,23 +256,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
   }, [visiblePages]);
 
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
+  const settingsDirectory = useSettingsDirectory();
 
-  // Load stores when project changes or when a page becomes active.
+  // Load stores when the settings project changes or a page becomes active.
   React.useEffect(() => {
     if (!isSettingsDialogOpen && !runtimeCtx.isVSCode && !isWindowed) {
       return;
     }
 
     if (settingsSlug === 'agents') {
-      void useAgentsStore.getState().loadAgents();
+      void useAgentsStore.getState().loadAgents(settingsDirectory);
       return;
     }
     if (settingsSlug === 'commands') {
-      void useCommandsStore.getState().loadCommands();
+      void useCommandsStore.getState().loadCommands(settingsDirectory);
       return;
     }
     if (settingsSlug === 'mcp') {
-      void useMcpConfigStore.getState().loadMcpConfigs();
+      void useMcpConfigStore.getState().loadMcpConfigs({ directory: settingsDirectory });
       return;
     }
     if (settingsSlug === 'plugins') {
@@ -279,13 +281,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
       return;
     }
     if (settingsSlug === 'skills.installed' || settingsSlug === 'skills.catalog') {
-      void useSkillsStore.getState().loadSkills();
+      void useSkillsStore.getState().loadSkills(settingsDirectory);
       void useSkillsCatalogStore.getState().loadCatalog();
     }
     if (settingsSlug === 'snippets') {
       void useSnippetsStore.getState().loadSnippets();
     }
-  }, [activeProjectId, isSettingsDialogOpen, isWindowed, runtimeCtx.isVSCode, settingsSlug]);
+    // `activeProjectId` still matters: the settings directory follows the active
+    // project until the user picks another one in the Settings selector.
+  }, [activeProjectId, isSettingsDialogOpen, isWindowed, runtimeCtx.isVSCode, settingsDirectory, settingsSlug]);
 
   const openPage = React.useCallback((slug: SettingsPageSlug) => {
     setSettingsPage(slug);
@@ -301,31 +305,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
     setMobileStage(def.kind === 'split' ? 'page-sidebar' : 'page-content');
   }, [isMobile, setSettingsPage]);
 
-  const openThirdPartyProviderSetup = React.useCallback(async (providerId: string): Promise<boolean> => {
-    const configStore = useConfigStore.getState();
-    await configStore.loadProviders({ source: 'settings:third-party-provider-setup' });
-    const providerAvailable = useConfigStore.getState().providers.some(
-      (provider) => provider.id === providerId,
-    );
-    if (!providerAvailable) {
-      return false;
-    }
-
-    configStore.setSelectedProvider(providerId);
-    openPage('providers');
-    if (isMobile) {
-      setMobileStage('page-content');
-    }
-    return true;
-  }, [isMobile, openPage]);
-
   const activePageMeta = React.useMemo(() => {
     return getSettingsPageMeta(settingsSlug);
   }, [settingsSlug]);
 
   // Nav is always open (collapsed state removed)
 
-  const mittrCraftSectionBySlug: Partial<Record<SettingsPageSlug, MittrCraftSection>> = React.useMemo(() => ({
+  const openChamberSectionBySlug: Partial<Record<SettingsPageSlug, OpenChamberSection>> = React.useMemo(() => ({
     general: 'general',
     appearance: 'visual',
     chat: 'chat',
@@ -334,6 +320,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
     notifications: 'notifications',
     voice: 'voice',
     tunnel: 'tunnel',
+    'isolated-spaces': 'spaces',
   }), []);
 
   const getPageTitle = React.useCallback((slug: SettingsPageSlug): string => {
@@ -346,6 +333,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return t('settings.page.remoteInstances.title');
       case 'providers':
         return t('settings.page.providers.title');
+      case 'web-search':
+        return t('settings.page.webSearch.title');
       case 'usage':
         return t('settings.page.usage.title');
       case 'agents':
@@ -366,6 +355,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return t('settings.page.git.title');
       case 'integrations':
         return t('settings.page.integrations.title');
+      case 'extensions':
+        return t('settings.page.extensions.title');
       case 'appearance':
         return t('settings.page.appearance.title');
       case 'chat':
@@ -374,6 +365,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return t('settings.page.shortcuts.title');
       case 'sessions':
         return t('settings.page.sessions.title');
+      case 'routing':
+        return t('settings.page.routing.title');
       case 'magic-prompts':
         return t('settings.page.magicPrompts.title');
       case 'snippets':
@@ -384,6 +377,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return t('settings.page.voice.title');
       case 'tunnel':
         return t('settings.page.tunnel.title');
+      case 'isolated-spaces':
+        return t('settings.openchamber.spaces.title');
       case 'about':
         return t('settings.page.about.title');
       case 'home':
@@ -435,8 +430,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         oauthClientSecret: '',
         oauthScope: '',
         oauthRedirectUri: '',
-        timeout: '',
-        enabled: true,
+        oauthCallbackPort: '',
+        oauthAuthServerMetadataUrl: '',
+        protocol: 'legacy',
+        timeoutStartup: '',
+        timeoutCatalog: '',
+        timeoutExecution: '',
+        codemode: 'default',
+        disabled: false,
       });
       store.setSelectedMcp(name);
       return result.id === 'mcp.create' ? 'mcp.server' : result.id;
@@ -458,19 +459,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
       return result.id === 'skills.create' ? 'skills.basic-information' : result.id;
     }
 
-    if (result.id === 'sessions.mittrQuota') {
-      useQuotaStore.getState().setSelectedProvider(MITTR_PROVIDER_ID);
-    }
-
-    if (result.id === 'usage.work-status-panel' || result.id === 'usage.model-quotas') {
-      const quota = useQuotaStore.getState();
-      if (!quota.selectedProviderId || quota.selectedProviderId === MITTR_PROVIDER_ID) {
-        quota.setSelectedProvider(firstThirdPartyUsage(quota.results));
-      }
-    }
-
     if (result.id === 'providers.connect') {
-      useConfigStore.getState().setSelectedProvider(ADD_PROVIDER_SETTINGS_ID);
+      useUIStore.getState().setSettingsProvidersConnectRequested(true);
+    }
+
+    if (result.id === 'providers.classification') {
+      useUIStore.getState().setSettingsProvidersClassificationRequested(true);
     }
 
     if (result.id === 'plugins.create') {
@@ -523,9 +517,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
     if (isMobile) {
       setMobileStage('page-content');
     }
-    if (result.id === 'plugins.create' && typeof window !== 'undefined') {
+    if (result.id === 'plugins.create') {
       window.setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('mittrcraft:settings-open-plugin-add'));
+        window.dispatchEvent(new CustomEvent('openchamber:settings-open-plugin-add'));
       }, 50);
     }
   }, [isMobile, openPage, prepareSettingsSearchTarget]);
@@ -569,22 +563,43 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
     }
   }, [openSearchResult, settingsSearchQuery, settingsSearchResults]);
 
+  // Links inside Settings (e.g. from a setting's explanation) travel the same
+  // road as a search result: open the page, then reveal the item.
+  const settingsJumpRequest = useUIStore((state) => state.settingsJumpRequest);
+  React.useEffect(() => {
+    if (!settingsJumpRequest) {
+      return;
+    }
+    useUIStore.getState().clearSettingsJumpRequest();
+    setPendingSearchItemId(settingsJumpRequest.itemId);
+    openPage(resolveSettingsSlug(settingsJumpRequest.page));
+    if (isMobile) {
+      setMobileStage('page-content');
+    }
+  }, [isMobile, openPage, settingsJumpRequest]);
+
   React.useEffect(() => {
     const targetId = pendingSearchItemId;
     if (!targetId) {
       return;
     }
 
+    // A page that loads its content (an agent's details, a provider's page)
+    // renders the item a few frames late, so look for it for a short while.
     let cancelled = false;
-    const frame = window.requestAnimationFrame(() => {
+    let attempts = 0;
+    let frame = 0;
+    const reveal = () => {
       if (cancelled) {
         return;
       }
-      const escapedId = typeof CSS !== 'undefined' && CSS.escape
-        ? CSS.escape(targetId)
+      const escapedId = globalThis.CSS?.escape
+        ? globalThis.CSS.escape(targetId)
         : targetId.replace(/[^a-zA-Z0-9_-]/g, '\\$&');
       const target = containerRef.current?.querySelector<HTMLElement>(`[data-settings-item="${escapedId}"]`);
       if (!target) {
+        attempts += 1;
+        if (attempts < PENDING_ITEM_MAX_FRAMES) frame = window.requestAnimationFrame(reveal);
         return;
       }
       setPendingSearchItemId(null);
@@ -593,7 +608,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
       window.setTimeout(() => {
         target.removeAttribute('data-settings-search-highlight');
       }, 1600);
-    });
+    };
+    frame = window.requestAnimationFrame(reveal);
 
     return () => {
       cancelled = true;
@@ -620,14 +636,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return <AgentsSidebar onItemSelect={opts.onItemSelect} />;
       case 'commands':
         return <CommandsSidebar onItemSelect={opts.onItemSelect} />;
-      case 'mcp':
-        return <McpSidebar onItemSelect={opts.onItemSelect} />;
-      case 'plugins':
-        return <PluginsSidebar onItemSelect={opts.onItemSelect} />;
       case 'skills.installed':
         return <SkillsSidebar onItemSelect={opts.onItemSelect} />;
-      case 'providers':
-        return <ProvidersSidebar onItemSelect={opts.onItemSelect} />;
       case 'usage':
         return <UsageSidebar onItemSelect={opts.onItemSelect} />;
       case 'magic-prompts':
@@ -666,6 +676,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         return <SkillsPage view="catalog" />;
       case 'providers':
         return <ProvidersPage />;
+      case 'web-search':
+        return <WebSearchPage />;
       case 'usage':
         return <UsagePage />;
       case 'about':
@@ -681,12 +693,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
       case 'git':
         return <GitPage />;
       case 'integrations':
-        return (
-          <IntegrationsPage
-            onOpenProviderSetup={openThirdPartyProviderSetup}
-            onOpenPluginManager={() => openPage('plugins')}
-          />
-        );
+        return <IntegrationsPage />;
+      case 'routing':
+        return <RoutingPage />;
+      case 'extensions':
+        return <ExtensionsPage />;
       case 'general':
       case 'appearance':
       case 'chat':
@@ -694,15 +705,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
       case 'sessions':
       case 'notifications':
       case 'voice':
-      case 'tunnel': {
-        const section = mittrCraftSectionBySlug[slug] ?? 'visual';
-        return <MittrCraftPage section={section} />;
+      case 'tunnel':
+      case 'isolated-spaces': {
+        const section = openChamberSectionBySlug[slug] ?? 'visual';
+        return <OpenChamberPage section={section} />;
       }
       case 'home':
       default:
         return null;
     }
-  }, [mittrCraftSectionBySlug, openPage, openThirdPartyProviderSetup, renderUnavailable, runtimeCtx, t]);
+  }, [openChamberSectionBySlug, renderUnavailable, runtimeCtx, t]);
 
   // Mobile: if opened via deep-link / palette to a non-home page, jump into it once.
   React.useEffect(() => {
@@ -727,19 +739,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
   }, [isMobile, mobileStage, settingsSlug]);
 
   const showBackButton = isMobile && mobileStage !== 'nav';
-  const backButtonTargetsPageSidebar = isMobile && mobileStage === 'page-content' && settingsSlug === 'skills.installed';
-  const showOpenPageSidebarButton = mobileStage === 'page-content'
-    && activePageMeta?.kind === 'split'
-    && !backButtonTargetsPageSidebar;
+  // Split pages drill down on mobile: nav → the page's own list → the item.
+  // Back walks that path in reverse, so it takes one tap to reach the next
+  // item instead of a round trip through the settings root.
+  const backButtonTargetsPageSidebar = isMobile
+    && mobileStage === 'page-content'
+    && activePageMeta?.kind === 'split';
   const mobileBackButtonLabel = backButtonTargetsPageSidebar
     ? t('settings.view.actions.back')
     : showBackButton
       ? t('settings.view.actions.backToSettings')
       : t('settings.view.actions.closeSettings');
-  const shortcutKey = getModifierLabel();
+  const openSettingsCombo = getEffectiveShortcutCombo(
+    'open_settings',
+    openSettingsShortcutOverride === undefined ? undefined : { open_settings: openSettingsShortcutOverride },
+  );
+  const closeSettingsTitle = openSettingsCombo
+    ? t('settings.view.actions.closeSettingsWithShortcut', {
+        shortcut: formatShortcutForDisplay(openSettingsCombo),
+      })
+    : t('settings.view.actions.closeSettings');
 
   const pushMobileSplitDetailHistory = React.useCallback((slug: SettingsPageSlug) => {
-    if (typeof window === 'undefined' || runtimeCtx.isVSCode) {
+    if (runtimeCtx.isVSCode) {
       return;
     }
 
@@ -759,17 +781,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
   }, [runtimeCtx.isVSCode]);
 
   const handleMobilePageSidebarItemSelect = React.useCallback(() => {
+    shouldFocusMobilePageContentRef.current = true;
     setMobileStage('page-content');
-    if (settingsSlug === 'skills.installed') {
-      pushMobileSplitDetailHistory(settingsSlug);
-    }
+    pushMobileSplitDetailHistory(settingsSlug);
   }, [pushMobileSplitDetailHistory, settingsSlug]);
+
+  React.useEffect(() => {
+    if (!isMobile || mobileStage !== 'page-content' || !shouldFocusMobilePageContentRef.current) {
+      return;
+    }
+
+    shouldFocusMobilePageContentRef.current = false;
+    const frame = window.requestAnimationFrame(() => {
+      containerRef.current
+        ?.querySelector<HTMLElement>('[data-settings-page-heading]')
+        ?.focus({ preventScroll: true });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [isMobile, mobileStage, settingsSlug]);
 
   const handleBack = React.useCallback(() => {
     if (backButtonTargetsPageSidebar) {
-      const currentDetail = typeof window !== 'undefined'
-        ? getSettingsDetailHistoryEntry(window.history.state)
-        : null;
+      const currentDetail = getSettingsDetailHistoryEntry(window.history.state);
       if (currentDetail?.page === settingsSlug && !runtimeCtx.isVSCode) {
         window.history.back();
         return;
@@ -781,18 +817,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
     setMobileStage('nav');
   }, [backButtonTargetsPageSidebar, runtimeCtx.isVSCode, settingsSlug]);
 
+  // The Android hardware back button belongs to the same ladder as the header's
+  // back arrow: one level up per press, and only the press at the root falls
+  // through to the shell, which closes Settings.
+  React.useEffect(() => {
+    if (!registerBackHandler) {
+      return;
+    }
+    registerBackHandler(() => {
+      if (!isMobile || mobileStage === 'nav') {
+        return false;
+      }
+      handleBack();
+      return true;
+    });
+    return () => registerBackHandler(null);
+  }, [handleBack, isMobile, mobileStage, registerBackHandler]);
+
   React.useEffect(() => {
     if (!isMobile || runtimeCtx.isVSCode) {
       return;
     }
 
     const handlePopState = (event: PopStateEvent) => {
-      if (settingsSlug !== 'skills.installed') {
+      if (getSettingsPageMeta(settingsSlug)?.kind !== 'split') {
         return;
       }
 
       const detail = getSettingsDetailHistoryEntry(event.state);
-      if (detail?.page === 'skills.installed') {
+      if (detail?.page === settingsSlug) {
         setMobileStage('page-content');
         return;
       }
@@ -806,17 +859,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
     };
   }, [isMobile, runtimeCtx.isVSCode, settingsSlug]);
 
-  const handleOpenPageSidebar = React.useCallback(() => {
-    setMobileStage('page-sidebar');
-  }, []);
-
   const renderSettingsNav = () => {
     const hasSearchQuery = settingsSearchQuery.trim().length > 0;
 
     return (
       <div className="flex h-full flex-col overflow-hidden">
         <div className="px-4 pt-3">
-          <div className="flex h-10 items-center gap-1.5 rounded-md border border-border bg-background/70 px-2 text-muted-foreground focus-within:ring-2 focus-within:ring-primary/40 sm:h-8">
+          <div className="oc-surface-elevated flex h-10 items-center gap-1.5 rounded-md border border-border bg-surface-elevated/70 px-2 text-muted-foreground focus-within:ring-2 focus-within:ring-ring sm:h-8">
             <Icon name="search" className="h-4 w-4 shrink-0" />
             <input
               value={settingsSearchQuery}
@@ -824,7 +873,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
               onKeyDown={handleSettingsSearchKeyDown}
               placeholder={t('settings.view.search.placeholder')}
               aria-label={t('settings.view.search.aria')}
-              className="typography-ui min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
+              className="typography-ui min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground/70"
             />
             {hasSearchQuery && (
               <button
@@ -840,14 +889,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         </div>
 
         {/* Scrollable nav items */}
-        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+        <ScrollableOverlay outerClassName="flex-1 min-h-0" disableHorizontal>
           <div className="flex flex-col gap-0.5 px-4 pt-4 pb-2">
             {hasSearchQuery ? (
               settingsSearchResults.length > 0 ? (() => {
                 let resultIndex = 0;
                 return groupedSettingsSearchResults.map((group) => (
                   <div key={group.page} className="space-y-0.5">
-                    <div className="px-2 pb-0.5 pt-2 typography-micro font-medium text-muted-foreground">
+                    <div className="px-2 pb-0.5 pt-2 typography-micro font-medium text-muted-foreground/70">
                       {group.pageTitle}
                     </div>
                     {group.results.map((result) => {
@@ -868,14 +917,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
                           }}
                           onClick={() => openSearchResult(result)}
                           className={cn(
-                            'flex w-full flex-col rounded-md px-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+                            'flex w-full flex-col rounded-md px-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                             hasDescription ? 'min-h-11 py-1.5' : 'py-2',
                             active ? 'bg-interactive-selection' : 'hover:bg-interactive-hover'
                           )}
                         >
                           <span className="typography-ui-label text-foreground truncate">{result.title}</span>
                           {hasDescription && (
-                            <span className="typography-micro text-muted-foreground line-clamp-2">{result.description}</span>
+                            <span className="typography-micro text-muted-foreground/70 line-clamp-2">{result.description}</span>
                           )}
                         </button>
                       );
@@ -955,16 +1004,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
               ));
             })()}
           </div>
-        </div>
-
-        {/* Footer */}
-        <div className="overflow-hidden transition-opacity duration-150 opacity-100">
-          <div className="border-t border-border bg-background px-4 py-1.5 space-y-0.5 sm:bg-sidebar">
-            {(!runtimeCtx.isVSCode || pendingRestartCount > 0) && (
-              <OpenCodeReloadFooterAction />
-            )}
-          </div>
-        </div>
+        </ScrollableOverlay>
       </div>
     );
   };
@@ -989,17 +1029,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
         // No sidebar available; fall back to direct content.
         const fallback = renderPageContent(settingsSlug);
         return (
-          <div className="flex-1 min-h-0 overflow-y-scroll overflow-x-hidden bg-background">
+          <ScrollableOverlay outerClassName="flex-1 min-h-0" className="bg-background" disableHorizontal>
             <ErrorBoundary>{fallback}</ErrorBoundary>
-          </div>
+          </ScrollableOverlay>
         );
       }
       return (
-        <div className="flex-1 min-h-0 overflow-y-scroll overflow-x-hidden bg-background">
+        <ScrollableOverlay outerClassName="flex-1 min-h-0" className="bg-background" disableHorizontal>
           <ErrorBoundary>
             {renderPageSidebar(settingsSlug, { onItemSelect: handleMobilePageSidebarItemSelect })}
           </ErrorBoundary>
-        </div>
+        </ScrollableOverlay>
       );
     }
 
@@ -1007,9 +1047,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
     const content = renderPageContent(settingsSlug);
 
     return (
-      <div className="flex-1 min-h-0 overflow-y-scroll overflow-x-hidden bg-background">
+      <ScrollableOverlay outerClassName="flex-1 min-h-0" className="bg-background" disableHorizontal>
         <ErrorBoundary>{content}</ErrorBoundary>
-      </div>
+      </ScrollableOverlay>
     );
   };
 
@@ -1024,17 +1064,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
           <div className={cn('border-r', runtimeCtx.isVSCode ? 'bg-background' : 'bg-sidebar')} style={{ width: SETTINGS_SPLIT_SIDEBAR_WIDTH, minWidth: SETTINGS_SPLIT_SIDEBAR_WIDTH, borderColor: 'var(--interactive-border)' }}>
             <ErrorBoundary>{renderPageSidebar(settingsSlug, {})}</ErrorBoundary>
           </div>
-          <div className="flex-1 min-h-0 overflow-y-scroll overflow-x-hidden bg-background">
+          <ScrollableOverlay outerClassName="flex-1 min-h-0" className="bg-background" disableHorizontal>
             <ErrorBoundary>{renderPageContent(settingsSlug)}</ErrorBoundary>
-          </div>
+          </ScrollableOverlay>
         </div>
       );
     }
 
     return (
-      <div className="h-full min-h-0 overflow-y-scroll overflow-x-hidden bg-background">
+      <ScrollableOverlay outerClassName="h-full min-h-0" className="bg-background" disableHorizontal>
         <ErrorBoundary>{renderPageContent(settingsSlug)}</ErrorBoundary>
-      </div>
+      </ScrollableOverlay>
     );
   };
 
@@ -1057,7 +1097,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
               type="button"
               onClick={handleBack}
               aria-label={mobileBackButtonLabel}
-              className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg p-2 text-muted-foreground hover:text-foreground hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg p-2 text-muted-foreground hover:text-foreground hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Icon name="arrow-left-s" className="h-5 w-5" />
             </button>
@@ -1069,24 +1109,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
               : (activePageMeta ? getPageTitle(activePageMeta.slug) : t('settings.view.home.title'))}
           </div>
 
-          {showOpenPageSidebarButton && (
-            <button
-              type="button"
-              onClick={handleOpenPageSidebar}
-              aria-label={t('settings.view.actions.openSectionList')}
-              className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg p-2 text-muted-foreground hover:text-foreground hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            >
-              <Icon name="list-unordered" className="h-5 w-5" />
-            </button>
-          )}
-
           {onClose && (
             <button
               type="button"
               onClick={onClose}
               aria-label={t('settings.view.actions.closeSettings')}
-              title={t('settings.view.actions.closeSettingsWithShortcut', { shortcut: shortcutKey })}
-              className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg p-2 text-muted-foreground hover:text-foreground hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              title={closeSettingsTitle}
+              className="inline-flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg p-2 text-muted-foreground hover:text-foreground hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Icon name="close" className="h-5 w-5" />
             </button>
@@ -1100,7 +1129,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
                 type="button"
                 onClick={handleBack}
                 aria-label={t('settings.view.actions.back')}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg p-2 text-muted-foreground hover:text-foreground hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-lg p-2 text-muted-foreground hover:text-foreground hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <Icon name="arrow-left-s" className="h-5 w-5" />
               </button>
@@ -1113,8 +1142,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
             type="button"
             onClick={onClose}
             aria-label={t('settings.view.actions.closeSettings')}
-            title={t('settings.view.actions.closeSettingsWithShortcut', { shortcut: shortcutKey })}
-            className="inline-flex h-7 w-7 items-center justify-center rounded-md p-0.5 text-muted-foreground hover:text-foreground hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            title={closeSettingsTitle}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md p-0.5 text-muted-foreground hover:text-foreground hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Icon name="close" className="h-5 w-5" />
           </button>
@@ -1130,7 +1159,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
           <>
             <div
               className={cn(
-                'relative flex h-full min-h-0 flex-col overflow-hidden border-r',
+                'relative flex h-full min-h-0 w-36 min-w-36 flex-col overflow-hidden border-r sm:w-64 sm:min-w-64',
                 isDesktopApp
                   ? 'bg-sidebar'
                   : runtimeCtx.isVSCode
@@ -1138,8 +1167,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onClose, forceMobile
                     : 'bg-sidebar',
               )}
               style={{
-                width: `${SETTINGS_NAV_WIDTH}px`,
-                minWidth: `${SETTINGS_NAV_WIDTH}px`,
                 borderColor: 'var(--interactive-border)',
               }}
             >

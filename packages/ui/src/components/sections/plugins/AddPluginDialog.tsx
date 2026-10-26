@@ -109,11 +109,7 @@ export const AddPluginDialog: React.FC<AddPluginDialogProps> = ({
         });
       }
       if (result.ok) {
-        if (result.restartDeferred) {
-          toast.success(t('settings.view.pendingRestart.saved'));
-        } else {
-          toast.success(result.message || t('settings.plugins.toast.created'));
-        }
+        toast.success(result.message || t('settings.plugins.toast.created'));
         if (result.reloadFailed) {
           toast.warning(t('settings.plugins.toast.reloadFailed'));
         }
@@ -266,7 +262,7 @@ export const AddPluginDialog: React.FC<AddPluginDialogProps> = ({
                     <span
                       className={cn(
                         'typography-ui-label font-normal',
-                        selected ? 'text-foreground' : 'text-foreground',
+                        selected ? 'text-foreground' : 'text-foreground/60',
                       )}
                     >
                       {label}

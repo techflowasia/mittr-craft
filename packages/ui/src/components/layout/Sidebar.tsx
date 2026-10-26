@@ -3,9 +3,11 @@ import { cn } from '@/lib/utils';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { useI18n } from '@/lib/i18n';
 import { useUIStore } from '@/stores/useUIStore';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 const SIDEBAR_CONTENT_WIDTH = 280;
-const SIDEBAR_MIN_WIDTH = 280;
+// Wide enough for the toolbar's eight icons and a labelled titlebar button.
+const SIDEBAR_MIN_WIDTH = 264;
 const SIDEBAR_MAX_WIDTH = 500;
 
 interface SidebarProps {
@@ -15,16 +17,12 @@ interface SidebarProps {
     className?: string;
     /** Fixed strip rendered above the scrollable content (e.g. toggle + project actions). */
     topBar?: React.ReactNode;
+    side?: 'left' | 'right';
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, className, topBar }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, className, topBar, side = 'left' }) => {
     const { t } = useI18n();
-    const sidebarSide = useUIStore((state) => state.sidebarSide);
-    // When the sidebar is docked right, every edge-anchored detail mirrors:
-    // the outer border, the inset shadow, the resize handle position, and the
-    // sign of the resize drag. The handle always lives on the sidebar's inner
-    // edge (the one facing the content), so it stays grabbable.
-    const isRightSide = sidebarSide === 'right';
+    const isRightSide = side === 'right';
     const sidebarWidth = useUIStore((state) => state.sidebarWidth);
     const setSidebarWidth = useUIStore((state) => state.setSidebarWidth);
     const [isResizing, setIsResizing] = React.useState(false);
@@ -98,9 +96,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
             return;
         }
 
-        // Dragging the handle away from the sidebar's own outer edge grows it.
-        // Docked left that means increasing clientX; docked right the handle is
-        // on the left edge, so the same gesture is a decreasing clientX.
         const pointerDelta = event.clientX - startXRef.current;
         const delta = isRightSide ? -pointerDelta : pointerDelta;
         const nextWidth = clampSidebarWidth(startWidthRef.current + delta);
@@ -158,9 +153,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
                 <div
                     className={cn(
                         'pointer-events-none absolute inset-0 z-30',
-                        isRightSide
-                            ? 'shadow-[inset_2px_0_10px_-2px_rgb(0_0_0_/_0.06)]'
-                            : 'shadow-[inset_-2px_0_10px_-2px_rgb(0_0_0_/_0.06)]',
+                        isRightSide ? 'shadow-[inset_2px_0_10px_-2px_rgb(0_0_0_/_0.06)]' : 'shadow-[inset_-2px_0_10px_-2px_rgb(0_0_0_/_0.06)]',
                     )}
                     aria-hidden="true"
                 />
@@ -168,8 +161,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
             {isOpen && (
                 <div
                     className={cn(
-                        'absolute top-0 z-20 h-full w-[3px] cursor-col-resize hover:bg-[var(--interactive-border)]/80 transition-colors',
-                        isRightSide ? 'left-0' : 'right-0',
+                        isRightSide ? 'absolute left-0' : 'absolute right-0',
+                        'top-0 z-20 h-full w-[3px] cursor-col-resize hover:bg-[var(--interactive-border)]/80 transition-colors',
                         isResizing && 'bg-[var(--interactive-border)]'
                     )}
                     onPointerDown={handlePointerDown}
@@ -178,10 +171,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
                     onPointerCancel={handlePointerEnd}
                     role="separator"
                     aria-orientation="vertical"
-                    // The key still reads `leftPanelAria`; its text is now
-                    // side-neutral ("Resize sidebar") in every locale, which is
-                    // what a screen reader announces. Renaming the id would
-                    // touch eleven dictionaries to change nothing anyone hears.
                     aria-label={t('sidebar.resize.leftPanelAria')}
                 />
             )}
@@ -195,9 +184,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
                 aria-hidden={!isOpen}
             >
                 {topBar}
-                <div className="min-h-0 flex-1 overflow-y-auto">
+                <ScrollableOverlay outerClassName="flex-1 min-h-0" disableHorizontal>
                     <ErrorBoundary>{children}</ErrorBoundary>
-                </div>
+                </ScrollableOverlay>
             </div>
         </aside>
     );

@@ -61,7 +61,7 @@ const DialogOverlay = React.forwardRef<
       ref={ref as React.Ref<HTMLDivElement>}
       data-slot="dialog-overlay"
       className={cn(
-        "oc-glass-backdrop fixed inset-0 z-50 bg-black/25 dark:bg-black/40",
+        "oc-glass-backdrop fixed inset-0 z-50 bg-surface-overlay/60",
         "transition-opacity duration-150 ease-out",
         "data-[starting-style]:opacity-0 data-[ending-style]:opacity-0",
         className
@@ -74,6 +74,8 @@ DialogOverlay.displayName = "DialogOverlay";
 
 type DialogContentProps = Omit<React.ComponentProps<typeof BaseDialog.Popup>, "children"> & {
   showCloseButton?: boolean
+  backdropProps?: React.ComponentProps<typeof DialogOverlay>
+  layerClassName?: string
   children?: React.ReactNode
 }
 
@@ -81,22 +83,21 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  backdropProps,
+  layerClassName,
   ...props
 }: DialogContentProps) {
   const { t } = useI18n()
 
   return (
     <DialogPortal>
-      <DialogOverlay className="rounded-none" />
-      <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none p-4">
+      <DialogOverlay className="rounded-none" {...backdropProps} />
+      <div className={cn("fixed inset-0 z-50 flex items-center justify-center pointer-events-none p-4", layerClassName)}>
         <BaseDialog.Popup
           data-slot="dialog-content"
           data-state-slot="dialog"
           className={cn(
-            // A modal genuinely floats, so it takes the third elevation step. Cards and
-            // settings rows stay flat on purpose: this app builds hierarchy from
-            // spacing and type, not from boxes.
-            "relative pointer-events-auto bg-background text-foreground flex flex-col w-full max-w-lg max-h-full gap-4 rounded-xl border p-6 shadow-[var(--elev-3)] overflow-y-auto pwa-dialog-content origin-center",
+            "oc-surface-elevated relative pointer-events-auto bg-surface-elevated text-surface-elevated-foreground flex flex-col w-full max-w-lg max-h-full gap-4 rounded-xl border p-6 oc-modal-shadow overflow-y-auto pwa-dialog-content origin-center",
             "transition-all duration-150 ease-out",
             "data-[starting-style]:opacity-0 data-[starting-style]:scale-[0.98]",
             "data-[ending-style]:opacity-0 data-[ending-style]:scale-[0.98]",
@@ -114,7 +115,7 @@ function DialogContent({
         {showCloseButton && (
           <BaseDialog.Close
             data-slot="dialog-close"
-            className="ring-offset-background focus:ring-ring data-[open]:bg-interactive-active data-[open]:text-foreground absolute top-2 right-2 rounded-lg opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none text-muted-foreground hover:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+            className="ring-offset-background focus:ring-ring data-[open]:bg-interactive-active data-[open]:text-foreground absolute top-2 right-2 z-10 inline-flex size-7 items-center justify-center rounded-lg opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none text-muted-foreground hover:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
           >
             <Icon name="close"/>
             <span className="sr-only">{t('dialog.common.actions.close')}</span>
@@ -130,7 +131,7 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-header"
-      className={cn("flex flex-col gap-2 text-center sm:text-left", className)}
+      className={cn("flex shrink-0 flex-col gap-2 text-center sm:text-left", className)}
       {...props}
     />
   )

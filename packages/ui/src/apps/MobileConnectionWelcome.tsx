@@ -2,7 +2,7 @@ import React from 'react';
 
 import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
-import { MittrCraftLogo } from '@/components/ui/MittrCraftLogo';
+import { OpenChamberLogo } from '@/components/ui/OpenChamberLogo';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
@@ -49,10 +49,10 @@ export const MobileConnectionWelcome: React.FC<{
     void conn.connect({ url: serverUrl, clientToken, label: connectionName });
   }, [clientToken, conn, connectionName, serverUrl]);
 
-  // Accept a pasted pairing link (mittrcraft://connect?...) in the URL field and
+  // Accept a pasted pairing link (openchamber://connect?...) in the URL field and
   // split it back into the server URL + token.
   const handleUrlChange = React.useCallback((value: string) => {
-    if (/^mittrcraft:\/\//i.test(value.trim())) {
+    if (/^openchamber:\/\//i.test(value.trim())) {
       const payload = parseConnectionPayload(value);
       if (payload) {
         if ('pairing' in payload) {
@@ -138,7 +138,7 @@ export const MobileConnectionWelcome: React.FC<{
       <div className="m-auto flex w-full max-w-[360px] shrink-0 flex-col items-center gap-9 py-8">
         <div className="flex flex-col items-center gap-5 text-center">
           <span {...debugLongPress} className="select-none" style={{ touchAction: 'manipulation' }}>
-            <MittrCraftLogo width={72} height={72} className="size-[72px]" />
+            <OpenChamberLogo width={72} height={72} className="size-[72px]" />
           </span>
           <h1 className="typography-h2 text-foreground">{t('mobile.connect.welcome.title')}</h1>
         </div>
@@ -232,7 +232,7 @@ export const MobileConnectionWelcome: React.FC<{
                         key={connection.id}
                         type="button"
                         disabled={isBusy}
-                        className="flex min-h-14 w-full items-center gap-3 border-b border-border/70 px-3.5 py-2.5 text-left last:border-b-0 hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary disabled:opacity-70"
+                        className="flex min-h-14 w-full items-center gap-3 border-b border-border/70 px-3.5 py-2.5 text-left last:border-b-0 hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-70"
                         onClick={() => {
                           setConnectingId(connection.id);
                           void conn.connect({ id: connection.id, candidates: connection.candidates, clientToken: connection.clientToken, label: connection.label })
@@ -267,7 +267,7 @@ export const MobileConnectionWelcome: React.FC<{
                   type="button"
                   onClick={() => setManualOpen((value) => !value)}
                   aria-expanded={manualOpen}
-                  className="mx-auto flex items-center gap-1 rounded-full px-2 py-1 typography-small text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  className="mx-auto flex items-center gap-1 rounded-full px-2 py-1 typography-small text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <span>{t('mobile.connect.manual.toggle')}</span>
                   <Icon name="arrow-down-s" className={cn('size-4 transition-transform duration-200', manualOpen && 'rotate-180')} />

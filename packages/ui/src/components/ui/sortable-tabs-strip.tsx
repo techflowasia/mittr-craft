@@ -2,7 +2,8 @@ import React from 'react';
 import {
   DndContext,
   DragOverlay,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   closestCenter,
   useSensor,
   useSensors,
@@ -21,6 +22,7 @@ import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/useUIStore';
 import { useDeviceInfo } from '@/lib/device';
 import { Icon } from "@/components/icon/Icon";
+import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@/components/ui/context-menu';
 
 export type SortableTabsStripItem = {
   id: string;
@@ -29,6 +31,8 @@ export type SortableTabsStripItem = {
   title?: string;
   closable?: boolean;
   closeLabel?: string;
+  /** A replaceable preview tab; its label is italic, as in VS Code. */
+  preview?: boolean;
 };
 
 type SortableTabsStripProps = {
@@ -37,6 +41,7 @@ type SortableTabsStripProps = {
   onSelect: (id: string) => void;
   onClose?: (id: string) => void;
   onReorder?: (activeId: string, overId: string) => void;
+  onDoubleClickTab?: (id: string) => void;
   layoutMode?: 'scrollable' | 'fit';
   variant?: 'default' | 'active-pill' | 'animated';
   activePillInsetClassName?: string;
@@ -49,6 +54,15 @@ type SortableTabsStripProps = {
       (e.g. a sliding mobile drawer): creating a composited layer mid-slide
       flickers in WKWebView. Tab-switch animation stays (layout transition). */
   nonCompositedIndicator?: boolean;
+  /** Per-tab right-click context menu. Return the menu items for the given tab,
+      or null/undefined to disable the context menu for that tab. */
+  tabContextMenu?: (args: {
+    id: string;
+    index: number;
+    isActive: boolean;
+    allIds: string[];
+    close: () => void;
+  }) => React.ReactNode;
   className?: string;
 };
 
@@ -76,7 +90,9 @@ const SortableTabWrapper: React.FC<{ id: string; children: React.ReactNode; clas
       ref={setNodeRef}
       data-sortable-tab-id={id}
       style={{
-        transform: DndCSS.Transform.toString(transform),
+        // Translate only: Transform adds the scale that stretches a dragged
+        // tab to the width of the slot it passes over.
+        transform: DndCSS.Translate.toString(transform),
         transition,
       }}
       className={cn('h-full rounded-md', className, isDragging && 'opacity-50')}
@@ -98,6 +114,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
   onSelect,
   onClose,
   onReorder,
+  onDoubleClickTab,
   layoutMode = 'scrollable',
   variant = 'default',
   activePillInsetClassName,
@@ -106,6 +123,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
   animateActivePill,
   activePillLowercase = true,
   nonCompositedIndicator = false,
+  tabContextMenu,
   className,
 }) => {
   const { t } = useI18n();
@@ -153,7 +171,10 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
   }, [activeId, items, pressedId, usesIndicator]);
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    // Mouse drags after a small move so a click still selects the tab; touch
+    // needs a long-press so a swipe keeps scrolling the strip.
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
   );
 
   const isSamePillRect = React.useCallback((
@@ -292,7 +313,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
     updateActivePillRect();
   });
 
-  const itemOrderKey = itemIDs.join(' ');
+  const itemOrderKey = itemIDs.join('\u0000');
 
   React.useLayoutEffect(() => {
     if (!usesIndicator) {
@@ -445,7 +466,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
             aria-hidden
           />
         ) : null}
-        {items.map((item) => {
+        {items.map((item, index) => {
           const isActive = item.id === activeId;
           const showInactiveIconOnly = inactiveTabsIconOnly && usesActivePillIndicator && !isActive && Boolean(item.icon);
           const shouldShowLabel = !showInactiveIconOnly;
@@ -479,9 +500,18 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                 }
               }
             : undefined;
-          return (
-            <Wrapper key={item.id} id={item.id} className={wrapperClassName}>
-              <div
+          const tabMenuItems = !isMobile && tabContextMenu
+            ? tabContextMenu({
+              id: item.id,
+              index,
+              isActive,
+              allIds: itemIDs,
+              close: () => onClose?.(item.id),
+            })
+            : null;
+
+          const tabElement = (
+            <div
                 ref={(element) => setTabRef(item.id, element)}
                 onAuxClick={handleAuxClick}
                 onMouseDown={handleMouseDown}
@@ -505,6 +535,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                   aria-selected={isActive}
                   aria-label={showInactiveIconOnly ? (item.title ?? item.label) : undefined}
                   onClick={() => onSelect(item.id)}
+                  onDoubleClick={onDoubleClickTab ? () => onDoubleClickTab(item.id) : undefined}
                   onPointerDown={usesIndicator ? () => {
                     setPillTransitionEnabled(true);
                     setPressedId(item.id);
@@ -570,7 +601,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                           ) : null}
                         </span>
                       ) : null}
-                      {shouldShowLabel ? <span className="animated-tabs__label truncate">{item.label}</span> : null}
+                      {shouldShowLabel ? <span className={cn('animated-tabs__label truncate', item.preview && 'italic')}>{item.label}</span> : null}
                     </>
                   ) : (
                     <span className={cn('flex min-w-0 flex-nowrap items-center gap-1.5', !isScrollable && 'justify-center')}>
@@ -602,7 +633,7 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                           ) : null}
                         </span>
                       ) : null}
-                      <span className="truncate leading-[1.2]">{item.label}</span>
+                      <span className={cn('truncate leading-[1.2]', item.preview && 'italic')}>{item.label}</span>
                     </span>
                   )}
                 </button>
@@ -636,6 +667,24 @@ export const SortableTabsStrip: React.FC<SortableTabsStripProps> = ({
                   </button>
                 ) : null}
               </div>
+          );
+
+          return (
+            <Wrapper key={item.id} id={item.id} className={wrapperClassName}>
+              {tabMenuItems ? (
+                <ContextMenu>
+                  <ContextMenuTrigger
+                    render={(triggerProps) => (
+                      <div {...triggerProps} className={cn('flex h-full min-w-0', triggerProps.className)}>
+                        {tabElement}
+                      </div>
+                    )}
+                  />
+                  <ContextMenuContent className="w-52">{tabMenuItems}</ContextMenuContent>
+                </ContextMenu>
+              ) : (
+                tabElement
+              )}
             </Wrapper>
           );
         })}

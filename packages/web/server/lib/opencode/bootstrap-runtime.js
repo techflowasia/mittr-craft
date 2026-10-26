@@ -1,13 +1,14 @@
+import { registerNotificationEmitRoutes } from '../notifications/emit-route.js';
+
 export const createBootstrapRuntime = (dependencies) => {
   const {
     createUiAuth,
-    createAdAuth,
     registerServerStatusRoutes,
     registerCommonRequestMiddleware,
     registerAuthAndAccessRoutes,
     registerTtsRoutes,
     registerNotificationRoutes,
-    registerMittrCraftRoutes,
+    registerOpenChamberRoutes,
     registerAgentToolRoutes = () => {},
     express,
   } = dependencies;
@@ -15,7 +16,7 @@ export const createBootstrapRuntime = (dependencies) => {
   const setupBaseRoutes = (app, options) => {
     const {
       process,
-      mittrcraftVersion,
+      openchamberVersion,
       runtimeName,
       serverStartedAt,
       gracefulShutdown,
@@ -57,29 +58,31 @@ export const createBootstrapRuntime = (dependencies) => {
       path,
       server,
       __dirname,
-      mittrcraftDataDir,
+      openchamberDataDir,
       modelsDevApiUrl,
       modelsMetadataCacheTtl,
       fetchFreeZenModels,
       getCachedZenModels,
       setAutoAcceptSession,
       agentToolRuntime,
+      pluginNotificationEmitter,
+      desktopUpdater,
+      skipBodyParsing,
     } = options;
 
     const uiAuthController = createUiAuth({
       password: uiPassword,
       readSettingsFromDiskMigrated,
       clientAuthController: remoteClientAuthRuntime,
-      adAuthController: createAdAuth(),
     });
     if (uiAuthController.enabled) {
-      console.log('UI authentication enabled for browser sessions');
+      console.log('UI password protection enabled for browser sessions');
     }
 
     registerServerStatusRoutes(app, {
       express,
       process,
-      mittrcraftVersion,
+      openchamberVersion,
       runtimeName,
       serverStartedAt,
       gracefulShutdown,
@@ -91,9 +94,16 @@ export const createBootstrapRuntime = (dependencies) => {
       uiAuthController,
     });
 
-    registerCommonRequestMiddleware(app, { express, verboseRequestLogs });
+    registerCommonRequestMiddleware(app, { express, verboseRequestLogs, skipBodyParsing });
 
     registerAgentToolRoutes(app, { express, agentToolRuntime });
+
+    const notificationEmitRoutes = registerNotificationEmitRoutes(app, {
+      express,
+      isAgentToolRequestAuthorized: (req) => agentToolRuntime?.authorizeRequest?.(req) === true,
+      emitter: pluginNotificationEmitter,
+    });
+    notificationEmitRoutes.registerPluginRoute();
 
     registerAuthAndAccessRoutes(app, {
       express,
@@ -110,6 +120,8 @@ export const createBootstrapRuntime = (dependencies) => {
       readSettingsFromDiskMigrated,
       normalizeTunnelSessionTtlMs,
     });
+
+    notificationEmitRoutes.registerApiRoute();
 
     registerTtsRoutes(app, { sayTTSCapability });
 
@@ -132,6 +144,7 @@ export const createBootstrapRuntime = (dependencies) => {
       writeSseEvent,
       getSessionActivitySnapshot: sessionRuntime.getSessionActivitySnapshot,
       getSessionStateSnapshot: sessionRuntime.getSessionStateSnapshot,
+      getPendingBlockingRequestsSnapshot: sessionRuntime.getPendingBlockingRequestsSnapshot,
       getSessionAttentionSnapshot: sessionRuntime.getSessionAttentionSnapshot,
       getSessionState: sessionRuntime.getSessionState,
       getSessionAttentionState: sessionRuntime.getSessionAttentionState,
@@ -142,19 +155,20 @@ export const createBootstrapRuntime = (dependencies) => {
       setAutoAcceptSession,
     });
 
-    registerMittrCraftRoutes(app, {
+    registerOpenChamberRoutes(app, {
       fs,
       os,
       path,
       process,
       server,
       __dirname,
-      mittrcraftDataDir,
+      openchamberDataDir,
       modelsDevApiUrl,
       modelsMetadataCacheTtl,
       readSettingsFromDiskMigrated,
       fetchFreeZenModels,
       getCachedZenModels,
+      desktopUpdater,
     });
 
     return {

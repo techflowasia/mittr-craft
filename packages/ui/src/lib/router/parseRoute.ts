@@ -1,10 +1,11 @@
-import type { MainTab } from '@/stores/useUIStore';
 import {
   type RouteState,
+  type RouteTab,
   VALID_TABS,
   VALID_SETTINGS_SECTIONS,
   ROUTE_PARAMS,
 } from './types';
+import { isLinkIdentifier } from './messageFocus';
 
 /**
  * Parse the current URL search parameters into a RouteState.
@@ -15,6 +16,7 @@ export function parseRoute(searchParams?: URLSearchParams): RouteState {
 
   return {
     sessionId: parseSessionId(params),
+    messageId: parseMessageId(params),
     tab: parseTab(params),
     settingsPath: parseSettingsPath(params),
     diffFile: parseDiffFile(params),
@@ -49,16 +51,28 @@ function parseSessionId(params: URLSearchParams): string | null {
 }
 
 /**
+ * Parse the linked message from URL parameters. It only means something next
+ * to a session, and IDs outside the plain identifier alphabet are rejected.
+ */
+function parseMessageId(params: URLSearchParams): string | null {
+  const value = params.get(ROUTE_PARAMS.MESSAGE)?.trim() ?? '';
+  if (!parseSessionId(params) || !isLinkIdentifier(value)) {
+    return null;
+  }
+  return value;
+}
+
+/**
  * Parse main tab from URL parameters.
  * Returns null if missing or invalid.
  */
-function parseTab(params: URLSearchParams): MainTab | null {
+function parseTab(params: URLSearchParams): RouteTab | null {
   const value = params.get(ROUTE_PARAMS.TAB);
   if (!value) {
     return null;
   }
 
-  const normalized = value.toLowerCase().trim() as MainTab;
+  const normalized = value.toLowerCase().trim() as RouteTab;
   if (VALID_TABS.includes(normalized)) {
     return normalized;
   }
@@ -83,7 +97,7 @@ function parseSettingsPath(params: URLSearchParams): string | null {
   }
 
   // Handle common aliases
-  if (normalized === 'mittrcraft' || normalized === 'general' || normalized === 'preferences') {
+  if (normalized === 'openchamber' || normalized === 'general' || normalized === 'preferences') {
     return 'home';
   }
 

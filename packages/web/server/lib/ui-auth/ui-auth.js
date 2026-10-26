@@ -1,22 +1,28 @@
 import crypto from 'crypto';
-import { SignJWT, jwtVerify } from 'jose';
+
+// jose is loaded on the first session check, not with the server.
+let josePending;
+const loadJose = () => {
+  josePending ??= import('jose');
+  return josePending;
+};
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { createUiPasskeys } from './ui-passkeys.js';
+import { sessionCookieNameForRequest } from './session-cookie.js';
 
 const SESSION_COOKIE_NAME = 'oc_ui_session';
-const AD_TRANSACTION_COOKIE_NAME = 'oc_ad_transaction';
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const TRUSTED_DEVICE_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const URL_AUTH_TOKEN_TTL_MS = 60 * 1000;
 const URL_AUTH_TOKEN_PREFIX = 'oc_url_';
 
 const RATE_LIMIT_WINDOW_MS = 5 * 60 * 1000;
-const RATE_LIMIT_MAX_ATTEMPTS = Number(process.env.MITTRCRAFT_RATE_LIMIT_MAX_ATTEMPTS) || 10;
+const RATE_LIMIT_MAX_ATTEMPTS = Number(process.env.OPENCHAMBER_RATE_LIMIT_MAX_ATTEMPTS) || 10;
 const RATE_LIMIT_LOCKOUT_MS = 15 * 60 * 1000;
 const RATE_LIMIT_CLEANUP_MS = 60 * 60 * 1000;
-const RATE_LIMIT_NO_IP_MAX_ATTEMPTS = Number(process.env.MITTRCRAFT_RATE_LIMIT_NO_IP_MAX_ATTEMPTS) || 3;
+const RATE_LIMIT_NO_IP_MAX_ATTEMPTS = Number(process.env.OPENCHAMBER_RATE_LIMIT_NO_IP_MAX_ATTEMPTS) || 3;
 
 const loginRateLimiter = new Map();
 let rateLimitCleanupTimer = null;
@@ -24,16 +30,10 @@ let rateLimitCleanupTimer = null;
 const rateLimitLocks = new Map();
 
 const getClientIp = (req) => {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string') {
-    const ip = forwarded.split(',')[0].trim();
-    if (ip.startsWith('::ffff:')) {
-      return ip.substring(7);
-    }
-    return ip;
-  }
-
-  const ip = req.ip || req.connection?.remoteAddress;
+  // req.ip follows X-Forwarded-For only through proxies the server trusts
+  // ('trust proxy' in server/index.js); reading the header directly would let
+  // every login attempt pick a fresh rate-limit bucket.
+  const ip = req.ip || req.socket?.remoteAddress;
   if (ip) {
     if (ip.startsWith('::ffff:')) {
       return ip.substring(7);
@@ -222,44 +222,6 @@ const isSecureRequest = (req) => {
   return false;
 };
 
-const readHeader = (req, name) => {
-  const value = req?.headers?.[name];
-  return typeof value === 'string' ? value.trim() : '';
-};
-
-const isLoopbackHostname = (hostname) => {
-  const normalized = hostname.replace(/^\[|\]$/g, '').toLowerCase();
-  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
-};
-
-const resolveAdReturnTo = (req) => {
-  const rawReturnTo = typeof req?.query?.returnTo === 'string' ? req.query.returnTo.trim() : '';
-  if (!rawReturnTo) return '/';
-  try {
-    const target = new URL(rawReturnTo);
-    if ((target.protocol !== 'http:' && target.protocol !== 'https:') || target.username || target.password || target.hash) {
-      return '/';
-    }
-    const requestHost = readHeader(req, 'host');
-    if (!requestHost) return '/';
-    const requestOrigin = new URL(`${isSecureRequest(req) ? 'https' : 'http'}://${requestHost}`);
-    if (target.origin === requestOrigin.origin) return `${target.pathname}${target.search}`;
-
-    const referrer = readHeader(req, 'referer');
-    const referrerOrigin = referrer ? new URL(referrer).origin : '';
-    if (
-      target.protocol === 'http:'
-      && isLoopbackHostname(target.hostname)
-      && isLoopbackHostname(requestOrigin.hostname)
-      && target.origin === referrerOrigin
-    ) {
-      return `${target.origin}${target.pathname}${target.search}`;
-    }
-  } catch {
-  }
-  return '/';
-};
-
 const parseCookies = (cookieHeader) => {
   if (!cookieHeader || typeof cookieHeader !== 'string') {
     return {};
@@ -305,7 +267,8 @@ const getUrlAuthTokenFromRequest = (req) => {
       token = undefined;
     }
   }
-  return typeof token === 'string' && token.trim() ? token.trim() : null;
+  if (typeof token === 'string' && token.trim()) return token.trim();
+  return null;
 };
 
 const getRequestPathname = (req) => {
@@ -330,31 +293,61 @@ const isWebSocketUpgrade = (req) => {
   return String(upgradeValue || '').toLowerCase() === 'websocket';
 };
 
+const GUEST_URL_AUTH_SCOPE = /^guest:([a-z][a-z0-9-]*)$/;
+
+/**
+ * A URL token scope narrows where the token is accepted. `guest:<id>` is
+ * minted for a guest iframe and only opens that guest's own package files:
+ * the iframe URL is readable by the guest's script, so the token must be
+ * worthless anywhere else.
+ * @returns {{ kind: 'guest', id: string } | null | undefined} `undefined` when the value is not a scope
+ */
+const parseUrlAuthScope = (value) => {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw !== 'string') return undefined;
+  const match = raw.trim().match(GUEST_URL_AUTH_SCOPE);
+  return match ? { kind: 'guest', id: match[1] } : undefined;
+};
+
+const isGuestScopedPath = (pathname, guestId) => pathname.startsWith(`/api/guests/${guestId}/`);
+
+// An isolated space's raw file and its sockets, under `/api/spaces/<id>/`, matched by shape.
+const SPACE_RAW_FILE_PATH = /^\/api\/spaces\/[0-9a-f]{12}\/fs\/raw$/;
+const SPACE_WS_PATH = /^\/api\/spaces\/[0-9a-f]{12}\/(?:terminal\/ws|dev-tunnel|event\/ws|global\/event\/ws)$/;
+
 const isUrlAuthReadableHttpPath = (pathname) => {
   return pathname === '/api/event'
     || pathname === '/api/global/event'
-    || pathname === '/api/mittrcraft/events'
-    || pathname === '/api/mittrcraft/realtime-proxy/sse'
+    || pathname === '/api/openchamber/events'
+    || pathname === '/api/openchamber/realtime-proxy/sse'
     || pathname === '/api/notifications/stream'
     || pathname === '/api/fs/raw'
-    || pathname === '/api/fs/serve'
-    || pathname.startsWith('/api/fs/serve/')
     || pathname.startsWith('/api/preview/proxy/')
-    || /^\/api\/projects\/[^/]+\/icon$/.test(pathname);
+    || /^\/api\/projects\/[^/]+\/icon$/.test(pathname)
+    || pathname === '/api/guests'
+    || /^\/api\/guests\/[a-z][a-z0-9-]*\//.test(pathname)
+    || SPACE_RAW_FILE_PATH.test(pathname);
 };
 
 const isUrlAuthWebSocketPath = (pathname) => {
   return pathname === '/api/event/ws'
     || pathname === '/api/global/event/ws'
-    || pathname === '/api/mittrcraft/realtime-proxy/ws'
+    || pathname === '/api/openchamber/realtime-proxy/ws'
     || pathname === '/api/terminal/ws'
     || pathname === '/api/dictation/ws'
-    || pathname.startsWith('/api/preview/proxy/');
+    || pathname === '/api/dev-tunnel'
+    || /^\/api\/guests\/[a-z][a-z0-9-]*\/surface\/ws$/.test(pathname)
+    || pathname.startsWith('/api/preview/proxy/')
+    || SPACE_WS_PATH.test(pathname);
 };
 
-const canUseUrlAuthTokenForRequest = (req) => {
+const canUseUrlAuthTokenForRequest = (req, scope = null) => {
   const method = typeof req?.method === 'string' ? req.method.toUpperCase() : 'GET';
   const pathname = getRequestPathname(req);
+  if (scope?.kind === 'guest') {
+    return !isWebSocketUpgrade(req) && method === 'GET' && isGuestScopedPath(pathname, scope.id);
+  }
   if (isWebSocketUpgrade(req)) {
     return isUrlAuthWebSocketPath(pathname);
   }
@@ -366,14 +359,12 @@ const buildCookie = ({
   value,
   maxAge,
   secure,
-  cookiePath = '/',
-  sameSite = 'Strict',
 }) => {
   const attributes = [
     `${name}=${value}`,
-    `Path=${cookiePath}`,
+    'Path=/',
     'HttpOnly',
-    `SameSite=${sameSite}`,
+    'SameSite=Strict',
   ];
 
   if (typeof maxAge === 'number') {
@@ -393,17 +384,6 @@ const buildCookie = ({
   return attributes.join('; ');
 };
 
-const appendSetCookieHeader = (res, cookie) => {
-  const current = typeof res.getHeader === 'function' ? res.getHeader('Set-Cookie') : undefined;
-  if (Array.isArray(current)) {
-    res.setHeader('Set-Cookie', [...current, cookie]);
-  } else if (typeof current === 'string' && current) {
-    res.setHeader('Set-Cookie', [current, cookie]);
-  } else {
-    res.setHeader('Set-Cookie', cookie);
-  }
-};
-
 const normalizePassword = (candidate) => {
   if (typeof candidate !== 'string') {
     return '';
@@ -413,10 +393,10 @@ const normalizePassword = (candidate) => {
 
 const isTrustedDeviceRequest = (value) => value === true;
 
-const MITTRCRAFT_DATA_DIR = process.env.MITTRCRAFT_DATA_DIR
-  ? path.resolve(process.env.MITTRCRAFT_DATA_DIR)
-  : path.join(os.homedir(), '.config', 'mittrcraft');
-const JWT_SECRET_FILE = path.join(MITTRCRAFT_DATA_DIR, 'jwt-secret');
+const OPENCHAMBER_DATA_DIR = process.env.OPENCHAMBER_DATA_DIR
+  ? path.resolve(process.env.OPENCHAMBER_DATA_DIR)
+  : path.join(os.homedir(), '.config', 'openchamber');
+const JWT_SECRET_FILE = path.join(OPENCHAMBER_DATA_DIR, 'jwt-secret');
 
 function getOrCreateJwtSecret() {
   const envSecret = process.env.OPENCODE_JWT_SECRET;
@@ -434,7 +414,7 @@ function getOrCreateJwtSecret() {
 
   const secret = crypto.randomBytes(32).toString('hex');
   try {
-    fs.mkdirSync(MITTRCRAFT_DATA_DIR, { recursive: true });
+    fs.mkdirSync(OPENCHAMBER_DATA_DIR, { recursive: true });
     fs.writeFileSync(JWT_SECRET_FILE, secret, { mode: 0o600 });
     console.log('[JWT] Generated and persisted new secret to', JWT_SECRET_FILE);
   } catch (e) {
@@ -451,10 +431,94 @@ function persistJwtSecret(secret) {
     throw error;
   }
 
-  fs.mkdirSync(MITTRCRAFT_DATA_DIR, { recursive: true });
+  fs.mkdirSync(OPENCHAMBER_DATA_DIR, { recursive: true });
   fs.writeFileSync(JWT_SECRET_FILE, secret, { mode: 0o600 });
   return new TextEncoder().encode(secret);
 }
+
+const UI_AUTH_PROVIDER_ID = /^[a-z][a-z0-9-]*$/;
+const uiAuthProviders = new Map();
+const urlAuthTokenRevokers = new Set();
+let providerSessionSecret = null;
+
+const readProviderSessionSecret = () => {
+  providerSessionSecret ??= getOrCreateJwtSecret();
+  return providerSessionSecret;
+};
+
+const hasUiAuthProviders = () => uiAuthProviders.size > 0;
+
+const appendSetCookie = (res, cookie) => {
+  const existing = typeof res.getHeader === 'function' ? res.getHeader('Set-Cookie') : undefined;
+  if (existing === undefined || existing === null) {
+    res.setHeader('Set-Cookie', cookie);
+    return;
+  }
+  res.setHeader('Set-Cookie', [...(Array.isArray(existing) ? existing : [String(existing)]), cookie]);
+};
+
+const readProviderSession = async (token) => {
+  if (!token) return null;
+  try {
+    const { jwtVerify } = await loadJose();
+    const { payload } = await jwtVerify(token, readProviderSessionSecret(), { algorithms: ['HS256'] });
+    if (payload.type !== 'ui-session' || !uiAuthProviders.has(payload.provider)) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+};
+
+const uiAuthStatusFields = (passwordEnabled) => (
+  hasUiAuthProviders() ? { providers: [...uiAuthProviders.keys()], passwordEnabled } : {}
+);
+
+export const registerUiAuthProvider = ({ id } = {}) => {
+  if (typeof id !== 'string' || !UI_AUTH_PROVIDER_ID.test(id)) {
+    throw new Error('A UI auth provider id is lowercase letters, digits and dashes');
+  }
+  if (uiAuthProviders.has(id)) throw new Error(`UI auth provider ${id} is already registered`);
+  const entry = { id };
+  uiAuthProviders.set(id, entry);
+  const isRegistered = () => uiAuthProviders.get(id) === entry;
+  const cookieFor = (req, value, maxAge) => buildCookie({
+    name: sessionCookieNameForRequest(req, SESSION_COOKIE_NAME),
+    value,
+    maxAge,
+    secure: isSecureRequest(req),
+  });
+
+  return {
+    issueSession: async (req, res, { trustDevice = false, claims = {} } = {}) => {
+      if (!isRegistered()) throw new Error(`UI auth provider ${id} is not registered`);
+      const ttlMs = trustDevice === true ? TRUSTED_DEVICE_SESSION_TTL_MS : SESSION_TTL_MS;
+      const { SignJWT } = await loadJose();
+      const token = await new SignJWT({ type: 'ui-session', provider: id, claims })
+        .setProtectedHeader({ alg: 'HS256' })
+        .setIssuedAt()
+        .setExpirationTime(ttlMs / 1000 + 's')
+        .sign(readProviderSessionSecret());
+      appendSetCookie(res, cookieFor(req, encodeURIComponent(token), Math.floor(ttlMs / 1000)));
+    },
+    readClaims: async (req) => {
+      if (!isRegistered()) return null;
+      const token = parseCookies(req?.headers?.cookie)[sessionCookieNameForRequest(req, SESSION_COOKIE_NAME)];
+      const payload = await readProviderSession(token);
+      if (payload?.provider !== id || !payload.claims || typeof payload.claims !== 'object') return null;
+      return payload.claims;
+    },
+    clearSession: (req, res) => {
+      const token = parseCookies(req?.headers?.cookie)[sessionCookieNameForRequest(req, SESSION_COOKIE_NAME)];
+      if (token) {
+        for (const revoke of urlAuthTokenRevokers) revoke(token);
+      }
+      appendSetCookie(res, cookieFor(req, '', 0));
+    },
+    unregister: () => {
+      if (isRegistered()) uiAuthProviders.delete(id);
+    },
+  };
+};
 
 export const createUiAuth = ({
   password,
@@ -463,13 +527,16 @@ export const createUiAuth = ({
   readSettingsFromDiskMigrated,
   clientAuthController = null,
   requireClientAuth = false,
-  adAuthController = null,
 } = {}) => {
   const normalizedPassword = normalizePassword(password);
-  const passwordEnabled = Boolean(normalizedPassword);
-  const adEnabled = adAuthController?.enabled === true;
-  const adConfigurationPresent = adAuthController?.configurationPresent === true;
   const urlAuthTokens = new Map();
+
+  const revokeSessionUrlAuthTokens = (sessionToken) => {
+    for (const [token, entry] of urlAuthTokens.entries()) {
+      if (entry?.sessionToken === sessionToken) urlAuthTokens.delete(token);
+    }
+  };
+  urlAuthTokenRevokers.add(revokeSessionUrlAuthTokens);
 
   const sweepUrlAuthTokens = () => {
     const now = Date.now();
@@ -480,16 +547,15 @@ export const createUiAuth = ({
     }
   };
 
-  const issueUrlAuthTokenForSession = (sessionToken) => {
+  const issueUrlAuthTokenForSession = (sessionToken, scope = null) => {
     sweepUrlAuthTokens();
     const token = `${URL_AUTH_TOKEN_PREFIX}${crypto.randomBytes(24).toString('base64url')}`;
     const expiresAt = Date.now() + URL_AUTH_TOKEN_TTL_MS;
-    urlAuthTokens.set(token, { sessionToken, expiresAt });
+    urlAuthTokens.set(token, { sessionToken, expiresAt, scope });
     return { token, expiresAt };
   };
 
   const authenticateUrlAuthToken = (req) => {
-    if (!canUseUrlAuthTokenForRequest(req)) return null;
     const token = getUrlAuthTokenFromRequest(req);
     if (!token || !token.startsWith(URL_AUTH_TOKEN_PREFIX)) return null;
     const entry = urlAuthTokens.get(token);
@@ -497,8 +563,12 @@ export const createUiAuth = ({
       urlAuthTokens.delete(token);
       return null;
     }
+    if (!canUseUrlAuthTokenForRequest(req, entry.scope)) return null;
     return { ok: true, sessionToken: entry.sessionToken || 'url:authenticated' };
   };
+
+  /** Scope requested on `POST /auth/url-token`: `?scope=guest:<id>` or `{ scope }` in the body. */
+  const readRequestedUrlAuthScope = (req) => parseUrlAuthScope(req?.body?.scope ?? req?.query?.scope);
 
   const authenticateClientRequest = async (req, { allowUrlToken = true } = {}) => {
     if (allowUrlToken) {
@@ -539,49 +609,114 @@ export const createUiAuth = ({
     client: clientAuth?.client || null,
   });
 
-  const clearSessionCookie = (req, res) => {
-    const secure = isSecureRequest(req);
-    const header = buildCookie({
-      name: cookieName,
-      value: '',
-      maxAge: 0,
-      secure,
-    });
-    appendSetCookieHeader(res, header);
-  };
-
-  const revokeSessionUrlAuthTokens = (req) => {
-    const sessionToken = parseCookies(req.headers.cookie)[cookieName];
-    if (!sessionToken) return;
-    for (const [token, entry] of urlAuthTokens.entries()) {
-      if (entry?.sessionToken === sessionToken) urlAuthTokens.delete(token);
-    }
-  };
-
-  if (!passwordEnabled && !adEnabled && !adConfigurationPresent) {
+  if (!normalizedPassword) {
     const setSessionCookie = (req, res, token, ttlMs = sessionTtlMs) => {
       const secure = isSecureRequest(req);
       const maxAgeSeconds = Math.floor(ttlMs / 1000);
       const header = buildCookie({
-        name: cookieName,
+        name: sessionCookieNameForRequest(req, cookieName),
         value: encodeURIComponent(token),
         maxAge: maxAgeSeconds,
         secure,
       });
-      appendSetCookieHeader(res, header);
+      res.setHeader('Set-Cookie', header);
     };
 
     const ensureSessionToken = async (req, res) => {
       const cookies = parseCookies(req.headers.cookie);
-      if (cookies[cookieName]) {
-        return cookies[cookieName];
+      const name = sessionCookieNameForRequest(req, cookieName);
+      if (cookies[name]) {
+        return cookies[name];
       }
       const token = crypto.randomBytes(32).toString('base64url');
       setSessionCookie(req, res, token, sessionTtlMs);
       return token;
     };
 
+    const providerSessionToken = async (req) => {
+      const token = parseCookies(req.headers.cookie)[sessionCookieNameForRequest(req, cookieName)];
+      return (await readProviderSession(token)) ? token : null;
+    };
+
+    const refuseWithoutProviderSession = (req, res) => {
+      setSessionCookie(req, res, '', 0);
+      res.status(401);
+      if (req.headers.accept?.includes('application/json') || req.path?.startsWith('/api')) {
+        res.json({ error: 'UI authentication required', locked: true });
+      } else {
+        res.type('text/plain').send('Authentication required');
+      }
+    };
+
+    const requireProviderSession = async (req, res, next, { allowClientAuth }) => {
+      if (req.method === 'OPTIONS') {
+        return next();
+      }
+      if (await providerSessionToken(req)) {
+        return next();
+      }
+      if (allowClientAuth && await authenticateClientRequest(req)) {
+        return next();
+      }
+      return refuseWithoutProviderSession(req, res);
+    };
+
+    const handleProviderSessionStatus = async (req, res) => {
+      const fields = uiAuthStatusFields(false);
+      const authorization = req.headers?.authorization;
+      if (typeof authorization === 'string' && authorization.toLowerCase().startsWith('bearer ')) {
+        if (await authenticateClientRequest(req, { allowUrlToken: false })) {
+          return res.json({ authenticated: true, scope: 'client', ...fields });
+        }
+        return res.status(401).json({ authenticated: false, locked: true, ...fields });
+      }
+      if (await providerSessionToken(req)) {
+        return res.json({ authenticated: true, ...fields });
+      }
+      if (await authenticateClientRequest(req)) {
+        return res.json({ authenticated: true, scope: 'client', ...fields });
+      }
+      setSessionCookie(req, res, '', 0);
+      return res.status(401).json({ authenticated: false, locked: true, ...fields });
+    };
+
+    const handleProviderUrlAuthToken = async (req, res) => {
+      const scope = readRequestedUrlAuthScope(req);
+      if (scope === undefined) {
+        return res.status(400).json({ error: 'Unknown URL token scope' });
+      }
+      const clientAuth = await authenticateClientRequest(req, { allowUrlToken: false });
+      const sessionToken = clientAuth ? clientSessionToken(clientAuth) : await providerSessionToken(req);
+      if (!sessionToken) {
+        return refuseWithoutProviderSession(req, res);
+      }
+      res.setHeader('Cache-Control', 'no-store');
+      return res.json(issueUrlAuthTokenForSession(sessionToken, scope));
+    };
+
+    const handleProviderResetAuth = (req, res) => {
+      try {
+        providerSessionSecret = persistJwtSecret(crypto.randomBytes(32).toString('hex'));
+        urlAuthTokens.clear();
+        setSessionCookie(req, res, '', 0);
+        res.json({ cleared: true, clearedPasskeys: 0, signedOutEverywhere: true });
+      } catch (error) {
+        res.status(typeof error?.statusCode === 'number' ? error.statusCode : 400).json({ error: error?.message || 'Global sign-out failed' });
+      }
+    };
+
+    const resolveProviderAuthContext = async (req, { allowClientAuth, allowUrlToken }) => {
+      const token = await providerSessionToken(req);
+      if (token) return { type: 'session', token };
+      if (!allowClientAuth) return null;
+      const clientAuth = await authenticateClientRequest(req, { allowUrlToken });
+      return clientAuth ? clientAuthContext(clientAuth) : null;
+    };
+
     const requireAuth = async (req, res, next) => {
+      if (hasUiAuthProviders()) {
+        return requireProviderSession(req, res, next, { allowClientAuth: true });
+      }
       if (!requireClientAuth) {
         return next();
       }
@@ -596,6 +731,9 @@ export const createUiAuth = ({
     };
 
     const requireSessionAuth = async (req, res, next) => {
+      if (hasUiAuthProviders()) {
+        return requireProviderSession(req, res, next, { allowClientAuth: false });
+      }
       if (!requireClientAuth) {
         return next();
       }
@@ -606,9 +744,13 @@ export const createUiAuth = ({
     };
 
     const resolveAuthContext = async (req, res, { allowClientAuth = true, allowUrlToken = true } = {}) => {
+      if (hasUiAuthProviders()) {
+        return resolveProviderAuthContext(req, { allowClientAuth, allowUrlToken });
+      }
       const cookies = parseCookies(req.headers.cookie);
-      if (cookies[cookieName]) {
-        return { type: 'session', token: cookies[cookieName] };
+      const name = sessionCookieNameForRequest(req, cookieName);
+      if (cookies[name]) {
+        return { type: 'session', token: cookies[name] };
       }
       if (allowClientAuth) {
         const clientAuth = await authenticateClientRequest(req, { allowUrlToken });
@@ -622,11 +764,16 @@ export const createUiAuth = ({
     };
 
     return {
-      enabled: false,
+      get enabled() {
+        return hasUiAuthProviders();
+      },
       requireAuth,
       requireSessionAuth,
       resolveAuthContext,
       handleSessionStatus: async (req, res) => {
+        if (hasUiAuthProviders()) {
+          return handleProviderSessionStatus(req, res);
+        }
         if (requireClientAuth) {
           const clientAuth = await authenticateClientRequest(req);
           if (clientAuth) {
@@ -639,24 +786,25 @@ export const createUiAuth = ({
       handleSessionCreate: (_req, res) => {
         res.status(400).json({ error: 'UI password not configured' });
       },
-      handleSessionDelete: (req, res) => {
-        revokeSessionUrlAuthTokens(req);
-        clearSessionCookie(req, res);
-        res.setHeader('Cache-Control', 'no-store');
-        res.json({ authenticated: false });
-      },
       handleUrlAuthToken: async (req, res) => {
+        if (hasUiAuthProviders()) {
+          return handleProviderUrlAuthToken(req, res);
+        }
+        const scope = readRequestedUrlAuthScope(req);
+        if (scope === undefined) {
+          return res.status(400).json({ error: 'Unknown URL token scope' });
+        }
         const clientAuth = await authenticateClientRequest(req, { allowUrlToken: false });
         if (clientAuth) {
           res.setHeader('Cache-Control', 'no-store');
-          return res.json(issueUrlAuthTokenForSession(clientSessionToken(clientAuth)));
+          return res.json(issueUrlAuthTokenForSession(clientSessionToken(clientAuth), scope));
         }
         if (requireClientAuth) {
           return res.status(401).json({ error: 'Client authentication required', locked: true, clientAuthRequired: true });
         }
         const sessionToken = await ensureSessionToken(req, res);
         res.setHeader('Cache-Control', 'no-store');
-        return res.json(issueUrlAuthTokenForSession(sessionToken));
+        return res.json(issueUrlAuthTokenForSession(sessionToken, scope));
       },
       handlePasskeyStatus: (_req, res) => {
         res.json({ enabled: false, hasPasskeys: false, passkeyCount: 0, rpID: null });
@@ -679,35 +827,20 @@ export const createUiAuth = ({
       handlePasskeyRevoke: (_req, res) => {
         res.status(400).json({ error: 'UI password not configured' });
       },
-      handleResetAuth: (_req, res) => {
+      handleResetAuth: (req, res) => {
+        if (hasUiAuthProviders()) {
+          return handleProviderResetAuth(req, res);
+        }
         res.status(400).json({ error: 'UI password not configured' });
       },
-      handleAdStatus: (_req, res) => {
-        if (!adAuthController) {
-          return res.json({ enabled: false });
-        }
-        return res.json(adAuthController.getStatus());
-      },
-      handleAdSessionCreate: async (req, res) => {
-        return res.status(400).json({ error: 'AD authentication not configured' });
-      },
-      handleAdLoginStart: (_req, res) => {
-        res.status(400).json({ error: 'Microsoft authentication not configured' });
-      },
-      handleAdCallback: (_req, res) => {
-        res.status(400).send('Microsoft authentication is not configured');
-      },
-      handleAdProfile: (_req, res) => {
-        res.status(400).json({ error: 'AD authentication not configured' });
-      },
-      getSessionEmail: async () => null,
       ensureSessionToken: async (req, res) => {
         const clientAuth = await authenticateClientRequest(req);
         if (clientAuth) return clientSessionToken(clientAuth);
+        if (hasUiAuthProviders()) return providerSessionToken(req);
         return ensureSessionToken(req, res);
       },
       dispose: () => {
-
+        urlAuthTokenRevokers.delete(revokeSessionUrlAuthTokens);
       },
     };
   }
@@ -715,9 +848,8 @@ export const createUiAuth = ({
   const salt = crypto.randomBytes(16);
   const expectedHash = crypto.scryptSync(normalizedPassword, salt, 64);
   let jwtSecret = getOrCreateJwtSecret();
-  let passwordBinding = passwordEnabled
-    ? crypto.createHmac('sha256', jwtSecret).update(normalizedPassword).digest('hex')
-    : '';
+  providerSessionSecret = jwtSecret;
+  let passwordBinding = crypto.createHmac('sha256', jwtSecret).update(normalizedPassword).digest('hex');
   const resolveSessionTtlMs = (trustDevice) => (trustDevice ? TRUSTED_DEVICE_SESSION_TTL_MS : sessionTtlMs);
   let passkeyController = createUiPasskeys({
     passwordBinding,
@@ -726,9 +858,7 @@ export const createUiAuth = ({
 
   const rebuildPasskeyController = () => {
     passkeyController.dispose();
-    passwordBinding = passwordEnabled
-      ? crypto.createHmac('sha256', jwtSecret).update(normalizedPassword).digest('hex')
-      : '';
+    passwordBinding = crypto.createHmac('sha256', jwtSecret).update(normalizedPassword).digest('hex');
     passkeyController = createUiPasskeys({
       passwordBinding,
       readSettingsFromDiskMigrated,
@@ -738,14 +868,16 @@ export const createUiAuth = ({
   const rotateJwtSecret = () => {
     const nextSecret = crypto.randomBytes(32).toString('hex');
     jwtSecret = persistJwtSecret(nextSecret);
+    providerSessionSecret = jwtSecret;
     urlAuthTokens.clear();
     rebuildPasskeyController();
   };
 
   const getTokenFromRequest = (req) => {
     const cookies = parseCookies(req.headers.cookie);
-    if (cookies[cookieName]) {
-      return cookies[cookieName];
+    const name = sessionCookieNameForRequest(req, cookieName);
+    if (cookies[name]) {
+      return cookies[name];
     }
     return null;
   };
@@ -754,12 +886,23 @@ export const createUiAuth = ({
     const secure = isSecureRequest(req);
     const maxAgeSeconds = Math.floor(ttlMs / 1000);
     const header = buildCookie({
-      name: cookieName,
+      name: sessionCookieNameForRequest(req, cookieName),
       value: encodeURIComponent(token),
       maxAge: maxAgeSeconds,
       secure,
     });
-    appendSetCookieHeader(res, header);
+    res.setHeader('Set-Cookie', header);
+  };
+
+  const clearSessionCookie = (req, res) => {
+    const secure = isSecureRequest(req);
+    const header = buildCookie({
+      name: sessionCookieNameForRequest(req, cookieName),
+      value: '',
+      maxAge: 0,
+      secure,
+    });
+    res.setHeader('Set-Cookie', header);
   };
 
   const verifyPassword = (candidate) => {
@@ -783,6 +926,7 @@ export const createUiAuth = ({
       return false;
     }
     try {
+      const { jwtVerify } = await loadJose();
       await jwtVerify(token, jwtSecret);
       return true;
     } catch {
@@ -790,9 +934,10 @@ export const createUiAuth = ({
     }
   };
 
-  const issueSession = async (req, res, { trustDevice = false, claims = {} } = {}) => {
+  const issueSession = async (req, res, { trustDevice = false } = {}) => {
     const ttlMs = resolveSessionTtlMs(trustDevice);
-    const token = await new SignJWT({ type: 'ui-session', ...claims })
+    const { SignJWT } = await loadJose();
+    const token = await new SignJWT({ type: 'ui-session' })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt()
       .setExpirationTime(ttlMs / 1000 + 's')
@@ -851,24 +996,24 @@ export const createUiAuth = ({
     if (hasBearer) {
       const clientAuth = await authenticateClientRequest(req, { allowUrlToken: false });
       if (clientAuth) {
-        res.json({ authenticated: true, scope: 'client' });
+        res.json({ authenticated: true, scope: 'client', ...uiAuthStatusFields(true) });
         return;
       }
-      res.status(401).json({ authenticated: false, locked: true });
+      res.status(401).json({ authenticated: false, locked: true, ...uiAuthStatusFields(true) });
       return;
     }
     const token = getTokenFromRequest(req);
     if (await isSessionValid(token)) {
-      res.json({ authenticated: true });
+      res.json({ authenticated: true, ...uiAuthStatusFields(true) });
       return;
     }
     const clientAuth = await authenticateClientRequest(req);
     if (clientAuth) {
-      res.json({ authenticated: true, scope: 'client' });
+      res.json({ authenticated: true, scope: 'client', ...uiAuthStatusFields(true) });
       return;
     }
     clearSessionCookie(req, res);
-    res.status(401).json({ authenticated: false, locked: true });
+    res.status(401).json({ authenticated: false, locked: true, ...uiAuthStatusFields(true) });
   };
 
   const resolveAuthenticatedSessionToken = async (req, { allowUrlToken = true } = {}) => {
@@ -891,21 +1036,20 @@ export const createUiAuth = ({
   };
 
   const handleUrlAuthToken = async (req, res) => {
+    const scope = readRequestedUrlAuthScope(req);
+    if (scope === undefined) {
+      return res.status(400).json({ error: 'Unknown URL token scope' });
+    }
     const sessionToken = await resolveAuthenticatedSessionToken(req, { allowUrlToken: false });
     if (!sessionToken) {
       clearSessionCookie(req, res);
       return respondUnauthorized(req, res);
     }
     res.setHeader('Cache-Control', 'no-store');
-    return res.json(issueUrlAuthTokenForSession(sessionToken));
+    return res.json(issueUrlAuthTokenForSession(sessionToken, scope));
   };
 
   const handleSessionCreate = async (req, res) => {
-    if (!passwordEnabled) {
-      res.status(400).json({ error: 'UI password not configured' });
-      return;
-    }
-
     const rateLimitResult = await checkRateLimit(req);
 
     res.setHeader('X-RateLimit-Limit', rateLimitResult.limit);
@@ -937,7 +1081,7 @@ export const createUiAuth = ({
     let clientTokenResult = null;
     if (req.body?.issueClientToken === true && typeof clientAuthController?.createClient === 'function') {
       clientTokenResult = await clientAuthController.createClient({
-        label: req.body?.clientLabel,
+        fallbackLabel: req.body?.clientLabel,
         expiresAt: new Date(Date.now() + ttlMs).toISOString(),
         clientKind: req.body?.clientKind,
         dedupeKey: req.body?.dedupeKey,
@@ -953,13 +1097,6 @@ export const createUiAuth = ({
       authenticated: true,
       ...(clientTokenResult?.token ? { clientToken: clientTokenResult.token, client: clientTokenResult.client } : {}),
     });
-  };
-
-  const handleSessionDelete = (req, res) => {
-    revokeSessionUrlAuthTokens(req);
-    clearSessionCookie(req, res);
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({ authenticated: false });
   };
 
   const respondPasskeyError = (res, error) => {
@@ -1012,7 +1149,7 @@ export const createUiAuth = ({
       let clientTokenResult = null;
       if (req.body?.issueClientToken === true && typeof clientAuthController?.createClient === 'function') {
         clientTokenResult = await clientAuthController.createClient({
-          label: req.body?.clientLabel,
+          fallbackLabel: req.body?.clientLabel,
           expiresAt: new Date(Date.now() + ttlMs).toISOString(),
           clientKind: req.body?.clientKind,
           dedupeKey: req.body?.dedupeKey,
@@ -1071,206 +1208,7 @@ export const createUiAuth = ({
       rateLimitCleanupTimer = null;
     }
     passkeyController.dispose();
-    if (adAuthController) {
-      adAuthController.dispose();
-    }
-  };
-
-  const handleAdStatus = (_req, res) => {
-    if (!adAuthController) {
-      return res.json({ enabled: false, passwordEnabled });
-    }
-    return res.json({ ...adAuthController.getStatus(), passwordEnabled });
-  };
-
-  const handleAdSessionCreate = async (req, res) => {
-    if (!adAuthController) {
-      return res.status(400).json({ error: 'AD authentication not configured' });
-    }
-    if (adAuthController.mode === 'entra') {
-      return res.status(400).json({ error: 'Use the Microsoft sign-in redirect' });
-    }
-
-    const rateLimitResult = await checkRateLimit(req);
-
-    res.setHeader('X-RateLimit-Limit', rateLimitResult.limit);
-    res.setHeader('X-RateLimit-Remaining', rateLimitResult.remaining);
-    res.setHeader('X-RateLimit-Reset', rateLimitResult.reset);
-
-    if (!rateLimitResult.allowed) {
-      res.setHeader('Retry-After', rateLimitResult.retryAfter);
-      res.status(429).json({
-        error: 'Too many login attempts, please try again later',
-        retryAfter: rateLimitResult.retryAfter,
-      });
-      return;
-    }
-
-    const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
-    }
-
-    const result = await adAuthController.authenticate(username, password);
-
-    if (!result.ok) {
-      await recordFailedAttempt(req);
-      clearSessionCookie(req, res);
-      return res.status(401).json({ error: result.error || 'Invalid credentials' });
-    }
-
-    await clearRateLimit(req);
-
-    const trustDevice = isTrustedDeviceRequest(req.body?.trustDevice);
-    const ttlMs = resolveSessionTtlMs(trustDevice);
-    await issueSession(req, res, {
-      trustDevice,
-      claims: { authMethod: 'ad', username, profile: result.profile },
-    });
-
-    let clientTokenResult = null;
-    if (req.body?.issueClientToken === true && typeof clientAuthController?.createClient === 'function') {
-      clientTokenResult = await clientAuthController.createClient({
-        label: req.body?.clientLabel,
-        expiresAt: new Date(Date.now() + ttlMs).toISOString(),
-        clientKind: req.body?.clientKind,
-        dedupeKey: req.body?.dedupeKey,
-        authMethod: 'ad',
-        deviceName: req.body?.deviceName,
-        devicePlatform: req.body?.devicePlatform,
-        deviceModel: req.body?.deviceModel,
-        appVersion: req.body?.appVersion,
-      });
-    }
-
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({
-      authenticated: true,
-      profile: result.profile,
-      ...(clientTokenResult?.token ? { clientToken: clientTokenResult.token, client: clientTokenResult.client } : {}),
-    });
-  };
-
-  const clearAdTransactionCookie = (req, res) => {
-    appendSetCookieHeader(res, buildCookie({
-      name: AD_TRANSACTION_COOKIE_NAME,
-      value: '',
-      maxAge: 0,
-      secure: isSecureRequest(req),
-      cookiePath: '/auth/ad/callback',
-      sameSite: 'Lax',
-    }));
-  };
-
-  const handleAdLoginStart = async (req, res) => {
-    if (!adAuthController?.enabled || adAuthController.mode !== 'entra') {
-      return res.status(400).json({ error: 'Microsoft authentication not configured' });
-    }
-    try {
-      const trustDevice = req.query?.trustDevice === 'true' || req.query?.trustDevice === '1';
-      const returnTo = resolveAdReturnTo(req);
-      const transaction = await adAuthController.beginAuthorization({ trustDevice, returnTo });
-      const maxAge = Math.max(1, Math.floor((transaction.expiresAt - Date.now()) / 1000));
-      res.setHeader('Cache-Control', 'no-store');
-      appendSetCookieHeader(res, buildCookie({
-        name: AD_TRANSACTION_COOKIE_NAME,
-        value: encodeURIComponent(transaction.state),
-        maxAge,
-        secure: isSecureRequest(req),
-        cookiePath: '/auth/ad/callback',
-        sameSite: 'Lax',
-      }));
-      return res.redirect(302, transaction.authorizationUrl);
-    } catch (error) {
-      console.error('[Entra] Failed to start sign-in:', error?.message || error);
-      return res.status(502).json({ error: 'Unable to start Microsoft sign-in' });
-    }
-  };
-
-  const handleAdCallback = async (req, res) => {
-    if (!adAuthController?.enabled || adAuthController.mode !== 'entra') {
-      return res.status(400).send('Microsoft authentication is not configured');
-    }
-
-    const state = typeof req.query?.state === 'string' ? req.query.state : '';
-    const code = typeof req.query?.code === 'string' ? req.query.code : '';
-    const providerError = typeof req.query?.error === 'string' ? req.query.error : '';
-    const transactionCookie = parseCookies(req.headers.cookie)[AD_TRANSACTION_COOKIE_NAME] || '';
-    clearAdTransactionCookie(req, res);
-    res.setHeader('Cache-Control', 'no-store');
-
-    if (providerError || !state || !code || transactionCookie !== state) {
-      return res.status(400).send('Microsoft sign-in could not be verified. Return to MittrCraft and try again.');
-    }
-
-    try {
-      const result = await adAuthController.completeAuthorization({ code, state });
-      await issueSession(req, res, {
-        trustDevice: result.trustDevice,
-        claims: { authMethod: 'entra', profile: result.profile },
-      });
-      return res.redirect(302, result.returnTo || '/');
-    } catch (error) {
-      console.error('[Entra] Sign-in callback failed:', error?.message || error);
-      return res.status(401).send('Microsoft sign-in failed. Return to MittrCraft and try again.');
-    }
-  };
-
-  const handleAdProfile = async (req, res) => {
-    if (!adAuthController) {
-      return res.status(400).json({ error: 'AD authentication not configured' });
-    }
-
-    const cookies = parseCookies(req.headers.cookie);
-    const token = cookies[cookieName];
-    if (!token) {
-      return res.status(401).json({ error: 'Not authenticated' });
-    }
-
-    try {
-      const payload = await jwtVerify(token, jwtSecret);
-      if (payload?.payload?.authMethod === 'entra' && payload?.payload?.profile) {
-        return res.json({ profile: payload.payload.profile });
-      }
-      const username = payload?.payload?.username;
-      if (!username) {
-        return res.status(400).json({ error: 'No username in session' });
-      }
-
-      const profile = await adAuthController.getProfile(username);
-      if (!profile) {
-        return res.status(404).json({ error: 'User profile not found' });
-      }
-
-      res.json({ profile });
-    } catch {
-      return res.status(401).json({ error: 'Invalid session' });
-    }
-  };
-
-  const getSessionEmail = async (req) => {
-    const cookies = parseCookies(req.headers.cookie);
-    const token = cookies[cookieName];
-    if (!token) return null;
-    try {
-      const payload = await jwtVerify(token, jwtSecret);
-      const profile = payload?.payload?.profile;
-      if (payload?.payload?.authMethod === 'entra' && typeof profile?.email === 'string' && profile.email) {
-        return profile.email;
-      }
-      const username = payload?.payload?.username;
-      if (username && adAuthController) {
-        const resolvedProfile = await adAuthController.getProfile(username);
-        if (typeof resolvedProfile?.email === 'string' && resolvedProfile.email) {
-          return resolvedProfile.email;
-        }
-      }
-      return null;
-    } catch {
-      return null;
-    }
+    urlAuthTokenRevokers.delete(revokeSessionUrlAuthTokens);
   };
 
   return {
@@ -1280,7 +1218,6 @@ export const createUiAuth = ({
     resolveAuthContext,
     handleSessionStatus,
     handleSessionCreate,
-    handleSessionDelete,
     handleUrlAuthToken,
     handlePasskeyStatus,
     handlePasskeyRegistrationOptions,
@@ -1290,13 +1227,9 @@ export const createUiAuth = ({
     handlePasskeyList,
     handlePasskeyRevoke,
     handleResetAuth,
-    handleAdStatus,
-    handleAdSessionCreate,
-    handleAdLoginStart,
-    handleAdCallback,
-    handleAdProfile,
-    getSessionEmail,
-    ensureSessionToken: async (req, _res) => {
+    ensureSessionToken: (req, _res) => {
+      const urlAuth = authenticateUrlAuthToken(req);
+      if (urlAuth) return clientSessionToken(urlAuth);
       return resolveAuthenticatedSessionToken(req);
     },
     dispose,

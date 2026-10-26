@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
-import { getRuntimeKey } from './runtime-switch';
+import { getRuntimeApiBaseUrl, getRuntimeKey, initializeRuntimeEndpoint, isTransientRuntimeKey } from './runtime-switch';
 
 /**
  * `getRuntimeKey` runs on store, event, and render paths, so its cost is
@@ -14,8 +14,8 @@ import { getRuntimeKey } from './runtime-switch';
  */
 
 type RuntimeWindow = typeof globalThis & {
-  __MITTRCRAFT_API_BASE_URL__?: string;
-  __MITTRCRAFT_LOCAL_ORIGIN__?: string;
+  __OPENCHAMBER_API_BASE_URL__?: string;
+  __OPENCHAMBER_LOCAL_ORIGIN__?: string;
 };
 
 const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
@@ -24,8 +24,8 @@ let urlConstructions = 0;
 
 const setRuntimeWindow = (apiBaseUrl: string | undefined, localOrigin: string | undefined): void => {
   const runtimeWindow = {} as RuntimeWindow;
-  if (apiBaseUrl !== undefined) runtimeWindow.__MITTRCRAFT_API_BASE_URL__ = apiBaseUrl;
-  if (localOrigin !== undefined) runtimeWindow.__MITTRCRAFT_LOCAL_ORIGIN__ = localOrigin;
+  if (apiBaseUrl !== undefined) runtimeWindow.__OPENCHAMBER_API_BASE_URL__ = apiBaseUrl;
+  if (localOrigin !== undefined) runtimeWindow.__OPENCHAMBER_LOCAL_ORIGIN__ = localOrigin;
   Object.defineProperty(globalThis, 'window', { value: runtimeWindow, configurable: true, writable: true });
 };
 
@@ -66,7 +66,7 @@ describe('getRuntimeKey caching', () => {
     setRuntimeWindow('https://first.example.com', 'https://app.example.com');
     expect(getRuntimeKey()).toBe('url:https://first.example.com');
 
-    (globalThis as RuntimeWindow & { window: RuntimeWindow }).window.__MITTRCRAFT_API_BASE_URL__ = 'https://second.example.com';
+    (globalThis as RuntimeWindow & { window: RuntimeWindow }).window.__OPENCHAMBER_API_BASE_URL__ = 'https://second.example.com';
     expect(getRuntimeKey()).toBe('url:https://second.example.com');
   });
 
@@ -74,7 +74,28 @@ describe('getRuntimeKey caching', () => {
     setRuntimeWindow('https://app.example.com', 'https://other.example.com');
     expect(getRuntimeKey()).toBe('url:https://app.example.com');
 
-    (globalThis as RuntimeWindow & { window: RuntimeWindow }).window.__MITTRCRAFT_LOCAL_ORIGIN__ = 'https://app.example.com';
+    (globalThis as RuntimeWindow & { window: RuntimeWindow }).window.__OPENCHAMBER_LOCAL_ORIGIN__ = 'https://app.example.com';
     expect(getRuntimeKey()).toBe('local');
+  });
+
+  test('initializes a hosted HTTP page without an injected API base', () => {
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { location: { origin: 'openchamber-ui://app' } },
+    });
+    initializeRuntimeEndpoint();
+    expect(isTransientRuntimeKey(getRuntimeKey())).toBe(true);
+
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: { location: { origin: 'https://app.example.com' } },
+    });
+    initializeRuntimeEndpoint();
+    expect(getRuntimeKey()).toBe('url:https://app.example.com');
+    expect(getRuntimeApiBaseUrl()).toBe('');
+
+    initializeRuntimeEndpoint({ apiBaseUrl: 'https://other.example.com' });
+    expect(getRuntimeKey()).toBe('url:https://app.example.com');
+    expect(getRuntimeApiBaseUrl()).toBe('');
   });
 });

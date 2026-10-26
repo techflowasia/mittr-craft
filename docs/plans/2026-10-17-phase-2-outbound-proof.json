@@ -1,0 +1,68 @@
+{
+  "engine": "packages/electron/resources/opencode-cli/opencode",
+  "engineVersion": "opencode v2.0.22",
+  "startedAt": "2026-10-17T02:32:30.323Z",
+  "scenarios": {
+    "outbound": {
+      "pass": true,
+      "ours": {
+        "env": {
+          "OPENCODE_DISABLE_MODELS_FETCH": "1",
+          "OPENCODE_DISABLE_AUTOUPDATE": "1"
+        },
+        "models": [
+          "stub/m1"
+        ],
+        "providers": 1,
+        "integrations": 231,
+        "answered": true,
+        "settledMs": 15000
+      },
+      "control": {
+        "models": [
+          "stub/m1"
+        ],
+        "providers": 1,
+        "integrations": 231,
+        "answered": true,
+        "settledMs": 15000,
+        "without": [
+          "OPENCODE_DISABLE_MODELS_FETCH",
+          "OPENCODE_DISABLE_AUTOUPDATE"
+        ],
+        "proxyNonLoopback": [
+          "models.opencode.ai:443"
+        ],
+        "nonLoopbackRemotes": [],
+        "nonLoopbackHostsInLog": [
+          "models.opencode.ai"
+        ]
+      }
+    }
+  },
+  "stopConditions": {},
+  "outbound": {
+    "lsofSamples": 119,
+    "lsofIntervalMs": 250,
+    "pidsSeen": 1,
+    "nonLoopbackRemotes": [],
+    "otherLoopbackPeers": [
+      {
+        "port": 11434,
+        "connections": 3,
+        "whileLocked": 0
+      }
+    ],
+    "proxyAttempts": 0,
+    "proxyLoopbackAttempts": 0,
+    "proxyNonLoopback": [],
+    "nonLoopbackHostsInLog": []
+  },
+  "stubTotals": {
+    "stub": 2,
+    "other": 0
+  },
+  "finishedAt": "2026-10-17T02:33:06.816Z",
+  "failures": [],
+  "blocked": false
+}

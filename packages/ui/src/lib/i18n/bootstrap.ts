@@ -57,6 +57,25 @@ const FR_MESSAGES: BootstrapMessages = {
   loadingData: (providersText, agentsText) => `Chargement des données (${providersText}, ${agentsText})…`,
 };
 
+const NL_MESSAGES: BootstrapMessages = {
+  startingApi: 'OpenCode API wordt gestart…',
+  initializing: 'Initialiseren…',
+  connecting: 'Verbinden…',
+  connected: 'Verbonden!',
+  connectionError: 'Verbindingsfout',
+  disconnected: 'Verbinding verbroken',
+  reconnecting: 'Opnieuw verbinden…',
+  initialDataLoadFailed: 'OpenCode is verbonden, maar het laden van de begingegevens is mislukt.',
+  cliNotFound: 'OpenCode CLI niet gevonden. Installeer die eerst.',
+  providersReady: '✓ Providers',
+  providersLoading: '… Providers',
+  agentsReady: '✓ Agents',
+  agentsLoading: '… Agents',
+  startingDevServer: (hostLabel) => `Dev-server voor de webview wordt gestart (${hostLabel})...`,
+  waitingDevServer: (hostLabel, attempt) => `Wachten op de dev-server voor de webview (${hostLabel})... poging ${attempt}`,
+  loadingData: (providersText, agentsText) => `Gegevens laden (${providersText}, ${agentsText})…`,
+};
+
 const ZH_CN_MESSAGES: BootstrapMessages = {
   startingApi: '正在启动 OpenCode API…',
   initializing: '正在初始化…',
@@ -228,6 +247,25 @@ const DE_MESSAGES: BootstrapMessages = {
   loadingData: (providersText, agentsText) => `Daten werden geladen (${providersText}, ${agentsText})…`,
 };
 
+const TR_MESSAGES: BootstrapMessages = {
+  startingApi: 'OpenCode API başlatılıyor…',
+  initializing: 'Başlatılıyor…',
+  connecting: 'Bağlanıyor…',
+  connected: 'Bağlandı!',
+  connectionError: 'Bağlantı hatası',
+  disconnected: 'Bağlantı kesildi',
+  reconnecting: 'Yeniden bağlanıyor…',
+  initialDataLoadFailed: 'OpenCode bağlandı ancak ilk veri yükleme başarısız oldu.',
+  cliNotFound: 'OpenCode CLI bulunamadı. Lütfen önce kurun.',
+  providersReady: '✓ Sağlayıcılar',
+  providersLoading: '… Sağlayıcılar',
+  agentsReady: '✓ Agent\'ler',
+  agentsLoading: '… Agent\'ler',
+  startingDevServer: (hostLabel) => `Webview dev sunucusu başlatılıyor (${hostLabel})...`,
+  waitingDevServer: (hostLabel, attempt) => `Webview dev sunucusu bekleniyor (${hostLabel})... deneme ${attempt}`,
+  loadingData: (providersText, agentsText) => `Veriler yükleniyor (${providersText}, ${agentsText})…`,
+};
+
 export const getBootstrapMessages = (locale: Locale): BootstrapMessages => {
   return BOOTSTRAP_MESSAGES[locale];
 };
@@ -236,6 +274,7 @@ const BOOTSTRAP_MESSAGES: Record<Locale, BootstrapMessages> = {
   en: EN_MESSAGES,
   de: DE_MESSAGES,
   fr: FR_MESSAGES,
+  nl: NL_MESSAGES,
   'zh-CN': ZH_CN_MESSAGES,
   'zh-TW': ZH_TW_MESSAGES,
   uk: UK_MESSAGES,
@@ -244,6 +283,7 @@ const BOOTSTRAP_MESSAGES: Record<Locale, BootstrapMessages> = {
   ko: KO_MESSAGES,
   pl: PL_MESSAGES,
   ja: JA_MESSAGES,
+  tr: TR_MESSAGES,
 };
 
 export const readStoredLocaleForBootstrap = (): Locale => {

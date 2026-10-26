@@ -1,6 +1,5 @@
-import './app-flavor-env.mjs';
-import { APP_FLAVOR } from './app-flavor.mjs';
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, shell, webContents } from 'electron';
+import { canReuseManagedOpenCodePreflight } from './opencode-readiness.mjs';
+import { app, BrowserWindow, dialog, ipcMain, Menu, MessageChannelMain, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, session, shell, webContents } from 'electron';
 import contextMenu from 'electron-context-menu';
 import log from 'electron-log/main.js';
 import dgram from 'node:dgram';
@@ -13,24 +12,59 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import updaterPkg from 'electron-updater';
 import { ElectronSshManager } from './ssh-manager.mjs';
+import { replaceFileWithRetry } from './windows-file-replace.mjs';
 import { createTrayController } from './tray.mjs';
+import { createHostConfirm } from './host-confirm.mjs';
+import { createSafeStorageSecretStore } from './secret-store.mjs';
+import { createDeepLinkRegistry } from './deep-link-registry.mjs';
 import { resolveManagedOpenCodeCwd } from './opencode-cwd.mjs';
-import { resolveStartupUrlProbePlan, shouldIgnoreLoopbackConnectionLimit } from './startup-url-selection.mjs';
+import { stopEmbeddedServer } from './server-shutdown.mjs';
+import { resolveStartupUrlProbePlan } from './startup-url-selection.mjs';
+import {
+  BACKGROUND_START_ARG,
+  DEEP_LINK_PROTOCOL,
+  MIN_WINDOW_HEIGHT,
+  MIN_WINDOW_WIDTH,
+  PRODUCT,
+  UI_PROTOCOL,
+  buildMainWindowOptions,
+  buildRendererAdditionalArguments,
+  buildStartupSplashUrl,
+  getLoginItemOptions,
+  getWindowIconPath,
+  installPackagedUiRequestHandler,
+  installStartupMarkSink,
+  isDev,
+  isMacMenuBarEnabled,
+  macosMajorVersion,
+  readLoginItemSettings,
+  readSettingsRoot,
+  readThemeSource,
+  resolveMainWindowBounds,
+  resolvePreloadPath,
+  resolveSplashBackgroundColor,
+  settingsFilePath,
+  shellEnvironmentAbort,
+  shouldStartInBackground,
+  shouldUsePackagedUi,
+  startShellEnvironmentProbe,
+  startupStartedAt,
+  takeDeferredAppEvents,
+  takeEarlyWindow,
+  usesFramelessChrome,
+  wasEarlyWindowClosed,
+} from './early-startup.mjs';
 import { sanitizeRuntimeRequestHeaders } from './runtime-request-headers.mjs';
-import { assertUpdaterCapability } from './updater-capability.mjs';
+import { isSplashColor, redactHostsConfigForRemote } from './remote-page-policy.mjs';
+import { isPackagedUiRuntimeRequest } from './packaged-ui-routing.mjs';
+import { probeDirectHostWithRetry } from './host-probe-policy.mjs';
+import { probeElectronHostWithDeadline } from './electron-host-probe.mjs';
+import { assertUpdaterCapability, updateCheckWithoutFeed } from './updater-capability.mjs';
 import { checkForDesktopUpdate } from './updater-check.mjs';
 import { resolveUpdaterChannel } from './updater-channel.mjs';
-import { isAuthCallbackLink } from './auth-deep-link.mjs';
-import { createSafeStorageSecretStore } from './secret-store.mjs';
+import { createContextMenuLabels, menuLabel, normalizeMenuLocale, roleMenuItem } from './menu-locales.mjs';
+import { UPSTREAM_PRODUCT } from './product.mjs';
 import { resolveUpdaterFeed } from './updater-feed.mjs';
-
-// Baked in by scripts/bundle-main.mjs at build time: which Mittr this build
-// talks to. Absent in an unbundled development run -- the define was never
-// applied there, so a bare reference would be a ReferenceError at startup --
-// and the empty string lets the server fall back to its own default.
-const BUILD_BROKER_BASE_URL = typeof __MITTRCRAFT_BROKER_URL__ === 'string'
-  ? __MITTRCRAFT_BROKER_URL__
-  : '';
 import {
   buildLinuxInstalledApps,
   buildLinuxOpenSpecs,
@@ -43,91 +77,29 @@ import {
   setLinuxAutostartEnabled,
 } from './linux-autostart.mjs';
 import { unsupportedAppSpecificOpenError, validateLocalPath } from './path-open-utils.mjs';
-import { mintOutsideFileGrant } from '@mittrcraft/web/server/lib/fs/routes.js';
+import {
+  browserPanelPermissionAuditDetails,
+  shouldAllowBrowserPanelCertificateError,
+  shouldAllowBrowserPanelPermission,
+} from './browser-panel-security.mjs';
+import { shouldBlockGuestFrameNavigation } from './guest-frame-navigation.mjs';
+import { createRelayDevTunnelBridge } from './relay-dev-tunnel.mjs';
+import { attachRendererRecovery } from './renderer-recovery.mjs';
+import { createLoadFailureWarningFilter } from './load-failure-warnings.mjs';
+import { mintOutsideFileGrant } from '@openchamber/web/server/lib/fs/routes.js';
+import { fetchUpdateNotes } from '@openchamber/web/server/lib/changelog/update-notes.js';
+import { applyConnectAttemptTimeout } from '@openchamber/web/server/lib/network-defaults.js';
+import { isNetworkAccessBlocked } from '@openchamber/web/server/lib/enterprise-mode.js';
 
 const execFileAsync = promisify(execFile);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const isDev = process.env.MITTRCRAFT_ELECTRON_DEV === '1' || !app.isPackaged;
-const electronStartupStartedAt = performance.now();
-
-import { DEEP_LINK_PROTOCOL } from './deep-link-protocol.mjs';
-const UI_PROTOCOL = 'mittrcraft-ui';
-const PACKAGED_APP_USER_MODEL_ID = APP_FLAVOR.appId;
-const DEV_APP_USER_MODEL_ID = 'dev.mittrcraft.desktop.dev';
-const APP_USER_MODEL_ID = app.isPackaged ? PACKAGED_APP_USER_MODEL_ID : DEV_APP_USER_MODEL_ID;
-const BACKGROUND_START_ARG = '--background';
-
-const getLoginItemOptions = () => {
-  if (process.platform === 'win32') {
-    return {
-      path: process.execPath,
-      args: [BACKGROUND_START_ARG],
-      name: APP_USER_MODEL_ID,
-    };
-  }
-  return {};
-};
-
-const readLoginItemSettings = () => {
-  if (process.platform === 'linux') {
-    return null;
-  }
-  if (process.platform !== 'darwin' && process.platform !== 'win32') return null;
-  try {
-    return app.getLoginItemSettings(getLoginItemOptions());
-  } catch {
-    return null;
-  }
-};
-
-const shouldStartInBackground = (loginItemSettings = readLoginItemSettings()) => {
-  return (
-    process.argv.includes(BACKGROUND_START_ARG) ||
-    loginItemSettings?.wasOpenedAtLogin === true ||
-    loginItemSettings?.wasOpenedAsHidden === true
-  );
-};
-
-// Set the product name early so electron-log derives its log directory as
-// ~/Library/Logs/MittrCraft/ (not ~/Library/Logs/@mittrcraft/electron/).
-app.setName(APP_FLAVOR.productName);
-if (process.platform === 'linux') {
-  app.setDesktopName(`${APP_FLAVOR.dataDirName}.desktop`);
-}
-if (isDev || APP_FLAVOR.id !== 'production') {
-  app.setPath('userData', path.join(app.getPath('appData'), 'MittrCraft Dev'));
-}
-app.setAppUserModelId(APP_USER_MODEL_ID);
-app.commandLine.appendSwitch('proxy-bypass-list', '<-loopback>');
-// Lift Chromium's per-host cap only for bundled UI. Applying this to Vite HMR
-// lets the renderer request most of the module graph at once, overwhelming the
-// dev server's transform pipeline and leaving the HTML splash visible for up
-// to a minute before React mounts.
-if (shouldIgnoreLoopbackConnectionLimit({
-  development: isDev,
-  packagedUi: process.env.MITTRCRAFT_ELECTRON_USE_BUNDLED_UI === '1',
-})) {
-  app.commandLine.appendSwitch('ignore-connections-limit', '127.0.0.1,localhost');
-}
-
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: UI_PROTOCOL,
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      corsEnabled: true,
-    },
-  },
-]);
-
-if (!app.requestSingleInstanceLock()) {
-  app.exit(0);
-  process.exit(0);
-}
+// This process runs quota/provider fetches under Node/undici, whose happy-eyeballs
+// default aborts each connect attempt after 250ms — distant provider endpoints
+// routinely need longer handshakes, surfacing as "fetch failed" (#3399). No-op on
+// runtimes without the setter.
+applyConnectAttemptTimeout();
 
 try {
   process.chdir(os.homedir());
@@ -141,15 +113,31 @@ log.transports.console.level = isDev ? 'debug' : 'warn';
 
 // The in-process web server runs in this same Node process and uses plain
 // `console.log/warn/error`. Without piping console through electron-log,
-// that output never lands in ~/Library/Logs/MittrCraft/main.log and we
+// that output never lands in ~/Library/Logs/OpenChamber/main.log and we
 // can't diagnose issues (e.g. OpenCode lifecycle, SSE disconnects) after
 // the fact. Route all console calls through electron-log so server-side
 // diagnostics are persisted.
 Object.assign(console, log.functions);
 
+// Node prints process warnings through console.error, so Electron's per-attempt
+// "Failed to load URL" warnings would flood main.log while the browser panel
+// waits for a dev server. Wrap Node's printer so repeats go to debug instead.
+const printProcessWarning = process.listeners('warning').find((listener) => listener.name === 'onWarning');
+if (printProcessWarning) {
+  const shouldReportWarning = createLoadFailureWarningFilter();
+  process.off('warning', printProcessWarning);
+  process.on('warning', (warning) => {
+    if (shouldReportWarning(warning)) printProcessWarning(warning);
+    else log.debug(`electron: ${warning.message}`);
+  });
+}
+
 const STARTUP_PERF_ENABLED_VALUES = new Set(['1', 'true']);
 const ELECTRON_STARTUP_PERF_PHASES = new Set([
+  'electron.entry',
   'electron.app.ready',
+  'electron.window.created',
+  'electron.main.loaded',
   'electron.server.start',
   'electron.server.ready',
   'electron.navigation.start',
@@ -159,18 +147,27 @@ const ELECTRON_STARTUP_PERF_PHASES = new Set([
   'electron.window.ready-to-show',
 ]);
 const ELECTRON_STARTUP_DOCUMENT_CLASSES = new Set(['splash', 'application']);
-const recordElectronStartupPerformance = (phase, details = {}) => {
-  const enabled = STARTUP_PERF_ENABLED_VALUES.has(String(process.env.MITTRCRAFT_STARTUP_PERF ?? '').toLowerCase());
+const logElectronStartupEvent = ({ phase, at, totalDurationMs, durationMs, documentClass }) => {
+  const enabled = STARTUP_PERF_ENABLED_VALUES.has(String(process.env.OPENCHAMBER_STARTUP_PERF ?? '').toLowerCase());
   if (!enabled || !ELECTRON_STARTUP_PERF_PHASES.has(phase)) return;
-  const event = {
-    phase,
-    at: Date.now(),
-    totalDurationMs: Math.max(0, performance.now() - electronStartupStartedAt),
-  };
-  if (Number.isFinite(details.durationMs) && details.durationMs >= 0) event.durationMs = details.durationMs;
-  if (ELECTRON_STARTUP_DOCUMENT_CLASSES.has(details.documentClass)) event.documentClass = details.documentClass;
+  const event = { phase, at, totalDurationMs };
+  if (Number.isFinite(durationMs) && durationMs >= 0) event.durationMs = durationMs;
+  if (ELECTRON_STARTUP_DOCUMENT_CLASSES.has(documentClass)) event.documentClass = documentClass;
   log.info('[startup-performance]', event);
 };
+const recordElectronStartupPerformance = (phase, details = {}) => {
+  logElectronStartupEvent({
+    phase,
+    at: Date.now(),
+    totalDurationMs: Math.max(0, performance.now() - startupStartedAt),
+    durationMs: details.durationMs,
+    documentClass: details.documentClass,
+  });
+};
+// The entry module and the early window recorded their marks before the
+// logger existed; they precede everything this module records.
+installStartupMarkSink(logElectronStartupEvent);
+recordElectronStartupPerformance('electron.main.loaded');
 const classifyStartupDocument = (url) => String(url || '').startsWith('data:') ? 'splash' : 'application';
 
 const LOG_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -210,25 +207,21 @@ const readAppMetadata = () => {
     try {
       const raw = fs.readFileSync(candidate, 'utf8');
       const parsed = JSON.parse(raw);
-      if (parsed?.name === '@mittrcraft/electron' && typeof parsed.version === 'string') {
+      if (parsed?.name === '@openchamber/electron' && typeof parsed.version === 'string') {
         return { name: parsed.name, version: parsed.version };
       }
     } catch {
     }
   }
-  return { name: '@mittrcraft/electron', version: app.getVersion() };
+  return { name: '@openchamber/electron', version: app.getVersion() };
 };
 
 const APP_METADATA = readAppMetadata();
 const APP_VERSION = APP_METADATA.version;
 
-const DEFAULT_DESKTOP_PORT = APP_FLAVOR.desktopPort;
+const DEFAULT_DESKTOP_PORT = PRODUCT.desktopPort;
 const LOOPBACK_BIND_HOST = '127.0.0.1';
 const LAN_BIND_HOST = '0.0.0.0';
-const MIN_WINDOW_WIDTH = 800;
-const MIN_WINDOW_HEIGHT = 520;
-const MIN_RESTORE_WINDOW_WIDTH = 900;
-const MIN_RESTORE_WINDOW_HEIGHT = 560;
 const MINI_CHAT_WINDOW_WIDTH = 520;
 const MINI_CHAT_WINDOW_HEIGHT = 760;
 const MINI_CHAT_MIN_WINDOW_WIDTH = 360;
@@ -242,11 +235,14 @@ const LOCAL_DESKTOP_CLIENT_DEDUPE_KEY = 'desktop-local';
 // connecting to someone else's server).
 const REMOTE_DESKTOP_CLIENT_KIND = 'desktop';
 const ENV_OVERRIDE_HOST_ID = '__env';
-const CHANGELOG_URL = 'https://raw.githubusercontent.com/techflowasia/mittr-craft/main/CHANGELOG.md';
-const GITHUB_BUG_REPORT_URL = 'https://github.com/techflowasia/mittr-craft/issues/new?template=bug_report.yml';
-const GITHUB_FEATURE_REQUEST_URL = 'https://github.com/techflowasia/mittr-craft/issues/new?template=feature_request.yml';
+const GITHUB_BUG_REPORT_URL = PRODUCT.links.bugReport;
+const GITHUB_IDEAS_URL = PRODUCT.links.ideas;
+const DISCORD_INVITE_URL = PRODUCT.links.discord;
 const INSTALLED_APPS_CACHE_TTL_SECS = 60 * 60 * 24;
 const INSTALLED_APPS_CACHE_FILE = 'discovered-apps.json';
+// Bump when discovery results change shape or matching semantics change, so cached
+// entries written by an older build are treated as stale and refresh immediately.
+const INSTALLED_APPS_CACHE_VERSION = 2;
 const LINUX_DESKTOP_ENTRIES_CACHE_TTL_MS = 30_000;
 const OPENCODE_SHUTDOWN_GRACE_MS = 100;
 const { autoUpdater } = updaterPkg;
@@ -254,6 +250,7 @@ const { autoUpdater } = updaterPkg;
 const state = {
   serverHandle: null,
   sidecarUrl: null,
+  localUiUrl: null,
   localOrigin: null,
   apiBaseUrl: null,
   clientToken: null,
@@ -267,8 +264,13 @@ const state = {
   quitInProgress: false,
   quitConfirmationPending: false,
   backgroundShutdownComplete: false,
+  backgroundShutdownPromise: null,
   sshShutdownPromise: null,
   installingUpdate: false,
+  // Latched from the moment an update install starts until the installer has
+  // been handed control or the install has failed. While it is set, no other
+  // path may end the process: the update sequence owns the exit.
+  updateInstallPending: false,
   pendingUpdate: null,
   unreachableHosts: new Set(),
   windowCounter: 1,
@@ -355,18 +357,22 @@ const quitConfirmationMessage = () => {
   if (reasons.length === 0) {
     return 'Background processes (sidecar, SSH sessions) will be stopped.';
   }
-  return `MittrCraft detected ${reasons.join(', ')}. Quitting now will stop sidecar/background processes and may interrupt pending work.`;
+  return `OpenChamber detected ${reasons.join(', ')}. Quitting now will stop sidecar/background processes and may interrupt pending work.`;
 };
 
 const shutdownBackgroundServices = () => {
-  if (state.backgroundShutdownComplete) return;
-  state.backgroundShutdownComplete = true;
-  setDesktopKeepAwakeActive(false);
-  if (state.installingUpdate) return;
-  killSidecar();
-  setImmediate(() => {
-    void shutdownSshSessions();
-  });
+  if (!state.backgroundShutdownPromise) {
+    setDesktopKeepAwakeActive(false);
+    shellEnvironmentAbort.abort();
+    state.backgroundShutdownPromise = Promise.all([
+      startShellEnvironmentProbe().catch(() => {}),
+      killSidecar(),
+      shutdownSshSessions(),
+    ]).finally(() => {
+      state.backgroundShutdownComplete = true;
+    });
+  }
+  return state.backgroundShutdownPromise;
 };
 
 const shutdownSshSessions = async () => {
@@ -384,10 +390,10 @@ const shutdownSshSessions = async () => {
   await state.sshShutdownPromise;
 };
 
-const prepareForQuit = ({ installingUpdate = false } = {}) => {
+const prepareForQuit = () => {
   state.quitRequested = true;
   state.quitConfirmed = true;
-  state.installingUpdate = installingUpdate;
+  state.installingUpdate = false;
   state.quitConfirmationPending = false;
 
   if (state.trayController) {
@@ -411,20 +417,25 @@ const prepareForQuit = ({ installingUpdate = false } = {}) => {
 
   setDesktopKeepAwakeActive(false);
 
-  if (installingUpdate) {
-    state.backgroundShutdownComplete = true;
-    return;
-  }
-
-  shutdownBackgroundServices();
+  return shutdownBackgroundServices();
 };
 
-const performConfirmedQuit = () => {
+const performConfirmedQuit = async ({ relaunch = false } = {}) => {
+  if (state.updateInstallPending) {
+    log.info('[electron] quit suppressed: update install owns the exit');
+    return;
+  }
   if (state.quitInProgress) return;
   state.quitInProgress = true;
 
-  prepareForQuit();
-  app.exit(0);
+  try {
+    await prepareForQuit();
+  } catch (error) {
+    log.warn('[electron] background shutdown failed:', error);
+  } finally {
+    if (relaunch) app.relaunch();
+    app.exit(0);
+  }
 };
 
 // Hard-stop signals (`Ctrl+C` on `electron:dev`, an external `kill`/SIGTERM,
@@ -434,12 +445,7 @@ const performConfirmedQuit = () => {
 // reaper remains the backstop for an unhandled hard crash (SIGKILL).
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
   process.on(signal, () => {
-    try {
-      shutdownBackgroundServices();
-    } catch (error) {
-      log.warn(`[electron] ${signal} shutdown failed:`, error);
-    }
-    app.exit(0);
+    void performConfirmedQuit();
   });
 }
 
@@ -469,8 +475,8 @@ const requestQuitWithConfirmation = async () => {
   try {
     const result = await dialog.showMessageBox({
       type: 'warning',
-      title: 'Quit MittrCraft?',
-      message: 'Quit MittrCraft?',
+      title: 'Quit OpenChamber?',
+      message: 'Quit OpenChamber?',
       detail: quitConfirmationMessage(),
       buttons: ['Quit', 'Cancel'],
       defaultId: 1,
@@ -508,8 +514,8 @@ const refreshQuitRiskFlags = async () => {
   const base = typeof state.sidecarUrl === 'string' ? state.sidecarUrl.trim().replace(/\/$/, '') : '';
   if (!base) return;
 
-  const scheduledUrl = `${base}/api/mittrcraft/scheduled-tasks/status`;
-  const tunnelUrl = `${base}/api/mittrcraft/tunnel/status`;
+  const scheduledUrl = `${base}/api/openchamber/scheduled-tasks/status`;
+  const tunnelUrl = `${base}/api/openchamber/tunnel/status`;
 
   const fetchJson = async (url) => {
     try {
@@ -537,48 +543,30 @@ const refreshQuitRiskFlags = async () => {
   }
 };
 
-const settingsFilePath = () => {
-  if (typeof process.env.MITTRCRAFT_DATA_DIR === 'string' && process.env.MITTRCRAFT_DATA_DIR.trim()) {
-    return path.join(process.env.MITTRCRAFT_DATA_DIR.trim(), 'settings.json');
-  }
-  return path.join(os.homedir(), '.config', 'mittrcraft', 'settings.json');
-};
-
 const sshManager = new ElectronSshManager({
   settingsFilePath: settingsFilePath(),
   appVersion: APP_VERSION,
   emit: (event, detail) => emitToAllWindows(event, detail),
 });
 
-const readJsonFile = (filePath) => {
-  try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  } catch (error) {
-    if (error && error.code === 'ENOENT') return {};
-    // Parse errors can happen if a concurrent writer just truncated the file
-    // and hasn't finished writing yet. Log loudly so we notice, then return
-    // {} as before. Writes are atomic (tmp + rename) so this race is rare.
-    log.warn?.('[electron] failed to read JSON file', filePath, error);
-    return {};
-  }
-};
-
 const writeJsonFile = async (filePath, data) => {
   const directory = path.dirname(filePath);
-  await fsp.mkdir(directory, { recursive: true, mode: 0o700 });
-  if (process.platform !== 'win32') await fsp.chmod(directory, 0o700);
+  // Tighten only a directory this write created: an existing one keeps the
+  // permissions and ACLs an administrator gave it.
+  const created = await fsp.mkdir(directory, { recursive: true, mode: 0o700 });
+  if (created && process.platform !== 'win32') await fsp.chmod(directory, 0o700);
   // Atomic: write to a temp file then rename. Readers never see a partial
   // JSON file that could parse-error and get coerced to {}.
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  await fsp.writeFile(tmp, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600 });
-  if (process.platform !== 'win32') await fsp.chmod(tmp, 0o600);
-  await fsp.rename(tmp, filePath);
-  if (process.platform !== 'win32') await fsp.chmod(filePath, 0o600);
-};
-
-const readSettingsRoot = () => {
-  const root = readJsonFile(settingsFilePath());
-  return root && typeof root === 'object' && !Array.isArray(root) ? root : {};
+  try {
+    await fsp.writeFile(tmp, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600 });
+    if (process.platform !== 'win32') await fsp.chmod(tmp, 0o600);
+    await replaceFileWithRetry(tmp, filePath);
+    if (process.platform !== 'win32') await fsp.chmod(filePath, 0o600);
+  } catch (error) {
+    await fsp.rm(tmp, { force: true }).catch(() => {});
+    throw error;
+  }
 };
 
 // Serializes read-modify-write of the settings file within this process.
@@ -603,7 +591,7 @@ const writeSettingsRoot = async (root) => writeJsonFile(settingsFilePath(), root
 
 // Stable per-install identifier for this desktop, persisted in settings. Used as
 // the client dedupe key on remote hosts so re-authenticating (e.g. after a login
-// session expires) reuses the same "MittrCraft Desktop" record instead of
+// session expires) reuses the same "OpenChamber Desktop" record instead of
 // piling up a new one each time. Different desktops get different ids.
 // Display-only device metadata shown in a server's device list ("macOS",
 // app version). Never used for auth decisions.
@@ -813,40 +801,6 @@ const writeDesktopHostsConfig = async (config) => {
   });
 };
 
-const readWindowState = () => {
-  const stateValue = readSettingsRoot().desktopWindowState;
-  return stateValue && typeof stateValue === 'object' ? stateValue : null;
-};
-
-const clampWindowBoundsToVisibleWorkArea = (bounds) => {
-  const width = Math.max(MIN_RESTORE_WINDOW_WIDTH, Math.round(Number(bounds?.width) || 0));
-  const height = Math.max(MIN_RESTORE_WINDOW_HEIGHT, Math.round(Number(bounds?.height) || 0));
-  const x = Math.round(Number(bounds?.x));
-  const y = Math.round(Number(bounds?.y));
-
-  if (!Number.isFinite(x) || !Number.isFinite(y)) {
-    return { width, height };
-  }
-
-  try {
-    const display = screen.getDisplayMatching({ x, y, width, height }) || screen.getPrimaryDisplay();
-    const workArea = display.workArea;
-    const clampedWidth = Math.min(width, Math.max(MIN_WINDOW_WIDTH, workArea.width));
-    const clampedHeight = Math.min(height, Math.max(MIN_WINDOW_HEIGHT, workArea.height));
-    const maxX = workArea.x + workArea.width - clampedWidth;
-    const maxY = workArea.y + workArea.height - clampedHeight;
-
-    return {
-      x: clampedWidth >= workArea.width ? workArea.x : Math.min(Math.max(x, workArea.x), maxX),
-      y: clampedHeight >= workArea.height ? workArea.y : Math.min(Math.max(y, workArea.y), maxY),
-      width: clampedWidth,
-      height: clampedHeight,
-    };
-  } catch {
-    return { x, y, width, height };
-  }
-};
-
 const writeWindowState = async (browserWindow) => {
   if (!browserWindow || browserWindow.isDestroyed()) return;
   if (!state.mainWindow || browserWindow.id !== state.mainWindow.id) return;
@@ -904,123 +858,16 @@ const buildHealthUrl = (url) => {
   }
 };
 
-const buildVersionUrl = (url) => {
-  try {
-    const parsed = new URL(url);
-    parsed.pathname = `${parsed.pathname.replace(/\/$/, '') || ''}/api/version`;
-    return parsed.toString();
-  } catch {
-    return null;
-  }
-};
-
-const buildSessionStatusUrl = (url) => {
-  try {
-    const parsed = new URL(url);
-    parsed.pathname = `${parsed.pathname.replace(/\/$/, '') || ''}/auth/session`;
-    return parsed.toString();
-  } catch {
-    return null;
-  }
-};
-
-const classifyVersionPayload = (payload) => {
-  const compatibility = payload?.compatibility;
-  if (!payload || payload.status !== 'ok' || !compatibility || typeof compatibility !== 'object') {
-    return 'wrong-service';
-  }
-
-  if (!Array.isArray(compatibility.capabilities) || !compatibility.capabilities.includes('api.runtime-url.v1')) {
-    return 'incompatible';
-  }
-
-  if (compatibility.apiVersion !== 1 || compatibility.minClientApiVersion > 1) {
-    return 'update-recommended';
-  }
-
-  return 'ok';
-};
-
-const fetchVersionPayload = async (versionUrl, { headers, timeoutMs }) => {
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  try {
-    return await fetch(versionUrl, { signal: timeoutSignal, headers });
-  } catch (error) {
-    if (timeoutSignal.aborted) {
-      throw error;
-    }
-    return await Promise.race([
-      electronNet.fetch(versionUrl, { headers }),
-      new Promise((_, reject) => setTimeout(() => reject(error), timeoutMs)),
-    ]);
-  }
-};
-
 const probeHostWithTimeout = async (url, timeoutMs, clientToken = '', requestHeaders = {}, expectedServerId = '') => {
-  const versionUrl = buildVersionUrl(url);
-  const sessionStatusUrl = buildSessionStatusUrl(url);
-  if (!versionUrl || !sessionStatusUrl) {
-    throw new Error('Invalid URL');
-  }
-
-  const started = Date.now();
-
-  // Identity gate for learned/untrusted addresses: verify the UNAUTHENTICATED
-  // /health identity before the token-carrying version fetch, so the bearer
-  // token is never sent to a re-assigned address that now belongs to a
-  // different machine. Older servers omit serverId from /health; only an
-  // explicit mismatch rejects.
-  if (typeof expectedServerId === 'string' && expectedServerId.trim()) {
-    const healthUrl = buildHealthUrl(url);
-    if (healthUrl) {
-      try {
-        const response = await fetch(healthUrl, { signal: AbortSignal.timeout(timeoutMs), headers: { Accept: 'application/json' } });
-        if (response.ok) {
-          const payload = await response.json().catch(() => null);
-          const reported = typeof payload?.serverId === 'string' ? payload.serverId.trim() : '';
-          if (reported && reported !== expectedServerId.trim()) {
-            return { status: 'wrong-service', latencyMs: Date.now() - started };
-          }
-        }
-      } catch {
-        // Unreachable/timeout surfaces in the version fetch below.
-      }
-    }
-  }
-
-  try {
-    const headers = { ...sanitizeRuntimeRequestHeaders(requestHeaders), Accept: 'application/json' };
-    const token = typeof clientToken === 'string' ? clientToken.trim() : '';
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-    const response = await fetchVersionPayload(versionUrl, { headers, timeoutMs });
-    const status = response.status;
-    if (status === 401 || status === 403) {
-      return { status: 'auth', latencyMs: Date.now() - started };
-    }
-    if (status < 200 || status >= 300) {
-      return { status: 'unreachable', latencyMs: Date.now() - started };
-    }
-    const payload = await response.json().catch(() => null);
-    const versionStatus = classifyVersionPayload(payload);
-    if (versionStatus !== 'ok') {
-      return { status: versionStatus, latencyMs: Date.now() - started };
-    }
-    const sessionResponse = await fetchVersionPayload(sessionStatusUrl, { headers, timeoutMs });
-    if (sessionResponse.status === 401 || sessionResponse.status === 403) {
-      return { status: 'auth', latencyMs: Date.now() - started };
-    }
-    if (!sessionResponse.ok) {
-      return { status: 'unreachable', latencyMs: Date.now() - started };
-    }
-    return {
-      status: versionStatus,
-      latencyMs: Date.now() - started,
-    };
-  } catch {
-    return { status: 'unreachable', latencyMs: Date.now() - started };
-  }
+  return probeElectronHostWithDeadline({
+    url,
+    timeoutMs,
+    clientToken,
+    requestHeaders,
+    expectedServerId,
+    chromiumFetch: (requestUrl, options) => electronNet.fetch(requestUrl, options),
+    isReady: () => app.isReady(),
+  });
 };
 
 const resolveStoredClientTokenForUrl = (targetUrl, config = readDesktopHostsConfig()) => {
@@ -1126,31 +973,26 @@ const buildLocalUrl = (port) => `http://127.0.0.1:${port}`;
 
 const resourceRoot = () => isDev ? path.join(__dirname, 'resources') : process.resourcesPath;
 const resolveWebDistDir = () => path.join(resourceRoot(), 'web-dist');
-const shouldUsePackagedUi = () => {
-  if (process.env.MITTRCRAFT_ELECTRON_LOAD_SERVER_UI === '1') return false;
-  if (process.env.MITTRCRAFT_ELECTRON_USE_BUNDLED_UI === '1') return true;
-  return app.isPackaged;
-};
 const packagedUiOrigin = () => `${UI_PROTOCOL}://app`;
 const buildPackagedUiUrl = (pathname = '/index.html') => new URL(pathname, `${packagedUiOrigin()}/`).toString();
 
 const injectRuntimeConfigIntoHtml = (html) => {
   const apiBaseUrl = state.apiBaseUrl || state.sidecarUrl || '';
   const localOrigin = state.localOrigin || state.sidecarUrl || '';
-  const initScript = `<script>if(window.__MITTRCRAFT_LOCAL_ORIGIN__===undefined){window.__MITTRCRAFT_LOCAL_ORIGIN__=${JSON.stringify(localOrigin)};}if(window.__MITTRCRAFT_API_BASE_URL__===undefined){window.__MITTRCRAFT_API_BASE_URL__=${JSON.stringify(apiBaseUrl)};}if(window.__MITTRCRAFT_CLIENT_TOKEN__===undefined&&${JSON.stringify(state.clientToken || '')}){window.__MITTRCRAFT_CLIENT_TOKEN__=${JSON.stringify(state.clientToken || '')};}</script>`;
+  const initScript = `<script>if(window.__OPENCHAMBER_LOCAL_ORIGIN__===undefined){window.__OPENCHAMBER_LOCAL_ORIGIN__=${JSON.stringify(localOrigin)};}if(window.__OPENCHAMBER_API_BASE_URL__===undefined){window.__OPENCHAMBER_API_BASE_URL__=${JSON.stringify(apiBaseUrl)};}if(window.__OPENCHAMBER_CLIENT_TOKEN__===undefined&&${JSON.stringify(state.clientToken || '')}){window.__OPENCHAMBER_CLIENT_TOKEN__=${JSON.stringify(state.clientToken || '')};}</script>`;
   if (html.includes('<head>')) return html.replace('<head>', `<head>${initScript}`);
   if (html.includes('</head>')) return html.replace('</head>', `${initScript}</head>`);
   return `${initScript}${html}`;
 };
 
 /**
- * The browser panel's own session, kept separate from MittrCraft's.
+ * The browser panel's own session, kept separate from OpenChamber's.
  *
  * Every page the user opens in the panel shares this partition, which is what
  * lets a dev-server login persist between sessions without touching the app's
  * own storage.
  */
-const BROWSER_PANEL_PARTITION = 'persist:mittrcraft-browser';
+const BROWSER_PANEL_PARTITION = 'persist:openchamber-browser';
 
 /**
  * Denies device and location access to pages shown in the browser panel.
@@ -1197,17 +1039,41 @@ const resolveBrowserPanelContents = (rawId) => {
 const hardenBrowserPanelSession = () => {
   const panelSession = session.fromPartition(BROWSER_PANEL_PARTITION);
 
-  panelSession.setPermissionRequestHandler((_contents, permission, callback, details) => {
-    log.info('[electron] browser panel denied a permission request', {
+  app.on('certificate-error', (event, contents, url, error, _certificate, callback) => {
+    if (contents.session === panelSession && shouldAllowBrowserPanelCertificateError({ url, error })) {
+      event.preventDefault();
+      callback(true);
+      return;
+    }
+    callback(false);
+  });
+
+  panelSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+    const allowed = shouldAllowBrowserPanelPermission({
       permission,
-      origin: details?.requestingUrl || '',
+      requestingUrl: details?.requestingUrl || '',
+      isFocused: contents.isFocused(),
     });
+    if (allowed) {
+      callback(true);
+      return;
+    }
+    log.info('[electron] browser panel denied a permission request', browserPanelPermissionAuditDetails({
+      permission,
+      requestingUrl: details?.requestingUrl || '',
+    }));
     callback(false);
   });
 
   // Asked before some features even request; answering here keeps a page from
   // reporting a capability it would then be denied.
-  panelSession.setPermissionCheckHandler(() => false);
+  panelSession.setPermissionCheckHandler((contents, permission, requestingOrigin) => (
+    shouldAllowBrowserPanelPermission({
+      permission,
+      requestingUrl: requestingOrigin,
+      isFocused: contents?.isFocused() === true,
+    })
+  ));
 
   // Serial, HID and USB device pickers.
   panelSession.setDevicePermissionHandler(() => false);
@@ -1215,7 +1081,18 @@ const hardenBrowserPanelSession = () => {
 
 const registerPackagedUiProtocol = () => {
   if (!shouldUsePackagedUi()) return;
-  protocol.handle(UI_PROTOCOL, async (request) => {
+  installPackagedUiRequestHandler(async (request) => {
+    if (isPackagedUiRuntimeRequest(request.url)) {
+      // Runtime requests must already target the per-window injected HTTP base.
+      // A shared protocol handler cannot infer which window/runtime owns a
+      // relative request, so fail closed instead of serving the app shell or
+      // forwarding credentials to the wrong host.
+      return Response.json(
+        { error: { code: 'runtime_unavailable' } },
+        { status: 503, headers: { 'x-openchamber-error': 'runtime-unavailable' } },
+      );
+    }
+
     const distPath = resolveWebDistDir();
     let requestedPath = '/index.html';
     try {
@@ -1235,7 +1112,15 @@ const registerPackagedUiProtocol = () => {
         if (filePath.endsWith('.html')) {
           const html = await fsp.readFile(filePath, 'utf8');
           const body = injectRuntimeConfigIntoHtml(html);
-          return new Response(body, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+          // index.html must never be cached: it names the hashed asset
+          // bundles, and a cached copy keeps a freshly installed build
+          // loading the previous version's UI from the renderer disk cache.
+          return new Response(body, {
+            headers: {
+              'Content-Type': 'text/html; charset=utf-8',
+              'Cache-Control': 'no-store',
+            },
+          });
         }
         return electronNet.fetch(pathToFileURL(filePath).toString());
       }
@@ -1334,7 +1219,7 @@ const maybeShowNativeNotification = (rawInput) => {
 
   const title = typeof payload.title === 'string' && payload.title.trim()
     ? payload.title.trim()
-    : 'MittrCraft';
+    : PRODUCT.appName;
   const body = typeof payload.body === 'string' ? payload.body : '';
   const sessionId = typeof payload.sessionId === 'string' && payload.sessionId.trim()
     ? payload.sessionId.trim()
@@ -1356,7 +1241,7 @@ const maybeShowNativeNotification = (rawInput) => {
   notification.on('click', () => {
     focusForegroundWindow();
     if (sessionId) {
-      emitToAllWindows('mittrcraft:open-session', { sessionId, directory });
+      emitToPrimaryWindow('openchamber:open-session', { sessionId, directory });
     }
     release();
   });
@@ -1371,104 +1256,19 @@ const mapUpdaterProgressEvent = (payload) => ({
   data: payload.data,
 });
 
-const SHELL_ENV_TIMEOUT_MS = 5_000;
-let cachedShellEnv = null;
-let shellEnvProbed = false;
-
-const isNushell = (shell) => {
-  const name = path.basename(shell).toLowerCase();
-  return name === 'nu' || name === 'nu.exe';
-};
-
-const parseShellEnv = (buf) => {
-  const result = {};
-  for (const line of buf.toString('utf8').split('\0')) {
-    if (!line) continue;
-    const idx = line.indexOf('=');
-    if (idx <= 0) continue;
-    result[line.slice(0, idx)] = line.slice(idx + 1);
-  }
-  return result;
-};
-
-const probeShellEnv = (shell, mode) => {
-  const result = spawnSync(shell, [mode, '-c', 'env -0'], {
-    stdio: ['ignore', 'pipe', 'ignore'],
-    timeout: SHELL_ENV_TIMEOUT_MS,
-    windowsHide: true,
-  });
-  if (result.error || result.status !== 0) return null;
-  const env = parseShellEnv(result.stdout);
-  return Object.keys(env).length > 0 ? env : null;
-};
-
-const queryWindowsRegistryValue = (key, name) => {
-  const result = spawnSync('reg.exe', ['query', key, '/v', name], {
-    encoding: 'utf8',
-    windowsHide: true,
-  });
-  if (result.error || result.status !== 0) return '';
-  const line = String(result.stdout || '')
-    .split(/\r?\n/)
-    .map((entry) => entry.trim())
-    .find((entry) => entry.toLowerCase().startsWith(name.toLowerCase()));
-  if (!line) return '';
-  const match = line.match(/^\S+\s+REG_\S+\s+(.+)$/);
-  return match?.[1]?.trim() || '';
-};
-
-const expandWindowsEnvRefs = (value) => String(value || '').replace(/%([^%]+)%/g, (_match, key) => process.env[key] || '');
-
-const loadWindowsEnv = () => {
-  const machinePath = queryWindowsRegistryValue('HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment', 'Path');
-  const userPath = queryWindowsRegistryValue('HKCU\\Environment', 'Path');
-  const homeDir = os.homedir();
-  const localAppData = process.env.LOCALAPPDATA || path.join(homeDir, 'AppData', 'Local');
-  const appData = process.env.APPDATA || path.join(homeDir, 'AppData', 'Roaming');
-  const commonPaths = [
-    path.join(homeDir, '.opencode', 'bin'),
-    path.join(homeDir, '.bun', 'bin'),
-    path.join(homeDir, '.local', 'bin'),
-    path.join(localAppData, 'Programs', 'Microsoft VS Code', 'bin'),
-    path.join(localAppData, 'Programs', 'Cursor', 'resources', 'app', 'bin'),
-    path.join(appData, 'npm'),
-  ];
-  return {
-    PATH: [machinePath, userPath, process.env.PATH, ...commonPaths]
-      .map(expandWindowsEnvRefs)
-      .filter(Boolean)
-      .join(path.delimiter),
-  };
-};
-
-// Finder-launched apps on macOS inherit a minimal PATH (no /opt/homebrew, mise, asdf, etc.).
-// Probe the user's login shell once so the sidecar sees the same PATH / tool env as `$SHELL -il`.
-const loadShellEnv = () => {
-  if (shellEnvProbed) return cachedShellEnv;
-  shellEnvProbed = true;
-  if (process.platform === 'win32') {
-    cachedShellEnv = loadWindowsEnv();
-    return cachedShellEnv;
-  }
-  const shell = process.env.SHELL || '/bin/sh';
-  if (isNushell(shell)) return null;
-  cachedShellEnv = probeShellEnv(shell, '-il') || probeShellEnv(shell, '-l');
-  return cachedShellEnv;
-};
+import { pathLooksUserConfigured, mergePathValues } from '@openchamber/web/server/lib/opencode/path-utils.js';
+import { provideLoginShellEnvSnapshot } from '@openchamber/web/server/lib/opencode/login-shell-env.js';
 
 // Merge the user's login-shell env (PATH, etc.) into this process before we
-import { pathLooksUserConfigured, mergePathValues } from '@mittrcraft/web/server/lib/opencode/path-utils.js';
-import { clearAppImageArgv0FromProcessEnv } from '@mittrcraft/web/server/lib/inherited-env.js';
-
 // import/start the server in-process. The server and its children (opencode
 // CLI, git, etc.) inherit process.env directly now — there is no sidecar
 // subprocess to hand a custom env to.
-const inheritUserShellEnv = () => {
-  // Clear before probing/merging so login-shell snapshots and children never
-  // inherit the AppImage path as argv[0] via zsh's ARGV0 parameter (#2588).
-  clearAppImageArgv0FromProcessEnv();
-
-  const shellEnv = loadShellEnv();
+const inheritUserShellEnv = async () => {
+  const shellEnv = await startShellEnvironmentProbe();
+  // The server would otherwise snapshot the same shell again, synchronously,
+  // on this thread. Windows keeps the server's own registry-based snapshot:
+  // the desktop loader only knows PATH there.
+  if (process.platform !== 'win32') provideLoginShellEnvSnapshot(shellEnv);
   if (!shellEnv) return;
 
   const homeDir = os.homedir();
@@ -1489,15 +1289,15 @@ const inheritUserShellEnv = () => {
   }
 };
 
-const shouldSkipLocalServer = () => {
-  inheritUserShellEnv();
-  return process.env.MITTRCRAFT_SKIP_LOCAL_SERVER === '1';
+const shouldSkipLocalServer = async () => {
+  await inheritUserShellEnv();
+  return process.env.OPENCHAMBER_SKIP_LOCAL_SERVER === '1';
 };
 
 const spawnLocalServer = async () => {
   const serverStartedAt = performance.now();
   recordElectronStartupPerformance('electron.server.start');
-  inheritUserShellEnv();
+  await inheritUserShellEnv();
 
   const settings = readSettingsRoot();
   const storedPort = Number.isFinite(settings.desktopLocalPort) ? settings.desktopLocalPort : null;
@@ -1507,10 +1307,15 @@ const spawnLocalServer = async () => {
   const lanAccessEnabled = settings.desktopLanAccessEnabled === true;
   setDesktopKeepAwakeActive(settings.desktopKeepAwakeEnabled === true);
   const desktopUiPassword = typeof settings.desktopUiPassword === 'string' ? settings.desktopUiPassword.trim() : '';
-  const lanAccessBlockedByMissingPassword = lanAccessEnabled && !desktopUiPassword;
-  const effectiveLanAccessEnabled = lanAccessEnabled && !lanAccessBlockedByMissingPassword;
+  // Enterprise mode keeps the app on this machine unless the administrator
+  // allowed network access (the server refuses a network bind as well).
+  const lanAccessBlockedByEnterprise = lanAccessEnabled && isNetworkAccessBlocked();
+  const lanAccessBlockedByMissingPassword = lanAccessEnabled && !lanAccessBlockedByEnterprise && !desktopUiPassword;
+  const effectiveLanAccessEnabled = lanAccessEnabled && !lanAccessBlockedByEnterprise && !lanAccessBlockedByMissingPassword;
   const bindHost = effectiveLanAccessEnabled ? LAN_BIND_HOST : LOOPBACK_BIND_HOST;
-  if (lanAccessBlockedByMissingPassword) {
+  if (lanAccessBlockedByEnterprise) {
+    log.warn('[desktop] LAN access is turned off by enterprise mode; starting on loopback only.');
+  } else if (lanAccessBlockedByMissingPassword) {
     log.warn('[desktop] LAN access was requested without a desktop UI password; starting on loopback only.');
   }
 
@@ -1529,36 +1334,38 @@ const spawnLocalServer = async () => {
     chosenPort = await pickUnusedPort(bindHost);
   }
 
-  // The server module reads ENV_DESKTOP_NOTIFY / MITTRCRAFT_DIST_DIR /
-  // MITTRCRAFT_RUNTIME at import time (top-level const), so these must be
+  // The server module reads ENV_DESKTOP_NOTIFY / OPENCHAMBER_DIST_DIR /
+  // OPENCHAMBER_RUNTIME at import time (top-level const), so these must be
   // set before the first import. After this point, the same env is used by
   // both the Electron main and the server running inside it.
-  process.env.MITTRCRAFT_HOST = bindHost;
-  process.env.MITTRCRAFT_DESKTOP_LAN_ACCESS_ACTIVE = effectiveLanAccessEnabled ? 'true' : 'false';
-  if (lanAccessBlockedByMissingPassword) {
-    process.env.MITTRCRAFT_DESKTOP_LAN_ACCESS_BLOCKED_REASON = 'missing-password';
+  process.env.OPENCHAMBER_HOST = bindHost;
+  process.env.OPENCHAMBER_DESKTOP_LAN_ACCESS_ACTIVE = effectiveLanAccessEnabled ? 'true' : 'false';
+  if (lanAccessBlockedByEnterprise) {
+    process.env.OPENCHAMBER_DESKTOP_LAN_ACCESS_BLOCKED_REASON = 'enterprise-mode';
+  } else if (lanAccessBlockedByMissingPassword) {
+    process.env.OPENCHAMBER_DESKTOP_LAN_ACCESS_BLOCKED_REASON = 'missing-password';
   } else {
-    delete process.env.MITTRCRAFT_DESKTOP_LAN_ACCESS_BLOCKED_REASON;
+    delete process.env.OPENCHAMBER_DESKTOP_LAN_ACCESS_BLOCKED_REASON;
   }
-  process.env.MITTRCRAFT_DIST_DIR = resolveWebDistDir();
-  process.env.MITTRCRAFT_RUNTIME = 'desktop';
+  process.env.OPENCHAMBER_DIST_DIR = resolveWebDistDir();
+  process.env.OPENCHAMBER_RUNTIME = 'desktop';
   // OpenCode uses process cwd as a fallback directory; app userData would make
   // packaged desktop look like a separate empty workspace.
-  process.env.MITTRCRAFT_OPENCODE_CWD = resolveManagedOpenCodeCwd({
+  process.env.OPENCHAMBER_OPENCODE_CWD = resolveManagedOpenCodeCwd({
     env: process.env,
     homedir: () => os.homedir(),
   });
-  process.env.MITTRCRAFT_DESKTOP_NOTIFY = 'true';
+  process.env.OPENCHAMBER_DESKTOP_NOTIFY = 'true';
   if (desktopUiPassword) {
-    process.env.MITTRCRAFT_UI_PASSWORD = desktopUiPassword;
+    process.env.OPENCHAMBER_UI_PASSWORD = desktopUiPassword;
   } else {
-    delete process.env.MITTRCRAFT_UI_PASSWORD;
+    delete process.env.OPENCHAMBER_UI_PASSWORD;
   }
-  process.env.MITTRCRAFT_SKIP_API_COMPRESSION = process.env.MITTRCRAFT_SKIP_API_COMPRESSION || 'true';
+  process.env.OPENCHAMBER_SKIP_API_COMPRESSION = process.env.OPENCHAMBER_SKIP_API_COMPRESSION || 'true';
   process.env.NO_PROXY = process.env.NO_PROXY || 'localhost,127.0.0.1';
   process.env.no_proxy = process.env.no_proxy || 'localhost,127.0.0.1';
 
-  const { startWebUiServer } = await import('@mittrcraft/web/server/index.js');
+  const { startWebUiServer } = await import('@openchamber/web/server/index.js');
 
   const handle = await startWebUiServer({
     port: chosenPort,
@@ -1567,19 +1374,30 @@ const spawnLocalServer = async () => {
     attachSignals: false,
     exitOnShutdown: false,
     apiOnly: false,
+    builtInExtensionsDir: app.isPackaged
+      ? path.join(app.getAppPath().endsWith('.asar') ? `${app.getAppPath()}.unpacked` : app.getAppPath(), 'node_modules/@openchamber/web/server/built-in-extensions')
+      : undefined,
     onDesktopNotification: (payload) => maybeShowNativeNotification(payload),
-    // The OS keychain is native, so the server cannot reach it on its own. When
-    // the platform has none this is null and the server stores the Mittr
-    // session unencrypted, which it logs.
-    secretStore: createSafeStorageSecretStore({ safeStorage }),
-    // Which Mittr this build talks to, decided by whoever ran the build rather
-    // than by whoever runs the app.
-    brokerBaseUrl: BUILD_BROKER_BASE_URL,
     getIsWindowFocused: isAnyWindowFocused,
+    pluginHost: {
+      secretStore: createSafeStorageSecretStore({ safeStorage }),
+      deepLinks: { register: deepLinkRegistry.register },
+      confirm: createHostConfirm({ dialog, windows: () => BrowserWindow.getAllWindows(), log }),
+    },
     getDesktopRuntimeConfig: () => ({
       apiBaseUrl: state.apiBaseUrl || '',
       requestHeaders: sanitizeRuntimeRequestHeaders(state.requestHeaders || {}),
     }),
+    desktopUpdater: {
+      check: () => handleInvoke(null, 'desktop_check_for_updates'),
+      install: async () => {
+        const updateInfo = await handleInvoke(null, 'desktop_check_for_updates');
+        if (!updateInfo.available) return updateInfo;
+        await handleInvoke(null, 'desktop_download_and_install_update');
+        return updateInfo;
+      },
+      restart: () => handleInvoke(null, 'desktop_restart'),
+    },
   });
 
   const port = handle.getPort();
@@ -1671,7 +1489,7 @@ Stop-ProcessTree $targetPid $true
     'if [ "$pid" -gt 0 ] 2>/dev/null; then kill -KILL "-$pid" 2>/dev/null; kill -KILL "$pid" 2>/dev/null; fi',
     'if [ "$port" -gt 0 ] 2>/dev/null && command -v lsof >/dev/null 2>&1; then for target in $(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null; lsof -ti ":$port" 2>/dev/null); do [ "$target" = "$$" ] || kill -KILL "$target" 2>/dev/null; done; fi',
   ].join('; ');
-  const child = spawn('/bin/sh', ['-c', script, 'mittrcraft-opencode-killer', normalizedPid, normalizedPort, String(OPENCODE_SHUTDOWN_GRACE_MS / 1000)], {
+  const child = spawn('/bin/sh', ['-c', script, 'openchamber-opencode-killer', normalizedPid, normalizedPort, String(OPENCODE_SHUTDOWN_GRACE_MS / 1000)], {
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
@@ -1679,27 +1497,16 @@ Stop-ProcessTree $targetPid $true
   child.unref();
 };
 
-const killSidecar = () => {
+const killSidecar = async () => {
   const handle = state.serverHandle;
   state.serverHandle = null;
   state.sidecarUrl = null;
   if (!handle) return;
 
-  try {
-    launchDetachedOpenCodeKiller(handle.getOpenCodeProcessInfo?.());
-  } catch (error) {
-    log.warn('[electron] failed to launch OpenCode killer:', error);
-  }
-};
-
-const macosMajorVersion = () => {
-  if (process.platform !== 'darwin') return 0;
-  const result = spawnSync('/usr/bin/sw_vers', ['-productVersion'], { encoding: 'utf8' });
-  const raw = (result.stdout || '').trim();
-  const [majorRaw, minorRaw] = raw.split('.');
-  const major = Number.parseInt(majorRaw || '0', 10);
-  const minor = Number.parseInt(minorRaw || '0', 10);
-  return major === 10 ? minor : major;
+  await stopEmbeddedServer(handle, {
+    launchFallback: launchDetachedOpenCodeKiller,
+    warn: (error) => log.warn('[electron] embedded server shutdown failed:', error),
+  });
 };
 
 const buildInitScript = (localOrigin, bootOutcome, apiBaseUrl = '', clientToken = '', requestHeaders = {}) => {
@@ -1713,7 +1520,7 @@ const buildInitScript = (localOrigin, bootOutcome, apiBaseUrl = '', clientToken 
   const outcome = JSON.stringify(bootOutcome ?? null);
   return [
     '(function(){',
-    `try{var __oc_local=${local};var __oc_api=${apiBase};var __oc_headers=${headers};var __oc_packaged=${packagedOrigin};var __oc_origin=window.location&&window.location.origin||'';var __oc_is_packaged=__oc_origin===__oc_packaged;var __oc_is_local=__oc_local&&__oc_origin===new URL(__oc_local).origin;window.__MITTRCRAFT_MACOS_MAJOR__=${macVersion};window.__MITTRCRAFT_LOCAL_ORIGIN__=__oc_local;window.__MITTRCRAFT_API_BASE_URL__=__oc_api;if(__oc_is_local||__oc_is_packaged){window.__MITTRCRAFT_HOME__=${home};window.__MITTRCRAFT_RUNTIME_HEADERS__=__oc_headers;}if((__oc_is_local||__oc_is_packaged)&&${token}){window.__MITTRCRAFT_CLIENT_TOKEN__=${token};}var __oc_bo=${outcome};if(__oc_bo){window.__MITTRCRAFT_DESKTOP_BOOT_OUTCOME__=__oc_bo;}}catch(_e){}`,
+    `try{var __oc_local=${local};var __oc_api=${apiBase};var __oc_headers=${headers};var __oc_packaged=${packagedOrigin};var __oc_origin=window.location&&window.location.origin||'';var __oc_is_packaged=__oc_origin===__oc_packaged;var __oc_is_local=__oc_local&&__oc_origin===new URL(__oc_local).origin;window.__OPENCHAMBER_MACOS_MAJOR__=${macVersion};window.__OPENCHAMBER_LOCAL_ORIGIN__=__oc_local;window.__OPENCHAMBER_API_BASE_URL__=__oc_api;if(__oc_is_local||__oc_is_packaged){window.__OPENCHAMBER_HOME__=${home};window.__OPENCHAMBER_RUNTIME_HEADERS__=__oc_headers;}if((__oc_is_local||__oc_is_packaged)&&${token}){window.__OPENCHAMBER_CLIENT_TOKEN__=${token};}var __oc_bo=${outcome};if(__oc_bo){window.__OPENCHAMBER_DESKTOP_BOOT_OUTCOME__=__oc_bo;}}catch(_e){}`,
     '}())',
   ].join('');
 };
@@ -1764,66 +1571,16 @@ const computeBootOutcome = ({ envTargetUrl, probe, config, localAvailable }) => 
       : probe?.status === 'wrong-service'
         ? 'wrong-service'
         : 'ok';
-  return { target: 'remote', status, hostId: host.id, url: host.apiUrl || host.url, ...availability };
-};
-
-const startupSplashIconDataUri = () => {
-  try {
-    const bytes = fs.readFileSync(path.join(resourceRoot(), 'icons', 'splash-icon.png'));
-    return `data:image/png;base64,${bytes.toString('base64')}`;
-  } catch {
-    return '';
+  // A relay-capable host is not a recovery case just because its stored
+  // direct URL failed the http probe — that URL is often the pairing
+  // creator's own loopback (unreachable here, or worse, someone else's
+  // service). The relay leg is activated in the renderer's relay restore,
+  // which cannot run from a recovery screen: boot to main on the local
+  // substrate and let it pick direct-or-relay.
+  if (status !== 'ok' && sanitizeHostRelayForStorage(host.relay)) {
+    return { target: 'remote', status: 'ok', hostId: host.id, url: host.apiUrl || host.url, ...availability };
   }
-};
-
-const buildStartupSplashHtml = () => {
-  const settings = readSettingsRoot();
-  const splashBgLight = typeof settings.splashBgLight === 'string' ? settings.splashBgLight.trim() : '#f5f5f4';
-  const splashFgLight = typeof settings.splashFgLight === 'string' ? settings.splashFgLight.trim() : '#1c1917';
-  const splashBgDark = typeof settings.splashBgDark === 'string' ? settings.splashBgDark.trim() : '#0c0a09';
-  const splashFgDark = typeof settings.splashFgDark === 'string' ? settings.splashFgDark.trim() : '#fafaf9';
-  const iconDataUri = startupSplashIconDataUri();
-
-  return `<!doctype html>
-  <html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <style>
-      :root { color-scheme: light dark; }
-      :root {
-        --splash-background: ${splashBgLight};
-        --splash-stroke: ${splashFgLight};
-      }
-      body {
-        margin: 0;
-        font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-        display: grid;
-        place-items: center;
-        height: 100vh;
-        background: var(--splash-background);
-        color: var(--splash-stroke);
-      }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --splash-background: ${splashBgDark};
-          --splash-stroke: ${splashFgDark};
-        }
-      }
-      .stack {
-        display: grid;
-        justify-items: center;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="stack">
-      ${iconDataUri
-        ? `<img width="140" height="140" src="${iconDataUri}" alt="MittrCraft loading icon" />`
-        : `<svg width="120" height="120" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MittrCraft loading icon"><rect width="24" height="24" rx="5" fill="currentColor" opacity="0.15"/></svg>`}
-    </div>
-  </body>
-  </html>`;
+  return { target: 'remote', status, hostId: host.id, url: host.apiUrl || host.url, ...availability };
 };
 
 const isBenignNavigationAbort = (error) => {
@@ -1889,7 +1646,11 @@ const loginRemoteAndIssueClientToken = async ({ url, password, trustDevice, requ
     ? { clientKind: LOCAL_DESKTOP_CLIENT_KIND, dedupeKey: LOCAL_DESKTOP_CLIENT_DEDUPE_KEY, ...desktopDeviceMetadata() }
     : { clientKind: REMOTE_DESKTOP_CLIENT_KIND, dedupeKey: `desktop:${await getOrCreateDesktopInstallId()}`, ...desktopDeviceMetadata() };
 
-  const loginResponse = await fetch(new URL('/auth/session', `${baseUrl}/`).toString(), {
+  // Keep a sub-path prefix (https://host/openchamber); new URL('/auth/session', base) would drop it.
+  const loginUrl = new URL(baseUrl);
+  loginUrl.pathname = `${loginUrl.pathname.replace(/\/+$/, '')}/auth/session`;
+  loginUrl.search = '';
+  const loginResponse = await fetch(loginUrl.toString(), {
     method: 'POST',
     signal: AbortSignal.timeout(10_000),
     headers: {
@@ -1901,7 +1662,7 @@ const loginRemoteAndIssueClientToken = async ({ url, password, trustDevice, requ
       password: candidatePassword,
       trustDevice: trustDevice === true,
       issueClientToken: true,
-      clientLabel: 'MittrCraft Desktop',
+      clientLabel: 'OpenChamber Desktop',
       ...clientIdentity,
     }),
   });
@@ -1929,7 +1690,7 @@ const loginRemoteAndIssueClientToken = async ({ url, password, trustDevice, requ
       Cookie: cookie,
     },
     body: JSON.stringify({
-      label: 'MittrCraft Desktop',
+      label: 'OpenChamber Desktop',
       ...clientIdentity,
     }),
   });
@@ -1943,13 +1704,25 @@ const loginRemoteAndIssueClientToken = async ({ url, password, trustDevice, requ
 
 const emitToWindow = (browserWindow, event, detail) => {
   if (!browserWindow || browserWindow.isDestroyed()) return;
-  browserWindow.webContents.send('mittrcraft:emit', { event, detail });
+  browserWindow.webContents.send('openchamber:emit', { event, detail });
 };
 
 const emitToAllWindows = (event, detail) => {
   for (const browserWindow of BrowserWindow.getAllWindows()) {
     emitToWindow(browserWindow, event, detail);
   }
+};
+
+// Session navigation must land in ONE window. Broadcasting it makes every
+// open window adopt the same session, hijacking whatever the other windows
+// were doing.
+const emitToPrimaryWindow = (event, detail) => {
+  const windows = BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed());
+  if (windows.length === 0) return;
+  const target = (state.mainWindow && !state.mainWindow.isDestroyed())
+    ? state.mainWindow
+    : windows.find((window) => window.isFocused()) || windows.find((window) => window.isVisible()) || windows[0];
+  emitToWindow(target, event, detail);
 };
 
 const setTaskbarProgress = (value) => {
@@ -1962,6 +1735,36 @@ const setTaskbarProgress = (value) => {
 };
 
 const pendingDeepLinks = [];
+
+const deepLinkRegistry = createDeepLinkRegistry({
+  onEmit: (event) => {
+    const target = state.mainWindow && !state.mainWindow.isDestroyed()
+      ? state.mainWindow
+      : BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
+    if (target) {
+      if (target.isMinimized()) target.restore();
+      target.show();
+      target.focus();
+    }
+    emitToAllWindows(event, {});
+  },
+  onError: (error, link) => log.warn('[electron] deep-link handler failed:', link.type, error),
+});
+const PENDING_SESSION_LINK_FALLBACK_MS = 10_000;
+
+// Hands the main window's renderer the session links that arrived before it
+// could listen, as { sessionId, messageId? }; the renderer validates both.
+const takePendingSessionDeepLinks = () => {
+  const taken = [];
+  for (let index = pendingDeepLinks.length - 1; index >= 0; index -= 1) {
+    const link = pendingDeepLinks[index];
+    if (link.type !== 'session' || !link.value) continue;
+    pendingDeepLinks.splice(index, 1);
+    const messageId = readDeepLinkQueryParam(link.raw, 'message');
+    taken.unshift(messageId ? { sessionId: link.value, messageId } : { sessionId: link.value });
+  }
+  return taken;
+};
 
 const parseDeepLink = (raw) => {
   if (typeof raw !== 'string') return null;
@@ -1977,6 +1780,16 @@ const parseDeepLink = (raw) => {
       ? decodeURIComponent(segments.join('/'))
       : '';
     return { type, value, raw: trimmed };
+  } catch {
+    return null;
+  }
+};
+
+const readDeepLinkQueryParam = (raw, name) => {
+  if (typeof raw !== 'string') return null;
+  try {
+    const value = new URL(raw).searchParams.get(name);
+    return value && value.trim() ? value.trim() : null;
   } catch {
     return null;
   }
@@ -2024,7 +1837,7 @@ const parseConnectPairingDeepLinkPayload = (raw) => {
     return {
       pairingId,
       secret,
-      label: typeof payload.label === 'string' && payload.label.trim() ? payload.label.trim() : 'MittrCraft',
+      label: typeof payload.label === 'string' && payload.label.trim() ? payload.label.trim() : PRODUCT.appName,
       fingerprint: typeof payload.fingerprint === 'string' && payload.fingerprint.trim() ? payload.fingerprint.trim() : '',
       expiresAt: expiresAt || null,
       candidates: candidates.sort((left, right) => left.priority - right.priority),
@@ -2096,9 +1909,9 @@ const redeemConnectPairingDeepLink = async (payload, serverUrl) => {
     body: JSON.stringify({
       pairingId: payload.pairingId,
       secret: payload.secret,
-      clientLabel: 'MittrCraft Desktop',
+      clientLabel: 'OpenChamber Desktop',
       clientKind: 'desktop',
-      deviceName: 'MittrCraft Desktop',
+      deviceName: 'OpenChamber Desktop',
       ...desktopDeviceMetadata(),
       dedupeKey: `desktop:${await getOrCreateDesktopInstallId()}`,
     }),
@@ -2158,7 +1971,7 @@ const confirmConnectDeepLink = async (payload) => {
   }
   const options = {
     type: 'warning',
-    title: 'Connect to MittrCraft server?',
+    title: 'Connect to OpenChamber server?',
     message: `Connect to "${payload.label}"?`,
     detail:
       `This will add ${payload.serverUrl} as a remote instance and route this app's activity ` +
@@ -2178,55 +1991,10 @@ const confirmConnectDeepLink = async (payload) => {
   }
 };
 
-// Announced once the sign-in exchange has actually stored a session, so the
-// sign-in surface stops guessing from window focus.
-const MITTR_SIGN_IN_EVENT = 'mittrcraft:mittr-signed-in';
-
-const dispatchDeepLink = (link) => {
+const dispatchDeepLink = async (link) => {
   if (!link) return;
+  if (await deepLinkRegistry.dispatch(link)) return;
   log.info('[electron] dispatching deep-link', { type: link.type, valueLen: link.value?.length || 0 });
-  if (isAuthCallbackLink(link)) {
-    // Deliberately the local server and nothing else. It is the only process
-    // holding the verifier for the sign-in this machine started, so it is the
-    // only one that can redeem the code — and handing the code to a remote
-    // instance the user happens to be connected to would be handing it to a
-    // machine that never asked for it.
-    const localUrl = state.sidecarUrl;
-    if (!localUrl) {
-      log.warn('[electron] auth callback arrived with no local server to redeem it');
-      return;
-    }
-    // The renderer never sees the raw callback; there is nothing it could do
-    // with it that the server cannot do more safely.
-    //
-    // The sign-in surface is told when the exchange lands. It cannot infer it:
-    // it re-checks on window focus, and macOS focuses this app to deliver the
-    // deep link -- before the exchange has been made, let alone finished. So
-    // the check ran against a session that did not exist yet, the surface
-    // stayed on the sign-in screen, and signing in appeared to need two
-    // attempts. The second one worked only because the first had by then
-    // stored its session.
-    void (async () => {
-      try {
-        const response = await fetch(`${localUrl}/api/mittr/auth/callback`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ url: link.raw }),
-        });
-        if (!response.ok) {
-          log.warn('[electron] the local server rejected the auth callback:', response.status);
-          return;
-        }
-        emitToAllWindows(MITTR_SIGN_IN_EVENT);
-        for (const browserWindow of BrowserWindow.getAllWindows()) {
-          dispatchDomEventToWindow(browserWindow, MITTR_SIGN_IN_EVENT);
-        }
-      } catch (error) {
-        log.warn('[electron] failed to hand the auth callback to the local server:', error?.message ?? error);
-      }
-    })();
-    return;
-  }
   if (link.type === 'connect') {
     const pairingPayload = parseConnectPairingDeepLinkPayload(link.raw);
     if (pairingPayload) {
@@ -2274,12 +2042,17 @@ const dispatchDeepLink = (link) => {
       target.show();
       target.focus();
     }
-    emitToAllWindows('mittrcraft:deep-link-focus', { reason: link.value || null });
+    emitToAllWindows('openchamber:deep-link-focus', { reason: link.value || null });
     return;
   }
 
   if (link.type === 'session' && link.value) {
-    emitToAllWindows('mittrcraft:open-session', { sessionId: link.value });
+    // A message link (`openchamber://session/<id>?message=<id>`) also names
+    // the message to show; the renderer validates both IDs.
+    const messageId = readDeepLinkQueryParam(link.raw, 'message');
+    emitToPrimaryWindow('openchamber:open-session', messageId
+      ? { sessionId: link.value, messageId }
+      : { sessionId: link.value });
     return;
   }
   if (link.type === 'host' && link.value) {
@@ -2289,10 +2062,21 @@ const dispatchDeepLink = (link) => {
   log.warn('[electron] unknown deep-link action:', link.type);
 };
 
-const flushPendingDeepLinks = () => {
+// Session links wait for the renderer to take them (desktop_take_pending_session_links)
+// once its listener is mounted: an event sent when the page has merely loaded
+// reached no listener on a cold start and the link was lost. The late flush
+// still delivers them to a renderer that never asks (an older remote UI).
+const flushPendingDeepLinks = ({ includeSessions }) => {
+  const kept = [];
   while (pendingDeepLinks.length > 0) {
-    dispatchDeepLink(pendingDeepLinks.shift());
+    const link = pendingDeepLinks.shift();
+    if (link.type === 'session' && !includeSessions) {
+      kept.push(link);
+      continue;
+    }
+    void dispatchDeepLink(link);
   }
+  pendingDeepLinks.push(...kept);
 };
 
 const isMainWindowReadyForDeepLink = () =>
@@ -2305,7 +2089,7 @@ const handleDeepLinks = (urls) => {
     const parsed = parseDeepLink(raw);
     if (!parsed) continue;
     if (isMainWindowReadyForDeepLink()) {
-      dispatchDeepLink(parsed);
+      void dispatchDeepLink(parsed);
     } else {
       pendingDeepLinks.push(parsed);
     }
@@ -2336,15 +2120,22 @@ const getMenuTargetWindow = () => {
 
 const dispatchMenuAction = (action) => {
   const target = getMenuTargetWindow();
-  emitToWindow(target, 'mittrcraft:menu-action', action);
-  dispatchDomEventToWindow(target, 'mittrcraft:menu-action', action);
+  // Zoom actions are consumed by the renderer's DOM listener. Sending them
+  // through both the IPC bridge and the DOM event would invoke the handler
+  // multiple times because preload fans the IPC event back into both paths.
+  if (action === 'zoom-in' || action === 'zoom-out' || action === 'zoom-reset') {
+    dispatchDomEventToWindow(target, 'openchamber:zoom', action);
+    return;
+  }
+  emitToWindow(target, 'openchamber:menu-action', action);
+  dispatchDomEventToWindow(target, 'openchamber:menu-action', action);
 };
 
 // Append-style menu actions must reach the renderer exactly once. Dual IPC+DOM
 // delivery (dispatchMenuAction) would insert the selection twice.
 const dispatchAddSelectionToChat = () => {
   const target = getMenuTargetWindow();
-  if (target) emitToWindow(target, 'mittrcraft:menu-action', 'add-selection-to-chat');
+  if (target) emitToWindow(target, 'openchamber:menu-action', 'add-selection-to-chat');
 };
 
 // Mini-chat draft windows are not deduplicated, so this must reach the renderer
@@ -2352,13 +2143,13 @@ const dispatchAddSelectionToChat = () => {
 // resolves the active directory/project and opens the window.
 const dispatchOpenMiniChat = (browserWindow) => {
   const target = browserWindow && !browserWindow.isDestroyed() ? browserWindow : getMenuTargetWindow();
-  if (target) emitToWindow(target, 'mittrcraft:open-mini-chat');
+  if (target) emitToWindow(target, 'openchamber:open-mini-chat');
 };
 
 const dispatchCheckForUpdates = () => {
-  emitToAllWindows('mittrcraft:check-for-updates');
+  emitToAllWindows('openchamber:check-for-updates');
   for (const browserWindow of BrowserWindow.getAllWindows()) {
-    dispatchDomEventToWindow(browserWindow, 'mittrcraft:check-for-updates');
+    dispatchDomEventToWindow(browserWindow, 'openchamber:check-for-updates');
   }
 };
 
@@ -2375,36 +2166,12 @@ const openDevToolsForMenuTarget = () => {
 };
 
 const relaunchFromMenu = () => {
-  prepareForQuit();
-  app.relaunch();
-  app.exit(0);
+  void performConfirmedQuit({ relaunch: true });
 };
 
 const nextWindowLabel = () => {
   const value = state.windowCounter++;
   return value === 1 ? 'main' : `main-${value}`;
-};
-
-const readThemeSource = () => {
-  const settings = readSettingsRoot();
-  // themeMode is the user's intent; themeVariant is only the resolved
-  // concrete appearance at persist time. When mode === 'system', we must
-  // follow the OS even if variant was saved as a specific value.
-  if (settings.themeMode === 'system' || settings.useSystemTheme === true) return 'system';
-  if (settings.themeMode === 'light') return 'light';
-  if (settings.themeMode === 'dark') return 'dark';
-  if (settings.themeVariant === 'light') return 'light';
-  if (settings.themeVariant === 'dark') return 'dark';
-  return 'system';
-};
-
-const getWindowIconPath = () => {
-  if (process.platform !== 'win32' && process.platform !== 'linux') return undefined;
-  const iconFileName = process.platform === 'linux' ? 'icon.png' : 'icon.ico';
-  const iconPath = isDev
-    ? path.join(__dirname, 'resources', 'icons', iconFileName)
-    : path.join(process.resourcesPath, 'icons', iconFileName);
-  return fs.existsSync(iconPath) ? iconPath : undefined;
 };
 
 const canUseTitleBarOverlay = (browserWindow) => (
@@ -2414,74 +2181,41 @@ const canUseTitleBarOverlay = (browserWindow) => (
   !browserWindow.isDestroyed()
 );
 
-const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }) => {
-  const saved = restoreGeometry ? readWindowState() : null;
-  const useSaved = saved && typeof saved.width === 'number' && typeof saved.height === 'number';
-  const restoredBounds = useSaved ? clampWindowBoundsToVisibleWorkArea(saved) : null;
+// `adopt` hands over the window the entry module created before this module
+// loaded; it is already on the splash and shows itself on ready-to-show.
+const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {}, adopt = null }) => {
+  const { bounds, maximized } = adopt
+    ? { bounds: null, maximized: adopt.maximized }
+    : restoreGeometry ? resolveMainWindowBounds() : { bounds: null, maximized: false };
   const desktopLocalOrigin = state.localOrigin || state.sidecarUrl || '';
   const rendererRuntimeConfig = buildRendererRuntimeConfig(url, runtimeConfig);
   const desktopApiBaseUrl = rendererRuntimeConfig.apiBaseUrl;
   const desktopClientToken = rendererRuntimeConfig.clientToken;
   const desktopRequestHeaders = rendererRuntimeConfig.requestHeaders || {};
-  const desktopHome = os.homedir() || '';
-  const desktopMacosMajor = String(macosMajorVersion());
-  const usesFramelessChrome = process.platform === 'win32' || process.platform === 'linux';
-  const usesCustomTitleBar = process.platform === 'darwin' || usesFramelessChrome;
-  const trayEnabled = process.platform !== 'darwin' || readSettingsRoot().desktopMacMenuBarEnabled !== false;
   const titleBarOverlayEnabled = false;
-  const autoHidesNativeMenuBar = process.platform !== 'darwin';
-  const windowIconPath = getWindowIconPath();
-  const options = {
-    title: 'MittrCraft',
-    ...(Number.isFinite(restoredBounds?.x) && Number.isFinite(restoredBounds?.y)
-      ? { x: restoredBounds.x, y: restoredBounds.y }
-      : {}),
-    width: restoredBounds?.width ?? 1280,
-    height: restoredBounds?.height ?? 800,
-    minWidth: MIN_WINDOW_WIDTH,
-    minHeight: MIN_WINDOW_HEIGHT,
-    icon: windowIconPath,
-    show: false,
-    backgroundColor: '#151313',
-    frame: usesFramelessChrome ? false : undefined,
-    autoHideMenuBar: autoHidesNativeMenuBar,
-    // Electron's hiddenInset adds its own extra inset, which leaves the controls
-    // visibly lower than the app header. Use a plain hidden title bar instead.
-    titleBarStyle: usesCustomTitleBar ? 'hidden' : 'default',
-    titleBarOverlay: titleBarOverlayEnabled,
-    trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 17 } : undefined,
-    webPreferences: {
-      additionalArguments: [
-        `--mittrcraft-local-origin=${desktopLocalOrigin}`,
-        `--mittrcraft-api-base-url=${desktopApiBaseUrl}`,
-        `--mittrcraft-client-token=${desktopClientToken}`,
-        `--mittrcraft-runtime-headers=${JSON.stringify(desktopRequestHeaders)}`,
-        `--mittrcraft-home=${desktopHome}`,
-        `--mittrcraft-macos-major=${desktopMacosMajor}`,
-        `--mittrcraft-tray-enabled=${trayEnabled ? '1' : '0'}`,
-        `--mittrcraft-boot-outcome=${JSON.stringify(state.bootOutcome || null)}`,
-        `--mittrcraft-relay-host-id=${rendererRuntimeConfig.relayHostId || ''}`,
-      ],
-      preload: isDev ? path.join(__dirname, 'preload.mjs') : path.join(app.getAppPath(), 'preload.mjs'),
-      backgroundThrottling: false,
-      contextIsolation: true,
-      nodeIntegration: false,
-      webviewTag: true,
-      // sandbox must stay off: the preload uses contextBridge + ipcRenderer
-      // from Electron's Node layer. contextIsolation + nodeIntegration:false
-      // keep the renderer world walled off from Node. Do NOT flip to true —
-      // the preload would fail to load and the desktop bridge would be unavailable.
-      sandbox: false,
-    },
-  };
 
-  const browserWindow = new BrowserWindow(options);
+  const browserWindow = adopt?.browserWindow ?? new BrowserWindow(buildMainWindowOptions({
+    bounds,
+    backgroundColor: resolveSplashBackgroundColor(),
+    additionalArguments: buildRendererAdditionalArguments({
+      localOrigin: desktopLocalOrigin,
+      apiBaseUrl: desktopApiBaseUrl,
+      clientToken: desktopClientToken,
+      requestHeaders: desktopRequestHeaders,
+      bootOutcome: state.bootOutcome || null,
+      relayHostId: rendererRuntimeConfig.relayHostId || '',
+      trayEnabled: isMacMenuBarEnabled(),
+    }),
+  }));
   browserWindow.__ocLabel = label || nextWindowLabel();
   browserWindow.__ocRuntimeConfig = { apiBaseUrl: desktopApiBaseUrl, clientToken: desktopClientToken, requestHeaders: desktopRequestHeaders };
   browserWindow.__ocInitScript = buildInitScript(desktopLocalOrigin, state.bootOutcome, desktopApiBaseUrl, desktopClientToken, desktopRequestHeaders);
   browserWindow.__ocTitleBarOverlayEnabled = titleBarOverlayEnabled;
+  browserWindow.on('app-command', (event, command) => {
+    if (command === 'browser-backward') event.preventDefault();
+  });
 
-  if (useSaved && saved.maximized) {
+  if (!adopt && maximized) {
     browserWindow.maximize();
   }
 
@@ -2519,16 +2253,16 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
 
   browserWindow.on('resize', () => {
     if (process.platform === 'darwin') {
-      emitToWindow(browserWindow, 'mittrcraft:window-resized');
+      emitToWindow(browserWindow, 'openchamber:window-resized');
     }
     debounceWindowStatePersist(browserWindow, false);
   });
   browserWindow.on('maximize', () => {
-    emitToWindow(browserWindow, 'mittrcraft:window-maximized-changed', { maximized: true });
+    emitToWindow(browserWindow, 'openchamber:window-maximized-changed', { maximized: true });
     debounceWindowStatePersist(browserWindow, false);
   });
   browserWindow.on('unmaximize', () => {
-    emitToWindow(browserWindow, 'mittrcraft:window-maximized-changed', { maximized: false });
+    emitToWindow(browserWindow, 'openchamber:window-maximized-changed', { maximized: false });
     debounceWindowStatePersist(browserWindow, false);
   });
   browserWindow.on('move', () => {
@@ -2564,7 +2298,10 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
     }
     if (BrowserWindow.getAllWindows().length === 0) {
       if (process.platform !== 'darwin') {
-        if (state.installingUpdate) {
+        if (state.updateInstallPending) {
+          log.info('[electron] last window closed while an update install is pending; leaving the exit to the installer');
+        } else if (state.installingUpdate) {
+          log.info('[electron] last window closed after the installer took over; quitting');
           app.quit();
         } else {
           performConfirmedQuit();
@@ -2575,8 +2312,12 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
 
   // Any navigation target that isn't our own UI (local server / configured
   // desktop hosts) should open in the user's default browser, not spawn
-  // another Electron window loading arbitrary web content.
-  const isAllowedNavigationUrl = (raw) => {
+  // another Electron window loading arbitrary web content. Configured hosts
+  // count only for navigating this window (host switching); a link opened
+  // into a new window (`window.open`, `target=_blank`) to a host goes
+  // through openHostWindow instead, since a bare window on a host page lacks
+  // the desktop runtime and its credentials and only shows the lock screen.
+  const isAllowedNavigationUrl = (raw, { includeHosts = true } = {}) => {
     try {
       const url = new URL(raw);
       if (url.protocol === 'devtools:') return true;
@@ -2601,7 +2342,7 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
         } catch {
         }
       }
-      const hosts = readDesktopHostsConfig()?.hosts || [];
+      const hosts = includeHosts ? readDesktopHostsConfig()?.hosts || [] : [];
       for (const entry of hosts) {
         if (typeof entry?.url !== 'string') continue;
         try {
@@ -2616,8 +2357,22 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
   };
 
   browserWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (isAllowedNavigationUrl(url)) {
-      return { action: 'allow' };
+    // A link to a saved instance opens that instance in the app, on the
+    // session it names, not as a bare page of its web UI.
+    const host = findConfiguredHostForUrl(url);
+    if (host) {
+      void openHostWindow(host, sessionRouteFromUrl(url), { reuseOpenWindow: true }).catch((error) => {
+        log.warn('[electron] failed to open host window from link:', error);
+      });
+      return { action: 'deny' };
+    }
+    // A page of this app opened into a new window would be a bare browser
+    // window: no desktop runtime, no window chrome, no credentials. A link to
+    // a session here moves this window to it; any other app page stays put.
+    if (isAllowedNavigationUrl(url, { includeHosts: false })) {
+      const route = sessionRouteFromUrl(url);
+      if (route) emitToWindow(browserWindow, 'openchamber:open-session', route);
+      return { action: 'deny' };
     }
     void shell.openExternal(url).catch(() => {});
     return { action: 'deny' };
@@ -2629,10 +2384,40 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
     void shell.openExternal(url).catch(() => {});
   });
 
+  // An extension frame navigating itself would carry data out in the URL;
+  // refused before the request (see guest-frame-navigation.mjs).
+  browserWindow.webContents.on('will-frame-navigate', (details) => {
+    let frameOrigin;
+    try {
+      frameOrigin = details.frame?.origin;
+    } catch {
+      frameOrigin = undefined;
+    }
+    if (!shouldBlockGuestFrameNavigation({
+      isMainFrame: details.isMainFrame,
+      frameOrigin,
+      frame: details.frame,
+      initiator: details.initiator,
+      mainFrame: browserWindow.webContents.mainFrame,
+      url: details.url,
+      isAppOrigin: isAllowedNavigationUrl,
+    })) return;
+    details.preventDefault();
+    let host = '';
+    try {
+      host = new URL(details.url).host;
+    } catch {
+      host = '';
+    }
+    // Only the host: the URL itself may be the data being carried out.
+    log.warn(`[guests] refused an extension frame navigating to ${host || 'an invalid URL'}`);
+  });
+
   browserWindow.webContents.setZoomFactor(1);
   browserWindow.webContents.on('zoom-changed', () => {
     browserWindow.webContents.setZoomFactor(1);
   });
+  attachRendererRecovery(browserWindow, { log, label: 'window' });
 
   browserWindow.webContents.on('dom-ready', () => {
     if (browserWindow.__ocLabel === 'main') {
@@ -2654,32 +2439,61 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {} }
     }
     browserWindow.webContents.setZoomFactor(1);
     if (state.mainWindow && browserWindow.id === state.mainWindow.id && pendingDeepLinks.length > 0) {
-      const timer = setTimeout(flushPendingDeepLinks, 400);
+      const timer = setTimeout(() => flushPendingDeepLinks({ includeSessions: false }), 400);
       if (typeof timer?.unref === 'function') timer.unref();
+      const lateTimer = setTimeout(() => flushPendingDeepLinks({ includeSessions: true }), PENDING_SESSION_LINK_FALLBACK_MS);
+      if (typeof lateTimer?.unref === 'function') lateTimer.unref();
     }
   });
 
-  browserWindow.once('ready-to-show', () => {
-    if (browserWindow.__ocLabel === 'main') {
-      recordElectronStartupPerformance('electron.window.ready-to-show', {
-        documentClass: classifyStartupDocument(browserWindow.webContents.getURL()),
-      });
-    }
-    browserWindow.show();
-    browserWindow.focus();
-  });
+  if (!adopt) {
+    browserWindow.once('ready-to-show', () => {
+      if (browserWindow.__ocLabel === 'main') {
+        recordElectronStartupPerformance('electron.window.ready-to-show', {
+          documentClass: classifyStartupDocument(browserWindow.webContents.getURL()),
+        });
+      }
+      browserWindow.show();
+      browserWindow.focus();
+    });
+  }
 
   if (url) {
     void navigateWindow(browserWindow, url);
-  } else {
-    void navigateWindow(
-      browserWindow,
-      `data:text/html;charset=utf-8,${encodeURIComponent(buildStartupSplashHtml())}`,
-      { allowAbort: true },
-    );
+  } else if (!adopt) {
+    void navigateWindow(browserWindow, buildStartupSplashUrl(), { allowAbort: true });
   }
 
   return browserWindow;
+};
+
+// Bounded so a renderer that never reports ready-to-show cannot hold the
+// backend: the splash is a courtesy, the server is the product.
+const SPLASH_SHOW_WAIT_MS = 500;
+
+// Creates the main window on the splash and resolves once it is on screen, so
+// the caller can defer main-thread-heavy work until the first paint happened.
+const showMainWindowWithSplash = () => {
+  const early = takeEarlyWindow();
+  const browserWindow = createBrowserWindow({
+    label: 'main',
+    restoreGeometry: true,
+    url: null,
+    adopt: early,
+  });
+  state.mainWindow = browserWindow;
+  // The entry module already gave the early window its bounded wait.
+  if (early) return Promise.resolve();
+  // The window's own ready-to-show listener calls show(); this one runs right
+  // after it. macOS does not reliably emit 'show' for a window shown while the
+  // app is not yet active, so that event is not awaited.
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, SPLASH_SHOW_WAIT_MS);
+    browserWindow.once('ready-to-show', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 };
 
 const activateMainWindow = async (url, localOrigin, bootOutcome, runtimeConfig = {}) => {
@@ -2756,6 +2570,112 @@ const openMainWindow = async () => {
   return activateMainWindow(targetUrl, state.localOrigin, state.bootOutcome, { apiBaseUrl, clientToken, requestHeaders });
 };
 
+// A session (and message) to open in a new window, from a link. IDs end up in
+// the window URL and the renderer's DOM selectors, so only plain identifier
+// characters pass.
+const SESSION_ROUTE_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+const parseSessionRoute = (rawSessionId, rawMessageId) => {
+  const sessionId = typeof rawSessionId === 'string' ? rawSessionId.trim() : '';
+  if (!SESSION_ROUTE_ID_RE.test(sessionId)) return null;
+  const messageId = typeof rawMessageId === 'string' ? rawMessageId.trim() : '';
+  return SESSION_ROUTE_ID_RE.test(messageId) ? { sessionId, messageId } : { sessionId };
+};
+
+const sessionRouteFromUrl = (raw) => {
+  try {
+    const url = new URL(raw);
+    return parseSessionRoute(url.searchParams.get('session'), url.searchParams.get('message'));
+  } catch {
+    return null;
+  }
+};
+
+// The window URL carries the route like the web does (`?session=&message=`);
+// the renderer's router opens it once the instance answers.
+const withSessionRoute = (windowUrl, route) => {
+  if (!route) return windowUrl;
+  try {
+    const url = new URL(windowUrl);
+    url.searchParams.set('session', route.sessionId);
+    if (route.messageId) url.searchParams.set('message', route.messageId);
+    return url.toString();
+  } catch {
+    return windowUrl;
+  }
+};
+
+// The configured desktop host a web address belongs to, if any.
+const findConfiguredHostForUrl = (raw) => {
+  let origin;
+  try {
+    origin = new URL(raw).origin;
+  } catch {
+    return null;
+  }
+  const hosts = readDesktopHostsConfig()?.hosts || [];
+  return hosts.find((entry) => [entry?.url, entry?.apiUrl].some((candidate) => {
+    if (typeof candidate !== 'string' || !candidate) return false;
+    try {
+      return new URL(candidate).origin === origin;
+    } catch {
+      return false;
+    }
+  })) || null;
+};
+
+// Opens a saved host in a new app window with its own credentials, optionally
+// on a session. Hosts with a relay leg boot the LOCAL UI and let the renderer
+// pick the transport (direct first, E2EE tunnel fallback) via the injected
+// relay host id — a fixed apiBaseUrl would strand the window when the direct
+// leg is unreachable.
+const openHostWindow = async (host, route = null, { reuseOpenWindow = false } = {}) => {
+  // A link to a host already open in a window lands in that window: brought
+  // to the front and moved to the session there, instead of one more window
+  // per click. "New window" from the switcher always opens one.
+  const existing = reuseOpenWindow
+    ? BrowserWindow.getAllWindows().find((window) => !window.isDestroyed() && window.__ocHostWindowId === host.id)
+    : null;
+  if (existing) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    if (!route) return;
+    // A window still booting has no listener yet; it reloads on the route.
+    if (existing.webContents.isLoading() && existing.__ocHostWindowBaseUrl) {
+      await navigateWindow(existing, withSessionRoute(existing.__ocHostWindowBaseUrl, route), { allowAbort: true });
+      return;
+    }
+    emitToWindow(existing, 'openchamber:open-session', route);
+    return;
+  }
+
+  let windowUrl;
+  let runtimeConfig;
+  if (host.relay) {
+    windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.sidecarUrl || state.localOrigin);
+    runtimeConfig = {
+      apiBaseUrl: '',
+      clientToken: host.clientToken || '',
+      requestHeaders: sanitizeRuntimeRequestHeaders(host.requestHeaders || {}),
+      relayHostId: host.id,
+    };
+  } else {
+    const targetUrl = normalizeHostUrl(host.apiUrl || host.url);
+    if (!targetUrl) throw new Error('Invalid URL');
+    windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : targetUrl;
+    runtimeConfig = {
+      apiBaseUrl: targetUrl,
+      clientToken: host.clientToken || '',
+      requestHeaders: sanitizeRuntimeRequestHeaders(host.requestHeaders || {}),
+    };
+  }
+  const browserWindow = await createAdditionalWindow(withSessionRoute(windowUrl, route), runtimeConfig);
+  if (browserWindow) {
+    browserWindow.__ocHostWindowId = host.id;
+    browserWindow.__ocHostWindowBaseUrl = windowUrl;
+  }
+};
+
 const createAdditionalWindow = async (url, runtimeConfig = {}) => {
   if (!state.startupResolved || !url) {
     return null;
@@ -2772,7 +2692,7 @@ const createAdditionalWindow = async (url, runtimeConfig = {}) => {
 const buildMiniChatUrl = ({ mode, sessionId, directory, projectId }) => {
   const base = shouldUsePackagedUi()
     ? buildPackagedUiUrl('/mini-chat.html')
-    : state.localOrigin || state.sidecarUrl;
+    : state.localUiUrl || state.localOrigin || state.sidecarUrl;
   if (!base) {
     throw new Error('Local UI is not available');
   }
@@ -2827,34 +2747,27 @@ const createMiniChatWindow = async ({ mode, sessionId = '', directory = '', proj
   const desktopApiBaseUrl = effectiveRuntimeConfig.apiBaseUrl || '';
   const desktopClientToken = effectiveRuntimeConfig.clientToken || '';
   const desktopRequestHeaders = effectiveRuntimeConfig.requestHeaders || {};
-  const desktopHome = os.homedir() || '';
-  const desktopMacosMajor = String(macosMajorVersion());
-  const usesFramelessChrome = process.platform === 'win32' || process.platform === 'linux';
-  const trayEnabled = process.platform !== 'darwin' || readSettingsRoot().desktopMacMenuBarEnabled !== false;
   const browserWindow = new BrowserWindow({
-    title: 'MittrCraft Mini Chat',
+    title: 'OpenChamber Mini Chat',
     width: MINI_CHAT_WINDOW_WIDTH,
     height: MINI_CHAT_WINDOW_HEIGHT,
     minWidth: MINI_CHAT_MIN_WINDOW_WIDTH,
     minHeight: MINI_CHAT_MIN_WINDOW_HEIGHT,
     icon: getWindowIconPath(),
     show: false,
-    backgroundColor: '#151313',
+    backgroundColor: resolveSplashBackgroundColor(),
     frame: usesFramelessChrome ? false : undefined,
     autoHideMenuBar: process.platform !== 'darwin',
     titleBarStyle: process.platform === 'darwin' || usesFramelessChrome ? 'hidden' : 'default',
     trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 17 } : undefined,
     webPreferences: {
-      additionalArguments: [
-        `--mittrcraft-local-origin=${desktopLocalOrigin}`,
-        `--mittrcraft-api-base-url=${desktopApiBaseUrl}`,
-        `--mittrcraft-client-token=${desktopClientToken}`,
-        `--mittrcraft-runtime-headers=${JSON.stringify(desktopRequestHeaders)}`,
-        `--mittrcraft-home=${desktopHome}`,
-        `--mittrcraft-macos-major=${desktopMacosMajor}`,
-        `--mittrcraft-tray-enabled=${trayEnabled ? '1' : '0'}`,
-      ],
-      preload: isDev ? path.join(__dirname, 'preload.mjs') : path.join(app.getAppPath(), 'preload.mjs'),
+      additionalArguments: buildRendererAdditionalArguments({
+        localOrigin: desktopLocalOrigin,
+        apiBaseUrl: desktopApiBaseUrl,
+        clientToken: desktopClientToken,
+        requestHeaders: desktopRequestHeaders,
+      }),
+      preload: resolvePreloadPath(),
       backgroundThrottling: false,
       contextIsolation: true,
       nodeIntegration: false,
@@ -2869,6 +2782,8 @@ const createMiniChatWindow = async ({ mode, sessionId = '', directory = '', proj
   browserWindow.__ocMiniChat = true;
   browserWindow.__ocMiniChatSessionId = sessionWindowKey;
   browserWindow.__ocPinned = false;
+
+  attachRendererRecovery(browserWindow, { log, label: 'mini chat' });
 
   if (sessionWindowKey) {
     state.miniChatWindowsBySession.set(sessionWindowKey, browserWindow);
@@ -2961,12 +2876,12 @@ const resolveMiniChatRuntimeConfig = (browserWindow, args = {}) => {
 };
 
 const resolveInitialUrl = async () => {
-  const hmrApiPort = process.env.MITTRCRAFT_HMR_API_PORT || '3901';
-  const hmrUiPort = process.env.MITTRCRAFT_HMR_UI_PORT || '5173';
+  const hmrApiPort = process.env.OPENCHAMBER_HMR_API_PORT || '3901';
+  const hmrUiPort = process.env.OPENCHAMBER_HMR_UI_PORT || '5173';
   const hmrApiUrl = `http://127.0.0.1:${hmrApiPort}`;
   const hmrUiUrl = `http://127.0.0.1:${hmrUiPort}`;
   const usePackagedUi = shouldUsePackagedUi();
-  const skipLocalServer = shouldSkipLocalServer();
+  const skipLocalServer = await shouldSkipLocalServer();
   const startupProbePlan = resolveStartupUrlProbePlan({
     development: isDev,
     packagedUi: usePackagedUi,
@@ -2984,7 +2899,18 @@ const resolveInitialUrl = async () => {
     ? hmrUiUrl
     : localUrl;
 
+  if (localUiUrl === hmrUiUrl) {
+    // The HMR dev script wipes Vite's dependency cache on every start, so the
+    // regenerated dependency chunks get new names under the same `?v=` hash.
+    // Vite serves those chunks as immutable and Chromium's disk cache survives
+    // app restarts, so a stale chunk set keeps answering 504 "Outdated
+    // Optimize Dep" and the splash never clears. Drop the cache before the
+    // first navigation so the renderer fetches the current chunk set.
+    await session.defaultSession.clearCache();
+  }
+
   state.sidecarUrl = localUrl;
+  state.localUiUrl = localUiUrl;
   const localAvailable = Boolean(localUrl);
 
   const localOrigin = localUrl ? new URL(localUrl).origin : null;
@@ -2994,7 +2920,7 @@ const resolveInitialUrl = async () => {
   let requestHeaders = {};
   let remoteProbe = null;
 
-  const envTarget = normalizeHostUrl(process.env.MITTRCRAFT_SERVER_URL || '');
+  const envTarget = normalizeHostUrl(process.env.OPENCHAMBER_SERVER_URL || '');
   const config = readDesktopHostsConfig();
   if (envTarget) {
     apiBaseUrl = envTarget;
@@ -3011,12 +2937,24 @@ const resolveInitialUrl = async () => {
     }
   }
 
+  const defaultHostRelayCapable = Boolean(
+    config.defaultHostId
+    && config.defaultHostId !== LOCAL_HOST_ID
+    && sanitizeHostRelayForStorage(config.hosts.find((entry) => entry.id === config.defaultHostId)?.relay),
+  );
   if (apiBaseUrl && apiBaseUrl !== localUrl) {
     remoteProbe = await probeHostWithTimeout(apiBaseUrl, 2_000, clientToken, requestHeaders);
-    if (remoteProbe.status === 'unreachable') {
+    if (remoteProbe.status === 'unreachable' && !defaultHostRelayCapable) {
       remoteProbe = await probeHostWithTimeout(apiBaseUrl, 10_000, clientToken, requestHeaders);
     }
-    if (remoteProbe.status === 'unreachable') {
+    // The renderer's relay restore owns transport selection for relay-capable
+    // hosts; any failed direct probe falls back to the local substrate.
+    if (remoteProbe.status !== 'ok' && defaultHostRelayCapable) {
+      apiBaseUrl = localUrl || '';
+      clientToken = localUrl ? readDesktopLocalClientToken() : '';
+      requestHeaders = {};
+      initialUrl = localUiUrl;
+    } else if (remoteProbe.status === 'unreachable') {
       state.unreachableHosts.add(apiBaseUrl);
       apiBaseUrl = localUrl || '';
       clientToken = localUrl ? readDesktopLocalClientToken() : '';
@@ -3030,7 +2968,7 @@ const resolveInitialUrl = async () => {
   }
   if (!initialUrl) {
     throw new Error(
-      'MITTRCRAFT_SKIP_LOCAL_SERVER=1 requires bundled UI, a running desktop HMR UI, or a reachable remote instance.',
+      'OPENCHAMBER_SKIP_LOCAL_SERVER=1 requires bundled UI, a running desktop HMR UI, or a reachable remote instance.',
     );
   }
 
@@ -3055,14 +2993,13 @@ const compareSemver = (left, right) => {
   return 0;
 };
 
-const assertFlavorUpdates = () => {
-  if (!APP_FLAVOR.updates) {
-    throw new Error(`${APP_FLAVOR.productName} does not update itself. Install a newer ${APP_FLAVOR.productName} build instead.`);
-  }
-};
+const assertDesktopUpdaterCapability = () => assertUpdaterCapability({
+  packaged: app.isPackaged,
+  updaterFeed: PRODUCT.updaterFeed,
+});
 
 const setupAutoUpdater = () => {
-  if (!app.isPackaged || !APP_FLAVOR.updates) {
+  if (!app.isPackaged) {
     return;
   }
   autoUpdater.autoDownload = false;
@@ -3072,9 +3009,12 @@ const setupAutoUpdater = () => {
   autoUpdater.disableWebInstaller = false;
   autoUpdater.logger = log;
 
-  const testBuild = typeof __MITTRCRAFT_UPDATER_E2E_BUILD__ !== 'undefined'
-    && __MITTRCRAFT_UPDATER_E2E_BUILD__ === true;
-  const feed = resolveUpdaterFeed({ testBuild });
+  const testBuild = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
+    && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
+  const feed = resolveUpdaterFeed({ testBuild, productionFeed: PRODUCT.updaterFeed });
+  if (!feed) {
+    return;
+  }
   const updaterChannel = feed.provider === 'github'
     ? resolveUpdaterChannel({ platform: process.platform, architecture: process.arch })
     : null;
@@ -3092,7 +3032,7 @@ const setupAutoUpdater = () => {
     const total = Number(progress.total || 0);
     const transferred = Number(progress.transferred || 0);
     setTaskbarProgress(total > 0 ? Math.max(0, Math.min(1, transferred / total)) : 0.01);
-    emitToAllWindows('mittrcraft:update-progress', mapUpdaterProgressEvent({
+    emitToAllWindows('openchamber:update-progress', mapUpdaterProgressEvent({
       event: 'Progress',
       data: {
         chunkLength: Math.max(0, Math.round(progress.bytesPerSecond || 0)),
@@ -3116,24 +3056,94 @@ const setupAutoUpdater = () => {
   });
 };
 
-const parseRelevantChangelogNotes = async (fromVersion, toVersion) => {
-  try {
-    const response = await fetch(CHANGELOG_URL, { signal: AbortSignal.timeout(10_000) });
-    if (!response.ok) return null;
-    const changelog = await response.text();
-    const sections = changelog.split(/^##\s+\[/m).slice(1);
-    const relevant = [];
-    for (const section of sections) {
-      const version = section.split(']')[0];
-      if (compareSemver(version, fromVersion) > 0 && compareSemver(version, toVersion) <= 0) {
-        relevant.push(`## [${section}`.trim());
-      }
+// quitAndInstall() reports failures (rejected code signature, a Squirrel
+// session already disabled by an earlier failure) asynchronously on the
+// 'error' event, long after the call returns. Give the install that long to
+// either take the app down or report why it did not.
+const UPDATE_INSTALL_GRACE_MS = 15_000;
+
+// Releasing terminals, the managed OpenCode child, and SSH sessions must not
+// hold the installer hostage: a stuck session would otherwise keep the app on
+// the old version forever. The backend's own stop() is already bounded; this
+// bounds everything the install path waits on, beyond the backend's 35s limit.
+const UPDATE_SHUTDOWN_TIMEOUT_MS = 40_000;
+
+/**
+ * Hand the downloaded update to the platform installer and keep the IPC call
+ * open until the app quits or the updater reports a failure, so a rejected
+ * install reaches the renderer instead of dying in the log. Restores the
+ * quit/install flags when the install never happens.
+ */
+const installDownloadedUpdate = () => new Promise((resolve, reject) => {
+  let settled = false;
+  let graceTimer;
+
+  // Hold the process from here until the installer has control. Every quit
+  // path checks this, so closing the last window during shutdown can no longer
+  // end the app with the install still pending.
+  state.updateInstallPending = true;
+
+  const rollbackQuitState = () => {
+    state.updateInstallPending = false;
+    state.quitRequested = false;
+    state.installingUpdate = false;
+  };
+
+  const fail = (error) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(graceTimer);
+    autoUpdater.off('error', fail);
+    rollbackQuitState();
+    log.error('[electron] update install failed', error);
+    reject(error instanceof Error ? error : new Error(String(error)));
+  };
+
+  autoUpdater.on('error', fail);
+
+  // Defer so the renderer's invoke channel is idle before the app starts
+  // shutting down.
+  setImmediate(async () => {
+    let shutdownTimer;
+    try {
+      // Stop the backend first, then declare the quit intent, then hand over.
+      // The flags exist only to let the installer's own quit through the
+      // hide-on-close and confirmation guards, so nothing sets them while the
+      // app is still doing work that can fail.
+      await Promise.race([
+        shutdownBackgroundServices(),
+        new Promise((resolveTimeout) => {
+          shutdownTimer = setTimeout(() => {
+            log.warn('[electron] background shutdown timed out before update install; continuing');
+            resolveTimeout(null);
+          }, UPDATE_SHUTDOWN_TIMEOUT_MS);
+        }),
+      ]);
+      if (settled) return;
+      // Start the installer error window after terminal cleanup, which can
+      // legitimately take longer than UPDATE_INSTALL_GRACE_MS.
+      graceTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        autoUpdater.off('error', fail);
+        resolve(null);
+      }, UPDATE_INSTALL_GRACE_MS);
+      state.quitRequested = true;
+      state.installingUpdate = true;
+      state.quitConfirmationPending = false;
+      log.info('[electron] handing control to the platform installer');
+      autoUpdater.quitAndInstall();
+      // The installer owns the exit from here; other quit paths may run again.
+      state.updateInstallPending = false;
+    } catch (error) {
+      fail(error);
+    } finally {
+      clearTimeout(shutdownTimer);
     }
-    return relevant.length > 0 ? relevant.join('\n\n') : null;
-  } catch {
-    return null;
-  }
-};
+  });
+});
+
+const parseRelevantChangelogNotes = (fromVersion, toVersion) => fetchUpdateNotes(fromVersion, toVersion, compareSemver);
 
 const buildInstalledAppsCachePath = () => path.join(path.dirname(settingsFilePath()), INSTALLED_APPS_CACHE_FILE);
 
@@ -3175,7 +3185,7 @@ const isAppBundleInstalled = async (appName) => Boolean(await resolveAppBundlePa
 const iconToDataUrl = async (iconPath, appName) => {
   if (!iconPath || !(await pathExists(iconPath))) return null;
   const safeName = String(appName || 'app').replace(/[^a-z0-9]/gi, '_');
-  const tempPath = path.join(os.tmpdir(), `mittrcraft-icon-${safeName}-${Date.now()}.png`);
+  const tempPath = path.join(os.tmpdir(), `openchamber-icon-${safeName}-${Date.now()}.png`);
   try {
     await execFileAsync('sips', ['-s', 'format', 'png', '-Z', '32', iconPath, '--out', tempPath], { stdio: 'ignore' });
   } catch {
@@ -3753,9 +3763,10 @@ const runSpecChain = (specs, appName) => {
 // The tunnel client lives in the web package (it already has a WebSocket
 // client) and is loaded only if the user actually previews a remote dev server.
 let devTunnelClientPromise = null;
+const relayDevTunnelBridge = createRelayDevTunnelBridge({ createMessageChannel: () => new MessageChannelMain(), logger: log });
 const getDevTunnelClient = async () => {
   if (!devTunnelClientPromise) {
-    devTunnelClientPromise = import('@mittrcraft/web/server/lib/dev-tunnel/client.js')
+    devTunnelClientPromise = import('@openchamber/web/server/lib/dev-tunnel/client.js')
       .then(({ createDevTunnelClient }) => createDevTunnelClient({ logger: log }))
       .catch((error) => {
         devTunnelClientPromise = null;
@@ -3766,6 +3777,7 @@ const getDevTunnelClient = async () => {
 };
 
 const closeAllDevTunnels = () => {
+  relayDevTunnelBridge.closeAll();
   if (!devTunnelClientPromise) return;
   const pending = devTunnelClientPromise;
   devTunnelClientPromise = null;
@@ -3774,6 +3786,10 @@ const closeAllDevTunnels = () => {
 
 const handleInvoke = async (browserWindow, command, args = {}) => {
   switch (command) {
+    case 'desktop_pick_theme_file': {
+      const { pickThemeFile } = await import('./theme-file-picker.mjs');
+      return pickThemeFile({ showDialog: (options) => dialog.showOpenDialog(browserWindow || undefined, options) });
+    }
     case 'desktop_start_window_drag':
       return null;
 
@@ -3801,6 +3817,13 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
         browserWindow.setTitle(args.title);
       }
       return null;
+
+    case 'desktop_managed_opencode_compatible':
+      return canReuseManagedOpenCodePreflight({
+        apiBaseUrl: args.apiBaseUrl,
+        localOrigin: state.localOrigin,
+        server: state.serverHandle,
+      });
 
     case 'desktop_get_app_version':
       return APP_VERSION;
@@ -3864,7 +3887,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     // Dev-server tunnels: bind a loopback port here and pipe it to a dev server
-    // on the remote MittrCraft host, so the browser panel loads a real origin
+    // on the remote OpenChamber host, so the browser panel loads a real origin
     // instead of a rewritten page. Deliberately absent from
     // COMMANDS_SAFE_FOR_REMOTE — a remote page must never open local listeners.
     case 'desktop_dev_tunnel_open': {
@@ -3872,6 +3895,11 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       const port = Number.isFinite(args.port) ? Math.trunc(args.port) : 0;
       if (!baseUrl) throw new Error('baseUrl is required');
       if (!(port > 0 && port <= 65535)) throw new Error('A valid port is required');
+
+      if (args.relay === true) {
+        const targetKey = typeof args.targetKey === 'string' ? args.targetKey.trim() : '';
+        return relayDevTunnelBridge.open({ targetKey, remotePort: port, webContents: browserWindow?.webContents });
+      }
 
       const headers = {};
       const requestHeaders = args.requestHeaders && typeof args.requestHeaders === 'object' ? args.requestHeaders : {};
@@ -3884,7 +3912,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
 
       const client = await getDevTunnelClient();
       const result = await client.open({ baseUrl, port, headers });
-      return { localPort: result.localPort, reused: result.reused, url: `http://127.0.0.1:${result.localPort}/` };
+      return { localPort: result.localPort, reused: result.reused, url: `http://openchamber-preview.localhost:${result.localPort}/` };
     }
 
     case 'desktop_dev_tunnel_close': {
@@ -3895,10 +3923,13 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       return { closed: client.close({ baseUrl, port }) };
     }
 
+    case 'desktop_relay_dev_tunnel_close_all':
+      return { closed: relayDevTunnelBridge.closeForWebContents(browserWindow?.webContents.id) };
+
     /**
      * Forces prefers-color-scheme for one previewed page.
      *
-     * nativeTheme.themeSource is app-wide and would drag MittrCraft's own
+     * nativeTheme.themeSource is app-wide and would drag OpenChamber's own
      * appearance along with it, so this goes through the page's own emulation
      * instead. The debugger session has to stay attached: emulation is part of
      * that session and resets the moment it detaches.
@@ -3933,7 +3964,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
      * Done here, in the panel's own session, rather than by the renderer: the
      * icon often sits behind the same login as the page, and letting the app's
      * own origin request it would both fail on those and quietly send traffic
-     * to third-party hosts from MittrCraft itself. The bytes come back as a
+     * to third-party hosts from OpenChamber itself. The bytes come back as a
      * data URL so nothing else has to fetch anything.
      */
     case 'desktop_browser_fetch_favicon': {
@@ -3966,7 +3997,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     // Scoped to the browser panel's own partition, so clearing it can never
-    // touch MittrCraft's session or any other window's storage.
+    // touch OpenChamber's session or any other window's storage.
     case 'desktop_browser_clear_data': {
       // Exact match, not a prefix: a prefix would also accept a partition that
       // merely starts with this name, which is not what the comment above
@@ -4064,7 +4095,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       if (!underHome && !underTmp) {
         throw new Error('File is outside the allowed workspace');
       }
-      const DENIED_SEGMENTS = ['.ssh', '.aws', '.gnupg', '.gpg', '.config/gh', '.config/mittrcraft/credentials'];
+      const DENIED_SEGMENTS = ['.ssh', '.aws', '.gnupg', '.gpg', '.config/gh', '.config/openchamber/credentials'];
       const relFromHome = underHome ? filePath.slice(home.length + 1) : '';
       const relNormalized = relFromHome.split(path.sep).join('/');
       if (DENIED_SEGMENTS.some((segment) => relNormalized === segment || relNormalized.startsWith(`${segment}/`))) {
@@ -4162,6 +4193,13 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       const parsed = new URL(target);
       if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
         throw new Error('Only HTTP URLs can be opened externally');
+      }
+
+      // A saved instance opens in the app, like the window.open path above.
+      const host = findConfiguredHostForUrl(parsed.toString());
+      if (host) {
+        await openHostWindow(host, sessionRouteFromUrl(parsed.toString()), { reuseOpenWindow: true });
+        return null;
       }
 
       await shell.openExternal(parsed.toString());
@@ -4306,12 +4344,14 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       }
       const cachedApps = Array.isArray(cache?.apps) ? cache.apps : [];
       const hasCache = Boolean(cache);
-      const isCacheStale = !cache || (now - Number(cache.updatedAt || 0)) > INSTALLED_APPS_CACHE_TTL_SECS;
+      const isCacheStale = !cache
+        || cache.version !== INSTALLED_APPS_CACHE_VERSION
+        || (now - Number(cache.updatedAt || 0)) > INSTALLED_APPS_CACHE_TTL_SECS;
       const refresh = async () => {
         const apps = await buildPlatformInstalledApps(Array.isArray(args.apps) ? args.apps : []);
         await fsp.mkdir(path.dirname(cachePath), { recursive: true });
-        await fsp.writeFile(cachePath, JSON.stringify({ updatedAt: now, apps }, null, 2));
-        emitToAllWindows('mittrcraft:installed-apps-updated', apps);
+        await fsp.writeFile(cachePath, JSON.stringify({ version: INSTALLED_APPS_CACHE_VERSION, updatedAt: now, apps }, null, 2));
+        emitToAllWindows('openchamber:installed-apps-updated', apps);
       };
       if (process.platform !== 'darwin' && process.platform !== 'win32' && process.platform !== 'linux') {
         return { apps: [], hasCache: false, isCacheStale: false, supported: false };
@@ -4332,7 +4372,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       const nextConfigInput = args.input || args.config || {};
       await writeDesktopHostsConfig(nextConfigInput);
       const updatedConfig = readDesktopHostsConfig();
-      const envTarget = normalizeHostUrl(process.env.MITTRCRAFT_SERVER_URL || '');
+      const envTarget = normalizeHostUrl(process.env.OPENCHAMBER_SERVER_URL || '');
       if (Object.prototype.hasOwnProperty.call(nextConfigInput, 'localClientToken') && isLocalRuntimeUrl(state.apiBaseUrl || state.sidecarUrl || state.localOrigin || '')) {
         state.clientToken = readDesktopLocalClientToken();
       }
@@ -4354,7 +4394,13 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       return getOrCreateDesktopInstallId();
 
     case 'desktop_host_probe':
-      return probeHostWithTimeout(String(args.url || ''), 2_000, String(args.clientToken || ''), args.requestHeaders || {}, String(args.expectedServerId || ''));
+      return probeDirectHostWithRetry((timeoutMs) => probeHostWithTimeout(
+        String(args.url || ''),
+        timeoutMs,
+        String(args.clientToken || ''),
+        args.requestHeaders || {},
+        String(args.expectedServerId || ''),
+      ));
 
     case 'desktop_remote_password_login':
       return loginRemoteAndIssueClientToken({
@@ -4367,6 +4413,21 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     case 'desktop_set_window_theme': {
       const mode = typeof args.themeMode === 'string' ? args.themeMode : '';
       const variant = typeof args.themeVariant === 'string' ? args.themeVariant : '';
+      const splash = args.splash && typeof args.splash === 'object' ? args.splash : null;
+      if (splash) {
+        const colors = {};
+        for (const key of ['bgLight', 'fgLight', 'bgDark', 'fgDark']) {
+          if (isSplashColor(splash[key])) colors[key] = splash[key];
+        }
+        if (Object.keys(colors).length === 4) {
+          const current = readSettingsRoot().desktopSplashColors;
+          const unchanged = current && typeof current === 'object'
+            && ['bgLight', 'fgLight', 'bgDark', 'fgDark'].every((key) => current[key] === colors[key]);
+          if (!unchanged) {
+            void mutateSettingsRoot((root) => ({ ...root, desktopSplashColors: colors }));
+          }
+        }
+      }
       // Priority order: themeMode expresses the user's intent (including
       // "follow OS"). Variant is just the resolved variant at send time;
       // when mode === 'system' with variant === 'dark' (because OS is
@@ -4397,8 +4458,11 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     case 'desktop_check_for_updates': {
-      assertFlavorUpdates();
-      assertUpdaterCapability({ packaged: app.isPackaged });
+      // A build without an update feed has no update to find, which is an
+      // answer, not a failure for the renderer to show.
+      const withoutFeed = updateCheckWithoutFeed({ updaterFeed: PRODUCT.updaterFeed, currentVersion: APP_VERSION });
+      if (withoutFeed) return withoutFeed;
+      assertDesktopUpdaterCapability();
       const currentVersion = APP_VERSION;
       const { available, updateInfo, updateResult, nextVersion, pendingUpdate } = await checkForDesktopUpdate({
         autoUpdater,
@@ -4422,13 +4486,12 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     case 'desktop_download_and_install_update':
-      assertFlavorUpdates();
-      assertUpdaterCapability({ packaged: app.isPackaged });
+      assertDesktopUpdaterCapability();
       if (!state.pendingUpdate) {
         throw new Error('No pending update');
       }
       setTaskbarProgress(0.01);
-      emitToAllWindows('mittrcraft:update-progress', mapUpdaterProgressEvent({
+      emitToAllWindows('openchamber:update-progress', mapUpdaterProgressEvent({
         event: 'Started',
         data: {
           contentLength: null,
@@ -4455,10 +4518,21 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
             const onError = (error) => finish(reject, error);
             autoUpdater.on('update-downloaded', onDownloaded);
             autoUpdater.on('error', onError);
-            Promise.resolve(autoUpdater.downloadUpdate()).catch((error) => finish(reject, error));
+            // downloadUpdate() resolves once the payload is on disk. It stays
+            // the authoritative signal: when the file was already cached the
+            // updater emits no 'update-downloaded', and waiting only for the
+            // event left this promise pending and its listeners attached on
+            // every retry.
+            Promise.resolve(autoUpdater.downloadUpdate())
+              .then(() => finish(resolve, null))
+              .catch((error) => finish(reject, error));
           });
         }
-        emitToAllWindows('mittrcraft:update-progress', mapUpdaterProgressEvent({
+        // The 'update-downloaded' event does not fire for an already cached
+        // payload, so record the payload as ready here too; otherwise restart
+        // would relaunch without installing anything.
+        state.pendingUpdate.downloaded = true;
+        emitToAllWindows('openchamber:update-progress', mapUpdaterProgressEvent({
           event: 'Finished',
           data: {},
         }));
@@ -4469,15 +4543,12 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
 
     case 'desktop_restart': {
       const applyUpdate = Boolean(state.pendingUpdate?.downloaded && app.isPackaged);
-      if (applyUpdate) {
-        assertFlavorUpdates();
-        assertUpdaterCapability({ packaged: app.isPackaged });
-      }
+      if (applyUpdate) assertDesktopUpdaterCapability();
       log.info(`[electron] desktop_restart applyUpdate=${applyUpdate} packaged=${app.isPackaged}`);
       if (applyUpdate && process.platform === 'darwin' && typeof app.isInApplicationsFolder === 'function') {
         try {
           if (!app.isInApplicationsFolder()) {
-            throw new Error('Desktop update requires MittrCraft.app to be installed in /Applications');
+            throw new Error('Desktop update requires OpenChamber.app to be installed in /Applications');
           }
         } catch (error) {
           log.warn('[electron] desktop_restart blocked', error);
@@ -4485,35 +4556,36 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
         }
       }
       if (applyUpdate) {
-        // Match the working updater pattern closely: only bypass the macOS
-        // hide-on-close / quit-confirmation guards, leave the rest of the
-        // updater-driven quit/install sequence alone.
-        state.quitRequested = true;
-        state.installingUpdate = true;
-        state.quitConfirmationPending = false;
+        // A previous restart click may still be installing: Squirrel accepts
+        // one quitAndInstall() per app session, so a second call throws
+        // SQRLUpdaterErrorInvalidState, and installDownloadedUpdate()'s
+        // fail() path would roll the quit state back while the first install
+        // is still in flight (#3670). updateInstallPending latches
+        // synchronously when the install starts and covers the backend-shutdown
+        // window; installingUpdate covers the tail after the installer has
+        // taken over the exit. A duplicate click joins the same restart
+        // instead of starting a second install.
+        if (state.updateInstallPending || state.installingUpdate) {
+          log.info('[electron] desktop_restart ignored, update install already in flight');
+          return null;
+        }
+        // The quit/install flags belong to installDownloadedUpdate(), which
+        // sets them once the backend is down and the installer is about to take
+        // over. Setting them here left a window in which closing the last
+        // window quit the app with the install still pending (#3027).
         if (state.mainWindow && !state.mainWindow.isDestroyed()) {
           try {
             debounceWindowStatePersist(state.mainWindow, true);
           } catch {
           }
         }
+        return await installDownloadedUpdate();
       }
       // Defer so the IPC reply flushes before the app starts shutting down.
-      // Without this, quitAndInstall() can race with the renderer's pending
-      // invoke and the restart appears to do nothing from the UI side.
+      // Without this, relaunch can race with the renderer's pending invoke and
+      // the restart appears to do nothing from the UI side.
       setImmediate(() => {
-        try {
-          if (applyUpdate) {
-            killSidecar();
-            autoUpdater.quitAndInstall();
-          } else {
-            prepareForQuit();
-            app.relaunch();
-            app.exit(0);
-          }
-        } catch (err) {
-          log.error('[electron] desktop_restart failed', err);
-        }
+        void performConfirmedQuit({ relaunch: true });
       });
       return null;
     }
@@ -4547,32 +4619,11 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     case 'desktop_new_window_for_host': {
-      // Open a saved host in a new window. Hosts with a relay leg boot the
-      // LOCAL UI and let the renderer pick the transport (direct first, E2EE
-      // tunnel fallback) via the injected relay host id — a fixed apiBaseUrl
-      // would strand the window when the direct leg is unreachable.
       const hostId = typeof args.hostId === 'string' ? args.hostId.trim() : '';
       const config = readDesktopHostsConfig();
       const host = config.hosts.find((entry) => entry.id === hostId);
       if (!host) throw new Error('Host not found');
-      if (host.relay) {
-        const windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.sidecarUrl || state.localOrigin);
-        await createAdditionalWindow(windowUrl, {
-          apiBaseUrl: '',
-          clientToken: host.clientToken || '',
-          requestHeaders: sanitizeRuntimeRequestHeaders(host.requestHeaders || {}),
-          relayHostId: host.id,
-        });
-        return null;
-      }
-      const targetUrl = normalizeHostUrl(host.apiUrl || host.url);
-      if (!targetUrl) throw new Error('Invalid URL');
-      const windowUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : targetUrl;
-      await createAdditionalWindow(windowUrl, {
-        apiBaseUrl: targetUrl,
-        clientToken: host.clientToken || '',
-        requestHeaders: sanitizeRuntimeRequestHeaders(host.requestHeaders || {}),
-      });
+      await openHostWindow(host);
       return null;
     }
 
@@ -4615,6 +4666,11 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     case 'desktop_get_window_pinned':
       return { pinned: Boolean(browserWindow?.__ocPinned) };
 
+    case 'desktop_take_pending_session_links':
+      // Session links open in the main window only.
+      if (!browserWindow || !state.mainWindow || browserWindow.id !== state.mainWindow.id) return [];
+      return takePendingSessionDeepLinks();
+
     case 'desktop_focus_main_window': {
       const sessionId = typeof args.sessionId === 'string' ? args.sessionId.trim() : '';
       const directory = typeof args.directory === 'string' ? args.directory.trim() : '';
@@ -4636,9 +4692,9 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       state.mainWindow.show();
       state.mainWindow.focus();
       if (sessionId) {
-        emitToWindow(state.mainWindow, 'mittrcraft:open-session', { sessionId, directory });
+        emitToWindow(state.mainWindow, 'openchamber:open-session', { sessionId, directory });
       } else if (mode === 'draft') {
-        emitToWindow(state.mainWindow, 'mittrcraft:open-draft-session', { directory, projectId });
+        emitToWindow(state.mainWindow, 'openchamber:open-draft-session', { directory, projectId });
       }
       return { focused: true };
     }
@@ -4673,12 +4729,23 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     case 'desktop_get_current_window_state':
       return { maximized: Boolean(browserWindow && !browserWindow.isDestroyed() && browserWindow.isMaximized()) };
 
+    case 'desktop_set_locale': {
+      if (typeof args.locale === 'string') {
+        setContextMenuLocale(args.locale);
+        if (process.platform === 'darwin') {
+          Menu.setApplicationMenu(buildMacMenu(normalizeMenuLocale(args.locale)));
+        }
+      }
+      return null;
+    }
+
     case 'desktop_show_app_menu': {
       if (!browserWindow || browserWindow.isDestroyed()) {
         return null;
       }
 
-      const menu = Menu.getApplicationMenu() || buildAutoHiddenMenu();
+      const locale = typeof args.locale === 'string' ? args.locale : 'en';
+      const menu = buildAutoHiddenMenu(locale);
       const x = Number.isFinite(Number(args.x)) ? Math.max(0, Math.round(Number(args.x))) : undefined;
       const y = Number.isFinite(Number(args.y)) ? Math.max(0, Math.round(Number(args.y))) : undefined;
       menu.popup({ window: browserWindow, x, y });
@@ -4724,8 +4791,29 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
   }
 };
 
-const buildMacMenu = () => {
+// A link the product sets to `null` leaves out its menu item, and a group left
+// with no items leaves out its separator.
+const helpLinkItems = (t) => {
+  const linkItem = (key, url) => (url ? [{ label: t(key), click: () => shell.openExternal(url) }] : []);
+  return [
+    [...linkItem('reportABug', GITHUB_BUG_REPORT_URL), ...linkItem('discussAnIdea', GITHUB_IDEAS_URL)],
+    linkItem('joinDiscord', DISCORD_INVITE_URL),
+  ].filter((group) => group.length > 0).flatMap((group) => [{ type: 'separator' }, ...group]);
+};
+
+// A build without an update feed leaves out the menu item that checks for one.
+const updateMenuItems = (t) => (PRODUCT.updaterFeed
+  ? [{ label: t('checkForUpdates'), click: () => dispatchCheckForUpdates() }]
+  : []);
+
+// The menu tables name the app the way upstream ships it; a product with
+// another name shows its own name in those labels.
+const productMenuLabel = (locale, key) => menuLabel(locale, key).replaceAll(UPSTREAM_PRODUCT.appName, PRODUCT.appName);
+
+const buildMacMenu = (locale = 'en') => {
   const dispatchAction = (action) => dispatchMenuAction(action);
+  const t = (key) => productMenuLabel(locale, key);
+  const roleItem = (role, key) => roleMenuItem(locale, role, key);
   const handleCopyAction = () => {
     BrowserWindow.getFocusedWindow()?.webContents.copy();
     dispatchAction('copy');
@@ -4733,104 +4821,104 @@ const buildMacMenu = () => {
 
   return Menu.buildFromTemplate([
     {
-      label: app.name,
+      label: t('app.name'),
       submenu: [
-        { label: 'About MittrCraft', click: () => dispatchAction('about') },
-        {
-          label: 'Check for Updates',
-          click: () => dispatchCheckForUpdates(),
-        },
+        { label: t('about'), click: () => dispatchAction('about') },
+        ...updateMenuItems(t),
         { type: 'separator' },
-        { label: 'Settings', accelerator: 'Cmd+,', click: () => dispatchAction('settings') },
-        { label: 'Reload Webview', click: () => reloadMenuTargetWindow() },
-        { label: 'Restart', click: () => relaunchFromMenu() },
-        { label: 'Command Palette', accelerator: 'Cmd+P', click: () => dispatchAction('command-palette') },
+        { label: t('settings'), accelerator: 'Cmd+,', click: () => dispatchAction('settings') },
+        { label: t('reloadWebview'), click: () => reloadMenuTargetWindow() },
+        { label: t('restart'), click: () => relaunchFromMenu() },
+        { label: t('commandPalette'), accelerator: 'Cmd+P', click: () => dispatchAction('command-palette') },
         { type: 'separator' },
-        { role: 'services' },
+        roleItem('services', 'services'),
         { type: 'separator' },
-        { role: 'hide' },
-        { role: 'hideOthers' },
+        roleItem('hide', 'hide'),
+        roleItem('hideOthers', 'hideOthers'),
         { type: 'separator' },
-        { role: 'quit' },
+        roleItem('quit', 'quit'),
       ],
     },
     {
-      label: 'File',
+      label: t('file'),
       submenu: [
-        { label: 'New Window', accelerator: 'Cmd+Shift+Alt+N', click: () => void handleInvoke(null, 'desktop_new_window') },
+        { label: t('newWindow'), accelerator: 'Cmd+Shift+Alt+N', click: () => void handleInvoke(null, 'desktop_new_window') },
         { type: 'separator' },
-        { label: 'New Session', accelerator: 'Cmd+N', click: () => dispatchAction('new-session') },
-        { label: 'New Worktree', accelerator: 'Cmd+Shift+N', click: () => dispatchAction('new-worktree-session') },
+        { label: t('newSession'), accelerator: 'Cmd+N', click: () => dispatchAction('new-session') },
+        { label: t('newWorktree'), accelerator: 'Cmd+Shift+N', click: () => dispatchAction('new-worktree-session') },
         // registerAccelerator:false → show the shortcut hint but let the
         // renderer own the (customizable) key binding, avoiding a double open.
-        { label: 'New Mini Chat', accelerator: 'Cmd+Alt+N', registerAccelerator: false, click: () => dispatchOpenMiniChat() },
+        { label: t('newMiniChat'), accelerator: 'Cmd+Alt+N', registerAccelerator: false, click: () => dispatchOpenMiniChat() },
         { type: 'separator' },
-        { label: 'Add Workspace', click: () => dispatchAction('change-workspace') },
+        { label: t('addWorkspace'), click: () => dispatchAction('change-workspace') },
         { type: 'separator' },
-        { role: 'close' },
+        roleItem('close', 'close'),
       ],
     },
     {
-      label: 'Edit',
+      label: t('edit'),
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
+        roleItem('undo', 'undo'),
+        roleItem('redo', 'redo'),
         { type: 'separator' },
-        { role: 'cut' },
-        { label: 'Copy', accelerator: 'Cmd+C', click: () => handleCopyAction() },
-        { label: 'Add Selection to Chat', accelerator: 'Cmd+L', registerAccelerator: false, click: () => dispatchAddSelectionToChat() },
-        { role: 'paste' },
-        { role: 'selectAll' },
+        roleItem('cut', 'cut'),
+        { label: t('copy'), accelerator: 'Cmd+C', click: () => handleCopyAction() },
+        { label: t('addSelectionToChat'), accelerator: 'Cmd+L', registerAccelerator: false, click: () => dispatchAddSelectionToChat() },
+        roleItem('paste', 'paste'),
+        roleItem('selectAll', 'selectAll'),
       ],
     },
     {
-      label: 'View',
+      label: t('view'),
       submenu: [
-        { label: 'Toggle Right Sidebar', accelerator: 'Cmd+B', click: () => dispatchAction('toggle-right-sidebar') },
-        { label: 'Open Git Sidebar', accelerator: 'Cmd+Shift+G', click: () => dispatchAction('open-right-sidebar-git') },
-        { label: 'Open Files Sidebar', accelerator: 'Cmd+Shift+F', click: () => dispatchAction('open-right-sidebar-files') },
+        { label: t('toggleRightSidebar'), accelerator: 'Cmd+B', click: () => dispatchAction('toggle-right-sidebar') },
+        { label: t('openGitSidebar'), accelerator: 'Cmd+Shift+G', click: () => dispatchAction('open-right-sidebar-git') },
+        { label: t('openFilesSidebar'), accelerator: 'Cmd+Shift+F', click: () => dispatchAction('open-right-sidebar-files') },
         { type: 'separator' },
-        { label: 'Toggle Terminal Dock', accelerator: 'Cmd+J', click: () => dispatchAction('toggle-terminal') },
-        { label: 'Toggle Terminal Expanded', accelerator: 'Cmd+Shift+J', click: () => dispatchAction('toggle-terminal-expanded') },
+        { label: t('toggleTerminalDock'), accelerator: 'Cmd+J', click: () => dispatchAction('toggle-terminal') },
+        { label: t('toggleTerminalExpanded'), accelerator: 'Cmd+Shift+J', click: () => dispatchAction('toggle-terminal-expanded') },
         { type: 'separator' },
-        { label: 'Light Theme', click: () => dispatchAction('theme-light') },
-        { label: 'Dark Theme', click: () => dispatchAction('theme-dark') },
-        { label: 'System Theme', click: () => dispatchAction('theme-system') },
+        { label: t('lightTheme'), click: () => dispatchAction('theme-light') },
+        { label: t('darkTheme'), click: () => dispatchAction('theme-dark') },
+        { label: t('systemTheme'), click: () => dispatchAction('theme-system') },
         { type: 'separator' },
-        { label: 'Toggle Session Sidebar', accelerator: 'Cmd+Alt+L', click: () => dispatchAction('toggle-sidebar') },
-        { label: 'Toggle Memory Debug', accelerator: 'Cmd+Shift+D', click: () => dispatchAction('toggle-memory-debug') },
+        { label: t('toggleSessionSidebar'), accelerator: 'Cmd+Alt+L', click: () => dispatchAction('toggle-sidebar') },
+        { label: t('toggleMemoryDebug'), accelerator: 'Cmd+Shift+D', click: () => dispatchAction('toggle-memory-debug') },
         { type: 'separator' },
-        { role: 'togglefullscreen' },
+        roleItem('togglefullscreen', 'toggleFullScreen'),
       ],
     },
     {
-      label: 'Window',
+      label: t('window'),
       submenu: [
-        { role: 'minimize' },
-        { role: 'zoom' },
+        roleItem('minimize', 'minimize'),
+        roleItem('zoom', 'zoom'),
         { type: 'separator' },
-        { role: 'close' },
+        { label: t('zoomIn'), accelerator: 'CmdOrCtrl+=', click: () => dispatchAction('zoom-in') },
+        { label: t('zoomOut'), accelerator: 'CmdOrCtrl+-', click: () => dispatchAction('zoom-out') },
+        { label: t('resetZoom'), accelerator: 'CmdOrCtrl+0', click: () => dispatchAction('zoom-reset') },
+        { type: 'separator' },
+        roleItem('close', 'close'),
       ],
     },
     {
-      label: 'Help',
+      label: t('help'),
       submenu: [
-        { label: 'Keyboard Shortcuts', accelerator: 'Cmd+.', click: () => dispatchAction('help-dialog') },
-        { label: 'Show Diagnostics', accelerator: 'Cmd+Shift+L', click: () => dispatchAction('download-logs') },
-        { label: 'Toggle Developer Tools', accelerator: 'Cmd+Alt+I', click: () => openDevToolsForMenuTarget() },
+        { label: t('keyboardShortcuts'), accelerator: 'Cmd+.', click: () => dispatchAction('help-dialog') },
+        { label: t('showDiagnostics'), accelerator: 'Cmd+Shift+L', click: () => dispatchAction('download-logs') },
+        { label: t('toggleDeveloperTools'), accelerator: 'Cmd+Alt+I', click: () => openDevToolsForMenuTarget() },
         { type: 'separator' },
-        { label: 'Clear Cache', click: () => void handleInvoke(null, 'desktop_clear_cache') },
-        { type: 'separator' },
-        { label: 'Report a Bug', click: () => shell.openExternal(GITHUB_BUG_REPORT_URL) },
-        { label: 'Request a Feature', click: () => shell.openExternal(GITHUB_FEATURE_REQUEST_URL) },
-        { type: 'separator' },
+        { label: t('clearCache'), click: () => void handleInvoke(null, 'desktop_clear_cache') },
+        ...helpLinkItems(t),
       ],
     },
   ]);
 };
 
-const buildAutoHiddenMenu = () => {
+const buildAutoHiddenMenu = (locale = 'en') => {
   const dispatchAction = (action) => dispatchMenuAction(action);
+  const t = (key) => productMenuLabel(locale, key);
+  const roleItem = (role, key) => roleMenuItem(locale, role, key);
   const handleCopyAction = () => {
     BrowserWindow.getFocusedWindow()?.webContents.copy();
     dispatchAction('copy');
@@ -4838,111 +4926,111 @@ const buildAutoHiddenMenu = () => {
 
   return Menu.buildFromTemplate([
     {
-      label: 'MittrCraft',
+      label: t('app.name'),
       submenu: [
-        { label: 'About MittrCraft', click: () => dispatchAction('about') },
-        {
-          label: 'Check for Updates',
-          click: () => dispatchCheckForUpdates(),
-        },
+        { label: t('about'), click: () => dispatchAction('about') },
+        ...updateMenuItems(t),
         { type: 'separator' },
-        { label: 'Settings', accelerator: 'Ctrl+,', click: () => dispatchAction('settings') },
-        { label: 'Reload Webview', click: () => reloadMenuTargetWindow() },
-        { label: 'Restart', click: () => relaunchFromMenu() },
-        { label: 'Command Palette', accelerator: 'Ctrl+P', click: () => dispatchAction('command-palette') },
+        { label: t('settings'), accelerator: 'Ctrl+,', click: () => dispatchAction('settings') },
+        { label: t('reloadWebview'), click: () => reloadMenuTargetWindow() },
+        { label: t('restart'), click: () => relaunchFromMenu() },
+        { label: t('commandPalette'), accelerator: 'Ctrl+P', click: () => dispatchAction('command-palette') },
         { type: 'separator' },
-        { role: 'quit' },
+        roleItem('quit', 'quit'),
       ],
     },
     {
-      label: 'File',
+      label: t('file'),
       submenu: [
-        { label: 'New Window', accelerator: 'Ctrl+Shift+Alt+N', click: () => void handleInvoke(null, 'desktop_new_window') },
+        { label: t('newWindow'), accelerator: 'Ctrl+Shift+Alt+N', click: () => void handleInvoke(null, 'desktop_new_window') },
         { type: 'separator' },
-        { label: 'New Session', accelerator: 'Ctrl+N', click: () => dispatchAction('new-session') },
-        { label: 'New Worktree', accelerator: 'Ctrl+Shift+N', click: () => dispatchAction('new-worktree-session') },
+        { label: t('newSession'), accelerator: 'Ctrl+N', click: () => dispatchAction('new-session') },
+        { label: t('newWorktree'), accelerator: 'Ctrl+Shift+N', click: () => dispatchAction('new-worktree-session') },
         { type: 'separator' },
-        { label: 'Add Workspace', click: () => dispatchAction('change-workspace') },
+        { label: t('addWorkspace'), click: () => dispatchAction('change-workspace') },
         { type: 'separator' },
-        { role: 'quit' },
+        roleItem('quit', 'quit'),
       ],
     },
     {
-      label: 'Edit',
+      label: t('edit'),
       submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
+        roleItem('undo', 'undo'),
+        roleItem('redo', 'redo'),
         { type: 'separator' },
-        { role: 'cut' },
-        { label: 'Copy', accelerator: 'Ctrl+C', click: () => handleCopyAction() },
-        { label: 'Add Selection to Chat', accelerator: 'Ctrl+L', registerAccelerator: false, click: () => dispatchAddSelectionToChat() },
-        { role: 'paste' },
-        { role: 'selectAll' },
+        roleItem('cut', 'cut'),
+        { label: t('copy'), accelerator: 'Ctrl+C', click: () => handleCopyAction() },
+        { label: t('addSelectionToChat'), accelerator: 'Ctrl+L', registerAccelerator: false, click: () => dispatchAddSelectionToChat() },
+        roleItem('paste', 'paste'),
+        roleItem('selectAll', 'selectAll'),
       ],
     },
     {
-      label: 'View',
+      label: t('view'),
       submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { label: 'Toggle Developer Tools', accelerator: 'Ctrl+Alt+I', click: () => openDevToolsForMenuTarget() },
+        roleItem('reload', 'reload'),
+        roleItem('forceReload', 'forceReload'),
+        { label: t('toggleDeveloperTools'), accelerator: 'Ctrl+Alt+I', click: () => openDevToolsForMenuTarget() },
         { type: 'separator' },
-        { label: 'Toggle Right Sidebar', accelerator: 'Ctrl+B', click: () => dispatchAction('toggle-right-sidebar') },
-        { label: 'Open Git Sidebar', accelerator: 'Ctrl+Shift+G', click: () => dispatchAction('open-right-sidebar-git') },
-        { label: 'Open Files Sidebar', accelerator: 'Ctrl+Shift+F', click: () => dispatchAction('open-right-sidebar-files') },
+        { label: t('toggleRightSidebar'), accelerator: 'Ctrl+B', click: () => dispatchAction('toggle-right-sidebar') },
+        { label: t('openGitSidebar'), accelerator: 'Ctrl+Shift+G', click: () => dispatchAction('open-right-sidebar-git') },
+        { label: t('openFilesSidebar'), accelerator: 'Ctrl+Shift+F', click: () => dispatchAction('open-right-sidebar-files') },
         { type: 'separator' },
-        { label: 'Toggle Terminal Dock', accelerator: 'Ctrl+J', click: () => dispatchAction('toggle-terminal') },
-        { label: 'Toggle Terminal Expanded', accelerator: 'Ctrl+Shift+J', click: () => dispatchAction('toggle-terminal-expanded') },
+        { label: t('toggleTerminalDock'), accelerator: 'Ctrl+J', click: () => dispatchAction('toggle-terminal') },
+        { label: t('toggleTerminalExpanded'), accelerator: 'Ctrl+Shift+J', click: () => dispatchAction('toggle-terminal-expanded') },
         { type: 'separator' },
-        { label: 'Light Theme', click: () => dispatchAction('theme-light') },
-        { label: 'Dark Theme', click: () => dispatchAction('theme-dark') },
-        { label: 'System Theme', click: () => dispatchAction('theme-system') },
+        { label: t('lightTheme'), click: () => dispatchAction('theme-light') },
+        { label: t('darkTheme'), click: () => dispatchAction('theme-dark') },
+        { label: t('systemTheme'), click: () => dispatchAction('theme-system') },
         { type: 'separator' },
-        { label: 'Toggle Session Sidebar', accelerator: 'Ctrl+Alt+L', click: () => dispatchAction('toggle-sidebar') },
-        { label: 'Toggle Memory Debug', accelerator: 'Ctrl+Shift+D', click: () => dispatchAction('toggle-memory-debug') },
+        { label: t('toggleSessionSidebar'), accelerator: 'Ctrl+Alt+L', click: () => dispatchAction('toggle-sidebar') },
+        { label: t('toggleMemoryDebug'), accelerator: 'Ctrl+Shift+D', click: () => dispatchAction('toggle-memory-debug') },
         { type: 'separator' },
-        { role: 'togglefullscreen' },
+        roleItem('togglefullscreen', 'toggleFullScreen'),
       ],
     },
     {
-      label: 'Go',
+      label: t('go'),
       submenu: [
-        { label: 'Back', accelerator: 'Ctrl+[', click: () => dispatchAction('go-back') },
-        { label: 'Forward', accelerator: 'Ctrl+]', click: () => dispatchAction('go-forward') },
+        { label: t('back'), accelerator: 'Ctrl+[', click: () => dispatchAction('go-back') },
+        { label: t('forward'), accelerator: 'Ctrl+]', click: () => dispatchAction('go-forward') },
         { type: 'separator' },
-        { label: 'Previous Session', accelerator: 'Alt+Up', click: () => dispatchAction('previous-session') },
-        { label: 'Next Session', accelerator: 'Alt+Down', click: () => dispatchAction('next-session') },
+        { label: t('previousSession'), accelerator: 'Alt+Up', click: () => dispatchAction('previous-session') },
+        { label: t('nextSession'), accelerator: 'Alt+Down', click: () => dispatchAction('next-session') },
         { type: 'separator' },
-        { label: 'Previous Project', accelerator: 'Ctrl+Alt+Up', click: () => dispatchAction('previous-project') },
-        { label: 'Next Project', accelerator: 'Ctrl+Alt+Down', click: () => dispatchAction('next-project') },
+        { label: t('previousProject'), accelerator: 'Ctrl+Alt+Up', click: () => dispatchAction('previous-project') },
+        { label: t('nextProject'), accelerator: 'Ctrl+Alt+Down', click: () => dispatchAction('next-project') },
       ],
     },
     {
-      label: 'Window',
+      label: t('window'),
       submenu: [
-        { role: 'minimize' },
-        { role: 'togglefullscreen' },
+        roleItem('minimize', 'minimize'),
+        { label: t('zoomIn'), accelerator: 'Ctrl+=', click: () => dispatchAction('zoom-in') },
+        { label: t('zoomOut'), accelerator: 'Ctrl+-', click: () => dispatchAction('zoom-out') },
+        { label: t('resetZoom'), accelerator: 'Ctrl+0', click: () => dispatchAction('zoom-reset') },
+        roleItem('togglefullscreen', 'toggleFullScreen'),
         { type: 'separator' },
-        { role: 'close' },
+        roleItem('close', 'close'),
       ],
     },
     {
-      label: 'Help',
+      label: t('help'),
       submenu: [
-        { label: 'Keyboard Shortcuts', accelerator: 'Ctrl+.', click: () => dispatchAction('help-dialog') },
-        { label: 'Show Diagnostics', accelerator: 'Ctrl+Shift+L', click: () => dispatchAction('download-logs') },
+        { label: t('keyboardShortcuts'), accelerator: 'Ctrl+.', click: () => dispatchAction('help-dialog') },
+        { label: t('showDiagnostics'), accelerator: 'Ctrl+Shift+L', click: () => dispatchAction('download-logs') },
         { type: 'separator' },
-        { label: 'Clear Cache', click: () => void handleInvoke(null, 'desktop_clear_cache') },
-        { type: 'separator' },
-        { label: 'Report a Bug', click: () => shell.openExternal(GITHUB_BUG_REPORT_URL) },
-        { label: 'Request a Feature', click: () => shell.openExternal(GITHUB_FEATURE_REQUEST_URL) },
-        { type: 'separator' },
+        { label: t('clearCache'), click: () => void handleInvoke(null, 'desktop_clear_cache') },
+        ...helpLinkItems(t),
       ],
     },
   ]);
 };
 
+const { labels: contextMenuLabels, apply: setContextMenuLocale } = createContextMenuLabels();
+
 contextMenu({
+  labels: contextMenuLabels,
   showInspectElement: isDev,
   showSaveImageAs: true,
   showCopyImage: true,
@@ -4992,7 +5080,7 @@ const isLocalSender = (webContents) => {
     if (url.protocol === `${UI_PROTOCOL}:` && url.hostname === 'app') return true;
     // Electron dev renders from Vite while the local API is served on a
     // separate port. This exact loopback HMR origin is trusted only in dev.
-    if (isDev && url.origin === `http://127.0.0.1:${process.env.MITTRCRAFT_HMR_UI_PORT || '5173'}`) return true;
+    if (isDev && url.origin === `http://127.0.0.1:${process.env.OPENCHAMBER_HMR_UI_PORT || '5173'}`) return true;
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
     if (state.localOrigin) {
       try {
@@ -5034,16 +5122,18 @@ const COMMANDS_SAFE_FOR_REMOTE = new Set([
   'desktop_tray_update',
 ]);
 
-ipcMain.handle('mittrcraft:invoke', async (event, command, args) => {
+ipcMain.handle('openchamber:invoke', async (event, command, args) => {
   if (!isLocalSender(event.sender) && !COMMANDS_SAFE_FOR_REMOTE.has(command)) {
     log.warn(`[ipc] rejected ${command} from non-local origin: ${event.sender?.getURL?.() || '(unknown)'}`);
     throw new Error('IPC not available for this origin');
   }
+  const local = isLocalSender(event.sender);
   const browserWindow = BrowserWindow.fromWebContents(event.sender);
-  return handleInvoke(browserWindow, command, args);
+  const result = await handleInvoke(browserWindow, command, args);
+  return !local && command === 'desktop_hosts_get' ? redactHostsConfigForRemote(result) : result;
 });
 
-ipcMain.handle('mittrcraft:dialog:open', async (event, options) => {
+ipcMain.handle('openchamber:dialog:open', async (event, options) => {
   // Native file dialogs expose absolute local paths; never grant to remote.
   if (!isLocalSender(event.sender)) {
     log.warn(`[ipc] rejected dialog:open from non-local origin: ${event.sender?.getURL?.() || '(unknown)'}`);
@@ -5092,7 +5182,7 @@ ipcMain.handle('mittrcraft:dialog:open', async (event, options) => {
   return result.filePaths[0] || null;
 });
 
-ipcMain.handle('mittrcraft:file:grant-existing', async (event, filePath) => {
+ipcMain.handle('openchamber:file:grant-existing', async (event, filePath) => {
   if (!isLocalSender(event.sender)) {
     log.warn(`[ipc] rejected file:grant-existing from non-local origin: ${event.sender?.getURL?.() || '(unknown)'}`);
     throw new Error('IPC not available for this origin');
@@ -5227,7 +5317,7 @@ const focusMainWindowWithSession = async (sessionId, directory) => {
     state.mainWindow.show();
     state.mainWindow.focus();
     if (sessionId) {
-      emitToWindow(state.mainWindow, 'mittrcraft:open-session', { sessionId, directory: directory || '' });
+      emitToWindow(state.mainWindow, 'openchamber:open-session', { sessionId, directory: directory || '' });
     }
     return;
   }
@@ -5272,7 +5362,7 @@ const dispatchTrayAction = async (action) => {
     const target = (state.mainWindow && !state.mainWindow.isDestroyed())
       ? state.mainWindow
       : await revealMainWindow();
-    emitToWindow(target, 'mittrcraft:tray-action', action);
+    emitToWindow(target, 'openchamber:tray-action', action);
     return;
   }
 
@@ -5294,7 +5384,7 @@ const dispatchTrayAction = async (action) => {
       if (surface.isMinimized()) surface.restore();
       surface.show();
       surface.focus();
-      emitToWindow(surface, 'mittrcraft:open-session', {
+      emitToWindow(surface, 'openchamber:open-session', {
         sessionId: action.sessionId,
         directory: action.directory || '',
       });
@@ -5308,7 +5398,7 @@ const dispatchTrayAction = async (action) => {
   if (!target || target.isDestroyed()) return;
 
   if (action.type === 'new-session') {
-    emitToWindow(target, 'mittrcraft:open-draft-session', { directory: '', projectId: '' });
+    emitToWindow(target, 'openchamber:open-draft-session', { directory: '', projectId: '' });
   }
   // show-main-window: revealing the window above is the whole action.
 };
@@ -5319,7 +5409,12 @@ app.on('window-all-closed', () => {
   }
 
   if (process.platform !== 'darwin') {
+    if (state.updateInstallPending) {
+      log.info('[electron] window-all-closed while an update install is pending; leaving the exit to the installer');
+      return;
+    }
     if (state.installingUpdate) {
+      log.info('[electron] window-all-closed after the installer took over; quitting');
       app.quit();
     } else {
       performConfirmedQuit();
@@ -5348,7 +5443,7 @@ app.on('before-quit', (event) => {
   }
 });
 
-app.on('second-instance', (_event, argv) => {
+const handleSecondInstance = (argv) => {
   const urls = Array.isArray(argv)
     ? argv.filter((arg) => typeof arg === 'string' && arg.startsWith(`${DEEP_LINK_PROTOCOL}://`))
     : [];
@@ -5358,15 +5453,33 @@ app.on('second-instance', (_event, argv) => {
   } else {
     void openMainWindow();
   }
-});
+};
 
-app.on('open-url', (event, url) => {
-  event.preventDefault();
+const handleOpenUrl = (url) => {
   handleDeepLinks([url]);
   if (BrowserWindow.getAllWindows().length === 0) {
     void openMainWindow();
   }
+};
+
+app.on('second-instance', (_event, argv) => {
+  handleSecondInstance(argv);
 });
+
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleOpenUrl(url);
+});
+
+// Events the entry module buffered while this module was loading. Replayed
+// once startup has resolved, so a deep link that arrives with the launch
+// cannot start a second backend resolution next to the one in progress.
+const replayDeferredAppEvents = () => {
+  for (const event of takeDeferredAppEvents()) {
+    if (event.type === 'open-url') handleOpenUrl(event.url);
+    else if (event.type === 'second-instance') handleSecondInstance(event.argv);
+  }
+};
 
 app.on('activate', async () => {
   const windows = BrowserWindow.getAllWindows().filter((window) => !window.isDestroyed());
@@ -5390,9 +5503,14 @@ app.on('activate', async () => {
 });
 
 app.whenReady().then(async () => {
-  recordElectronStartupPerformance('electron.app.ready');
+  if (wasEarlyWindowClosed()) return;
   const loginItemSettings = readLoginItemSettings();
   const isBackgroundStart = shouldStartInBackground(loginItemSettings);
+  // The window goes up before anything else so the splash renders while the
+  // rest of startup runs. Everything below shares the main thread with the
+  // renderer's navigation callbacks, and importing the server module graph
+  // blocks it for a few hundred milliseconds.
+  const mainWindowShown = isBackgroundStart ? null : showMainWindowWithSplash();
   log.info('[electron] app starting', {
     version: APP_VERSION,
     packaged: app.isPackaged,
@@ -5447,30 +5565,28 @@ app.whenReady().then(async () => {
     state.requestHeaders = sanitizeRuntimeRequestHeaders(requestHeaders || {});
     // Serverless background startup re-probes the remote when a window is
     // eventually opened instead of trusting reachability from login time.
-    state.startupResolved = !shouldSkipLocalServer();
+    state.startupResolved = !(await shouldSkipLocalServer());
     state.initScript = buildInitScript(localOrigin, state.bootOutcome, apiBaseUrl, clientToken, state.requestHeaders);
     log.info('[electron] started in background without window');
+    replayDeferredAppEvents();
     return;
   }
-
-  state.mainWindow = createBrowserWindow({
-    label: 'main',
-    restoreGeometry: true,
-    url: null,
-  });
 
   const initial = extractInitialDeepLinks();
   if (initial.length > 0) handleDeepLinks(initial);
 
+  await mainWindowShown;
   const { initialUrl, localOrigin, bootOutcome, apiBaseUrl, clientToken, requestHeaders } = await resolveInitialUrl();
   await activateMainWindow(initialUrl, localOrigin, bootOutcome, { apiBaseUrl, clientToken, requestHeaders });
+  replayDeferredAppEvents();
 
   // Notify renderer on OS wake-from-sleep so the SSE event pipeline can
   // reconnect immediately instead of waiting for the heartbeat watchdog.
   powerMonitor.on('resume', () => {
-    emitToAllWindows('mittrcraft:system-resume', { timestamp: Date.now() });
+    emitToAllWindows('openchamber:system-resume', { timestamp: Date.now() });
   });
 }).catch((error) => {
+  if (state.quitInProgress) return;
   log.error('[electron] startup failed:', error);
   app.exit(1);
 });

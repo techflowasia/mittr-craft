@@ -157,6 +157,7 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
 
   const createClient = async ({
     label,
+    fallbackLabel,
     expiresAt,
     clientKind,
     dedupeKey,
@@ -172,9 +173,16 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
       const store = await readStore();
       const normalizedDedupeKey = normalizeOptionalString(dedupeKey);
       const token = generateToken();
+      // A dedupe-keyed mint REPLACES the previous record for the same device,
+      // so an operator-visible name must survive the replacement: an explicit
+      // label wins, otherwise the replaced record's label is kept, and only a
+      // first-ever mint falls back to the client-reported default.
+      const existing = normalizedDedupeKey
+        ? store.clients.find((entry) => entry.dedupeKey === normalizedDedupeKey)
+        : null;
       const client = {
         id: generateId(),
-        label: normalizeLabel(label),
+        label: normalizeLabel(normalizeOptionalString(label) || existing?.label || fallbackLabel),
         tokenHash: hashToken(token),
         createdAt: nowIso(),
         lastUsedAt: null,
@@ -239,11 +247,11 @@ export const createRemoteClientAuthRuntime = ({ fsPromises, path, crypto, storeP
       return null;
     }
     // Which transport carried this request: the relay tunnel proxy stamps every
-    // forwarded request with x-mittrcraft-relay-connection; anything else is a
+    // forwarded request with x-openchamber-relay-connection; anything else is a
     // direct (local/LAN/tunnel-URL) request. Feeds device display AND relay
     // demand (hasActiveRelayClients), so a relay request must never be
     // misclassified as direct.
-    const transport = req?.headers?.['x-mittrcraft-relay-connection'] ? 'relay' : 'direct';
+    const transport = req?.headers?.['x-openchamber-relay-connection'] ? 'relay' : 'direct';
     return withStoreMutation(async () => {
       const tokenHash = hashToken(token);
       const store = await readStore();

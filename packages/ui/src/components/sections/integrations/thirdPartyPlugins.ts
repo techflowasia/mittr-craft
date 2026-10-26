@@ -1,14 +1,11 @@
-import type { IconName } from '@/components/icon/icons';
 import type { I18nKey } from '@/lib/i18n';
 import type { PluginEntry, RegistryResult } from '@/stores/usePluginsStore';
 
 export interface ThirdPartyPluginDefinition {
   id: string;
   packageName: string;
+  /** The provider the plugin registers; its card shows that provider's logo. */
   providerId: string;
-  icon: IconName;
-  /** Brand mark tint (e.g. Claude orange); neutral marks use text-foreground. */
-  brandClassName: string;
   nameKey: I18nKey;
   descriptionKey: I18nKey;
   homepage: string;
@@ -17,33 +14,11 @@ export interface ThirdPartyPluginDefinition {
 export const THIRD_PARTY_PLUGINS: readonly ThirdPartyPluginDefinition[] = [
   {
     id: 'opencode-claude',
-    packageName: '@mittrcraft/opencode-claude',
+    packageName: '@openchamber/opencode-claude',
     providerId: 'claude-code',
-    icon: 'claude-code',
-    brandClassName: 'text-[#D97757]',
     nameKey: 'settings.integrations.thirdParty.opencodeClaude.name',
     descriptionKey: 'settings.integrations.thirdParty.opencodeClaude.description',
     homepage: 'https://github.com/openchamber/opencode-claude',
-  },
-  {
-    id: 'opencode-commandcode',
-    packageName: '@mittrcraft/opencode-commandcode',
-    providerId: 'command-code',
-    icon: 'command-code',
-    brandClassName: 'text-foreground',
-    nameKey: 'settings.integrations.thirdParty.opencodeCommandcode.name',
-    descriptionKey: 'settings.integrations.thirdParty.opencodeCommandcode.description',
-    homepage: 'https://github.com/openchamber/opencode-commandcode',
-  },
-  {
-    id: 'opencode-cursor-oauth',
-    packageName: '@mittrcraft/opencode-cursor',
-    providerId: 'cursor',
-    icon: 'cursor',
-    brandClassName: 'text-foreground',
-    nameKey: 'settings.integrations.thirdParty.opencodeCursorOauth.name',
-    descriptionKey: 'settings.integrations.thirdParty.opencodeCursorOauth.description',
-    homepage: 'https://github.com/openchamber/opencode-cursor',
   },
 ] as const;
 

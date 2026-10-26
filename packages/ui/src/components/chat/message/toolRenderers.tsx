@@ -1,9 +1,11 @@
+import { carriesFileDiffs, isFileChangeTool } from '@/lib/opencode/tools';
 
 import { cn } from '@/lib/utils';
 import { typography } from '@/lib/typography';
 import { formatToolInput, detectToolOutputLanguage } from '@/lib/toolHelpers';
 import { SimpleMarkdownRenderer } from '../MarkdownRenderer';
-import { Icon } from "@/components/icon/Icon";
+import { parseWebSearchOutput } from '@/lib/opencode/websearch';
+import { WebSearchResults } from './parts/WebSearchResults';
 
 const cleanOutput = (output: string) => {
     let cleaned = output.replace(/^<file>\s*\n?/, '').replace(/\n?<\/file>\s*$/, '');
@@ -20,6 +22,28 @@ export const coerceToText = (value: unknown, fallback = ''): string => {
     } catch {
         return fallback;
     }
+};
+
+// Guards the renderer process against V8 "Zone Allocation failed" OOM crashes
+// (issue #2265). When a tool returns oversized external content — e.g. a fetched
+// web page with full-resolution base64 images inlined — the entire payload flows
+// through this module as a single JS string that is JSON.parsed, syntax
+// highlighted, and attached to the DOM. A large enough single string exceeds
+// V8's Zone allocator and hard-crashes the renderer before any virtualization or
+// CSS clip can help. Capping the string length before that work happens keeps a
+// useful head of the output while preventing the pathological allocation.
+export const TOOL_OUTPUT_MAX_CHARS = 512 * 1024;
+
+export const capToolOutputText = (
+    output: string,
+    maxChars: number = TOOL_OUTPUT_MAX_CHARS,
+): string => {
+    if (typeof output !== 'string' || output.length <= maxChars) {
+        return output;
+    }
+    const omitted = output.length - maxChars;
+    const notice = `\n\n… [output truncated: ${omitted} more characters not shown to prevent the renderer from running out of memory]`;
+    return output.slice(0, maxChars) + notice;
 };
 
 const hasLspDiagnostics = (output: string): boolean => {
@@ -121,11 +145,11 @@ export const tryParseJsonOutput = (output: string): { data: unknown; isJson: boo
 export const formatEditOutput = (output: string, toolName: string, metadata?: Record<string, unknown>): string => {
     let cleaned = cleanOutput(output);
 
-    if ((toolName === 'edit' || toolName === 'multiedit' || toolName === 'write' || toolName === 'apply_patch') && hasLspDiagnostics(cleaned)) {
+    if (isFileChangeTool(toolName) && hasLspDiagnostics(cleaned)) {
         cleaned = stripLspDiagnostics(cleaned);
     }
 
-    if ((toolName === 'edit' || toolName === 'multiedit' || toolName === 'apply_patch') && cleaned.trim().length === 0) {
+    if (carriesFileDiffs(toolName) && cleaned.trim().length === 0) {
         const diff = getToolMetadataPatch(metadata);
         if (diff) {
             return diff;
@@ -208,50 +232,6 @@ export const parseReadToolOutput = (output: string): ParsedReadToolOutput => {
         type: detectedType,
         lines,
     };
-};
-
-export const renderListOutput = (output: string, options?: { unstyled?: boolean }) => {
-    try {
-        const lines = output.trim().split('\n').filter(Boolean);
-        if (lines.length === 0) return null;
-
-        const items: Array<{ name: string; depth: number; isFile: boolean }> = [];
-        lines.forEach((line) => {
-            const match = line.match(/^(\s*)(.+)$/);
-            if (match) {
-                const [, spaces, name] = match;
-                const depth = Math.floor(spaces.length / 2);
-                const isFile = !name.endsWith('/');
-                items.push({
-                    name: name.replace(/\/$/, ''),
-                    depth,
-                    isFile,
-                });
-            }
-        });
-
-        return (
-            <div
-                className={cn(
-                    'w-full min-w-0 font-mono space-y-0.5',
-                    options?.unstyled ? null : 'p-3 bg-muted/20 rounded-xl border border-border/30'
-                )}
-                style={typography.tool.popup}
-            >
-                {items.map((item, idx) => (
-                    <div key={idx} className="min-w-0" style={{ paddingLeft: `${item.depth * 20}px` }}>
-                        {item.isFile ? (
-                            <span className="text-foreground/90 block truncate">{item.name}</span>
-                        ) : (
-                            <span className="font-semibold text-foreground block truncate">{item.name}/</span>
-                        )}
-                    </div>
-                ))}
-            </div>
-        );
-    } catch {
-        return null;
-    }
 };
 
 const GREP_DOT_STYLE = { backgroundColor: 'var(--status-info)', opacity: 0.6 };
@@ -379,160 +359,16 @@ export const renderGlobOutput = (output: string, isMobile: boolean, options?: { 
     }
 };
 
-type Todo = {
-    id?: string;
-    content: string;
-    status: 'in_progress' | 'pending' | 'completed' | 'cancelled';
-    priority?: 'high' | 'medium' | 'low';
-};
-
-export const renderTodoOutput = (
-    output: string,
-    labels: {
-        total: string;
-        inProgress: string;
-        pending: string;
-        completed: string;
-        cancelled: string;
-    },
-    options?: { unstyled?: boolean },
-) => {
-    try {
-        const raw: unknown = JSON.parse(output);
-        if (!Array.isArray(raw)) {
-            return null;
-        }
-        const todos: Todo[] = raw.filter(
-            (t): t is Todo =>
-                !!t &&
-                typeof t === 'object' &&
-                typeof (t as { content?: unknown }).content === 'string' &&
-                typeof (t as { status?: unknown }).status === 'string',
-        );
-        if (todos.length === 0) {
-            return null;
-        }
-
-        const todosByStatus = todos.reduce((acc, t) => {
-            const status = t.status as keyof typeof acc;
-            if (status in acc) acc[status].push(t);
-            return acc;
-        }, { in_progress: [] as Todo[], pending: [] as Todo[], completed: [] as Todo[], cancelled: [] as Todo[] });
-
-        const getPriorityDot = (priority?: string) => {
-            const baseClasses = 'w-2 h-2 rounded-full flex-shrink-0 mt-1';
-            switch (priority) {
-                case 'high':
-                    return <div className={baseClasses} style={{ backgroundColor: 'var(--status-error)' }} />;
-                case 'medium':
-                    return <div className={baseClasses} style={{ backgroundColor: 'var(--primary)' }} />;
-                case 'low':
-                    return <div className={baseClasses} style={{ backgroundColor: 'var(--status-info)' }} />;
-                default:
-                    return <div className={baseClasses} style={{ backgroundColor: 'var(--muted-foreground)', opacity: 0.5 }} />;
-            }
-        };
-
-        return (
-            <div
-                className={cn(
-                    'space-y-3 w-full min-w-0',
-                    options?.unstyled ? null : 'p-3 bg-muted/20 rounded-xl border border-border/30'
-                )}
-                style={typography.tool.popup}
-            >
-                <div className="flex gap-4 typography-meta pb-2 border-b border-border/20">
-                    <span className="font-medium" style={{ color: 'var(--muted-foreground)' }}>{labels.total}: {todos.length}</span>
-                    {todosByStatus.in_progress.length > 0 && (
-                        <span className="font-medium" style={{ color: 'var(--foreground)' }}>{labels.inProgress}: {todosByStatus.in_progress.length}</span>
-                    )}
-                    {todosByStatus.pending.length > 0 && (
-                        <span style={{ color: 'var(--muted-foreground)' }}>{labels.pending}: {todosByStatus.pending.length}</span>
-                    )}
-                    {todosByStatus.completed.length > 0 && (
-                        <span style={{ color: 'var(--status-success)' }}>{labels.completed}: {todosByStatus.completed.length}</span>
-                    )}
-                    {todosByStatus.cancelled.length > 0 && (
-                        <span style={{ color: 'var(--muted-foreground)', opacity: 0.5 }}>{labels.cancelled}: {todosByStatus.cancelled.length}</span>
-                    )}
-                </div>
-
-                {todosByStatus.in_progress.length > 0 && (
-                    <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: 'var(--foreground)' }} />
-                            <span className="typography-meta font-semibold text-foreground uppercase tracking-wide">{labels.inProgress}</span>
-                        </div>
-                        <div className="space-y-1.5 pl-4">
-                            {todosByStatus.in_progress.map((todo, idx) => (
-                                <div key={todo.id || idx} className="flex items-start gap-2">
-                                    {getPriorityDot(todo.priority)}
-                                    <span className="typography-code text-foreground flex-1 leading-relaxed">{coerceToText(todo.content)}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {todosByStatus.pending.length > 0 && (
-                    <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                            <div className="w-2 h-2 rounded-full bg-muted-foreground/50" />
-                            <span className="typography-meta font-semibold text-muted-foreground uppercase tracking-wide">{labels.pending}</span>
-                        </div>
-                        <div className="space-y-1.5 pl-4">
-                            {todosByStatus.pending.map((todo, idx) => (
-                                <div key={todo.id || idx} className="flex items-start gap-2">
-                                    {getPriorityDot(todo.priority)}
-                                    <span className="typography-code text-foreground flex-1 leading-relaxed">{coerceToText(todo.content)}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {todosByStatus.completed.length > 0 && (
-                    <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                            <Icon name="check" className="w-3 h-3"  style={{ color: 'var(--status-success)' }}/>
-                            <span className="typography-meta font-semibold uppercase tracking-wide" style={{ color: 'var(--status-success)' }}>{labels.completed}</span>
-                        </div>
-                        <div className="space-y-1.5 pl-4">
-                            {todosByStatus.completed.map((todo, idx) => (
-                                <div key={todo.id || idx} className="flex items-start gap-2">
-                                    <Icon name="check" className="w-3 h-3 mt-0.5 flex-shrink-0"  style={{ color: 'var(--status-success)', opacity: 0.7 }}/>
-                                    <span className="typography-code text-foreground flex-1 leading-relaxed">{coerceToText(todo.content)}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {todosByStatus.cancelled.length > 0 && (
-                    <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                            <span className="w-3 h-3 text-muted-foreground">×</span>
-                            <span className="typography-meta font-semibold text-muted-foreground uppercase tracking-wide">{labels.cancelled}</span>
-                        </div>
-                        <div className="space-y-1.5 pl-4">
-                            {todosByStatus.cancelled.map((todo, idx) => (
-                                <div key={todo.id || idx} className="flex items-start gap-2">
-                                    <span className="w-3 h-3 text-muted-foreground mt-0.5 flex-shrink-0">×</span>
-                                    <span className="typography-code text-muted-foreground line-through flex-1 leading-relaxed">{coerceToText(todo.content)}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-            </div>
-        );
-    } catch {
-        return null;
-    }
-};
-
 export const renderWebSearchOutput = (output: string, options?: { unstyled?: boolean }) => {
     try {
+        const parsed = parseWebSearchOutput(output);
+        if (parsed) {
+            return (
+                <div className={cn('w-full min-w-0', options?.unstyled ? null : 'p-2 bg-muted/20 rounded-xl border border-border/20')}>
+                    <WebSearchResults output={parsed} providerId={null} />
+                </div>
+            );
+        }
         return (
             <div
                 className={cn(
@@ -575,7 +411,7 @@ export const parseDiffToUnified = (diffText: string): UnifiedDiffHunk[] => {
 
         if (line.startsWith('Index:') || line.startsWith('===') || line.startsWith('---') || line.startsWith('+++')) {
             if (line.startsWith('Index:')) {
-                currentFile = line.split(' ')[1].split('/').pop() || 'file';
+                currentFile = line.slice('Index:'.length).trim().split('/').pop() || 'file';
             }
             i++;
             continue;

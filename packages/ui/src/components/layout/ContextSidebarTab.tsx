@@ -1,21 +1,29 @@
 import React from 'react';
-import type { Message, Part } from '@opencode-ai/sdk/v2';
+import type { Message, Part } from '@/lib/opencode/model';
+import { WorkerHighlightedCode } from '@/components/code/WorkerHighlightedCode';
 
-import { deriveMessageRole } from '@/components/chat/message/messageRole';
+import { Icon } from "@/components/icon/Icon";
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
-import { computeCacheHitRate } from '@/stores/utils/tokenUtils';
-import { useAllLiveSessions, useSessions, useSessionMessageRecords } from '@/sync/sync-context';
+import { computeCacheHitRate, findLatestContextFill } from '@/stores/utils/tokenUtils';
+import { useSessions, useSessionMessageRecords } from '@/sync/sync-context';
+import { copyTextToClipboard } from '@/lib/clipboard';
 import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
-import { ActivityTimeline } from './ActivityTimeline';
-import { isEmbeddedSessionChat } from '@/components/layout/contextPanelEmbeddedChat';
-import { isVSCodeRuntime } from '@/lib/desktop';
+import { formatMoney } from '@/lib/money';
+import {
+  derivePartsLabel,
+  deriveUserSnippet,
+  formatAssistantTokens,
+  formatMessagePreviewTime,
+} from './rawMessagePreview';
 import type { TimeFormatPreference } from '@/stores/useUIStore';
 import { formatDateTimeForPreference } from '@/lib/timeFormat';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
+import { ProductSlot, useProductSlotFilled } from '@/lib/product-plugins';
 
 type SessionMessage = { info: Message; parts: Part[] };
-
 
 type ProviderModelLike = {
   id?: string;
@@ -87,6 +95,7 @@ const extractTokenBreakdown = (message: SessionMessage): TokenBreakdown => {
   }
 
   const breakdown = source as {
+    total?: unknown;
     input?: unknown;
     output?: unknown;
     reasoning?: unknown;
@@ -98,6 +107,10 @@ const extractTokenBreakdown = (message: SessionMessage): TokenBreakdown => {
   const reasoning = toNonNegativeNumber(breakdown.reasoning);
   const cacheRead = toNonNegativeNumber(breakdown.cache?.read);
   const cacheWrite = toNonNegativeNumber(breakdown.cache?.write);
+  // Multi-step turns accumulate the fields across API round-trips (every tool
+  // call re-reads the whole cached prompt), so summing them overstates the
+  // window. The server-reported total is the final round-trip's window.
+  const reportedTotal = toNonNegativeNumber(breakdown.total);
 
   return {
     input,
@@ -105,7 +118,7 @@ const extractTokenBreakdown = (message: SessionMessage): TokenBreakdown => {
     reasoning,
     cacheRead,
     cacheWrite,
-    total: input + output + reasoning + cacheRead + cacheWrite,
+    total: reportedTotal > 0 ? reportedTotal : input + output + reasoning + cacheRead + cacheWrite,
   };
 };
 
@@ -190,10 +203,8 @@ const addBuckets = (target: ContextBuckets, value: ContextBuckets): ContextBucke
 });
 
 const deriveRoleBucket = (message: SessionMessage): 'user' | 'assistant' | 'tool' | 'other' => {
-  const roleInfo = deriveMessageRole(message.info);
-  if (roleInfo.isUser) return 'user';
-  if (roleInfo.role === 'assistant') return 'assistant';
-  if (roleInfo.role === 'tool') return 'tool';
+  if (message.info.role === 'user') return 'user';
+  if (message.info.role === 'assistant') return 'assistant';
   return 'other';
 };
 
@@ -226,16 +237,6 @@ const computeContextBreakdown = (
 
 const formatNumber = (value: number): string => value.toLocaleString(getCurrentIntlLocale());
 
-const formatMoney = (value: number): string => {
-  if (!Number.isFinite(value) || value <= 0) return new Intl.NumberFormat(getCurrentIntlLocale(), { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(0);
-  return new Intl.NumberFormat(getCurrentIntlLocale(), {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: value < 0.01 ? 4 : 2,
-    maximumFractionDigits: value < 0.01 ? 4 : 2,
-  }).format(value);
-};
-
 const formatDateTime = (timestamp: number | null, timeFormatPreference: TimeFormatPreference): string => {
   if (!timestamp || !Number.isFinite(timestamp)) return '-';
   return formatDateTimeForPreference(timestamp, timeFormatPreference, {
@@ -265,6 +266,9 @@ const resolveProviderAndModel = (
 export const ContextPanelContent: React.FC = () => {
   const { t } = useI18n();
   const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
+  const [expandedRawMessages, setExpandedRawMessages] = React.useState<Record<string, boolean>>({});
+  const [copiedRawMessageId, setCopiedRawMessageId] = React.useState<string | null>(null);
+  const copyResetTimeoutRef = React.useRef<number | null>(null);
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   const currentSessionDirectory = useSessionUIStore((state) => state.currentSessionDirectory);
   const sessions = useSessions(currentSessionDirectory ?? undefined);
@@ -273,48 +277,53 @@ export const ContextPanelContent: React.FC = () => {
     currentSessionDirectory ?? undefined,
   );
   const providers = useConfigStore((state) => state.providers);
+  const rawMessagesReplaced = useProductSlotFilled('context-raw-messages');
 
-  const liveSessions = useAllLiveSessions();
-  const childSessions = React.useMemo(
-    () => (currentSessionId
-      ? liveSessions.filter((candidate) => candidate.parentID === currentSessionId)
-      : []),
-    [liveSessions, currentSessionId],
-  );
-  const isMobile = useUIStore((state) => state.isMobile);
-  const openContextPanelTab = useUIStore((state) => state.openContextPanelTab);
-  const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
-
-  // The same branch the transcript's Task tool takes: surfaces that cannot
-  // host an embedded panel navigate to the child session instead.
-  const openChildSession = React.useCallback((childId: string, label: string) => {
-    if (!currentSessionDirectory) return;
-    if (isEmbeddedSessionChat() || isMobile || isVSCodeRuntime()) {
-      setCurrentSession(childId, currentSessionDirectory);
-      return;
+  React.useEffect(() => {
+    if (copyResetTimeoutRef.current !== null) {
+      window.clearTimeout(copyResetTimeoutRef.current);
+      copyResetTimeoutRef.current = null;
     }
-    openContextPanelTab(currentSessionDirectory, {
-      mode: 'chat',
-      dedupeKey: `session:${childId}`,
-      label,
-      readOnly: true,
-    });
-  }, [currentSessionDirectory, isMobile, openContextPanelTab, setCurrentSession]);
+    setExpandedRawMessages((prev) => (Object.keys(prev).length > 0 ? {} : prev));
+    setCopiedRawMessageId(null);
+  }, [currentSessionDirectory, currentSessionId]);
+
+  React.useEffect(() => {
+    return () => {
+      if (copyResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+        copyResetTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleCopyRawMessage = React.useCallback(async (messageId: string, value: string) => {
+    const result = await copyTextToClipboard(value);
+    if (result.ok) {
+      setCopiedRawMessageId(messageId);
+      if (copyResetTimeoutRef.current !== null) {
+        window.clearTimeout(copyResetTimeoutRef.current);
+      }
+      copyResetTimeoutRef.current = window.setTimeout(() => {
+        setCopiedRawMessageId((prev) => (prev === messageId ? null : prev));
+        copyResetTimeoutRef.current = null;
+      }, 2000);
+    } else {
+      setCopiedRawMessageId(null);
+    }
+  }, []);
 
   const viewModel = React.useMemo(() => {
     const currentSession = currentSessionId ? sessions.find((session) => session.id === currentSessionId) ?? null : null;
 
-    const assistantMessages = sessionMessages.filter((entry) => deriveMessageRole(entry.info).role === 'assistant');
-    const userMessages = sessionMessages.filter((entry) => deriveMessageRole(entry.info).isUser);
+    const assistantMessages = sessionMessages.filter((entry) => entry.info.role === 'assistant');
+    const userMessages = sessionMessages.filter((entry) => entry.info.role === 'user');
 
-    let contextMessage: SessionMessage | null = null;
-    for (let i = assistantMessages.length - 1; i >= 0; i -= 1) {
-      const message = assistantMessages[i];
-      if (extractTokenBreakdown(message).total > 0) {
-        contextMessage = message;
-        break;
-      }
-    }
+    // After a compaction the fill is unknown until a response reports tokens;
+    // the compaction record itself still supplies the last-turn breakdown.
+    const contextFill = findLatestContextFill(sessionMessages.map((entry) => entry.info));
+    const contextMessage = contextFill ? sessionMessages[contextFill.index] ?? null : null;
+    const isCompacted = contextFill?.state === 'compacted';
 
     const tokenBreakdown = contextMessage ? extractTokenBreakdown(contextMessage) : EMPTY_BREAKDOWN;
 
@@ -339,13 +348,16 @@ export const ContextPanelContent: React.FC = () => {
     );
 
     const contextLimit = providerModel.contextLimit;
-    const usagePercent = contextLimit && contextLimit > 0
-      ? Math.min(999, (tokenBreakdown.total / contextLimit) * 100)
-      : 0;
+    const usagePercent = isCompacted
+      ? null
+      : contextLimit && contextLimit > 0
+        ? Math.min(999, (tokenBreakdown.total / contextLimit) * 100)
+        : 0;
 
-    const systemPrompt = ([...sessionMessages].reverse().find(
-      (entry) => deriveMessageRole(entry.info).isUser && typeof (entry.info as { system?: unknown }).system === 'string',
-    )?.info as { system?: string } | undefined)?.system || '';
+    // OpenCode v2 delivers instruction text as its own `system` message
+    // instead of hanging a `system` string off the first user message.
+    const systemMessage = [...sessionMessages].reverse().find((entry) => entry.info.role === 'system');
+    const systemPrompt = systemMessage?.info.role === 'system' ? systemMessage.info.text : '';
 
     const computedBreakdown = computeContextBreakdown(sessionMessages, systemPrompt);
 
@@ -399,13 +411,13 @@ export const ContextPanelContent: React.FC = () => {
   ];
 
   return (
-    <div className="h-full overflow-y-auto bg-background">
+    <ScrollableOverlay outerClassName="h-full" className="bg-background">
       <div className="mx-auto w-full max-w-[52rem] px-5 py-6">
 
         {/* ── Session header ── */}
         <div className="mb-6">
-          <h2 className="typography-ui-header font-semibold text-foreground truncate">{viewModel.sessionTitle}</h2>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 typography-micro text-muted-foreground">
+          <h2 dir="auto" className="typography-ui-header font-semibold text-foreground truncate text-left">{viewModel.sessionTitle}</h2>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 typography-micro text-muted-foreground/70">
             <span>{viewModel.providerModel.providerName} / {viewModel.providerModel.modelName}</span>
             {viewModel.createdAt && (
               <>
@@ -420,13 +432,13 @@ export const ContextPanelContent: React.FC = () => {
         <div className="mb-5 rounded-lg bg-[var(--surface-elevated)]/70 px-4 py-3.5">
           <div className="flex items-baseline justify-between">
             <span className="typography-micro text-muted-foreground">{t('contextSidebar.section.context')}</span>
-            <span className="typography-micro tabular-nums text-muted-foreground">
-              {formatNumber(viewModel.tokenBreakdown.total)}
+            <span className="typography-micro tabular-nums text-muted-foreground/70">
+              {viewModel.usagePercent === null ? '—' : formatNumber(viewModel.tokenBreakdown.total)}
               {viewModel.contextLimit ? ` / ${formatNumber(viewModel.contextLimit)}` : ''}
             </span>
           </div>
           <div className="mt-2.5 flex h-1 w-full overflow-hidden rounded-full bg-[var(--surface-subtle)]">
-            {viewModel.usagePercent > 0 && (
+            {viewModel.usagePercent !== null && viewModel.usagePercent > 0 && (
               <div
                 className="rounded-full transition-all duration-300"
                 style={{
@@ -437,7 +449,9 @@ export const ContextPanelContent: React.FC = () => {
             )}
           </div>
           <div className="mt-1.5 typography-micro font-medium tabular-nums text-foreground/80">
-            {t('contextSidebar.context.percentUsed', { percent: viewModel.usagePercent.toFixed(1) })}
+            {viewModel.usagePercent === null
+              ? t('contextUsage.compacted.description')
+              : t('contextSidebar.context.percentUsed', { percent: viewModel.usagePercent.toFixed(1) })}
           </div>
         </div>
 
@@ -450,7 +464,7 @@ export const ContextPanelContent: React.FC = () => {
             { label: t('contextSidebar.stats.cost'), value: formatMoney(viewModel.totalAssistantCost) },
           ] as const).map((item) => (
             <div key={item.label} className="rounded-lg bg-[var(--surface-elevated)]/70 px-3 py-2.5">
-              <div className="typography-micro text-muted-foreground">{item.label}</div>
+              <div className="typography-micro text-muted-foreground/70">{item.label}</div>
               <div className="mt-0.5 typography-ui-label tabular-nums text-foreground">{item.value}</div>
             </div>
           ))}
@@ -473,7 +487,7 @@ export const ContextPanelContent: React.FC = () => {
               },
             ] as const).map((item) => (
               <div key={item.label}>
-                <div className="typography-micro text-muted-foreground">{item.label}</div>
+                <div className="typography-micro text-muted-foreground/70">{item.label}</div>
                 <div className="mt-0.5 typography-ui-label tabular-nums text-foreground">
                   {item.value !== null && item.value !== undefined
                     ? item.format === 'percent'
@@ -508,7 +522,7 @@ export const ContextPanelContent: React.FC = () => {
               return (
                 <div key={segment.key} className="inline-flex items-center gap-1.5">
                   <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: segment.color }} />
-                  <span className="typography-micro text-muted-foreground">
+                  <span className="typography-micro text-muted-foreground/70">
                     {segment.label} <span className="tabular-nums">{pct.toFixed(0)}%</span>
                   </span>
                 </div>
@@ -517,15 +531,127 @@ export const ContextPanelContent: React.FC = () => {
           </div>
         </div>
 
-        {/* ── Activity timeline ── */}
-        <ActivityTimeline
-          messages={sessionMessages}
-          childSessions={childSessions}
-          onOpenChild={openChildSession}
-          timeFormatPreference={timeFormatPreference}
-          sessionKey={`${currentSessionDirectory ?? ''}::${currentSessionId ?? ''}`}
-        />
+        {/* ── Raw messages ── */}
+        {rawMessagesReplaced ? (
+          <ErrorBoundary>
+            <ProductSlot name="context-raw-messages" sessionId={currentSessionId} directory={currentSessionDirectory ?? null} messages={sessionMessages} />
+          </ErrorBoundary>
+        ) : (
+        <div>
+          <div className="typography-micro text-muted-foreground">{t('contextSidebar.section.rawMessages')}</div>
+          <div className="mt-2.5 space-y-1">
+            {[...sessionMessages].reverse().map((message) => {
+              const role = message.info.role;
+              const isAssistant = role === 'assistant';
+              const isUser = role === 'user';
+              const isExpanded = expandedRawMessages[message.info.id] === true;
+              const isCopied = copiedRawMessageId === message.info.id;
+              const messageCreatedAt = (message.info.time?.created ?? null) as number | null;
+              const partsLabel = derivePartsLabel(message.parts);
+              const tokens = isAssistant ? extractTokenBreakdown({ info: message.info, parts: message.parts }) : null;
+              const userSnippet = isUser ? deriveUserSnippet(message.parts) : '';
+              const previewTime = formatMessagePreviewTime(messageCreatedAt, timeFormatPreference);
+              // Keep token/time columns stable; the message label owns all
+              // remaining space and truncates before it can push metrics.
+              const assistantLeft = partsLabel || '\u2014';
+              const assistantMiddle = tokens
+                ? formatAssistantTokens(tokens.input, tokens.output, formatNumber)
+                : '';
+              const otherLeft = role || 'unknown';
+              const otherLabel = partsLabel ? `${otherLeft}: ${partsLabel}` : otherLeft;
+
+              const jsonValue = isExpanded
+                ? JSON.stringify({ info: message.info, parts: message.parts }, null, 2)
+                : '';
+
+              return (
+                <div
+                  key={message.info.id}
+                  className="overflow-hidden rounded-lg bg-[var(--surface-elevated)]/70"
+                >
+                  <button
+                    type="button"
+                    className="w-full cursor-pointer px-3 py-1.5 text-left hover:bg-[var(--interactive-hover)]"
+                    aria-expanded={isExpanded}
+                    onClick={() => {
+                      setExpandedRawMessages((prev) => ({
+                        ...prev,
+                        [message.info.id]: !(prev[message.info.id] === true),
+                      }));
+                    }}
+                  >
+                    <div
+                      className="grid items-center gap-x-2 whitespace-nowrap typography-micro"
+                      style={{ gridTemplateColumns: isAssistant ? 'minmax(0, 1fr) 7.5rem max-content' : 'minmax(0, 1fr) max-content' }}
+                    >
+                      {isUser ? (
+                        <span
+                          className="min-w-0 truncate text-muted-foreground"
+                        >
+                          <span className="typography-ui-label text-foreground">user:</span>{' '}
+                          {userSnippet}
+                        </span>
+                      ) : (
+                        <>
+                          <span
+                            className={
+                              isAssistant
+                                ? 'min-w-0 truncate text-muted-foreground'
+                                : 'min-w-0 truncate text-muted-foreground'
+                            }
+                          >
+                            {isAssistant ? assistantLeft : otherLabel}
+                          </span>
+                          {isAssistant && (
+                            <span className="text-right text-muted-foreground tabular-nums">
+                              {assistantMiddle}
+                            </span>
+                          )}
+                        </>
+                      )}
+                      <span className="text-right text-muted-foreground">{previewTime}</span>
+                    </div>
+                  </button>
+
+                  {isExpanded && (
+                    <div className="border-t border-[var(--surface-subtle)] p-0">
+                      <div className="group relative max-h-[26rem] w-full overflow-auto bg-[var(--surface-background)]">
+                        <div className="absolute top-1 right-2 z-10 opacity-0 transition-opacity group-hover:opacity-100">
+                          <button
+                            type="button"
+                            className="rounded p-1 text-muted-foreground transition-colors hover:bg-interactive-hover/60 hover:text-foreground"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void handleCopyRawMessage(message.info.id, jsonValue);
+                            }}
+                            aria-label={isCopied ? t('contextSidebar.actions.copied') : t('contextSidebar.actions.copyJson')}
+                            title={isCopied ? t('contextSidebar.actions.copied') : t('contextSidebar.actions.copy')}
+                          >
+                            {isCopied ? <Icon name="check" className="size-3.5" /> : <Icon name="file-copy" className="size-3.5" />}
+                          </button>
+                        </div>
+                        <WorkerHighlightedCode
+                          language="json"
+                          code={jsonValue}
+                          style={{
+                            margin: 0,
+                            padding: '0.75rem',
+                            background: 'transparent',
+                            fontSize: 'var(--text-micro)',
+                            lineHeight: '1.35',
+                          }}
+                          wrap
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        )}
       </div>
-    </div>
+    </ScrollableOverlay>
   );
 };

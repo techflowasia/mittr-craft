@@ -18,12 +18,15 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
-import { useCommandsStore, isCommandBuiltIn, type Command } from '@/stores/useCommandsStore';
-import { useSkillsStore } from '@/stores/useSkillsStore';
+import { selectCommandsForDirectory, useCommandsStore, isCommandBuiltIn, type Command } from '@/stores/useCommandsStore';
+import { selectSkillsForDirectory, useSkillsStore } from '@/stores/useSkillsStore';
+import { useSettingsDirectory } from '@/hooks/useSettingsDirectory';
 import { useShallow } from 'zustand/react/shallow';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { cn } from '@/lib/utils';
 import { SettingsProjectSelector } from '@/components/sections/shared/SettingsProjectSelector';
+import { SettingsSidebarNoMatches, SettingsSidebarSearch } from '@/components/sections/shared/SettingsSidebarSearch';
+import { matchesRankQuery } from '@/lib/search/fuzzySearch';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
 import { SETTINGS_PANEL_TITLE_CLASS } from '@/components/sections/shared/SettingsSection';
@@ -34,6 +37,7 @@ interface CommandsSidebarProps {
 
 export const CommandsSidebar: React.FC<CommandsSidebarProps> = ({ onItemSelect }) => {
   const { t } = useI18n();
+  const [query, setQuery] = React.useState('');
   const [renameDialogCommand, setRenameDialogCommand] = React.useState<Command | null>(null);
   const [renameNewName, setRenameNewName] = React.useState('');
   const [confirmActionCommand, setConfirmActionCommand] = React.useState<Command | null>(null);
@@ -43,7 +47,6 @@ export const CommandsSidebar: React.FC<CommandsSidebarProps> = ({ onItemSelect }
 
   const {
     selectedCommandName,
-    commands,
     setSelectedCommand,
     setCommandDraft,
     createCommand,
@@ -51,20 +54,23 @@ export const CommandsSidebar: React.FC<CommandsSidebarProps> = ({ onItemSelect }
     loadCommands,
   } = useCommandsStore(useShallow((s) => ({
     selectedCommandName: s.selectedCommandName,
-    commands: s.commands,
     setSelectedCommand: s.setSelectedCommand,
     setCommandDraft: s.setCommandDraft,
     createCommand: s.createCommand,
     deleteCommand: s.deleteCommand,
     loadCommands: s.loadCommands,
   })));
-  const skills = useSkillsStore((s) => s.skills);
+  // Settings browses whichever project its own selector points at; the app
+  // stays where it is.
+  const settingsDirectory = useSettingsDirectory();
+  const commands = useCommandsStore((state) => selectCommandsForDirectory(state, settingsDirectory));
+  const skills = useSkillsStore((state) => selectSkillsForDirectory(state, settingsDirectory));
   const loadSkills = useSkillsStore((s) => s.loadSkills);
 
   React.useEffect(() => {
-    loadCommands();
-    loadSkills();
-  }, [loadCommands, loadSkills]);
+    void loadCommands(settingsDirectory);
+    void loadSkills(settingsDirectory);
+  }, [loadCommands, loadSkills, settingsDirectory]);
 
   const skillNames = React.useMemo(() => new Set(skills.map((skill) => skill.name)), [skills]);
   const commandOnlyItems = React.useMemo(
@@ -131,7 +137,7 @@ export const CommandsSidebar: React.FC<CommandsSidebarProps> = ({ onItemSelect }
     }
 
     setIsConfirmActionPending(true);
-    const success = await deleteCommand(confirmActionCommand.name);
+    const success = await deleteCommand(confirmActionCommand.name, settingsDirectory);
 
     if (success) {
       if (confirmActionType === 'delete') {
@@ -167,6 +173,7 @@ export const CommandsSidebar: React.FC<CommandsSidebarProps> = ({ onItemSelect }
       template: command.template,
       agent: command.agent,
       model: command.model,
+      subagent: command.subagent,
     });
     setSelectedCommand(newName);
 
@@ -204,11 +211,13 @@ export const CommandsSidebar: React.FC<CommandsSidebarProps> = ({ onItemSelect }
       template: renameDialogCommand.template,
       agent: renameDialogCommand.agent,
       model: renameDialogCommand.model,
-    });
+      subagent: renameDialogCommand.subagent,
+      scope: renameDialogCommand.scope,
+    }, settingsDirectory);
 
     if (success) {
       // Delete old command
-      const deleteSuccess = await deleteCommand(renameDialogCommand.name);
+      const deleteSuccess = await deleteCommand(renameDialogCommand.name, settingsDirectory);
       if (deleteSuccess) {
         toast.success(`Command renamed to "${sanitizedName}"`);
         setSelectedCommand(sanitizedName);
@@ -222,8 +231,9 @@ export const CommandsSidebar: React.FC<CommandsSidebarProps> = ({ onItemSelect }
     setRenameDialogCommand(null);
   };
 
-  const builtInCommands = commandOnlyItems.filter(isCommandBuiltIn);
-  const customCommands = commandOnlyItems.filter((cmd) => !isCommandBuiltIn(cmd));
+  const shownCommands = commandOnlyItems.filter((command) => matchesRankQuery([command.name, command.description], query));
+  const builtInCommands = shownCommands.filter(isCommandBuiltIn);
+  const customCommands = shownCommands.filter((cmd) => !isCommandBuiltIn(cmd));
 
   return (
     <div className={cn('flex h-full flex-col', bgClass)}>
@@ -241,6 +251,7 @@ export const CommandsSidebar: React.FC<CommandsSidebarProps> = ({ onItemSelect }
             <Icon name="add" className="h-3.5 w-3.5" />
           </Button>
         </div>
+        {commandOnlyItems.length > 0 ? <SettingsSidebarSearch value={query} onChange={setQuery} /> : null}
       </div>
 
       <ScrollableOverlay outerClassName="flex-1 min-h-0" className="space-y-1 px-3 py-2">
@@ -250,6 +261,8 @@ export const CommandsSidebar: React.FC<CommandsSidebarProps> = ({ onItemSelect }
             <p className="typography-ui-label font-medium">{t('settings.commands.sidebar.empty.title')}</p>
             <p className="typography-meta mt-1 opacity-75">{t('settings.commands.sidebar.empty.description')}</p>
           </div>
+        ) : shownCommands.length === 0 ? (
+          <SettingsSidebarNoMatches query={query} />
         ) : (
           <>
             {builtInCommands.length > 0 && (
@@ -433,7 +446,7 @@ const CommandListItem: React.FC<CommandListItemProps> = ({
       <div className="flex min-w-0 flex-1 items-center">
         <button
           onClick={onSelect}
-          className="flex min-w-0 flex-1 flex-col gap-0 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          className="flex min-w-0 flex-1 flex-col gap-0 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           tabIndex={0}
         >
           <div className="flex items-center gap-2">
@@ -448,7 +461,7 @@ const CommandListItem: React.FC<CommandListItemProps> = ({
           </div>
 
           {command.description && (
-            <div className="typography-micro text-muted-foreground truncate leading-tight">
+            <div className="typography-micro text-muted-foreground/60 truncate leading-tight">
               {command.description}
             </div>
           )}

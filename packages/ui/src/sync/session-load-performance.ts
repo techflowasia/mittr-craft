@@ -1,11 +1,13 @@
-const STORAGE_KEY = "mittrcraft_session_load_perf"
+const STORAGE_KEY = "openchamber_session_load_perf"
 const MAX_EVENTS = 1_000
 const ALLOWED_OPERATIONS = new Set([
   "bootstrap.directory",
+  "bootstrap.environment",
   "bootstrap.sessions.all",
   "bootstrap.sessions.archived",
   "bootstrap.sessions.roots",
   "global-sessions.active",
+  "global-sessions.all",
   "global-sessions.archived",
   "session-messages.initial",
   "session-messages.older",
@@ -21,6 +23,7 @@ const ALLOWED_CALLERS = new Set([
   "initial-page",
   "known-project",
   "known-worktree",
+  "location-shutdown",
   "older",
   "pagination",
   "prefetch",
@@ -59,7 +62,7 @@ type SessionLoadPerformanceState = {
 
 declare global {
   interface Window {
-    __mittrcraftSessionLoadPerformance?: SessionLoadPerformanceState
+    __openchamberSessionLoadPerformance?: SessionLoadPerformanceState
   }
 }
 
@@ -95,7 +98,7 @@ export function startSessionLoadPerformanceEvent(input: Omit<SessionLoadPerforma
     details?: Partial<Pick<SessionLoadPerformanceEvent, "retryCount" | "recordCount">>,
   ) => {
     if (typeof window === "undefined" || !ALLOWED_OUTCOMES.has(outcome)) return
-    const state = window.__mittrcraftSessionLoadPerformance ?? { events: [] }
+    const state = window.__openchamberSessionLoadPerformance ?? { events: [] }
     const queuedMs = nonNegativeNumber(input.queuedMs)
     const requestLimit = nonNegativeInteger(input.requestLimit)
     const retryCount = nonNegativeInteger(details?.retryCount ?? input.retryCount)
@@ -113,7 +116,7 @@ export function startSessionLoadPerformanceEvent(input: Omit<SessionLoadPerforma
       at: Date.now(),
     })
     if (state.events.length > MAX_EVENTS) state.events.splice(0, state.events.length - MAX_EVENTS)
-    window.__mittrcraftSessionLoadPerformance = state
+    window.__openchamberSessionLoadPerformance = state
   }
 }
 
@@ -125,7 +128,7 @@ type FirstVisibleSessionPerformanceDependencies = {
   startEvent: typeof startSessionLoadPerformanceEvent
 }
 
-const FIRST_VISIBLE_MARK = "mittrcraft.chat.first_message_visible"
+const FIRST_VISIBLE_MARK = "openchamber.chat.first_message_visible"
 
 export function createFirstVisibleSessionPerformanceTracker(
   dependencies?: Partial<FirstVisibleSessionPerformanceDependencies>,

@@ -3,6 +3,7 @@ import {
   Dialog,
   DialogContent,
 } from '@/components/ui/dialog';
+import { OpenChamberLogo } from '@/components/ui/OpenChamberLogo';
 import { debugUtils } from '@/lib/debug';
 import { cn } from '@/lib/utils';
 import { toast } from '@/components/ui';
@@ -10,6 +11,7 @@ import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
 import { getDesktopAppVersion } from '@/lib/desktopNative';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { ProductSlot } from '@/lib/product-plugins';
 
 interface AboutDialogProps {
   open: boolean;
@@ -67,8 +69,8 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
         const response = await runtimeFetch('/api/system/info');
         if (response.ok) {
           const data = await response.json();
-          if (typeof data.mittrcraftVersion === 'string' && data.mittrcraftVersion.trim()) {
-            setVersion(data.mittrcraftVersion);
+          if (typeof data.openchamberVersion === 'string' && data.openchamberVersion.trim()) {
+            setVersion(data.openchamberVersion);
             return;
           }
         }
@@ -88,12 +90,12 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
     let cancelled = false;
     const fetchOpenCodeVersion = async () => {
       try {
-        const response = await runtimeFetch('/api/opencode/version', {
+        const response = await runtimeFetch('/api/opencode/upgrade-status', {
           headers: { Accept: 'application/json' },
         });
         if (!response.ok) return;
-        const data = await response.json().catch(() => null) as null | { version?: unknown };
-        const currentVersion = typeof data?.version === 'string' ? data.version.trim() : '';
+        const data = await response.json().catch(() => null) as null | { currentVersion?: unknown };
+        const currentVersion = typeof data?.currentVersion === 'string' ? data.currentVersion.trim() : '';
         if (!cancelled && currentVersion) {
           setOpenCodeVersion(currentVersion);
         }
@@ -139,37 +141,25 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
 
   const displayVersion = version;
 
-  const [signingOut, setSigningOut] = React.useState(false);
-
-  const handleSignOutMittr = React.useCallback(async () => {
-    setSigningOut(true);
-    try {
-      const response = await runtimeFetch('/api/mittr/auth/session', { method: 'DELETE' });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      window.location.reload();
-    } catch {
-      toast.error(t('settings.mittrcraft.about.toast.signOutFailed'));
-      setSigningOut(false);
-    }
-  }, [t]);
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xs p-6">
         <div className="flex flex-col items-center text-center space-y-4">
-          <img src="/app-icon-512.png" alt="" aria-hidden="true" width={64} height={64} />
+          <OpenChamberLogo width={64} height={64} />
 
           <div className="space-y-1">
-            <h2 className="text-lg font-semibold">MittrCraft</h2>
+            <h2 className="text-lg font-semibold">OpenChamber</h2>
             <div className="space-y-0.5 typography-meta text-muted-foreground">
               {displayVersion && (
-                <p>{t('aboutDialog.mittrCraftVersionLabel', { version: displayVersion })}</p>
+                <p>{t('aboutDialog.openChamberVersionLabel', { version: displayVersion })}</p>
               )}
               {openCodeVersion && (
                 <p>{t('aboutDialog.openCodeVersionLabel', { version: openCodeVersion })}</p>
               )}
             </div>
           </div>
+
+          <ProductSlot name="about-dialog" />
 
           {showDiagnostics && (
             <div className="flex flex-col items-center gap-2 pt-2">
@@ -194,36 +184,39 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
             </div>
           )}
 
-          {/* The repository is ours. The Discord server and the X account that
-              used to sit beside it were upstream's, and the rebrand renamed the
-              handle to one that does not exist — a link to nowhere wearing our
-              name. */}
-          <div className="flex items-center justify-center pt-2">
+          <div className="flex flex-col items-center gap-2 pt-2">
+            <div className="flex items-center justify-center gap-4">
+              <a
+                href="https://github.com/openchamber/openchamber"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 typography-meta text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Icon name="github-fill" className="h-4 w-4" />
+                <span>GitHub</span>
+              </a>
+              <a
+                href="https://discord.gg/ZYRSdnwwKA"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 typography-meta text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <Icon name="discord-fill" className="h-4 w-4" />
+                <span>Discord</span>
+              </a>
+            </div>
             <a
-              href="https://github.com/techflowasia/mittr-craft"
+              href="https://x.com/openchamber_dev"
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-1.5 typography-meta text-muted-foreground hover:text-foreground transition-colors"
             >
-              <Icon name="github-fill" className="h-4 w-4" />
-              <span>GitHub</span>
+              <Icon name="twitter-xfill" className="h-4 w-4" />
+              <span>@openchamber_dev</span>
             </a>
           </div>
 
-          <button
-            type="button"
-            onClick={() => { void handleSignOutMittr(); }}
-            disabled={signingOut}
-            className={cn(
-              'typography-meta text-muted-foreground hover:text-foreground',
-              'underline-offset-2 hover:underline',
-              'disabled:opacity-50 disabled:cursor-not-allowed'
-            )}
-          >
-            {t('settings.mittrcraft.about.actions.signOutMittr')}
-          </button>
-
-          <p className="typography-meta text-muted-foreground pt-2">
+          <p className="typography-meta text-muted-foreground/60 pt-2">
             {t('aboutDialog.footerNote')}
           </p>
         </div>

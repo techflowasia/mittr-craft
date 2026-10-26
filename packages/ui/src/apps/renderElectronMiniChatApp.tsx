@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import '@/styles/fonts';
+import '@/styles/katex-css';
 import '@/index.css';
 import '@/lib/debug';
 import { SessionAuthGate } from '@/components/auth/SessionAuthGate';
@@ -10,11 +11,13 @@ import type { RuntimeAPIs } from '@/lib/api/types';
 import { startAppearanceAutoSave } from '@/lib/appearanceAutoSave';
 import { applyPersistedDirectoryPreferences } from '@/lib/directoryPersistence';
 import { initializeLocale, I18nProvider } from '@/lib/i18n';
-import { MittrSignInGate } from '@/components/mittr/MittrSignInGate';
+import { ProductRoot } from '@/lib/product-plugins';
 import { initializeAppearancePreferences, syncDesktopSettings } from '@/lib/persistence';
 import { startModelPrefsAutoSave } from '@/lib/modelPrefsAutoSave';
 import { startTypographyWatcher } from '@/lib/typographyWatcher';
 import { ElectronMiniChatApp } from './ElectronMiniChatApp';
+
+import.meta.glob('../../../*/src/product-ui-plugin.{ts,tsx}', { eager: true });
 
 const initializeSharedPreferences = () => {
   initializeLocale();
@@ -49,13 +52,9 @@ export function renderElectronMiniChatApp(apis: RuntimeAPIs) {
         <ThemeSystemProvider>
           <ThemeProvider>
             <SessionAuthGate>
-              {/* The same two gates as the main window, in the same order. A
-                  mini chat calls the same models, so leaving it ungated would
-                  have made it the way around the sign-in it is meant to
-                  enforce. */}
-              <MittrSignInGate>
+              <ProductRoot surface="mini-chat">
                 <ElectronMiniChatApp apis={apis} />
-              </MittrSignInGate>
+              </ProductRoot>
             </SessionAuthGate>
           </ThemeProvider>
         </ThemeSystemProvider>

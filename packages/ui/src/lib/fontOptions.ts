@@ -1,13 +1,26 @@
-export type UiFontOption = 'ibm-plex-sans' | 'inter' | 'geist-sans' | 'atkinson-hyperlegible' | 'source-sans-3' | 'roboto' | 'noto-sans' | 'dm-sans' | 'manrope' | 'system';
+import { productFontOptions, subscribeProductUiPlugins } from './product-plugins';
 
-export type MonoFontOption = 'ibm-plex-mono' | 'jetbrains-mono' | 'fira-code' | 'geist-mono' | 'commit-mono' | 'source-code-pro' | 'cascadia-code' | 'roboto-mono' | 'iosevka' | 'system-mono';
+type ProductFontId = string & Record<never, never>;
 
-export interface FontFaceSource {
+export type UiFontOption = 'inter' | 'fixel' | 'geist-sans' | 'atkinson-hyperlegible' | 'source-sans-3' | 'roboto' | 'noto-sans' | 'dm-sans' | 'manrope' | 'system' | ProductFontId;
+
+export type MonoFontOption = 'jetbrains-mono' | 'fira-code' | 'geist-mono' | 'commit-mono' | 'source-code-pro' | 'cascadia-code' | 'roboto-mono' | 'iosevka' | 'system-mono' | ProductFontId;
+
+interface FontFaceSourceBase {
     family: string;
-    packageName: string;
-    filePrefix: string;
     weights: number[];
 }
+
+interface FontsourceFaceSource extends FontFaceSourceBase {
+    packageName: string;
+    filePrefix: string;
+}
+
+interface DirectFontFaceSource extends FontFaceSourceBase {
+    urls: Record<number, string>;
+}
+
+export type FontFaceSource = FontsourceFaceSource | DirectFontFaceSource;
 
 export interface FontOptionDefinition<T extends string> {
     id: T;
@@ -20,18 +33,26 @@ export interface FontOptionDefinition<T extends string> {
 
 export const UI_FONT_OPTIONS: FontOptionDefinition<UiFontOption>[] = [
     {
-        id: 'ibm-plex-sans',
-        label: 'IBM Plex Sans',
-        description: 'The interface face MITTR Studio uses, so the two products read as one family.',
-        stack: '"IBM Plex Sans", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-        source: { family: 'IBM Plex Sans', packageName: '@fontsource/ibm-plex-sans', filePrefix: 'ibm-plex-sans', weights: [400, 500, 600] }
-    },
-    {
         id: 'inter',
         label: 'Inter',
         description: 'Modern UI sans with excellent readability at small sizes.',
         stack: '"Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         source: { family: 'Inter', packageName: '@fontsource/inter', filePrefix: 'inter', weights: [400, 500, 600] }
+    },
+    {
+        id: 'fixel',
+        label: 'Fixel Text',
+        description: 'Humanist geometric sans-serif with full Ukrainian support.',
+        stack: '"Fixel Text", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        source: {
+            family: 'Fixel Text',
+            weights: [400, 500, 600],
+            urls: {
+                400: 'https://cdn.jsdelivr.net/gh/MacPaw/Fixel@f6ee910e98add47e830db87f1a754130506c11a2/fonts/webfonts/FixelText-Regular.woff2',
+                500: 'https://cdn.jsdelivr.net/gh/MacPaw/Fixel@f6ee910e98add47e830db87f1a754130506c11a2/fonts/webfonts/FixelText-Medium.woff2',
+                600: 'https://cdn.jsdelivr.net/gh/MacPaw/Fixel@f6ee910e98add47e830db87f1a754130506c11a2/fonts/webfonts/FixelText-SemiBold.woff2'
+            }
+        }
     },
     {
         id: 'geist-sans',
@@ -86,18 +107,11 @@ export const UI_FONT_OPTIONS: FontOptionDefinition<UiFontOption>[] = [
         id: 'system',
         label: 'System',
         description: 'Native operating system interface font.',
-        stack: '"SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif'
+        stack: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif'
     }
 ];
 
 export const CODE_FONT_OPTIONS: FontOptionDefinition<MonoFontOption>[] = [
-    {
-        id: 'ibm-plex-mono',
-        label: 'IBM Plex Mono',
-        description: 'Monospace companion to IBM Plex Sans, matching MITTR Studio.',
-        stack: '"IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace',
-        source: { family: 'IBM Plex Mono', packageName: '@fontsource/ibm-plex-mono', filePrefix: 'ibm-plex-mono', weights: [400, 500, 600] }
-    },
     {
         id: 'jetbrains-mono',
         label: 'JetBrains Mono',
@@ -168,12 +182,47 @@ const buildFontMap = <T extends string>(options: FontOptionDefinition<T>[]) =>
 export const UI_FONT_OPTION_MAP = buildFontMap(UI_FONT_OPTIONS);
 export const CODE_FONT_OPTION_MAP = buildFontMap(CODE_FONT_OPTIONS);
 
-// The family resemblance with MITTR Studio is the default rather than an
-// opt-in: a product that only looks related once you find a setting does not
-// look related. Both faces are fetched on demand by `fontLoader`, and both
-// stacks fall back to the system face if that fetch never lands.
-export const DEFAULT_UI_FONT: UiFontOption = 'ibm-plex-sans';
-export const DEFAULT_MONO_FONT: MonoFontOption = 'ibm-plex-mono';
+const builtInUiFonts = [...UI_FONT_OPTIONS];
+const builtInCodeFonts = [...CODE_FONT_OPTIONS];
+
+const withProductFonts = <T extends string>(
+    contributed: ReturnType<typeof productFontOptions>,
+    builtIn: FontOptionDefinition<T>[],
+): FontOptionDefinition<T>[] => {
+    const taken = new Set<string>(builtIn.map((option) => option.id));
+    const added: FontOptionDefinition<T>[] = [];
+    for (const option of contributed) {
+        if (!option.id || !option.stack || taken.has(option.id)) {
+            continue;
+        }
+        taken.add(option.id);
+        added.push({ id: option.id as T, label: option.label, description: option.description, stack: option.stack });
+    }
+    return [...added, ...builtIn];
+};
+
+const replaceFonts = <T extends string>(
+    list: FontOptionDefinition<T>[],
+    map: Record<T, FontOptionDefinition<T>>,
+    next: FontOptionDefinition<T>[],
+) => {
+    list.splice(0, list.length, ...next);
+    for (const key of Object.keys(map)) {
+        delete map[key as T];
+    }
+    Object.assign(map, buildFontMap(next));
+};
+
+const syncProductFonts = () => {
+    replaceFonts(UI_FONT_OPTIONS, UI_FONT_OPTION_MAP, withProductFonts(productFontOptions('ui'), builtInUiFonts));
+    replaceFonts(CODE_FONT_OPTIONS, CODE_FONT_OPTION_MAP, withProductFonts(productFontOptions('mono'), builtInCodeFonts));
+};
+
+subscribeProductUiPlugins(syncProductFonts);
+syncProductFonts();
+
+export const DEFAULT_UI_FONT: UiFontOption = 'system';
+export const DEFAULT_MONO_FONT: MonoFontOption = 'system-mono';
 
 export const isUiFontOption = (value: unknown): value is UiFontOption =>
     typeof value === 'string' && value in UI_FONT_OPTION_MAP;

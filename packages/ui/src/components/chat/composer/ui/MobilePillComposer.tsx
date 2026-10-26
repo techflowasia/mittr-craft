@@ -2,22 +2,27 @@
  * The collapsed mobile composer.
  *
  * With the keyboard down the composer is a pill: attachments, a one-line
- * preview of the draft, and a mic, with a round new-session button beside it.
- * Tapping anywhere in it expands the real composer and raises the keyboard in
- * the same gesture — which is why the expand handler must run synchronously
- * from the tap rather than from an effect.
+ * preview of the draft, and a mic. Tapping anywhere in it expands the real
+ * composer and raises the keyboard in the same gesture — which is why the
+ * expand handler must run synchronously from the tap rather than from an
+ * effect.
  *
- * The new-session button collapses away once a draft is already open, letting
- * the pill grow into its place.
+ * With content, the inner end slot sends while the session is idle. While it
+ * is running, abort keeps that slot and a round queue action appears beside
+ * the pill; otherwise nothing sits beside it.
  */
 
+import React, { useState } from 'react';
+import type { SourceControlProvider } from '@/lib/api/types';
+import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
 import { StopIcon } from '@/components/icons/StopIcon';
 import { SessionGoalRow } from '@/components/chat/SessionGoalRow';
-import { SessionSuggestionChip } from '@/components/chat/SessionSuggestionChip';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
-import type { Theme } from '@/types/theme';
+import { useConfigStore } from '@/stores/useConfigStore';
+import { isVSCodeRuntime } from '@/lib/desktop';
+import { isDictationCaptureSupported } from '@/lib/dictation/use-dictation-audio-source';
 import { ComposerAttachmentControls } from './ComposerAttachmentControls';
 
 export interface MobilePillComposerProps {
@@ -30,14 +35,24 @@ export interface MobilePillComposerProps {
     canAbort: boolean;
     footerIconButtonClass: string;
     iconSizeClass: string;
+    sendIconSizeClass: string;
     stopIconSizeClass: string;
-    theme: Theme;
+    /** Rendered as the pill's own first row (the suggested follow-up). */
+    topRow?: React.ReactNode;
+    /** Attached files, shown inside the pill above the draft line. */
+    attachments?: React.ReactNode;
+    /** Rendered as the pill's own last row (mobile model/agent controls). */
+    bottomRow?: React.ReactNode;
     onExpand: () => void;
-    onApplySuggestion: (text: string) => void;
-    onNewSession: () => void;
+    onPrimaryAction: () => void;
+    /** While a turn runs, the trailing action queues, as the expanded composer does. */
+    onQueueMessage: () => void;
     onPickLocalFiles: () => void;
-    onOpenIssuePicker: () => void;
-    onOpenPrPicker: () => void;
+    onOpenGitHubPicker: () => void;
+    /** The host the project's issues and change requests come from. */
+    repositoryProvider?: SourceControlProvider;
+    showLinearPicker?: boolean;
+    onOpenLinearPicker?: () => void;
     onOpenAttachSheet: () => void;
     onStartDictation: () => void;
     onAbort: () => void;
@@ -55,18 +70,28 @@ export function MobilePillComposer(props: MobilePillComposerProps) {
         canAbort,
         footerIconButtonClass,
         iconSizeClass,
+        sendIconSizeClass,
         stopIconSizeClass,
-        theme: currentTheme,
+        topRow,
+        attachments,
+        bottomRow,
         onExpand,
-        onApplySuggestion,
-        onNewSession,
+        onPrimaryAction,
+        onQueueMessage,
         onPickLocalFiles,
-        onOpenIssuePicker,
-        onOpenPrPicker,
+        onOpenGitHubPicker,
+        repositoryProvider,
+        showLinearPicker,
+        onOpenLinearPicker,
         onOpenAttachSheet,
         onStartDictation,
         onAbort,
     } = props;
+    const canPrimaryAction = hasContent && Boolean(currentSessionId || newSessionDraftOpen);
+    const showTrailingSendAction = canPrimaryAction && canAbort;
+    const dictationEnabled = useConfigStore((state) => state.dictationEnabled);
+    const [dictationSupported] = useState(() => !isVSCodeRuntime() && isDictationCaptureSupported());
+    const showDictation = dictationEnabled && dictationSupported;
 
     return (
         <div className="flex flex-col">
@@ -75,36 +100,54 @@ export function MobilePillComposer(props: MobilePillComposerProps) {
             directory={directory}
             className="mb-1.5"
         />
-        <SessionSuggestionChip
-            sessionId={currentSessionId}
-            directory={directory}
-            hidden={hasContent || newSessionDraftOpen}
-            onApply={onApplySuggestion}
-            className="mb-1.5"
-        />
-        <div className="flex items-center gap-2">
+        <div className="flex items-center">
+            {/* Shadow on the wrapper, never on the glass: see "Floating
+                composer" in composer/DOCUMENTATION.md. The wrapper hugs the
+                box, so the shadow follows the morph's height tween. */}
             <div
-                className="flex h-11 min-w-0 flex-1 items-center gap-x-0.5 rounded-full border border-border/80 pl-2 pr-1 shadow-[0_4px_16px_-4px_rgb(0_0_0_/_0.12)]"
-                style={{ backgroundColor: currentTheme?.colors?.surface?.subtle }}
+                className={cn(
+                    'flex min-w-0 flex-1 flex-col shadow-[0_4px_16px_-4px_rgb(0_0_0_/_0.12)]',
+                    topRow || bottomRow ? 'rounded-[1.5rem]' : 'rounded-full',
+                )}
             >
+            <div
+                data-mobile-composer-pill="true"
+                // The morph measures and animates this box (see mobileComposerMorph).
+                data-composer-box="true"
+                className={cn(
+                    'oc-glass-composer flex min-w-0 flex-col border border-border/80',
+                    topRow || bottomRow ? 'rounded-[1.5rem]' : 'rounded-full',
+                )}
+            >
+            {topRow}
+            {attachments}
+            {/* pl-1 puts the attach icon at the same inset the expanded
+                footer gives it, and h-12 is the expanded footer's height
+                (its buttons sit on the mobile 36px touch floor), so the icons
+                do not shift across the swap. */}
+            <div className="flex h-12 min-w-0 items-center gap-x-0.5 pl-1 pr-1">
                 <ComposerAttachmentControls
                     isVSCode={isVSCode}
                     footerIconButtonClass={footerIconButtonClass}
                     iconSizeClass={iconSizeClass}
                     handlePickLocalFiles={onPickLocalFiles}
-                    openIssuePicker={onOpenIssuePicker}
-                    openPrPicker={onOpenPrPicker}
+                    openGitHubPicker={onOpenGitHubPicker}
+                    repositoryProvider={repositoryProvider}
+                    showLinearPicker={showLinearPicker}
+                    openLinearPicker={onOpenLinearPicker}
                     onOpenMobileSheet={onOpenAttachSheet}
                 />
                 <button
                     type="button"
+                    // The morph moves the editor block to and from this line.
+                    data-composer-morph-prompt="true"
                     className="flex h-full min-w-0 flex-1 cursor-text items-center px-1.5 text-left"
                     onClick={onExpand}
                 >
                     <span
                         className={cn(
                             'truncate typography-ui-label',
-                            message.trim() ? 'text-foreground' : 'text-muted-foreground',
+                            message.trim() ? 'text-foreground' : 'text-muted-foreground/40',
                         )}
                     >
                         {message.trim()
@@ -114,17 +157,19 @@ export function MobilePillComposer(props: MobilePillComposerProps) {
                                 : t('chat.chatInput.placeholder.selectSession')}
                     </span>
                 </button>
-                <button
-                    type="button"
-                    className={footerIconButtonClass}
-                    // Starts recording in place; the composer morphs into the
-                    // voice variant once dictation actually goes live.
-                    onClick={onStartDictation}
-                    title={t('chat.dictation.start')}
-                    aria-label={t('chat.dictation.start')}
-                >
-                    <Icon name="mic" className={cn(iconSizeClass, 'text-current')} />
-                </button>
+                {showDictation ? (
+                    <button
+                        type="button"
+                        className={footerIconButtonClass}
+                        // Starts recording in place; the composer morphs into the
+                        // voice variant once dictation actually goes live.
+                        onClick={onStartDictation}
+                        title={t('chat.dictation.start')}
+                        aria-label={t('chat.dictation.start')}
+                    >
+                        <Icon name="mic" className={cn(iconSizeClass, 'text-current')} />
+                    </button>
+                ) : null}
                 {/* Same visibility rule as the full composer's stop control:
                     while a turn is running the stop button takes the mic's
                     end slot and the mic shifts one slot left. Instant swap —
@@ -151,26 +196,46 @@ export function MobilePillComposer(props: MobilePillComposerProps) {
                     >
                         <StopIcon className={cn(stopIconSizeClass)} />
                     </button>
+                ) : canPrimaryAction ? (
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="text-primary hover:text-primary"
+                        onClick={onPrimaryAction}
+                        title={t('chat.chatInput.actions.sendMessageAria')}
+                        aria-label={t('chat.chatInput.actions.sendMessageAria')}
+                    >
+                        <Icon name="send-plane-2" className={cn(sendIconSizeClass)} />
+                    </Button>
                 ) : null}
             </div>
-            {/* New-session button: fades/shrinks away when the draft is
-                already open, letting the pill expand into its place. */}
+            {bottomRow}
+            </div>
+            </div>
+            {/* While running, Abort owns the pill's end slot and this outer
+                button queues the draft, with the same rotated icon and label
+                the expanded composer uses for that state. Collapsed otherwise. */}
             <div
                 className={cn(
                     'flex-shrink-0 transition-all duration-200 ease-out',
-                    newSessionDraftOpen ? 'w-0 opacity-0 overflow-hidden' : 'w-11 opacity-100',
+                    // The gap lives on the slot, so a collapsed slot leaves
+                    // the pill exactly as wide as the expanded box.
+                    showTrailingSendAction ? 'ml-2 w-11 opacity-100' : 'w-0 opacity-0 overflow-hidden',
+                    // The glass button's shadow, kept off its backdrop-filter.
+                    'rounded-full shadow-[0_4px_16px_-4px_rgb(0_0_0_/_0.12)]',
                 )}
             >
                 <button
                     type="button"
-                    className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border border-border/80 text-foreground shadow-[0_4px_16px_-4px_rgb(0_0_0_/_0.12)]"
-                    style={{ backgroundColor: currentTheme?.colors?.surface?.subtle }}
-                    onClick={onNewSession}
-                    disabled={newSessionDraftOpen}
-                    title={t('mobile.sessions.newChat')}
-                    aria-label={t('mobile.sessions.newChat')}
+                    className="oc-glass-composer flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border border-border/80 text-primary hover:text-primary"
+                    onClick={onQueueMessage}
+                    disabled={!showTrailingSendAction}
+                    tabIndex={showTrailingSendAction ? undefined : -1}
+                    title={t('chat.chatInput.actions.queueMessageAria')}
+                    aria-label={t('chat.chatInput.actions.queueMessageAria')}
                 >
-                    <Icon name="add" className="h-5 w-5 text-current" />
+                    <Icon name="send-plane-2" className={cn(sendIconSizeClass, '-rotate-90', 'text-current')} />
                 </button>
             </div>
         </div>

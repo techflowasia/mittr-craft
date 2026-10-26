@@ -1,0 +1,15 @@
+{
+  "name": "@mittrcraft/ui-plugin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "type-check": "tsc --noEmit",
+    "test": "node ../../scripts/run-isolated-tests.mjs src",
+    "lint": "eslint \"./src/**/*.{ts,tsx}\" --config ../../eslint.config.js"
+  },
+  "dependencies": {
+    "@ricky0123/vad-web": "0.0.31",
+    "onnxruntime-web": "1.30.0"
+  }
+}

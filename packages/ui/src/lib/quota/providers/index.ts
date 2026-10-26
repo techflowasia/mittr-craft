@@ -7,6 +7,7 @@ export interface QuotaProviderMeta {
 
 export const QUOTA_PROVIDERS: QuotaProviderMeta[] = [
   { id: 'claude', name: 'Claude' },
+  { id: 'cline-pass', name: 'ClinePass' },
   { id: 'codex', name: 'Codex' },
   { id: 'cursor', name: 'Cursor' },
   { id: 'github-copilot', name: 'GitHub Copilot' },
@@ -21,8 +22,38 @@ export const QUOTA_PROVIDERS: QuotaProviderMeta[] = [
   { id: 'ollama-cloud', name: 'Ollama Cloud' },
   { id: 'wafer', name: 'Wafer.ai' },
   { id: 'opencode-go', name: 'OpenCode Go' },
-  { id: 'crof', name: 'CrofAI' },
+  { id: 'deepinfra', name: 'DeepInfra' },
   { id: 'deepseek', name: 'DeepSeek' },
+  { id: 'exe-dev', name: 'exe.dev' },
+  { id: 'hyper', name: 'Charm Hyper' },
   { id: 'neuralwatt', name: 'NeuralWatt' },
+  { id: 'kilo', name: 'Kilo Code' },
+  { id: 'zenmux', name: 'ZenMux' },
   { id: 'xai', name: 'xAI' },
 ];
+
+const runTimeProviders = new Set<string>();
+
+export function registerQuotaProvider(meta: { id: string; name: string }, options?: { first?: boolean; exclusive?: boolean }): void {
+  if (QUOTA_PROVIDERS.some((provider) => provider.id === meta.id)) {
+    return;
+  }
+  const entry: QuotaProviderMeta = { id: meta.id as QuotaProviderId, name: meta.name };
+  runTimeProviders.add(entry.id);
+  if (options?.first) {
+    QUOTA_PROVIDERS.unshift(entry);
+  } else {
+    QUOTA_PROVIDERS.push(entry);
+  }
+  if (options?.exclusive) {
+    const kept = QUOTA_PROVIDERS.filter((provider) => runTimeProviders.has(provider.id));
+    QUOTA_PROVIDERS.splice(0, QUOTA_PROVIDERS.length, ...kept);
+  }
+}
+
+export function selectRegisteredQuotaProvider(id: string, select: (id: QuotaProviderId) => void): void {
+  const provider = QUOTA_PROVIDERS.find((entry) => entry.id === id);
+  if (provider) {
+    select(provider.id);
+  }
+}

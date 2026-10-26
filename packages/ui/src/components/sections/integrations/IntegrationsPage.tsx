@@ -1,33 +1,59 @@
 import React from 'react';
 import { SettingsPageLayout } from '@/components/sections/shared/SettingsPageLayout';
+import { SettingsSection } from '@/components/sections/shared/SettingsSection';
 import { useI18n } from '@/lib/i18n';
-import { ComingSoonMessengersSection } from './ComingSoonMessengersSection';
+import { ProductSlot } from '@/lib/product-plugins';
+import { isVSCodeRuntime } from '@/lib/desktop';
+import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
+import { GuestIntegrationCard, GuestIntegrationsSection } from './GuestIntegrationsSection';
+import { useGuestsStore } from '@/lib/guests/store';
+import { isGuestActive } from '@/lib/guests/capabilities';
+import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
+import { GitHubIntegration } from './GitHubIntegration';
+import { GitLabSettings } from '@/components/sections/openchamber/GitLabSettings';
+import { LinearSettings } from './LinearSettings';
 import { ThirdPartyIntegrationsSection } from './ThirdPartyIntegrationsSection';
-import { WorkTrackingIntegrationsSection } from './WorkTrackingIntegrationsSection';
+import { CatalogExtensionsSection } from './CatalogExtensionsSection';
 
-interface IntegrationsPageProps {
-  onOpenProviderSetup: (providerId: string) => Promise<boolean>;
-  onOpenPluginManager: () => void;
-}
-
-export const IntegrationsPage: React.FC<IntegrationsPageProps> = ({
-  onOpenProviderSetup,
-  onOpenPluginManager,
-}) => {
+export const IntegrationsPage: React.FC = () => {
   const { t } = useI18n();
+  // GitHub sign-in is an OpenChamber server feature; the VS Code extension
+  // uses the editor's own GitHub session instead.
+  // Hosting providers are OpenChamber server features; VS Code uses its own Git integration.
+  const hasGitHub = !isVSCodeRuntime();
+  const hasGitLab = !isVSCodeRuntime();
+  const hasLinear = Boolean(getRegisteredRuntimeAPIs()?.linear);
+  const guests = useGuestsStore((state) => state.guests);
+  const runtimeKey = useGuestsStore((state) => state.runtimeKey);
+  const builtInGuests = !isVSCodeRuntime() && !isMobileSurfaceRuntime()
+    ? guests.filter((guest) => guest.source === 'bundled' && guest.integration && isGuestActive(guest))
+    : [];
+  const hasBuiltIn = hasGitHub || hasGitLab || hasLinear || builtInGuests.length > 0;
 
   return (
     <SettingsPageLayout
       title={t('settings.page.integrations.title')}
       description={t('settings.page.integrations.description')}
-      showSaveStatus={false}
+      showSaveStatus
     >
-      <WorkTrackingIntegrationsSection />
-      <ComingSoonMessengersSection />
-      <ThirdPartyIntegrationsSection
-        onOpenProviderSetup={onOpenProviderSetup}
-        onOpenPluginManager={onOpenPluginManager}
-      />
+      {hasBuiltIn ? (
+        <SettingsSection
+          title={t('settings.integrations.firstParty.title')}
+          info={t('settings.integrations.firstParty.info')}
+          divider={false}
+          settingsItem="integrations.first-party"
+          contentClassName="space-y-3"
+        >
+          {hasGitHub ? <GitHubIntegration /> : null}
+          {hasGitLab ? <GitLabSettings /> : null}
+          {hasLinear ? <LinearSettings /> : null}
+          {builtInGuests.map((guest) => <GuestIntegrationCard key={`${runtimeKey}:${guest.id}`} guest={guest} />)}
+        </SettingsSection>
+      ) : null}
+      <ProductSlot name="integrations-page" />
+      <ThirdPartyIntegrationsSection divider={hasBuiltIn} />
+      <CatalogExtensionsSection />
+      <GuestIntegrationsSection />
     </SettingsPageLayout>
   );
 };

@@ -1,47 +1,55 @@
 ---
 title: Umgebungsvariablen
-description: Konfiguriere die MittrCraft- und OpenCode-Integration mit Umgebungsvariablen.
+description: Konfiguriere die OpenChamber- und OpenCode-Integration mit Umgebungsvariablen.
 ---
 
 # Umgebungsvariablen
 
-MittrCraft liest diese Umgebungsvariablen beim Start. Für Startdienste speichert `mittrcraft startup enable` die aktuelle Umgebung standardmäßig als Schnappschuss, also führe den Befehl nach Änderungen an den Variablen, die der Dienst verwenden soll, erneut aus.
+OpenChamber liest diese Umgebungsvariablen beim Start. Für Startdienste speichert `openchamber startup enable` die aktuelle Umgebung standardmäßig als Schnappschuss, also führe den Befehl nach Änderungen an den Variablen, die der Dienst verwenden soll, erneut aus.
 
-## MittrCraft-Server
+## OpenChamber-Server
 
-### `MITTRCRAFT_HOST`
+### `OPENCHAMBER_HOST`
 
-Bind-Adresse für den MittrCraft-Webserver. Verwende `0.0.0.0`, um Zugriff von anderen Maschinen zu erlauben.
+Bind-Adresse für den OpenChamber-Webserver. Verwende `0.0.0.0`, um Zugriff von anderen Maschinen zu erlauben.
 
-### `MITTRCRAFT_UI_PASSWORD`
+### `OPENCHAMBER_UI_PASSWORD`
 
 Passwort für die Browser-Oberfläche. Verwende es, wenn du außerhalb von localhost bindest, Tunnels nutzt oder hinter einem Reverse Proxy läufst.
 
-### `MITTRCRAFT_API_ONLY`
+### `OPENCHAMBER_API_ONLY`
 
-Startet MittrCraft im Headless-Modus, wenn auf `true` oder `1` gesetzt. API-Routen bleiben für Desktop- und Mobile-Clients verfügbar, aber die Browser-Oberfläche wird nicht ausgeliefert.
+Startet OpenChamber im Headless-Modus, wenn auf `true` oder `1` gesetzt. API-Routen bleiben für Desktop- und Mobile-Clients verfügbar, aber die Browser-Oberfläche wird nicht ausgeliefert.
 
-### `MITTRCRAFT_DATA_DIR`
+### `OPENCHAMBER_FRAME_ANCESTORS`
 
-Überschreibt das MittrCraft-Datenverzeichnis. Standard ist `~/.config/mittrcraft`.
+Origins, die OpenChamber in einem Frame auf ihrer eigenen Seite zeigen dürfen, durch Leerzeichen getrennt, zum Beispiel `https://dash.example.com`. `*` erlaubt jede Seite. Standardmäßig dürfen nur OpenChamber selbst und seine Desktop- und Mobile-Apps es einbetten, damit keine fremde Seite seine Schaltflächen überlagern kann.
 
-### `MITTRCRAFT_COMPRESS_API`
+### `OPENCHAMBER_DATA_DIR`
+
+Überschreibt das OpenChamber-Datenverzeichnis. Standard ist `~/.config/openchamber`.
+
+### `OPENCHAMBER_CHATS_DIR`
+
+Verschiebt die verwalteten Chat-Verzeichnisse, die OpenChamber für Chats ohne Projekt anlegt. Standard ist `~/.config/openchamber/chats`. Setze ein Verzeichnis, das der OpenCode-Server lesen kann, wenn OpenChamber und OpenCode unter verschiedenen Benutzern laufen. Bestehende Chats werden nicht verschoben.
+
+### `OPENCHAMBER_COMPRESS_API`
 
 Steuert die Komprimierung von API-Antworten. Verwende `true` oder `1`, um sie zu erzwingen, und `false` oder `0`, um sie zu deaktivieren.
 
-### `MITTRCRAFT_SKIP_API_COMPRESSION`
+### `OPENCHAMBER_SKIP_API_COMPRESSION`
 
-Deaktiviert die Komprimierung von API-Antworten, wenn auf `true` oder `1` gesetzt. Das hat Vorrang vor `MITTRCRAFT_COMPRESS_API`.
+Deaktiviert die Komprimierung von API-Antworten, wenn auf `true` oder `1` gesetzt. Das hat Vorrang vor `OPENCHAMBER_COMPRESS_API`.
 
-### `MITTRCRAFT_VERBOSE_REQUEST_LOGS`
+### `OPENCHAMBER_VERBOSE_REQUEST_LOGS`
 
 Aktiviert ausführliche HTTP-Request-Logs, wenn auf `true` oder `1` gesetzt.
 
-### `MITTRCRAFT_UPDATE_API_URL`
+### `OPENCHAMBER_UPDATE_API_URL`
 
 Überschreibt den API-Endpunkt für Update-Prüfungen. Die meisten Nutzer sollten das nicht setzen.
 
-### `MITTRCRAFT_PACKAGE_MANAGER`
+### `OPENCHAMBER_PACKAGE_MANAGER`
 
 Erzwingt den Paketmanager, den Update-Operationen verwenden, wenn die automatische Erkennung falsch liegt.
 
@@ -49,7 +57,7 @@ Erzwingt den Paketmanager, den Update-Operationen verwenden, wenn die automatisc
 
 ### `OPENCODE_HOST`
 
-Verbindet MittrCraft mit einem vorhandenen OpenCode-Server. Der Wert muss ein `http`- oder `https`-Origin mit explizitem Port und ohne Pfad, Query oder Hash sein. `OPENCODE_HOST` hat Vorrang vor `OPENCODE_PORT`.
+Verbindet OpenChamber mit einem vorhandenen OpenCode-Server. Der Wert muss ein `http`- oder `https`-Origin mit explizitem Port und ohne Pfad, Query oder Hash sein. `OPENCODE_HOST` hat Vorrang vor `OPENCODE_PORT`.
 
 ### `OPENCODE_PORT`
 
@@ -57,15 +65,15 @@ Legt den Port des OpenCode-Servers fest. Bei verwaltetem OpenCode fordert dies d
 
 ### `OPENCODE_SKIP_START`
 
-Verhindert, dass MittrCraft einen eigenen OpenCode-Server startet, wenn auf `true` gesetzt.
+Verhindert, dass OpenChamber einen eigenen OpenCode-Server startet, wenn auf `true` gesetzt.
 
-### `MITTRCRAFT_OPENCODE_HOSTNAME`
+### `OPENCHAMBER_OPENCODE_HOSTNAME`
 
-Bind-Hostname für den von MittrCraft verwalteten OpenCode-Server. Standard ist `127.0.0.1`.
+Bind-Hostname für den von OpenChamber verwalteten OpenCode-Server. Standard ist `127.0.0.1`.
 
 ### `OPENCODE_BINARY`
 
-Pfad zur ausführbaren `opencode`-Datei, die MittrCraft ausführen soll.
+Pfad zur ausführbaren `opencode`-Datei, die OpenChamber ausführen soll.
 
 ### `OPENCODE_CONFIG`
 
@@ -83,9 +91,9 @@ Benutzerdefiniertes Datenverzeichnis für den verwalteten OpenCode-Server.
 
 Wählt die WSL-Distribution für die OpenCode-Integration unter Windows aus.
 
-### `MITTRCRAFT_OPENCODE_WSL_DISTRO`
+### `OPENCHAMBER_OPENCODE_WSL_DISTRO`
 
-MittrCraft-spezifischer Alias zur Auswahl der WSL-Distribution. `OPENCODE_WSL_DISTRO` hat Vorrang, wenn beide gesetzt sind.
+OpenChamber-spezifischer Alias zur Auswahl der WSL-Distribution. `OPENCODE_WSL_DISTRO` hat Vorrang, wenn beide gesetzt sind.
 
 ### `OPENCODE_JWT_SECRET`
 
@@ -93,19 +101,19 @@ Geheimnis zum Signieren von UI-Authentifizierungstokens. Verwende für dauerhaft
 
 ## Terminal und Git
 
-### `MITTRCRAFT_TERMINAL_SHELL`
+### `OPENCHAMBER_TERMINAL_SHELL`
 
-Shell-Executable, die MittrCraft für Terminal-Sessions verwendet.
+Shell-Executable, die OpenChamber für Terminal-Sessions verwendet.
 
-### `MITTRCRAFT_GIT_BINARY`
+### `OPENCHAMBER_GIT_BINARY`
 
-Git-Executable, die MittrCraft-Git-Funktionen verwenden.
+Git-Executable, die OpenChamber-Git-Funktionen verwenden.
 
 ### `GIT_BINARY`
 
-Alternative Git-Executable-Überschreibung. Bevorzuge `MITTRCRAFT_GIT_BINARY` für MittrCraft-spezifische Konfiguration.
+Alternative Git-Executable-Überschreibung. Bevorzuge `OPENCHAMBER_GIT_BINARY` für OpenChamber-spezifische Konfiguration.
 
-### `MITTRCRAFT_GIT_READ_CACHE_TTL_MS`
+### `OPENCHAMBER_GIT_READ_CACHE_TTL_MS`
 
 Lebensdauer in Millisekunden für zwischengespeicherte Git-gestützte Dateilesevorgänge. Setze `0`, um diesen Cache beim Debuggen zu deaktivieren.
 
@@ -113,25 +121,25 @@ Lebensdauer in Millisekunden für zwischengespeicherte Git-gestützte Dateilesev
 
 ### `OPENAI_API_KEY`
 
-API-Schlüssel, den MittrCraft-Voice-Funktionen für OpenAI-kompatible Dienste verwenden.
+API-Schlüssel, den OpenChamber-Voice-Funktionen verwenden, wenn sie OpenAI selbst aufrufen. An einen eigenen OpenAI-kompatiblen Server wird er nie gesendet: Gib diesem Server in den Einstellungen einen eigenen Schlüssel.
 
-### `MITTRCRAFT_ALLOW_REMOTE_OPENAI_COMPAT_URLS`
+### `OPENCHAMBER_ALLOW_REMOTE_OPENAI_COMPAT_URLS`
 
 Erlaubt entfernte OpenAI-kompatible Basis-URLs für Voice-Funktionen, wenn auf `true` oder `1` gesetzt.
 
 ### `NGROK_AUTHTOKEN`
 
-ngrok-Auth-Token, den MittrCraft-Tunnel-Befehle verwenden. Du kannst ngrok auch mit `ngrok config add-authtoken <token>` konfigurieren.
+ngrok-Auth-Token, den OpenChamber-Tunnel-Befehle verwenden. Du kannst ngrok auch mit `ngrok config add-authtoken <token>` konfigurieren.
 
 ## Laufzeit-Helfer
 
 ### `BUN_BINARY`
 
-Bun-Executable, die MittrCraft beim Starten von Daemon-Prozessen verwenden soll.
+Bun-Executable, die OpenChamber beim Starten von Daemon-Prozessen verwenden soll.
 
 ### `BUN_INSTALL`
 
-Installationswurzel von Bun. MittrCraft verwendet sie, um `bin/bun` für Daemon-Start und Updates zu finden.
+Installationswurzel von Bun. OpenChamber verwendet sie, um `bin/bun` für Daemon-Start und Updates zu finden.
 
 ### `VITE_OPENCODE_URL`
 

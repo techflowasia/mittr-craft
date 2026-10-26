@@ -13,6 +13,8 @@ export interface RuntimeUrlConfig {
 export interface RuntimeUrlResolver {
   api(path: string, query?: RuntimeUrlQuery): string;
   authenticatedAsset(path: string, query?: RuntimeUrlQuery): string;
+  /** Same as `authenticatedAsset` with a caller-minted scoped token instead of the session-wide one. */
+  assetWithUrlToken(path: string, token: string, query?: RuntimeUrlQuery): string;
   auth(path: string, query?: RuntimeUrlQuery): string;
   health(query?: RuntimeUrlQuery): string;
   rawFile(path: string, options?: { download?: boolean; allowOutsideWorkspace?: boolean; outsideFileGrant?: string }): string;
@@ -35,13 +37,13 @@ const normalizeBaseUrl = (value: string | null | undefined): string => {
 
 const readInjectedApiBaseUrl = (): string => {
   if (typeof window === 'undefined') return '';
-  const injected = (window as typeof window & { __MITTRCRAFT_API_BASE_URL__?: string }).__MITTRCRAFT_API_BASE_URL__;
+  const injected = (window as typeof window & { __OPENCHAMBER_API_BASE_URL__?: string }).__OPENCHAMBER_API_BASE_URL__;
   return normalizeBaseUrl(injected);
 };
 
 const readInjectedLocalOrigin = (): string => {
   if (typeof window === 'undefined') return '';
-  const injected = (window as typeof window & { __MITTRCRAFT_LOCAL_ORIGIN__?: string }).__MITTRCRAFT_LOCAL_ORIGIN__;
+  const injected = (window as typeof window & { __OPENCHAMBER_LOCAL_ORIGIN__?: string }).__OPENCHAMBER_LOCAL_ORIGIN__;
   return normalizeBaseUrl(injected);
 };
 
@@ -90,18 +92,23 @@ const buildHttpUrl = (baseUrl: string, path: string, query?: RuntimeUrlQuery): s
     return appendRelativeQuery(normalizedPath, query);
   }
 
-  const url = new URL(normalizedPath, `${baseUrl}/`);
+  // Join onto the base's own path instead of new URL(absolutePath, base),
+  // which keeps only the origin and drops a sub-path prefix
+  // (https://host/openchamber -> https://host). A saved host URL can still
+  // carry a query or hash from the browser address bar; neither belongs to
+  // the API path, so they are dropped.
+  const base = new URL(baseUrl);
+  const url = new URL(`${base.origin}${base.pathname.replace(/\/+$/, '')}${normalizedPath}`);
   appendQuery(url, query);
   return url.toString();
 };
 
-const withUrlAuth = (urlValue: string): string => {
-  const token = getRuntimeUrlAuthTokenSync();
+const withUrlAuth = (urlValue: string, token: string = getRuntimeUrlAuthTokenSync()): string => {
   if (!token) return urlValue;
 
   const url = ABSOLUTE_URL_PATTERN.test(urlValue)
     ? new URL(urlValue)
-    : new URL(urlValue, 'http://mittrcraft.local');
+    : new URL(urlValue, 'http://openchamber.local');
   url.searchParams.set('oc_url_token', token);
   if (ABSOLUTE_URL_PATTERN.test(urlValue)) return url.toString();
   return `${url.pathname}${url.search}${url.hash}`;
@@ -123,7 +130,7 @@ const toRealtimeProxyUrl = (kind: 'sse' | 'ws', targetUrl: string, config: Runti
   const localOrigin = readInjectedLocalOrigin();
   if (!localOrigin) return null;
   try {
-    const proxy = new URL(`/api/mittrcraft/realtime-proxy/${kind === 'sse' ? 'sse' : 'ws'}`, `${localOrigin}/`);
+    const proxy = new URL(`/api/openchamber/realtime-proxy/${kind === 'sse' ? 'sse' : 'ws'}`, `${localOrigin}/`);
     proxy.searchParams.set('url', targetUrl);
     const localToken = getLocalRuntimeUrlAuthTokenSync(localOrigin);
     if (localToken) proxy.searchParams.set('oc_url_token', localToken);
@@ -150,6 +157,7 @@ export const createRuntimeUrlResolver = (config: RuntimeUrlConfig = {}): Runtime
   return {
     api: http,
     authenticatedAsset: (path, query) => withUrlAuth(http(path, query)),
+    assetWithUrlToken: (path, token, query) => withUrlAuth(http(path, query), token),
     auth: http,
     health: (query) => http('/health', query),
     rawFile: (path, options) => http('/api/fs/raw', {

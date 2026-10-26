@@ -1,0 +1,71 @@
+{
+  "about": "Upstream test failures recorded on untouched upstream 2.1.1 with this machine's bun 1.3.14 (docs/plans/2026-10-16-phase-1-baseline.txt). scripts/mittr/test-baseline.mjs runs each stage of the root test script and fails only on a failure not listed here. `file` is relative to the folder the stage runs in.",
+  "failures": [
+    {
+      "stage": "scripts",
+      "file": "scripts/bump-version.test.mjs",
+      "test": "a release bump packs workspace dependencies at the new version after a frozen install",
+      "why": "bun pm pack packs the old version under bun 1.3.14"
+    },
+    {
+      "stage": "sdk",
+      "file": "scripts/examples.test.ts",
+      "test": "checked-in SDK examples > all shipped bundles match their source and current SDK",
+      "why": "bundle hash differs with the bundler of bun 1.3.14"
+    },
+    {
+      "stage": "ui",
+      "file": "src/components/chat/markdown/markdownCore.test.ts",
+      "test": "Streaming heal > healing a long streamed block full of underscores stays fast",
+      "why": "timing limit on this machine"
+    },
+    {
+      "stage": "ui",
+      "file": "src/components/chat/markdown/markdownCore.test.ts",
+      "test": "Many short paragraphs > block math and disclosures after thousands of paragraphs render in linear work (assistant text)",
+      "why": "timing limit on this machine"
+    },
+    {
+      "stage": "ui",
+      "file": "src/components/chat/markdown/markdownCore.test.ts",
+      "test": "Many short paragraphs > block math and disclosures after thousands of paragraphs render in linear work (user text)",
+      "why": "timing limit on this machine"
+    },
+    {
+      "stage": "ui",
+      "file": "src/components/chat/markdown/markdownCore.test.ts",
+      "test": "Long paragraphs > the data dump from the report opens without the quadratic rescan",
+      "why": "timing limit on this machine"
+    },
+    {
+      "stage": "vscode",
+      "file": "src/opencode-upgrade-runtime.test.ts",
+      "test": "VS Code OpenCode upgrades > uses the configured registry and Basic headers for the v2 package version",
+      "why": "mock.method is missing in bun 1.3.14"
+    },
+    {
+      "stage": "vscode",
+      "file": "src/opencode-upgrade-runtime.test.ts",
+      "test": "VS Code OpenCode upgrades > reports invalid registry configuration without a public-registry fallback",
+      "why": "mock.method is missing in bun 1.3.14"
+    },
+    {
+      "stage": "vscode",
+      "file": "src/opencodeConfig-npm-registry.test.ts",
+      "test": "plugin metadata uses the shared resolver with credential-safe URLs",
+      "why": "mock.method is missing in bun 1.3.14"
+    },
+    {
+      "stage": "vscode",
+      "file": "webview/api/git.test.ts",
+      "test": "createVSCodeGitAPI network operations > a slow transfer stays running past the bridge timeout and settles with the host answer",
+      "why": "mock.timers is missing in bun 1.3.14"
+    },
+    {
+      "stage": "web",
+      "file": "server/lib/spaces/websocket.test.js",
+      "test": "the WebSocket forwarder > ends every socket when it is closed",
+      "why": "flaky: fails in a full run, passes alone"
+    }
+  ]
+}

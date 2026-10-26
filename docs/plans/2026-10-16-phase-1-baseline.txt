@@ -1,0 +1,56 @@
+Phase 1 baseline: untouched upstream OpenChamber 2.1.1 (e302062e3be0686986594fddabdafd8a97c129e5)
+Recorded 2026-10-16 on branch rebase/upstream-2.1.1, before any change of ours.
+
+Environment
+  bun 1.3.14 (installed; the base declares bun@1.4.2 in packageManager), node v24.16.0 (nvm, .nvmrc lts/*)
+  macOS arm64, Darwin 25.5.0
+  bun install: 3093 packages, bun.lock unchanged, no new lockfile.
+
+Rule: failures below are upstream's (or this bun/machine's), not ours to fix.
+Later tasks must not add any failure to this list.
+
+type-check (bun run type-check)
+  PASS  mobile, sdk, web, electron, ui, root     (exit 0 for all six)
+
+lint (bun run lint)
+  PASS  mobile, sdk, web, electron, ui, root     (exit 0 for all six)
+  ui: 0 errors, 5 warnings (react-hooks/exhaustive-deps)
+
+test (bun run test, run per stage in the same order)
+  scripts   FAIL  8/9 files passed
+  sdk       FAIL  21/22 files passed
+  ui        FAIL  726/727 files passed
+  vscode    FAIL  56/59 files passed
+  electron  PASS  33/33 files passed
+  web       FAIL  355 files passed, 1 failed, 9 skipped; 6332 tests passed, 1 failed, 127 skipped
+
+Failing tests
+  scripts
+    scripts/bump-version.test.mjs
+      a release bump packs workspace dependencies at the new version after a frozen install
+        (expected packed version 1.24.0, received 1.23.1; depends on `bun pm pack`, likely bun 1.3.14 vs 1.4.2)
+  sdk
+    packages/sdk/scripts/examples.test.ts
+      checked-in SDK examples > all shipped bundles match their source and current SDK
+        (bundle hash differs; likely bundler output of bun 1.3.14 vs 1.4.2)
+  ui   (all in packages/ui/src/components/chat/markdown/markdownCore.test.ts; timing limits, reproduced on a second run)
+      Streaming heal > healing a long streamed block full of underscores stays fast (3.9s, limit 1.5s)
+      Many short paragraphs > block math and disclosures after thousands of paragraphs render in linear work (assistant text)
+      Many short paragraphs > block math and disclosures after thousands of paragraphs render in linear work (user text)
+      Long paragraphs > the data dump from the report opens without the quadratic rescan
+  vscode
+    VS Code OpenCode upgrades > uses the configured registry and Basic headers for the v2 package version
+    VS Code OpenCode upgrades > reports invalid registry configuration without a public-registry fallback
+    plugin metadata uses the shared resolver with credential-safe URLs
+      (these three: `mock.method is not a function`)
+    createVSCodeGitAPI network operations > a slow transfer stays running past the bridge timeout and settles with the host answer
+      (`mock.timers` undefined)
+      All four are node:test mock APIs missing in bun 1.3.14.
+  web
+    server/lib/spaces/websocket.test.js > the WebSocket forwarder > ends every socket when it is closed
+      (flaky: failed in the full run, passed 3 of 3 when run alone)
+  electron
+    none
+
+Note: the bun-dependent failures (scripts, sdk, vscode, and possibly the ui timing ones) may clear on bun 1.4.2.
+Ruling R3 keeps the installed bun, so this file is the reference for the later tasks.

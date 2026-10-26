@@ -1,0 +1,32 @@
+diff --git a/packages/electron/updater-capability.mjs b/packages/electron/updater-capability.mjs
+index 049b24713..7df0c603b 100644
+--- a/packages/electron/updater-capability.mjs
++++ b/packages/electron/updater-capability.mjs
+@@ -1,13 +1,16 @@
+ import fs from 'node:fs';
+ import path from 'node:path';
++import { UPSTREAM_PRODUCT } from './product.mjs';
+ 
+ export const assertUpdaterCapability = ({
+   platform = process.platform,
+   packaged,
++  updaterFeed = UPSTREAM_PRODUCT.updaterFeed,
+   appImagePath = process.env.APPIMAGE,
+   access = fs.accessSync,
+   stat = fs.statSync,
+ } = {}) => {
++  if (!updaterFeed) throw new Error('Updates are not available in this build.');
+   if (platform !== 'linux' || !packaged) return;
+ 
+   if (!appImagePath) {
+@@ -33,3 +36,10 @@ export const assertUpdaterCapability = ({
+     );
+   }
+ };
++
++// What an update check answers in a build with no update feed: no update, and
++// that updates are off, so a caller can say so rather than "up to date".
++// Null when the build has a feed and the check should run.
++export const updateCheckWithoutFeed = ({ updaterFeed = UPSTREAM_PRODUCT.updaterFeed, currentVersion }) => (
++  updaterFeed ? null : { available: false, updatesDisabled: true, currentVersion, version: null, body: null, date: null }
++);

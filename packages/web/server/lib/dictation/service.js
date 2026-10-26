@@ -1,3 +1,5 @@
+import { readVoiceKey } from '../tts/voice-keys.js';
+import { detectTextLanguage } from '../tts/language-detect.js';
 /**
  * Dictation service: resolves STT providers, tracks local model download
  * state, and exposes a readiness snapshot for the status route.
@@ -13,10 +15,11 @@ import { rm } from 'fs/promises';
 
 import { DictationWorkerClient, WorkerBackedTranscriptionSession } from './local/worker-client.js';
 import { OpenAICompatibleTranscriptionSession } from './openai-compatible-session.js';
-import { MITTR_LISTEN_ERRORS, MittrTranscriptionSession } from './mittr-session.js';
 import {
   DEFAULT_LOCAL_STT_MODEL,
   DEFAULT_LOCAL_TTS_MODEL,
+  getLocalTtsDefaultSpeaker,
+  resolveLocalTtsModelForLanguage,
   LOCAL_STT_MODEL_CATALOG,
   LOCAL_STT_MODEL_IDS,
   LOCAL_TTS_MODEL_CATALOG,
@@ -28,11 +31,7 @@ import {
 } from './local/model-catalog.js';
 import { ensureLocalSttModel, isLocalSttModelInstalled } from './local/model-downloader.js';
 
-const resolveProvider = (value) => (
-  value === 'openai-compatible' || value === 'mittr' ? value : 'local'
-);
-
-export function createDictationService({ modelsDir, getMittrSpeechClient = () => null }) {
+export function createDictationService({ modelsDir }) {
   const workerClient = new DictationWorkerClient();
   /** modelId -> 'downloading' | 'error' */
   const downloadStates = new Map();
@@ -88,41 +87,17 @@ export function createDictationService({ modelsDir, getMittrSpeechClient = () =>
    * @param {{ provider?: string, language?: string, localModel?: string,
    *           openaiCompatible?: { baseUrl?: string, model?: string, apiKey?: string } }} options
    */
-  const readMittrListenReadiness = async () => {
-    const client = getMittrSpeechClient();
-    if (!client) {
-      return { client: null, available: false, reasonCode: 'unreachable' };
-    }
-    const readiness = await client.readiness();
-    if (readiness.ready?.listen) {
-      return { client, available: true };
-    }
-    return { client, available: false, reasonCode: readiness.reason || 'not_configured' };
-  };
-
   const createSttSession = async (options = {}) => {
-    const provider = resolveProvider(options.provider);
-
-    if (provider === 'mittr') {
-      const { client, available, reasonCode } = await readMittrListenReadiness();
-      if (!available) {
-        return {
-          error: MITTR_LISTEN_ERRORS[reasonCode] || MITTR_LISTEN_ERRORS.not_configured,
-          retryable: reasonCode === 'unreachable',
-          reasonCode,
-        };
-      }
-      const session = new MittrTranscriptionSession({ client });
-      await session.connect();
-      return { session };
-    }
+    const provider = options.provider === 'openai-compatible' ? 'openai-compatible' : 'local';
 
     if (provider === 'openai-compatible') {
       const config = options.openaiCompatible || {};
       const session = new OpenAICompatibleTranscriptionSession({
         baseURL: config.baseUrl,
         model: config.model,
-        apiKey: config.apiKey || undefined,
+        // The key stored in Settings; one sent with the request comes from a
+        // client older than the server-side store.
+        apiKey: config.apiKey || readVoiceKey('stt'),
         language: options.language || undefined,
       });
       try {
@@ -190,7 +165,7 @@ export function createDictationService({ modelsDir, getMittrSpeechClient = () =>
    * @param {{ provider?: string, localModel?: string }} [options]
    */
   const getStatus = async (options = {}) => {
-    const provider = resolveProvider(options.provider);
+    const provider = options.provider === 'openai-compatible' ? 'openai-compatible' : 'local';
     const modelId = resolveLocalModelId(options.localModel);
 
     const describeModel = async (id, catalog) => ({
@@ -211,11 +186,6 @@ export function createDictationService({ modelsDir, getMittrSpeechClient = () =>
 
     if (provider === 'openai-compatible') {
       return { provider, available: true, models, ttsModels };
-    }
-
-    if (provider === 'mittr') {
-      const { available, reasonCode } = await readMittrListenReadiness();
-      return { provider, available, ...(available ? {} : { reasonCode }), models, ttsModels };
     }
 
     const model = models.find((entry) => entry.id === modelId) || null;
@@ -256,10 +226,30 @@ export function createDictationService({ modelsDir, getMittrSpeechClient = () =>
   /**
    * Synthesize speech with the local TTS model. Returns WAV bytes, or a
    * readiness error while the model is missing/downloading.
-   * @param {{ text: string, model?: string, speakerId?: number, speed?: number }} options
+   *
+   * With `language: 'auto'` the text's language decides the model: the
+   * caller's model when it speaks that language, otherwise the catalog
+   * model for it (downloaded on first use, reported as in-progress until it
+   * lands). The caller's speaker id is kept only on the caller's model; a
+   * substitute model starts from its own default speaker for the language.
+   * A language no catalog model covers keeps the caller's model, so text is
+   * never silently dropped.
+   * `languageSample` is the whole message the chunk belongs to (or a prefix
+   * of it): the language is judged on that, never on a short chunk alone.
+   * @param {{ text: string, model?: string, speakerId?: number, speed?: number, language?: string, languageSample?: string }} options
    */
-  const synthesizeSpeech = async ({ text, model, speakerId, speed }) => {
-    const modelId = isLocalTtsModelId(model) ? model : DEFAULT_LOCAL_TTS_MODEL;
+  const synthesizeSpeech = async ({ text, model, speakerId, speed, language, languageSample }) => {
+    const requestedModelId = isLocalTtsModelId(model) ? model : DEFAULT_LOCAL_TTS_MODEL;
+    let modelId = requestedModelId;
+    let resolvedLanguage = null;
+    if (language === 'auto') {
+      resolvedLanguage = detectTextLanguage(languageSample || text).language;
+      const forLanguage = resolveLocalTtsModelForLanguage(resolvedLanguage, requestedModelId);
+      if (forLanguage && forLanguage !== requestedModelId) {
+        modelId = forLanguage;
+        speakerId = getLocalTtsDefaultSpeaker(modelId, resolvedLanguage);
+      }
+    }
     const installed = await isLocalSttModelInstalled(modelsDir, modelId);
     if (!installed) {
       const state = downloadStates.get(modelId);
@@ -287,7 +277,7 @@ export function createDictationService({ modelsDir, getMittrSpeechClient = () =>
       speakerId,
       speed,
     });
-    return { audio: result.audio, format: result.format };
+    return { audio: result.audio, format: result.format, modelId, language: resolvedLanguage };
   };
 
   /**

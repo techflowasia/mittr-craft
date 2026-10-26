@@ -4,6 +4,7 @@ export const createNotificationEmitterRuntime = (dependencies) => {
     getDesktopNotifyEnabled,
     desktopNotifyPrefix,
     getUiNotificationClients,
+    getOpenChamberEventClients = () => new Set(),
     getBroadcastGlobalUiEvent,
     // Optional: in-process desktop shells (Electron main) inject a callback so
     // notifications are delivered as a direct function call instead of a stdout
@@ -22,8 +23,8 @@ export const createNotificationEmitterRuntime = (dependencies) => {
     onDesktopNotification = typeof cb === 'function' ? cb : null;
   };
 
-  const writeSseEvent = (res, payload) => {
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  const writeSseEvent = (res, payload, serializedPayload = JSON.stringify(payload)) => {
+    res.write(`data: ${serializedPayload}\n\n`);
   };
 
   const emitDesktopNotification = (payload) => {
@@ -66,7 +67,7 @@ export const createNotificationEmitterRuntime = (dependencies) => {
     const desktopNotificationDelivered = options.desktopNotificationDelivered === true;
 
     const syntheticPayload = {
-      type: 'mittrcraft:notification',
+      type: 'openchamber:notification',
       properties: {
         ...payload,
         // Tell local desktop UI whether a native channel already accepted this
@@ -77,6 +78,20 @@ export const createNotificationEmitterRuntime = (dependencies) => {
         desktopStdoutActive: desktopNotifyEnabled,
       },
     };
+
+    // New clients share the control SSE; older clients retain their dedicated
+    // notification SSE. The global broadcaster still owns WebSocket delivery.
+    const controlClients = getOpenChamberEventClients();
+    if (controlClients.size > 0) {
+      const serializedPayload = JSON.stringify(syntheticPayload);
+      for (const client of controlClients) {
+        try {
+          writeSseEvent(client, syntheticPayload, serializedPayload);
+        } catch {
+          // One disconnected control client must not block other transports.
+        }
+      }
+    }
 
     const broadcastGlobalUiEvent = typeof getBroadcastGlobalUiEvent === 'function'
       ? getBroadcastGlobalUiEvent()
@@ -91,9 +106,10 @@ export const createNotificationEmitterRuntime = (dependencies) => {
       return;
     }
 
+    const serializedPayload = JSON.stringify(syntheticPayload);
     for (const res of clients) {
       try {
-        writeSseEvent(res, syntheticPayload);
+        writeSseEvent(res, syntheticPayload, serializedPayload);
       } catch {
         // ignore
       }

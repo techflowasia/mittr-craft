@@ -1,11 +1,15 @@
-import { getRuntimeExtraHeadersSync, refreshLocalRuntimeUrlAuthToken, refreshRuntimeUrlAuthToken, setRuntimeBearerToken, setRuntimeExtraHeaders } from '@mittrcraft/ui/lib/runtime-auth';
-import { installRuntimeFetchBridge } from '@mittrcraft/ui/lib/runtime-fetch';
-import { initializeRuntimeEndpoint, switchRuntimeEndpoint } from '@mittrcraft/ui/lib/runtime-switch';
-import { restoreDesktopRelayRuntime } from '@mittrcraft/ui/lib/desktopRelayRestore';
-import { configureRuntimeUrlResolver } from '@mittrcraft/ui/lib/runtime-url';
-import type { EmbeddedSessionRuntimeBootstrap } from '@mittrcraft/ui/components/layout/contextPanelEmbeddedChat';
-import { opencodeClient } from '@mittrcraft/ui/lib/opencode/client';
+import { getRuntimeExtraHeadersSync, refreshLocalRuntimeUrlAuthToken, refreshRuntimeUrlAuthToken, setRuntimeBearerToken, setRuntimeExtraHeaders } from '@openchamber/ui/lib/runtime-auth';
+import { installRuntimeFetchBridge } from '@openchamber/ui/lib/runtime-fetch';
+import { initializeRuntimeEndpoint } from '@openchamber/ui/lib/runtime-switch';
+import { warmDesktopHostStatuses } from '@openchamber/ui/lib/desktopHostStatus';
+import { restoreDesktopRelayRuntime } from '@openchamber/ui/lib/desktopRelayRestore';
+import { getInjectedBootOutcome } from '@openchamber/ui/lib/desktopBoot';
+import { configureRuntimeUrlResolver } from '@openchamber/ui/lib/runtime-url';
+import { opencodeClient } from '@openchamber/ui/lib/opencode/client';
 import { createWebAPIs } from './api';
+
+// The switcher's statuses are warmed after boot settles, not during it.
+const HOST_STATUS_WARMUP_DELAY_MS = 3_000;
 
 const sameOrigin = (left: string, right: string): boolean => {
   if (!left || !right) return false;
@@ -18,23 +22,31 @@ const sameOrigin = (left: string, right: string): boolean => {
 
 declare global {
   interface Window {
-    __MITTRCRAFT_API_BASE_URL__?: string;
-    __MITTRCRAFT_CLIENT_TOKEN__?: string;
-    __MITTRCRAFT_RUNTIME_HEADERS__?: Record<string, string>;
-    __MITTRCRAFT_LOCAL_ORIGIN__?: string;
-    __MITTRCRAFT_RELAY_HOST_ID__?: string;
+    __OPENCHAMBER_API_BASE_URL__?: string;
+    __OPENCHAMBER_CLIENT_TOKEN__?: string;
+    __OPENCHAMBER_RUNTIME_HEADERS__?: Record<string, string>;
+    __OPENCHAMBER_LOCAL_ORIGIN__?: string;
+    __OPENCHAMBER_RELAY_HOST_ID__?: string;
   }
 }
 
-export const readRuntimeBootstrapConfig = (): EmbeddedSessionRuntimeBootstrap => {
+type RuntimeBootstrapConfig = {
+  apiBaseUrl: string;
+  clientToken: string;
+  localOrigin: string;
+  runtimeHeaders?: Record<string, string>;
+  relayHostId: string;
+};
+
+export const readRuntimeBootstrapConfig = (): RuntimeBootstrapConfig => {
   const readString = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
 
   return {
-    apiBaseUrl: readString(window.__MITTRCRAFT_API_BASE_URL__),
-    clientToken: readString(window.__MITTRCRAFT_CLIENT_TOKEN__),
-    localOrigin: readString(window.__MITTRCRAFT_LOCAL_ORIGIN__),
-    runtimeHeaders: window.__MITTRCRAFT_RUNTIME_HEADERS__,
-    relayHostId: readString(window.__MITTRCRAFT_RELAY_HOST_ID__),
+    apiBaseUrl: readString(window.__OPENCHAMBER_API_BASE_URL__),
+    clientToken: readString(window.__OPENCHAMBER_CLIENT_TOKEN__),
+    localOrigin: readString(window.__OPENCHAMBER_LOCAL_ORIGIN__),
+    runtimeHeaders: window.__OPENCHAMBER_RUNTIME_HEADERS__,
+    relayHostId: readString(window.__OPENCHAMBER_RELAY_HOST_ID__),
   };
 };
 
@@ -43,8 +55,10 @@ export const readRuntimeBootstrapConfig = (): EmbeddedSessionRuntimeBootstrap =>
 let desktopRelayRestoreReady: Promise<void> = Promise.resolve();
 export const getDesktopRelayRestoreReady = (): Promise<void> => desktopRelayRestoreReady;
 
-export const createConfiguredWebAPIs = (bootstrap?: EmbeddedSessionRuntimeBootstrap | null) => {
-  const { apiBaseUrl, clientToken, localOrigin, runtimeHeaders, relayHostId, relay } = bootstrap ?? readRuntimeBootstrapConfig();
+export const createConfiguredWebAPIs = () => {
+  const { apiBaseUrl, clientToken, localOrigin, runtimeHeaders, relayHostId } = readRuntimeBootstrapConfig();
+  const bootOutcome = getInjectedBootOutcome();
+  const desktopHostId = relayHostId || (bootOutcome?.target === 'remote' ? bootOutcome.hostId : '');
 
   const urls = configureRuntimeUrlResolver({
     apiBaseUrl: apiBaseUrl || undefined,
@@ -52,21 +66,12 @@ export const createConfiguredWebAPIs = (bootstrap?: EmbeddedSessionRuntimeBootst
   });
   initializeRuntimeEndpoint({
     apiBaseUrl,
-    runtimeKey: sameOrigin(apiBaseUrl, localOrigin) ? 'local' : null,
+    runtimeKey: sameOrigin(apiBaseUrl, localOrigin) ? 'local' : (desktopHostId ? `host:${desktopHostId}` : null),
   });
   setRuntimeBearerToken(clientToken || null);
   setRuntimeExtraHeaders(runtimeHeaders || null);
-  if (relay) {
-    switchRuntimeEndpoint({
-      apiBaseUrl,
-      clientToken: clientToken || null,
-      requestHeaders: runtimeHeaders || null,
-      runtimeKey: relayHostId ? `host:${relayHostId}` : null,
-      relay,
-    });
-  }
-  // createWebAPIs imports UI stores, which instantiate the SDK singleton before
-  // an embedded frame's asynchronous parent bootstrap is available.
+  // createWebAPIs imports UI stores, which instantiate the SDK singleton
+  // before the endpoint above is configured.
   opencodeClient.reconnectToRuntimeBaseUrl();
   void refreshRuntimeUrlAuthToken(apiBaseUrl || undefined).catch(() => {});
   if (localOrigin && !sameOrigin(apiBaseUrl, localOrigin) && Object.keys(getRuntimeExtraHeadersSync()).length > 0) {
@@ -79,16 +84,21 @@ export const createConfiguredWebAPIs = (bootstrap?: EmbeddedSessionRuntimeBootst
   // relay host is involved. main.tsx holds the app render on this promise so
   // the user sees the splash instead of a transient auth screen against an
   // endpoint that is still being selected.
-  desktopRelayRestoreReady = relay
-    ? Promise.resolve()
-    : Promise.race([
-        restoreDesktopRelayRuntime(relayHostId || undefined).catch(() => {}),
-        // Never hold the app hostage: a stuck probe/tunnel gives up to the UI.
-        new Promise<void>((resolve) => { window.setTimeout(resolve, 10_000); }),
-      ]).then(() => {
-        // Relay-capable windows may select a reachable direct leg before React
-        // subscribes to runtime-change events, so bind the SDK explicitly.
-        opencodeClient.reconnectToRuntimeBaseUrl();
-      });
+  desktopRelayRestoreReady = Promise.race([
+    restoreDesktopRelayRuntime(relayHostId || undefined).catch(() => {}),
+    // Never hold the app hostage: a stuck probe/tunnel gives up to the UI.
+    new Promise<void>((resolve) => { window.setTimeout(resolve, 10_000); }),
+  ]).then(() => {
+    // Relay-capable windows may select a reachable direct leg before React
+    // subscribes to runtime-change events, so bind the SDK explicitly.
+    opencodeClient.reconnectToRuntimeBaseUrl();
+  });
+  // Learn every instance's reachability in the background, so the switcher opens
+  // on real values instead of probing for the first time under the user's
+  // cursor. After the endpoint is settled and past the app's own bootstrap:
+  // this is unprompted work and the machine's network is busiest at launch.
+  void desktopRelayRestoreReady.then(() => {
+    window.setTimeout(() => { void warmDesktopHostStatuses().catch(() => {}); }, HOST_STATUS_WARMUP_DELAY_MS);
+  });
   return createWebAPIs({ urls });
 };

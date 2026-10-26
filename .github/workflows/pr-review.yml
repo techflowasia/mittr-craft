@@ -20,8 +20,8 @@ jobs:
     name: automation
     if: |
       github.event_name == 'pull_request_target' ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.login != 'mittrcraft-bot[bot]' && (github.event.comment.body == '/oc-review' || startsWith(github.event.comment.body, '/oc-review ') || github.event.comment.body == '@openchamber-bot review' || startsWith(github.event.comment.body, '@openchamber-bot review '))) ||
-      (github.event_name == 'pull_request_review_comment' && github.event.comment.user.login != 'mittrcraft-bot[bot]' && (github.event.comment.body == '/oc-review' || startsWith(github.event.comment.body, '/oc-review ') || github.event.comment.body == '@openchamber-bot review' || startsWith(github.event.comment.body, '@openchamber-bot review ')))
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.login != 'openchamber-bot[bot]' && (github.event.comment.body == '/oc-review' || startsWith(github.event.comment.body, '/oc-review ') || github.event.comment.body == '@openchamber-bot review' || startsWith(github.event.comment.body, '@openchamber-bot review '))) ||
+      (github.event_name == 'pull_request_review_comment' && github.event.comment.user.login != 'openchamber-bot[bot]' && (github.event.comment.body == '/oc-review' || startsWith(github.event.comment.body, '/oc-review ') || github.event.comment.body == '@openchamber-bot review' || startsWith(github.event.comment.body, '@openchamber-bot review ')))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -29,7 +29,7 @@ jobs:
       issues: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
 
@@ -79,7 +79,7 @@ jobs:
       - name: Generate review app token
         id: app-token
         if: steps.pr.outputs.draft == 'false'
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ secrets.OC_REVIEW_APP_ID }}
           private-key: ${{ secrets.OC_REVIEW_APP_PRIVATE_KEY }}
@@ -105,8 +105,40 @@ jobs:
 
           echo "safe=true" >> "$GITHUB_OUTPUT"
 
-      - name: Mark review pending
+      - name: Throttle push-burst reviews
+        id: throttle
         if: steps.pr.outputs.draft == 'false' && steps.safety.outputs.safe == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+        run: |
+          # Manual commands always run; only push-triggered re-reviews are throttled,
+          # so a push burst cannot produce a review per push.
+          if [ "$EVENT_NAME" != "pull_request_target" ] || [ "$EVENT_ACTION" != "synchronize" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          last_review_at="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+            | jq -r '[.[] | select(.user.login == "openchamber-bot[bot]" and (.body | contains("<!-- oc-review-meta "))) | .created_at] | last // empty')"
+
+          if [ -z "$last_review_at" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          age="$(( $(date +%s) - $(date -d "$last_review_at" +%s) ))"
+          if [ "$age" -lt 900 ]; then
+            echo "Last review was ${age}s ago; skipping push-triggered re-review (15m throttle)."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mark review pending
+        if: steps.pr.outputs.draft == 'false' && steps.safety.outputs.safe == 'true' && steps.throttle.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
@@ -204,7 +236,7 @@ jobs:
         run: sleep 30
 
       - name: Install opencode
-        if: steps.pr.outputs.draft == 'false' && steps.safety.outputs.safe == 'true'
+        if: steps.pr.outputs.draft == 'false' && steps.safety.outputs.safe == 'true' && steps.throttle.outputs.skip != 'true'
         run: |
           set -o pipefail
           install_log="$(mktemp)"
@@ -237,16 +269,16 @@ jobs:
           exit "$((curl_status || install_status))"
 
       - name: Record review start
-        if: steps.pr.outputs.draft == 'false' && steps.safety.outputs.safe == 'true'
+        if: steps.pr.outputs.draft == 'false' && steps.safety.outputs.safe == 'true' && steps.throttle.outputs.skip != 'true'
         id: review-start
         run: echo "started_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
 
       - name: Review pull request
-        if: steps.pr.outputs.draft == 'false' && steps.safety.outputs.safe == 'true'
+        if: steps.pr.outputs.draft == 'false' && steps.safety.outputs.safe == 'true' && steps.throttle.outputs.skip != 'true'
         id: review-run
         env:
           REVIEW_TIMEOUT: 30m
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          ZHIPU_API_KEY: ${{ secrets.ZHIPU_API_KEY }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_URL: ${{ steps.pr.outputs.url }}
@@ -259,14 +291,14 @@ jobs:
           COMMAND_FOCUS: ${{ steps.command.outputs.focus }}
         run: |
           review_started_epoch="$(date +%s)"
-          review_model="$(awk -F': ' '$1 == "model" { print $2; exit }' .opencode/agent/pr-review.md)"
+          review_model="$(awk -F': ' '$1 == "model" { print $2; exit }' .opencode/agent/pr-review-bot.md)"
           echo "OpenCode version: $(opencode --version)"
           echo "Review agent: pr-review"
           echo "Review model: ${review_model:-unknown}"
           echo "Review timeout: $REVIEW_TIMEOUT"
 
           set +e
-          timeout --signal=TERM --kill-after=30s "$REVIEW_TIMEOUT" opencode run --agent pr-review "A pull request in the MittrCraft repository needs one unified correctness, repository-guidance, contribution-quality, and evidence review.
+          timeout --signal=TERM --kill-after=30s "$REVIEW_TIMEOUT" opencode run --agent pr-review-bot "A pull request in the OpenChamber repository needs one unified correctness, repository-guidance, contribution-quality, and evidence review.
 
           This may be a repeated review request. Before writing a new review, inspect prior PR comments, bot comments, reviews, inline comments, and the commit timeline via GitHub. Compare prior findings against commits pushed after those comments, then only repeat findings that still exist in the current diff/current file state.
 
@@ -302,7 +334,7 @@ jobs:
 
       - name: Verify and enforce review verdict
         id: verdict
-        if: always() && steps.pr.outputs.draft == 'false' && steps.safety.outputs.safe == 'true'
+        if: always() && steps.pr.outputs.draft == 'false' && steps.safety.outputs.safe == 'true' && steps.throttle.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
@@ -346,10 +378,10 @@ jobs:
           review_json="$(gh api \
             "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
             --paginate \
-            | jq -s --arg started_at "$REVIEW_STARTED_AT" '[.[][] | select(.created_at >= $started_at and .user.login == "mittrcraft-bot[bot]" and (.body | contains("<h3>Code Review Summary</h3>")) and (.body | contains("<!-- oc-review-meta ")))] | last // empty')"
+            | jq -s --arg started_at "$REVIEW_STARTED_AT" '[.[][] | select(.created_at >= $started_at and .user.login == "openchamber-bot[bot]" and (.body | contains("<h3>Code Review Summary</h3>")) and (.body | contains("<!-- oc-review-meta ")))] | last // empty')"
 
           if [ -z "$review_json" ]; then
-            fail_automation "Review completed without creating a new structured MittrCraft Bot PR comment."
+            fail_automation "Review completed without creating a new structured OpenChamber Bot PR comment."
           fi
 
           if ! metadata="$(printf '%s' "$review_json" | jq -er '.body | capture("<!-- oc-review-meta (?<json>\\{[^\\n]+\\}) -->").json | fromjson')"; then
@@ -388,9 +420,8 @@ jobs:
             fail_automation "Review comment does not identify the expected HEAD."
           fi
 
-          if ! printf '%s' "$body" | grep -Fq '<h3>Applied Repository Guidance</h3>' || \
-             ! printf '%s' "$body" | grep -Fq '| Source | Why applicable | Rules/invariants evaluated |'; then
-            fail_automation "Review comment does not contain the required applied-guidance record."
+          if ! printf '%s' "$body" | grep -Fq '**For the maintainer:**'; then
+            fail_automation "Review comment does not contain the maintainer verdict line."
           fi
 
           expected_marker="<!-- oc-review-meta {\"head\":\"$REVIEW_HEAD_SHA\",\"verdict\":\"$verdict\"} -->"
@@ -416,7 +447,7 @@ jobs:
           fi
 
           {
-            echo "### MittrCraft review verdict"
+            echo "### OpenChamber review verdict"
             echo
             echo "- HEAD: \`$REVIEW_HEAD_SHA\`"
             echo "- Verdict: \`$verdict\`"
@@ -424,7 +455,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Mark automation failure
-        if: always() && steps.pr.outputs.draft == 'false' && steps.verdict.outcome != 'success' && steps.safety.outputs.safe != 'false'
+        if: always() && steps.pr.outputs.draft == 'false' && steps.verdict.outcome != 'success' && steps.safety.outputs.safe != 'false' && steps.throttle.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}

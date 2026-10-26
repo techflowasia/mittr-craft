@@ -1,4 +1,4 @@
-import type { Session } from '@opencode-ai/sdk/v2';
+import type { Session } from '@/lib/opencode/model';
 
 import { getSessionMetadata, type SessionMetadataRecord } from './sessionReviewMetadata';
 
@@ -14,10 +14,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 export const getContextObligatoryMessages = (
   session: Session | null | undefined,
 ): ContextObligatoryMessage[] => {
-  const mittrcraft = getSessionMetadata(session).mittrcraft;
-  if (!isRecord(mittrcraft) || !Array.isArray(mittrcraft.context_obligatory_messages)) return [];
+  const openchamber = getSessionMetadata(session).openchamber;
+  if (!isRecord(openchamber) || !Array.isArray(openchamber.context_obligatory_messages)) return [];
 
-  return mittrcraft.context_obligatory_messages.filter((value): value is ContextObligatoryMessage =>
+  return openchamber.context_obligatory_messages.filter((value): value is ContextObligatoryMessage =>
     isRecord(value)
     && typeof value.id === 'string'
     && typeof value.createdAt === 'number'
@@ -30,9 +30,9 @@ export const withContextObligatoryMessage = (
   message: ContextObligatoryMessage,
   pinned: boolean,
 ): SessionMetadataRecord => {
-  const mittrcraft = isRecord(metadata.mittrcraft) ? metadata.mittrcraft : {};
-  const current = Array.isArray(mittrcraft.context_obligatory_messages)
-    ? mittrcraft.context_obligatory_messages.filter((value): value is ContextObligatoryMessage =>
+  const openchamber = isRecord(metadata.openchamber) ? metadata.openchamber : {};
+  const current = Array.isArray(openchamber.context_obligatory_messages)
+    ? openchamber.context_obligatory_messages.filter((value): value is ContextObligatoryMessage =>
       isRecord(value) && typeof value.id === 'string')
     : [];
   const withoutMessage = current.filter((value) => value.id !== message.id);
@@ -40,8 +40,8 @@ export const withContextObligatoryMessage = (
 
   return {
     ...metadata,
-    mittrcraft: {
-      ...mittrcraft,
+    openchamber: {
+      ...openchamber,
       context_obligatory_messages: nextMessages,
     },
   };

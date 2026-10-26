@@ -26,7 +26,7 @@ jobs:
       archive_name: ${{ steps.archive.outputs.archive_name }}
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -38,7 +38,7 @@ jobs:
         id: archive
         run: |
           mkdir -p artifacts
-          ARCHIVE_NAME="mittrcraft-docs-source-${GITHUB_SHA::8}.tar.gz"
+          ARCHIVE_NAME="openchamber-docs-source-${GITHUB_SHA::8}.tar.gz"
           tar -czf "artifacts/${ARCHIVE_NAME}" -C packages/docs .
           echo "archive_name=${ARCHIVE_NAME}" >> "$GITHUB_OUTPUT"
 
@@ -58,15 +58,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Trigger mittrcraft-website docs sync (optional)
+      - name: Trigger openchamber-website docs sync (optional)
         if: ${{ github.event_name == 'push' || github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
         env:
-          WEBSITE_REPO: techflowasia/mittr-craft-website
-          WEBSITE_TOKEN: ${{ secrets.MITTRCRAFT_WEBSITE_REPO_TOKEN }}
+          WEBSITE_REPO: openchamber/openchamber-website
+          WEBSITE_TOKEN: ${{ secrets.OPENCHAMBER_WEBSITE_REPO_TOKEN }}
           SOURCE_REF: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref_name }}
         run: |
           if [ -z "$WEBSITE_TOKEN" ]; then
-            echo "MITTRCRAFT_WEBSITE_REPO_TOKEN not set; skip dispatch."
+            echo "OPENCHAMBER_WEBSITE_REPO_TOKEN not set; skip dispatch."
             exit 0
           fi
 

@@ -1,12 +1,12 @@
-# MittrCraft Docs Source
+# OpenChamber Docs Source
 
-This package is the source-of-truth for MittrCraft public docs content.
+This package is the source-of-truth for OpenChamber public docs content.
 
 ## Layout
 
 - `content/docs/*.mdx` - English docs pages (source of truth)
 - `content/docs/<locale>/*.mdx` - translations, mirroring the English filenames
-  (e.g. `uk/`, `zh-cn/`, `pt-br/`, `fr/`); see `CONTRIBUTING.md` → Localization
+  (e.g. `uk/`, `zh-cn/`, `pt-br/`, `fr/`, `tr/`); see `CONTRIBUTING.md` → Localization
 - `sidebar.config.json` - docs navigation structure for Starlight sidebar
 - `CONTRIBUTING.md` - authoring guide for adding pages, sections, and translations
 - `DEPLOYMENT.md` - release/manual packaging and sync trigger model
@@ -28,6 +28,6 @@ This validates:
 
 This repo owns docs content.
 
-Website rendering/deployment happens in `mittrcraft-website` (`apps/docs`).
+Website rendering/deployment happens in `openchamber-website` (`apps/docs`).
 
 Use `.github/workflows/docs-source.yml` to package docs source on release or manual trigger.

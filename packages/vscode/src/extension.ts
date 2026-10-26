@@ -1,13 +1,29 @@
 import * as vscode from 'vscode';
 import { ChatViewProvider } from './ChatViewProvider';
-import { AgentManagerPanelProvider } from './AgentManagerPanelProvider';
 import { SessionEditorPanelProvider } from './SessionEditorPanelProvider';
 import { createOpenCodeManager, type OpenCodeManager } from './opencode';
+import { configureOpenCodeCredentials, openCodeCredentialSource } from './opencodeAuth';
 import { startGlobalEventWatcher, stopGlobalEventWatcher, setChatViewProvider } from './sessionActivityWatcher';
+import { pathsEqualWithNormalizedDriveLetter } from './pathUtils';
 import { resolveWorkspaceFolders } from './workspaceResolver';
+import { InlineCommentThreads, SIDEBAR_SURFACE_ID } from './InlineCommentThreads';
+import { applyConnectAttemptTimeout } from './networkDefaults';
+import { stopGitProcesses } from './bridge-git-process-runtime';
+import { registerGenerateCommitMessageCommand } from './scmCommitMessage';
 
 let chatViewProvider: ChatViewProvider | undefined;
-let agentManagerProvider: AgentManagerPanelProvider | undefined;
+
+/** The webview's `{ drafts: [{ id, text }] }` snapshot, or null when it is not one. */
+function readDraftSnapshot(snapshot: unknown): Array<{ id: string; text: string }> | null {
+  if (typeof snapshot !== 'object' || snapshot === null || !('drafts' in snapshot) || !Array.isArray(snapshot.drafts)) return null;
+  const drafts: Array<{ id: string; text: string }> = [];
+  for (const entry of snapshot.drafts) {
+    if (typeof entry !== 'object' || entry === null || !('id' in entry) || typeof entry.id !== 'string') continue;
+    const text = 'text' in entry && typeof entry.text === 'string' ? entry.text : '';
+    drafts.push({ id: entry.id, text });
+  }
+  return drafts;
+}
 let sessionEditorProvider: SessionEditorPanelProvider | undefined;
 let openCodeManager: OpenCodeManager | undefined;
 let outputChannel: vscode.OutputChannel | undefined;
@@ -17,7 +33,7 @@ let activeSessionTitle: string | null = null;
 
 const t = vscode.l10n.t;
 
-const SETTINGS_KEY = 'mittrcraft.settings';
+const SETTINGS_KEY = 'openchamber.settings';
 const CHAT_VIEW_BOOTSTRAP_DELAY_MS = 80;
 
 const waitForChatViewBootstrap = () => new Promise<void>((resolve) => setTimeout(resolve, CHAT_VIEW_BOOTSTRAP_DELAY_MS));
@@ -38,7 +54,8 @@ const formatDurationMs = (value: number | null | undefined) => {
 };
 
 export async function activate(context: vscode.ExtensionContext) {
-  outputChannel = vscode.window.createOutputChannel('MittrCraft');
+  applyConnectAttemptTimeout();
+  outputChannel = vscode.window.createOutputChannel('OpenChamber');
 
   let moveToRightSidebarScheduled = false;
 
@@ -80,12 +97,12 @@ export async function activate(context: vscode.ExtensionContext) {
     if (!moveCommandId) return 'unsupported';
 
     try {
-      await vscode.commands.executeCommand('mittrcraft.chatView.focus');
+      await vscode.commands.executeCommand('openchamber.chatView.focus');
       await vscode.commands.executeCommand(moveCommandId);
       return 'moved';
     } catch (error) {
       outputChannel?.appendLine(
-        `[MittrCraft] Failed moving chat view to right sidebar (command=${moveCommandId}): ${error instanceof Error ? error.message : String(error)}`
+        `[OpenChamber] Failed moving chat view to right sidebar (command=${moveCommandId}): ${error instanceof Error ? error.message : String(error)}`
       );
       return 'failed';
     }
@@ -94,9 +111,9 @@ export async function activate(context: vscode.ExtensionContext) {
   const maybeMoveChatToRightSidebarOnStartup = async () => {
     if (isCursorLikeHost()) return;
 
-    const attempted = context.globalState.get<boolean>('mittrcraft.sidebarAutoMoveAttempted') || false;
+    const attempted = context.globalState.get<boolean>('openchamber.sidebarAutoMoveAttempted') || false;
     if (attempted) return;
-    await context.globalState.update('mittrcraft.sidebarAutoMoveAttempted', true);
+    await context.globalState.update('openchamber.sidebarAutoMoveAttempted', true);
 
     if (moveToRightSidebarScheduled) return;
     moveToRightSidebarScheduled = true;
@@ -115,7 +132,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 
   // Migration: clear legacy auto-set API URLs (ports 47680-47689 were auto-assigned by older extension versions)
-  const config = vscode.workspace.getConfiguration('mittrcraft');
+  const config = vscode.workspace.getConfiguration('openchamber');
   const legacyApiUrl = config.get<string>('apiUrl') || '';
   if (/^https?:\/\/localhost:4768\d\/?$/.test(legacyApiUrl.trim())) {
     await config.update('apiUrl', '', vscode.ConfigurationTarget.Global);
@@ -123,6 +140,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Create OpenCode manager first
   openCodeManager = createOpenCodeManager(context);
+  // Quota lookups read provider credentials from the running OpenCode.
+  configureOpenCodeCredentials(openCodeCredentialSource(openCodeManager));
 
   // Create chat view provider with manager reference
   // The webview will show a loading state until OpenCode is ready
@@ -138,25 +157,25 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Register sidebar/focus commands AFTER the webview view provider is registered
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.openSidebar', async () => {
+    vscode.commands.registerCommand('openchamber.openSidebar', async () => {
       // Best-effort: open the container (if available), then focus the chat view.
       try {
-        await vscode.commands.executeCommand('workbench.view.extension.mittrcraft');
+        await vscode.commands.executeCommand('workbench.view.extension.openchamber');
       } catch (e) {
-        outputChannel?.appendLine(`[MittrCraft] workbench.view.extension.mittrcraft failed: ${e}`);
+        outputChannel?.appendLine(`[OpenChamber] workbench.view.extension.openchamber failed: ${e}`);
       }
 
       try {
-        await vscode.commands.executeCommand('mittrcraft.chatView.focus');
+        await vscode.commands.executeCommand('openchamber.chatView.focus');
       } catch (e) {
-        outputChannel?.appendLine(`[MittrCraft] mittrcraft.chatView.focus failed: ${e}`);
-        vscode.window.showErrorMessage(t('MittrCraft: Failed to open sidebar - {0}', String(e)));
+        outputChannel?.appendLine(`[OpenChamber] openchamber.chatView.focus failed: ${e}`);
+        vscode.window.showErrorMessage(t('OpenChamber: Failed to open sidebar - {0}', String(e)));
         return false;
       }
 
       if (!chatViewProvider?.hasResolvedView()) {
-        outputChannel?.appendLine('[MittrCraft] Chat sidebar focus completed before the webview was resolved');
-        vscode.window.showWarningMessage(t('MittrCraft: Chat sidebar is not ready'));
+        outputChannel?.appendLine('[OpenChamber] Chat sidebar focus completed before the webview was resolved');
+        vscode.window.showWarningMessage(t('OpenChamber: Chat sidebar is not ready'));
         return false;
       }
 
@@ -165,23 +184,65 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   const revealChatViewForPayload = async () => {
-    const opened = await vscode.commands.executeCommand<boolean>('mittrcraft.openSidebar');
+    const opened = await vscode.commands.executeCommand<boolean>('openchamber.openSidebar');
     if (!opened) {
       return false;
     }
 
     await waitForChatViewBootstrap();
     if (!chatViewProvider?.hasResolvedView()) {
-      outputChannel?.appendLine('[MittrCraft] Chat sidebar webview was disposed before payload delivery');
-      vscode.window.showWarningMessage(t('MittrCraft: Chat sidebar is not ready'));
+      outputChannel?.appendLine('[OpenChamber] Chat sidebar webview was disposed before payload delivery');
+      vscode.window.showWarningMessage(t('OpenChamber: Chat sidebar is not ready'));
       return false;
     }
 
     return true;
   };
 
+  const selectNewSessionWorkspace = async (directory?: string) => {
+    const candidates = resolveWorkspaceFolders(vscode.workspace.workspaceFolders ?? []);
+    let folderPath = directory;
+
+    if (!folderPath && candidates.length === 0) {
+      vscode.window.showInformationMessage('OpenChamber: No folder is open. Open a folder to start a new session.');
+      return;
+    }
+
+    if (!folderPath) {
+      folderPath = candidates.length === 1
+        ? candidates[0].path
+        : (await vscode.window.showQuickPick(
+            candidates.map((folder) => ({ label: folder.name, description: folder.path, path: folder.path })),
+            { placeHolder: 'Select a workspace folder for this session', matchOnDescription: true }
+          ))?.path;
+    }
+
+    if (!folderPath) {
+      return;
+    }
+
+    if (openCodeManager) {
+      const result = await openCodeManager.setWorkingDirectory(folderPath);
+      if (!result.success) {
+        vscode.window.showErrorMessage(`OpenChamber: ${result.error}`);
+        return;
+      }
+    }
+
+    const workspaceFolders = candidates.some((folder) => folder.path === folderPath)
+      ? candidates
+      : [
+          ...candidates,
+          {
+            name: folderPath.split(/[\\/]/).filter(Boolean).pop() ?? folderPath,
+            path: folderPath,
+          },
+        ];
+    return { directory: folderPath, workspaceFolders };
+  };
+
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.focusChat', async () => {
+    vscode.commands.registerCommand('openchamber.focusChat', async () => {
       if (!(await revealChatViewForPayload())) {
         return;
       }
@@ -191,42 +252,43 @@ export async function activate(context: vscode.ExtensionContext) {
 
   void maybeMoveChatToRightSidebarOnStartup();
 
-  // Create Agent Manager panel provider
-  agentManagerProvider = new AgentManagerPanelProvider(context, context.extensionUri, openCodeManager);
   sessionEditorProvider = new SessionEditorPanelProvider(context, context.extensionUri, openCodeManager);
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.internal.settingsSynced', (settings: unknown) => {
+    vscode.commands.registerCommand('openchamber.internal.settingsSynced', (settings: unknown) => {
       chatViewProvider?.notifySettingsSynced(settings);
       sessionEditorProvider?.notifySettingsSynced(settings);
-      agentManagerProvider?.notifySettingsSynced(settings);
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.internal.permissionAutoAcceptSynced', (snapshot: unknown) => {
+    vscode.commands.registerCommand('openchamber.internal.permissionAutoAcceptSynced', (snapshot: unknown) => {
       chatViewProvider?.notifyPermissionAutoAcceptSynced(snapshot);
       sessionEditorProvider?.notifyPermissionAutoAcceptSynced(snapshot);
-      agentManagerProvider?.notifyPermissionAutoAcceptSynced(snapshot);
     })
   );
 
   context.subscriptions.push(
-    vscode.window.onDidChangeWindowState((state) => {
-      chatViewProvider?.notifyWindowFocusChanged(state.focused);
-      sessionEditorProvider?.notifyWindowFocusChanged(state.focused);
-      agentManagerProvider?.notifyWindowFocusChanged(state.focused);
+    vscode.window.onDidChangeWindowState(() => {
+      chatViewProvider?.notifyViewerStateChanged();
+      sessionEditorProvider?.notifyViewerStateChanged();
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.openAgentManager', () => {
-      agentManagerProvider?.createOrShow();
+    // The command id predates multi-run (it opened the removed Agent Manager
+    // panel); it stays so existing keybindings keep working.
+    vscode.commands.registerCommand('openchamber.openAgentManager', async () => {
+      const workspace = await selectNewSessionWorkspace();
+      if (!workspace) {
+        return;
+      }
+      sessionEditorProvider?.createOrShowParallelDraft(workspace.directory);
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.setActiveSession', (sessionId: unknown, title?: unknown) => {
+    vscode.commands.registerCommand('openchamber.setActiveSession', (sessionId: unknown, title?: unknown) => {
       if (typeof sessionId === 'string' && sessionId.trim().length > 0) {
         activeSessionId = sessionId.trim();
         activeSessionTitle = typeof title === 'string' && title.trim().length > 0 ? title.trim() : null;
@@ -239,9 +301,9 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.openActiveSessionInEditor', () => {
+    vscode.commands.registerCommand('openchamber.openActiveSessionInEditor', () => {
       if (!activeSessionId) {
-        vscode.window.showInformationMessage(t('MittrCraft: No active session'));
+        vscode.window.showInformationMessage(t('OpenChamber: No active session'));
         return;
       }
       sessionEditorProvider?.createOrShow(activeSessionId, activeSessionTitle ?? undefined);
@@ -249,7 +311,7 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.openSessionInEditor', (sessionId: string, title?: string) => {
+    vscode.commands.registerCommand('openchamber.openSessionInEditor', (sessionId: string, title?: string) => {
       if (typeof sessionId !== 'string' || sessionId.trim().length === 0) {
         return;
       }
@@ -258,23 +320,31 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.openNewSessionInEditor', () => {
-      sessionEditorProvider?.createOrShowNewSession();
+    vscode.commands.registerCommand('openchamber.openNewSessionInEditor', async () => {
+      const workspace = await selectNewSessionWorkspace();
+      if (!workspace) {
+        return;
+      }
+      sessionEditorProvider?.createOrShowNewSession(workspace.directory);
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.openCurrentOrNewSessionInEditor', () => {
+    vscode.commands.registerCommand('openchamber.openCurrentOrNewSessionInEditor', async () => {
       if (activeSessionId) {
         sessionEditorProvider?.createOrShow(activeSessionId, activeSessionTitle ?? undefined);
-      } else {
-        sessionEditorProvider?.createOrShowNewSession();
+        return;
       }
+      const workspace = await selectNewSessionWorkspace();
+      if (!workspace) {
+        return;
+      }
+      sessionEditorProvider?.createOrShowNewSession(workspace.directory);
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.restartApi', async () => {
+    vscode.commands.registerCommand('openchamber.restartApi', async () => {
       try {
         // Prefer the full in-app reload flow (overlay + managed restart via the
         // bridge + config/data refresh) driven by the webview — same as after an
@@ -284,18 +354,18 @@ export async function activate(context: vscode.ExtensionContext) {
           return;
         }
         await openCodeManager?.restart();
-        vscode.window.showInformationMessage(t('MittrCraft: API connection restarted'));
+        vscode.window.showInformationMessage(t('OpenChamber: API connection restarted'));
       } catch (e) {
-        vscode.window.showErrorMessage(t('MittrCraft: Failed to restart API - {0}', String(e)));
+        vscode.window.showErrorMessage(t('OpenChamber: Failed to restart API - {0}', String(e)));
       }
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.addToContext', async () => {
+    vscode.commands.registerCommand('openchamber.addToContext', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) {
-        vscode.window.showWarningMessage(t('MittrCraft [Add to Context]: No active editor'));
+        vscode.window.showWarningMessage(t('OpenChamber [Add to Context]: No active editor'));
         return;
       }
 
@@ -303,7 +373,7 @@ export async function activate(context: vscode.ExtensionContext) {
       const selectedText = editor.document.getText(selection);
 
       if (!selectedText) {
-        vscode.window.showWarningMessage(t('MittrCraft [Add to Context]: No text selected'));
+        vscode.window.showWarningMessage(t('OpenChamber [Add to Context]: No text selected'));
         return;
       }
 
@@ -332,7 +402,7 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.attachExplorerToChat', async (resource?: vscode.Uri, resources?: vscode.Uri[]) => {
+    vscode.commands.registerCommand('openchamber.attachExplorerToChat', async (resource?: vscode.Uri, resources?: vscode.Uri[]) => {
       const uriCandidates: vscode.Uri[] = [];
       if (Array.isArray(resources)) {
         uriCandidates.push(...resources.filter((entry): entry is vscode.Uri => entry instanceof vscode.Uri));
@@ -385,7 +455,7 @@ export async function activate(context: vscode.ExtensionContext) {
       }
 
       if (attachedFiles.length === 0) {
-        vscode.window.showWarningMessage(t('MittrCraft: No file selected to mention'));
+        vscode.window.showWarningMessage(t('OpenChamber: No file selected to mention'));
         return;
       }
 
@@ -397,16 +467,16 @@ export async function activate(context: vscode.ExtensionContext) {
       }
 
       if (skippedEntries.length > 0) {
-        vscode.window.showInformationMessage(t('MittrCraft: Some selected entries were skipped (folders or unsupported resources)'));
+        vscode.window.showInformationMessage(t('OpenChamber: Some selected entries were skipped (folders or unsupported resources)'));
       }
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.explain', async () => {
+    vscode.commands.registerCommand('openchamber.explain', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) {
-        vscode.window.showWarningMessage(t('MittrCraft [Explain]: No active editor'));
+        vscode.window.showWarningMessage(t('OpenChamber [Explain]: No active editor'));
         return;
       }
 
@@ -438,10 +508,10 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.improveCode', async () => {
+    vscode.commands.registerCommand('openchamber.improveCode', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) {
-        vscode.window.showWarningMessage(t('MittrCraft [Improve Code]: No active editor'));
+        vscode.window.showWarningMessage(t('OpenChamber [Improve Code]: No active editor'));
         return;
       }
 
@@ -449,7 +519,7 @@ export async function activate(context: vscode.ExtensionContext) {
       const selectedText = editor.document.getText(selection);
 
       if (!selectedText) {
-        vscode.window.showWarningMessage(t('MittrCraft [Improve Code]: No text selected'));
+        vscode.window.showWarningMessage(t('OpenChamber [Improve Code]: No text selected'));
         return;
       }
 
@@ -470,46 +540,103 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Comments are written where the code is: the thread opens on the selected
+  // lines and stays there until the message is sent. The composer chips remain
+  // the authoritative list, so the threads follow what the webview reports.
+  const inlineCommentThreads = new InlineCommentThreads({
+    submitDraft: async (payload) => {
+      // Same routing as Add to Context: a session tab the user is working in
+      // takes the comment; otherwise it goes to the sidebar, revealing it when
+      // needed. Opening a fresh tab for a comment left the user's sidebar chat
+      // ignored and a new tab in the way.
+      const panelId = sessionEditorProvider?.addLineCommentToActivePanel(payload);
+      if (panelId) {
+        return panelId;
+      }
+      if (!(await revealChatViewForPayload())) {
+        return null;
+      }
+      if (!chatViewProvider) {
+        vscode.window.showWarningMessage(t('OpenChamber: Chat sidebar is not ready'));
+        return null;
+      }
+      chatViewProvider.addLineComment(payload);
+      return SIDEBAR_SURFACE_ID;
+    },
+    removeDraft: (draftId) => {
+      // Every surface is told, because each webview holds its own draft store
+      // and only the one actually holding the draft can drop it. Removal is
+      // idempotent everywhere else.
+      sessionEditorProvider?.removeLineComment(draftId);
+      chatViewProvider?.removeLineComment(draftId);
+    },
+    reportUndelivered: () => {
+      vscode.window.showWarningMessage(t('OpenChamber [Add Comment]: The comment never reached the chat and was discarded'));
+    },
+    avatar: vscode.Uri.joinPath(context.extensionUri, 'assets', 'app-icon.png'),
+    strings: {
+      threadLabel: ({ startLine, endLine }) => (startLine === endLine
+        ? t('Comment on line {0}', String(startLine))
+        : t('Comment on lines {0}-{1}', String(startLine), String(endLine))),
+      author: t('OpenChamber'),
+      notSent: t('Not sent yet'),
+    },
+  });
+  context.subscriptions.push(inlineCommentThreads);
+
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.newSession', async (directory?: unknown) => {
-      const candidates = resolveWorkspaceFolders(vscode.workspace.workspaceFolders ?? []);
-      let folderPath: string | undefined = typeof directory === 'string' ? directory : undefined;
-
-      if (!folderPath && candidates.length === 0) {
-        vscode.window.showInformationMessage('MittrCraft: No folder is open. Open a folder to start a new session.');
+    vscode.commands.registerCommand('openchamber.addLineComment', () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        vscode.window.showWarningMessage(t('OpenChamber [Add Comment]: No active editor'));
         return;
       }
-
-      if (!folderPath) {
-        folderPath = candidates.length === 1
-          ? candidates[0].path
-          : (await vscode.window.showQuickPick(
-              candidates.map((folder) => ({ label: folder.name, description: folder.path, path: folder.path })),
-              { placeHolder: 'Select a workspace folder for this session', matchOnDescription: true }
-            ))?.path;
-      }
-
-      if (!folderPath) {
+      // Same rule the gutter `+` follows, so the two entry points cannot
+      // disagree about where a comment is allowed.
+      if (!inlineCommentThreads.canCommentOn(editor.document.uri)) {
+        vscode.window.showWarningMessage(t('OpenChamber [Add Comment]: File is outside the workspace'));
         return;
       }
+      inlineCommentThreads.openThread(editor.document.uri, editor.selection);
+    })
+  );
 
-      if (openCodeManager) {
-        const result = await openCodeManager.setWorkingDirectory(folderPath);
-        if (!result.success) {
-          vscode.window.showErrorMessage(`MittrCraft: ${result.error}`);
-          return;
-        }
+  // Invoked by the thread's own Comment button, and by the gutter `+` flow,
+  // which both arrive as a CommentReply carrying the typed text.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('openchamber.submitLineComment', async (reply: vscode.CommentReply) => {
+      await inlineCommentThreads.submitReply(reply);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('openchamber.removeLineComment', (thread: vscode.CommentThread) => {
+      inlineCommentThreads.removeThread(thread);
+    })
+  );
+
+  // The webview reports its whole draft list whenever it changes; the threads
+  // follow it. Not contributed in package.json: internal wiring, not a command
+  // a user should find in the palette.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('openchamber.internal.inlineCommentsSync', (message: { snapshot: unknown; surfaceId: string }) => {
+      // The snapshot crossed the webview boundary as JSON; the surface id was
+      // stamped by the provider that received it, so an untagged snapshot
+      // cannot be attributed and is ignored rather than applied to threads it
+      // may know nothing about.
+      const drafts = readDraftSnapshot(message.snapshot);
+      if (!drafts || !message.surfaceId) return;
+      inlineCommentThreads.reconcile(message.surfaceId, drafts);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('openchamber.newSession', async (directory?: unknown) => {
+      const workspace = await selectNewSessionWorkspace(typeof directory === 'string' ? directory : undefined);
+      if (!workspace) {
+        return;
       }
-      const workspaceFolders = candidates.some((folder) => folder.path === folderPath)
-        ? candidates
-        : [
-            ...candidates,
-            {
-              name: folderPath.split(/[\\/]/).filter(Boolean).pop() ?? folderPath,
-              path: folderPath,
-            },
-          ];
-      chatViewProvider?.createNewSession({ directory: folderPath, workspaceFolders });
+      chatViewProvider?.createNewSession(workspace);
     })
   );
 
@@ -520,14 +647,14 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.showSettings', () => {
+    vscode.commands.registerCommand('openchamber.showSettings', () => {
       chatViewProvider?.showSettings();
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mittrcraft.showOpenCodeStatus', async () => {
-      const config = vscode.workspace.getConfiguration('mittrcraft');
+    vscode.commands.registerCommand('openchamber.showOpenCodeStatus', async () => {
+      const config = vscode.workspace.getConfiguration('openchamber');
       const configuredApiUrl = (config.get<string>('apiUrl') || '').trim();
 
       const extensionVersion = String(context.extension?.packageJSON?.version || '');
@@ -537,7 +664,9 @@ export async function activate(context: vscode.ExtensionContext) {
       const debug = openCodeManager?.getDebugInfo();
       const resolvedApiUrl = openCodeManager?.getApiUrl();
       const workingDirectory = openCodeManager?.getWorkingDirectory() ?? '';
-      const workingDirectoryMatchesWorkspace = Boolean(primaryWorkspace && workingDirectory === primaryWorkspace);
+      const workingDirectoryMatchesWorkspace = Boolean(
+        primaryWorkspace && pathsEqualWithNormalizedDriveLetter(workingDirectory, primaryWorkspace)
+      );
       let resolvedApiPath = '';
       if (resolvedApiUrl) {
         try {
@@ -605,17 +734,20 @@ export async function activate(context: vscode.ExtensionContext) {
       };
 
       const probeTargets: Array<{ label: string; path: string; includeDirectory?: boolean; timeoutMs?: number }> = [
-        { label: 'health', path: '/global/health', includeDirectory: false },
-        { label: 'config', path: '/config', includeDirectory: true },
-        { label: 'providers', path: '/config/providers', includeDirectory: true },
+        { label: 'health', path: '/api/info', includeDirectory: false },
+        { label: 'config', path: '/api/config', includeDirectory: true },
+        { label: 'providers', path: '/api/provider', includeDirectory: true },
         // Can be slower on large configs; keep the probe from producing false negatives.
-        { label: 'agents', path: '/agent', includeDirectory: true, timeoutMs: 12000 },
-        { label: 'commands', path: '/command', includeDirectory: true, timeoutMs: 10000 },
-        { label: 'project', path: '/project/current', includeDirectory: true },
-        { label: 'path', path: '/path', includeDirectory: true },
+        { label: 'agents', path: '/api/agent', includeDirectory: true, timeoutMs: 12000 },
+        { label: 'commands', path: '/api/command', includeDirectory: true, timeoutMs: 10000 },
+        // OpenCode 2.0.8 removed `project.current`; the location probe below
+        // answers which project a directory belongs to, and `/api/project`
+        // lists the known ones.
+        { label: 'project', path: '/api/project', includeDirectory: false },
+        { label: 'location', path: '/api/location', includeDirectory: true },
         // Session listing is what powers the sidebar. This helps diagnose "no sessions shown" bugs.
-        { label: 'sessions', path: '/session', includeDirectory: true, timeoutMs: 12000 },
-        { label: 'sessionStatus', path: '/session/status', includeDirectory: true },
+        { label: 'sessions', path: '/api/session', includeDirectory: true, timeoutMs: 12000 },
+        { label: 'sessionStatus', path: '/api/session/active', includeDirectory: false },
       ];
 
       const probes = resolvedApiUrl
@@ -636,7 +768,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
       const lines = [
         `Time: ${new Date().toISOString()}`,
-        `MittrCraft version: ${extensionVersion || '(unknown)'}`,
+        `OpenChamber version: ${extensionVersion || '(unknown)'}`,
         `OpenCode Version: ${debug?.version ?? '(unknown)'}`,
         `VS Code version: ${vscode.version}`,
         `Platform: ${process.platform} ${process.arch}`,
@@ -645,7 +777,7 @@ export async function activate(context: vscode.ExtensionContext) {
         `Working directory: ${workingDirectory}`,
         `Working dir matches workspace: ${workingDirectoryMatchesWorkspace ? 'yes' : 'no'}`,
         `API URL (configured): ${configuredApiUrl || '(none)'}`,
-        `OpenCode binary (configured): ${(vscode.workspace.getConfiguration('mittrcraft').get<string>('opencodeBinary') || '').trim() || '(none)'}`,
+        `OpenCode binary (configured): ${(vscode.workspace.getConfiguration('openchamber').get<string>('opencodeBinary') || '').trim() || '(none)'}`,
         `API URL (resolved): ${openCodeManager?.getApiUrl() ?? '(none)'}`,
         `API URL path: ${resolvedApiPath || '(none)'}`,
         debug
@@ -711,7 +843,6 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.onDidChangeActiveColorTheme((theme) => {
       chatViewProvider?.updateTheme(theme.kind);
-      agentManagerProvider?.updateTheme(theme.kind);
       sessionEditorProvider?.updateTheme(theme.kind);
     })
   );
@@ -727,7 +858,6 @@ export async function activate(context: vscode.ExtensionContext) {
         event.affectsConfiguration('workbench.preferredDarkColorTheme')
       ) {
         chatViewProvider?.updateTheme(vscode.window.activeColorTheme.kind);
-        agentManagerProvider?.updateTheme(vscode.window.activeColorTheme.kind);
         sessionEditorProvider?.updateTheme(vscode.window.activeColorTheme.kind);
       }
     })
@@ -737,7 +867,6 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     openCodeManager.onStatusChange((status, error) => {
       chatViewProvider?.updateConnectionStatus(status, error);
-      agentManagerProvider?.updateConnectionStatus(status, error);
       sessionEditorProvider?.updateConnectionStatus(status, error);
 
       // Start/stop global event watcher based on connection status
@@ -751,6 +880,8 @@ export async function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  registerGenerateCommitMessageCommand(context, openCodeManager);
+
   // Start OpenCode API without blocking activation.
   // Blocking here delays webview resolution and causes a blank panel until startup completes.
   void openCodeManager.start();
@@ -758,10 +889,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
 export async function deactivate() {
   stopGlobalEventWatcher();
-  await openCodeManager?.stop();
+  await Promise.all([openCodeManager?.stop(), stopGitProcesses()]);
   openCodeManager = undefined;
   chatViewProvider = undefined;
-  agentManagerProvider = undefined;
   sessionEditorProvider = undefined;
   outputChannel?.dispose();
   outputChannel = undefined;

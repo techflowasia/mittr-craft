@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const credential = vi.fn();
 
 vi.mock('./auth.js', () => ({
-  loadClaudeCredential: () => credential(),
+  findClaudeCredential: () => credential(),
+  loadClaudeCredential: async () => credential(),
 }));
 
 import { fetchQuota, isConfigured, resetClaudeQuotaCache } from './index.js';
@@ -50,7 +51,7 @@ describe('Claude quota provider', () => {
   it('reports not configured when no credential source has a token', async () => {
     credential.mockReturnValue(null);
 
-    expect(isConfigured()).toBe(false);
+    expect(isConfigured({})).toBe(false);
     const result = await fetchQuota();
     expect(result.configured).toBe(false);
     expect(result.ok).toBe(false);
@@ -65,6 +66,24 @@ describe('Claude quota provider', () => {
     expect(result.ok).toBe(true);
     expect(result.planLabel).toBe('max');
     expect(result.usage.windows['5h'].usedPercent).toBe(5);
+  });
+
+  it('coalesces concurrent refreshes into one Anthropic request', async () => {
+    let resolveResponse;
+    const fetchMock = vi.fn().mockReturnValue(new Promise((resolve) => {
+      resolveResponse = resolve;
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const first = fetchQuota();
+    const second = fetchQuota();
+    resolveResponse(jsonResponse(PAYLOAD));
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(firstResult.ok).toBe(true);
+    expect(secondResult.ok).toBe(true);
   });
 
   it('keeps serving the last good values while Anthropic rate limits', async () => {

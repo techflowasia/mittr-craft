@@ -1,5 +1,5 @@
 /**
- * Shared Chrome DevTools Protocol helpers for MittrCraft performance tooling.
+ * Shared Chrome DevTools Protocol helpers for OpenChamber performance tooling.
  *
  * `scripts/profile-browser.mjs` and `scripts/profile-idle.mjs` both drive Chrome
  * over CDP. Launching, target discovery, and the minimal protocol client live
@@ -92,6 +92,19 @@ export const createPageTarget = async (port) => {
   const targets = await waitForJson(`${baseUrl}/json`)
   const target = targets.find((entry) => entry.type === "page" && entry.webSocketDebuggerUrl)
   if (!target) throw new Error("Chrome did not expose or create a page target")
+  return target
+}
+
+/**
+ * The page target of a browser that is already running, such as the desktop
+ * shell launched with `--remote-debugging-port`: its application window, not
+ * a DevTools page and not a blank tab.
+ */
+export const findPageTarget = async (port) => {
+  const targets = await waitForJson(`http://127.0.0.1:${port}/json`)
+  const pages = targets.filter((entry) => entry.type === "page" && entry.webSocketDebuggerUrl && !entry.url.startsWith("devtools://"))
+  const target = pages.find((entry) => entry.url !== "about:blank") ?? pages[0]
+  if (!target) throw new Error(`No page target is exposed on port ${port}`)
   return target
 }
 

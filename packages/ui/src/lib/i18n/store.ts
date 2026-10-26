@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import { dict as enDict, type I18nKey } from './messages/en';
+import { overlayDictionary, subscribeProductUiPlugins } from '../product-plugins';
 import { DEFAULT_LOCALE, detectInitialLocale, type Locale, writeStoredLocale } from './runtime';
 
 export type I18nParams = Record<string, string | number | boolean | null | undefined>;
@@ -30,6 +31,8 @@ async function loadDictionary(locale: Locale): Promise<I18nDictionary> {
     ? await import('./messages/zh-CN') as { dict: I18nDictionary }
     : locale === 'fr'
       ? await import('./messages/fr') as { dict: I18nDictionary }
+      : locale === 'nl'
+        ? await import('./messages/nl') as { dict: I18nDictionary }
     : locale === 'zh-TW'
       ? await import('./messages/zh-TW') as { dict: I18nDictionary }
       : locale === 'es'
@@ -46,14 +49,16 @@ async function loadDictionary(locale: Locale): Promise<I18nDictionary> {
                   ? await import('./messages/de') as { dict: I18nDictionary }
                   : locale === 'ja'
                     ? await import('./messages/ja') as { dict: I18nDictionary }
-                    : { dict: enDict };
+                    : locale === 'tr'
+                      ? await import('./messages/tr') as { dict: I18nDictionary }
+                      : { dict: enDict };
   dictionaries.set(locale, mod.dict);
   return mod.dict;
 }
 
 export const useI18nStore = create<I18nState>()((set, get) => ({
   locale: DEFAULT_LOCALE,
-  dictionary: enDict,
+  dictionary: overlayDictionary(DEFAULT_LOCALE, enDict),
   loadingLocale: null,
   setLocale: (locale) => {
     const current = get();
@@ -66,7 +71,7 @@ export const useI18nStore = create<I18nState>()((set, get) => ({
 
     set({
       locale,
-      dictionary: cached ?? current.dictionary,
+      dictionary: cached ? overlayDictionary(locale, cached) : current.dictionary,
       loadingLocale: cached ? null : locale,
     });
 
@@ -78,22 +83,33 @@ export const useI18nStore = create<I18nState>()((set, get) => ({
       if (get().locale !== locale) {
         return;
       }
-      set({ dictionary, loadingLocale: null });
+      set({ dictionary: overlayDictionary(locale, dictionary), loadingLocale: null });
     }).catch((error) => {
       console.error(`[i18n] failed to load locale ${locale}`, error);
       if (get().locale === locale) {
-        set({ dictionary: enDict, loadingLocale: null });
+        set({ dictionary: overlayDictionary(DEFAULT_LOCALE, enDict), loadingLocale: null });
       }
     });
   },
 }));
+
+subscribeProductUiPlugins(() => {
+  const { locale, loadingLocale } = useI18nStore.getState();
+  if (loadingLocale) {
+    return;
+  }
+  const raw = dictionaries.get(locale);
+  if (raw) {
+    useI18nStore.setState({ dictionary: overlayDictionary(locale, raw) });
+  }
+});
 
 export function initializeLocale(): void {
   useI18nStore.getState().setLocale(detectInitialLocale());
 }
 
 export function formatMessage(dictionary: I18nDictionary, key: I18nKey, params?: I18nParams): string {
-  const template = dictionary[key] ?? enDict[key] ?? key;
+  const template = dictionary[key] ?? overlayDictionary(DEFAULT_LOCALE, enDict)[key] ?? key;
   if (!params) {
     return template;
   }

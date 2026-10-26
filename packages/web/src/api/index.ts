@@ -1,21 +1,22 @@
-import type { RuntimeAPIs } from '@mittrcraft/ui/lib/api/types';
+import type { RuntimeAPIs } from '@openchamber/ui/lib/api/types';
+import { createDesktopThemeFileAPI } from '@openchamber/ui/lib/desktop';
 import {
   createRuntimeUrlResolver,
   getRuntimeUrlResolver,
   setRuntimeUrlResolver,
   type RuntimeUrlResolver,
-} from '@mittrcraft/ui/lib/runtime-url';
-import { useDirectoryStore } from '@mittrcraft/ui/stores/useDirectoryStore';
+} from '@openchamber/ui/lib/runtime-url';
+import { useDirectoryStore } from '@openchamber/ui/stores/useDirectoryStore';
 import { createWebTerminalAPI } from './terminal';
 import { createWebGitAPI } from './git';
 import { createWebFilesAPI } from './files';
 import { createWebSettingsAPI } from './settings';
 import { createWebPermissionsAPI } from './permissions';
 import { createWebNotificationsAPI } from './notifications';
-import { createWebToolsAPI } from './tools';
 import { createWebPushAPI } from './push';
-import { createWebGitHubAPI } from './github';
+import { createWebLinearAPI } from './linear';
 import { createWebClientAuthAPI } from './clientAuth';
+import { createWebSourceControlAPI } from './source-control';
 
 export interface WebAPIsOptions {
   urls?: RuntimeUrlResolver;
@@ -24,6 +25,7 @@ export interface WebAPIsOptions {
 const createActiveRuntimeUrlResolver = (): RuntimeUrlResolver => ({
   api: (...args) => getRuntimeUrlResolver().api(...args),
   authenticatedAsset: (...args) => getRuntimeUrlResolver().authenticatedAsset(...args),
+  assetWithUrlToken: (...args) => getRuntimeUrlResolver().assetWithUrlToken(...args),
   auth: (...args) => getRuntimeUrlResolver().auth(...args),
   health: (...args) => getRuntimeUrlResolver().health(...args),
   rawFile: (...args) => getRuntimeUrlResolver().rawFile(...args),
@@ -37,6 +39,7 @@ export const createWebAPIs = (options: WebAPIsOptions = {}): RuntimeAPIs => {
   const activeUrls = createActiveRuntimeUrlResolver();
 
   return {
+   themeFiles: createDesktopThemeFileAPI(),
   runtime: { platform: 'web', isDesktop: false, isVSCode: false, label: 'web' },
   terminal: createWebTerminalAPI(),
   git: createWebGitAPI(),
@@ -44,9 +47,9 @@ export const createWebAPIs = (options: WebAPIsOptions = {}): RuntimeAPIs => {
   settings: createWebSettingsAPI(),
   permissions: createWebPermissionsAPI(),
   notifications: createWebNotificationsAPI(),
-  github: createWebGitHubAPI({ urls: activeUrls }),
+  sourceControl: createWebSourceControlAPI(),
+  linear: createWebLinearAPI(),
   push: createWebPushAPI(),
   clientAuth: createWebClientAuthAPI(),
-  tools: createWebToolsAPI(),
   };
 };

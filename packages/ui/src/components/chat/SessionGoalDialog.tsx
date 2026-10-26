@@ -10,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { NumberInput } from '@/components/ui/number-input';
 import { toast } from '@/components/ui';
 import { Checkbox } from '@/components/ui/checkbox';
-import { useGoalObjectiveContent, useSessionGoal } from '@/hooks/useSessionGoal';
+import { useGoalCheckAvailable, useGoalObjectiveContent, useSessionGoal } from '@/hooks/useSessionGoal';
 import {
   formatGoalTokens,
   SESSION_GOAL_OBJECTIVE_CHAR_LIMIT,
@@ -19,7 +19,6 @@ import { sessionGoalStatusColor, sessionGoalStatusLabelKey } from '@/lib/session
 import { clearSessionGoal, setSessionGoal } from '@/lib/sessionGoalActions';
 import { useI18n } from '@/lib/i18n';
 import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
-import { SessionGoalCriteria } from '@/components/chat/SessionGoalCriteria';
 import { useUIStore } from '@/stores/useUIStore';
 
 interface SessionGoalDialogProps {
@@ -30,13 +29,15 @@ interface SessionGoalDialogProps {
 }
 
 // Create/manage dialog for the session goal: objective + optional token
-// budget on creation; status, usage, latest audit note and lifecycle actions
+// budget on creation; status, usage, the checking model and lifecycle actions
 // (pause/resume/complete/clear) once a goal exists.
 export function SessionGoalDialog({ open, onOpenChange, sessionId, directory }: SessionGoalDialogProps) {
   const { t } = useI18n();
   const isMobile = useUIStore((state) => state.isMobile);
   const { goal } = useSessionGoal(sessionId, directory);
   const objectiveContent = useGoalObjectiveContent(sessionId, goal);
+  // Creating a goal needs something to check its progress; managing an existing one does not.
+  const cannotCheck = !useGoalCheckAvailable(directory, open) && !goal;
 
   const [objective, setObjective] = React.useState('');
   const [budgetEnabled, setBudgetEnabled] = React.useState(false);
@@ -83,10 +84,10 @@ export function SessionGoalDialog({ open, onOpenChange, sessionId, directory }: 
   // "saving" over the outcome (re-saving used to spawn a fresh active goal
   // that the auditor instantly re-completed — a confusing status flash).
   const isCompleted = goal?.status === 'complete';
-  const canSave = !isCompleted && trimmedObjective.length > 0 && (!goal || objectiveChanged || budgetChanged);
+  const canSave = !isCompleted && !cannotCheck && trimmedObjective.length > 0 && (!goal || objectiveChanged || budgetChanged);
 
   const handleSave = () => run(
-    () => setSessionGoal(sessionId, directory, { objective: trimmedObjective, tokenBudget: budgetValue, keepContract: !objectiveChanged }, goal),
+    () => setSessionGoal(sessionId, directory, { objective: trimmedObjective, tokenBudget: budgetValue }, goal),
     true,
   );
 
@@ -110,23 +111,19 @@ export function SessionGoalDialog({ open, onOpenChange, sessionId, directory }: 
                   {t('chat.goal.usage.turns', { turns: goal.turnsUsed })}
                 </span>
               </div>
-              {goal.note ? (
-                <p className="typography-meta text-muted-foreground">{goal.note}</p>
-              ) : null}
               {/* Only failure states carry a reason worth reading; outcomes
                   like "verified by audit" are noise next to the status dot. */}
               {goal.statusReason && (goal.status === 'blocked' || goal.status === 'budgetLimited') ? (
-                <p className="typography-meta text-muted-foreground">{goal.statusReason}</p>
+                <p className="typography-meta text-muted-foreground/70">{goal.statusReason}</p>
               ) : null}
               {goal.evaluationProviderID || goal.evaluationModelID ? (
                 <div className="flex items-baseline gap-2 typography-meta">
-                  <span className="text-muted-foreground">{t('chat.goal.dialog.evaluationModelLabel')}</span>
+                  <span className="text-muted-foreground/70">{t('chat.goal.dialog.evaluationModelLabel')}</span>
                   <span className="min-w-0 break-all text-foreground">
                     {[goal.evaluationProviderID, goal.evaluationModelID].filter(Boolean).join('/')}
                   </span>
                 </div>
               ) : null}
-              <SessionGoalCriteria criteria={goal.criteria} />
             </div>
           )}
 
@@ -137,7 +134,7 @@ export function SessionGoalDialog({ open, onOpenChange, sessionId, directory }: 
               <div className="space-y-1">
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="typography-ui-label text-foreground">{t('chat.goal.dialog.objectiveLabel')}</span>
-                  <span className="typography-micro tabular-nums text-muted-foreground" aria-label={t('chat.goal.counter.aria')}>
+                  <span className="typography-micro tabular-nums text-muted-foreground/70" aria-label={t('chat.goal.counter.aria')}>
                     {objective.length}/{SESSION_GOAL_OBJECTIVE_CHAR_LIMIT}
                   </span>
                 </div>
@@ -182,6 +179,10 @@ export function SessionGoalDialog({ open, onOpenChange, sessionId, directory }: 
                 )}
               </div>
             </>
+          )}
+
+          {cannotCheck && (
+            <p className="typography-meta text-muted-foreground">{t('chat.goal.dialog.noSmallModel')}</p>
           )}
 
           <div className="flex items-center gap-2 pt-1">

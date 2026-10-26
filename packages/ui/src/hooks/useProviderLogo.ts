@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 
+import { remoteModelCatalogAllowed } from '@/lib/product-plugins';
+
 type LogoSource = 'local' | 'remote' | 'none';
 
 interface UseProviderLogoReturn {
@@ -8,10 +10,21 @@ interface UseProviderLogoReturn {
     hasLogo: boolean;
 }
 
-const localLogoModules = import.meta.glob<string>('../assets/provider-logos/*.svg', {
-    eager: true,
-    import: 'default',
-});
+// Vite rewrites `import.meta.glob` at build time into the matching modules. A runtime without
+// that transform (the bun test runner) throws on the call instead, so keep it failable and let
+// the hook fall back to the remote logo URL it already supports.
+const loadLocalLogoModules = (): Record<string, string> => {
+    try {
+        return import.meta.glob<string>('../assets/provider-logos/*.svg', {
+            eager: true,
+            import: 'default',
+        });
+    } catch {
+        return {};
+    }
+};
+
+const localLogoModules = loadLocalLogoModules();
 
 const LOCAL_PROVIDER_LOGO_MAP = new Map<string, string>();
 const PRELOADED_LOGO_SRCS = new Set<string>();
@@ -20,12 +33,14 @@ const LOGO_ALIAS = new Map<string, string>([
     ['codex', 'openai'],
     ['chatgpt', 'openai'],
     ['claude', 'anthropic'],
+    ['cline-pass', 'cline'],
     ['gemini', 'google'],
     ['evroc-ai', 'evroc'],
     ['evrocai', 'evroc'],
     ['ollama-cloud', 'ollama'],
     ['wafer-ai', 'wafer.ai'],
     ['wafer', 'wafer.ai'],
+    ['copilot', 'github-copilot'],
 ]);
 
 const normalizeProviderId = (providerId: string | null | undefined) => {
@@ -45,11 +60,16 @@ const buildLogoCandidates = (providerId: string | null | undefined) => {
 
     const compact = normalized.replace(/[^a-z0-9_\-./:]/g, '');
     const primary = compact.split(/[/:]/)[0] || compact;
-    const candidates = [LOGO_ALIAS.get(compact), LOGO_ALIAS.get(primary), compact, primary]
+    const prefixAlias = compact.startsWith('exe-') ? 'exe-dev' : undefined;
+    const candidates = [prefixAlias, LOGO_ALIAS.get(compact), LOGO_ALIAS.get(primary), compact, primary]
         .filter((value): value is string => Boolean(value && value.length > 0));
 
     return [...new Set(candidates)];
 };
+
+const remoteLogoSrc = (providerId: string | null): string | null => (
+    providerId && remoteModelCatalogAllowed() ? `https://models.dev/logos/${providerId}.svg` : null
+);
 
 const resolveProviderLogoSrc = (providerId: string | null | undefined): string | null => {
     const candidates = buildLogoCandidates(providerId);
@@ -59,8 +79,7 @@ const resolveProviderLogoSrc = (providerId: string | null | undefined): string |
         return localLogoSrc;
     }
 
-    const remoteResolvedId = candidates[0] ?? null;
-    return remoteResolvedId ? `https://models.dev/logos/${remoteResolvedId}.svg` : null;
+    return remoteLogoSrc(candidates[0] ?? null);
 };
 
 const preloadProviderLogo = (providerId: string | null | undefined): void => {
@@ -94,7 +113,7 @@ for (const [path, url] of Object.entries(localLogoModules)) {
 export function useProviderLogo(providerId: string | null | undefined): UseProviderLogoReturn {
     const candidates = buildLogoCandidates(providerId);
     const localResolvedId = candidates.find((candidate) => LOCAL_PROVIDER_LOGO_MAP.has(candidate)) ?? null;
-    const remoteResolvedId = candidates[0] ?? null;
+    const remoteSrc = remoteLogoSrc(candidates[0] ?? null);
     const hasLocalLogo = Boolean(localResolvedId);
     const localLogoSrc = localResolvedId ? LOCAL_PROVIDER_LOGO_MAP.get(localResolvedId) ?? null : null;
 
@@ -102,13 +121,13 @@ export function useProviderLogo(providerId: string | null | undefined): UseProvi
 
     useEffect(() => {
         setSource(hasLocalLogo ? 'local' : 'remote');
-    }, [hasLocalLogo, localResolvedId, remoteResolvedId]);
+    }, [hasLocalLogo, localResolvedId, remoteSrc]);
 
     const handleError = useCallback(() => {
         setSource((current) => (current === 'local' && hasLocalLogo ? 'remote' : 'none'));
     }, [hasLocalLogo]);
 
-    if (!localResolvedId && !remoteResolvedId) {
+    if (!localResolvedId && !remoteSrc) {
         return { src: null, onError: handleError, hasLogo: false };
     }
 
@@ -120,9 +139,9 @@ export function useProviderLogo(providerId: string | null | undefined): UseProvi
         };
     }
 
-    if (source === 'remote' && remoteResolvedId) {
+    if (source === 'remote' && remoteSrc) {
         return {
-            src: `https://models.dev/logos/${remoteResolvedId}.svg`,
+            src: remoteSrc,
             onError: handleError,
             hasLogo: true,
         };

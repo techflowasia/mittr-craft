@@ -4,11 +4,11 @@ import path from 'node:path';
 
 const dir = process.env.LATEST_YML_DIR;
 const repo = process.env.GH_REPO;
-const version = process.env.MITTRCRAFT_VERSION;
+const version = process.env.OPENCHAMBER_VERSION;
 
 if (!dir) throw new Error('LATEST_YML_DIR is required');
 if (!repo) throw new Error('GH_REPO is required');
-if (!version) throw new Error('MITTRCRAFT_VERSION is required');
+if (!version) throw new Error('OPENCHAMBER_VERSION is required');
 
 const parse = (content) => {
   const lines = content.split('\n');
@@ -74,16 +74,25 @@ const read = async (subdir, filename) => {
 
 const output = {};
 
-const winX64 = await read('latest-yml-x86_64-pc-windows-msvc', 'latest.yml');
-const winArm64 = await read('latest-yml-aarch64-pc-windows-msvc', 'latest.yml');
-if (!winX64 || !winArm64) {
-  throw new Error('Both x64 and arm64 Windows update manifests are required');
+// Finishing a published release rebuilds macOS only; its Windows manifests
+// are already on the release and stay untouched.
+const macOnly = process.env.MAC_ONLY === '1';
+
+if (!macOnly) {
+  const winX64 = await read('latest-yml-x86_64-pc-windows-msvc', 'latest.yml');
+  const winArm64 = await read('latest-yml-aarch64-pc-windows-msvc', 'latest.yml');
+  if (!winX64 || !winArm64) {
+    throw new Error('Both x64 and arm64 Windows update manifests are required');
+  }
+  output['latest.yml'] = serialize(winX64);
+  output['latest-arm64.yml'] = serialize(winArm64);
 }
-output['latest.yml'] = serialize(winX64);
-output['latest-arm64.yml'] = serialize(winArm64);
 
 const macX64 = await read('latest-yml-x86_64-apple-darwin', 'latest-mac.yml');
 const macArm64 = await read('latest-yml-aarch64-apple-darwin', 'latest-mac.yml');
+if (macOnly && (!macX64 || !macArm64)) {
+  throw new Error('Both x64 and arm64 macOS update manifests are required');
+}
 if (macX64 || macArm64) {
   const base = macArm64 || macX64;
   output['latest-mac.yml'] = serialize({

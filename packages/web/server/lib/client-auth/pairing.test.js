@@ -7,13 +7,13 @@ import crypto from 'node:crypto';
 import { createClientPairingRuntime } from './pairing.js';
 
 const makeRuntime = async (options = {}) => {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mittrcraft-pairing-test-'));
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-pairing-test-'));
   const createdClients = [];
   const remoteClientAuthRuntime = options.remoteClientAuthRuntime || {
     createClient: vi.fn(async (input) => {
       const client = {
         id: `client-${createdClients.length + 1}`,
-        label: input.label,
+        label: input.label ?? input.fallbackLabel,
         clientKind: input.clientKind,
         authMethod: input.authMethod,
         pairingId: input.pairingId,
@@ -61,6 +61,10 @@ describe('client auth pairing runtime', () => {
       pairingId: created.pairing.id,
       clientKind: 'mobile',
       dedupeKey: 'device-key',
+      // No operator-typed pairing label: the app-reported name is only a
+      // fallback so a re-pair keeps the existing device record's label.
+      label: null,
+      fallbackLabel: 'Iryna iPhone',
     }));
 
     await expect(runtime.redeemPairingSession({

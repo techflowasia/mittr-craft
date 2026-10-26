@@ -1,0 +1,41 @@
+{
+  "files": [
+    {
+      "name": "vad.worklet.bundle.min.js",
+      "package": "@ricky0123/vad-web",
+      "version": "0.0.31",
+      "path": "dist/vad.worklet.bundle.min.js",
+      "sha256": "8a48fdc7429948a2fde3d29a84bb1a64c1f67b4ba578ccaa7548b7f989f06a74",
+      "bytes": 2480
+    },
+    {
+      "name": "silero_vad_v5.onnx",
+      "package": "@ricky0123/vad-web",
+      "version": "0.0.31",
+      "path": "dist/silero_vad_v5.onnx",
+      "sha256": "2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f",
+      "bytes": 2327524
+    },
+    {
+      "name": "ort-wasm-simd-threaded.mjs",
+      "package": "onnxruntime-web",
+      "version": "1.30.0",
+      "path": "dist/ort-wasm-simd-threaded.mjs",
+      "sha256": "e13f7f94fc51b4ca72b12faeb1ee95f4ace6dfbc8939bc718aabdc0a27c4299b",
+      "bytes": 24381
+    },
+    {
+      "name": "ort-wasm-simd-threaded.wasm",
+      "package": "onnxruntime-web",
+      "version": "1.30.0",
+      "path": "dist/ort-wasm-simd-threaded.wasm",
+      "sha256": "3398c10d07d229bd91b364548e130e0e51a8e5704b88c7c083ebbeb78842dee2",
+      "bytes": 14239897
+    }
+  ],
+  "notices": [
+    { "heading": "@ricky0123/vad-web", "sha256": "e4359efa64d90c34742afd5df388b0a7ba75134d1b0f66ae9ac5f26c94f14e34" },
+    { "heading": "onnxruntime-web", "sha256": "d4b21e61409a2f0b86ee7e3b86233f8b282a2fa925aacbbea67933097048daf2" },
+    { "heading": "Silero VAD model", "sha256": "0658d0029b715f5c4e49648dd9cdeff34d777f71048321efb4b476ef9597fe30" }
+  ]
+}

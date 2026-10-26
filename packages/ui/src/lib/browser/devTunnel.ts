@@ -2,7 +2,7 @@
  * Makes a remote dev server browsable from the desktop app.
  *
  * A URL like `http://localhost:5173` means "this machine" to whoever resolves
- * it. When MittrCraft is running on another host, that is the wrong machine:
+ * it. When OpenChamber is running on another host, that is the wrong machine:
  * the dev server is on the host, the browser is here. The desktop shell binds
  * an equivalent local port and pipes it to the host, so the same page loads
  * from a real local origin with nothing rewritten.
@@ -10,24 +10,73 @@
  * Everywhere else — local runtime, web, mobile — the URL is already correct and
  * is returned untouched.
  */
-import { invokeDesktopCommand } from '@/lib/desktopNative';
-import { getRuntimeBearerTokenSync, getRuntimeExtraHeadersSync } from '@/lib/runtime-auth';
-import { getRuntimeApiBaseUrl, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
-import { isLoopbackUrl } from './url';
+import { invokeDesktopCommand, listenForDesktopRelayDevTunnels, postDesktopRelayDevTunnelMessage } from '@/lib/desktopNative';
+import { getRuntimeBearerTokenSync, getRuntimeExtraHeadersSync, refreshRuntimeUrlAuthToken } from '@/lib/runtime-auth';
+import { getActiveRelayTunnel, isRelayModeActive } from '@/lib/relay/runtime-tunnel';
+import { openRuntimeWebSocket } from '@/lib/relay/runtime-socket';
+import type { RelayTunnelWebSocket } from '@/lib/relay/tunnel-client';
+import { getRuntimeApiBaseUrl, getRuntimeKey, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
+import { getRuntimeUrlResolver } from '@/lib/runtime-url';
+import { DEV_TUNNEL_HOSTNAME, isLoopbackUrl } from './url';
 
-type TunnelResult = { localPort: number; reused: boolean; url: string };
+type TunnelResult = { localPort: number };
 
 /** Keyed by `${baseUrl}|${port}`; the shell owns the real lifetime. */
 const localPortByTarget = new Map<string, number>();
 /** Reverse map, so a tunnel port never leaks into the address bar or storage. */
 const originByLocalPort = new Map<number, string>();
+const relaySockets = new Map<string, RelayTunnelWebSocket>();
+const pendingRelayConnections = new Set<string>();
+
+const openRelayConnection = async (connectionId: string, remotePort: number): Promise<void> => {
+  if (!getActiveRelayTunnel()) {
+    pendingRelayConnections.delete(connectionId);
+    postDesktopRelayDevTunnelMessage(connectionId, { type: 'close' });
+    return;
+  }
+  await refreshRuntimeUrlAuthToken(getRuntimeApiBaseUrl());
+  if (!pendingRelayConnections.has(connectionId) || !getActiveRelayTunnel()) return;
+  const url = getRuntimeUrlResolver().websocket(`/api/dev-tunnel?port=${remotePort}`);
+  const socket = openRuntimeWebSocket(url);
+  relaySockets.set(connectionId, socket);
+  socket.binaryType = 'arraybuffer';
+  socket.onopen = () => postDesktopRelayDevTunnelMessage(connectionId, { type: 'ready' });
+  socket.onmessage = (event) => postDesktopRelayDevTunnelMessage(connectionId, { type: 'data', data: event.data instanceof ArrayBuffer ? event.data : new TextEncoder().encode(event.data) });
+  socket.onerror = () => postDesktopRelayDevTunnelMessage(connectionId, { type: 'close' });
+  socket.onclose = () => {
+    pendingRelayConnections.delete(connectionId);
+    relaySockets.delete(connectionId);
+    postDesktopRelayDevTunnelMessage(connectionId, { type: 'close' });
+  };
+};
+
+listenForDesktopRelayDevTunnels(({ connectionId, remotePort, message }) => {
+  switch (message.type) {
+    case 'data': {
+      const socket = relaySockets.get(connectionId);
+      if (socket && message.data) socket.send(message.data);
+      return;
+    }
+    case 'close':
+      pendingRelayConnections.delete(connectionId);
+      relaySockets.get(connectionId)?.close();
+      relaySockets.delete(connectionId);
+      return;
+    case 'connect':
+      pendingRelayConnections.add(connectionId);
+      void openRelayConnection(connectionId, remotePort).catch(() => {
+        pendingRelayConnections.delete(connectionId);
+        postDesktopRelayDevTunnelMessage(connectionId, { type: 'close' });
+      });
+  }
+});
 
 const isDesktopRuntime = (): boolean => (
-  typeof window !== 'undefined' && Boolean(window.__MITTRCRAFT_ELECTRON__)
+  typeof window !== 'undefined' && Boolean(window.__OPENCHAMBER_ELECTRON__)
 );
 
 /**
- * True when the app is talking to a MittrCraft on another machine. A local
+ * True when the app is talking to an OpenChamber on another machine. A local
  * runtime resolves loopback URLs correctly on its own and must not be tunneled,
  * which would only add a hop.
  */
@@ -35,13 +84,32 @@ const isRemoteRuntime = (baseUrl: string): boolean => {
   if (!baseUrl) return false;
   try {
     const parsed = new URL(baseUrl, typeof window !== 'undefined' ? window.location.href : undefined);
-    const localOrigin = typeof window !== 'undefined' ? window.__MITTRCRAFT_LOCAL_ORIGIN__ : '';
+    const localOrigin = typeof window !== 'undefined' ? window.__OPENCHAMBER_LOCAL_ORIGIN__ : '';
     if (localOrigin && parsed.origin === localOrigin) return false;
     return !isLoopbackUrl(parsed.toString());
   } catch {
     return false;
   }
 };
+
+export const isRemoteWebLoopbackUrl = (url: string): boolean => {
+  if (!url || isDesktopRuntime() || !isLoopbackUrl(url) || !globalThis.window) return false;
+  return isRemoteRuntime(getRuntimeApiBaseUrl() || globalThis.window.location.href);
+};
+
+export const resolveIframeBrowserUrl = (url: string): string => (
+  isRemoteWebLoopbackUrl(url) ? '' : url
+);
+
+/**
+ * True when the desktop reaches the instance's dev servers through this
+ * tunnel. Only loopback addresses can go through it: a named local address
+ * (portless `https://auth.myapp.localhost`) resolves on this machine, and the
+ * tunnel rewrites the host the name-based proxy routes on.
+ */
+export const reachesDevServersThroughTunnel = (): boolean => (
+  isDesktopRuntime() && isRemoteRuntime(getRuntimeApiBaseUrl())
+);
 
 /**
  * The port a loopback URL addresses, including the one it leaves implicit.
@@ -61,11 +129,19 @@ const rewriteToLocalPort = (url: string, localPort: number): string => {
   try {
     const parsed = new URL(url);
     parsed.protocol = 'http:';
-    parsed.hostname = '127.0.0.1';
+    parsed.hostname = DEV_TUNNEL_HOSTNAME;
     parsed.port = String(localPort);
     return parsed.toString();
   } catch {
     return url;
+  }
+};
+
+const rememberOriginalOrigin = (url: string, localPort: number): void => {
+  try {
+    originByLocalPort.set(localPort, new URL(url).origin);
+  } catch {
+    // Unparseable input never reaches here; nothing to record.
   }
 };
 
@@ -100,11 +176,7 @@ export const resolveBrowsableUrl = async (url: string): Promise<string> => {
   const key = `${baseUrl}|${port}`;
   const cached = localPortByTarget.get(key);
   if (cached) {
-    try {
-      originByLocalPort.set(cached, new URL(url).origin);
-    } catch {
-      // Unparseable input never reaches here; nothing to record.
-    }
+    rememberOriginalOrigin(url, cached);
     return rewriteToLocalPort(url, cached);
   }
 
@@ -112,6 +184,8 @@ export const resolveBrowsableUrl = async (url: string): Promise<string> => {
     const result = await invokeDesktopCommand<TunnelResult>('desktop_dev_tunnel_open', {
       baseUrl,
       port,
+      relay: isRelayModeActive(),
+      targetKey: getRuntimeKey(),
       clientToken: getRuntimeBearerTokenSync(),
       requestHeaders: getRuntimeExtraHeadersSync(),
     });
@@ -119,11 +193,7 @@ export const resolveBrowsableUrl = async (url: string): Promise<string> => {
       throw new DevTunnelUnavailableError(url);
     }
     localPortByTarget.set(key, result.localPort);
-    try {
-      originByLocalPort.set(result.localPort, new URL(url).origin);
-    } catch {
-      // Unparseable input never reaches here; nothing to record.
-    }
+    rememberOriginalOrigin(url, result.localPort);
     return rewriteToLocalPort(url, result.localPort);
   } catch (error) {
     if (error instanceof DevTunnelUnavailableError) throw error;
@@ -132,7 +202,7 @@ export const resolveBrowsableUrl = async (url: string): Promise<string> => {
 };
 
 /**
- * True when a loopback URL belongs to the machine MittrCraft runs on rather
+ * True when a loopback URL belongs to the machine OpenChamber runs on rather
  * than to this one.
  *
  * A page served through a tunnel can send the browser to another local port —
@@ -162,7 +232,7 @@ export const toDisplayUrl = (url: string): string => {
   if (!url) return url;
   try {
     const parsed = new URL(url);
-    if (parsed.hostname !== '127.0.0.1') return url;
+    if (parsed.hostname !== DEV_TUNNEL_HOSTNAME && parsed.hostname !== '127.0.0.1') return url;
     const origin = originByLocalPort.get(Number.parseInt(parsed.port || '0', 10));
     if (!origin) return url;
     return `${origin}${parsed.pathname}${parsed.search}${parsed.hash}`;
@@ -180,6 +250,10 @@ export const toDisplayUrl = (url: string): string => {
 const resetDevTunnelCache = (): void => {
   localPortByTarget.clear();
   originByLocalPort.clear();
+  pendingRelayConnections.clear();
+  for (const socket of relaySockets.values()) socket.close();
+  relaySockets.clear();
+  void invokeDesktopCommand('desktop_relay_dev_tunnel_close_all').catch(() => {});
 };
 
 if (typeof window !== 'undefined') {

@@ -1,0 +1,147 @@
+diff --git a/packages/electron/product.mjs b/packages/electron/product.mjs
+new file mode 100644
+index 000000000..a93705ea6
+--- /dev/null
++++ b/packages/electron/product.mjs
+@@ -0,0 +1,141 @@
++// Product identity for the desktop shell. A build that ships a `product.json`
++// next to `package.json` (the same idea VSCodium uses) overrides these values;
++// without one, every value equals the literal this app has always used.
++//
++// This module is pure so tests and tooling can import it without Electron. The
++// instance resolved at startup lives in `product-runtime.mjs`.
++
++import nodeFs from 'node:fs';
++import os from 'node:os';
++import path from 'node:path';
++
++const deepFreeze = (value) => {
++  if (value && typeof value === 'object') {
++    for (const child of Object.values(value)) deepFreeze(child);
++    Object.freeze(value);
++  }
++  return value;
++};
++
++export const UPSTREAM_PRODUCT = deepFreeze({
++  appName: 'OpenChamber',
++  linuxDesktopName: 'openchamber.desktop',
++  deepLinkProtocol: 'openchamber',
++  appUserModelId: {
++    packaged: 'dev.openchamber.desktop',
++    dev: 'dev.openchamber.desktop.dev',
++  },
++  desktopPort: 57123,
++  links: {
++    bugReport: 'https://github.com/openchamber/openchamber/issues/new?template=bug_report.yml',
++    ideas: 'https://github.com/openchamber/openchamber/discussions/categories/ideas',
++    discord: 'https://discord.gg/ZYRSdnwwKA',
++  },
++  updaterFeed: { provider: 'github', owner: 'openchamber', repo: 'openchamber' },
++  splashSvg: null,
++  env: {},
++  ensureDirs: [],
++  serverPlugins: [],
++  serverReportsAppVersion: false,
++});
++
++const PRODUCT_FILE = 'product.json';
++
++const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
++
++const clone = (value) => {
++  if (Array.isArray(value)) return value.map(clone);
++  if (isPlainObject(value)) return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, clone(child)]));
++  return value;
++};
++
++// Plain objects merge key by key; arrays, `null` and scalars replace.
++const mergeProduct = (base, override) => {
++  const merged = clone(base);
++  for (const [key, value] of Object.entries(override)) {
++    merged[key] = isPlainObject(value) && isPlainObject(merged[key])
++      ? mergeProduct(merged[key], value)
++      : clone(value);
++  }
++  return merged;
++};
++
++const expandHome = (value, homeDir) => {
++  if (typeof value !== 'string') return value;
++  return value.startsWith('~/') ? path.join(homeDir, value.slice(2)) : value;
++};
++
++const readProductFile = (appPath, fs) => {
++  const file = path.join(appPath, PRODUCT_FILE);
++  let raw;
++  try {
++    raw = fs.readFileSync(file, 'utf8');
++  } catch (error) {
++    if (error && error.code === 'ENOENT') return null;
++    throw error;
++  }
++  let parsed;
++  try {
++    parsed = JSON.parse(raw);
++  } catch (error) {
++    throw new Error(`${file} is not valid JSON: ${error.message}`);
++  }
++  if (!isPlainObject(parsed)) throw new Error(`${file} must contain a JSON object`);
++  return parsed;
++};
++
++export function readProduct({ appPath, fs = nodeFs, homeDir = os.homedir() }) {
++  const override = readProductFile(appPath, fs);
++  const product = override ? mergeProduct(UPSTREAM_PRODUCT, override) : clone(UPSTREAM_PRODUCT);
++
++  product.env = Object.fromEntries(
++    Object.entries(product.env ?? {}).map(([key, value]) => [key, expandHome(value, homeDir)]),
++  );
++  product.ensureDirs = (product.ensureDirs ?? []).map((dir) => expandHome(dir, homeDir));
++  product.serverPlugins = (product.serverPlugins ?? []).map((entry) => path.resolve(appPath, entry));
++  product.splashSvg = product.splashSvg ? path.resolve(appPath, product.splashSvg) : null;
++  return product;
++}
++
++// The SVG markup a product draws on the startup splash in place of the default
++// logo, or null to keep the default. A file that cannot be read keeps the
++// default too: the splash must never stop the app from starting.
++export function readSplashSvg(product, fs = nodeFs) {
++  if (!product.splashSvg) return null;
++  try {
++    return fs.readFileSync(product.splashSvg, 'utf8');
++  } catch {
++    return null;
++  }
++}
++
++// `devUserDataName` keeps a development run's Chromium profile apart from the
++// installed app's; it is only set for a development run.
++export function resolveAppNames(product, { isDev }) {
++  return {
++    appName: product.appName,
++    linuxDesktopName: product.linuxDesktopName,
++    devUserDataName: isDev ? `${product.appName} Dev` : null,
++  };
++}
++
++// Product values win over anything already in the environment, including a
++// personal OPENCODE_CONFIG_DIR, so a rebranded build never reads another
++// install's data.
++export function applyProductEnv(product, env = process.env) {
++  const keys = Object.keys(product.env ?? {});
++  for (const key of keys) env[key] = product.env[key];
++  return keys;
++}
++
++// The in-process server reports its own package's version, which is the
++// app's version when the two ship together. A product that versions the app
++// apart from the server it packs has the server report the app's version
++// instead, so every surface that shows a version shows the one installed.
++export function serverVersionEnv(product, appVersion) {
++  return product.serverReportsAppVersion && appVersion ? { OPENCHAMBER_HOST_APP_VERSION: appVersion } : {};
++}
++
++export function ensureProductDirs(product, fs = nodeFs) {
++  for (const dir of product.ensureDirs ?? []) fs.mkdirSync(dir, { recursive: true });
++}

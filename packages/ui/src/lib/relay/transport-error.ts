@@ -17,7 +17,16 @@
  * the engine is already answering, producing two independent AI responses.
  */
 
-const AMBIGUOUS_TRANSPORT_FLAG = '__mittrcraftAmbiguousTransport';
+const AMBIGUOUS_TRANSPORT_FLAG = '__openchamberAmbiguousTransport';
+const definiteRejections = new WeakSet<Error>();
+
+/** A routing response proves the request never reached its intended API. */
+export const markDefiniteTransportFailure = <T extends Error>(error: T): T => {
+  definiteRejections.add(error);
+  return error;
+};
+
+export const isDefiniteTransportFailure = (error: Error): boolean => definiteRejections.has(error);
 
 /**
  * Mark an error as "dispatched, outcome unknown". Returns the same error so it

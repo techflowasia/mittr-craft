@@ -24,6 +24,11 @@ interface SettingsPageLayoutProps {
   headerEnd?: React.ReactNode;
   /** Show persistence feedback for instant-save settings. */
   showSaveStatus?: boolean;
+  /**
+   * Commit-on-blur for autosaving pages: fires for every focus leaving the
+   * page content, so a text field does not need its own handler.
+   */
+  onBlurCapture?: React.FocusEventHandler;
   /** Additional className for the content container */
   className?: string;
   /** Additional className for the outer ScrollableOverlay */
@@ -44,6 +49,7 @@ export const SettingsPageLayout: React.FC<SettingsPageLayoutProps> = ({
   description,
   headerEnd,
   showSaveStatus = false,
+  onBlurCapture,
 }) => {
   const hasHeader = title != null || description != null || headerEnd != null || showSaveStatus;
   const isPlainTitle = typeof title === 'string' || typeof title === 'number';
@@ -51,7 +57,7 @@ export const SettingsPageLayout: React.FC<SettingsPageLayoutProps> = ({
 
   return (
     <ScrollableOverlay
-      outerClassName={cn('h-full', outerClassName)}
+      outerClassName={cn('h-full overlay-scrollbar-wrapper--stable-gutter', outerClassName)}
       className="w-full @container"
     >
       <div
@@ -62,6 +68,7 @@ export const SettingsPageLayout: React.FC<SettingsPageLayoutProps> = ({
           '[&>section:first-of-type]:border-t-0 [&>section:first-of-type]:pt-0',
           className
         )}
+        onBlurCapture={onBlurCapture}
       >
         {hasHeader && (
           // Wraps rather than squeezes. The action cluster never shrinks, so on
@@ -75,13 +82,13 @@ export const SettingsPageLayout: React.FC<SettingsPageLayoutProps> = ({
                   hasTitleChrome ? (
                     <div className="flex min-w-0 items-center gap-2">
                       {titleLeading}
-                      <h1 className={cn(SETTINGS_PAGE_TITLE_CLASS, 'min-w-0 truncate')}>{title}</h1>
+                      <h1 data-settings-page-heading tabIndex={-1} className={cn(SETTINGS_PAGE_TITLE_CLASS, 'min-w-0 truncate')}>{title}</h1>
                       {/* A status badge carries a fixed word; compressing it
                           wraps the text inside its own pill. */}
                       <span className="shrink-0">{titleAccessory}</span>
                     </div>
                   ) : (
-                    <h1 className={SETTINGS_PAGE_TITLE_CLASS}>{title}</h1>
+                    <h1 data-settings-page-heading tabIndex={-1} className={SETTINGS_PAGE_TITLE_CLASS}>{title}</h1>
                   )
                 ) : (
                   title

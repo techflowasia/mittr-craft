@@ -4,11 +4,11 @@ import { spawnSync } from 'child_process';
 import { getRunDir } from './cli-paths.js';
 
 async function getPidFilePath(port) {
-  return path.join(getRunDir(), `mittrcraft-${port}.pid`);
+  return path.join(getRunDir(), `openchamber-${port}.pid`);
 }
 
 async function getInstanceFilePath(port) {
-  return path.join(getRunDir(), `mittrcraft-${port}.json`);
+  return path.join(getRunDir(), `openchamber-${port}.json`);
 }
 
 function readPidFile(pidFilePath) {
@@ -86,7 +86,7 @@ function removeInstanceFile(instanceFilePath) {
 // PID is known to be ours (a child we just spawned, or a process we are
 // stopping). Do NOT use it to validate a PID read from a pid file: after an
 // ungraceful shutdown the pid file is stale and the kernel may have recycled
-// that PID to an unrelated process — see isMittrCraftProcessRunning.
+// that PID to an unrelated process — see isOpenchamberProcessRunning.
 function isProcessRunning(pid) {
   try {
     process.kill(pid, 0);
@@ -123,19 +123,19 @@ function readProcessCmdline(pid) {
   return null;
 }
 
-function isMittrCraftCmdline(cmdline) {
+function isOpenchamberCmdline(cmdline) {
   if (typeof cmdline !== 'string' || cmdline.length === 0) {
     return false;
   }
-  // Every install path contains the "mittrcraft" segment — the npm package
-  // (@mittrcraft/web) and the source checkout both do, for the foreground
+  // Every install path contains the "openchamber" segment — the npm package
+  // (@openchamber/web) and the source checkout both do, for the foreground
   // (bin/cli.js) and daemon (server/index.js) entrypoints alike. Matching the
   // path segment (not a generic "cli.js") keeps a recycled stranger such as
   // "npm-cli.js" or "agentmemory" from being mistaken for us.
-  return cmdline.toLowerCase().includes('mittrcraft');
+  return cmdline.toLowerCase().includes('openchamber');
 }
 
-// Liveness + identity — "is the MittrCraft instance recorded in a pid file
+// Liveness + identity — "is the OpenChamber instance recorded in a pid file
 // still the process running under this PID". Use this (not isProcessRunning)
 // when validating a PID read from a pid file. After an ungraceful shutdown
 // removePidFile never runs, so the stale PID can be recycled to an unrelated
@@ -143,12 +143,12 @@ function isMittrCraftCmdline(cmdline) {
 // startup, which loops forever under systemd Restart=always (issue #1721).
 // Where identity can't be determined (Windows, unreadable /proc or ps), we fall
 // back to liveness so there are no false negatives on those platforms.
-function isMittrCraftProcessRunning(pid) {
-  const state = getMittrCraftProcessState(pid);
+function isOpenchamberProcessRunning(pid) {
+  const state = getOpenchamberProcessState(pid);
   return state === 'matched' || state === 'unknown';
 }
 
-function getMittrCraftProcessState(pid, options = {}) {
+function getOpenchamberProcessState(pid, options = {}) {
   const checkProcessRunning = typeof options.isProcessRunning === 'function'
     ? options.isProcessRunning
     : isProcessRunning;
@@ -163,10 +163,10 @@ function getMittrCraftProcessState(pid, options = {}) {
   if (cmdline === null) {
     return 'unknown';
   }
-  return isMittrCraftCmdline(cmdline) ? 'matched' : 'mismatched';
+  return isOpenchamberCmdline(cmdline) ? 'matched' : 'mismatched';
 }
 
-function hasMittrCraftRuntimeInfo(info) {
+function hasOpenchamberRuntimeInfo(info) {
   return Boolean(info && typeof info.runtime === 'string' && info.runtime.length > 0);
 }
 
@@ -283,10 +283,10 @@ export {
   writeInstanceOptions,
   removeInstanceFile,
   isProcessRunning,
-  isMittrCraftCmdline,
-  isMittrCraftProcessRunning,
-  getMittrCraftProcessState,
-  hasMittrCraftRuntimeInfo,
+  isOpenchamberCmdline,
+  isOpenchamberProcessRunning,
+  getOpenchamberProcessState,
+  hasOpenchamberRuntimeInfo,
   terminateProcessTree,
   stopInstanceProcess,
 };

@@ -5,10 +5,12 @@
 //   - Relay (default): POST tokens + generic text to the central Cloudflare relay, which
 //     holds the single project APNs key and signs+sends — so users configure nothing.
 //   - Direct (fallback): sign an ES256 JWT with Node crypto and send over HTTP/2 ourselves,
-//     for self-hosters who set MITTRCRAFT_APNS_* and MITTRCRAFT_PUSH_RELAY_DISABLED=true.
+//     for self-hosters who set OPENCHAMBER_APNS_* and OPENCHAMBER_PUSH_RELAY_DISABLED=true.
 // Wired into the same trigger fanout as web push (see runtime.js); the relay carries only
 // generic, model-based text (no session content) — see APNS.md.
 
+import { sessionKeyFor, withHashedSessionKeys } from './session-key.js';
+import { parsePushKey, sealPushContent } from './push-seal.js';
 import {
   getOrCreateRelaySigningKeypair,
   signRelayMessage as signRelayMessageShared,
@@ -19,8 +21,8 @@ const APNS_HOST_PRODUCTION = 'https://api.push.apple.com';
 const APNS_HOST_SANDBOX = 'https://api.sandbox.push.apple.com';
 // APNs rejects auth tokens older than 1h; refresh well inside that window.
 const JWT_TTL_MS = 50 * 60 * 1000;
-const DEFAULT_BUNDLE_ID = 'com.mittrcraft.app';
-const DEFAULT_RELAY_URL = 'https://api.mittrcraft.dev/v1/push/send';
+const DEFAULT_BUNDLE_ID = 'com.openchamber.app';
+const DEFAULT_RELAY_URL = 'https://api.openchamber.dev/v1/push/send';
 const MAX_TOKENS_PER_SESSION = 10;
 // APNs reasons that mean the token is permanently invalid → drop it.
 const DEAD_TOKEN_REASONS = new Set(['BadDeviceToken', 'Unregistered', 'DeviceTokenNotForTopic']);
@@ -47,6 +49,7 @@ export const createApnsRuntime = (deps) => {
   } = deps;
 
   let persistLock = Promise.resolve();
+  let legacyKeysScrubQueued = false;
   let cachedJwt = null; // { token, issuedAtMs, keyId }
   let cachedRelayKey = null; // { privateKey, publicJwk }
   let warnedUnconfigured = false;
@@ -108,8 +111,17 @@ export const createApnsRuntime = (deps) => {
       if (!parsed || typeof parsed !== 'object' || parsed.version !== APNS_TOKENS_VERSION) {
         return emptyStore();
       }
-      const tokensBySession =
+      const stored =
         parsed.tokensBySession && typeof parsed.tokensBySession === 'object' ? parsed.tokensBySession : {};
+      const { bySession: tokensBySession, changed } = withHashedSessionKeys(stored);
+      if (changed && !legacyKeysScrubQueued) {
+        // Rewrite once so raw session tokens leave the disk now, not at the
+        // next registration.
+        legacyKeysScrubQueued = true;
+        void persistTokenUpdate((current) => current).catch((error) => {
+          console.warn('Failed to rewrite APNs tokens with hashed session keys:', error);
+        });
+      }
       return { version: APNS_TOKENS_VERSION, tokensBySession };
     } catch (error) {
       if (error && typeof error === 'object' && error.code === 'ENOENT') {
@@ -122,7 +134,7 @@ export const createApnsRuntime = (deps) => {
 
   const writeTokensToDisk = async (data) => {
     await fsPromises.mkdir(path.dirname(APNS_TOKENS_FILE_PATH), { recursive: true });
-    await fsPromises.writeFile(APNS_TOKENS_FILE_PATH, JSON.stringify(data, null, 2), 'utf8');
+    await fsPromises.writeFile(APNS_TOKENS_FILE_PATH, JSON.stringify(data, null, 2), { encoding: 'utf8', mode: 0o600 });
   };
 
   const persistTokenUpdate = async (mutate) => {
@@ -154,6 +166,9 @@ export const createApnsRuntime = (deps) => {
           // which at registration. Older entries without one default to production (matches
           // released builds).
           environment: entry.environment === 'sandbox' ? 'sandbox' : 'production',
+          // The device's key for end-to-end sealed text (push-seal.js); absent for
+          // apps from before it, which keep getting plain text.
+          pushKey: parsePushKey(entry.pushKey) ?? undefined,
         };
       })
       .filter(Boolean);
@@ -165,16 +180,17 @@ export const createApnsRuntime = (deps) => {
 
   const normalizeEnvironment = (environment) => (environment === 'sandbox' ? 'sandbox' : 'production');
 
-  const addOrUpdateApnsToken = async (uiSessionToken, deviceToken, userAgent, platform, environment) => {
+  const addOrUpdateApnsToken = async (uiSessionToken, deviceToken, userAgent, platform, environment, pushKey) => {
     if (!uiSessionToken || typeof deviceToken !== 'string' || deviceToken.trim().length === 0) return;
     const token = deviceToken.trim();
+    const sessionKey = sessionKeyFor(uiSessionToken);
     const tokenPlatform = normalizePlatform(platform);
     const tokenEnvironment = normalizeEnvironment(environment);
     const now = Date.now();
 
     await persistTokenUpdate((current) => {
       const tokensBySession = { ...(current.tokensBySession || {}) };
-      const existing = normalizeTokens(tokensBySession[uiSessionToken]);
+      const existing = normalizeTokens(tokensBySession[sessionKey]);
       const filtered = existing.filter((entry) => entry.deviceToken !== token);
       filtered.unshift({
         deviceToken: token,
@@ -183,8 +199,9 @@ export const createApnsRuntime = (deps) => {
         userAgent: typeof userAgent === 'string' && userAgent.length > 0 ? userAgent : undefined,
         platform: tokenPlatform,
         environment: tokenEnvironment,
+        pushKey: parsePushKey(pushKey) ?? undefined,
       });
-      tokensBySession[uiSessionToken] = filtered.slice(0, MAX_TOKENS_PER_SESSION);
+      tokensBySession[sessionKey] = filtered.slice(0, MAX_TOKENS_PER_SESSION);
       return { version: APNS_TOKENS_VERSION, tokensBySession };
     });
 
@@ -198,13 +215,14 @@ export const createApnsRuntime = (deps) => {
 
   const removeApnsToken = async (uiSessionToken, deviceToken) => {
     if (!uiSessionToken || !deviceToken) return;
+    const sessionKey = sessionKeyFor(uiSessionToken);
     await persistTokenUpdate((current) => {
       const tokensBySession = { ...(current.tokensBySession || {}) };
-      const filtered = normalizeTokens(tokensBySession[uiSessionToken]).filter(
+      const filtered = normalizeTokens(tokensBySession[sessionKey]).filter(
         (entry) => entry.deviceToken !== deviceToken,
       );
-      if (filtered.length === 0) delete tokensBySession[uiSessionToken];
-      else tokensBySession[uiSessionToken] = filtered;
+      if (filtered.length === 0) delete tokensBySession[sessionKey];
+      else tokensBySession[sessionKey] = filtered;
       return { version: APNS_TOKENS_VERSION, tokensBySession };
     });
   };
@@ -227,18 +245,18 @@ export const createApnsRuntime = (deps) => {
   // ---------------------------------------------------------------------------
 
   const resolveApnsConfig = async () => {
-    let keyId = trimmedEnv('MITTRCRAFT_APNS_KEY_ID');
-    let teamId = trimmedEnv('MITTRCRAFT_APNS_TEAM_ID');
-    let bundleId = trimmedEnv('MITTRCRAFT_APNS_BUNDLE_ID');
-    let environment = (trimmedEnv('MITTRCRAFT_APNS_ENVIRONMENT') || '').toLowerCase();
-    let p8 = normalizePem(process.env.MITTRCRAFT_APNS_P8 || '');
+    let keyId = trimmedEnv('OPENCHAMBER_APNS_KEY_ID');
+    let teamId = trimmedEnv('OPENCHAMBER_APNS_TEAM_ID');
+    let bundleId = trimmedEnv('OPENCHAMBER_APNS_BUNDLE_ID');
+    let environment = (trimmedEnv('OPENCHAMBER_APNS_ENVIRONMENT') || '').toLowerCase();
+    let p8 = normalizePem(process.env.OPENCHAMBER_APNS_P8 || '');
 
-    const p8Path = trimmedEnv('MITTRCRAFT_APNS_P8_PATH');
+    const p8Path = trimmedEnv('OPENCHAMBER_APNS_P8_PATH');
     if (!p8 && p8Path) {
       try {
         p8 = (await fsPromises.readFile(p8Path, 'utf8')).trim();
       } catch (error) {
-        console.warn('[APNs] Failed to read MITTRCRAFT_APNS_P8_PATH:', error?.message ?? error);
+        console.warn('[APNs] Failed to read OPENCHAMBER_APNS_P8_PATH:', error?.message ?? error);
       }
     }
 
@@ -377,15 +395,15 @@ export const createApnsRuntime = (deps) => {
   // Relay mode (default): the single APNs key lives in the central Cloudflare relay, not on
   // each user's server — so users configure nothing. The server just POSTs device tokens +
   // generic text; the relay signs + sends and reports which tokens to drop. Direct mode (below)
-  // is the fallback for self-hosters who set MITTRCRAFT_APNS_* and disable the relay.
+  // is the fallback for self-hosters who set OPENCHAMBER_APNS_* and disable the relay.
   const resolveRelayConfig = () => {
-    if (trimmedEnv('MITTRCRAFT_PUSH_RELAY_DISABLED') === 'true') return null;
-    const url = trimmedEnv('MITTRCRAFT_PUSH_RELAY_URL') || DEFAULT_RELAY_URL;
-    const override = (trimmedEnv('MITTRCRAFT_APNS_ENVIRONMENT') || '').toLowerCase();
+    if (trimmedEnv('OPENCHAMBER_PUSH_RELAY_DISABLED') === 'true') return null;
+    const url = trimmedEnv('OPENCHAMBER_PUSH_RELAY_URL') || DEFAULT_RELAY_URL;
+    const override = (trimmedEnv('OPENCHAMBER_APNS_ENVIRONMENT') || '').toLowerCase();
     return {
       url,
       registerUrl: url.replace(/\/send$/, '/register-token'),
-      // Explicit MITTRCRAFT_APNS_ENVIRONMENT forces every send to that environment; when
+      // Explicit OPENCHAMBER_APNS_ENVIRONMENT forces every send to that environment; when
       // unset (null), each token is delivered to the environment it registered with.
       environment: override === 'sandbox' ? 'sandbox' : override === 'production' ? 'production' : null,
     };
@@ -393,7 +411,7 @@ export const createApnsRuntime = (deps) => {
 
   const sendViaRelay = async (deviceTokens, payload, relay, environment) => {
     const tokens = deviceTokens.slice(0, 100);
-    const title = typeof payload?.title === 'string' && payload.title.length > 0 ? payload.title : 'MittrCraft';
+    const title = typeof payload?.title === 'string' && payload.title.length > 0 ? payload.title : 'OpenChamber';
     const { privateKey, publicJwk } = await getOrCreateRelayKeypair();
     const ts = Date.now();
     // Sign over the same canonical form the relay verifies: ts.sortedTokens.title.
@@ -438,7 +456,7 @@ export const createApnsRuntime = (deps) => {
       if (!warnedUnconfigured) {
         warnedUnconfigured = true;
         console.warn(
-          '[APNs] Relay disabled and no direct config; set MITTRCRAFT_APNS_KEY_ID / MITTRCRAFT_APNS_TEAM_ID / MITTRCRAFT_APNS_P8 for direct send.',
+          '[APNs] Relay disabled and no direct config; set OPENCHAMBER_APNS_KEY_ID / OPENCHAMBER_APNS_TEAM_ID / OPENCHAMBER_APNS_P8 for direct send.',
         );
       }
       return;
@@ -496,11 +514,18 @@ export const createApnsRuntime = (deps) => {
     // endpoint that actually knows the token (Xcode builds → sandbox, TestFlight/App Store
     // → production). Mixing them gets BadDeviceToken and the token wrongly dropped as dead.
     const tokensByEnvironment = new Map();
+    // Devices that gave a push key get their text sealed for them alone, so
+    // each is its own send; the rest share one batch per environment.
+    const sealedDevices = [];
     const seen = new Set();
     for (const record of Object.values(store.tokensBySession || {})) {
       for (const entry of normalizeTokens(record)) {
         if (seen.has(entry.deviceToken)) continue;
         seen.add(entry.deviceToken);
+        if (entry.pushKey) {
+          sealedDevices.push(entry);
+          continue;
+        }
         const group = tokensByEnvironment.get(entry.environment) || [];
         group.push(entry.deviceToken);
         tokensByEnvironment.set(entry.environment, group);
@@ -513,10 +538,28 @@ export const createApnsRuntime = (deps) => {
       for (const [environment, deviceTokens] of tokensByEnvironment) {
         await sendViaRelay(deviceTokens, payload, relay, relay.environment ?? environment);
       }
+      for (const entry of sealedDevices) {
+        await sendViaRelay([entry.deviceToken], sealedPayloadFor(payload, entry.pushKey), relay, relay.environment ?? entry.environment);
+      }
       return;
     }
     await sendViaDirectApns(tokensByEnvironment, payload);
+    for (const entry of sealedDevices) {
+      await sendViaDirectApns(new Map([[entry.environment, [entry.deviceToken]]]), sealedPayloadFor(payload, entry.pushKey));
+    }
   };
+
+  // What the relay and the push service see for a device with a key: the
+  // generic scenario title and an empty body, with the real title and body
+  // sealed in `data.enc` for the phone to open.
+  const sealedPayloadFor = (payload, pushKey) => ({
+    ...payload,
+    body: '',
+    data: {
+      ...(payload?.data && typeof payload.data === 'object' ? payload.data : {}),
+      enc: sealPushContent(pushKey, { title: payload?.title, body: payload?.body }),
+    },
+  });
 
   return {
     addOrUpdateApnsToken,

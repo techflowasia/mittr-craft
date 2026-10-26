@@ -1,4 +1,5 @@
 import * as gitHttp from '@/lib/gitApiHttp';
+import { normalizePath as normalizePathImpl } from '@/lib/pathNormalization';
 import type { GitWorktreeBootstrapStatus } from '@/lib/api/types';
 import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import { toast } from '@/components/ui';
@@ -11,7 +12,7 @@ type WorktreeBootstrapReadyHandler = (status: GitWorktreeBootstrapStatus) => voi
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const POLL_INTERVAL_MS = 250;
 
-const normalizePath = (value: string): string => value.replace(/\\/g, '/').replace(/\/+$/, '') || value;
+const normalizePath = (value: string | null | undefined): string => normalizePathImpl(value) ?? '';
 
 const state = new Map<string, WorktreeBootstrapState>();
 type WorktreeBootstrapTarget = 'git-ready' | 'setup-ready';
@@ -23,6 +24,23 @@ const watchers = new Map<string, { cancelled: boolean; lifecycleVersion: number 
 
 const getKey = (directory: string): string => normalizePath(directory);
 const getWaiterKey = (key: string, target: WorktreeBootstrapTarget): string => `${key}\n${target}`;
+
+// UI surfaces subscribe to know when a directory enters or leaves bootstrap,
+// so a half-created worktree's transient files are never shown as changes.
+const bootstrapListeners = new Set<() => void>();
+
+const notifyBootstrapListeners = (): void => {
+  for (const listener of bootstrapListeners) {
+    listener();
+  }
+};
+
+export const subscribeWorktreeBootstrapState = (listener: () => void): (() => void) => {
+  bootstrapListeners.add(listener);
+  return () => {
+    bootstrapListeners.delete(listener);
+  };
+};
 
 const startLifecycle = (key: string): void => {
   const watcher = watchers.get(key);
@@ -72,6 +90,7 @@ const storePolledState = (
   }
 
   state.set(key, next);
+  notifyBootstrapListeners();
   return next;
 };
 
@@ -98,6 +117,7 @@ export const markWorktreeBootstrapPending = (directory: string): void => {
     error: null,
     updatedAt: Date.now(),
   });
+  notifyBootstrapListeners();
 };
 
 export const clearWorktreeBootstrapState = (directory: string): void => {
@@ -108,6 +128,7 @@ export const clearWorktreeBootstrapState = (directory: string): void => {
   startLifecycle(key);
   state.delete(key);
   lifecycleVersions.delete(key);
+  notifyBootstrapListeners();
 };
 
 export const setWorktreeBootstrapState = (directory: string, next: WorktreeBootstrapState): void => {
@@ -117,6 +138,7 @@ export const setWorktreeBootstrapState = (directory: string, next: WorktreeBoots
   }
   startLifecycle(key);
   state.set(key, next);
+  notifyBootstrapListeners();
 };
 
 export const getWorktreeBootstrapState = (directory: string): WorktreeBootstrapState | null => {
@@ -137,6 +159,25 @@ const createFailedStatus = (error: string): GitWorktreeBootstrapStatus => ({
   error,
   updatedAt: Date.now(),
 });
+
+const bootstrapFailureDescription = (status: GitWorktreeBootstrapStatus): string => {
+  switch (status.errorCode) {
+    case 'AUTHENTICATION_REQUIRED':
+      return t('worktree.bootstrap.toast.authorizationRequired');
+    case 'GIT_LFS_CLIENT_MISSING':
+      return t('worktree.bootstrap.toast.lfsClientMissing');
+    case 'INVALID_REQUEST':
+      return t('worktree.bootstrap.toast.invalidConfiguration');
+    case 'CANCELLED':
+      return t('worktree.bootstrap.toast.cancelled');
+    case 'TIMEOUT':
+      return t('worktree.bootstrap.toast.timeoutDescription');
+    case 'TRANSPORT_FAILED':
+      return t('worktree.bootstrap.toast.transportFailed');
+    default:
+      return status.error || t('worktree.bootstrap.toast.failedDescription');
+  }
+};
 
 const markBootstrapFailed = (
   directory: string,
@@ -215,7 +256,7 @@ const pollWorktreeBootstrapInBackground = async (
     if (current.status === 'failed') {
       onFailed?.(current);
       toast.error(t('worktree.bootstrap.toast.failed'), {
-        description: current.error || t('worktree.bootstrap.toast.failedDescription'),
+        description: bootstrapFailureDescription(current),
       });
       return;
     }

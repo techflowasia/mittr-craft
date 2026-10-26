@@ -52,11 +52,6 @@ export const SessionGoalRow: React.FC<SessionGoalRowProps> = React.memo(({ sessi
       })
     : (goal.tokensUsed > 0 ? t('chat.goal.usage.tokens', { used: formatGoalTokens(goal.tokensUsed) }) : null);
 
-  const metCount = goal.criteria.filter((criterion) => criterion.status === 'met').length;
-  const progress = goal.criteria.length > 0
-    ? t('chat.goal.criteria.progress', { met: metCount, total: goal.criteria.length })
-    : null;
-
   const pauseResume = goal.status === 'active'
     ? { icon: 'pause' as const, labelKey: 'chat.goal.action.pause' as const, next: 'paused' as const }
     : (goal.status === 'paused' || goal.status === 'blocked' || goal.status === 'budgetLimited'
@@ -68,6 +63,9 @@ export const SessionGoalRow: React.FC<SessionGoalRowProps> = React.memo(({ sessi
       className={cn(
         'flex w-full min-w-0 items-center gap-2 rounded-lg border px-2 py-1',
         'border-[var(--interactive-border)]',
+        // The strip floats over the transcript like the composer box it sits
+        // above, so it needs a surface of its own: a border alone is clear glass.
+        'oc-glass-composer',
         className,
       )}
       aria-label={t('chat.goal.row.aria')}
@@ -75,7 +73,7 @@ export const SessionGoalRow: React.FC<SessionGoalRowProps> = React.memo(({ sessi
     >
       <Icon name="target" className="h-3.5 w-3.5 flex-shrink-0" style={{ color: sessionGoalStatusColor[goal.status] }} aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate typography-meta text-foreground">
-        {goal.note || objectiveContent || ''}
+        {objectiveContent || t('chat.goal.dialog.titleManage')}
       </span>
       {goal.status === 'active' && (!sessionStatus || sessionStatus.type === 'idle') ? (
         // The agent stopped but the goal is still active: the server is
@@ -90,13 +88,8 @@ export const SessionGoalRow: React.FC<SessionGoalRowProps> = React.memo(({ sessi
           {t(sessionGoalStatusLabelKey[goal.status] as never)}
         </span>
       )}
-      {progress ? (
-        <span className="flex-shrink-0 typography-meta tabular-nums text-muted-foreground">
-          {progress}
-        </span>
-      ) : null}
       {usage ? (
-        <span className="flex-shrink-0 typography-meta tabular-nums text-muted-foreground">
+        <span className="flex-shrink-0 typography-meta tabular-nums text-muted-foreground/70">
           {usage}
         </span>
       ) : null}

@@ -15,8 +15,10 @@
     "noEmit": true,
     "baseUrl": "./src",
     "paths": {
+      "@openchamber/sdk": ["../../sdk/src/index.ts"],
+      "@openchamber/sdk/schemas": ["../../sdk/src/schemas.ts"],
       "@/*": ["./*"],
-      "@mittrcraft/ui/*": ["./*"]
+      "@openchamber/ui/*": ["./*"]
     }
   },
   "include": ["src"]

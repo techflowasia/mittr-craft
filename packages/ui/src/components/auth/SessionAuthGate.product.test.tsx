@@ -1,0 +1,626 @@
+import { afterEach, describe, expect, mock, test } from 'bun:test';
+
+type ComponentFn<P extends Record<string, unknown> = Record<string, unknown>> = (props: P) => unknown;
+
+type HookRecord = {
+  values: unknown[];
+  deps: Array<unknown[] | undefined>;
+};
+
+type HookEffect = () => void | (() => void);
+type HookCallback = (...args: unknown[]) => unknown;
+type JSXProps = Record<string, unknown> & { children?: unknown };
+type JSXElementType<P extends Record<string, unknown> = Record<string, unknown>> = ComponentFn<P> | string | symbol;
+
+const hookRecords = new Map<unknown, HookRecord>();
+let currentRecord: HookRecord | null = null;
+let hookIndex = 0;
+let pendingEffects: Array<() => void> = [];
+const originalWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+
+afterEach(() => {
+  if (originalWindow) {
+    Object.defineProperty(globalThis, 'window', originalWindow);
+  } else {
+    Reflect.deleteProperty(globalThis, 'window');
+  }
+});
+
+const resetHarness = () => {
+  hookRecords.clear();
+  currentRecord = null;
+  hookIndex = 0;
+  pendingEffects = [];
+  runtimeApiBaseUrl = '';
+  sessionBody = { authenticated: false };
+  desktopShell = false;
+  clientTokenFromServer = 'issued-token';
+  clientTokenDelay = null;
+  descriptionOverride = null;
+  descriptionContexts.length = 0;
+  slotCalls.length = 0;
+  fetchedPaths.length = 0;
+  hostSets.length = 0;
+  switchedEndpoints.length = 0;
+  runtimeKey = 'local';
+  runtimeEndpointChangedListener = null;
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      isSecureContext: false,
+      location: { origin: 'http://127.0.0.1:3000' },
+      localStorage: {
+        getItem: () => null,
+        setItem: () => undefined,
+      },
+      setTimeout: (callback: () => void) => {
+        queueMicrotask(callback);
+        return 0;
+      },
+      clearTimeout: () => undefined,
+    },
+  });
+};
+
+const shallowEqualDeps = (left?: unknown[], right?: unknown[]): boolean => {
+  if (!left || !right) return false;
+  if (left.length !== right.length) return false;
+  return left.every((value, index) => Object.is(value, right[index]));
+};
+
+const getRecord = (component: unknown): HookRecord => {
+  const existing = hookRecords.get(component);
+  if (existing) return existing;
+  const record: HookRecord = { values: [], deps: [] };
+  hookRecords.set(component, record);
+  return record;
+};
+
+const getHookRecord = (): HookRecord => {
+  if (!currentRecord) {
+    throw new Error('Hooks can only run during a render pass');
+  }
+  return currentRecord;
+};
+
+const renderComponent = <P extends Record<string, unknown>>(component: ComponentFn<P>, props: P): unknown => {
+  const previousRecord = currentRecord;
+  const previousHookIndex = hookIndex;
+  currentRecord = getRecord(component);
+  hookIndex = 0;
+
+  try {
+    return component(props);
+  } finally {
+    currentRecord = previousRecord;
+    hookIndex = previousHookIndex;
+  }
+};
+
+function useCallback<T extends HookCallback>(callback: T, deps?: unknown[]): T {
+  const record = getHookRecord();
+  const index = hookIndex++;
+  const previousDeps = record.deps[index];
+  if (!shallowEqualDeps(previousDeps, deps)) {
+    record.values[index] = callback;
+    record.deps[index] = deps;
+  }
+  return record.values[index] as T;
+}
+
+function useEffect(effect: HookEffect, deps?: unknown[]): void {
+  const record = getHookRecord();
+  const index = hookIndex++;
+  const previousDeps = record.deps[index];
+  if (!shallowEqualDeps(previousDeps, deps)) {
+    record.deps[index] = deps;
+    pendingEffects.push(() => {
+      effect();
+    });
+  }
+}
+
+function useMemo<T>(factory: () => T, deps?: unknown[]): T {
+  const record = getHookRecord();
+  const index = hookIndex++;
+  const previousDeps = record.deps[index];
+  if (!shallowEqualDeps(previousDeps, deps)) {
+    record.values[index] = factory();
+    record.deps[index] = deps;
+  }
+  return record.values[index] as T;
+}
+
+function useRef<T>(initialValue: T): { current: T } {
+  const record = getHookRecord();
+  const index = hookIndex++;
+  if (record.values[index] === undefined) {
+    record.values[index] = { current: initialValue };
+  }
+  return record.values[index] as { current: T };
+}
+
+function useState<T>(initialValue: T | (() => T)): readonly [T, (next: T | ((prev: T) => T)) => void] {
+  const record = getHookRecord();
+  const index = hookIndex++;
+  if (record.values[index] === undefined) {
+    record.values[index] = typeof initialValue === 'function'
+      ? (initialValue as () => T)()
+      : initialValue;
+  }
+
+  const setState = (next: T | ((prev: T) => T)) => {
+    record.values[index] = typeof next === 'function'
+      ? (next as (prev: T) => T)(record.values[index] as T)
+      : next;
+  };
+
+  return [record.values[index] as T, setState] as const;
+}
+
+function jsx<P extends Record<string, unknown>>(type: JSXElementType<P>, props: JSXProps & P): unknown {
+  if (type === reactJsxRuntime.Fragment) {
+    return props.children ?? null;
+  }
+
+  if (typeof type === 'function') {
+    return renderComponent(type, props as P);
+  }
+
+  return { type, props };
+}
+
+const ReactMock = {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+};
+
+const reactJsxRuntime = {
+  Fragment: Symbol('Fragment'),
+  jsx,
+  jsxs: jsx,
+  jsxDEV: jsx,
+};
+
+let sessionBody: Record<string, unknown> = { authenticated: false };
+let desktopShell = false;
+let clientTokenFromServer = 'issued-token';
+let clientTokenDelay: Promise<void> | null = null;
+let descriptionOverride: string | null = null;
+const descriptionContexts: unknown[] = [];
+const slotCalls: JSXProps[] = [];
+const fetchedPaths: string[] = [];
+const hostSets: unknown[] = [];
+const switchedEndpoints: unknown[] = [];
+let runtimeApiBaseUrl = '';
+let runtimeKey = 'local';
+let runtimeEndpointChangedListener: (() => void) | null = null;
+
+mock.module('react/jsx-runtime', () => reactJsxRuntime);
+mock.module('react/jsx-dev-runtime', () => reactJsxRuntime);
+
+mock.module('react', () => ({
+  __esModule: true,
+  default: ReactMock,
+  ...ReactMock,
+}));
+
+mock.module('@simplewebauthn/browser', () => ({
+  browserSupportsWebAuthn: mock(() => false),
+}));
+
+mock.module('@/components/ui/button', () => ({
+  Button: ({ children }: { children?: unknown }) => children ?? null,
+}));
+
+mock.module('@/components/ui/checkbox', () => ({
+  Checkbox: () => null,
+}));
+
+mock.module('@/components/ui/input', () => ({
+  Input: (props: JSXProps) => ({ type: 'input', props }),
+}));
+
+mock.module('@/components/ui', () => ({
+  toast: {
+    success: mock(() => undefined),
+    error: mock(() => undefined),
+    message: mock(() => undefined),
+  },
+}));
+
+mock.module('@/components/ui/OpenChamberLogo', () => ({
+  OpenChamberLogo: () => 'logo',
+}));
+
+mock.module('@/components/icon/Icon', () => ({
+  Icon: () => null,
+}));
+
+mock.module('@/components/desktop/DesktopHostSwitcher', () => ({
+  DesktopHostSwitcherInline: () => 'host-switcher',
+}));
+
+mock.module('@/lib/i18n', () => ({
+  useI18n: () => ({ t: (key: string) => key }),
+}));
+
+mock.module('@/lib/desktop', () => ({
+  invokeDesktop: () => Promise.resolve(null),
+  isDesktopShell: mock(() => desktopShell),
+  isVSCodeRuntime: mock(() => false),
+}));
+
+mock.module('@/lib/persistence', () => ({
+  initializeAppearancePreferences: mock(() => Promise.resolve()),
+  syncDesktopSettings: mock(() => Promise.resolve()),
+}));
+
+mock.module('@/lib/directoryPersistence', () => ({
+  applyPersistedDirectoryPreferences: mock(() => Promise.resolve()),
+}));
+
+mock.module('@/lib/runtime-fetch', () => ({
+  runtimeFetch: mock(async (path: string) => {
+    fetchedPaths.push(path);
+    if (path === '/api/client-auth/clients') {
+      await clientTokenDelay;
+      return new Response(JSON.stringify({ token: clientTokenFromServer }), { status: 201, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify(sessionBody), { status: 401, headers: { 'content-type': 'application/json' } });
+  }),
+}));
+
+mock.module('@/lib/product-plugins', () => ({
+  ProductSlot: (props: JSXProps) => {
+    slotCalls.push(props);
+    return { type: 'product-slot', props };
+  },
+  translateProductSessionAuthDescription: (context: unknown) => {
+    descriptionContexts.push(context);
+    return descriptionOverride;
+  },
+}));
+
+mock.module('@/lib/runtime-auth', () => ({
+  getRuntimeExtraHeadersSync: mock(() => ({})),
+}));
+
+mock.module('@/lib/runtime-switch', () => ({
+  getRuntimeApiBaseUrl: () => runtimeApiBaseUrl,
+  getRuntimeKey: () => runtimeKey,
+  subscribeRuntimeEndpointChanged: (listener: () => void) => {
+    runtimeEndpointChangedListener = listener;
+    return () => {
+      if (runtimeEndpointChangedListener === listener) runtimeEndpointChangedListener = null;
+    };
+  },
+  switchRuntimeEndpoint: (endpoint: unknown) => { switchedEndpoints.push(endpoint); },
+}));
+
+mock.module('@/lib/desktopHosts', () => ({
+  desktopHostsGet: () => Promise.resolve({
+    hosts: [{ id: 'remote', url: 'https://host-a.example' }],
+    defaultHostId: 'remote',
+    initialHostChoiceCompleted: true,
+    localOrigin: 'http://127.0.0.1:3000',
+  }),
+  desktopHostsSet: (config: unknown) => {
+    hostSets.push(config);
+    return Promise.resolve();
+  },
+  getDesktopHostApiUrl: (host: { url: string }) => host.url,
+  normalizeHostUrl: (value: string) => value.replace(/\/+$/, ''),
+}));
+
+mock.module('@/lib/passkeys', () => ({
+  authenticateWithPasskey: mock(() => Promise.resolve(null)),
+  cancelPasskeyCeremony: mock(() => undefined),
+  defaultPasskeyStatus: { enabled: false, hasPasskeys: false, passkeyCount: 0, rpID: null },
+  fetchPasskeyStatus: mock(() => Promise.resolve({ enabled: false, hasPasskeys: false, passkeyCount: 0, rpID: null })),
+  isPasskeyCeremonyAbort: mock(() => false),
+  registerCurrentDevicePasskey: mock(() => Promise.resolve(null)),
+}));
+
+const authSessionStore = {
+  state: 'ok' as const,
+  markAuthenticated: mock(() => undefined),
+};
+
+mock.module('@/lib/runtime-auth-expiry', () => ({
+  installAuthSessionFocusWatch: mock(() => undefined),
+  useAuthSessionStore: Object.assign(
+    (selector: (store: typeof authSessionStore) => unknown) => selector(authSessionStore),
+    { getState: () => authSessionStore },
+  ),
+}));
+
+const { SessionAuthGate } = await import('./SessionAuthGate');
+
+const flushEffects = async () => {
+  while (pendingEffects.length > 0) {
+    const effects = pendingEffects;
+    pendingEffects = [];
+    for (const effect of effects) {
+      effect();
+    }
+    await Promise.resolve();
+  }
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await Promise.resolve();
+};
+
+const renderGate = async () => {
+  const firstPass = renderComponent(SessionAuthGate, { children: 'child' });
+  await flushEffects();
+  const secondPass = renderComponent(SessionAuthGate, { children: 'child' });
+  await flushEffects();
+  return secondPass ?? firstPass;
+};
+
+const collectText = (node: unknown): string => {
+  if (node === null || node === undefined || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map((child) => collectText(child)).join(' ');
+  if (typeof node === 'object') {
+    const element = node as { props?: { children?: unknown } };
+    return collectText(element.props?.children);
+  }
+  return '';
+};
+
+const slotProps = (tree: unknown) => findElement(tree, 'product-slot')?.props as {
+  runtime: string;
+  isTunnelLocked: boolean;
+  onSignedIn: (clientToken?: string) => Promise<boolean>;
+};
+
+const findElement = (node: unknown, type: string): { type: string; props: JSXProps } | null => {
+  if (!node || typeof node !== 'object') return null;
+  const element = node as { type?: unknown; props?: JSXProps };
+  if (element.type === type && element.props) return { type, props: element.props };
+  const children = element.props?.children;
+  if (Array.isArray(children)) {
+    for (const child of children) {
+      const match = findElement(child, type);
+      if (match) return match;
+    }
+    return null;
+  }
+  return findElement(children, type);
+};
+
+describe('SessionAuthGate session-auth-methods slot', () => {
+  test('the auth-methods slot receives isTunnelLocked', async () => {
+    resetHarness();
+    sessionBody = { authenticated: false, locked: true, tunnelLocked: true };
+
+    const tree = await renderGate();
+
+    expect(findElement(tree, 'product-slot')?.props).toMatchObject({ name: 'session-auth-methods', isTunnelLocked: true });
+    expect(slotCalls.at(-1)?.isTunnelLocked).toBe(true);
+  });
+
+  test('the slot is given isTunnelLocked false when the tunnel is not locked', async () => {
+    resetHarness();
+    sessionBody = { authenticated: false, locked: true };
+
+    const tree = await renderGate();
+
+    expect(findElement(tree, 'product-slot')?.props).toMatchObject({ name: 'session-auth-methods', isTunnelLocked: false });
+  });
+
+  test('the password form is hidden when no password is configured', async () => {
+    resetHarness();
+    sessionBody = { authenticated: false, locked: true, passwordEnabled: false, providers: ['x'] };
+
+    const tree = await renderGate();
+
+    expect(findElement(tree, 'input')).toBeNull();
+    expect(findElement(tree, 'form')).toBeNull();
+    expect(findElement(tree, 'product-slot')).not.toBeNull();
+  });
+
+  test('the password form shows when a password is configured next to a provider', async () => {
+    resetHarness();
+    sessionBody = { authenticated: false, locked: true, passwordEnabled: true, providers: ['x'] };
+
+    const tree = await renderGate();
+
+    expect(findElement(tree, 'input')).not.toBeNull();
+    expect(findElement(tree, 'product-slot')).not.toBeNull();
+  });
+
+  test('with no passwordEnabled field the form shows as upstream', async () => {
+    resetHarness();
+    sessionBody = { authenticated: false, locked: true };
+
+    const tree = await renderGate();
+
+    expect(findElement(tree, 'input')).not.toBeNull();
+    expect(findElement(tree, 'form')).not.toBeNull();
+  });
+
+  test('the slot is told which runtime the gate is in', async () => {
+    resetHarness();
+    expect(slotProps(await renderGate()).runtime).toBe('web');
+
+    resetHarness();
+    desktopShell = true;
+    runtimeApiBaseUrl = 'https://host-a.example';
+    runtimeKey = 'host:a';
+    expect(slotProps(await renderGate()).runtime).toBe('desktop-remote');
+
+    resetHarness();
+    desktopShell = true;
+    (globalThis as unknown as { window: Record<string, unknown> }).window.__OPENCHAMBER_LOCAL_ORIGIN__ = 'http://127.0.0.1:3000';
+    expect(slotProps(await renderGate()).runtime).toBe('desktop-local');
+  });
+
+  test('a signed-in web visitor is let in without asking for a client token', async () => {
+    resetHarness();
+    const props = slotProps(await renderGate());
+
+    expect(await props.onSignedIn()).toBe(true);
+
+    expect(collectText(await renderGate()).trim()).toBe('child');
+    expect(fetchedPaths.filter((path) => path === '/api/client-auth/clients')).toEqual([]);
+    expect(hostSets).toEqual([]);
+  });
+
+  test('a remote desktop window keeps the client token the sign-in came with, and is let in', async () => {
+    resetHarness();
+    desktopShell = true;
+    runtimeApiBaseUrl = 'https://host-a.example';
+    runtimeKey = 'host:a';
+    const props = slotProps(await renderGate());
+
+    expect(await props.onSignedIn('token-from-sign-in')).toBe(true);
+
+    expect(hostSets).toEqual([{
+      hosts: [{ id: 'remote', url: 'https://host-a.example', clientToken: 'token-from-sign-in' }],
+      defaultHostId: 'remote',
+      initialHostChoiceCompleted: true,
+    }]);
+    expect(switchedEndpoints).toHaveLength(1);
+    expect(switchedEndpoints[0]).toMatchObject({ apiBaseUrl: 'https://host-a.example', clientToken: 'token-from-sign-in', runtimeKey: 'host:a' });
+    expect(fetchedPaths.filter((path) => path === '/api/client-auth/clients')).toEqual([]);
+    expect(collectText(await renderGate()).trim()).toBe('child');
+  });
+
+  test('a remote desktop window asks the server for a client token once when the sign-in gave none', async () => {
+    resetHarness();
+    desktopShell = true;
+    runtimeApiBaseUrl = 'https://host-a.example';
+    runtimeKey = 'host:a';
+    const props = slotProps(await renderGate());
+
+    expect(await props.onSignedIn()).toBe(true);
+
+    expect(fetchedPaths.filter((path) => path === '/api/client-auth/clients')).toEqual(['/api/client-auth/clients']);
+    expect(switchedEndpoints[0]).toMatchObject({ clientToken: 'issued-token' });
+  });
+
+  test('a remote desktop window that cannot get a client token stays at the gate', async () => {
+    resetHarness();
+    desktopShell = true;
+    runtimeApiBaseUrl = 'https://host-a.example';
+    runtimeKey = 'host:a';
+    clientTokenFromServer = '';
+    const props = slotProps(await renderGate());
+
+    expect(await props.onSignedIn()).toBe(false);
+
+    expect(switchedEndpoints).toEqual([]);
+    expect(findElement(await renderGate(), 'product-slot')).not.toBeNull();
+  });
+});
+
+describe('SessionAuthGate sign-in that finishes after a host switch', () => {
+  const remoteA = async () => {
+    resetHarness();
+    desktopShell = true;
+    runtimeApiBaseUrl = 'https://host-a.example';
+    runtimeKey = 'host:a';
+    return slotProps(await renderGate());
+  };
+
+  const switchTo = (apiBaseUrl: string, key: string) => {
+    runtimeApiBaseUrl = apiBaseUrl;
+    runtimeKey = key;
+    runtimeEndpointChangedListener?.();
+  };
+
+  const nothingApplied = () => {
+    expect(hostSets).toEqual([]);
+    expect(switchedEndpoints).toEqual([]);
+  };
+
+  test('discards a directory sign-in that finishes on another remote host', async () => {
+    const props = await remoteA();
+    switchTo('https://host-b.example', 'host:b');
+
+    expect(await props.onSignedIn('token-a')).toBe(false);
+
+    nothingApplied();
+  });
+
+  test('discards a directory sign-in that finishes after switching to Local', async () => {
+    const props = await remoteA();
+    switchTo('', 'local');
+
+    expect(await props.onSignedIn('token-a')).toBe(false);
+
+    nothingApplied();
+  });
+
+  test('discards the client token it was still asking the first host for', async () => {
+    const props = await remoteA();
+    let releaseToken: () => void = () => undefined;
+    clientTokenDelay = new Promise<void>((resolve) => { releaseToken = resolve; });
+
+    const pending = props.onSignedIn();
+    await Promise.resolve();
+    switchTo('https://host-b.example', 'host:b');
+    releaseToken();
+
+    expect(await pending).toBe(false);
+    nothingApplied();
+  });
+
+  test('a web sign-in that finishes after the runtime changed does not let the person in', async () => {
+    resetHarness();
+    const props = slotProps(await renderGate());
+    switchTo('https://host-b.example', 'host:b');
+
+    expect(await props.onSignedIn()).toBe(false);
+  });
+});
+
+describe('SessionAuthGate description', () => {
+  test('the line under the title is upstream\'s while no plugin words it', async () => {
+    resetHarness();
+    sessionBody = { authenticated: false, locked: true, passwordEnabled: false, providers: ['x'] };
+
+    expect(collectText(await renderGate())).toContain('sessionAuth.locked.passwordDescription');
+
+    expect(descriptionContexts.at(-1)).toEqual({ passwordEnabled: false, runtime: 'web' });
+  });
+
+  test('a plugin can word the line, and its words replace upstream\'s', async () => {
+    resetHarness();
+    sessionBody = { authenticated: false, locked: true, passwordEnabled: false, providers: ['x'] };
+    descriptionOverride = 'Sign in with your company account.';
+
+    const text = collectText(await renderGate());
+
+    expect(text).toContain('Sign in with your company account.');
+    expect(text).not.toContain('sessionAuth.locked.passwordDescription');
+    expect(descriptionContexts.at(-1)).toEqual({ passwordEnabled: false, runtime: 'web' });
+  });
+
+  test('the plugin is told the runtime, so it can leave a local desktop alone', async () => {
+    resetHarness();
+    desktopShell = true;
+    (globalThis as unknown as { window: Record<string, unknown> }).window.__OPENCHAMBER_LOCAL_ORIGIN__ = 'http://127.0.0.1:3000';
+    sessionBody = { authenticated: false, locked: true, passwordEnabled: false, providers: ['x'] };
+
+    await renderGate();
+    expect(descriptionContexts.at(-1)).toEqual({ passwordEnabled: false, runtime: 'desktop-local' });
+  });
+
+  test('the tunnel line is never replaced', async () => {
+    resetHarness();
+    sessionBody = { authenticated: false, locked: true, tunnelLocked: true };
+    descriptionOverride = 'Sign in with your company account.';
+
+    const text = collectText(await renderGate());
+
+    expect(text).toContain('sessionAuth.locked.tunnelDescription');
+    expect(text).not.toContain('company account');
+  });
+});

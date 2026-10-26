@@ -1,5 +1,5 @@
 /**
- * WebSocket client for the MittrCraft dictation endpoint (/api/dictation/ws).
+ * WebSocket client for the OpenChamber dictation endpoint (/api/dictation/ws).
  *
  * One shared client per app. The socket is opened lazily when a dictation
  * starts and closed after an idle delay. URLs are resolved at connect time via
@@ -12,7 +12,7 @@ import { openRuntimeWebSocket } from '@/lib/relay/runtime-socket';
 import { type RelayTunnelWebSocket } from '@/lib/relay/tunnel-client';
 
 export interface DictationStartOptions {
-    provider?: 'local' | 'openai-compatible' | 'mittr';
+    provider?: 'local' | 'openai-compatible';
     language?: string;
     localModel?: string;
     openaiCompatible?: {
@@ -31,32 +31,31 @@ interface DictationServerMessage {
     error?: string;
     retryable?: boolean;
     reasonCode?: string;
-    resetsAt?: string;
 }
 
 interface DictationStreamError extends Error {
     retryable: boolean;
     reasonCode?: string;
-    resetsAt?: string;
 }
 
-const createStreamError = (message: string, retryable: boolean, reasonCode?: string, resetsAt?: string): DictationStreamError => {
+const createStreamError = (message: string, retryable: boolean, reasonCode?: string): DictationStreamError => {
     const error = new Error(message) as DictationStreamError;
     error.name = 'DictationStreamError';
     error.retryable = retryable;
     if (reasonCode) {
         error.reasonCode = reasonCode;
     }
-    if (typeof resetsAt === 'string') {
-        error.resetsAt = resetsAt;
-    }
     return error;
 };
 
 const CONNECT_TIMEOUT_MS = 10000;
-const START_TIMEOUT_MS = 15000;
+// The first start of a session also loads the local ONNX engine (measured ~3s
+// on an M1, more on slower machines and on first run after boot). 15s left too
+// little headroom and surfaced as "Dictation start timed out" before the worker
+// was ready.
+const START_TIMEOUT_MS = 30000;
 const IDLE_CLOSE_DELAY_MS = 30000;
-const DEFAULT_FINISH_TIMEOUT_MS = 30000;
+const DEFAULT_FINISH_TIMEOUT_MS = 60000;
 
 type ConnectionStatusListener = (connected: boolean) => void;
 type PartialListener = (dictationId: string, text: string) => void;
@@ -348,7 +347,6 @@ export class DictationClient {
                     message.error || 'Dictation failed',
                     message.retryable !== false,
                     message.reasonCode,
-                    message.resetsAt,
                 );
                 const pendingStart = this.pendingStarts.get(dictationId);
                 if (pendingStart) {
@@ -454,7 +452,7 @@ export class DictationClient {
 export const dictationClient = new DictationClient();
 
 if (typeof window !== 'undefined') {
-    window.addEventListener('mittrcraft:runtime-endpoint-changed', () => {
+    window.addEventListener('openchamber:runtime-endpoint-changed', () => {
         // Drop the socket so the next dictation reconnects to the new runtime.
         dictationClient.cancelAllForRuntimeSwitch();
     });

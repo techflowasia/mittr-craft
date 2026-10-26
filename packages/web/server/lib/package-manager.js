@@ -4,30 +4,32 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { fetchUpdateNotes } from './changelog/update-notes.js';
+import { isEnterpriseMode } from './enterprise-mode.js';
+
+import { resolveNpmRegistryRequest } from './opencode/npm-registry-config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PACKAGE_NAME = '@mittrcraft/web';
+const PACKAGE_NAME = '@openchamber/web';
 const PACKAGE_PATH_SEGMENTS = PACKAGE_NAME.split('/');
-const NPM_REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}`;
-const CHANGELOG_URL = 'https://raw.githubusercontent.com/techflowasia/mittr-craft/main/CHANGELOG.md';
-const GITHUB_RELEASES_URL = 'https://github.com/techflowasia/mittr-craft/releases';
-const GITHUB_RELEASES_API_URL = 'https://api.github.com/repos/techflowasia/mittr-craft/releases';
+const GITHUB_RELEASES_URL = 'https://github.com/openchamber/openchamber/releases';
+const GITHUB_RELEASES_API_URL = 'https://api.github.com/repos/openchamber/openchamber/releases';
 let cachedDetectedPm = null;
 
 function getSpawnSyncBaseOptions() {
   return process.platform === 'win32' ? { windowsHide: true } : {};
 }
-const UPDATE_CHECK_URL = process.env.MITTRCRAFT_UPDATE_API_URL || 'https://api.mittrcraft.dev/v1/update/check';
+const UPDATE_CHECK_URL = process.env.OPENCHAMBER_UPDATE_API_URL || 'https://api.openchamber.dev/v1/update/check';
 
-function getMittrCraftConfigDir() {
+function getOpenChamberConfigDir() {
   if (process.platform === 'win32') {
     const appData = process.env.APPDATA;
-    if (appData) return path.join(appData, 'mittrcraft');
+    if (appData) return path.join(appData, 'openchamber');
   }
 
-  return path.join(os.homedir(), '.config', 'mittrcraft');
+  return path.join(os.homedir(), '.config', 'openchamber');
 }
 
 function sanitizeInstallScope(scope) {
@@ -36,7 +38,7 @@ function sanitizeInstallScope(scope) {
 }
 
 function getOrCreateInstallId(scope = 'web') {
-  const configDir = getMittrCraftConfigDir();
+  const configDir = getOpenChamberConfigDir();
   const normalizedScope = sanitizeInstallScope(scope);
   const idPath = path.join(configDir, `install-id-${normalizedScope}`);
 
@@ -99,7 +101,7 @@ async function resolveAndroidApkUrl(version, candidateUrl) {
     const response = await fetch(`${GITHUB_RELEASES_API_URL}/tags/v${version}`, {
       headers: {
         Accept: 'application/vnd.github+json',
-        'User-Agent': 'mittrcraft-update-check',
+        'User-Agent': 'openchamber-update-check',
       },
       signal: AbortSignal.timeout(10000),
     });
@@ -113,7 +115,7 @@ async function resolveAndroidApkUrl(version, candidateUrl) {
         && typeof asset.browser_download_url === 'string'
       ))
       : [];
-    const canonicalAsset = apkAssets.find((asset) => /^(?:MittrCraft|MittrCraft)-.+-android\.apk$/i.test(asset.name));
+    const canonicalAsset = apkAssets.find((asset) => /^OpenChamber-.+-android\.apk$/i.test(asset.name));
     return (canonicalAsset || apkAssets[0])?.browser_download_url;
   } catch {
     return undefined;
@@ -128,7 +130,9 @@ async function checkForUpdatesFromApi(currentVersion, options = {}) {
     const shouldTrustClientPlatform = appType === 'desktop-electron' || appType === 'vscode' || appType === 'mobile-capacitor';
     const platform = shouldTrustClientPlatform ? normalizePlatform(options.platform) : hostPlatform;
     const arch = shouldTrustClientPlatform ? normalizeArch(options.arch) : hostArch;
-    const reportUsage = options.reportUsage !== false;
+    // Enterprise mode keeps the update check (security fixes must reach the
+    // company) but never reports usage, whatever the client asked for.
+    const reportUsage = options.reportUsage !== false && !isEnterpriseMode();
     const payload = {
       appType,
       deviceClass: normalizeDeviceClass(options.deviceClass),
@@ -344,7 +348,7 @@ function getGlobalNodeModulesRoots(pm) {
 function getOwnedPackagePathsFromGlobalBins(pm) {
   const packagePaths = [];
   for (const binDir of getGlobalBinDirs(pm)) {
-    const binaryName = process.platform === 'win32' ? 'mittrcraft.cmd' : 'mittrcraft';
+    const binaryName = process.platform === 'win32' ? 'openchamber.cmd' : 'openchamber';
     const binaryPath = path.join(binDir, binaryName);
     if (!fs.existsSync(binaryPath)) continue;
 
@@ -386,7 +390,7 @@ export function detectPackageManagerDetails() {
   // dozen spawnSync(pm, ['bin', '-g']) calls with 10s timeouts each; under
   // the in-process server every one blocks the Electron main event loop and
   // manifests as a multi-second UI freeze. Short-circuit here.
-  if (process.env.MITTRCRAFT_RUNTIME === 'desktop') {
+  if (process.env.OPENCHAMBER_RUNTIME === 'desktop') {
     return {
       packageManager: 'electron',
       reason: 'desktop-runtime',
@@ -406,7 +410,7 @@ export function detectPackageManagerDetails() {
       };
   }
 
-  const forcedPm = process.env.MITTRCRAFT_PACKAGE_MANAGER?.trim();
+  const forcedPm = process.env.OPENCHAMBER_PACKAGE_MANAGER?.trim();
   if (forcedPm && ['npm', 'pnpm', 'yarn', 'bun'].includes(forcedPm)) {
     const forcedPmCommand = resolvePackageManagerCommand(forcedPm);
     if (isCommandAvailable(forcedPmCommand)) {
@@ -619,23 +623,23 @@ function isCommandAvailable(command) {
   }
 }
 
+function getGlobalListArgs(pm) {
+  switch (pm) {
+    case 'pnpm':
+      return ['list', '-g', '--depth=0', PACKAGE_NAME];
+    case 'yarn':
+      return ['global', 'list', '--depth=0'];
+    case 'bun':
+      return ['pm', 'ls', '-g'];
+    default:
+      return ['list', '-g', '--depth=0', PACKAGE_NAME];
+  }
+}
+
 function isPackageInstalledWith(pm) {
   try {
     const pmCommand = resolvePackageManagerCommand(pm);
-    let args;
-    switch (pm) {
-      case 'pnpm':
-        args = ['list', '-g', '--depth=0', PACKAGE_NAME];
-        break;
-      case 'yarn':
-        args = ['global', 'list', '--depth=0'];
-        break;
-      case 'bun':
-        args = ['pm', 'ls', '-g'];
-        break;
-      default:
-        args = ['list', '-g', '--depth=0', PACKAGE_NAME];
-    }
+    const args = getGlobalListArgs(pm);
 
     const result = spawnSync(pmCommand, args, {
       encoding: 'utf8',
@@ -645,26 +649,69 @@ function isPackageInstalledWith(pm) {
     });
 
     if (result.status !== 0) return false;
-    return result.stdout.includes(PACKAGE_NAME) || result.stdout.includes('mittrcraft');
+    return result.stdout.includes(PACKAGE_NAME) || result.stdout.includes('openchamber');
   } catch {
     return false;
   }
 }
 
+// npm, bun and yarn print `name@version`; pnpm separates the name and the
+// version with whitespace. An optional `v` covers yarn listing formats.
+const GLOBAL_VERSION_PATTERN = /@openchamber\/web[@\s]+v?(\d[\w.+-]*)/;
+
 /**
- * Get the update command for the detected package manager
+ * Read the globally installed version of the package as reported by the
+ * package manager itself. Returns null when the listing cannot be read or
+ * parsed. The listing command may exit non-zero when the package is missing,
+ * so stdout is parsed regardless of the status.
  */
-export function getUpdateCommand(pm = detectPackageManager()) {
+function getInstalledGlobalVersion(pm) {
+  try {
+    const pmCommand = resolvePackageManagerCommand(pm);
+    const result = spawnSync(pmCommand, getGlobalListArgs(pm), {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 10000,
+      ...getSpawnSyncBaseOptions(),
+    });
+    return String(result.stdout || '').match(GLOBAL_VERSION_PATTERN)?.[1] || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Normalize a version string into an exact install target.
+ * Returns the plain version or null when the value is not a concrete version.
+ */
+function normalizeTargetVersion(value) {
+  const normalized = String(value ?? '').trim().replace(/^v/, '');
+  return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(normalized) ? normalized : null;
+}
+
+/**
+ * Get the update command for the detected package manager.
+ * When an exact target version is given, it is pinned in the spec instead of
+ * re-resolving the `latest` dist-tag at install time: the update check and the
+ * package manager see different metadata, and dist-tag resolution can lag the
+ * check behind a fresh release (stale packument cache, pnpm minimumReleaseAge).
+ */
+export function getUpdateCommand(pm = detectPackageManager(), options = {}) {
+  const targetVersion = normalizeTargetVersion(options.targetVersion);
+  if (options.targetVersion != null && !targetVersion) {
+    throw new Error(`Invalid target version for update: ${String(options.targetVersion)}`);
+  }
+  const versionSpec = targetVersion ? `@${targetVersion}` : '@latest';
   const pmCommand = quoteCommand(resolvePackageManagerCommand(pm));
   switch (pm) {
     case 'pnpm':
-      return `${pmCommand} add -g ${PACKAGE_NAME}@latest`;
+      return `${pmCommand} add -g ${PACKAGE_NAME}${versionSpec}`;
     case 'yarn':
-      return `${pmCommand} global add ${PACKAGE_NAME}@latest`;
+      return `${pmCommand} global add ${PACKAGE_NAME}${versionSpec}`;
     case 'bun':
-      return `${pmCommand} add -g ${PACKAGE_NAME}@latest`;
+      return `${pmCommand} add -g ${PACKAGE_NAME}${versionSpec}`;
     default:
-      return `${pmCommand} install -g ${PACKAGE_NAME}@latest`;
+      return `${pmCommand} install -g ${PACKAGE_NAME}${versionSpec}`;
   }
 }
 
@@ -686,8 +733,9 @@ export function getCurrentVersion() {
  */
 async function getLatestVersion() {
   try {
-    const response = await fetch(NPM_REGISTRY_URL, {
-      headers: { Accept: 'application/json' },
+    const request = resolveNpmRegistryRequest(PACKAGE_NAME);
+    const response = await fetch(request.url, {
+      headers: { Accept: 'application/json', ...request.headers },
       signal: AbortSignal.timeout(10000),
     });
 
@@ -737,34 +785,9 @@ function compareVersions(left, right) {
   return 0;
 }
 
-/**
- * Fetch changelog notes between versions
- */
+/** Release notes between the installed and the offered version, or undefined. */
 async function fetchChangelogNotes(fromVersion, toVersion) {
-  try {
-    const response = await fetch(CHANGELOG_URL, {
-      signal: AbortSignal.timeout(10000),
-    });
-
-    if (!response.ok) return undefined;
-
-    const changelog = await response.text();
-    const sections = changelog.split(/^## /m).slice(1);
-
-    const relevantSections = sections.filter((section) => {
-      const match = section.match(/^\[(\d+\.\d+\.\d+)\]/);
-      if (!match) return false;
-      return compareVersions(match[1], fromVersion) > 0 && compareVersions(match[1], toVersion) <= 0;
-    });
-
-    if (relevantSections.length === 0) return undefined;
-
-    return relevantSections
-      .map((s) => '## ' + s.trim())
-      .join('\n\n');
-  } catch {
-    return undefined;
-  }
+  return (await fetchUpdateNotes(fromVersion, toVersion, compareVersions)) ?? undefined;
 }
 
 export async function checkForUpdates(options = {}) {
@@ -785,7 +808,7 @@ export async function checkForUpdates(options = {}) {
       return {
         ...remote,
         packageManager: pm,
-        updateCommand: 'mittrcraft update',
+        updateCommand: 'openchamber update',
       };
     }
   }
@@ -819,15 +842,19 @@ export async function checkForUpdates(options = {}) {
     downloadUrl,
     packageManager: pm,
     // Show our CLI command, not raw package manager command
-    updateCommand: 'mittrcraft update',
+    updateCommand: 'openchamber update',
   };
 }
 
 /**
- * Execute the update (used by CLI)
+ * Execute the update (used by CLI).
+ * When an exact target version is given, the globally installed version is
+ * read back after the package manager exits: a zero exit status alone is not
+ * proof the target landed (stale dist-tag resolution, pnpm release-age policy),
+ * and the caller must not report success without the version matching.
  */
 export function executeUpdate(pm = detectPackageManager(), options = {}) {
-  const command = getUpdateCommand(pm);
+  const command = getUpdateCommand(pm, { targetVersion: options.targetVersion });
   if (!options?.silent) {
     console.log(`Updating ${PACKAGE_NAME} using ${pm}...`);
     console.log(`Running: ${command}`);
@@ -839,8 +866,43 @@ export function executeUpdate(pm = detectPackageManager(), options = {}) {
     ...getSpawnSyncBaseOptions(),
   });
 
+  if (result.status !== 0) {
+    return {
+      success: false,
+      exitCode: result.status,
+      error: `Package manager exited with code ${result.status}`,
+    };
+  }
+
+  const targetVersion = normalizeTargetVersion(options.targetVersion);
+  if (!targetVersion) {
+    return {
+      success: true,
+      exitCode: result.status,
+      installedVersion: null,
+    };
+  }
+
+  const installedVersion = getInstalledGlobalVersion(pm);
+  if (!installedVersion) {
+    return {
+      success: false,
+      exitCode: result.status,
+      error: `Could not determine the globally installed ${PACKAGE_NAME} version after the update; not reporting success`,
+    };
+  }
+
+  if (compareVersions(installedVersion, targetVersion) !== 0) {
+    return {
+      success: false,
+      exitCode: result.status,
+      error: `Installed ${PACKAGE_NAME} version ${installedVersion} does not match target ${targetVersion}. The package manager may have resolved different metadata or filtered the release.`,
+    };
+  }
+
   return {
-    success: result.status === 0,
+    success: true,
     exitCode: result.status,
+    installedVersion,
   };
 }

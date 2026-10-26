@@ -1,3 +1,4 @@
+import { spaceApiPath } from '@/lib/spaces/space-route';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeUrlResolver, type RuntimeUrlResolver } from '@/lib/runtime-url';
 import { isFilePathWithinDirectory, toAbsoluteFilePath } from '@/lib/path-utils';
@@ -137,11 +138,13 @@ export const prepareLocalMarkdownImages = async ({
   if (cached) cache.delete(key);
 
   const response = await runtimeFetch(
-    `/api/mittrcraft/sessions/${encodeURIComponent(sessionId)}/markdown-image-grants`,
+    `/api/openchamber/sessions/${encodeURIComponent(sessionId)}/markdown-image-grants`,
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ directory, messageId, sources }),
+      // The grant is issued by the server that holds the file: a space's for a space directory.
+      directory,
       signal,
     },
   );
@@ -201,7 +204,7 @@ export const resolveMarkdownImageSource = async (
 };
 
 /**
- * VS Code has no MittrCraft server route for message-scoped temporary-file
+ * VS Code has no OpenChamber server route for message-scoped temporary-file
  * grants. Preserve its existing workspace-only gallery path through the local
  * filesystem bridge, including the same size and signature validation.
  */
@@ -250,7 +253,7 @@ export const getPreparedMarkdownImageUrl = (
   image: Extract<PreparedMarkdownImage, { status: 'ready' }>,
   directory: string,
 ): string => getRuntimeUrlResolver().authenticatedAsset(
-  '/api/fs/raw',
+  spaceApiPath('/api/fs/raw', directory),
   {
     path: image.path,
     directory,

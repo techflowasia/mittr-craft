@@ -11,6 +11,7 @@ import { isModuleCliExecution, normalizeCliEntryPath } from './cli-entry.js';
 import { requestJson } from './lib/cli-http.js';
 import { requestControlAction } from './lib/cli-control.js';
 import { inspectTunnelAttachability } from './lib/cli-lifecycle.js';
+import { startupCommand } from './lib/commands-startup.js';
 import { formatGoal } from './lib/commands-schedule.js';
 import {
   buildSessionCreatePayload,
@@ -29,32 +30,34 @@ import {
 import {
   assertAuthenticatedNetworkExposure,
   commands,
-  discoverMittrCraftInstanceOnPort,
+  discoverOpenChamberInstanceOnPort,
   discoverLifecycleInstances,
   discoverRunningInstances,
   discoverUnconfirmedRegistryInstanceOnPort,
   ensureTunnelProfilesMigrated,
+  EXIT_CODE,
   generateUiPassword,
   getInstanceFilePath,
   getPidFilePath,
-  isMittrCraftCmdline,
-  isMittrCraftProcessRunning,
+  isOpenchamberCmdline,
+  isOpenchamberProcessRunning,
   parseArgs,
   resolveServeHost,
   resolveServeUiPassword,
 } from './cli.js';
+import { buildWindowsStartupTaskCommand } from './lib/cli-startup.js';
 
-async function withTempMittrCraftDataDir(fn) {
-  const previous = process.env.MITTRCRAFT_DATA_DIR;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-cli-test-'));
-  process.env.MITTRCRAFT_DATA_DIR = dir;
+async function withTempOpenChamberDataDir(fn) {
+  const previous = process.env.OPENCHAMBER_DATA_DIR;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-cli-test-'));
+  process.env.OPENCHAMBER_DATA_DIR = dir;
   try {
     return await fn(dir);
   } finally {
     if (typeof previous === 'string') {
-      process.env.MITTRCRAFT_DATA_DIR = previous;
+      process.env.OPENCHAMBER_DATA_DIR = previous;
     } else {
-      delete process.env.MITTRCRAFT_DATA_DIR;
+      delete process.env.OPENCHAMBER_DATA_DIR;
     }
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -84,7 +87,7 @@ async function captureStdout(fn) {
   }
 }
 
-async function startMockMittrCraftServer(options = {}) {
+async function startMockOpenChamberServer(options = {}) {
   const runtime = options.runtime || 'web';
   const pid = Number.isFinite(options.pid) ? options.pid : null;
   let shutdownRequested = false;
@@ -172,11 +175,11 @@ async function waitForTcpPort(port, timeoutMs = 3000) {
   return false;
 }
 
-function spawnMittrCraftLikeIdleProcess() {
-  return spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', 'mittrcraft-idle'], { stdio: 'ignore' });
+function spawnOpenChamberLikeIdleProcess() {
+  return spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', 'openchamber-idle'], { stdio: 'ignore' });
 }
 
-function spawnMittrCraftLikeHungServer(port) {
+function spawnOpenChamberLikeHungServer(port) {
   const script = `
     const net = require('net');
     const sockets = new Set();
@@ -187,7 +190,7 @@ function spawnMittrCraftLikeHungServer(port) {
     server.listen(${port}, '127.0.0.1');
     setInterval(() => {}, 1000);
   `;
-  return spawn(process.execPath, ['-e', script, 'mittrcraft-hung-server'], { stdio: 'ignore' });
+  return spawn(process.execPath, ['-e', script, 'openchamber-hung-server'], { stdio: 'ignore' });
 }
 
 describe('cli args', () => {
@@ -203,11 +206,32 @@ describe('cli args', () => {
     expect(parseArgs(['serve', '-d']).removedFlagErrors).toEqual([]);
   });
 
+  it('rejects a flag that only another command reads', () => {
+    expect(parseArgs(['serve', '--daily', '09:30']).removedFlagErrors).toEqual([
+      'Unknown option for serve: --daily (used by: schedule)',
+    ]);
+    expect(parseArgs(['--port', '8080', '--lines', '5']).removedFlagErrors).toEqual([
+      'Unknown option for serve: --lines (used by: logs)',
+    ]);
+    expect(parseArgs(['status', '--token', 'x']).removedFlagErrors).toEqual([
+      'Unknown option for status: --token (used by: tunnel)',
+    ]);
+  });
+
+  it('accepts command-owned flags on their own commands and global flags anywhere', () => {
+    expect(parseArgs(['schedule', 'create', '--daily', '09:30', '--prompt', 'hi', '--project', 'p']).removedFlagErrors).toEqual([]);
+    expect(parseArgs(['session', 'send', '--session', 's', '--message', 'hi', '--wait', '--timeout', '30']).removedFlagErrors).toEqual([]);
+    expect(parseArgs(['tunnel', 'start', '--provider', 'cloudflare', '--mode', 'quick', '--dry-run']).removedFlagErrors).toEqual([]);
+    expect(parseArgs(['logs', '--lines', '20', '--no-follow']).removedFlagErrors).toEqual([]);
+    expect(parseArgs(['--port', '8080']).command).toBe('serve');
+    expect(parseArgs(['serve', '--hostname', 'h', '--port', '3000', '--json', '--quiet']).removedFlagErrors).toEqual([]);
+  });
+
   it('parses explicit connect-url server overrides', () => {
-    const parsed = parseArgs(['connect-url', '--server', 'https://mittrcraft.example.com', '--port', '3002']);
+    const parsed = parseArgs(['connect-url', '--server', 'https://openchamber.example.com', '--port', '3002']);
 
     expect(parsed.command).toBe('connect-url');
-    expect(parsed.options.server).toBe('https://mittrcraft.example.com');
+    expect(parsed.options.server).toBe('https://openchamber.example.com');
     expect(parsed.options.port).toBe(3002);
   });
 
@@ -314,7 +338,7 @@ describe('cli args', () => {
       '--worktree',
       'side-task',
       '--branch',
-      'mittrcraft/side-task',
+      'openchamber/side-task',
       '--base',
       'main',
       '--no-upstream',
@@ -327,7 +351,7 @@ describe('cli args', () => {
     expect(parsed.options.prompt).toBe('Investigate cache invalidation');
     expect(parsed.options.model).toBe('openai/gpt-5.5');
     expect(parsed.options.worktree).toBe('side-task');
-    expect(parsed.options.branch).toBe('mittrcraft/side-task');
+    expect(parsed.options.branch).toBe('openchamber/side-task');
     expect(parsed.options.startRef).toBe('main');
     expect(parsed.options.setUpstream).toBe(false);
   });
@@ -346,7 +370,7 @@ describe('cli args', () => {
       model: 'openai/gpt-5.5',
       agent: 'build',
       worktree: 'side-task',
-      branch: 'mittrcraft/side-task',
+      branch: 'openchamber/side-task',
       startRef: 'main',
       setUpstream: true,
     })).toEqual({
@@ -354,7 +378,7 @@ describe('cli args', () => {
       title: 'Side task',
       worktree: {
         name: 'side-task',
-        branchName: 'mittrcraft/side-task',
+        branchName: 'openchamber/side-task',
         startRef: 'main',
       },
       prompt: 'Investigate cache invalidation',
@@ -552,9 +576,9 @@ describe('cli args', () => {
   it('formats projects compactly', () => {
     expect(formatProjectLine({
       id: 'path_repo',
-      label: 'MittrCraft',
-      path: '/repo/mittrcraft',
-    })).toBe('- `MittrCraft` — `path_repo` — `/repo/mittrcraft`');
+      label: 'Openchamber',
+      path: '/repo/openchamber',
+    })).toBe('- `Openchamber` — `path_repo` — `/repo/openchamber`');
   });
 
   it('formats model defaults and favorites compactly', () => {
@@ -659,7 +683,7 @@ describe('cli API target resolution', () => {
       discoverDesktopInstance: async () => null,
       discoverLifecycleInstances: async () => [{ port: 3001 }, { port: 3002 }],
       isServerHealthReady: async () => false,
-    })).rejects.toThrow('Multiple MittrCraft instances are running');
+    })).rejects.toThrow('Multiple OpenChamber instances are running');
   });
 });
 
@@ -680,15 +704,15 @@ describe('network-exposed auth validation', () => {
   });
 
   it('allows explicit unsafe LAN override from process env only', () => {
-    const previous = process.env.MITTRCRAFT_ALLOW_UNAUTHENTICATED_LAN;
-    process.env.MITTRCRAFT_ALLOW_UNAUTHENTICATED_LAN = 'true';
+    const previous = process.env.OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN;
+    process.env.OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN = 'true';
     try {
       expect(() => assertAuthenticatedNetworkExposure({ host: '0.0.0.0' })).not.toThrow();
     } finally {
       if (typeof previous === 'string') {
-        process.env.MITTRCRAFT_ALLOW_UNAUTHENTICATED_LAN = previous;
+        process.env.OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN = previous;
       } else {
-        delete process.env.MITTRCRAFT_ALLOW_UNAUTHENTICATED_LAN;
+        delete process.env.OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN;
       }
     }
   });
@@ -732,30 +756,30 @@ describe('serve UI password resolution', () => {
 });
 
 describe('serve host resolution', () => {
-  it('uses MITTRCRAFT_HOST when --host is not provided', () => {
-    const previous = process.env.MITTRCRAFT_HOST;
-    process.env.MITTRCRAFT_HOST = '192.0.2.20';
+  it('uses OPENCHAMBER_HOST when --host is not provided', () => {
+    const previous = process.env.OPENCHAMBER_HOST;
+    process.env.OPENCHAMBER_HOST = '192.0.2.20';
     try {
       expect(resolveServeHost(undefined)).toBe('192.0.2.20');
     } finally {
       if (typeof previous === 'string') {
-        process.env.MITTRCRAFT_HOST = previous;
+        process.env.OPENCHAMBER_HOST = previous;
       } else {
-        delete process.env.MITTRCRAFT_HOST;
+        delete process.env.OPENCHAMBER_HOST;
       }
     }
   });
 
-  it('prefers explicit --host over MITTRCRAFT_HOST', () => {
-    const previous = process.env.MITTRCRAFT_HOST;
-    process.env.MITTRCRAFT_HOST = '192.0.2.20';
+  it('prefers explicit --host over OPENCHAMBER_HOST', () => {
+    const previous = process.env.OPENCHAMBER_HOST;
+    process.env.OPENCHAMBER_HOST = '192.0.2.20';
     try {
       expect(resolveServeHost('192.0.2.21')).toBe('192.0.2.21');
     } finally {
       if (typeof previous === 'string') {
-        process.env.MITTRCRAFT_HOST = previous;
+        process.env.OPENCHAMBER_HOST = previous;
       } else {
-        delete process.env.MITTRCRAFT_HOST;
+        delete process.env.OPENCHAMBER_HOST;
       }
     }
   });
@@ -763,7 +787,7 @@ describe('serve host resolution', () => {
 
 describe('compatibility exports', () => {
   it('allows tunnel profile migration before command options are initialized', async () => {
-    await withTempMittrCraftDataDir(async () => {
+    await withTempOpenChamberDataDir(async () => {
       const store = ensureTunnelProfilesMigrated();
 
       expect(store).toEqual({ version: 1, profiles: [] });
@@ -771,7 +795,7 @@ describe('compatibility exports', () => {
   });
 
   it('includes ngrok in fallback tunnel providers when no server is reachable', async () => {
-    await withTempMittrCraftDataDir(async () => {
+    await withTempOpenChamberDataDir(async () => {
       const port = await allocateLoopbackPort();
       const output = await captureStdout(async () => {
         await commands.tunnel({ json: true, explicitPort: true, port }, 'providers');
@@ -784,7 +808,7 @@ describe('compatibility exports', () => {
   });
 
   it('supports ngrok quick dry-run with an explicit port', async () => {
-    await withTempMittrCraftDataDir(async () => {
+    await withTempOpenChamberDataDir(async () => {
       const output = await captureStdout(async () => {
         await commands.tunnel({
           json: true,
@@ -811,7 +835,7 @@ describe('CLI HTTP helpers', () => {
   it('sends one typed request to the shared control endpoint', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async (url, options = {}) => {
-      expect(new URL(String(url)).pathname).toBe('/api/mittrcraft/control');
+      expect(new URL(String(url)).pathname).toBe('/api/openchamber/control');
       expect(options.method).toBe('POST');
       expect(JSON.parse(options.body)).toEqual({
         action: 'session.status',
@@ -829,8 +853,8 @@ describe('CLI HTTP helpers', () => {
     }
   });
 
-  it('retries UI-authenticated API requests with the stored instance password', async () => {
-    await withTempMittrCraftDataDir(async () => {
+  it.each(['oc_ui_session', 'oc_ui_session_3000'])('retries UI-authenticated API requests with the %s cookie', async (cookieName) => {
+    await withTempOpenChamberDataDir(async () => {
       const port = 45678;
       fs.writeFileSync(await getInstanceFilePath(port), JSON.stringify({ port, uiPassword: 'secret' }, null, 2));
       const originalFetch = globalThis.fetch;
@@ -841,11 +865,11 @@ describe('CLI HTTP helpers', () => {
           expect(JSON.parse(options.body)).toEqual({ password: 'secret' });
           return {
             ok: true,
-            headers: { get: (name) => name.toLowerCase() === 'set-cookie' ? 'oc_ui_session=session-token; Path=/; HttpOnly' : null },
+            headers: { get: (name) => name.toLowerCase() === 'set-cookie' ? `${cookieName}=session-token; Path=/; HttpOnly` : null },
             json: async () => ({ authenticated: true }),
           };
         }
-        if (options.headers?.Cookie === 'oc_ui_session=session-token') {
+        if (options.headers?.Cookie === `${cookieName}=session-token`) {
           return createMockJsonResponse({ ok: true });
         }
         return {
@@ -856,17 +880,18 @@ describe('CLI HTTP helpers', () => {
       };
 
       try {
-        const { response, body } = await requestJson(port, '/api/mittrcraft/tunnel/start', {
+        const { response, body } = await requestJson(port, '/api/openchamber/tunnel/start', {
           method: 'POST',
           body: JSON.stringify({ provider: 'ngrok', mode: 'quick' }),
         });
 
         expect(response.ok).toBe(true);
         expect(body).toEqual({ ok: true });
+        expect(calls.at(-1).options.headers.Cookie).toBe(`${cookieName}=session-token`);
         expect(calls.map((call) => new URL(call.url).pathname)).toEqual([
-          '/api/mittrcraft/tunnel/start',
+          '/api/openchamber/tunnel/start',
           '/auth/session',
-          '/api/mittrcraft/tunnel/start',
+          '/api/openchamber/tunnel/start',
         ]);
       } finally {
         globalThis.fetch = originalFetch;
@@ -874,8 +899,8 @@ describe('CLI HTTP helpers', () => {
     });
   });
 
-  it('prefers the stored instance password over a non-explicit env password', async () => {
-    await withTempMittrCraftDataDir(async () => {
+  it.each(['oc_ui_session', 'oc_ui_session_3000'])('uses the stored password and getSetCookie for %s', async (cookieName) => {
+    await withTempOpenChamberDataDir(async () => {
       const port = 45679;
       fs.writeFileSync(await getInstanceFilePath(port), JSON.stringify({ port, uiPassword: 'stored-secret' }, null, 2));
       const originalFetch = globalThis.fetch;
@@ -884,11 +909,11 @@ describe('CLI HTTP helpers', () => {
           expect(JSON.parse(options.body)).toEqual({ password: 'stored-secret' });
           return {
             ok: true,
-            headers: { getSetCookie: () => ['oc_ui_session=session-token; Path=/; HttpOnly'] },
+            headers: { getSetCookie: () => [`${cookieName}=session-token; Path=/; HttpOnly`] },
             json: async () => ({ authenticated: true }),
           };
         }
-        if (options.headers?.Cookie === 'oc_ui_session=session-token') {
+        if (options.headers?.Cookie === `${cookieName}=session-token`) {
           return createMockJsonResponse({ ok: true });
         }
         return {
@@ -899,7 +924,7 @@ describe('CLI HTTP helpers', () => {
       };
 
       try {
-        const { response, body } = await requestJson(port, '/api/mittrcraft/scheduled-tasks/status', {
+        const { response, body } = await requestJson(port, '/api/openchamber/scheduled-tasks/status', {
           uiPassword: 'stale-env-secret',
           explicitUiPassword: false,
         });
@@ -913,7 +938,7 @@ describe('CLI HTTP helpers', () => {
   });
 
   it('authenticates desktop-local API requests with the stored client token', async () => {
-    await withTempMittrCraftDataDir(async (dir) => {
+    await withTempOpenChamberDataDir(async (dir) => {
       const port = 57123;
       fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({
         desktopLocalPort: port,
@@ -932,7 +957,7 @@ describe('CLI HTTP helpers', () => {
       };
 
       try {
-        const { response, body } = await requestJson(port, '/api/mittrcraft/scheduled-tasks/status');
+        const { response, body } = await requestJson(port, '/api/openchamber/scheduled-tasks/status');
 
         expect(response.ok).toBe(true);
         expect(body).toEqual({ ok: true });
@@ -944,11 +969,11 @@ describe('CLI HTTP helpers', () => {
 });
 
 describe('cli entry detection', () => {
-  const modulePath = '/tmp/mittrcraft/bin/cli.js';
+  const modulePath = '/tmp/openchamber/bin/cli.js';
   const moduleUrl = pathToFileURL(modulePath).href;
 
   it('resolves symlinked entry paths before comparing', () => {
-    const symlinkPath = '/usr/local/bin/mittrcraft';
+    const symlinkPath = '/usr/local/bin/openchamber';
     const realpath = (filePath) => {
       if (filePath === path.resolve(symlinkPath)) {
         return modulePath;
@@ -980,8 +1005,8 @@ describe('cli entry detection', () => {
   });
 
   it('accepts wrapper binary name fallback when requested', () => {
-    const wrapperPath = '/home/user/.local/bin/mittrcraft';
-    expect(isModuleCliExecution(wrapperPath, moduleUrl, undefined, 'mittrcraft')).toBe(true);
+    const wrapperPath = '/home/user/.local/bin/openchamber';
+    expect(isModuleCliExecution(wrapperPath, moduleUrl, undefined, 'openchamber')).toBe(true);
   });
 
   it('normalizes direct paths when realpath fails', () => {
@@ -994,36 +1019,36 @@ describe('cli entry detection', () => {
   });
 });
 
-describe('isMittrCraftCmdline', () => {
-  it('accepts MittrCraft CLI and daemon cmdlines', () => {
-    expect(isMittrCraftCmdline('node /x/@mittrcraft/web/bin/cli.js serve')).toBe(true);
-    expect(isMittrCraftCmdline('node /x/@mittrcraft/web/server/index.js --port 9090')).toBe(true);
-    expect(isMittrCraftCmdline('bun /home/u/projects/mittrcraft/packages/web/server/index.js --port 3001')).toBe(true);
+describe('isOpenchamberCmdline', () => {
+  it('accepts OpenChamber CLI and daemon cmdlines', () => {
+    expect(isOpenchamberCmdline('node /x/@openchamber/web/bin/cli.js serve')).toBe(true);
+    expect(isOpenchamberCmdline('node /x/@openchamber/web/server/index.js --port 9090')).toBe(true);
+    expect(isOpenchamberCmdline('bun /home/u/projects/openchamber/packages/web/server/index.js --port 3001')).toBe(true);
   });
 
   it('rejects recycled and unrelated processes (issue #1721)', () => {
-    expect(isMittrCraftCmdline('node /home/herjarsa/npm-global/bin/agentmemory')).toBe(false);
-    expect(isMittrCraftCmdline('node /usr/lib/node_modules/npm/bin/npm-cli.js install')).toBe(false);
-    expect(isMittrCraftCmdline('')).toBe(false);
-    expect(isMittrCraftCmdline(null)).toBe(false);
+    expect(isOpenchamberCmdline('node /home/herjarsa/npm-global/bin/agentmemory')).toBe(false);
+    expect(isOpenchamberCmdline('node /usr/lib/node_modules/npm/bin/npm-cli.js install')).toBe(false);
+    expect(isOpenchamberCmdline('')).toBe(false);
+    expect(isOpenchamberCmdline(null)).toBe(false);
   });
 });
 
-describe('isMittrCraftProcessRunning', () => {
+describe('isOpenchamberProcessRunning', () => {
   it('returns false for a dead PID', () => {
-    expect(isMittrCraftProcessRunning(2147483646)).toBe(false);
+    expect(isOpenchamberProcessRunning(2147483646)).toBe(false);
   });
 
   // Identity verification is available on Linux (/proc) and macOS (ps); on those
   // platforms a live but unrelated process (a recycled stale PID) must read as
   // not-running so it can't trip the "already running" guard (issue #1721).
   it.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')(
-    'returns false for a live non-MittrCraft PID',
+    'returns false for a live non-OpenChamber PID',
     async () => {
       const child = spawn('sleep', ['30'], { stdio: 'ignore' });
       try {
         await new Promise((resolve) => setTimeout(resolve, 150));
-        expect(isMittrCraftProcessRunning(child.pid)).toBe(false);
+        expect(isOpenchamberProcessRunning(child.pid)).toBe(false);
       } finally {
         child.kill('SIGKILL');
       }
@@ -1033,10 +1058,10 @@ describe('isMittrCraftProcessRunning', () => {
 
 describe('lifecycle instance discovery', () => {
   it('does not attribute a desktop runtime response to a different explicit port', async () => {
-    await withTempMittrCraftDataDir(async (dir) => {
+    await withTempOpenChamberDataDir(async (dir) => {
       fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ desktopLocalPort: 57123 }, null, 2));
 
-      const instance = await discoverMittrCraftInstanceOnPort(3003, {
+      const instance = await discoverOpenChamberInstanceOnPort(3003, {
         fetchImpl: async () => createMockJsonResponse({ runtime: 'desktop', pid: 934 }),
       });
 
@@ -1045,10 +1070,10 @@ describe('lifecycle instance discovery', () => {
   });
 
   it('attributes a desktop runtime response to its configured desktop port', async () => {
-    await withTempMittrCraftDataDir(async (dir) => {
+    await withTempOpenChamberDataDir(async (dir) => {
       fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ desktopLocalPort: 57123 }, null, 2));
 
-      const instance = await discoverMittrCraftInstanceOnPort(57123, {
+      const instance = await discoverOpenChamberInstanceOnPort(57123, {
         fetchImpl: async () => createMockJsonResponse({ runtime: 'desktop', pid: 934 }),
       });
 
@@ -1061,7 +1086,7 @@ describe('lifecycle instance discovery', () => {
   });
 
   it('does not mark tunnel attachability as desktop for a different explicit port', async () => {
-    await withTempMittrCraftDataDir(async (dir) => {
+    await withTempOpenChamberDataDir(async (dir) => {
       fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ desktopLocalPort: 57123 }, null, 2));
       const originalFetch = globalThis.fetch;
       globalThis.fetch = async () => createMockJsonResponse({ runtime: 'desktop', pid: 934 });
@@ -1076,7 +1101,7 @@ describe('lifecycle instance discovery', () => {
   });
 
   it('keeps pid and instance files when live port probe confirms a cmdline mismatch', async () => {
-    await withTempMittrCraftDataDir(async () => {
+    await withTempOpenChamberDataDir(async () => {
       const port = 45123;
       const pid = 12345;
       const pidFile = await getPidFilePath(port);
@@ -1086,7 +1111,7 @@ describe('lifecycle instance discovery', () => {
 
       const instances = await discoverRunningInstances({
         fetchImpl: async () => createMockJsonResponse({ runtime: 'web', pid }),
-        getMittrCraftProcessState: () => 'mismatched',
+        getOpenchamberProcessState: () => 'mismatched',
       });
 
       expect(instances).toEqual([
@@ -1098,7 +1123,7 @@ describe('lifecycle instance discovery', () => {
   });
 
   it('removes stale pid and instance files when a cmdline mismatch is not confirmed by live probe', async () => {
-    await withTempMittrCraftDataDir(async () => {
+    await withTempOpenChamberDataDir(async () => {
       const port = 45124;
       const pid = 12346;
       const pidFile = await getPidFilePath(port);
@@ -1108,7 +1133,7 @@ describe('lifecycle instance discovery', () => {
 
       const instances = await discoverRunningInstances({
         fetchImpl: async () => createMockJsonResponse(null, false),
-        getMittrCraftProcessState: () => 'mismatched',
+        getOpenchamberProcessState: () => 'mismatched',
       });
 
       expect(instances).toEqual([]);
@@ -1118,7 +1143,7 @@ describe('lifecycle instance discovery', () => {
   });
 
   it('preserves matched pid and instance files when the recorded port probe is inconclusive', async () => {
-    await withTempMittrCraftDataDir(async () => {
+    await withTempOpenChamberDataDir(async () => {
       const port = 45126;
       const pid = 12347;
       const pidFile = await getPidFilePath(port);
@@ -1128,7 +1153,7 @@ describe('lifecycle instance discovery', () => {
 
       const instances = await discoverRunningInstances({
         fetchImpl: async () => createMockJsonResponse(null, false),
-        getMittrCraftProcessState: () => 'matched',
+        getOpenchamberProcessState: () => 'matched',
       });
 
       expect(instances).toEqual([]);
@@ -1138,7 +1163,7 @@ describe('lifecycle instance discovery', () => {
   });
 
   it('preserves unknown-identity pid and instance files when the recorded port probe is inconclusive', async () => {
-    await withTempMittrCraftDataDir(async () => {
+    await withTempOpenChamberDataDir(async () => {
       const port = 45129;
       const pid = 12350;
       const pidFile = await getPidFilePath(port);
@@ -1148,7 +1173,7 @@ describe('lifecycle instance discovery', () => {
 
       const instances = await discoverRunningInstances({
         fetchImpl: async () => createMockJsonResponse(null, false),
-        getMittrCraftProcessState: () => 'unknown',
+        getOpenchamberProcessState: () => 'unknown',
       });
 
       expect(instances).toEqual([]);
@@ -1157,8 +1182,8 @@ describe('lifecycle instance discovery', () => {
     });
   });
 
-  it('uses the live system-info pid instead of a stale MittrCraft-looking pid-file pid', async () => {
-    await withTempMittrCraftDataDir(async () => {
+  it('uses the live system-info pid instead of a stale OpenChamber-looking pid-file pid', async () => {
+    await withTempOpenChamberDataDir(async () => {
       const port = 45127;
       const stalePid = 12348;
       const livePid = 54321;
@@ -1169,7 +1194,7 @@ describe('lifecycle instance discovery', () => {
 
       const instances = await discoverRunningInstances({
         fetchImpl: async () => createMockJsonResponse({ runtime: 'web', pid: livePid }),
-        getMittrCraftProcessState: () => 'matched',
+        getOpenchamberProcessState: () => 'matched',
       });
 
       expect(instances).toEqual([
@@ -1179,7 +1204,7 @@ describe('lifecycle instance discovery', () => {
   });
 
   it('uses the explicit host when probing a pid-file entry without a stored host', async () => {
-    await withTempMittrCraftDataDir(async () => {
+    await withTempOpenChamberDataDir(async () => {
       const port = 45128;
       const pid = 12349;
       const host = '192.0.2.10';
@@ -1194,7 +1219,7 @@ describe('lifecycle instance discovery', () => {
             urls.push(String(url));
             return createMockJsonResponse({ runtime: 'web', pid });
           },
-          getMittrCraftProcessState: () => 'matched',
+          getOpenchamberProcessState: () => 'matched',
         },
       );
 
@@ -1206,7 +1231,7 @@ describe('lifecycle instance discovery', () => {
   });
 
   it('tries loopback before treating an explicit-host pid-file probe as inconclusive', async () => {
-    await withTempMittrCraftDataDir(async () => {
+    await withTempOpenChamberDataDir(async () => {
       const port = 45130;
       const pid = 12351;
       const host = '192.0.2.11';
@@ -1223,7 +1248,7 @@ describe('lifecycle instance discovery', () => {
               ? createMockJsonResponse({ runtime: 'web', pid })
               : createMockJsonResponse(null, false);
           },
-          getMittrCraftProcessState: () => 'matched',
+          getOpenchamberProcessState: () => 'matched',
         },
       );
 
@@ -1236,7 +1261,7 @@ describe('lifecycle instance discovery', () => {
   });
 
   it('does not accept a fallback loopback probe with a different pid for a concrete host registry', async () => {
-    await withTempMittrCraftDataDir(async () => {
+    await withTempOpenChamberDataDir(async () => {
       const port = 45131;
       const pid = 12352;
       const otherPid = 54322;
@@ -1254,7 +1279,7 @@ describe('lifecycle instance discovery', () => {
               ? createMockJsonResponse({ runtime: 'web', pid: otherPid })
               : createMockJsonResponse(null, false);
           },
-          getMittrCraftProcessState: () => 'matched',
+          getOpenchamberProcessState: () => 'matched',
         },
       );
 
@@ -1264,8 +1289,8 @@ describe('lifecycle instance discovery', () => {
     });
   });
 
-  it('discovers an explicit live MittrCraft port without a pid-file registry entry', async () => {
-    await withTempMittrCraftDataDir(async () => {
+  it('discovers an explicit live OpenChamber port without a pid-file registry entry', async () => {
+    await withTempOpenChamberDataDir(async () => {
       const port = 45125;
       const instances = await discoverLifecycleInstances(
         { explicitPort: true, port },
@@ -1279,9 +1304,9 @@ describe('lifecycle instance discovery', () => {
   });
 
   it('cleans a matched pid-file entry without stopping it when the recorded port is free', async () => {
-    await withTempMittrCraftDataDir(async () => {
+    await withTempOpenChamberDataDir(async () => {
       const port = await allocateLoopbackPort();
-      const child = spawnMittrCraftLikeIdleProcess();
+      const child = spawnOpenChamberLikeIdleProcess();
       const pidFile = await getPidFilePath(port);
       const instanceFile = await getInstanceFilePath(port);
       try {
@@ -1303,9 +1328,9 @@ describe('lifecycle instance discovery', () => {
 });
 
 describe('lifecycle commands with unmanaged explicit ports', () => {
-  it('serve refuses to start on a live MittrCraft port without requiring pid files', async () => {
-    await withTempMittrCraftDataDir(async () => {
-      const server = await startMockMittrCraftServer();
+  it('serve refuses to start on a live OpenChamber port without requiring pid files', async () => {
+    await withTempOpenChamberDataDir(async () => {
+      const server = await startMockOpenChamberServer();
       try {
         await expect(commands.serve({ explicitPort: true, port: server.port, quiet: true })).rejects.toThrow(
           /already running on port/
@@ -1317,8 +1342,8 @@ describe('lifecycle commands with unmanaged explicit ports', () => {
   });
 
   it('status --port reports a live unmanaged server when the registry is empty', async () => {
-    await withTempMittrCraftDataDir(async () => {
-      const server = await startMockMittrCraftServer();
+    await withTempOpenChamberDataDir(async () => {
+      const server = await startMockOpenChamberServer();
       try {
         const output = await captureStdout(() => commands.status({ explicitPort: true, port: server.port, json: true }));
         const payload = JSON.parse(output);
@@ -1333,9 +1358,31 @@ describe('lifecycle commands with unmanaged explicit ports', () => {
     });
   });
 
+  it('status --json reports the address a registered server was asked to bind', async () => {
+    await withTempOpenChamberDataDir(async () => {
+      const server = await startMockOpenChamberServer();
+      const child = spawnOpenChamberLikeIdleProcess();
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        fs.writeFileSync(await getPidFilePath(server.port), String(child.pid));
+        fs.writeFileSync(await getInstanceFilePath(server.port), JSON.stringify({ port: server.port, host: '0.0.0.0', launchMode: 'daemon' }, null, 2));
+
+        const output = await captureStdout(() => commands.status({ json: true }));
+
+        // The probe answers on loopback; the bind address comes from the registry.
+        expect(JSON.parse(output).instances).toEqual([
+          expect.objectContaining({ runtime: 'cli', port: server.port, launchMode: 'daemon', bindHost: '0.0.0.0' }),
+        ]);
+      } finally {
+        child.kill('SIGKILL');
+        await server.close();
+      }
+    });
+  });
+
   it('stop --port reaches unmanaged shutdown when the registry is empty', async () => {
-    await withTempMittrCraftDataDir(async () => {
-      const server = await startMockMittrCraftServer();
+    await withTempOpenChamberDataDir(async () => {
+      const server = await startMockOpenChamberServer();
       try {
         await commands.stop({ explicitPort: true, port: server.port, quiet: true, suppressQuietOutput: true });
         expect(server.shutdownRequested).toBe(true);
@@ -1346,9 +1393,9 @@ describe('lifecycle commands with unmanaged explicit ports', () => {
   });
 
   it('stop --port can recover a matched pid-file instance whose HTTP endpoint is unresponsive', async () => {
-    await withTempMittrCraftDataDir(async () => {
+    await withTempOpenChamberDataDir(async () => {
       const port = await allocateLoopbackPort();
-      const child = spawnMittrCraftLikeHungServer(port);
+      const child = spawnOpenChamberLikeHungServer(port);
       const pidFile = await getPidFilePath(port);
       const instanceFile = await getInstanceFilePath(port);
       try {
@@ -1368,8 +1415,8 @@ describe('lifecycle commands with unmanaged explicit ports', () => {
   });
 
   it('plain stop ignores a stale CLI registry entry that resolves to desktop runtime', async () => {
-    await withTempMittrCraftDataDir(async () => {
-      const server = await startMockMittrCraftServer({ runtime: 'desktop' });
+    await withTempOpenChamberDataDir(async () => {
+      const server = await startMockOpenChamberServer({ runtime: 'desktop' });
       const child = spawn('sleep', ['30'], { stdio: 'ignore' });
       const pidFile = await getPidFilePath(server.port);
       const instanceFile = await getInstanceFilePath(server.port);
@@ -1391,8 +1438,8 @@ describe('lifecycle commands with unmanaged explicit ports', () => {
   });
 
   it('restart --port restarts a live unmanaged server through the shared explicit-port discovery path', async () => {
-    await withTempMittrCraftDataDir(async () => {
-      const server = await startMockMittrCraftServer();
+    await withTempOpenChamberDataDir(async () => {
+      const server = await startMockOpenChamberServer();
       const calls = [];
       const host = '127.0.0.1';
       try {
@@ -1419,5 +1466,129 @@ describe('lifecycle commands with unmanaged explicit ports', () => {
         await server.close();
       }
     });
+  });
+});
+
+describe('Windows startup task command builder', () => {
+  it('default-path length stays under 200 chars', () => {
+    const cmd = buildWindowsStartupTaskCommand(
+      'C:\\Users\\test\\.config\\openchamber\\bin\\OpenChamber.ps1'
+    );
+    expect(cmd).toMatch(/^powershell\.exe -NoProfile -ExecutionPolicy Bypass -File /);
+    expect(cmd.length).toBeLessThan(200);
+  });
+
+  it('worst-case long path stays under 261-char Task Scheduler ceiling', () => {
+    // Build a wrapper path >= 180 chars (simulates long OPENCHAMBER_DATA_DIR)
+    // Overhead = 57 chars (prefix + closing quote), so max wrapper for <261 total is 203
+    const longPath =
+      'C:\\Users\\' +
+      'a'.repeat(139) +
+      '\\.config\\openchamber\\bin\\OpenChamber.ps1';
+    expect(longPath.length).toBeGreaterThanOrEqual(180);
+
+    const cmd = buildWindowsStartupTaskCommand(longPath);
+    expect(cmd.length).toBeLessThan(261);
+  });
+
+  it('does NOT inline SetEnvironmentVariable (externalization invariant)', () => {
+    const cmd = buildWindowsStartupTaskCommand('C:\\wrapper.ps1');
+    expect(cmd).not.toContain('SetEnvironmentVariable');
+  });
+
+  it('uses -File form, not -Command', () => {
+    const cmd = buildWindowsStartupTaskCommand('C:\\wrapper.ps1');
+    expect(cmd).toContain('-File ');
+    expect(cmd).not.toContain('-Command ');
+  });
+});
+
+describe('startup command lingering output', () => {
+  const linuxStatus = (lingerEnabled, lingerUser = 'alice') => ({
+    supported: true,
+    platform: 'linux',
+    enabled: true,
+    active: true,
+    activeState: 'active',
+    servicePath: '/home/alice/.config/systemd/user/openchamber.service',
+    lingerEnabled,
+    lingerUser,
+  });
+
+  const dependenciesFor = (status) => ({
+    getStartupStatus: () => status,
+    enableStartupService: () => status,
+    disableStartupService: () => status,
+  });
+
+  const runCommand = (status, options, action) => startupCommand(options, action, dependenciesFor(status));
+
+  it.each([
+    ['enable', true, 'ok', undefined],
+    ['enable', false, 'warning', 'LINGER_DISABLED'],
+    ['enable', null, 'warning', 'LINGER_UNKNOWN'],
+    ['status', true, 'ok', undefined],
+    ['status', false, 'warning', 'LINGER_DISABLED'],
+    ['status', null, 'warning', 'LINGER_UNKNOWN'],
+  ])('reports %s with Linux linger=%s as JSON-only output', async (action, lingerEnabled, expectedStatus, warningCode) => {
+    const output = await captureStdout(() => runCommand(linuxStatus(lingerEnabled), { json: true }, action));
+    const payload = JSON.parse(output);
+
+    expect(payload.status).toBe(expectedStatus);
+    expect(payload.action).toBe(action);
+    expect(payload.lingerEnabled).toBe(lingerEnabled);
+    expect(payload.messages?.[0]?.code).toBe(warningCode);
+  });
+
+  it.each([
+    ['enable', true, 'yes'],
+    ['enable', false, 'no'],
+    ['enable', null, 'unknown'],
+    ['status', true, 'yes'],
+    ['status', false, 'no'],
+    ['status', null, 'unknown'],
+  ])('reports %s with Linux linger=%s in one quiet result line', async (action, lingerEnabled, label) => {
+    const output = await captureStdout(() => runCommand(linuxStatus(lingerEnabled), { quiet: true }, action));
+
+    expect(output.split('\n')).toHaveLength(2);
+    expect(output).toContain(` linger:${label}\n`);
+    expect(output).not.toContain('loginctl');
+  });
+
+  it.each([true, false])('warns with an actionable command in human TTY=%s output', async (isTTY) => {
+    const descriptor = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: isTTY });
+    try {
+      const output = await captureStdout(() => runCommand(linuxStatus(false), {}, 'enable'));
+
+      expect(output).toContain('[LINGER_DISABLED]');
+      expect(output).toContain('sudo loginctl enable-linger alice');
+    } finally {
+      if (descriptor) Object.defineProperty(process.stdout, 'isTTY', descriptor);
+      else delete process.stdout.isTTY;
+    }
+  });
+
+  it('reports unknown state without inventing a user when detection is unavailable', async () => {
+    const output = await captureStdout(() => runCommand(linuxStatus(null, null), {}, 'status'));
+
+    expect(output).toContain('[LINGER_UNKNOWN]');
+    expect(output).toContain('loginctl show-user "$USER" -p Linger');
+  });
+
+  it('reports disabled-service linger state without warning or remediation', async () => {
+    const output = await captureStdout(() => runCommand({ ...linuxStatus(false), enabled: false }, {}, 'status'));
+
+    expect(output).toContain('user lingering is disabled');
+    expect(output).not.toContain('[LINGER_DISABLED]');
+    expect(output).not.toContain('loginctl enable-linger');
+  });
+
+  it('does not emit linger guidance for unsupported systems', async () => {
+    await expect(runCommand(
+      { supported: false, platform: 'freebsd', enabled: false, servicePath: null },
+      { json: true },
+      'status'
+    )).rejects.toMatchObject({ exitCode: EXIT_CODE.USAGE_ERROR });
   });
 });

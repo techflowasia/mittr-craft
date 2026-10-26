@@ -2,9 +2,10 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+import { resolveNpmRegistryRequest } from './npm-registry-config.js';
+
 const NPM_CACHE_TTL_MS = 3_600_000;
 const NPM_FETCH_TIMEOUT_MS = 5_000;
-const NPM_REGISTRY_BASE = 'https://registry.npmjs.org';
 
 /**
  * @typedef {Object} NpmPackagePayload
@@ -42,16 +43,12 @@ function _getUserAgent() {
 
   try {
     const pkg = JSON.parse(fs.readFileSync(_getPackageJsonPath(), 'utf8'));
-    _userAgent = `mittrcraft-server/${typeof pkg.version === 'string' ? pkg.version : '0.0.0'}`;
+    _userAgent = `openchamber-server/${typeof pkg.version === 'string' ? pkg.version : '0.0.0'}`;
   } catch {
-    _userAgent = 'mittrcraft-server/dev';
+    _userAgent = 'openchamber-server/dev';
   }
 
   return _userAgent;
-}
-
-function encodeName(name) {
-  return encodeURIComponent(name).replace(/^%40/, '@');
 }
 
 function parseDistTags(value) {
@@ -87,10 +84,12 @@ function cacheResult(name, payload) {
  */
 export async function lookupNpmPackage(name) {
   try {
-    const response = await fetch(`${NPM_REGISTRY_BASE}/${encodeName(name)}`, {
+    const request = resolveNpmRegistryRequest(name);
+    const response = await fetch(request.url, {
       headers: {
         'User-Agent': _getUserAgent(),
         Accept: 'application/json',
+        ...request.headers,
       },
       signal: AbortSignal.timeout(NPM_FETCH_TIMEOUT_MS),
     });

@@ -3,10 +3,15 @@ import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { useI18n } from '@/lib/i18n';
+import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import { useRepositoryReferenceProvider } from '@/components/references/referenceSources';
+import { changeRequestCopy } from '@/lib/source-control/changeRequestCopy';
 import type { GeneratedResult } from './generatedJsonResult';
 
 export const GeneratedJsonResultCard: React.FC<{ result: GeneratedResult }> = ({ result }) => {
   const { t } = useI18n();
+  // The result carries no provider; the session's repository says what it is called.
+  const repositoryProvider = useRepositoryReferenceProvider(useEffectiveDirectory() ?? null);
   const [copied, setCopied] = React.useState(false);
   const copiedResetTimerRef = React.useRef<number | null>(null);
 
@@ -46,7 +51,7 @@ export const GeneratedJsonResultCard: React.FC<{ result: GeneratedResult }> = ({
         <span className="font-mono text-[13px] text-muted-foreground">
           {result.kind === 'commit'
             ? t('chat.generatedResult.commit.title')
-            : t('chat.generatedResult.pullRequest.title')}
+            : t(changeRequestCopy('chat.generatedResult.pullRequest.title', repositoryProvider))}
         </span>
         <Button
           type="button"
@@ -68,7 +73,7 @@ export const GeneratedJsonResultCard: React.FC<{ result: GeneratedResult }> = ({
               <ul className="space-y-1 text-sm text-muted-foreground">
                 {result.highlights.map((highlight, index) => (
                   <li key={`${index}-${highlight}`} className="flex gap-2">
-                    <span className="text-muted-foreground">-</span>
+                    <span className="text-muted-foreground/70">-</span>
                     <span>{highlight}</span>
                   </li>
                 ))}

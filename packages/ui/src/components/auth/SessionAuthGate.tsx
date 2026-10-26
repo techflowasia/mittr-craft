@@ -8,21 +8,17 @@ import { invokeDesktop, isDesktopShell, isVSCodeRuntime } from '@/lib/desktop';
 import { syncDesktopSettings, initializeAppearancePreferences } from '@/lib/persistence';
 import { applyPersistedDirectoryPreferences } from '@/lib/directoryPersistence';
 import { DesktopHostSwitcherInline } from '@/components/desktop/DesktopHostSwitcher';
-import { MittrCraftLogo } from '@/components/ui/MittrCraftLogo';
+import { OpenChamberLogo } from '@/components/ui/OpenChamberLogo';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { installAuthSessionFocusWatch, useAuthSessionStore } from '@/lib/runtime-auth-expiry';
+import { AuthExpiredBanner } from './AuthExpiredBanner';
 import { getRuntimeExtraHeadersSync } from '@/lib/runtime-auth';
-import { getRuntimeUrlResolver } from '@/lib/runtime-url';
+import { ProductSlot, translateProductSessionAuthDescription, type SessionAuthRuntime } from '@/lib/product-plugins';
 import { getRuntimeApiBaseUrl, getRuntimeKey, subscribeRuntimeEndpointChanged, switchRuntimeEndpoint } from '@/lib/runtime-switch';
 import { desktopHostsGet, desktopHostsSet, getDesktopHostApiUrl, normalizeHostUrl } from '@/lib/desktopHosts';
-import {
-  resolveStatusCheckFailureState,
-  runtimeIdentityMatches,
-  SESSION_AUTH_REQUIRED_EVENT,
-  type GateState,
-  type RuntimeIdentity,
-} from './sessionAuthGateState';
+import { runtimeIdentityMatches, type GateState, type RuntimeIdentity } from './sessionAuthGateState';
 import {
   authenticateWithPasskey,
   cancelPasskeyCeremony,
@@ -44,13 +40,13 @@ const STATUS_CHECK_ENDPOINT = '/auth/session';
 // answers (200/401/429) are never retried.
 const TRANSIENT_RETRY_MAX_ATTEMPTS = 4;
 const TRANSIENT_RETRY_BASE_DELAY_MS = 1_500;
-const TRUST_DEVICE_STORAGE_KEY = 'mittrcraft.uiAuth.trustDevice';
+const TRUST_DEVICE_STORAGE_KEY = 'openchamber.uiAuth.trustDevice';
 const LOCAL_DESKTOP_CLIENT_KIND = 'desktop-local';
 const LOCAL_DESKTOP_CLIENT_DEDUPE_KEY = 'desktop-local';
 
 const readLocalOrigin = (): string => {
   if (typeof window === 'undefined') return '';
-  const injected = (window as typeof window & { __MITTRCRAFT_LOCAL_ORIGIN__?: string }).__MITTRCRAFT_LOCAL_ORIGIN__;
+  const injected = (window as typeof window & { __OPENCHAMBER_LOCAL_ORIGIN__?: string }).__OPENCHAMBER_LOCAL_ORIGIN__;
   return typeof injected === 'string' ? injected.trim() : '';
 };
 
@@ -134,7 +130,7 @@ const submitPassword = async (password: string, trustDevice: boolean): Promise<R
       password,
       trustDevice,
       issueClientToken,
-      clientLabel: 'MittrCraft Desktop',
+      clientLabel: 'OpenChamber Desktop',
       ...desktopClientAuthMetadata(),
     }),
   });
@@ -153,7 +149,7 @@ const issueDesktopClientToken = async (): Promise<string> => {
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },
-    body: JSON.stringify({ label: 'MittrCraft Desktop', ...desktopClientAuthMetadata() }),
+    body: JSON.stringify({ label: 'OpenChamber Desktop', ...desktopClientAuthMetadata() }),
   }).catch(() => null);
   if (!response?.ok) {
     return '';
@@ -165,6 +161,11 @@ const issueDesktopClientToken = async (): Promise<string> => {
 
 const shouldUseDesktopShellPasswordLogin = (): boolean => {
   return isDesktopShell() && !isLocalDesktopRuntime();
+};
+
+const sessionAuthRuntime = (): SessionAuthRuntime => {
+  if (!isDesktopShell()) return 'web';
+  return isLocalDesktopRuntime() ? 'desktop-local' : 'desktop-remote';
 };
 
 const captureRuntimeIdentity = (): RuntimeIdentity => ({
@@ -293,8 +294,8 @@ const AuthShell: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 };
 
 const LoadingScreen: React.FC = () => (
-  <div className="flex min-h-screen items-center justify-center bg-background text-foreground">
-    <MittrCraftLogo width={120} height={120} />
+  <div className="flex min-h-dvh items-center justify-center bg-[var(--splash-background,var(--surface-background))] text-foreground">
+    <OpenChamberLogo width={120} height={120} variant="splash" />
   </div>
 );
 
@@ -351,20 +352,15 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
   const [errorMessage, setErrorMessage] = React.useState('');
   const [retryAfter, setRetryAfter] = React.useState<number | undefined>(undefined);
   const [isTunnelLocked, setIsTunnelLocked] = React.useState(false);
+  const [passwordEnabled, setPasswordEnabled] = React.useState(true);
   const [passkeyStatus, setPasskeyStatus] = React.useState<PasskeyStatus>(defaultPasskeyStatus);
   const [supportsPasskeys, setSupportsPasskeys] = React.useState(false);
   const [isPasskeyBusy, setIsPasskeyBusy] = React.useState(false);
   const [trustDevice, setTrustDevice] = React.useState<boolean>(() => readStoredTrustDevice());
   const [activePasskeyAction, setActivePasskeyAction] = React.useState<'auth' | 'register' | null>(null);
-  const [adEnabled, setAdEnabled] = React.useState(false);
-  const [adMode, setAdMode] = React.useState<'ldap' | 'entra' | null>(null);
-  const [passwordEnabled, setPasswordEnabled] = React.useState(true);
-  const [adUsername, setAdUsername] = React.useState('');
-  const [adPassword, setAdPassword] = React.useState('');
-  const [isAdSubmitting, setIsAdSubmitting] = React.useState(false);
   const passwordInputRef = React.useRef<HTMLInputElement | null>(null);
-  const adUsernameInputRef = React.useRef<HTMLInputElement | null>(null);
   const hasResyncedRef = React.useRef(skipAuth);
+  const hasBootstrapResyncedRef = React.useRef(skipAuth);
 
   React.useEffect(() => {
     if (typeof window === 'undefined') {
@@ -372,126 +368,6 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
     }
     window.localStorage.setItem(TRUST_DEVICE_STORAGE_KEY, trustDevice ? 'true' : 'false');
   }, [trustDevice]);
-
-  React.useEffect(() => {
-    if (skipAuth) return;
-
-    const checkAdStatus = async () => {
-      try {
-        const response = await runtimeFetch('/auth/ad/status', {
-          method: 'GET',
-          credentials: 'include',
-          headers: { Accept: 'application/json' },
-        });
-        if (response.ok) {
-          const data = await response.json() as { enabled?: boolean; mode?: unknown; passwordEnabled?: boolean };
-          setAdEnabled(data.enabled === true);
-          setAdMode(data.mode === 'entra' || data.mode === 'ldap' ? data.mode : null);
-          setPasswordEnabled(data.passwordEnabled !== false);
-        }
-      } catch {
-        setAdEnabled(false);
-        setAdMode(null);
-      }
-    };
-
-    void checkAdStatus();
-  }, [skipAuth]);
-
-  const handleEntraLogin = React.useCallback(() => {
-    const loginUrl = getRuntimeUrlResolver().auth('/auth/ad/login', {
-      trustDevice: trustDevice ? 'true' : undefined,
-      returnTo: window.location.origin,
-    });
-    window.location.assign(loginUrl);
-  }, [trustDevice]);
-
-  const handleAdLogin = React.useCallback(async () => {
-    if (!adUsername || !adPassword || isAdSubmitting) return;
-
-    const runtime = captureRuntimeIdentity();
-    setIsAdSubmitting(true);
-    setErrorMessage('');
-
-    try {
-      const issueClientToken = shouldIssueDesktopClientToken();
-      const response = await runtimeFetch('/auth/ad/session', {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({
-          username: adUsername,
-          password: adPassword,
-          trustDevice,
-          issueClientToken,
-          clientLabel: 'MittrCraft Desktop',
-          ...desktopClientAuthMetadata(),
-        }),
-      });
-
-      if (!isRuntimeIdentityActive(runtime)) return;
-
-      if (response.ok) {
-        const payload = await response.json().catch(() => null) as { clientToken?: unknown; profile?: { displayName?: string; email?: string } } | null;
-        if (!isRuntimeIdentityActive(runtime)) return;
-
-        setAdUsername('');
-        setAdPassword('');
-        setIsTunnelLocked(false);
-
-        let clientToken = '';
-        if (issueClientToken) {
-          clientToken = typeof payload?.clientToken === 'string' && payload.clientToken.trim()
-            ? payload.clientToken.trim()
-            : '';
-          if (!clientToken) {
-            clientToken = await issueDesktopClientToken();
-            if (!isRuntimeIdentityActive(runtime)) return;
-          }
-        }
-
-        if (clientToken) {
-          const requestHeaders = getRuntimeExtraHeadersSync();
-          if (!await applyDesktopClientToken(clientToken, runtime, requestHeaders)) return;
-        }
-
-        setState('authenticated');
-        return;
-      }
-
-      if (response.status === 401) {
-        setErrorMessage('Invalid AD credentials');
-        setIsTunnelLocked(false);
-        setState('locked');
-        return;
-      }
-
-      if (response.status === 429) {
-        const data = await response.json().catch(() => ({}));
-        setRetryAfter(data.retryAfter);
-        setIsTunnelLocked(false);
-        setState('rate-limited');
-        return;
-      }
-
-      setErrorMessage('AD login failed');
-      setIsTunnelLocked(false);
-      setState('error');
-    } catch (error) {
-      if (!isRuntimeIdentityActive(runtime)) return;
-      console.warn('AD login failed:', error);
-      setErrorMessage('AD login failed');
-      setIsTunnelLocked(false);
-      setState('error');
-    } finally {
-      if (isRuntimeIdentityActive(runtime)) {
-        setIsAdSubmitting(false);
-      }
-    }
-  }, [adPassword, adUsername, isAdSubmitting, trustDevice]);
 
   const refreshPasskeyStatus = React.useCallback(async (runtime = captureRuntimeIdentity()) => {
     if (skipAuth) {
@@ -604,7 +480,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
           return;
         }
         if (response.status === 401) {
-          let data: { tunnelLocked?: boolean; debug?: { hasRefreshToken: boolean; message: string } } = {};
+          let data: { tunnelLocked?: boolean; passwordEnabled?: boolean; debug?: { hasRefreshToken: boolean; message: string } } = {};
           try {
             data = JSON.parse(responseText);
           } catch {
@@ -612,6 +488,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
           }
           resetTransientRetry();
           setIsTunnelLocked(data.tunnelLocked === true);
+          setPasswordEnabled(data.passwordEnabled !== false);
           setPasskeyStatus(latestPasskeyStatus);
           setState('locked');
           setRetryAfter(undefined);
@@ -640,14 +517,10 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
         return;
       }
       console.warn('Failed to check session status:', error);
-      if (resolveStatusCheckFailureState({ shouldUseDesktopShellPasswordLogin: shouldUseDesktopShellPasswordLogin() }) === 'locked') {
-        setState('locked');
-        setRetryAfter(undefined);
-        setIsTunnelLocked(false);
-        return;
-      }
       // Network-level failure — over the relay this is typically the initial
       // tunnel attempt racing this request; it self-heals within seconds.
+      // No server answer exists here (the request never reached the wire),
+      // so this is never evidence of a password requirement; 401 above is.
       if (scheduleTransientRetry()) return;
       setState('error');
       setIsTunnelLocked(false);
@@ -686,30 +559,29 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
   }, [checkStatus, resetTransientRetry, skipAuth]);
 
   React.useEffect(() => {
-    if (skipAuth) return;
-
-    const handleAuthRequired = () => {
-      cancelPasskeyCeremony();
-      setPassword('');
-      setAdPassword('');
-      setErrorMessage('');
-      setRetryAfter(undefined);
-      setIsTunnelLocked(false);
-      setIsSubmitting(false);
-      setIsAdSubmitting(false);
-      setActivePasskeyAction(null);
-      setIsPasskeyBusy(false);
-      resetTransientRetry();
-      setState('locked');
-    };
-
-    window.addEventListener(SESSION_AUTH_REQUIRED_EVENT, handleAuthRequired);
-    return () => window.removeEventListener(SESSION_AUTH_REQUIRED_EVENT, handleAuthRequired);
-  }, [resetTransientRetry, skipAuth]);
-
-  React.useEffect(() => {
     if (!skipAuth && state === 'locked') {
       hasResyncedRef.current = false;
+    }
+  }, [skipAuth, state]);
+
+  // Mid-session expiry: the banner asks for a re-login by flipping the shared
+  // auth store to 'reauthenticating'; the gate answers with its own status
+  // check, which lands in the full 'locked' flow on a genuine 401. A
+  // successful login resolves the store back to 'ok'.
+  const authSessionState = useAuthSessionStore((store) => store.state);
+  React.useEffect(() => {
+    if (!skipAuth) installAuthSessionFocusWatch();
+  }, [skipAuth]);
+  React.useEffect(() => {
+    if (skipAuth) return;
+    if (authSessionState === 'reauthenticating') {
+      void checkStatusRef.current?.();
+    }
+  }, [authSessionState, skipAuth]);
+  React.useEffect(() => {
+    if (skipAuth) return;
+    if (state === 'authenticated' && useAuthSessionStore.getState().state !== 'ok') {
+      useAuthSessionStore.getState().markAuthenticated();
     }
   }, [skipAuth, state]);
 
@@ -726,13 +598,44 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
     }
     if (state === 'authenticated' && !hasResyncedRef.current) {
       hasResyncedRef.current = true;
+      // First authentication of this page load is bootstrap: adopt the
+      // persisted workspace pointers. A re-login after mid-session expiry is
+      // not — this window already has its own workspace, and the shared
+      // settings document may carry another window's pointers.
+      const isBootstrapResync = !hasBootstrapResyncedRef.current;
+      hasBootstrapResyncedRef.current = true;
       void (async () => {
         await initializeAppearancePreferences();
-        await syncDesktopSettings();
-        await applyPersistedDirectoryPreferences();
+        await syncDesktopSettings({ bootstrap: isBootstrapResync });
+        if (isBootstrapResync) {
+          await applyPersistedDirectoryPreferences();
+        }
       })();
     }
   }, [skipAuth, state]);
+
+  const signInHostKey = getRuntimeKey();
+  const signInApiBaseUrl = getRuntimeApiBaseUrl();
+  const finishProviderSignIn = React.useMemo(() => {
+    const runtime: RuntimeIdentity = { apiBaseUrl: signInApiBaseUrl, runtimeKey: signInHostKey };
+    return async (issuedClientToken?: string): Promise<boolean> => {
+      if (!isRuntimeIdentityActive(runtime)) return false;
+      if (shouldIssueDesktopClientToken()) {
+        let clientToken = issuedClientToken?.trim() ?? '';
+        if (!clientToken) {
+          clientToken = await issueDesktopClientToken();
+          if (!isRuntimeIdentityActive(runtime)) return false;
+        }
+        if (!clientToken) return false;
+        if (!await applyDesktopClientToken(clientToken, runtime, getRuntimeExtraHeadersSync())) return false;
+      }
+      if (!isRuntimeIdentityActive(runtime)) return false;
+      setIsTunnelLocked(false);
+      setErrorMessage('');
+      setState('authenticated');
+      return true;
+    };
+  }, [signInApiBaseUrl, signInHostKey]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -921,7 +824,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
     try {
       const payload = await authenticateWithPasskey(trustDevice, {
         issueClientToken: shouldIssueDesktopClientToken(),
-        clientLabel: 'MittrCraft Desktop',
+        clientLabel: 'OpenChamber Desktop',
         ...desktopClientAuthMetadata(),
       }) as { clientToken?: unknown } | null;
       const clientToken = shouldIssueDesktopClientToken() && typeof payload?.clientToken === 'string' && payload.clientToken.trim()
@@ -1020,15 +923,11 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
             <p className="typography-meta text-muted-foreground">
               {isTunnelLocked
                 ? t('sessionAuth.locked.tunnelDescription')
-                : (adMode === 'entra' && !passwordEnabled
-                  ? (showHostSwitcher
-                    ? t('sessionAuth.locked.microsoftBrowserDescription')
-                    : t('sessionAuth.locked.microsoftDescription'))
-                  : t('sessionAuth.locked.passwordDescription'))}
+                : (translateProductSessionAuthDescription({ passwordEnabled, runtime: sessionAuthRuntime() }) ?? t('sessionAuth.locked.passwordDescription'))}
             </p>
           </div>
 
-          {!isTunnelLocked && (
+          {!isTunnelLocked && passwordEnabled && (
             <form onSubmit={handleSubmit} className="w-full space-y-2">
               {canUsePasskey && (
                 <Button
@@ -1048,94 +947,11 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
                     : t('sessionAuth.actions.usePasskey')}</span>
                 </Button>
               )}
-              {adEnabled && adMode === 'entra' && !showHostSwitcher && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full"
-                  onClick={handleEntraLogin}
-                >
-                  <Icon name="user" className="h-4 w-4" />
-                  <span>{t('sessionAuth.actions.signInWithMicrosoft')}</span>
-                </Button>
-              )}
-              {adEnabled && adMode === 'ldap' && (
-                <div className="space-y-2">
-                  <div className="relative">
-                    <Icon name="user" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      id="ad-username"
-                      ref={adUsernameInputRef}
-                      type="text"
-                      autoComplete="username"
-                      placeholder="AD Username"
-                      value={adUsername}
-                      onChange={(event) => {
-                        setAdUsername(event.target.value);
-                        if (errorMessage) setErrorMessage('');
-                      }}
-                      className="pl-10"
-                      disabled={isAdSubmitting}
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
-                      <Icon name="lock" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        id="ad-password"
-                        type="password"
-                        autoComplete="current-password"
-                        placeholder="AD Password"
-                        value={adPassword}
-                        onChange={(event) => {
-                          setAdPassword(event.target.value);
-                          if (errorMessage) setErrorMessage('');
-                        }}
-                        className="pl-10"
-                        disabled={isAdSubmitting}
-                      />
-                    </div>
-                    <Button
-                      type="button"
-                      size="icon"
-                      disabled={!adUsername || !adPassword || isAdSubmitting}
-                      onClick={() => void handleAdLogin()}
-                      aria-label={isAdSubmitting ? 'Logging in...' : 'Login with AD'}
-                    >
-                      {isAdSubmitting ? (
-                        <Icon name="loader-4" className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Icon name="key" className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </div>
-                  {passwordEnabled && (
-                    <div className="relative">
-                      <div className="absolute inset-0 flex items-center">
-                        <span className="w-full border-t" />
-                      </div>
-                      <div className="relative flex justify-center text-xs uppercase">
-                        <span className="bg-background px-2 text-muted-foreground">{t('sessionAuth.divider.or')}</span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-              {adEnabled && adMode === 'entra' && passwordEnabled && (
-                <div className="relative">
-                  <div className="absolute inset-0 flex items-center">
-                    <span className="w-full border-t" />
-                  </div>
-                  <div className="relative flex justify-center text-xs uppercase">
-                    <span className="bg-background px-2 text-muted-foreground">{t('sessionAuth.divider.or')}</span>
-                  </div>
-                </div>
-              )}
-              {passwordEnabled && <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2">
                 <div className="relative flex-1">
-                  <Icon name="lock" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Icon name="lock" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
                   <Input
-                    id="mittrcraft-ui-password"
+                    id="openchamber-ui-password"
                     ref={passwordInputRef}
                     type="password"
                     autoComplete="current-password"
@@ -1165,7 +981,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
                     <Icon name="lock-unlock" className="h-4 w-4" />
                   )}
                 </Button>
-              </div>}
+              </div>
               {canOfferPasskeySetup ? (
                 <div className="flex items-center justify-between pt-1">
                   <label className="flex items-center gap-2 text-center typography-micro text-muted-foreground">
@@ -1213,6 +1029,13 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
             </form>
           )}
 
+          <ProductSlot
+            name="session-auth-methods"
+            isTunnelLocked={isTunnelLocked}
+            runtime={sessionAuthRuntime()}
+            onSignedIn={finishProviderSignIn}
+          />
+
           {showHostSwitcher && (
             <div className="w-full">
               <DesktopHostSwitcherInline />
@@ -1226,5 +1049,10 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
     );
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      {skipAuth ? null : <AuthExpiredBanner />}
+      {children}
+    </>
+  );
 };

@@ -1,9 +1,9 @@
 // Private relay service: config persistence, lifecycle of the relay host
-// client, and the /api/mittrcraft/relay/* management routes.
+// client, and the /api/openchamber/relay/* management routes.
 //
 // Config lives in the server settings file as `settings.privateRelay =
 // { enabled, relayUrl }` (same storage precedent as tunnels/notifications).
-// Routes are registered with the other MittrCraft feature routes, before the
+// Routes are registered with the other OpenChamber feature routes, before the
 // generic OpenCode proxy, and are covered by the same global UI auth gate.
 //
 // Cross-runtime parity note: relay host mode intentionally targets the web
@@ -15,8 +15,9 @@ import express from 'express';
 
 import { createRelayIdentityRuntime } from './identity.js';
 import { startRelayHost } from './host-client.js';
+import { isEnterpriseMode, readEnterprisePolicy } from '../enterprise-mode.js';
 
-export const DEFAULT_RELAY_URL = 'wss://relay.mittrcraft.dev/ws';
+export const DEFAULT_RELAY_URL = 'wss://relay.openchamber.dev/ws';
 
 const isValidRelayUrl = (value) => {
   if (typeof value !== 'string') return false;
@@ -35,15 +36,23 @@ const normalizeRelayUrl = (value) => {
   return trimmed;
 };
 
-// A deployment can pin the relay endpoint via env (e.g. a self-hosted relay on
-// your own Cloudflare account/domain). When set and valid it overrides the
-// stored setting entirely, so the host connection, the pairing offer, and the
-// status all point at it — clients then inherit it from the offer automatically.
-const envRelayUrlOverride = () => {
-  const raw = process.env.MITTRCRAFT_RELAY_URL;
-  if (typeof raw !== 'string' || !raw.trim() || !isValidRelayUrl(raw)) return null;
-  return raw.trim();
+// A deployment can pin the relay endpoint (e.g. a self-hosted relay on your
+// own Cloudflare account/domain): `relayUrl` in the machine policy file, else
+// OPENCHAMBER_RELAY_URL (see ../enterprise-mode.js). When set and valid it
+// overrides the stored setting entirely, so the host connection, the pairing
+// offer, and the status all point at it — clients then inherit it from the
+// offer automatically. An invalid pinned value pins nothing.
+export const pinnedRelayUrl = () => {
+  const raw = readEnterprisePolicy().relayUrl;
+  return raw && isValidRelayUrl(raw) ? raw.trim() : null;
 };
+
+// Enterprise mode keeps remote access inside the company: the relay runs only
+// on a pinned self-hosted endpoint, never on ours.
+// Traffic is end-to-end encrypted either way; what stays in-house is the
+// metadata and the path into this machine.
+const RELAY_BLOCKED_ERROR = 'In enterprise mode the relay runs on your own endpoint: set relayUrl in the policy file or OPENCHAMBER_RELAY_URL to a self-hosted relay.';
+export const relayBlockedByEnterprise = () => isEnterpriseMode() && pinnedRelayUrl() === null;
 
 /**
  * @param {{
@@ -70,6 +79,11 @@ export const createRelayService = ({
   // evict each other at the relay worker ("Control replaced") and devices land
   // on a random instance. Optional: without it, behavior is pre-lock.
   hostLock = null,
+  // When false, this instance never starts the relay host on its own (boot,
+  // demand reconcile, or claim-watch takeover) — only an explicit user action
+  // (enable, pairing) force-claims. Dev/debug instances set this so they do not
+  // capture paired devices from the production instance sharing the data dir.
+  allowPassiveHost = true,
   logger = console,
 }) => {
   const identityRuntime = createRelayIdentityRuntime({ crypto, readSettingsFromDiskMigrated, writeSettingsToDisk, readSettingsStrict });
@@ -80,16 +94,23 @@ export const createRelayService = ({
   // claimant dies; a running host stands down when another process claims.
   let claimWatchTimer = null;
   const CLAIM_WATCH_INTERVAL_MS = 30_000;
+  // A standby instance does not grab a freed claim immediately: a clean restart
+  // of the previous host (app update, relaunch) releases the claim for a short
+  // while, and taking it during that window strands the devices on this —
+  // possibly older — instance. The restarting host reclaims at boot without any
+  // wait, so it always wins the window.
+  const CLAIM_TAKEOVER_GRACE_MS = 120_000;
+  let claimFreeSinceMs = null;
 
   const readConfig = async () => {
     const settings = await readSettingsFromDiskMigrated();
     const stored = settings?.privateRelay;
-    const override = envRelayUrlOverride();
+    const override = pinnedRelayUrl();
     return {
       enabled: stored?.enabled === true,
       relayUrl: override ?? normalizeRelayUrl(stored?.relayUrl),
-      // True when the endpoint is pinned by MITTRCRAFT_RELAY_URL (a self-hosted
-      // relay); the stored setting is ignored while it is set.
+      // True when an administrator pinned the endpoint (a self-hosted relay);
+      // the stored setting is ignored while it is set.
       relayUrlLocked: override !== null,
     };
   };
@@ -110,7 +131,7 @@ export const createRelayService = ({
 
   const standbyStatus = (holderPid) => ({
     state: 'standby',
-    lastError: `relay host is owned by another local MittrCraft process (pid ${holderPid})`,
+    lastError: `relay host is owned by another local OpenChamber process (pid ${holderPid})`,
     connectedClients: 0,
   });
 
@@ -133,8 +154,19 @@ export const createRelayService = ({
             }
             return;
           }
-          if (status.state === 'standby' && hostLock.tryClaim()) {
-            logger.warn('[Relay] host claim is free — taking over the relay host');
+          if (status.state !== 'standby' || !allowPassiveHost) return;
+          if (hostLock.liveClaimantPid() !== null) {
+            claimFreeSinceMs = null;
+            return;
+          }
+          if (claimFreeSinceMs === null) {
+            claimFreeSinceMs = Date.now();
+            return;
+          }
+          if (Date.now() - claimFreeSinceMs < CLAIM_TAKEOVER_GRACE_MS) return;
+          if (hostLock.tryClaim()) {
+            claimFreeSinceMs = null;
+            logger.warn('[Relay] host claim stayed free — taking over the relay host');
             await start(relayUrl);
           }
         } catch (error) {
@@ -149,10 +181,24 @@ export const createRelayService = ({
     if (!claimWatchTimer) return;
     clearInterval(claimWatchTimer);
     claimWatchTimer = null;
+    claimFreeSinceMs = null;
   };
 
   const start = async (relayUrl, { claim = 'try' } = {}) => {
     if (hostClient) return;
+    // Every path into the relay host passes here: boot, demand, enable, pairing.
+    if (relayBlockedByEnterprise()) {
+      status = { state: 'disabled', lastError: RELAY_BLOCKED_ERROR, connectedClients: 0 };
+      return;
+    }
+    if (claim !== 'force' && !allowPassiveHost) {
+      status = {
+        state: 'standby',
+        lastError: 'passive relay hosting is disabled on this instance — enable the relay or create a pairing link to host here',
+        connectedClients: 0,
+      };
+      return;
+    }
     if (hostLock) {
       const claimed = claim === 'force' ? hostLock.forceClaim() : hostLock.tryClaim();
       if (!claimed) {
@@ -237,6 +283,7 @@ export const createRelayService = ({
       connectedClients: live.connectedClients,
       relayUrl: config.relayUrl,
       relayUrlLocked: config.relayUrlLocked,
+      blockedByEnterprise: relayBlockedByEnterprise(),
       ...(live.lastError ? { lastError: live.lastError } : {}),
     };
   };
@@ -261,7 +308,7 @@ export const createRelayService = ({
 
   const getPairingCandidate = async () => {
     const config = await readConfig();
-    if (!config.enabled) return null;
+    if (!config.enabled || relayBlockedByEnterprise()) return null;
     return buildPairingCandidate();
   };
 
@@ -270,6 +317,8 @@ export const createRelayService = ({
   // rather than requiring a separate manual toggle. Idempotent: a no-op when the
   // relay is already enabled and running.
   const ensureEnabledForPairing = async () => {
+    // Direct pairing still works: the pairing route drops a failed relay candidate.
+    if (relayBlockedByEnterprise()) throw Object.assign(new Error(RELAY_BLOCKED_ERROR), { statusCode: 403 });
     const config = await readConfig();
     if (!config.enabled) {
       await writeConfig({ enabled: true, relayUrl: config.relayUrl });
@@ -286,7 +335,7 @@ export const createRelayService = ({
   };
 
   const registerRoutes = (app) => {
-    app.get('/api/mittrcraft/relay/status', async (_req, res) => {
+    app.get('/api/openchamber/relay/status', async (_req, res) => {
       try {
         res.json(await getStatus());
       } catch (error) {
@@ -294,7 +343,10 @@ export const createRelayService = ({
       }
     });
 
-    app.post('/api/mittrcraft/relay/enable', express.json({ limit: '16kb' }), async (req, res) => {
+    app.post('/api/openchamber/relay/enable', express.json({ limit: '16kb' }), async (req, res) => {
+      if (relayBlockedByEnterprise()) {
+        return res.status(403).json({ error: RELAY_BLOCKED_ERROR, code: 'enterprise_mode' });
+      }
       try {
         const current = await readConfig();
         const relayUrl = typeof req.body?.relayUrl === 'string' ? normalizeRelayUrl(req.body.relayUrl) : current.relayUrl;
@@ -308,7 +360,7 @@ export const createRelayService = ({
       }
     });
 
-    app.post('/api/mittrcraft/relay/disable', async (_req, res) => {
+    app.post('/api/openchamber/relay/disable', async (_req, res) => {
       try {
         const current = await readConfig();
         await writeConfig({ enabled: false, relayUrl: current.relayUrl });

@@ -1,32 +1,38 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles/fonts'
+import './styles/katex-css'
 import './index.css'
 import App from './App.tsx'
 import { SessionAuthGate } from './components/auth/SessionAuthGate'
-import { MittrSignInGate } from '@/components/mittr/MittrSignInGate';
 import { ThemeSystemProvider } from './contexts/ThemeSystemContext'
 import { ThemeProvider } from './components/providers/ThemeProvider'
 import './lib/debug'
 import { syncDesktopSettings, initializeAppearancePreferences } from './lib/persistence'
 import { startAppearanceAutoSave } from './lib/appearanceAutoSave'
 import { applyPersistedDirectoryPreferences } from './lib/directoryPersistence'
+import { preloadMarkdownRenderer } from './components/chat/markdownRendererLoader'
 import { startTypographyWatcher } from './lib/typographyWatcher'
 import { startModelPrefsAutoSave } from './lib/modelPrefsAutoSave'
 import { initializeLocale, I18nProvider } from './lib/i18n'
 import type { RuntimeAPIs } from './lib/api/types'
+import { installRuntimeEndpointReset } from './apps/runtimeEndpointReset'
+import { ProductRoot } from './lib/product-plugins'
+
+import.meta.glob('../../*/src/product-ui-plugin.{ts,tsx}', { eager: true })
 
 declare global {
   interface Window {
-    __MITTRCRAFT_RUNTIME_APIS__?: RuntimeAPIs;
+    __OPENCHAMBER_RUNTIME_APIS__?: RuntimeAPIs;
   }
 }
 
-const runtimeAPIs = (typeof window !== 'undefined' && window.__MITTRCRAFT_RUNTIME_APIS__) || (() => {
+const runtimeAPIs = (typeof window !== 'undefined' && window.__OPENCHAMBER_RUNTIME_APIS__) || (() => {
   throw new Error('Runtime APIs not provided for legacy UI entrypoint.');
 })();
 
 initializeLocale();
+installRuntimeEndpointReset();
 
 // Initialize settings asynchronously — the app renders with defaults first
 // and hydrates once persisted preferences are applied. Users with non-default
@@ -54,19 +60,20 @@ if (!rootElement) {
   throw new Error('Root element not found');
 }
 
+// The first session opened after load renders its messages through the lazy
+// markdown chunk; fetching it now, while the app boots, means that open shows
+// text instead of empty message boxes until the chunk arrives.
+preloadMarkdownRenderer();
+
 createRoot(rootElement).render(
   <StrictMode>
     <I18nProvider>
       <ThemeSystemProvider>
         <ThemeProvider>
           <SessionAuthGate>
-            {/* Inside the instance gate on purpose: that one decides who may
-                reach this machine, this one decides who may use Mittr's models.
-                Asking for a Mittr identity before the instance has admitted you
-                would put the second question first. */}
-            <MittrSignInGate>
+            <ProductRoot surface="main">
               <App apis={runtimeAPIs} />
-            </MittrSignInGate>
+            </ProductRoot>
           </SessionAuthGate>
         </ThemeProvider>
       </ThemeSystemProvider>

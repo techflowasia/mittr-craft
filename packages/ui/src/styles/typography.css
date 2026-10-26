@@ -10,22 +10,22 @@
 
   .typography-ui-header {
     font-size: var(--text-ui-header);
-    line-height: round(calc(var(--lh-tight) * 1em), 1px);
+    line-height: round(1.45em, 1px);
   }
 
   .typography-ui-label {
     font-size: var(--text-ui-label);
-    line-height: round(calc(var(--lh-tight) * 1em), 1px);
+    line-height: round(1.45em, 1px);
   }
 
   .typography-meta {
     font-size: var(--text-meta);
-    line-height: round(calc(var(--lh-tight) * 1em), 1px);
+    line-height: round(1.45em, 1px);
   }
 
   .typography-micro {
     font-size: var(--text-micro);
-    line-height: round(calc(var(--lh-tight) * 1em), 1px);
+    line-height: round(1.45em, 1px);
   }
 
   /*
@@ -65,11 +65,11 @@
   .typography-settings-description {
     font-size: var(--text-meta);
     font-weight: 400;
-    line-height: var(--lh-body);
+    line-height: 1.5;
   }
 
   .typography-settings-link {
-    font-size: var(--text-meta);
+    font-size: 0.8125rem; /* 13px */
     font-weight: 500;
     line-height: 1.2;
     color: var(--primary-base);
@@ -106,8 +106,11 @@
     padding-inline: calc(clamp(0.75rem, 2.5vw, 1rem) * var(--padding-scale, 1));
   }
 
+  /* Wide layout: the transcript uses the whole chat width; the composer and
+     the rows docked above it (.chat-input-column, .chat-column cards) keep a
+     readable column. */
   .wide-chat-layout .chat-message-column {
-    width: min(100%, 64rem);
+    width: 100%;
   }
 
   @media (min-width: 1024px) {
@@ -133,7 +136,7 @@
   .model-favorite-button:focus-visible {
     outline: 2px solid var(--primary);
     outline-offset: 2px;
-    border-radius: var(--radius-sm);
+    border-radius: 0.25rem;
   }
 
   .model-favorite-button:active {
@@ -227,5 +230,60 @@
 }
 
 .wide-chat-layout .chat-message-column {
-  width: min(100%, 64rem);
+  width: 100%;
+}
+
+/* A message reached through a message link shows a selection tint behind its
+   content for a moment, then fades out: the whole column for a reply, only
+   the bubble for a user message, which sits narrower at the side. The
+   attribute is set and removed by useChatTimelineScroll; only opacity
+   animates. */
+[data-message-link-target] > .chat-message-column,
+[data-message-link-target] [data-user-message-bubble] {
+  isolation: isolate;
+}
+
+[data-message-link-target]:not(:has([data-user-message-bubble])) > .chat-message-column::before,
+[data-message-link-target] [data-user-message-bubble]::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  background: var(--interactive-selection);
+  pointer-events: none;
+  opacity: 0;
+  animation: oc-message-link-target 1.2s ease-out;
+}
+
+[data-message-link-target]:not(:has([data-user-message-bubble])) > .chat-message-column::before {
+  inset: -0.5rem 0;
+  border-radius: 0.75rem;
+}
+
+[data-message-link-target] [data-user-message-bubble] {
+  position: relative;
+}
+
+/* Inside the bubble's own stacking context: above its background, below
+   its text. */
+[data-message-link-target] [data-user-message-bubble]::before {
+  inset: 0;
+  border-radius: inherit;
+}
+
+@keyframes oc-message-link-target {
+  0%,
+  25% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-message-link-target]:not(:has([data-user-message-bubble])) > .chat-message-column::before,
+  [data-message-link-target] [data-user-message-bubble]::before {
+    animation: none;
+    opacity: 0.35;
+  }
 }

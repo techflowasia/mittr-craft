@@ -16,9 +16,9 @@
  *   bottleneck it is measuring.
  */
 
-export const IDLE_PROBE_GLOBAL = "__mittrcraftIdleProbe"
+export const IDLE_PROBE_GLOBAL = "__openchamberIdleProbe"
 
-const probeFactory = function installMittrCraftIdleProbe(globalName, stackCaptureBudget) {
+const probeFactory = function installOpenchamberIdleProbe(globalName, stackCaptureBudget) {
   if (globalThis[globalName]) return
 
   const now = () => performance.now()
@@ -34,7 +34,7 @@ const probeFactory = function installMittrCraftIdleProbe(globalName, stackCaptur
     for (const line of lines) {
       // Skip the Error line and every frame belonging to the probe itself.
       if (!line.includes("http")) continue
-      if (line.includes("installMittrCraftIdleProbe")) continue
+      if (line.includes("installOpenchamberIdleProbe")) continue
       const match = line.match(/\(?((?:https?:)\/\/[^\s)]+)\)?$/)
       const location = match ? match[1] : line.trim()
       const name = line.trim().replace(/^at\s+/, "").split(" (")[0]

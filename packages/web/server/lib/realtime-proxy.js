@@ -1,19 +1,23 @@
 import { WebSocket, WebSocketServer } from 'ws';
 
-const PROXY_SSE_PATH = '/api/mittrcraft/realtime-proxy/sse';
-const PROXY_WS_PATH = '/api/mittrcraft/realtime-proxy/ws';
+const PROXY_SSE_PATH = '/api/openchamber/realtime-proxy/sse';
+const PROXY_WS_PATH = '/api/openchamber/realtime-proxy/ws';
 
 const isAllowedSsePath = (pathname) => {
   return pathname === '/api/event'
     || pathname === '/api/global/event'
-    || pathname === '/api/mittrcraft/events'
+    || pathname === '/api/openchamber/events'
     || pathname === '/api/notifications/stream';
 };
+
+// The same three sockets of an isolated space, under `/api/spaces/<id>/`, matched by shape.
+const SPACE_WS_PATH = /^\/api\/spaces\/[0-9a-f]{12}\/(?:terminal\/ws|event\/ws|global\/event\/ws)$/;
 
 const isAllowedWebSocketPath = (pathname) => {
   return pathname === '/api/event/ws'
     || pathname === '/api/global/event/ws'
-    || pathname === '/api/terminal/ws';
+    || pathname === '/api/terminal/ws'
+    || SPACE_WS_PATH.test(pathname);
 };
 
 const normalizeBaseUrl = (value) => {
@@ -200,6 +204,8 @@ export const attachRealtimeProxy = ({ app, server, getDesktopRuntimeConfig, getU
 
     const upstream = new WebSocket(resolved.target.toString(), {
       headers: resolved.requestHeaders,
+      // ws does not send Origin by default; protected upstreams require it.
+      origin: `${resolved.target.protocol === 'wss:' ? 'https:' : 'http:'}//${resolved.target.host}`,
     });
     const pending = [];
 

@@ -1,17 +1,19 @@
-# <picture><source media="(prefers-color-scheme: dark)" srcset="docs/references/badges/mittrcraft-logo-dark.svg"><img src="docs/references/badges/mittrcraft-logo-light.svg" width="32" height="32" align="absmiddle" /></picture> MittrCraft
+# <picture><source media="(prefers-color-scheme: dark)" srcset="docs/references/badges/openchamber-logo-dark.svg"><img src="docs/references/badges/openchamber-logo-light.svg" width="32" height="32" align="absmiddle" /></picture> OpenChamber
 
-[![GitHub stars](https://img.shields.io/github/stars/techflowasia/mittr-craft?style=flat&labelColor=100F0F&color=66800B)](https://github.com/techflowasia/mittr-craft/stargazers)
-[![GitHub release](https://img.shields.io/github/v/release/techflowasia/mittr-craft?style=flat&labelColor=100F0F&color=205EA6)](https://github.com/techflowasia/mittr-craft/releases/latest)
+[![GitHub stars](https://img.shields.io/github/stars/openchamber/openchamber?style=flat&labelColor=100F0F&color=66800B)](https://github.com/openchamber/openchamber/stargazers)
+[![GitHub release](https://img.shields.io/github/v/release/openchamber/openchamber?style=flat&labelColor=100F0F&color=205EA6)](https://github.com/openchamber/openchamber/releases/latest)
 [![Discord](https://img.shields.io/badge/Discord-join.svg?style=flat&labelColor=100F0F&color=8B7EC8&logo=discord&logoColor=FFFCF0)](https://discord.gg/ZYRSdnwwKA)
-[![Support the project](https://img.shields.io/badge/Support-Project-black?style=flat&labelColor=100F0F&color=EC8B49&logo=ko-fi&logoColor=FFFCF0)](https://ko-fi.com/G2G41SAWNS)
+[![Support the project](https://img.shields.io/badge/Support-Project-black?style=flat&labelColor=100F0F&color=EC8B49&logo=patreon&logoColor=FFFCF0)](https://www.patreon.com/openchamber)
+
+<a href="https://www.blacksmith.sh/"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/references/badges/blacksmith-dark.svg"><img src="docs/references/badges/blacksmith-light.svg" height="28" alt="CI powered by Blacksmith" /></picture></a>
 
 ## Run agent work. Keep control. Ship from anywhere.
 
-**MittrCraft is an open-source workspace for running, supervising, and reviewing AI coding work across desktop, browser, editor, and mobile.**
+**OpenChamber is an open-source workspace for running and reviewing AI coding work on desktop, web, VS Code, and mobile.**
 
-MittrCraft gives you one place to direct agent work, understand the changes, and move them toward release. Your projects stay available when you switch devices or step away.
+Start agent work, see what changed, and take it through review and release. Your projects and sessions remain available when you switch devices or step away.
 
-![MittrCraft Chat](docs/references/chat_example.png)
+![OpenChamber Chat](docs/references/chat_example.png)
 
 <details>
 <summary>More screenshots</summary>
@@ -19,17 +21,17 @@ MittrCraft gives you one place to direct agent work, understand the changes, and
 ![VS Code Extension](packages/vscode/extension.jpg)
 
 <p>
-<img src="docs/references/pwa_chat_example.png" width="45%" alt="MittrCraft PWA chat">
-<img src="docs/references/pwa_diff_example.png" width="45%" alt="MittrCraft PWA diff review">
+<img src="docs/references/pwa_chat_example.png" width="45%" alt="OpenChamber PWA chat">
+<img src="docs/references/pwa_diff_example.png" width="45%" alt="OpenChamber PWA diff review">
 </p>
 
 </details>
 
-## What you can do with MittrCraft
+## What you can do with OpenChamber
 
 ### Goals that continue on their own
 
-Give a session a finish line with **Session Goals**. MittrCraft checks the result after every turn and keeps the agent working until the goal is complete, blocked, or reaches the limit you set — even after you close the app.
+Give a session a finish line with **Session Goals**. OpenChamber checks the result after every turn and keeps the agent working until it completes the goal, gets blocked, or reaches the limit you set. It can continue after you close the app.
 
 ### Compare and combine runs
 
@@ -41,11 +43,11 @@ Use **Multi-run** to give the same task to up to five models, each in its own se
 
 ### Inspect a running app
 
-Open your app beside the conversation with **Preview**. Point at an element and send the agent its screenshot, styles, position, and browser errors — all the context behind “this thing here.” Desktop brings the same workflow to any web page through its built-in browser.
+Open your app beside the conversation with **Preview**. Point at an element to send the agent its screenshot, styles, position, and browser errors. No more trying to explain "this thing here." The desktop app can do the same with any web page in its built-in browser.
 
 ### GitHub context from issue to pull request
 
-Start a session from a GitHub issue or pull request with its context attached. Send failed checks or review comments back to the agent, then update or merge the pull request from MittrCraft.
+Start a session from a GitHub issue or pull request with its context attached. Send failed checks or review comments back to the agent, then update or merge the pull request from OpenChamber.
 
 ### Continue on another device
 
@@ -71,53 +73,53 @@ Run a prompt once, daily, weekly, or on a cron schedule. Scheduled tasks can use
 | **Web / PWA** | Open your workspace in a browser, install it as an app, and stay up to date through background notifications |
 | **VS Code** | Keep sessions beside your code, send selections to the agent, open results in the editor, and compare parallel runs |
 | **iOS / Android** | Review and steer work away from your desk, receive completion alerts, and use the terminal with touch controls |
-| **CLI / Server** | Run MittrCraft on a workstation or server, schedule work, manage remote access, and keep it available after login |
+| **CLI / Server** | Run OpenChamber on a workstation or server, schedule work, manage remote access, and keep it available after login |
 
 ## Quick start
 
-### Desktop — macOS, Windows, and Linux
+### Desktop for macOS, Windows, and Linux
 
-Download the latest release from [GitHub Releases](https://github.com/techflowasia/mittr-craft/releases/latest). Desktop bundles the matching OpenCode CLI, so no separate OpenCode installation is required.
+Download the latest release from [GitHub Releases](https://github.com/openchamber/openchamber/releases/latest). Desktop bundles the matching OpenCode CLI, so no separate OpenCode installation is required.
 
 Linux releases are available as x86_64 and ARM64 AppImages. Make the downloaded AppImage executable and keep it in a writable location for in-app updates:
 
 ```bash
-chmod +x MittrCraft-*.AppImage
-./MittrCraft-*.AppImage
+chmod +x OpenChamber-*.AppImage
+./OpenChamber-*.AppImage
 ```
 
 Linux AppImages require FUSE (`libfuse.so.2`). Without FUSE, run with `APPIMAGE_EXTRACT_AND_RUN=1`.
 
 ### VS Code
 
-Install [MittrCraft from the Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=fedaykindev.mittrcraft), or search for “MittrCraft” in Extensions.
+Install [OpenChamber from the Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=fedaykindev.openchamber), or search for "OpenChamber" in Extensions.
 
-### CLI — Web and PWA
+### CLI for Web and PWA
 
 Requires Node.js 22+. CLI/Web and VS Code use your installed [OpenCode CLI](https://opencode.ai).
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/techflowasia/mittr-craft/main/scripts/install.sh | bash
-mittrcraft --ui-password be-creative-here
+curl -fsSL https://raw.githubusercontent.com/openchamber/openchamber/main/scripts/install.sh | bash
+openchamber --ui-password be-creative-here
 ```
 
 Common operations:
 
 ```bash
-mittrcraft status
-mittrcraft connect-url --qr
-mittrcraft tunnel start --provider cloudflare --mode quick --qr
-mittrcraft startup enable
-mittrcraft logs
-mittrcraft stop
-mittrcraft update
+openchamber status
+openchamber connect-url --qr
+openchamber tunnel start --provider cloudflare --mode quick --qr
+openchamber startup enable
+openchamber logs
+openchamber stop
+openchamber update
 ```
 
-MittrCraft binds to localhost by default. Use `--lan` only on a trusted network and protect browser access with `--ui-password`.
+OpenChamber binds to localhost by default. Use `--lan` only on a trusted network and protect browser access with `--ui-password`.
 
 ## Guides
 
-Go deeper with the MittrCraft guides:
+Go deeper with the OpenChamber guides:
 
 - [Quick start](packages/docs/content/docs/quickstart.mdx)
 - [Installation](packages/docs/content/docs/install.mdx)
@@ -136,25 +138,27 @@ For self-hosting details, see the [reverse proxy guide](docs/REVERSE_PROXY.md). 
 
 ## Why OpenCode?
 
-MittrCraft uses [OpenCode](https://opencode.ai) to power its coding agents. We chose it because we believe it provides the best open-source agentic coding experience today: capable, extensible, and open by design.
+OpenChamber uses [OpenCode](https://opencode.ai) to run coding agents. We chose it because it is open source, has a solid API, and is easy to extend.
 
-Around that foundation, MittrCraft brings together the work that happens before, during, and after an agent run — deciding what to try, keeping it on track, reviewing the result, connecting from anywhere, and getting the change shipped.
+OpenChamber handles the rest of the workflow. You can decide what to try, keep the agent on track, review the result, connect from another device, and ship the change.
 
-MittrCraft is an independent project and is not affiliated with the OpenCode team.
+OpenChamber is an independent project and is not affiliated with the OpenCode team.
 
 ## Contributing
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for development setup and contribution guidelines. Documentation authoring guidance lives in [`packages/docs`](packages/docs/README.md).
+Bug fixes and small improvements are welcome as PRs. Features and behavior changes start in an [Ideas discussion](https://github.com/openchamber/openchamber/discussions/categories/ideas) so we agree on the product side before anyone writes code. Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a PR; it has the setup, the review contract, and what happens to large unplanned PRs. Documentation authoring guidance lives in [`packages/docs`](packages/docs/README.md).
+
+Bugs go to [issues](https://github.com/openchamber/openchamber/issues/new/choose). Questions go to [Q&A discussions](https://github.com/openchamber/openchamber/discussions/categories/q-a).
 
 ## Acknowledgments
 
 Special thanks to:
 
-- [OpenCode](https://opencode.ai) for its excellent API and extensible open-source architecture
-- [Pierre](https://pierrejs-docs.vercel.app/) for its fast diff viewer and syntax highlighting
-- [Ghostty-web](https://github.com/coder/ghostty-web) for its Ghostty web renderer
+- [OpenCode](https://opencode.ai) for the API and open-source architecture OpenChamber builds on
+- [Pierre](https://pierrejs-docs.vercel.app/) for the diff viewer and syntax highlighting
+- The [T3 Code](https://github.com/pingdotgg/t3code) team for their browser adapter for [libghostty-vt](https://github.com/ghostty-org/ghostty), which our terminal is built on
 - [Yulia Ivashko](https://github.com/yulia-ivashko), who built the firework celebration that plays on every successful push
-- Every contributor who shaped MittrCraft with code, ideas, and attention to detail
+- Everyone who contributed code, reported bugs, or shared ideas
 
 ## License
 

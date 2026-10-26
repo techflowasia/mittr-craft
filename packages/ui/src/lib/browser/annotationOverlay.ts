@@ -48,16 +48,16 @@ export type BrowserAnnotationOverlayLabels = {
   readonly submit: string;
 };
 
-const ANNOTATION_ACTIVE_FLAG = '__mittrcraftBrowserAnnotationActive';
+const ANNOTATION_ACTIVE_FLAG = '__openchamberBrowserAnnotationActive';
 
 /** Cancels an overlay left behind by an earlier session. Safe when none is active. */
 export const ANNOTATION_TEARDOWN_SCRIPT = `(() => {
   try {
-    var host = document.querySelector('[data-mittrcraft-annotation]');
+    var host = document.querySelector('[data-openchamber-annotation]');
     if (host && host.parentNode) host.parentNode.removeChild(host);
   } catch (error) { /* page navigated away */ }
   try {
-    var cursor = document.getElementById('mittrcraft-annotation-cursor');
+    var cursor = document.getElementById('openchamber-annotation-cursor');
     if (cursor && cursor.parentNode) cursor.parentNode.removeChild(cursor);
   } catch (error) { /* page navigated away */ }
   try { delete window['${ANNOTATION_ACTIVE_FLAG}']; } catch (error) { /* non-configurable */ }
@@ -72,7 +72,7 @@ export const buildAnnotationOverlayScript = (
   var CONFIG = ${config};
   var THEME = CONFIG.theme;
   var LABELS = CONFIG.labels;
-  var OVERLAY_ATTR = 'data-mittrcraft-annotation';
+  var OVERLAY_ATTR = 'data-openchamber-annotation';
   var Z_OVERLAY = 2147483646;
   var MAX_TEXT = 400;
   var MIN_RECT = 3;
@@ -205,7 +205,17 @@ export const buildAnnotationOverlayScript = (
 
   var host = document.createElement('div');
   host.setAttribute(OVERLAY_ATTR, '');
-  host.style.cssText = 'position:fixed;inset:0;z-index:' + Z_OVERLAY + ';pointer-events:none';
+  // A manual popover: shown, it joins the browser's top layer without making
+  // the rest of the page inert. See "top layer" below.
+  host.setAttribute('popover', 'manual');
+  // Every declaration is !important: as a popover, and later inside a page
+  // dialog, the host matches page rules such as [popover]{background:...},
+  // which would otherwise paint a sheet over the whole page.
+  host.style.cssText = [
+    'all:initial', 'display:block', 'position:fixed', 'inset:0', 'width:auto', 'height:auto',
+    'max-width:none', 'max-height:none', 'margin:0', 'padding:0', 'border:0', 'background:transparent',
+    'overflow:visible', 'opacity:1', 'transform:none', 'z-index:' + Z_OVERLAY, 'pointer-events:none'
+  ].join(' !important;') + ' !important';
   var shadow = host.attachShadow({ mode: 'closed' });
 
   var style = document.createElement('style');
@@ -222,13 +232,14 @@ export const buildAnnotationOverlayScript = (
     '.editor{position:fixed;left:0;top:0;display:none;align-items:center;gap:8px;width:min(420px,calc(100vw - 24px));padding:6px;padding-left:16px;border-radius:22px;border:1px solid ' + THEME.border + ';background:' + THEME.glassSurface + ';-webkit-backdrop-filter:' + THEME.glassFilter + ';backdrop-filter:' + THEME.glassFilter + ';box-shadow:0 8px 28px rgba(0,0,0,.3);pointer-events:auto}',
     '.editor textarea{flex:1;min-width:0;resize:none;border:none;background:transparent;color:' + THEME.text + ';font-size:13px;line-height:20px;outline:none;padding:6px 0;min-height:32px;max-height:104px;display:block}',
     '.editor textarea::placeholder{color:' + THEME.mutedText + '}',
-    '.editor button{appearance:none;border:none;background:' + THEME.primary + ';color:' + THEME.primaryContrast + ';border-radius:999px;padding:8px 18px;font-size:12px;line-height:18px;font-weight:600;cursor:pointer;white-space:nowrap}',
+    '.editor button{appearance:none;border:none;background:' + THEME.primary + ';color:' + THEME.primaryContrast + ';border-radius:999px;width:32px;height:32px;padding:0;display:flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer}',
+    '.editor button svg{width:16px;height:16px;display:block}',
     '.editor button[disabled]{opacity:.5;cursor:default}'
   ].join('');
   shadow.appendChild(style);
 
   var cursorStyle = document.createElement('style');
-  cursorStyle.id = 'mittrcraft-annotation-cursor';
+  cursorStyle.id = 'openchamber-annotation-cursor';
   document.head.appendChild(cursorStyle);
   var setCursor = function (value) {
     cursorStyle.textContent = value ? '*{cursor:' + value + ' !important}' : '';
@@ -278,7 +289,11 @@ export const buildAnnotationOverlayScript = (
   comment.placeholder = LABELS.commentPlaceholder;
   var submit = document.createElement('button');
   submit.type = 'button';
-  submit.textContent = LABELS.submit;
+  // Icon-only attach button (Remix attachment-2), matching the chat comment
+  // input; the localized label stays available to assistive tech.
+  submit.setAttribute('aria-label', LABELS.submit);
+  submit.title = LABELS.submit;
+  submit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.8287 7.75737L9.1718 13.4142C8.78127 13.8047 8.78127 14.4379 9.1718 14.8284C9.56232 15.219 10.1955 15.219 10.586 14.8284L16.2429 9.17158C17.4144 8.00001 17.4144 6.10052 16.2429 4.92894C15.0713 3.75737 13.1718 3.75737 12.0002 4.92894L6.34337 10.5858C4.39075 12.5384 4.39075 15.7042 6.34337 17.6569C8.29599 19.6095 11.4618 19.6095 13.4144 17.6569L19.0713 12L20.4855 13.4142L14.8287 19.0711C12.095 21.8047 7.66283 21.8047 4.92916 19.0711C2.19549 16.3374 2.19549 11.9053 4.92916 9.17158L10.586 3.51473C12.5386 1.56211 15.7045 1.56211 17.6571 3.51473C19.6097 5.46735 19.6097 8.63317 17.6571 10.5858L12.0002 16.2427C10.8287 17.4142 8.92916 17.4142 7.75759 16.2427C6.58601 15.0711 6.58601 13.1716 7.75759 12L13.4144 6.34316L14.8287 7.75737Z" fill="currentColor"/></svg>';
   editor.append(comment, submit);
 
   /**
@@ -530,6 +545,7 @@ export const buildAnnotationOverlayScript = (
   };
 
   var onKeyDown = function (event) {
+    if (event.isComposing || event.keyCode === 229) return;
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -540,6 +556,8 @@ export const buildAnnotationOverlayScript = (
   var onCommentKeyDown = function (event) {
     // Do not let the annotated page treat typed letters as its own shortcuts.
     event.stopPropagation();
+    // WebKit can report the composition-confirming Enter as keyCode 229.
+    if (event.isComposing || event.keyCode === 229) return;
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       attach();
@@ -557,6 +575,110 @@ export const buildAnnotationOverlayScript = (
   window.addEventListener('keydown', onKeyDown, true);
   comment.addEventListener('keydown', onCommentKeyDown);
 
+  // --------------------------------------------------------------- top layer
+
+  /**
+   * Keeps the chrome above a modal dialog or popover the page opens.
+   *
+   * Those render in the browser's top layer, which no z-index reaches, and a
+   * modal dialog also makes everything outside itself inert: the outlines drew
+   * under the dialog and the comment box took no typing. So the host is shown
+   * as a popover, which puts it in the top layer too, and it lives inside the
+   * page's topmost modal dialog, where that inertness does not reach. Showing it
+   * again whenever the page puts something new on top keeps it last, so above.
+   *
+   * Opening our own modal dialog instead would make the page's dialog inert,
+   * which is the thing being annotated.
+   */
+  var modals = [];
+
+  var isModalDialog = function (element) {
+    if (element.tagName !== 'DIALOG') return false;
+    try { return element.matches(':modal'); } catch (error) { return false; }
+  };
+
+  var trackDialog = function (dialog) {
+    var index = modals.indexOf(dialog);
+    if (index !== -1) modals.splice(index, 1);
+    // Opened last, so on top. Dialogs already open when annotation starts are
+    // taken in document order, which is the usual order of nesting.
+    if (isModalDialog(dialog)) modals.push(dialog);
+  };
+
+  var topModal = function () {
+    for (var i = modals.length - 1; i >= 0; i -= 1) {
+      if (modals[i].isConnected && isModalDialog(modals[i])) return modals[i];
+    }
+    return null;
+  };
+
+  var placeHost = function () {
+    var parent = topModal() || document.body || document.documentElement;
+    var hadFocus = shadow.activeElement === comment;
+    if (host.parentNode !== parent) parent.appendChild(host);
+    try {
+      if (host.matches(':popover-open')) host.hidePopover();
+      host.showPopover();
+    } catch (error) { /* no popover support: the z-index still covers ordinary pages */ }
+    // Moving the host blurs the comment box mid-sentence.
+    if (hadFocus) comment.focus({ preventScroll: true });
+  };
+
+  var topLayerObserver = new window.MutationObserver(function (records) {
+    var changed = false;
+    for (var i = 0; i < records.length; i += 1) {
+      if (records[i].type === 'attributes' && records[i].target.tagName === 'DIALOG') {
+        trackDialog(records[i].target);
+        changed = true;
+      }
+    }
+    if (!host.isConnected) {
+      // Removed on purpose, not along with a dialog: the session was cancelled
+      // from the app or replaced by a new one. End it, so its listeners stop
+      // swallowing the page's clicks and nothing brings the host back.
+      for (var j = 0; j < records.length; j += 1) {
+        if (Array.prototype.indexOf.call(records[j].removedNodes, host) !== -1) {
+          finish(null);
+          return;
+        }
+      }
+      changed = true;
+    }
+    if (!changed) return;
+    placeHost();
+    // Our own move is not a page change.
+    topLayerObserver.takeRecords();
+  });
+
+  var onToggle = function (event) {
+    if (event.target === host || event.newState !== 'open') return;
+    placeHost();
+    topLayerObserver.takeRecords();
+  };
+
+  // With the host inside the page's dialog, clicks on our chrome would reach
+  // the dialog's own handlers, and a click outside its box commonly closes it.
+  // Typing in the comment box would reach its key handlers the same way.
+  var CHROME_EVENTS = BLOCKED_EVENTS.concat([
+    'pointerdown', 'pointerup', 'keydown', 'keyup', 'keypress', 'beforeinput', 'input'
+  ]);
+  var keepChromeEvent = function (event) { event.stopPropagation(); };
+  CHROME_EVENTS.forEach(function (name) {
+    host.addEventListener(name, keepChromeEvent);
+  });
+
+  var startTopLayer = function () {
+    Array.prototype.forEach.call(document.querySelectorAll('dialog'), trackDialog);
+    placeHost();
+    topLayerObserver.observe(document.documentElement, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['open']
+    });
+    document.addEventListener('toggle', onToggle, true);
+  };
+
   // ------------------------------------------------------------------ finish
 
   var teardown = function () {
@@ -570,6 +692,8 @@ export const buildAnnotationOverlayScript = (
     window.removeEventListener('resize', onScrollOrResize, true);
     window.removeEventListener('keydown', onKeyDown, true);
     comment.removeEventListener('keydown', onCommentKeyDown);
+    topLayerObserver.disconnect();
+    document.removeEventListener('toggle', onToggle, true);
     setCursor('');
     if (cursorStyle.parentNode) cursorStyle.parentNode.removeChild(cursorStyle);
     if (host.parentNode) host.parentNode.removeChild(host);
@@ -609,7 +733,7 @@ export const buildAnnotationOverlayScript = (
 
   submit.addEventListener('click', attach);
 
-  (document.body || document.documentElement).appendChild(host);
+  startTopLayer();
   setTool('select');
   syncChrome();
 });`;

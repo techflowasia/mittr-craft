@@ -1,3 +1,5 @@
+import { isEnterpriseMode } from '../enterprise-mode.js';
+
 const LOCAL_BASE_URL_HOSTS = new Set([
   'localhost',
   '127.0.0.1',
@@ -47,13 +49,19 @@ export const normalizeCustomOpenAIBaseURL = (value) => {
     return { error: 'Custom server URL must not include credentials' };
   }
 
-  const isDesktop = (process.env.MITTRCRAFT_RUNTIME || '').trim().toLowerCase() === 'desktop';
-  const envFlagRaw = process.env.MITTRCRAFT_ALLOW_REMOTE_OPENAI_COMPAT_URLS;
+  // Speech and transcription carry conversation content, so enterprise mode
+  // keeps them on this machine whatever else allows a remote host.
+  if (isEnterpriseMode() && !isAllowedLocalHost(parsed.hostname)) {
+    return { error: 'In enterprise mode a custom speech server has to run on this machine.' };
+  }
+
+  const isDesktop = (process.env.OPENCHAMBER_RUNTIME || '').trim().toLowerCase() === 'desktop';
+  const envFlagRaw = process.env.OPENCHAMBER_ALLOW_REMOTE_OPENAI_COMPAT_URLS;
   const hasExplicitFlag = typeof envFlagRaw === 'string' && envFlagRaw.trim().length > 0;
   const allowRemote = hasExplicitFlag ? isEnvFlagEnabled(envFlagRaw) : isDesktop;
   if (!allowRemote && !isAllowedLocalHost(parsed.hostname)) {
     return {
-      error: 'Remote custom server URLs are disabled. Set MITTRCRAFT_ALLOW_REMOTE_OPENAI_COMPAT_URLS=true to allow this host.',
+      error: 'Remote custom server URLs are disabled. Set OPENCHAMBER_ALLOW_REMOTE_OPENAI_COMPAT_URLS=true to allow this host.',
     };
   }
 

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 const asNonEmptyString = (value) => {
   if (typeof value !== 'string') {
     return null;
@@ -15,7 +16,7 @@ export const registerScheduledTaskRoutes = (app, dependencies) => {
     sanitizeProjects,
     projectConfigRuntime,
     scheduledTasksRuntime,
-    getMittrCraftEventClients,
+    getOpenChamberEventClients,
     writeSseEvent,
     scheduledTaskService = createScheduledTaskService(dependencies),
   } = dependencies;
@@ -129,7 +130,7 @@ export const registerScheduledTaskRoutes = (app, dependencies) => {
     }
   });
 
-  app.get('/api/mittrcraft/scheduled-tasks/status', async (_req, res) => {
+  app.get('/api/openchamber/scheduled-tasks/status', async (_req, res) => {
     try {
       return res.json(await scheduledTaskService.status());
     } catch (error) {
@@ -138,7 +139,7 @@ export const registerScheduledTaskRoutes = (app, dependencies) => {
     }
   });
 
-  app.get('/api/mittrcraft/events', (req, res) => {
+  app.get('/api/openchamber/events', (req, res) => {
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
@@ -149,16 +150,20 @@ export const registerScheduledTaskRoutes = (app, dependencies) => {
     // not of this server: a desktop shell and a browser tab can be connected to
     // the same server at once. Recording it on the connection keeps the answer
     // current without any enable/disable setting to go stale.
-    res.mittrcraftBrowserCapable = req.query?.browser === '1';
+    res.openchamberBrowserCapable = req.query?.browser === '1';
+    // Names this connection, so what a client asks to follow lives exactly as
+    // long as the connection that receives its changes.
+    res.openchamberConnectionId = randomUUID();
 
-    const clients = getMittrCraftEventClients();
+    const clients = getOpenChamberEventClients();
     clients.add(res);
 
     try {
       writeSseEvent(res, {
-        type: 'mittrcraft:event-stream-ready',
+        type: 'openchamber:event-stream-ready',
         properties: {
           connectedAt: Date.now(),
+          connectionId: res.openchamberConnectionId,
         },
       });
     } catch {
@@ -167,7 +172,7 @@ export const registerScheduledTaskRoutes = (app, dependencies) => {
     const heartbeat = setInterval(() => {
       try {
         writeSseEvent(res, {
-          type: 'mittrcraft:heartbeat',
+          type: 'openchamber:heartbeat',
           properties: {
             timestamp: Date.now(),
           },

@@ -18,11 +18,14 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
-import { useSkillsStore, type DiscoveredSkill } from '@/stores/useSkillsStore';
+import { selectSkillsForDirectory, useSkillsStore, type DiscoveredSkill } from '@/stores/useSkillsStore';
+import { useSettingsDirectory } from '@/hooks/useSettingsDirectory';
 import { useShallow } from 'zustand/react/shallow';
 import { cn } from '@/lib/utils';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { SettingsProjectSelector } from '@/components/sections/shared/SettingsProjectSelector';
+import { SettingsSidebarNoMatches, SettingsSidebarSearch } from '@/components/sections/shared/SettingsSidebarSearch';
+import { matchesRankQuery } from '@/lib/search/fuzzySearch';
 import { SidebarGroup } from '@/components/sections/shared/SidebarGroup';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
@@ -41,6 +44,7 @@ const isRenamableSkill = (skill: DiscoveredSkill | null | undefined): boolean =>
 
 export const SkillsSidebar: React.FC<SkillsSidebarProps> = ({ onItemSelect }) => {
   const { t } = useI18n();
+  const [query, setQuery] = React.useState('');
   const [renameDialogSkill, setRenameDialogSkill] = React.useState<DiscoveredSkill | null>(null);
   const [renameNewName, setRenameNewName] = React.useState('');
   const [deleteDialogSkill, setDeleteDialogSkill] = React.useState<DiscoveredSkill | null>(null);
@@ -49,7 +53,6 @@ export const SkillsSidebar: React.FC<SkillsSidebarProps> = ({ onItemSelect }) =>
 
   const {
     selectedSkillName,
-    skills,
     setSelectedSkill,
     setSkillDraft,
     deleteSkill,
@@ -57,7 +60,6 @@ export const SkillsSidebar: React.FC<SkillsSidebarProps> = ({ onItemSelect }) =>
     getSkillDetail,
   } = useSkillsStore(useShallow((s) => ({
     selectedSkillName: s.selectedSkillName,
-    skills: s.skills,
     setSelectedSkill: s.setSelectedSkill,
     setSkillDraft: s.setSkillDraft,
     deleteSkill: s.deleteSkill,
@@ -65,7 +67,15 @@ export const SkillsSidebar: React.FC<SkillsSidebarProps> = ({ onItemSelect }) =>
     getSkillDetail: s.getSkillDetail,
   })));
 
-  // Skills are loaded by the Settings shell when this page is active.
+  // Settings browses whichever project its own selector points at; the app
+  // stays where it is.
+  const settingsDirectory = useSettingsDirectory();
+  const skills = useSkillsStore((state) => selectSkillsForDirectory(state, settingsDirectory));
+  const loadSkills = useSkillsStore((state) => state.loadSkills);
+
+  React.useEffect(() => {
+    void loadSkills(settingsDirectory);
+  }, [loadSkills, settingsDirectory]);
 
   const bgClass = 'bg-background';
 
@@ -101,7 +111,7 @@ export const SkillsSidebar: React.FC<SkillsSidebarProps> = ({ onItemSelect }) =>
     }
 
     setIsDeletePending(true);
-    const success = await deleteSkill(deleteDialogSkill.name);
+    const success = await deleteSkill(deleteDialogSkill.name, settingsDirectory);
     if (success) {
       toast.success(t('settings.skills.sidebar.toast.skillDeleted', { name: deleteDialogSkill.name }));
       setDeleteDialogSkill(null);
@@ -124,7 +134,7 @@ export const SkillsSidebar: React.FC<SkillsSidebarProps> = ({ onItemSelect }) =>
     }
 
     // Get full skill detail to copy
-    const detail = await getSkillDetail(skill.name);
+    const detail = await getSkillDetail(skill.name, settingsDirectory);
     if (!detail) {
       toast.error(t('settings.skills.sidebar.toast.duplicateLoadFailed'));
       return;
@@ -173,7 +183,7 @@ export const SkillsSidebar: React.FC<SkillsSidebarProps> = ({ onItemSelect }) =>
     }
 
     // Rename in place on disk so SKILL.md body and supporting files are preserved.
-    const success = await renameSkill(renameDialogSkill.name, sanitizedName);
+    const success = await renameSkill(renameDialogSkill.name, sanitizedName, settingsDirectory);
     if (success) {
       toast.success(t('settings.skills.sidebar.toast.skillRenamed', { name: sanitizedName }));
       setSelectedSkill(sanitizedName);
@@ -185,8 +195,9 @@ export const SkillsSidebar: React.FC<SkillsSidebarProps> = ({ onItemSelect }) =>
   };
 
   // Separate project and user skills
-  const projectSkills = skills.filter((s) => s.scope === 'project');
-  const userSkills = skills.filter((s) => s.scope === 'user');
+  const shownSkills = skills.filter((skill) => matchesRankQuery([skill.name, skill.description], query));
+  const projectSkills = shownSkills.filter((s) => s.scope === 'project');
+  const userSkills = shownSkills.filter((s) => s.scope === 'user');
 
   // Helper: group a list of skills by their domain folder
   function groupSkillsByFolder(list: DiscoveredSkill[]) {
@@ -229,6 +240,7 @@ export const SkillsSidebar: React.FC<SkillsSidebarProps> = ({ onItemSelect }) =>
             <Icon name="add" className="h-3.5 w-3.5" />
           </Button>
         </div>
+        {skills.length > 0 ? <SettingsSidebarSearch value={query} onChange={setQuery} /> : null}
       </div>
 
       <ScrollableOverlay outerClassName="flex-1 min-h-0" className="space-y-1 px-3 py-2 overflow-x-hidden">
@@ -238,6 +250,8 @@ export const SkillsSidebar: React.FC<SkillsSidebarProps> = ({ onItemSelect }) =>
             <p className="typography-ui-label font-medium">{t('settings.skills.sidebar.empty.title')}</p>
             <p className="typography-meta mt-1 opacity-75">{t('settings.skills.sidebar.empty.description')}</p>
           </div>
+        ) : shownSkills.length === 0 ? (
+          <SettingsSidebarNoMatches query={query} />
         ) : (
           <>
             {projectSkills.length > 0 && (
@@ -439,12 +453,6 @@ const SkillListItem: React.FC<SkillListItemProps> = ({
 }) => {
   const { t } = useI18n();
   const isMobile = isMobileDeviceViaCSS();
-  const sourceLabel = skill.source === 'claude'
-    ? t('settings.skills.sidebar.badge.claude')
-    : skill.source === 'agents'
-      ? t('settings.skills.sidebar.badge.agents')
-      : t('settings.skills.sidebar.badge.opencode');
-  const badgeClassName = 'typography-micro text-muted-foreground bg-[var(--surface-muted)] px-1 rounded flex-shrink-0 leading-none pb-px border border-[var(--interactive-border)]/50';
   const isBuiltIn = isBuiltInSkill(skill);
   const canRename = isRenamableSkill(skill);
   const [isContextMenuOpen, setIsContextMenuOpen] = React.useState(false);
@@ -472,17 +480,13 @@ const SkillListItem: React.FC<SkillListItemProps> = ({
       <div className="flex min-w-0 flex-1 items-center">
         <button
           onClick={onSelect}
-          className="flex min-w-0 flex-1 flex-col gap-0 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          className="flex min-w-0 flex-1 flex-col gap-0 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           tabIndex={0}
         >
           <div className="flex items-center gap-1.5">
             <span className="typography-ui-label font-normal truncate text-foreground">
               {skill.name}
             </span>
-            <span className={badgeClassName}>
-              {skill.scope}
-            </span>
-            <span className={badgeClassName}>{sourceLabel}</span>
           </div>
         </button>
 

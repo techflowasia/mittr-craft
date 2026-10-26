@@ -1,0 +1,44 @@
+[
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"openchamber://session/\"",
+    "to": "\"mittrcraft-dev://session/\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "protocol===\"openchamber:\"",
+    "to": "protocol===\"mittrcraft-dev:\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "schemas:{\"openchamber:\":",
+    "to": "schemas:{\"mittrcraft-dev:\":",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"shell\",\"openchamber\",\"openchamber-ui\"",
+    "to": "\"shell\",\"openchamber\",\"mittrcraft-dev\",\"openchamber-ui\"",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/linear/routes.js",
+    "from": "openchamber://focus/linear-auth",
+    "to": "mittrcraft-dev://focus/linear-auth",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "=\"OpenChamber\",",
+    "to": "=\"MittrCraft Dev\",",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "{className:\"text-lg font-semibold\",children:\"MittrCraft\"}",
+    "to": "{className:\"text-lg font-semibold\",children:\"MittrCraft Dev\"}",
+    "count": 1
+  }
+]

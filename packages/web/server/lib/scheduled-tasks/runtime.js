@@ -1,9 +1,10 @@
-import { createOpencodeClient } from '@opencode-ai/sdk/v2';
+import { OpenCode } from '@opencode/client';
 import { DateTime } from 'luxon';
-import parser from 'cron-parser';
+import { CronExpressionParser } from 'cron-parser';
 import { expandSnippets } from '../opencode/snippets.js';
 import { buildGoalIntroText, createSessionGoal } from '../session-goal/create.js';
 import { discoverLoops } from './loops.js';
+import { assertOpenCodeApiResponse } from '../opencode/prompt-response.js';
 
 const DEFAULT_GLOBAL_CONCURRENCY = 4;
 const DEFAULT_PROJECT_CONCURRENCY = 2;
@@ -216,7 +217,7 @@ export const computeNextRunAt = (task, nowMs = Date.now()) => {
 
   if (schedule.kind === 'cron') {
     try {
-      const iterator = parser.parseExpression(schedule.cron, {
+      const iterator = CronExpressionParser.parse(schedule.cron, {
         tz: zone,
         currentDate: new Date(nowMs),
       });
@@ -254,11 +255,34 @@ export const createScheduledTasksRuntime = (deps) => {
     waitForOpenCodeReady,
     emitTaskRunEvent,
     setSessionAutoAccept,
+    sessionKnowledgeRuntime = null,
+    // The goal record lives in OpenChamber's metadata store (OpenCode 2.x takes
+    // session metadata only at create time); without it goal mode cannot run.
+    persistSessionGoal = null,
+    // Chats scope (see chats-scope.js): scheduled like a project, but each run
+    // opens a new chat directory and loop files are not discovered for it.
+    chatsScope = null,
     logger = console,
     maxGlobalConcurrency = DEFAULT_GLOBAL_CONCURRENCY,
     maxProjectConcurrency = DEFAULT_PROJECT_CONCURRENCY,
     maxRunDurationMs = DEFAULT_MAX_RUN_MS,
   } = deps;
+
+  // Every OpenCode route lives under /api in v2 and the client appends it, so
+  // the client only wants the origin. Directory scoping is a request header.
+  const openCodeOrigin = () => new URL(buildOpenCodeUrl('/api/info', '')).origin;
+  const createScopedClient = (directory) => OpenCode.make({
+    baseUrl: openCodeOrigin(),
+    headers: {
+      ...getOpenCodeAuthHeaders(),
+      ...(directory ? { 'x-opencode-directory': encodeURIComponent(directory) } : {}),
+    },
+    fetch: async (...args) => {
+      const response = await fetch(...args);
+      assertOpenCodeApiResponse(response);
+      return response;
+    },
+  });
 
   let started = false;
   const tasksByProject = new Map();
@@ -363,13 +387,23 @@ export const createScheduledTasksRuntime = (deps) => {
     }
   };
 
+  const isChatsScope = (projectID) => Boolean(chatsScope) && projectID === chatsScope.id;
+
+  const listScopes = async () => {
+    const projects = await listProjects();
+    if (!chatsScope || projects.some((project) => project?.id === chatsScope.id)) {
+      return projects;
+    }
+    return [...projects, { id: chatsScope.id, path: chatsScope.root }];
+  };
+
   const ensureProjectPath = async (projectID) => {
     if (projectPathByID.has(projectID)) {
       return projectPathByID.get(projectID) || null;
     }
 
     try {
-      const projects = await listProjects();
+      const projects = await listScopes();
       const project = projects.find((item) => item?.id === projectID && item?.path);
       if (project?.path) {
         projectPathByID.set(projectID, project.path);
@@ -386,7 +420,9 @@ export const createScheduledTasksRuntime = (deps) => {
     const projectPath = projectPathByID.get(projectID) || null;
 
     let tasks;
-    if (projectPath) {
+    // The chats root is not a repository: user-scope loops already run once
+    // per project, and discovering them here would add one more run each.
+    if (projectPath && !isChatsScope(projectID)) {
       // Reconcile `.agents/loops` definitions with the persisted task list:
       // loop files are authoritative while present, removed files unschedule
       // their task, and runtime state is preserved (see loops.js).
@@ -406,7 +442,7 @@ export const createScheduledTasksRuntime = (deps) => {
   };
 
   const syncAllProjects = async () => {
-    const projects = await listProjects();
+    const projects = await listScopes();
     const activeProjectIDs = new Set();
     projectPathByID.clear();
     for (const project of projects) {
@@ -425,7 +461,16 @@ export const createScheduledTasksRuntime = (deps) => {
     }
 
     for (const projectID of activeProjectIDs) {
-      await syncProject(projectID);
+      try {
+        await syncProject(projectID);
+      } catch (error) {
+        // One project's config being unusable (a broken file, a lock timeout)
+        // must not keep every other project's tasks from being scheduled.
+        logger.warn?.('[ScheduledTasks] failed to sync project', {
+          projectID,
+          error: error?.message ?? String(error),
+        });
+      }
     }
   };
 
@@ -451,41 +496,43 @@ export const createScheduledTasksRuntime = (deps) => {
     return projectRunning < maxProjectConcurrency;
   };
 
-  const buildPromptAsyncPayload = (task, projectPath) => ({
-    model: {
-      providerID: task.execution.providerID,
-      modelID: task.execution.modelID,
-    },
-    ...(task.execution.agent ? { agent: task.execution.agent } : {}),
-    ...(task.execution.variant ? { variant: task.execution.variant } : {}),
-    parts: [
-      {
-        type: 'text',
-        text: expandSnippets(task.execution.prompt, projectPath),
-      },
-      ...(task.execution.goalEnabled
-        ? [{ type: 'text', text: buildGoalIntroText(task.execution.goalTokenBudget), synthetic: true }]
-        : []),
-    ],
-  });
+  // Never allowed to fail the run: a task that executes without its
+  // background is a lesser loss than a task that does not execute.
+  const resolveKnowledge = (sessionID, projectPath) => (sessionKnowledgeRuntime
+    ? sessionKnowledgeRuntime.resolvePendingForSession(sessionID, projectPath)
+      .catch(() => ({ text: '', signature: '' }))
+    : Promise.resolve({ text: '', signature: '' }));
 
-  const runPromptAsync = async ({ baseUrl, authHeaders, sessionID, projectPath, task }) => {
-    const promptUrl = new URL(`${baseUrl}/session/${encodeURIComponent(sessionID)}/prompt_async`);
-    promptUrl.searchParams.set('directory', projectPath);
-    const response = await fetch(promptUrl.toString(), {
-      method: 'POST',
-      headers: {
-        ...authHeaders,
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify(buildPromptAsyncPayload(task, projectPath)),
+  // Recorded only after the send is accepted, so a failed dispatch carries
+  // the context again on the next run.
+  const recordKnowledge = async (sessionID, projectPath, knowledge) => {
+    if (knowledge.text && sessionKnowledgeRuntime) {
+      await sessionKnowledgeRuntime.recordDelivered(sessionID, projectPath, knowledge.signature)
+        .catch(() => undefined);
+    }
+  };
+
+  const runPrompt = async ({ client, sessionID, projectPath, task }) => {
+    const knowledge = await resolveKnowledge(sessionID, projectPath);
+
+    // A v2 prompt carries a single authored text. Standing project context and
+    // the goal briefing therefore travel as synthetic messages sent first, so
+    // the model still reads the prompt against them exactly as before. A
+    // synthetic message schedules execution unless `resume: false`: without
+    // it the model would start on the briefing alone, before the task arrived.
+    if (knowledge.text) {
+      await client.session.synthetic({ sessionID, text: knowledge.text, resume: false });
+    }
+    if (task.execution.goalEnabled) {
+      await client.session.synthetic({ sessionID, text: buildGoalIntroText(task.execution.goalTokenBudget), resume: false });
+    }
+
+    await client.session.prompt({
+      sessionID,
+      text: expandSnippets(task.execution.prompt, projectPath),
     });
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw new Error(`prompt_async failed (${response.status})${body ? `: ${body}` : ''}`);
-    }
+    await recordKnowledge(sessionID, projectPath, knowledge);
   };
 
   const resolveScheduledCommand = async ({ client, projectPath, task }) => {
@@ -496,27 +543,35 @@ export const createScheduledTasksRuntime = (deps) => {
 
     let commands = [];
     try {
-      const response = await client.command.list({ directory: projectPath });
+      const response = await client.command.list({ location: { directory: projectPath } });
       commands = Array.isArray(response?.data) ? response.data : [];
     } catch {
       return null;
     }
 
+    // v2 CommandInfo carries no template, so a goal objective distilled from
+    // the command body is no longer available; the goal falls back to the
+    // prompt text, which expandCommandGoalObjective already handles.
     const command = commands.find((candidate) => candidate?.name === parsed.command);
     return command ? { ...parsed, template: command.template } : null;
   };
 
-  const runScheduledCommand = async ({ client, projectPath, sessionID, task, command }) => {
+  const runScheduledCommand = async ({ client, sessionID, projectPath, command }) => {
+    // The command route takes no extra parts, so standing context goes in
+    // first as a synthetic message that does not start execution.
+    const knowledge = await resolveKnowledge(sessionID, projectPath);
+    if (knowledge.text) {
+      await client.session.synthetic({ sessionID, text: knowledge.text, resume: false });
+    }
+    // Agent, model and variant are session properties in v2 and were already
+    // set when the run created the session; the command body only carries text.
     await client.session.command({
       sessionID,
-      directory: projectPath,
-      command: command.command,
-      arguments: command.arguments,
-      ...(task.execution.agent ? { agent: task.execution.agent } : {}),
-      model: `${task.execution.providerID}/${task.execution.modelID}`,
-      ...(task.execution.variant ? { variant: task.execution.variant } : {}),
+      // OpenCode 2.0.8 renamed the command body field `command` to `name`.
+      name: command.command,
+      text: command.arguments,
     });
-
+    await recordKnowledge(sessionID, projectPath, knowledge);
   };
 
   const runTaskWithWatchdog = async (projectID, task, reason) => {
@@ -531,20 +586,39 @@ export const createScheduledTasksRuntime = (deps) => {
       await waitForOpenCodeReady(10_000, 250);
     }
 
-    const baseUrl = buildOpenCodeUrl('/', '').replace(/\/$/, '');
-    const authHeaders = getOpenCodeAuthHeaders();
-    const client = createOpencodeClient({
-      baseUrl,
-      headers: authHeaders,
-    });
+    // A chats-scope run is a new chat, so it gets its own directory the way a
+    // chat started from the UI does; a project run works in the project.
+    const directory = isChatsScope(projectID)
+      ? await chatsScope.createChatDirectory(new Date(startedAt))
+      : projectPath;
 
-    const sessionResponse = await client.session.create({
-      directory: projectPath,
-      title,
-    });
-    const sessionID = sessionResponse?.data?.id;
-    if (!sessionID) {
-      throw new Error('failed to create session');
+    const baseUrl = openCodeOrigin();
+    const authHeaders = getOpenCodeAuthHeaders();
+    const client = createScopedClient(directory);
+
+    // Agent, model and variant belong to the session in v2: a scheduled run
+    // fixes them here instead of repeating them on every prompt.
+    let sessionID;
+    try {
+      const session = await client.session.create({
+        title,
+        location: { directory },
+        model: {
+          providerID: task.execution.providerID,
+          id: task.execution.modelID,
+          ...(task.execution.variant ? { variant: task.execution.variant } : {}),
+        },
+        ...(task.execution.agent ? { agent: task.execution.agent } : {}),
+      });
+      sessionID = session?.id;
+      if (!sessionID) {
+        throw new Error('failed to create session');
+      }
+    } catch (error) {
+      if (directory !== projectPath) {
+        await chatsScope.discardChatDirectory(directory);
+      }
+      throw error;
     }
 
     try {
@@ -563,13 +637,13 @@ export const createScheduledTasksRuntime = (deps) => {
       // is already auto-approved. Enrollment failure must not kill the run —
       // the task still executes, permissions just wait for the user.
       try {
-        await setSessionAutoAccept(sessionID, true, projectPath);
+        await setSessionAutoAccept(sessionID, true, directory);
       } catch (error) {
         logger.warn?.('[scheduled-tasks] failed to enable permission auto-accept for session', sessionID, error?.message ?? error);
       }
     }
 
-    const scheduledCommand = await resolveScheduledCommand({ client, projectPath, task });
+    const scheduledCommand = await resolveScheduledCommand({ client, projectPath: directory, task });
 
     if (task.execution.goalEnabled) {
       const commandObjective = scheduledCommand
@@ -578,9 +652,10 @@ export const createScheduledTasksRuntime = (deps) => {
       await createSessionGoal({
         baseUrl,
         authHeaders,
+        persistSessionGoal,
         sessionID,
-        directory: projectPath,
-        objective: commandObjective ?? expandSnippets(task.execution.prompt, projectPath),
+        directory,
+        objective: commandObjective ?? expandSnippets(task.execution.prompt, directory),
         tokenBudget: task.execution.goalTokenBudget,
         providerID: task.execution.providerID,
         modelID: task.execution.modelID,
@@ -589,20 +664,15 @@ export const createScheduledTasksRuntime = (deps) => {
     }
 
     if (scheduledCommand) {
-      await runScheduledCommand({ client, projectPath, sessionID, task, command: scheduledCommand });
+      await runScheduledCommand({ client, sessionID, projectPath: directory, command: scheduledCommand });
     } else {
-      await runPromptAsync({
-        baseUrl,
-        authHeaders,
-        sessionID,
-        projectPath,
-        task,
-      });
+      await runPrompt({ client, sessionID, projectPath: directory, task });
     }
 
     const finishedAt = Date.now();
     return {
       sessionID,
+      directory,
       durationMs: Math.max(0, finishedAt - startedAt),
       reason,
       startedAt,
@@ -657,7 +727,8 @@ export const createScheduledTasksRuntime = (deps) => {
   const runTask = async (projectID, taskID, reason, scheduledFor) => {
     const taskMap = tasksByProject.get(projectID);
     const task = taskMap?.get(taskID);
-    if (!task || !task.enabled) {
+    // Manual runNow runs paused tasks too; only scheduled dispatches skip them.
+    if (!task || (reason !== 'manual' && !task.enabled)) {
       return { ok: false, skipped: true };
     }
 
@@ -828,6 +899,7 @@ export const createScheduledTasksRuntime = (deps) => {
 
       let status = 'success';
       let sessionID;
+      let sessionDirectory;
       let durationMs = 0;
       let errorMessage;
 
@@ -846,6 +918,7 @@ export const createScheduledTasksRuntime = (deps) => {
           }
         });
         sessionID = result.sessionID;
+        sessionDirectory = result.directory;
         durationMs = result.durationMs;
         status = 'success';
         logger.info?.(
@@ -964,6 +1037,7 @@ export const createScheduledTasksRuntime = (deps) => {
           ok: status === 'success',
           status,
           sessionID,
+          directory: sessionDirectory,
           task: stateResult.task || recoveredTask,
           error: status === 'error' ? errorMessage : undefined,
           persistError: message,
@@ -986,6 +1060,7 @@ export const createScheduledTasksRuntime = (deps) => {
         ok: status === 'success',
         status,
         sessionID,
+        directory: sessionDirectory,
         task: stateResult.task || null,
         error: errorMessage,
       };

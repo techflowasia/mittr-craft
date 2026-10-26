@@ -2,11 +2,17 @@ import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const spawnMock = vi.fn();
+const spawnSyncMock = vi.fn();
 const recordStartupPerformanceMock = vi.fn();
 
 vi.mock('node:child_process', () => ({
   spawn: spawnMock,
-  spawnSync: vi.fn(),
+  spawnSync: spawnSyncMock,
+  // `managed-process-registry.js` (imported transitively via lifecycle.js)
+  // calls `promisify(execFile)` at module load, so the mock must expose a
+  // function here. Lifecycle tests don't exercise the reaper path, so a plain
+  // stub is enough; the registry's best-effort writes are no-ops on errors.
+  execFile: vi.fn(),
 }));
 vi.mock('./startup-performance.js', () => ({
   recordStartupPerformance: recordStartupPerformanceMock,
@@ -20,6 +26,7 @@ const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   spawnMock.mockReset();
+  spawnSyncMock.mockReset();
   recordStartupPerformanceMock.mockReset();
   globalThis.fetch = originalFetch;
   if (typeof originalOpencodeBinary === 'string') {
@@ -62,6 +69,9 @@ const createRuntime = (overrides = {}, stateOverrides = {}, envOverrides = {}) =
     openCodeApiPrefixDetected: false,
     openCodeApiDetectionTimer: null,
     lastOpenCodeError: null,
+    lastOpenCodeHealthFailure: null,
+    lastManagedOpenCodeProcess: null,
+    lastOpenCodeRestartDiagnostics: null,
     isOpenCodeReady: false,
     openCodeNotReadySince: 0,
     isExternalOpenCode: false,
@@ -75,7 +85,7 @@ const createRuntime = (overrides = {}, stateOverrides = {}, envOverrides = {}) =
     ...stateOverrides,
   };
 
-  return createOpenCodeLifecycleRuntime({
+  const runtime = createOpenCodeLifecycleRuntime({
     state,
     env: {
       ENV_CONFIGURED_OPENCODE_PORT: 45678,
@@ -92,7 +102,8 @@ const createRuntime = (overrides = {}, stateOverrides = {}, envOverrides = {}) =
     waitForReady: vi.fn(async () => true),
     normalizeApiPrefix: vi.fn(() => ''),
     applyOpencodeBinaryFromSettings: vi.fn(async () => null),
-    ensureOpencodeCliEnv: vi.fn(),
+    checkOpenCodeBinary: async () => '2.0.19',
+  ensureOpencodeCliEnv: vi.fn(),
     ensureLocalOpenCodeServerPassword: vi.fn(async () => 'password'),
     resolveManagedOpenCodeLaunchSpec: vi.fn((binary) => ({ binary, args: [], wrapperType: null })),
     setOpenCodePort: vi.fn((port) => {
@@ -104,20 +115,57 @@ const createRuntime = (overrides = {}, stateOverrides = {}, envOverrides = {}) =
     clearResolvedOpenCodeBinary: vi.fn(),
     buildAugmentedPath: vi.fn(() => '/home/user/.bun/bin:/usr/local/bin:/usr/bin'),
     buildManagedOpenCodePath: vi.fn(() => '/home/user/.bun/bin:/usr/local/bin:/usr/bin'),
+    // Never let a test touch the real `~/.local/share/opencode/opencode.db`.
+    topUpV1SessionMigration: vi.fn(() => ({ status: 'skipped', missing: 0, revisited: 0, reason: 'no-database' })),
     getManagedOpenCodeShellEnvSnapshot: vi.fn(() => ({
       PATH: '/home/user/.bun/bin:/usr/local/bin:/usr/bin',
       SHELL_ONLY: 'yes',
+      OPENCODE_PASSWORD: 'shell-password',
       OPENCODE_SERVER_PASSWORD: 'shell-password',
     })),
     ...overrides,
   });
+  runtime.testState = state;
+  return runtime;
 };
 
 describe('OpenCode lifecycle', () => {
+  it('uses the resolved binary directly on startup and managed restart without an env override', async () => {
+    delete process.env.OPENCODE_BINARY;
+    const binaries = ['/bundle one/opencode-cli/opencode', '/bundle two/opencode-cli/opencode'];
+    const ensureOpencodeCliEnv = vi.fn()
+      .mockReturnValueOnce(binaries[0])
+      .mockReturnValueOnce(binaries[1]);
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    globalThis.fetch = vi.fn(async () => ({ ok: false }));
+    const runtime = createRuntime({ ensureOpencodeCliEnv });
+    const firstServer = await runtime.startOpenCode();
+    runtime.testState.openCodeProcess = firstServer;
+    try {
+      await runtime.restartOpenCode();
+      expect(firstServer.signalCode).toBe('SIGTERM');
+      expect(spawnMock.mock.calls.map(([binary]) => binary)).toEqual(binaries);
+      expect(runtime.testState.lastOpenCodeLaunchDiagnostics.sourceBinary).toBe(binaries[1]);
+      expect(process.env.OPENCODE_BINARY).toBeUndefined();
+      for (const [, , options] of spawnMock.mock.calls) {
+        expect(options.env).not.toHaveProperty('OPENCODE_BINARY');
+      }
+      // Credential reads take variable keys from the environment the current process got.
+      expect(runtime.getManagedOpenCodeProcessEnv()).toBe(spawnMock.mock.calls[1][2].env);
+      expect(runtime.getManagedOpenCodeProcessEnv()).toMatchObject({ SHELL_ONLY: 'yes' });
+    } finally {
+      await runtime.testState.openCodeProcess.close();
+    }
+  });
+
   it('records an authoritative ready terminal event for external startup', async () => {
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ healthy: true }),
+      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
     }));
     const runtime = createRuntime({
       env: {
@@ -146,10 +194,88 @@ describe('OpenCode lifecycle', () => {
     expect(terminalEvents).toHaveLength(1);
   });
 
-  it('warms recently used directories after a successful bootstrap', async () => {
+  it('recovers an external OPENCODE_HOST connection using its configured endpoint', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ healthy: true }),
+      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+    }));
+    globalThis.fetch = fetchMock;
+    const runtime = createRuntime({}, {
+      openCodePort: null,
+      openCodeBaseUrl: null,
+      isExternalOpenCode: true,
+    }, {
+      ENV_CONFIGURED_OPENCODE_PORT: null,
+      ENV_CONFIGURED_OPENCODE_HOST: { origin: 'http://seamus:4095', port: 4095 },
+      ENV_EFFECTIVE_PORT: 4095,
+    });
+
+    await runtime.restartOpenCode();
+
+    expect(runtime.getManagedOpenCodeProcessEnv()).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://seamus:4095/api/info',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(runtime.testState.openCodePort).toBe(4095);
+    expect(runtime.testState.openCodeBaseUrl).toBe('http://seamus:4095');
+    expect(runtime.testState.lastOpenCodeError).toBeNull();
+  });
+
+  it('retains the OPENCODE_HOST port after an external re-probe fails', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      json: async () => null,
+    }));
+    const runtime = createRuntime({}, {
+      openCodePort: 4095,
+      openCodeBaseUrl: 'http://seamus:4095',
+      isExternalOpenCode: true,
+    }, {
+      ENV_CONFIGURED_OPENCODE_PORT: null,
+      ENV_CONFIGURED_OPENCODE_HOST: { origin: 'http://seamus:4095', port: 4095 },
+      ENV_EFFECTIVE_PORT: 4095,
+    });
+
+    await expect(runtime.restartOpenCode()).rejects.toThrow(
+      'External OpenCode server on port 4095 is not responding',
+    );
+
+    expect(runtime.testState.openCodePort).toBe(4095);
+    expect(runtime.testState.openCodeBaseUrl).toBe('http://seamus:4095');
+  });
+
+  it('attaches to an OPENCODE_HOST running OpenCode v1 instead of starting a managed server', async () => {
+    const requested = [];
+    globalThis.fetch = vi.fn(async (url) => {
+      const href = String(url);
+      requested.push(href);
+      if (href.endsWith('/global/health')) return Response.json({ healthy: true, version: '1.18.32' });
+      return new Response('<html>OpenCode</html>', { headers: { 'content-type': 'text/html' } });
+    });
+    const runtime = createRuntime({
+      reapManagedOrphanedProcesses: vi.fn(async () => ({ reaped: 0 })),
+    }, {}, {
+      ENV_CONFIGURED_OPENCODE_PORT: null,
+      ENV_CONFIGURED_OPENCODE_HOST: { origin: 'http://seamus:4095', port: 4095 },
+      ENV_EFFECTIVE_PORT: 4095,
+    });
+
+    await runtime.bootstrapOpenCodeAtStartup();
+
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(requested).toContain('http://seamus:4095/global/health');
+    expect(runtime.testState.isExternalOpenCode).toBe(true);
+    expect(runtime.testState.isOpenCodeReady).toBe(false);
+    expect(runtime.testState.openCodeBaseUrl).toBe('http://seamus:4095');
+    expect(runtime.testState.openCodePort).toBe(4095);
+    expect(runtime.testState.lastOpenCodeError).toContain('1.18.32');
+  });
+
+  it('warms only the last-used directory after a successful bootstrap', async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
     }));
     globalThis.fetch = fetchMock;
     const runtime = createRuntime({
@@ -167,13 +293,17 @@ describe('OpenCode lifecycle', () => {
     await runtime.bootstrapOpenCodeAtStartup();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const warmupUrls = fetchMock.mock.calls
-      .map(([url]) => String(url))
-      .filter((url) => url.includes('/session/status'));
-    expect(warmupUrls).toEqual([
-      'http://127.0.0.1:45678/session/status?directory=%2Ftmp%2Fworktree-a',
-      'http://127.0.0.1:45678/session/status?directory=%2Ftmp%2Fproject-b',
+    const warmups = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith('/api/location'))
+      .map(([url, init]) => [String(url), init.headers['x-opencode-directory']]);
+    // Each warmed directory boots its whole MCP fleet on OpenCode 2 (#4018).
+    // v2 reads the directory from the header, and only location routes start
+    // one: `/api/session` is a global list.
+    expect(warmups).toEqual([
+      ['http://127.0.0.1:45678/api/location', '%2Ftmp%2Fworktree-a'],
     ]);
+    // Server-side reads without a directory of their own go to the warmed one.
+    expect(runtime.getDefaultOpenCodeDirectory()).toBe('/tmp/worktree-a');
   });
 
   it('records an authoritative error terminal event when bootstrap fails', async () => {
@@ -231,6 +361,61 @@ describe('OpenCode lifecycle', () => {
 
     expect(warn).toHaveBeenCalledTimes(2);
     expect(warn).toHaveBeenLastCalledWith(expect.stringContaining('(2/20)'));
+    warn.mockRestore();
+  });
+
+  it.each([
+    {
+      name: 'timeout',
+      expectedClass: 'timeout',
+      fetchResult: () => {
+        const error = new Error('The operation was aborted');
+        error.name = 'AbortError';
+        throw error;
+      },
+    },
+    {
+      name: 'connection refusal',
+      expectedClass: 'connection_refused',
+      fetchResult: () => {
+        const error = new Error('connect ECONNREFUSED 127.0.0.1:45678');
+        error.code = 'ECONNREFUSED';
+        throw error;
+      },
+    },
+    {
+      name: 'invalid JSON',
+      expectedClass: 'invalid_response',
+      fetchResult: () => ({
+        ok: true,
+        json: async () => {
+          throw new SyntaxError('Unexpected token');
+        },
+      }),
+    },
+  ])('classifies and stores a counted $name health failure', async ({ expectedClass, fetchResult }) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    globalThis.fetch = vi.fn(fetchResult);
+    const runtime = createRuntime({}, {
+      openCodePort: 45678,
+      openCodeProcess: {
+        pid: process.pid,
+        exitCode: null,
+        signalCode: null,
+        close: vi.fn(async () => {}),
+      },
+      isOpenCodeReady: true,
+    });
+
+    await runtime.triggerHealthCheck();
+
+    expect(runtime.testState.lastOpenCodeHealthFailure).toEqual({
+      class: expectedClass,
+      detail: expect.any(String),
+      at: expect.any(String),
+      source: 'immediate',
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(`class=${expectedClass}`));
     warn.mockRestore();
   });
 
@@ -320,6 +505,124 @@ describe('OpenCode lifecycle', () => {
     expect(onOpenCodeRestarted).toHaveBeenCalledTimes(1);
   });
 
+  it('retains post-listen stderr and exited process diagnostics across restart', async () => {
+    const firstChild = createMockChild();
+    const replacement = createMockChild();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      json: async () => null,
+    }));
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        firstChild.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n');
+      });
+      return firstChild;
+    });
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        replacement.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n');
+      });
+      return replacement;
+    });
+    const runtime = createRuntime();
+    const server = await runtime.startOpenCode();
+    runtime.testState.openCodeProcess = server;
+
+    firstChild.stderr.emit(
+      'data',
+      `${'x'.repeat(40 * 1024)}\ntoken=runtime-secret\nruntime worker failed after startup\n`,
+    );
+    firstChild.exitCode = 7;
+    firstChild.emit('exit', 7, null);
+
+    expect(server.exitCode).toBe(7);
+    expect(Buffer.byteLength(server.stderrTail)).toBeLessThanOrEqual(32 * 1024);
+    expect(server.stderrTail).not.toContain('runtime-secret');
+    expect(server.stderrTail).toContain('runtime worker failed after startup');
+
+    await runtime.triggerHealthCheck();
+
+    expect(runtime.testState.lastOpenCodeRestartDiagnostics).toEqual({
+      reason: 'immediate-process-exited',
+      healthFailure: null,
+      process: {
+        pid: 12345,
+        exitCode: 7,
+        signalCode: null,
+        stderrTail: expect.stringContaining('runtime worker failed after startup'),
+        alive: false,
+      },
+      busySessionCount: 0,
+      at: expect.any(String),
+    });
+    expect(runtime.testState.lastManagedOpenCodeProcess).toEqual({
+      pid: 12345,
+      exitCode: 7,
+      signalCode: null,
+      stderrTail: expect.stringContaining('runtime worker failed after startup'),
+    });
+
+    await runtime.testState.openCodeProcess.close();
+    warn.mockRestore();
+  });
+
+  it('redacts Authorization scheme credentials from stderr diagnostics', async () => {
+    const firstChild = createMockChild();
+    const replacement = createMockChild();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 503,
+      json: async () => null,
+    }));
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        firstChild.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n');
+      });
+      return firstChild;
+    });
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        replacement.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n');
+      });
+      return replacement;
+    });
+    const runtime = createRuntime();
+    const server = await runtime.startOpenCode();
+    runtime.testState.openCodeProcess = server;
+
+    firstChild.stderr.emit(
+      'data',
+      'request rejected: Authorization: Basic dXNlcjpwYXNz\n'
+      + 'authorization: basic bG93ZXI6Y2FzZQ==\n'
+      + 'Authorization: Bearer fake-bearer-token-value\n'
+      + 'falling back to basic health monitor\n'
+      + 'runtime worker failed after startup\n',
+    );
+    firstChild.exitCode = 7;
+    firstChild.emit('exit', 7, null);
+
+    expect(server.stderrTail).not.toContain('dXNlcjpwYXNz');
+    expect(server.stderrTail).not.toContain('bG93ZXI6Y2FzZQ');
+    expect(server.stderrTail).not.toContain('fake-bearer-token-value');
+    expect(server.stderrTail).toContain('falling back to basic health monitor');
+    expect(server.stderrTail).toContain('runtime worker failed after startup');
+
+    await runtime.triggerHealthCheck();
+
+    const diagnosticsTail = runtime.testState.lastOpenCodeRestartDiagnostics.process.stderrTail;
+    expect(diagnosticsTail).not.toContain('dXNlcjpwYXNz');
+    expect(diagnosticsTail).not.toContain('bG93ZXI6Y2FzZQ');
+    expect(diagnosticsTail).not.toContain('fake-bearer-token-value');
+    expect(diagnosticsTail).toContain('falling back to basic health monitor');
+    expect(diagnosticsTail).toContain('runtime worker failed after startup');
+
+    await runtime.testState.openCodeProcess.close();
+    warn.mockRestore();
+  });
+
   it('does not call onOpenCodeRestarted when a managed restart fails', async () => {
     const close = vi.fn(async () => {});
     const onOpenCodeRestarted = vi.fn();
@@ -351,6 +654,245 @@ describe('OpenCode lifecycle', () => {
     expect(onOpenCodeRestarted).not.toHaveBeenCalled();
   });
 
+  it('onEngineReady fires after the first start and after each restart', async () => {
+    const onEngineReady = vi.fn();
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    globalThis.fetch = vi.fn(async () => ({ ok: false }));
+    const runtime = createRuntime({ onEngineReady });
+
+    runtime.testState.openCodeProcess = await runtime.startOpenCode();
+    expect(onEngineReady).toHaveBeenCalledTimes(1);
+    try {
+      await runtime.restartOpenCode();
+      expect(onEngineReady).toHaveBeenCalledTimes(2);
+    } finally {
+      await runtime.testState.openCodeProcess.close();
+    }
+  });
+
+  it('onEngineReady does not fire after a failed start', async () => {
+    const onEngineReady = vi.fn();
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      queueMicrotask(() => child.emit('exit', null, 'SIGTERM'));
+      return child;
+    });
+    const runtime = createRuntime({ onEngineReady });
+
+    await expect(runtime.startOpenCode()).rejects.toThrow();
+
+    expect(onEngineReady).not.toHaveBeenCalled();
+  });
+
+  it('a throwing onEngineReady listener does not fail the start', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    globalThis.fetch = vi.fn(async () => ({ ok: false }));
+    const runtime = createRuntime({ onEngineReady: () => { throw new Error('listener broke'); } });
+
+    const server = await runtime.startOpenCode();
+
+    expect(server.url).toBeTruthy();
+    expect(warn).toHaveBeenCalledWith(expect.any(String), 'listener broke');
+    await server.close();
+    warn.mockRestore();
+  });
+
+  // Holds the first start in its binary check, before it has spawned anything,
+  // until the test lets it go: the window in which a restart used to find no
+  // process to close.
+  const holdFirstBinaryCheck = () => {
+    let entered;
+    let release;
+    const firstCheckEntered = new Promise((resolve) => { entered = resolve; });
+    const firstCheckReleased = new Promise((resolve) => { release = resolve; });
+    let checks = 0;
+    const checkOpenCodeBinary = async () => {
+      checks += 1;
+      if (checks === 1) {
+        entered();
+        await firstCheckReleased;
+      }
+      return '2.0.20';
+    };
+    return { checkOpenCodeBinary, firstCheckEntered, releaseFirstCheck: () => release() };
+  };
+
+  it('a restart requested during the first start leaves exactly one live process', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+    }));
+    const children = [];
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      child.pid = 2147483600 + children.length;
+      children.push(child);
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    const { checkOpenCodeBinary, firstCheckEntered, releaseFirstCheck } = holdFirstBinaryCheck();
+    const onEngineReady = vi.fn();
+    const runtime = createRuntime(
+      { reapManagedOrphanedProcesses: vi.fn(async () => ({ reaped: 0 })), checkOpenCodeBinary, onEngineReady },
+      {},
+      { ENV_EFFECTIVE_PORT: null, ENV_CONFIGURED_OPENCODE_PORT: null },
+    );
+
+    const boot = runtime.bootstrapOpenCodeAtStartup();
+    await firstCheckEntered;
+    const restart = runtime.restartOpenCode('catalog');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirstCheck();
+    await Promise.all([boot, restart]);
+
+    const live = children.filter((child) => child.kill.mock.calls.length === 0);
+    try {
+      expect(spawnMock).toHaveBeenCalledTimes(2);
+      expect(live).toHaveLength(1);
+      expect(children.filter((child) => child.kill.mock.calls.length > 0)).toEqual([children[0]]);
+      expect(live).toEqual([children[1]]);
+      expect(runtime.testState.openCodeProcess.pid).toBe(children[1].pid);
+      expect(onEngineReady).toHaveBeenCalledTimes(2);
+    } finally {
+      live.forEach((child) => child.kill());
+    }
+  });
+
+  it('a restart requested before the first start joins the queue gives exactly one spawn', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+    }));
+    const children = [];
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      child.pid = 2147483620 + children.length;
+      children.push(child);
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    let releaseReap;
+    const reapReleased = new Promise((resolve) => { releaseReap = resolve; });
+    let reapEntered;
+    const reapStarted = new Promise((resolve) => { reapEntered = resolve; });
+    const reapManagedOrphanedProcesses = vi.fn(async () => {
+      reapEntered();
+      await reapReleased;
+      return { reaped: 0 };
+    });
+    const { checkOpenCodeBinary, firstCheckEntered, releaseFirstCheck } = holdFirstBinaryCheck();
+    const onEngineReady = vi.fn();
+    const runtime = createRuntime(
+      { reapManagedOrphanedProcesses, checkOpenCodeBinary, onEngineReady },
+      {},
+      { ENV_EFFECTIVE_PORT: null, ENV_CONFIGURED_OPENCODE_PORT: null },
+    );
+
+    const boot = runtime.bootstrapOpenCodeAtStartup();
+    await reapStarted;
+    const restart = runtime.restartOpenCode('catalog');
+    await firstCheckEntered;
+    releaseReap();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirstCheck();
+    await Promise.all([boot, restart]);
+
+    const live = children.filter((child) => child.kill.mock.calls.length === 0);
+    try {
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(live).toEqual([children[0]]);
+      expect(runtime.testState.openCodeProcess.pid).toBe(children[0].pid);
+      expect(onEngineReady).toHaveBeenCalledTimes(1);
+    } finally {
+      live.forEach((child) => child.kill());
+    }
+  });
+
+  it('the first start still replaces a stale process carried over from a hot reload', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+    }));
+    const child = createMockChild();
+    spawnMock.mockImplementation(() => {
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    const stale = { pid: null, exitCode: 1, signalCode: null, close: vi.fn(async () => {}) };
+    const runtime = createRuntime(
+      { reapManagedOrphanedProcesses: vi.fn(async () => ({ reaped: 0 })) },
+      { openCodeProcess: stale },
+      { ENV_EFFECTIVE_PORT: null, ENV_CONFIGURED_OPENCODE_PORT: null },
+    );
+
+    await runtime.bootstrapOpenCodeAtStartup();
+
+    try {
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(runtime.testState.openCodeProcess).not.toBe(stale);
+      expect(runtime.testState.openCodeProcess.pid).toBe(child.pid);
+    } finally {
+      child.kill();
+    }
+  });
+
+  it('a failed first start does not block a later restart', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ version: '2.0.20', pid: 1, urls: [], paths: { tmp: '/tmp' } }),
+    }));
+    const children = [];
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      child.pid = 2147483610 + children.length;
+      children.push(child);
+      if (children.length <= 2) {
+        queueMicrotask(() => {
+          child.exitCode = 1;
+          child.emit('exit', 1, null);
+        });
+      } else {
+        queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      }
+      return child;
+    });
+    const { checkOpenCodeBinary, firstCheckEntered, releaseFirstCheck } = holdFirstBinaryCheck();
+    const runtime = createRuntime(
+      { reapManagedOrphanedProcesses: vi.fn(async () => ({ reaped: 0 })), checkOpenCodeBinary },
+      {},
+      { ENV_EFFECTIVE_PORT: null, ENV_CONFIGURED_OPENCODE_PORT: null },
+    );
+
+    const boot = runtime.bootstrapOpenCodeAtStartup();
+    await firstCheckEntered;
+    const restart = runtime.restartOpenCode('catalog');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirstCheck();
+    await Promise.all([boot, restart]);
+
+    const live = children.filter((child) => child.exitCode === null && child.kill.mock.calls.length === 0);
+    try {
+      expect(spawnMock).toHaveBeenCalledTimes(3);
+      expect(live).toEqual([children[2]]);
+      expect(runtime.testState.openCodeProcess.pid).toBe(children[2].pid);
+    } finally {
+      live.forEach((child) => child.kill());
+      error.mockRestore();
+      warn.mockRestore();
+    }
+  });
+
   it('launches managed OpenCode with the managed PATH', async () => {
     delete process.env.OPENCODE_BINARY;
     const child = createMockChild();
@@ -369,6 +911,7 @@ describe('OpenCode lifecycle', () => {
     expect(args).toEqual(['serve', '--hostname', '127.0.0.1', '--port', '45678']);
     expect(options.env.PATH).toBe('/home/user/.bun/bin:/usr/local/bin:/usr/bin');
     expect(options.env.SHELL_ONLY).toBe('yes');
+    expect(options.env.OPENCODE_PASSWORD).toBe('password');
     expect(options.env.OPENCODE_SERVER_PASSWORD).toBe('password');
     expect(server.exitCode).toBeNull();
     expect(server.signalCode).toBeNull();
@@ -398,10 +941,39 @@ describe('OpenCode lifecycle', () => {
     expect(server.signalCode).toBe('SIGTERM');
   });
 
+  it('removes AppImage launcher entries from the managed OpenCode launch env', async () => {
+    delete process.env.OPENCODE_BINARY;
+    const previous = { APPDIR: process.env.APPDIR, LD_LIBRARY_PATH: process.env.LD_LIBRARY_PATH };
+    process.env.APPDIR = '/tmp/.mount_OpenChAbC123';
+    process.env.LD_LIBRARY_PATH = '/tmp/.mount_OpenChAbC123/usr/lib:/opt/x:';
+    const child = createMockChild();
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n');
+      });
+      return child;
+    });
+
+    try {
+      const runtime = createRuntime();
+      const server = await runtime.startOpenCode();
+      const [, , options] = spawnMock.mock.calls[0];
+
+      expect(options.env.LD_LIBRARY_PATH).toBe('/opt/x');
+
+      await server.close();
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it('strips AppImage ARGV0 from managed OpenCode launch env', async () => {
     delete process.env.OPENCODE_BINARY;
     const previousArgv0 = process.env.ARGV0;
-    process.env.ARGV0 = '/path/to/MittrCraft/MittrCraft-1.17.2-linux-x86_64.AppImage';
+    process.env.ARGV0 = '/path/to/OpenChamber/OpenChamber-1.17.2-linux-x86_64.AppImage';
     const child = createMockChild();
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
@@ -432,7 +1004,7 @@ describe('OpenCode lifecycle', () => {
     }
   });
 
-  it('adds managed MittrCraft tool environment without allowing it to replace launch invariants', async () => {
+  it('adds managed OpenChamber tool environment without allowing it to replace launch invariants', async () => {
     const child = createMockChild();
     spawnMock.mockImplementationOnce(() => {
       queueMicrotask(() => {
@@ -442,8 +1014,9 @@ describe('OpenCode lifecycle', () => {
     });
     const getManagedOpenCodeEnv = vi.fn(async () => ({
       OPENCODE_CONFIG_CONTENT: '{"plugin":["file:///tool.js"]}',
-      MITTRCRAFT_AGENT_TOOL_TOKEN: 'ephemeral',
+      OPENCHAMBER_AGENT_TOOL_TOKEN: 'ephemeral',
       PATH: '/untrusted/path',
+      OPENCODE_PASSWORD: 'untrusted-password',
       OPENCODE_SERVER_PASSWORD: 'untrusted-password',
     }));
 
@@ -453,8 +1026,9 @@ describe('OpenCode lifecycle', () => {
 
     expect(getManagedOpenCodeEnv).toHaveBeenCalledOnce();
     expect(options.env.OPENCODE_CONFIG_CONTENT).toBe('{"plugin":["file:///tool.js"]}');
-    expect(options.env.MITTRCRAFT_AGENT_TOOL_TOKEN).toBe('ephemeral');
+    expect(options.env.OPENCHAMBER_AGENT_TOOL_TOKEN).toBe('ephemeral');
     expect(options.env.PATH).toBe('/home/user/.bun/bin:/usr/local/bin:/usr/bin');
+    expect(options.env.OPENCODE_PASSWORD).toBe('password');
     expect(options.env.OPENCODE_SERVER_PASSWORD).toBe('password');
 
     await server.close();
@@ -612,4 +1186,189 @@ describe('OpenCode lifecycle', () => {
     expect(spawnMock).toHaveBeenCalledTimes(2);
     await server.close();
   });
+
+  it('tops up the v1 session migration before spawning managed OpenCode', async () => {
+    const calls = [];
+    const topUpV1SessionMigration = vi.fn(() => {
+      calls.push('top-up');
+      return { status: 'scheduled', missing: 3, revisited: 0 };
+    });
+    spawnMock.mockImplementation(() => {
+      calls.push('spawn');
+      const child = createMockChild();
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    globalThis.fetch = vi.fn(async () => ({ ok: false }));
+
+    const runtime = createRuntime({ topUpV1SessionMigration });
+    await runtime.startOpenCode();
+
+    expect(topUpV1SessionMigration).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual(['top-up', 'spawn']);
+  });
+
+  it('hands the top-up the data dir the managed OpenCode starts with', async () => {
+    const topUpV1SessionMigration = vi.fn(() => ({ status: 'skipped', missing: 0, revisited: 0, reason: 'no-database' }));
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    globalThis.fetch = vi.fn(async () => ({ ok: false }));
+
+    const runtime = createRuntime({
+      topUpV1SessionMigration,
+      getManagedOpenCodeShellEnvSnapshot: vi.fn(() => ({ XDG_DATA_HOME: '/shell/share', SHELL_ONLY: 'yes' })),
+      getManagedOpenCodeEnv: vi.fn(async () => ({ XDG_DATA_HOME: '/engine/share', OPENCODE_DB: 'opencode.db' })),
+    });
+    await runtime.startOpenCode();
+
+    const [[{ env }]] = topUpV1SessionMigration.mock.calls;
+    const [, , options] = spawnMock.mock.calls[0];
+    expect(env.XDG_DATA_HOME).toBe('/engine/share');
+    expect(env.OPENCODE_DB).toBe('opencode.db');
+    expect(env.SHELL_ONLY).toBe('yes');
+    expect(options.env.XDG_DATA_HOME).toBe(env.XDG_DATA_HOME);
+    expect(options.env.OPENCODE_DB).toBe(env.OPENCODE_DB);
+  });
+
+  it('checks the binary with the same engine env the managed OpenCode starts with', async () => {
+    const checkOpenCodeBinary = vi.fn(async () => '2.0.19');
+    spawnMock.mockImplementation(() => {
+      const child = createMockChild();
+      queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+      return child;
+    });
+    globalThis.fetch = vi.fn(async () => ({ ok: false }));
+
+    const runtime = createRuntime({
+      checkOpenCodeBinary,
+      getManagedOpenCodeEnv: vi.fn(async () => ({ XDG_DATA_HOME: '/engine/share', XDG_CACHE_HOME: '/engine/cache' })),
+    });
+    await runtime.startOpenCode();
+
+    const [[, { env }]] = checkOpenCodeBinary.mock.calls;
+    const [, , options] = spawnMock.mock.calls[0];
+    expect(env.XDG_DATA_HOME).toBe('/engine/share');
+    expect(env.XDG_CACHE_HOME).toBe('/engine/cache');
+    expect(env.PATH).toBe(process.env.PATH);
+    expect(options.env.XDG_DATA_HOME).toBe(env.XDG_DATA_HOME);
+    expect(options.env.XDG_CACHE_HOME).toBe(env.XDG_CACHE_HOME);
+  });
+
+});
+
+describe('killProcessOnPort on Windows', () => {
+  const originalPlatform = process.platform;
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform });
+  });
+
+  const setPlatform = (platform) => {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+  };
+
+  it('force-kills the process listening on the target port via taskkill', () => {
+    setPlatform('win32');
+    const orphanPid = 54321;
+    spawnSyncMock.mockImplementation((cmd) => {
+      if (cmd === 'powershell') {
+        return { stdout: `${orphanPid}\r\n` };
+      }
+      return { stdout: '' };
+    });
+
+    const runtime = createRuntime();
+    runtime.killProcessOnPort(45678);
+
+    expect(spawnSyncMock).toHaveBeenCalledWith(
+      'powershell',
+      expect.arrayContaining([expect.stringContaining('-LocalPort 45678')]),
+      expect.objectContaining({ windowsHide: true })
+    );
+    expect(spawnSyncMock).toHaveBeenCalledWith(
+      'taskkill',
+      ['/PID', String(orphanPid), '/F'],
+      expect.objectContaining({ windowsHide: true })
+    );
+  });
+
+  it('never force-kills its own process id', () => {
+    setPlatform('win32');
+    spawnSyncMock.mockImplementation((cmd) => {
+      if (cmd === 'powershell') {
+        return { stdout: `${process.pid}\r\n` };
+      }
+      return { stdout: '' };
+    });
+
+    const runtime = createRuntime();
+    runtime.killProcessOnPort(45678);
+
+    expect(spawnSyncMock).not.toHaveBeenCalledWith('taskkill', expect.anything(), expect.anything());
+  });
+
+  it('does nothing when no process is listening on the target port', () => {
+    setPlatform('win32');
+    spawnSyncMock.mockImplementation((cmd) => {
+      if (cmd === 'powershell') {
+        return { stdout: '' };
+      }
+      return { stdout: '' };
+    });
+
+    const runtime = createRuntime();
+    runtime.killProcessOnPort(45678);
+
+    expect(spawnSyncMock).not.toHaveBeenCalledWith('taskkill', expect.anything(), expect.anything());
+  });
+});
+
+it('shares the managed CLI preflight with desktop while startup is pending', async () => {
+  let finish;
+  let entered;
+  const checking = new Promise(resolve => { entered = resolve; });
+  const check = new Promise(resolve => { finish = resolve; });
+  let checks = 0;
+  const runtime = createRuntime({
+    checkOpenCodeBinary: () => { checks += 1; entered(); return check; },
+    ensureOpencodeCliEnv: () => '/tmp/opencode',
+  });
+  spawnMock.mockImplementation(() => {
+    const child = createMockChild();
+    queueMicrotask(() => child.stdout.emit('data', 'opencode server listening on http://127.0.0.1:45678\n'));
+    return child;
+  });
+  expect(await runtime.getManagedOpenCodePreflight()).toBe(false);
+  const starting = runtime.startOpenCode();
+  await checking;
+  const desktopVerdict = runtime.getManagedOpenCodePreflight();
+  expect(runtime.testState.isOpenCodeReady).toBe(false);
+  finish('2.0.20');
+  expect(await desktopVerdict).toBe(true);
+  expect(checks).toBe(1);
+  const server = await starting;
+  try {
+    expect(await runtime.getManagedOpenCodePreflight()).toBe(true);
+    runtime.testState.isExternalOpenCode = true;
+    expect(await runtime.getManagedOpenCodePreflight()).toBe(false);
+    runtime.testState.isExternalOpenCode = false;
+    runtime.testState.isShuttingDown = true;
+    expect(await runtime.getManagedOpenCodePreflight()).toBe(false);
+  } finally {
+    await server.close();
+  }
+});
+
+it('a rejected CLI preflight never permits desktop bootstrap', async () => {
+  const runtime = createRuntime({
+    checkOpenCodeBinary: async () => {
+      throw Object.assign(new Error('Unsupported CLI'), { code: 'OPENCODE_BINARY_INVALID' });
+    },
+  });
+  await expect(runtime.startOpenCode()).rejects.toThrow('Unsupported CLI');
+  expect(await runtime.getManagedOpenCodePreflight()).toBe(false);
+  expect(spawnMock).not.toHaveBeenCalled();
 });

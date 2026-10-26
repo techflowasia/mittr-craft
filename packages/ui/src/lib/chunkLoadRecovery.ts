@@ -1,8 +1,9 @@
 import { lazy } from 'react';
+import { isVSCodeRuntime } from './desktop';
 
 declare const __APP_VERSION__: string | undefined;
 
-const RELOAD_STORAGE_KEY = 'mittrcraft:chunk-import-reload';
+const RELOAD_STORAGE_KEY = 'openchamber:chunk-import-reload';
 const RETRY_DELAY_MS = 250;
 const RELOAD_GUARD_MS = 30_000;
 
@@ -42,6 +43,9 @@ function reloadMarkerSignature(error: unknown): string {
 
 function scheduleReloadOnce(error: unknown): void {
   if (typeof window === 'undefined') return;
+  // VS Code owns webview navigation. Keep the import failure available to the
+  // error boundary instead of replacing the app with an unsupported reload.
+  if (isVSCodeRuntime()) return;
 
   const now = Date.now();
   const signature = reloadMarkerSignature(error);

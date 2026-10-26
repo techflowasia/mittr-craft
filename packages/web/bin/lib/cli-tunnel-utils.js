@@ -129,7 +129,7 @@ function buildTunnelStartReplayCommand({
   tokenViaStdin,
   tokenFileProvided,
 }) {
-  const parts = ['mittrcraft', 'tunnel', 'start'];
+  const parts = ['openchamber', 'tunnel', 'start'];
   if (Number.isFinite(port) && port > 0) {
     parts.push('--port', String(port));
   }
@@ -174,7 +174,7 @@ function buildTunnelStartReplayCommand({
 
 function buildTunnelProfileAddCommand({ provider, hostname }) {
   const parts = [
-    'mittrcraft',
+    'openchamber',
     'tunnel',
     'profile',
     'add',

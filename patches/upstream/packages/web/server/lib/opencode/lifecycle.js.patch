@@ -1,0 +1,37 @@
+diff --git a/packages/web/server/lib/opencode/lifecycle.js b/packages/web/server/lib/opencode/lifecycle.js
+index ce5a2beed..f8a4fc43b 100644
+--- a/packages/web/server/lib/opencode/lifecycle.js
++++ b/packages/web/server/lib/opencode/lifecycle.js
+@@ -726,7 +726,10 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
+ 
+     await applyOpencodeBinaryFromSettings({ strict: true });
+     const resolvedBinary = ensureOpencodeCliEnv();
+-    const preflight = checkOpenCodeBinary(resolveManagedOpenCodeLaunchSpec(resolvedBinary));
++    const managedOpenCodeEnv = await getManagedOpenCodeEnv();
++    const preflight = checkOpenCodeBinary(resolveManagedOpenCodeLaunchSpec(resolvedBinary), {
++      env: { ...process.env, ...managedOpenCodeEnv },
++    });
+     managedPreflight = preflight.then(() => true, () => false);
+     await preflight;
+     recordStartupPerformance('opencode.binary.ready', {
+@@ -745,7 +748,6 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
+     const shellEnv = typeof getManagedOpenCodeShellEnvSnapshot === 'function'
+       ? getManagedOpenCodeShellEnvSnapshot() || {}
+       : {};
+-    const managedOpenCodeEnv = await getManagedOpenCodeEnv();
+     recordStartupPerformance('opencode.environment.ready', {
+       attempt,
+       durationMs: performance.now() - phaseStartedAt,
+@@ -755,9 +757,10 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
+ 
+     // Re-arm OpenCode's own V1 -> V2 session import for sessions a bundled
+     // OpenCode 1.x created after the migration already completed. Only for the
+-    // managed process, only while it is not running, and never fatal.
++    // managed process, only while it is not running, and never fatal. It reads
++    // the database the process is about to open, from the same environment.
+     try {
+-      const topUp = topUpV1SessionMigration();
++      const topUp = topUpV1SessionMigration({ env: { ...shellEnv, ...process.env, ...managedOpenCodeEnv } });
+       if (topUp && topUp.status !== 'skipped') {
+         console.log('[OpenCode] V1 session migration top-up:', topUp);
+       }

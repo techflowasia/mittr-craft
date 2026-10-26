@@ -1,9 +1,10 @@
 import React from 'react';
 import { cn, fuzzyMatch } from '@/lib/utils';
 import { useSessionUIStore } from '@/sync/session-ui-store';
-import { useSessionMessages } from '@/sync/sync-context';
-import { useCommandsStore } from '@/stores/useCommandsStore';
-import { useSkillsStore } from '@/stores/useSkillsStore';
+import { useChatSessionSelection } from './chatColumnSession';
+import { selectCommandsForDirectory, useCommandsStore } from '@/stores/useCommandsStore';
+import { selectSkillsForDirectory, useSkillsStore } from '@/stores/useSkillsStore';
+import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
@@ -11,8 +12,10 @@ import { useUIStore } from '@/stores/useUIStore';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { useMobileAutocompleteMaxHeight } from './useMobileAutocompleteMaxHeight';
 import { commandMatchesSearch, mergeCommandAutocompleteItems } from './commandAutocompleteItems';
+import { useGuestCommands } from '@/hooks/useGuestSurfaces';
+import { AutocompleteRowTooltip } from './composer/ui/AutocompleteRowTooltip';
 
-type CommandSource = 'mittrcraft' | 'opencode' | 'skill';
+type CommandSource = 'openchamber' | 'opencode' | 'skill' | 'extension';
 
 export interface CommandInfo {
   id: string;
@@ -23,10 +26,19 @@ export interface CommandInfo {
   agent?: string;
   model?: string;
   isBuiltIn?: boolean;
-  isMittrCraft?: boolean;
+  isOpenChamber?: boolean;
   isSkill?: boolean;
   scope?: string;
+  /** Name of the extension that contributed the command; shown as its badge. */
+  extensionName?: string;
 }
+
+// Every name the composer runs itself; an extension command with one of
+// these names is dropped before it reaches the list.
+const LOCAL_COMMAND_NAMES = [
+  'init', 'review', 'undo', 'redo', 'timeline', 'compact', 'fork', 'btw', 'summary', 'workspace-review', 'handoff-review',
+  'plan-feature', 'craft-goal', 'schedule-task', 'catch-up', 'debug', 'weigh', 'explore',
+];
 
 export interface CommandAutocompleteHandle {
   handleKeyDown: (key: string) => void;
@@ -64,9 +76,7 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
   style,
 }, ref) => {
   const { t } = useI18n();
-  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
-  const sessionMessages = useSessionMessages(currentSessionId ?? '');
-  const hasMessagesInCurrentSession = sessionMessages.length > 0;
+  const currentSessionId = useChatSessionSelection().sessionId;
   const hasSession = Boolean(currentSessionId);
   const hasNewSessionDraft = useSessionUIStore((state) => Boolean(state.newSessionDraft?.open));
   const canStartSessionCommand = hasSession || hasNewSessionDraft;
@@ -75,16 +85,22 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
 
   const [commands, setCommands] = React.useState<CommandInfo[]>([]);
   const [loading, setLoading] = React.useState(false);
-  const commandsWithMetadata = useCommandsStore((s) => s.commands);
-  const refreshCommands = useCommandsStore((s) => s.loadCommands);
-  const skills = useSkillsStore((s) => s.skills);
-  const refreshSkills = useSkillsStore((s) => s.loadSkills);
+  // Commands and skills belong to the directory the composer sends to — the
+  // session's own directory, or the Chats root for a chat draft — not to the
+  // project the app was on last.
+  const effectiveDirectory = useEffectiveDirectory();
+  const commandsWithMetadata = useCommandsStore((s) => selectCommandsForDirectory(s, effectiveDirectory));
+  const loadCommandsForDirectory = useCommandsStore((s) => s.loadCommands);
+  const skills = useSkillsStore((s) => selectSkillsForDirectory(s, effectiveDirectory));
+  const loadSkillsForDirectory = useSkillsStore((s) => s.loadSkills);
+  const refreshCommands = React.useCallback(() => loadCommandsForDirectory(effectiveDirectory), [effectiveDirectory, loadCommandsForDirectory]);
+  const refreshSkills = React.useCallback(() => loadSkillsForDirectory(effectiveDirectory), [effectiveDirectory, loadSkillsForDirectory]);
   const [selectedIndex, setSelectedIndex] = React.useState(0);
   const selectedIndexRef = React.useRef(0);
   const keyboardNavigationRef = React.useRef(false);
   const itemRefs = React.useRef<(HTMLDivElement | null)[]>([]);
   const containerRef = React.useRef<HTMLDivElement | null>(null);
-  const mobileMaxHeight = useMobileAutocompleteMaxHeight(containerRef, isMobile);
+  const mobileMaxHeight = useMobileAutocompleteMaxHeight(containerRef, true);
   const ignoreClickRef = React.useRef(false);
   const pointerStartRef = React.useRef<{ x: number; y: number } | null>(null);
   const pointerMovedRef = React.useRef(false);
@@ -113,6 +129,14 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
     void refreshSkills();
   }, [refreshCommands, refreshSkills]);
 
+  const reservedCommandNames = React.useMemo(() => {
+    const names = new Set<string>(LOCAL_COMMAND_NAMES);
+    for (const command of commandsWithMetadata) names.add(command.name.toLowerCase());
+    for (const skill of skills) names.add(skill.name.toLowerCase());
+    return names;
+  }, [commandsWithMetadata, skills]);
+  const guestCommands = useGuestCommands(reservedCommandNames);
+
   React.useEffect(() => {
     const loadCommands = async () => {
       setLoading(true);
@@ -139,66 +163,83 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
         }));
 
         const builtInCommands: CommandInfo[] = [
-          ...(hasSession && !hasMessagesInCurrentSession
-            ? [{ id: 'mittrcraft:init', name: 'init', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.initDescription'), isBuiltIn: true }]
+          ...(hasSession
+            ? [{ id: 'openchamber:init', name: 'init', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.initDescription'), isBuiltIn: true }]
             : []
           ),
           ...(hasSession  // Show when session exists, not when hasMessages
             ? [
-                { id: 'mittrcraft:undo', name: 'undo', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.undoDescription'), isBuiltIn: true },
-                { id: 'mittrcraft:redo', name: 'redo', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.redoDescription'), isBuiltIn: true },
-                { id: 'mittrcraft:timeline', name: 'timeline', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.timelineDescription'), isBuiltIn: true },
+                { id: 'openchamber:undo', name: 'undo', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.undoDescription'), isBuiltIn: true },
+                { id: 'openchamber:redo', name: 'redo', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.redoDescription'), isBuiltIn: true },
+                { id: 'openchamber:timeline', name: 'timeline', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.timelineDescription'), isBuiltIn: true },
+                { id: 'openchamber:compact', name: 'compact', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.compactDescription'), isBuiltIn: true },
               ]
             : []
           ),
-          { id: 'mittrcraft:compact', name: 'compact', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.compactDescription'), isBuiltIn: true },
           ...(hasSession
-            ? [{ id: 'mittrcraft:summary', name: 'summary', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.summaryDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:btw', name: 'btw', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.btwDescription'), isOpenChamber: true }]
+            : []
+          ),
+          ...(hasSession
+            ? [{ id: 'openchamber:fork', name: 'fork', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.forkDescription'), isOpenChamber: true }]
+            : []
+          ),
+          ...(hasSession
+            ? [{ id: 'openchamber:summary', name: 'summary', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.summaryDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:workspace-review', name: 'workspace-review', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.workspaceReviewDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:workspace-review', name: 'workspace-review', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.workspaceReviewDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canUseReviewHandoffFlow
-            ? [{ id: 'mittrcraft:handoff-review', name: 'handoff-review', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.handoffReviewDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:handoff-review', name: 'handoff-review', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.handoffReviewDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:plan-feature', name: 'plan-feature', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.featurePlanDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:plan-feature', name: 'plan-feature', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.featurePlanDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:craft-goal', name: 'craft-goal', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.craftGoalDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:craft-goal', name: 'craft-goal', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.craftGoalDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:schedule-task', name: 'schedule-task', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.scheduleTaskDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:schedule-task', name: 'schedule-task', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.scheduleTaskDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:catch-up', name: 'catch-up', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.catchUpDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:catch-up', name: 'catch-up', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.catchUpDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:debug', name: 'debug', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.debugDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:debug', name: 'debug', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.debugDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:weigh', name: 'weigh', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.weighDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:weigh', name: 'weigh', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.weighDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:explore', name: 'explore', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.exploreDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:explore', name: 'explore', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.exploreDescription'), isOpenChamber: true }]
             : []
           ),
         ];
-        const allCommands = mergeCommandAutocompleteItems(builtInCommands, customCommands, skillCommands);
+        const extensionCommands: CommandInfo[] = guestCommands.map((entry) => ({
+          id: `extension:${entry.guestId}:${entry.command.name}`,
+          name: entry.command.name,
+          source: 'extension',
+          description: entry.command.description,
+          extensionName: entry.guestName,
+        }));
+        const allCommands = [
+          ...mergeCommandAutocompleteItems(builtInCommands, customCommands, skillCommands),
+          ...extensionCommands,
+        ];
 
-        const allowInitCommand = !hasMessagesInCurrentSession;
-        const filtered = (searchQuery
+        const filtered = searchQuery
           ? allCommands.filter(cmd => commandMatchesSearch(cmd, searchQuery))
-          : allCommands).filter(cmd => allowInitCommand || cmd.name !== 'init');
+          : allCommands;
 
         filtered.sort((a, b) => {
           const aStartsWith = a.name.toLowerCase().startsWith(searchQuery.toLowerCase());
@@ -211,69 +252,76 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
         setCommands(filtered);
       } catch {
 
-        const allowInitCommand = !hasMessagesInCurrentSession;
         const builtInCommands: CommandInfo[] = [
-          ...(hasSession && !hasMessagesInCurrentSession
-            ? [{ id: 'mittrcraft:init', name: 'init', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.initDescription'), isBuiltIn: true }]
+          ...(hasSession
+            ? [{ id: 'openchamber:init', name: 'init', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.initDescription'), isBuiltIn: true }]
             : []
           ),
           ...(hasSession  // Show when session exists, not when hasMessages
             ? [
-                { id: 'mittrcraft:undo', name: 'undo', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.undoDescription'), isBuiltIn: true },
-                { id: 'mittrcraft:redo', name: 'redo', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.redoDescription'), isBuiltIn: true },
-                { id: 'mittrcraft:timeline', name: 'timeline', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.timelineDescription'), isBuiltIn: true },
+                { id: 'openchamber:undo', name: 'undo', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.undoDescription'), isBuiltIn: true },
+                { id: 'openchamber:redo', name: 'redo', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.redoDescription'), isBuiltIn: true },
+                { id: 'openchamber:timeline', name: 'timeline', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.timelineDescription'), isBuiltIn: true },
               ]
             : []
           ),
-          { id: 'mittrcraft:compact', name: 'compact', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.compactDescription'), isBuiltIn: true },
+          { id: 'openchamber:compact', name: 'compact', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.compactDescription'), isBuiltIn: true },
           ...(hasSession
-            ? [{ id: 'mittrcraft:summary', name: 'summary', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.summaryDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:btw', name: 'btw', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.btwDescription'), isOpenChamber: true }]
+            : []
+          ),
+          ...(hasSession
+            ? [{ id: 'openchamber:fork', name: 'fork', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.forkDescription'), isOpenChamber: true }]
+            : []
+          ),
+          ...(hasSession
+            ? [{ id: 'openchamber:summary', name: 'summary', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.summaryDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:workspace-review', name: 'workspace-review', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.workspaceReviewDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:workspace-review', name: 'workspace-review', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.workspaceReviewDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canUseReviewHandoffFlow
-            ? [{ id: 'mittrcraft:handoff-review', name: 'handoff-review', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.handoffReviewDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:handoff-review', name: 'handoff-review', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.handoffReviewDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:plan-feature', name: 'plan-feature', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.featurePlanDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:plan-feature', name: 'plan-feature', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.featurePlanDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:craft-goal', name: 'craft-goal', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.craftGoalDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:craft-goal', name: 'craft-goal', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.craftGoalDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:schedule-task', name: 'schedule-task', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.scheduleTaskDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:schedule-task', name: 'schedule-task', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.scheduleTaskDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:catch-up', name: 'catch-up', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.catchUpDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:catch-up', name: 'catch-up', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.catchUpDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:debug', name: 'debug', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.debugDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:debug', name: 'debug', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.debugDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:weigh', name: 'weigh', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.weighDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:weigh', name: 'weigh', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.weighDescription'), isOpenChamber: true }]
             : []
           ),
           ...(canStartSessionCommand
-            ? [{ id: 'mittrcraft:explore', name: 'explore', source: 'mittrcraft' as const, description: t('chat.commandAutocomplete.command.exploreDescription'), isMittrCraft: true }]
+            ? [{ id: 'openchamber:explore', name: 'explore', source: 'openchamber' as const, description: t('chat.commandAutocomplete.command.exploreDescription'), isOpenChamber: true }]
             : []
           ),
         ];
 
-        const filtered = (searchQuery
+        const filtered = searchQuery
           ? builtInCommands.filter(cmd =>
               fuzzyMatch(cmd.name, searchQuery) ||
               (cmd.description && fuzzyMatch(cmd.description, searchQuery))
             )
-          : builtInCommands).filter(cmd => allowInitCommand || cmd.name !== 'init');
+          : builtInCommands;
 
         setCommands(filtered);
       } finally {
@@ -282,7 +330,7 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
     };
 
     loadCommands();
-  }, [searchQuery, hasMessagesInCurrentSession, hasSession, canStartSessionCommand, canUseReviewHandoffFlow, commandsWithMetadata, skills, t]);
+  }, [searchQuery, hasSession, canStartSessionCommand, canUseReviewHandoffFlow, commandsWithMetadata, guestCommands, skills, t]);
 
   React.useEffect(() => {
     setSelectedIndex(0);
@@ -336,24 +384,27 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
 
     switch (command.name) {
       case 'init':
-        return <Icon name="file" className="h-3.5 w-3.5 text-green-500" />;
+        return <Icon name="file" className="h-3.5 w-3.5 text-muted-foreground" />;
       case 'undo':
-        return <Icon name="arrow-go-back" className="h-3.5 w-3.5 text-orange-500" />;
+        return <Icon name="arrow-go-back" className="h-3.5 w-3.5 text-muted-foreground" />;
       case 'redo':
-        return <Icon name="arrow-go-forward" className="h-3.5 w-3.5 text-orange-500" />;
+        return <Icon name="arrow-go-forward" className="h-3.5 w-3.5 text-muted-foreground" />;
       case 'timeline':
         return <Icon name="time" className="h-3.5 w-3.5" />;
       case 'compact':
-        return <Icon name="scissors" className="h-3.5 w-3.5 text-purple-500" />;
+        return <Icon name="scissors" className="h-3.5 w-3.5 text-muted-foreground" />;
       case 'review':
-        return <Icon name="search-eye" className="h-3.5 w-3.5 text-blue-500" />;
+        return <Icon name="search-eye" className="h-3.5 w-3.5 text-muted-foreground" />;
       case 'test':
       case 'build':
       case 'run':
         return <Icon name="terminal-box" className="h-3.5 w-3.5 text-cyan-500" />;
       default:
         if (command.isBuiltIn) {
-          return <Icon name="flashlight" className="h-3.5 w-3.5 text-yellow-500" />;
+          return <Icon name="flashlight" className="h-3.5 w-3.5 text-muted-foreground" />;
+        }
+        if (command.source === 'extension') {
+          return <Icon name="window" className="h-3.5 w-3.5 text-muted-foreground" />;
         }
         return <Icon name="command" className="h-3.5 w-3.5 text-muted-foreground" />;
     }
@@ -362,7 +413,7 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
   return (
     <div
       ref={containerRef}
-      className="absolute z-[100] min-w-0 w-full max-w-[450px] max-h-64 bg-background border-2 border-border/60 rounded-xl shadow-none bottom-full mb-2 left-0 flex flex-col"
+      className="absolute z-[100] min-w-0 w-full max-w-[450px] max-h-64 oc-glass-popover border-2 border-border/60 rounded-xl shadow-none bottom-full mb-2 left-0 flex flex-col"
       style={mobileMaxHeight !== undefined ? { ...style, maxHeight: mobileMaxHeight } : style}
     >
       <ScrollableOverlay preventOverscroll outerClassName="flex-1 min-h-0" className="px-0 pb-2">
@@ -374,8 +425,9 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
           <div>
             {commands.map((command, index) => {
               const isSystem = command.isBuiltIn;
-              const isMittrCraftBadge = command.isMittrCraft;
+              const isOpenChamberBadge = command.isOpenChamber;
               return (
+                <AutocompleteRowTooltip description={command.description} active={!isMobile && index === selectedIndex}>
                 <div
                   key={command.id}
                   ref={(el) => { itemRefs.current[index] = el; }}
@@ -452,9 +504,13 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
                           {t('chat.commandAutocomplete.badge.command')}
                         </span>
                       )}
-                      {isMittrCraftBadge ? (
+                      {command.extensionName ? (
                         <span className={NEUTRAL_BADGE_CLASS}>
-                          MittrCraft
+                          {command.extensionName}
+                        </span>
+                      ) : isOpenChamberBadge ? (
+                        <span className={NEUTRAL_BADGE_CLASS}>
+                          OpenChamber
                         </span>
                       ) : isSystem ? (
                         <span className={NEUTRAL_BADGE_CLASS}>
@@ -471,13 +527,9 @@ export const CommandAutocomplete = React.forwardRef<CommandAutocompleteHandle, C
                         </span>
                       )}
                     </div>
-                    {command.description && !isMobile && (
-                      <div className="typography-meta text-muted-foreground mt-0.5 truncate">
-                        {command.description}
-                      </div>
-                    )}
                   </div>
                 </div>
+                </AutocompleteRowTooltip>
               );
             })}
             {commands.length === 0 && (

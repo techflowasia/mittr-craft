@@ -13,59 +13,40 @@
  * global read to race with.
  */
 
-type MessageTokens = {
-  input?: number;
-  output?: number;
-  reasoning?: number;
-  cache?: { read?: number; write?: number };
-};
+import { findLatestContextFill, type ContextFillMessage } from '@/stores/utils/tokenUtils';
 
-type MessageLike = {
-  id?: string;
-  role?: string;
-  tokens?: MessageTokens;
-};
-
-type WorkStatusContextUsage = {
-  totalTokens: number;
-  /** Context limit actually used for the ratio, after the default fallback. */
-  limit: number;
-  /** Unrounded, so the panel and the header cannot disagree by a rounding step. */
-  percent: number;
-};
+type WorkStatusContextUsage =
+  | {
+    state: 'measured';
+    totalTokens: number;
+    /** Context limit actually used for the ratio, after the default fallback. */
+    limit: number;
+    /** Unrounded, so the panel and the header cannot disagree by a rounding step. */
+    percent: number;
+  }
+  /** Compacted since the last response that reported tokens: the fill is unknown, not zero. */
+  | { state: 'compacted'; limit: number };
 
 /** The store's own fallback when a model exposes no context limit. */
 export const DEFAULT_CONTEXT_LIMIT = 200_000;
 
-const sumTokens = (tokens: MessageTokens): number => (
-  (tokens.input ?? 0)
-  + (tokens.output ?? 0)
-  + (tokens.reasoning ?? 0)
-  + (tokens.cache?.read ?? 0)
-  + (tokens.cache?.write ?? 0)
-);
-
 /**
- * Usage from the newest assistant message that reported a non-zero token count.
- * Each assistant turn reports the whole window it saw, so the latest one is the
- * current fill — not a sum across turns.
+ * Usage from the newest assistant message that reported a non-zero token count,
+ * or `compacted` when a finished compaction is newer than any such message
+ * (see `findLatestContextFill`). The latest turn describes the current fill —
+ * not a sum across turns. Within a turn, the server-reported `total` is the
+ * final round-trip's window; summing the breakdown fields instead overstates
+ * multi-step turns, whose input/cache fields accumulate across round-trips.
  */
 export const computeContextUsage = (
-  messages: readonly MessageLike[],
+  messages: readonly ContextFillMessage[],
   contextLimit: number,
 ): WorkStatusContextUsage | null => {
-  if (messages.length === 0) return null;
+  const fill = findLatestContextFill(messages);
+  if (!fill) return null;
 
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message?.role !== 'assistant' || !message.tokens) continue;
+  const limit = contextLimit > 0 ? contextLimit : DEFAULT_CONTEXT_LIMIT;
+  if (fill.state === 'compacted') return { state: 'compacted', limit };
 
-    const totalTokens = sumTokens(message.tokens);
-    if (totalTokens <= 0) continue;
-
-    const limit = contextLimit > 0 ? contextLimit : DEFAULT_CONTEXT_LIMIT;
-    return { totalTokens, limit, percent: (totalTokens / limit) * 100 };
-  }
-
-  return null;
+  return { state: 'measured', totalTokens: fill.totalTokens, limit, percent: (fill.totalTokens / limit) * 100 };
 };

@@ -360,7 +360,7 @@ export function CodeMirrorEditor({
       if (typeof document === 'undefined') return null;
       const metaNonce = document.querySelector('meta[name="csp-nonce"]')?.getAttribute('content');
       if (metaNonce) return metaNonce;
-      const windowNonce = (window as Window & { __MITTRCRAFT_CSP_NONCE__?: string }).__MITTRCRAFT_CSP_NONCE__;
+      const windowNonce = (window as Window & { __OPENCHAMBER_CSP_NONCE__?: string }).__OPENCHAMBER_CSP_NONCE__;
       return typeof windowNonce === 'string' && windowNonce.length > 0 ? windowNonce : null;
     })();
 
@@ -511,10 +511,9 @@ export function CodeMirrorEditor({
       <div
         ref={hostRef}
         className={cn(
-          'h-full w-full',
+          'oc-surface-code h-full w-full',
           '[&_.cm-editor]:h-full [&_.cm-editor]:w-full',
           '[&_.cm-scroller]:font-mono [&_.cm-scroller]:text-[var(--text-code)] [&_.cm-scroller]:leading-6',
-          '[&_.cm-lineNumbers]:text-[var(--tools-edit-line-number)]',
           className,
         )}
       />

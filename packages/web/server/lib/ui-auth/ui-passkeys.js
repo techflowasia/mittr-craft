@@ -2,22 +2,24 @@ import crypto from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import {
-  generateAuthenticationOptions,
-  generateRegistrationOptions,
-  verifyAuthenticationResponse,
-  verifyRegistrationResponse,
-} from '@simplewebauthn/server';
+
+// @simplewebauthn/server and its ASN.1 dependencies are ~130 modules; only
+// passkey registration and authentication need them, so they load on first use.
+let webauthnPending;
+const loadWebAuthn = () => {
+  webauthnPending ??= import('@simplewebauthn/server');
+  return webauthnPending;
+};
 
 const DEFAULT_STORE_VERSION = 1;
 const DEFAULT_CHALLENGE_TTL_MS = 5 * 60 * 1000;
-const DEFAULT_RP_NAME = 'MittrCraft';
+const DEFAULT_RP_NAME = 'OpenChamber';
 
-const MITTRCRAFT_DATA_DIR = process.env.MITTRCRAFT_DATA_DIR
-  ? path.resolve(process.env.MITTRCRAFT_DATA_DIR)
-  : path.join(os.homedir(), '.config', 'mittrcraft');
+const OPENCHAMBER_DATA_DIR = process.env.OPENCHAMBER_DATA_DIR
+  ? path.resolve(process.env.OPENCHAMBER_DATA_DIR)
+  : path.join(os.homedir(), '.config', 'openchamber');
 
-const PASSKEY_STORE_FILE = path.join(MITTRCRAFT_DATA_DIR, 'ui-passkeys.json');
+const PASSKEY_STORE_FILE = path.join(OPENCHAMBER_DATA_DIR, 'ui-passkeys.json');
 
 const createUserId = () => crypto.randomBytes(32).toString('base64url');
 
@@ -326,12 +328,12 @@ export const createUiPasskeys = ({
       throw error;
     }
 
-    const options = await generateRegistrationOptions({
+    const options = await (await loadWebAuthn()).generateRegistrationOptions({
       rpName,
       rpID,
       userID,
-      userName: 'mittrcraft-ui',
-      userDisplayName: 'MittrCraft UI',
+      userName: 'openchamber-ui',
+      userDisplayName: 'OpenChamber UI',
       attestationType: 'none',
       excludeCredentials: getPasskeysForRpId(store, rpID).map((passkey) => ({
         id: passkey.id,
@@ -377,7 +379,7 @@ export const createUiPasskeys = ({
 
     registrationChallenges.delete(requestId);
 
-    const verification = await verifyRegistrationResponse({
+    const verification = await (await loadWebAuthn()).verifyRegistrationResponse({
       response,
       expectedChallenge: matchingRecord.challenge,
       expectedOrigin: matchingRecord.expectedOrigins,
@@ -437,7 +439,7 @@ export const createUiPasskeys = ({
       throw error;
     }
 
-    const options = await generateAuthenticationOptions({
+    const options = await (await loadWebAuthn()).generateAuthenticationOptions({
       rpID,
       userVerification: 'required',
       allowCredentials: passkeys.map((passkey) => ({
@@ -471,7 +473,7 @@ export const createUiPasskeys = ({
     const passkey = store.passkeys.find((item) => item.id === response?.id);
 
     if (!passkey) {
-      const error = new Error('That passkey is not registered for this MittrCraft instance');
+      const error = new Error('That passkey is not registered for this OpenChamber instance');
       error.statusCode = 404;
       throw error;
     }
@@ -485,7 +487,7 @@ export const createUiPasskeys = ({
 
     authenticationChallenges.delete(requestId);
 
-    const verification = await verifyAuthenticationResponse({
+    const verification = await (await loadWebAuthn()).verifyAuthenticationResponse({
       response,
       expectedChallenge: matchingRecord.challenge,
       expectedOrigin: matchingRecord.expectedOrigins,

@@ -17,7 +17,7 @@ describe('core-routes', () => {
         shutdownOpts = opts;
       }),
       getHealthSnapshot: () => ({ status: 'ok' }),
-      mittrcraftVersion: '1.0.0',
+      openchamberVersion: '1.0.0',
       runtimeName: 'test',
       express,
     };
@@ -30,12 +30,47 @@ describe('core-routes', () => {
     expect(shutdownOpts).toEqual({ exitProcess: true });
   });
 
+  it('lets the agent credential helper past the UI session guard, and nothing else', async () => {
+    const app = express();
+    const requireAuth = vi.fn((_req, res) => res.status(401).json({ error: 'Unauthorized' }));
+    registerAuthAndAccessRoutes(app, {
+      express,
+      tunnelAuthController: {
+        classifyRequestScope: () => 'local',
+        requireTunnelSession: vi.fn(),
+        getTunnelSessionFromRequest: vi.fn(),
+        clearTunnelSessionCookie: vi.fn(),
+        exchangeBootstrapToken: vi.fn(),
+      },
+      uiAuthController: {
+        requireAuth,
+        handleSessionStatus: vi.fn(), handleSessionCreate: vi.fn(), handlePasskeyStatus: vi.fn(),
+        handlePasskeyAuthenticationOptions: vi.fn(), handlePasskeyAuthenticationVerify: vi.fn(),
+        handlePasskeyRegistrationOptions: vi.fn(), handlePasskeyRegistrationVerify: vi.fn(),
+        handlePasskeyList: vi.fn(), handlePasskeyRevoke: vi.fn(), handleResetAuth: vi.fn(),
+      },
+      readSettingsFromDiskMigrated: vi.fn(async () => ({})),
+      normalizeTunnelSessionTtlMs: vi.fn(),
+    });
+    // Registered after the guard, exactly as the git feature routes are.
+    app.post('/api/git/repository-credential', (_req, res) => res.json({ mode: 'none' }));
+    app.post('/api/git/identities', (_req, res) => res.json({ reached: true }));
+
+    // Git's helper has no UI session and cannot get one; its own bearer secret
+    // and same-machine check are what protect it.
+    await request(app).post('/api/git/repository-credential').send({}).expect(200, { mode: 'none' });
+    expect(requireAuth).not.toHaveBeenCalled();
+
+    await request(app).post('/api/git/identities').send({}).expect(401);
+    expect(requireAuth).toHaveBeenCalledTimes(1);
+  });
+
   it('should require UI auth before /api/system/shutdown when auth is configured', async () => {
     const app = express();
     const dependencies = {
       gracefulShutdown: vi.fn(async () => {}),
       getHealthSnapshot: () => ({ status: 'ok' }),
-      mittrcraftVersion: '1.0.0',
+      openchamberVersion: '1.0.0',
       runtimeName: 'test',
       express,
       tunnelAuthController: {
@@ -62,7 +97,7 @@ describe('core-routes', () => {
     const dependencies = {
       gracefulShutdown: vi.fn(async () => {}),
       getHealthSnapshot: () => ({ status: 'ok' }),
-      mittrcraftVersion: '1.0.0',
+      openchamberVersion: '1.0.0',
       runtimeName: 'test',
       express,
       tunnelAuthController: {
@@ -89,7 +124,7 @@ describe('core-routes', () => {
     const dependencies = {
       gracefulShutdown: vi.fn(async () => {}),
       getHealthSnapshot: () => ({ status: 'ok' }),
-      mittrcraftVersion: '1.0.0',
+      openchamberVersion: '1.0.0',
       runtimeName: 'test',
       express,
       tunnelAuthController: {
@@ -125,6 +160,47 @@ describe('core-routes', () => {
       .expect(200);
 
     expect(response.body).toEqual({ body: { content: 'Snippet body' } });
+  });
+
+  it('leaves the body of a request alone when told to, for both parsers', async () => {
+    const app = express();
+    registerCommonRequestMiddleware(app, { express, skipBodyParsing: (req) => req.path.startsWith('/api/spaces/') });
+    const raw = (req, res) => {
+      // A body a parser read is complete already, and its stream ends no second time.
+      if (req.complete) {
+        res.json({ body: req.body ?? null, raw: '' });
+        return;
+      }
+      const chunks = [];
+      req.on('data', (chunk) => chunks.push(chunk));
+      req.on('end', () => res.json({ body: req.body ?? null, raw: Buffer.concat(chunks).toString('utf8') }));
+    };
+    app.post('/api/spaces/abc/form', raw);
+    app.post('/api/spaces/abc/config/snippets/x', raw);
+    app.post('/api/other/form', raw);
+
+    const kept = await request(app).post('/api/spaces/abc/form').type('form').send('a=1&b=2').expect(200);
+    expect(kept.body).toEqual({ body: null, raw: 'a=1&b=2' });
+    const keptJson = await request(app).post('/api/spaces/abc/config/snippets/x').send({ content: 'x' }).expect(200);
+    expect(keptJson.body).toEqual({ body: null, raw: '{"content":"x"}' });
+    // Elsewhere the parsers still run, and a parsed body leaves nothing to read.
+    const parsed = await request(app).post('/api/other/form').type('form').send('a=1&b=2').expect(200);
+    expect(parsed.body).toEqual({ body: { a: '1', b: '2' }, raw: '' });
+  });
+
+  it('should parse JSON bodies for the web search config route', async () => {
+    const app = express();
+    registerCommonRequestMiddleware(app, { express });
+    app.put('/api/config/websearch', (req, res) => {
+      res.json({ body: req.body });
+    });
+
+    const response = await request(app)
+      .put('/api/config/websearch')
+      .send({ selection: 'random' })
+      .expect(200);
+
+    expect(response.body).toEqual({ body: { selection: 'random' } });
   });
 
   it('should parse JSON bodies for custom provider upsert routes', async () => {
@@ -200,6 +276,45 @@ describe('core-routes', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it('lets only GET html-preview file reads past API auth; the grant in the path is checked by the fs route', async () => {
+    const app = express();
+    const requireAuth = vi.fn((_req, res) => res.status(401).json({ error: 'Unauthorized' }));
+    registerAuthAndAccessRoutes(app, {
+      express,
+      tunnelAuthController: {
+        classifyRequestScope: () => 'local',
+        requireTunnelSession: vi.fn(),
+        getTunnelSessionFromRequest: vi.fn(),
+        clearTunnelSessionCookie: vi.fn(),
+        exchangeBootstrapToken: vi.fn(),
+      },
+      uiAuthController: {
+        requireAuth,
+        handleSessionStatus: vi.fn(),
+        handleSessionCreate: vi.fn(),
+        handlePasskeyStatus: vi.fn(),
+        handlePasskeyAuthenticationOptions: vi.fn(),
+        handlePasskeyAuthenticationVerify: vi.fn(),
+        handlePasskeyRegistrationOptions: vi.fn(),
+        handlePasskeyRegistrationVerify: vi.fn(),
+        handlePasskeyList: vi.fn(),
+        handlePasskeyRevoke: vi.fn(),
+        handleResetAuth: vi.fn(),
+      },
+      readSettingsFromDiskMigrated: vi.fn(async () => ({})),
+      normalizeTunnelSessionTtlMs: vi.fn(),
+    });
+    app.get(/^\/api\/fs\/preview\/.+$/, (_req, res) => res.json({ reached: true }));
+    app.post('/api/fs/preview', (_req, res) => res.json({ reached: true }));
+    app.get('/api/fs/read', (_req, res) => res.json({ reached: true }));
+
+    await request(app).get('/api/fs/preview/grant-1/repo/index.html').expect(200, { reached: true });
+    await request(app).post('/api/fs/preview').send({ path: '/repo/index.html' }).expect(401);
+    await request(app).get('/api/fs/preview/grant-1').expect(401);
+    await request(app).get('/api/fs/read?path=/repo/index.html').expect(401);
+    expect(requireAuth).toHaveBeenCalledTimes(3);
   });
 
   it('should probe loopback preview URLs and return ok: true for status codes 200-599', async () => {
@@ -438,7 +553,7 @@ describe('core-routes', () => {
     expect(response.headers['cache-control']).toBe('no-store');
     expect(response.body).toMatchObject({
       ok: true,
-      server: { label: 'MittrCraft', url: 'http://runtime.example', fingerprint: 'ABCD-1234' },
+      server: { label: 'OpenChamber', url: 'http://runtime.example', fingerprint: 'ABCD-1234' },
       client: { id: 'client-1', authMethod: 'pairing' },
       clientToken: 'oc_client_token',
     });
@@ -544,9 +659,6 @@ describe('client auth routes', () => {
     const requireAuth = vi.fn((_req, _res, next) => next());
     const requireSessionAuth = vi.fn((_req, _res, next) => next());
     const resolveAuthContext = vi.fn(options.resolveAuthContext || (async () => ({ type: 'session' })));
-    const handleAdLoginStart = vi.fn((_req, res) => res.redirect(302, 'https://login.microsoftonline.com/tenant/authorize'));
-    const handleAdCallback = vi.fn((_req, res) => res.redirect(302, '/'));
-    const handleSessionDelete = vi.fn((_req, res) => res.json({ authenticated: false }));
     return {
       express,
       tunnelAuthController: {
@@ -558,7 +670,6 @@ describe('client auth routes', () => {
       uiAuthController: {
         handleSessionStatus: (_req, res) => res.json({ authenticated: true }),
         handleSessionCreate: (_req, res) => res.json({ authenticated: true }),
-        handleSessionDelete,
         handlePasskeyStatus: (_req, res) => res.json({ enabled: false }),
         handlePasskeyAuthenticationOptions: (_req, res) => res.json({}),
         handlePasskeyAuthenticationVerify: (_req, res) => res.json({ authenticated: true }),
@@ -570,11 +681,6 @@ describe('client auth routes', () => {
         handlePasskeyList: (_req, res) => res.json({ passkeys: [] }),
         handlePasskeyRevoke: (_req, res) => res.json({ revoked: true }),
         handleResetAuth: (_req, res) => res.json({ cleared: true }),
-        handleAdStatus: (_req, res) => res.json({ enabled: true, mode: 'entra' }),
-        handleAdLoginStart,
-        handleAdCallback,
-        handleAdSessionCreate: (_req, res) => res.status(400).json({ error: 'Use redirect' }),
-        handleAdProfile: (_req, res) => res.json({ profile: {} }),
       },
       remoteClientAuthRuntime: {
         listClients: async () => clients,
@@ -606,47 +712,9 @@ describe('client auth routes', () => {
       },
       readSettingsFromDiskMigrated: async () => ({}),
       normalizeTunnelSessionTtlMs: () => 1000,
-      testHooks: { clients, requireAuth, requireSessionAuth, resolveAuthContext, handleAdLoginStart, handleAdCallback, handleSessionDelete },
+      testHooks: { clients, requireAuth, requireSessionAuth, resolveAuthContext },
     };
   };
-
-  it('routes Microsoft login start and callback only for local scope', async () => {
-    const app = express();
-    const dependencies = createDependencies();
-    registerAuthAndAccessRoutes(app, dependencies);
-
-    await request(app).get('/auth/ad/login').expect(302);
-    await request(app).get('/auth/ad/callback?state=state-1&code=code-1').expect(302, 'Found. Redirecting to /');
-    expect(dependencies.testHooks.handleAdLoginStart).toHaveBeenCalledTimes(1);
-    expect(dependencies.testHooks.handleAdCallback).toHaveBeenCalledTimes(1);
-
-    const tunnelApp = express();
-    const tunnelDependencies = createDependencies();
-    tunnelDependencies.tunnelAuthController.classifyRequestScope = () => 'tunnel';
-    registerAuthAndAccessRoutes(tunnelApp, tunnelDependencies);
-
-    await request(tunnelApp).get('/auth/ad/login').expect(403);
-    await request(tunnelApp).get('/auth/ad/callback?state=state-1&code=code-1').expect(403);
-    expect(tunnelDependencies.testHooks.handleAdLoginStart).not.toHaveBeenCalled();
-    expect(tunnelDependencies.testHooks.handleAdCallback).not.toHaveBeenCalled();
-  });
-
-  it('logs out local UI sessions but rejects tunnel scope', async () => {
-    const app = express();
-    const dependencies = createDependencies();
-    registerAuthAndAccessRoutes(app, dependencies);
-
-    await request(app).delete('/auth/session').expect(200, { authenticated: false });
-    expect(dependencies.testHooks.handleSessionDelete).toHaveBeenCalledTimes(1);
-
-    const tunnelApp = express();
-    const tunnelDependencies = createDependencies();
-    tunnelDependencies.tunnelAuthController.classifyRequestScope = () => 'tunnel';
-    registerAuthAndAccessRoutes(tunnelApp, tunnelDependencies);
-
-    await request(tunnelApp).delete('/auth/session').expect(403);
-    expect(tunnelDependencies.testHooks.handleSessionDelete).not.toHaveBeenCalled();
-  });
 
   it('creates, lists, and revokes remote client tokens', async () => {
     const app = express();
@@ -737,7 +805,7 @@ describe('client auth routes', () => {
 
     const current = await request(app)
       .post('/api/client-auth/clients')
-      .send({ label: 'MittrCraft Desktop', clientKind: 'desktop-local' });
+      .send({ label: 'OpenChamber Desktop', clientKind: 'desktop-local' });
     const other = await request(app)
       .post('/api/client-auth/clients')
       .send({ label: 'Other device' });
@@ -772,7 +840,7 @@ describe('client auth routes', () => {
 
     const desktop = await request(app)
       .post('/api/client-auth/clients')
-      .send({ label: 'MittrCraft Desktop', clientKind: 'desktop-local' });
+      .send({ label: 'OpenChamber Desktop', clientKind: 'desktop-local' });
     const other = await request(app)
       .post('/api/client-auth/clients')
       .send({ label: 'Other device' });
@@ -805,7 +873,7 @@ describe('client auth routes', () => {
 
     const desktop = await request(app)
       .post('/api/client-auth/clients')
-      .send({ label: 'MittrCraft Desktop', clientKind: 'desktop-local' });
+      .send({ label: 'OpenChamber Desktop', clientKind: 'desktop-local' });
     const remote = await request(app)
       .post('/api/client-auth/clients')
       .send({ label: 'Phone' });
@@ -867,6 +935,8 @@ describe('client auth routes', () => {
     })).toBe('unknown-public');
   });
 
+  const signedIn = { resolveAuthContext: async () => ({ type: 'session' }) };
+
   it('reports null port and tunnel URL on /api/system/info when no getters are wired', async () => {
     const app = express();
     registerServerStatusRoutes(app, {
@@ -874,14 +944,15 @@ describe('client auth routes', () => {
       serverStartedAt: '2026-01-01T00:00:00.000Z',
       gracefulShutdown: vi.fn(async () => {}),
       getHealthSnapshot: () => ({ status: 'ok' }),
-      mittrcraftVersion: '1.0.0',
+      openchamberVersion: '1.0.0',
       runtimeName: 'test',
       express,
+      uiAuthController: signedIn,
     });
 
     const response = await request(app).get('/api/system/info');
     expect(response.status).toBe(200);
-    expect(response.body.mittrcraftVersion).toBe('1.0.0');
+    expect(response.body.openchamberVersion).toBe('1.0.0');
     expect(response.body.runtime).toBe('test');
     expect(response.body.pid).toBeTypeOf('number');
     expect(response.body.startedAt).toBeTypeOf('string');
@@ -896,16 +967,40 @@ describe('client auth routes', () => {
       serverStartedAt: '2026-01-01T00:00:00.000Z',
       gracefulShutdown: vi.fn(async () => {}),
       getHealthSnapshot: () => ({ status: 'ok' }),
-      mittrcraftVersion: '1.0.0',
+      openchamberVersion: '1.0.0',
       runtimeName: 'test',
       express,
       getServerPort: () => 9988,
       getTunnelUrl: () => 'https://worktree-a.example.trycloudflare.com',
+      uiAuthController: signedIn,
     });
 
     const response = await request(app).get('/api/system/info');
     expect(response.status).toBe(200);
     expect(response.body.port).toBe(9988);
     expect(response.body.tunnelUrl).toBe('https://worktree-a.example.trycloudflare.com');
+  });
+
+  it('keeps the pid but not where the server is reachable on /api/system/info before login', async () => {
+    const app = express();
+    registerServerStatusRoutes(app, {
+      process,
+      serverStartedAt: '2026-01-01T00:00:00.000Z',
+      gracefulShutdown: vi.fn(async () => {}),
+      getHealthSnapshot: () => ({ status: 'ok' }),
+      openchamberVersion: '1.0.0',
+      runtimeName: 'test',
+      express,
+      getServerPort: () => 9988,
+      getTunnelUrl: () => 'https://worktree-a.example.trycloudflare.com',
+      uiAuthController: { resolveAuthContext: async () => null },
+    });
+
+    const response = await request(app).get('/api/system/info');
+    expect(response.status).toBe(200);
+    // The CLI identifies its own server by pid before it has any credential.
+    expect(response.body.pid).toBe(process.pid);
+    expect(response.body).not.toHaveProperty('port');
+    expect(response.body).not.toHaveProperty('tunnelUrl');
   });
 });

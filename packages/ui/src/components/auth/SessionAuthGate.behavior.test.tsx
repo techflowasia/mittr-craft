@@ -38,8 +38,6 @@ const resetHarness = () => {
   desktopHostsGetCalls = 0;
   desktopHostsSetCalls = 0;
   runtimeSwitchCalls = 0;
-  runtimeFetchAuthenticated = false;
-  const windowEvents = new EventTarget();
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
     value: {
@@ -53,9 +51,6 @@ const resetHarness = () => {
         return 0;
       },
       clearTimeout: () => undefined,
-      addEventListener: windowEvents.addEventListener.bind(windowEvents),
-      removeEventListener: windowEvents.removeEventListener.bind(windowEvents),
-      dispatchEvent: windowEvents.dispatchEvent.bind(windowEvents),
     },
   });
 };
@@ -185,7 +180,6 @@ const reactJsxRuntime = {
 
 let desktopShell = false;
 let runtimeFetchRejects = true;
-let runtimeFetchAuthenticated = false;
 let runtimeApiBaseUrl = '';
 let runtimeKey = 'local';
 let runtimeEndpointChangedListener: (() => void) | null = null;
@@ -227,8 +221,8 @@ mock.module('@/components/ui', () => ({
   },
 }));
 
-mock.module('@/components/ui/MittrCraftLogo', () => ({
-  MittrCraftLogo: () => 'logo',
+mock.module('@/components/ui/OpenChamberLogo', () => ({
+  OpenChamberLogo: () => 'logo',
 }));
 
 mock.module('@/components/icon/Icon', () => ({
@@ -264,21 +258,20 @@ mock.module('@/lib/runtime-fetch', () => ({
       throw new Error('offline');
     }
 
-    return new Response(JSON.stringify({ authenticated: runtimeFetchAuthenticated }), {
-      status: runtimeFetchAuthenticated ? 200 : 401,
+    return new Response(JSON.stringify({ authenticated: false }), {
+      status: 401,
       headers: { 'content-type': 'application/json' },
     });
   }),
 }));
 
-mock.module('@/lib/runtime-auth', () => ({
-  getRuntimeExtraHeadersSync: mock(() => ({})),
+mock.module('@/lib/product-plugins', () => ({
+  ProductSlot: () => null,
+  translateProductSessionAuthDescription: () => null,
 }));
 
-mock.module('@/lib/runtime-url', () => ({
-  getRuntimeUrlResolver: () => ({
-    auth: (path: string) => path,
-  }),
+mock.module('@/lib/runtime-auth', () => ({
+  getRuntimeExtraHeadersSync: mock(() => ({})),
 }));
 
 mock.module('@/lib/runtime-switch', () => ({
@@ -315,8 +308,20 @@ mock.module('@/lib/passkeys', () => ({
   registerCurrentDevicePasskey: mock(() => Promise.resolve(null)),
 }));
 
+const authSessionStore = {
+  state: 'ok' as const,
+  markAuthenticated: mock(() => undefined),
+};
+
+mock.module('@/lib/runtime-auth-expiry', () => ({
+  installAuthSessionFocusWatch: mock(() => undefined),
+  useAuthSessionStore: Object.assign(
+    (selector: (store: typeof authSessionStore) => unknown) => selector(authSessionStore),
+    { getState: () => authSessionStore },
+  ),
+}));
+
 const { SessionAuthGate } = await import('./SessionAuthGate');
-const { SESSION_AUTH_REQUIRED_EVENT } = await import('./sessionAuthGateState');
 
 const flushEffects = async () => {
   while (pendingEffects.length > 0) {
@@ -367,22 +372,6 @@ const findElement = (node: unknown, type: string): { type: string; props: JSXPro
 };
 
 describe('SessionAuthGate status-check failure behavior', () => {
-  test('returns an authenticated app to the login surface when auth is required', async () => {
-    resetHarness();
-    runtimeFetchRejects = false;
-    runtimeFetchAuthenticated = true;
-
-    const authenticatedTree = await renderGate();
-    expect(collectText(authenticatedTree)).toContain('child');
-
-    window.dispatchEvent(new Event(SESSION_AUTH_REQUIRED_EVENT));
-    const lockedTree = renderComponent(SessionAuthGate, { children: 'child' });
-    await flushEffects();
-
-    expect(collectText(lockedTree)).toContain('sessionAuth.locked.unlockTitle');
-    expect(collectText(lockedTree)).not.toContain('child');
-  });
-
   test('keeps non-desktop status-check rejection on the error screen', async () => {
     resetHarness();
     desktopShell = false;
@@ -395,7 +384,7 @@ describe('SessionAuthGate status-check failure behavior', () => {
     expect(text).not.toContain('sessionAuth.locked.unlockTitle');
   });
 
-  test('keeps desktop-shell status-check rejection on the locked password prompt', async () => {
+  test('keeps desktop-shell status-check rejection on the error screen, never a guessed password prompt', async () => {
     resetHarness();
     desktopShell = true;
     runtimeFetchRejects = true;
@@ -403,8 +392,11 @@ describe('SessionAuthGate status-check failure behavior', () => {
     const tree = await renderGate();
     const text = collectText(tree);
 
-    expect(text).toContain('sessionAuth.locked.unlockTitle');
-    expect(text).not.toContain('sessionAuth.error.networkTitle');
+    expect(text).toContain('sessionAuth.error.networkTitle');
+    expect(text).not.toContain('sessionAuth.locked.unlockTitle');
+    // A network failure says nothing about the server, so the desktop error
+    // screen keeps its real escape hatches: retry and the host switcher.
+    expect(text).toContain('host-switcher');
   });
 
   test('discards a password completion after switching to another host', async () => {

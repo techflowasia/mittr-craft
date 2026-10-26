@@ -30,6 +30,7 @@ async function statusCommand(options = {}) {
         pid: Number.isFinite(desktopInstance.pid) ? desktopInstance.pid : null,
         launchMode: null,
         passwordProtected: null,
+        bindHost: null,
       }
     : null;
 
@@ -46,6 +47,9 @@ async function statusCommand(options = {}) {
         pid: instance.pid,
         launchMode: instance.launchMode || 'daemon',
         passwordProtected: instance.source === 'probe' ? null : passwordProtected,
+        // The address the server was asked to bind, not the one a probe
+        // answered on: a server bound to 0.0.0.0 also answers on loopback.
+        bindHost: storedOptions.host || null,
       };
     });
 
@@ -61,6 +65,7 @@ async function statusCommand(options = {}) {
       pid: Number.isFinite(explicitDesktop.pid) ? explicitDesktop.pid : null,
       launchMode: null,
       passwordProtected: null,
+      bindHost: null,
     });
   }
   const runningCount = instances.length;
@@ -88,7 +93,7 @@ async function statusCommand(options = {}) {
     return;
   }
 
-  clackIntro('MittrCraft Status');
+  clackIntro('OpenChamber Status');
 
   if (runningCount === 0) {
     logStatus('warning', 'stopped');

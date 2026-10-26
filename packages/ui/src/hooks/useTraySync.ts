@@ -1,19 +1,21 @@
 import React from 'react';
-import type { Session } from '@opencode-ai/sdk/v2';
+import type { Session } from '@/lib/opencode/model';
 import { canUseElectronDesktopIPC, invokeDesktop, isDesktopLocalOriginActive } from '@/lib/desktop';
 import { getRuntimeApiBaseUrl } from '@/lib/runtime-switch';
 import { desktopHostsGet, getDesktopHostApiUrl, locationMatchesHost, redactSensitiveUrl } from '@/lib/desktopHosts';
-import { getSyncChildStores, getAllSyncSessions } from '@/sync/sync-refs';
-import { opencodeClient } from '@/lib/opencode/client';
-import { useGlobalSessionStatusStore, applyGlobalSessionStatusSnapshot } from '@/sync/global-session-status';
+import { getSyncChildStores } from '@/sync/sync-refs';
+import { useGlobalSessionStatusStore } from '@/sync/global-session-status';
+import {
+  useGlobalBlockingRequestsStore,
+  type BlockingFormRequest,
+  type BlockingPermissionRequest,
+} from '@/sync/global-blocking-requests';
 import { compareSessionsByLifecycleOrder, useSessionOrderingStore } from '@/sync/session-ordering';
 import { useNotificationStore } from '@/sync/notification-store';
 import { useSessionPinnedStore } from '@/stores/useSessionPinnedStore';
 import { respondToPermission } from '@/sync/session-actions';
 import {
   useGlobalSessionsStore,
-  ensureGlobalSessionsLoaded,
-  refreshGlobalSessions,
   resolveGlobalSessionDirectory,
 } from '@/stores/useGlobalSessionsStore';
 import { useQuotaStore } from '@/stores/useQuotaStore';
@@ -26,24 +28,18 @@ import { resolveProjectForSessionDirectory, normalizeProjectPath } from '@/lib/p
 import type { ProjectEntry } from '@/lib/api/types';
 import type { WorktreeMetadata } from '@/types/worktree';
 import { toast } from '@/components/ui';
-import type { PermissionRequest } from '@/types/permission';
-import type { QuestionRequest } from '@/types/question';
 
 // Native tray/menu bar bridge. The Electron main process owns the Tray UI; this hook
 // streams a compact snapshot of live session/approval state to it via the
 // `desktop_tray_update` IPC command, and routes tray clicks back into the app.
 //
-// Only meaningful on desktop platforms with a native tray/menu bar — main.mjs
-// no-ops the command elsewhere, but we still gate here to avoid pointless work.
+// Dock badges share the IPC command, but remain active when the menu bar is
+// disabled. That path observes unread state only, without tray polling or quotas.
 
-const TRAY_ACTION_EVENT = 'mittrcraft:tray-action';
+const TRAY_ACTION_EVENT = 'openchamber:tray-action';
 // Event-driven updates do the real work; this is just a slow safety net.
 const POLL_INTERVAL_MS = 5000;
 const FLUSH_DEBOUNCE_MS = 500;
-// Pull the full cross-project session list periodically. SSE keeps the active
-// directory instant; this catches sessions created in directories this client
-// never opened (other worktrees, other projects, the TUI, …).
-const GLOBAL_REFRESH_MS = 45000;
 const MAX_SESSIONS = 20;
 
 type TraySessionStatus = 'idle' | 'busy' | 'retry';
@@ -61,7 +57,7 @@ type TraySession = {
 };
 
 type TrayApproval = {
-  kind: 'permission' | 'question';
+  kind: 'permission' | 'form';
   id: string;
   sessionId: string;
   sessionTitle: string;
@@ -76,7 +72,7 @@ type TrayUsage = { mode: 'usage' | 'remaining'; groups: TrayUsageGroup[] };
 type TraySnapshot = {
   sessions: TraySession[];
   approvals: TrayApproval[];
-  // Active instance label (e.g. "Local MittrCraft" or a remote host name) so
+  // Active instance label (e.g. "Local OpenChamber" or a remote host name) so
   // the tray header makes clear which instance/window it reflects.
   instanceName: string;
   // Provider rate-limit usage, only for providers the user enabled for the
@@ -89,7 +85,7 @@ type TraySnapshot = {
 };
 
 // focus-session / new-session are routed natively by the main process through
-// the existing `mittrcraft:open-session` / `mittrcraft:open-draft-session`
+// the existing `openchamber:open-session` / `openchamber:open-draft-session`
 // events (handled in App.tsx). Only respond-permission needs handling here.
 type TrayAction =
   | { type: 'respond-permission'; sessionId: string; id: string; response: 'once' | 'always' | 'reject' };
@@ -103,23 +99,20 @@ type DesktopBridgeGlobal = {
 
 const isTrayPlatform = (): boolean => {
   if (typeof window === 'undefined') return false;
-  const platform = (window as unknown as { __MITTRCRAFT_PLATFORM__?: string }).__MITTRCRAFT_PLATFORM__;
+  const platform = (window as unknown as { __OPENCHAMBER_PLATFORM__?: string }).__OPENCHAMBER_PLATFORM__;
   return platform === 'darwin' || platform === 'win32' || platform === 'linux';
 };
 
 const isTrayEnabled = (): boolean =>
-  typeof window !== 'undefined' && window.__MITTRCRAFT_ELECTRON__?.trayEnabled !== false;
+  typeof window !== 'undefined' && window.__OPENCHAMBER_ELECTRON__?.trayEnabled !== false;
 
-const permissionLabel = (request: PermissionRequest): string => {
-  const head = typeof request.permission === 'string' ? request.permission : 'Permission';
-  const pattern = Array.isArray(request.patterns) ? request.patterns.find((p) => typeof p === 'string' && p.trim()) : '';
-  return pattern ? `${head}: ${pattern}` : head;
+const permissionLabel = (request: BlockingPermissionRequest): string => {
+  const head = request.action.trim() || 'Permission';
+  const resource = request.resources.find((item) => item.trim());
+  return resource ? `${head}: ${resource}` : head;
 };
 
-const questionLabel = (request: QuestionRequest): string => {
-  const first = Array.isArray(request.questions) ? request.questions[0] : undefined;
-  return first?.header || first?.question || 'Question';
-};
+const formLabel = (request: BlockingFormRequest): string => request.title.trim() || 'Question';
 
 const compareSessionOrder = (left: Session, right: Session): number => (
   compareSessionsByLifecycleOrder(
@@ -204,15 +197,15 @@ const buildUsage = (): TrayUsage => {
 };
 
 // Mirrors the header's instance resolution (Header.refreshCurrentInstanceLabel):
-// the local origin shows as "Local MittrCraft"; a remote host shows its
+// the local origin shows as "Local OpenChamber"; a remote host shows its
 // configured name. Async because the host config is read over IPC.
 const resolveInstanceName = async (): Promise<string> => {
   try {
-    if (isDesktopLocalOriginActive()) return 'Local MittrCraft';
-    const localOrigin = (window as unknown as { __MITTRCRAFT_LOCAL_ORIGIN__?: string }).__MITTRCRAFT_LOCAL_ORIGIN__
+    if (isDesktopLocalOriginActive()) return 'Local OpenChamber';
+    const localOrigin = (window as unknown as { __OPENCHAMBER_LOCAL_ORIGIN__?: string }).__OPENCHAMBER_LOCAL_ORIGIN__
       || window.location.origin;
     const runtimeApiBaseUrl = getRuntimeApiBaseUrl();
-    if (runtimeApiBaseUrl && locationMatchesHost(runtimeApiBaseUrl, localOrigin)) return 'Local MittrCraft';
+    if (runtimeApiBaseUrl && locationMatchesHost(runtimeApiBaseUrl, localOrigin)) return 'Local OpenChamber';
     const cfg = await desktopHostsGet();
     const match = cfg.hosts.find((host) =>
       runtimeApiBaseUrl ? locationMatchesHost(runtimeApiBaseUrl, getDesktopHostApiUrl(host)) : false);
@@ -275,11 +268,11 @@ const collectLiveData = (): LiveData => {
         approvals.push({ kind: 'permission', id: request.id, sessionId: sid, sessionTitle: '', label: permissionLabel(request), directory });
       }
     }
-    for (const [sessionId, requests] of Object.entries(state.question ?? {})) {
+    for (const [sessionId, requests] of Object.entries(state.form ?? {})) {
       for (const request of requests ?? []) {
         if (!request?.id) continue;
         const sid = request.sessionID || sessionId;
-        approvals.push({ kind: 'question', id: request.id, sessionId: sid, sessionTitle: '', label: questionLabel(request), directory });
+        approvals.push({ kind: 'form', id: request.id, sessionId: sid, sessionTitle: '', label: formLabel(request), directory });
       }
     }
   }
@@ -291,44 +284,12 @@ const collectLiveData = (): LiveData => {
 // landing in useGlobalSessionStatusStore (the fallback in the rollup below):
 //  - live: the global event stream carries status events for every directory;
 //    the sync dispatcher routes the ones without a child store into the store;
-//  - polled: events only deliver changes, so an initial per-directory snapshot
-//    seeds the state and a slow poll reconciles anything missed. Per directory
-//    because the upstream `/session/status` endpoint is directory-scoped
-//    (querying it without a directory covers only the server's own cwd, NOT
-//    all projects).
-
-// Directories worth polling: everywhere the tray's visible sessions live —
-// including synced ones, so the poll reconciles any status event a child
-// store missed (e.g. a session created from another window mid-race). Returns
-// each directory with the session ids the global list places there, so the
-// snapshot can authoritatively clear stale entries by session id.
-const collectStatusPollDirectories = (): Map<string, string[]> => {
-  const allSessions = useGlobalSessionsStore.getState().activeSessions;
-  const rootDirs = new Set<string>();
-  allSessions
-    .filter((s) => s?.id && !s.parentID)
-    .slice()
-    .sort(compareSessionOrder)
-    .slice(0, MAX_SESSIONS)
-    .forEach((session) => {
-      const directory = resolveGlobalSessionDirectory(session);
-      if (directory) rootDirs.add(directory);
-    });
-
-  const targets = new Map<string, string[]>();
-  for (const session of allSessions) {
-    if (!session?.id) continue;
-    const directory = resolveGlobalSessionDirectory(session);
-    if (!directory || !rootDirs.has(directory)) continue;
-    const ids = targets.get(directory) ?? [];
-    ids.push(session.id);
-    targets.set(directory, ids);
-  }
-  return targets;
-};
-
-const buildSnapshot = (instanceName: string): TraySnapshot => {
-  const live = collectLiveData();
+//  - seeded: events only deliver changes, so the root global-sessions poll
+//    seeds the store from the host's cross-project map (`/api/sessions/status`,
+//    see `sync/host-session-status-seed.ts`). The tray no longer polls the
+//    upstream `/session/status?directory=` endpoint: that call creates an
+//    OpenCode instance per directory.
+const buildSnapshot = (instanceName: string, includeTray: boolean): TraySnapshot => {
   const notif = useNotificationStore.getState().index.session;
 
   // The list source is the GLOBAL store — every project/worktree the backend
@@ -336,11 +297,9 @@ const buildSnapshot = (instanceName: string): TraySnapshot => {
   // status/unread/branch are merged in by id where we have them (the session's
   // directory is synced); otherwise the row is shown as idle.
   const allSessions = useGlobalSessionsStore.getState().activeSessions;
-  const titleById = new Map<string, string>(live.titleById);
   const childrenByParent = new Map<string, string[]>();
   for (const session of allSessions) {
     if (!session?.id) continue;
-    if (session.title) titleById.set(session.id, session.title);
     if (session.parentID) {
       const siblings = childrenByParent.get(session.parentID) ?? [];
       siblings.push(session.id);
@@ -361,6 +320,30 @@ const buildSnapshot = (instanceName: string): TraySnapshot => {
     }
     return out;
   };
+
+  // Count the full root list, independently of the tray's visibility and limit.
+  const ui = useUIStore.getState();
+  let dockBadgeCount = 0;
+  if (ui.dockBadgeEnabled) {
+    for (const session of allSessions) {
+      if (!session?.id || session.parentID) continue;
+      let familyUnseen = notif.unseenCount[session.id] ?? 0;
+      if (familyUnseen === 0 && ui.notifyOnSubtasks) {
+        familyUnseen = collectDescendants(session.id)
+          .reduce((sum, id) => sum + (notif.unseenCount[id] ?? 0), 0);
+      }
+      if (familyUnseen > 0) dockBadgeCount += 1;
+    }
+  }
+  if (!includeTray) {
+    return { sessions: [], approvals: [], instanceName, usage: { mode: 'usage', groups: [] }, dockBadgeCount };
+  }
+
+  const live = collectLiveData();
+  const titleById = new Map<string, string>(live.titleById);
+  for (const session of allSessions) {
+    if (session?.id && session.title) titleById.set(session.id, session.title);
+  }
 
   // A session is active if EITHER source says so: the synced child stores
   // (instant, but can miss sessions created outside this window) or the
@@ -403,24 +386,21 @@ const buildSnapshot = (instanceName: string): TraySnapshot => {
       };
     });
 
+  // Directory stores list approvals for open directories; the cross-directory
+  // index adds the ones from directories this window never initialized.
   const approvals = live.approvals.map((a) => ({ ...a, sessionTitle: titleById.get(a.sessionId) || '' }));
-
-  // Dock badge: count chats (root sessions) with unseen activity over the FULL
-  // cross-project list — not the MAX_SESSIONS-capped `sessions` above — so the
-  // number is accurate even with many projects. A subtask's unseen rolls up to
-  // its root only when the user opted into subtask notifications, matching the
-  // sidebar's needs-attention rule.
-  const ui = useUIStore.getState();
-  let dockBadgeCount = 0;
-  if (ui.dockBadgeEnabled) {
-    for (const session of allSessions) {
-      if (!session?.id || session.parentID) continue; // roots only
-      let familyUnseen = notif.unseenCount[session.id] ?? 0;
-      if (familyUnseen === 0 && ui.notifyOnSubtasks) {
-        familyUnseen = collectDescendants(session.id)
-          .reduce((sum, id) => sum + (notif.unseenCount[id] ?? 0), 0);
-      }
-      if (familyUnseen > 0) dockBadgeCount += 1;
+  const seen = new Set(approvals.map((a) => a.id));
+  for (const [sessionId, pending] of useGlobalBlockingRequestsStore.getState().bySession) {
+    const sessionTitle = titleById.get(sessionId) || '';
+    for (const request of pending.permissions) {
+      if (seen.has(request.id)) continue;
+      seen.add(request.id);
+      approvals.push({ kind: 'permission', id: request.id, sessionId, sessionTitle, label: permissionLabel(request), directory: pending.directory });
+    }
+    for (const request of pending.forms) {
+      if (seen.has(request.id)) continue;
+      seen.add(request.id);
+      approvals.push({ kind: 'form', id: request.id, sessionId, sessionTitle, label: formLabel(request), directory: pending.directory });
     }
   }
 
@@ -429,7 +409,8 @@ const buildSnapshot = (instanceName: string): TraySnapshot => {
 
 export const useTraySync = (): void => {
   React.useEffect(() => {
-    if (!isTrayPlatform() || !isTrayEnabled() || !canUseElectronDesktopIPC()) return;
+    if (!isTrayPlatform() || !canUseElectronDesktopIPC()) return;
+    const trayEnabled = isTrayEnabled();
 
     let disposed = false;
     let lastSerialized = '';
@@ -439,32 +420,11 @@ export const useTraySync = (): void => {
     let instanceName = '';
     const flushNow = () => {
       if (disposed) return;
-      const snapshot = buildSnapshot(instanceName);
+      const snapshot = buildSnapshot(instanceName, trayEnabled);
       const serialized = JSON.stringify(snapshot);
       if (serialized === lastSerialized) return;
       lastSerialized = serialized;
       void invokeDesktop('desktop_tray_update', snapshot);
-    };
-
-    void resolveInstanceName().then((name) => {
-      if (disposed) return;
-      instanceName = name;
-      flushNow();
-    });
-
-    // Seed + reconcile the cross-project status map. The live path is the
-    // global event stream (captured by the sync dispatcher); this poll covers
-    // sessions already busy before this window opened and any missed events.
-    // Cheap: ~ms per directory, bounded by the tray's visible session count.
-    const refreshGlobalStatus = async () => {
-      const targets = collectStatusPollDirectories();
-      await Promise.all([...targets.entries()].map(async ([directory, sessionIds]) => {
-        // null = fetch failed → keep that directory's current entries;
-        // {} = authoritative "everything here is idle".
-        const raw = await opencodeClient.getSessionStatusForDirectory(directory).catch(() => null);
-        if (disposed || raw === null) return;
-        applyGlobalSessionStatusSnapshot(directory, raw, sessionIds);
-      }));
     };
 
     // Coalesce bursts (e.g. token-by-token streaming updates a store rapidly)
@@ -477,6 +437,32 @@ export const useTraySync = (): void => {
         flushNow();
       }, FLUSH_DEBOUNCE_MS);
     };
+
+    const unsubscribeNotif = useNotificationStore.subscribe(() => scheduleFlush());
+    const unsubscribeGlobal = useGlobalSessionsStore.subscribe(() => scheduleFlush());
+    const unsubscribeUI = useUIStore.subscribe((state, previous) => {
+      if (state.dockBadgeEnabled !== previous.dockBadgeEnabled || state.notifyOnSubtasks !== previous.notifyOnSubtasks) {
+        scheduleFlush();
+      }
+    });
+    const stopBadgeSync = () => {
+      disposed = true;
+      if (flushTimer !== null) window.clearTimeout(flushTimer);
+      unsubscribeNotif();
+      unsubscribeGlobal();
+      unsubscribeUI();
+    };
+
+    if (!trayEnabled) {
+      flushNow();
+      return stopBadgeSync;
+    }
+
+    void resolveInstanceName().then((name) => {
+      if (disposed) return;
+      instanceName = name;
+      flushNow();
+    });
 
     // Event-driven: subscribe to each directory store so session create/update/
     // status changes propagate immediately, and to the registry so stores for
@@ -517,34 +503,20 @@ export const useTraySync = (): void => {
     }
     rebindStores();
 
-    const unsubscribeNotif = useNotificationStore.subscribe(() => scheduleFlush());
-    // The global store drives the session list. It updates instantly via SSE
-    // for the active directory; subscribe so those land in the tray at once.
-    const unsubscribeGlobal = useGlobalSessionsStore.subscribe(() => scheduleFlush());
     // Project labels and discovered worktrees feed the "project · branch"
     // subtitle; refresh the tray when they change (deduped, so cheap).
     const unsubscribeProjects = useProjectsStore.subscribe(() => scheduleFlush());
     const unsubscribeWorktrees = useSessionUIStore.subscribe(() => scheduleFlush());
     const unsubscribeGit = useGitStore.subscribe(() => scheduleFlush());
-    // The dock-badge toggle and subtask-notification preference live here; a
-    // change must re-push the snapshot so the badge appears/clears immediately.
-    const unsubscribeUI = useUIStore.subscribe(() => scheduleFlush());
     // Cross-project status map: fed live by the sync dispatcher from the global
-    // event stream, and seeded/reconciled by the poll below.
+    // event stream and seeded from the host by the root global-sessions poll.
+    // The tray used to poll `/session/status?directory=` for up to 20
+    // directories every 5 seconds, which made OpenCode create an instance for
+    // each of them; the host seed covers the same startup gap for free.
     const unsubscribeGlobalStatus = useGlobalSessionStatusStore.subscribe(() => scheduleFlush());
+    const unsubscribeGlobalRequests = useGlobalBlockingRequestsStore.subscribe(() => scheduleFlush());
     const unsubscribeSessionOrder = useSessionOrderingStore.subscribe(() => scheduleFlush());
     const unsubscribePinnedSessions = useSessionPinnedStore.subscribe(() => scheduleFlush());
-
-    // Make the tray self-sufficient: load the full cross-project list now
-    // (independent of the sidebar) and refresh it periodically so sessions from
-    // directories this client never opened still show up and stay current.
-    void ensureGlobalSessionsLoaded(getAllSyncSessions());
-    const refreshInterval = window.setInterval(() => { void refreshGlobalSessions(); }, GLOBAL_REFRESH_MS);
-
-    // Global busy/retry status: fetch now and poll, so unsynced sessions don't
-    // sit looking idle. Synced directories stay instant via their SSE stores.
-    void refreshGlobalStatus();
-    const globalStatusInterval = window.setInterval(() => { void refreshGlobalStatus(); }, POLL_INTERVAL_MS);
 
     // Usage: push to the tray whenever the quota store changes, and do one
     // initial fetch for enabled providers so the submenu isn't empty on launch.
@@ -564,18 +536,13 @@ export const useTraySync = (): void => {
     flushNow();
 
     return () => {
-      disposed = true;
-      if (flushTimer !== null) window.clearTimeout(flushTimer);
+      stopBadgeSync();
       window.clearInterval(interval);
-      window.clearInterval(refreshInterval);
-      window.clearInterval(globalStatusInterval);
-      unsubscribeNotif();
-      unsubscribeGlobal();
       unsubscribeProjects();
       unsubscribeWorktrees();
       unsubscribeGit();
-      unsubscribeUI();
       unsubscribeGlobalStatus();
+      unsubscribeGlobalRequests();
       unsubscribeSessionOrder();
       unsubscribePinnedSessions();
       unsubscribeQuota();
@@ -586,8 +553,8 @@ export const useTraySync = (): void => {
   }, []);
 
   React.useEffect(() => {
-    if (!isTrayPlatform() || !isTrayEnabled() || typeof window === 'undefined') return;
-    const bridge = (window as unknown as { __MITTRCRAFT_DESKTOP__?: DesktopBridgeGlobal }).__MITTRCRAFT_DESKTOP__;
+    if (!isTrayPlatform() || !isTrayEnabled() || !canUseElectronDesktopIPC()) return;
+    const bridge = (window as unknown as { __OPENCHAMBER_DESKTOP__?: DesktopBridgeGlobal }).__OPENCHAMBER_DESKTOP__;
     const listen = bridge?.listen;
     if (typeof listen !== 'function') return;
 

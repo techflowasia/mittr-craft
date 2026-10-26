@@ -1,18 +1,18 @@
 #!/usr/bin/env tsx
 
 /*
- * Port OpenCode themes into full MittrCraft theme JSON files.
+ * Port OpenCode themes into full OpenChamber theme JSON files.
  *
  * Usage:
  *   bun run themes:port:opencode --list
  *   bun run themes:port:opencode github cursor lucent-orng --force
- *   bun run themes:port:opencode aura --out-dir /tmp/mittrcraft-theme-port-test --force
+ *   bun run themes:port:opencode aura --out-dir /tmp/openchamber-theme-port-test --force
  *   bun run themes:port:opencode path/to/theme.json --stdout
  *
  * Expected result:
  *   - resolves theme colors from OpenCode desktop themes, TUI context themes,
- *     or existing MittrCraft theme JSON files
- *   - writes complete MittrCraft light/dark theme JSON output with solid core
+ *     or existing OpenChamber theme JSON files
+ *   - writes complete OpenChamber light/dark theme JSON output with solid core
  *     surfaces, interactive colors, syntax colors, and full schema coverage
  *   - produces files ready to register in presets without half-mapped tokens
  */
@@ -61,7 +61,7 @@ interface DesktopTheme {
   dark: ThemeVariant;
 }
 
-interface MittrCraftTheme {
+interface OpenChamberTheme {
   metadata: {
     id: string;
     name: string;
@@ -89,7 +89,7 @@ type ResolvedContextTheme = Record<string, string> & {
   thinkingOpacity?: number;
 };
 
-type ThemeSource = DesktopTheme | ContextThemeJson | MittrCraftTheme;
+type ThemeSource = DesktopTheme | ContextThemeJson | OpenChamberTheme;
 
 type ResolvedTheme = Record<string, ColorValue>;
 
@@ -287,7 +287,7 @@ function isContextTheme(value: ThemeSource): value is ContextThemeJson {
   return Boolean(value && typeof value === 'object' && 'theme' in value && !('light' in value) && !('metadata' in value));
 }
 
-function isMittrCraftTheme(value: ThemeSource): value is MittrCraftTheme {
+function isOpenChamberTheme(value: ThemeSource): value is OpenChamberTheme {
   return Boolean(value && typeof value === 'object' && 'metadata' in value && 'colors' in value);
 }
 
@@ -544,7 +544,7 @@ function syntheticTokensFromContextTheme(resolved: ResolvedContextTheme, mode: C
   };
 }
 
-function syntheticTokensFromMittrCraftTheme(theme: MittrCraftTheme): ResolvedTheme {
+function syntheticTokensFromOpenChamberTheme(theme: OpenChamberTheme): ResolvedTheme {
   const colors = theme.colors as Record<string, any>;
   const primary = colors.primary ?? {};
   const surface = colors.surface ?? {};
@@ -787,7 +787,7 @@ function buildTheme(
   variant: ThemeVariant,
   resolved: ResolvedTheme,
   mode: 'light' | 'dark',
-): MittrCraftTheme {
+): OpenChamberTheme {
   const isDark = mode === 'dark';
   const background = token(resolved, 'background-base', isDark ? '#151313' : '#FFFCF0');
   const foreground = token(resolved, 'text-base', isDark ? '#CECDC3' : '#100F0F');
@@ -979,10 +979,6 @@ function buildTheme(
         typing: weakText,
       },
       markdown: {
-        heading1: token(resolved, 'markdown-heading', primaryBase),
-        heading2: token(resolved, 'markdown-heading', primaryBase),
-        heading3: strongText,
-        heading4: foreground,
         link: token(resolved, 'markdown-link', primaryBase),
         linkHover: token(resolved, 'markdown-link-text', primaryHover),
         inlineCode: token(resolved, 'markdown-code', successBase),
@@ -1240,7 +1236,7 @@ async function main(): Promise<void> {
   }
 
   const resolveThemeVariant = await loadResolver(args.opencodeRoot);
-  const generated: Array<{ fileName: string; theme: MittrCraftTheme }> = [];
+  const generated: Array<{ fileName: string; theme: OpenChamberTheme }> = [];
 
   for (const spec of args.specs) {
     const themePath = await resolveThemeSpec(spec, args.opencodeRoot);
@@ -1297,7 +1293,7 @@ async function main(): Promise<void> {
       continue;
     }
 
-    if (isMittrCraftTheme(source)) {
+    if (isOpenChamberTheme(source)) {
       const colors = source.colors as Record<string, any>;
       const variant = syntheticVariantFromResolvedTheme({
         neutral: colors.surface?.background ?? '#151313',
@@ -1325,7 +1321,7 @@ async function main(): Promise<void> {
         theme: buildTheme(
           syntheticTheme,
           variant,
-          syntheticTokensFromMittrCraftTheme(source),
+          syntheticTokensFromOpenChamberTheme(source),
           source.metadata.variant,
         ),
       });

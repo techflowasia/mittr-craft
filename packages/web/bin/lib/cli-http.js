@@ -3,6 +3,10 @@ import { readDesktopLocalClientTokenFromSettings, readDesktopLocalPortFromSettin
 import { getInstanceFilePath, readInstanceOptions } from './cli-process.js';
 
 const UI_SESSION_COOKIE_NAME = 'oc_ui_session';
+// The server folds the request port into the cookie name (oc_ui_session_<port>)
+// so LAN instances on different ports don't share one jar (issue #2377). Accept
+// both the bare name and any per-port variant when extracting.
+const UI_SESSION_COOKIE_PATTERN = new RegExp(`(?:^|,\\s*)(${UI_SESSION_COOKIE_NAME}(?:_\\d+)?=[^;]+)`);
 
 function extractUiSessionCookie(response) {
   const values = [];
@@ -23,7 +27,7 @@ function extractUiSessionCookie(response) {
   }
 
   for (const setCookie of values) {
-    const match = setCookie.match(new RegExp(`(?:^|,\\s*)(${UI_SESSION_COOKIE_NAME}=[^;]+)`));
+    const match = setCookie.match(UI_SESSION_COOKIE_PATTERN);
     if (match?.[1]) return match[1];
   }
   return null;
@@ -204,7 +208,7 @@ async function fetchTunnelProvidersFromPort(port, fetchImpl = globalThis.fetch) 
     return null;
   }
   try {
-    const response = await fetchImpl(buildLocalUrl(port, '/api/mittrcraft/tunnel/providers'));
+    const response = await fetchImpl(buildLocalUrl(port, '/api/openchamber/tunnel/providers'));
     if (!response.ok) return null;
     const body = await response.json().catch(() => null);
     if (!body || !Array.isArray(body.providers)) return null;

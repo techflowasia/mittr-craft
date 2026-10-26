@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,8 +9,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '../../..');
 const electronDir = path.join(repoRoot, 'packages/electron');
-const preferredHmrUiPort = Number(process.env.MITTRCRAFT_HMR_UI_PORT || '5173');
-const preferredHmrApiPort = Number(process.env.MITTRCRAFT_HMR_API_PORT || '3901');
+const bundledOpenCodeCliDir = path.join(electronDir, 'resources', 'opencode-cli');
+const preferredHmrUiPort = Number(process.env.OPENCHAMBER_HMR_UI_PORT || '5173');
+const preferredHmrApiPort = Number(process.env.OPENCHAMBER_HMR_API_PORT || '3901');
 
 const quoteWindowsCommandArg = (value) => `"${String(value).replace(/"/g, '""')}"`;
 
@@ -37,12 +39,28 @@ function spawnProcess(command, args, options = {}) {
 
   return spawn(spawnCommand, spawnArgs, {
     cwd: repoRoot,
-    env: { ...process.env, MITTRCRAFT_ELECTRON_DEV: '1' },
+    env: { ...process.env, OPENCHAMBER_ELECTRON_DEV: '1' },
     stdio: 'inherit',
     detached: process.platform !== 'win32',
     windowsVerbatimArguments: isWindowsCommandScript,
     ...options,
   });
+}
+
+// Packaged builds resolve the staged OpenCode CLI through process.resourcesPath.
+// In development that path points at Electron's own resources, so hand the
+// staged directory to the backend explicitly: the dev app must run the same
+// OpenCode the release ships, not whatever `opencode` sits on PATH.
+function resolveBundledOpenCodeCliEnv() {
+  const binary = path.join(bundledOpenCodeCliDir, process.platform === 'win32' ? 'opencode.exe' : 'opencode');
+  if (!fs.existsSync(binary)) {
+    console.warn(
+      `[electron:dev] bundled OpenCode CLI missing at ${binary}; falling back to PATH. ` +
+        'Run `bun run --cwd packages/electron prepare:opencode-cli` to stage it.',
+    );
+    return {};
+  }
+  return { OPENCHAMBER_BUNDLED_OPENCODE_CLI_DIR: bundledOpenCodeCliDir };
 }
 
 function ensureElectronInstalled() {
@@ -68,7 +86,7 @@ function runProcess(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: repoRoot,
-      env: { ...process.env, MITTRCRAFT_ELECTRON_DEV: '1' },
+      env: { ...process.env, OPENCHAMBER_ELECTRON_DEV: '1' },
       stdio: 'inherit',
       ...options,
     });
@@ -197,12 +215,13 @@ async function stopChildTree(child) {
 }
 
 async function main() {
-  const useBundledUi = process.env.MITTRCRAFT_ELECTRON_USE_BUNDLED_UI === '1';
+  const useBundledUi = process.env.OPENCHAMBER_ELECTRON_USE_BUNDLED_UI === '1';
   let devServer = null;
   let hmrApiPort = '';
   let hmrUiPort = '';
 
   ensureElectronInstalled();
+  const bundledOpenCodeCliEnv = resolveBundledOpenCodeCliEnv();
 
   if (useBundledUi) {
     await runProcess('bun', ['run', '--cwd', 'packages/electron', 'build:web-assets']);
@@ -212,23 +231,25 @@ async function main() {
     devServer = spawnProcess('node', ['./scripts/dev-web-hmr.mjs'], {
       env: {
         ...process.env,
-        MITTRCRAFT_ELECTRON_DEV: '1',
-        MITTRCRAFT_HMR_UI_PORT: hmrUiPort,
-        MITTRCRAFT_HMR_API_PORT: hmrApiPort,
-        MITTRCRAFT_DISABLE_PWA_DEV: '1',
+        ...bundledOpenCodeCliEnv,
+        OPENCHAMBER_ELECTRON_DEV: '1',
+        OPENCHAMBER_HMR_UI_PORT: hmrUiPort,
+        OPENCHAMBER_HMR_API_PORT: hmrApiPort,
+        OPENCHAMBER_DISABLE_PWA_DEV: '1',
       },
     });
   }
 
-  const electron = spawnProcess('npx', ['electron', './main.mjs'], {
+  const electron = spawnProcess('bun', ['x', 'electron', './entry.mjs'], {
     cwd: electronDir,
     env: {
       ...process.env,
-      MITTRCRAFT_ELECTRON_DEV: '1',
-      ...(useBundledUi ? { MITTRCRAFT_ELECTRON_USE_BUNDLED_UI: '1' } : {}),
-      MITTRCRAFT_HMR_UI_PORT: hmrUiPort,
-      MITTRCRAFT_HMR_API_PORT: hmrApiPort,
-      MITTRCRAFT_DISABLE_PWA_DEV: '1',
+      ...bundledOpenCodeCliEnv,
+      OPENCHAMBER_ELECTRON_DEV: '1',
+      ...(useBundledUi ? { OPENCHAMBER_ELECTRON_USE_BUNDLED_UI: '1' } : {}),
+      OPENCHAMBER_HMR_UI_PORT: hmrUiPort,
+      OPENCHAMBER_HMR_API_PORT: hmrApiPort,
+      OPENCHAMBER_DISABLE_PWA_DEV: '1',
     },
   });
 

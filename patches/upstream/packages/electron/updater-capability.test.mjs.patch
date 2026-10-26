@@ -1,0 +1,50 @@
+diff --git a/packages/electron/updater-capability.test.mjs b/packages/electron/updater-capability.test.mjs
+index b612210b0..beba00ee7 100644
+--- a/packages/electron/updater-capability.test.mjs
++++ b/packages/electron/updater-capability.test.mjs
+@@ -1,7 +1,7 @@
+ import assert from 'node:assert/strict';
+ import test from 'node:test';
+ 
+-import { assertUpdaterCapability } from './updater-capability.mjs';
++import { assertUpdaterCapability, updateCheckWithoutFeed } from './updater-capability.mjs';
+ 
+ test('preserves updater behavior outside packaged Linux', () => {
+   assert.doesNotThrow(() => assertUpdaterCapability({ platform: 'darwin', packaged: true }));
+@@ -47,3 +47,36 @@ test('accepts a writable packaged AppImage', () => {
+     access: () => {},
+   }));
+ });
++
++test('updater is unavailable when product.updaterFeed is null', () => {
++  for (const platform of ['darwin', 'win32', 'linux']) {
++    assert.throws(
++      () => assertUpdaterCapability({ platform, packaged: true, updaterFeed: null }),
++      /not available in this build/,
++    );
++  }
++});
++
++test('updater stays available for a product that declares a feed', () => {
++  assert.doesNotThrow(() => assertUpdaterCapability({
++    platform: 'darwin',
++    packaged: true,
++    updaterFeed: { provider: 'generic', url: 'https://updates.example.test/' },
++  }));
++});
++
++test('a check without a feed answers that updates are off, not that the app is up to date', () => {
++  assert.deepEqual(updateCheckWithoutFeed({ updaterFeed: null, currentVersion: '2.1.1+mittr.1' }), {
++    available: false,
++    updatesDisabled: true,
++    currentVersion: '2.1.1+mittr.1',
++    version: null,
++    body: null,
++    date: null,
++  });
++});
++
++test('a check with a feed runs as before', () => {
++  assert.equal(updateCheckWithoutFeed({ currentVersion: '2.1.1' }), null);
++  assert.equal(updateCheckWithoutFeed({ updaterFeed: { provider: 'generic', url: 'https://updates.example.test/' }, currentVersion: '2.1.1' }), null);
++});

@@ -1,13 +1,13 @@
 export const streamDebugEnabled = (): boolean => {
     if (typeof window === 'undefined') return false;
     try {
-        return window.localStorage.getItem('mittrcraft_stream_debug') === '1';
+        return window.localStorage.getItem('openchamber_stream_debug') === '1';
     } catch {
         return false;
     }
 };
 
-const STREAM_PERF_STORAGE_KEY = 'mittrcraft_stream_perf';
+const STREAM_PERF_STORAGE_KEY = 'openchamber_stream_perf';
 
 type PerfCounter = {
     count: number;
@@ -41,13 +41,13 @@ export type StreamPerfSnapshot = {
 
 declare global {
     interface Window {
-        __mittrcraftStreamPerfState?: StreamPerfState;
-        __mittrcraftStreamPerformance?: {
+        __openchamberStreamPerfState?: StreamPerfState;
+        __openchamberStreamPerformance?: {
             setEnabled: (enabled: boolean) => void;
             reset: () => void;
             getSnapshot: () => StreamPerfSnapshot;
         };
-        __mittrcraftVsCodeStreamPerfState?: {
+        __openchamberVsCodeStreamPerfState?: {
             counters: Map<string, PerfCounter>;
             lastReportAt?: number;
             lastUpdatedAt?: number;
@@ -66,7 +66,19 @@ const readInitialStreamPerfEnabled = (): boolean => {
     }
 };
 
-let streamPerfEnabled = readInitialStreamPerfEnabled();
+let streamPerfProfileEnabled = readInitialStreamPerfEnabled();
+let streamPerfMemoryDebugEnabled = false;
+
+const isStreamPerfEnabled = (): boolean => streamPerfProfileEnabled || streamPerfMemoryDebugEnabled;
+
+const clearStreamPerfStateIfDisabled = (): void => {
+    if (isStreamPerfEnabled() || !globalThis.window) {
+        return;
+    }
+
+    delete window.__openchamberStreamPerfState;
+    delete window.__openchamberVsCodeStreamPerfState;
+};
 
 const nowMs = (): number => {
     if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
@@ -76,20 +88,20 @@ const nowMs = (): number => {
 };
 
 const ensureStreamPerfState = (): StreamPerfState | null => {
-    if (!streamPerfEnabled || typeof window === 'undefined') {
+    if (!isStreamPerfEnabled() || typeof window === 'undefined') {
         return null;
     }
 
-    if (!window.__mittrcraftStreamPerfState) {
+    if (!window.__openchamberStreamPerfState) {
         const startedAt = Date.now();
-        window.__mittrcraftStreamPerfState = {
+        window.__openchamberStreamPerfState = {
             counters: new Map<string, PerfCounter>(),
             startedAt,
             lastUpdatedAt: startedAt,
         };
     }
 
-    return window.__mittrcraftStreamPerfState;
+    return window.__openchamberStreamPerfState;
 };
 
 const normalizePerfEntries = (counters: Map<string, PerfCounter>): StreamPerfEntry[] => {
@@ -121,7 +133,7 @@ const updatePerfCounter = (metric: string, amount: number): void => {
 };
 
 export const setStreamPerfEnabled = (enabled: boolean): void => {
-    streamPerfEnabled = enabled;
+    streamPerfProfileEnabled = enabled;
     if (typeof window === 'undefined') {
         return;
     }
@@ -129,7 +141,7 @@ export const setStreamPerfEnabled = (enabled: boolean): void => {
     try {
         if (enabled) {
             window.localStorage.setItem(STREAM_PERF_STORAGE_KEY, '1');
-            window.__mittrcraftStreamPerfState = {
+            window.__openchamberStreamPerfState = {
                 counters: new Map<string, PerfCounter>(),
                 startedAt: Date.now(),
                 lastUpdatedAt: Date.now(),
@@ -138,11 +150,24 @@ export const setStreamPerfEnabled = (enabled: boolean): void => {
         }
 
         window.localStorage.removeItem(STREAM_PERF_STORAGE_KEY);
-        delete window.__mittrcraftStreamPerfState;
-        delete window.__mittrcraftVsCodeStreamPerfState;
+        clearStreamPerfStateIfDisabled();
     } catch {
         // ignore storage failures in debug helper
     }
+};
+
+export const setStreamPerfMemoryDebugEnabled = (enabled: boolean): void => {
+    streamPerfMemoryDebugEnabled = enabled;
+    if (typeof window === 'undefined') {
+        return;
+    }
+
+    if (enabled) {
+        ensureStreamPerfState();
+        return;
+    }
+
+    clearStreamPerfStateIfDisabled();
 };
 
 export const resetStreamPerf = (): void => {
@@ -150,17 +175,17 @@ export const resetStreamPerf = (): void => {
         return;
     }
 
-    if (streamPerfEnabled) {
-        window.__mittrcraftStreamPerfState = {
+    if (isStreamPerfEnabled()) {
+        window.__openchamberStreamPerfState = {
             counters: new Map<string, PerfCounter>(),
             startedAt: Date.now(),
             lastUpdatedAt: Date.now(),
         };
     }
 
-    if (window.__mittrcraftVsCodeStreamPerfState) {
-        window.__mittrcraftVsCodeStreamPerfState = {
-            ...window.__mittrcraftVsCodeStreamPerfState,
+    if (window.__openchamberVsCodeStreamPerfState) {
+        window.__openchamberVsCodeStreamPerfState = {
+            ...window.__openchamberVsCodeStreamPerfState,
             counters: new Map<string, PerfCounter>(),
             startedAt: Date.now(),
             lastUpdatedAt: Date.now(),
@@ -179,8 +204,8 @@ export const getStreamPerfSnapshot = (): StreamPerfSnapshot => {
         };
     }
 
-    const state = window.__mittrcraftStreamPerfState;
-    if (!streamPerfEnabled || !state) {
+    const state = window.__openchamberStreamPerfState;
+    if (!isStreamPerfEnabled() || !state) {
         return {
             enabled: false,
             startedAt: null,
@@ -210,8 +235,8 @@ export const getVsCodeStreamPerfSnapshot = (): StreamPerfSnapshot => {
         };
     }
 
-    const state = window.__mittrcraftVsCodeStreamPerfState;
-    if (!streamPerfEnabled || !state) {
+    const state = window.__openchamberVsCodeStreamPerfState;
+    if (!isStreamPerfEnabled() || !state) {
         return {
             enabled: false,
             startedAt: null,
@@ -241,14 +266,14 @@ export const streamPerfObserve = (metric: string, value: number): void => {
 };
 
 export const streamPerfMark = (metric: string): void => {
-    if (!streamPerfEnabled || typeof performance === 'undefined' || typeof performance.mark !== 'function') {
+    if (!isStreamPerfEnabled() || typeof performance === 'undefined' || typeof performance.mark !== 'function') {
         return;
     }
-    performance.mark(`mittrcraft.${metric}`);
+    performance.mark(`openchamber.${metric}`);
 };
 
 export const streamPerfMeasure = <T>(metric: string, fn: () => T): T => {
-    if (!streamPerfEnabled) {
+    if (!isStreamPerfEnabled()) {
         return fn();
     }
 
@@ -261,7 +286,7 @@ export const streamPerfMeasure = <T>(metric: string, fn: () => T): T => {
 };
 
 if (typeof window !== 'undefined') {
-    window.__mittrcraftStreamPerformance = {
+    window.__openchamberStreamPerformance = {
         setEnabled: setStreamPerfEnabled,
         reset: resetStreamPerf,
         getSnapshot: getStreamPerfSnapshot,

@@ -35,6 +35,7 @@ const ACCEPTED_ATTACHMENT_TYPES = [
   ".diff",
   ".docx",
   ".drawio",
+  ".excalidraw",
   ".env",
   ".erl",
   ".ex",
@@ -204,7 +205,7 @@ const TEXT_MIMES = new Set([
 const ATTACHMENT_SAMPLE_BYTES = 4096
 const DOCUMENT_EXTENSIONS = new Set(["docx", "pptx", "xlsx", "odt", "odp", "ods"])
 const REDACTED = "[REDACTED]"
-const OMITTED = "[OMITTED BY MITTRCRAFT]"
+const OMITTED = "[OMITTED BY OPENCHAMBER]"
 const SENSITIVE_NAMES = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[-_]?key|client[-_]?secret|password|secret|access[-_]?token|refresh[-_]?token|id[-_]?token|token)$/i
 
 type PreparedAttachmentFile = {
@@ -216,6 +217,8 @@ const extensionOf = (name: string): string => {
   const index = name.lastIndexOf(".")
   return index === -1 ? "" : name.slice(index + 1).toLowerCase()
 }
+
+export const isDocumentAttachmentFilename = (name: string): boolean => DOCUMENT_EXTENSIONS.has(extensionOf(name))
 
 const declaredMimeOf = (file: File): string => file.type.split(";", 1)[0]?.trim().toLowerCase() ?? ""
 
@@ -392,7 +395,7 @@ export const prepareAttachmentFiles = (
   file: File,
   reservedFilenames: Iterable<string> = [],
 ): PreparedAttachmentFile[] | Promise<PreparedAttachmentFile[] | undefined> | undefined => {
-  if (!DOCUMENT_EXTENSIONS.has(extensionOf(file.name))) {
+  if (!isDocumentAttachmentFilename(file.name)) {
     const prepared = prepareAttachmentFile(file)
     if (prepared instanceof Promise) return prepared.then((output) => output ? [output] : undefined)
     return prepared ? [prepared] : undefined

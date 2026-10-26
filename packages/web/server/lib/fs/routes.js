@@ -1,4 +1,6 @@
 import { createRealpathCache } from '../path-realpath-cache.js';
+import { redactGitText } from '../git/redaction.js';
+import { resolveByteRange } from './byte-range.js';
 import nodeFsPromises from 'node:fs/promises';
 import nodePath from 'node:path';
 
@@ -14,6 +16,49 @@ const pruneOutsideFileGrants = () => {
       outsideFileGrants.delete(token);
     }
   }
+};
+
+const PREVIEW_GRANT_IDLE_TTL_MS = 10 * 60 * 1000;
+const PREVIEW_GRANT_MAX_ENTRIES = 256;
+const PREVIEW_SANDBOX_POLICY = 'sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads';
+
+/**
+ * Grants for HTML previews. A grant names the workspace base the page's files
+ * resolve against and the read root its script may read bytes from. It stays
+ * valid while the page keeps loading files and lapses after ten idle minutes.
+ */
+const createPreviewGrants = ({ crypto = globalThis.crypto, now = () => Date.now() } = {}) => {
+  const grants = new Map();
+
+  const prune = () => {
+    const at = now();
+    for (const [id, grant] of grants.entries()) {
+      if (grant.expiresAt <= at) grants.delete(id);
+    }
+    while (grants.size >= PREVIEW_GRANT_MAX_ENTRIES) {
+      grants.delete(grants.keys().next().value);
+    }
+  };
+
+  return {
+    mint: ({ base, readRoot }) => {
+      prune();
+      const grant = crypto.randomUUID();
+      const expiresAt = now() + PREVIEW_GRANT_IDLE_TTL_MS;
+      grants.set(grant, { base, readRoot, expiresAt });
+      return { grant, expiresAt };
+    },
+    use: (id) => {
+      const grant = grants.get(id);
+      if (!grant) return null;
+      if (grant.expiresAt <= now()) {
+        grants.delete(id);
+        return null;
+      }
+      grant.expiresAt = now() + PREVIEW_GRANT_IDLE_TTL_MS;
+      return grant;
+    },
+  };
 };
 
 const isOsPermissionError = (error) => (
@@ -67,27 +112,8 @@ export const mintOutsideFileGrant = async (targetPath, {
   };
 };
 
-const resolveOutsideFileGrant = async ({ token, targetPath, scope, fsPromises }) => {
-  pruneOutsideFileGrants();
-  if (typeof token !== 'string' || !token.trim()) {
-    return { ok: false, error: 'Outside workspace file access requires a grant' };
-  }
-  const grant = outsideFileGrants.get(token.trim());
-  if (!grant) {
-    return { ok: false, error: 'Outside workspace file grant is invalid or expired' };
-  }
-  if (!grant.scopes.has(scope)) {
-    return { ok: false, error: 'Outside workspace file grant does not allow this operation' };
-  }
-  const canonicalPath = await fsPromises.realpath(targetPath);
-  if (canonicalPath !== grant.canonicalPath) {
-    return { ok: false, error: 'Outside workspace file grant does not match requested path' };
-  }
-  return { ok: true, base: grant.base, resolved: canonicalPath, granted: true };
-};
-
 const createCommandTimeoutMs = () => {
-  const raw = Number(process.env.MITTRCRAFT_FS_EXEC_TIMEOUT_MS);
+  const raw = Number(process.env.OPENCHAMBER_FS_EXEC_TIMEOUT_MS);
   if (Number.isFinite(raw) && raw > 0) return raw;
   return 5 * 60 * 1000;
 };
@@ -97,15 +123,21 @@ const createCommandTimeoutMs = () => {
 // absorbs the burst of identical lookups a fresh client (e.g. right after a
 // page reload) fires for every project. Set to 0 to disable caching.
 const createGitReadCacheTtlMs = () => {
-  const raw = Number(process.env.MITTRCRAFT_GIT_READ_CACHE_TTL_MS);
+  const raw = Number(process.env.OPENCHAMBER_GIT_READ_CACHE_TTL_MS);
   if (Number.isFinite(raw) && raw >= 0) return raw;
   return 30 * 1000;
 };
 
 const createGitCheckIgnoreTimeoutMs = () => {
-  const raw = Number(process.env.MITTRCRAFT_GIT_CHECK_IGNORE_TIMEOUT_MS);
+  const raw = Number(process.env.OPENCHAMBER_GIT_CHECK_IGNORE_TIMEOUT_MS);
   if (Number.isFinite(raw) && raw >= 0) return raw;
   return 2500;
+};
+
+const createUploadMaxBytes = () => {
+  const raw = Number(process.env.OPENCHAMBER_FS_UPLOAD_MAX_BYTES);
+  if (Number.isFinite(raw) && raw > 0) return Math.floor(raw);
+  return 100 * 1024 * 1024;
 };
 
 const FILE_MIME_MAP = Object.freeze({
@@ -119,14 +151,30 @@ const FILE_MIME_MAP = Object.freeze({
   '.xml': 'application/xml',
   '.txt': 'text/plain',
   '.md': 'text/markdown',
+  '.mmd': 'text/plain',
   '.pdf': 'application/pdf',
   '.csv': 'text/csv',
+  '.tsv': 'text/tab-separated-values',
   '.woff2': 'font/woff2',
   '.woff': 'font/woff',
   '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
   '.eot': 'application/vnd.ms-fontobject',
   '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.wav': 'audio/wav',
+  '.flac': 'audio/flac',
+  '.ogg': 'audio/ogg',
+  '.oga': 'audio/ogg',
+  '.opus': 'audio/ogg',
+  '.weba': 'audio/webm',
   '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.ogv': 'video/ogg',
+  '.mkv': 'video/x-matroska',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
@@ -139,6 +187,27 @@ const FILE_MIME_MAP = Object.freeze({
 });
 
 const MAX_SERVE_BYTES = 100 * 1024 * 1024;
+
+const streamUploadBody = async (req, handle, maxBytes) => {
+  let received = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    received += buffer.length;
+    if (received > maxBytes) {
+      req.resume?.();
+      throw Object.assign(new Error('Upload exceeds the maximum allowed size'), { uploadTooLarge: true });
+    }
+
+    let offset = 0;
+    while (offset < buffer.length) {
+      const { bytesWritten } = await handle.write(buffer, offset, buffer.length - offset, null);
+      if (!Number.isFinite(bytesWritten) || bytesWritten <= 0) {
+        throw new Error('Failed to write upload');
+      }
+      offset += bytesWritten;
+    }
+  }
+};
 
 // Only deterministic, side-effect-free git plumbing path queries are cacheable.
 // Anything outside this allowlist (including any non-git command) runs normally
@@ -169,7 +238,24 @@ const isPathWithinRoot = (resolvedPath, rootPath, path, os) => {
   return true;
 };
 
-const resolveWorkspacePath = ({ targetPath, baseDirectory, path, os, normalizeDirectoryPath, mittrcraftUserConfigRoot }) => {
+// A chats root may not exist until the first draft. Resolve its existing
+// ancestor so both that first mkdir and later OpenCode sessions use disk casing.
+const canonicalDirectoryPath = async (directory, fsPromises, path) => {
+  let ancestor = path.resolve(directory);
+  const missing = [];
+  for (;;) {
+    try {
+      return path.join(await fsPromises.realpath(ancestor), ...missing);
+    } catch (error) {
+      const parent = path.dirname(ancestor);
+      if (error.code !== 'ENOENT' || parent === ancestor) throw error;
+      missing.unshift(path.basename(ancestor));
+      ancestor = parent;
+    }
+  }
+};
+
+const resolveWorkspacePath = ({ targetPath, baseDirectory, path, os, normalizeDirectoryPath, managedRoots }) => {
   const normalized = normalizeDirectoryPath(targetPath);
   if (!normalized || typeof normalized !== 'string') {
     return { ok: false, error: 'Path is required' };
@@ -182,8 +268,12 @@ const resolveWorkspacePath = ({ targetPath, baseDirectory, path, os, normalizeDi
     return { ok: true, base: resolvedBase, resolved };
   }
 
-  if (isPathWithinRoot(resolved, mittrcraftUserConfigRoot, path, os)) {
-    return { ok: true, base: path.resolve(mittrcraftUserConfigRoot), resolved };
+  // Managed roots (config root, relocated chats root) stay valid targets
+  // even outside the active workspace.
+  for (const root of managedRoots) {
+    if (isPathWithinRoot(resolved, root, path, os)) {
+      return { ok: true, base: path.resolve(root), resolved };
+    }
   }
 
   return { ok: false, error: 'Path is outside of active workspace' };
@@ -222,7 +312,7 @@ const resolveWorkspacePathFromWorktrees = async ({ targetPath, baseDirectory, pa
   return { ok: false, error: 'Path is outside of active workspace' };
 };
 
-const resolveWorkspacePathFromContext = async ({ req, targetPath, resolveProjectDirectory, path, os, normalizeDirectoryPath, mittrcraftUserConfigRoot }) => {
+const resolveWorkspacePathFromContext = async ({ req, targetPath, resolveProjectDirectory, path, os, fsPromises, normalizeDirectoryPath, managedRoots }) => {
   const resolvedProject = await resolveProjectDirectory(req);
   if (!resolvedProject.directory) {
     return { ok: false, error: resolvedProject.error || 'Active workspace is required' };
@@ -234,19 +324,157 @@ const resolveWorkspacePathFromContext = async ({ req, targetPath, resolveProject
     path,
     os,
     normalizeDirectoryPath,
-    mittrcraftUserConfigRoot,
+    managedRoots,
   });
   if (resolved.ok || resolved.error !== 'Path is outside of active workspace') {
     return resolved;
   }
 
-  return resolveWorkspacePathFromWorktrees({
+  // The active project directory is validated with fs.realpath, so the base is
+  // canonical while the client (and the file tree) addresses files under the
+  // user-visible root, which may itself be a symlink. Retry against the raw
+  // directory the client asked for so those paths stay addressable. Symlink
+  // resolution still happens afterwards, and the routes that need canonical
+  // containment re-check it against this base.
+  const requestedBase = resolvedProject.requestedDirectory;
+  if (typeof requestedBase === 'string' && requestedBase && requestedBase !== resolvedProject.directory) {
+    const lexical = resolveWorkspacePath({
+      targetPath,
+      baseDirectory: requestedBase,
+      path,
+      os,
+      normalizeDirectoryPath,
+      managedRoots,
+    });
+    if (lexical.ok) {
+      return lexical;
+    }
+  }
+
+  // Keep legacy lexical paths valid, but also accept the canonical roots
+  // returned by /fs/home. Never infer filesystem identity from letter case.
+  let resolutionError;
+  for (const root of managedRoots) {
+    try {
+      const canonicalRoot = await canonicalDirectoryPath(root, fsPromises, path);
+      const resolvedPath = path.resolve(normalizeDirectoryPath(targetPath));
+      if (isPathWithinRoot(resolvedPath, canonicalRoot, path, os)) {
+        return { ok: true, base: canonicalRoot, resolved: resolvedPath };
+      }
+    } catch (error) {
+      resolutionError ??= error;
+    }
+  }
+  const worktree = await resolveWorkspacePathFromWorktrees({
     targetPath,
     baseDirectory: resolvedProject.directory,
     path,
     os,
     normalizeDirectoryPath,
   });
+  if (worktree.ok) return worktree;
+  if (resolutionError) throw resolutionError;
+  return worktree;
+};
+
+// Nested repository discovery bounds: only shallow walks are useful for the
+// Git tab's "pick a repository" picker, and deep/monorepo trees can explode
+// otherwise. Directories deeper than maxDepth or beyond the visit cap are
+// silently not searched.
+const GIT_DIRS_MAX_DEPTH = 3;
+const GIT_DIRS_MAX_DIRS = 100;
+const GIT_DIRS_SKIP_LIST = new Set(['node_modules', 'dist', 'build', '.venv', 'target', '.next']);
+
+// Walks rootPath and returns every nested git repository path (a directory
+// containing a `.git` entry — a directory, a worktree pointer file, or a
+// symlink). A repository boundary stops descent: nested repos inside repos
+// are not reported. The root itself, when it is a repo, yields no results.
+// Symlinked directories are followed, the way the file tree follows them: a
+// parent folder of links to repositories kept elsewhere is a common way to
+// group them into one project. Each real directory is walked once, so a link
+// loop or two links to one repository cannot repeat it, and repositories are
+// reported under the path the link gives them inside the project.
+const findGitDirectories = async ({ rootPath, fsPromises, path: pathModule, maxDepth, maxDirs }) => {
+  const results = [];
+  const walkedRealPaths = new Set();
+  let visited = 0;
+
+  const walk = async (dir, depth) => {
+    if (visited >= maxDirs) {
+      return;
+    }
+
+    let realPath;
+    try {
+      realPath = await fsPromises.realpath(dir);
+    } catch (error) {
+      if (dir === rootPath) {
+        throw error;
+      }
+      return;
+    }
+    if (walkedRealPaths.has(realPath)) {
+      return;
+    }
+    walkedRealPaths.add(realPath);
+
+    let dirents;
+    try {
+      dirents = await fsPromises.readdir(dir, { withFileTypes: true });
+    } catch (error) {
+      // Unreadable subtree — skip it unless it is the root itself, which the
+      // route maps to 403/404/500 through the shared error handling.
+      if (dir === rootPath) {
+        throw error;
+      }
+      return;
+    }
+    visited += 1;
+
+    let isRepoBoundary = false;
+    const subdirectories = [];
+    for (const dirent of dirents) {
+      if (dirent.name === '.git') {
+        isRepoBoundary = true;
+        continue;
+      }
+      if (!dirent.isDirectory() && !dirent.isSymbolicLink()) {
+        continue;
+      }
+      if (GIT_DIRS_SKIP_LIST.has(dirent.name)) {
+        continue;
+      }
+      if (depth >= maxDepth) {
+        continue;
+      }
+      if (dirent.isSymbolicLink()) {
+        // A link to a file, or a dangling one, is not a place to look.
+        const target = await fsPromises.stat(pathModule.join(dir, dirent.name)).catch(() => null);
+        if (!target?.isDirectory()) {
+          continue;
+        }
+      }
+      subdirectories.push(dirent.name);
+    }
+
+    if (isRepoBoundary) {
+      if (dir !== rootPath) {
+        results.push(dir);
+      }
+      return;
+    }
+
+    subdirectories.sort();
+    for (const name of subdirectories) {
+      if (visited >= maxDirs) {
+        break;
+      }
+      await walk(pathModule.join(dir, name), depth + 1);
+    }
+  };
+
+  await walk(rootPath, 0);
+  return results;
 };
 
 const deriveCloneDirectoryName = (remoteUrl) => {
@@ -257,53 +485,14 @@ const deriveCloneDirectoryName = (remoteUrl) => {
   return match?.[1]?.trim() || '';
 };
 
-const resolveCloneGitIdentity = async (gitIdentityId) => {
-  const id = typeof gitIdentityId === 'string' ? gitIdentityId.trim() : '';
-  if (!id) return null;
-  const { getProfile, getGlobalIdentity } = await import('../git/index.js');
-  if (id === 'global') {
-    const globalIdentity = await getGlobalIdentity();
-    if (!globalIdentity?.userName || !globalIdentity?.userEmail) return null;
-    return {
-      id: 'global',
-      name: 'Global Identity',
-      userName: globalIdentity.userName,
-      userEmail: globalIdentity.userEmail,
-      sshKey: globalIdentity.sshCommand ? globalIdentity.sshCommand.replace('ssh -i ', '') : null,
-    };
-  }
-  return getProfile(id) || null;
-};
-
-const escapeCloneSshKeyPath = (sshKeyPath) => {
-  const raw = String(sshKeyPath || '').trim();
-  if (!raw) return '';
-  const normalized = process.platform === 'win32' ? raw.replace(/\\/g, '/') : raw;
-  const dangerousChars = /[`$!"';&|<>(){}[\]*?#~]/;
-  if (dangerousChars.test(normalized)) {
-    throw new Error(`SSH key path contains invalid characters: ${raw}`);
-  }
-  if (process.platform === 'win32') {
-    const driveMatch = normalized.match(/^([A-Za-z]):\//);
-    const unixPath = driveMatch ? `/${driveMatch[1].toLowerCase()}${normalized.slice(2)}` : normalized;
-    return `'${unixPath}'`;
-  }
-  return `'${normalized.replace(/'/g, "'\\''")}'`;
-};
-
-const resolveReadPathFromContext = async ({ req, targetPath, scope, resolveProjectDirectory, path, os, fsPromises, normalizeDirectoryPath, mittrcraftUserConfigRoot }) => {
+const resolveReadPathFromContext = async ({ req, targetPath, scope, resolveProjectDirectory, path, os, fsPromises, normalizeDirectoryPath, managedRoots }) => {
   if (req.query?.allowOutsideWorkspace === 'true') {
     const normalized = normalizeDirectoryPath(targetPath);
     if (!normalized || typeof normalized !== 'string') {
       return { ok: false, error: 'Path is required' };
     }
     const resolved = path.resolve(normalized);
-    return resolveOutsideFileGrant({
-      token: req.query?.outsideFileGrant,
-      targetPath: resolved,
-      scope,
-      fsPromises,
-    });
+    return { ok: true, base: path.dirname(resolved), resolved };
   }
 
   return resolveWorkspacePathFromContext({
@@ -312,8 +501,9 @@ const resolveReadPathFromContext = async ({ req, targetPath, scope, resolveProje
     resolveProjectDirectory,
     path,
     os,
+    fsPromises,
     normalizeDirectoryPath,
-    mittrcraftUserConfigRoot,
+    managedRoots,
   });
 };
 
@@ -398,8 +588,17 @@ export const registerFsRoutes = (app, dependencies) => {
     resolveProjectDirectory,
     buildAugmentedPath,
     resolveGitBinaryForSpawn,
-    mittrcraftUserConfigRoot,
+    openchamberUserConfigRoot,
+    managedChatsRoot,
+    cloneRepository,
   } = dependencies;
+  // Chat worktrees may live outside every project workspace; both managed
+  // roots stay valid filesystem targets.
+  const chatsRoot = typeof managedChatsRoot === 'string' && managedChatsRoot.trim()
+    ? path.resolve(managedChatsRoot.trim())
+    : path.join(openchamberUserConfigRoot, 'chats');
+  const managedRoots = [path.resolve(openchamberUserConfigRoot), chatsRoot];
+  const previewGrants = createPreviewGrants({ crypto });
   const realpathCache = createRealpathCache({
     realpath: fsPromises.realpath.bind(fsPromises),
   });
@@ -572,13 +771,22 @@ export const registerFsRoutes = (app, dependencies) => {
     job.updatedAt = Date.now();
   };
 
-  app.get('/api/fs/home', (_req, res) => {
+  app.get('/api/fs/home', async (_req, res) => {
     try {
       const home = os.homedir();
       if (!home || typeof home !== 'string' || home.length === 0) {
         return res.status(500).json({ error: 'Failed to resolve home directory' });
       }
-      return res.json({ home });
+      const [canonicalChatsRoot, canonicalLegacyChatsRoot] = await Promise.all([
+        canonicalDirectoryPath(chatsRoot, fsPromises, path),
+        canonicalDirectoryPath(path.join(openchamberUserConfigRoot, 'chats'), fsPromises, path).catch((error) => {
+          // A relocated root must remain usable if the old root is inaccessible.
+          // Omit only this optional alias; clients retain exact legacy matching.
+          console.warn('Failed to resolve legacy chats root:', error);
+          return undefined;
+        }),
+      ]);
+      return res.json({ home, chatsRoot, canonicalChatsRoot, canonicalLegacyChatsRoot });
     } catch (error) {
       console.error('Failed to resolve home directory:', error);
       return res.status(500).json({ error: (error && error.message) || 'Failed to resolve home directory' });
@@ -598,13 +806,14 @@ export const registerFsRoutes = (app, dependencies) => {
         return res.status(403).json({ error: 'Outside workspace directory creation requires a grant' });
       } else {
         const resolved = await resolveWorkspacePathFromContext({
+          fsPromises,
           req,
           targetPath: dirPath,
           resolveProjectDirectory,
           path,
           os,
           normalizeDirectoryPath,
-          mittrcraftUserConfigRoot,
+          managedRoots,
         });
         if (!resolved.ok) {
           return res.status(400).json({ error: resolved.error });
@@ -624,10 +833,17 @@ export const registerFsRoutes = (app, dependencies) => {
   });
 
   app.post('/api/fs/clone', async (req, res) => {
+    if (req.body?.unverifiedConfirmed !== true) {
+      return res.status(409).json({ code: 'GIT_NETWORK_OPERATION_REQUIRED',
+        error: 'Use a planned clone with explicit transport selection, or explicitly confirm unverified System Git.' });
+    }
     try {
       const { remoteUrl, destinationPath, gitIdentityId } = req.body ?? {};
       const remote = typeof remoteUrl === 'string' ? remoteUrl.trim() : '';
       const destination = typeof destinationPath === 'string' ? destinationPath.trim() : '';
+      const selectedGitIdentityId = Object.prototype.toString.call(gitIdentityId) === '[object String]'
+        ? gitIdentityId.trim() || undefined
+        : undefined;
       if (!remote) {
         return res.status(400).json({ error: 'Repository URL is required' });
       }
@@ -670,15 +886,6 @@ export const registerFsRoutes = (app, dependencies) => {
         return res.status(400).json({ error: 'Destination path must include a directory name' });
       }
 
-      const identity = await resolveCloneGitIdentity(gitIdentityId);
-      const gitArgs = ['clone', '--', remote, directoryName];
-      const sshKeyPath = typeof identity?.sshKey === 'string' ? identity.sshKey.trim() : '';
-      if (sshKeyPath) {
-        gitArgs.unshift(`core.sshCommand=ssh -i ${escapeCloneSshKeyPath(sshKeyPath)} -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=accept-new`);
-        gitArgs.unshift('-c');
-      }
-
-      await fsPromises.mkdir(parentPath, { recursive: true });
       try {
         await fsPromises.access(resolvedDestination);
         return res.status(409).json({ error: 'Destination path already exists' });
@@ -688,47 +895,77 @@ export const registerFsRoutes = (app, dependencies) => {
         }
       }
 
-      const output = await new Promise((resolve, reject) => {
-        const child = spawn(resolveGitBinaryForSpawn(), gitArgs, {
-          cwd: parentPath,
-          windowsHide: true,
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env: {
-            ...process.env,
-            PATH: buildAugmentedPath ? buildAugmentedPath(process.env.PATH || '') : process.env.PATH,
-            GIT_TERMINAL_PROMPT: '0',
-          },
-        });
-
-        let stdout = '';
-        let stderr = '';
-        child.stdout.on('data', (data) => { stdout += data.toString(); });
-        child.stderr.on('data', (data) => { stderr += data.toString(); });
-        child.on('error', reject);
-        child.on('close', (code) => {
-          const combined = `${stdout}\n${stderr}`.trim();
-          if (code === 0) {
-            resolve(combined);
-            return;
-          }
-          const message = combined || `git clone failed with exit code ${code}`;
-          reject(new Error(message));
-        });
+      if (!(cloneRepository instanceof Function)) {
+        return res.status(501).json({ error: 'Repository cloning is unavailable' });
+      }
+      const result = await cloneRepository({
+        remoteUrl: remote,
+        destinationPath: resolvedDestination,
+        gitIdentityId: selectedGitIdentityId,
+        unverifiedConfirmed: true,
       });
-
-      if (identity?.userName && identity?.userEmail) {
-        try {
-          const { setLocalIdentity } = await import('../git/index.js');
-          await setLocalIdentity(resolvedDestination, identity);
-        } catch (error) {
-          console.warn('Failed to apply git identity after clone:', error);
-        }
+      if (result.state === 'partial' && result.completedSteps?.includes('checked-out')) {
+        return res.status(200).json({ success: false, state: 'partial', setupRequired: true,
+          path: resolvedDestination, operationId: result.operationId,
+          error: 'Checkout retained. Open Git setup to finish; do not clone again.' });
+      }
+      if (result.state !== 'succeeded') {
+        const conflict = result.error?.code === 'CONFLICT';
+        const message = conflict
+          ? 'Destination path already exists'
+          : redactGitText(result.error?.message || 'Failed to clone repository', {
+            secrets: [remote, resolvedDestination],
+          });
+        return res.status(conflict ? 409 : 500).json({ error: message });
       }
 
-      return res.json({ success: true, path: resolvedDestination, output });
+      return res.json({
+        success: true,
+        path: resolvedDestination,
+        output: redactGitText(result.output || '', { secrets: [remote, resolvedDestination] }),
+      });
     } catch (error) {
-      console.error('Failed to clone repository:', error);
-      return res.status(500).json({ error: error.message || 'Failed to clone repository' });
+      if (error?.code === 'INVALID_GIT_IDENTITY') {
+        return res.status(400).json({ error: 'Selected Git identity is unavailable' });
+      }
+      if (error?.status === 400 || error?.code === 'INVALID_GIT_NETWORK_OPERATION') {
+        return res.status(400).json({ error: 'Repository URL is invalid' });
+      }
+      if (error?.code === 'CONFLICT' || error?.status === 409) {
+        return res.status(409).json({ error: 'Destination path already exists' });
+      }
+      return res.status(500).json({ error: 'Failed to clone repository' });
+    }
+  });
+
+  app.get('/api/fs/directory-stat', async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const paths = new URL(req.url, 'http://openchamber.local').searchParams.getAll('path');
+    const directoryPath = paths.length === 1 ? paths[0].trim() : '';
+    if (!directoryPath) {
+      return res.status(400).json({ error: 'Path is required' });
+    }
+
+    try {
+      // Directory discovery uses the same path policy as /api/fs/list, including
+      // paths outside the current workspace. stat follows symlinks without readdir.
+      const resolvedPath = path.resolve(normalizeDirectoryPath(directoryPath));
+      const stats = await fsPromises.stat(resolvedPath);
+      if (!stats.isDirectory()) {
+        return res.status(400).json({ error: 'Specified path is not a directory', reason: 'not-directory' });
+      }
+      return res.json({ isDirectory: true });
+    } catch (error) {
+      if (error.code === 'ENOENT' || error.code === 'ENOTDIR') {
+        return res.status(error.code === 'ENOENT' ? 404 : 400).json({
+          error: error.code === 'ENOENT' ? 'Directory not found' : 'Specified path is not a directory',
+          reason: error.code === 'ENOENT' ? 'not-found' : 'not-directory',
+        });
+      }
+      if (isOsPermissionError(error)) {
+        return sendOsPermissionDenied(res, 'Access to directory denied');
+      }
+      return res.status(500).json({ error: 'Failed to stat directory' });
     }
   });
 
@@ -749,7 +986,7 @@ export const registerFsRoutes = (app, dependencies) => {
         os,
         fsPromises,
         normalizeDirectoryPath,
-        mittrcraftUserConfigRoot,
+        managedRoots,
       });
       if (!resolved.ok) {
         if (req.query?.allowOutsideWorkspace === 'true') {
@@ -758,14 +995,7 @@ export const registerFsRoutes = (app, dependencies) => {
         return res.status(400).json({ error: resolved.error });
       }
 
-      const [canonicalPath, canonicalBase] = await Promise.all([
-        fsPromises.realpath(resolved.resolved),
-        fsPromises.realpath(resolved.base).catch(() => path.resolve(resolved.base)),
-      ]);
-
-      if (!isPathWithinRoot(canonicalPath, canonicalBase, path, os)) {
-        return res.status(403).json({ error: 'Access to file denied' });
-      }
+      const canonicalPath = await fsPromises.realpath(resolved.resolved);
 
       const stats = await fsPromises.stat(canonicalPath);
       if (!stats.isFile()) {
@@ -806,7 +1036,7 @@ export const registerFsRoutes = (app, dependencies) => {
         os,
         fsPromises,
         normalizeDirectoryPath,
-        mittrcraftUserConfigRoot,
+        managedRoots,
       });
       if (!resolved.ok) {
         if (req.query?.allowOutsideWorkspace === 'true') {
@@ -815,14 +1045,7 @@ export const registerFsRoutes = (app, dependencies) => {
         return res.status(400).json({ error: resolved.error });
       }
 
-      const [canonicalPath, canonicalBase] = await Promise.all([
-        fsPromises.realpath(resolved.resolved),
-        fsPromises.realpath(resolved.base).catch(() => path.resolve(resolved.base)),
-      ]);
-
-      if (!isPathWithinRoot(canonicalPath, canonicalBase, path, os)) {
-        return res.status(403).json({ error: 'Access to file denied' });
-      }
+      const canonicalPath = await fsPromises.realpath(resolved.resolved);
 
       const stats = await fsPromises.stat(canonicalPath);
       if (!stats.isFile()) {
@@ -877,7 +1100,7 @@ export const registerFsRoutes = (app, dependencies) => {
         os,
         fsPromises,
         normalizeDirectoryPath,
-        mittrcraftUserConfigRoot,
+        managedRoots,
       });
       if (!resolved.ok) {
         if (req.query?.allowOutsideWorkspace === 'true') {
@@ -886,14 +1109,7 @@ export const registerFsRoutes = (app, dependencies) => {
         return res.status(400).json({ error: resolved.error });
       }
 
-      const [canonicalPath, canonicalBase] = await Promise.all([
-        fsPromises.realpath(resolved.resolved),
-        fsPromises.realpath(resolved.base).catch(() => path.resolve(resolved.base)),
-      ]);
-
-      if (!isPathWithinRoot(canonicalPath, canonicalBase, path, os)) {
-        return res.status(403).json({ error: 'Access to file denied' });
-      }
+      const canonicalPath = await fsPromises.realpath(resolved.resolved);
 
       const stats = await fsPromises.stat(canonicalPath);
       if (!stats.isFile()) {
@@ -901,19 +1117,7 @@ export const registerFsRoutes = (app, dependencies) => {
       }
 
       const ext = path.extname(canonicalPath).toLowerCase();
-      const mimeMap = {
-        '.png': 'image/png',
-        '.jpg': 'image/jpeg',
-        '.jpeg': 'image/jpeg',
-        '.gif': 'image/gif',
-        '.svg': 'image/svg+xml',
-        '.webp': 'image/webp',
-        '.ico': 'image/x-icon',
-        '.bmp': 'image/bmp',
-        '.avif': 'image/avif',
-        '.pdf': 'application/pdf',
-      };
-      const mimeType = mimeMap[ext] || 'application/octet-stream';
+      const mimeType = FILE_MIME_MAP[ext] || 'application/octet-stream';
 
       const download = req.query.download === 'true';
       if (download) {
@@ -927,11 +1131,35 @@ export const registerFsRoutes = (app, dependencies) => {
         res.setHeader('Content-Disposition', `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`);
       }
 
-      const content = await fsPromises.readFile(canonicalPath);
       res.setHeader('Cache-Control', 'no-store');
-      if (resolved.granted) {
-        res.setHeader('Referrer-Policy', 'no-referrer');
+      res.setHeader('Referrer-Policy', 'no-referrer');
+      res.setHeader('Accept-Ranges', 'bytes');
+
+      // A byte span is streamed from disk rather than read whole: the audio
+      // and video players ask for one on every seek, and a recording can be
+      // hundreds of megabytes.
+      const range = resolveByteRange(req.headers?.range, stats.size);
+      if (range.kind === 'unsatisfiable') {
+        res.setHeader('Content-Range', `bytes */${stats.size}`);
+        return res.status(416).end();
       }
+      if (range.kind === 'range') {
+        const handle = await fsPromises.open(canonicalPath, 'r');
+        res.status(206);
+        res.setHeader('Content-Range', `bytes ${range.start}-${range.end}/${stats.size}`);
+        res.setHeader('Content-Length', String(range.end - range.start + 1));
+        res.type(mimeType);
+        // The handle closes with the stream, on success and on failure alike.
+        const stream = handle.createReadStream({ start: range.start, end: range.end });
+        stream.on('error', (error) => {
+          console.error('Failed to stream raw file range:', error);
+          res.destroy(error);
+        });
+        stream.pipe(res);
+        return undefined;
+      }
+
+      const content = await fsPromises.readFile(canonicalPath);
       return res.type(mimeType).send(content);
     } catch (error) {
       const err = error;
@@ -946,39 +1174,67 @@ export const registerFsRoutes = (app, dependencies) => {
     }
   });
 
-  app.get(/^\/api\/fs\/serve\/(.+)$/, async (req, res) => {
-    const rawPath = req.params[0] || '';
-    if (!rawPath) {
-      return res.status(400).json({ error: 'Path is required' });
-    }
-
+  // An HTML preview is untrusted content: it runs in an opaque-origin sandbox
+  // and reaches its own files through a grant carried in the URL path, so
+  // relative URLs keep it and no session credential is ever in the page's URL.
+  app.post('/api/fs/preview', async (req, res) => {
     try {
-      if (req.query?.allowOutsideWorkspace === 'true') {
-        return res.status(403).json({ error: 'allowOutsideWorkspace is not permitted for this endpoint' });
-      }
-
-      const filePath = path.resolve('/', rawPath);
+      // The workspace resolver normalizes and rejects a missing or non-string path.
       const resolved = await resolveReadPathFromContext({
         req,
-        targetPath: filePath,
+        targetPath: req.body?.path,
         resolveProjectDirectory,
         path,
         os,
+        fsPromises,
         normalizeDirectoryPath,
-        mittrcraftUserConfigRoot,
+        managedRoots,
+      });
+      if (!resolved.ok) {
+        return res.status(400).json({ error: resolved.error });
+      }
+      const canonicalPage = await fsPromises.realpath(resolved.resolved);
+      const stats = await fsPromises.stat(canonicalPage);
+      if (!stats.isFile()) {
+        return res.status(400).json({ error: 'Specified path is not a file' });
+      }
+      const isManagedBase = managedRoots.some((root) => path.resolve(root) === resolved.base);
+      const readRoot = isManagedBase
+        ? path.dirname(canonicalPage)
+        : await fsPromises.realpath(resolved.base);
+      return res.json(previewGrants.mint({ base: resolved.base, readRoot }));
+    } catch (error) {
+      if (error instanceof Error && error.code === 'ENOENT') {
+        return res.status(404).json({ error: 'File not found' });
+      }
+      if (isOsPermissionError(error)) {
+        return sendOsPermissionDenied(res, 'Access to file denied');
+      }
+      console.error('Failed to grant file preview:', error);
+      return res.status(500).json({ error: 'Failed to grant file preview' });
+    }
+  });
+
+  app.get(/^\/api\/fs\/preview\/([^/]+)\/(.+)$/, async (req, res) => {
+    const grant = previewGrants.use(req.params[0]);
+    if (!grant) {
+      return res.status(403).json({ error: 'Preview grant is invalid or expired' });
+    }
+
+    try {
+      const resolved = resolveWorkspacePath({
+        targetPath: path.resolve('/', req.params[1]),
+        baseDirectory: grant.base,
+        path,
+        os,
+        normalizeDirectoryPath,
+        managedRoots,
       });
       if (!resolved.ok) {
         return res.status(400).json({ error: resolved.error });
       }
 
-      const [canonicalPath, canonicalBase] = await Promise.all([
-        fsPromises.realpath(resolved.resolved),
-        fsPromises.realpath(resolved.base).catch(() => path.resolve(resolved.base)),
-      ]);
-
-      if (!isPathWithinRoot(canonicalPath, canonicalBase, path, os)) {
-        return res.status(403).json({ error: 'Access to file denied' });
-      }
+      const canonicalPath = await fsPromises.realpath(resolved.resolved);
 
       const stats = await fsPromises.stat(canonicalPath);
       if (!stats.isFile()) {
@@ -993,6 +1249,14 @@ export const registerFsRoutes = (app, dependencies) => {
       const content = await fsPromises.readFile(canonicalPath);
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Content-Type-Options', 'nosniff');
+      // Opened directly in a tab, the page is still an opaque-origin sandbox.
+      res.setHeader('Content-Security-Policy', PREVIEW_SANDBOX_POLICY);
+      // Embedding (img, stylesheet, classic script) needs no CORS. Reading a
+      // file's bytes from script (fetch, fonts, module scripts) is CORS, and
+      // the opaque page may do that only inside its read root.
+      if (isPathWithinRoot(canonicalPath, grant.readRoot, path, os) && !res.getHeader('Access-Control-Allow-Origin')) {
+        res.setHeader('Access-Control-Allow-Origin', 'null');
+      }
       return res.type(mimeType).send(content);
     } catch (error) {
       const err = error;
@@ -1018,13 +1282,14 @@ export const registerFsRoutes = (app, dependencies) => {
 
     try {
       const resolved = await resolveWorkspacePathFromContext({
+        fsPromises,
         req,
         targetPath: filePath,
         resolveProjectDirectory,
         path,
         os,
         normalizeDirectoryPath,
-        mittrcraftUserConfigRoot,
+        managedRoots,
       });
       if (!resolved.ok) {
         return res.status(400).json({ error: resolved.error });
@@ -1069,6 +1334,125 @@ export const registerFsRoutes = (app, dependencies) => {
     }
   });
 
+  app.post('/api/fs/upload', async (req, res) => {
+    const filePath = typeof req.query?.path === 'string' ? req.query.path.trim() : '';
+    const overwrite = req.query?.overwrite === 'true';
+    if (!filePath) {
+      return res.status(400).json({ error: 'Path is required' });
+    }
+    if (!String(req.headers?.['content-type'] || '').toLowerCase().startsWith('application/octet-stream')) {
+      return res.status(415).json({ error: 'Content-Type must be application/octet-stream' });
+    }
+
+    const maxUploadBytes = createUploadMaxBytes();
+    const declaredSize = Number(req.headers?.['content-length']);
+    if (Number.isFinite(declaredSize) && declaredSize > maxUploadBytes) {
+      req.resume?.();
+      return res.status(413).json({ error: `File exceeds maximum size of ${maxUploadBytes} bytes` });
+    }
+
+    try {
+      const resolved = await resolveWorkspacePathFromContext({
+        fsPromises,
+        req,
+        targetPath: filePath,
+        resolveProjectDirectory,
+        path,
+        os,
+        normalizeDirectoryPath,
+        managedRoots,
+      });
+      if (!resolved.ok) {
+        return res.status(400).json({ error: resolved.error });
+      }
+
+      const canonicalBase = await fsPromises.realpath(resolved.base).catch(() => path.resolve(resolved.base));
+      const requestedParent = path.dirname(resolved.resolved);
+      const canonicalParent = await fsPromises.realpath(requestedParent);
+      if (!isPathWithinRoot(canonicalParent, canonicalBase, path, os)) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      const existingPath = await fsPromises.realpath(resolved.resolved).catch((error) => {
+        if (error && typeof error === 'object' && error.code === 'ENOENT') {
+          return null;
+        }
+        throw error;
+      });
+      const writePath = existingPath || path.join(canonicalParent, path.basename(resolved.resolved));
+      if (!isPathWithinRoot(writePath, canonicalBase, path, os)) {
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      if (existingPath) {
+        const stats = await fsPromises.stat(existingPath);
+        if (stats.isDirectory()) {
+          return res.status(400).json({ error: 'Specified path is a directory' });
+        }
+        if (!overwrite) {
+          req.resume?.();
+          return res.status(409).json({ error: 'File already exists', reason: 'already-exists' });
+        }
+      }
+
+      const tmp = `${writePath}.upload-${crypto.randomUUID()}`;
+      let tempExists = false;
+      try {
+        const handle = await fsPromises.open(tmp, 'wx');
+        tempExists = true;
+        let streamError = null;
+        try {
+          await streamUploadBody(req, handle, maxUploadBytes);
+        } catch (error) {
+          streamError = error;
+        }
+        try {
+          await handle.close();
+        } catch (error) {
+          if (!streamError) throw error;
+        }
+        if (streamError) throw streamError;
+
+        if (overwrite) {
+          await fsPromises.rename(tmp, writePath);
+        } else {
+          // A same-directory hard link commits without replacing a target that
+          // appeared after the existence check. The temp file is already fully
+          // flushed, so readers never observe a partial upload.
+          await fsPromises.link(tmp, writePath);
+          await fsPromises.unlink(tmp).catch(() => {});
+        }
+        tempExists = false;
+      } catch (error) {
+        if (tempExists) {
+          await fsPromises.unlink(tmp).catch(() => {});
+        }
+        throw error;
+      }
+
+      return res.json({ success: true, path: resolved.resolved });
+    } catch (error) {
+      const err = error;
+      if (err && typeof err === 'object' && err.code === 'EEXIST') {
+        return res.status(409).json({ error: 'File already exists', reason: 'already-exists' });
+      }
+      if (err && typeof err === 'object' && err.code === 'ENOENT') {
+        return res.status(404).json({ error: 'Destination directory not found', reason: 'not-found' });
+      }
+      if (err && typeof err === 'object' && err.uploadTooLarge) {
+        return res.status(413).json({ error: `File exceeds maximum size of ${maxUploadBytes} bytes` });
+      }
+      if (err && typeof err === 'object' && (err.code === 'EISDIR' || err.code === 'ENOTDIR')) {
+        return res.status(400).json({ error: 'Specified path is a directory' });
+      }
+      if (isOsPermissionError(err)) {
+        return sendOsPermissionDenied(res, 'Access denied');
+      }
+      console.error('Failed to upload file:', error);
+      return res.status(500).json({ error: (error && error.message) || 'Failed to upload file' });
+    }
+  });
+
   app.post('/api/fs/delete', async (req, res) => {
     const { path: targetPath } = req.body || {};
     if (!targetPath || typeof targetPath !== 'string') {
@@ -1077,13 +1461,14 @@ export const registerFsRoutes = (app, dependencies) => {
 
     try {
       const resolved = await resolveWorkspacePathFromContext({
+        fsPromises,
         req,
         targetPath,
         resolveProjectDirectory,
         path,
         os,
         normalizeDirectoryPath,
-        mittrcraftUserConfigRoot,
+        managedRoots,
       });
       if (!resolved.ok) {
         return res.status(400).json({ error: resolved.error });
@@ -1115,26 +1500,28 @@ export const registerFsRoutes = (app, dependencies) => {
 
     try {
       const resolvedOld = await resolveWorkspacePathFromContext({
+        fsPromises,
         req,
         targetPath: oldPath,
         resolveProjectDirectory,
         path,
         os,
         normalizeDirectoryPath,
-        mittrcraftUserConfigRoot,
+        managedRoots,
       });
       if (!resolvedOld.ok) {
         return res.status(400).json({ error: resolvedOld.error });
       }
 
       const resolvedNew = await resolveWorkspacePathFromContext({
+        fsPromises,
         req,
         targetPath: newPath,
         resolveProjectDirectory,
         path,
         os,
         normalizeDirectoryPath,
-        mittrcraftUserConfigRoot,
+        managedRoots,
       });
       if (!resolvedNew.ok) {
         return res.status(400).json({ error: resolvedNew.error });
@@ -1234,13 +1621,14 @@ export const registerFsRoutes = (app, dependencies) => {
       }
       const resolvedCwdCandidate = path.resolve(normalizeDirectoryPath(cwd));
       const resolvedForWorkspace = await resolveWorkspacePathFromContext({
+        fsPromises,
         req,
         targetPath: resolvedCwdCandidate,
         resolveProjectDirectory,
         path,
         os,
         normalizeDirectoryPath,
-        mittrcraftUserConfigRoot,
+        managedRoots,
       });
       if (!resolvedForWorkspace.ok) {
         console.warn(`Rejected /api/fs/exec outside workspace: ${resolvedForWorkspace.error}`);
@@ -1366,7 +1754,8 @@ export const registerFsRoutes = (app, dependencies) => {
                 const child = spawn(resolveGitBinaryForSpawn(), ['check-ignore', '--', ...pathsToCheck], {
                   cwd: resolvedPath,
                   windowsHide: true,
-                  stdio: ['ignore', 'pipe', 'pipe'],
+                  // Diagnostics are unused here. An unread pipe can block Git forever.
+                  stdio: ['ignore', 'pipe', 'ignore'],
                 });
 
                 let stdout = '';
@@ -1459,6 +1848,63 @@ export const registerFsRoutes = (app, dependencies) => {
         return sendOsPermissionDenied(res, 'Access to directory denied');
       }
       return res.status(500).json({ error: (error && error.message) || 'Failed to list directory' });
+    }
+  });
+
+  app.get('/api/fs/git-dirs', async (req, res) => {
+    const rawPath = typeof req.query.path === 'string' && req.query.path.trim().length > 0
+      ? req.query.path.trim()
+      : '';
+    if (!rawPath) {
+      return res.status(400).json({ error: 'Path is required' });
+    }
+
+    try {
+      const resolved = await resolveWorkspacePathFromContext({
+        fsPromises,
+        req,
+        targetPath: rawPath,
+        resolveProjectDirectory,
+        path,
+        os,
+        normalizeDirectoryPath,
+        managedRoots,
+      });
+      if (!resolved.ok) {
+        return res.status(400).json({ error: resolved.error });
+      }
+
+      const stats = await fsPromises.stat(resolved.resolved);
+      if (!stats.isDirectory()) {
+        return res.status(400).json({ error: 'Specified path is not a directory', reason: 'not-directory' });
+      }
+
+      const repositories = await findGitDirectories({
+        rootPath: resolved.resolved,
+        fsPromises,
+        path,
+        maxDepth: GIT_DIRS_MAX_DEPTH,
+        maxDirs: GIT_DIRS_MAX_DIRS,
+      });
+
+      return res.json({
+        path: resolved.resolved,
+        repositories: repositories.map((repoPath) => ({
+          path: repoPath,
+          name: path.basename(repoPath),
+        })),
+      });
+    } catch (error) {
+      const err = error;
+      const code = err && typeof err === 'object' && 'code' in err ? err.code : undefined;
+      if (code === 'ENOENT') {
+        return res.status(404).json({ error: 'Directory not found', reason: 'not-found' });
+      }
+      if (isOsPermissionError(err)) {
+        return sendOsPermissionDenied(res, 'Access to directory denied');
+      }
+      console.error('Failed to find git directories:', error);
+      return res.status(500).json({ error: (error && error.message) || 'Failed to find git directories' });
     }
   });
 };

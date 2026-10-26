@@ -1,0 +1,21 @@
+diff --git a/packages/electron/updater-feed.test.mjs b/packages/electron/updater-feed.test.mjs
+index bee126834..32e450de8 100644
+--- a/packages/electron/updater-feed.test.mjs
++++ b/packages/electron/updater-feed.test.mjs
+@@ -72,3 +72,16 @@ test('invalid URLs fall back to the production feed even with both test gates',
+     }), PRODUCTION_UPDATER_FEED);
+   }
+ });
++
++test('a product without an updater feed resolves to no feed', () => {
++  assert.equal(resolveUpdaterFeed({ productionFeed: null }), null);
++  assert.equal(
++    resolveUpdaterFeed({ productionFeed: null, environment: overrideEnvironment }),
++    null,
++  );
++});
++
++test('a product feed replaces the default production feed', () => {
++  const productionFeed = { provider: 'generic', url: 'https://updates.example.test/' };
++  assert.equal(resolveUpdaterFeed({ productionFeed }), productionFeed);
++});

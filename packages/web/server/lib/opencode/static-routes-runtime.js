@@ -13,10 +13,11 @@ export const createStaticRoutesRuntime = (dependencies) => {
     readSettingsFromDiskMigrated,
     normalizePwaAppName,
     normalizePwaOrientation,
+    isRequestAuthorized,
   } = dependencies;
 
   const resolveDistPath = () => {
-    const env = typeof process.env.MITTRCRAFT_DIST_DIR === 'string' ? process.env.MITTRCRAFT_DIST_DIR.trim() : '';
+    const env = typeof process.env.OPENCHAMBER_DIST_DIR === 'string' ? process.env.OPENCHAMBER_DIST_DIR.trim() : '';
     if (env) {
       return path.resolve(env);
     }
@@ -28,11 +29,19 @@ export const createStaticRoutesRuntime = (dependencies) => {
 
     if (fs.existsSync(distPath)) {
       console.log(`Serving static files from ${distPath}`);
+      const hashedAssetsPrefix = path.join(distPath, 'assets') + path.sep;
       app.use(express.static(distPath, {
         setHeaders(res, filePath) {
           // Service workers should never be long-cached; iOS is especially sensitive.
-          if (typeof filePath === 'string' && filePath.endsWith(`${path.sep}sw.js`)) {
+          if (filePath.endsWith(`${path.sep}sw.js`)) {
             res.setHeader('Cache-Control', 'no-store');
+            return;
+          }
+          // Vite names every file under assets/ by its content hash, so a name
+          // never changes meaning. Without this each lazy chunk costs a
+          // revalidation round trip, which is felt on remote connections.
+          if (filePath.startsWith(hashedAssetsPrefix)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
           }
         },
       }));
@@ -45,23 +54,24 @@ export const createStaticRoutesRuntime = (dependencies) => {
         readSettingsFromDiskMigrated,
         normalizePwaAppName,
         normalizePwaOrientation,
+        isRequestAuthorized,
       });
 
-      app.get(/^(?!\/api|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (_req, res) => {
+      app.get(/^(?!\/api|\/linear|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (_req, res) => {
         res.sendFile(path.join(distPath, 'index.html'));
       });
       return;
     }
 
     console.warn(`Warning: ${distPath} not found, static files will not be served`);
-    app.get(/^(?!\/api|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (_req, res) => {
+    app.get(/^(?!\/api|\/linear|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (_req, res) => {
       res.status(404).send('Static files not found. Please build the application first.');
     });
   };
 
   const registerApiOnlyFallbackRoutes = (app) => {
-    app.get(/^(?!\/api|\/auth|\/health|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (req, res) => {
-      const command = 'mittrcraft connect-url --help';
+    app.get(/^(?!\/api|\/auth|\/health|\/linear|.*\.(js|css|svg|png|jpg|jpeg|gif|ico|woff|woff2|ttf|eot|map)).*$/, (req, res) => {
+      const command = 'openchamber connect-url --help';
       res.status(200).format({
         html: () => {
           res.send(`<!doctype html>
@@ -69,7 +79,7 @@ export const createStaticRoutesRuntime = (dependencies) => {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MittrCraft API-only mode</title>
+  <title>OpenChamber API-only mode</title>
   <style>
     :root {
       color-scheme: dark;
@@ -171,7 +181,7 @@ export const createStaticRoutesRuntime = (dependencies) => {
 </head>
 <body>
   <main>
-    <svg class="logo" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MittrCraft logo">
+    <svg class="logo" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="OpenChamber logo">
       <path d="M50 50 L8.432 26 L8.432 74 L50 98 Z" fill="currentColor" fill-opacity=".15" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
       <path d="M8.432 26 L18.824 32 L18.824 44 L8.432 38 Z" fill="currentColor" fill-opacity=".2"/>
       <path d="M18.824 32 L29.216 38 L29.216 50 L18.824 44 Z" fill="currentColor" fill-opacity=".45"/>
@@ -212,8 +222,8 @@ export const createStaticRoutesRuntime = (dependencies) => {
         <path d="M-8 -4 L8 -4 L8 12 L-8 12 Z" fill="currentColor" fill-opacity=".4"/>
       </g>
     </svg>
-    <h1>MittrCraft is running in headless mode</h1>
-    <p>This server is ready. Open it from the MittrCraft desktop or mobile app to use it.</p>
+    <h1>OpenChamber is running in headless mode</h1>
+    <p>This server is ready. Open it from the OpenChamber desktop or mobile app to use it.</p>
     <div class="command">
       <code id="connect-command">${command}</code>
       <button type="button" id="copy-command" aria-label="Copy command" title="Copy command">
@@ -249,10 +259,10 @@ export const createStaticRoutesRuntime = (dependencies) => {
 </html>`);
         },
         json: () => {
-          res.json({ ok: true, mode: 'api-only', message: 'MittrCraft is running in API-only mode' });
+          res.json({ ok: true, mode: 'api-only', message: 'OpenChamber is running in API-only mode' });
         },
         default: () => {
-          res.type('text/plain').send('MittrCraft is running in API-only mode');
+          res.type('text/plain').send('OpenChamber is running in API-only mode');
         },
       });
     });

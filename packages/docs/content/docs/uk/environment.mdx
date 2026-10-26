@@ -1,47 +1,55 @@
 ---
 title: Змінні середовища
-description: Налаштуйте інтеграцію MittrCraft і OpenCode через змінні середовища.
+description: Налаштуйте інтеграцію OpenChamber і OpenCode через змінні середовища.
 ---
 
 # Змінні середовища
 
-MittrCraft читає ці змінні під час запуску. Для startup-сервісів `mittrcraft startup enable` типово зберігає snapshot поточного середовища, тому після змін перезапустіть цю команду.
+OpenChamber читає ці змінні під час запуску. Для startup-сервісів `openchamber startup enable` типово зберігає snapshot поточного середовища, тому після змін перезапустіть цю команду.
 
-## Сервер MittrCraft
+## Сервер OpenChamber
 
-### `MITTRCRAFT_HOST`
+### `OPENCHAMBER_HOST`
 
-Адреса, на якій слухає web-сервер MittrCraft. Використовуйте `0.0.0.0`, щоб відкрити доступ з інших машин.
+Адреса, на якій слухає web-сервер OpenChamber. Використовуйте `0.0.0.0`, щоб відкрити доступ з інших машин.
 
-### `MITTRCRAFT_UI_PASSWORD`
+### `OPENCHAMBER_UI_PASSWORD`
 
 Пароль для browser UI. Використовуйте його для доступу не лише з localhost, тунелів або reverse proxy.
 
-### `MITTRCRAFT_API_ONLY`
+### `OPENCHAMBER_API_ONLY`
 
-Запускає MittrCraft у headless mode, якщо встановлено `true` або `1`. API routes залишаються доступними для desktop і mobile clients, але browser UI не віддається.
+Запускає OpenChamber у headless mode, якщо встановлено `true` або `1`. API routes залишаються доступними для desktop і mobile clients, але browser UI не віддається.
 
-### `MITTRCRAFT_DATA_DIR`
+### `OPENCHAMBER_FRAME_ANCESTORS`
 
-Перевизначає директорію даних MittrCraft. Типово це `~/.config/mittrcraft`.
+Origins, яким дозволено показувати OpenChamber у фреймі на своїй сторінці, через пробіл, наприклад `https://dash.example.com`. `*` дозволяє будь-який сайт. Типово вбудовувати його можуть лише сам OpenChamber і його desktop- та mobile-застосунки, тож інші сайти не можуть перекрити його кнопки.
 
-### `MITTRCRAFT_COMPRESS_API`
+### `OPENCHAMBER_DATA_DIR`
+
+Перевизначає директорію даних OpenChamber. Типово це `~/.config/openchamber`.
+
+### `OPENCHAMBER_CHATS_DIR`
+
+Переносить директорії керованих чатів, які OpenChamber створює для чатів без проєкту. Типово це `~/.config/openchamber/chats`. Вкажіть директорію, яку може читати сервер OpenCode, якщо OpenChamber і OpenCode працюють від різних користувачів. Наявні чати не переносяться.
+
+### `OPENCHAMBER_COMPRESS_API`
 
 Керує стисненням API-відповідей. `true` або `1` вмикає, `false` або `0` вимикає.
 
-### `MITTRCRAFT_SKIP_API_COMPRESSION`
+### `OPENCHAMBER_SKIP_API_COMPRESSION`
 
-Вимикає стиснення API-відповідей, якщо встановлено `true` або `1`. Має пріоритет над `MITTRCRAFT_COMPRESS_API`.
+Вимикає стиснення API-відповідей, якщо встановлено `true` або `1`. Має пріоритет над `OPENCHAMBER_COMPRESS_API`.
 
-### `MITTRCRAFT_VERBOSE_REQUEST_LOGS`
+### `OPENCHAMBER_VERBOSE_REQUEST_LOGS`
 
 Вмикає детальні HTTP request logs, якщо встановлено `true` або `1`.
 
-### `MITTRCRAFT_UPDATE_API_URL`
+### `OPENCHAMBER_UPDATE_API_URL`
 
 Перевизначає endpoint для перевірки оновлень. Більшості користувачів це не потрібно.
 
-### `MITTRCRAFT_PACKAGE_MANAGER`
+### `OPENCHAMBER_PACKAGE_MANAGER`
 
 Примусово задає package manager для оновлень, якщо auto-detection помилився.
 
@@ -49,23 +57,23 @@ MittrCraft читає ці змінні під час запуску. Для sta
 
 ### `OPENCODE_HOST`
 
-Підключає MittrCraft до вже запущеного OpenCode server. Значення має бути `http` або `https` origin з явним портом і без path, query або hash. `OPENCODE_HOST` має пріоритет над `OPENCODE_PORT`.
+Підключає OpenChamber до вже запущеного OpenCode server. Значення має бути `http` або `https` origin з явним портом і без path, query або hash. `OPENCODE_HOST` має пріоритет над `OPENCODE_PORT`.
 
 ### `OPENCODE_PORT`
 
-Задає порт OpenCode server. Для managed OpenCode це бажаний порт; з `OPENCODE_SKIP_START=true` MittrCraft підключається до зовнішнього сервера на цьому порту.
+Задає порт OpenCode server. Для managed OpenCode це бажаний порт; з `OPENCODE_SKIP_START=true` OpenChamber підключається до зовнішнього сервера на цьому порту.
 
 ### `OPENCODE_SKIP_START`
 
-Не дає MittrCraft запускати власний OpenCode server, якщо встановлено `true`.
+Не дає OpenChamber запускати власний OpenCode server, якщо встановлено `true`.
 
-### `MITTRCRAFT_OPENCODE_HOSTNAME`
+### `OPENCHAMBER_OPENCODE_HOSTNAME`
 
-Hostname для OpenCode server, яким керує MittrCraft. Типово `127.0.0.1`.
+Hostname для OpenCode server, яким керує OpenChamber. Типово `127.0.0.1`.
 
 ### `OPENCODE_BINARY`
 
-Шлях до executable `opencode`, який має запускати MittrCraft.
+Шлях до executable `opencode`, який має запускати OpenChamber.
 
 ### `OPENCODE_CONFIG`
 
@@ -83,9 +91,9 @@ Hostname для OpenCode server, яким керує MittrCraft. Типово `1
 
 Вибирає WSL distro для інтеграції OpenCode на Windows.
 
-### `MITTRCRAFT_OPENCODE_WSL_DISTRO`
+### `OPENCHAMBER_OPENCODE_WSL_DISTRO`
 
-MittrCraft-specific alias для вибору WSL distro. `OPENCODE_WSL_DISTRO` має пріоритет, якщо задані обидві змінні.
+OpenChamber-specific alias для вибору WSL distro. `OPENCODE_WSL_DISTRO` має пріоритет, якщо задані обидві змінні.
 
 ### `OPENCODE_JWT_SECRET`
 
@@ -93,19 +101,19 @@ Secret для підпису UI auth tokens. Для постійних service d
 
 ## Terminal і Git
 
-### `MITTRCRAFT_TERMINAL_SHELL`
+### `OPENCHAMBER_TERMINAL_SHELL`
 
-Shell executable для terminal sessions в MittrCraft.
+Shell executable для terminal sessions в OpenChamber.
 
-### `MITTRCRAFT_GIT_BINARY`
+### `OPENCHAMBER_GIT_BINARY`
 
-Git executable для Git-функцій MittrCraft.
+Git executable для Git-функцій OpenChamber.
 
 ### `GIT_BINARY`
 
-Альтернативний override для Git executable. Для MittrCraft-specific налаштувань краще використовуйте `MITTRCRAFT_GIT_BINARY`.
+Альтернативний override для Git executable. Для OpenChamber-specific налаштувань краще використовуйте `OPENCHAMBER_GIT_BINARY`.
 
-### `MITTRCRAFT_GIT_READ_CACHE_TTL_MS`
+### `OPENCHAMBER_GIT_READ_CACHE_TTL_MS`
 
 TTL у мілісекундах для cached Git-backed file reads. Встановіть `0`, щоб вимкнути cache під час debugging.
 
@@ -113,25 +121,25 @@ TTL у мілісекундах для cached Git-backed file reads. Встан�
 
 ### `OPENAI_API_KEY`
 
-API key для voice-функцій MittrCraft, які викликають OpenAI-compatible services.
+API key, яким голосові функції OpenChamber користуються, коли звертаються до самого OpenAI. На власний OpenAI-сумісний сервер він ніколи не надсилається: дай цьому серверу окремий ключ у Налаштуваннях.
 
-### `MITTRCRAFT_ALLOW_REMOTE_OPENAI_COMPAT_URLS`
+### `OPENCHAMBER_ALLOW_REMOTE_OPENAI_COMPAT_URLS`
 
 Дозволяє remote OpenAI-compatible base URLs для voice-функцій, якщо встановлено `true` або `1`.
 
 ### `NGROK_AUTHTOKEN`
 
-ngrok auth token для tunnel-команд MittrCraft. Також можна налаштувати ngrok через `ngrok config add-authtoken <token>`.
+ngrok auth token для tunnel-команд OpenChamber. Також можна налаштувати ngrok через `ngrok config add-authtoken <token>`.
 
 ## Runtime helpers
 
 ### `BUN_BINARY`
 
-Bun executable, який MittrCraft має використовувати для запуску daemon processes.
+Bun executable, який OpenChamber має використовувати для запуску daemon processes.
 
 ### `BUN_INSTALL`
 
-Корінь інсталяції Bun. MittrCraft використовує його, щоб знайти `bin/bun` для daemon startup і updates.
+Корінь інсталяції Bun. OpenChamber використовує його, щоб знайти `bin/bun` для daemon startup і updates.
 
 ### `VITE_OPENCODE_URL`
 

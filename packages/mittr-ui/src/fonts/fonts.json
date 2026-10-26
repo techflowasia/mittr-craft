@@ -1,0 +1,85 @@
+{
+  "files": [
+    {
+      "name": "IBMPlexSans-Regular.woff2",
+      "package": "@ibm/plex",
+      "version": "6.4.1",
+      "path": "IBM-Plex-Sans/fonts/complete/woff2/IBMPlexSans-Regular.woff2",
+      "sha256": "ba711a3085ff9f27440b6b9c4550cfc47c97bf36591d5da958b975bb3add8c1a",
+      "bytes": 63020
+    },
+    {
+      "name": "IBMPlexSans-Medium.woff2",
+      "package": "@ibm/plex",
+      "version": "6.4.1",
+      "path": "IBM-Plex-Sans/fonts/complete/woff2/IBMPlexSans-Medium.woff2",
+      "sha256": "5660f8a658f8bb50dbc005232f885eadffd2bc1c235c4f6fbb63469d1f9cde6d",
+      "bytes": 66740
+    },
+    {
+      "name": "IBMPlexSans-SemiBold.woff2",
+      "package": "@ibm/plex",
+      "version": "6.4.1",
+      "path": "IBM-Plex-Sans/fonts/complete/woff2/IBMPlexSans-SemiBold.woff2",
+      "sha256": "f78048030eab62e860efa39a0df79e2e5581bf122eb95b9bc42c0b8a4988d205",
+      "bytes": 67060
+    },
+    {
+      "name": "IBMPlexSansThai-Regular.woff2",
+      "package": "@ibm/plex",
+      "version": "6.4.1",
+      "path": "IBM-Plex-Sans-Thai/fonts/complete/woff2/IBMPlexSansThai-Regular.woff2",
+      "sha256": "0350508969dad82ffd2b7608d8299454bf19ec54e464a16a66e5a9733e83654d",
+      "bytes": 39824
+    },
+    {
+      "name": "IBMPlexSansThai-Medium.woff2",
+      "package": "@ibm/plex",
+      "version": "6.4.1",
+      "path": "IBM-Plex-Sans-Thai/fonts/complete/woff2/IBMPlexSansThai-Medium.woff2",
+      "sha256": "8249537de3768f46ce7b04e9e832c47f3ffa84900bdac2b18968d431d8814c61",
+      "bytes": 41132
+    },
+    {
+      "name": "IBMPlexSansThai-SemiBold.woff2",
+      "package": "@ibm/plex",
+      "version": "6.4.1",
+      "path": "IBM-Plex-Sans-Thai/fonts/complete/woff2/IBMPlexSansThai-SemiBold.woff2",
+      "sha256": "83f9d86c099e0006077854cac1cf6f9d3177fb0c4f356254a7d56d047c097e52",
+      "bytes": 41528
+    },
+    {
+      "name": "IBMPlexMono-Regular.woff2",
+      "package": "@ibm/plex",
+      "version": "6.4.1",
+      "path": "IBM-Plex-Mono/fonts/complete/woff2/IBMPlexMono-Regular.woff2",
+      "sha256": "49ce58b41a0e1cb921c0f58d9a5b8b96a2cc21437c7066f3ba4f24873076d131",
+      "bytes": 45640
+    },
+    {
+      "name": "IBMPlexMono-Medium.woff2",
+      "package": "@ibm/plex",
+      "version": "6.4.1",
+      "path": "IBM-Plex-Mono/fonts/complete/woff2/IBMPlexMono-Medium.woff2",
+      "sha256": "8c2c290cbd998fa1f647e4572aca6ebbd72589551b0f3f9f8bb8628fbb8219d5",
+      "bytes": 46724
+    },
+    {
+      "name": "IBMPlexMono-SemiBold.woff2",
+      "package": "@ibm/plex",
+      "version": "6.4.1",
+      "path": "IBM-Plex-Mono/fonts/complete/woff2/IBMPlexMono-SemiBold.woff2",
+      "sha256": "ed5eaca7522336959d6c3810bd9bb78424f0d964082d581bfbea169ee08d14e3",
+      "bytes": 47016
+    }
+  ],
+  "licence": {
+    "path": "LICENSE.txt",
+    "sha256": "7e6b2818edbd8f6a01ae80641cc8f16a51080d08fb4e532be3a0b6f74adb07da",
+    "lineEnds": "CRLF in the package, LF in brand/THIRD_PARTY_NOTICES.md"
+  },
+  "notice": {
+    "heading": "IBM Plex",
+    "sha256": "1ea355a115c30d0a708bc7b96847748a10b7182802a1d77aac36c2bb8dedaba1"
+  }
+}

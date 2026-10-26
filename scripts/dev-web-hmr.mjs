@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
-import { VAD_OUT_DIR, copyVadAssets, resolveVadSources } from './copy-vad-assets.mjs';
 import { existsSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { resolveBunExecutable } from './lib/bun-executable.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,12 +13,15 @@ const repoRoot = path.resolve(__dirname, '..');
 const useDetachedChildren = process.platform === 'darwin';
 const webRoot = path.join(repoRoot, 'packages/web');
 
+const bunExecutable = resolveBunExecutable();
+
 function run(label, command, args, env = {}, options = {}) {
   return spawn(command, args, {
     cwd: options.cwd || repoRoot,
     stdio: 'inherit',
     env: { ...process.env, ...env },
     detached: useDetachedChildren,
+    windowsHide: true,
   }).on('error', (error) => {
     console.error(`[dev:web:hmr] Failed to start ${label}:`, error);
   });
@@ -82,9 +86,9 @@ async function stopChildTree(child) {
   }
 }
 
-const uiPort = process.env.MITTRCRAFT_HMR_UI_PORT || '5180';
-const backendPort = process.env.MITTRCRAFT_HMR_API_PORT || '3902';
-const hmrHost = process.env.MITTRCRAFT_HMR_HOST || '127.0.0.1';
+const uiPort = process.env.OPENCHAMBER_HMR_UI_PORT || '5180';
+const backendPort = process.env.OPENCHAMBER_HMR_API_PORT || '3902';
+const hmrHost = process.env.OPENCHAMBER_HMR_HOST || '127.0.0.1';
 
 function getLanAddresses() {
   const addresses = [];
@@ -112,18 +116,30 @@ function clearViteCache() {
 }
 
 clearViteCache();
-copyVadAssets({ ...resolveVadSources(), outDir: VAD_OUT_DIR });
 
-const api = run('api', 'bun', ['run', '--cwd', 'packages/web', 'dev:server:watch'], {
-  MITTRCRAFT_PORT: backendPort,
-});
+const api = run(
+  'api',
+  bunExecutable,
+  [
+    'run',
+    '--cwd',
+    'packages/web',
+    'dev:server:watch',
+  ],
+  {
+    OPENCHAMBER_PORT: backendPort,
+    // Dev backends share the relay identity with the production instance; never
+    // let them capture the machine's relay host on their own.
+    OPENCHAMBER_RELAY_HOST: process.env.OPENCHAMBER_RELAY_HOST || 'off',
+  },
+);
 const vite = run(
   'vite',
-  'bun',
+  bunExecutable,
   ['x', 'vite', '--force', '--host', hmrHost, '--port', uiPort, '--strictPort'],
   {
-    MITTRCRAFT_PORT: backendPort,
-    MITTRCRAFT_DISABLE_PWA_DEV: '1',
+    OPENCHAMBER_PORT: backendPort,
+    OPENCHAMBER_DISABLE_PWA_DEV: '1',
   },
   { cwd: webRoot },
 );

@@ -1,14 +1,67 @@
-import type { NotificationPayload, NotificationsAPI } from '@mittrcraft/ui/lib/api/types';
+import type { NotificationPayload, NotificationsAPI } from '@openchamber/ui/lib/api/types';
 
 const SW_READY_TIMEOUT_MS = 1500;
 const NOTIFICATION_DEDUPE_TTL_MS = 5000;
-const NOTIFICATION_DEDUPE_STORAGE_PREFIX = 'mittrcraft-notification-claim:';
+const NOTIFICATION_DEDUPE_STORAGE_PREFIX = 'openchamber-notification-claim:';
 
 const notificationClaims = new Map<string, number>();
 
 const isClientFocused = (): boolean => {
   if (typeof document === 'undefined') return true;
   return document.visibilityState === 'visible' && document.hasFocus();
+};
+
+const buildSessionTargetUrl = (sessionId?: string): string | null => {
+  if (typeof sessionId !== 'string') return null;
+  const trimmed = sessionId.trim();
+  if (!trimmed) return null;
+  return `/?session=${encodeURIComponent(trimmed)}`;
+};
+
+type NotificationTarget = {
+  url: string;
+  sessionId: string;
+};
+
+const getNotificationTarget = (payload?: NotificationPayload): NotificationTarget | undefined => {
+  const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId.trim() : '';
+  if (!sessionId) return undefined;
+  const url = buildSessionTargetUrl(sessionId);
+  if (!url) return undefined;
+  return { url, sessionId };
+};
+
+type NotificationOptionsWithTarget = NotificationOptions & {
+  data?: NotificationTarget;
+};
+
+const withNotificationTarget = (
+  payload: NotificationPayload | undefined,
+  target: NotificationTarget | undefined,
+): NotificationOptionsWithTarget => {
+  const options: NotificationOptionsWithTarget = {
+    body: payload?.body,
+    tag: payload?.tag,
+  };
+  if (target) {
+    options.data = target;
+  }
+  return options;
+};
+
+const focusOrOpenNotificationTarget = (target?: NotificationTarget): void => {
+  try {
+    if (typeof window === 'undefined') return;
+    if (typeof window.focus === 'function') {
+      window.focus();
+    }
+    if (!target) return;
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (current === target.url) return;
+    window.location.assign(target.url);
+  } catch {
+    // Navigation is best-effort; the notification was already shown.
+  }
 };
 
 const getNotificationClaimKey = (payload?: NotificationPayload): string => {
@@ -103,10 +156,11 @@ const notifyWithServiceWorker = async (payload?: NotificationPayload): Promise<b
   }
 
   try {
-    await registration.showNotification(payload?.title ?? 'MittrCraft', {
-      body: payload?.body,
-      tag: payload?.tag,
-    });
+    const target = getNotificationTarget(payload);
+    await registration.showNotification(
+      payload?.title ?? 'OpenChamber',
+      withNotificationTarget(payload, target),
+    );
     return true;
   } catch (error) {
     console.warn('Failed to send notification via service worker', error);
@@ -168,10 +222,16 @@ const notifyWithWebAPI = async (payload?: NotificationPayload): Promise<boolean>
       return true;
     }
 
-    new Notification(payload?.title ?? 'MittrCraft', {
-      body: payload?.body,
-      tag: payload?.tag,
-    });
+    const target = getNotificationTarget(payload);
+    const notification = new Notification(
+      payload?.title ?? 'OpenChamber',
+      withNotificationTarget(payload, target),
+    );
+    notification.onclick = (event) => {
+      event.preventDefault();
+      focusOrOpenNotificationTarget(target);
+      notification.close();
+    };
     return true;
   } catch (error) {
     console.warn('Failed to send notification', error);
@@ -184,7 +244,7 @@ const notifyWithDesktop = async (payload?: NotificationPayload): Promise<boolean
     return false;
   }
 
-  const desktop = (window as unknown as { __MITTRCRAFT_DESKTOP__?: DesktopBridgeGlobal }).__MITTRCRAFT_DESKTOP__;
+  const desktop = (window as unknown as { __OPENCHAMBER_DESKTOP__?: DesktopBridgeGlobal }).__OPENCHAMBER_DESKTOP__;
   if (!desktop?.invoke) {
     return false;
   }
@@ -199,6 +259,7 @@ const notifyWithDesktop = async (payload?: NotificationPayload): Promise<boolean
         sessionId: payload?.sessionId,
         directory: payload?.directory,
         requireHidden: payload?.requireHidden,
+        showWhenFocused: payload?.showWhenFocused,
       },
     });
     return true;
@@ -214,7 +275,7 @@ export const createWebNotificationsAPI = (): NotificationsAPI => ({
   },
   canNotify: () => {
     if (typeof window !== 'undefined') {
-      const desktop = (window as unknown as { __MITTRCRAFT_DESKTOP__?: DesktopBridgeGlobal }).__MITTRCRAFT_DESKTOP__;
+      const desktop = (window as unknown as { __OPENCHAMBER_DESKTOP__?: DesktopBridgeGlobal }).__OPENCHAMBER_DESKTOP__;
       if (desktop?.invoke) {
         return true;
       }

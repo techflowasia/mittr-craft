@@ -1,18 +1,18 @@
 apply plugin: 'com.android.application'
 
-def ciVersionCode = System.getenv('MITTRCRAFT_ANDROID_VERSION_CODE')
-def ciVersionName = System.getenv('MITTRCRAFT_ANDROID_VERSION_NAME')
-def ciKeystorePath = System.getenv('MITTRCRAFT_ANDROID_KEYSTORE_PATH')
-def ciKeystorePassword = System.getenv('MITTRCRAFT_ANDROID_KEYSTORE_PASSWORD')
-def ciKeyAlias = System.getenv('MITTRCRAFT_ANDROID_KEY_ALIAS')
-def ciKeyPassword = System.getenv('MITTRCRAFT_ANDROID_KEY_PASSWORD')
+def ciVersionCode = System.getenv('OPENCHAMBER_ANDROID_VERSION_CODE')
+def ciVersionName = System.getenv('OPENCHAMBER_ANDROID_VERSION_NAME')
+def ciKeystorePath = System.getenv('OPENCHAMBER_ANDROID_KEYSTORE_PATH')
+def ciKeystorePassword = System.getenv('OPENCHAMBER_ANDROID_KEYSTORE_PASSWORD')
+def ciKeyAlias = System.getenv('OPENCHAMBER_ANDROID_KEY_ALIAS')
+def ciKeyPassword = System.getenv('OPENCHAMBER_ANDROID_KEY_PASSWORD')
 def hasCiSigning = ciKeystorePath && ciKeystorePassword && ciKeyAlias && ciKeyPassword
 
 android {
-    namespace "com.mittrcraft.app"
+    namespace "com.openchamber.app"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.mittrcraft.app"
+        applicationId "com.openchamber.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode ciVersionCode ? ciVersionCode.toInteger() : 1
@@ -57,6 +57,11 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
     implementation project(':capacitor-cordova-android-plugins')
+    // SealedPushMessagingService extends the push plugin's service and reads RemoteMessage,
+    // which the plugin keeps as an implementation detail. Same artifact and version as the
+    // plugin (firebaseMessagingVersion in variables.gradle), not a new library.
+    implementation "com.google.firebase:firebase-messaging:$firebaseMessagingVersion"
+    implementation "androidx.core:core:$androidxCoreVersion"
 }
 
 apply from: 'capacitor.build.gradle'

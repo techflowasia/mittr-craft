@@ -1,17 +1,33 @@
 import fs from 'fs';
-import { engineConfigDir } from './home.js';
 import path from 'path';
 import os from 'os';
 import yaml from 'yaml';
-import { parse as parseJsonc } from 'jsonc-parser';
+import {
+  applyEdits,
+  createScanner,
+  findNodeAtLocation,
+  modify,
+  parse as parseJsonc,
+  parseTree,
+  printParseErrorCode,
+  SyntaxKind,
+} from 'jsonc-parser';
+import { readSectionEntry, readMcpEntry } from './config-v2.js';
+import { resolveWorktreeDirectory } from './worktree-directory.js';
 
 // ============== PATH CONSTANTS ==============
 
-const OPENCODE_CONFIG_DIR = path.join(engineConfigDir());
+// OpenCode 2 resolves its global config directory as `OPENCODE_CONFIG_DIR`
+// when set, else `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode`.
+const OPENCODE_CONFIG_DIR = process.env.OPENCODE_CONFIG_DIR?.trim()
+  ? path.resolve(process.env.OPENCODE_CONFIG_DIR.trim())
+  : path.join(process.env.XDG_CONFIG_HOME?.trim() || path.join(os.homedir(), '.config'), 'opencode');
 const AGENT_DIR = path.join(OPENCODE_CONFIG_DIR, 'agents');
 const COMMAND_DIR = path.join(OPENCODE_CONFIG_DIR, 'commands');
 const SKILL_DIR = path.join(OPENCODE_CONFIG_DIR, 'skills');
-const CONFIG_FILE = path.join(OPENCODE_CONFIG_DIR, 'config.json');
+// OpenCode 2 reads only `opencode.json(c)`; the v1-era `config.json` is not
+// discovered any more, so it is neither read nor written here.
+const CONFIG_FILE = path.join(OPENCODE_CONFIG_DIR, 'opencode.json');
 const PROMPT_FILE_PATTERN = /^\{file:(.+)\}$/i;
 
 // ============== SCOPE TYPE CONSTANTS ==============
@@ -120,13 +136,21 @@ function writeMdFile(filePath, frontmatter, body) {
 
 // ============== CONFIG FILE OPERATIONS ==============
 
+/**
+ * Project config files in the order OpenCode 2 lets them win: a file under
+ * `.opencode/` overrides the one beside it at the project root, and
+ * `opencode.json` overrides `opencode.jsonc`. When several exist, the
+ * highest-priority one is the file OpenChamber reads and writes for the
+ * project scope (OpenCode merges them all; an entry that lives only in a
+ * lower file is visible through the resolved catalog but not editable here).
+ */
 function getProjectConfigCandidates(workingDirectory) {
   if (!workingDirectory) return [];
   return [
-    path.join(workingDirectory, 'opencode.json'),
-    path.join(workingDirectory, 'opencode.jsonc'),
     path.join(workingDirectory, '.opencode', 'opencode.json'),
     path.join(workingDirectory, '.opencode', 'opencode.jsonc'),
+    path.join(workingDirectory, 'opencode.json'),
+    path.join(workingDirectory, 'opencode.jsonc'),
   ];
 }
 
@@ -141,13 +165,13 @@ function getProjectConfigPath(workingDirectory) {
     }
   }
 
+  // A new project config goes beside the project's other `.opencode/` files.
   return candidates[0];
 }
 
 function getConfigPaths(workingDirectory) {
   return {
     userPaths: [
-      path.join(OPENCODE_CONFIG_DIR, 'config.json'),
       path.join(OPENCODE_CONFIG_DIR, 'opencode.json'),
       path.join(OPENCODE_CONFIG_DIR, 'opencode.jsonc'),
     ],
@@ -169,6 +193,46 @@ function getPrimaryUserConfigPath(userPaths) {
   return CONFIG_FILE;
 }
 
+const INVALID_JSONC = 'INVALID_JSONC';
+
+function isInvalidJsoncError(error) {
+  return Boolean(error && typeof error === 'object' && error.code === INVALID_JSONC);
+}
+
+function formatJsoncParseError(filePath, errors) {
+  const first = Array.isArray(errors) && errors.length > 0 ? errors[0] : null;
+  const location = first && Number.isFinite(first.offset)
+    ? ` (${printParseErrorCode(first.error)} at offset ${first.offset})`
+    : '';
+  return `OpenCode configuration at ${filePath} contains invalid JSONC and cannot be loaded safely${location}`;
+}
+
+function isCommentOnlyParse(parsed, errors) {
+  // Comment-only / whitespace-only files parse to undefined with nothing but
+  // ValueExpected. Any other error means real content we failed to understand
+  // (YAML, plain text, a stray leading token), which must not read as empty.
+  return parsed === undefined
+    && errors.every((entry) => printParseErrorCode(entry.error) === 'ValueExpected');
+}
+
+function parseConfigResult(content, filePath) {
+  const errors = [];
+  const parsed = parseJsonc(content, errors, { allowTrailingComma: true });
+  if (isCommentOnlyParse(parsed, errors)) {
+    return { config: {}, value: {}, commentOnly: true };
+  }
+  if (errors.length > 0 || !isPlainObject(parsed)) {
+    const error = new Error(formatJsoncParseError(filePath, errors));
+    error.code = INVALID_JSONC;
+    throw error;
+  }
+  return { config: parsed, value: parsed, commentOnly: false };
+}
+
+function parseConfigObject(content, filePath) {
+  return parseConfigResult(content, filePath).config;
+}
+
 function readConfigFile(filePath) {
   if (!filePath || !fs.existsSync(filePath)) {
     return {};
@@ -179,8 +243,13 @@ function readConfigFile(filePath) {
     if (!normalized) {
       return {};
     }
-    return parseJsonc(normalized, [], { allowTrailingComma: true });
+    // Refuse partial jsonc-parser trees. Ignoring errors previously let mutations
+    // rewrite a truncated object (often only `$schema`) over the full config.
+    return parseConfigObject(normalized, filePath);
   } catch (error) {
+    if (isInvalidJsoncError(error)) {
+      throw error;
+    }
     console.error(`Failed to read config file: ${filePath}`, error);
     throw new Error('Failed to read OpenCode configuration');
   }
@@ -210,25 +279,73 @@ function mergeConfigs(base, override) {
   return result;
 }
 
+function readConfigLayer(filePath) {
+  try {
+    return { config: readConfigFile(filePath), error: null };
+  } catch (error) {
+    if (isInvalidJsoncError(error)) {
+      console.error(error.message);
+      return { config: {}, error };
+    }
+    throw error;
+  }
+}
+
 function readConfigLayers(workingDirectory) {
   const { userPaths, projectPath, customPath } = getConfigPaths(workingDirectory);
   const userPath = getPrimaryUserConfigPath(userPaths);
-  const userConfig = readConfigFile(userPath);
-  const projectConfig = readConfigFile(projectPath);
-  const customConfig = readConfigFile(customPath);
-  const mergedConfig = mergeConfigs(mergeConfigs(userConfig, projectConfig), customConfig);
+  // OpenCode loads every global config file in order, so an `opencode.jsonc`
+  // next to `opencode.json` overrides it. New entries still go to the primary
+  // file; entries found in the override are edited where they live.
+  const userOverridePath = userPaths.find((candidate) => candidate !== userPath && fs.existsSync(candidate)) ?? null;
+  const userLayer = readConfigLayer(userPath);
+  const userOverrideLayer = readConfigLayer(userOverridePath);
+  const projectLayer = readConfigLayer(projectPath);
+  const customLayer = readConfigLayer(customPath);
+  const mergedConfig = mergeConfigs(
+    mergeConfigs(mergeConfigs(userLayer.config, userOverrideLayer.config), projectLayer.config),
+    customLayer.config,
+  );
+
+  const layerErrors = [];
+  if (userLayer.error) {
+    layerErrors.push({ path: userPath, code: userLayer.error.code, message: userLayer.error.message });
+  }
+  if (userOverrideLayer.error && userOverridePath) {
+    layerErrors.push({ path: userOverridePath, code: userOverrideLayer.error.code, message: userOverrideLayer.error.message });
+  }
+  if (projectLayer.error && projectPath) {
+    layerErrors.push({ path: projectPath, code: projectLayer.error.code, message: projectLayer.error.message });
+  }
+  if (customLayer.error && customPath) {
+    layerErrors.push({ path: customPath, code: customLayer.error.code, message: customLayer.error.message });
+  }
 
   return {
-    userConfig,
-    projectConfig,
-    customConfig,
+    userConfig: userLayer.config,
+    userOverrideConfig: userOverrideLayer.config,
+    projectConfig: projectLayer.config,
+    customConfig: customLayer.config,
     mergedConfig,
-    paths: { userPath, projectPath, customPath }
+    paths: { userPath, userOverridePath, projectPath, customPath },
+    layerErrors,
   };
 }
 
 function readConfig(workingDirectory) {
   return readConfigLayers(workingDirectory).mergedConfig;
+}
+
+/**
+ * The parent directory OpenCode would create a worktree in for this project,
+ * read from the merged OpenCode configuration on the canonical checkout. Keeps
+ * the `worktree.directory` rule in one place (`worktree-directory.js`) and
+ * returns null when the setting is unset, so the caller can fall back to
+ * OpenChamber's data-dir location.
+ */
+function readWorktreeDirectorySetting(workingDirectory, primaryWorktree = workingDirectory) {
+  const { mergedConfig } = readConfigLayers(workingDirectory);
+  return resolveWorktreeDirectory(mergedConfig, primaryWorktree);
 }
 
 function getConfigForPath(layers, targetPath) {
@@ -244,51 +361,268 @@ function getConfigForPath(layers, targetPath) {
   return layers.userConfig;
 }
 
+function deepEqualJsonValue(a, b) {
+  if (a === b) {
+    return true;
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((item, index) => deepEqualJsonValue(item, b[index]));
+  }
+  if (isPlainObject(a) && isPlainObject(b)) {
+    const keys = Object.keys(a);
+    return keys.length === Object.keys(b).length
+      && keys.every((key) => Object.prototype.hasOwnProperty.call(b, key) && deepEqualJsonValue(a[key], b[key]));
+  }
+  return false;
+}
+
+// Structural diff between the parsed on-disk config and the desired config.
+// Object keys are compared per key (order-insensitive); arrays and scalars are
+// replaced whole. The desired config must already be JSON-normalized (no
+// `undefined` values), so absent keys are the only removal signal.
+function collectConfigEdits(current, next, basePath, edits) {
+  if (!isPlainObject(current) || !isPlainObject(next)) {
+    if (!deepEqualJsonValue(current, next)) {
+      edits.push({ type: 'set', path: basePath, value: next });
+    }
+    return;
+  }
+
+  for (const key of Object.keys(current)) {
+    if (!Object.prototype.hasOwnProperty.call(next, key)) {
+      edits.push({ type: 'remove', path: [...basePath, key] });
+    }
+  }
+  for (const [key, nextValue] of Object.entries(next)) {
+    const keyPath = [...basePath, key];
+    if (!Object.prototype.hasOwnProperty.call(current, key)) {
+      edits.push({ type: 'set', path: keyPath, value: nextValue });
+      continue;
+    }
+    collectConfigEdits(current[key], nextValue, keyPath, edits);
+  }
+}
+
+function findSeparatorComma(text, start, end) {
+  if (end <= start) {
+    return -1;
+  }
+  const scanner = createScanner(text, true);
+  scanner.setPosition(start);
+  const token = scanner.scan();
+  const offset = scanner.getTokenOffset();
+  if (token === SyntaxKind.CommaToken && offset < end) {
+    return offset;
+  }
+  return -1;
+}
+
+// Removes exactly the property node plus one adjacent separator comma. The
+// scanner-based comma lookup keeps comments in the surrounding gaps (including
+// commas inside comments), and avoids jsonc-parser's own removal leaving a
+// stray comma when the last property of an object is deleted.
+function removePropertyEdits(text, propertyPath) {
+  const root = parseTree(text, [], { allowTrailingComma: true });
+  const valueNode = findNodeAtLocation(root, propertyPath);
+  const propertyNode = valueNode?.parent;
+  const objectNode = propertyNode?.parent;
+  if (
+    !valueNode
+    || !propertyNode
+    || !objectNode
+    || objectNode.type !== 'object'
+    || !Array.isArray(objectNode.children)
+    || !objectNode.children.includes(propertyNode)
+  ) {
+    throw new Error('Failed to locate config property for removal');
+  }
+
+  const siblings = objectNode.children;
+  const index = siblings.indexOf(propertyNode);
+  const propStart = propertyNode.offset;
+  const propEnd = propertyNode.offset + propertyNode.length;
+  const edits = [{ offset: propStart, length: propEnd - propStart, content: '' }];
+
+  const objectEnd = objectNode.offset + objectNode.length;
+  const nextSibling = index < siblings.length - 1 ? siblings[index + 1] : null;
+  const afterGapEnd = nextSibling ? nextSibling.offset : objectEnd - 1;
+  let commaOffset = findSeparatorComma(text, propEnd, afterGapEnd);
+  if (commaOffset === -1) {
+    const previousSibling = index > 0 ? siblings[index - 1] : null;
+    const beforeGapStart = previousSibling
+      ? previousSibling.offset + previousSibling.length
+      : objectNode.offset + 1;
+    commaOffset = findSeparatorComma(text, beforeGapStart, propStart);
+  }
+  if (commaOffset !== -1) {
+    edits.push({ offset: commaOffset, length: 1, content: '' });
+  }
+  return edits;
+}
+
+function applyConfigEdits(existingText, edits) {
+  const formattingOptions = {
+    tabSize: 2,
+    insertSpaces: true,
+    eol: existingText.includes('\r\n') ? '\r\n' : '\n',
+  };
+  let text = existingText;
+  for (const edit of edits) {
+    if (edit.type === 'remove') {
+      text = applyEdits(text, removePropertyEdits(text, edit.path));
+    } else {
+      text = applyEdits(text, modify(text, edit.path, edit.value, { formattingOptions }));
+    }
+  }
+  return text;
+}
+
+function parsedConfigEquals(text, desired) {
+  const content = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  const errors = [];
+  const parsed = parseJsonc(content, errors, { allowTrailingComma: true });
+  if (errors.length > 0 || !isPlainObject(parsed)) {
+    return false;
+  }
+  return deepEqualJsonValue(parsed, desired);
+}
+
+function buildConfigFileContent(desired, existingRaw, existingParse) {
+  if (!existingRaw.trim()) {
+    return JSON.stringify(desired, null, 2);
+  }
+  if (!existingParse || existingParse.commentOnly) {
+    // A comment-only file has no root object to merge into: keep the user's
+    // comments and append the serialized config below them.
+    return `${existingRaw.trimEnd()}\n${JSON.stringify(desired, null, 2)}`;
+  }
+  if (!isPlainObject(desired)) {
+    return JSON.stringify(desired, null, 2);
+  }
+
+  const edits = [];
+  collectConfigEdits(existingParse.value, desired, [], edits);
+  if (edits.length === 0) {
+    return existingRaw;
+  }
+  const rewritten = applyConfigEdits(existingRaw, edits);
+  if (parsedConfigEquals(rewritten, desired)) {
+    return rewritten;
+  }
+  console.warn('Comment-preserving config edit did not round-trip; writing a normalized config instead');
+  return JSON.stringify(desired, null, 2);
+}
+
 function writeConfig(config, filePath = CONFIG_FILE) {
   try {
+    let existingRaw = '';
+    let existingParse = null;
     if (fs.existsSync(filePath)) {
-      const backupFile = `${filePath}.mittrcraft.backup`;
+      // Defense in depth: never overwrite a file we cannot fully parse.
+      existingRaw = fs.readFileSync(filePath, 'utf8');
+      if (existingRaw.trim()) {
+        existingParse = parseConfigResult(existingRaw.trim(), filePath);
+      }
+
+      const backupFile = `${filePath}.openchamber.backup`;
       fs.copyFileSync(filePath, backupFile);
       console.log(`Created config backup: ${backupFile}`);
     }
 
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify(config, null, 2), 'utf8');
+    // A JSON round-trip normalizes the config at the write boundary: it drops
+    // `undefined` values exactly like the serialized write would.
+    const desired = JSON.parse(JSON.stringify(config));
+    fs.writeFileSync(filePath, buildConfigFileContent(desired, existingRaw, existingParse), 'utf8');
     console.log(`Successfully wrote config file: ${filePath}`);
   } catch (error) {
+    if (isInvalidJsoncError(error)) {
+      throw error;
+    }
     console.error(`Failed to write config file: ${filePath}`, error);
     throw new Error('Failed to write OpenCode configuration');
   }
 }
 
-function getJsonEntrySource(layers, sectionKey, entryName) {
+function getLayerError(layers, filePath) {
+  if (!filePath || !Array.isArray(layers?.layerErrors)) {
+    return null;
+  }
+  return layers.layerErrors.find((entry) => entry.path === filePath) || null;
+}
+
+function throwIfLayerError(layers, filePath) {
+  const failed = getLayerError(layers, filePath);
+  if (!failed) {
+    return;
+  }
+  const error = new Error(failed.message);
+  error.code = failed.code;
+  throw error;
+}
+
+/**
+ * Look one entry up in a config layer, accepting both OpenCode 2 section keys
+ * and the v1 keys v2 still decodes. `sectionKind` is `agents`, `commands`,
+ * `providers`, or `mcp`.
+ */
+function lookupSectionEntry(config, sectionKind, entryName) {
+  if (sectionKind === 'mcp') {
+    return readMcpEntry(config, entryName);
+  }
+  return readSectionEntry(config, sectionKind, entryName);
+}
+
+function getJsonEntrySource(layers, sectionKind, entryName) {
   const { userConfig, projectConfig, customConfig, paths } = layers;
-  const customSection = customConfig?.[sectionKey]?.[entryName];
-  if (customSection !== undefined) {
-    return { section: customSection, config: customConfig, path: paths.customPath, exists: true };
+  const found = (config, filePath) => {
+    const entry = lookupSectionEntry(config, sectionKind, entryName);
+    if (entry.value === undefined) return null;
+    return {
+      section: entry.value,
+      config,
+      path: filePath,
+      exists: true,
+      sectionKey: entry.key,
+      legacy: entry.legacy,
+    };
+  };
+
+  if (paths.customPath) {
+    throwIfLayerError(layers, paths.customPath);
+    const custom = found(customConfig, paths.customPath);
+    if (custom) return custom;
   }
 
-  const projectSection = projectConfig?.[sectionKey]?.[entryName];
-  if (projectSection !== undefined) {
-    return { section: projectSection, config: projectConfig, path: paths.projectPath, exists: true };
+  if (paths.projectPath && !getLayerError(layers, paths.projectPath)) {
+    const project = found(projectConfig, paths.projectPath);
+    if (project) return project;
   }
 
-  const userSection = userConfig?.[sectionKey]?.[entryName];
-  if (userSection !== undefined) {
-    return { section: userSection, config: userConfig, path: paths.userPath, exists: true };
+  if (paths.userOverridePath) {
+    throwIfLayerError(layers, paths.userOverridePath);
+    const userOverride = found(layers.userOverrideConfig, paths.userOverridePath);
+    if (userOverride) return userOverride;
   }
 
-  return { section: null, config: null, path: null, exists: false };
+  throwIfLayerError(layers, paths.userPath);
+  const user = found(userConfig, paths.userPath);
+  if (user) return user;
+
+  return { section: null, config: null, path: null, exists: false, sectionKey: null, legacy: false };
 }
 
 function getJsonWriteTarget(layers, preferredScope) {
   const { userConfig, projectConfig, customConfig, paths } = layers;
   if (paths.customPath) {
+    throwIfLayerError(layers, paths.customPath);
     return { config: customConfig, path: paths.customPath };
   }
   if (preferredScope === AGENT_SCOPE.PROJECT && paths.projectPath) {
+    throwIfLayerError(layers, paths.projectPath);
     return { config: projectConfig, path: paths.projectPath };
   }
+  throwIfLayerError(layers, paths.userPath);
   return { config: userConfig, path: paths.userPath };
 }
 
@@ -373,7 +707,20 @@ function walkSkillMdFiles(rootDir) {
   if (!rootDir || !fs.existsSync(rootDir)) return [];
 
   const results = [];
+  // Real paths of the directories on the current walk path. Links (symlinks and
+  // Windows junctions) are followed at any depth; a link back to one of its own
+  // ancestors is skipped instead of recursing forever. Two links to the same
+  // target elsewhere in the tree are both walked, as the top level always did.
+  const ancestors = new Set();
   const walk = (dir) => {
+    let realDir;
+    try {
+      realDir = fs.realpathSync(dir);
+    } catch {
+      return;
+    }
+    if (ancestors.has(realDir)) return;
+
     let entries = [];
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -381,16 +728,33 @@ function walkSkillMdFiles(rootDir) {
       return;
     }
 
+    ancestors.add(realDir);
+
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
+      // Junctions report as links, not directories. A link whose target cannot be
+      // stat'ed is skipped, the way an unreadable directory is, instead of failing
+      // the whole scan.
+      let isDirectoryEntry = entry.isDirectory();
+      let isFileEntry = entry.isFile();
+      if (entry.isSymbolicLink()) {
+        try {
+          const target = fs.statSync(fullPath);
+          isDirectoryEntry = target.isDirectory();
+          isFileEntry = target.isFile();
+        } catch {
+          continue;
+        }
+      }
+      if (isDirectoryEntry) {
         walk(fullPath);
         continue;
       }
-      if (entry.isFile() && entry.name === 'SKILL.md') {
+      if (isFileEntry && entry.name === 'SKILL.md') {
         results.push(fullPath);
       }
     }
+    ancestors.delete(realDir);
   };
 
   walk(rootDir);
@@ -548,11 +912,14 @@ export {
   parseMdFile,
   writeMdFile,
   readConfigFile,
+  readConfigLayer,
   isPlainObject,
   readConfigLayers,
   readConfig,
+  readWorktreeDirectorySetting,
   getConfigForPath,
   writeConfig,
+  lookupSectionEntry,
   getJsonEntrySource,
   getJsonWriteTarget,
   getAncestors,

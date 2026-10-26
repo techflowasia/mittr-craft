@@ -1,18 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { UPSTREAM_PRODUCT } from './product.mjs';
 
 export const assertUpdaterCapability = ({
   platform = process.platform,
   packaged,
+  updaterFeed = UPSTREAM_PRODUCT.updaterFeed,
   appImagePath = process.env.APPIMAGE,
   access = fs.accessSync,
   stat = fs.statSync,
 } = {}) => {
+  if (!updaterFeed) throw new Error('Updates are not available in this build.');
   if (platform !== 'linux' || !packaged) return;
 
   if (!appImagePath) {
     throw new Error(
-      'Updates require the packaged Linux AppImage. Start MittrCraft from its .AppImage file, not an extracted or repackaged copy.',
+      'Updates require the packaged Linux AppImage. Start OpenChamber from its .AppImage file, not an extracted or repackaged copy.',
     );
   }
   if (!path.isAbsolute(appImagePath)) {
@@ -22,7 +25,7 @@ export const assertUpdaterCapability = ({
   try {
     if (!stat(appImagePath).isFile()) throw new Error('not a file');
   } catch {
-    throw new Error(`The running AppImage cannot be found at ${appImagePath}. Start MittrCraft from a valid .AppImage file.`);
+    throw new Error(`The running AppImage cannot be found at ${appImagePath}. Start OpenChamber from a valid .AppImage file.`);
   }
 
   try {
@@ -33,3 +36,10 @@ export const assertUpdaterCapability = ({
     );
   }
 };
+
+// What an update check answers in a build with no update feed: no update, and
+// that updates are off, so a caller can say so rather than "up to date".
+// Null when the build has a feed and the check should run.
+export const updateCheckWithoutFeed = ({ updaterFeed = UPSTREAM_PRODUCT.updaterFeed, currentVersion }) => (
+  updaterFeed ? null : { available: false, updatesDisabled: true, currentVersion, version: null, body: null, date: null }
+);

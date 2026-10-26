@@ -22,8 +22,8 @@ export const createServerStartupRuntime = (dependencies) => {
 
   const resolveBindHost = (host) =>
     host
-    || (typeof process.env.MITTRCRAFT_HOST === 'string' && process.env.MITTRCRAFT_HOST.trim().length > 0
-      ? process.env.MITTRCRAFT_HOST.trim()
+    || (typeof process.env.OPENCHAMBER_HOST === 'string' && process.env.OPENCHAMBER_HOST.trim().length > 0
+      ? process.env.OPENCHAMBER_HOST.trim()
       : '127.0.0.1');
 
   const startListeningAndMaybeTunnel = async ({
@@ -48,12 +48,12 @@ export const createServerStartupRuntime = (dependencies) => {
 
           if (typeof process.send === 'function') {
             if (!process.connected) {
-              throw new Error('MittrCraft startup IPC channel disconnected before ready notification');
+              throw new Error('OpenChamber startup IPC channel disconnected before ready notification');
             }
 
             await new Promise((resolveReadyNotification, rejectReadyNotification) => {
               try {
-                process.send({ type: 'mittrcraft:ready', port: activePort }, (error) => {
+                process.send({ type: 'openchamber:ready', port: activePort }, (error) => {
                   if (error) {
                     rejectReadyNotification(error);
                     return;
@@ -69,7 +69,7 @@ export const createServerStartupRuntime = (dependencies) => {
           const displayHost = (bindHost === '0.0.0.0' || bindHost === '::' || bindHost === '[::]')
             ? 'localhost'
             : (bindHost.includes(':') ? `[${bindHost}]` : bindHost);
-          console.log(`MittrCraft server listening on ${bindHost}:${activePort}`);
+          console.log(`OpenChamber server listening on ${bindHost}:${activePort}`);
           console.log(`Health check: http://${displayHost}:${activePort}/health`);
           console.log(`Web interface: http://${displayHost}:${activePort}`);
 
@@ -138,7 +138,7 @@ export const createServerStartupRuntime = (dependencies) => {
       // Cover every signal a shell or dev harness may use to stop/restart us, so
       // the managed OpenCode child is always torn down gracefully instead of
       // orphaned: SIGINT/SIGQUIT (Ctrl+C/Ctrl+\), SIGTERM (kill/default), SIGHUP
-      // (terminal close), SIGUSR2 (nodemon restart for `dev:server:watch`).
+      // (terminal close), SIGUSR2 (nodemon restart outside Windows).
       process.on('SIGTERM', handleSignal);
       process.on('SIGINT', handleSignal);
       process.on('SIGQUIT', handleSignal);

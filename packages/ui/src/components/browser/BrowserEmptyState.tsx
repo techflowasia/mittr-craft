@@ -2,12 +2,12 @@ import React from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
-import { MittrCraftLogo } from '@/components/ui/MittrCraftLogo';
+import { OpenChamberLogo } from '@/components/ui/OpenChamberLogo';
 import { useI18n } from '@/lib/i18n';
 import { fetchDevServers, mergeDevServerCandidates, type DevServerDiscovery } from '@/lib/browser/devServers';
 import { clearAnnouncedDevServers, useAnnouncedDevServers } from '@/lib/browser/announcedServers';
-import { browserUrlLabel, isLoopbackUrl } from '@/lib/browser/url';
-import { getRuntimeApiBaseUrl } from '@/lib/runtime-switch';
+import { browserUrlLabel } from '@/lib/browser/url';
+import { isRemoteWebLoopbackUrl } from '@/lib/browser/devTunnel';
 
 /**
  * What the panel shows before anything is loaded.
@@ -36,17 +36,7 @@ const REFRESH_INTERVAL_MS = 2_000;
  * way to reach them. The desktop shell tunnels a local port for exactly this
  * case; a browser tab has no equivalent, and its `localhost` is its own.
  */
-const isUnreachableFromHere = (): boolean => {
-  if (typeof window === 'undefined') return false;
-  if (window.__MITTRCRAFT_ELECTRON__) return false;
-  const baseUrl = getRuntimeApiBaseUrl();
-  if (!baseUrl) return false;
-  try {
-    return !isLoopbackUrl(new URL(baseUrl, window.location.href).toString());
-  } catch {
-    return false;
-  }
-};
+const isUnreachableFromHere = (): boolean => isRemoteWebLoopbackUrl('http://localhost');
 
 export const BrowserEmptyState: React.FC<{
   onOpen: (url: string) => void;
@@ -89,7 +79,7 @@ export const BrowserEmptyState: React.FC<{
     // own top, and no amount of scrolling reaches it. Only the list of servers
     // scrolls, and it shrinks to whatever room is left before it does.
     <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 overflow-hidden bg-background p-6 text-center">
-      <MittrCraftLogo width={110} height={110} className="shrink-0 opacity-20" />
+      <OpenChamberLogo width={110} height={110} className="shrink-0 opacity-20" />
       <div className="flex shrink-0 flex-col gap-1">
         <span className="typography-ui-header text-foreground">{t('contextPanel.browser.empty')}</span>
         <span className="typography-micro text-muted-foreground">{t('contextPanel.browser.emptyHint')}</span>
@@ -115,6 +105,7 @@ export const BrowserEmptyState: React.FC<{
                 variant="outline"
                 size="sm"
                 className="w-full shrink-0 justify-start gap-2"
+                disabled={remoteOnly}
                 onClick={() => {
                   // The offer is answered; leaving it up would keep suggesting
                   // servers behind a page the user is already looking at.

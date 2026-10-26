@@ -17,19 +17,27 @@ export default defineConfig(({ mode }) => ({
   ],
   resolve: {
     alias: [
-      { find: '@opencode-ai/sdk/v2', replacement: path.resolve(__dirname, '../../node_modules/@opencode-ai/sdk/dist/v2/client.js') },
-      { find: '@mittrcraft/ui', replacement: path.resolve(__dirname, '../ui/src') },
+      { find: '@openchamber/sdk/schemas', replacement: path.resolve(__dirname, '../sdk/src/schemas.ts') },
+      { find: '@openchamber/sdk', replacement: path.resolve(__dirname, '../sdk/src/index.ts') },
+      { find: '@openchamber/ui', replacement: path.resolve(__dirname, '../ui/src') },
       { find: '@vscode', replacement: path.resolve(__dirname, './webview') },
       { find: '@', replacement: path.resolve(__dirname, '../ui/src') },
     ],
   },
   worker: {
     format: 'es',
+    // VS Code webviews cannot load module imports from inside a web worker.
+    // Keep the Shiki worker self-contained instead of emitting grammar chunks.
+    rollupOptions: {
+      output: {
+        inlineDynamicImports: true,
+      },
+    },
   },
   define: {
     'process.env.NODE_ENV': JSON.stringify(mode === 'production' ? 'production' : 'development'),
     'global': 'globalThis',
-    '__MITTRCRAFT_WEBVIEW_BUILD_TIME__': JSON.stringify(new Date().toISOString()),
+    '__OPENCHAMBER_WEBVIEW_BUILD_TIME__': JSON.stringify(new Date().toISOString()),
   },
   envPrefix: ['VITE_'],
   server: {
@@ -47,7 +55,7 @@ export default defineConfig(({ mode }) => ({
     },
   },
   optimizeDeps: {
-    include: ['@opencode-ai/sdk/v2'],
+    include: ['@opencode/client'],
   },
   build: {
     outDir: path.resolve(__dirname, 'dist/webview'),

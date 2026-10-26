@@ -1,14 +1,14 @@
 ---
 name: ui-api-decoupling
-description: Use when creating or modifying MittrCraft shared UI data access, OpenCode SDK calls, `RuntimeAPIs`, runtime fetch/auth/URLs, authenticated browser assets, bridges/proxies, runtime switching, or server API routes.
+description: Use when creating or modifying OpenChamber shared UI data access, OpenCode SDK calls, `RuntimeAPIs`, runtime fetch/auth/URLs, authenticated browser assets, bridges/proxies, runtime switching, or server API routes.
 ---
 
 # UI API Decoupling
 
 ## Core Boundary
 
-- Official OpenCode API calls use `@opencode-ai/sdk/v2` through `opencodeClient`.
-- MittrCraft-owned HTTP capabilities use `RuntimeAPIs` where runtime-specific behavior exists, otherwise explicit MittrCraft routes through `runtimeFetch`.
+- Official OpenCode API calls use `@opencode/client` (OpenCode 2.x, `/api/*` routes) through `opencodeClient`; only `packages/ui/src/lib/opencode/` may see wire types, everything else uses the domain model in `lib/opencode/model.ts`.
+- OpenChamber-owned HTTP capabilities use `RuntimeAPIs` where runtime-specific behavior exists, otherwise explicit OpenChamber routes through `runtimeFetch`.
 - Browser/realtime consumers use shared runtime URL/socket helpers.
 - Shared UI never hardcodes localhost, ports, API origins, credentials, or one runtime's transport assumptions.
 - Treat runtime adapters as the imperative shell: they own transport, auth, serialization, and platform mechanics. Shared feature code receives trusted contracts and owns domain decisions.
@@ -19,10 +19,20 @@ description: Use when creating or modifying MittrCraft shared UI data access, Op
 |---|---|
 | Official OpenCode endpoint | `opencodeClient` or its SDK client |
 | SDK gap for official OpenCode | Narrow documented wrapper in `opencodeClient` preserving request fidelity |
-| MittrCraft HTTP route | `runtimeFetch('/api/...')` |
+| OpenChamber HTTP route | `runtimeFetch('/api/...')` |
 | Runtime-owned capability | Extend `RuntimeAPIs` and implement each applicable runtime |
 | Browser-owned authenticated URL | Runtime URL resolver and scoped URL auth |
 | SSE/WebSocket | Owning realtime transport; also load `relay-transport` |
+
+## Name The Surfaces Before Editing
+
+Before writing code that changes what a user can reach or do, write the surface list: every runtime this behavior exists on, and one line per runtime saying what happens there. Runtimes are web, Electron desktop, VS Code, hosted mobile, and Capacitor mobile.
+
+The step is done when no runtime is missing a line. "Not applicable" is a line; silence is not. A stable unsupported response is a valid outcome, an accidental fallthrough is not.
+
+Carry the list into the pull request description, which asks for the same table. It is the same artifact: written once while deciding, restated once while handing off. A surface you cannot answer for is the finding — say so in the list rather than leaving the row blank.
+
+This applies to any user-reachable behavior, not only shared UI data access. A sequence that spans native shell, server, and renderer has surfaces too; so does a capability that only one runtime implements today.
 
 ## Load References By Task
 
@@ -37,7 +47,7 @@ Load every matching reference before editing.
 ## Mandatory Rules
 
 1. **Do not bypass the SDK for official OpenCode APIs.** Preserve SDK-generated method, body, headers, query, auth, and abort signal.
-2. **Keep MittrCraft routes explicit.** Register them before the generic OpenCode proxy.
+2. **Keep OpenChamber routes explicit.** Register them before the generic OpenCode proxy.
 3. **Use runtime APIs for runtime-owned capabilities.** Components consume hooks/providers, not runtime globals.
 4. **Resolve runtime state at call time.** Do not cache runtime base URLs, resolver output, credentials, or SDK clients across endpoint switches.
 5. **Let transport own auth.** HTTP uses runtime bearer handling; browser/realtime URLs use scoped short-lived URL auth where headers are impossible.
@@ -49,6 +59,7 @@ Load every matching reference before editing.
 11. **Parse at the boundary.** Treat external, persisted, bridge, IPC, and network payloads as unknown until a schema, parser, or narrow constructor produces the trusted type consumed by shared code. Do not validate fields and then continue passing the raw payload.
 12. **Model the real contract.** Prefer precise result/state unions and required dependencies over loose strings, boolean combinations, optional callback bags, `any`, or repeated casts. Make unsupported runtime behavior and failure distinct from valid empty success.
 13. **Keep adapters deep and bridges thin.** Hide meaningful protocol or platform mechanics behind an intention-revealing runtime operation; do not add pass-through layers that only rename SDK, fetch, or bridge calls.
+14. **Scope every OpenCode read to the directory being worked in.** A directory-scoped read makes OpenCode start that location with all its MCP servers, so a read names the current directory (UI) or the lifecycle's default directory (server), and one read per known project is a fan-out. Which routes and why: `opencode-v2`, *Every directory-scoped read starts a location*.
 
 ## HTTP Decision Rules
 
@@ -67,7 +78,7 @@ const imageSrc = getRuntimeUrlResolver().authenticatedAsset('/api/fs/raw?path=di
 const eventUrl = getRuntimeUrlResolver().sse('/api/event');
 ```
 
-Plain `fetch` is reserved for intentional external origins that are not the active MittrCraft/OpenCode runtime.
+Plain `fetch` is reserved for intentional external origins that are not the active OpenChamber/OpenCode runtime.
 
 ## Runtime Switch Safety
 
@@ -92,10 +103,10 @@ Re-parse values obtained after a switch at their owning boundary. A type establi
 ## Verification
 
 - Official calls use SDK paths or documented SDK-gap wrappers.
-- MittrCraft routes win before generic proxy fallback.
+- OpenChamber routes win before generic proxy fallback.
 - Request fidelity, auth, abort, query, and body behavior are tested.
 - Browser/realtime auth uses narrow allowlists and scoped tokens.
-- Every applicable runtime has implementation or explicit unsupported behavior.
+- Every applicable runtime has implementation or explicit unsupported behavior, and the surface list written before editing has a line for each.
 - Runtime switching cannot reuse stale endpoint/auth/cache state.
 - Privileged Electron/extension behavior is enforced outside the renderer.
 - Focused transport, bridge, proxy, auth, and runtime tests pass; static type/lint checks alone are insufficient.

@@ -1,10 +1,7 @@
 import fs from 'node:fs';
+import { UPSTREAM_PRODUCT } from './product.mjs';
 
-export const PRODUCTION_UPDATER_FEED = Object.freeze({
-  provider: 'github',
-  owner: 'techflowasia',
-  repo: 'mittr-craft',
-});
+export const PRODUCTION_UPDATER_FEED = UPSTREAM_PRODUCT.updaterFeed;
 
 const isLoopbackHostname = (hostname) => {
   if (hostname === '::1' || hostname === '[::1]') return true;
@@ -35,13 +32,14 @@ export const parseLoopbackUpdaterUrl = (value) => {
 export const resolveUpdaterFeed = ({
   environment = process.env,
   testBuild = false,
+  productionFeed = PRODUCTION_UPDATER_FEED,
 } = {}) => {
-  if (environment.MITTRCRAFT_E2E !== '1'
+  if (environment.OPENCHAMBER_E2E !== '1'
     || testBuild !== true) {
-    return PRODUCTION_UPDATER_FEED;
+    return productionFeed;
   }
 
-  const url = parseLoopbackUpdaterUrl(environment.MITTRCRAFT_UPDATER_E2E_URL);
-  if (!url) return PRODUCTION_UPDATER_FEED;
+  const url = parseLoopbackUpdaterUrl(environment.OPENCHAMBER_UPDATER_E2E_URL);
+  if (!url) return productionFeed;
   return { provider: 'generic', url };
 };

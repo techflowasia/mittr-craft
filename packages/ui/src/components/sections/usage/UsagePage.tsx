@@ -17,9 +17,6 @@ import { useI18n } from '@/lib/i18n';
 import { formatTimeForPreference } from '@/lib/timeFormat';
 import { useUIStore, type TimeFormatPreference } from '@/stores/useUIStore';
 import { SettingsPageLayout } from '@/components/sections/shared/SettingsPageLayout';
-import { MITTR_PROVIDER_ID, useQuotaMeStore } from '@/lib/mittr-quota/quota-me-store';
-import { isMittrUsageOffered, resolveUsageSelection } from './mittrUsage';
-import { MittrUsagePage } from './MittrUsagePage';
 import {
   SettingsSection,
   SettingsCheckboxRow,
@@ -43,15 +40,13 @@ export const UsagePage: React.FC = () => {
   const { t } = useI18n();
   const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
   const results = useQuotaStore((state) => state.results);
-  const selection = useQuotaStore((state) => state.selectedProviderId);
-  const selectedProviderId = selection === MITTR_PROVIDER_ID ? null : selection;
-  const mittrOffered = isMittrUsageOffered(useQuotaMeStore((state) => state.state));
+  const selectedProviderId = useQuotaStore((state) => state.selectedProviderId);
   const setSelectedProvider = useQuotaStore((state) => state.setSelectedProvider);
   const loadSettings = useQuotaStore((state) => state.loadSettings);
   const fetchAllQuotas = useQuotaStore((state) => state.fetchAllQuotas);
   const isLoading = useQuotaStore((state) => state.isLoading);
   const lastUpdated = useQuotaStore((state) => state.lastUpdated);
-  const error = useQuotaStore((state) => state.error);
+  const refreshErrors = useQuotaStore((state) => state.refreshErrors);
   const dropdownProviderIds = useQuotaStore((state) => state.dropdownProviderIds);
   const setDropdownProviderIds = useQuotaStore((state) => state.setDropdownProviderIds);
   const selectedModels = useQuotaStore((state) => state.selectedModels);
@@ -66,20 +61,37 @@ export const UsagePage: React.FC = () => {
   }, [loadSettings, fetchAllQuotas]);
 
   React.useEffect(() => {
-    const next = resolveUsageSelection(selection, mittrOffered, results);
-    if (next !== selection) setSelectedProvider(next);
-  }, [mittrOffered, results, selection, setSelectedProvider]);
+    if (selectedProviderId) {
+      return;
+    }
+    if (results.length === 0) {
+      return;
+    }
+    const firstConfigured = results.find((entry) => entry.configured)?.providerId;
+    setSelectedProvider(firstConfigured ?? QUOTA_PROVIDERS[0]?.id ?? null);
+  }, [results, selectedProviderId, setSelectedProvider]);
 
   const selectedResult = results.find((entry) => entry.providerId === selectedProviderId) ?? null;
 
   const providerMeta = QUOTA_PROVIDERS.find((provider) => provider.id === selectedProviderId);
   const providerName = providerMeta?.name ?? selectedProviderId ?? t('settings.usage.sidebar.title');
   const usage = selectedResult?.usage;
-  const selectedProviderError = selectedResult?.configured && !selectedResult.ok
-    ? selectedResult.error
-    : null;
+  const refreshError = selectedProviderId ? refreshErrors[selectedProviderId] : undefined;
+  const selectedProviderError = refreshError
+    ? usage
+      ? t('header.services.usageRefreshFailedStale', { error: refreshError })
+      : refreshError
+    : selectedResult?.configured && !selectedResult.ok
+      ? selectedResult.error
+      : null;
   const showInDropdown = selectedProviderId ? dropdownProviderIds.includes(selectedProviderId) : false;
-  const hasCredentialsForm = selectedProviderId === 'ollama-cloud' || selectedProviderId === 'cursor';
+  const credentialProviderId = selectedProviderId === 'exe-dev'
+    || selectedProviderId === 'ollama-cloud'
+    || selectedProviderId === 'cursor'
+    || selectedProviderId === 'zenmux'
+    ? selectedProviderId
+    : null;
+  const hasCredentialsForm = credentialProviderId !== null;
   const handleDropdownToggle = React.useCallback((enabled: boolean) => {
     if (!selectedProviderId) {
       return;
@@ -146,10 +158,6 @@ export const UsagePage: React.FC = () => {
 
   const providerSelectedModels = selectedProviderId ? (selectedModels[selectedProviderId] ?? []) : [];
 
-  if (selection === MITTR_PROVIDER_ID) {
-    return <MittrUsagePage />;
-  }
-
   if (!selectedProviderId) {
     return (
         <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -190,10 +198,14 @@ export const UsagePage: React.FC = () => {
         <p className="typography-ui-label text-foreground pb-8">{t('settings.usage.page.state.noData')}</p>
       )}
 
-      {(error || selectedProviderError) && (
+      {/* Only the selected provider's own failure belongs in its panel. The
+          store's global `error` is whichever provider failed first and has no
+          UI consumer left; shown here it labeled DeepSeek with Claude's
+          rate-limit message. */}
+      {selectedProviderError && (
         <div className="mb-8 rounded-lg border border-[var(--status-error-border)] bg-[var(--status-error-background)] px-4 py-3">
           <p className="typography-ui-label font-medium text-[var(--status-error)]">{t('settings.usage.page.state.refreshFailedTitle')}</p>
-          <p className="typography-meta text-[var(--status-error)] mt-1">{error ?? selectedProviderError}</p>
+          <p className="typography-meta text-[var(--status-error)]/80 mt-1">{selectedProviderError}</p>
         </div>
       )}
 
@@ -201,21 +213,21 @@ export const UsagePage: React.FC = () => {
       {selectedResult && !selectedResult.configured && !hasCredentialsForm && (
         <div className="mb-8 rounded-lg border border-[var(--status-warning-border)] bg-[var(--status-warning-background)] px-4 py-3">
           <p className="typography-ui-label font-medium text-[var(--status-warning)]">{t('settings.usage.page.state.providerNotConfiguredTitle')}</p>
-          <p className="typography-meta text-[var(--status-warning)] mt-1">
+          <p className="typography-meta text-[var(--status-warning)]/80 mt-1">
             {t('settings.usage.page.state.providerNotConfiguredDescription')}
           </p>
         </div>
       )}
 
-      {(selectedProviderId === 'ollama-cloud' || selectedProviderId === 'cursor') && (
-        <QuotaCredentials providerId={selectedProviderId} providerName={providerName} />
+      {credentialProviderId && (
+        <QuotaCredentials providerId={credentialProviderId} providerName={providerName} />
       )}
 
       {usage?.windows && Object.keys(usage.windows).length > 0 && (
         <SettingsSection settingsItem="usage.model-quotas">
           <div className="divide-y divide-[var(--surface-subtle)]">
             {Object.entries(usage.windows).map(([label, window]) => (
-              <UsageCard key={label} title={label} window={window} />
+              <UsageCard key={label} title={label} window={window} providerId={selectedProviderId} />
             ))}
           </div>
         </SettingsSection>

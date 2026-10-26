@@ -1,3 +1,4 @@
+import { isQuestionTool, normalizeToolName, type ToolName } from '@/lib/opencode/tools';
 import { ACTIVITY_STANDALONE_TOOL_NAMES } from './constants';
 import type {
     ChatMessageEntry,
@@ -6,8 +7,8 @@ import type {
     TurnPartRecord,
 } from './types';
 
-const isStandaloneTool = (toolName: unknown): boolean => {
-    return typeof toolName === 'string' && ACTIVITY_STANDALONE_TOOL_NAMES.has(toolName.toLowerCase());
+const isStandaloneTool = (toolName: ToolName): boolean => {
+    return ACTIVITY_STANDALONE_TOOL_NAMES.has(normalizeToolName(toolName));
 };
 
 const getPartEndTime = (part: unknown): number | undefined => {
@@ -34,10 +35,6 @@ const getPartText = (part: unknown): string | undefined => {
 const getMessageFinish = (message: ChatMessageEntry): string | undefined => {
     const finish = (message.info as { finish?: unknown }).finish;
     return typeof finish === 'string' ? finish : undefined;
-};
-
-const isCompactionSummaryMessage = (message: ChatMessageEntry): boolean => {
-    return (message.info as { summary?: unknown }).summary === true;
 };
 
 const buildTurnPartRecord = (
@@ -97,7 +94,14 @@ export const projectTurnActivity = (input: ProjectActivityInput): ProjectActivit
     input.assistantMessages.forEach((message) => {
         const finish = getMessageFinish(message);
         const messageHasTool = message.parts.some((part) => part.type === 'tool');
-        const messageIsCompactionSummary = isCompactionSummaryMessage(message);
+        // A turn blocked on a question never reaches finish === 'stop' (the
+        // user must answer first). Treating the text the model produced
+        // before the question as 'justification' would bury it inside the
+        // collapsible Activity group — the context stays invisible until the
+        // turn completes (OPE-199). Keep it inline like OpenCode.
+        const messageHasQuestion = message.parts.some((part) => (
+            part.type === 'tool' && isQuestionTool(part.tool)
+        ));
 
         message.parts.forEach((part, partIndex) => {
             const isTool = part.type === 'tool';
@@ -107,9 +111,9 @@ export const projectTurnActivity = (input: ProjectActivityInput): ProjectActivit
                 : undefined;
             const partId = part.id ?? `${message.info.id}-part-${partIndex}-${part.type}`;
 
-            const toolName = isTool
-                ? (part as { tool?: unknown }).tool
-                : undefined;
+            // SAFETY: a tool part always carries a string `tool` name; this
+            // view only reads it and tolerates its absence.
+            const toolName = isTool ? (part as { tool?: string }).tool : undefined;
             const standaloneTool = isTool && isStandaloneTool(toolName);
             if (standaloneTool) {
                 const toolPartId = partId;
@@ -137,13 +141,9 @@ export const projectTurnActivity = (input: ProjectActivityInput): ProjectActivit
                 input.showTextJustificationActivity
                 && part.type === 'text'
                 && text
-                && (
-                    messageIsCompactionSummary
-                    || (
-                        !isConfirmedSummaryText
-                        && (messageHasTool || (typeof finish === 'string' && finish !== 'stop'))
-                    )
-                )
+                && !messageHasQuestion
+                && !isConfirmedSummaryText
+                && (messageHasTool || (typeof finish === 'string' && finish !== 'stop'))
             ) {
                 kind = 'justification';
             }

@@ -2,16 +2,43 @@ import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Radio } from '@/components/ui/radio';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { dropdownTriggerVariants } from '@/components/ui/dropdown-trigger';
 import { cn } from '@/lib/utils';
 import { SettingsInfoHint } from './SettingsInfoHint';
 
+/**
+ * Width cap shared by every settings value picker.
+ *
+ * `applyTypography` scales the `--typography-*` vars but never the root rem,
+ * so a rem-based cap (`max-w-48`) stays 192px while the label inside it grows,
+ * and the value clips at 150–200% interface font size. `ch` is measured
+ * against the trigger's own `typography-ui-label` font, so the cap grows with
+ * the setting. Below `@xl` the field row stacks and the control is plain
+ * `w-full`, so on narrow panes the cap is the only thing keeping the
+ * trigger from spanning the pane.
+ *
+ * The cap is deliberately tight: every settings picker shares it so a column
+ * of dropdowns reads as one width, and long values truncate inside instead
+ * of stretching the trigger across the pane.
+ */
+const SETTINGS_TRIGGER_WIDTH_CLASS = 'w-full min-w-[16ch] max-w-[28ch]';
+
 /** Settings select trigger: full column width in stacked cells; capped in field rows via parent. */
-export const SETTINGS_SELECT_TRIGGER_CLASS = 'w-full min-w-40 max-w-48';
+export const SETTINGS_SELECT_TRIGGER_CLASS = SETTINGS_TRIGGER_WIDTH_CLASS;
 export const SETTINGS_SELECT_SIZE = 'settings' as const;
 
 /** Fixed-width select used inside full-width SettingsFieldRow control columns. */
-export const SETTINGS_SELECT_ROW_TRIGGER_CLASS = 'w-full min-w-40 max-w-48';
+export const SETTINGS_SELECT_ROW_TRIGGER_CLASS = SETTINGS_TRIGGER_WIDTH_CLASS;
+
+/**
+ * Width for every settings NumberInput stepper. Font-relative for the same
+ * reason as the trigger cap above: a rem-fixed `w-16`/`w-20`/`w-24`/`w-32`
+ * clips its own digits once the interface font is scaled up. The explicit
+ * `typography-ui-label` pins `ch` to the same scaled font the inner numeric
+ * field renders in, since the wrapper would otherwise inherit an unscaled one.
+ */
+export const SETTINGS_NUMBER_INPUT_CLASS = 'typography-ui-label w-[16ch]';
 
 /** Compact reset / icon action next to a settings control (matches h-8 controls). */
 export const SETTINGS_ICON_BUTTON_CLASS =
@@ -21,7 +48,7 @@ export const SETTINGS_ICON_BUTTON_CLASS =
 // eslint-disable-next-line react-refresh/only-export-components
 export const SETTINGS_CUSTOM_TRIGGER_CLASS = cn(
   dropdownTriggerVariants(),
-  'w-full min-w-40 max-w-48',
+  SETTINGS_TRIGGER_WIDTH_CLASS,
 );
 
 /** Shared width for stacked control clusters (select/input + reset). */
@@ -310,8 +337,8 @@ export const SettingsFieldRow: React.FC<SettingsFieldRowProps> = ({
       )}
     >
       <div className="min-w-0 @xl:w-56 @xl:shrink-0">
-        <div className="flex items-center gap-1.5">
-          <div className={SETTINGS_FIELD_LABEL_CLASS}>{label}</div>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <div className={cn('min-w-0 truncate', SETTINGS_FIELD_LABEL_CLASS)}>{label}</div>
           {info != null ? <SettingsInfoHint>{info}</SettingsInfoHint> : null}
         </div>
         {description != null ? (
@@ -478,10 +505,7 @@ export const SettingsRadioOption: React.FC<SettingsRadioOptionProps> = ({
       />
       <div className="flex min-w-0 flex-col">
         <span
-          className={cn(
-            'typography-settings-field-label font-normal',
-            selected ? 'text-foreground' : 'text-foreground',
-          )}
+          className="typography-settings-field-label font-normal text-foreground"
         >
           {label}
         </span>
@@ -516,6 +540,12 @@ interface SettingsChipOption<T extends string> {
   value: T;
   label: React.ReactNode;
   disabled?: boolean;
+  /**
+   * Shown on hover (long-press on touch). The popup stays open while the
+   * pointer is on it, so it may carry a link. Keep what the user must read
+   * visible elsewhere: touch users rarely long-press.
+   */
+  tooltip?: React.ReactNode;
 }
 
 interface SettingsChipGroupProps<T extends string> {
@@ -540,20 +570,35 @@ export function SettingsChipGroup<T extends string>({
       aria-label={ariaLabel}
       className={cn('flex flex-wrap items-center gap-1', className)}
     >
-      {options.map((option) => (
-        <Button
-          key={option.value}
-          type="button"
-          variant="chip"
-          size="xs"
-          disabled={option.disabled}
-          aria-pressed={value === option.value}
-          className="!font-normal"
-          onClick={() => onChange(option.value)}
-        >
-          {option.label}
-        </Button>
-      ))}
+      {options.map((option) => {
+        const chip = (
+          <Button
+            key={option.value}
+            type="button"
+            variant="chip"
+            size="xs"
+            disabled={option.disabled}
+            aria-pressed={value === option.value}
+            className="!font-normal"
+            onClick={() => onChange(option.value)}
+          >
+            {option.label}
+          </Button>
+        );
+        if (!option.tooltip) return chip;
+        return (
+          <Tooltip key={option.value}>
+            {/* A disabled button gets no hover events, so its tooltip (usually
+                the reason it is disabled) hangs on a wrapper instead. */}
+            <TooltipTrigger asChild>
+              {option.disabled ? <span className="inline-flex" tabIndex={0}>{chip}</span> : chip}
+            </TooltipTrigger>
+            <TooltipContent side="top" sideOffset={6} className="max-w-xs">
+              {option.tooltip}
+            </TooltipContent>
+          </Tooltip>
+        );
+      })}
     </div>
   );
 }

@@ -3,12 +3,14 @@ import type {
   FileSearchQuery,
   FileSearchResult,
   FilesAPI,
-} from '@mittrcraft/ui/lib/api/types';
+} from '@openchamber/ui/lib/api/types';
 import {
   FilesystemError,
   parseFilesystemErrorReason,
-} from '@mittrcraft/ui/lib/api/files-errors';
-import { runtimeFetch } from '@mittrcraft/ui/lib/runtime-fetch';
+  type FilesystemErrorReason,
+} from '@openchamber/ui/lib/api/files-errors';
+import { runtimeFetch } from '@openchamber/ui/lib/runtime-fetch';
+import { shareFileFromNativeApp } from '@openchamber/ui/lib/nativeFileShare';
 
 const normalizePath = (path: string): string => path.replace(/\\/g, '/');
 
@@ -29,6 +31,13 @@ type WebDirectoryListResponse = {
   directory?: string;
   path?: string;
   entries?: WebDirectoryEntry[];
+};
+
+type WebFileUploadResponse = {
+  success?: boolean;
+  path?: string;
+  error?: string;
+  reason?: FilesystemErrorReason;
 };
 
 const toDirectoryListResult = (fallbackDirectory: string, payload: WebDirectoryListResponse): DirectoryListResult => {
@@ -158,6 +167,7 @@ export const createWebFilesAPI = ({ getDirectory }: WebFilesAPIOptions): FilesAP
     }
     const response = await runtimeFetch('/api/fs/stat', {
       query: params,
+      signal: AbortSignal.timeout(30_000),
       headers: directoryHeaders(getDirectory, options?.directory),
     });
 
@@ -189,7 +199,8 @@ export const createWebFilesAPI = ({ getDirectory }: WebFilesAPIOptions): FilesAP
     }
     const response = await runtimeFetch('/api/fs/read', {
       query: params,
-      cache: options?.optional ? 'no-store' : 'default',
+      signal: AbortSignal.timeout(30_000),
+      cache: options?.optional || options?.fresh ? 'no-store' : 'default',
       headers: directoryHeaders(getDirectory, options?.directory),
     });
 
@@ -219,6 +230,36 @@ export const createWebFilesAPI = ({ getDirectory }: WebFilesAPIOptions): FilesAP
     return {
       success: Boolean((result as { success?: boolean }).success),
       path: typeof (result as { path?: string }).path === 'string' ? normalizePath((result as { path: string }).path) : target,
+    };
+  },
+
+  async uploadFile(path: string, file: Blob, options): Promise<{ success: boolean; path: string }> {
+    const target = normalizePath(path);
+    const response = await runtimeFetch('/api/fs/upload', {
+      method: 'POST',
+      query: {
+        path: target,
+        overwrite: options?.overwrite ? 'true' : undefined,
+      },
+      headers: {
+        'Content-Type': 'application/octet-stream',
+        ...directoryHeaders(getDirectory, options?.directory),
+      },
+      body: file,
+    });
+
+    if (!response.ok) {
+      const error: WebFileUploadResponse = await response.json().catch(() => ({ error: response.statusText }));
+      throw new FilesystemError(error.error || 'Failed to upload file', {
+        reason: parseFilesystemErrorReason(error.reason),
+        status: response.status,
+      });
+    }
+
+    const result: WebFileUploadResponse = await response.json().catch(() => ({}));
+    return {
+      success: Boolean(result.success),
+      path: result.path ? normalizePath(result.path) : target,
     };
   },
 
@@ -289,9 +330,8 @@ export const createWebFilesAPI = ({ getDirectory }: WebFilesAPIOptions): FilesAP
     const capacitor = (window as typeof window & {
       Capacitor?: { isNativePlatform?: () => boolean };
     }).Capacitor;
-    const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
-    if (capacitor?.isNativePlatform?.() === true && navigator.canShare?.({ files: [file] })) {
-      await navigator.share({ files: [file] });
+    if (capacitor?.isNativePlatform?.() === true) {
+      await shareFileFromNativeApp(new File([blob], filename, { type: blob.type || 'application/octet-stream' }));
       return;
     }
 

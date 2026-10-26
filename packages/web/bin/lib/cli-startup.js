@@ -8,7 +8,7 @@ import { getDataDir } from './cli-paths.js';
 import { hasUiPasswordConfigured } from './cli-network.js';
 import { searchPathFor } from './cli-executables.js';
 
-const STARTUP_SERVICE_ID = 'dev.mittrcraft.web';
+const STARTUP_SERVICE_ID = 'dev.openchamber.web';
 
 function getStartupServicePaths() {
   if (process.platform === 'darwin') {
@@ -20,7 +20,7 @@ function getStartupServicePaths() {
   if (process.platform === 'linux') {
     return {
       platform: 'linux',
-      servicePath: path.join(os.homedir(), '.config', 'systemd', 'user', 'mittrcraft.service'),
+      servicePath: path.join(os.homedir(), '.config', 'systemd', 'user', 'openchamber.service'),
     };
   }
   if (process.platform === 'win32') {
@@ -71,7 +71,11 @@ function getStartupEnvFilePath() {
 }
 
 function getMacosStartupWrapperPath() {
-  return path.join(getDataDir(), 'bin', 'MittrCraft');
+  return path.join(getDataDir(), 'bin', 'OpenChamber');
+}
+
+function getWindowsStartupWrapperPath() {
+  return path.join(getDataDir(), 'bin', 'OpenChamber.ps1');
 }
 
 function collectStartupEnv(options = {}) {
@@ -89,13 +93,13 @@ function collectStartupEnv(options = {}) {
   }
   const uiPassword = hasUiPasswordConfigured(options.uiPassword) ? options.uiPassword : undefined;
   if (uiPassword) {
-    env.MITTRCRAFT_UI_PASSWORD = uiPassword;
+    env.OPENCHAMBER_UI_PASSWORD = uiPassword;
   }
   if (options.apiOnly === true) {
-    env.MITTRCRAFT_API_ONLY = 'true';
+    env.OPENCHAMBER_API_ONLY = 'true';
   }
-  if (typeof process.env.MITTRCRAFT_DATA_DIR === 'string' && process.env.MITTRCRAFT_DATA_DIR.trim().length > 0) {
-    env.MITTRCRAFT_DATA_DIR = path.resolve(process.env.MITTRCRAFT_DATA_DIR.trim());
+  if (typeof process.env.OPENCHAMBER_DATA_DIR === 'string' && process.env.OPENCHAMBER_DATA_DIR.trim().length > 0) {
+    env.OPENCHAMBER_DATA_DIR = path.resolve(process.env.OPENCHAMBER_DATA_DIR.trim());
   }
   return env;
 }
@@ -156,15 +160,37 @@ function removeStartupEnvFile() {
   try { fs.unlinkSync(getStartupEnvFilePath()); } catch {}
 }
 
+const PNPM_STORE_SEGMENT = `${path.sep}.pnpm${path.sep}`;
+const PACKAGE_SEGMENT = `${path.sep}node_modules${path.sep}@openchamber${path.sep}web${path.sep}`;
+
+// pnpm keeps every installed version in its own store directory and links the
+// current one into node_modules. A startup service pointed at the store path
+// keeps launching the old version after an update, so prefer the link.
+function stablePnpmEntrypoint(resolved, exists = fs.existsSync) {
+  const storeIndex = resolved.indexOf(PNPM_STORE_SEGMENT);
+  if (storeIndex < 0) return null;
+  const packageIndex = resolved.indexOf(PACKAGE_SEGMENT, storeIndex);
+  if (packageIndex < 0) return null;
+  const stable = path.join(
+    resolved.slice(0, storeIndex),
+    '@openchamber',
+    'web',
+    resolved.slice(packageIndex + PACKAGE_SEGMENT.length),
+  );
+  return exists(stable) ? stable : null;
+}
+
 function resolveCliEntrypoint() {
   const entry = typeof process.argv[1] === 'string' && process.argv[1].trim().length > 0
     ? process.argv[1]
     : path.join(__dirname, 'cli.js');
+  let resolved;
   try {
-    return fs.realpathSync(entry);
+    resolved = fs.realpathSync(entry);
   } catch {
     return path.resolve(entry);
   }
+  return stablePnpmEntrypoint(resolved) ?? resolved;
 }
 
 function buildStartupArgs(options = {}) {
@@ -189,11 +215,29 @@ exec ${startupShellQuote(process.execPath)} ${args}
   return wrapperPath;
 }
 
+function writeWindowsStartupWrapper(options = {}) {
+  const wrapperPath = getWindowsStartupWrapperPath();
+  const envFilePath = getStartupEnvFilePath();
+  const startupArgs = buildStartupArgs(options).map(powershellQuote).join(' ');
+  const ps1Content = [
+    `$envFile=${powershellQuote(envFilePath)}`,
+    `if (Test-Path $envFile) { Get-Content $envFile | ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { $v=$matches[2]; if ($v.StartsWith("'") -and $v.EndsWith("'")) { $v=$v.Substring(1,$v.Length-2).Replace("'\\''","'") }; [Environment]::SetEnvironmentVariable($matches[1], $v, 'Process') } } }`,
+    `& ${powershellQuote(process.execPath)} ${startupArgs}`,
+  ].join('; ');
+  fs.mkdirSync(path.dirname(wrapperPath), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(wrapperPath, ps1Content, { mode: 0o700 });
+  return wrapperPath;
+}
+
+function buildWindowsStartupTaskCommand(wrapperPath) {
+  return `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${wrapperPath}"`;
+}
+
 function buildMacosLaunchAgent(options = {}) {
   const wrapperPath = writeMacosStartupWrapper(options);
   const args = [wrapperPath];
   const env = collectStartupEnv(options);
-  const logDir = path.join(os.homedir(), 'Library', 'Logs', 'MittrCraft');
+  const logDir = path.join(os.homedir(), 'Library', 'Logs', 'OpenChamber');
   const argXml = args.map((arg) => `    <string>${escapeXml(arg)}</string>`).join('\n');
   const envXml = Object.entries(env).length > 0
     ? `  <key>EnvironmentVariables</key>\n  <dict>\n${Object.entries(env).map(([key, value]) => `    <key>${escapeXml(key)}</key>\n    <string>${escapeXml(value)}</string>`).join('\n')}\n  </dict>\n`
@@ -229,7 +273,7 @@ function buildSystemdUserService(options = {}) {
   const args = buildStartupArgs(options).map((arg) => `"${systemdEscapeArg(arg)}"`).join(' ');
   const envFilePath = getStartupEnvFilePath();
   return `[Unit]
-Description=MittrCraft web server
+Description=OpenChamber web server
 After=network-online.target
 
 [Service]
@@ -261,6 +305,52 @@ function runStartupCommand(command, args, options = {}) {
   return result;
 }
 
+function parseLingerState(stdout) {
+  if (typeof stdout !== 'string') {
+    return null;
+  }
+  const match = stdout.match(/^Linger=([A-Za-z]+)\s*$/m);
+  if (!match) {
+    return null;
+  }
+  const value = match[1].toLowerCase();
+  if (value === 'yes') return true;
+  if (value === 'no') return false;
+  return null;
+}
+
+function getCurrentUsername() {
+  try {
+    const name = os.userInfo().username;
+    if (typeof name === 'string' && name.length > 0) {
+      return name;
+    }
+  } catch {
+    // userInfo() can throw when the uid has no passwd entry; fall back to env.
+  }
+  return process.env.USER || process.env.LOGNAME || '';
+}
+
+// A systemd --user service only keeps running without an active login session
+// when the user has lingering enabled. Detect it so `startup enable` can warn
+// that the service may otherwise stop on logout. Returns null when the state
+// cannot be determined (no username, loginctl unavailable, or odd output).
+function getUserLingerEnabled(user) {
+  if (!user) {
+    return null;
+  }
+  let result;
+  try {
+    result = runStartupCommand('loginctl', ['show-user', user, '-p', 'Linger'], { allowFailure: true });
+  } catch {
+    return null;
+  }
+  if (result.status !== 0) {
+    return null;
+  }
+  return parseLingerState(result.stdout);
+}
+
 function getStartupStatus() {
   const paths = getStartupServicePaths();
   if (!paths.servicePath) {
@@ -271,9 +361,10 @@ function getStartupStatus() {
     return { supported: true, platform: paths.platform, enabled: result.status === 0, active: null, servicePath: paths.servicePath };
   }
   if (paths.platform === 'linux') {
-    const enabledResult = runStartupCommand('systemctl', ['--user', 'is-enabled', 'mittrcraft.service'], { allowFailure: true });
-    const activeResult = runStartupCommand('systemctl', ['--user', 'is-active', 'mittrcraft.service'], { allowFailure: true });
+    const enabledResult = runStartupCommand('systemctl', ['--user', 'is-enabled', 'openchamber.service'], { allowFailure: true });
+    const activeResult = runStartupCommand('systemctl', ['--user', 'is-active', 'openchamber.service'], { allowFailure: true });
     const activeState = (activeResult.stdout || '').trim() || 'inactive';
+    const lingerUser = getCurrentUsername();
     return {
       supported: true,
       platform: paths.platform,
@@ -281,6 +372,8 @@ function getStartupStatus() {
       active: activeState === 'active',
       activeState,
       servicePath: paths.servicePath,
+      lingerEnabled: getUserLingerEnabled(lingerUser),
+      lingerUser: lingerUser || null,
     };
   }
   return {
@@ -301,7 +394,7 @@ function enableStartupService(options = {}) {
   if (paths.platform === 'macos') {
     removeStartupEnvFile();
     fs.mkdirSync(path.dirname(paths.servicePath), { recursive: true, mode: 0o700 });
-    fs.mkdirSync(path.join(os.homedir(), 'Library', 'Logs', 'MittrCraft'), { recursive: true, mode: 0o700 });
+    fs.mkdirSync(path.join(os.homedir(), 'Library', 'Logs', 'OpenChamber'), { recursive: true, mode: 0o700 });
     fs.writeFileSync(paths.servicePath, buildMacosLaunchAgent(options), { mode: 0o600 });
     runStartupCommand('/bin/launchctl', ['bootout', `gui/${process.getuid()}`, paths.servicePath], { allowFailure: true });
     runStartupCommand('/bin/launchctl', ['bootstrap', `gui/${process.getuid()}`, paths.servicePath]);
@@ -314,25 +407,20 @@ function enableStartupService(options = {}) {
     fs.mkdirSync(path.dirname(paths.servicePath), { recursive: true, mode: 0o700 });
     fs.writeFileSync(paths.servicePath, buildSystemdUserService(options), { mode: 0o600 });
     runStartupCommand('systemctl', ['--user', 'daemon-reload']);
-    runStartupCommand('systemctl', ['--user', 'enable', '--now', 'mittrcraft.service']);
+    runStartupCommand('systemctl', ['--user', 'enable', '--now', 'openchamber.service']);
     return getStartupStatus();
   }
 
-  const envFilePath = writeStartupEnvFile(options);
-  const startupArgs = buildStartupArgs(options).map(powershellQuote).join(', ');
-  const powerShellCommand = [
-    `$envFile=${powershellQuote(envFilePath)}`,
-    `if (Test-Path $envFile) { Get-Content $envFile | ForEach-Object { if ($_ -match '^([^=]+)=(.*)$') { $v=$matches[2]; if ($v.StartsWith("'") -and $v.EndsWith("'")) { $v=$v.Substring(1,$v.Length-2).Replace("'\\''","'") }; [Environment]::SetEnvironmentVariable($matches[1], $v, 'Process') } } }`,
-    `& ${powershellQuote(process.execPath)} ${startupArgs}`,
-  ].join('; ');
-  const taskArgs = `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "${powerShellCommand.replace(/"/g, '\\"')}"`;
+  writeStartupEnvFile(options);
+  const wrapperPath = writeWindowsStartupWrapper(options);
+  const taskCommand = buildWindowsStartupTaskCommand(wrapperPath);
   runStartupCommand('schtasks.exe', [
     '/Create',
     '/TN', STARTUP_SERVICE_ID,
     '/SC', 'ONLOGON',
     '/RL', 'LIMITED',
     '/F',
-    '/TR', taskArgs,
+    '/TR', taskCommand,
   ]);
   runStartupCommand('schtasks.exe', ['/Run', '/TN', STARTUP_SERVICE_ID], { allowFailure: true });
   return getStartupStatus();
@@ -351,7 +439,7 @@ function disableStartupService() {
   }
 
   if (paths.platform === 'linux') {
-    runStartupCommand('systemctl', ['--user', 'disable', '--now', 'mittrcraft.service'], { allowFailure: true });
+    runStartupCommand('systemctl', ['--user', 'disable', '--now', 'openchamber.service'], { allowFailure: true });
     try { fs.unlinkSync(paths.servicePath); } catch {}
     runStartupCommand('systemctl', ['--user', 'daemon-reload'], { allowFailure: true });
     return getStartupStatus();
@@ -359,12 +447,16 @@ function disableStartupService() {
 
   runStartupCommand('schtasks.exe', ['/End', '/TN', STARTUP_SERVICE_ID], { allowFailure: true });
   runStartupCommand('schtasks.exe', ['/Delete', '/TN', STARTUP_SERVICE_ID, '/F'], { allowFailure: true });
+  try { fs.unlinkSync(getWindowsStartupWrapperPath()); } catch {}
+  removeStartupEnvFile();
   return getStartupStatus();
 }
 
 
 export {
+  stablePnpmEntrypoint,
   getStartupStatus,
   enableStartupService,
   disableStartupService,
+  buildWindowsStartupTaskCommand,
 };

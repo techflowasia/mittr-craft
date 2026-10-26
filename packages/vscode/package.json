@@ -1,13 +1,13 @@
 {
-  "name": "mittrcraft",
-  "displayName": "MittrCraft",
+  "name": "openchamber",
+  "displayName": "OpenChamber",
   "description": "%extension.description%",
-  "version": "1.22.0",
+  "version": "2.1.1",
   "publisher": "fedaykindev",
   "private": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/techflowasia/mittr-craft.git"
+    "url": "https://github.com/openchamber/openchamber.git"
   },
   "qna": "https://discord.gg/ZYRSdnwwKA",
   "license": "MIT",
@@ -29,39 +29,40 @@
     "groq",
     "assistant",
     "opencode",
-    "mittrcraft"
+    "openchamber"
   ],
   "icon": "assets/app-icon.png",
   "main": "./dist/extension.js",
   "l10n": "./l10n",
   "activationEvents": [
-    "onCommand:mittrcraft.openSidebar",
-    "onCommand:mittrcraft.attachExplorerToChat",
-    "onView:mittrcraft.chatView"
+    "onCommand:openchamber.openSidebar",
+    "onCommand:openchamber.attachExplorerToChat",
+    "onCommand:openchamber.generateCommitMessage",
+    "onView:openchamber.chatView"
   ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "mittrcraft",
-          "title": "MittrCraft",
+          "id": "openchamber",
+          "title": "OpenChamber",
           "icon": "assets/icon.svg"
         }
       ]
     },
     "views": {
-      "mittrcraft": [
+      "openchamber": [
         {
           "type": "webview",
-          "id": "mittrcraft.chatView",
+          "id": "openchamber.chatView",
           "name": "%views.chat.name%"
         }
       ]
     },
     "commands": [
       {
-        "command": "mittrcraft.openSidebar",
-        "category": "MittrCraft",
+        "command": "openchamber.openSidebar",
+        "category": "OpenChamber",
         "title": "%command.openSidebar.title%",
         "icon": {
           "light": "assets/icon.svg",
@@ -69,35 +70,35 @@
         }
       },
       {
-        "command": "mittrcraft.focusChat",
-        "category": "MittrCraft",
+        "command": "openchamber.focusChat",
+        "category": "OpenChamber",
         "title": "%command.focusChat.title%"
       },
       {
-        "command": "mittrcraft.restartApi",
-        "category": "MittrCraft",
+        "command": "openchamber.restartApi",
+        "category": "OpenChamber",
         "title": "%command.restartApi.title%"
       },
       {
-        "command": "mittrcraft.showOpenCodeStatus",
-        "category": "MittrCraft",
+        "command": "openchamber.showOpenCodeStatus",
+        "category": "OpenChamber",
         "title": "%command.showOpenCodeStatus.title%"
       },
       {
-        "command": "mittrcraft.openAgentManager",
-        "category": "MittrCraft",
+        "command": "openchamber.openAgentManager",
+        "category": "OpenChamber",
         "title": "%command.openAgentManager.title%",
-        "icon": "$(circuit-board)"
+        "icon": "$(repo-forked)"
       },
       {
-        "command": "mittrcraft.openActiveSessionInEditor",
-        "category": "MittrCraft",
+        "command": "openchamber.openActiveSessionInEditor",
+        "category": "OpenChamber",
         "title": "%command.openActiveSessionInEditor.title%",
         "icon": "$(link-external)"
       },
       {
-        "command": "mittrcraft.openNewSessionInEditor",
-        "category": "MittrCraft",
+        "command": "openchamber.openNewSessionInEditor",
+        "category": "OpenChamber",
         "title": "%command.openNewSessionInEditor.title%",
         "icon": {
           "light": "assets/icon.svg",
@@ -105,113 +106,172 @@
         }
       },
       {
-        "command": "mittrcraft.openCurrentOrNewSessionInEditor",
-        "category": "MittrCraft",
+        "command": "openchamber.openCurrentOrNewSessionInEditor",
+        "category": "OpenChamber",
         "title": "%command.openCurrentOrNewSessionInEditor.title%",
         "icon": "$(link-external)"
       },
       {
-        "command": "mittrcraft.addToContext",
-        "category": "MittrCraft",
+        "command": "openchamber.addToContext",
+        "category": "OpenChamber",
         "title": "%command.addToContext.title%"
       },
       {
-        "command": "mittrcraft.explain",
-        "category": "MittrCraft",
+        "command": "openchamber.addLineComment",
+        "category": "OpenChamber",
+        "title": "%command.addLineComment.title%"
+      },
+      {
+        "command": "openchamber.submitLineComment",
+        "category": "OpenChamber",
+        "title": "%command.submitLineComment.title%"
+      },
+      {
+        "command": "openchamber.removeLineComment",
+        "category": "OpenChamber",
+        "title": "%command.removeLineComment.title%",
+        "icon": "$(close)"
+      },
+      {
+        "command": "openchamber.explain",
+        "category": "OpenChamber",
         "title": "%command.explain.title%"
       },
       {
-        "command": "mittrcraft.improveCode",
-        "category": "MittrCraft",
+        "command": "openchamber.improveCode",
+        "category": "OpenChamber",
         "title": "%command.improveCode.title%"
       },
       {
-        "command": "mittrcraft.newSession",
-        "category": "MittrCraft",
+        "command": "openchamber.newSession",
+        "category": "OpenChamber",
         "title": "%command.newSession.title%",
         "icon": "$(add)"
       },
       {
-        "command": "mittrcraft.showSettings",
-        "category": "MittrCraft",
+        "command": "openchamber.showSettings",
+        "category": "OpenChamber",
         "title": "%command.showSettings.title%",
         "icon": "$(settings-gear)"
       },
       {
-        "command": "mittrcraft.attachExplorerToChat",
-        "category": "MittrCraft",
+        "command": "openchamber.attachExplorerToChat",
+        "category": "OpenChamber",
         "title": "%command.attachExplorerToChat.title%"
+      },
+      {
+        "command": "openchamber.generateCommitMessage",
+        "category": "OpenChamber",
+        "title": "%command.generateCommitMessage.title%",
+        "icon": {
+          "light": "assets/icon.svg",
+          "dark": "assets/icon-scm-titlebar.svg"
+        }
       }
     ],
     "submenus": [
       {
-        "id": "mittrcraft.submenu",
-        "label": "MittrCraft"
+        "id": "openchamber.submenu",
+        "label": "OpenChamber"
       }
     ],
     "menus": {
+      "scm/title": [
+        {
+          "command": "openchamber.generateCommitMessage",
+          "when": "scmProvider == git",
+          "group": "navigation@0"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "openchamber.submitLineComment",
+          "group": "inline",
+          "when": "commentController == openchamber.inlineComments"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "openchamber.removeLineComment",
+          "group": "navigation",
+          "when": "commentController == openchamber.inlineComments && commentThread == openchamberAttached"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "openchamber.submitLineComment",
+          "when": "false"
+        },
+        {
+          "command": "openchamber.removeLineComment",
+          "when": "false"
+        }
+      ],
       "editor/context": [
         {
-          "submenu": "mittrcraft.submenu",
+          "submenu": "openchamber.submenu",
           "group": "navigation"
         }
       ],
       "explorer/context": [
         {
-          "command": "mittrcraft.attachExplorerToChat",
+          "command": "openchamber.attachExplorerToChat",
           "when": "resourceScheme == file && explorerResourceIsFolder == false",
           "group": "navigation@50"
         }
       ],
       "editor/title": [
         {
-          "command": "mittrcraft.openNewSessionInEditor",
+          "command": "openchamber.openNewSessionInEditor",
           "group": "navigation@1"
         }
       ],
       "view/title": [
         {
-          "command": "mittrcraft.newSession",
-          "when": "view == mittrcraft.chatView",
+          "command": "openchamber.newSession",
+          "when": "view == openchamber.chatView",
           "group": "navigation@1"
         },
         {
-          "command": "mittrcraft.openCurrentOrNewSessionInEditor",
-          "when": "view == mittrcraft.chatView",
+          "command": "openchamber.openCurrentOrNewSessionInEditor",
+          "when": "view == openchamber.chatView",
           "group": "navigation@2"
         },
         {
-          "command": "mittrcraft.openAgentManager",
-          "when": "view == mittrcraft.chatView",
+          "command": "openchamber.openAgentManager",
+          "when": "view == openchamber.chatView",
           "group": "navigation@3"
         },
         {
-          "command": "mittrcraft.showSettings",
-          "when": "view == mittrcraft.chatView",
+          "command": "openchamber.showSettings",
+          "when": "view == openchamber.chatView",
           "group": "navigation@4"
         }
       ],
-      "mittrcraft.submenu": [
+      "openchamber.submenu": [
         {
-          "command": "mittrcraft.explain"
+          "command": "openchamber.explain"
         },
         {
-          "command": "mittrcraft.improveCode"
+          "command": "openchamber.improveCode"
         },
         {
-          "command": "mittrcraft.addToContext"
+          "command": "openchamber.addToContext"
+        },
+        {
+          "command": "openchamber.addLineComment"
         }
       ]
     },
     "configuration": {
-      "title": "MittrCraft",
+      "title": "OpenChamber",
       "properties": {
-        "mittrcraft.apiUrl": {
+        "openchamber.apiUrl": {
           "type": "string",
           "default": "",
           "description": "%configuration.apiUrl.description%"
         },
-        "mittrcraft.opencodeBinary": {
+        "openchamber.opencodeBinary": {
           "type": "string",
           "default": "",
           "description": "%configuration.opencodeBinary.description%"
@@ -244,12 +304,13 @@
     "vite": "^7.1.2"
   },
   "dependencies": {
-    "@mittrcraft/ui": "workspace:*",
-    "@opencode-ai/sdk": "1.18.18",
+    "@openchamber/ui": "workspace:*",
+    "@opencode/client": "2.0.22",
     "adm-zip": "^0.6.0",
     "jsonc-parser": "^3.3.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "yaml": "^2.8.1"
+    "yaml": "^2.8.1",
+    "zod": "^4.3.6"
   }
 }

@@ -1,15 +1,16 @@
 import { abortCurrentOperation, patchSessionMetadata } from '@/sync/session-actions';
+import type { Metadata } from '@/lib/opencode/model';
 import { distillGoalObjective } from '@/lib/smallModel';
 import { formatMessage, useI18nStore } from '@/lib/i18n';
 import { toast } from '@/components/ui';
-import { runtimeFetch } from '@/lib/runtime-fetch';
+import { deleteGoalObjectiveFile, writeGoalObjectiveFile } from '@/lib/goalObjectiveFiles';
 import {
   SESSION_GOAL_OBJECTIVE_CHAR_LIMIT,
   type SessionGoalPayload,
   type SessionGoalStatus,
 } from '@/lib/sessionGoalMetadata';
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
+const isRecord = (value: unknown): value is Metadata =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
 const createGoalId = (): string =>
@@ -18,10 +19,10 @@ const createGoalId = (): string =>
 const writeGoal = (
   sessionId: string,
   directory: string | undefined,
-  update: (currentGoal: Record<string, unknown> | null) => Record<string, unknown> | null,
+  update: (currentGoal: Metadata | null) => Metadata | null,
 ) =>
   patchSessionMetadata(sessionId, directory, (metadata) => {
-    const namespace = isRecord(metadata.mittrcraft) ? metadata.mittrcraft : {};
+    const namespace = isRecord(metadata.openchamber) ? metadata.openchamber : {};
     const currentGoal = isRecord(namespace.goal) ? namespace.goal : null;
     const nextGoal = update(currentGoal);
     const nextNamespace = { ...namespace };
@@ -30,48 +31,12 @@ const writeGoal = (
     } else {
       delete nextNamespace.goal;
     }
-    return { ...metadata, mittrcraft: nextNamespace };
+    return { ...metadata, openchamber: nextNamespace };
   });
-
-// File-backed objectives: the text lives in a server-side file keyed by the
-// session id (one goal per session — a new goal overwrites the old file);
-// the metadata only carries an `objectiveFile: true` flag so it stays light
-// for session.updated fanout. If the file write fails (offline blip, VS
-// Code without the route), the objective falls back to inline metadata.
-const writeObjectiveFile = async (sessionId: string, content: string): Promise<boolean> => {
-  try {
-    const response = await runtimeFetch(`/api/goals/objective/${encodeURIComponent(sessionId)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
-};
-
-const deleteObjectiveFile = (sessionId: string): void => {
-  void runtimeFetch(`/api/goals/objective/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
-    .catch(() => undefined);
-};
-
-/** Fetch the file-backed objective text for display; null when unavailable. */
-export async function fetchGoalObjectiveContent(sessionId: string): Promise<string | null> {
-  try {
-    const response = await runtimeFetch(`/api/goals/objective/${encodeURIComponent(sessionId)}`);
-    if (!response.ok) return null;
-    const parsed = await response.json().catch(() => null) as { content?: unknown } | null;
-    return typeof parsed?.content === 'string' ? parsed.content : null;
-  } catch {
-    return null;
-  }
-}
 
 export interface SetSessionGoalInput {
   objective: string;
   tokenBudget: number | null;
-  keepContract?: boolean;
 }
 
 /**
@@ -114,9 +79,9 @@ export async function setSessionGoal(
   const tokenBudget = typeof input.tokenBudget === 'number' && Number.isFinite(input.tokenBudget) && input.tokenBudget > 0
     ? Math.floor(input.tokenBudget)
     : null;
-  const objectiveFile = await writeObjectiveFile(sessionId, objective);
+  const objectiveFile = await writeGoalObjectiveFile(sessionId, objective);
   const now = Date.now();
-  await writeGoal(sessionId, directory, (currentGoal) => {
+  await writeGoal(sessionId, directory, (currentGoal): Metadata => {
     if (existing && currentGoal && currentGoal.id === existing.id && existing.status !== 'complete') {
       // Edit in place: keep accounting, reactivate, clear stale audit state.
       return {
@@ -127,8 +92,6 @@ export async function setSessionGoal(
         status: 'active',
         statusReason: 'resumed',
         blockedStreak: 0,
-        stallStreak: 0,
-        ...(input.keepContract ? {} : { criteria: [], bestMet: 0 }),
         updatedAt: now,
       };
     }
@@ -169,7 +132,6 @@ export async function setSessionGoalStatus(
       // 'resumed' is the server's kickoff signal for an already-idle session.
       statusReason: status === 'active' ? 'resumed' : (status === 'complete' ? 'marked by user' : ''),
       blockedStreak: 0,
-      stallStreak: 0,
       // An explicit resume grants a fresh auto-continuation allowance —
       // otherwise a goal blocked on the turn cap would re-block on the very
       // next tick and Resume would be a dead end.
@@ -185,7 +147,7 @@ export async function clearSessionGoal(sessionId: string, directory: string | un
     wasActive = currentGoal?.status === 'active';
     return null;
   });
-  deleteObjectiveFile(sessionId);
+  deleteGoalObjectiveFile(sessionId);
   // Removing a running goal is a "stop" too — abort the current turn like
   // pause does. A no-op when the session is idle.
   if (wasActive) {

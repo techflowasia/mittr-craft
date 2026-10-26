@@ -52,6 +52,7 @@ export type BrowserToolbarProps = {
   onForward: () => void;
   onReload: () => void;
   onOpenExternal: () => void;
+  canOpenExternal?: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
   isLoading: boolean;
@@ -81,6 +82,7 @@ export const BrowserToolbar: React.FC<BrowserToolbarProps> = ({
   onForward,
   onReload,
   onOpenExternal,
+  canOpenExternal = true,
   canGoBack,
   canGoForward,
   isLoading,
@@ -170,14 +172,14 @@ export const BrowserToolbar: React.FC<BrowserToolbarProps> = ({
           autoComplete="off"
           role="combobox"
           aria-expanded={visibleSuggestions.length > 0}
-          aria-controls="mittrcraft-browser-address-suggestions"
+          aria-controls="openchamber-browser-address-suggestions"
           className={cn(
             'h-6 w-full rounded-full border border-border/50 bg-[var(--surface-elevated)] px-3',
             'typography-micro text-foreground outline-none focus:border-[var(--interactive-focus-ring)]',
           )}
           aria-label={t('contextPanel.browser.addressAria')}
         />
-        <div id="mittrcraft-browser-address-suggestions">
+        <div id="openchamber-browser-address-suggestions">
           <BrowserAddressSuggestions
             entries={visibleSuggestions}
             activeIndex={activeSuggestion}
@@ -235,7 +237,12 @@ export const BrowserToolbar: React.FC<BrowserToolbarProps> = ({
       {onOpenDevTools ? (
         <ToolbarButton icon="terminal-box" label={t('contextPanel.browser.devTools')} onClick={onOpenDevTools} />
       ) : null}
-      <ToolbarButton icon="external-link" label={t('contextPanel.browser.openExternal')} onClick={onOpenExternal} />
+      <ToolbarButton
+        icon="external-link"
+        label={t('contextPanel.browser.openExternal')}
+        onClick={onOpenExternal}
+        disabled={!canOpenExternal}
+      />
     </div>
   );
 };

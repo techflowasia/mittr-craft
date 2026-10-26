@@ -16,30 +16,41 @@ describe('event stream protocol helpers', () => {
     expect(MESSAGE_STREAM_DIRECTORY_WS_PATH).toBe('/api/event/ws');
   });
 
-  it('parses wrapped SSE payloads with event id and directory', () => {
+  it('reads the event id and directory out of a v2 payload', () => {
+    // OpenCode 2.x sends no `id:` line: the id is `payload.id` and the
+    // directory is `payload.location.directory`.
     const envelope = parseSseEventEnvelope(
-      'id: evt-1\n' +
+      'data: {"id":"evt_1","type":"session.renamed","location":{"directory":"/tmp/project"},"data":{"sessionID":"s1"}}\n'
+    );
+
+    expect(envelope.eventId).toBe('evt_1');
+    expect(envelope.directory).toBe('/tmp/project');
+    expect(envelope.payload.type).toBe('session.renamed');
+  });
+
+  it('parses a wrapped payload, preferring the wrapper directory', () => {
+    const envelope = parseSseEventEnvelope(
       'event: message\n' +
-      'data: {"directory":"/tmp/project","payload":{"type":"session.updated"}}\n'
+      'data: {"directory":"/tmp/project","payload":{"id":"evt_1","type":"session.renamed"}}\n'
     );
 
     expect(envelope).toEqual({
-      eventId: 'evt-1',
+      eventId: 'evt_1',
       directory: '/tmp/project',
-      payload: { type: 'session.updated' },
+      payload: { id: 'evt_1', type: 'session.renamed' },
     });
   });
 
-  it('derives directory from payload properties when not wrapped', () => {
+  it('has no directory when the payload carries no location', () => {
     const envelope = parseSseEventEnvelope(
-      'data: {"type":"mittrcraft:notification","properties":{"directory":"/tmp/project"}}\n'
+      'data: {"type":"openchamber:notification","properties":{"directory":"/tmp/project"}}\n'
     );
 
     expect(envelope).toEqual({
       eventId: null,
-      directory: '/tmp/project',
+      directory: null,
       payload: {
-        type: 'mittrcraft:notification',
+        type: 'openchamber:notification',
         properties: { directory: '/tmp/project' },
       },
     });
@@ -167,14 +178,14 @@ describe('event stream protocol helpers', () => {
 
     const sent = sendMessageStreamWsEvent(
       socket,
-      { type: 'mittrcraft:heartbeat', timestamp: 1 },
+      { type: 'openchamber:heartbeat', timestamp: 1 },
       { eventId: 'evt-2', directory: '/tmp/project' }
     );
 
     expect(sent).toBe(true);
     expect(JSON.parse(rawPayload)).toEqual({
       type: 'event',
-      payload: { type: 'mittrcraft:heartbeat', timestamp: 1 },
+      payload: { type: 'openchamber:heartbeat', timestamp: 1 },
       eventId: 'evt-2',
       directory: '/tmp/project',
     });

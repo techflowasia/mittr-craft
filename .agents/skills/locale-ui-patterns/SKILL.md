@@ -1,6 +1,6 @@
 ---
 name: locale-ui-patterns
-description: Use when creating or modifying MittrCraft UI text, labels, buttons, placeholders, aria labels, empty states, toasts, dialogs, settings copy, navigation labels, or any user-facing strings.
+description: Use when creating or modifying OpenChamber UI text, labels, buttons, placeholders, aria labels, empty states, toasts, dialogs, settings copy, navigation labels, or any user-facing strings.
 ---
 
 # Locale UI Patterns
@@ -46,14 +46,14 @@ Good:
 ```ts
 'settings.appearance.language.label': 'Language'
 'layout.mainTab.chat': 'Chat'
-'chat.input.placeholder': 'Ask MittrCraft...'
+'chat.input.placeholder': 'Ask OpenChamber...'
 ```
 
 Bad:
 ```ts
 'Language': 'Language'
 'chatLabel': 'Chat'
-'askMittrCraftDotDotDot': 'Ask MittrCraft...'
+'askOpenChamberDotDotDot': 'Ask OpenChamber...'
 ```
 
 Avoid overly generic keys unless the text is truly global and context-independent. Prefer specific keys when button meaning can vary by surface.
@@ -102,13 +102,17 @@ date
   : t('dialog.delete.description', { count })
 ```
 
+## Desktop Native Menus
+
+The Electron app menu and the right-click context menu are native, outside `@/lib/i18n`. Their labels live in `packages/electron/menu-locales.mjs` (`MENU_LOCALE_DICTIONARIES`, `CONTEXT_MENU_LABEL_DICTIONARIES`), keyed by the same locale codes as the UI. A new menu item gets its label in every locale there, and a new UI language gets its own entry there in the same change; `menu-locales.test.mjs` checks key parity.
+
 ## Translation Boundary
 
 Translate visible text, placeholders, tooltips, dialogs, toasts, empty/error/loading states, and user-facing `aria-label`, `title`, and `alt` text.
 
 Keep these literal:
 
-- Product names: `MittrCraft`, `OpenCode`, `GitHub`
+- Product names: `OpenChamber`, `OpenCode`, `GitHub`
 - Protocol/tool acronyms: `MCP`, `SSE`, `WebSocket`, `API`
 - Model/provider names
 - File paths, command names, environment variables
@@ -117,7 +121,7 @@ Keep these literal:
 ## Completion Criteria
 
 - No new hardcoded user-facing English in changed UI files.
-- Every new key exists in all dictionaries with a real translation.
+- Every new key exists in all dictionaries with a real translation, including `packages/electron/menu-locales.mjs` for native menu labels.
 - All translated values are resolved inside a reactive render/hook boundary.
 - No locale state added to broad/shared stores.
 - No full app remount for locale changes.

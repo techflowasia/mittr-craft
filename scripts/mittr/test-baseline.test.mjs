@@ -1,0 +1,413 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { test } from 'node:test';
+
+import { HOME_PREFIX, RealHomeError, assertIsolatedEnv, isolatedEnv, sweepStaleHomes, withIsolatedEnv } from './isolated-env.mjs';
+import { compareStage, main, parseFailures, rootTestStages, runTestBaseline } from './test-baseline.mjs';
+
+const ISOLATED_OUTPUT = `FAIL (node) src/a.test.mjs
+FAIL (bun) src/b.test.ts
+
+===== src/a.test.mjs (node) =====
+▶ outer
+  ✖ inner fails (0.812916ms)
+✖ outer (1.12575ms)
+✔ plain passes (0.038792ms)
+✖ plain fails > with arrow (0.038209ms)
+ℹ fail 2
+
+✖ failing tests:
+
+test at src/a.test.mjs:2:38
+✖ inner fails (0.812916ms)
+  AssertionError [ERR_ASSERTION]: 1 == 2
+
+test at src/a.test.mjs:4:1
+✖ plain fails > with arrow (0.038209ms)
+  Error: x
+
+
+===== src/b.test.ts (bun) =====
+bun test v1.3.14 (d1632b29)
+error: expect(received).toBe(expected)
+(fail) Suite one > bun fails [4.87ms]
+
+ 1 pass
+ 1 fail
+
+===== src/c.test.ts (bun) =====
+SyntaxError: nothing loads
+
+UNKNOWN RUNNER src/d.test.js: imports neither bun:test nor node:test
+
+0/4 test files passed, 3 failed, 1 with no known runner
+`;
+
+const VITEST_OUTPUT = ` RUN  v4.1.5 /work/packages/web
+ ❯ server/lib/spaces/websocket.test.js (2 tests | 1 failed) 3ms
+     × ends every socket when it is closed 3ms
+\x1b[31m FAIL \x1b[39m server/lib/spaces/websocket.test.js > the WebSocket forwarder > ends every socket when it is closed
+AssertionError: expected 1 to be 2
+ FAIL  server/lib/other.test.js > a > b
+`;
+
+test('reads the stages from the root test script', () => {
+  const stages = rootTestStages({
+    scripts: { test: 'node scripts/run-isolated-tests.mjs scripts && bun run --cwd packages/sdk test && bun run --cwd packages/web test' },
+  });
+  assert.deepEqual(stages.map(({ name, cwd }) => [name, cwd]), [['scripts', '.'], ['sdk', 'packages/sdk'], ['web', 'packages/web']]);
+});
+
+test('names each failing node and bun test, and a file that fails without one', () => {
+  assert.deepEqual(parseFailures(ISOLATED_OUTPUT), [
+    { file: 'src/a.test.mjs', test: 'inner fails' },
+    { file: 'src/a.test.mjs', test: 'plain fails > with arrow' },
+    { file: 'src/b.test.ts', test: 'Suite one > bun fails' },
+    { file: 'src/c.test.ts', test: null },
+    { file: 'src/d.test.js', test: null },
+  ]);
+});
+
+test('names each failing vitest test, colours or not', () => {
+  assert.deepEqual(parseFailures(VITEST_OUTPUT), [
+    { file: 'server/lib/spaces/websocket.test.js', test: 'the WebSocket forwarder > ends every socket when it is closed' },
+    { file: 'server/lib/other.test.js', test: 'a > b' },
+  ]);
+});
+
+test('only a failure outside the baseline counts; a listed one that passed is reported', () => {
+  const baseline = [
+    { stage: 'web', file: 'server/lib/spaces/websocket.test.js', test: 'the WebSocket forwarder > ends every socket when it is closed' },
+    { stage: 'web', file: 'server/lib/x.test.js', test: 'x' },
+    { stage: 'ui', file: 'server/lib/other.test.js', test: 'a > b' },
+  ];
+  const result = compareStage({ stage: 'web', status: 1, failures: parseFailures(VITEST_OUTPUT), baseline });
+
+  assert.deepEqual(result.known.map(({ file }) => file), ['server/lib/spaces/websocket.test.js']);
+  assert.deepEqual(result.unexpected, [{ file: 'server/lib/other.test.js', test: 'a > b' }]);
+  assert.deepEqual(result.nowPassing.map(({ file }) => file), ['server/lib/x.test.js']);
+});
+
+test('a stage that fails without naming a test, or a file without a test name, is never covered', () => {
+  const baseline = [{ stage: 's', file: 'src/c.test.ts', test: 'anything' }];
+  assert.deepEqual(compareStage({ stage: 's', status: 1, failures: [], baseline }).unexpected, [{ file: null, test: null }]);
+  assert.deepEqual(
+    compareStage({ stage: 's', status: 1, failures: [{ file: 'src/c.test.ts', test: null }], baseline }).unexpected,
+    [{ file: 'src/c.test.ts', test: null }],
+  );
+});
+
+test('runs every stage even after one fails, and fails only on a new failure', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-baseline-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+    scripts: { test: 'node run.mjs scripts && bun run --cwd packages/web test && bun run --cwd packages/ui test' },
+  }));
+  fs.mkdirSync(path.join(dir, 'brand'));
+  const baseline = { failures: [{ stage: 'web', file: 'server/lib/spaces/websocket.test.js', test: 'the WebSocket forwarder > ends every socket when it is closed' }] };
+  fs.writeFileSync(path.join(dir, 'brand', 'test-baseline.json'), JSON.stringify(baseline));
+
+  const outputs = {
+    scripts: { status: 0, output: 'all good' },
+    web: { status: 1, output: ' FAIL  server/lib/spaces/websocket.test.js > the WebSocket forwarder > ends every socket when it is closed\n' },
+    ui: { status: 0, output: 'all good' },
+  };
+  const ran = [];
+  const exec = ({ command }) => {
+    const name = command.match(/--cwd packages\/(\S+)/)?.[1] ?? 'scripts';
+    ran.push(name);
+    return outputs[name];
+  };
+
+  assert.equal(runTestBaseline({ cwd: dir, exec, log: () => {} }).ok, true);
+  assert.deepEqual(ran, ['scripts', 'web', 'ui']);
+
+  outputs.ui = { status: 1, output: '===== src/new.test.ts (bun) =====\n(fail) brand new [1.00ms]\n' };
+  ran.length = 0;
+  const lines = [];
+  const result = runTestBaseline({ cwd: dir, exec, log: (line) => lines.push(line) });
+  assert.equal(result.ok, false);
+  assert.deepEqual(ran, ['scripts', 'web', 'ui', 'ui']);
+  assert.match(lines.join('\n'), /new failure: src\/new\.test\.ts > brand new/);
+
+  assert.throws(() => runTestBaseline({ cwd: dir, only: ['nope'], exec, log: () => {} }), /no test stage named nope/);
+});
+
+test('a failure that does not come back when the stage runs again is reported as flaky, not fatal', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-baseline-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ scripts: { test: 'bun run --cwd packages/web test' } }));
+  fs.mkdirSync(path.join(dir, 'brand'));
+  fs.writeFileSync(path.join(dir, 'brand', 'test-baseline.json'), JSON.stringify({ failures: [] }));
+  const runs = [
+    { status: 1, output: ' FAIL  a.test.js > sometimes\n FAIL  b.test.js > always\n' },
+    { status: 1, output: ' FAIL  b.test.js > always\n FAIL  c.test.js > other time\n' },
+  ];
+  const lines = [];
+  const result = runTestBaseline({ cwd: dir, exec: () => runs.shift(), log: (line) => lines.push(line) });
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.results[0].unexpected, [{ file: 'b.test.js', test: 'always' }]);
+  assert.deepEqual(result.results[0].flaky.map(({ file }) => file), ['a.test.js', 'c.test.js']);
+  assert.match(lines.join('\n'), /flaky \(failed in one of two runs\): a\.test\.js > sometimes/);
+
+  runs.push({ status: 1, output: ' FAIL  a.test.js > sometimes\n' }, { status: 0, output: '' });
+  assert.equal(runTestBaseline({ cwd: dir, exec: () => runs.shift(), log: () => {} }).ok, true);
+});
+
+const fixtureRepo = (t, script) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'test-baseline-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ scripts: { test: script } }));
+  fs.mkdirSync(path.join(dir, 'brand'));
+  fs.writeFileSync(path.join(dir, 'brand', 'test-baseline.json'), JSON.stringify({ failures: [] }));
+  return dir;
+};
+
+test('every stage runs under its own temporary home, never the real one', (t) => {
+  const dir = fixtureRepo(t, 'node run.mjs scripts && bun run --cwd packages/web test && bun run --cwd packages/ui test');
+  const realHome = os.userInfo().homedir;
+  const seen = [];
+  const exec = ({ command, env }) => {
+    seen.push({ command, env, existed: fs.existsSync(env.HOME) });
+    return { status: 0, output: '' };
+  };
+
+  assert.equal(runTestBaseline({ cwd: dir, exec, log: () => {} }).ok, true);
+
+  assert.equal(seen.length, 3);
+  assert.equal(new Set(seen.map(({ env }) => env.HOME)).size, 3, 'each stage gets a fresh home');
+  for (const { env, existed } of seen) {
+    assert.ok(existed, 'the home exists while the stage runs');
+    assert.notEqual(env.HOME, realHome);
+    assert.ok(env.HOME.startsWith(fs.realpathSync(os.tmpdir())), 'the home is a temporary folder');
+    assert.equal(env.XDG_CONFIG_HOME, path.join(env.HOME, '.config'));
+    assert.equal(env.XDG_DATA_HOME, path.join(env.HOME, '.local', 'share'));
+    assert.equal(env.XDG_CACHE_HOME, path.join(env.HOME, '.cache'));
+    assert.equal(env.XDG_STATE_HOME, path.join(env.HOME, '.local', 'state'));
+    assert.equal(env.OPENCHAMBER_DATA_DIR, undefined, 'the data dir is left to default inside the home');
+    const resolved = spawnSync(process.execPath, ['-e', "const os=require('node:os'),path=require('node:path');process.stdout.write(process.env.OPENCHAMBER_DATA_DIR?path.resolve(process.env.OPENCHAMBER_DATA_DIR):path.join(os.homedir(),'.config','openchamber'))"], { env, encoding: 'utf8' }).stdout;
+    assert.equal(resolved, path.join(env.HOME, '.config', 'openchamber'), 'the data dir resolves inside the temporary home');
+    assert.equal(env.GIT_CONFIG_NOSYSTEM, '1');
+    assert.ok(env.npm_config_cache.startsWith(env.HOME));
+    assert.ok(env.BUN_INSTALL.startsWith(env.HOME));
+    assert.equal(env.PATH, process.env.PATH, 'the toolchain stays on PATH');
+    assert.ok(!fs.existsSync(env.HOME), 'the home is removed when the stage ends');
+  }
+});
+
+test('the parent engine and product variables never reach a stage', (t) => {
+  const dir = fixtureRepo(t, 'bun run --cwd packages/web test');
+  const names = ['OPENCODE_CONFIG', 'OPENCODE_SERVER_PASSWORD', 'MITTRCRAFT_BROKER_URL', 'MITTR_FOO', 'OPENCHAMBER_PORT', 'OPENCHAMBER_DATA_DIR', 'GIT_DIR', 'XDG_CONFIG_HOME'];
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  t.after(() => {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+  for (const name of names) process.env[name] = `/real/${name}`;
+  let env;
+
+  runTestBaseline({ cwd: dir, exec: (call) => { env = call.env; return { status: 0, output: '' }; }, log: () => {} });
+
+  for (const name of ['OPENCODE_CONFIG', 'OPENCODE_SERVER_PASSWORD', 'MITTRCRAFT_BROKER_URL', 'MITTR_FOO', 'OPENCHAMBER_PORT', 'OPENCHAMBER_DATA_DIR', 'GIT_DIR']) {
+    assert.equal(env[name], undefined, `${name} must be removed`);
+  }
+  assert.ok(env.XDG_CONFIG_HOME.startsWith(env.HOME));
+});
+
+test('a stage that would run under the real home is refused before anything runs', (t) => {
+  const dir = fixtureRepo(t, 'bun run --cwd packages/web test');
+  const realHome = os.userInfo().homedir;
+  let ran = false;
+
+  assert.throws(
+    () => runTestBaseline({
+      cwd: dir,
+      exec: () => { ran = true; return { status: 0, output: '' }; },
+      log: () => {},
+      isolation: { makeHome: () => realHome },
+    }),
+    (error) => error instanceof RealHomeError && /real user home/.test(error.message),
+  );
+  assert.equal(ran, false);
+  assert.ok(fs.existsSync(realHome), 'the refusal never removes the real home');
+});
+
+test('the command line exits non-zero with a plain message when the home is the real one', (t) => {
+  const dir = fixtureRepo(t, 'node -e 0');
+  const errors = [];
+  let ran = false;
+
+  const code = main([], {
+    cwd: dir,
+    isolation: { makeHome: () => os.userInfo().homedir, tmp: path.join(dir, 'no-tmp') },
+    exec: () => { ran = true; return { status: 0, output: '' }; },
+    log: () => {},
+    error: (line) => errors.push(line),
+  });
+
+  assert.equal(code, 2);
+  assert.equal(ran, false);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /^\[mittr\] refusing to run tests: HOME is the real user home/);
+});
+
+test('git, node and bun keep working inside the isolated home', (t) => {
+  const outputs = withIsolatedEnv((env) => {
+    const run = (command, args) => spawnSync(command, args, { env, encoding: 'utf8', cwd: env.HOME });
+    return {
+      email: run('git', ['config', '--get', 'user.email']),
+      name: run('git', ['config', '--get', 'user.name']),
+      home: run(process.execPath, ['-e', 'process.stdout.write(require("node:os").homedir())']),
+      bun: run('bun', ['--version']),
+      npmCache: run(process.execPath, ['-e', 'process.stdout.write(process.env.npm_config_cache)']),
+    };
+  });
+  t.diagnostic(`bun ${outputs.bun.stdout.trim()}`);
+
+  assert.equal(outputs.email.stdout.trim(), 'test-runner@example.invalid');
+  assert.ok(outputs.name.stdout.trim().length > 0);
+  assert.notEqual(outputs.home.stdout, os.userInfo().homedir);
+  assert.equal(outputs.bun.status, 0);
+  assert.ok(outputs.npmCache.stdout.startsWith(outputs.home.stdout));
+});
+
+test('the guard refuses a missing home, a data dir outside the home and leftover engine variables', () => {
+  const realHome = os.userInfo().homedir;
+  const good = isolatedEnv({ home: path.join(os.tmpdir(), `${HOME_PREFIX}check`), parentEnv: {}, realHome });
+  assert.ok(assertIsolatedEnv(good, { realHome }));
+  assert.throws(() => assertIsolatedEnv({ ...good, HOME: undefined }, { realHome }), RealHomeError);
+  assert.throws(() => assertIsolatedEnv({ ...good, HOME: realHome }, { realHome }), /real user home/);
+  assert.throws(() => assertIsolatedEnv({ ...good, OPENCHAMBER_DATA_DIR: path.join(realHome, '.config', 'openchamber') }, { realHome }), /OPENCHAMBER_DATA_DIR is outside/);
+  assert.throws(() => assertIsolatedEnv({ ...good, XDG_DATA_HOME: path.join(realHome, '.local', 'share') }, { realHome }), /XDG_DATA_HOME is outside/);
+  assert.throws(() => assertIsolatedEnv({ ...good, OPENCODE_CONFIG: '/x' }, { realHome }), /OPENCODE_CONFIG is still set/);
+});
+
+const standInHome = (t) => {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'stand-in-')));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const realHome = path.join(base, 'techflow');
+  fs.mkdirSync(path.join(realHome, '.config'), { recursive: true });
+  return { base, realHome };
+};
+
+const guardAccepts = (home, realHome) => {
+  const env = isolatedEnv({ home, parentEnv: {}, realHome });
+  return () => assertIsolatedEnv(env, { realHome });
+};
+
+test('the guard refuses every spelling of the real home', (t) => {
+  const { base, realHome } = standInHome(t);
+
+  assert.throws(guardAccepts(`${realHome}/`, realHome), /real user home/, 'trailing slash');
+  assert.throws(guardAccepts(`${realHome}//.`, realHome), /real user home/, 'dot segment');
+  assert.throws(guardAccepts(path.join(realHome, '.config', '..'), realHome), /real user home/, 'parent segment');
+
+  const link = path.join(base, 'link-to-home');
+  fs.symlinkSync(realHome, link);
+  assert.throws(guardAccepts(link, realHome), /real user home/, 'symlink to the real home');
+  assert.throws(guardAccepts(`${link}/`, realHome), /real user home/, 'symlink with a trailing slash');
+
+  assert.throws(guardAccepts(base, realHome), /contains the real user home/, 'a folder that contains the real home');
+  assert.throws(guardAccepts(path.join(base, 'techflow', '..'), realHome), /contains the real user home/, 'a folder that contains it through a dot segment');
+});
+
+test('the guard refuses a differently-cased spelling of the real home on a case-insensitive disk', (t) => {
+  const { realHome } = standInHome(t);
+  const swapped = path.join(path.dirname(realHome), path.basename(realHome).toUpperCase());
+  if (!fs.existsSync(swapped)) {
+    t.skip('this disk is case-sensitive');
+    return;
+  }
+
+  assert.throws(guardAccepts(swapped, realHome), /real user home/);
+  assert.throws(guardAccepts(`${swapped}/`, realHome), /real user home/);
+  assert.throws(guardAccepts(path.dirname(swapped.toUpperCase()), realHome), /contains the real user home/);
+});
+
+test('a temporary home beside the real home is accepted', (t) => {
+  const { base, realHome } = standInHome(t);
+  const other = path.join(base, `${HOME_PREFIX}ok`);
+  fs.mkdirSync(other);
+
+  assert.ok(guardAccepts(other, realHome)());
+});
+
+test('the temporary home is removed when the stage fails or throws', (t) => {
+  const dir = fixtureRepo(t, 'bun run --cwd packages/web test');
+  let home;
+
+  runTestBaseline({ cwd: dir, exec: ({ env }) => { home = env.HOME; return { status: 1, output: ' FAIL  a.test.js > broken\n' }; }, log: () => {} });
+  assert.ok(home.includes(HOME_PREFIX));
+  assert.ok(!fs.existsSync(home), 'removed after a failing stage');
+
+  assert.throws(() => runTestBaseline({ cwd: dir, exec: ({ env }) => { home = env.HOME; throw new Error('spawn failed'); }, log: () => {} }), /spawn failed/);
+  assert.ok(!fs.existsSync(home), 'removed after a stage that throws');
+});
+
+test('stale temporary homes are swept from the temp folder, and nothing else is', (t) => {
+  const { base, realHome } = standInHome(t);
+  const tmp = path.join(base, 'tmp');
+  fs.mkdirSync(tmp);
+  const make = (name, ageMs, now) => {
+    const target = path.join(tmp, name);
+    fs.mkdirSync(path.join(target, 'nested'), { recursive: true });
+    const when = new Date(now - ageMs);
+    fs.utimesSync(target, when, when);
+    return target;
+  };
+  const now = Date.now();
+  const stale = make(`${HOME_PREFIX}old`, 2 * 60 * 60 * 1000, now);
+  const fresh = make(`${HOME_PREFIX}new`, 5 * 60 * 1000, now);
+  const other = make('someone-elses-folder', 5 * 60 * 60 * 1000, now);
+  const outside = path.join(base, `${HOME_PREFIX}outside`);
+  fs.mkdirSync(outside);
+  fs.utimesSync(outside, new Date(now - 9 * 60 * 60 * 1000), new Date(now - 9 * 60 * 60 * 1000));
+  const link = path.join(tmp, `${HOME_PREFIX}link`);
+  fs.symlinkSync(outside, link);
+
+  assert.deepEqual(sweepStaleHomes({ tmp, now, realHome }), [stale]);
+
+  assert.ok(!fs.existsSync(stale));
+  for (const kept of [fresh, other, outside, link, realHome]) assert.ok(fs.existsSync(kept), `${kept} must stay`);
+});
+
+test('a stale folder that holds the real home is never swept', (t) => {
+  const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-home-')));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const tmp = path.join(base, 'tmp');
+  const container = path.join(tmp, `${HOME_PREFIX}holder`);
+  const realHome = path.join(container, 'user');
+  fs.mkdirSync(realHome, { recursive: true });
+  const old = new Date(Date.now() - 48 * 60 * 60 * 1000);
+  fs.utimesSync(container, old, old);
+
+  assert.deepEqual(sweepStaleHomes({ tmp, realHome }), []);
+  assert.ok(fs.existsSync(realHome));
+});
+
+test('the command line sweeps stale temporary homes before the first stage', (t) => {
+  const dir = fixtureRepo(t, 'node -e 0');
+  const tmp = path.join(dir, 'tmp');
+  const stale = path.join(tmp, `${HOME_PREFIX}stale`);
+  fs.mkdirSync(stale, { recursive: true });
+  const old = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  fs.utimesSync(stale, old, old);
+  let sweptBeforeRun = null;
+
+  const code = main([], {
+    cwd: dir,
+    isolation: { tmp },
+    exec: () => { sweptBeforeRun = !fs.existsSync(stale); return { status: 0, output: '' }; },
+    log: () => {},
+    error: () => {},
+  });
+
+  assert.equal(code, 0);
+  assert.equal(sweptBeforeRun, true);
+});

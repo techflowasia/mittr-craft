@@ -10,7 +10,7 @@ afterEach(() => {
 });
 
 describe('createEventPipeline — system resume reconnect', () => {
-  it('reconnects immediately on mittrcraft:system-resume event', async () => {
+  it('reconnects immediately on openchamber:system-resume event', async () => {
     const winListeners = {};
     globalThis.document = {
       visibilityState: 'visible',
@@ -35,18 +35,15 @@ describe('createEventPipeline — system resume reconnect', () => {
     const firstHold = new Promise((resolve) => { releaseFirstStream = resolve; });
 
     const sdk = {
-      global: {
+      event: {
         // Accept options with signal so the mock generator can abort.
-        event: async (options) => {
+        subscribe: (options) => {
           const callIndex = sdkCallIndex++;
           eventCalls.push(callIndex);
           const signal = options?.signal;
           if (callIndex === 0) {
-            return {
-              stream: (async function* () {
-                yield {
-                  payload: { type: 'session.status', properties: { sessionID: 's1', status: { type: 'idle' } } },
-                };
+            return (async function* () {
+                yield { id: 'evt_1', created: 1000, location: { directory: '/repo' }, type: 'session.status', data: { sessionID: 's1', status: { type: 'idle' } } };
                 // Wait for either the hold promise or abort signal.
                 await Promise.race([
                   firstHold,
@@ -57,17 +54,12 @@ describe('createEventPipeline — system resume reconnect', () => {
                     });
                   }),
                 ]);
-              })(),
-            };
+              })();
           }
-          return {
-            stream: (async function* () {
-              yield {
-                payload: { type: 'session.status', properties: { sessionID: 's1', status: { type: 'idle' } } },
-              };
+          return (async function* () {
+              yield { id: 'evt_1', created: 1000, location: { directory: '/repo' }, type: 'session.status', data: { sessionID: 's1', status: { type: 'idle' } } };
               await new Promise(() => {});
-            })(),
-          };
+            })();
         },
       },
     };
@@ -96,7 +88,7 @@ describe('createEventPipeline — system resume reconnect', () => {
       // Wait for first SSE attempt to start and deliver the event, then
       // simulate OS resume by invoking the registered handler directly.
       setTimeout(() => {
-        const handler = winListeners['mittrcraft:system-resume'];
+        const handler = winListeners['openchamber:system-resume'];
         if (handler) handler();
       }, 80);
     });

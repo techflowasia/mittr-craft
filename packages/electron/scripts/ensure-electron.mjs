@@ -13,8 +13,8 @@
  * back to Node).
  *
  * Test hooks (env, never used in normal operation):
- *   MITTRCRAFT_ELECTRON_PKG_DIR       - resolve the electron package here.
- *   MITTRCRAFT_ELECTRON_INSTALL_COMMANDS - JSON array of [bin, args] repair
+ *   OPENCHAMBER_ELECTRON_PKG_DIR       - resolve the electron package here.
+ *   OPENCHAMBER_ELECTRON_INSTALL_COMMANDS - JSON array of [bin, args] repair
  *                                        commands, e.g.
  *                                        `[["bun",["install.js"]],["node",["install.js"]]]`.
  *
@@ -28,6 +28,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+
+import { resolveBunExecutable } from '../../../scripts/lib/bun-executable.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -225,30 +227,34 @@ export function isComplete(electronDir, expected = expectedArch()) {
   return true;
 }
 
-function resolveInstallCommands(env) {
-  if (env.MITTRCRAFT_ELECTRON_INSTALL_COMMANDS) {
+function resolveInstallCommands(env, bunResolver = resolveBunExecutable) {
+  const normalize = (commands) => commands.map(([bin, args]) => [
+    bin === 'bun' ? bunResolver({ env }) : bin,
+    args,
+  ]);
+  if (env.OPENCHAMBER_ELECTRON_INSTALL_COMMANDS) {
     try {
-      const parsed = JSON.parse(env.MITTRCRAFT_ELECTRON_INSTALL_COMMANDS);
+      const parsed = JSON.parse(env.OPENCHAMBER_ELECTRON_INSTALL_COMMANDS);
       if (
         Array.isArray(parsed) &&
         parsed.every((command) => Array.isArray(command) && typeof command[0] === 'string')
       ) {
-        return parsed;
+        return normalize(parsed);
       }
     } catch {
       // Fall through to the default commands.
     }
   }
-  return [
+  return normalize([
     ['bun', ['install.js']],
     ['node', ['install.js']],
-  ];
+  ]);
 }
 
 export function repair(electronDir, options = {}) {
   const env = options.env ?? process.env;
   const runner = options.runner ?? spawnSync;
-  const commands = options.commands ?? resolveInstallCommands(env);
+  const commands = options.commands ?? resolveInstallCommands(env, options.bunResolver);
 
   // A partial extraction can leave stale entries (and a stale path.txt) that
   // a re-run would merge with. Start clean so the repair is deterministic.
@@ -265,6 +271,7 @@ export function repair(electronDir, options = {}) {
       cwd: electronDir,
       stdio: options.stdio ?? 'inherit',
       env: { ...env, ELECTRON_SKIP_BINARY_DOWNLOAD: undefined },
+      windowsHide: true,
     });
     if (result.error) {
       console.warn(`[electron:ensure] could not run \`${label}\`: ${result.error.message}`);
@@ -282,7 +289,7 @@ export function repair(electronDir, options = {}) {
 export async function main(argv = process.argv.slice(2), env = process.env) {
   const bestEffort = argv.includes('--best-effort');
 
-  const overrideDir = env.MITTRCRAFT_ELECTRON_PKG_DIR;
+  const overrideDir = env.OPENCHAMBER_ELECTRON_PKG_DIR;
   const electronDir = overrideDir
     ? fs.existsSync(path.join(overrideDir, 'package.json'))
       ? overrideDir

@@ -1,11 +1,11 @@
-// MittrCraft private relay protocol constants and shared types.
+// OpenChamber private relay protocol constants and shared types.
 // Spec: .opencode/plans/private-relay/01-protocol-spec.md
 // Three layers: relay routing (Layer 1), E2EE channel (Layer 2), tunnel mux (Layer 3).
 // This module is isomorphic: browser, Node, and Cloudflare Workers.
 
 export const RELAY_PROTOCOL_VERSION = 1;
 
-export const RELAY_HKDF_INFO = 'mittrcraft-relay-v1';
+export const RELAY_HKDF_INFO = 'openchamber-relay-v1';
 
 // Encrypted frame layout: [1 byte version][12 byte IV][ciphertext + 16 byte GCM tag].
 export const ENCRYPTED_FRAME_VERSION = 1;
@@ -47,6 +47,7 @@ export const TunnelFrameType = {
   WsClose: 10,
   Ping: 11,
   Pong: 12,
+  DeliveryAck: 13,
 } as const;
 
 export type TunnelFrameTypeValue = (typeof TunnelFrameType)[keyof typeof TunnelFrameType];
@@ -97,6 +98,8 @@ export interface E2eeHelloMessage {
   // Capability advertisement: the client can pack multiple tunnel frames into
   // one encrypted WS message. Missing/false = legacy (one frame per message).
   batch?: boolean;
+  /** Client supports cumulative downstream delivery acknowledgements. */
+  flowControl?: boolean;
 }
 
 export interface E2eeReadyMessage {
@@ -105,6 +108,8 @@ export interface E2eeReadyMessage {
   // Host echoes `batch: true` only when it also supports batching AND the client
   // advertised it. Batching is enabled for the session only if both agree.
   batch?: boolean;
+  /** Enabled only when both peers support downstream flow control. */
+  flowControl?: boolean;
 }
 
 // Relay-assigned WebSocket close codes.
@@ -119,4 +124,3 @@ export const RelayCloseCode = {
   RekeyMismatch: 1008,
   ChannelFailure: 1011,
 } as const;
-

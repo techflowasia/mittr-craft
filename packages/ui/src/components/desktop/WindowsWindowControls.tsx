@@ -8,7 +8,7 @@ import type { DesktopWindowControlAction, DesktopWindowControlsSide } from '@/li
 import { useUIStore } from '@/stores/useUIStore';
 
 // macOS chrome colors; intentionally theme-independent — these replicate a
-// foreign platform's chrome, not MittrCraft's own status tokens, so the
+// foreign platform's chrome, not OpenChamber's own status tokens, so the
 // theme-system hex rule does not apply.
 const TRAFFIC_LIGHT_FILL: Record<DesktopWindowControlAction, string> = {
   close: '#FF5F57',
@@ -57,7 +57,7 @@ const TrafficLightButton: React.FC<TrafficLightButtonProps> = ({ action, isMaxim
       // 24px-wide button wrapping a 14px circle centers it at a 24px interval
       // between neighbors, giving a 10px edge-to-edge gap. The 32px height
       // keeps the titlebar's vertical hit band.
-      className="app-region-no-drag flex h-8 w-[24px] items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      className="app-region-no-drag flex h-8 w-[24px] items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <span
         className="flex size-3.5 items-center justify-center rounded-full shadow-[inset_0_0_0_0.5px_rgba(0,0,0,0.28)] transition-[filter] duration-75 active:brightness-90"
@@ -103,10 +103,10 @@ export const WindowsWindowControls = React.memo(function WindowsWindowControls({
       setIsMaximized(Boolean(detail?.maximized));
     };
 
-    window.addEventListener('mittrcraft:window-maximized-changed', handleMaximizedChange);
+    window.addEventListener('openchamber:window-maximized-changed', handleMaximizedChange);
     return () => {
       disposed = true;
-      window.removeEventListener('mittrcraft:window-maximized-changed', handleMaximizedChange);
+      window.removeEventListener('openchamber:window-maximized-changed', handleMaximizedChange);
     };
   }, [visible]);
 
@@ -142,7 +142,9 @@ export const WindowsWindowControls = React.memo(function WindowsWindowControls({
       <div
         className={cn(
           'app-region-no-drag group/wctl flex h-8 shrink-0 items-center',
-          isLeft ? 'mr-1' : 'ml-1',
+          // macOS-style circles keep an edge inset on the right (the header's
+          // flush pr-0 is a Windows-caption convention, classic style only).
+          isLeft ? 'mr-1' : 'ml-1 mr-3',
         )}
         aria-label={t('header.windowControls.groupAria')}
       >
@@ -159,7 +161,7 @@ export const WindowsWindowControls = React.memo(function WindowsWindowControls({
   // otherwise the project-actions chevron overlaps the session title. Right
   // side keeps a taller h-12 Windows-style hit target.
   const buttonClassName = cn(
-    'app-region-no-drag inline-flex items-center justify-center text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+    'app-region-no-drag inline-flex items-center justify-center text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
     isLeft ? 'h-8 w-8 rounded-md' : 'h-12 w-11',
   );
   const containerClassName = isLeft
@@ -205,7 +207,14 @@ export const WindowsWindowControls = React.memo(function WindowsWindowControls({
       <button
         key="close"
         type="button"
-        className={cn(buttonClassName, 'hover:bg-status-error hover:text-status-error-foreground')}
+        className={cn(
+          buttonClassName,
+          // Hover pairs the solid error red with its authored on-red
+          // foreground (the --destructive pairing). The error-background wash
+          // is a banner surface tint, not a glyph-button hover: against it the
+          // on-solid foreground is unreadable in both modes.
+          'hover:bg-[var(--status-error)] hover:text-[var(--status-error-foreground)]',
+        )}
         onClick={() => { void invokeDesktop('desktop_close_current_window'); }}
         title={t('header.windowControls.close')}
         aria-label={t('header.windowControls.close')}

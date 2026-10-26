@@ -1,8 +1,8 @@
-import type { Session } from '@opencode-ai/sdk/v2';
+import type { Metadata, Session } from '@/lib/opencode/model';
 
-export type SessionMetadataRecord = Record<string, unknown>;
+export type SessionMetadataRecord = Metadata;
 
-type MittrCraftMetadata = {
+type OpenChamberMetadata = {
   kind?: 'review';
   originalSessionID?: string;
   reviewSessionID?: string;
@@ -11,37 +11,36 @@ type MittrCraftMetadata = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
-export const getSessionMetadata = (session: Session | null | undefined): SessionMetadataRecord => {
-  const metadata = (session as (Session & { metadata?: unknown }) | null | undefined)?.metadata;
-  return isRecord(metadata) ? metadata : {};
-};
+export const getSessionMetadata = (session: Session | null | undefined): SessionMetadataRecord => (
+  session?.metadata ?? {}
+);
 
-const getMittrCraftMetadata = (metadata: SessionMetadataRecord): MittrCraftMetadata => {
-  const value = metadata.mittrcraft;
-  return isRecord(value) ? value as MittrCraftMetadata : {};
+const getOpenChamberMetadata = (metadata: SessionMetadataRecord): OpenChamberMetadata => {
+  const value = metadata.openchamber;
+  return isRecord(value) ? value as OpenChamberMetadata : {};
 };
 
 export const getReviewSessionID = (session: Session | null | undefined): string | null => {
-  const value = getMittrCraftMetadata(getSessionMetadata(session)).reviewSessionID;
+  const value = getOpenChamberMetadata(getSessionMetadata(session)).reviewSessionID;
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
 };
 
 export const getOriginalSessionID = (session: Session | null | undefined): string | null => {
-  const value = getMittrCraftMetadata(getSessionMetadata(session)).originalSessionID;
+  const value = getOpenChamberMetadata(getSessionMetadata(session)).originalSessionID;
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
 };
 
 export const isReviewSession = (session: Session | null | undefined): boolean =>
-  getMittrCraftMetadata(getSessionMetadata(session)).kind === 'review' && Boolean(getOriginalSessionID(session));
+  getOpenChamberMetadata(getSessionMetadata(session)).kind === 'review' && Boolean(getOriginalSessionID(session));
 
 export const withReviewSessionLink = (
   metadata: SessionMetadataRecord,
   reviewSessionID: string,
 ): SessionMetadataRecord => {
-  const current = getMittrCraftMetadata(metadata);
+  const current = getOpenChamberMetadata(metadata);
   return {
     ...metadata,
-    mittrcraft: {
+    openchamber: {
       ...current,
       reviewSessionID,
     },
@@ -52,10 +51,10 @@ export const withReviewSessionMarker = (
   metadata: SessionMetadataRecord,
   originalSessionID: string,
 ): SessionMetadataRecord => {
-  const current = getMittrCraftMetadata(metadata);
+  const current = getOpenChamberMetadata(metadata);
   return {
     ...metadata,
-    mittrcraft: {
+    openchamber: {
       ...current,
       kind: 'review' as const,
       originalSessionID,
@@ -67,16 +66,16 @@ export const withoutReviewSessionLink = (
   metadata: SessionMetadataRecord,
   reviewSessionID: string,
 ): SessionMetadataRecord => {
-  const current = getMittrCraftMetadata(metadata);
+  const current = getOpenChamberMetadata(metadata);
   if (current.reviewSessionID !== reviewSessionID) return metadata;
 
-  const restMittrCraft = { ...current };
-  delete restMittrCraft.reviewSessionID;
+  const restOpenChamber = { ...current };
+  delete restOpenChamber.reviewSessionID;
   const next: SessionMetadataRecord = { ...metadata };
-  if (Object.keys(restMittrCraft).length > 0) {
-    next.mittrcraft = restMittrCraft;
+  if (Object.keys(restOpenChamber).length > 0) {
+    next.openchamber = restOpenChamber;
   } else {
-    delete next.mittrcraft;
+    delete next.openchamber;
   }
   return next;
 };

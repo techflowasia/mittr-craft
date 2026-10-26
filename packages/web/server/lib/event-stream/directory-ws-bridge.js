@@ -56,7 +56,7 @@ export function acceptDirectoryMessageStreamWsConnection({
       return;
     }
 
-    sendMessageStreamWsEvent(socket, { type: 'mittrcraft:heartbeat', timestamp: Date.now() }, { directory: 'global' });
+    sendMessageStreamWsEvent(socket, { type: 'openchamber:heartbeat', timestamp: Date.now() }, { directory: 'global' });
   }, heartbeatIntervalMs);
 
   socket.on('close', () => {
@@ -106,7 +106,7 @@ export function acceptDirectoryMessageStreamWsConnection({
           buildUrlFailed = false;
           let targetUrl;
           try {
-            targetUrl = new URL(buildOpenCodeUrl('/event', ''));
+            targetUrl = new URL(buildOpenCodeUrl('/api/event', ''));
           } catch {
             buildUrlFailed = true;
             throw new Error('OpenCode service unavailable');

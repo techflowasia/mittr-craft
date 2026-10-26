@@ -1,11 +1,15 @@
 import type { IconName } from '@/components/icon/icons';
 import type { I18nKey } from '@/lib/i18n';
-import type { ContextPanelMode } from '@/stores/useUIStore';
+import {
+  isPluginContextPanelMode,
+  type ContextPanelMode,
+} from '@/lib/surfaces/modes';
 
-export type ContextSurfaceId =
+export type BuiltInContextSurfaceId =
   | 'editor'
   | 'git'
   | 'pr'
+  | 'linear'
   | 'diff'
   | 'walkthrough'
   | 'terminal'
@@ -15,11 +19,17 @@ export type ContextSurfaceId =
   | 'browser'
   | 'chat';
 
+export type ContextSurfaceId = BuiltInContextSurfaceId | `plugin:${string}`;
+
 export type ContextSurfaceDescriptor = {
   id: ContextSurfaceId;
   /** The context panel tab mode this surface activates. 1:1 in the current model. */
   mode: ContextPanelMode;
   icon: IconName;
+  /** Authenticated package SVG for a guest rail mark. Prefer over `icon` when set. */
+  iconSrc?: string;
+  /** Guest-provided name. When set, the rail prefers this over `labelKey`. */
+  label?: string;
   labelKey: I18nKey;
   /**
    * 'always' surfaces can be opened empty from the rail.
@@ -84,11 +94,20 @@ export const CONTEXT_SURFACES: readonly ContextSurfaceDescriptor[] = [
     availability: 'always',
   },
   {
+    id: 'linear',
+    descriptionKey: 'contextRail.surface.linear.description',
+    defaultWidthFraction: 0.45,
+    mode: 'linear',
+    icon: 'linear',
+    labelKey: 'contextPanel.mode.linear',
+    availability: 'always',
+  },
+  {
     id: 'editor',
     descriptionKey: 'contextRail.surface.editor.description',
     defaultWidthFraction: 3 / 5,
     mode: 'file',
-    icon: 'braces',
+    icon: 'file-edit',
     labelKey: 'contextPanel.mode.files',
     availability: 'always',
   },
@@ -104,9 +123,12 @@ export const CONTEXT_SURFACES: readonly ContextSurfaceDescriptor[] = [
   {
     id: 'notes',
     descriptionKey: 'contextRail.surface.notes.description',
-    defaultWidthFraction: 1 / 3,
+    // As wide as the files surface: this panel now carries a sidebar and a
+    // content column, and a third of the window leaves the content column too
+    // narrow to read a note in.
+    defaultWidthFraction: 3 / 5,
     mode: 'notes',
-    icon: 'sticky-note',
+    icon: 'book-marked',
     labelKey: 'contextRail.surface.notes',
     availability: 'always',
   },
@@ -139,7 +161,6 @@ export const CONTEXT_SURFACES: readonly ContextSurfaceDescriptor[] = [
   },
 ];
 
-const SURFACE_BY_ID = new Map(CONTEXT_SURFACES.map((surface) => [surface.id, surface]));
 const FRACTION_BY_MODE = new Map(CONTEXT_SURFACES.map((surface) => [surface.mode, surface.defaultWidthFraction]));
 
 // Tablet width and up: below this the walkthrough cannot show a stop and its
@@ -147,33 +168,39 @@ const FRACTION_BY_MODE = new Map(CONTEXT_SURFACES.map((surface) => [surface.mode
 export const WALKTHROUGH_MIN_WIDTH = 768;
 
 export const getContextSurfaceWidthFraction = (mode: ContextPanelMode): number => {
+  if (isPluginContextPanelMode(mode)) return 0.45;
   return FRACTION_BY_MODE.get(mode) ?? 1 / 2;
 };
 
-const isContextSurfaceId = (value: unknown): value is ContextSurfaceId => {
-  return typeof value === 'string' && SURFACE_BY_ID.has(value as ContextSurfaceId);
+const isKnownSurfaceId = (value: string, byId: ReadonlyMap<string, ContextSurfaceDescriptor>): boolean => {
+  return byId.has(value);
 };
 
 /**
  * Applies a persisted user reorder on top of the default registry order:
  * unknown ids are dropped, missing surfaces are appended in default order.
  */
-export const sortContextSurfaces = (railOrder: readonly string[]): ContextSurfaceDescriptor[] => {
+export const sortContextSurfaces = (
+  railOrder: readonly string[],
+  extras: readonly ContextSurfaceDescriptor[] = [],
+): ContextSurfaceDescriptor[] => {
+  const all = extras.length === 0 ? CONTEXT_SURFACES : [...CONTEXT_SURFACES, ...extras];
+  const byId = new Map<string, ContextSurfaceDescriptor>(all.map((surface) => [surface.id, surface]));
   const ordered: ContextSurfaceDescriptor[] = [];
-  const seen = new Set<ContextSurfaceId>();
+  const seen = new Set<string>();
 
   for (const id of railOrder) {
-    if (!isContextSurfaceId(id) || seen.has(id)) {
+    if (!isKnownSurfaceId(id, byId) || seen.has(id)) {
       continue;
     }
-    const surface = SURFACE_BY_ID.get(id);
+    const surface = byId.get(id);
     if (surface) {
       seen.add(id);
       ordered.push(surface);
     }
   }
 
-  for (const surface of CONTEXT_SURFACES) {
+  for (const surface of all) {
     if (!seen.has(surface.id)) {
       ordered.push(surface);
     }
@@ -184,10 +211,22 @@ export const sortContextSurfaces = (railOrder: readonly string[]): ContextSurfac
 
 type VisibleRailSurfacesOptions = {
   railOrder: readonly string[];
+  /** Surfaces the user chose to hide from the rail (and from the digit
+      shortcuts, which share this filter). */
+  hiddenSurfaces?: readonly string[];
   planModeEnabled: boolean;
   isVSCode: boolean;
   screenWidth: number;
   tabs: readonly { mode: ContextPanelMode }[];
+  /** Linear's rail icon stays off until a workspace is connected. */
+  linearConnected: boolean;
+  /** The pull-request rail icon stays off until a GitHub or GitLab account is
+      connected (OAuth, a token, or a detected `gh`/`glab` login). Accounts are
+      connected from Settings, so hiding the surface removes no entry point. */
+  sourceControlConnected: boolean;
+  /** Installed guest panels. Empty on VS Code and when the catalog has not
+      loaded or failed. */
+  extras?: readonly ContextSurfaceDescriptor[];
 };
 
 /**
@@ -199,21 +238,33 @@ type VisibleRailSurfacesOptions = {
  * existing tab keeps them visible even if the content source went away.
  */
 export const getVisibleContextRailSurfaces = (options: VisibleRailSurfacesOptions): ContextSurfaceDescriptor[] => {
-  return sortContextSurfaces(options.railOrder).filter((surface) => {
+  return sortContextSurfaces(options.railOrder, options.extras).filter((surface) => {
+    if (options.hiddenSurfaces?.includes(surface.id)) {
+      return false;
+    }
+    if (isPluginContextPanelMode(surface.mode) && options.isVSCode) {
+      return false;
+    }
     if (surface.id === 'plan' && !options.planModeEnabled) {
       return false;
     }
     // The walkthrough needs room for a stop list beside real code, and its
-    // diffs come from MittrCraft's Git routes, which VS Code does not serve.
+    // diffs come from OpenChamber's Git routes, which VS Code does not serve.
     if (surface.id === 'walkthrough' && (options.isVSCode || options.screenWidth < WALKTHROUGH_MIN_WIDTH)) {
       return false;
     }
-    // VS Code already is an editor with a browser next to it. What MittrCraft
+    // VS Code already is an editor with a browser next to it. What OpenChamber
     // could add there is a bare frame: no annotation, no agent control, no
     // remote dev servers — all of which need a Chromium host the extension does
     // not have. Offering the surface anyway would promise the panel people see
     // on the desktop.
     if (surface.id === 'browser' && options.isVSCode) {
+      return false;
+    }
+    if (surface.id === 'linear' && !options.linearConnected) {
+      return false;
+    }
+    if (surface.id === 'pr' && !options.sourceControlConnected) {
       return false;
     }
     if (surface.availability === 'has-content') {

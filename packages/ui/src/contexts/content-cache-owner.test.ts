@@ -36,6 +36,25 @@ describe("content cache owner", () => {
     owner.dispose()
   })
 
+  test("bypasses metadata cache for an authoritative read", async () => {
+    let content = "old"
+    let reads = 0
+    const owner = createContentCachedFiles({
+      readFile: async (path: string) => {
+        reads += 1
+        return { path, content }
+      },
+      statFile: async () => ({ isFile: true, isDirectory: false, size: 3, mtimeMs: 1 }),
+    } as unknown as FilesAPI)
+
+    await owner.files.readFile!("file.ts")
+    content = "new"
+    expect((await owner.files.readFile!("file.ts")).content).toBe("old")
+    expect((await owner.files.readFile!("file.ts", { fresh: true })).content).toBe("new")
+    expect(reads).toBe(2)
+    owner.dispose()
+  })
+
   test("retries a read that overlaps a write", async () => {
     const firstRead = deferred<{ path: string; content: string }>()
     let content = "old"
@@ -103,7 +122,7 @@ describe("content cache owner", () => {
       } as unknown as FilesAPI)
 
       expect((await owner.files.readFile!("notes.txt")).content).toBe("value-1")
-      window.dispatchEvent(new CustomEvent("mittrcraft:runtime-endpoint-will-change", {
+      window.dispatchEvent(new CustomEvent("openchamber:runtime-endpoint-will-change", {
         detail: {
           apiBaseUrl: "http://127.0.0.1:3902",
           previousApiBaseUrl: "http://127.0.0.1:3901",

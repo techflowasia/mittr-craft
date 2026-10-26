@@ -1,0 +1,620 @@
+{
+  "bun.lock": [
+    {
+      "hook": "lockfile",
+      "why": "Re-resolved with bun install for the workspace packages we add, and never hand-merged."
+    }
+  ],
+  "knip.json": [
+    {
+      "hook": "knip",
+      "why": "Knip does not follow import.meta.glob, so the file the entry points load by glob reported as unused."
+    },
+    {
+      "hook": "knip",
+      "why": "Knip does not follow the product UI plugin's test files either, so the mittr-ui workspace names its spec files as entries too and the dead-code report stays identical to the base."
+    }
+  ],
+  "packages/electron/deep-link-registry.mjs": [
+    {
+      "hook": "electron-host",
+      "why": "A plugin needs to receive deep links on its own hosts, so this registry lets it claim a host (never one the app owns), and the app's dispatcher offers it every link before its own handling."
+    }
+  ],
+  "packages/electron/early-startup.mjs": [
+    {
+      "hook": "electron",
+      "why": "A rebranded build has to change the app name, deep-link scheme, user-model id, default desktop port, help links and update feed without patching each constant by hand."
+    },
+    {
+      "hook": "splash",
+      "why": "The startup splash is a page the desktop shell writes itself before any UI loads, with the default logo as inline SVG markup, so a rebranded build had no way to show its own mark there short of rewriting that markup in the built bundle."
+    }
+  ],
+  "packages/electron/entry.mjs": [
+    {
+      "hook": "electron",
+      "why": "A rebranded build has to change the app name, deep-link scheme, user-model id, default desktop port, help links and update feed without patching each constant by hand."
+    }
+  ],
+  "packages/electron/host-confirm.mjs": [
+    {
+      "hook": "electron-host",
+      "why": "A plugin's question for the person is shown as a native message box over the visible window, with cancel as the default and the confirm label as the only yes; a question with missing or oversized text, a dialog that fails, and a second question while one is open are all answered no."
+    }
+  ],
+  "packages/electron/main.mjs": [
+    {
+      "hook": "electron",
+      "why": "A rebranded build has to change the app name, deep-link scheme, user-model id, default desktop port, help links and update feed without patching each constant by hand."
+    },
+    {
+      "hook": "menu",
+      "why": "The native menus take their labels from per-locale tables that spell the app's name inside them (\"About OpenChamber\", \"Über OpenChamber\", the application menu title and so on, in every language), so a product with its own name showed upstream's name in the menu bar."
+    },
+    {
+      "hook": "updater",
+      "why": "A product without an update feed still showed \"Check for updates\" in the application menu, and the renderer's own update checks (the About page, the periodic poll) asked the main process, which refused with \"Updates are not available in this build.\" and put that error on screen."
+    },
+    {
+      "hook": "updater-ui",
+      "why": "A build with no update feed answered update checks with \"no update available\", so the About page, and remote clients asking through the server, reported the app as up to date although nothing was ever checked."
+    },
+    {
+      "hook": "electron-host",
+      "why": "An in-process server plugin needs keychain-backed secrets and its own deep-link hosts, and the desktop shell offered neither, so it now passes plugins a safeStorage secret store and a deep-link handler registry that the dispatcher consults first, without a plugin editing the app's dispatcher."
+    },
+    {
+      "hook": "electron-host",
+      "why": "A plugin that must not act on a request until the person at this Mac agrees (turning on something that runs on its own) had no way to ask through the operating system, where no other process can answer for them, so the desktop shell now also passes plugins confirm(question), which shows a native dialog with the cancel button as the default."
+    }
+  ],
+  "packages/electron/product-runtime.mjs": [
+    {
+      "hook": "product",
+      "why": "A build can now ship a product.json next to package.json and have the desktop shell read its name, deep-link scheme, ports, links, updater feed, environment, directories and server plugins from it, instead of someone editing the literals scattered through the Electron sources."
+    },
+    {
+      "hook": "server-version",
+      "why": "A product that versions its app apart from the server it packs showed the server package's version in the About dialog, so the server can now report the app's version instead."
+    }
+  ],
+  "packages/electron/product.mjs": [
+    {
+      "hook": "product",
+      "why": "A build can now ship a product.json next to package.json and have the desktop shell read its name, deep-link scheme, ports, links, updater feed, environment, directories and server plugins from it, instead of someone editing the literals scattered through the Electron sources."
+    },
+    {
+      "hook": "electron",
+      "why": "A rebranded build has to change the app name, deep-link scheme, user-model id, default desktop port, help links and update feed without patching each constant by hand."
+    },
+    {
+      "hook": "splash",
+      "why": "The startup splash is a page the desktop shell writes itself before any UI loads, with the default logo as inline SVG markup, so a rebranded build had no way to show its own mark there short of rewriting that markup in the built bundle."
+    },
+    {
+      "hook": "server-version",
+      "why": "A product that versions its app apart from the server it packs showed the server package's version in the About dialog, so the server can now report the app's version instead."
+    },
+    {
+      "hook": "product",
+      "why": "The comment saying product values win over the environment had drifted above resolveAppNames, where it describes nothing, and left applyProductEnv, the function that overwrites the environment, without it."
+    },
+    {
+      "hook": "product",
+      "why": "A product could only force environment values over the launch environment, so a value a development run should be able to point elsewhere (a service URL, say) had no default a launch could still override; envDefaults fill only variables the launch left unset or blank."
+    }
+  ],
+  "packages/electron/secret-store.mjs": [
+    {
+      "hook": "electron-host",
+      "why": "A plugin needs to keep tokens sealed by the operating system's keychain, so this wraps Electron safeStorage as a two-method encrypt and decrypt store that is absent when the system offers no encryption."
+    },
+    {
+      "hook": "electron-host",
+      "why": "On Linux without a keyring, safeStorage reports encryption as available while keeping its key in plain text (the basic_text backend), so the store handed plugins a seal that protected nothing; that backend now means no store."
+    },
+    {
+      "hook": "electron-host",
+      "why": "Asking safeStorage whether it can seal may raise a keychain dialog that blocks the main thread, and the store asked while the app was starting, before any window or server existed; it now asks on first use only, keeps the answer, and exposes it as available() so a plugin decides when to ask."
+    },
+    {
+      "hook": "electron-host",
+      "why": "The store kept its first answer for the whole run, so when a keychain dialog was answered after the first ask had already come back no, sign-in stayed refused until the app restarted; a yes is still kept, and a no is asked again on the next use at most once every five seconds."
+    },
+    {
+      "hook": "electron-host",
+      "why": "The wait before asking again after a no was measured on the wall clock, so setting the system clock backwards could keep a no for as long as the clock had moved; it is now measured on the monotonic clock."
+    }
+  ],
+  "packages/electron/updater-capability.mjs": [
+    {
+      "hook": "electron",
+      "why": "A rebranded build has to change the app name, deep-link scheme, user-model id, default desktop port, help links and update feed without patching each constant by hand."
+    },
+    {
+      "hook": "updater-ui",
+      "why": "A build with no update feed answered update checks with \"no update available\", so the About page, and remote clients asking through the server, reported the app as up to date although nothing was ever checked."
+    }
+  ],
+  "packages/electron/updater-feed.mjs": [
+    {
+      "hook": "electron",
+      "why": "A rebranded build has to change the app name, deep-link scheme, user-model id, default desktop port, help links and update feed without patching each constant by hand."
+    }
+  ],
+  "packages/ui/src/apps/renderElectronMiniChatApp.tsx": [
+    {
+      "hook": "ui",
+      "why": "A build that bundles this UI needs a way to rename the product and swap the mark without editing UI source on every upstream release."
+    },
+    {
+      "hook": "ui-plugins",
+      "why": "A product plugin could only rename the product and swap the logo, so a build that needs its own sign-in screen, account menu, model-picker marks or composer actions would have had to edit each upstream component; a root wrapper and named slots that render nothing when no plugin fills them let it add those at one-line call sites."
+    }
+  ],
+  "packages/ui/src/components/auth/SessionAuthGate.tsx": [
+    {
+      "hook": "session-auth-gate",
+      "why": "The session gate had no place for another way to sign in, so a build that adds one had to edit the gate; it now renders a session-auth-methods slot after the password form, outside the tunnel check, and leaves the password form out when the session status says no password is set, since that form could not sign anyone in."
+    },
+    {
+      "hook": "session-auth-finish",
+      "why": "A sign-in method a plugin adds could open a session but had no way to hand it to the gate, and a desktop window connected to another host needs a client token, not the cookie, to stay signed in, so the gate now tells the slot which runtime it is in and gives it an onSignedIn that applies the token it is handed (or asks the host for one) and lets the person in."
+    },
+    {
+      "hook": "session-auth-description",
+      "why": "The line under the sign-in title says the session is password-protected, which is wrong on a server whose only sign-in is a plugin's, so the gate now asks the product plugins for the words first and keeps its own line when none answers."
+    },
+    {
+      "hook": "session-auth-finish-host",
+      "why": "A sign-in a plugin started on one host could finish after the person switched to another, and the gate would then give the first host's client token to the second, so the finisher it hands the slot is now bound to the host the gate was drawn for and does nothing, answering false, once the window is on another."
+    },
+    {
+      "hook": "session-auth-description-runtime",
+      "why": "A plugin that words the line under the sign-in title could not tell a local desktop, which has no company sign-in to offer, from a web or remote window, so the gate now also gives it the runtime it is in."
+    }
+  ],
+  "packages/ui/src/components/chat/ChatInput.tsx": [
+    {
+      "hook": "composer-shift-enter",
+      "why": "A build that edits text on Shift+Enter (continuing a Markdown list) had no way in short of editing the composer's key handler; the handler now asks shiftEnterEdit after the history keys and before the send branch, applies an answer as one editor edit and consumes the key, and with no plugin, or for plain Enter, a key that sends, shell mode or an open picker, nothing changes."
+    }
+  ],
+  "packages/ui/src/components/chat/ChatMessage.tsx": [
+    {
+      "hook": "chat-message",
+      "why": "An assistant message showed every failed turn as the engine's raw error and had no place for a product's own follow-up, so a build whose provider refuses a turn for a reason the person can act on (a used-up weekly quota) could neither say so plainly nor offer to send it again; a product plugin may now reword the error first, and a footer slot under the message renders nothing when no plugin fills it."
+    },
+    {
+      "hook": "chat-message",
+      "why": "An error a product plugin rewords did not say which provider the turn ran on, so a build could not tell a turn its own provider could not route (a model the person may not use right now) from one on a provider that is switched off, and gave both the same advice; the plugin now also receives the provider id, and without a plugin nothing changes."
+    },
+    {
+      "hook": "main-surface",
+      "why": "A downstream build that styles assistant replies as bubbles had no stable hook on the assistant message body, as user messages already have data-user-message-bubble; the assistant body container now carries data-assistant-bubble, which changes nothing on its own."
+    }
+  ],
+  "packages/ui/src/components/chat/ModelControls.tsx": [
+    {
+      "hook": "model-controls",
+      "why": "A product plugin's model-picker decorations reached no picker, so a build that offers only its own provider's models (unless the person opts in to others) had no way to keep the rest out of the composer's model list on desktop and in the mobile sheet short of editing the composer."
+    },
+    {
+      "hook": "model-controls",
+      "why": "The model picker always offered \"Add new provider\", so a build whose picker plugin shows only its own provider until the person opts in to others showed a row that led to providers the picker would not list; a picker plugin can now withhold that row, and without one it stays."
+    },
+    {
+      "hook": "model-controls",
+      "why": "The picker offered the Auto entry even while a picker plugin showed only its own provider, so a build that keeps the composer on its own models until the person opts in to others still offered a choice the server routes elsewhere; the Auto entry now follows the same provider rule, and without a plugin it stays."
+    },
+    {
+      "hook": "model-picker",
+      "why": "The picker rows could carry only the thinking-effort label, so a product plugin's entry status (a mark and whether the entry can be chosen) had no place on the row; the row end now draws the status pill before the thinking label and passes the status to the list as isEntryBlocked, and without a plugin no pill is drawn and nothing is blocked."
+    },
+    {
+      "hook": "model-picker",
+      "why": "The phone-sized model sheet builds its own rows, so an entry a product plugin marked as unavailable could still be applied there by its row, its effort chips or its more-efforts panel and showed no mark; the sheet now draws the same status pill and disables those buttons for a blocked entry, and without a plugin it is unchanged."
+    }
+  ],
+  "packages/ui/src/components/chat/composer/shiftEnterEdit.ts": [
+    {
+      "hook": "composer-shift-enter",
+      "why": "The decision of when a product may answer Shift+Enter lives in one small module: only Enter with Shift and no Alt, Ctrl or Meta, in normal input mode with no picker open, and only when the keyboard policy says the key breaks the line rather than sends; the first plugin with an edit answers."
+    }
+  ],
+  "packages/ui/src/components/chat/composer/ui/ComposerFooter.tsx": [
+    {
+      "hook": "composer-actions",
+      "why": "A downstream build adds its own composer action beside the microphone (a voice assistant button) and can hold dictation off with a reason, without editing the footer on every upstream release. With no plugin nothing changes."
+    }
+  ],
+  "packages/ui/src/components/layout/ContextSidebarTab.tsx": [
+    {
+      "hook": "context-raw-messages",
+      "why": "The context panel's Raw Messages section was a flat list of one-line rows, so a build that shows the session's work as a timeline instead (each prompt with the steps it caused and the subagents they started) would have had to edit the panel; a context-raw-messages slot, given the session id, its directory and the message records the panel already reads, takes the place of that section when a plugin fills it, inside an error boundary, and with no plugin the section is unchanged."
+    }
+  ],
+  "packages/ui/src/components/layout/MainLayout.tsx": [
+    {
+      "hook": "main-surface",
+      "why": "A downstream build that wants its own home page over the chat area had no place to render one inside the layout's providers, and no stable names for the layout's regions to style; a main-surface slot renders last inside the main area, the shell, the right column and the main area carry data-product-region names, and with no plugin the slot renders nothing."
+    },
+    {
+      "hook": "sidebar-side",
+      "why": "A build that lets the person put the session list on the right edge of the window had no way to move it short of rebuilding the layout; the row that holds the sidebar and the column now carries data-sidebar-side from useProductSidebarSide, is reversed on screen for the right edge while the sidebar stays first in the page (so the column keeps its state and glass styles keep their anchors), gives the sidebar its side, and on the right puts a plain drag strip where the left edge keeps the titlebar reserve. With no plugin the sidebar is on the left as before."
+    }
+  ],
+  "packages/ui/src/components/layout/Sidebar.tsx": [
+    {
+      "hook": "sidebar-side",
+      "why": "On the right edge the sidebar's border, inset shadow and resize handle belonged on its other side, and dragging the handle toward the content shrank it; a side prop, left by default, mirrors those and negates the drag so the same gesture widens the sidebar on both edges."
+    }
+  ],
+  "packages/ui/src/components/model-picker/ModelEntryStatusPill.tsx": [
+    {
+      "hook": "model-picker",
+      "why": "The row end draws a product plugin's entry status as a small pill with its text, tone and tooltip, in a component of its own so it can be rendered and tested apart from the composer."
+    }
+  ],
+  "packages/ui/src/components/model-picker/ModelPickerList.tsx": [
+    {
+      "hook": "model-picker",
+      "why": "A product plugin could mark a model entry as unavailable, but the picker still let it be chosen, so a build that knows an entry cannot answer (its quota is used up) could draw a mark on the row yet not stop a click, Enter or Space from choosing it; the list now takes isEntryBlocked, and without it every row behaves as before."
+    }
+  ],
+  "packages/ui/src/components/sections/integrations/IntegrationsPage.tsx": [
+    {
+      "hook": "integrations-page",
+      "why": "A downstream build had no place for its own integration settings on the Integrations page, so adding them (a work tracker's connection) would have meant editing the page's sections; a slot right after the built-in integrations section renders nothing when no plugin fills it, and the page is unchanged."
+    }
+  ],
+  "packages/ui/src/components/sections/openchamber/AboutSettings.tsx": [
+    {
+      "hook": "updater-ui",
+      "why": "A build with no update feed answered update checks with \"no update available\", so the About page, and remote clients asking through the server, reported the app as up to date although nothing was ever checked."
+    },
+    {
+      "hook": "about-settings",
+      "why": "The About page links to the project's repository, chat and social account from constants in the component, so a build that ships without those links had no way to leave them out short of editing the page."
+    },
+    {
+      "hook": "about",
+      "why": "The About page had no place for a product's own row, so a build that offers one there (signing out) would have had to edit the page; a slot after the update rows renders nothing when no plugin fills it."
+    }
+  ],
+  "packages/ui/src/components/sections/providers/ProviderGrid.tsx": [
+    {
+      "hook": "providers-page",
+      "why": "The providers page had no place for a product's own provider setting, so a build that adds one (a switch for showing other providers) would have had to edit the page; a slot inside the page layout, above the provider cards, renders nothing when no plugin fills it."
+    }
+  ],
+  "packages/ui/src/components/session/sidebar/shell/SidebarFooter.tsx": [
+    {
+      "hook": "sidebar-footer",
+      "why": "The sidebar footer had no place for a product's own control, so a build that adds one there (an account menu) would have had to edit the footer; a slot after the settings, usage, shortcuts and about buttons renders nothing when no plugin fills it and is shown wherever those buttons are."
+    }
+  ],
+  "packages/ui/src/components/ui/AboutDialog.tsx": [
+    {
+      "hook": "about",
+      "why": "The About dialog had no place for a product's own action, so a build that offers one there (signing out) would have had to edit the dialog; a slot under the version lines renders nothing when no plugin fills it."
+    }
+  ],
+  "packages/ui/src/components/ui/OpenChamberLogo.tsx": [
+    {
+      "hook": "ui",
+      "why": "A build that bundles this UI needs a way to rename the product and swap the mark without editing UI source on every upstream release."
+    }
+  ],
+  "packages/ui/src/hooks/useProviderLogo.ts": [
+    {
+      "hook": "model-catalog",
+      "why": "A build that brings its own model list had no way to keep the window from asking models.dev for model metadata (when the server cannot answer) and for provider logos the UI does not bundle, which tells a third party the app is running; a product plugin that sets remoteModelCatalog to false now stops both, and without one nothing changes."
+    }
+  ],
+  "packages/ui/src/lib/fontOptions.ts": [
+    {
+      "hook": "font-options",
+      "why": "The font pickers listed only the faces upstream names, so a build that bundles a face of its own (IBM Plex, served from beside the app) could not offer it; the option lists and their lookup maps now keep the same objects but are refilled in place, the plugin's options first, from the font options product plugins give, skipping a built-in or repeated id and an option with no id or stack. A contributed option has no source, so choosing it loads nothing from the network, and with no plugin the lists are upstream's."
+    }
+  ],
+  "packages/ui/src/lib/i18n/store.ts": [
+    {
+      "hook": "ui",
+      "why": "A build that bundles this UI needs a way to rename the product and swap the mark without editing UI source on every upstream release."
+    }
+  ],
+  "packages/ui/src/lib/product-plugins.ts": [
+    {
+      "hook": "ui",
+      "why": "A build that bundles this UI needs a way to rename the product and swap the mark without editing UI source on every upstream release."
+    },
+    {
+      "hook": "ui-plugins",
+      "why": "A product plugin could only rename the product and swap the logo, so a build that needs its own sign-in screen, account menu, model-picker marks or composer actions would have had to edit each upstream component; a root wrapper and named slots that render nothing when no plugin fills them let it add those at one-line call sites."
+    },
+    {
+      "hook": "ui-plugins",
+      "why": "A model-picker plugin registered after the picker had rendered swapped the one hook the picker calls for a composition with more hooks, which React rejects with a hooks-order error, so once the picker has used it the hook stays fixed and a late picker plugin is ignored until reload."
+    },
+    {
+      "hook": "model-catalog",
+      "why": "A build that brings its own model list had no way to keep the window from asking models.dev for model metadata (when the server cannot answer) and for provider logos the UI does not bundle, which tells a third party the app is running; a product plugin that sets remoteModelCatalog to false now stops both, and without one nothing changes."
+    },
+    {
+      "hook": "model-controls",
+      "why": "The model picker always offered \"Add new provider\", so a build whose picker plugin shows only its own provider until the person opts in to others showed a row that led to providers the picker would not list; a picker plugin can now withhold that row, and without one it stays."
+    },
+    {
+      "hook": "chat-message",
+      "why": "An error a product plugin rewords did not say which provider the turn ran on, so a build could not tell a turn its own provider could not route (a model the person may not use right now) from one on a provider that is switched off, and gave both the same advice; the plugin now also receives the provider id, and without a plugin nothing changes."
+    },
+    {
+      "hook": "session-auth-finish",
+      "why": "The session-auth-methods slot now receives the runtime the gate is in and an onSignedIn callback, so a sign-in method added by a plugin can finish a sign-in the way a password sign-in does."
+    },
+    {
+      "hook": "session-auth-description",
+      "why": "A product plugin can now word the line under the sign-in title through sessionAuthDescription, the way it can reword a message error, and the first plugin to answer wins."
+    },
+    {
+      "hook": "session-auth-description-runtime",
+      "why": "The context sessionAuthDescription is given now carries the runtime the sign-in gate is in as well as passwordEnabled."
+    },
+    {
+      "hook": "integrations-page",
+      "why": "The integrations-page slot is a named slot like the others: a downstream build adds its own integration settings to the Integrations page without editing the page's sections, and with no plugin it renders nothing."
+    },
+    {
+      "hook": "composer-actions",
+      "why": "A downstream build adds its own composer action beside the microphone (a voice assistant button) and can hold dictation off with a reason, without editing the footer on every upstream release. With no plugin nothing changes."
+    },
+    {
+      "hook": "main-surface",
+      "why": "The main-surface slot is a named slot like the others, with no props: a downstream build renders its own page inside the main area without editing the layout, and with no plugin it renders nothing."
+    },
+    {
+      "hook": "context-raw-messages",
+      "why": "The context-raw-messages slot is a named slot like the others, with the session id, its directory and its message records as props, and useProductSlotFilled tells a component whether any plugin fills a slot, so a section can step aside for the slot only when something takes its place."
+    },
+    {
+      "hook": "composer-shift-enter",
+      "why": "A product plugin can now give composerShiftEnter, which takes the composer's text and selection and returns one edit (range, insert and selection) or null, and productComposerShiftEnter asks each plugin in turn, skipping one that throws."
+    },
+    {
+      "hook": "sidebar-side",
+      "why": "A product plugin can now give sidebarSide, a { subscribe, get } source of 'left' or 'right', and useProductSidebarSide reads the last one given through useSyncExternalStore, falling back to the left when none is given or it throws, so the hook count stays fixed whatever plugins load."
+    },
+    {
+      "hook": "font-options",
+      "why": "A product plugin can now give fontOptions, { ui, mono } lists of options with an id, label, description and stack and no source, and productFontOptions(kind) returns every plugin's options of one kind for the font option lists to merge in."
+    }
+  ],
+  "packages/ui/src/lib/quota/providers/index.ts": [
+    {
+      "hook": "quota-ui",
+      "why": "A build whose server plugin reports a usage source of its own had no way to list it on the Usage page, because the provider list was a fixed table keyed by a closed id union, so registerQuotaProvider now adds an entry at run time (the one cast widens the id there and nowhere else) and selectRegisteredQuotaProvider passes a registered id to the caller's setter, which keeps this module from importing the quota store that already imports it."
+    },
+    {
+      "hook": "quota-ui",
+      "why": "A build that reports usage from its own source may not want upstream's built-in providers on the Usage page, where listing them makes the page ask the server for each one, so registerQuotaProvider takes an exclusive option that leaves only the providers registered at run time on the list."
+    }
+  ],
+  "packages/ui/src/main.tsx": [
+    {
+      "hook": "ui",
+      "why": "A build that bundles this UI needs a way to rename the product and swap the mark without editing UI source on every upstream release."
+    },
+    {
+      "hook": "ui-plugins",
+      "why": "A product plugin could only rename the product and swap the logo, so a build that needs its own sign-in screen, account menu, model-picker marks or composer actions would have had to edit each upstream component; a root wrapper and named slots that render nothing when no plugin fills them let it add those at one-line call sites."
+    }
+  ],
+  "packages/ui/src/stores/useConfigStore.ts": [
+    {
+      "hook": "model-catalog",
+      "why": "A build that brings its own model list had no way to keep the window from asking models.dev for model metadata (when the server cannot answer) and for provider logos the UI does not bundle, which tells a third party the app is running; a product plugin that sets remoteModelCatalog to false now stops both, and without one nothing changes."
+    }
+  ],
+  "packages/ui/src/stores/useUpdateStore.ts": [
+    {
+      "hook": "updater-ui",
+      "why": "A browser or remote client asks the server it is connected to for updates, and the store rebuilds that answer from a fixed list of fields, which dropped `updatesDisabled`."
+    }
+  ],
+  "packages/web/server/index.js": [
+    {
+      "hook": "server",
+      "why": "A build shipped under another name needs server-side behaviour of its own, such as extra variables for the managed OpenCode or a route of its own, without patching the server for each one."
+    },
+    {
+      "hook": "engine-env",
+      "why": "Server plugins hand the managed OpenCode an environment that moves its config, data, state and cache folders, but the binary preflight, the compatibility version read, the v2 install and the CLI upgrade still ran the binary with the plain process environment, so each of them created and wrote the engine's default folders (its log among them) next to the ones the server actually uses."
+    },
+    {
+      "hook": "server-version",
+      "why": "A product that versions its app apart from the server it packs showed the server package's version in the About dialog, so the server can now report the app's version instead."
+    },
+    {
+      "hook": "server-plugins",
+      "why": "A build's server plugin needed more of the server than the app, data dir and logger (the express module, the bound port, settings, UI events, the managed OpenCode and its readiness, git, request scope and shutdown) and had no way to add engine config, so a downstream build would have had to edit upstream's server for each provider, policy or plugin it adds."
+    },
+    {
+      "hook": "managed-config",
+      "why": "A downstream build adds providers, policies and plugins to the managed OpenCode by returning a config fragment from its server plugin, which the managed config writer puts in the managed OPENCODE_CONFIG file beside OpenChamber's own plugins, keeping that layer even when the user set OPENCODE_CONFIG (their file and OPENCODE_CONFIG_CONTENT then move into OPENCODE_CONFIG_CONTENT), instead of editing upstream's writer."
+    },
+    {
+      "hook": "server-plugins",
+      "why": "A plugin that moves the managed OpenCode's data folder between restarts could not tell which folder the running process was actually launched with, since a restart it asked for may join one already under way that read the environment earlier."
+    },
+    {
+      "hook": "quota-server",
+      "why": "A server plugin could not reach the quota registry or the helpers that build a quota result, so the plugin context now hands it registerQuotaProvider and quotaResult."
+    },
+    {
+      "hook": "ui-auth",
+      "why": "A server plugin could not add a sign-in method of its own, so the plugin context now hands it the UI auth provider registry and says whether a UI password is set."
+    },
+    {
+      "hook": "ui-auth-client",
+      "why": "A sign-in provider added at run time could open a UI session but not mint the client token a desktop app needs to stay signed in to a remote server, so the plugin context's uiAuth now hands plugins the remote clients store's createClient."
+    },
+    {
+      "hook": "server-plugins",
+      "why": "A downstream build turns catalog connector configs into the engine's own entry shape without copying upstream's normaliser, so the plugin context's opencode handle now carries config-v2's toMcpEntity as mcpEntity."
+    },
+    {
+      "hook": "server-plugins",
+      "why": "A downstream build adds its own actions next to the control contract and reaches the same service the CLI and agent tool use, instead of copying it, so the plugin context's control hands plugins the control service's execute and resolveSessionDirectory, the agent tool's control and web action definitions, and the screenshot writer with its folder."
+    },
+    {
+      "hook": "server-plugins",
+      "why": "The control and web definitions leave out actions the control service still runs (memory, notify, the scheduler status), so a downstream action could take one of those names and shadow it; the plugin context's control now also hands plugins the service's full action list as all, so a plugin refuses every upstream name."
+    },
+    {
+      "hook": "server-plugins",
+      "why": "A downstream route that answers control errors as upstream's control route does keeps the partial-result fields only from the control service's own error, and could tell that error apart only by writing upstream's class name as a string, which then ships in the downstream build; the plugin context's control now also hands plugins the error class itself as ControlError, so a plugin matches it with instanceof."
+    },
+    {
+      "hook": "permission-auto-accept",
+      "why": "A downstream build has permission requests that must always reach the person, such as a question about signing in to a site, whatever permission mode the session is in, and the auto-accept runtime had no way to leave one for the user: an auto session answered it within milliseconds and a safety session handed it to the classifier. A server plugin may now return neverAutoAnswer(permission), and a request any plugin marks (or whose check throws) is held for the user in every mode, announced as left for the user, and never counted as answered automatically. With no plugin that marks a request nothing changes."
+    },
+    {
+      "hook": "session-assist-suggestion",
+      "why": "A downstream build that wants a next-prompt suggestion after every reply, not only while requested work is unfinished, had no way to change the suggestion instructions short of editing the prompt. A server plugin may now register a suggestion style through registerSuggestionStyle on the plugin context; its suggestionRules() take the place of the suggestion instructions alone, while the recap, the JSON shape, the language rule, the suggestion switch and the runtime filters stay upstream's, and rules that throw or are not a non-empty list of text leave the built-in instructions. With no style registered the prompt is byte-identical."
+    }
+  ],
+  "packages/web/server/lib/agent-tool/runtime.js": [
+    {
+      "hook": "agent-tool-token",
+      "why": "The agent tool plugin read its callback token from the engine's environment on every call, so the token stayed there and every process the engine starts (its shell commands, terminals, MCP servers and formatters) inherited it and could call the callback as the agent tool; the plugin now moves the token out of the environment when it loads, keeps it for the engine process alone, and still finds it after the engine reloads the plugin."
+    }
+  ],
+  "packages/web/server/lib/enterprise-mode.js": [
+    {
+      "hook": "enterprise",
+      "why": "A build shipped under another name has administrators who place its policy in that product's own folder, not OpenChamber's."
+    }
+  ],
+  "packages/web/server/lib/fs/routes.js": [
+    {
+      "hook": "fs",
+      "why": "GET /api/fs/home resolved the legacy chats root under a fixed ~/.config/openchamber, so a server with its own OPENCHAMBER_DATA_DIR still reached into the default install's folder."
+    }
+  ],
+  "packages/web/server/lib/git/service.js": [
+    {
+      "hook": "git-integrate",
+      "why": "Moving commits between worktrees checks the target branch out in a temporary worktree under a fixed ~/.config/openchamber/tmp, even when OPENCHAMBER_DATA_DIR puts the rest of the server's state elsewhere."
+    }
+  ],
+  "packages/web/server/lib/opencode/lifecycle.js": [
+    {
+      "hook": "opencode",
+      "why": "The V1 session top-up rewrites the migration cursor in OpenCode's database before the managed OpenCode starts, and it always looked for that database at ~/.local/share/opencode/opencode.db."
+    },
+    {
+      "hook": "engine-env",
+      "why": "Server plugins hand the managed OpenCode an environment that moves its config, data, state and cache folders, but the binary preflight, the compatibility version read, the v2 install and the CLI upgrade still ran the binary with the plain process environment, so each of them created and wrote the engine's default folders (its log among them) next to the ones the server actually uses."
+    },
+    {
+      "hook": "server-plugins",
+      "why": "A build's server plugin needed more of the server than the app, data dir and logger (the express module, the bound port, settings, UI events, the managed OpenCode and its readiness, git, request scope and shutdown) and had no way to add engine config, so a downstream build would have had to edit upstream's server for each provider, policy or plugin it adds."
+    },
+    {
+      "hook": "lifecycle",
+      "why": "The first start stored its process only once it had spawned, so a restart that arrived meanwhile (a config change right after the server began listening) found nothing to close and spawned a second engine, leaving one of the two running with no owner; starts and restarts now take turns."
+    },
+    {
+      "hook": "lifecycle",
+      "why": "A restart that arrived during the orphan reap, before the first start had joined the launch queue, still left bootstrap to spawn a second engine once the restart had started one, so bootstrap now skips its start when a restart already started the engine, and still replaces a process left over from a hot reload."
+    }
+  ],
+  "packages/web/server/lib/opencode/managed-config-file.js": [
+    {
+      "hook": "managed-config",
+      "why": "A downstream build adds providers, policies and plugins to the managed OpenCode by returning a config fragment from its server plugin, which the managed config writer puts in the managed OPENCODE_CONFIG file beside OpenChamber's own plugins, keeping that layer even when the user set OPENCODE_CONFIG (their file and OPENCODE_CONFIG_CONTENT then move into OPENCODE_CONFIG_CONTENT), instead of editing upstream's writer."
+    },
+    {
+      "hook": "managed-config",
+      "why": "OpenCode lets a policy in OPENCODE_CONFIG outrank project config and OPENCODE_CONFIG_CONTENT, but a user's own OPENCODE_CONFIG file outranked a contribution merged into OPENCODE_CONFIG_CONTENT, so a contributed config now keeps the OPENCODE_CONFIG layer and the user's file and content move into OPENCODE_CONFIG_CONTENT."
+    }
+  ],
+  "packages/web/server/lib/opencode/openchamber-routes.js": [
+    {
+      "hook": "update-check",
+      "why": "A build that ships no updates through the update service had no way to stop the server's update check, which posts the platform, version and a persistent install id."
+    },
+    {
+      "hook": "models-metadata",
+      "why": "A build that brings its own model list had no way to stop the server from downloading the public models.dev catalog for every window that asks, which tells a third party the app is running; OPENCHAMBER_MODELS_METADATA_DISABLED makes the route answer an empty catalog without fetching."
+    },
+    {
+      "hook": "update-install",
+      "why": "With the update check switched off the install route still asked the update service and could install and restart into upstream's package, so OPENCHAMBER_UPDATE_CHECK_DISABLED now makes it answer that no update is available, with no request, install or restart."
+    }
+  ],
+  "packages/web/server/lib/opencode/v1-migration-topup.js": [
+    {
+      "hook": "opencode",
+      "why": "The V1 session top-up rewrites the migration cursor in OpenCode's database before the managed OpenCode starts, and it always looked for that database at ~/.local/share/opencode/opencode.db."
+    }
+  ],
+  "packages/web/server/lib/permission-auto-accept/runtime.js": [
+    {
+      "hook": "permission-auto-accept",
+      "why": "A downstream build has permission requests that must always reach the person, such as a question about signing in to a site, whatever permission mode the session is in, and the auto-accept runtime had no way to leave one for the user: an auto session answered it within milliseconds and a safety session handed it to the classifier. A server plugin may now return neverAutoAnswer(permission), and a request any plugin marks (or whose check throws) is held for the user in every mode, announced as left for the user, and never counted as answered automatically. With no plugin that marks a request nothing changes."
+    }
+  ],
+  "packages/web/server/lib/quota/providers/index.js": [
+    {
+      "hook": "quota-server",
+      "why": "A build's server plugin that has its own usage source had no way to show it on the Usage page, because the quota registry was a fixed table, so the provider list and the dispatcher now also read the providers registered at run time."
+    },
+    {
+      "hook": "quota-server",
+      "why": "A build that reports usage from its own source may not want upstream's built-in quota providers, several of which read another vendor's stored login (a keychain item, a config file) and call that vendor's usage API when the Usage page opens, so a provider registered as exclusive takes them out of the provider list and the dispatcher until it is removed."
+    }
+  ],
+  "packages/web/server/lib/quota/providers/registered.js": [
+    {
+      "hook": "quota-server",
+      "why": "Registering a quota provider at run time should not make the server load every provider module at start, so the run-time entries live in a module with no imports that the registry merges and the plugin context uses."
+    },
+    {
+      "hook": "quota-server",
+      "why": "The exclusive flag is kept beside the run-time entries, in the module with no imports, so the registry and the plugin context read the same state without loading every provider at start."
+    }
+  ],
+  "packages/web/server/lib/server-plugins.js": [
+    {
+      "hook": "server",
+      "why": "A build shipped under another name needs server-side behaviour of its own, such as extra variables for the managed OpenCode or a route of its own, without patching the server for each one."
+    },
+    {
+      "hook": "server-plugins",
+      "why": "A build's server plugin needed more of the server than the app, data dir and logger (the express module, the bound port, settings, UI events, the managed OpenCode and its readiness, git, request scope and shutdown) and had no way to add engine config, so a downstream build would have had to edit upstream's server for each provider, policy or plugin it adds."
+    },
+    {
+      "hook": "permission-auto-accept",
+      "why": "A downstream build has permission requests that must always reach the person, such as a question about signing in to a site, whatever permission mode the session is in, and the auto-accept runtime had no way to leave one for the user: an auto session answered it within milliseconds and a safety session handed it to the classifier. A server plugin may now return neverAutoAnswer(permission), and a request any plugin marks (or whose check throws) is held for the user in every mode, announced as left for the user, and never counted as answered automatically. With no plugin that marks a request nothing changes."
+    }
+  ],
+  "packages/web/server/lib/session-assist/prompt.js": [
+    {
+      "hook": "session-assist-suggestion",
+      "why": "A downstream build that wants a next-prompt suggestion after every reply, not only while requested work is unfinished, had no way to change the suggestion instructions short of editing the prompt. A server plugin may now register a suggestion style through registerSuggestionStyle on the plugin context; its suggestionRules() take the place of the suggestion instructions alone, while the recap, the JSON shape, the language rule, the suggestion switch and the runtime filters stay upstream's, and rules that throw or are not a non-empty list of text leave the built-in instructions. With no style registered the prompt is byte-identical."
+    }
+  ],
+  "packages/web/server/lib/ui-auth/ui-auth.js": [
+    {
+      "hook": "ui-auth",
+      "why": "A build whose browser sign-in comes from a company directory had no way to open or check a UI session without a UI password; registerUiAuthProvider lets it issue and read sessions with the password sessions' secret and lifetimes, makes the session required while it is registered, and the session status names the providers and whether a password works."
+    },
+    {
+      "hook": "ui-auth",
+      "why": "On a server whose only sign-in is a registered provider, sign out everywhere did nothing and a provider sign-out left that session's URL tokens usable; the reset now rotates the secret provider sessions are signed with (refused while OPENCODE_JWT_SECRET pins it) and clears URL tokens, and clearSession revokes the URL tokens of the session it ends."
+    }
+  ]
+}

@@ -1,17 +1,18 @@
 import { createConfiguredWebAPIs } from './runtimeConfig';
-import type { RuntimeAPIs } from '@mittrcraft/ui/lib/api/types';
-import '@mittrcraft/ui/index.css';
-import '@mittrcraft/ui/styles/fonts';
+import type { RuntimeAPIs } from '@openchamber/ui/lib/api/types';
+import '@openchamber/ui/index.css';
+import '@openchamber/ui/styles/fonts';
+import '@openchamber/ui/styles/katex-css';
 
 declare global {
   interface Window {
-    __MITTRCRAFT_RUNTIME_APIS__?: RuntimeAPIs;
+    __OPENCHAMBER_RUNTIME_APIS__?: RuntimeAPIs;
   }
 }
 
-window.__MITTRCRAFT_RUNTIME_APIS__ = createConfiguredWebAPIs();
+window.__OPENCHAMBER_RUNTIME_APIS__ = createConfiguredWebAPIs();
 
-void import('@mittrcraft/ui/apps/renderElectronMiniChatApp')
+void import('@openchamber/ui/apps/renderElectronMiniChatApp')
   .then(({ renderElectronMiniChatApp }) => {
-    renderElectronMiniChatApp(window.__MITTRCRAFT_RUNTIME_APIS__ ?? createConfiguredWebAPIs());
+    renderElectronMiniChatApp(window.__OPENCHAMBER_RUNTIME_APIS__ ?? createConfiguredWebAPIs());
   });

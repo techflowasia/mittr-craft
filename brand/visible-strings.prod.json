@@ -1,0 +1,38 @@
+[
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"openchamber://session/\"",
+    "to": "\"mittrcraft://session/\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "protocol===\"openchamber:\"",
+    "to": "protocol===\"mittrcraft:\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "schemas:{\"openchamber:\":",
+    "to": "schemas:{\"mittrcraft:\":",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"shell\",\"openchamber\",\"openchamber-ui\"",
+    "to": "\"shell\",\"openchamber\",\"mittrcraft\",\"openchamber-ui\"",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/linear/routes.js",
+    "from": "openchamber://focus/linear-auth",
+    "to": "mittrcraft://focus/linear-auth",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "=\"OpenChamber\",",
+    "to": "=\"MittrCraft\",",
+    "count": 1
+  }
+]

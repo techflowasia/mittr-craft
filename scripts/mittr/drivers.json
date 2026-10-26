@@ -1,0 +1,26 @@
+{
+  "agentBrowser": {
+    "version": "0.38.1",
+    "asset": "agent-browser-darwin-arm64",
+    "url": "https://github.com/vercel-labs/agent-browser/releases/download/v0.38.1/agent-browser-darwin-arm64",
+    "sha256": "2e61287259053ea964d39e77002c6a34af0e589e55ccff25e659efae7e892e0d",
+    "bytes": 15768448,
+    "resignedStrippedSha256": "0b47b1d705bf21de8e2104e0cf03acf20a3185d8627d343cc5f4b2083519e6a0",
+    "resignedStrippedBytes": 15646064,
+    "licence": "Apache-2.0",
+    "licenceUrl": "https://raw.githubusercontent.com/vercel-labs/agent-browser/v0.38.1/LICENSE",
+    "licenceSha256": "014bb31e83d5c2e76aea1cc6e82217346ab41362f32cb355ad0f5c10aa0aeaff"
+  },
+  "cuaDriver": {
+    "version": "0.28.2",
+    "asset": "cua-driver-rs-0.28.2-darwin-universal.tar.gz",
+    "url": "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.28.2/cua-driver-rs-0.28.2-darwin-universal.tar.gz",
+    "archiveSha256": "e273181b26709c88b1d809474deb3c592b4efae3530b11d76318f1887fc3fbb1",
+    "archiveBytes": 70078129,
+    "binarySha256": "9a7731f7e961a57963f0deb132878367fdf7354e7327a4d558fe4a68e4686b81",
+    "bundleIdentifier": "com.trycua.driver",
+    "teamIdentifier": "YCK386LBJ7",
+    "licence": "MIT",
+    "noticeSha256": "5c428cedde39ead9fafca8f323e76564dfb5fe0c880bd1bafd7a88b1f051bf6c"
+  }
+}

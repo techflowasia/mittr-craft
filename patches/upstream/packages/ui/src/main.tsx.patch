@@ -1,0 +1,13 @@
+diff --git a/packages/ui/src/main.tsx b/packages/ui/src/main.tsx
+index abcb601f2..310728372 100644
+--- a/packages/ui/src/main.tsx
++++ b/packages/ui/src/main.tsx
+@@ -18,6 +18,8 @@ import { initializeLocale, I18nProvider } from './lib/i18n'
+ import type { RuntimeAPIs } from './lib/api/types'
+ import { installRuntimeEndpointReset } from './apps/runtimeEndpointReset'
+ 
++import.meta.glob('../../*/src/product-ui-plugin.{ts,tsx}', { eager: true })
++
+ declare global {
+   interface Window {
+     __OPENCHAMBER_RUNTIME_APIS__?: RuntimeAPIs;

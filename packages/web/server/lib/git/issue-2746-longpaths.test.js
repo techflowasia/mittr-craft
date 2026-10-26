@@ -10,13 +10,14 @@ import {
   getWorktreeBootstrapStatus,
   populateWorktreeWithLockRecovery,
 } from './service.js';
+import { createWorktreeBootstrapStore } from './worktree-bootstrap-storage.js';
 
 // ---------------------------------------------------------------------------
 // Regression for https://github.com/openchamber/openchamber/issues/2746
 //
 // "[Bug] new worktree， Filename too long"
 //
-// MittrCraft places worktrees under:
+// OpenChamber places worktrees under:
 //   <XDG_DATA_HOME>/opencode/worktree/<40-char root commit hash>/<worktree name>
 // and populates them with `git reset --hard`. On Windows, that deep prefix plus
 // a deeply nested repo file (e.g. yudao ~173 chars) exceeds MAX_PATH (260) and
@@ -26,7 +27,7 @@ import {
 const tempDirs = [];
 
 const createTempDir = () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-git-issue2746-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-git-issue2746-'));
   tempDirs.push(dir);
   return dir;
 };
@@ -95,7 +96,7 @@ describe('issue #2746 - worktree long path support', () => {
       const created = await createWorktree(repo, {
         mode: 'new',
         worktreeName: 'issue-2746',
-        branchName: 'mittrcraft/issue-2746',
+        branchName: 'openchamber/issue-2746',
       });
       expect(created.directoryCreated).toBe(true);
 
@@ -158,22 +159,26 @@ describe('issue #2746 - worktree long path support', () => {
       fs.writeFileSync(path.join(repo, 'README.md'), '# Test\n');
       runGit(repo, ['add', 'README.md']);
       runGit(repo, ['commit', '-qm', 'add readme']);
+      const bootstrapStore = createWorktreeBootstrapStore({
+        filePath: path.join(dataHome, 'bootstrap.json'),
+      });
 
       const created = await createWorktree(repo, {
         mode: 'new',
         worktreeName: 'issue-2746-namemax',
-        branchName: 'mittrcraft/issue-2746-namemax',
-      });
+        branchName: 'openchamber/issue-2746-namemax',
+      }, { bootstrapStore });
       expect(created.directoryCreated).toBe(true);
 
       await expect.poll(async () => {
-        const status = await getWorktreeBootstrapStatus(created.path);
+        const status = await getWorktreeBootstrapStatus(created.path, { bootstrapStore });
         return status?.status;
       }, { timeout: 10_000 }).toBe('failed');
 
-      const status = await getWorktreeBootstrapStatus(created.path);
+      const status = await getWorktreeBootstrapStatus(created.path, { bootstrapStore });
       expect(status?.error).toMatch(/file name too long|filename too long/i);
       expect(status?.error).toMatch(/path-length limit/i);
+      await expect(bootstrapStore.read(created.path)).resolves.toEqual(status);
       expect(runGit(created.path, ['config', '--get', 'core.longpaths']).trim()).toBe('true');
     } finally {
       if (previousXdgDataHome === undefined) {

@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>MittrCraft</string>
+	<string>OpenChamber</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -32,21 +32,21 @@
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>MittrCraft connects to MittrCraft servers on your local network.</string>
+	<string>OpenChamber connects to OpenChamber servers on your local network.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>MittrCraft uses the camera to scan a server's pairing QR code.</string>
+	<string>OpenChamber uses the camera to scan a server's pairing QR code.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>MittrCraft uses the microphone for voice dictation in the chat composer.</string>
+	<string>OpenChamber uses the microphone for voice dictation in the chat composer.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLName</key>
-			<string>com.mittrcraft.app.deeplink</string>
+			<string>com.openchamber.app.deeplink</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>mittrcraft</string>
+				<string>openchamber</string>
 			</array>
 		</dict>
 	</array>

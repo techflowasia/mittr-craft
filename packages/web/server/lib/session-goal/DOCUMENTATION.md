@@ -1,13 +1,12 @@
-# Session Goal (Mittr goal)
+# Session Goal
 
 Server-side control loop that keeps a session working toward a user-defined
-objective stored under `metadata.mittrcraft.goal`, with an independent judge
-that checks each acceptance criterion against the engine's tool record.
-Design: `docs/specs/2026-09-26-mittr-goal-design.md`. Built on MittrCraft's backend-driven
+objective stored under `metadata.openchamber.goal`, with Jev (the
+classification model) or the small model as an independent progress check. Built on OpenChamber's backend-driven
 architecture (session-assist is the structural template): the loop lives in
 the web server and survives UI disconnects.
 
-## Goal payload (`metadata.mittrcraft.goal`)
+## Goal payload (`metadata.openchamber.goal`)
 
 ```
 {
@@ -19,16 +18,11 @@ the web server and survives UI disconnects.
   tokensUsed,              // tokensCommitted + current segment (snapshot - baseline)
   tokensBaseline,          // segment start snapshot (pre-goal turn; 0 after compaction)
   tokensCommitted,         // closed segments' total (one segment per compaction)
-  turnsUsed,               // auto-continuations sent (capped at MAX_AUTO_TURNS)
-  blockedStreak,           // consecutive blocked audit verdicts
-  auditFailStreak,         // consecutive rounds with a criterion nobody could judge
-  stallStreak,             // consecutive judged rounds without a new met criterion
-  bestMet,                 // most criteria met in any round so far
-  criteria,                // acceptance contract, see "Contract and judge"
-  note,                    // first unmet criterion's text, <= 280 chars
+  turnsUsed,               // auto-continuations sent (capped at the Settings turn limit)
+  auditFailStreak,         // consecutive progress checks that could not run
   statusReason,            // why settled; 'resumed' is a kickoff signal from UI
-  evaluationProviderID,    // 'mittr' or the provider of the latest model judge/contract
-  evaluationModelID,       // the deciding model(s) of the latest round
+  evaluationProviderID,    // provider of the latest check; '' when Jev answered
+  evaluationModelID,       // model of the latest check (Jev's model id for Jev)
   lastAccountedMessageID,  // incremental accounting cursor
   createdAt, updatedAt
 }
@@ -50,7 +44,7 @@ session and drops the write when the stored goal id no longer matches.
 ## File-backed objectives
 
 The objective TEXT lives in `<data-dir>/goals/<sessionId>.md` (data dir =
-`MITTRCRAFT_DATA_DIR` or `~/.config/mittrcraft`), keyed by the SESSION ID:
+`OPENCHAMBER_DATA_DIR` or `~/.config/openchamber`), keyed by the SESSION ID:
 sessions are globally unique and carry one goal at a time, so the mapping is
 deterministic and a new goal simply overwrites the file. Metadata carries
 only `objectiveFile: true` — never a path — so user-writable metadata cannot
@@ -60,7 +54,7 @@ before touching the filesystem). Rationale: metadata rides every
 
 - `objectives.js` — write/read/delete, 5000-char clamp.
 - `routes.js` — `PUT/GET/DELETE /api/goals/objective/:sessionId`
-  (MittrCraft-owned, registered before the generic proxy; JSON parsing via
+  (OpenChamber-owned, registered before the generic proxy; JSON parsing via
   the `/api/goals` family in core-routes). The UI writes the file BEFORE
   patching the goal metadata and falls back to an inline objective when the
   write fails; `clearSessionGoal` deletes the file best-effort.
@@ -69,10 +63,21 @@ before touching the filesystem). Rationale: metadata rides every
   the file is unreadable — a goal never dies because a file went away.
 - UI display fetches content via the GET route
   (`useGoalObjectiveContent`); in VS Code the route is unavailable, so the
-  strip degrades to the audit note (display-only fallback by design).
+  strip shows a generic goal title (display-only fallback by design).
 - Server-created goals write the file through `create.js`, which also owns
   objective fitting, inline fallback, metadata creation, and the synthetic
   first-turn reminder shared by scheduled tasks and CLI-created sessions.
+
+- Forks: OpenCode copies the source metadata into a fork, goal included.
+  The UI fork paths (`forkAfterMessage`, `forkFromMessage`, `/fork`) then copy
+  the objective file to the fork's id, or inline the text when that write
+  fails (`packages/ui/src/lib/sessionForkInheritance.ts`). The copy re-reads
+  the fork's goal id first and is skipped when the user armed a new goal on
+  the fork meanwhile. Forks made through `POST /api/openchamber/sessions/:id/fork`
+  (CLI, scheduled tasks) get the same repair server-side before the prompt is
+  dispatched (`openchamber-sessions/fork-inheritance.js`); UI forks call
+  OpenCode directly, so both implementations exist. `/btw` forks drop the goal
+  with the rest of the inherited namespace.
 
 ## Flow
 
@@ -85,13 +90,24 @@ before touching the filesystem). Rationale: metadata rides every
    a goal on an idle session emits no status transition.
 3. On fire (`tick`), gated by the `sessionGoalEnabled` setting:
    - fetch session (skip sub-agent sessions), require an `active` goal;
-   - authoritative live-activity check after the quiet window: re-read the
-     session status map, bail if the parent resumed, then list direct child
-     sessions and bail while any child is `busy`/`retry`. A background
-     subagent leaves its parent idle, then injects its result into the parent
-     when done; that parent `busy` → `idle` cycle re-arms the loop without
-     polling. Status/children fetch failure is unknown, not empty, so it skips
-     the audit and retries after another quiet window;
+   - authoritative live-activity check after the quiet window: re-read
+     `/api/session/active`, bail if the parent resumed; then list the
+      parent's subagent sessions through `GET /api/session?parentID=` (cursor
+      paged) and bail while any of them is active. The loop rechecks after
+      another quiet window so a missed parent idle event cannot strand the
+      goal when the child finishes. A status or children fetch failure is
+      unknown, not empty, so it skips the audit and retries after another quiet
+      window;
+     both reads live in `../opencode/session-activity.js`, shared with the
+     notification runtime;
+   - messages come from `/api/session/:id/message` as v2's flat records
+     (`type`, `content[]`, `model`, `finish`, `tokens`); `toLoopMessage`
+     projects them into the `{ info, parts }` view the rest of the tick reads,
+     and a completed `compaction` record plays v1's `summary: true` assistant
+     turn. v2 gives a compaction only `time.created`, so the projection
+     stamps `time.completed` from it: every "finished" check in the tick reads
+     `time.completed`, and without it a compaction looks still running. Other
+     plumbing roles are dropped from the view;
    - quiescence check via the message tail (trailing user message or
      unfinished assistant reply → bail; the next idle transition re-arms);
    - token accounting as a SNAPSHOT of the latest completed assistant turn:
@@ -112,30 +128,63 @@ before touching the filesystem). Rationale: metadata rides every
      stop), with a tick-side safety net. Messages sent while paused leave
      the goal alone; Resume re-arms the loop, and resuming over an aborted
      tail skips the audit and goes straight to a continuation nudge;
-   - terminal checks, cheapest first: assistant turn error → `blocked`;
-     `tokensUsed >= tokenBudget` → `budgetLimited`;
-     `turnsUsed >= MAX_AUTO_TURNS` (20) → `blocked`;
-   - if the latest message is a compaction summary, skip the audit and
-     continue unconditionally — running into the context window mid-work is
-     by definition "in progress, not finished" (the summary is a retelling,
-     not evidence, and must not be judged);
-   - otherwise the judge (see "Contract and judge"). It is the SOLE
-     termination authority besides the hard stops above — the working agent
-     has no channel to settle its own goal. Every criterion `met` settles
-     `complete`; every unmet criterion `needs_person` increments
-     `blockedStreak` and settles `blocked` after 3 consecutive rounds, so a
-     one-off snag cannot end the goal. A criterion nobody could judge
-     tolerates ONE continuation (`auditFailStreak`); a second consecutive
-     round settles `blocked` ("progress audit unavailable") — resumable, and
-     settling resets the streak. When the met count has not grown for 5
-     consecutive judged rounds (`stallStreak`) the goal settles `blocked`
-     ("no progress on the remaining criteria"), so a stuck agent does not
-     loop to the turn cap;
+    - terminal checks, cheapest first: assistant turn error → `blocked`;
+      `tokensUsed >= tokenBudget` → `budgetLimited`;
+      `turnsUsed >= ` the turn limit (Settings → Goal, `sessionGoalMaxAutoTurns`, 1–200, default 20; read on every tick) → `blocked`;
+    - error classification is independent of `finish`: `MessageAbortedError`
+      keeps the pause/resume behavior; only a `finish: "length"` with no
+      error, or `MessageOutputLengthError`, is an in-progress truncation that
+      skips the audit and continues. Any other non-null error wins over a
+      length finish and blocks with its non-empty `error.name`, or
+      `assistant turn failed` when unnamed;
+    - length recovery is bounded separately from the token budget and
+      auto-continuation cap: the first truncation permits one continuation, but
+      a second consecutive completed, non-summary assistant turn that is also
+      truncated settles the goal as `blocked` (`repeated output truncation`).
+      The consecutive state is derived from the loaded message history, not
+      persisted, using `info.time.created` chronology rather than message IDs.
+      Summary messages are not agent turns; an ordinary completed assistant
+      turn naturally breaks the consecutive condition. Explicit Resume grants
+      one new recovery attempt over the same transcript; the continuation
+      consumes that permission, so another truncation blocks again. Resume
+      does not bypass assistant errors or the token budget;
+   - otherwise, a progress check of the objective + the last assistant turn
+     only — no conversation history and no continuation prompts (`audit.js`).
+     Three yes/no questions: does the report say all requested work is done
+     (`all_done`), does it name requested work the agent still has to do
+     (`remaining`), and is the agent stopped by something only the user can
+     provide (`needs_user`). `decideProgress` combines them in code:
+     `needs_user >= 0.5` → blocked, `all_done >= 0.5 && remaining < 0.5` →
+     complete, anything else → continue. Jev answers with probabilities; the
+     small model answers the same questions as JSON booleans read as 1/0, so
+     there is one format and one decision. The long turn is cut to its head
+     and, mostly, its tail, where the report sits.
+     Who answers: Jev when `sessionGoalChecker` is `classifier` (an explicit
+     pick; the default is `small-model`, since a classification provider set
+     up for another feature is not consent to audit goals with Jev) and a
+     classification provider can run it (`classifierEndpoint`, owned by
+     `../routing`); the small model otherwise, and also when Jev fails this
+     time (`restrictToPreferredProvider`, session's own provider/model
+     preferred). The check is the SOLE termination authority besides the hard
+     stops above — the working agent has no channel to settle its own goal.
+     `complete` and `blocked` settle on the first such answer: a blocked turn
+     waits on the user, and another nudge would only spend a turn repeating the
+     question (`statusReason: 'waiting for user input'`). There is no note: the
+     strip shows the objective. A check that cannot run tolerates ONE
+     consecutive unchecked continuation (`auditFailStreak`); a second
+     consecutive failure settles the goal as `blocked` ("progress audit
+     unavailable") — resumable, and settling resets the streak so Resume gets
+     fresh tolerance. A dead checker can never drive the loop blind to the turn
+     cap. Measured on 144 hand-written goal-report turns plus 8 real ones (lab:
+     `~/projects/openchamber-extensions/jev-goal-lab`): Jev 142/144 with both
+     misses on the safe side, gpt-6-luna 141/144. Change the questions or the
+     threshold only with a new run of that lab;
    - continue: persist accounting + `turnsUsed` first (a crash after the
      write just waits for the next idle tick; the reverse could double-send),
-     re-check the tail, then `POST /session/:id/prompt_async` with the
-     continuation prompt using the last assistant message's
-     provider/model/agent — the goal spends the session's own subscription.
+     re-check the tail, then `POST /api/session/:id/prompt` with the
+     continuation prompt. v2 keeps the model and agent on the session, so the
+     prompt runs on what the session already uses; nothing is re-selected —
+     the goal spends the session's own subscription.
 4. Settling (`complete`/`blocked`/`budgetLimited`) fires the injected
    `emitGoalNotification` so the user hears about it even with the UI closed:
    desktop + UI broadcast + the standard push fanout (web-push with full
@@ -147,53 +196,20 @@ before touching the filesystem). Rationale: metadata rides every
    Pausing a goal from the UI also aborts the running turn (and vice versa —
    an abort pauses the goal), so "stop" means stop on both axes.
 
-## Contract and judge
-
-- `evidence.js` — builds the evidence from the engine's messages since the
-  goal was created: every tool part (tool, status, command/path/URL/query,
-  bash exit code, output tail), a capped digest (newest entries win), a full
-  corpus for URL matching, and the agent's closing text as `report` (a claim,
-  never evidence).
-- `contract.js` — derived once, at the first judged tick with no stored
-  criteria: the small model turns the objective plus the first turn's
-  activity (including the person's answers to `question`) into 1–8 criteria
-  with a closed JSON schema. Each has one check: `file`, `command`,
-  `sources` or `judge`. Stored on the goal and frozen; the UI clears it when
-  the objective is edited. A failed derivation judges one whole-objective
-  criterion that tick, is not stored, and is retried next tick.
-- `checks.js` — deterministic script checks, no model: `file` (exists inside
-  the session directory, not empty, optional literal `contains`; symlinks and
-  paths leaving the directory fail), `command` (the newest bash run whose
-  command contains the text exited 0 and no edit/write/patch came after it),
-  `sources` (every URL cited in the file or the report appears in the tool
-  record). Checks never execute anything.
-- `judge.js` — script checks first, then `judge` criteria through the Mittr
-  platform (`../mittr-goal-judge`, `getMittrGoalJudge`), then the session's
-  small model for whatever the platform did not decide (signed out,
-  unreachable, undecided). Each criterion records `status`
-  (`met`/`missing`/`needs_person`/`pending`), `reason` and `by`
-  (`script`/`mittr`/`model`).
-
 ## Continuation prompt
 
-Built in `runtime.js`: the objective as untrusted user data in an
-XML-escaped `<objective>` block, every criterion with its verdict and reason,
-budget numbers, and the method rules — work on what is not met, act on error
-signals, only tool calls count as evidence, ask through `question` only for
-what needs the person, end with a per-criterion goal report. The goal intro
-(`create.js` `buildGoalIntroText`, UI `lib/sessionGoalIntro.ts`, kept
-identical) teaches the same method from turn one, including the brief: ask
-only what cannot be found or safely defaulted, and nothing when the
-requirements are clear.
+Built inline in `runtime.js`: the objective as untrusted user data in an
+XML-escaped `<objective>` block, budget numbers, keep-the-full-objective and
+work-from-evidence rules, a completion-audit instruction, and the requirement
+to end every turn with a factual done/verified/remaining report — the audit
+sees only that final turn, so the report is its evidence.
 
 ## UI consumers (packages/ui)
 
 - `lib/sessionGoalMetadata.ts` — payload parsing/types.
 - `lib/sessionGoalActions.ts` — create/edit/pause/resume/clear via
-  `patchSessionMetadata` (an objective edit clears the contract);
-  `lib/sessionGoalPresentation.ts` — status colors/labels and criterion
-  icons shared across surfaces; `lib/sessionGoalIntro.ts` — the Mittr goal
-  method sent with the armed turn.
+  `patchSessionMetadata`; `lib/sessionGoalPresentation.ts` — status
+  colors/labels shared across surfaces.
 - `stores/useSessionGoalArmStore.ts` — the "next prompt starts a goal" flag,
   consumed by `sendMessage` in `sync/session-ui-store.ts` (works for drafts).
   Armed slash commands resolve their authoritative command template and apply
@@ -206,23 +222,29 @@ requirements are clear.
 - `components/chat/SessionGoalButton.tsx` — composer target button
   (arm / status color / cancel confirm); `SessionGoalRow.tsx` — goal strip
   above the composer; `SessionGoalDialog.tsx` — manage dialog
-  (edit/pause/resume/complete/clear) with the criteria list
-  (`SessionGoalCriteria.tsx`); the strip shows `met/total`.
+  (edit/pause/resume/complete/clear).
 - Sidebar glyph next to the date in `SessionNodeItem`.
+- `components/sections/openchamber/SessionGoalCheckerField.tsx` — Settings →
+  Chat → Goal: Jev or the small model checks progress
+  (`sessionGoalChecker`). Without a classification provider the Jev chip is
+  disabled and the small model shows as chosen, matching the server.
+  `useGoalCheckAvailable` (`hooks/useSessionGoal.ts`) gates arming a new goal
+  on either checker being able to run.
 
 ## Scheduled goals
 
 Scheduled tasks can run as goals: `execution.goalEnabled` (+ optional
 `execution.goalTokenBudget`) on a task makes the scheduled-tasks runtime
-stamp `metadata.mittrcraft.goal` onto the fresh session (objective = the
-expanded task prompt, or the argument-expanded command template for a slash
-command) and attach the goal-mode intro part to normal prompts.
-The loop here picks it up from session events like any other goal.
+write the goal into OpenChamber's session metadata store through the
+`persistSessionGoal` seam `server/index.js` hands it (objective = the expanded
+task prompt; v2 `CommandInfo` carries no template, so a slash command's
+objective is its raw invocation) and attach the goal-mode intro part to normal
+prompts. The store write is what arms the loop (`notifyGoalChanged`).
 
 ## CLI-created goals
 
-`mittrcraft session create --prompt <text> --goal` uses the explicit
-`POST /api/mittrcraft/sessions` orchestration route. The server creates the
+`openchamber session create --prompt <text> --goal` uses the explicit
+`POST /api/openchamber/sessions` orchestration route. The server creates the
 session, fits and stores the expanded prompt as its objective, patches active
 goal metadata, appends the synthetic goal reminder, and only then dispatches
 the prompt. `--goal-token-budget` applies the same optional budget contract as
@@ -232,7 +254,7 @@ expansion becomes the audit objective; goal metadata
 is still installed before the command runs. A missing command template falls
 back to the raw invocation.
 
-`mittrcraft session send --goal` and `mittrcraft session fork --goal` use
+`openchamber session send --goal` and `openchamber session fork --goal` use
 the same server-owned prompt orchestration. Send installs a fresh goal on the
 target session; fork first uses the official OpenCode fork operation (at the
 optional message boundary), then installs the goal on the new session. Both
@@ -244,7 +266,7 @@ ordering used by create and scheduled goals.
 - Web-server feature: VS Code (extension-only) renders goal state via
   `session.updated` but does not run the loop.
 - A goal on a session with no assistant reply yet starts after the first
-  user exchange completes (no provider/model to continue with before that).
-- `tokensUsed` and the evidence only cover the 200-message fetch window per
-  tick; extremely long busy stretches between
+  user exchange completes (there is no reply to audit before that).
+- `tokensUsed` only counts completed assistant messages seen within the
+  40-message fetch window per tick; extremely long busy stretches between
   idles undercount (acceptable: budget is a guardrail, not billing).

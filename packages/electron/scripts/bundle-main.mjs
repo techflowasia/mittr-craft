@@ -1,51 +1,53 @@
 /**
- * Bundle main.mjs into a single file. Small electron-* helper deps are
- * inlined; everything else — including the in-process web server
- * (@mittrcraft/web) and native modules — stays external so it resolves
- * from node_modules at runtime inside the packaged app.
+ * Bundle the Electron main process into dist-bundle/. Three files come out:
+ * entry.mjs (what Electron loads: pre-ready configuration and the first
+ * window), main.mjs (everything else, imported after `ready`) and
+ * early-startup.mjs, which both import. It must stay a separate file that
+ * both bundles import at runtime: the early window is handed from entry to
+ * main through a slot in that module, and inlining it would give each bundle
+ * its own copy. Small electron-* helper deps are inlined; everything else —
+ * including the in-process web server (@openchamber/web) and native modules —
+ * stays external so it resolves from node_modules at runtime inside the
+ * packaged app.
  *
  * Why external matters: packages/web/server pulls in bun-pty, which has
  * a top-level `import { dlopen } from "bun:ffi"`. If we inline it here,
  * Node's ESM loader sees `bun:ffi` at package load time and crashes with
  * ERR_UNSUPPORTED_ESM_URL_SCHEME before any runtime guard can skip it.
- * Leaving @mittrcraft/web external means the conditional
+ * Leaving @openchamber/web external means the conditional
  * `if (isBunRuntime) await import('bun-pty')` stays dynamic and is never
  * reached under Electron.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveAppFlavor } from '../app-flavor.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
-const updaterE2eBuild = process.env.MITTRCRAFT_UPDATER_E2E_BUILD === '1';
-// Which Mittr the built application talks to. Set at build time -- a develop
-// build points at develop, a release build at production -- because a packaged
-// application has no .env for anyone to edit, and the origin named here is
-// where a signed-in developer's Mittr session is sent. Left empty, the server
-// falls back to its own default.
-const brokerBaseUrl = (process.env.MITTRCRAFT_BROKER_URL ?? '').trim();
-const appFlavor = resolveAppFlavor(process.env.MITTRCRAFT_APP_FLAVOR);
+const updaterE2eBuild = process.env.OPENCHAMBER_UPDATER_E2E_BUILD === '1';
 
 const result = await Bun.build({
-  entrypoints: [path.join(root, 'main.mjs')],
+  entrypoints: [
+    path.join(root, 'entry.mjs'),
+    path.join(root, 'main.mjs'),
+    path.join(root, 'early-startup.mjs'),
+  ],
   outdir: path.join(root, 'dist-bundle'),
   target: 'node',
   format: 'esm',
   external: [
     'electron',
-    '@mittrcraft/web',
-    '@mittrcraft/web/*',
+    '@openchamber/web',
+    '@openchamber/web/*',
     'bun-pty',
     'node-pty',
+    './main.mjs',
+    './early-startup.mjs',
   ],
   minify: false,
   sourcemap: 'none',
   naming: '[name].mjs',
   define: {
-    __MITTRCRAFT_UPDATER_E2E_BUILD__: updaterE2eBuild ? 'true' : 'false',
-    __MITTRCRAFT_BROKER_URL__: JSON.stringify(brokerBaseUrl),
-    __MITTRCRAFT_APP_FLAVOR__: JSON.stringify(appFlavor.id),
+    __OPENCHAMBER_UPDATER_E2E_BUILD__: updaterE2eBuild ? 'true' : 'false',
   },
 });
 
@@ -54,7 +56,4 @@ if (!result.success) {
   process.exit(1);
 }
 
-console.log(
-  `[electron] main.mjs bundled -> dist-bundle/main.mjs (updater E2E=${updaterE2eBuild}, `
-  + `broker=${brokerBaseUrl || 'server default'}, flavor=${appFlavor.id})`,
-);
+console.log(`[electron] main process bundled -> dist-bundle/{entry,main,early-startup}.mjs (updater E2E=${updaterE2eBuild})`);

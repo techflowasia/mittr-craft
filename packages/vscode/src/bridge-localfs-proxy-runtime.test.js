@@ -38,7 +38,7 @@ const { tryHandleLocalFsProxy } = await import('./bridge-localfs-proxy-runtime')
 
 describe('bridge local fs proxy', () => {
   it('does not forward server-owned Markdown image grant routes to OpenCode', async () => {
-    const response = await tryHandleLocalFsProxy('POST', '/api/mittrcraft/sessions/ses_1/markdown-image-grants');
+    const response = await tryHandleLocalFsProxy('POST', '/api/openchamber/sessions/ses_1/markdown-image-grants');
 
     expect(response?.status).toBe(501);
     expect(Buffer.from(response?.bodyBase64 ?? '', 'base64').toString('utf8'))
@@ -59,6 +59,11 @@ describe('bridge local fs proxy', () => {
     const response = await tryHandleLocalFsProxy('GET', '/api/fs/stat?path=%2Fmissing.ts');
 
     expect(response?.status).toBe(404);
+  });
+
+  it('does not forward directory availability probes to OpenCode', async () => {
+    const response = await tryHandleLocalFsProxy('GET', '/api/fs/directory-stat?path=%2Fmissing-dir');
+    expect(response?.status).toBe(501);
   });
 
   it('reads from the active directory when it is the second workspace root', async () => {

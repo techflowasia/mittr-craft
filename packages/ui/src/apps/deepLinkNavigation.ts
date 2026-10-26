@@ -2,6 +2,8 @@ import React from 'react';
 
 import { isCapacitorApp } from '@/lib/platform';
 import { useSessionUIStore } from '@/sync/session-ui-store';
+import { requestMessageFocus } from '@/lib/router/messageFocus';
+import { openSessionLink } from '@/lib/router/openSessionFromRoute';
 
 import { parseDeepLink, type DeepLinkIntent, type SessionsFilter, type ViewTarget } from './deepLinks';
 
@@ -36,6 +38,12 @@ let pending: DeepLinkIntent | null = null;
 const execute = (intent: DeepLinkIntent): boolean => {
   switch (intent.type) {
     case 'session':
+      // A message link carries no directory; the route opener resolves it.
+      if (intent.messageId && !intent.directory) {
+        void openSessionLink(intent.sessionId, intent.messageId);
+        return true;
+      }
+      if (intent.messageId) requestMessageFocus(intent.sessionId, intent.messageId);
       void useSessionUIStore.getState().setCurrentSession(intent.sessionId, intent.directory ?? null);
       return true;
 
@@ -98,7 +106,7 @@ const applyDeepLinkIntent = (intent: DeepLinkIntent): void => {
   flush();
 };
 
-/** Convenience: parse a raw `mittrcraft://…` URL and apply it. No-op for unrecognised URLs. */
+/** Convenience: parse a raw `openchamber://…` URL and apply it. No-op for unrecognised URLs. */
 const applyDeepLinkUrl = (raw: string | null | undefined): void => {
   const intent = parseDeepLink(raw);
   if (intent) {

@@ -11,6 +11,7 @@ import { sessionEvents } from '@/lib/sessionEvents';
 import { createWorktreeSession } from '@/lib/worktreeSessionCreator';
 import { showOpenCodeStatus } from '@/lib/openCodeStatus';
 import { addSelectionToChat } from '@/lib/addSelectionToChat';
+import { navigateSessionHistory } from '@/lib/sessionNavigationHistory';
 
 const getActiveElementSelectedText = (): string => {
   if (typeof document === 'undefined') {
@@ -54,8 +55,8 @@ const copyCurrentSelectionFallback = async (): Promise<boolean> => {
   return document.execCommand('copy');
 };
 
-const MENU_ACTION_EVENT = 'mittrcraft:menu-action';
-const CHECK_FOR_UPDATES_EVENT = 'mittrcraft:check-for-updates';
+const MENU_ACTION_EVENT = 'openchamber:menu-action';
+const CHECK_FOR_UPDATES_EVENT = 'openchamber:check-for-updates';
 
 type DesktopBridgeGlobal = {
   listen?: (
@@ -102,7 +103,6 @@ export const useMenuActions = (
   const toggleHelpDialog = useUIStore((s) => s.toggleHelpDialog);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const setSessionSwitcherOpen = useUIStore((s) => s.setSessionSwitcherOpen);
-  const setActiveMainTab = useUIStore((s) => s.setActiveMainTab);
   const setSettingsDialogOpen = useUIStore((s) => s.setSettingsDialogOpen);
   const setAboutDialogOpen = useUIStore((s) => s.setAboutDialogOpen);
   const checkForUpdates = useUpdateStore((state) => state.checkForUpdates);
@@ -151,10 +151,9 @@ export const useMenuActions = (
     const nextSession = sessions[nextIndex];
     if (!nextSession) return;
 
-    setActiveMainTab('chat');
     setSessionSwitcherOpen(false);
     useSessionUIStore.getState().setCurrentSession(nextSession.id);
-  }, [setActiveMainTab, setSessionSwitcherOpen]);
+  }, [setSessionSwitcherOpen]);
 
   const navigateProject = React.useCallback((direction: -1 | 1) => {
     const { activeProjectId, projects, setActiveProject } = useProjectsStore.getState();
@@ -191,14 +190,18 @@ export const useMenuActions = (
           break;
 
         case 'new-session':
-          setActiveMainTab('chat');
-          setSessionSwitcherOpen(false);
-          openNewSessionDraft();
+                setSessionSwitcherOpen(false);
+          {
+            const sessionState = useSessionUIStore.getState();
+            const directory = useDirectoryStore.getState().currentDirectory;
+            openNewSessionDraft(sessionState.currentSessionId && directory
+              ? { directoryOverride: directory }
+              : undefined);
+          }
           break;
 
         case 'new-worktree-session':
-          setActiveMainTab('chat');
-          setSessionSwitcherOpen(false);
+                setSessionSwitcherOpen(false);
           createWorktreeSession();
           break;
 
@@ -260,7 +263,7 @@ export const useMenuActions = (
         }
 
         case 'copy': {
-          const copyEvent = new Event('mittrcraft:copy', { cancelable: true });
+          const copyEvent = new Event('openchamber:copy', { cancelable: true });
           const wasHandled = !window.dispatchEvent(copyEvent);
           if (!wasHandled) {
             void copyCurrentSelectionFallback();
@@ -292,12 +295,14 @@ export const useMenuActions = (
           onToggleMemoryDebug?.();
           break;
 
+        // Same history as the Back/Forward shortcuts, which this menu's
+        // accelerators shadow on Windows and Linux.
         case 'go-back':
-          useDirectoryStore.getState().goBack();
+          navigateSessionHistory(-1);
           break;
 
         case 'go-forward':
-          useDirectoryStore.getState().goForward();
+          navigateSessionHistory(1);
           break;
 
         case 'previous-session':
@@ -335,7 +340,6 @@ export const useMenuActions = (
       onToggleMemoryDebug,
       openNewSessionDraft,
       setAboutDialogOpen,
-      setActiveMainTab,
       setSessionSwitcherOpen,
       setCommandPaletteOpen,
       setSettingsDialogOpen,
@@ -367,14 +371,14 @@ export const useMenuActions = (
 
   React.useEffect(() => {
     if (typeof window === 'undefined') return;
-    const desktop = (window as unknown as { __MITTRCRAFT_DESKTOP__?: DesktopBridgeGlobal }).__MITTRCRAFT_DESKTOP__;
+    const desktop = (window as unknown as { __OPENCHAMBER_DESKTOP__?: DesktopBridgeGlobal }).__OPENCHAMBER_DESKTOP__;
     const listen = desktop?.listen;
     if (typeof listen !== 'function') return;
 
     let unlistenMenu: null | (() => void | Promise<void>) = null;
     let unlistenUpdate: null | (() => void | Promise<void>) = null;
 
-    listen('mittrcraft:menu-action', (evt) => {
+    listen('openchamber:menu-action', (evt) => {
       const action = evt?.payload;
       if (typeof action !== 'string') return;
       handleAction(action as MenuAction);
@@ -386,7 +390,7 @@ export const useMenuActions = (
         // ignore
       });
 
-    listen('mittrcraft:check-for-updates', () => {
+    listen('openchamber:check-for-updates', () => {
       window.dispatchEvent(new Event(CHECK_FOR_UPDATES_EVENT));
     })
       .then((fn) => {

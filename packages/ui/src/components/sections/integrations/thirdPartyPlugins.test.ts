@@ -1,43 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import type { PluginEntry, RegistryResult } from '@/stores/usePluginsStore';
-import * as thirdPartyCatalog from './thirdPartyPlugins';
 import {
+  getCatalogPluginPresentation,
   getCatalogPluginState,
   getCatalogPluginPrimaryAction,
   getLatestNpmSpec,
   specMatchesPackage,
+  THIRD_PARTY_PLUGINS,
 } from './thirdPartyPlugins';
 
-type CatalogPresentationStatus =
-  | 'not-installed'
-  | 'installed'
-  | 'installed-version'
-  | 'update-available'
-  | 'unpinned'
-  | 'ambiguous'
-  | 'restart-required'
-  | 'registry-unavailable'
-  | 'provider-unavailable';
-
-type GetCatalogPluginPresentation = (
-  state: ReturnType<typeof getCatalogPluginState>,
-  options?: {
-    registryUnavailable?: boolean;
-    restartRequired?: boolean;
-    providerUnavailable?: boolean;
-  },
-) => {
-  status: CatalogPresentationStatus;
-  latestVersion: string | null;
-};
-
-const getCatalogPluginPresentation = (
-  thirdPartyCatalog as unknown as {
-    getCatalogPluginPresentation?: GetCatalogPluginPresentation;
-  }
-).getCatalogPluginPresentation;
-
-const claudePackage = '@mittrcraft/opencode-claude';
+const claudePackage = '@openchamber/opencode-claude';
 
 const entry = (spec: string, scope: PluginEntry['scope'] = 'user'): PluginEntry => ({
   id: `config:${scope}:${spec}`,
@@ -59,9 +31,6 @@ const registry = (spec: string, currentVersion: string | null, latestVersion = '
 
 describe('third-party plugin catalog helpers', () => {
   test('derives compact-card status with explicit transient-state priority', () => {
-    expect(typeof getCatalogPluginPresentation).toBe('function');
-    if (!getCatalogPluginPresentation) return;
-
     const notInstalled = getCatalogPluginState([], claudePackage, {});
     expect(getCatalogPluginPresentation(notInstalled)).toEqual({
       status: 'not-installed',
@@ -117,29 +86,19 @@ describe('third-party plugin catalog helpers', () => {
   test('matches only a package or its versioned spec', () => {
     expect(specMatchesPackage(claudePackage, claudePackage)).toBe(true);
     expect(specMatchesPackage(`${claudePackage}@0.6.0`, claudePackage)).toBe(true);
-    expect(specMatchesPackage('@mittrcraft/opencode-claude-extra@0.6.0', claudePackage)).toBe(false);
+    expect(specMatchesPackage('@openchamber/opencode-claude-extra@0.6.0', claudePackage)).toBe(false);
   });
 
-  test('points catalog plugins at the MittrCraft GitHub and npm packages', () => {
-    expect(thirdPartyCatalog.THIRD_PARTY_PLUGINS.map((plugin) => ({
+  test('points catalog plugins at the OpenChamber GitHub and npm packages', () => {
+    expect(THIRD_PARTY_PLUGINS.map((plugin) => ({
       id: plugin.id,
       packageName: plugin.packageName,
       homepage: plugin.homepage,
     }))).toEqual([
       {
         id: 'opencode-claude',
-        packageName: '@mittrcraft/opencode-claude',
+        packageName: '@openchamber/opencode-claude',
         homepage: 'https://github.com/openchamber/opencode-claude',
-      },
-      {
-        id: 'opencode-commandcode',
-        packageName: '@mittrcraft/opencode-commandcode',
-        homepage: 'https://github.com/openchamber/opencode-commandcode',
-      },
-      {
-        id: 'opencode-cursor-oauth',
-        packageName: '@mittrcraft/opencode-cursor',
-        homepage: 'https://github.com/openchamber/opencode-cursor',
       },
     ]);
   });

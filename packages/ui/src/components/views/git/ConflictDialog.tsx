@@ -10,7 +10,6 @@ import { Button } from '@/components/ui/button';
 
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useInputStore } from '@/sync/input-store';
-import { useUIStore } from '@/stores/useUIStore';
 import { toast } from '@/components/ui';
 import { Icon } from "@/components/icon/Icon";
 import { getConflictDetails, type MergeConflictDetails } from '@/lib/gitApi';
@@ -25,6 +24,7 @@ interface ConflictDialogProps {
   operation: 'merge' | 'rebase';
   onAbort: () => void;
   onClearState?: () => void;
+  onNavigatedToChat?: () => void;
 }
 
 export const ConflictDialog: React.FC<ConflictDialogProps> = ({
@@ -35,13 +35,13 @@ export const ConflictDialog: React.FC<ConflictDialogProps> = ({
   operation,
   onAbort,
   onClearState,
+  onNavigatedToChat,
 }) => {
   const { t } = useI18n();
   const openNewSessionDraft = useSessionUIStore((state) => state.openNewSessionDraft);
   const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
   const setPendingInputText = useInputStore((state) => state.setPendingInputText);
   const setPendingSyntheticParts = useInputStore((state) => state.setPendingSyntheticParts);
-  const setActiveMainTab = useUIStore((state) => state.setActiveMainTab);
 
   const [isLoading, setIsLoading] = React.useState(false);
   const [conflictDetails, setConflictDetails] = React.useState<MergeConflictDetails | null>(null);
@@ -137,9 +137,9 @@ export const ConflictDialog: React.FC<ConflictDialogProps> = ({
       { text: context.payloadText, synthetic: true },
     ]);
 
-    setActiveMainTab('chat');
     onClearState?.();
     onOpenChange(false);
+    onNavigatedToChat?.();
   };
 
   const handleResolveInNewSession = async () => {
@@ -158,10 +158,9 @@ export const ConflictDialog: React.FC<ConflictDialogProps> = ({
         { text: context.payloadText, synthetic: true },
       ],
     });
-    // Navigate to chat tab so user sees the new session
-    setActiveMainTab('chat');
     onClearState?.();
     onOpenChange(false);
+    onNavigatedToChat?.();
   };
 
   const operationLabel = operation === 'merge' ? t('gitView.operation.merge') : t('gitView.operation.rebase');

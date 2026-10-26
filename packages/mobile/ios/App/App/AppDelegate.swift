@@ -79,6 +79,27 @@ let apnsEnvironment: String = {
     return profile.range(of: pattern, options: .regularExpression) != nil ? "development" : "production"
 }()
 
+/// The key this phone opens end-to-end sealed push text with (base64, 32 bytes).
+/// Made once and kept in the App Group, where the notification service
+/// extension reads it; the web layer hands it to the server with the push
+/// token (`__OPENCHAMBER_PUSH_KEY__`, useNativePushRegistration). The relay,
+/// Apple and Google then carry only sealed text. See the server's push-seal.js.
+let pushSealKey: String = {
+    let storageKey = "pushSealKey"
+    let defaults = UserDefaults(suiteName: "group.com.openchamber.app")
+    if let stored = defaults?.string(forKey: storageKey),
+       Data(base64Encoded: stored)?.count == 32 {
+        return stored
+    }
+    var bytes = [UInt8](repeating: 0, count: 32)
+    guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+        return ""
+    }
+    let key = Data(bytes).base64EncodedString()
+    defaults?.set(key, forKey: storageKey)
+    return key
+}()
+
 /// Bridge subclass (referenced from Main.storyboard) whose job is to expose native-only
 /// facts to the web layer as document-start user scripts. These run before any page JS,
 /// so consumers always see them — injecting later from the scene lifecycle raced the
@@ -104,8 +125,9 @@ class BridgeViewController: CAPBridgeViewController {
         // what actually settles it once the page exists.
         let attached = GCKeyboard.coalesced != nil
         let source = """
-        window.__MITTRCRAFT_APNS_ENV__ = '\(apnsEnvironment)';
-        window.__MITTRCRAFT_HARDWARE_KEYBOARD__ = \(attached ? "true" : "false");
+        window.__OPENCHAMBER_APNS_ENV__ = '\(apnsEnvironment)';
+        window.__OPENCHAMBER_PUSH_KEY__ = '\(pushSealKey)';
+        window.__OPENCHAMBER_HARDWARE_KEYBOARD__ = \(attached ? "true" : "false");
         """
         webView?.configuration.userContentController.addUserScript(
             WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
@@ -155,7 +177,7 @@ class BridgeViewController: CAPBridgeViewController {
     private func publishHardwareKeyboardState(_ attached: Bool) {
         let value = attached ? "true" : "false"
         webView?.evaluateJavaScript("""
-        window.__MITTRCRAFT_HARDWARE_KEYBOARD__ = \(value);
+        window.__OPENCHAMBER_HARDWARE_KEYBOARD__ = \(value);
         window.dispatchEvent(new CustomEvent('oc:hardware-keyboard', { detail: { attached: \(value) } }));
         """)
     }
@@ -221,17 +243,17 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         writeWidgetSnapshot()
     }
 
-    private static let widgetAppGroup = "group.com.mittrcraft.app"
+    private static let widgetAppGroup = "group.com.openchamber.app"
     private static let widgetSnapshotKey = "widgetSnapshot"
 
-    /// Pulls the session overview JSON from the web layer (window.__MITTRCRAFT_WIDGET_SNAPSHOT__),
+    /// Pulls the session overview JSON from the web layer (window.__OPENCHAMBER_WIDGET_SNAPSHOT__),
     /// stores it in the shared App Group, and reloads the widget timelines. localStorage/stores
     /// aren't reachable from the widget process, so this is how the bundled UI feeds the widgets —
     /// no server involved. Failures are ignored so a transient read never clobbers a good snapshot.
     private func writeWidgetSnapshot() {
         guard let bridge = window?.rootViewController as? CAPBridgeViewController,
               let webView = bridge.webView else { return }
-        let js = "(typeof window.__MITTRCRAFT_WIDGET_SNAPSHOT__ === 'function') ? window.__MITTRCRAFT_WIDGET_SNAPSHOT__() : null"
+        let js = "(typeof window.__OPENCHAMBER_WIDGET_SNAPSHOT__ === 'function') ? window.__OPENCHAMBER_WIDGET_SNAPSHOT__() : null"
         webView.evaluateJavaScript(js) { result, _ in
             guard let json = result as? String, !json.isEmpty,
                   let defaults = UserDefaults(suiteName: SceneDelegate.widgetAppGroup) else { return }

@@ -8,13 +8,13 @@ import { themeStoragePlugin } from '../../vite-theme-plugin';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packageJson = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'));
-const pwaDevEnabled = process.env.MITTRCRAFT_DISABLE_PWA_DEV !== '1';
+const pwaDevEnabled = process.env.OPENCHAMBER_DISABLE_PWA_DEV !== '1';
 const reactScanToggle = (process.env.VITE_ENABLE_REACT_SCAN ?? '').toLowerCase();
 const enableReactScan = reactScanToggle === '1' || reactScanToggle === 'true' || reactScanToggle === 'on' || reactScanToggle === 'yes';
 const themeDirectory = path.resolve(__dirname, '../ui/src/lib/theme/themes');
 
 const themeJsonHmrPlugin = () => ({
-  name: 'mittrcraft-theme-json-hmr',
+  name: 'openchamber-theme-json-hmr',
   handleHotUpdate({ file, server }: { file: string; server: { ws: { send: (payload: unknown) => void } } }) {
     if (!file.startsWith(`${themeDirectory}${path.sep}`) || path.extname(file) !== '.json') {
       return;
@@ -23,7 +23,7 @@ const themeJsonHmrPlugin = () => ({
     try {
       server.ws.send({
         type: 'custom',
-        event: 'mittrcraft:theme-updated',
+        event: 'openchamber:theme-updated',
         data: JSON.parse(readFileSync(file, 'utf-8')),
       });
       // Theme JSON is applied by the runtime event listener. Returning no
@@ -73,7 +73,7 @@ export default defineConfig({
       injectRegister: false,
       manifest: false,
       injectManifest: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,ttf,otf,eot}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,ttf,otf,eot,wasm}'],
         // iOS Safari/PWA is much more reliable with a classic (non-module) SW bundle.
         rollupFormat: 'iife',
         // We already keep a custom manifest in index.html
@@ -87,8 +87,9 @@ export default defineConfig({
   ],
   resolve: {
     alias: [
-      { find: '@opencode-ai/sdk/v2', replacement: path.resolve(__dirname, '../../node_modules/@opencode-ai/sdk/dist/v2/client.js') },
-      { find: '@mittrcraft/ui', replacement: path.resolve(__dirname, '../ui/src') },
+      { find: '@openchamber/sdk/schemas', replacement: path.resolve(__dirname, '../sdk/src/schemas.ts') },
+      { find: '@openchamber/sdk', replacement: path.resolve(__dirname, '../sdk/src/index.ts') },
+      { find: '@openchamber/ui', replacement: path.resolve(__dirname, '../ui/src') },
       { find: '@web', replacement: path.resolve(__dirname, './src') },
       { find: '@', replacement: path.resolve(__dirname, '../ui/src') },
     ],
@@ -102,21 +103,25 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(packageJson.version),
   },
   optimizeDeps: {
-    include: ['@opencode-ai/sdk/v2'],
+    include: ['@opencode/client'],
   },
   server: {
     port: 5173,
     proxy: {
       '/auth': {
-        target: `http://127.0.0.1:${process.env.MITTRCRAFT_PORT || 3001}`,
+        target: `http://127.0.0.1:${process.env.OPENCHAMBER_PORT || 3001}`,
         changeOrigin: true,
       },
       '/health': {
-        target: `http://127.0.0.1:${process.env.MITTRCRAFT_PORT || 3001}`,
+        target: `http://127.0.0.1:${process.env.OPENCHAMBER_PORT || 3001}`,
+        changeOrigin: true,
+      },
+      '/linear': {
+        target: `http://127.0.0.1:${process.env.OPENCHAMBER_PORT || 3001}`,
         changeOrigin: true,
       },
       '/api': {
-        target: `http://127.0.0.1:${process.env.MITTRCRAFT_PORT || 3001}`,
+        target: `http://127.0.0.1:${process.env.OPENCHAMBER_PORT || 3001}`,
         changeOrigin: true,
         ws: true,
       },
@@ -182,7 +187,7 @@ export default defineConfig({
           if (packageName === 'react' || packageName === 'react-dom') return 'vendor-react';
           if (packageName === 'zustand' || packageName === 'zustand/middleware') return 'vendor-zustand';
 
-          if (packageName === '@opencode-ai/sdk') return 'vendor-opencode-sdk';
+          if (packageName === '@opencode/client') return 'vendor-opencode-client';
           if (packageName.includes('remark') || packageName.includes('rehype') || packageName === 'react-markdown') return 'vendor-markdown';
           if (packageName === '@base-ui/react' || packageName.startsWith('@base-ui')) return 'vendor-base-ui';
 

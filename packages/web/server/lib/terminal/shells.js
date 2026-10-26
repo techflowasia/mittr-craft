@@ -1,5 +1,6 @@
 const TERMINAL_SHELL_IDS = ['bash', 'zsh', 'sh', 'fish', 'pwsh', 'powershell', 'cmd', 'dash', 'ksh', 'nu'];
 const TERMINAL_SHELL_ID_SET = new Set(TERMINAL_SHELL_IDS);
+const isString = (value) => String(value) === value;
 
 export const normalizeTerminalShell = (value) => {
   if (typeof value !== 'string') return null;
@@ -24,6 +25,22 @@ export const getTerminalShellLoginArgs = (executable, platform = process.platfor
   return null;
 };
 
+export const buildTerminalShellLaunch = (executable, { mode = 'interactive', command = null, loginShell = false, platform = process.platform } = {}) => {
+  const loginArgs = loginShell ? getTerminalShellLoginArgs(executable, platform) : [];
+  if (!loginArgs) throw new Error(`Terminal shell "${shellIdFromPath(executable) ?? executable}" does not support login mode`);
+
+  if (mode === 'interactive') return { executable, args: loginArgs };
+
+  const trimmedCommand = isString(command) ? command.trim() : '';
+  if (!trimmedCommand) throw new Error('Terminal command is required');
+
+  const id = shellIdFromPath(executable);
+  if (id === 'nu') return { executable, args: [...loginArgs, '-c', trimmedCommand] };
+  if (id === 'pwsh' || id === 'powershell') return { executable, args: [...loginArgs, '-Command', trimmedCommand] };
+  if (id === 'cmd') return { executable, args: ['/d', '/s', '/c', trimmedCommand] };
+  return { executable, args: [...loginArgs, '-i', '-c', trimmedCommand] };
+};
+
 export const createTerminalShellResolver = ({ fs, path, searchPathFor, isExecutable, buildAugmentedPath = () => env.PATH || '', platform = process.platform, env = process.env }) => {
   const resolveExecutable = (candidate) => {
     if (!candidate) return null;
@@ -35,7 +52,7 @@ export const createTerminalShellResolver = ({ fs, path, searchPathFor, isExecuta
 
   const defaultCandidates = () => platform === 'win32'
     ? [
-        env.MITTRCRAFT_TERMINAL_SHELL,
+        env.OPENCHAMBER_TERMINAL_SHELL,
         env.SHELL,
         env.ComSpec,
         path.join(env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
@@ -43,7 +60,7 @@ export const createTerminalShellResolver = ({ fs, path, searchPathFor, isExecuta
         'powershell.exe',
         'cmd.exe',
       ]
-    : [env.MITTRCRAFT_TERMINAL_SHELL, env.SHELL, '/bin/zsh', '/bin/bash', '/bin/sh', 'zsh', 'bash', 'sh'];
+    : [env.OPENCHAMBER_TERMINAL_SHELL, env.SHELL, '/bin/zsh', '/bin/bash', '/bin/sh', 'zsh', 'bash', 'sh'];
 
   const resolveCandidates = (candidates) => {
     const seen = new Set();
@@ -68,7 +85,7 @@ export const createTerminalShellResolver = ({ fs, path, searchPathFor, isExecuta
 
     const candidates = platform === 'win32'
       ? [...defaultCandidates(), ...TERMINAL_SHELL_IDS]
-      : [env.MITTRCRAFT_TERMINAL_SHELL, env.SHELL, ...configuredShells, ...TERMINAL_SHELL_IDS, '/bin/zsh', '/bin/bash', '/bin/sh'];
+      : [env.OPENCHAMBER_TERMINAL_SHELL, env.SHELL, ...configuredShells, ...TERMINAL_SHELL_IDS, '/bin/zsh', '/bin/bash', '/bin/sh'];
     const autoExecutable = resolveCandidates(defaultCandidates())[0] ?? null;
     const byId = new Map([
       ['auto', {

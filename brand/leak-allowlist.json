@@ -1,0 +1,351 @@
+[
+  {
+    "file": "app.asar/dist-bundle/*.mjs",
+    "key": "appName",
+    "snippet": "OpenChamber",
+    "reason": "Built-in default product name (UPSTREAM_PRODUCT); the packaged product.json replaces it before anything reads it."
+  },
+  {
+    "file": "app.asar/dist-bundle/main.mjs",
+    "key": "app.name",
+    "snippet": "OpenChamber",
+    "reason": "Native menu label table; the menu hook swaps upstream's app name for the product's as the menu is built."
+  },
+  {
+    "file": "app.asar/dist-bundle/main.mjs",
+    "key": "about",
+    "snippet": "OpenChamber",
+    "reason": "Native menu label table (\"About ...\" in every locale); the menu hook swaps upstream's app name for the product's as the menu is built."
+  },
+  {
+    "file": "app.asar/dist-bundle/early-startup.mjs",
+    "snippet": "aria-label=\"OpenChamber loading icon\"",
+    "reason": "Default splash logo, drawn only when the product names no splashSvg; product.json names one."
+  },
+  {
+    "file": "app.asar/product-plugins/mittr-server.mjs",
+    "snippet": "showOpenCodeRestartConfirm",
+    "reason": "Settings key (an id in settings.json), never shown."
+  },
+  {
+    "file": "app.asar/product-plugins/mittr-server.mjs",
+    "snippet": "[\"MittrCraft\", \"OpenChamber\"]",
+    "reason": "Name mapping the server plugin uses to carry 1.x settings over; data, never shown."
+  },
+  {
+    "file": "app.asar/product-plugins/mittr-server.mjs",
+    "snippet": "before the first OpenCode 2 start: ",
+    "reason": "Server log line."
+  },
+  {
+    "file": "app.asar/product-plugins/mittr-server.mjs",
+    "snippet": "kept the existing backup from before OpenCode 2: ",
+    "reason": "Server log line."
+  },
+  {
+    "file": "app.asar/product-plugins/mittr-server.mjs",
+    "snippet": "You are an AI agent running in OpenCode, a coding agent harness.",
+    "reason": "Model-facing prompt text, never shown: the engine's own opening sentence, which the identity plugin finds and replaces with MittrCraft's."
+  },
+  {
+    "file": "app.asar/product-plugins/mittr-server.mjs",
+    "snippet": "You are OpenCode, a coding agent",
+    "reason": "Model-facing prompt text, never shown: an older engine opening sentence, which the identity plugin finds and replaces with MittrCraft's."
+  },
+  {
+    "file": "app.asar/product-plugins/mittr-server.mjs",
+    "snippet": "Never call yourself OpenCode or OpenChamber",
+    "reason": "Model-facing prompt text, never shown: the identity line the plugin adds to the system prompt, naming the two names the model must not use."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "substitutions:[[\"OpenChamber\",\"MittrCraft\"],[\"OpenCode\",\"MittrCraft\"]]",
+    "reason": "The product UI plugin's own rename rules; data, never shown."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "showOpenCodeUpdateNotifications",
+    "reason": "Settings key (an id in settings.json), never shown."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "Local OpenCode Unavailable",
+    "reason": "Fallback field of the desktop recovery config; the recovery screen renders its titleKey translation instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "OpenCode CLI could not be started or is not installed. Install OpenCode or connect to a remote server instead.",
+    "reason": "Fallback field of the desktop recovery config; the recovery screen renders its descriptionKey translation instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "\" is not running OpenChamber. Verify the address points to an OpenChamber server.",
+    "reason": "Fallback field of the desktop recovery config; the recovery screen renders its descriptionKey translation instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "The OpenChamber server at \"",
+    "reason": "Fallback field of the desktop recovery config; the recovery screen renders its descriptionKey translation instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "\" is not compatible with this app version. Update OpenChamber on the server, then try again.",
+    "reason": "Fallback field of the desktop recovery config; the recovery screen renders its descriptionKey translation instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "User / OpenCode",
+    "reason": "Fallback label of a skill location option; the skills pages render the option's translation key instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "Project / OpenCode",
+    "reason": "Fallback label of a skill location option; the skills pages render the option's translation key instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "Global OpenCode config location",
+    "reason": "Fallback description of a skill location option; the skills pages render the option's translation key instead."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "your OpenCode Console workspace",
+    "reason": "phase-2: names the third-party console that can hold provider rules; shown only on the Providers page in enterprise mode, which the phase-2 provider lock replaces."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "workspace, which OpenChamber can’t read.",
+    "reason": "Upstream English value of the phase-2 Console key above; the English override replaces it, and other locales substitute the name."
+  },
+  {
+    "file": "web-dist/assets/*.js",
+    "snippet": "openchamber://connect",
+    "reason": "Pairing payload (the link the desktop builds and imports, and the placeholders that show it): wire contract to mobile clients until phase 5."
+  },
+  {
+    "file": "web-dist/assets/renderMobileApp-*.js",
+    "snippet": "OpenChamber Mobile",
+    "reason": "phase-5 surface: client label sent by the mobile app."
+  },
+  {
+    "file": "web-dist/mobile.html",
+    "snippet": "<title>OpenChamber Mobile</title>",
+    "reason": "phase-5 surface: the mobile web shell."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/index.js",
+    "snippet": "[OpenChamberDesktopNotify] ",
+    "reason": "Prefix of the line protocol the server writes to stdout for the desktop shell; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/index.js",
+    "snippet": "X-OpenCode-Directory,X-OpenCode-Directory-Encoding,Ngrok-Skip-Browser-Warning,X-OpenChamber-Surface",
+    "reason": "HTTP header names in the CORS allow list; protocol ids."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/index.js",
+    "snippet": "refreshOpenCodeAfterConfigChange('OpenCode v2 installation')",
+    "reason": "Reason passed to a console log line (\"Refreshing OpenCode after ...\")."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/agent-tool/runtime.js",
+    "snippet": "// OpenCode 2 puts a plugin tool behind",
+    "reason": "Comment inside the plugin source the server writes for the engine; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/agent-tool/runtime.js",
+    "snippet": "// field: OpenCode rejects that",
+    "reason": "Comment inside the plugin source the server writes for the engine; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/agent-tool/runtime.js",
+    "snippet": "// OpenCode 2 no longer hands a tool its",
+    "reason": "Comment inside the plugin source the server writes for the engine; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/agent-tool/runtime.js",
+    "snippet": "instead and OpenChamber resolves the",
+    "reason": "Comment inside the plugin source the server writes for the engine; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/agent-tool/runtime.js",
+    "snippet": "// aborted, so the OpenChamber side stops",
+    "reason": "Comment inside the plugin source the server writes for the engine; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/enterprise-mode.js",
+    "snippet": "/Library/Application Support/OpenChamber/policy.json",
+    "reason": "Default policy file path; the product file sets OPENCHAMBER_POLICY_FILE, which replaces it."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/enterprise-mode.js",
+    "snippet": "WINDOWS_PROGRAM_DATA, 'OpenChamber', 'policy.json'",
+    "reason": "Default Windows policy file path; the product file sets OPENCHAMBER_POLICY_FILE, which replaces it."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/enterprise-mode.js",
+    "snippet": "programData, 'OpenChamber', 'policy.json'",
+    "reason": "Default Windows policy file path; the product file sets OPENCHAMBER_POLICY_FILE, which replaces it."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/openchamber-control/error.js",
+    "snippet": "'OpenChamberControlError'",
+    "reason": "Error class name; an id."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/compatibility.js",
+    "snippet": "'UnsupportedOpenCodeVersionError'",
+    "reason": "Error class name; an id."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/managed-process-registry.js",
+    "snippet": "[lifecycle] reaped orphaned OpenCode pid ",
+    "reason": "Server log line."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/openchamber-routes.js",
+    "snippet": "restarting OpenChamber...",
+    "reason": "Shell script and log text of the web server self-update; the desktop updates through its own updater, which is off."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/openchamber-routes.js",
+    "snippet": "Service manager will restart OpenChamber.",
+    "reason": "Shell script and log text of the web server self-update; the desktop updates through its own updater, which is off."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/openchamber-routes.js",
+    "snippet": "=== OpenChamber update ",
+    "reason": "Log text of the web server self-update; the desktop updates through its own updater, which is off."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/settings-registry.json",
+    "snippet": "\"showOpenCodeUpdateNotifications\"",
+    "reason": "Settings key (an id in settings.json), never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/static-routes-runtime.js",
+    "snippet": "aria-label=\"OpenChamber logo\"",
+    "reason": "Headless-mode page, served only when no UI build exists; the desktop always serves the UI from resources/web-dist."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/static-routes-runtime.js",
+    "snippet": "<h1>OpenChamber is running in headless mode</h1>",
+    "reason": "Headless-mode page, served only when no UI build exists; the desktop always serves the UI from resources/web-dist."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/static-routes-runtime.js",
+    "snippet": "Open it from the OpenChamber desktop or mobile app",
+    "reason": "Headless-mode page, served only when no UI build exists; the desktop always serves the UI from resources/web-dist."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/v1-migration-topup.js",
+    "snippet": "[OpenCode] ",
+    "reason": "Server log lines of the session migration top-up, which start with this tag."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/v1-migration-topup.js",
+    "snippet": " OpenCode 1.x session(s) are missing from the v2 database",
+    "reason": "Server log line (session migration top-up)."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/v1-migration-topup.js",
+    "snippet": "would make OpenCode rewrite ",
+    "reason": "Server log line (session migration top-up)."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/v1-migration-topup.js",
+    "snippet": " OpenCode 1.x session(s) changed since the last v2 import",
+    "reason": "Server log line (session migration top-up)."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/opencode/v1-migration-topup.js",
+    "snippet": "OpenCode will re-import ",
+    "reason": "Server log line (session migration top-up)."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/quota/providers/*.js",
+    "snippet": "OpenChamber quota provider",
+    "reason": "User-Agent header sent to the quota provider; not shown to a person."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/quota/providers/xai.js",
+    "snippet": "'User-Agent': 'OpenChamber'",
+    "reason": "User-Agent header sent to the quota provider; not shown to a person."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/spaces/places/docker-live-support.js",
+    "snippet": "not control, OpenCode inside a space",
+    "reason": "Comment inside a script the live Docker test support runs; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/spaces/places/fake-docker.js",
+    "snippet": "\"isOpenCodeReady\":true",
+    "reason": "JSON field name in the fake Docker used by tests; an id."
+  },
+  {
+    "file": "app.asar/dist-bundle/*.mjs",
+    "key": "bugReport",
+    "snippet": "https://github.com/openchamber/openchamber/issues/new",
+    "reason": "Built-in default link (UPSTREAM_PRODUCT); product.json sets every link to null, so the menu shows none."
+  },
+  {
+    "file": "app.asar/dist-bundle/*.mjs",
+    "key": "ideas",
+    "snippet": "https://github.com/openchamber/openchamber/discussions/categories/ideas",
+    "reason": "Built-in default link (UPSTREAM_PRODUCT); product.json sets every link to null, so the menu shows none."
+  },
+  {
+    "file": "app.asar/dist-bundle/*.mjs",
+    "key": "discord",
+    "snippet": "https://discord.gg/ZYRSdnwwKA",
+    "reason": "Built-in default link (UPSTREAM_PRODUCT); product.json sets every link to null, so the menu shows none."
+  },
+  {
+    "file": "web-dist/assets/runtimeEndpointReset-*.js",
+    "snippet": "=\"https://github.com/openchamber/openchamber/releases\";",
+    "reason": "Release-notes address of the app update dialog, which opens only when an app update is available; this build has no update channel, so it never opens."
+  },
+  {
+    "file": "web-dist/assets/SettingsView-*.js",
+    "key": "homepage",
+    "snippet": "https://github.com/openchamber/opencode-",
+    "reason": "Home of a third-party engine plugin, hosted under upstream's GitHub organisation; the plugin's Docs button opens it. Kept pending the owner's ruling: it is where the plugin lives."
+  },
+  {
+    "file": "web-dist/assets/SettingsView-*.js",
+    "key": "gitUrl",
+    "snippet": "https://github.com/openchamber/openchamber-excalidraw",
+    "reason": "Install source of the Excalidraw extension, hosted under upstream's GitHub organisation; installing it fetches from there. Never shown as text."
+  },
+  {
+    "file": "web-dist/assets/SettingsView-*.js",
+    "key": "homepage",
+    "snippet": "https://github.com/openchamber/openchamber-excalidraw",
+    "reason": "Home of the Excalidraw extension, hosted under upstream's GitHub organisation; the extension's Docs button opens it. Kept pending the owner's ruling: it is where the extension lives."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/linear/auth.js",
+    "snippet": "https://api.openchamber.dev/v1/oauth/linear",
+    "reason": "Address of the Linear sign-in service the server calls; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/notifications/apns-runtime.js",
+    "snippet": "https://api.openchamber.dev/v1/push/send",
+    "reason": "Address of the push relay the server calls; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/package-manager.js",
+    "snippet": "https://api.openchamber.dev/v1/update/check",
+    "reason": "Address of upstream's update and usage service. The product env sets OPENCHAMBER_UPDATE_CHECK_DISABLED=1, so the update-check route answers updatesDisabled and the server never calls it; never shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/package-manager.js",
+    "snippet": "GITHUB_RELEASES_URL = 'https://github.com/openchamber/openchamber/releases'",
+    "reason": "Release-notes address returned with an available update; the update check is switched off by OPENCHAMBER_UPDATE_CHECK_DISABLED=1, so none is ever returned or shown."
+  },
+  {
+    "file": "app.asar/node_modules/@openchamber/web/server/lib/relay/service.js",
+    "snippet": "wss://relay.openchamber.dev/ws",
+    "reason": "Address of the relay service the server connects to for phone pairing; never shown."
+  }
+]

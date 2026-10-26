@@ -1,10 +1,10 @@
-import { afterAll, describe, expect, it, mock } from 'bun:test';
+import { afterAll, describe, expect, it } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-ui-auth-test-'));
-process.env.MITTRCRAFT_DATA_DIR = dataDir;
+const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-ui-auth-test-'));
+process.env.OPENCHAMBER_DATA_DIR = dataDir;
 
 afterAll(() => {
   fs.rmSync(dataDir, { recursive: true, force: true });
@@ -26,15 +26,6 @@ const createResponse = () => {
     },
     json(payload) {
       body = payload;
-      return this;
-    },
-    send(payload) {
-      body = payload;
-      return this;
-    },
-    redirect(code, location) {
-      statusCode = code;
-      headers.set('location', location);
       return this;
     },
     setHeader(name, value) {
@@ -111,35 +102,6 @@ describe('ui auth client credential seam', () => {
       sessionCalled = true;
     });
     expect(sessionCalled).toBe(true);
-  });
-
-  it('expires only the current UI session when logging out', async () => {
-    const createUiAuth = await loadCreateUiAuth();
-    const auth = createUiAuth({ password: 'secret' });
-    const loginRes = createResponse();
-    await auth.handleSessionCreate({ method: 'POST', headers: {}, body: { password: 'secret' } }, loginRes);
-    const sessionCookie = String(loginRes.getHeader('set-cookie')).split(';', 1)[0];
-    const urlTokenRes = createResponse();
-    await auth.handleUrlAuthToken({ method: 'POST', headers: { cookie: sessionCookie } }, urlTokenRes);
-    const urlToken = urlTokenRes.body.token;
-    const req = { method: 'DELETE', headers: { cookie: sessionCookie } };
-    const res = createResponse();
-
-    auth.handleSessionDelete(req, res);
-
-    expect(res.body).toEqual({ authenticated: false });
-    expect(res.getHeader('cache-control')).toBe('no-store');
-    expect(res.getHeader('set-cookie')).toContain('oc_ui_session=');
-    expect(res.getHeader('set-cookie')).toContain('Max-Age=0');
-
-    const tokenReq = { method: 'GET', url: `/api/event?oc_url_token=${urlToken}`, headers: { accept: 'application/json' } };
-    const tokenRes = createResponse();
-    let tokenAccepted = false;
-    await auth.requireAuth(tokenReq, tokenRes, () => {
-      tokenAccepted = true;
-    });
-    expect(tokenAccepted).toBe(false);
-    expect(tokenRes.statusCode).toBe(401);
   });
 
   it('can require bearer client credentials when UI password is disabled', async () => {
@@ -220,36 +182,75 @@ describe('ui auth client credential seam', () => {
     expect(await auth.ensureSessionToken(urlReq, urlRes)).toBe('client:device-1');
     expect(await auth.resolveAuthContext(urlReq, urlRes, { allowUrlToken: false })).toBe(null);
 
-    const serveReq = { method: 'GET', path: '/api/fs/serve/tmp/index.html', url: `/api/fs/serve/tmp/index.html?oc_url_token=${encodeURIComponent(urlToken)}`, headers: {} };
-    const serveRes = createResponse();
-    let serveCalled = false;
-    await auth.requireAuth(serveReq, serveRes, () => {
-      serveCalled = true;
-    });
-    expect(serveCalled).toBe(true);
+    // The session URL token no longer opens file previews: a preview page can
+    // read its own URL, so it gets a narrow fs grant instead (see fs routes).
+    for (const denied of [
+      { method: 'GET', path: '/api/fs/serve/tmp/index.html', url: `/api/fs/serve/tmp/index.html?oc_url_token=${encodeURIComponent(urlToken)}`, headers: {} },
+      { method: 'GET', path: '/api/fs/preview/grant/tmp/index.html', url: `/api/fs/preview/grant/tmp/index.html?oc_url_token=${encodeURIComponent(urlToken)}`, headers: {} },
+    ]) {
+      const deniedRes = createResponse();
+      let deniedCalled = false;
+      await auth.requireAuth(denied, deniedRes, () => {
+        deniedCalled = true;
+      });
+      expect(deniedCalled).toBe(false);
+      expect(deniedRes.statusCode).toBe(401);
+    }
 
-    const absoluteServeReq = { method: 'GET', path: '/api/fs/serve/Users/test/project/preview-test.html', url: `/api/fs/serve/Users/test/project/preview-test.html?oc_url_token=${encodeURIComponent(urlToken)}`, headers: {} };
-    const absoluteServeRes = createResponse();
-    let absoluteServeCalled = false;
-    await auth.requireAuth(absoluteServeReq, absoluteServeRes, () => {
-      absoluteServeCalled = true;
-    });
-    expect(absoluteServeCalled).toBe(true);
-
-    const mountedServeReq = {
+    const mountedRawReq = {
       method: 'GET',
       baseUrl: '/api',
-      path: '/fs/serve/Users/test/project/preview-test.html',
-      originalUrl: `/api/fs/serve/Users/test/project/preview-test.html?oc_url_token=${encodeURIComponent(urlToken)}`,
-      url: `/fs/serve/Users/test/project/preview-test.html?oc_url_token=${encodeURIComponent(urlToken)}`,
+      path: '/fs/raw',
+      originalUrl: `/api/fs/raw?path=%2Ftmp%2Fimage.png&oc_url_token=${encodeURIComponent(urlToken)}`,
+      url: `/fs/raw?path=%2Ftmp%2Fimage.png&oc_url_token=${encodeURIComponent(urlToken)}`,
       headers: {},
     };
-    const mountedServeRes = createResponse();
-    let mountedServeCalled = false;
-    await auth.requireAuth(mountedServeReq, mountedServeRes, () => {
-      mountedServeCalled = true;
+    const mountedRawRes = createResponse();
+    let mountedRawCalled = false;
+    await auth.requireAuth(mountedRawReq, mountedRawRes, () => {
+      mountedRawCalled = true;
     });
-    expect(mountedServeCalled).toBe(true);
+    expect(mountedRawCalled).toBe(true);
+
+    const guestReq = { method: 'GET', path: '/api/guests/hello/panel/index.html', url: `/api/guests/hello/panel/index.html?oc_url_token=${encodeURIComponent(urlToken)}`, headers: {} };
+    const guestRes = createResponse();
+    let guestCalled = false;
+    await auth.requireAuth(guestReq, guestRes, () => {
+      guestCalled = true;
+    });
+    expect(guestCalled).toBe(true);
+
+    // A guest-scoped token opens only that guest's files. It is the token a
+    // sandboxed guest page can read from its own URL, so it must fail on every
+    // system path and on another guest's files.
+    const guestMintReq = { method: 'POST', path: '/auth/url-token', query: { scope: 'guest:hello' }, headers: { authorization: 'Bearer client-token', accept: 'application/json' } };
+    const guestMintRes = createResponse();
+    await auth.handleUrlAuthToken(guestMintReq, guestMintRes);
+    const guestToken = guestMintRes.body.token;
+    expect(typeof guestToken).toBe('string');
+    const guestScopedReq = { method: 'GET', path: '/api/guests/hello/panel/main.js', url: `/api/guests/hello/panel/main.js?oc_url_token=${encodeURIComponent(guestToken)}`, headers: {} };
+    let guestScopedCalled = false;
+    await auth.requireAuth(guestScopedReq, createResponse(), () => {
+      guestScopedCalled = true;
+    });
+    expect(guestScopedCalled).toBe(true);
+    for (const forbidden of [
+      { method: 'GET', path: '/api/fs/raw', url: `/api/fs/raw?path=%2Ftmp%2Fimage.png&oc_url_token=${encodeURIComponent(guestToken)}` },
+      { method: 'GET', path: '/api/event', url: `/api/event?oc_url_token=${encodeURIComponent(guestToken)}` },
+      { method: 'GET', path: '/api/guests/other/panel/main.js', url: `/api/guests/other/panel/main.js?oc_url_token=${encodeURIComponent(guestToken)}` },
+      { method: 'GET', path: '/api/guests', url: `/api/guests?oc_url_token=${encodeURIComponent(guestToken)}` },
+    ]) {
+      const forbiddenRes = createResponse();
+      let forbiddenCalled = false;
+      await auth.requireAuth({ ...forbidden, headers: {} }, forbiddenRes, () => {
+        forbiddenCalled = true;
+      });
+      expect(forbiddenCalled).toBe(false);
+      expect(forbiddenRes.statusCode).toBe(401);
+    }
+    const badScopeRes = createResponse();
+    await auth.handleUrlAuthToken({ ...guestMintReq, query: { scope: 'admin' } }, badScopeRes);
+    expect(badScopeRes.statusCode).toBe(400);
 
     const dictationWsReq = {
       method: 'GET',
@@ -258,6 +259,67 @@ describe('ui auth client credential seam', () => {
       headers: { upgrade: 'websocket' },
     };
     expect(await auth.ensureSessionToken(dictationWsReq, null)).toBe('client:device-1');
+
+    // An extension surface socket takes the session-wide URL token, never a
+    // guest-scoped one: it carries the user's pointer and keyboard.
+    const surfaceWsReq = {
+      method: 'GET',
+      path: '/api/guests/server-chrome/surface/ws',
+      url: `/api/guests/server-chrome/surface/ws?oc_url_token=${encodeURIComponent(urlToken)}`,
+      headers: { upgrade: 'websocket' },
+    };
+    expect(await auth.ensureSessionToken(surfaceWsReq, null)).toBe('client:device-1');
+    expect(await auth.ensureSessionToken({ ...surfaceWsReq, url: `/api/guests/server-chrome/surface/ws?oc_url_token=${encodeURIComponent(guestToken)}` }, null)).toBe(null);
+    expect(await auth.ensureSessionToken({
+      ...surfaceWsReq,
+      path: '/api/guests/server-chrome/surface/ws/extra',
+      url: `/api/guests/server-chrome/surface/ws/extra?oc_url_token=${encodeURIComponent(urlToken)}`,
+    }, null)).toBe(null);
+
+    const devTunnelWsReq = {
+      method: 'GET',
+      path: '/api/dev-tunnel',
+      url: `/api/dev-tunnel?port=4322&oc_url_token=${encodeURIComponent(urlToken)}`,
+      headers: { upgrade: 'websocket' },
+    };
+    expect(await auth.ensureSessionToken(devTunnelWsReq, null)).toBe('client:device-1');
+
+    // The sockets and the raw file of an isolated space, by path shape, and nothing else under the prefix.
+    for (const socket of ['terminal/ws', 'dev-tunnel', 'event/ws', 'global/event/ws']) {
+      const spaceWsReq = {
+        method: 'GET',
+        path: `/api/spaces/a1b2c3d4e5f6/${socket}`,
+        url: `/api/spaces/a1b2c3d4e5f6/${socket}?oc_url_token=${encodeURIComponent(urlToken)}`,
+        headers: { upgrade: 'websocket' },
+      };
+      expect(await auth.ensureSessionToken(spaceWsReq, null)).toBe('client:device-1');
+    }
+    expect(await auth.ensureSessionToken({
+      method: 'GET',
+      path: '/api/spaces/a1b2c3d4e5f6/dictation/ws',
+      url: `/api/spaces/a1b2c3d4e5f6/dictation/ws?oc_url_token=${encodeURIComponent(urlToken)}`,
+      headers: { upgrade: 'websocket' },
+    }, null)).toBe(null);
+    expect(await auth.ensureSessionToken({
+      method: 'GET',
+      path: '/api/spaces/a1b2c3d4e5f6/fs/raw',
+      url: `/api/spaces/a1b2c3d4e5f6/fs/raw?path=x.png&oc_url_token=${encodeURIComponent(urlToken)}`,
+      headers: { accept: 'image/png' },
+    }, null)).toBe('client:device-1');
+    expect(await auth.ensureSessionToken({
+      method: 'GET',
+      path: '/api/spaces/a1b2c3d4e5f6/session',
+      url: `/api/spaces/a1b2c3d4e5f6/session?oc_url_token=${encodeURIComponent(urlToken)}`,
+      headers: { accept: 'application/json' },
+    }, null)).toBe(null);
+
+    const devTunnelSubpathWsReq = {
+      method: 'GET',
+      path: '/api/dev-tunnel/private',
+      url: `/api/dev-tunnel/private?port=4322&oc_url_token=${encodeURIComponent(urlToken)}`,
+      headers: { upgrade: 'websocket' },
+    };
+    expect(await auth.ensureSessionToken(devTunnelSubpathWsReq, null)).toBe(null);
 
     const dictationHttpReq = {
       method: 'GET',
@@ -307,7 +369,7 @@ describe('ui auth client credential seam', () => {
             token: 'client-token',
             client: {
               id: 'device-1',
-              label: input.label,
+              label: input.label ?? input.fallbackLabel,
               createdAt: new Date().toISOString(),
               lastUsedAt: null,
               revokedAt: null,
@@ -325,7 +387,7 @@ describe('ui auth client credential seam', () => {
       body: {
         password: 'secret',
         issueClientToken: true,
-        clientLabel: 'MittrCraft Desktop',
+        clientLabel: 'OpenChamber Desktop',
       },
     };
     const res = createResponse();
@@ -333,174 +395,93 @@ describe('ui auth client credential seam', () => {
     await auth.handleSessionCreate(req, res);
 
     expect(res.body.clientToken).toBe('client-token');
-    expect(createClientInput.label).toBe('MittrCraft Desktop');
+    expect(createClientInput.fallbackLabel).toBe('OpenChamber Desktop');
     const expiresAt = Date.parse(createClientInput.expiresAt);
     expect(expiresAt).toBeGreaterThanOrEqual(before + 122_000);
     expect(expiresAt).toBeLessThanOrEqual(Date.now() + 124_000);
   });
 });
 
-describe('ui auth Microsoft Entra seam', () => {
-  it('protects the UI with Entra even when no UI password is configured', async () => {
-    const createUiAuth = await loadCreateUiAuth();
-    const auth = createUiAuth({
-      adAuthController: {
-        enabled: true,
-        configurationPresent: true,
-        mode: 'entra',
-        getStatus: () => ({ enabled: true, mode: 'entra', loginPath: '/auth/ad/login' }),
-        dispose: () => {},
-      },
-    });
-    const req = { method: 'GET', path: '/api/config/settings', headers: { accept: 'application/json' } };
+// issue #2377: browsers key cookie jars on host only, so two instances on one
+// LAN IP (different ports) collided on `oc_ui_session`. Cookies are now scoped
+// by the request port so each instance owns its own slot.
+describe('ui auth port-scoped session cookies (issue #2377)', () => {
+  const loginHost = async (auth, host) => {
+    const req = { method: 'POST', headers: { host }, body: { password: 'secret' } };
     const res = createResponse();
+    await auth.handleSessionCreate(req, res);
+    return String(res.getHeader('set-cookie') || '').split(';', 1)[0];
+  };
 
-    await auth.requireAuth(req, res, () => {});
+  it('names the issued cookie with the request port', async () => {
+    const createUiAuth = await loadCreateUiAuth();
+    const auth = createUiAuth({ password: 'secret' });
 
-    expect(auth.enabled).toBe(true);
-    expect(res.statusCode).toBe(401);
-    const statusRes = createResponse();
-    auth.handleAdStatus({}, statusRes);
-    expect(statusRes.body).toEqual({ enabled: true, mode: 'entra', loginPath: '/auth/ad/login', passwordEnabled: false });
+    const issued = await loginHost(auth, '192.168.0.1:3000');
+    expect(issued).toMatch(/^oc_ui_session_3000=/);
+    expect(issued.length).toBeGreaterThan('oc_ui_session_3000='.length);
   });
 
-  it('binds the OIDC callback to its browser transaction and issues a UI session', async () => {
+  it('keeps the bare cookie name when the host has no explicit port', async () => {
     const createUiAuth = await loadCreateUiAuth();
-    const completeAuthorization = mock(async () => ({
-      trustDevice: true,
-      profile: { id: 'object-1', displayName: 'Ada Lovelace', email: 'ada@example.com' },
-    }));
-    const auth = createUiAuth({
-      sessionTtlMs: 60_000,
-      adAuthController: {
-        enabled: true,
-        configurationPresent: true,
-        mode: 'entra',
-        getStatus: () => ({ enabled: true, mode: 'entra', loginPath: '/auth/ad/login' }),
-        beginAuthorization: async () => ({
-          authorizationUrl: 'https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?state=state-1',
-          state: 'state-1',
-          expiresAt: Date.now() + 60_000,
-        }),
-        completeAuthorization,
-        dispose: () => {},
-      },
-    });
+    const auth = createUiAuth({ password: 'secret' });
 
-    const startRes = createResponse();
-    await auth.handleAdLoginStart({ headers: {}, query: { trustDevice: 'true' } }, startRes);
-    expect(startRes.statusCode).toBe(302);
-    expect(startRes.getHeader('location')).toContain('login.microsoftonline.com');
-    expect(startRes.getHeader('set-cookie')).toContain('oc_ad_transaction=state-1');
-    expect(startRes.getHeader('set-cookie')).toContain('Path=/auth/ad/callback');
-    expect(startRes.getHeader('set-cookie')).toContain('SameSite=Lax');
-
-    const callbackRes = createResponse();
-    await auth.handleAdCallback({
-      headers: { cookie: 'oc_ad_transaction=state-1' },
-      query: { state: 'state-1', code: 'authorization-code' },
-    }, callbackRes);
-    expect(callbackRes.statusCode).toBe(302);
-    expect(callbackRes.getHeader('location')).toBe('/');
-    expect(completeAuthorization).toHaveBeenCalledWith({ code: 'authorization-code', state: 'state-1' });
-    const cookies = callbackRes.getHeader('set-cookie');
-    expect(Array.isArray(cookies)).toBe(true);
-    expect(cookies.some((cookie) => cookie.startsWith('oc_ad_transaction=;'))).toBe(true);
-    expect(cookies.some((cookie) => cookie.startsWith('oc_ui_session='))).toBe(true);
+    expect(await loginHost(auth, '192.168.0.1')).toMatch(/^oc_ui_session=/);
   });
 
-  it('returns a loopback HMR login to the initiating UI origin', async () => {
+  it('reads the slot for the request port and ignores another port cookie', async () => {
     const createUiAuth = await loadCreateUiAuth();
-    let authorizationInput = null;
-    const auth = createUiAuth({
-      adAuthController: {
-        enabled: true,
-        configurationPresent: true,
-        mode: 'entra',
-        getStatus: () => ({ enabled: true, mode: 'entra', loginPath: '/auth/ad/login' }),
-        beginAuthorization: async (input) => {
-          authorizationInput = input;
-          return {
-            authorizationUrl: 'https://login.microsoftonline.com/tenant/oauth2/v2.0/authorize?state=state-hmr',
-            state: 'state-hmr',
-            expiresAt: Date.now() + 60_000,
-          };
-        },
-        completeAuthorization: async () => ({
-          trustDevice: false,
-          profile: { displayName: 'Ada Lovelace' },
-          returnTo: 'http://localhost:5180/',
-        }),
-        dispose: () => {},
-      },
-    });
+    const auth = createUiAuth({ password: 'secret' });
 
-    const startRes = createResponse();
-    await auth.handleAdLoginStart({
-      headers: { host: 'localhost:3000', referer: 'http://localhost:5180/' },
-      query: { returnTo: 'http://localhost:5180/' },
-    }, startRes);
-    expect(authorizationInput).toEqual({ trustDevice: false, returnTo: 'http://localhost:5180/' });
+    // Valid token issued against :3000.
+    const portCookie = await loginHost(auth, '192.168.0.1:3000');
+    const validToken = portCookie.slice('oc_ui_session_3000='.length);
 
-    const callbackRes = createResponse();
-    await auth.handleAdCallback({
-      headers: { cookie: 'oc_ad_transaction=state-hmr' },
-      query: { state: 'state-hmr', code: 'authorization-code' },
-    }, callbackRes);
-    expect(callbackRes.getHeader('location')).toBe('http://localhost:5180/');
+    // A request that lands on :3001 must read the :3001 slot, NOT the :3000 one,
+    // even though the browser ships both cookies to either port.
+    const wrongSlot = {
+      method: 'GET',
+      headers: { host: '192.168.0.1:3001', cookie: `oc_ui_session_3000=${validToken}; oc_ui_session_3001=stale` },
+    };
+    const wrongRes = createResponse();
+    await auth.handleSessionStatus(wrongSlot, wrongRes);
+    expect(wrongRes.body.authenticated).toBe(false);
+
+    // The same token read on its own port authenticates.
+    const rightSlot = {
+      method: 'GET',
+      headers: { host: '192.168.0.1:3000', cookie: `oc_ui_session_3000=${validToken}` },
+    };
+    const rightRes = createResponse();
+    await auth.handleSessionStatus(rightSlot, rightRes);
+    expect(rightRes.body.authenticated).toBe(true);
   });
+});
 
-  it('rejects an untrusted Microsoft login return target', async () => {
+describe('ui auth login rate limit', () => {
+  it('keys failed logins on the connection, not on a client-chosen X-Forwarded-For', async () => {
     const createUiAuth = await loadCreateUiAuth();
-    let authorizationInput = null;
-    const auth = createUiAuth({
-      adAuthController: {
-        enabled: true,
-        configurationPresent: true,
-        mode: 'entra',
-        getStatus: () => ({ enabled: true, mode: 'entra' }),
-        beginAuthorization: async (input) => {
-          authorizationInput = input;
-          return {
-            authorizationUrl: 'https://login.microsoftonline.com/tenant/authorize',
-            state: 'state-unsafe',
-            expiresAt: Date.now() + 60_000,
-          };
-        },
-        dispose: () => {},
-      },
-    });
-    const res = createResponse();
+    const auth = createUiAuth({ password: 'secret' });
+    const attempt = async (index) => {
+      // A rotated header is a deliberate spoof: without a trusted proxy in
+      // front, Express leaves req.ip at the socket address.
+      const req = {
+        method: 'POST',
+        ip: '198.51.100.7',
+        headers: { host: '127.0.0.1:3000', 'x-forwarded-for': `203.0.113.${index}` },
+        body: { password: 'wrong' },
+      };
+      const res = createResponse();
+      await auth.handleSessionCreate(req, res);
+      return res.statusCode;
+    };
 
-    await auth.handleAdLoginStart({
-      headers: { host: 'localhost:3000', referer: 'http://localhost:5180/' },
-      query: { returnTo: 'https://attacker.example/' },
-    }, res);
+    const statuses = [];
+    for (let index = 0; index < 12; index += 1) {
+      statuses.push(await attempt(index));
+    }
 
-    expect(authorizationInput).toEqual({ trustDevice: false, returnTo: '/' });
-  });
-
-  it('rejects callbacks whose state does not match the browser cookie', async () => {
-    const createUiAuth = await loadCreateUiAuth();
-    const completeAuthorization = mock(async () => ({ trustDevice: false, profile: {} }));
-    const auth = createUiAuth({
-      adAuthController: {
-        enabled: true,
-        configurationPresent: true,
-        mode: 'entra',
-        getStatus: () => ({ enabled: true, mode: 'entra' }),
-        completeAuthorization,
-        dispose: () => {},
-      },
-    });
-    const res = createResponse();
-
-    await auth.handleAdCallback({
-      headers: { cookie: 'oc_ad_transaction=state-for-another-browser' },
-      query: { state: 'state-1', code: 'authorization-code' },
-    }, res);
-
-    expect(res.statusCode).toBe(400);
-    expect(completeAuthorization).not.toHaveBeenCalled();
+    expect(statuses.slice(0, 10)).toEqual(Array(10).fill(401));
+    expect(statuses.slice(10)).toEqual([429, 429]);
   });
 });

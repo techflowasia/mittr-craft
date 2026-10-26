@@ -7,7 +7,7 @@ import { execGit } from './bridge-git-process-runtime';
 const MAX_FILE_ATTACH_SIZE_BYTES = 20 * 1024 * 1024;
 
 const createGitCheckIgnoreTimeoutMs = () => {
-  const raw = Number(process.env.MITTRCRAFT_GIT_CHECK_IGNORE_TIMEOUT_MS);
+  const raw = Number(process.env.OPENCHAMBER_GIT_CHECK_IGNORE_TIMEOUT_MS);
   if (Number.isFinite(raw) && raw >= 0) return raw;
   return 2500;
 };
@@ -122,25 +122,8 @@ const isPathInside = (candidatePath: string, parentPath: string): boolean => {
 
 export const normalizeFsPath = (value: string) => value.replace(/\\/g, '/');
 
-const execGitCheckIgnore = async (args: string[], cwd: string): Promise<{ stdout: string; stderr: string; exitCode: number } | null> => {
-  if (GIT_CHECK_IGNORE_TIMEOUT_MS <= 0) {
-    return execGit(args, cwd);
-  }
-
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      execGit(args, cwd),
-      new Promise<null>((resolve) => {
-        timeout = setTimeout(() => resolve(null), GIT_CHECK_IGNORE_TIMEOUT_MS);
-      }),
-    ]);
-  } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-  }
-};
+const execGitCheckIgnore = (args: string[], cwd: string) =>
+  execGit(args, cwd, { timeoutMs: GIT_CHECK_IGNORE_TIMEOUT_MS });
 
 const gitCheckIgnoreNames = async (cwd: string, names: string[]): Promise<Set<string>> => {
   if (names.length === 0) {
@@ -148,9 +131,6 @@ const gitCheckIgnoreNames = async (cwd: string, names: string[]): Promise<Set<st
   }
 
   const result = await execGitCheckIgnore(['check-ignore', '--', ...names], cwd);
-  if (!result) {
-    return new Set();
-  }
   if (result.exitCode !== 0 || !result.stdout) {
     return new Set();
   }
@@ -169,9 +149,6 @@ const gitCheckIgnorePaths = async (cwd: string, paths: string[]): Promise<Set<st
   }
 
   const result = await execGitCheckIgnore(['check-ignore', '--', ...paths], cwd);
-  if (!result) {
-    return new Set();
-  }
   if (result.exitCode !== 0 || !result.stdout) {
     return new Set();
   }
@@ -583,12 +560,8 @@ export const resolveFileReadPath = async (targetPath: string, requestedRoot?: st
   }
 
   try {
-    const [canonicalPath, canonicalBase] = await Promise.all([
-      fs.promises.realpath(resolved),
-      fs.promises.realpath(baseRoot).catch(() => path.resolve(baseRoot)),
-    ]);
-
-    if (!isPathInside(canonicalPath, canonicalBase)) {
+    const canonicalPath = await fs.promises.realpath(resolved);
+    if (!isPathInside(resolved, path.resolve(baseRoot))) {
       return { ok: false, status: 403, error: 'Access to file denied' };
     }
 

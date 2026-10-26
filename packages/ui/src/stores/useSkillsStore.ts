@@ -10,7 +10,6 @@ import {
 import { createDeferredSafeJSONStorage } from "./utils/safeStorage";
 import { runtimeFetch } from "@/lib/runtime-fetch";
 import { runBackgroundNetworkTask } from "@/lib/background-network";
-import { noteDeferredRestartFromPayload } from "@/lib/opencode/deferredRestart";
 import { useProjectsStore } from "@/stores/useProjectsStore";
 
 import { opencodeClient } from '@/lib/opencode/client';
@@ -20,6 +19,19 @@ import { filterSkillsByRuntimeFlags } from './skillVisibility';
 // project selector (and Commands/Agents). Falling back only to the session
 // directory misses repository-local `.agents/skills` when the client directory
 // is unset or points elsewhere while an active project exists.
+/**
+ * Directory a call operates on. Settings can browse another project without
+ * moving the app, so every entry point takes one; omitting it means the project
+ * the app is currently on.
+ */
+const resolveDirectory = (directory?: string | null): string | null => {
+  if (directory !== undefined) {
+    const trimmed = directory?.trim();
+    return trimmed ? trimmed : null;
+  }
+  return getRequestDirectory();
+};
+
 const getRequestDirectory = (): string | null => {
   try {
     const projectsStore = useProjectsStore.getState();
@@ -62,6 +74,8 @@ interface SkillSources {
     name?: string;
     description?: string;
     instructions?: string;
+    /** The model only loads the skill when asked for it by name. */
+    disableModelInvocation?: boolean;
   };
   projectMd?: { exists: boolean; path: string | null };
   claudeMd?: { exists: boolean; path: string | null };
@@ -119,6 +133,7 @@ export interface SkillConfig {
   source?: SkillSource;
   targetPath?: string;
   supportingFiles?: Array<{ path: string; content: string }>;
+  disableModelInvocation?: boolean;
 }
 
 export interface PendingFile {
@@ -144,24 +159,33 @@ interface SkillDetail {
 
 interface SkillsStore {
   selectedSkillName: string | null;
+  /** Skills of the project the app is on. Chat and autocompletes read this one. */
   skills: DiscoveredSkill[];
+  /** Every directory loaded so far, including the ambient one. */
+  skillsByDirectory: Record<string, DiscoveredSkill[]>;
   isLoading: boolean;
   skillDraft: SkillDraft | null;
 
   setSelectedSkill: (name: string | null) => void;
   setSkillDraft: (draft: SkillDraft | null) => void;
-  loadSkills: () => Promise<boolean>;
-  getSkillDetail: (name: string) => Promise<SkillDetail | null>;
-  createSkill: (config: SkillConfig) => Promise<boolean>;
-  updateSkill: (name: string, config: Partial<SkillConfig>) => Promise<boolean>;
-  renameSkill: (name: string, newName: string) => Promise<boolean>;
-  deleteSkill: (name: string) => Promise<boolean>;
-  getSkillByName: (name: string) => DiscoveredSkill | undefined;
-  
+  loadSkills: (directory?: string | null) => Promise<boolean>;
+  getSkillDetail: (name: string, directory?: string | null) => Promise<SkillDetail | null>;
+  createSkill: (config: SkillConfig, directory?: string | null) => Promise<boolean>;
+  updateSkill: (name: string, config: Partial<SkillConfig>, directory?: string | null) => Promise<boolean>;
+  renameSkill: (name: string, newName: string, directory?: string | null) => Promise<boolean>;
+  deleteSkill: (name: string, directory?: string | null) => Promise<boolean>;
+  getSkillByName: (name: string, directory?: string | null) => DiscoveredSkill | undefined;
+  /**
+   * Skills are discovered on the connected instance and cached by directory,
+   * which two instances can share — so a switch must drop the caches rather
+   * than report the previous instance's skills for the new one.
+   */
+  resetForRuntimeSwitch: () => void;
+
   // Supporting files
-  readSupportingFile: (skillName: string, filePath: string) => Promise<string | null>;
-  writeSupportingFile: (skillName: string, filePath: string, content: string) => Promise<boolean>;
-  deleteSupportingFile: (skillName: string, filePath: string) => Promise<boolean>;
+  readSupportingFile: (skillName: string, filePath: string, directory?: string | null) => Promise<string | null>;
+  writeSupportingFile: (skillName: string, filePath: string, content: string, directory?: string | null) => Promise<boolean>;
+  deleteSupportingFile: (skillName: string, filePath: string, directory?: string | null) => Promise<boolean>;
 }
 
 declare global {
@@ -176,6 +200,26 @@ const SKILLS_LOAD_CACHE_TTL_MS = 5000;
 const DEFAULT_SKILLS_CACHE_KEY = '__default__';
 const skillsLastLoadedAt = new Map<string, number>();
 const skillsLoadInFlight = new Map<string, Promise<boolean>>();
+// Bumped on every runtime switch. Skills are discovered on the connected
+// instance and cached by directory, which two instances can share, so a load
+// already in flight for the previous instance must not write into the new one.
+let skillsGeneration = 0;
+
+/**
+ * Merge a partial list (OpenCode's own skill list failed, only the disk scan
+ * came back) with what was known before. Previously known skills the disk scan
+ * cannot vouch for — built-ins and anything OpenCode found through its config —
+ * are kept instead of vanishing on one failed fetch. Managed-root skills
+ * (`renamable`) are covered by the disk scan, so their absence is real.
+ */
+export const mergePartialSkills = (
+  partial: DiscoveredSkill[],
+  previous: DiscoveredSkill[],
+): DiscoveredSkill[] => {
+  const partialNames = new Set(partial.map((skill) => skill.name));
+  const carried = previous.filter((skill) => !partialNames.has(skill.name) && skill.renamable !== true);
+  return carried.length > 0 ? [...partial, ...carried] : partial;
+};
 
 const getSkillsCacheKey = (directory: string | null): string => {
   return directory?.trim() || DEFAULT_SKILLS_CACHE_KEY;
@@ -186,12 +230,16 @@ export const invalidateSkillsLoadCache = (directory: string | null = getRequestD
 };
 
 const upsertSkillLocal = (
-  set: (state: Partial<SkillsStore>) => void,
+  set: (updater: (state: SkillsStore) => Partial<SkillsStore>) => void,
   get: () => SkillsStore,
   name: string,
   config: Partial<SkillConfig>,
+  directory: string | null,
 ) => {
-  const existing = get().skills.find((skill) => skill.name === name);
+  const cacheKey = getSkillsCacheKey(directory);
+  const isAmbient = cacheKey === getSkillsCacheKey(getRequestDirectory());
+  const current = get().skillsByDirectory[cacheKey] ?? [];
+  const existing = current.find((skill) => skill.name === name);
   const path = config.targetPath ?? existing?.path ?? '';
   const nextSkill: DiscoveredSkill = {
     ...existing,
@@ -202,11 +250,16 @@ const upsertSkillLocal = (
     description: config.description ?? existing?.description ?? '',
     group: parseSkillGroup(path),
   };
-  const skills = get().skills;
-  const nextSkills = skills.some((skill) => skill.name === name)
-    ? skills.map((skill) => (skill.name === name ? nextSkill : skill))
-    : [...skills, nextSkill];
-  set({ skills: nextSkills });
+  const nextSkills = current.some((skill) => skill.name === name)
+    ? current.map((skill) => (skill.name === name ? nextSkill : skill))
+    : [...current, nextSkill];
+  set((state) => {
+    const next: Partial<SkillsStore> = {
+      skillsByDirectory: { ...state.skillsByDirectory, [cacheKey]: nextSkills },
+    };
+    if (isAmbient) next.skills = nextSkills;
+    return next;
+  });
 };
 
 const removeSkillLocal = (
@@ -230,14 +283,36 @@ const SLOW_HEALTH_POLL_BASE_MS = 800;
 const SLOW_HEALTH_POLL_INCREMENT_MS = 200;
 const SLOW_HEALTH_POLL_MAX_MS = 2000;
 
+const EMPTY_SKILLS: DiscoveredSkill[] = [];
+
+/**
+ * Skills of one project. Returns a stored array so components can select it
+ * directly; an omitted directory means the project the app is on.
+ */
+export const selectSkillsForDirectory = (
+  state: Pick<SkillsStore, 'skillsByDirectory'>,
+  directory?: string | null,
+): DiscoveredSkill[] => {
+  const cacheKey = getSkillsCacheKey(resolveDirectory(directory));
+  return state.skillsByDirectory[cacheKey] ?? EMPTY_SKILLS;
+};
+
 export const useSkillsStore = create<SkillsStore>()(
   devtools(
     persist(
       (set, get) => ({
         selectedSkillName: null,
         skills: [],
+        skillsByDirectory: {},
         isLoading: false,
         skillDraft: null,
+
+        resetForRuntimeSwitch: () => {
+          skillsGeneration += 1;
+          skillsLastLoadedAt.clear();
+          skillsLoadInFlight.clear();
+          set({ skills: [], skillsByDirectory: {}, isLoading: false });
+        },
 
         setSelectedSkill: (name: string | null) => {
           set({ selectedSkillName: name });
@@ -247,12 +322,13 @@ export const useSkillsStore = create<SkillsStore>()(
           set({ skillDraft: draft });
         },
 
-        loadSkills: async () => {
-          const directory = getRequestDirectory();
+        loadSkills: async (requestedDirectory?: string | null) => {
+          const directory = resolveDirectory(requestedDirectory);
           const cacheKey = getSkillsCacheKey(directory);
+          const isAmbient = cacheKey === getSkillsCacheKey(getRequestDirectory());
           const now = Date.now();
           const loadedAt = skillsLastLoadedAt.get(cacheKey) ?? 0;
-          const hasCachedSkills = get().skills.length > 0;
+          const hasCachedSkills = (get().skillsByDirectory[cacheKey] ?? (isAmbient ? get().skills : [])).length > 0;
 
           if (hasCachedSkills && now - loadedAt < SKILLS_LOAD_CACHE_TTL_MS) {
             return true;
@@ -263,9 +339,12 @@ export const useSkillsStore = create<SkillsStore>()(
             return inFlight;
           }
 
+          const generation = skillsGeneration;
           const request = (async () => {
             set({ isLoading: true });
-            const previousSkills = get().skills;
+            // Failure must never look like an empty project. The mirror is the
+            // fallback so a directory loaded before this map existed still counts.
+            const previousSkills = get().skillsByDirectory[cacheKey] ?? (isAmbient ? get().skills : []);
             let lastError: unknown = null;
 
             for (let attempt = 0; attempt < 3; attempt++) {
@@ -301,13 +380,32 @@ export const useSkillsStore = create<SkillsStore>()(
                 // Deliberately not OpenCode's own skill endpoint: measured
                 // against 1.18.14 it lists only global and builtin skills and
                 // omits the project skills the agent actually has.
-                const visibleSkills = filterSkillsByRuntimeFlags(
+                const scannedSkills = filterSkillsByRuntimeFlags(
                   configSkills,
                   data.externalSkills ?? null,
                 );
+                // The server answers with only its disk scan when OpenCode's
+                // own list could not be read. That is not a complete list:
+                // keep what was known and retry on the next load.
+                const isPartial = data.openCodeSkillsUnavailable === true;
+                const visibleSkills = isPartial
+                  ? mergePartialSkills(scannedSkills, previousSkills)
+                  : scannedSkills;
 
-                set({ skills: visibleSkills, isLoading: false });
-                skillsLastLoadedAt.set(cacheKey, Date.now());
+                if (generation !== skillsGeneration) return false;
+                set((state) => {
+                  const next: Partial<SkillsStore> = {
+                    skillsByDirectory: { ...state.skillsByDirectory, [cacheKey]: visibleSkills },
+                    isLoading: false,
+                  };
+                  if (isAmbient) next.skills = visibleSkills;
+                  return next;
+                });
+                if (isPartial) {
+                  skillsLastLoadedAt.delete(cacheKey);
+                } else {
+                  skillsLastLoadedAt.set(cacheKey, Date.now());
+                }
                 return true;
               } catch (error) {
                 lastError = error;
@@ -317,7 +415,15 @@ export const useSkillsStore = create<SkillsStore>()(
             }
 
             console.error("Failed to load skills:", lastError);
-            set({ skills: previousSkills, isLoading: false });
+            if (generation !== skillsGeneration) return false;
+            set((state) => {
+              const next: Partial<SkillsStore> = {
+                skillsByDirectory: { ...state.skillsByDirectory, [cacheKey]: previousSkills },
+                isLoading: false,
+              };
+              if (isAmbient) next.skills = previousSkills;
+              return next;
+            });
             return false;
           })();
 
@@ -329,9 +435,9 @@ export const useSkillsStore = create<SkillsStore>()(
           }
         },
 
-        getSkillDetail: async (name: string) => {
+        getSkillDetail: async (name: string, requestedDirectory?: string | null) => {
           try {
-            const directory = getRequestDirectory();
+            const directory = resolveDirectory(requestedDirectory);
             const queryParams = directory ? `?directory=${encodeURIComponent(directory)}` : '';
             
             const response = await runtimeFetch(`/api/config/skills/${encodeURIComponent(name)}${queryParams}`, {
@@ -347,7 +453,7 @@ export const useSkillsStore = create<SkillsStore>()(
           }
         },
 
-        createSkill: async (config: SkillConfig) => {
+        createSkill: async (config: SkillConfig, requestedDirectory?: string | null) => {
           try {
             const skillConfig: Record<string, unknown> = {
               name: config.name,
@@ -358,8 +464,9 @@ export const useSkillsStore = create<SkillsStore>()(
             if (config.scope) skillConfig.scope = config.scope;
             if (config.source) skillConfig.source = config.source;
             if (config.supportingFiles) skillConfig.supportingFiles = config.supportingFiles;
+            if (config.disableModelInvocation) skillConfig.disableModelInvocation = true;
 
-            const directory = getRequestDirectory();
+            const directory = resolveDirectory(requestedDirectory);
             const queryParams = directory ? `?directory=${encodeURIComponent(directory)}` : '';
 
             const response = await runtimeFetch(`/api/config/skills/${encodeURIComponent(config.name)}${queryParams}`, {
@@ -380,13 +487,7 @@ export const useSkillsStore = create<SkillsStore>()(
             invalidateSkillsLoadCache(directory);
 
             if (payload?.requiresManualRestart) {
-              upsertSkillLocal(set, get, config.name, config);
-              return true;
-            }
-
-            if (noteDeferredRestartFromPayload(payload, 'skills', { id: config.name })) {
-              upsertSkillLocal(set, get, config.name, config);
-              emitConfigChange("skills", { source: CONFIG_EVENT_SOURCE });
+              upsertSkillLocal(set, get, config.name, config, directory);
               return true;
             }
 
@@ -399,7 +500,7 @@ export const useSkillsStore = create<SkillsStore>()(
               return true;
             }
 
-            const loaded = await get().loadSkills();
+            const loaded = await get().loadSkills(directory);
             if (loaded) {
               emitConfigChange("skills", { source: CONFIG_EVENT_SOURCE });
             }
@@ -409,7 +510,7 @@ export const useSkillsStore = create<SkillsStore>()(
           }
         },
 
-        updateSkill: async (name: string, config: Partial<SkillConfig>) => {
+        updateSkill: async (name: string, config: Partial<SkillConfig>, requestedDirectory?: string | null) => {
           try {
             const skillConfig: Record<string, unknown> = {};
 
@@ -417,8 +518,9 @@ export const useSkillsStore = create<SkillsStore>()(
             if (config.instructions !== undefined) skillConfig.instructions = config.instructions;
             if (config.supportingFiles !== undefined) skillConfig.supportingFiles = config.supportingFiles;
             if (config.targetPath !== undefined) skillConfig.targetPath = config.targetPath;
+            if (config.disableModelInvocation !== undefined) skillConfig.disableModelInvocation = config.disableModelInvocation;
 
-            const directory = getRequestDirectory();
+            const directory = resolveDirectory(requestedDirectory);
             const queryParams = directory ? `?directory=${encodeURIComponent(directory)}` : '';
 
             const response = await runtimeFetch(`/api/config/skills/${encodeURIComponent(name)}${queryParams}`, {
@@ -439,13 +541,7 @@ export const useSkillsStore = create<SkillsStore>()(
             invalidateSkillsLoadCache(directory);
 
             if (payload?.requiresManualRestart) {
-              upsertSkillLocal(set, get, name, config);
-              return true;
-            }
-
-            if (noteDeferredRestartFromPayload(payload, 'skills', { id: name })) {
-              upsertSkillLocal(set, get, name, config);
-              emitConfigChange("skills", { source: CONFIG_EVENT_SOURCE });
+              upsertSkillLocal(set, get, name, config, directory);
               return true;
             }
 
@@ -458,7 +554,7 @@ export const useSkillsStore = create<SkillsStore>()(
               return true;
             }
 
-            const loaded = await get().loadSkills();
+            const loaded = await get().loadSkills(directory);
             if (loaded) {
               emitConfigChange("skills", { source: CONFIG_EVENT_SOURCE });
             }
@@ -468,11 +564,9 @@ export const useSkillsStore = create<SkillsStore>()(
           }
         },
 
-        renameSkill: async (name: string, newName: string) => {
-          startConfigUpdate("Renaming skill...");
-          let requiresReload = false;
+        renameSkill: async (name: string, newName: string, requestedDirectory?: string | null) => {
           try {
-            const directory = getRequestDirectory();
+            const directory = resolveDirectory(requestedDirectory);
             const queryParams = directory ? `?directory=${encodeURIComponent(directory)}` : '';
 
             const response = await runtimeFetch(`/api/config/skills/${encodeURIComponent(name)}${queryParams}`, {
@@ -493,7 +587,6 @@ export const useSkillsStore = create<SkillsStore>()(
             const needsReload = payload?.requiresReload ?? false;
             invalidateSkillsLoadCache(directory);
             if (needsReload) {
-              requiresReload = true;
               await refreshSkillsAfterOpenCodeRestart({
                 message: payload?.message,
                 delayMs: payload?.reloadDelayMs,
@@ -501,23 +594,19 @@ export const useSkillsStore = create<SkillsStore>()(
               return true;
             }
 
-            const loaded = await get().loadSkills();
+            const loaded = await get().loadSkills(directory);
             if (loaded) {
               emitConfigChange("skills", { source: CONFIG_EVENT_SOURCE });
             }
             return loaded;
           } catch {
             return false;
-          } finally {
-            if (!requiresReload) {
-              finishConfigUpdate();
-            }
           }
         },
 
-        deleteSkill: async (name: string) => {
+        deleteSkill: async (name: string, requestedDirectory?: string | null) => {
           try {
-            const directory = getRequestDirectory();
+            const directory = resolveDirectory(requestedDirectory);
             const queryParams = directory ? `?directory=${encodeURIComponent(directory)}` : '';
 
             const response = await runtimeFetch(`/api/config/skills/${encodeURIComponent(name)}${queryParams}`, {
@@ -538,12 +627,6 @@ export const useSkillsStore = create<SkillsStore>()(
               return true;
             }
 
-            if (noteDeferredRestartFromPayload(payload, 'skills', { id: name })) {
-              removeSkillLocal(set, get, name);
-              emitConfigChange("skills", { source: CONFIG_EVENT_SOURCE });
-              return true;
-            }
-
             if (payload?.requiresReload) {
               startConfigUpdate("Deleting skill...");
               await refreshSkillsAfterOpenCodeRestart({
@@ -553,7 +636,7 @@ export const useSkillsStore = create<SkillsStore>()(
               return true;
             }
 
-            const loaded = await get().loadSkills();
+            const loaded = await get().loadSkills(directory);
             if (loaded) {
               emitConfigChange("skills", { source: CONFIG_EVENT_SOURCE });
             }
@@ -568,14 +651,13 @@ export const useSkillsStore = create<SkillsStore>()(
           }
         },
 
-        getSkillByName: (name: string) => {
-          const { skills } = get();
-          return skills.find((s) => s.name === name);
+        getSkillByName: (name: string, requestedDirectory?: string | null) => {
+          return selectSkillsForDirectory(get(), requestedDirectory).find((skill) => skill.name === name);
         },
 
-        readSupportingFile: async (skillName: string, filePath: string) => {
+        readSupportingFile: async (skillName: string, filePath: string, requestedDirectory?: string | null) => {
           try {
-            const directory = getRequestDirectory();
+            const directory = resolveDirectory(requestedDirectory);
             const queryParams = directory ? `&directory=${encodeURIComponent(directory)}` : '';
             
             const response = await runtimeFetch(
@@ -593,9 +675,9 @@ export const useSkillsStore = create<SkillsStore>()(
           }
         },
 
-        writeSupportingFile: async (skillName: string, filePath: string, content: string) => {
+        writeSupportingFile: async (skillName: string, filePath: string, content: string, requestedDirectory?: string | null) => {
           try {
-            const directory = getRequestDirectory();
+            const directory = resolveDirectory(requestedDirectory);
             const queryParams = directory ? `?directory=${encodeURIComponent(directory)}` : '';
             
             const response = await runtimeFetch(
@@ -616,9 +698,9 @@ export const useSkillsStore = create<SkillsStore>()(
           }
         },
 
-        deleteSupportingFile: async (skillName: string, filePath: string) => {
+        deleteSupportingFile: async (skillName: string, filePath: string, requestedDirectory?: string | null) => {
           try {
-            const directory = getRequestDirectory();
+            const directory = resolveDirectory(requestedDirectory);
             const queryParams = directory ? `?directory=${encodeURIComponent(directory)}` : '';
             
             const response = await runtimeFetch(

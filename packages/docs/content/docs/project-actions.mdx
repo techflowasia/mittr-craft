@@ -17,12 +17,16 @@ You can limit an action to certain operating systems if a command only makes sen
 
 ## Run an action
 
-Actions live in a menu in the app header. Click one and MittrCraft runs it in a terminal in your project folder, switching you to the terminal view so you can watch the output. Stop it from the same menu.
+Actions live in a menu in the app header. Click one and OpenChamber runs it in a terminal in your project folder, switching you to the terminal view so you can watch the output. Stop it from the same menu.
 
 ## Auto-open a dev server
 
-Turn on **auto-open URL** for an action that starts a server. MittrCraft watches the output for a local address and offers to open it — see [Preview & Dev Servers](/preview/). On desktop you can also route it through an SSH port forward.
+Turn on **auto-open URL** for an action that starts a server. OpenChamber watches the output for a local address and offers to open it — see [Preview & Dev Servers](/preview/). On desktop you can also route it through an SSH port forward.
+
+If the server has a fixed address, put it in the action's URL field. `{worktree}` and `{branch}` fill in the checkout the action runs in, so one action works in every worktree. With [portless](https://github.com/vercel-labs/portless), `https://{worktree}.myapp.localhost` opens `https://auth.myapp.localhost` in a worktree on `feature/auth` and `https://myapp.localhost` in the main checkout. You may not need the field at all: when portless prints its address, OpenChamber opens that one instead of the port behind it. On a desktop connected to a remote instance it opens the port instead, since only loopback ports travel through the tunnel to the remote machine.
 
 ## Related
 
-- [Preview & Dev Servers](/preview/) — open a running dev server inside MittrCraft
+- [Repository config](/repository-config/) — keep actions and setup commands in the repository for the whole team
+
+- [Preview & Dev Servers](/preview/) — open a running dev server inside OpenChamber

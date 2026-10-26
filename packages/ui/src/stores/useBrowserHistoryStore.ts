@@ -83,7 +83,7 @@ export const useBrowserHistoryStore = create<BrowserHistoryState>()(
       },
     }),
     {
-      name: 'mittrcraft-browser-history',
+      name: 'openchamber-browser-history',
       version: 1,
       storage: createDeferredSafeJSONStorage(),
       partialize: (state) => ({ byProject: state.byProject }),

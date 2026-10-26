@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 
-import { fetchDesktopInstalledApps, isDesktopLocalOriginActive, isDesktopShell, type DesktopSettings, type InstalledDesktopAppInfo } from '@/lib/desktop';
+import { fetchDesktopInstalledApps, isDesktopLocalOriginActive, isDesktopShell, type InstalledDesktopAppInfo } from '@/lib/desktop';
 import { OPEN_IN_APPS, DEFAULT_OPEN_IN_APP_ID, OPEN_IN_ALWAYS_AVAILABLE_APP_IDS, getOpenInAppById, getPlatformOpenInApp, type OpenInApp } from '@/lib/openInApps';
-import { updateDesktopSettings } from '@/lib/persistence';
+import { type SettingsSyncedDetail, updateDesktopSettings } from '@/lib/persistence';
 
 export type OpenInAppOption = OpenInApp & {
   iconDataUrl?: string;
@@ -160,7 +160,7 @@ export const useOpenInAppsStore = create<OpenInAppsState>()((set, get) => ({
     void loadInstalledApps();
 
     const settingsHandler = (event: Event) => {
-      const detail = (event as CustomEvent<DesktopSettings>).detail;
+      const detail = (event as CustomEvent<SettingsSyncedDetail>).detail?.settings;
       const nextId = detail
         && typeof detail.openInAppId === 'string'
         && detail.openInAppId.length > 0
@@ -192,11 +192,11 @@ export const useOpenInAppsStore = create<OpenInAppsState>()((set, get) => ({
       applyInstalledApps(detail);
     };
 
-    window.addEventListener('mittrcraft:settings-synced', settingsHandler);
-    window.addEventListener('mittrcraft:app-ready', appReadyHandler);
-    window.addEventListener('mittrcraft:installed-apps-updated', updateHandler);
+    window.addEventListener('openchamber:settings-synced', settingsHandler);
+    window.addEventListener('openchamber:app-ready', appReadyHandler);
+    window.addEventListener('openchamber:installed-apps-updated', updateHandler);
 
-    const appReady = (window as unknown as { __mittrcraftAppReady?: boolean }).__mittrcraftAppReady;
+    const appReady = (window as unknown as { __openchamberAppReady?: boolean }).__openchamberAppReady;
     if (appReady) {
       void loadInstalledApps();
     }

@@ -77,12 +77,40 @@ describe('useSkillsStore directory resolution', () => {
     });
 
     invalidateSkillsLoadCache(activeProjectPath);
+    invalidateSkillsLoadCache('/workspace/other-project');
     useSkillsStore.setState({
       selectedSkillName: null,
       skills: [],
+      skillsByDirectory: {},
       isLoading: false,
       skillDraft: null,
     });
+  });
+
+  test('loading another project leaves the active project\'s skills alone', async () => {
+    // Settings can browse a project the app is not on. Chat autocompletes read
+    // `skills`, so that list must keep describing the active project.
+    const activeSkills = [{
+      name: 'active-only',
+      path: `${activeProjectPath}/.agents/skills/active-only/SKILL.md`,
+      scope: 'project' as const,
+      source: 'agents' as const,
+      description: 'Active project skill',
+      group: undefined,
+      renamable: false,
+    }];
+    useSkillsStore.setState({
+      skills: activeSkills,
+      skillsByDirectory: { [activeProjectPath]: activeSkills },
+    });
+
+    const loaded = await useSkillsStore.getState().loadSkills('/workspace/other-project');
+
+    expect(loaded).toBe(true);
+    expect(runtimeFetchCalls[0]?.url).toContain(`directory=${encodeURIComponent('/workspace/other-project')}`);
+    const state = useSkillsStore.getState();
+    expect(state.skills).toEqual(activeSkills);
+    expect(state.skillsByDirectory['/workspace/other-project']?.map((skill) => skill.name)).toEqual(['repo-local-skill']);
   });
 
   test('loadSkills scopes discovery to the active project even when client directory is unset', async () => {
@@ -200,5 +228,51 @@ describe('useSkillsStore directory resolution', () => {
     expect(await useSkillsStore.getState().loadSkills()).toBe(true);
     expect(runtimeFetchCalls.length).toBe(2);
     expect(runtimeFetchCalls[1]?.url).toContain(`directory=${encodeURIComponent(activeProjectPath)}`);
+  });
+  test('a partial list keeps previously known OpenCode skills and is not cached as fresh', async () => {
+    const builtIn = {
+      name: 'OpenCode',
+      path: '<built-in>',
+      scope: 'user' as const,
+      source: 'opencode' as const,
+      description: 'Built-in',
+      group: undefined,
+      renamable: false,
+    };
+    const deletedManaged = {
+      name: 'deleted-managed',
+      path: `${activeProjectPath}/.opencode/skills/deleted-managed/SKILL.md`,
+      scope: 'project' as const,
+      source: 'opencode' as const,
+      description: 'Gone from disk',
+      group: undefined,
+      renamable: true,
+    };
+    useSkillsStore.setState({
+      skills: [builtIn, deletedManaged],
+      skillsByDirectory: { [activeProjectPath]: [builtIn, deletedManaged] },
+    });
+    const diskOnly = {
+      name: 'repo-local-skill',
+      path: `${activeProjectPath}/.agents/skills/repo-local-skill/SKILL.md`,
+      scope: 'project',
+      source: 'agents',
+      sources: { md: { description: 'Repository local' } },
+    };
+    runtimeFetchImpl = async () => new Response(JSON.stringify({
+      skills: [diskOnly],
+      openCodeSkillsUnavailable: true,
+    }), { headers: { 'Content-Type': 'application/json' } });
+
+    expect(await useSkillsStore.getState().loadSkills()).toBe(true);
+    expect(useSkillsStore.getState().skills.map((skill) => skill.name)).toEqual(['repo-local-skill', 'OpenCode']);
+
+    // Not cached: the next load asks again, and a complete answer is authoritative.
+    runtimeFetchImpl = async () => new Response(JSON.stringify({ skills: [diskOnly] }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(await useSkillsStore.getState().loadSkills()).toBe(true);
+    expect(runtimeFetchCalls.length).toBe(2);
+    expect(useSkillsStore.getState().skills.map((skill) => skill.name)).toEqual(['repo-local-skill']);
   });
 });
