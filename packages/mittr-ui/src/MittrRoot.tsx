@@ -8,6 +8,7 @@ import { SelectMittrUsage } from './quota/SelectMittrUsage';
 import { MittrSignInGate } from './sign-in/MittrSignInGate';
 import { MittrSmallModelRefresh } from './smallModel/smallModelRefresh';
 import { MittrVoiceMount } from './voice/MittrVoiceRoot';
+import { MittrRecentSectionDefault } from './sidebar/recentSectionDefault';
 import './sidebar/projectActions.css';
 
 export function MittrRoot({ children, surface }: { children: React.ReactNode; surface: MittrSurface }): React.ReactNode {
@@ -16,6 +17,7 @@ export function MittrRoot({ children, surface }: { children: React.ReactNode; su
       <GlassSky />
       <MittrDefaultFonts />
       <MittrSmallModelRefresh />
+      <MittrRecentSectionDefault />
       <MittrSignInGate>
         <SelectMittrUsage />
         <MittrProjectFolderNotice surface={surface} />
