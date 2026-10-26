@@ -8,6 +8,7 @@ import { SelectMittrUsage } from './quota/SelectMittrUsage';
 import { MittrSignInGate } from './sign-in/MittrSignInGate';
 import { MittrSmallModelRefresh } from './smallModel/smallModelRefresh';
 import { MittrVoiceMount } from './voice/MittrVoiceRoot';
+import './sidebar/projectActions.css';
 
 export function MittrRoot({ children, surface }: { children: React.ReactNode; surface: MittrSurface }): React.ReactNode {
   return (

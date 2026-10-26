@@ -1,0 +1,13 @@
+.group\/project [class~="group-hover/project:opacity-100"]:not(.inset-0) {
+  opacity: 1;
+  pointer-events: auto;
+  color: color-mix(in srgb, var(--foreground) 72%, transparent);
+}
+
+.group\/project [class~="group-hover/project:pr-20"] {
+  padding-right: 5rem;
+}
+
+.group\/project [class~="group-hover/project:pr-14"] {
+  padding-right: 3.5rem;
+}
