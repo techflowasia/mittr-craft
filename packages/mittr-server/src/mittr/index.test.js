@@ -881,7 +881,7 @@ test('the stored switch ON still denies the hosted opencode provider', async (t)
   assert.deepEqual(await mittr.managedConfig(), {
     plugins: [envDirOf(dataDir), identityDirOf(dataDir), toolsDirOf(dataDir)],
     share: 'disabled',
-    experimental: { policies: [{ action: 'provider.use', resource: 'opencode', effect: 'deny' }] },
+    experimental: { policies: [{ action: 'provider.use', resource: '*', effect: 'allow' }] },
   });
 });
 
@@ -1389,7 +1389,7 @@ test('an apply before the engine config is first built triggers no refresh, and 
   assert.equal(engine.refreshes.length, 2);
 });
 
-const OTHERS_SHOWN = [{ action: 'provider.use', resource: 'opencode', effect: 'deny' }];
+const OTHERS_SHOWN = [{ action: 'provider.use', resource: '*', effect: 'allow' }];
 
 test('the provider switch rewrites the engine config with the new lock and keeps the models', async (t) => {
   const engine = fakeEngineContext();

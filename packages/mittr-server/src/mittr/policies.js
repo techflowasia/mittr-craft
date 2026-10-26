@@ -3,13 +3,12 @@ export const MITTR_PROVIDER_ID = 'mittr';
 /**
  * The engine's `provider.use` rules. Locked (the default), every provider is
  * denied and only `providerId` is allowed back; the engine lets the later rule
- * of one list win. With other providers shown, the hosted `opencode` provider
- * stays denied (R52), so company prompts never reach a keyless third-party
- * service just because the switch is on.
+ * of one list win. With other providers shown, every provider is allowed,
+ * the hosted `opencode` one included, as in 1.22.
  */
 export const policiesFor = ({ showOtherProviders, providerId }) =>
   showOtherProviders === true
-    ? [{ action: 'provider.use', resource: 'opencode', effect: 'deny' }]
+    ? [{ action: 'provider.use', resource: '*', effect: 'allow' }]
     : [
         { action: 'provider.use', resource: '*', effect: 'deny' },
         { action: 'provider.use', resource: providerId, effect: 'allow' },
