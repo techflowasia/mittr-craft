@@ -983,3 +983,19 @@ UPSTREAM_CONTRACT.push(
     why: "the desktop header is the column's first child, a <header> whose only child is the role=tablist row, and that row's first two children are the aria-hidden spacers sized from --oc-titlebar-left-inset and --oc-titlebar-controls-width, the second one no-drag; TitlebarLeftControls stays pinned over the window's top-left corner and publishes --oc-titlebar-controls-width; so MittrCraft's sidebar-side CSS can make the header keep that reserve while the sidebar is on the right and the corner is the header's",
   },
 );
+
+UPSTREAM_CONTRACT.push({
+  id: 'composer-last-pick',
+  files: [
+    'packages/ui/src/stores/useConfigStore.ts',
+    'packages/ui/src/sync/selection-store.ts',
+    'packages/ui/src/sync/session-ui-store.ts',
+    'packages/ui/src/components/chat/ModelControls.tsx',
+    'packages/ui/src/components/sections/openchamber/DefaultsSettings.tsx',
+    'packages/ui/src/lib/persistence.ts',
+    'packages/web/server/lib/opencode/settings-registry.json',
+    'packages/web/server/lib/opencode/settings-files.js',
+    'packages/web/server/lib/opencode/settings-runtime.js',
+  ],
+  why: "the composer's model pick goes through setProvider and setModel, which mark it selectionSource 'manual', its agent pick through setAgent, which marks agentSelectionSource 'manual', and its effort pick through setCurrentVariantOverride with a defined override, each before the chat records the same choice in the selection store (getSessionModelSelection, getSessionAgentSelection, getAgentModelVariantForSession), while applyDefaultModelAgentSelection marks both sources 'auto', clears the override and writes only the selection fields and directoryScoped; setSettingsDefaultModel, setSettingsDefaultVariant and setSettingsDefaultAgent record the change so a cached settings read cannot undo it and, with no chat open, apply the defaults again; config-store persists the three defaults, updateDesktopSettings writes them ('' clears one, as the Settings page does) and isApplyingServerSettings marks a sync; the three are profile settings that upstream seeds into preferences.json from the top level of a settings.json that predates the split; so MittrCraft keeps the person's last pick as the defaults a new chat and the next start begin from, and 1.22's defaults carry over",
+});

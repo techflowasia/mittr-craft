@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import registry from '../../web/server/lib/opencode/settings-registry.json' with { type: 'json' };
+import { flattenPreferences, seedPreferencesFrom } from '../../web/server/lib/opencode/settings-files.js';
 import { MITTR_SETTINGS_KEYS, UPSTREAM_SETTINGS_KEYS, migrateSettingsOnce } from './settings.js';
 import { repoRoot } from './upstream-contract.js';
 
@@ -88,6 +89,19 @@ test('migrateSettingsOnce keeps every key upstream reads at the top level', asyn
 
   assert.deepEqual(result, { renamed: [], moved: ['agentChromeProfile'] });
   assert.deepEqual(readSettings(dataDir), { ...upstreamRead, mittr: { agentChromeProfile: 'Work' } });
+});
+
+test("1.22's composer defaults stay where upstream seeds the person's preferences from", async (t) => {
+  const defaults = { defaultModel: 'mittr/deep', defaultVariant: 'high', defaultAgent: 'plan' };
+  const dataDir = withDataDir(t, { ...defaults, agentChromeProfile: 'Work' });
+
+  await migrateSettingsOnce({ dataDir, ...realKeys });
+  const carried = readSettings(dataDir);
+
+  assert.deepEqual({ defaultModel: carried.defaultModel, defaultVariant: carried.defaultVariant, defaultAgent: carried.defaultAgent }, defaults);
+  for (const surface of [null, 'desktop']) {
+    assert.deepEqual(flattenPreferences(seedPreferencesFrom(carried, 1), surface), defaults);
+  }
 });
 
 test('migrateSettingsOnce leaves keys that are neither upstream nor listed Mittr keys where they are', async (t) => {

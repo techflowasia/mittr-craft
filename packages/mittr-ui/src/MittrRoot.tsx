@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { MittrLastPick } from './composer/lastPick';
 import { MittrDefaultFonts } from './fonts/MittrDefaultFonts';
 import { GlassSky } from './glass/GlassSky';
 import { MittrSurfaceContext, type MittrSurface } from './mittrSurface';
@@ -22,6 +23,7 @@ export function MittrRoot({ children, surface }: { children: React.ReactNode; su
         <SelectMittrUsage />
         <MittrProjectFolderNotice surface={surface} />
         <MittrVoiceMount />
+        {surface === 'main' ? <MittrLastPick /> : null}
         {children}
       </MittrSignInGate>
     </MittrSurfaceContext.Provider>

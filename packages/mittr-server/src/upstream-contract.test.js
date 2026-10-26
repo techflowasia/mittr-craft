@@ -2636,6 +2636,55 @@ Object.assign(checks, {
   },
 });
 
+const sliceBetween = (text, start, end) => {
+  const from = text.indexOf(start);
+  assert.ok(from >= 0, `${start} is gone`);
+  const to = text.indexOf(end, from + start.length);
+  assert.ok(to > from, `nothing ends ${start} with ${end}`);
+  return text.slice(from, to);
+};
+
+checks['composer-last-pick'] = () => {
+  const config = source('packages/ui/src/stores/useConfigStore.ts');
+  for (const [setter, next] of [
+    ['setProvider: (providerId: string) => {', 'setModel: (modelId: string) => {'],
+    ['setModel: (modelId: string) => {', 'setCurrentVariant: (variant: string | undefined) => {'],
+  ]) {
+    has(sliceBetween(config, setter, next), /selectionSource: "manual"/, `${setter} no longer marks the model as picked`);
+  }
+  has(sliceBetween(config, 'setCurrentVariantOverride: (override, inherited) => {', 'getCurrentModelVariants: () => {'), /currentVariantSelection: \{ override, inherited \},/);
+  const setAgent = sliceBetween(config, 'setAgent: (agentName: string | undefined, options?: { keepModel?: boolean }) => {', 'if (agentName && !options?.keepModel) {');
+  has(setAgent, /const agentSelectionSource = agentName \? "manual" as const : "auto" as const;/);
+  assert.ok(setAgent.indexOf('set((state) =>') < setAgent.indexOf('selState.saveSessionAgentSelection(currentSessionId, agentName);'), 'setAgent records the chat agent before it changes the composer');
+  has(
+    sliceBetween(config, 'applyDefaultModelAgentSelection: (options) => {', 'return nextState;'),
+    /const nextState: Partial<ConfigStore> = \{\s*currentAgentName: resolvedAgentName,\s*currentProviderId: nextSnapshot\.currentProviderId,\s*currentModelId: nextSnapshot\.currentModelId,\s*currentVariant: resolvedVariant,\s*currentVariantSelection: \{ override: undefined, inherited: resolvedVariant \},\s*selectionSource: "auto",\s*agentSelectionSource: "auto",\s*directoryScoped: \{\s*\.\.\.state\.directoryScoped,\s*\[directoryKey\]: nextSnapshot,\s*\},\s*\};/,
+    'applying the defaults writes more than the selection fields MittrCraft keeps, or no longer marks them auto',
+  );
+  for (const [name, field] of [['Model', 'model'], ['Variant', 'variant'], ['Agent', 'agent']]) {
+    has(config, new RegExp(`setSettingsDefault${name}: \\(${field}: string \\| undefined\\) => \\{\\s*recordOpenChamberDefaultsChange\\(\\);\\s*set\\(\\{ settingsDefault${name}: ${field} \\}\\);\\s*if \\(!useSessionUIStore\\.getState\\(\\)\\.currentSessionId\\) get\\(\\)\\.applyDefaultModelAgentSelection\\(\\);`));
+    has(config, new RegExp(`^ {20}settingsDefault${name}: state\\.settingsDefault${name},$`, 'm'), `config-store no longer persists settingsDefault${name}`);
+  }
+  has(config, /const edited = revision !== openChamberDefaultsUserRevision;/);
+  const selection = source('packages/ui/src/sync/selection-store.ts');
+  has(selection, /getSessionModelSelection: \(sessionId: string\) => \{ providerId: string; modelId: string \} \| null/);
+  has(selection, /getSessionAgentSelection: \(sessionId: string\) => string \| null/);
+  has(selection, /getAgentModelVariantForSession: \(sessionId: string, agentName: string, providerId: string, modelId: string\) => string \| null \| undefined/);
+  has(source('packages/ui/src/sync/session-ui-store.ts'), /^  currentSessionId: string \| null$/m);
+  const controls = source('packages/ui/src/components/chat/ModelControls.tsx');
+  has(controls, /setProvider\(providerId\);\s*setModel\(modelId\);\s*if \(currentSessionId\) \{\s*saveSessionModelSelection\(currentSessionId, providerId, modelId\);/, 'a model pick no longer changes the composer before the chat records it');
+  has(controls, /setCurrentVariantOverride\(\s*variant,\s*resolveInheritedVariantForModel\(providerId, modelId, agentNameOverride\),\s*\);[\s\S]{0,400}?saveAgentModelVariantForSession\(currentSessionId, effectiveAgentName, providerId, modelId, variant\);/, 'an effort pick no longer changes the composer before the chat records it');
+  has(controls, /setAgent\(agentName\);\s*addRecentAgent\(agentName\);[\s\S]{0,300}?saveSessionAgentSelection\(currentSessionId, agentName\);/, 'an agent pick no longer changes the composer before the chat records it');
+  has(source('packages/ui/src/components/sections/openchamber/DefaultsSettings.tsx'), /await updateDesktopSettings\(\{ defaultModel: newValue \?\? '', defaultVariant: '' \}\);/);
+  const persistence = source('packages/ui/src/lib/persistence.ts');
+  has(persistence, /^export const isApplyingServerSettings = \(\): boolean =>/m);
+  has(persistence, /^export const updateDesktopSettings = async \(changes: Partial<DesktopSettings>\): Promise<SettingsWriteResult> => \{/m);
+  const registry = JSON.parse(source('packages/web/server/lib/opencode/settings-registry.json'));
+  for (const key of ['defaultModel', 'defaultVariant', 'defaultAgent']) assert.equal(registry.fields[key]?.scope, 'profile', `${key} is no longer a profile setting`);
+  has(source('packages/web/server/lib/opencode/settings-files.js'), /export const seedPreferencesFrom = \(document, now\) => buildPreferencesFields\(\{\}, document, now\);/);
+  has(source('packages/web/server/lib/opencode/settings-runtime.js'), /if \(preferences\.status === 'missing'\) \{\s*const seeded = seedPreferencesFrom\(instance, Date\.now\(\)\);/);
+};
+
 test('every contract item has a check, and every check an item', () => {
   assert.deepEqual(UPSTREAM_CONTRACT.map((entry) => entry.id).sort(), Object.keys(checks).sort());
   for (const entry of UPSTREAM_CONTRACT) {

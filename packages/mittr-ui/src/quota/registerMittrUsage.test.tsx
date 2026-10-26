@@ -6,6 +6,7 @@ import { buildSettingsSearchResults } from '../../../ui/src/lib/settings/search'
 import { dict as enDict } from '../../../ui/src/lib/i18n/messages/en';
 import { overlayDictionary } from '../../../ui/src/lib/product-plugins';
 import { useQuotaStore } from '../../../ui/src/stores/useQuotaStore';
+import { MittrLastPick } from '../composer/lastPick';
 import { MittrRoot } from '../MittrRoot';
 import '../product-ui-plugin';
 import { MittrSignInGate } from '../sign-in/MittrSignInGate';
@@ -60,15 +61,24 @@ describe('the Mittr usage provider', () => {
     expect(useQuotaStore.getState().selectedProviderId).toBe('codex');
   });
 
-  test('the choice is made inside the sign-in gate, so only once someone is signed in', () => {
-    const root = MittrRoot({ children: 'app', surface: 'main' });
+  const insideGate = (surface: 'main' | 'mini-chat') => {
+    const root = MittrRoot({ children: 'app', surface });
     if (!React.isValidElement<{ children: React.ReactNode }>(root)) throw new Error('MittrRoot did not return an element');
     const gate = React.Children.toArray(root.props.children).find((child) => React.isValidElement(child) && child.type === MittrSignInGate);
     if (!React.isValidElement<{ children: React.ReactNode }>(gate)) throw new Error('MittrRoot did not wrap the sign-in gate');
-    const inside = React.Children.toArray(gate.props.children);
-    expect(inside).toHaveLength(4);
-    expect(inside[3]).toBe('app');
+    return React.Children.toArray(gate.props.children);
+  };
+
+  test('the choice is made inside the sign-in gate, so only once someone is signed in', () => {
+    const inside = insideGate('main');
+    expect(inside.at(-1)).toBe('app');
     expect(React.isValidElement(inside[0]) && inside[0].type === SelectMittrUsage).toBe(true);
+  });
+
+  test('the last pick in the composer is remembered inside the sign-in gate of the main window only', () => {
+    const remembers = (surface: 'main' | 'mini-chat') => insideGate(surface).some((child) => React.isValidElement(child) && child.type === MittrLastPick);
+    expect(remembers('main')).toBe(true);
+    expect(remembers('mini-chat')).toBe(false);
   });
 });
 
