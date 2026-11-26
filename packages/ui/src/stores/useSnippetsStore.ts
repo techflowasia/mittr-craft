@@ -8,7 +8,7 @@ import { useDirectoryStore } from '@/stores/useDirectoryStore';
 
 export type SnippetScope = 'global' | 'project';
 
-interface SnippetDraft {
+export interface SnippetDraft {
   name: string;
   scope: SnippetScope;
   content?: string;
@@ -16,25 +16,67 @@ interface SnippetDraft {
   description?: string;
 }
 
+type SnippetWriteResult = { ok: true } | { ok: false; reason: 'taken' | 'failed' };
+
+export interface SnippetQuickCreate {
+  name?: string;
+  content: string;
+  onSaved?: (name: string) => void;
+}
+
 interface SnippetsStore {
   snippets: Snippet[];
   isLoading: boolean;
   selectedSnippetName: string | null;
   snippetDraft: SnippetDraft | null;
+  hasUnsavedChanges: boolean;
+  quickCreate: SnippetQuickCreate | null;
 
   setSelectedSnippet: (name: string | null) => void;
   setSnippetDraft: (draft: SnippetDraft | null) => void;
+  setHasUnsavedChanges: (value: boolean) => void;
+  openQuickCreate: (request: SnippetQuickCreate) => void;
+  closeQuickCreate: () => void;
   loadSnippets: () => Promise<boolean>;
-  createSnippet: (name: string, content: string, options?: { aliases?: string[]; description?: string; scope?: SnippetScope }) => Promise<boolean>;
-  updateSnippet: (name: string, updates: { content?: string; aliases?: string[]; description?: string }) => Promise<boolean>;
+  createSnippet: (name: string, content: string, options?: { aliases?: string[]; description?: string; scope?: SnippetScope }) => Promise<SnippetWriteResult>;
+  updateSnippet: (name: string, updates: { name?: string; scope?: SnippetScope; content?: string; aliases?: string[]; description?: string }) => Promise<SnippetWriteResult>;
   deleteSnippet: (name: string) => Promise<boolean>;
   expandText: (text: string) => Promise<string>;
+  previewSnippet: (content: string) => Promise<string>;
   getSnippetByName: (name: string) => Snippet | undefined;
 }
 
+const writeFailure = (status: number): SnippetWriteResult => ({ ok: false, reason: status === 409 ? 'taken' : 'failed' });
+
 const SNIPPETS_LOAD_CACHE_TTL_MS = 5000;
 let lastLoadedAt = 0;
-let loadInFlight: Promise<boolean> | null = null;
+let registryGeneration = 0;
+let loadInFlight: { generation: number; promise: Promise<boolean> } | null = null;
+let registryDirectory: string | null | undefined;
+
+const isRegistryCurrent = (directory: string | null): boolean => (
+  registryDirectory === directory && Date.now() - lastLoadedAt < SNIPPETS_LOAD_CACHE_TTL_MS
+);
+
+const invalidateRegistry = () => {
+  registryGeneration += 1;
+  lastLoadedAt = 0;
+  registryDirectory = undefined;
+};
+
+const SNIPPET_TOKEN = /#([a-z0-9_-]+)/gi;
+
+const namesKnownSnippet = (text: string, snippets: readonly Snippet[]): boolean => {
+  const triggers = new Set<string>();
+  for (const snippet of snippets) {
+    triggers.add(snippet.name.toLowerCase());
+    for (const alias of snippet.aliases ?? []) triggers.add(alias.toLowerCase());
+  }
+  for (const match of text.matchAll(SNIPPET_TOKEN)) {
+    if (triggers.has(match[1].toLowerCase())) return true;
+  }
+  return false;
+};
 
 const getRequestDirectory = (): string | null => {
   try {
@@ -50,6 +92,19 @@ const getRequestDirectory = (): string | null => {
   return null;
 };
 
+const requestExpansion = async (directory: string | null, body: { text: string } | { content: string }): Promise<string | undefined> => {
+  const headers = new Headers({ 'Content-Type': 'application/json' });
+  if (directory) headers.set('x-opencode-directory', directory);
+  const queryParams = directory ? `?directory=${encodeURIComponent(directory)}` : '';
+  const response = await runtimeFetch(`/api/config/snippets/expand${queryParams}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || 'Failed to expand snippets');
+  return (await response.json()).text;
+};
+
 export const useSnippetsStore = create<SnippetsStore>()(
   devtools(
     (set, get) => ({
@@ -57,40 +112,50 @@ export const useSnippetsStore = create<SnippetsStore>()(
       isLoading: false,
       selectedSnippetName: null,
       snippetDraft: null,
+      hasUnsavedChanges: false,
+      quickCreate: null,
 
       setSelectedSnippet: (name) => set({ selectedSnippetName: name }),
       setSnippetDraft: (draft) => set({ snippetDraft: draft }),
+      setHasUnsavedChanges: (value) => set({ hasUnsavedChanges: value }),
+      openQuickCreate: (request) => set({ quickCreate: request }),
+      closeQuickCreate: () => set({ quickCreate: null }),
 
       loadSnippets: async () => {
-        const now = Date.now();
-        if (get().snippets.length > 0 && now - lastLoadedAt < SNIPPETS_LOAD_CACHE_TTL_MS) return true;
-        if (loadInFlight) return loadInFlight;
+        const directory = getRequestDirectory();
+        if (get().snippets.length > 0 && isRegistryCurrent(directory)) return true;
+        if (loadInFlight?.generation === registryGeneration) return loadInFlight.promise;
 
-        const request = (async () => {
+        const generation = registryGeneration;
+        const request = (async (): Promise<boolean> => {
           set({ isLoading: true });
           try {
-            const directory = getRequestDirectory();
             const queryParams = directory ? `?directory=${encodeURIComponent(directory)}` : '';
             const response = await runtimeFetch(`/api/config/snippets${queryParams}`, {
               headers: { 'Cache-Control': 'no-cache', ...(directory ? { 'x-opencode-directory': directory } : {}) },
+              signal: new AbortController().signal,
             });
             if (!response.ok) throw new Error('Failed to load snippets');
             const snippets: Snippet[] = await response.json();
+            if (generation !== registryGeneration) return get().loadSnippets();
             set({ snippets, isLoading: false });
             lastLoadedAt = Date.now();
+            registryDirectory = directory;
             return true;
           } catch (error) {
+            if (generation !== registryGeneration) return get().loadSnippets();
             console.error('[SnippetsStore] Failed to load:', error);
             set({ isLoading: false });
             return false;
           }
         })();
 
-        loadInFlight = request;
+        const entry = { generation, promise: request };
+        loadInFlight = entry;
         try {
           return await request;
         } finally {
-          loadInFlight = null;
+          if (loadInFlight === entry) loadInFlight = null;
         }
       },
 
@@ -104,18 +169,15 @@ export const useSnippetsStore = create<SnippetsStore>()(
             body: JSON.stringify({ content, aliases: options.aliases, description: options.description, scope: options.scope }),
           });
           if (!response.ok) {
-            const payload = await response.json().catch(() => null);
-            if (response.status === 409) {
-              return await get().updateSnippet(name, { content, aliases: options.aliases, description: options.description });
-            }
-            throw new Error(payload?.error || 'Failed to create snippet');
+            console.error('[SnippetsStore] Failed to create:', (await response.json().catch(() => null))?.error);
+            return writeFailure(response.status);
           }
-          lastLoadedAt = 0;
+          invalidateRegistry();
           await get().loadSnippets();
-          return true;
+          return { ok: true };
         } catch (error) {
           console.error('[SnippetsStore] Failed to create:', error);
-          return false;
+          return { ok: false, reason: 'failed' };
         }
       },
 
@@ -128,13 +190,24 @@ export const useSnippetsStore = create<SnippetsStore>()(
             headers: { 'Content-Type': 'application/json', ...(directory ? { 'x-opencode-directory': directory } : {}) },
             body: JSON.stringify(updates),
           });
-          if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || 'Failed to update snippet');
-          lastLoadedAt = 0;
+          if (!response.ok) {
+            console.error('[SnippetsStore] Failed to update:', (await response.json().catch(() => null))?.error);
+            return writeFailure(response.status);
+          }
+          const payload: { snippet?: Snippet } = await response.json().catch(() => ({}));
+          const saved = payload.snippet;
+          if (saved) {
+            set((state) => ({
+              snippets: state.snippets.map((item) => (item.name === name ? saved : item)),
+              selectedSnippetName: state.selectedSnippetName === name ? saved.name : state.selectedSnippetName,
+            }));
+          }
+          invalidateRegistry();
           await get().loadSnippets();
-          return true;
+          return { ok: true };
         } catch (error) {
           console.error('[SnippetsStore] Failed to update:', error);
-          return false;
+          return { ok: false, reason: 'failed' };
         }
       },
 
@@ -148,7 +221,7 @@ export const useSnippetsStore = create<SnippetsStore>()(
           });
           if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || 'Failed to delete snippet');
           if (get().selectedSnippetName === name) set({ selectedSnippetName: null });
-          lastLoadedAt = 0;
+          invalidateRegistry();
           await get().loadSnippets();
           return true;
         } catch (error) {
@@ -160,15 +233,11 @@ export const useSnippetsStore = create<SnippetsStore>()(
       expandText: async (text) => {
         if (!/#[a-z0-9_-]+/i.test(text)) return text;
         const directory = getRequestDirectory();
-        const queryParams = directory ? `?directory=${encodeURIComponent(directory)}` : '';
-        const response = await runtimeFetch(`/api/config/snippets/expand${queryParams}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...(directory ? { 'x-opencode-directory': directory } : {}) },
-          body: JSON.stringify({ text }),
-        });
-        if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || 'Failed to expand snippets');
-        return (await response.json()).text ?? text;
+        if (isRegistryCurrent(directory) && !namesKnownSnippet(text, get().snippets)) return text;
+        return (await requestExpansion(directory, { text })) ?? text;
       },
+
+      previewSnippet: async (content) => (await requestExpansion(getRequestDirectory(), { content })) ?? '',
 
       getSnippetByName: (name) => get().snippets.find((snippet) => snippet.name === name || snippet.aliases.includes(name)),
     }),

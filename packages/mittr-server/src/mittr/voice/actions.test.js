@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import '../../../../web/scripts/register-server-sources.mjs';
 
 import express from 'express';
 
-import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
 import { serve } from '../test-helpers.js';
 import { registerMittrControlRoutes } from '../tools/control-routes.js';
 import { MITTR_TOOLS, MittrToolError, UPSTREAM_SWITCHES, createMittrActionRegistry } from '../tools/registry.js';
 import { NOTHING_TO_ALLOW, registerVoiceActions } from './actions.js';
 import { createVoiceConversation } from './conversation.js';
+
+const { OPENCHAMBER_ALL_ACTIONS } = await import('../../../../web/server/lib/openchamber-control/actions.js');
 
 const ENGINE = { url: (route) => `http://127.0.0.1:4096${route}`, authHeaders: () => ({ authorization: 'Basic acme' }) };
 

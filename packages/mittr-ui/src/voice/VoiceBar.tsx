@@ -53,7 +53,7 @@ export function VoiceBar({ snapshot, onEnd, className }: VoiceBarProps): React.R
     <section
       aria-label={t('mittr.voice.talk.label')}
       className={cn(
-        'flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2 rounded-xl border border-border/60 bg-[var(--surface-elevated)] p-3 text-foreground shadow-lg',
+        'flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2 rounded-xl border border-[var(--interactive-border)] bg-[var(--surface-elevated)] p-3 text-foreground shadow-lg',
         className,
       )}
     >
@@ -61,7 +61,7 @@ export function VoiceBar({ snapshot, onEnd, className }: VoiceBarProps): React.R
         <span role="status" aria-atomic="true" className="flex min-w-0 flex-1 items-center gap-2 typography-meta">
           <span
             aria-hidden="true"
-            className={cn('size-2 shrink-0 rounded-full', snapshot.hearing && 'animate-pulse motion-reduce:animate-none')}
+            className={cn('size-2 shrink-0 rounded-full', snapshot.hearing && 'animate-pulse mittr-motion-calm')}
             style={{ backgroundColor: DOT[phase] }}
           />
           <span className="truncate">{t(STATE[phase])}</span>
@@ -73,7 +73,7 @@ export function VoiceBar({ snapshot, onEnd, className }: VoiceBarProps): React.R
       </div>
       {snapshot.running ? (
         <p className="flex items-center gap-1.5 typography-micro text-muted-foreground">
-          <Icon name="loader-4" aria-hidden="true" className="size-3.5 animate-spin motion-reduce:animate-none" />
+          <Icon name="loader-4" aria-hidden="true" className="size-3.5 animate-spin mittr-motion-calm" />
           <span className="min-w-0 [overflow-wrap:anywhere]">{t('mittr.voice.talk.running', { label: snapshot.running })}</span>
         </p>
       ) : null}
@@ -91,7 +91,7 @@ export function VoiceBar({ snapshot, onEnd, className }: VoiceBarProps): React.R
         {announcement}
       </p>
       {lines.length ? (
-        <ol ref={list} role="log" aria-live="off" className="flex max-h-56 flex-col gap-1.5 overflow-y-auto pr-1">
+        <ol ref={list} role="log" aria-live="off" className="flex max-h-56 flex-col gap-1.5 overflow-y-auto pe-1">
           {lines.map((line) => (
             <li key={line.id} className="flex flex-col gap-0.5">
               <span

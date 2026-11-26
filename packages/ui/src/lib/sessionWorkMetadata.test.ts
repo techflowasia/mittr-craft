@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Metadata, Session } from '@/lib/opencode/model';
-import { getSessionWork, isDoneSuggested, isSessionInWork, withSessionWorkState } from './sessionWorkMetadata';
+import { getSessionWork, isDoneSuggested, isReviewSuggested, isSessionInWork, withSessionWorkClosed, withSessionWorkState } from './sessionWorkMetadata';
 
 // SAFETY: fixture carries the identity fields and what the work helpers read.
 const session = (metadata: Metadata, idle = 100): Session => ({
@@ -30,6 +30,19 @@ describe('session work metadata', () => {
     expect(isDoneSuggested(session({ openchamber: { work: { state: 'open' } } }))).toBe(false);
   });
 
+  test('reads a record the server opened on a sent message, done hint included', () => {
+    const opened = session({ openchamber: { work: { state: 'open', openedAt: 5, openedBy: 'auto', suggestDoneAt: 150 } } }, 100);
+    expect(getSessionWork(opened)).toMatchObject({ state: 'open', openedBy: 'auto' });
+    expect(isDoneSuggested(opened)).toBe(true);
+  });
+
+  test('offers a review under the same freshness rule, in or out of work, and yields to a current done hint', () => {
+    expect(isReviewSuggested(session({ openchamber: { reviewOffer: { at: 150 } } }, 100))).toBe(true);
+    expect(isReviewSuggested(session({ openchamber: { reviewOffer: { at: 150 } } }, 300))).toBe(false);
+    expect(isReviewSuggested(session({ openchamber: { work: { state: 'done' }, reviewOffer: { at: 150 } } }, 100))).toBe(true);
+    expect(isReviewSuggested(session({ openchamber: { work: { state: 'open', suggestDoneAt: 150 }, reviewOffer: { at: 150 } } }, 100))).toBe(false);
+  });
+
   test('the user tracks and closes; closing keeps when and by whom it opened and drops the hint', () => {
     const base: Metadata = { openchamber: { goal: { id: 'g' } } };
     const tracked = withSessionWorkState(base, 'open', 10);
@@ -41,5 +54,14 @@ describe('session work metadata', () => {
 
     // Asking for the state it already has changes nothing.
     expect(withSessionWorkState(closed, 'done', 30)).toBe(closed);
+  });
+
+  test('closing for a pin closes only work that is open, and gives a session never in work no record', () => {
+    const open: Metadata = { openchamber: { pinned: { at: 1 }, work: { state: 'open', openedAt: 5, openedBy: 'auto' } } };
+    expect(withSessionWorkClosed(open, 9)).toEqual({ openchamber: { pinned: { at: 1 }, work: { state: 'done', doneAt: 9, openedAt: 5, openedBy: 'auto' } } });
+    const never: Metadata = { openchamber: { pinned: { at: 1 } } };
+    expect(withSessionWorkClosed(never, 9)).toBe(never);
+    const done: Metadata = { openchamber: { work: { state: 'done', doneAt: 3 } } };
+    expect(withSessionWorkClosed(done, 9)).toBe(done);
   });
 });

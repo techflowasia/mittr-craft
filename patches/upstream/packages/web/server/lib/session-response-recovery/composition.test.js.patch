@@ -1,0 +1,60 @@
+diff --git a/packages/web/server/lib/session-response-recovery/composition.test.js b/packages/web/server/lib/session-response-recovery/composition.test.js
+new file mode 100644
+index 000000000..be51a0490
+--- /dev/null
++++ b/packages/web/server/lib/session-response-recovery/composition.test.js
+@@ -0,0 +1,54 @@
++import { it, expect } from 'vitest';
++import { mkdtemp } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import path from 'node:path';
++import { createResponseRecoveryOwner } from './owner.js';
++import { createRecoveryTransitions } from './transitions.js';
++import { createBootstrapRuntime } from '../server-frame/bootstrap-runtime.js';
++
++it('mounts cancellation after authentication and before mutation-capable routes', () => {
++  const order = [];
++  const beforeRequest = () => {};
++  const app = { use: value => order.push(value), post: () => {}, get: () => {} };
++  const runtime = createBootstrapRuntime({
++    createUiAuth: () => ({}), express: { json: () => () => {} },
++    registerServerStatusRoutes: () => {}, registerCommonRequestMiddleware: () => {},
++    registerAuthAndAccessRoutes: () => order.push('auth'),
++    registerTtsRoutes: () => order.push('tts'), registerNotificationRoutes: () => {},
++    registerOpenChamberRoutes: () => order.push('routes'),
++  });
++  runtime.setupBaseRoutes(app, { responseRecovery: { beforeRequest }, sessionRuntime: {} });
++  expect(order.indexOf('auth')).toBeLessThan(order.indexOf(beforeRequest));
++  expect(order.indexOf(beforeRequest)).toBeLessThan(order.indexOf('routes'));
++});
++
++it('reopens ordinary admission after readiness and only the last account token settles', async () => {
++  const owner = await createResponseRecoveryOwner({ dataDir: await mkdtemp(path.join(tmpdir(), 'recovery-tokens-')), namespace: 'proof', client: () => ({}), archiveStore: () => ({}) });
++  const transitions = createRecoveryTransitions({ identity: () => 'account', suspend: () => owner.suspend(), resume: () => owner.resume() });
++  const send = owner.admissions.fetch(async () => new Response('{}'));
++  try {
++    const a = await transitions.begin(); const b = await transitions.begin();
++    await transitions.end(a); await transitions.ready();
++    await expect(send('http://engine/api/session/ses_1/prompt', { method: 'POST' })).rejects.toThrow('upstream-transition');
++    await transitions.end(b);
++    expect((await send('http://engine/api/session/ses_1/prompt', { method: 'POST' })).ok).toBe(true);
++  } finally { await owner.stop(); }
++});
++
++it('does not reopen app admissions when readiness arrives before the transition drains', async () => {
++  const owner = await createResponseRecoveryOwner({
++    dataDir: await mkdtemp(path.join(tmpdir(), 'recovery-compose-')), namespace: 'proof',
++    client: () => ({}), archiveStore: () => ({}),
++  });
++  let release;
++  const held = new Promise(resolve => { release = resolve; });
++  const transport = owner.admissions.fetch(async () => { await held; return new Response('{}'); });
++  const sending = transport('http://engine/api/session/ses_1/prompt', { method: 'POST' });
++  const draining = owner.suspend();
++  const ready = owner.resume({ recoveryEnabled: false });
++  await Promise.resolve();
++  await expect(transport('http://engine/api/session/ses_2/prompt', { method: 'POST' })).rejects.toThrow('upstream-transition');
++  release(); await sending; await draining; await ready;
++  expect((await transport('http://engine/api/session/ses_2/prompt', { method: 'POST' })).ok).toBe(true);
++  await owner.stop();
++});

@@ -18,7 +18,8 @@
  *
  * Everything after the copy (counting, the engine run) uses only the copies,
  * under a temporary HOME with every XDG base pointing inside it, on a random
- * port with a random password. The engine is killed afterwards.
+ * port with a random password, inside sandbox-exec with no network but
+ * loopback. The engine is killed afterwards.
  *
  * Usage (bun is required for `bun:sqlite`):
  *
@@ -31,7 +32,8 @@
  *                               state under it, as 1.22 does for an account
  *     [--one-root]              all four XDG bases on one root, as Dev's
  *                               MITTRCRAFT_ENGINE_HOME does (default: prod's four bases)
- *     [--engine <binary>]       default: packages/electron/resources/opencode-cli/opencode
+ *     [--engine <serve.mjs>]    the bundled OpenCode server entry, run with Node
+ *                               (default: packages/electron/resources/opencode-server/serve.mjs)
  *     [--samples <n>]           sessions to compare message counts for (default 3)
  *     [--json <file>]           also write the full result as JSON
  *     [--keep]                  keep the temp HOME for inspection
@@ -40,7 +42,7 @@
 
 import { Database } from 'bun:sqlite';
 import { spawn, spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -48,10 +50,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
+import { BUNDLED_ENGINE_MISSING, bundledEngineCommand, bundledEngineEntry, engineServeArgs } from './isolated-env.mjs';
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const NODE = process.versions.bun ? 'node' : process.execPath;
 const RESERVED_PORTS = new Set([57123, 57133]);
 const MIGRATION_KEY = 'migration.v1-v2';
 const PAGE_LIMIT = 200;
+const SOURCE_VERSIONS = ['1.x', '2.x'];
 
 const pageSchema = z.object({
   data: z.array(z.unknown()),
@@ -66,7 +72,7 @@ const assertPlainFileName = (flag, value) => {
   }
 };
 
-const parseArgs = (argv) => {
+export const parseArgs = (argv) => {
   const args = { samples: 3, keep: false, timeoutMs: 30 * 60 * 1000 };
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
@@ -81,6 +87,7 @@ const parseArgs = (argv) => {
     else if (flag === '--copy-as') args.copyAs = value();
     else if (flag === '--account-dir') args.accountDir = value();
     else if (flag === '--engine') args.engine = value();
+    else if (flag === '--from') args.from = value();
     else if (flag === '--samples') args.samples = Number(value());
     else if (flag === '--json') args.json = value();
     else if (flag === '--timeout-ms') args.timeoutMs = Number(value());
@@ -90,6 +97,7 @@ const parseArgs = (argv) => {
     else throw new Error(`Unknown argument: ${flag}`);
   }
   if (!args.source) throw new Error('--source <engine data dir> is required');
+  if (args.from !== undefined && !SOURCE_VERSIONS.includes(args.from)) throw new Error(`--from takes ${SOURCE_VERSIONS.join(' or ')}`);
   if (args.db !== undefined) assertPlainFileName('--db', args.db);
   if (args.copyAs !== undefined) {
     const [from, to, ...rest] = args.copyAs.split(':');
@@ -106,7 +114,16 @@ const isDatabaseFile = (name) => /^opencode.*\.db$/.test(name);
 const listDatabases = (dir) =>
   fs.existsSync(dir) ? fs.readdirSync(dir).filter(isDatabaseFile).sort() : [];
 
-const openReadOnly = (file) => new Database(file, { readonly: true });
+const openReadOnly = (file) => {
+  try {
+    const db = new Database(file, { readonly: true });
+    db.query('SELECT 1').get();
+    return db;
+  } catch (error) {
+    if (fs.existsSync(`${file}-wal`)) throw error;
+    return new Database(`file:${encodeURI(file)}?immutable=1`, { readonly: true });
+  }
+};
 
 const statKey = (file) => {
   try {
@@ -179,7 +196,7 @@ const countIfPresent = (db, tables, table, where = '') =>
 
 const iso = (ms) => (Number.isFinite(ms) && ms > 0 ? new Date(ms).toISOString() : null);
 
-const inspectDatabase = (file) => {
+export const inspectDatabase = (file) => {
   const stat = fs.statSync(file);
   const db = openReadOnly(file);
   try {
@@ -212,10 +229,18 @@ const inspectDatabase = (file) => {
         v1NotInV2: tables.has('session_v2') ? sessionIds.filter((id) => !v2Set.has(id)).length : null,
       },
       sessionIds,
+      v2SessionIds: v2Ids,
     };
   } finally {
     db.close();
   }
+};
+
+export const sourceVersionOf = (inspection) => {
+  if (!inspection || inspection.v2.session_v2 === null) return '1.x';
+  if (!inspection.v1.session) return inspection.v1.session === null || inspection.v2.session_v2 > 0 ? '2.x' : '1.x';
+  const migrated = inspection.v2.migration && JSON.parse(inspection.v2.migration.value).phase === 'completed';
+  return migrated && inspection.v2.session_v2 > 0 ? '2.x' : '1.x';
 };
 
 const inspectDir = (dir) => listDatabases(dir).map((name) => inspectDatabase(path.join(dir, name)));
@@ -224,14 +249,15 @@ const inspectDir = (dir) => listDatabases(dir).map((name) => inspectDatabase(pat
  * Sessions that exist only outside the file the engine opens: the ones a
  * carry-over that reads one file would leave behind.
  */
-const overlap = (inspections, openedFile) => {
+export const overlap = (inspections, openedFile, from = '1.x') => {
+  const idsOf = (entry) => (from === '2.x' ? entry.v2SessionIds : entry.sessionIds);
   const target = inspections.find((entry) => entry.file === openedFile);
-  const targetIds = new Set(target?.sessionIds ?? []);
-  const union = new Set(inspections.flatMap((entry) => entry.sessionIds));
+  const targetIds = new Set(target ? idsOf(target) : []);
+  const union = new Set(inspections.flatMap(idsOf));
   const outside = {};
   for (const entry of inspections) {
     if (entry.file === openedFile) continue;
-    outside[entry.file] = entry.sessionIds.filter((id) => !targetIds.has(id)).length;
+    outside[entry.file] = idsOf(entry).filter((id) => !targetIds.has(id)).length;
   }
   const onlyOutside = [...union].filter((id) => !targetIds.has(id)).length;
   return { distinctSessionsAllFiles: union.size, inOpenedFile: targetIds.size, onlyInOtherFiles: onlyOutside, perOtherFile: outside };
@@ -292,7 +318,8 @@ const startEngine = async ({ engine, tempHome, bases, extraEnv, logFile }) => {
   };
   fs.mkdirSync(env.TMPDIR, { recursive: true });
   const log = fs.openSync(logFile, 'a');
-  const child = spawn(engine, ['serve', '--hostname', '127.0.0.1', '--port', String(port)], {
+  const launch = bundledEngineCommand(engine, engineServeArgs(port), { node: NODE });
+  const child = spawn(launch.command, launch.args, {
     cwd: workDir,
     env,
     stdio: ['ignore', log, log],
@@ -386,16 +413,17 @@ const pageMessages = async (engine, sessionId) => {
   return count;
 };
 
-const pickSamples = (dbFile, wanted) => {
+export const pickSamples = (dbFile, wanted, from = '1.x') => {
   const db = openReadOnly(dbFile);
   try {
     const tables = tablesOf(db);
-    if (!tables.has('session') || !tables.has('message')) return [];
+    const [sessions, messages] = from === '2.x' ? ['session_v2', 'session_message'] : ['session', 'message'];
+    if (!tables.has(sessions) || !tables.has(messages)) return [];
     const picks = [
-      ['most messages', 'SELECT s.id AS id FROM session s WHERE s.parent_id IS NULL ORDER BY (SELECT COUNT(*) FROM message m WHERE m.session_id = s.id) DESC LIMIT 1'],
-      ['newest', 'SELECT id FROM session WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1'],
-      ['oldest', 'SELECT id FROM session WHERE parent_id IS NULL ORDER BY time_created ASC LIMIT 1'],
-      ['a subagent session', 'SELECT id FROM session WHERE parent_id IS NOT NULL ORDER BY time_updated DESC LIMIT 1'],
+      ['most messages', `SELECT s.id AS id FROM ${sessions} s WHERE s.parent_id IS NULL ORDER BY (SELECT COUNT(*) FROM ${messages} m WHERE m.session_id = s.id) DESC LIMIT 1`],
+      ['newest', `SELECT id FROM ${sessions} WHERE parent_id IS NULL ORDER BY time_updated DESC LIMIT 1`],
+      ['oldest', `SELECT id FROM ${sessions} WHERE parent_id IS NULL ORDER BY time_created ASC LIMIT 1`],
+      ['a subagent session', `SELECT id FROM ${sessions} WHERE parent_id IS NOT NULL ORDER BY time_updated DESC LIMIT 1`],
     ];
     const chosen = [];
     for (const [why, sql] of picks) {
@@ -406,8 +434,8 @@ const pickSamples = (dbFile, wanted) => {
     return chosen.map(({ id, why }) => ({
       id,
       why,
-      title: scalar(db, 'SELECT title FROM session WHERE id = ?', id),
-      v1Messages: scalar(db, 'SELECT COUNT(*) FROM message WHERE session_id = ?', id),
+      title: scalar(db, `SELECT title FROM ${sessions} WHERE id = ?`, id),
+      v1Messages: tables.has('message') ? scalar(db, 'SELECT COUNT(*) FROM message WHERE session_id = ?', id) : null,
       v1Parts: tables.has('part') ? scalar(db, 'SELECT COUNT(*) FROM part WHERE session_id = ?', id) : null,
       v2SessionMessages: tables.has('session_message') ? scalar(db, 'SELECT COUNT(*) FROM session_message WHERE session_id = ?', id) : null,
       v2Types: tables.has('session_message')
@@ -427,7 +455,7 @@ const pickSamples = (dbFile, wanted) => {
  * user - k and assistant - k. `system` and `synthetic` entries are added by
  * 2.x and not compared. Any other difference is reported as unexplained.
  */
-const compareRoles = (dbFile) => {
+export const compareRoles = (dbFile) => {
   const db = openReadOnly(dbFile);
   try {
     const tables = tablesOf(db);
@@ -488,6 +516,67 @@ const compareRoles = (dbFile) => {
   }
 };
 
+const rowsBySession = (db, sql) => {
+  const sessions = new Map();
+  for (const { session, key, type, data } of db.query(sql).iterate()) {
+    if (!sessions.has(session)) sessions.set(session, new Map());
+    sessions.get(session).set(key, `${type}:${createHash('sha256').update(String(data)).digest('hex')}`);
+  }
+  return sessions;
+};
+
+export const readV2 = (file) => {
+  if (!fs.existsSync(file)) return null;
+  const db = openReadOnly(file);
+  try {
+    const tables = tablesOf(db);
+    if (!tables.has('session_v2') || !tables.has('session_message')) return null;
+    return {
+      sessions: new Set(db.query('SELECT id FROM session_v2').all().map((row) => row.id)),
+      messages: rowsBySession(db, 'SELECT session_id AS session, id AS key, type, data FROM session_message'),
+      parts: tables.has('session_part')
+        ? rowsBySession(db, "SELECT session_id AS session, message_id || ':' || ordinal AS key, type, data FROM session_part")
+        : null,
+    };
+  } finally {
+    db.close();
+  }
+};
+
+const rowChanges = (before = new Map(), after = new Map()) => ({
+  missing: [...before.keys()].filter((key) => !after.has(key)).length,
+  changed: [...before].filter(([key, row]) => after.has(key) && after.get(key) !== row).length,
+  added: [...after.keys()].filter((key) => !before.has(key)).length,
+});
+
+const rowTotal = (sessions) => (sessions ? [...sessions.values()].reduce((total, rows) => total + rows.size, 0) : null);
+
+export const compareV2 = (before, after) => {
+  if (!before) return null;
+  const differing = [];
+  for (const id of [...before.sessions].sort()) {
+    const messages = rowChanges(before.messages.get(id), after?.messages.get(id));
+    const parts = before.parts && after?.parts ? rowChanges(before.parts.get(id), after.parts.get(id)) : null;
+    const missingSession = !after?.sessions.has(id);
+    const lost = missingSession || [messages, parts].some((rows) => rows && rows.missing + rows.changed > 0);
+    if (!lost && messages.added === 0 && !parts?.added) continue;
+    differing.push({ id, missingSession, messages, parts, reason: lost ? 'UNEXPLAINED' : 'entries added only' });
+  }
+  return {
+    sessionsCompared: before.sessions.size,
+    totals: {
+      sessionsBefore: before.sessions.size,
+      sessionsAfter: after?.sessions.size ?? 0,
+      messagesBefore: rowTotal(before.messages),
+      messagesAfter: rowTotal(after?.messages) ?? 0,
+      partsBefore: rowTotal(before.parts),
+      partsAfter: rowTotal(after?.parts),
+    },
+    differing,
+    unexplained: differing.filter((item) => item.reason === 'UNEXPLAINED').length,
+  };
+};
+
 const readLogLines = (dirs, pattern) => {
   const hits = [];
   for (const dir of dirs) {
@@ -501,7 +590,7 @@ const readLogLines = (dirs, pattern) => {
   return hits;
 };
 
-const withoutIds = (inspections) => inspections.map(({ sessionIds, ...rest }) => rest);
+const withoutIds = (inspections) => inspections.map(({ sessionIds, v2SessionIds, ...rest }) => rest);
 
 const printTable = (label, inspections) => {
   console.log(`\n${label}`);
@@ -524,9 +613,9 @@ const printTable = (label, inspections) => {
 const main = async () => {
   const args = parseArgs(process.argv.slice(2));
   const source = path.resolve(args.source);
-  const engineBinary = path.resolve(args.engine ?? path.join(repoRoot, 'packages/electron/resources/opencode-cli/opencode'));
-  if (!fs.existsSync(engineBinary)) throw new Error(`engine not found: ${engineBinary} (run: bun run --cwd packages/electron prepare:opencode-cli)`);
-  const engineVersion = spawnSync(engineBinary, ['--version'], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: os.tmpdir() } }).stdout.trim();
+  const engineBinary = path.resolve(args.engine ?? bundledEngineEntry(repoRoot));
+  if (!fs.existsSync(engineBinary)) throw new Error(`engine not found: ${engineBinary} (${BUNDLED_ENGINE_MISSING})`);
+  const engineVersion = spawnSync(NODE, [engineBinary, '--version'], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: os.tmpdir() } }).stdout.trim();
 
   const copyMethod = args.snapshot
     ? 'snapshot: SQLite read-only open + VACUUM INTO (can touch source -shm)'
@@ -560,17 +649,20 @@ const main = async () => {
   const extraEnv = args.db ? { OPENCODE_DB: args.db } : {};
   const expectedFile = args.db ?? 'opencode.db';
   const logFile = path.join(tempHome, 'engine.log');
+  const from = args.from ?? sourceVersionOf(before.find((entry) => entry.file === expectedFile));
+  const v2Before = from === '2.x' ? new Map(listDatabases(dataDir).map((name) => [name, readV2(path.join(dataDir, name))])) : null;
 
   console.log(`engine      ${engineVersion} (${engineBinary})`);
   console.log(`source      ${source} (${copyMethod}: ${copied.shared.join(', ') || 'none'})`);
   if (args.accountDir) console.log(`account     ${path.resolve(args.accountDir)} (copied: ${copied.account.join(', ') || 'none'})`);
+  console.log(`from        ${from}${args.from ? ' (--from)' : ' (detected)'}`);
   console.log(`temp HOME   ${tempHome}`);
   console.log(`engine data ${dataDir} (${args.oneRoot ? 'one root, as Dev' : 'four XDG bases, as prod'})`);
   console.log(`env         ${args.db ? `OPENCODE_DB=${args.db}` : 'OPENCODE_DB unset'}${args.copyAs ? `, pre-start copy ${args.copyAs.from} -> ${args.copyAs.to}` : ''}`);
-  printTable('BEFORE (copies, as 1.x left them)', before);
+  printTable(`BEFORE (copies, as ${from} left them)`, before);
 
   let engine;
-  const result = { engineVersion, source, layout: args.oneRoot ? 'one root (Dev)' : 'four XDG bases (prod)', accountDir: args.accountDir ?? null, opencodeDb: args.db ?? null, copyAs: args.copyAs ?? null, copyMethod, before: withoutIds(before) };
+  const result = { engineVersion, source, from, layout: args.oneRoot ? 'one root (Dev)' : 'four XDG bases (prod)', accountDir: args.accountDir ?? null, opencodeDb: args.db ?? null, copyAs: args.copyAs ?? null, copyMethod, before: withoutIds(before) };
   try {
     const deadline = Date.now() + args.timeoutMs;
     const startedAt = Date.now();
@@ -582,7 +674,9 @@ const main = async () => {
     const openedDb = openNow.filter((file) => file.endsWith('.db')).map((file) => path.basename(file));
     result.openedByEngine = openedDb;
     const migrationFile = path.join(dataDir, openedDb.find((name) => name !== 'opencode-next.db') ?? expectedFile);
-    const migration = await waitForMigration(engine, migrationFile, deadline);
+    const migration = from === '2.x' && migrationState(migrationFile) === null
+      ? { state: null, waitedMs: 0 }
+      : await waitForMigration(engine, migrationFile, deadline);
     result.migration = { file: path.basename(migrationFile), ...migration, totalMs: Date.now() - startedAt };
 
     const apiIds = await pageSessions(engine, {});
@@ -606,7 +700,7 @@ const main = async () => {
       result.apiPerProject = { projects: projects.length, perProject, distinctUnion: union.size };
     }
 
-    const samples = pickSamples(migrationFile, args.samples);
+    const samples = pickSamples(migrationFile, args.samples, from);
     for (const sample of samples) sample.apiMessages = await pageMessages(engine, sample.id).catch((error) => `error: ${error.message}`);
     result.samples = samples;
     result.openAtEnd = openFilesOf(engine.child.pid).map((file) => path.basename(file));
@@ -619,8 +713,13 @@ const main = async () => {
   const after = inspectDir(dataDir);
   result.after = withoutIds(after);
   result.mtimeChanged = after.filter((entry) => before.find((old) => old.file === entry.file)?.mtime !== entry.mtime).map((entry) => entry.file);
-  if (result.migration) result.roles = compareRoles(path.join(dataDir, result.migration.file));
-  result.overlap = overlap(before, result.migration?.file ?? expectedFile);
+  if (result.migration && from === '1.x') result.roles = compareRoles(path.join(dataDir, result.migration.file));
+  if (from === '2.x') {
+    const file = result.migration?.file ?? expectedFile;
+    result.carried = compareV2(v2Before.get(file), readV2(path.join(dataDir, file)));
+    if (!result.carried) result.error ??= `${file} had no session_v2 and session_message tables before the start`;
+  }
+  result.overlap = overlap(before, result.migration?.file ?? expectedFile, from);
   result.logDbLines = readLogLines([path.join(dataDir, 'log')], /\.db\b|migrat/i).slice(0, 20);
   const engineLog = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8') : '';
   result.engineStdoutDbLines = engineLog.split('\n').filter((line) => /\.db\b|migrat/i.test(line)).slice(0, 20);
@@ -638,6 +737,12 @@ const main = async () => {
     console.log(`roles differing    ${result.roles.differing.length} session(s), unexplained ${result.roles.unexplained}`);
     for (const item of result.roles.differing) console.log(`  ${item.id}: 1.x ${JSON.stringify(item.v1)} -> 2.x ${JSON.stringify(item.v2)}: ${item.reason}`);
   }
+  if (result.carried) {
+    const t = result.carried.totals;
+    console.log(`carried            ${result.carried.sessionsCompared} session_v2 sessions; sessions ${t.sessionsBefore} -> ${t.sessionsAfter}, session_message ${t.messagesBefore} -> ${t.messagesAfter}, session_part ${t.partsBefore ?? '-'} -> ${t.partsAfter ?? '-'}`);
+    console.log(`carried differing  ${result.carried.differing.length} session(s), unexplained ${result.carried.unexplained}`);
+    for (const item of result.carried.differing) console.log(`  ${item.id}: ${item.missingSession ? 'session missing, ' : ''}messages ${JSON.stringify(item.messages)}, parts ${JSON.stringify(item.parts)}: ${item.reason}`);
+  }
   for (const sample of result.samples ?? []) {
     console.log(`sample ${sample.id} (${sample.why}): v1 message ${sample.v1Messages}, part ${sample.v1Parts} -> session_message ${sample.v2SessionMessages} ${JSON.stringify(sample.v2Types)}, API ${sample.apiMessages}`);
   }
@@ -647,10 +752,12 @@ const main = async () => {
   if (args.json) fs.writeFileSync(path.resolve(args.json), `${JSON.stringify(result, null, 2)}\n`);
   if (args.keep) console.log(`\nkept ${tempHome}`);
   else fs.rmSync(tempHome, { recursive: true, force: true });
-  if (result.error || result.roles?.unexplained) process.exitCode = 1;
+  if (result.error || result.roles?.unexplained || result.carried?.unexplained) process.exitCode = 1;
 };
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exitCode = 1;
-});
+if (import.meta.main) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  });
+}

@@ -46,7 +46,11 @@ export function registerMittrAuthRoutes(app, {
   onSignIn = null,
   // Called with the next active userId (or null) when the active account changes.
   onAccountChange = null,
+  // Must drain captured engine work before credentials or account ownership change.
+  beforeAccountMutation = async () => {},
+  accountMutationSettled = async () => {},
   switchSettled = () => false,
+  accountRefusal = async () => null,
   logger = console,
 }) {
   const redirectUri = authRedirectUri(scheme);
@@ -81,7 +85,8 @@ export function registerMittrAuthRoutes(app, {
     if (!onAccountChange) return {};
     try {
       const outcome = await onAccountChange(nextUserId);
-      return outcome?.engineRestarted === false ? { engineRestarted: false } : {};
+      if (outcome?.engineRestarted !== false) return {};
+      return { engineRestarted: false, ...(outcome.engineError ? { engineError: outcome.engineError } : {}) };
     } catch (error) {
       logger.warn('[mittr] switching account failed:', error?.message ?? error);
       return { engineRestarted: false };
@@ -90,12 +95,22 @@ export function registerMittrAuthRoutes(app, {
 
   const activeUserId = () => store.read()?.subject.userId ?? null;
 
+  const refusalFor = async (userId) => {
+    try {
+      return await accountRefusal(userId);
+    } catch (error) {
+      logger.warn('[mittr] could not check the account\'s history before switching:', error?.message ?? error);
+      return null;
+    }
+  };
+
   const failure = (status, error) => ({ status, body: { error } });
   const stale = (status, error) => ({ ...failure(status, error), stale: true });
 
   // How the last sign-in from the browser ended, until the next one starts:
   // the deep link has no window to answer, so the gate reads it from status.
   let lastFailure = null;
+  let lastRefusal = null;
   let sessionEnded = false;
 
   const signIn = async (callbackUrl) => {
@@ -157,34 +172,50 @@ export function registerMittrAuthRoutes(app, {
       return failure(502, 'Mittr returned an unusable session');
     }
 
-    const before = activeUserId();
+    const keepsAnother = () => ![null, session.subject.userId].includes(activeUserId());
+    const refused = keepsAnother() ? await refusalFor(session.subject.userId) : null;
+    if (attempt !== ownAttempt) return stale(409, 'The sign-in was cancelled');
+
+    let mutation;
     try {
-      store.write(session);
-    } catch (error) {
-      logger.error('[mittr] could not store the sign-in:', error?.message ?? error);
-      return failure(500, CANNOT_STORE);
-    }
-
-    let restart = {};
-    if (before !== session.subject.userId) {
-      restart = await announceAccountChange(session.subject.userId);
-    } else if (onSignIn) {
-      // Sign-in has succeeded by now; a follow-up that fails never changes
-      // the answer.
+      mutation = await beforeAccountMutation();
+      const before = activeUserId();
+      const stay = refused !== null && keepsAnother();
       try {
-        await onSignIn(before, session.subject.userId);
+        if (attempt !== ownAttempt) return stale(409, 'The sign-in was cancelled');
+        store.write(session, { activate: !stay });
       } catch (error) {
-        logger.warn('[mittr] work after sign-in failed:', error?.message ?? error);
+        logger.error('[mittr] could not store the sign-in:', error?.message ?? error);
+        return failure(500, CANNOT_STORE);
       }
-    }
+      if (stay) {
+        lastRefusal = { userId: session.subject.userId, ...refused };
+        logger.warn(`[mittr] signed in without switching: ${refused.message}`);
+        return { status: 200, body: { ...statusOf(store.read()), switchRefused: refused } };
+      }
 
-    return { status: 200, body: { ...statusOf(session), ...restart } };
+      let restart = {};
+      if (before !== session.subject.userId) {
+        restart = await announceAccountChange(session.subject.userId);
+      } else if (onSignIn) {
+        // Sign-in has succeeded by now; a follow-up that fails never changes
+        // the answer.
+        try {
+          await onSignIn(before, session.subject.userId);
+        } catch (error) {
+          logger.warn('[mittr] work after sign-in failed:', error?.message ?? error);
+        }
+      }
+
+      return { status: 200, body: { ...statusOf(session), ...restart } };
+    } finally { await accountMutationSettled(mutation); }
   };
 
   app.post('/api/mittr/auth/start', refuseWhenUnsafe, (_req, res) => {
     pending = createTransaction({ now });
     attempt += 1;
     lastFailure = null;
+    lastRefusal = null;
     const authorizeUrl = new URL(ENDPOINT.start, broker.baseUrl);
     authorizeUrl.searchParams.set('code_challenge', pending.challenge);
     authorizeUrl.searchParams.set('redirect_uri', redirectUri);
@@ -217,53 +248,73 @@ export function registerMittrAuthRoutes(app, {
   app.post('/api/mittr/auth/accounts/repair', async (_req, res) => {
     const keychainRefusal = signInRefusal();
     if (keychainRefusal) return res.status(503).json({ error: keychainRefusal });
-    let result;
+    let mutation;
     try {
-      result = store.repair();
-    } catch (error) {
-      logger.error('[mittr] could not set the account list aside:', error?.message ?? error);
-      return res.status(500).json({ error: CANNOT_STORE });
-    }
-    if (result.repaired) await announceAccountChange(activeUserId());
-    return res.json({ repaired: result.repaired });
+      let result;
+    try {
+        mutation = await beforeAccountMutation();
+        result = store.repair();
+        lastRefusal = null;
+      } catch (error) {
+        logger.error('[mittr] could not set the account list aside:', error?.message ?? error);
+        return res.status(500).json({ error: CANNOT_STORE });
+      }
+      if (result.repaired) await announceAccountChange(activeUserId());
+      return res.json({ repaired: result.repaired });
+    } finally { await accountMutationSettled(mutation); }
   });
 
   app.delete('/api/mittr/auth/session', refuseWhenUnsafe, async (_req, res) => {
+    let mutation;
     try {
-      store.clear();
-    } catch (error) {
-      logger.error('[mittr] could not sign out:', error?.message ?? error);
-      return res.status(500).json({ error: CANNOT_STORE });
-    }
-    lastFailure = null;
-    sessionEnded = false;
-    const next = store.read();
-    const restart = await announceAccountChange(next?.subject.userId ?? null);
-    return res.json({ ...statusOf(next), ...restart });
+      try {
+        mutation = await beforeAccountMutation();
+        store.clear();
+      } catch (error) {
+        logger.error('[mittr] could not sign out:', error?.message ?? error);
+        return res.status(500).json({ error: CANNOT_STORE });
+      }
+      lastFailure = null;
+      lastRefusal = null;
+      sessionEnded = false;
+      const next = store.read();
+      const restart = await announceAccountChange(next?.subject.userId ?? null);
+      return res.json({ ...statusOf(next), ...restart });
+    } finally { await accountMutationSettled(mutation); }
   });
 
-  app.get('/api/mittr/auth/accounts', (_req, res) => res.json({ accounts: store.list() }));
+  app.get('/api/mittr/auth/accounts', (_req, res) => res.json({ accounts: store.list(), ...(lastRefusal ? { switchRefused: lastRefusal } : {}) }));
 
   app.post('/api/mittr/auth/accounts/activate', refuseWhenUnsafe, readJson, async (req, res) => {
     const userId = typeof req.body?.userId === 'string' ? req.body.userId : '';
     if (activeUserId() === userId) return res.json(statusOf(store.read()));
     if (!store.list().some((account) => account.userId === userId)) return res.status(404).json({ error: 'That account is not signed in on this machine' });
+    const refused = await refusalFor(userId);
+    if (refused) return res.status(409).json({ error: refused.message, code: refused.code });
+    let mutation;
     try {
-      store.activate(userId);
-    } catch (error) {
-      logger.error('[mittr] could not switch account:', error?.message ?? error);
-      return res.status(500).json({ error: CANNOT_STORE });
-    }
-    lastFailure = null;
-    sessionEnded = false;
-    const restart = await announceAccountChange(userId);
-    return res.json({ ...statusOf(store.read()), ...restart });
+      try {
+        mutation = await beforeAccountMutation();
+        store.activate(userId);
+      } catch (error) {
+        logger.error('[mittr] could not switch account:', error?.message ?? error);
+        return res.status(500).json({ error: CANNOT_STORE });
+      }
+      lastFailure = null;
+      lastRefusal = null;
+      sessionEnded = false;
+      const restart = await announceAccountChange(userId);
+      return res.json({ ...statusOf(store.read()), ...restart });
+    } finally { await accountMutationSettled(mutation); }
   });
 
   app.post('/api/mittr/auth/accounts/retry-switch', refuseWhenUnsafe, async (_req, res) => {
     if (switchSettled()) return res.json(statusOf(store.read()));
-    const restart = await announceAccountChange(activeUserId());
-    return res.json({ ...statusOf(store.read()), ...restart });
+    const mutation = await beforeAccountMutation();
+    try {
+      const restart = await announceAccountChange(activeUserId());
+      return res.json({ ...statusOf(store.read()), ...restart });
+    } finally { await accountMutationSettled(mutation); }
   });
 
   const refresh = async (session) => {
@@ -284,13 +335,21 @@ export function registerMittrAuthRoutes(app, {
       if (response.status === 401) {
         // Only the account this refresh was for: the active one may have
         // changed while it was in flight.
-        const wasActive = activeUserId() === userId;
-        store.signOut(userId, { activateNext: false });
-        if (wasActive) {
-          sessionEnded = true;
-          void announceAccountChange(null);
-        }
-        return null;
+        let mutation;
+        try {
+          let wasActive = activeUserId() === userId;
+          if (wasActive) {
+            mutation = await beforeAccountMutation();
+            if (!stillCurrent()) return store.read();
+            wasActive = activeUserId() === userId;
+          }
+          store.signOut(userId, { activateNext: false });
+          if (wasActive) {
+            sessionEnded = true;
+            await announceAccountChange(null);
+          }
+          return null;
+        } finally { await accountMutationSettled(mutation); }
       }
       if (!response.ok) return store.read();
 

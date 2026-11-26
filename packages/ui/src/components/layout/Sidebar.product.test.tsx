@@ -67,16 +67,16 @@ describe('Sidebar side', () => {
   test('on the left edge the handle is on its right and dragging right widens it', async () => {
     const { width, html } = await dragBy(undefined, 60);
     expect(width).toBe(340);
-    expect(html).toContain('border-r');
-    expect(html).toContain('class="absolute right-0 top-0 ');
+    expect(html).toContain('shadow-[inset_-0.5px_0_0_0_var(--oc-edge-strong)] rtl:');
+    expect(html).toContain('class="absolute inset-e-0 top-0 ');
   });
 
   test('on the right edge the handle is on its left and dragging left widens it', async () => {
     const { width, html } = await dragBy('right', -60);
     expect(width).toBe(340);
-    expect(html).toContain('border-l');
-    expect(html).not.toContain('border-r');
-    expect(html).toContain('class="absolute left-0 top-0 ');
+    expect(html).toContain('shadow-[inset_0.5px_0_0_0_var(--oc-edge-strong)] rtl:');
+    expect(html).not.toContain('inset-e-0');
+    expect(html).toContain('class="absolute inset-s-0 top-0 ');
   });
 
   test('on the right edge dragging right narrows it', async () => {

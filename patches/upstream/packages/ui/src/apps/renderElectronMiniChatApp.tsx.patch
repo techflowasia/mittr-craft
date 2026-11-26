@@ -1,13 +1,31 @@
 diff --git a/packages/ui/src/apps/renderElectronMiniChatApp.tsx b/packages/ui/src/apps/renderElectronMiniChatApp.tsx
-index eae6cb51c..14d5fdf26 100644
+index 5836b1ae0..fe5956eaa 100644
 --- a/packages/ui/src/apps/renderElectronMiniChatApp.tsx
 +++ b/packages/ui/src/apps/renderElectronMiniChatApp.tsx
-@@ -16,6 +16,8 @@ import { startModelPrefsAutoSave } from '@/lib/modelPrefsAutoSave';
- import { startTypographyWatcher } from '@/lib/typographyWatcher';
+@@ -10,12 +10,15 @@ import { ThemeProvider } from '@/components/providers/ThemeProvider';
+ import { ThemeSystemProvider } from '@/contexts/ThemeSystemContext';
+ import type { RuntimeAPIs } from '@/lib/api/types';
+ import { I18nProvider } from '@/lib/i18n';
++import { ProductRoot } from '@/lib/product-plugins';
+ import { leaveLastActiveSessionToMainWindow } from '@/sync/last-session-cache';
+ import { prefetchSessionBeforeMount } from '@/sync/sync-context';
  import { ElectronMiniChatApp } from './ElectronMiniChatApp';
+ import { readMiniChatConfig } from './miniChatConfig';
+ import { initializeSharedPreferences } from './initializeSharedPreferences';
  
 +import.meta.glob('../../../*/src/product-ui-plugin.{ts,tsx}', { eager: true });
 +
- const initializeSharedPreferences = () => {
-   initializeLocale();
- 
+ export function renderElectronMiniChatApp(apis: RuntimeAPIs) {
+   initializeSharedPreferences({ logLabel: '[mini-chat-main]' });
+   leaveLastActiveSessionToMainWindow();
+@@ -36,7 +39,9 @@ export function renderElectronMiniChatApp(apis: RuntimeAPIs) {
+         <ThemeSystemProvider>
+           <ThemeProvider>
+             <SessionAuthGate>
+-              <ElectronMiniChatApp apis={apis} />
++              <ProductRoot surface="mini-chat">
++                <ElectronMiniChatApp apis={apis} />
++              </ProductRoot>
+             </SessionAuthGate>
+           </ThemeProvider>
+         </ThemeSystemProvider>

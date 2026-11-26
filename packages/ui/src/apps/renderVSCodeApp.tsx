@@ -6,43 +6,23 @@ import '@/index.css';
 import '@/lib/debug';
 import { SessionAuthGate } from '@/components/auth/SessionAuthGate';
 import { ThemeProvider } from '@/components/providers/ThemeProvider';
+import { preloadMarkdownRenderer } from '@/components/chat/markdownRendererLoader';
 import { OpenCodeCompatibilityGate } from '@/components/update/OpenCodeCompatibilityGate';
 import { ThemeSystemProvider } from '@/contexts/ThemeSystemContext';
 import type { RuntimeAPIs } from '@/lib/api/types';
-import { startAppearanceAutoSave } from '@/lib/appearanceAutoSave';
-import { applyPersistedDirectoryPreferences } from '@/lib/directoryPersistence';
-import { initializeLocale, I18nProvider } from '@/lib/i18n';
-import { initializeAppearancePreferences, syncDesktopSettings } from '@/lib/persistence';
-import { startModelPrefsAutoSave } from '@/lib/modelPrefsAutoSave';
-import { startTypographyWatcher } from '@/lib/typographyWatcher';
+import { I18nProvider } from '@/lib/i18n';
 import { VSCodeApp } from './VSCodeApp';
-
-const initializeSharedPreferences = () => {
-  initializeLocale();
-
-  void initializeAppearancePreferences().then(() => {
-    void Promise.all([
-      syncDesktopSettings(),
-      applyPersistedDirectoryPreferences(),
-    ]).catch((err) => {
-      console.error('[vscode-main] settings init failed:', err);
-    });
-
-    startAppearanceAutoSave();
-    startModelPrefsAutoSave();
-    startTypographyWatcher();
-  }).catch((err) => {
-    console.error('[vscode-main] appearance init failed:', err);
-  });
-};
+import { initializeSharedPreferences } from './initializeSharedPreferences';
 
 export function renderVSCodeApp(apis: RuntimeAPIs) {
-  initializeSharedPreferences();
+  initializeSharedPreferences({ logLabel: '[vscode-main]' });
 
   const rootElement = document.getElementById('root');
   if (!rootElement) {
     throw new Error('Root element not found');
   }
+
+  preloadMarkdownRenderer();
 
   createRoot(rootElement).render(
     <StrictMode>

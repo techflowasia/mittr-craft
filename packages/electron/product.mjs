@@ -28,7 +28,7 @@ export const UPSTREAM_PRODUCT = deepFreeze({
   desktopPort: 57123,
   links: {
     bugReport: 'https://github.com/openchamber/openchamber/issues/new?template=bug_report.yml',
-    ideas: 'https://github.com/openchamber/openchamber/discussions/categories/ideas',
+    ideas: 'https://github.com/openchamber/openchamber/issues/new?template=feature_request.yml',
     discord: 'https://discord.gg/ZYRSdnwwKA',
   },
   updaterFeed: { provider: 'github', owner: 'openchamber', repo: 'openchamber' },
@@ -145,4 +145,9 @@ export function serverVersionEnv(product, appVersion) {
 
 export function ensureProductDirs(product, fs = nodeFs) {
   for (const dir of product.ensureDirs ?? []) fs.mkdirSync(dir, { recursive: true });
+}
+
+export function withoutProductToken(userAgent, product) {
+  const token = product.appName.replaceAll(' ', '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return String(userAgent || '').replace(new RegExp(`\\s${token}/\\S+`, 'gi'), '');
 }

@@ -1,0 +1,64 @@
+diff --git a/packages/ui/src/components/chat/ChatMessage.tsx b/packages/ui/src/components/chat/ChatMessage.tsx
+index 00a8d40da..4da2712d3 100644
+--- a/packages/ui/src/components/chat/ChatMessage.tsx
++++ b/packages/ui/src/components/chat/ChatMessage.tsx
+@@ -46,9 +46,11 @@ import { getContextObligatoryMessages } from '@/lib/contextObligatoryMessages';
+ import { setContextObligatoryMessage } from '@/sync/session-actions';
+ import { isVSCodeRuntime } from '@/lib/desktop';
+ import { useChatColumnActions } from './chatColumnSession';
++import { LiveFinalActivityContext } from './components/liveActivityContext';
+ import { MessageSelectionMark } from './messageSelection/MessageSelectionMark';
+ import { MESSAGE_SELECT_UNIT_ATTRIBUTE } from './messageSelection/useMessageSelectionClicks';
+ import { useMessageSelectionEntry } from './messageSelection/useMessageSelectionEntry';
++import { ProductSlot, translateProductMessageError } from '@/lib/product-plugins';
+ 
+ const ToolOutputDialog = lazyWithChunkRecovery(() => import('./message/ToolOutputDialog'));
+ 
+@@ -352,6 +354,10 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
+     const hasTurnGrouping = Boolean(turnGroupingContext);
+     const isLastAssistantInTurn = turnGroupingContext?.isLastAssistantInTurn ?? false;
+ 
++    const closedFold = React.useContext(LiveFinalActivityContext)?.expanded === false;
++    const joinsReplyAbove = turnGroupingContext?.isFirstAssistantInTurn === false && !slice?.from && !closedFold;
++    const joinsReplyBelow = turnGroupingContext?.isLastAssistantInTurn === false && !slice?.to;
++
+     const nextIsHiddenUserMessage = React.useMemo(
+         () => !isUser && isHiddenUserMessage(nextMessage),
+         [isUser, nextMessage]
+@@ -445,6 +451,13 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
+         if (isFollowedByAssistant) {
+             return undefined;
+         }
++        if (message.info.role === 'assistant' && message.info.error) {
++            const { type, message: errorText, status, response } = message.info.error;
++            const productText = translateProductMessageError({ type, message: errorText, status, responseBody: response?.body, providerID: message.info.providerID });
++            if (productText !== null) {
++                return { text: productText };
++            }
++        }
+         return assistantErrorNotice(message.info);
+     }, [isFollowedByAssistant, isUser, message.info]);
+ 
+@@ -693,7 +706,12 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
+                             </FadeInOnReveal>
+                         )
+                     ) : (
+-                        <div className="relative">
++                        <div
++                            className="relative"
++                            data-assistant-bubble=""
++                            data-reply-joins-above={joinsReplyAbove ? '' : undefined}
++                            data-reply-joins-below={joinsReplyBelow ? '' : undefined}
++                        >
+                             <MessageBody
+                                 sessionId={message.info.sessionID}
+                                 messageId={message.info.id}
+@@ -735,7 +753,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
+                                 extraActions={guestMessageActions}
+                                 onSelectMessages={onSelectMessages}
+                             />
+-
++                            {slice?.to ? null : <ProductSlot name="assistant-message-footer" message={message} isLatestTurn={turnGroupingContext?.isLatestTurn === true} />}
+                         </div>
+                     )}
+                 </div>

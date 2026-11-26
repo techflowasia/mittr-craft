@@ -4,15 +4,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import '../../../../web/scripts/register-server-sources.mjs';
 
 import express from 'express';
 
 import { MARKER_PNG } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
-import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
-import { SCREENSHOT_DIRECTORY } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { deferred, listen, until } from '../test-helpers.js';
 import { TOOLS_CALLBACK_ROUTE, createToolsCallback } from './callback.js';
 import { MittrToolError, createMittrActionRegistry } from './registry.js';
+
+const { OPENCHAMBER_ALL_ACTIONS } = await import('../../../../web/server/lib/openchamber-control/actions.js');
+const { SCREENSHOT_DIRECTORY } = await import('../../../../web/server/lib/openchamber-control/screenshots.js');
 
 const recordingLogger = () => {
   const lines = [];

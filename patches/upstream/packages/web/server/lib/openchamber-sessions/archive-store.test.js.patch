@@ -1,0 +1,22 @@
+diff --git a/packages/web/server/lib/openchamber-sessions/archive-store.test.js b/packages/web/server/lib/openchamber-sessions/archive-store.test.js
+index c8d37e89d..010666733 100644
+--- a/packages/web/server/lib/openchamber-sessions/archive-store.test.js
++++ b/packages/web/server/lib/openchamber-sessions/archive-store.test.js
+@@ -30,6 +30,17 @@ describe('createArchiveStore', () => {
+     await expect(store.entry('ses_1')).resolves.toBeUndefined();
+   });
+ 
++  it.each([false, true])('marks corrupt-file recovery non-authoritative even when quarantine fails=%s', async fails => {
++    const dataDir = makeDataDir();
++    const store = createArchiveStore({ dataDir, now: () => 1000 });
++    fs.writeFileSync(store.filePath, '{"ses_1":1000');
++    if (fails) fs.mkdirSync(`${store.filePath}.corrupt-1000`);
++    await expect(store.load()).resolves.toMatchObject({ ok: true, authoritative: false, entries: {} });
++    await expect(store.getAll()).resolves.toEqual({});
++    await expect(store.entry('ses_1')).resolves.toBeUndefined();
++    await expect(store.load()).resolves.toMatchObject({ authoritative: false });
++  });
++
+   it('tells an archive from an explicit unarchive and from a session it does not mention', async () => {
+     const dataDir = makeDataDir();
+     writeFile(dataDir, { ses_1: 7, ses_3: null });

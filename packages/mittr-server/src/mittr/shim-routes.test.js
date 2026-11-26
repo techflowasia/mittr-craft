@@ -318,6 +318,56 @@ test('a stream the platform breaks ends with one error the engine does not retry
   assert.equal(events.some((event) => event.done), false);
 });
 
+test('a length-limited stream reports interruption instead of ending successfully', async (t) => {
+  const terminal = `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'lo' }, finish_reason: 'length' }] })}\n\n`;
+  const upstream = await platform(t, answerStream([frame({ content: 'Hel' }), terminal.slice(0, 25), terminal.slice(25), DONE]));
+  const events = [];
+  const { request } = await shim(t, { upstreamV1: upstream.v1, onAnswer: (event) => events.push(event) });
+  const response = await request('/chat/completions');
+  const text = await readAll(response);
+  assert.equal(text.includes('"finish_reason":"length"'), false);
+  assert.equal(text.includes('"content":"lo"'), true);
+  const frames = text.split('\n').filter((line) => line.startsWith('data:'));
+  assert.equal(frames.at(-1), 'data: [DONE]');
+  const { error } = JSON.parse(frames.at(-2).slice(5));
+  assert.equal(error.code, 'response_length_limit');
+  assert.ok(ENGINE_INVALID_REQUEST_TYPES.has(error.type));
+  assert.equal(ENGINE_RETRY_WORDING.test(error.message), false);
+  assert.equal(events.some((event) => event.done), false);
+  assert.equal(upstream.requests.length, 1);
+});
+
+test('length limits also fail with no content, a tool fragment, or no final newline', async (t) => {
+  for (const delta of [{}, { tool_calls: [{ index: 0, function: { arguments: '{' } }] }]) {
+    const terminal = `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: 'length' }] })}`;
+    const upstream = await platform(t, answerStream([terminal]));
+    const { request } = await shim(t, { upstreamV1: upstream.v1 });
+    const text = await readAll(await request('/chat/completions'));
+    assert.equal(text.includes('response_length_limit'), true);
+    assert.equal(text.includes('"finish_reason":"length"'), false);
+    assert.equal(text.endsWith(DONE), true);
+    if (delta.tool_calls) assert.equal(text.includes('"tool_calls"'), true);
+  }
+});
+
+test('a normal streamed finish is passed through byte for byte', async (t) => {
+  const body = frame({ content: 'length is ordinary text' })
+    + `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\n` + DONE;
+  const upstream = await platform(t, answerStream([body]));
+  const { request } = await shim(t, { upstreamV1: upstream.v1 });
+  assert.equal(await readAll(await request('/chat/completions')), body);
+});
+
+test('an empty length-limited answer is an explicit non-retryable failure', async (t) => {
+  const upstream = await platform(t, answerJson(200, { choices: [{ message: { content: '' }, finish_reason: 'length' }] }));
+  const { request } = await shim(t, { upstreamV1: upstream.v1 });
+  const response = await request('/chat/completions', { body: { ...REQUEST, stream: false } });
+  assert.equal(response.status, 502);
+  assert.equal(response.headers.get('x-should-retry'), 'false');
+  assert.equal((await response.json()).error.code, 'response_length_limit');
+  assert.equal(upstream.requests.length, 1);
+});
+
 test('the engine hanging up stops the upstream request', async (t) => {
   const upstreamClosed = deferred();
   const upstream = await platform(t, (_req, res) => {
@@ -885,4 +935,108 @@ test('the shim log names the call and never the token', async (t) => {
   const { request: unlogged } = await shim(t, { upstreamV1: upstream.v1, logger: quiet, env: {} });
   await readAll(await unlogged('/chat/completions'));
   assert.deepEqual(quiet.lines.log, []);
+});
+
+const failureRecords = (logger) => logger.lines.log.filter((line) => line.startsWith('[mittr] request-failed ')).map((line) => JSON.parse(line.slice('[mittr] request-failed '.length)));
+
+test('length diagnostics capture budget and same-frame usage without private data', async (t) => {
+  const logger = recordingLogger();
+  const ending = `data: ${JSON.stringify({ choices: [{ finish_reason: 'length', delta: { content: 'PRIVATE_RESPONSE' } }], usage: { prompt_tokens: 100, completion_tokens: 12, completion_tokens_details: { reasoning_tokens: 8 } }, secret: 'PRIVATE_EXTRA' })}\n\n`;
+  const upstream = await platform(t, answerStream([ending.slice(0, 17), ending.slice(17), DONE]));
+  const { request } = await shim(t, { upstreamV1: upstream.v1, logger });
+  const response = await request('/chat/completions', { body: { ...REQUEST, max_tokens: 12, messages: [{ role: 'user', content: 'PRIVATE_PROMPT' }] } });
+  assert.match(await readAll(response), /response_length_limit/);
+  const records = failureRecords(logger);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].maxTokens, 12);
+  assert.equal(records[0].outputTokens, 12);
+  assert.equal(records[0].reasoningTokens, 8);
+  assert.equal(records[0].httpStatus, 200);
+  assert.equal(records[0].finishReason, 'length');
+  assert.equal(JSON.stringify(records).includes('PRIVATE'), false);
+});
+
+test('length at EOF records missing usage and does not collect usage after cutoff', async (t) => {
+  for (const suffix of ['', `\n\ndata: ${JSON.stringify({ choices: [], usage: { completion_tokens: 999 } })}\n\n${DONE}`]) {
+    const logger = recordingLogger();
+    const end = `data: ${JSON.stringify({ choices: [{ finish_reason: 'length', delta: {} }] })}`;
+    const upstream = await platform(t, answerStream([end + suffix]));
+    const { request } = await shim(t, { upstreamV1: upstream.v1, logger });
+    assert.match(await readAll(await request('/chat/completions')), /response_length_limit/);
+    const records = failureRecords(logger);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].outputTokens, null);
+    assert.equal(records[0].usageAvailable, false);
+  }
+});
+
+test('HTTP and JSON length failures log metadata while successful completions do not', async (t) => {
+  for (const [status, reason, outcome] of [[400, null, 'http_error'], [200, 'length', 'length'], [200, 'stop', null]]) {
+    const logger = recordingLogger();
+    const upstream = await platform(t, answerJson(status, { choices: [{ finish_reason: reason, message: { content: 'PRIVATE' } }], usage: { completion_tokens: 7 }, error: { message: 'PRIVATE' } }));
+    const { request } = await shim(t, { upstreamV1: upstream.v1, logger });
+    await readAll(await request('/chat/completions', { body: { ...REQUEST, stream: false } }));
+    const records = failureRecords(logger);
+    assert.equal(records.length, outcome ? 1 : 0);
+    if (outcome) { assert.equal(records[0].outcome, outcome); assert.equal(records[0].outputTokens, 7); }
+    assert.equal(JSON.stringify(records).includes('PRIVATE'), false);
+  }
+});
+
+test('transport failure and timeout emit one diagnostic record', async (t) => {
+  for (const timeout of [false, true]) {
+    const logger = recordingLogger();
+    const fetchImpl = timeout
+      ? async (_url, { signal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('PRIVATE')), { once: true }))
+      : async () => { throw new Error('PRIVATE'); };
+    const { request } = await shim(t, { logger, fetchImpl, upstreamTimeoutMs: 10 });
+    await readAll(await request('/chat/completions'));
+    assert.equal(failureRecords(logger).length, 1);
+    assert.equal(failureRecords(logger)[0].outcome, timeout ? 'timeout' : 'transport_error');
+  }
+});
+
+test('a broken stream logs once without retaining upstream error text', async (t) => {
+  const logger = recordingLogger();
+  const fetchImpl = async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(frame({ content: 'PRIVATE' })));
+    },
+    pull(controller) { controller.error(new Error('PRIVATE')); },
+  }), { headers: { 'content-type': 'text/event-stream' } });
+  const { request } = await shim(t, { fetchImpl, logger });
+  assert.match(await readAll(await request('/chat/completions')), /stream_cut_off/);
+  const records = failureRecords(logger);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].outcome, 'stream_error');
+  assert.equal(JSON.stringify(records).includes('PRIVATE'), false);
+});
+
+test('successful streamed answers produce no failure diagnostics', async (t) => {
+  const logger = recordingLogger();
+  const upstream = await platform(t, answerStream([frame({ content: 'PRIVATE' }), DONE]));
+  const { request } = await shim(t, { upstreamV1: upstream.v1, logger });
+  await readAll(await request('/chat/completions'));
+  assert.deepEqual(failureRecords(logger), []);
+});
+
+test('quota outcomes stay quota across HTTP, streaming and EOF failures', async (t) => {
+  const quota = { error: { code: 'llm_quota_exhausted', kind: 'chat', resets_at: '2026-11-09T00:00:00Z' } };
+  for (const [stream, respond] of [[false, answerJson(429, quota)], [false, answerJson(200, quota)], [true, answerStream([`data: ${JSON.stringify(quota)}\n\n`])], [true, answerStream([`data: ${JSON.stringify(quota)}`])]]) {
+    const logger = recordingLogger();
+    const upstream = await platform(t, respond);
+    const { request } = await shim(t, { upstreamV1: upstream.v1, logger });
+    await readAll(await request('/chat/completions', { body: { ...REQUEST, stream } }));
+    const records = failureRecords(logger);
+    assert.equal(records.length, 1);
+    assert.equal(records[0].outcome, 'quota');
+  }
+});
+
+test('diagnostic logger failure does not change length error delivery', async (t) => {
+  const upstream = await platform(t, answerStream([`data: {"choices":[{"finish_reason":"length"}]}\n\n`]));
+  const logger = recordingLogger();
+  logger.log = () => { throw new Error('logger failed'); };
+  const { request } = await shim(t, { upstreamV1: upstream.v1, logger });
+  assert.match(await readAll(await request('/chat/completions')), /response_length_limit/);
 });

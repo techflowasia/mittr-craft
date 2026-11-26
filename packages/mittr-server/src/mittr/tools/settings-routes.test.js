@@ -2,16 +2,18 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import '../../../../web/scripts/register-server-sources.mjs';
 
 import express from 'express';
 
-import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
-import { SCREENSHOT_DIRECTORY, writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { createMittrSettings } from '../mittr-settings.js';
 import { serve, stubAgentBrowser, tempDataDir } from '../test-helpers.js';
 import { CHROME_PERMISSION } from './chrome-approvals.js';
 import { setupMittrTools } from './index.js';
 import { createMittrActionRegistry } from './registry.js';
+
+const { OPENCHAMBER_ALL_ACTIONS } = await import('../../../../web/server/lib/openchamber-control/actions.js');
+const { SCREENSHOT_DIRECTORY, writeScreenshot } = await import('../../../../web/server/lib/openchamber-control/screenshots.js');
 
 const quietLogger = () => {
   const lines = [];
@@ -197,10 +199,10 @@ test('PUT changes a switch and refreshes the tools', async (t) => {
   assert.equal(state.refreshes, 1);
   assert.equal(storedTools().chrome, false);
   assert.equal(storedTools().chromeHeaded, true);
-  assert.deepEqual(pluginTools(), ['mittrcraft_computer']);
+  assert.deepEqual(pluginTools(), ['mittrcraft_computer', 'mittrcraft_todo']);
 
   assert.deepEqual((await call('PUT', '/api/mittr/tools', { computer: false, chrome: true })).body.computer, { offered: true, enabled: false });
-  assert.deepEqual(pluginTools(), ['mittrcraft_chrome']);
+  assert.deepEqual(pluginTools(), ['mittrcraft_chrome', 'mittrcraft_todo']);
   assert.equal(state.refreshes, 2);
 });
 

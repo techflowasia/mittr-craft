@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import '../../web/scripts/register-server-sources.mjs';
 
-import { createThemeRuntime } from '../../web/server/lib/opencode/theme-runtime.js';
 import { DEFAULT_THEME_MARK, DEFAULT_THEMES, installDefaultThemes } from './default-themes.js';
 import { tempDataDir } from './mittr/test-helpers.js';
+
+const { createThemeRuntime } = await import('../../web/server/lib/appearance/theme-runtime.js');
 
 const themesOf = (dataDir) => path.join(dataDir, 'themes');
 const fileOf = (dataDir, id) => path.join(themesOf(dataDir), `${id}.json`);

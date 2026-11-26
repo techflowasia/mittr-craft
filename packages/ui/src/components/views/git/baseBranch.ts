@@ -1,32 +1,18 @@
 export const branchRefLabel = (ref: string): string => ref.replace(/^refs\/(heads|remotes)\//, '').replace(/^remotes\//, '');
 
-/**
- * Derives the base ("target") branch a feature branch should compare and
- * merge against. Shared by GitView and the standalone pull-request surface so
- * both resolve the same base for the same repository state.
- */
+export const comparisonBaseBranchName = (ref: string, primaryRemote: string | null | undefined): string => {
+  if (ref.startsWith('refs/heads/')) return ref.slice('refs/heads/'.length);
+  return primaryRemote && ref.startsWith(`${primaryRemote}/`) ? ref.slice(primaryRemote.length + 1) : ref;
+};
+
 export const deriveBaseBranch = (options: {
-  /** Remotes authorized to supply the base branch. */
   remoteNames: ReadonlySet<string>;
-  /** All repository remotes, used to reject a remote-qualified hint outside the binding. */
   knownRemoteNames?: ReadonlySet<string>;
   localBranches: readonly string[];
   worktreeCreatedFromBranch?: string | null;
   rootBranchHint?: string | null;
-  /**
-   * The repository's own default branch, read from a `remote/HEAD` symbolic
-   * ref. Its own option rather than another hint: `rootBranchHint` means "the
-   * branch the project root worktree is on", and a parameter that means two
-   * things is one the next caller gets wrong.
-   */
   defaultBranch?: string | null;
-  /** Whether to guess a conventional branch when no repository authority resolves a base. */
   fallbackToConventional?: boolean;
-  /**
-   * The branch being compared. A branch is never its own base, so a candidate
-   * equal to it is skipped — in a plain checkout `rootBranchHint` *is* the
-   * current branch, and taking it produced a comparison with itself.
-   */
   headBranch?: string | null;
 }): string => {
   const {
@@ -92,8 +78,6 @@ export const deriveBaseBranch = (options: {
   const fromHint = candidate(rootBranchHint);
   if (fromHint) return fromHint;
 
-  // Authoritative where the hints are guesses: this is what the repository says
-  // its default branch is, so it outranks the conventional names below.
   const fromDefault = candidate(defaultBranch);
   if (fromDefault) return fromDefault;
 
@@ -104,16 +88,6 @@ export const deriveBaseBranch = (options: {
   return 'main';
 };
 
-/**
- * Whether a base branch can be resolved locally or through one of the active
- * remote-tracking refs. Callers must not offer comparisons against the `main`
- * fallback when that ref does not actually exist in the repository.
- *
- * `remoteBranches` are remote-relative (`origin/main`, `origin/feature/x`), so
- * the remote name is dropped and the rest compared whole. A suffix test matched
- * `origin/feature/main` for a base of `main`, which passes the check and then
- * fails the comparison it was meant to prevent.
- */
 export const hasResolvableBaseBranch = (options: {
   baseBranch: string;
   localBranches: readonly string[];
@@ -127,37 +101,51 @@ export const hasResolvableBaseBranch = (options: {
   });
 };
 
-/**
- * The ref a comparison should actually name, for a base the person chose or
- * the repository's reflog reported.
- *
- * The range API honors refs literally: it never substitutes `origin/main` for
- * `main`, so a caller has to say which one it means. And a repository answers
- * to the remote it is bound to, so a base on any other remote is not a
- * comparison this repository can make — it is a different project's branch
- * with a familiar name. Null means exactly that: no ref here is the base.
- */
 export const qualifyBaseRef = (candidate: string | null | undefined, options: {
   localBranches: readonly string[];
-  /** Remote-relative names, as `origin/main`. */
   remoteBranches: readonly string[];
-  /** Every remote the repository configures, used to recognise a qualified hint. */
   remoteNames: ReadonlySet<string>;
-  /** The remote this repository is bound to, if any. */
   primaryRemote: string | null | undefined;
 }): string | null => {
   const { localBranches, remoteBranches, remoteNames, primaryRemote } = options;
-  let branch = candidate?.trim()
-    .replace(/^refs\/heads\//, '')
+  const trimmed = candidate?.trim() ?? '';
+  if (trimmed.startsWith('refs/heads/')) {
+    const local = trimmed.slice('refs/heads/'.length);
+    return localBranches.includes(local) ? trimmed : null;
+  }
+  let branch = trimmed
     .replace(/^refs\/remotes\//, '')
-    .replace(/^remotes\//, '') ?? '';
+    .replace(/^remotes\//, '');
   if (!branch) return null;
-  if (localBranches.includes(branch)) return `refs/heads/${branch}`;
   const slashIndex = branch.indexOf('/');
-  if (slashIndex > 0 && remoteNames.has(branch.slice(0, slashIndex))) {
+  if (slashIndex > 0 && remoteNames.has(branch.slice(0, slashIndex)) && !localBranches.includes(branch)) {
     if (branch.slice(0, slashIndex) !== primaryRemote) return null;
     branch = branch.slice(slashIndex + 1);
   }
   if (primaryRemote && remoteBranches.includes(`${primaryRemote}/${branch}`)) return `${primaryRemote}/${branch}`;
+  if (localBranches.includes(branch)) return `refs/heads/${branch}`;
+  return null;
+};
+
+export type BranchComparisonBaseSource = 'chosen' | 'pull-request' | 'created-from' | 'default';
+
+export const resolveBranchComparisonBase = (candidates: {
+  chosen: string | null;
+  pullRequest: string | null;
+  createdFrom: string | null;
+  defaultBranch: string | null;
+}, options: Parameters<typeof qualifyBaseRef>[1] & { headBranch: string }): { ref: string; source: BranchComparisonBaseSource } | null => {
+  const order: Array<[BranchComparisonBaseSource, string | null]> = [
+    ['chosen', candidates.chosen],
+    ['pull-request', candidates.pullRequest],
+    ['created-from', candidates.createdFrom],
+    ['default', candidates.defaultBranch],
+  ];
+  for (const [source, candidate] of order) {
+    const ref = qualifyBaseRef(candidate, options);
+    if (!ref) continue;
+    const branch = ref.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : ref.slice(`${options.primaryRemote}/`.length);
+    if (branch !== options.headBranch) return { ref, source };
+  }
   return null;
 };

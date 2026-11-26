@@ -1,0 +1,13 @@
+diff --git a/packages/web/server/lib/enterprise-mode.ts b/packages/web/server/lib/enterprise-mode.ts
+index 440a5ecf5..c0285ece9 100644
+--- a/packages/web/server/lib/enterprise-mode.ts
++++ b/packages/web/server/lib/enterprise-mode.ts
+@@ -33,6 +33,8 @@ const hasErrorDetails = (value: unknown): value is { code?: unknown; message?: u
+ const WINDOWS_PROGRAM_DATA = 'C:\\ProgramData';
+ 
+ export const policyFilePaths = ({ platform = process.platform, env = process.env }: Pick<EnterprisePolicyOptions, 'platform' | 'env'> = {}) => {
++  const productPolicyFile = (env.OPENCHAMBER_POLICY_FILE ?? '').trim();
++  if (productPolicyFile) return [productPolicyFile];
+   if (platform === 'darwin') return ['/Library/Application Support/OpenChamber/policy.json'];
+   if (platform === 'win32') {
+     const fixed = path.win32.join(WINDOWS_PROGRAM_DATA, 'OpenChamber', 'policy.json');

@@ -1,11 +1,13 @@
 import type { Session, SessionStatus } from '../../../ui/src/lib/opencode/model';
 import { formatGoalTokens, getSessionGoal, type SessionGoalPayload } from '../../../ui/src/lib/sessionGoalMetadata';
 import { resolveGlobalSessionDirectory } from '../../../ui/src/stores/globalSessionStructure';
-import type { PendingBlockingRequests } from '../../../ui/src/sync/global-blocking-requests';
+import type { useGlobalBlockingRequestsStore } from '../../../ui/src/sync/global-blocking-requests';
 import type { QuotaMeState } from '../quota/quotaMeStore';
 import { mittrT, type MittrKey } from '../strings/mittrT';
 import type { MyWorkState } from '../work/myWorkController';
 import type { WorkItem } from '../work/workItems';
+
+type PendingBlockingRequests = ReturnType<typeof useGlobalBlockingRequestsStore.getState>['bySession'] extends ReadonlyMap<string, infer Pending> ? Pending : never;
 
 export type TodayKind = 'approval' | 'question' | 'review' | 'goal' | 'running' | 'scheduled' | 'quota' | 'error' | 'due' | 'work' | 'widget';
 
@@ -40,6 +42,7 @@ export type TodayState = {
   unseenCount: Readonly<Record<string, number>>;
   unseenHasError: Readonly<Record<string, boolean>>;
   quota: QuotaMeState;
+  catalogAliases?: readonly string[];
   work: MyWorkState;
   scheduled: readonly ScheduledRun[];
   now: number;
@@ -79,6 +82,9 @@ export function waiting(state: TodayState): TodayRow[] {
     }
     for (const request of pending.forms) {
       rows.push({ id: `question:${request.id}`, kind: 'question', title: titleOf(session), detail: request.title.trim() || mittrT('mittr.today.kind.question'), open });
+    }
+    for (const request of pending.pages) {
+      rows.push({ id: `page:${request.id}`, kind: 'question', title: titleOf(session), detail: request.title.trim() || mittrT('mittr.today.kind.question'), open });
     }
   }
   for (const session of roots(state)) {
@@ -146,8 +152,9 @@ const byDue = (left: WorkItem, right: WorkItem): number => {
 export function alerts(state: TodayState): TodayRow[] {
   const rows: TodayRow[] = [];
   if (state.quota.status === 'ok') {
-    for (const [alias, status] of state.quota.quota.agentStatus) {
-      if (status.state !== 'near' && status.state !== 'out') continue;
+    for (const alias of state.catalogAliases ?? []) {
+      const status = state.quota.quota.agentStatus.get(alias);
+      if (!status || (status.state !== 'near' && status.state !== 'out')) continue;
       const title = status.state === 'out'
         ? mittrT('mittr.today.alert.quotaOut', { model: alias })
         : mittrT('mittr.today.alert.quotaNear', { model: alias, percent: status.percentLeft ?? Math.floor((status.left / Math.max(1, status.limit)) * 100) });

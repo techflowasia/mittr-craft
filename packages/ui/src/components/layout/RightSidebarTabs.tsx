@@ -12,23 +12,17 @@ import type { ProjectRef } from '@/lib/projectContextApi';
 import { useI18n } from '@/lib/i18n';
 
 export const ProjectContextPanel: React.FC<{
+  visible?: boolean;
   onActionComplete?: () => void;
   onOpenPlan?: (plan: { id: string; title: string; projectRef: ProjectRef }) => void;
-}> = ({ onActionComplete, onOpenPlan }) => {
+}> = ({ visible = true, onActionComplete, onOpenPlan }) => {
   const homeDirectory = useDirectoryStore((state) => state.homeDirectory);
   const { t } = useI18n();
   const gitDirectories = useGitStore((state) => state.directories);
   const chatSessionDirectory = useSessionUIStore((state) => state.currentSessionDirectory);
 
-  // One owner decision shared with the panel, agent memory, and PlanView:
-  // chats resolve to the Chats owner, worktrees to their project, and an
-  // unrecognized directory owns nothing (null) rather than borrowing
-  // whichever project happens to be active.
   const projectRef = useProjectContextOwner(chatSessionDirectory);
 
-  // Display-only lookup: a user-renamed project label wins over the directory
-  // name. The owner decision stays with the hook — this must not reintroduce
-  // a fallback.
   const projects = useProjectsStore((state) => state.projects);
   const labeledProject = React.useMemo(
     () => (projectRef ? projects.find((project) => project.id === projectRef.id) ?? null : null),
@@ -55,10 +49,10 @@ export const ProjectContextPanel: React.FC<{
   }, [gitDirectories, projectRef]);
 
   return (
-    /* The panel scrolls its own tab content; a scroller here would nest. */
     <div className="h-full min-h-0 overflow-hidden bg-background">
       <ProjectNotesTodoPanel
         projectRef={projectRef}
+        visible={visible}
         projectLabel={projectLabel}
         canCreateWorktree={canCreateWorktree}
         onActionComplete={onActionComplete}

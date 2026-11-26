@@ -4,16 +4,14 @@ import { Icon } from '@/components/icon/Icon';
 import { useI18n } from '@/lib/i18n';
 import type { Session } from '@/lib/opencode/model';
 import { getSessionGoal } from '@/lib/sessionGoalMetadata';
-import { sessionGoalStatusColor, sessionGoalStatusLabelKey } from '@/lib/sessionGoalPresentation';
-import type { PendingRequestCounts } from './usePendingRequestCounts';
+import { sessionGoalMarkLabelKey, sessionGoalStatusColor } from '@/lib/sessionGoalPresentation';
+import type { PendingRequests } from './usePendingRequests';
 
-/** The goal glyph the desktop sidebar shows, tinted by the goal's status. */
 export const MobileSessionGoalGlyph: React.FC<{ session: Session }> = ({ session }) => {
   const { t } = useI18n();
   const goal = getSessionGoal(session);
   if (!goal) return null;
-  // SAFETY: sessionGoalStatusLabelKey contains an i18n key for every SessionGoalStatus.
-  const label = t(sessionGoalStatusLabelKey[goal.status] as never);
+  const label = t(sessionGoalMarkLabelKey[goal.status]);
   return (
     <Icon
       name="target"
@@ -24,31 +22,25 @@ export const MobileSessionGoalGlyph: React.FC<{ session: Session }> = ({ session
   );
 };
 
-/** The permission and question badges the desktop sidebar shows. */
-export const MobileSessionPendingBadges: React.FC<PendingRequestCounts> = ({ permissionCount, formCount }) => {
+export const MobileSessionPendingBadges: React.FC<PendingRequests> = ({ hasPermission, hasForm }) => {
   const { t } = useI18n();
-  if (permissionCount === 0 && formCount === 0) return null;
-  const formLabel = formCount === 1
-    ? t('sessions.sidebar.session.status.questionPendingSingle')
-    : t('sessions.sidebar.session.status.questionPendingMany', { count: formCount });
+  if (!hasPermission && !hasForm) return null;
   return (
     <>
-      {permissionCount > 0 ? (
+      {hasPermission ? (
         <span
-          className="inline-flex shrink-0 items-center gap-1 rounded bg-destructive/10 px-1 py-0.5 text-[0.7rem] text-destructive"
+          className="inline-flex shrink-0 items-center text-status-warning"
           aria-label={t('sessions.sidebar.session.status.permissionRequired')}
         >
           <Icon name="shield" className="size-3" />
-          <span className="leading-none tabular-nums">{permissionCount}</span>
         </span>
       ) : null}
-      {formCount > 0 ? (
+      {hasForm ? (
         <span
-          className="inline-flex shrink-0 items-center gap-1 rounded bg-status-info/10 px-1 py-0.5 text-[0.7rem] text-status-info"
-          aria-label={formLabel}
+          className="inline-flex shrink-0 items-center text-status-warning"
+          aria-label={t('sessions.sidebar.session.status.questionPending')}
         >
           <Icon name="question" className="size-3" />
-          <span className="leading-none tabular-nums">{formCount}</span>
         </span>
       ) : null}
     </>

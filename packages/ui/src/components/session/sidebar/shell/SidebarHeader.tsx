@@ -1,372 +1,327 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
+import { canAddSidebarSection, closeSectionsManager, editSection, openSectionsManager, useSidebarSectionsUiStore } from '../sections/sectionActions';
+import { createSidebarSectionFromTemplate, SIDEBAR_SECTION_NAME_MAX, SIDEBAR_SECTION_TEXT_MAX } from '@/lib/sidebarSections';
+import { useOnDemandComponent } from '@/hooks/useOnDemandComponent';
+
+const loadSectionsManager = () => import('../sections/SidebarSectionsManager').then((module) => module.SidebarSectionsManager);
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { Icon } from "@/components/icon/Icon";
-import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
+import type { IconName } from "@/components/icon/icons";
+import { resolveSidebarGrouping, useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 import { useSessionMultiSelectStore } from '@/stores/useSessionMultiSelectStore';
-import { useI18n } from '@/lib/i18n';
+import { useI18n, type I18nKey } from '@/lib/i18n';
 import { updateDesktopSettings } from '@/lib/persistence';
 import { SessionSearchInput } from '@/components/session/SessionSearchInput';
-import { Button } from '@/components/ui/button';
-import { GuestIcon } from '@/components/layout/GuestRailIcon';
-import { useGuestPages } from '@/hooks/useGuestSurfaces';
-import { guestPackageIconSrc, resolveGuestIconName } from '@/lib/guests/icon';
-import { getRuntimeUrlResolver } from '@/lib/runtime-url';
-import { useUIStore } from '@/stores/useUIStore';
+import { markAllSessionsViewed } from '@/sync/notification-store';
+import { useHasUnreadSession } from '@/sync/session-unread';
+import type { SearchScope } from '@/lib/search/omniQuery';
+import { SearchInMenu } from '@/components/search/SearchInMenu';
+import { SearchStatusMark } from '@/components/search/SearchStatusMark';
+import type { ContentSearchStatus } from '@/hooks/useConversationSearch';
 
 type Props = {
   hideDirectoryControls: boolean;
   showProjectDisplayControls: boolean;
-  showRecentControls: boolean;
-  handleOpenDirectoryDialog: () => void;
-  onOpenScheduled: () => void;
-  onOpenArchive: () => void;
+  showSectionControls: boolean;
+  showPagesSection: boolean;
   headerActionIconClass: string;
   headerActionButtonClass: string;
-  isSessionSearchOpen: boolean;
-  setIsSessionSearchOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+  listControlsSlot?: HTMLElement | null;
+  closeSessionSearch: () => void;
   sessionSearchInputRef: React.RefObject<HTMLInputElement | null>;
   sessionSearchQuery: string;
   setSessionSearchQuery: (value: string) => void;
-  hasSessionSearchQuery: boolean;
-  searchMatchCount: number;
-  collapseAllProjects: () => void;
-  expandAllProjects: () => void;
+  searchScope: SearchScope;
+  setSearchScope: (scope: SearchScope) => void;
+  searchStatus: ContentSearchStatus;
+  searchMatchCount: number | null;
+  collapseAll: () => void;
+  expandAll: () => void;
 };
+
+const IDLE_BUTTON_CLASS = 'text-muted-foreground hover:text-foreground hover:bg-transparent';
+
+function MarkAllReadItem(): React.ReactNode {
+  const { t } = useI18n();
+  const hasUnread = useHasUnreadSession();
+  return (
+    <DropdownMenuItem disabled={!hasUnread} onClick={markAllSessionsViewed} className="flex items-center gap-2">
+      <Icon name="check-double" className="h-4 w-4" />
+      <span>{t('sessions.sidebar.header.actions.markAllRead')}</span>
+    </DropdownMenuItem>
+  );
+}
 
 export function SidebarHeader(props: Props): React.ReactNode {
   const { t } = useI18n();
-  const guestPages = useGuestPages();
+  const headerRef = React.useRef<HTMLDivElement | null>(null);
+  const sectionsTriggerRef = React.useRef<HTMLButtonElement | null>(null);
+  const sectionsManagerOpen = useSidebarSectionsUiStore((state) => state.managerOpen);
+  const sidebarSections = useSessionDisplayStore((state) => state.sections);
+  const SectionsManager = useOnDemandComponent(props.showSectionControls && sectionsManagerOpen, loadSectionsManager, closeSectionsManager);
   const {
     hideDirectoryControls,
     showProjectDisplayControls,
-    showRecentControls,
-    handleOpenDirectoryDialog,
-    onOpenScheduled,
-    onOpenArchive,
+    showSectionControls,
+    showPagesSection,
     headerActionIconClass,
     headerActionButtonClass,
-    isSessionSearchOpen,
-    setIsSessionSearchOpen,
+    listControlsSlot = null,
+    closeSessionSearch,
     sessionSearchInputRef,
     sessionSearchQuery,
     setSessionSearchQuery,
-    hasSessionSearchQuery,
+    searchScope,
+    setSearchScope,
+    searchStatus,
     searchMatchCount,
-    collapseAllProjects,
-    expandAllProjects,
+    collapseAll,
+    expandAll,
   } = props;
 
   const selectionModeEnabled = useSessionMultiSelectStore((state) => state.enabled);
   const toggleSelectionMode = useSessionMultiSelectStore((state) => state.toggleMode);
 
-  const showRecentSection = useSessionDisplayStore((state) => state.showRecentSection);
-  const toggleRecentSection = useSessionDisplayStore((state) => state.toggleRecentSection);
+
+  const detailedZoneRows = useSessionDisplayStore((state) => state.detailedZoneRows);
+  const setDetailedZoneRows = useSessionDisplayStore((state) => state.setDetailedZoneRows);
+  const worktreeNameByBranch = useSessionDisplayStore((state) => state.worktreeNameByBranch);
+  const setWorktreeNameByBranch = useSessionDisplayStore((state) => state.setWorktreeNameByBranch);
   const projectSortOrder = useSessionDisplayStore((state) => state.projectSortOrder);
   const setProjectSortOrder = useSessionDisplayStore((state) => state.setProjectSortOrder);
-  const worktreeSortOrder = useSessionDisplayStore((state) => state.worktreeSortOrder);
-  const setWorktreeSortOrder = useSessionDisplayStore((state) => state.setWorktreeSortOrder);
-  const sidebarViewMode = useSessionDisplayStore((state) => state.sidebarViewMode);
-  const setSidebarViewMode = useSessionDisplayStore((state) => state.setSidebarViewMode);
+  const sidebarGrouping = useSessionDisplayStore(resolveSidebarGrouping);
+  const setSidebarGrouping = useSessionDisplayStore((state) => state.setSidebarGrouping);
   const projectDisplayMode = useSessionDisplayStore((state) => state.projectDisplayMode);
   const setProjectDisplayMode = useSessionDisplayStore((state) => state.setProjectDisplayMode);
-  const isSingleProjectMode = showProjectDisplayControls && projectDisplayMode === 'single';
-  // VS Code has no mode switch and always renders the projects view.
-  const timelineView = showProjectDisplayControls && sidebarViewMode === 'timeline';
+  const timeGrouping = showProjectDisplayControls && sidebarGrouping === 'time';
+  const isSingleProjectMode = showProjectDisplayControls && projectDisplayMode === 'single' && !timeGrouping;
+
+  const checkMark = <Icon name="check" className="h-4 w-4 text-primary" />;
+  const choiceSubmenu = <T extends string>(
+    { labelKey, icon }: { labelKey: I18nKey; icon: IconName },
+    options: readonly (readonly [T, I18nKey])[],
+    current: T,
+    onSelect: (value: T) => void,
+  ) => {
+    const currentLabelKey = options.find(([value]) => value === current)?.[1];
+    return (
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger className="gap-2">
+          <Icon name={icon} className="h-4 w-4" />
+          <span className="flex-1">{t(labelKey)}</span>
+          {currentLabelKey ? <span className="ms-4 text-muted-foreground">{t(currentLabelKey)}</span> : null}
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent className="min-w-[160px]">
+          {options.map(([value, optionLabelKey]) => (
+            <DropdownMenuItem key={value} closeOnClick={false} onClick={() => onSelect(value)} className="flex items-center justify-between">
+              <span>{t(optionLabelKey)}</span>
+              {current === value ? checkMark : null}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+    );
+  };
+  const toggleItem = ({ labelKey, icon }: { labelKey: I18nKey; icon: IconName }, checked: boolean, onToggle: () => void) => (
+    <DropdownMenuItem closeOnClick={false} onClick={onToggle} className="flex items-center gap-2">
+      <Icon name={icon} className="h-4 w-4" />
+      <span className="flex-1">{t(labelKey)}</span>
+      {checked ? checkMark : null}
+    </DropdownMenuItem>
+  );
+  const displayMenuSections: React.ReactNode[] = [
+    <>
+      <DropdownMenuItem onClick={toggleSelectionMode} className="flex items-center gap-2">
+        <Icon name="checkbox-multiple" className="h-4 w-4" />
+        <span>{selectionModeEnabled
+          ? t('sessions.sidebar.header.actions.exitSelection')
+          : t('sessions.sidebar.header.actions.selectSessions')}</span>
+      </DropdownMenuItem>
+    </>,
+  ];
+  if (showProjectDisplayControls) {
+    displayMenuSections.push(choiceSubmenu({ labelKey: 'sessions.sidebar.header.listGrouping.label', icon: sidebarGrouping === 'time' ? 'time' : 'folders' }, [
+      ['project', 'sessions.sidebar.header.listGrouping.project'],
+      ['time', 'sessions.sidebar.header.listGrouping.time'],
+    ] as const, sidebarGrouping, (grouping) => {
+      setSidebarGrouping(grouping);
+      void updateDesktopSettings({ sidebarGrouping: grouping });
+    }));
+  }
+  if (!timeGrouping) displayMenuSections.push(<>
+    {choiceSubmenu({ labelKey: 'sessions.sidebar.header.actions.sortProjects', icon: 'arrow-up-down' }, [
+      ['manual', 'sessions.sidebar.header.projectSort.manual'],
+      ['a-z', 'sessions.sidebar.header.projectSort.aToZ'],
+      ['z-a', 'sessions.sidebar.header.projectSort.zToA'],
+      ['date-added', 'sessions.sidebar.header.projectSort.dateAdded'],
+      ['recent', 'sessions.sidebar.header.projectSort.recent'],
+    ] as const, projectSortOrder, (order) => {
+      setProjectSortOrder(order);
+      void updateDesktopSettings({ sidebarProjectSortOrder: order });
+    })}
+    {showProjectDisplayControls ? choiceSubmenu({ labelKey: 'sessions.sidebar.header.projectDisplay.label', icon: 'folder-open' }, [
+      ['all', 'sessions.sidebar.header.projectDisplay.all'],
+      ['single', 'sessions.sidebar.header.projectDisplay.single'],
+    ] as const, projectDisplayMode, (mode) => {
+      setProjectDisplayMode(mode);
+      void updateDesktopSettings({ sidebarProjectDisplayMode: mode });
+    }) : null}
+  </>);
+  if (showSectionControls) {
+    displayMenuSections.push(<>
+      {toggleItem({ labelKey: 'sessions.sidebar.header.displayMode.detailedZoneRows', icon: 'list-check-2' }, detailedZoneRows, () => {
+        setDetailedZoneRows(!detailedZoneRows);
+        void updateDesktopSettings({ sidebarDetailedZoneRows: !detailedZoneRows });
+      })}
+      {toggleItem({ labelKey: 'sessions.sidebar.header.displayMode.worktreeNameByBranch', icon: 'git-branch' }, worktreeNameByBranch, () => {
+        setWorktreeNameByBranch(!worktreeNameByBranch);
+        void updateDesktopSettings({ sidebarWorktreeNameByBranch: !worktreeNameByBranch });
+      })}
+    </>);
+  }
+  if (!isSingleProjectMode) {
+    displayMenuSections.push(<>
+      <DropdownMenuItem onClick={collapseAll} className="flex items-center gap-2">
+        <Icon name="contract-up-down" className="h-4 w-4" />
+        <span>{t('sessions.sidebar.header.displayMode.collapseAll')}</span>
+      </DropdownMenuItem>
+      <DropdownMenuItem onClick={expandAll} className="flex items-center gap-2">
+        <Icon name="expand-up-down" className="h-4 w-4" />
+        <span>{t('sessions.sidebar.header.displayMode.expandAll')}</span>
+      </DropdownMenuItem>
+    </>);
+  }
+  displayMenuSections.push(<MarkAllReadItem />);
+
+  const searchText = sessionSearchQuery.trim();
+  const canSaveSearch = showSectionControls && searchText !== '' && !searchText.toLowerCase().startsWith('ses_')
+    && canAddSidebarSection(sidebarSections);
+  const saveSearchAsSection = () => {
+    const section = createSidebarSectionFromTemplate('blank', searchText.slice(0, SIDEBAR_SECTION_NAME_MAX));
+    editSection({ ...section, filter: { ...section.filter, text: [searchText.slice(0, SIDEBAR_SECTION_TEXT_MAX)] } }, true);
+    closeSessionSearch();
+  };
+
+  const searchTrailing = sessionSearchQuery.trim() !== '' || searchScope !== 'everything' ? <>
+    <SearchStatusMark status={searchStatus} scope={searchScope} />
+    <SearchInMenu
+      scope={searchScope}
+      onChange={setSearchScope}
+      actions={canSaveSearch ? (
+        <DropdownMenuItem onClick={saveSearchAsSection} className="flex items-center gap-2">
+          <Icon name="stack" className="h-4 w-4" />
+          <span>{t('sessions.sidebar.sections.saveSearch')}</span>
+        </DropdownMenuItem>
+      ) : undefined}
+    />
+  </> : null;
 
   if (hideDirectoryControls) {
-    // VS Code: the sidebar is always a single workspace, so project/directory
-    // controls stay hidden, but session search is still useful. Show a compact,
-    // always-visible search input at the top of the sessions list.
     return (
-      <div className="select-none flex-shrink-0 px-2.5 py-1.5">
+      <div className="select-none flex-shrink-0 px-2 py-1">
         <SessionSearchInput
           inputRef={sessionSearchInputRef}
           value={sessionSearchQuery}
           onSearch={setSessionSearchQuery}
-          onClose={() => setIsSessionSearchOpen(false)}
+          onClose={closeSessionSearch}
           placeholder={t('sessions.sidebar.header.search.placeholder')}
           clearLabel={t('sessions.sidebar.header.search.clear')}
-          leadingHint={hasSessionSearchQuery
-            ? (searchMatchCount === 1
-              ? t('sessions.sidebar.header.search.matchCountSingle', { count: searchMatchCount })
-              : t('sessions.sidebar.header.search.matchCountPlural', { count: searchMatchCount }))
-            : undefined}
-          trailingHint={t('sessions.sidebar.header.search.escapeHint')}
+          trailing={<>
+            {searchMatchCount !== null ? (
+              <span className="shrink-0 px-1 typography-micro tabular-nums text-muted-foreground" aria-label={searchMatchCount === 1
+                ? t('sessions.sidebar.header.search.matchCountSingle', { count: searchMatchCount })
+                : t('sessions.sidebar.header.search.matchCountPlural', { count: searchMatchCount })}>{searchMatchCount}</span>
+            ) : null}
+            {searchTrailing}
+          </>}
         />
       </div>
     );
   }
 
+  const listControls = (
+    <>
+          {showSectionControls ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  ref={sectionsTriggerRef}
+                  type="button"
+                  onClick={sectionsManagerOpen ? closeSectionsManager : openSectionsManager}
+                  className={cn(headerActionButtonClass, IDLE_BUTTON_CLASS, sectionsManagerOpen && 'text-foreground')}
+                  aria-label={t('sessions.sidebar.sections.customize')}
+                  aria-expanded={sectionsManagerOpen}
+                >
+                  <Icon name="list-settings" className={headerActionIconClass} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={4}><p>{t('sessions.sidebar.sections.customize')}</p></TooltipContent>
+            </Tooltip>
+          ) : null}
+          {showSectionControls && SectionsManager ? <SectionsManager anchor={headerRef} trigger={sectionsTriggerRef} pages={showPagesSection} /> : null}
+
+          <DropdownMenu>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className={cn(headerActionButtonClass, IDLE_BUTTON_CLASS)}
+                    aria-label={t('sessions.sidebar.header.displayMode.label')}
+                  >
+                    <Icon name="more" className={headerActionIconClass} />
+                  </button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={4}><p>{t('sessions.sidebar.header.displayMode.label')}</p></TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="end" className="min-w-[200px]">
+              {displayMenuSections.map((section, index) => (
+                <React.Fragment key={index}>
+                  {index > 0 ? <DropdownMenuSeparator /> : null}
+                  {section}
+                </React.Fragment>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+    </>
+  );
+
   return (
-    <div className="select-none flex-shrink-0 px-2.5 py-1">
+    <div ref={headerRef} className="select-none flex-shrink-0 px-2.5 py-1">
       <div className="flex h-auto min-h-8 flex-col gap-1">
-        {/* h-8 is a minimum, not a fixed height: at a large interface font
-            size the rem-sized buttons no longer fit one row, and the two
-            clusters wrap onto a second line instead of overflowing the
-            sidebar's overflow-x-hidden edge. */}
-        <div className="flex min-h-8 flex-wrap items-center justify-between gap-2">
-          {/* Quiet toolbar at the top of the list: project/surface entry
-              points at left, list controls at right. ml-[3px] compensates the
-              icon inset inside the 24px buttons so the first glyph sits 16px
-              from the sidebar edge, in line with the titlebar controls. */}
-          <div className="ml-[3px] flex min-w-0 items-center gap-1.5">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={handleOpenDirectoryDialog}
-                  className={cn(headerActionButtonClass, 'text-muted-foreground hover:text-foreground hover:bg-transparent')}
-                  aria-label={t('sessions.sidebar.header.actions.addProject')}
-                >
-                  <Icon name="folder-add" className={headerActionIconClass} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={4}><p>{t('sessions.sidebar.header.actions.addProject')}</p></TooltipContent>
-            </Tooltip>
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={onOpenScheduled}
-                  className={cn(headerActionButtonClass, 'text-muted-foreground hover:text-foreground hover:bg-transparent')}
-                  aria-label={t('sessions.sidebar.header.actions.scheduledTasks')}
-                >
-                  <Icon name="calendar-schedule" className={headerActionIconClass} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={4}><p>{t('sessions.sidebar.header.actions.scheduledTasks')}</p></TooltipContent>
-            </Tooltip>
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={onOpenArchive}
-                  className={cn(headerActionButtonClass, 'text-muted-foreground hover:text-foreground hover:bg-transparent')}
-                  aria-label={t('sessions.sidebar.nav.archive')}
-                >
-                  <Icon name="archive" className={headerActionIconClass} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={4}><p>{t('sessions.sidebar.nav.archive')}</p></TooltipContent>
-            </Tooltip>
-            {guestPages.length > 0 && <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="xs" className="w-6 text-muted-foreground" aria-label={t('sessions.sidebar.header.actions.extensionPages')}>
-                  <Icon name="apps" className={headerActionIconClass} />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start">
-                <DropdownMenuLabel>{t('sessions.sidebar.header.actions.extensionPages')}</DropdownMenuLabel>
-                {guestPages.map((guest) => <DropdownMenuItem key={guest.id} onSelect={() => useUIStore.getState().setOpenGuestPage(guest.id)}>
-                  <GuestIcon icon={resolveGuestIconName(guest.icon)} iconSrc={guestPackageIconSrc(guest.id, guest.icon, getRuntimeUrlResolver().authenticatedAsset)} className="size-4" />
-                  <span>{guest.pageTitle ?? guest.name}</span>
-                </DropdownMenuItem>)}
-              </DropdownMenuContent>
-            </DropdownMenu>}
-          </div>
-
-          <div className="flex min-w-0 items-center gap-1.5">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={() => setIsSessionSearchOpen((prev) => !prev)}
-                  className={cn(headerActionButtonClass, 'text-muted-foreground hover:text-foreground hover:bg-transparent')}
-                  aria-label={t('sessions.sidebar.header.actions.searchSessions')}
-                  aria-expanded={isSessionSearchOpen}
-                >
-                  <Icon name="search" className={headerActionIconClass} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={4}><p>{t('sessions.sidebar.header.actions.searchSessions')}</p></TooltipContent>
-            </Tooltip>
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={toggleSelectionMode}
-                  className={cn(headerActionButtonClass, 'text-muted-foreground hover:text-foreground hover:bg-transparent', selectionModeEnabled && 'bg-interactive-hover text-primary')}
-                  aria-label={selectionModeEnabled
-                    ? t('sessions.sidebar.header.actions.exitSelection')
-                    : t('sessions.sidebar.header.actions.selectSessions')}
-                  aria-pressed={selectionModeEnabled}
-                >
-                  <Icon name="checkbox-multiple" className={headerActionIconClass} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={4}>
-                <p>{selectionModeEnabled
-                  ? t('sessions.sidebar.header.actions.exitSelection')
-                  : t('sessions.sidebar.header.actions.selectSessions')}</p>
-              </TooltipContent>
-            </Tooltip>
-
-            <DropdownMenu>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      className={cn(headerActionButtonClass, 'text-muted-foreground hover:text-foreground hover:bg-transparent')}
-                      aria-label={t('sessions.sidebar.header.displayMode.label')}
-                    >
-                      <Icon name="equalizer-2" className={headerActionIconClass} />
-                    </button>
-                  </DropdownMenuTrigger>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" sideOffset={4}><p>{t('sessions.sidebar.header.displayMode.label')}</p></TooltipContent>
-              </Tooltip>
-              <DropdownMenuContent align="end" className="min-w-[180px]">
-                {showProjectDisplayControls ? (
-                  <>
-                    <DropdownMenuLabel>{t('sessions.sidebar.header.viewMode.label')}</DropdownMenuLabel>
-                    {([
-                      ['projects', 'sessions.sidebar.header.viewMode.projects'],
-                      ['timeline', 'sessions.sidebar.header.viewMode.timeline'],
-                    ] as const).map(([mode, labelKey]) => (
-                      <DropdownMenuItem
-                        key={mode}
-                        onClick={() => {
-                          setSidebarViewMode(mode);
-                          void updateDesktopSettings({ sidebarViewMode: mode });
-                        }}
-                        className="flex items-center justify-between"
-                      >
-                        <span>{t(labelKey)}</span>
-                        {sidebarViewMode === mode ? <Icon name="check" className="h-4 w-4 text-primary" /> : null}
-                      </DropdownMenuItem>
-                    ))}
-                    {timelineView ? null : <DropdownMenuSeparator />}
-                  </>
-                ) : null}
-                {timelineView ? null : <>
-                <DropdownMenuLabel>{t('sessions.sidebar.header.actions.sortProjects')}</DropdownMenuLabel>
-                {([
-                  ['manual', 'sessions.sidebar.header.projectSort.manual'],
-                  ['a-z', 'sessions.sidebar.header.projectSort.aToZ'],
-                  ['z-a', 'sessions.sidebar.header.projectSort.zToA'],
-                  ['date-added', 'sessions.sidebar.header.projectSort.dateAdded'],
-                  ['recent', 'sessions.sidebar.header.projectSort.recent'],
-                ] as const).map(([order, labelKey]) => (
-                  <DropdownMenuItem
-                    key={order}
-                    onClick={() => {
-                      setProjectSortOrder(order);
-                      void updateDesktopSettings({ sidebarProjectSortOrder: order });
-                    }}
-                    className="flex items-center justify-between"
-                  >
-                    <span>{t(labelKey)}</span>
-                    {projectSortOrder === order ? <Icon name="check" className="h-4 w-4 text-primary" /> : null}
-                  </DropdownMenuItem>
-                ))}
-                <DropdownMenuSeparator />
-                {/* VS Code groups by workspace only; it has no worktree groups to sort. */}
-                {showProjectDisplayControls ? <>
-                <DropdownMenuLabel>{t('sessions.sidebar.header.actions.sortWorktrees')}</DropdownMenuLabel>
-                {([
-                  ['recent', 'sessions.sidebar.header.worktreeSort.recent'],
-                  ['manual', 'sessions.sidebar.header.projectSort.manual'],
-                  ['a-z', 'sessions.sidebar.header.projectSort.aToZ'],
-                ] as const).map(([order, labelKey]) => (
-                  <DropdownMenuItem
-                    key={order}
-                    onClick={() => {
-                      setWorktreeSortOrder(order);
-                      void updateDesktopSettings({ sidebarWorktreeSortOrder: order });
-                    }}
-                    className="flex items-center justify-between"
-                  >
-                    <span>{t(labelKey)}</span>
-                    {worktreeSortOrder === order ? <Icon name="check" className="h-4 w-4 text-primary" /> : null}
-                  </DropdownMenuItem>
-                ))}
-                <DropdownMenuSeparator />
-                </> : null}
-                {showProjectDisplayControls ? (
-                  <>
-                    <DropdownMenuLabel>{t('sessions.sidebar.header.projectDisplay.label')}</DropdownMenuLabel>
-                    {([
-                      ['all', 'sessions.sidebar.header.projectDisplay.all'],
-                      ['single', 'sessions.sidebar.header.projectDisplay.single'],
-                    ] as const).map(([mode, labelKey]) => (
-                      <DropdownMenuItem
-                        key={mode}
-                        onClick={() => {
-                          setProjectDisplayMode(mode);
-                          void updateDesktopSettings({ sidebarProjectDisplayMode: mode });
-                        }}
-                        className="flex items-center justify-between"
-                      >
-                        <span>{t(labelKey)}</span>
-                        {projectDisplayMode === mode ? <Icon name="check" className="h-4 w-4 text-primary" /> : null}
-                      </DropdownMenuItem>
-                    ))}
-                    <DropdownMenuSeparator />
-                  </>
-                ) : null}
-                </>}
-                {!timelineView && showRecentControls && !isSingleProjectMode ? (
-                  <DropdownMenuItem
-                    onClick={() => {
-                      toggleRecentSection();
-                      void updateDesktopSettings({ sidebarShowRecentSection: !showRecentSection });
-                    }}
-                    className="flex items-center justify-between"
-                  >
-                    <span>{t('sessions.sidebar.header.displayMode.showRecent')}</span>
-                    {showRecentSection ? <Icon name="check" className="h-4 w-4 text-primary" /> : null}
-                  </DropdownMenuItem>
-                ) : null}
-                {!timelineView && !isSingleProjectMode ? (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={collapseAllProjects} className="flex items-center gap-2">
-                      <Icon name="contract-up-down" className="h-4 w-4" />
-                      <span>{t('sessions.sidebar.header.displayMode.collapseAll')}</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={expandAllProjects} className="flex items-center gap-2">
-                      <Icon name="expand-up-down" className="h-4 w-4" />
-                      <span>{t('sessions.sidebar.header.displayMode.expandAll')}</span>
-                    </DropdownMenuItem>
-                  </>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-
-        {isSessionSearchOpen ? (
-          <div className="pb-1">
+        <div className="ms-[3px] flex min-h-8 items-center gap-1.5">
+          <div className="min-w-0 flex-1">
             <SessionSearchInput
               inputRef={sessionSearchInputRef}
               value={sessionSearchQuery}
               onSearch={setSessionSearchQuery}
-              onClose={() => setIsSessionSearchOpen(false)}
-              placeholder={t('sessions.sidebar.header.search.placeholder')}
+              onClose={closeSessionSearch}
+              placeholder={t('settings.common.sidebar.searchPlaceholder')}
+              label={t('sessions.sidebar.header.actions.searchSessions')}
               clearLabel={t('sessions.sidebar.header.search.clear')}
-              leadingHint={hasSessionSearchQuery
-                ? (searchMatchCount === 1
-                  ? t('sessions.sidebar.header.search.matchCountSingle', { count: searchMatchCount })
-                  : t('sessions.sidebar.header.search.matchCountPlural', { count: searchMatchCount }))
-                : undefined}
-              trailingHint={t('sessions.sidebar.header.search.escapeHint')}
+              quiet
+              trailing={searchTrailing}
             />
           </div>
-        ) : null}
+          {listControlsSlot ? null : listControls}
+        </div>
       </div>
+      {listControlsSlot
+        ? createPortal(<div className="flex items-center gap-1.5 pe-2.5">{listControls}</div>, listControlsSlot)
+        : null}
     </div>
   );
 }

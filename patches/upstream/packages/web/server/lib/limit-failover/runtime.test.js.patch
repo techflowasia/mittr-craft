@@ -1,0 +1,49 @@
+diff --git a/packages/web/server/lib/limit-failover/runtime.test.js b/packages/web/server/lib/limit-failover/runtime.test.js
+index 600338b5c..443fe058e 100644
+--- a/packages/web/server/lib/limit-failover/runtime.test.js
++++ b/packages/web/server/lib/limit-failover/runtime.test.js
+@@ -432,4 +432,44 @@ describe('limit failover plugin', () => {
+       expect(ctx.credential.activate).not.toHaveBeenCalled();
+     });
+   });
++
++  const TOKEN_SLOT = Symbol.for('openchamber.agent-tool.token');
++
++  const withTokenSlot = async (kept, run) => {
++    const previous = globalThis[TOKEN_SLOT];
++    if (kept === undefined) delete globalThis[TOKEN_SLOT];
++    else globalThis[TOKEN_SLOT] = kept;
++    try {
++      await withCallbackEnv(run);
++    } finally {
++      if (previous === undefined) delete globalThis[TOKEN_SLOT];
++      else globalThis[TOKEN_SLOT] = previous;
++    }
++  };
++
++  const reportedWith = async (plugin) => {
++    const { ctx, hooks } = createContext();
++    await plugin.setup(ctx);
++    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ action: 'retry' })));
++    vi.stubGlobal('fetch', fetchMock);
++    const event = retryEvent();
++    await hooks.retry(event);
++    return { decision: event.decision, authorization: fetchMock.mock.calls.map(([, init]) => init.headers.authorization) };
++  };
++
++  it('reports with the token another plugin of this engine already took out of the environment', async () => {
++    await withTokenSlot('acme-kept-token', async () => {
++      delete process.env.OPENCHAMBER_AGENT_TOOL_TOKEN;
++      expect(await reportedWith(await loadPlugin())).toEqual({ decision: { retry: true, delay: 0 }, authorization: ['Bearer acme-kept-token'] });
++    });
++  });
++
++  it('keeps the token out of the environment the engine hands its processes when it loads first', async () => {
++    await withTokenSlot(undefined, async () => {
++      const plugin = await loadPlugin();
++      expect(Object.hasOwn(process.env, 'OPENCHAMBER_AGENT_TOOL_TOKEN')).toBe(false);
++      expect(await reportedWith(plugin)).toEqual({ decision: { retry: true, delay: 0 }, authorization: ['Bearer token'] });
++      expect(Object.hasOwn(process.env, 'OPENCHAMBER_AGENT_TOOL_TOKEN')).toBe(false);
++    });
++  });
+ });

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
+import '../../../web/scripts/register-server-sources.mjs';
 
 import express from 'express';
 

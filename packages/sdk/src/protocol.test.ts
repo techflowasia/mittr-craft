@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import { OPENCHAMBER_SDK_API_VERSION, OPENCHAMBER_SDK_CHANNEL } from './api-version.ts';
+import type { HostDevice } from './contract.ts';
 import {
   clampAttachRequest,
   clampPromptRequest,
@@ -8,7 +9,13 @@ import {
   GUEST_ATTACH_DATA_MAX,
   GUEST_ATTACH_TITLE_MAX,
   GUEST_COMPOSE_TEXT_MAX,
+  GUEST_GENERATE_PROMPT_MAX,
+  GUEST_GENERATE_SYSTEM_MAX,
+  GUEST_GENERATE_TIMEOUT_MS,
+  isGuestAttachItem,
+  isGuestLinkItem,
   readHostMessage,
+  type JsonValue,
 } from './contract.ts';
 import { GUEST_POPOVER_DATA_MAX, isGuestPopoverRequest } from './popover.ts';
 import {
@@ -74,6 +81,22 @@ const readyPayload = {
   item: null,
 };
 
+describe('guest generate timeout invariant', () => {
+  test('exceeds the Small Model deadline for the largest guest-shaped request', () => {
+    // The server derives its deadline from prompt size (issue #5017): 60 s base
+    // plus 40 ms per estimated token (~4 chars/token), capped at 900 s —
+    // `generationBudgetMs` in packages/web/server/lib/small-model/index.js.
+    // The arithmetic is inlined here rather than importing that module: the SDK
+    // tests must not pull in the web server's dependency tree.
+    const guestPromptChars = GUEST_GENERATE_PROMPT_MAX + GUEST_GENERATE_SYSTEM_MAX;
+    const serverBudgetMs = Math.min(900_000, 60_000 + Math.ceil(guestPromptChars / 4) * 40);
+    // 72 000 chars ≈ 18 000 tokens → 780 s. A shorter SDK wait would time out
+    // first and orphan the model's remaining work.
+    expect(serverBudgetMs).toBe(780_000);
+    expect(GUEST_GENERATE_TIMEOUT_MS).toBeGreaterThan(serverBudgetMs);
+  });
+});
+
 describe('parseHostMessage', () => {
   test('accepts bounded popover messages and refuses unsafe guest payloads', () => {
     const open = {
@@ -132,6 +155,23 @@ describe('parseHostMessage', () => {
     expect(message?.type).toBe('ready');
     if (message?.type !== 'ready') throw new Error('Expected ready snapshot');
     expect(message.payload.features).toEqual({ statusControls: true });
+  });
+
+  test('keeps the device a ready describes and strips keys it does not know', () => {
+    const device: HostDevice = { formFactor: 'phone', pointer: 'coarse', insets: { top: 47, right: 0, bottom: 34, left: 0 }, keyboard: 291 };
+    const message = parseHostMessage({
+      channel: OPENCHAMBER_SDK_CHANNEL,
+      v: OPENCHAMBER_SDK_API_VERSION,
+      type: 'ready',
+      payload: { ...readyPayload, device: { ...device, notch: true }, futureField: 1 },
+    });
+    if (message?.type !== 'ready') throw new Error('Expected ready snapshot');
+    expect(message.payload.device).toEqual(device);
+    expect('futureField' in message.payload).toBe(false);
+    // A host before the field sends none, and the ready still parses.
+    const older = parseHostMessage({ channel: OPENCHAMBER_SDK_CHANNEL, v: OPENCHAMBER_SDK_API_VERSION, type: 'ready', payload: readyPayload });
+    if (older?.type !== 'ready') throw new Error('Expected ready snapshot');
+    expect(older.payload.device).toBeUndefined();
   });
 
   test('accepts a null directory', () => {
@@ -746,6 +786,17 @@ describe('parseGuestMessage', () => {
     expect(parseGuestMessage({ ...base, type: 'generate', payload: {} })).toBeNull();
   });
 
+  test('accepts the late generate listen notice and a late answer, and drops a malformed one', () => {
+    const envelope = { channel: OPENCHAMBER_SDK_CHANNEL, v: 1 as const };
+    expect(parseGuestMessage({ ...envelope, type: 'generate-late-listen' })?.type).toBe('generate-late-listen');
+    const answered = { ...envelope, type: 'generate-late' as const, payload: { request: { prompt: 'Summarize' }, ok: true as const, result: { text: 'Short.' } } };
+    expect(parseHostMessage(answered)).toEqual(answered);
+    const failed = { ...envelope, type: 'generate-late' as const, payload: { request: { prompt: 'Summarize', system: 'Be brief' }, ok: false as const, code: 'MODEL_FAILED' as const, error: 'Failed.' } };
+    expect(parseHostMessage(failed)).toEqual(failed);
+    expect(parseHostMessage({ ...answered, payload: { request: { prompt: '' }, ok: true, result: { text: 'x' } } })).toBeNull();
+    expect(parseHostMessage({ ...failed, payload: { ...failed.payload, code: 'NOPE' } })).toBeNull();
+  });
+
   test('accepts file messages and drops an empty or backslash path', () => {
     const base = { channel: OPENCHAMBER_SDK_CHANNEL, v: 1 as const, id: 'oc-20' };
     expect(parseGuestMessage({ ...base, type: 'file-read', payload: { path: 'README.md' } })?.type).toBe('file-read');
@@ -909,5 +960,76 @@ describe('actions, commands, and badge wire shapes', () => {
     expect(parseGuestMessage({ ...envelope, type: 'badge', id: 'b-1', payload: { count: 1000 } })).toBeNull();
     expect(parseGuestMessage({ ...envelope, type: 'badge', id: 'b-1', payload: { count: -1 } })).toBeNull();
     expect(parseGuestMessage({ ...envelope, type: 'badge', id: 'b-1', payload: { count: 1.5 } })).toBeNull();
+  });
+
+  test('shells messages parse, including every scope, and refuse out-of-range bounds', () => {
+    const envelope = { channel: OPENCHAMBER_SDK_CHANNEL, v: OPENCHAMBER_SDK_API_VERSION };
+    expect(parseGuestMessage({ ...envelope, type: 'shells-subscribe', id: 'c1', payload: { subscriptionId: 's1', scope: { kind: 'session', sessionId: 'ses_1' } } })?.type).toBe('shells-subscribe');
+    expect(parseGuestMessage({ ...envelope, type: 'shells-subscribe', id: 'c1p', payload: { subscriptionId: 's1', scope: { kind: 'project', projectId: 'p1' } } })?.type).toBe('shells-subscribe');
+    expect(parseGuestMessage({ ...envelope, type: 'shells-subscribe', id: 'c1g', payload: { subscriptionId: 's1', scope: { kind: 'global' } } })?.type).toBe('shells-subscribe');
+    expect(parseGuestMessage({ ...envelope, type: 'shells-subscribe', id: 'c1x', payload: { subscriptionId: 's1', scope: { kind: 'nope' } } })).toBeNull();
+    expect(parseGuestMessage({ ...envelope, type: 'shells-unsubscribe', id: 'c2', payload: { subscriptionId: 's1' } })?.type).toBe('shells-unsubscribe');
+    expect(parseGuestMessage({ ...envelope, type: 'shell-output', id: 'c3', payload: { shellId: 'sh_1', cursor: 0, tailBytes: 65536 } })?.type).toBe('shell-output');
+    expect(parseGuestMessage({ ...envelope, type: 'shell-output', id: 'c4', payload: { shellId: 'sh_1', tailBytes: 65537 } })).toBeNull();
+    expect(parseGuestMessage({ ...envelope, type: 'shell-output', id: 'c5', payload: { shellId: 'sh_1', cursor: -1 } })).toBeNull();
+    expect(parseGuestMessage({ ...envelope, type: 'shell-stop', id: 'c6', payload: { shellId: 'sh_1' } })?.type).toBe('shell-stop');
+    expect(parseHostMessage({ ...envelope, type: 'shells', payload: { subscriptionId: 's1', snapshot: { kind: 'shells', scope: { kind: 'global' }, shells: [{ id: 'sh_1', sessionID: 'ses_1', command: 'sleep 1', startedAt: 1, background: true }], ended: [] } } })?.type).toBe('shells');
+    expect(parseHostMessage({ ...envelope, type: 'shells', payload: { subscriptionId: 's1', snapshot: { kind: 'shells', scope: { kind: 'session', sessionId: 'ses_1' }, shells: [], ended: [] } } })?.type).toBe('shells');
+  });
+
+  test('accepts ended shells with a known status and refuses anything else', () => {
+    const snapshot = (ended: unknown[]) => ({ ...envelope, type: 'shells', payload: { subscriptionId: 's1', snapshot: { kind: 'shells', scope: { kind: 'global' }, shells: [], ended } } });
+    const done = { id: 'sh_1', sessionID: 'ses_1', command: 'make', startedAt: 1, background: true, endedAt: 2 };
+    expect(parseHostMessage(snapshot([{ ...done, status: 'exited', exit: 0 }, { ...done, id: 'sh_2', status: 'stopped' }]))?.type).toBe('shells');
+    expect(parseHostMessage(snapshot([{ ...done, status: 'crashed' }]))).toBeNull();
+    expect(parseHostMessage(snapshot([{ ...done, status: 'exited', exit: 1.5 }]))).toBeNull();
+    expect(parseHostMessage({ ...envelope, type: 'shells', payload: { subscriptionId: 's1', snapshot: { kind: 'shells', scope: { kind: 'global' }, shells: [] } } })).toBeNull();
+  });
+
+  test('accepts shell output and shell stop result payloads', () => {
+    expect(parseHostMessage({ ...envelope, type: 'result', id: 'c1', ok: true, payload: { output: 'tick', cursor: 14, skipped: false } }))
+      .toMatchObject({ type: 'result', ok: true, payload: { output: 'tick', cursor: 14, skipped: false } });
+    expect(parseHostMessage({ ...envelope, type: 'result', id: 'c2', ok: true, payload: { stopped: true } }))
+      .toMatchObject({ type: 'result', ok: true, payload: { stopped: true } });
+  });
+});
+
+describe('the link item', () => {
+  const push = (item: JsonValue) => parseHostMessage({ channel: OPENCHAMBER_SDK_CHANNEL, v: 1, type: 'item', payload: { item } });
+
+  test('reaches the guest as a link, never as a composer chip', () => {
+    const item = { kind: 'link', identifier: 'DEMO-12', url: 'https://tasks.example.com/tasks/DEMO-12' };
+    const message = push(item);
+    expect(message?.type === 'item' && message.payload.item).toEqual(item);
+    if (message?.type === 'item') {
+      expect(isGuestLinkItem(message.payload.item)).toBe(true);
+      expect(isGuestAttachItem(message.payload.item)).toBe(false);
+    }
+    expect(push({ kind: 'link', identifier: 'DEMO-12' })?.type).toBe('item');
+  });
+
+  test('refuses a link item with extra or empty fields', () => {
+    expect(push({ kind: 'link', identifier: '' })).toBeNull();
+    expect(push({ kind: 'link', identifier: 'DEMO-12', title: 'x' })).toBeNull();
+    expect(push({ kind: 'link', identifier: 'D'.repeat(129) })).toBeNull();
+  });
+});
+
+describe('microphone wire', () => {
+  const envelope = { channel: OPENCHAMBER_SDK_CHANNEL, v: OPENCHAMBER_SDK_API_VERSION } as const;
+
+  test('the host takes an open at a real audio rate and a close', () => {
+    expect(parseGuestMessage({ ...envelope, type: 'microphone-open', id: 'oc-1', payload: { sampleRate: 48_000 } })).not.toBeNull();
+    expect(parseGuestMessage({ ...envelope, type: 'microphone-close', id: 'oc-2' })).not.toBeNull();
+    expect(parseGuestMessage({ ...envelope, type: 'microphone-open', id: 'oc-3', payload: { sampleRate: 100 } })).toBeNull();
+    expect(parseGuestMessage({ ...envelope, type: 'microphone-open', id: 'oc-4', payload: { sampleRate: 44_100.5 } })).toBeNull();
+  });
+
+  test('audio is a bounded Float32Array and an end names its reason', () => {
+    const audio = { ...envelope, type: 'microphone-audio', payload: { samples: new Float32Array(1024) } } as const;
+    expect(parseHostMessage(audio)).not.toBeNull();
+    expect(parseHostMessage({ ...audio, payload: { samples: new Float32Array(16_385) } })).toBeNull();
+    expect(readHostMessage(audio)).toEqual(audio);
+    expect(parseHostMessage({ ...envelope, type: 'microphone-ended', payload: { reason: 'device-lost' } })).not.toBeNull();
   });
 });

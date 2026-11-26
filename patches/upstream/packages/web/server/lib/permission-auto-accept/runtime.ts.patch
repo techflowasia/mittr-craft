@@ -1,0 +1,117 @@
+diff --git a/packages/web/server/lib/permission-auto-accept/runtime.ts b/packages/web/server/lib/permission-auto-accept/runtime.ts
+index 62c03c218..c8a8d8fc9 100644
+--- a/packages/web/server/lib/permission-auto-accept/runtime.ts
++++ b/packages/web/server/lib/permission-auto-accept/runtime.ts
+@@ -62,6 +62,7 @@ export function createPermissionAutoAcceptRuntime({
+   onPermissionReplied = null,
+   resolveLegacyEnabledMode = async () => 'auto',
+   readDefaultMode = async () => (await readSettingsFromDiskMigrated())?.[DEFAULT_MODE_SETTINGS_KEY],
++  neverAutoAnswer = () => false,
+   fetchImpl = fetch,
+   retryDelaysMs = RETRY_DELAYS_MS,
+   requestTimeoutMs = REQUEST_TIMEOUT_MS,
+@@ -75,6 +76,7 @@ export function createPermissionAutoAcceptRuntime({
+   const inFlight = new Map<JsonValue, Promise<boolean>>();
+   const reconcilePromises = new Map<string, Promise<void>>();
+   const outcomes = new Map<JsonValue, Promise<PermissionOutcome>>();
++  const leftForUser = new Set<JsonValue>();
+ 
+   const snapshot = () => {
+     const legacySessions: PermissionPolicySnapshot['sessions'] = {};
+@@ -221,10 +223,11 @@ export function createPermissionAutoAcceptRuntime({
+ 
+   const isSessionAutoAccepting = async (sessionId: JsonValue, directory?: PermissionDirectory) => isAutoAnsweringMode(await resolveSessionMode(sessionId, directory));
+ 
+-  const replyOnce = async (permission: JsonObject, directory: PermissionDirectory) => {
++  const replyOnce = async (permission: JsonObject, directory: PermissionDirectory, marked: boolean) => {
+     if (!permission?.id || !permission?.sessionID) return 'ignored';
+     const mode = await resolveLineageMode(permission.sessionID, directory);
+     if (mode === 'ask') return 'ignored';
++    if (marked) return 'held';
+     if (mode === 'safety') {
+       const verdict = evaluatePermission ? await evaluatePermission(permission, directory) : null;
+       if (verdict?.action !== 'accept') return 'held';
+@@ -237,12 +240,25 @@ export function createPermissionAutoAcceptRuntime({
+     return 'replied';
+   };
+ 
+-  const rememberOutcome = (permissionId: JsonValue, outcome: Promise<PermissionOutcome>) => {
++  const rememberOutcome = (permissionId: JsonValue, outcome: Promise<PermissionOutcome>, marked: boolean) => {
+     outcomes.delete(permissionId);
+     outcomes.set(permissionId, outcome);
++    if (marked) leftForUser.add(permissionId);
++    else leftForUser.delete(permissionId);
+     if (outcomes.size > OUTCOME_CACHE_LIMIT) {
+       const oldest = outcomes.keys().next();
+-      if (!oldest.done) outcomes.delete(oldest.value);
++      if (!oldest.done) {
++        outcomes.delete(oldest.value);
++        leftForUser.delete(oldest.value);
++      }
++    }
++  };
++
++  const isMarkedForUser = (permission: JsonObject) => {
++    try {
++      return neverAutoAnswer(permission) === true;
++    } catch {
++      return true;
+     }
+   };
+ 
+@@ -251,18 +267,19 @@ export function createPermissionAutoAcceptRuntime({
+     const key = permission.id;
+     const existing = inFlight.get(key);
+     if (existing) return existing;
++    const marked = isMarkedForUser(permission);
+     const outcome = (async (): Promise<PermissionOutcome> => {
+       for (const delay of retryDelaysMs) {
+         if (delay > 0) await wait(delay);
+         try {
+-          return await replyOnce(permission, directory);
++          return await replyOnce(permission, directory, marked);
+         } catch (error) {
+           if (hasNotFoundStatus(error)) return 'replied';
+         }
+       }
+       return 'failed';
+     })();
+-    rememberOutcome(key, outcome);
++    rememberOutcome(key, outcome, marked);
+     void outcome.then((result) => {
+       if (result !== 'held' && result !== 'failed') return;
+       broadcastGlobalUiEvent?.({
+@@ -286,11 +303,24 @@ export function createPermissionAutoAcceptRuntime({
+     } catch {
+       return wasReplied();
+     }
+-    if (mode === 'auto') return true;
++    if (mode === 'auto' && !leftForUser.has(permissionId ?? null)) return true;
+     if (mode === 'ask') return false;
+     return wasReplied();
+   };
+ 
++  const isLeftForPerson = async (sessionId: string, permissionId: string) => {
++    let payload;
++    try {
++      payload = await request(`/api/session/${encodeURIComponent(sessionId)}/permission/${encodeURIComponent(permissionId)}`);
++    } catch (error) {
++      if (hasNotFoundStatus(error)) return false;
++      throw error;
++    }
++    const data = jsonProperty(payload, 'data');
++    const permission = isJsonObject(data) ? data : payload;
++    return !isJsonObject(permission) || isMarkedForUser(permission);
++  };
++
+   const runningSessionDirectories = async () => {
+     const payload = await request('/api/session/active');
+     const sessionIds = Object.keys(jsonProperty(payload, 'data') ?? {});
+@@ -392,6 +422,7 @@ export function createPermissionAutoAcceptRuntime({
+     resolveSessionMode,
+     isSessionAutoAccepting,
+     isPermissionAutoAnswered,
++    isLeftForPerson,
+     processPermission,
+     reconcilePending,
+     forgetSession: (sessionId: JsonValue) => sessions.delete(sessionId),

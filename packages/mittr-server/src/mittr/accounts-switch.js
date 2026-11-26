@@ -19,10 +19,29 @@ export function createAccountSwitcher({ store, opencode, applyCache, sync, engin
 
   const targetHome = () => store.engineHome({ carryLegacy: false });
 
+  const launchedHome = () => opencode.launchedDataHome?.() ?? null;
+  const tracksEngine = () => Boolean(engineDataHome) && opencode.launchedDataHome instanceof Function;
+
+  let readies = 0;
+  let stopped = false;
+  let unmanaged = false;
+  const engineReady = () => {
+    readies += 1;
+    stopped = false;
+    unmanaged = launchedHome() === null;
+  };
+
   const engineOnTarget = () => {
-    if (!engineDataHome) return true;
-    const launched = opencode.launchedDataHome?.() ?? null;
-    return launched === null || launched === engineDataHome(targetHome());
+    if (!tracksEngine()) return true;
+    const launched = launchedHome();
+    if (launched === null) return unmanaged;
+    return !stopped && launched === engineDataHome(targetHome());
+  };
+
+  const engineOnAnotherHome = () => {
+    if (!tracksEngine()) return false;
+    const launched = launchedHome();
+    return launched !== null && launched !== engineDataHome(targetHome());
   };
 
   const enqueue = (task) => {
@@ -34,42 +53,50 @@ export function createAccountSwitcher({ store, opencode, applyCache, sync, engin
   const restartOntoTarget = async () => {
     triedFor = targetHome();
     for (let attempt = 0; attempt < RESTARTS_PER_TARGET && !engineOnTarget(); attempt += 1) {
+      const readiesBefore = readies;
       try {
         await opencode.refresh(SWITCH_REASON);
+        stopped = false;
       } catch (error) {
+        if (readies === readiesBefore) stopped = true;
         logger.warn('[mittr] the engine did not restart on the account\'s history:', error?.message ?? error);
-        return false;
+        return { engineRestarted: false, engineError: { code: typeof error?.code === 'string' ? error.code : null, message: String(error?.message ?? error) } };
       }
     }
     if (!engineOnTarget()) {
       logger.warn('[mittr] the engine is still on another account\'s history after restarting');
-      return false;
+      return { engineRestarted: false };
     }
     triedFor = undefined;
-    return true;
+    return {};
   };
 
   const activeUserId = () => store.list().find((account) => account.active)?.userId ?? null;
 
   const run = async (userId) => {
-    if (activeUserId() !== userId) store.activate(userId);
-    lastSwitchCompleted = false;
-    const cacheApplied = (await applyCache()) !== false;
-    const engineRestarted = await restartOntoTarget();
-    lastSwitchCompleted = cacheApplied;
-    syncInBackground();
-    const status = statusOf(store.read());
-    return engineRestarted ? status : { ...status, engineRestarted: false };
+    let mutation;
+    try {
+      if (activeUserId() !== userId) {
+        mutation = await opencode.beforeAccountMutation?.();
+        store.activate(userId);
+      }
+      lastSwitchCompleted = false;
+      const cacheApplied = (await applyCache()) !== false;
+      const restart = await restartOntoTarget();
+      lastSwitchCompleted = cacheApplied;
+      syncInBackground();
+      return { ...statusOf(store.read()), ...restart };
+    } finally { if (mutation !== undefined) await opencode.accountMutationSettled?.(mutation); }
   };
 
-  const switchTo = (userId) => enqueue(() => run(userId));
+  const switchTo = (userId, { reconcile = false } = {}) => enqueue(() => run(reconcile ? activeUserId() : userId));
 
-  const afterSignIn = () => {
+  const afterSignIn = async () => {
     syncInBackground();
   };
 
   const correctEngineHome = () => enqueue(async () => {
-    if (engineOnTarget()) return;
+    if (!engineOnAnotherHome()) return;
     if (triedFor === targetHome()) {
       logger.warn('[mittr] the engine came up on another account\'s history again; Mittr answers stay closed until the next switch');
       return;
@@ -79,5 +106,5 @@ export function createAccountSwitcher({ store, opencode, applyCache, sync, engin
 
   const settledOnTarget = () => lastSwitchCompleted && engineOnTarget();
 
-  return { switchTo, afterSignIn, engineOnTarget, settledOnTarget, correctEngineHome };
+  return { switchTo, afterSignIn, engineReady, engineOnTarget, engineOnAnotherHome, settledOnTarget, correctEngineHome };
 }

@@ -31,6 +31,24 @@ test('materializeIdentityPlugin writes a loadable directory plugin', async (t) =
   assert.equal(o.system[0].text, 'You are MittrCraft, an AI coding agent. Help.');
 });
 
+test('normal generation receives a bounded task-completion instruction exactly once', async (t) => {
+  const dir = await materializeIdentityPlugin({ dataDir: tempDataDir(t) });
+  const plugin = (await import(pathToFileURL(path.join(dir, 'index.js')).href)).default;
+  const hooks = new Map();
+  await plugin.setup({ session: { hook: async (name, handler) => { hooks.set(name, handler); } } });
+  const output = { system: [] };
+  hooks.get('context')(output);
+  hooks.get('generate')(output);
+  const policies = output.system.filter((part) => part.text.startsWith('Task completion:'));
+  assert.equal(policies.length, 1);
+  assert.match(policies[0].text, /continue with the next authorized action/);
+  assert.match(policies[0].text, /do not replace required approval/);
+  assert.match(policies[0].text, /do not promise background work/);
+  const compact = { system: [] };
+  hooks.get('compaction')(compact);
+  assert.equal(compact.system.some((part) => part.text.startsWith('Task completion:')), false);
+});
+
 test('a second write replaces the files and tightens a loosened mode', async (t) => {
   const dataDir = tempDataDir(t);
   const dir = await materializeIdentityPlugin({ dataDir });

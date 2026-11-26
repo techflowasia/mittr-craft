@@ -1,0 +1,159 @@
+diff --git a/packages/web/server/lib/opencode/managed-config-file.test.js b/packages/web/server/lib/opencode/managed-config-file.test.js
+index 7fcf7bfd2..75b2745bf 100644
+--- a/packages/web/server/lib/opencode/managed-config-file.test.js
++++ b/packages/web/server/lib/opencode/managed-config-file.test.js
+@@ -13,7 +13,7 @@ afterEach(async () => {
+ 
+ const DENIAL = { action: 'integration.use', resource: 'plugin:leakshield', effect: 'deny' };
+ 
+-const createHarness = async ({ settings = {}, env = {}, listExtensionSkillDirectories, listExtensionPluginDirectories, openchamberVersion, readPluginDenials } = {}) => {
++const createHarness = async ({ settings = {}, env = {}, listExtensionSkillDirectories, listExtensionPluginDirectories, openchamberVersion, readPluginDenials, contributeConfig } = {}) => {
+   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-managed-config-'));
+   temporaryDirectories.push(dataDir);
+   const agentToolRuntime = {
+@@ -41,6 +41,7 @@ const createHarness = async ({ settings = {}, env = {}, listExtensionSkillDirect
+     listExtensionPluginDirectories,
+     openchamberVersion,
+     readPluginDenials,
++    contributeConfig,
+   });
+   const readConfigFile = async () => JSON.parse(await fs.readFile(path.join(dataDir, MANAGED_CONFIG_FILE_NAME), 'utf8'));
+   return { dataDir, runtime, agentToolRuntime, current, readConfigFile, titleDirectory };
+@@ -241,6 +242,12 @@ describe('managed OpenCode config file', () => {
+     });
+   });
+ 
++  it('does not offer sharing on the render tool when the build turned share pages off', async () => {
++    const { runtime, agentToolRuntime } = await createHarness({ settings: {}, env: { OPENCHAMBER_SHARE_PAGES_DISABLED: '1' } });
++    await runtime.buildManagedChildEnv();
++    expect(agentToolRuntime.materializePlugin).toHaveBeenLastCalledWith(expect.objectContaining({ includeRender: true, includeShare: false }));
++  });
++
+   it('offers sharing on the render tool unless enterprise mode has no pinned relay, and rewrites it when that changes', async () => {
+     const saved = { mode: process.env.OPENCHAMBER_ENTERPRISE_MODE, relay: process.env.OPENCHAMBER_RELAY_URL };
+     try {
+@@ -403,6 +410,124 @@ describe('managed OpenCode config file', () => {
+     expect(await runtime.refreshManagedConfigFile()).toEqual({ updated: false, reason: 'external-config' });
+   });
+ 
++  it('contributions are written beside upstream plugins', async () => {
++    const { dataDir, runtime, readConfigFile, titleDirectory } = await createHarness({
++      contributeConfig: async () => ({ providers: { x: { name: 'X' } }, plugins: ['/mine'], policies: [DENIAL] }),
++      readPluginDenials: () => [{ ...DENIAL, resource: 'plugin:other' }],
++    });
++
++    await runtime.buildManagedChildEnv();
++
++    expect(await readConfigFile()).toEqual({
++      providers: { x: { name: 'X' } },
++      plugins: ['-opencode.browser', '-opencode.tool.automation', path.join(dataDir, 'agent-tool', 'openchamber-agent-tool'), titleDirectory, '/mine'],
++      skills: [path.join(dataDir, 'skills')],
++      commands: { 'new-extension': expect.any(Object) },
++      policies: [{ ...DENIAL, resource: 'plugin:other' }, DENIAL],
++    });
++  });
++
++  it('a refresh writes the contributions as they are now', async () => {
++    const current = { config: { providers: { x: { name: 'X' } } } };
++    const { runtime, readConfigFile } = await createHarness({ contributeConfig: () => current.config });
++    await runtime.buildManagedChildEnv();
++
++    current.config = { providers: { x: { name: 'X' } }, experimental: { policies: [] } };
++    expect(await runtime.refreshManagedConfigFile()).toEqual({ updated: true });
++
++    expect((await readConfigFile()).experimental).toEqual({ policies: [] });
++  });
++
++  it('no contributor writes the upstream file byte-identically', async () => {
++    const { dataDir, runtime, titleDirectory } = await createHarness();
++
++    await runtime.buildManagedChildEnv();
++
++    const text = await fs.readFile(path.join(dataDir, MANAGED_CONFIG_FILE_NAME), 'utf8');
++    const written = JSON.parse(text);
++    expect(Object.keys(written)).toEqual(['plugins', 'skills', 'commands']);
++    expect(written.plugins).toEqual(['-opencode.browser', '-opencode.tool.automation', path.join(dataDir, 'agent-tool', 'openchamber-agent-tool'), titleDirectory]);
++    expect(text).toBe(`${JSON.stringify(written, null, 2)}\n`);
++  });
++
++  it('a contributor that fails stops the engine start instead of dropping its config', async () => {
++    const { runtime } = await createHarness({
++      contributeConfig: async () => { throw new Error('contribution unavailable'); },
++    });
++
++    await expect(runtime.buildManagedChildEnv()).rejects.toThrow('contribution unavailable');
++  });
++
++  // OpenCode reads policies from its config layers lowest first and lets the
++  // last match decide, so OPENCODE_CONFIG_CONTENT is the weakest place for a
++  // policy and the user's own OPENCODE_CONFIG file outranks it.
++  it('a contributor takes OPENCODE_CONFIG from the user and moves their config into OPENCODE_CONFIG_CONTENT', async () => {
++    const userDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-user-config-'));
++    temporaryDirectories.push(userDir);
++    const userFile = path.join(userDir, 'opencode.jsonc');
++    const userText = '{\n  // theirs\n  "model": "file/model",\n  "plugins": ["/theirs"],\n  "experimental": { "policies": [{ "action": "provider.use", "resource": "*", "effect": "allow" }] },\n}\n';
++    await fs.writeFile(userFile, userText);
++    const { dataDir, runtime, readConfigFile, titleDirectory } = await createHarness({
++      env: {
++        OPENCODE_CONFIG: userFile,
++        OPENCODE_CONFIG_CONTENT: JSON.stringify({
++          model: 'content/model',
++          experimental: { policies: [{ action: 'provider.use', resource: 'other', effect: 'allow' }] },
++        }),
++      },
++      contributeConfig: async () => ({
++        providers: { x: { name: 'X' } },
++        plugins: ['/mine'],
++        experimental: { policies: [{ action: 'provider.use', resource: '*', effect: 'deny' }] },
++      }),
++    });
++
++    const childEnv = await runtime.buildManagedChildEnv();
++
++    expect(childEnv.OPENCODE_CONFIG).toBe(path.join(dataDir, MANAGED_CONFIG_FILE_NAME));
++    expect(await readConfigFile()).toEqual({
++      providers: { x: { name: 'X' } },
++      plugins: ['-opencode.browser', '-opencode.tool.automation', path.join(dataDir, 'agent-tool', 'openchamber-agent-tool'), titleDirectory, '/mine'],
++      skills: [path.join(dataDir, 'skills')],
++      commands: { 'new-extension': expect.any(Object) },
++      experimental: { policies: [{ action: 'provider.use', resource: '*', effect: 'deny' }] },
++    });
++    expect(JSON.parse(childEnv.OPENCODE_CONFIG_CONTENT)).toEqual({
++      model: 'content/model',
++      plugins: ['/theirs'],
++      experimental: {
++        policies: [
++          { action: 'provider.use', resource: '*', effect: 'allow' },
++          { action: 'provider.use', resource: 'other', effect: 'allow' },
++        ],
++      },
++    });
++    expect(await fs.readFile(userFile, 'utf8')).toBe(userText);
++    expect(await runtime.refreshManagedConfigFile()).toEqual({ updated: true });
++  });
++
++  it('a missing user OPENCODE_CONFIG file counts as empty once a contributor takes the layer', async () => {
++    const { runtime } = await createHarness({
++      env: { OPENCODE_CONFIG: path.join(os.tmpdir(), 'openchamber-no-such-config', 'opencode.json') },
++      contributeConfig: async () => ({ providers: { x: { name: 'X' } } }),
++    });
++
++    expect(JSON.parse((await runtime.buildManagedChildEnv()).OPENCODE_CONFIG_CONTENT)).toEqual({});
++  });
++
++  it('an unreadable user OPENCODE_CONFIG file stops the start once a contributor takes the layer', async () => {
++    const userDir = await fs.mkdtemp(path.join(os.tmpdir(), 'openchamber-user-config-'));
++    temporaryDirectories.push(userDir);
++    const userFile = path.join(userDir, 'opencode.json');
++    await fs.writeFile(userFile, '{ "model": ');
++    const { runtime } = await createHarness({
++      env: { OPENCODE_CONFIG: userFile },
++      contributeConfig: async () => ({ providers: { x: { name: 'X' } } }),
++    });
++
++    await expect(runtime.buildManagedChildEnv()).rejects.toThrow(userFile);
++  });
++
+   it('leaves no temp file behind and never publishes a partial list', async () => {
+     const { dataDir, runtime } = await createHarness({ settings: {} });
+ 

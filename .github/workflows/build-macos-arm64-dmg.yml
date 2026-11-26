@@ -30,26 +30,26 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "22"
+          node-version: "26"
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Get bundled OpenCode CLI version
-        id: opencode_cli_version
+      - name: Get bundled OpenCode server version
+        id: opencode_server_version
         run: |
-          VERSION=$(node -p "require('./packages/electron/package.json').opencodeCli.version")
+          VERSION=$(node -p "require('./packages/electron/package.json').devDependencies['@opencode/server']")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Cache bundled OpenCode CLI artifact
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      - name: Cache bundled OpenCode server native packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: packages/electron/.cache/opencode-cli
-          key: opencode-cli-${{ runner.os }}-arm64-${{ steps.opencode_cli_version.outputs.version }}
+          path: packages/electron/.cache/opencode-server
+          key: opencode-server-${{ runner.os }}-arm64-${{ steps.opencode_server_version.outputs.version }}
           restore-keys: |
-            opencode-cli-${{ runner.os }}-arm64-
+            opencode-server-${{ runner.os }}-arm64-
 
       - name: Install Apple Certificate
         env:
@@ -82,12 +82,12 @@ jobs:
           ELECTRON_BUILDER_ARCH: arm64
         run: |
           bun run build:web-assets
-          bun run prepare:opencode-cli
-          bun run verify:opencode-cli
+          bun run prepare:opencode-server
+          bun run verify:opencode-server
           bun run bundle:main
           bun run rebuild:native
           ./node_modules/.bin/electron-builder --mac --arm64 --publish=never
-          bun run verify:opencode-cli:packaged
+          bun run verify:opencode-server:packaged
 
       - name: Prepare DMG artifact
         run: |
@@ -104,7 +104,7 @@ jobs:
           fi
 
       - name: Upload DMG artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dmg-electron-${{ inputs.macos_version }}-arm64
           path: artifacts/*.dmg

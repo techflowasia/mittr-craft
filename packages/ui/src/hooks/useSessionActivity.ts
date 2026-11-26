@@ -1,9 +1,10 @@
 import React from 'react';
-import { getLastConversationMessage, isIncompleteAssistantTurn } from '@/lib/opencode/model';
+import { getLastConversationMessage, isIncompleteAssistantTurn, type Message } from '@/lib/opencode/model';
 import { useSessionUIStore } from '@/sync/session-ui-store';
-import { useSessionStatus, useSessionMessages, useSessionPermissions, useSessionForms } from '@/sync/sync-context';
+import { formTurnHold, useRecoverableQuestionsStore } from '@/sync/recoverable-questions';
+import { readUnloadedFormToolLinks } from '@/sync/session-actions';
+import { useDirectorySync, useSessionStatus, useSessionStatusSnapshotReady, useSessionMessagesSelector, useSessionPermissions } from '@/sync/sync-context';
 
-// Mirrors OpenCode SessionStatus: busy|retry|idle.
 type SessionActivityPhase = 'idle' | 'busy' | 'retry';
 
 export interface SessionActivityResult {
@@ -13,6 +14,10 @@ export interface SessionActivityResult {
   isCooldown: boolean;
 }
 
+const selectHasPendingAssistant = (messages: Message[]): boolean => (
+  isIncompleteAssistantTurn(getLastConversationMessage(messages))
+);
+
 const IDLE_RESULT: SessionActivityResult = {
   phase: 'idle',
   isWorking: false,
@@ -20,36 +25,34 @@ const IDLE_RESULT: SessionActivityResult = {
   isCooldown: false,
 };
 
-/**
- * Determines if a session is actively working.
- * Checks session_status and, only when status is missing, falls back to the
- * trailing assistant message when its completion update has not landed yet.
- * Returns idle when permissions or forms are pending (the permission /
- * form indicator takes priority, and the send button must stay available so
- * the user can supersede the prompt with a new message).
- */
 export function useSessionActivity(sessionId: string | null | undefined, directory?: string): SessionActivityResult {
   const status = useSessionStatus(sessionId ?? '', directory);
-  const messages = useSessionMessages(sessionId ?? '', directory);
+  const statusSnapshotReady = useSessionStatusSnapshotReady(directory, sessionId ?? '');
+  const hasPendingAssistant = useSessionMessagesSelector(sessionId ?? '', directory, selectHasPendingAssistant);
   const permissions = useSessionPermissions(sessionId ?? '', directory);
-  const forms = useSessionForms(sessionId ?? '', directory);
+  const releasedForms = useRecoverableQuestionsStore((state) => state.releasedForms);
+  const formHoldsTurn = useDirectorySync(React.useCallback((state) => (
+    state.form[sessionId ?? '']?.some((form) => formTurnHold(form, state.part, releasedForms) !== 'released') ?? false
+  ), [sessionId, releasedForms]), directory);
+  const unloadedForms = useDirectorySync(React.useCallback((state) => (
+    (state.form[sessionId ?? ''] ?? [])
+      .filter((form) => formTurnHold(form, state.part, releasedForms) === 'unknown')
+      .map((form) => form.id)
+      .join('\n')
+  ), [sessionId, releasedForms]), directory);
+  const sessionForms = useDirectorySync(React.useCallback((state) => state.form[sessionId ?? ''], [sessionId]), directory);
+  React.useEffect(() => {
+    if (sessionId && unloadedForms) readUnloadedFormToolLinks(sessionId);
+  }, [sessionId, unloadedForms, sessionForms]);
 
   return React.useMemo<SessionActivityResult>(() => {
     if (!sessionId) return IDLE_RESULT;
 
-    // Permissions or forms pending → idle (the blocking indicator takes
-    // priority and the send button must remain a send, not a stop).
-    if (permissions.length > 0 || forms.length > 0) return IDLE_RESULT;
+    if (permissions.length > 0 || formHoldsTurn) return IDLE_RESULT;
 
     const phase: SessionActivityPhase = (status?.type ?? 'idle') as SessionActivityPhase;
 
-    // Only trust the trailing assistant message as a transient fallback while
-    // waiting for session.status/message.updated to settle.
-    // Plumbing roles are transparent here: a synthetic or switch message
-    // landing after the streaming assistant must not read as the turn ending.
-    const hasPendingAssistant = isIncompleteAssistantTurn(getLastConversationMessage(messages));
-
-    const hasAuthoritativeStatus = status !== undefined;
+    const hasAuthoritativeStatus = status !== undefined || statusSnapshotReady;
     const statusWorking = hasAuthoritativeStatus && phase !== 'idle';
     const isWorking = statusWorking || hasPendingAssistant;
 
@@ -63,7 +66,7 @@ export function useSessionActivity(sessionId: string | null | undefined, directo
       isBusy: phase === 'busy' || (!statusWorking && hasPendingAssistant),
       isCooldown: false,
     };
-  }, [sessionId, status, messages, permissions, forms]);
+  }, [sessionId, status, statusSnapshotReady, hasPendingAssistant, permissions, formHoldsTurn]);
 }
 
 export function useCurrentSessionActivity(): SessionActivityResult {

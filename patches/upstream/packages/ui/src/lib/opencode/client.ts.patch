@@ -1,0 +1,27 @@
+diff --git a/packages/ui/src/lib/opencode/client.ts b/packages/ui/src/lib/opencode/client.ts
+index fa756fff8..e6bfd88ec 100644
+--- a/packages/ui/src/lib/opencode/client.ts
++++ b/packages/ui/src/lib/opencode/client.ts
+@@ -1256,6 +1256,10 @@ class OpencodeService {
+     model?: ModelSelection
+     agent?: string
+     providerID: string
++    /** Called immediately before the prompt request may be admitted remotely. */
++    onPromptDispatch?: () => void
++    /** Optional last preflight after async preparation, before prompt admission. */
++    beforePromptDispatch?: () => Promise<void>
+     text: string
+     files?: Array<FileInputLite>
+     context?: SyntheticContextInput[]
+@@ -1308,8 +1312,10 @@ class OpencodeService {
+         }),
+       )
+     }
+-    const prompt = (skills: readonly SkillAttachmentRef[]) => {
++    const prompt = async (skills: readonly SkillAttachmentRef[]) => {
++      await params.beforePromptDispatch?.()
+       this.assertRuntimeUnchanged(params.runtimeKey)
++      params.onPromptDispatch?.()
+       params.beforeSend?.()
+       return call("session.prompt", () =>
+         this.clientFor(params.directory).session.prompt({

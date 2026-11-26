@@ -8,9 +8,11 @@ import {
   RETRY_SWITCH_ENDPOINT,
   SESSION_ENDPOINT,
   createAccountsApi,
+  HttpError,
+  isEngineRefusal,
   type AccountsFetch,
   type AccountsResponse,
-} from './accountsApi';
+  type SwitchOutcome, initialsOf } from './accountsApi';
 
 type Call = { path: string; method: string; body?: string };
 
@@ -25,6 +27,17 @@ const answering = (body: JsonValue, status = 200) => {
     return response;
   };
   return { fetch, calls };
+};
+
+const V1 = { code: 'MITTR_ENGINE_V1_HISTORY', message: 'Open MittrCraft 2.1.1 once.' };
+
+const failureOf = async (request: Promise<SwitchOutcome>): Promise<HttpError> => {
+  try {
+    await request;
+  } catch (error) {
+    if (error instanceof HttpError) return error;
+  }
+  throw new Error('expected an HttpError');
 };
 
 const offline: AccountsFetch = () => Promise.reject(new Error('offline'));
@@ -53,6 +66,50 @@ describe('accounts api', () => {
     expect(await apiWith(stuck.fetch).activateAccount('u-a')).toEqual({ signedIn: true, userId: 'u-a', engineRestarted: false });
 
     await expect(apiWith(answering({ error: 'That account is not signed in on this machine' }, 404).fetch).activateAccount('nobody')).rejects.toThrow('HTTP 404');
+  });
+
+  test('a refused request carries why and its code, and a body without them carries neither', async () => {
+    const refused = await failureOf(apiWith(answering({ error: V1.message, code: V1.code }, 409).fetch).activateAccount('u-a'));
+    expect([refused.status, refused.error, refused.code, refused.message]).toEqual([409, V1.message, V1.code, 'HTTP 409']);
+
+    const noCode = await failureOf(apiWith(answering({ error: 'Cannot store' }, 500).fetch).activateAccount('u-a'));
+    expect([noCode.error, noCode.code]).toEqual(['Cannot store', null]);
+
+    for (const body of [null, 'plain text', { error: 7, code: {} }]) {
+      const odd = await failureOf(apiWith(answering(body, 502).fetch).retrySwitch());
+      expect([odd.status, odd.error, odd.code]).toEqual([502, null, null]);
+    }
+
+    const notJson: AccountsFetch = async () => ({ ok: false, status: 504, json: () => Promise.reject(new SyntaxError('not json')) });
+    const unread = await failureOf(apiWith(notJson).retrySwitch());
+    expect([unread.status, unread.error, unread.code]).toEqual([504, null, null]);
+  });
+
+  test('a switch whose engine did not start keeps the engine error, and a refused sign-in switch keeps its reason', async () => {
+    const stuck = { signedIn: true, userId: 'u-a', engineRestarted: false, engineError: V1 } as const;
+    expect(await apiWith(answering({ ...stuck, displayName: 'Ann Lee' }).fetch).activateAccount('u-a')).toEqual(stuck);
+
+    const unnamed = { signedIn: true, userId: 'u-a', engineRestarted: false, engineError: { code: null, message: 'engine did not come back' } } as const;
+    expect(await apiWith(answering(unnamed).fetch).retrySwitch()).toEqual(unnamed);
+
+    const bad = { signedIn: true, engineRestarted: false, engineError: 'boom', switchRefused: { code: 'x' } };
+    expect(await apiWith(answering(bad).fetch).retrySwitch()).toEqual({ signedIn: true, engineRestarted: false });
+
+    expect(await apiWith(answering({ signedIn: true, userId: 'u-b', switchRefused: V1 }).fetch).retrySwitch()).toEqual({ signedIn: true, userId: 'u-b', switchRefused: V1 });
+  });
+
+  test('the account list says when the last sign-in was not switched to, and a server that does not say reads as none', async () => {
+    expect(await apiWith(answering({ accounts: [A, B], switchRefused: { userId: 'u-a', ...V1 } }).fetch).fetchAccountList()).toEqual({ accounts: [A, B], switchRefused: V1 });
+    expect(await apiWith(answering({ accounts: [A, B] }).fetch).fetchAccountList()).toEqual({ accounts: [A, B], switchRefused: null });
+    expect(await apiWith(answering({ accounts: [A, B], switchRefused: 'yes' }).fetch).fetchAccountList()).toEqual({ accounts: [A, B], switchRefused: null });
+  });
+
+  test('only the engine\'s own refusals are worth showing as they are', () => {
+    expect(isEngineRefusal(V1)).toBe(true);
+    expect(isEngineRefusal({ code: 'MITTR_ENGINE_DATABASE_BUSY', message: 'x' })).toBe(true);
+    expect(isEngineRefusal({ code: 'EACCES', message: 'x' })).toBe(false);
+    expect(isEngineRefusal({ code: null, message: 'x' })).toBe(false);
+    expect(isEngineRefusal(null)).toBe(false);
   });
 
   test('signing out deletes the session and says whether someone is still signed in', async () => {
@@ -93,4 +150,11 @@ describe('accounts api', () => {
     await apiWith(offline).cancelAddAccount();
     await apiWith(answering({ error: 'x' }, 500).fetch).cancelAddAccount();
   });
+});
+
+test('initials skip brackets and other signs around a name', () => {
+  expect(initialsOf('Somchai (Dev)')).toBe('SD');
+  expect(initialsOf('Somchai (')).toBe('S');
+  expect(initialsOf('สมชาย ใจดี')).toBe('สใ');
+  expect(initialsOf('---')).toBe('');
 });

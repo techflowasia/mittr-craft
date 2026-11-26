@@ -7,6 +7,8 @@ import type { ModelPickerDecorations } from '../../../ui/src/lib/product-plugins
 import { useConfigStore } from '../../../ui/src/stores/useConfigStore';
 import { mittrEntryStatus } from '../quota/agentStatus';
 import { useQuotaMe } from '../quota/quotaMeStore';
+import { refreshMittrCatalog } from '../quota/mittrAIRefresh';
+import { useQuotaAutoRefresh } from '../../../ui/src/stores/useQuotaStore';
 import { MITTR_PROVIDER_ID } from '../mittrProvider';
 
 export const PROVIDER_LOCK_ENDPOINT = '/api/mittr/provider-lock';
@@ -182,6 +184,8 @@ export function useMittrPickerFilter(open: boolean): ProviderLock {
 }
 
 export function useMittrPickerDecorations(open: boolean): ModelPickerDecorations {
+  useQuotaAutoRefresh(open);
+  React.useEffect(() => { if (open) void refreshMittrCatalog(); }, [open]);
   const { showOtherProviders } = useMittrPickerFilter(open);
   const quota = useQuotaMe(open);
   const agentStatus = quota.status === 'ok' ? quota.quota.agentStatus : null;

@@ -5,6 +5,7 @@ import { cameThroughProxy, isLoopbackPeer } from './loopback-guard.js';
 import { describeModelRefusal } from './model-refusal.js';
 import { CANNOT_REACH_MITTR } from './platform.js';
 import { createStreamMarkupWatcher, describeMarkup } from './response-markup.js';
+import { createRequestMetadata } from './request-metadata.js';
 
 /** Where the engine's `mittr` provider points: `http://127.0.0.1:<server port>` + this. */
 export const SHIM_PREFIX = '/mittr-shim/v1';
@@ -36,6 +37,27 @@ const LLM_QUOTA_EXHAUSTED = 'llm_quota_exhausted';
 const STREAM_DONE = 'data: [DONE]\n\n';
 const CUT_OFF = { error: { type: 'invalid_request_error', code: 'stream_cut_off', message: 'The answer was cut off. Send your message again.' } };
 const CUT_OFF_END = `\ndata: ${JSON.stringify(CUT_OFF)}\n\n${STREAM_DONE}`;
+const LENGTH_LIMIT = { error: { type: 'invalid_request_error', code: 'response_length_limit', message: 'The model reached its response limit before finishing. Ask it to continue from where it stopped.' } };
+
+// Quota rewriting gives us complete lines. Keep the final delta (which may
+// contain text or a tool-call fragment), but replace its successful finish
+// with an error before the engine can mark this turn as done.
+const endAtLengthLimit = (bytes) => {
+  const text = Buffer.from(bytes).toString('utf8');
+  if (!text.includes('length')) return null;
+  const lines = text.split('\n');
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!lines[index].startsWith('data:')) continue;
+    const frame = parsedOrNull(lines[index].slice(5));
+    if (!Array.isArray(frame?.choices) || !frame.choices.some((choice) => choice?.finish_reason === 'length')) continue;
+    for (const choice of frame.choices) {
+      if (choice?.finish_reason === 'length') choice.finish_reason = null;
+    }
+    lines[index] = `data: ${JSON.stringify(frame)}`;
+    return Buffer.from(`${lines.slice(0, index + 1).join('\n')}\n\ndata: ${JSON.stringify(LENGTH_LIMIT)}\n\n${STREAM_DONE}`);
+  }
+  return null;
+};
 
 const SESSION_ID = /^[\w.:-]{1,128}$/;
 const MODEL_ALIAS = /^[^\s\u0000-\u001f\u007f]{1,200}$/;
@@ -218,6 +240,17 @@ export function registerMittrShim(app, {
   const chatCompletions = async (req, res) => {
     if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) return res.status(400).json({ error: 'Invalid request body' });
     const startedAt = now();
+    const metadata = createRequestMetadata({ body: req.body, now, logger });
+    // The quota rewriter supplies complete lines, so diagnostics need no extra stream buffer.
+    const observeLines = (bytes) => {
+      for (const line of Buffer.from(bytes).toString('utf8').split('\n')) {
+        if (!line.startsWith('data:')) continue;
+        const frame = parsedOrNull(line.slice(5));
+        metadata.observe(frame);
+        if (frame?.error) metadata.fail(frame.error.code === LLM_QUOTA_EXHAUSTED ? 'quota' : 'upstream_error');
+        if (Array.isArray(frame?.choices) && frame.choices.some((choice) => choice?.finish_reason === 'length')) break;
+      }
+    };
     const sessionId = sessionIdOf(req.headers);
     const requestedModel = requestedModelOf(req.body);
     const model = JSON.stringify(requestedModel);
@@ -233,6 +266,7 @@ export function registerMittrShim(app, {
       inFlight.delete(res);
       if (res.writableFinished) return;
       engineGone = true;
+      metadata.fail('client_closed');
       limit.abort();
     });
 
@@ -243,8 +277,14 @@ export function registerMittrShim(app, {
       logger.error('[mittr] shim could not read the Mittr sign-in:', error?.message ?? error);
     }
     if (engineGone) return undefined;
-    if (!session?.accessToken) return res.status(401).json(NOT_SIGNED_IN);
-    if (!engineOnActiveHome()) return res.status(503).set(NO_RETRY).json(SWITCHING);
+    if (!session?.accessToken) {
+      metadata.fail('not_signed_in');
+      return res.status(401).json(NOT_SIGNED_IN);
+    }
+    if (!engineOnActiveHome()) {
+      metadata.fail('account_changed');
+      return res.status(503).set(NO_RETRY).json(SWITCHING);
+    }
     inFlight.add(res);
 
     let upstream;
@@ -260,12 +300,14 @@ export function registerMittrShim(app, {
       });
     } catch (error) {
       limit.stop();
+      metadata.fail(limit.timedOut() ? 'timeout' : 'transport_error');
       logCall(limit.timedOut() ? 'timeout' : 'failed', sessionId);
       if (engineGone) return undefined;
       if (limit.timedOut()) return res.status(504).set(NO_RETRY).json(TIMED_OUT);
       logger.error('[mittr] shim could not reach Mittr:', error?.message ?? error);
       return res.status(502).set(NO_RETRY).json(PLATFORM_UNREACHABLE);
     }
+    metadata.setStatus(upstream.status);
     logCall(upstream.status, sessionId);
 
     if (!(req.body.stream && upstream.ok && upstream.body)) {
@@ -275,14 +317,18 @@ export function registerMittrShim(app, {
         bytes = new Uint8Array(await upstream.arrayBuffer());
       } catch (error) {
         if (engineGone) return undefined;
+        metadata.fail(limit.timedOut() ? 'timeout' : 'transport_error');
         logger.error('[mittr] shim lost the answer from Mittr:', error?.message ?? error);
         return limit.timedOut() ? res.status(504).set(NO_RETRY).json(TIMED_OUT) : res.status(502).set(NO_RETRY).json(PLATFORM_UNREACHABLE);
       } finally {
         limit.stop();
       }
       const answer = parsedOrNull(Buffer.from(bytes).toString('utf8'));
+      metadata.observe(answer);
       const quota = readQuotaExhausted(answer);
+      if (!upstream.ok && !quota) metadata.fail('http_error');
       if (quota) {
+        metadata.fail('quota');
         const refusal = toEngineRefusal(quota);
         return res.status(refusal.status).set(refusal.headers).json(refusal.body);
       }
@@ -294,6 +340,10 @@ export function registerMittrShim(app, {
           if (requestId !== null) res.setHeader('x-request-id', requestId);
           return res.status(403).json(WITHDRAWN);
         }
+      }
+      if (upstream.ok && answer?.choices?.some((choice) => choice?.finish_reason === 'length')) {
+        metadata.fail('length');
+        return res.status(502).set(NO_RETRY).json(LENGTH_LIMIT);
       }
       if (upstream.ok) {
         tellAnswer({ chunk: bytes, done: false });
@@ -330,24 +380,48 @@ export function registerMittrShim(app, {
     try {
       limit.arm();
       let refused = false;
+      let lengthLimited = false;
       for await (const chunk of upstream.body) {
         const bytes = quotaFrames.push(chunk);
+        observeLines(bytes);
         const refusal = endAtQuotaRefusal(bytes);
-        await send(refusal ?? bytes);
+        const lengthLimit = refusal === null ? endAtLengthLimit(bytes) : null;
+        await send(refusal ?? lengthLimit ?? bytes);
         if (engineGone) return undefined;
+        lengthLimited = lengthLimit !== null;
+        if (lengthLimited) {
+          metadata.fail('length');
+          break;
+        }
         refused = refusal !== null;
-        if (refused) break;
+        if (refused) {
+          metadata.fail('quota');
+          break;
+        }
         limit.arm();
+      }
+      if (lengthLimited) {
+        limit.abort();
+        return res.end();
       }
       if (refused) {
         limit.abort();
       } else {
         const rest = quotaFrames.end();
-        await send(endAtQuotaRefusal(rest) ?? rest);
+        observeLines(rest);
+        const refusal = endAtQuotaRefusal(rest);
+        const lengthLimit = refusal === null ? endAtLengthLimit(rest) : null;
+        await send(refusal ?? lengthLimit ?? rest);
         if (engineGone) return undefined;
+        if (refusal !== null) metadata.fail('quota');
+        if (lengthLimit !== null) {
+          metadata.fail('length');
+          return res.end();
+        }
       }
     } catch (error) {
       if (engineGone) return undefined;
+      metadata.fail(limit.timedOut() ? 'timeout' : 'stream_error');
       logger.error(`[mittr] shim cut the answer: ${limit.timedOut() ? 'Mittr went silent' : `the stream from Mittr broke (${error?.message ?? error})`}`);
       return res.end(CUT_OFF_END);
     } finally {

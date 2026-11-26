@@ -38,8 +38,32 @@ export async function copyTextToClipboard(text: string): Promise<ClipboardCopyRe
   };
 }
 
-// `plainText` replaces the Markdown source in `text/plain` for users who copy
-// messages as plain text; the Markdown flavor is then left out entirely.
+type ClipboardTextPlugin = {
+  read: () => Promise<{ text: string }>;
+};
+
+type CapacitorGlobal = {
+  getPlatform?: () => string;
+  registerPlugin?: (name: string) => ClipboardTextPlugin;
+};
+
+let androidClipboardPlugin: ClipboardTextPlugin | null = null;
+
+const getAndroidClipboardPlugin = (): ClipboardTextPlugin | null => {
+  // SAFETY: `window.Capacitor` is injected by the native shell with this shape and
+  // is absent in every other runtime, which the optional members account for.
+  const capacitor = (window as typeof window & { Capacitor?: CapacitorGlobal }).Capacitor;
+  if (capacitor?.getPlatform?.() !== 'android' || !capacitor.registerPlugin) return null;
+  androidClipboardPlugin ??= capacitor.registerPlugin('ClipboardText');
+  return androidClipboardPlugin;
+};
+
+export async function readClipboardText(): Promise<string> {
+  const plugin = getAndroidClipboardPlugin();
+  if (plugin) return (await plugin.read()).text;
+  return navigator.clipboard.readText();
+}
+
 export async function copyMarkdownToClipboard(
   markdown: string,
   html: string,

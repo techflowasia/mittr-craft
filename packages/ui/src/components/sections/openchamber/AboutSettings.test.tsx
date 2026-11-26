@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, mock, test } from 'bun:test';
 import React, { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Window } from 'happy-dom';
@@ -8,7 +8,7 @@ Object.assign(globalThis, {
   window: browser, document: browser.document, navigator: browser.navigator,
   localStorage: browser.localStorage, sessionStorage: browser.sessionStorage,
   Node: browser.Node, Element: browser.Element, HTMLElement: browser.HTMLElement,
-  HTMLButtonElement: browser.HTMLButtonElement, Event: browser.Event, MouseEvent: browser.MouseEvent,
+  HTMLButtonElement: browser.HTMLButtonElement, Event: browser.Event, CustomEvent: browser.CustomEvent, MouseEvent: browser.MouseEvent,
   getComputedStyle: browser.getComputedStyle.bind(browser),
   requestAnimationFrame: browser.requestAnimationFrame.bind(browser),
   cancelAnimationFrame: browser.cancelAnimationFrame.bind(browser),
@@ -17,11 +17,17 @@ Object.assign(globalThis, {
 
 const realFetch = globalThis.fetch;
 const engineChecks: string[] = [];
+let installation: string | null = null;
 globalThis.fetch = async (input: RequestInfo | URL) => {
   const url = String(input);
   if (url.includes('/api/opencode/upgrade')) engineChecks.push(url);
+  if (url.includes('/api/opencode/compatibility') && installation) {
+    return new Response(JSON.stringify({ state: 'compatible', version: '2.3.2', installation, canInstall: false }), { headers: { 'Content-Type': 'application/json' } });
+  }
   return new Response('{}', { status: 503, headers: { 'Content-Type': 'application/json' } });
 };
+
+mock.module('@/components/ui/AboutLogo', () => ({ AboutLogo: () => null }));
 
 const { AboutSettings, LinkIfSet } = await import('./AboutSettings');
 const { useUpdateStore } = await import('@/stores/useUpdateStore');
@@ -37,6 +43,7 @@ const render = async () => {
   document.body.append(container);
   const root = createRoot(container);
   await act(async () => root.render(<I18nProvider><AboutSettings /></I18nProvider>));
+  for (let turn = 0; turn < 20; turn += 1) await act(async () => { await Promise.resolve(); });
   return {
     container,
     buttons: () => [...container.querySelectorAll('button')].map((button) => button.textContent?.trim() ?? ''),
@@ -76,6 +83,44 @@ describe('About page update controls', () => {
       expect(useUpdateStore.getState().checking).toBe(false);
     } finally {
       await page.unmount();
+    }
+  });
+
+  test('a build with no update channel offers no engine check where its engine is bundled, since only the app can update that one', async () => {
+    useUpdateStore.setState({ runtimeType: 'desktop', available: false, checking: false, error: null, info: noChannelAnswer });
+    for (const [kind, shown] of [['bundled', false], ['managed', true], ['external', true]] as const) {
+      installation = kind;
+      const page = await render();
+      try {
+        expect({ kind, shown: page.buttons().includes('Check updates') }).toEqual({ kind, shown });
+        expect(page.buttons()).not.toContain('Check for updates');
+      } finally {
+        installation = null;
+        await page.unmount();
+      }
+    }
+  });
+
+  test('the phone layout hides the engine check for a bundled engine too', async () => {
+    useUpdateStore.setState({ runtimeType: 'desktop', available: false, checking: false, error: null, info: noChannelAnswer });
+    const width = browser.innerWidth;
+    browser.happyDOM.setViewport({ width: 390 });
+    Object.defineProperty(browser.navigator, 'maxTouchPoints', { configurable: true, value: 1 });
+    try {
+      for (const [kind, shown] of [['bundled', false], ['managed', true]] as const) {
+        installation = kind;
+        const page = await render();
+        try {
+          expect(page.container.querySelector('.text-center')).not.toBeNull();
+          expect({ kind, shown: page.buttons().includes('Check updates') }).toEqual({ kind, shown });
+        } finally {
+          installation = null;
+          await page.unmount();
+        }
+      }
+    } finally {
+      Reflect.deleteProperty(browser.navigator, 'maxTouchPoints');
+      browser.happyDOM.setViewport({ width });
     }
   });
 

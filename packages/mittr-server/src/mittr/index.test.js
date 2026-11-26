@@ -3,14 +3,16 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import '../../../web/scripts/register-server-sources.mjs';
 
 import express from 'express';
 
-import { createManagedConfigRuntime } from '../../../web/server/lib/opencode/managed-config-file.js';
 import { setupMittr } from './index.js';
 import { mintLocalToken } from './local-token.js';
 import { USER_CONFIG_DIR, deferred, fakeEngineContext, fakeEngineFetch, fakeFetch, json, serve, stubAgentBrowser, tempDataDir, until } from './test-helpers.js';
 import { CHROME_EXECUTABLE } from './tools/chrome-control.js';
+
+const { createManagedConfigRuntime } = await import('../../../web/server/lib/opencode/managed-config-file.js');
 
 const NOW = Date.now();
 const DEV_ENV = { MITTRCRAFT_BROKER_URL: 'https://api-dev.mittr.asia', MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft-dev' };
@@ -75,6 +77,15 @@ const signIn = async (call) => {
   await call('POST', '/api/mittr/auth/start');
   return call('POST', '/api/mittr/auth/callback', { url: 'mittrcraft-dev://auth/callback?code=c1' });
 };
+
+test('Mittr sign-in awaits the host recovery pre-mutation boundary', async (t) => {
+  const engine = fakeEngineContext();
+  let invalidations = 0;
+  engine.context.opencode.beforeAccountMutation = async () => { invalidations++; };
+  const { call } = await setUp(t, { engine });
+  assert.equal((await signIn(call)).status, 200);
+  assert.equal(invalidations, 1);
+});
 
 const sessionFiles = (dataDir) => fs.readdirSync(path.join(dataDir, 'mittr-accounts')).filter((name) => name.endsWith('.session'));
 
@@ -238,7 +249,7 @@ test('a 1.x single-account user keeps their models and default before the sessio
 
   assert.deepEqual(await mittrModelsOf(mittr), ['a1', 'a2']);
   assert.equal(defaultModelOf(engine), 'mittr/a2');
-  assert.equal(engine.userConfigWrites.length, 0);
+  assert.deepEqual(engine.userConfigWrites.map(({ config }) => config), [{ model: 'mittr/a2', policies: LOCKED }]);
   assert.deepEqual(uses, []);
   assert.equal(fs.existsSync(path.join(dataDir, 'mittr-session')), true);
 
@@ -545,7 +556,7 @@ test('setup hands the server plugin an engine env, a config fragment and a bound
   const { MITTRCRAFT_TOOLS_TOKEN: token, ...env } = await mittr.engineEnv();
   assert.deepEqual(env, { NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost', MITTRCRAFT_TOOLS_URL: 'http://127.0.0.1:4100/mittr-tools/v1/call' });
   assert.match(token, /^[A-Za-z0-9_-]{43}$/);
-  assert.deepEqual(await mittr.managedConfig(), { plugins: [envDirOf(dataDir), identityDirOf(dataDir), toolsDirOf(dataDir)], share: 'disabled', experimental: { policies: LOCKED } });
+  assert.deepEqual(await mittr.managedConfig(), { plugins: [envDirOf(dataDir), identityDirOf(dataDir), toolsDirOf(dataDir)], share: 'disabled', policies: LOCKED });
   await mittr.dispose();
   assert.equal(engine.readyListeners.size, 0);
 });
@@ -832,7 +843,7 @@ const engineAndBroker = (answer) => fakeEngineFetch({ answer, other: () => json(
 test('the lock is in the config from the first build, before any model or port', async (t) => {
   const engine = fakeEngineContext({ port: null });
   const { mittr, dataDir } = await setUp(t, { engine });
-  assert.deepEqual(await mittr.managedConfig(), { plugins: [envDirOf(dataDir), identityDirOf(dataDir), toolsDirOf(dataDir)], share: 'disabled', experimental: { policies: LOCKED } });
+  assert.deepEqual(await mittr.managedConfig(), { plugins: [envDirOf(dataDir), identityDirOf(dataDir), toolsDirOf(dataDir)], share: 'disabled', policies: LOCKED });
 });
 
 test('the identity plugin is on disk before the config names it', async (t) => {
@@ -856,7 +867,7 @@ test('a plugin that cannot be rewritten keeps the one already on disk in the con
   }
 
   assert.deepEqual(config.plugins, [envDirOf(dataDir), dir, toolsDirOf(dataDir)]);
-  assert.deepEqual(config.experimental.policies, LOCKED);
+  assert.deepEqual(config.policies, LOCKED);
   assert.ok(logger.warnings.some((line) => line.startsWith('[mittr] could not rewrite the identity plugin; keeping the one already written')), logger.warnings.join('\n'));
 });
 
@@ -869,7 +880,7 @@ test('an identity plugin that cannot be written leaves the lock and the models i
 
   const config = await mittr.managedConfig();
   assert.equal(config.plugins, undefined);
-  assert.deepEqual(config.experimental.policies, LOCKED);
+  assert.deepEqual(config.policies, LOCKED);
   assert.deepEqual(Object.keys(config.providers.mittr.models), ['a1', 'a2']);
   assert.ok(logger.warnings.some((line) => line.startsWith('[mittr] could not write the identity plugin')), logger.warnings.join('\n'));
 });
@@ -881,7 +892,7 @@ test('the stored switch ON still denies the hosted opencode provider', async (t)
   assert.deepEqual(await mittr.managedConfig(), {
     plugins: [envDirOf(dataDir), identityDirOf(dataDir), toolsDirOf(dataDir)],
     share: 'disabled',
-    experimental: { policies: [{ action: 'provider.use', resource: '*', effect: 'allow' }] },
+    policies: [{ action: 'provider.use', resource: '*', effect: 'allow' }],
   });
 });
 
@@ -890,10 +901,10 @@ test('engine session sharing is off with the switch off and on, and stays off ac
   const { mittr, call } = await setUp(t, { engine });
   assert.equal((await mittr.managedConfig()).share, 'disabled');
   assert.equal((await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: true })).status, 200);
-  assert.deepEqual(engine.rendered.at(-1).experimental.policies, OTHERS_SHOWN);
+  assert.deepEqual(engine.rendered.at(-1).policies, OTHERS_SHOWN);
   assert.equal(engine.rendered.at(-1).share, 'disabled');
   assert.equal((await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: false })).status, 200);
-  assert.deepEqual(engine.rendered.at(-1).experimental.policies, LOCKED);
+  assert.deepEqual(engine.rendered.at(-1).policies, LOCKED);
   assert.equal(engine.rendered.at(-1).share, 'disabled');
 });
 
@@ -905,12 +916,12 @@ test('the shim URL follows the bound server port', async (t) => {
   const config = await mittr.managedConfig();
   assert.equal(config.providers.mittr.settings.baseURL, 'http://127.0.0.1:4100/mittr-shim/v1');
   assert.deepEqual(Object.keys(config.providers.mittr.models), ['a1', 'a2']);
-  assert.deepEqual(config.experimental.policies, LOCKED);
+  assert.deepEqual(config.policies, LOCKED);
 
   engine.server.port = null;
   const unbound = await mittr.managedConfig();
   assert.equal(unbound.providers?.mittr, undefined);
-  assert.deepEqual(unbound.experimental.policies, LOCKED);
+  assert.deepEqual(unbound.policies, LOCKED);
 });
 
 test('new models rewrite the managed config, then hand the engine the shim key, never the Mittr token', async (t) => {
@@ -1152,17 +1163,17 @@ const defaultModelOf = (engine) => engine.userConfigFile.model;
 test('a signed-in fresh install starts on the first Mittr agent, once the engine config carries the agents', async (t) => {
   const fetchImpl = platform();
   const { call, engine } = await setUp(t, { fetchImpl });
-  assert.deepEqual(engine.userConfigWrites, []);
+  assert.deepEqual(engine.userConfigWrites.map(({ config }) => config), [{ policies: LOCKED }]);
 
   assert.equal((await signIn(call)).status, 200);
   await until(() => defaultModelOf(engine) === 'mittr/a1');
-  assert.deepEqual(engine.userConfigWrites.map(({ config }) => config), [{ model: 'mittr/a1' }]);
+  assert.deepEqual(engine.userConfigWrites.map(({ config }) => config), [{ policies: LOCKED }, { policies: LOCKED, model: 'mittr/a1' }]);
   // The refresh just before the write put the agents in the engine config.
-  const { afterRefreshes } = engine.userConfigWrites[0];
+  const { afterRefreshes } = engine.userConfigWrites[1];
   assert.deepEqual(Object.keys(engine.rendered[afterRefreshes - 1].providers.mittr.models), ['a1', 'a2']);
 
   assert.equal((await call('POST', '/api/mittr/catalog/sync')).status, 200);
-  assert.equal(engine.userConfigWrites.length, 1);
+  assert.equal(engine.userConfigWrites.length, 2);
 });
 
 test('a default the person chose is kept while it is offered, and one on another provider always', async (t) => {
@@ -1221,7 +1232,58 @@ test('an account whose catalog has not arrived keeps the default until it does, 
 test('a start with nobody signed in takes a Mittr default left behind out', async (t) => {
   const engine = fakeEngineContext({ userConfigFile: { model: 'mittr/a1', theme: 'dark' } });
   await setUp(t, { engine });
+  assert.deepEqual(engine.userConfigFile, { theme: 'dark', policies: LOCKED });
+});
+
+test('the lock is the last rule in the engine user config, where an allow would outrank the managed one, and follows the switch', async (t) => {
+  const own = [{ action: 'skill.use', resource: 'x', effect: 'deny' }, { action: 'provider.use', resource: 'openai', effect: 'allow' }];
+  const engine = fakeEngineContext({ userConfigFile: { theme: 'dark', policies: [...own, { action: 'provider.use', resource: '*', effect: 'allow' }] } });
+  const { mittr, call } = await setUp(t, { engine });
+  await mittr.managedConfig();
+  assert.deepEqual(engine.userConfigFile, { theme: 'dark', policies: [...own, ...LOCKED] });
+  const writes = engine.userConfigWrites.length;
+  await mittr.managedConfig();
+  assert.equal(engine.userConfigWrites.length, writes);
+
+  assert.equal((await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: true })).status, 200);
+  assert.deepEqual(engine.userConfigFile.policies, own);
+  assert.deepEqual(engine.rendered.at(-1).policies, OTHERS_SHOWN);
+  assert.equal((await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: false })).status, 200);
+  assert.deepEqual(engine.userConfigFile.policies, [...own, ...LOCKED]);
+});
+
+test('the providers a person turned off stay off when other providers are shown', async (t) => {
+  const engine = fakeEngineContext({ userConfigFile: { disabled_providers: ['openai'] } });
+  const { mittr, call } = await setUp(t, { engine });
+  await mittr.managedConfig();
+  assert.deepEqual(engine.userConfigFile, { disabled_providers: ['openai'], policies: LOCKED });
+  assert.equal((await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: true })).status, 200);
+  assert.deepEqual(engine.userConfigFile, { disabled_providers: ['openai'] });
+});
+
+test('the switch says it was not applied when the engine user config could not be written, and the next one applies it', async (t) => {
+  const engine = fakeEngineContext({ userConfigFile: { theme: 'dark' } });
+  const { mittr, call } = await setUp(t, { engine });
+  await mittr.managedConfig();
+  const write = engine.engine.userConfig.write;
+  engine.engine.userConfig.write = () => { throw new Error('Failed to write OpenCode configuration'); };
+
+  const refused = await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: true });
+  assert.equal(refused.status, 500);
+  assert.deepEqual(refused.body, { error: 'The setting is saved, but the engine has not taken it up yet', showOtherProviders: true });
+  assert.deepEqual(engine.userConfigFile.policies, LOCKED);
+
+  engine.engine.userConfig.write = write;
+  assert.deepEqual(await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: true }), { status: 200, body: { showOtherProviders: true } });
   assert.deepEqual(engine.userConfigFile, { theme: 'dark' });
+});
+
+test('a user config the engine does not read gets no lock, and the warning names the file that outranks the managed one', async (t) => {
+  const engine = fakeEngineContext({ userConfigFile: { theme: 'dark' } });
+  const { mittr, logger } = await setUp(t, { engine, engineConfigDir: '/elsewhere/opencode' });
+  await mittr.managedConfig();
+  assert.deepEqual(engine.userConfigWrites, []);
+  assert.ok(logger.warnings.includes('[mittr] the provider lock is only in the managed config, and an allow in /elsewhere/opencode/opencode.json outranks it'));
 });
 
 test('the default is left alone when the server\'s user config is not the file the engine reads', async (t) => {
@@ -1359,6 +1421,7 @@ test('overlapping applies leave the engine config on the last list, and a later 
   engine.refreshGate = gate.promise;
   const first = mittr.applyModels(MODELS);
   const second = mittr.applyModels([]);
+  await until(() => engine.refreshes.length > 0);
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(engine.refreshes.length, 1);
   engine.refreshGate = null;
@@ -1399,7 +1462,7 @@ test('the provider switch rewrites the engine config with the new lock and keeps
 
   assert.deepEqual(await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: true }), { status: 200, body: { showOtherProviders: true } });
   assert.equal(engine.refreshes.length, 2);
-  assert.deepEqual(engine.rendered.at(-1).experimental.policies, OTHERS_SHOWN);
+  assert.deepEqual(engine.rendered.at(-1).policies, OTHERS_SHOWN);
   assert.deepEqual(renderedAliasesOf(engine), ['a1', 'a2']);
   assert.deepEqual(engine.broadcasts, [{ type: 'mittr.provider-lock.changed', payload: { showOtherProviders: true } }]);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dataDir, 'mittr-settings.json'), 'utf8')), { showOtherProviders: true });
@@ -1410,7 +1473,7 @@ test('the provider switch rewrites the engine config with the new lock and keeps
   assert.equal(engine.refreshes.length, 2);
 
   assert.equal((await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: false })).status, 200);
-  assert.deepEqual(engine.rendered.at(-1).experimental.policies, LOCKED);
+  assert.deepEqual(engine.rendered.at(-1).policies, LOCKED);
   assert.deepEqual((await call('GET', '/api/mittr/provider-lock')).body, { showOtherProviders: false });
 });
 
@@ -1430,7 +1493,7 @@ test('a switch change waits for a model list being written, so neither write is 
   assert.equal((await switched).status, 200);
 
   assert.equal(engine.refreshes.length, 2);
-  assert.deepEqual(engine.rendered.at(-1).experimental.policies, OTHERS_SHOWN);
+  assert.deepEqual(engine.rendered.at(-1).policies, OTHERS_SHOWN);
   assert.deepEqual(renderedAliasesOf(engine), ['a1', 'a2']);
 });
 
@@ -1439,7 +1502,7 @@ test('a switch change before the engine config is first built writes nothing, an
   const { mittr, call } = await setUp(t, { engine, built: false });
   assert.equal((await call('PUT', '/api/mittr/provider-lock', { showOtherProviders: true })).status, 200);
   assert.equal(engine.refreshes.length, 0);
-  assert.deepEqual((await mittr.managedConfig()).experimental.policies, OTHERS_SHOWN);
+  assert.deepEqual((await mittr.managedConfig()).policies, OTHERS_SHOWN);
 });
 
 const QUOTA_WEEK = {
@@ -1498,6 +1561,38 @@ test('this week\'s quota is read with the account token, and a signed-out read i
   const [request] = fetchImpl.calls.filter(isQuotaCall);
   assert.equal(request.url, 'https://api-dev.mittr.asia/api/quota/me');
   assert.equal(request.headers.Authorization, 'Bearer at-1');
+});
+
+test('raw and Usage share one sample, recover speech, and fence account round trips', async (t) => {
+  const sample = deferred();
+  let quotaReads = 0;
+  let exchanges = 0;
+  const week = { ...QUOTA_WEEK, lines: [{ modelKey: 'voice', kind: 'stt', label: 'Voice', used: 1, limit: 100, source: 'user' }] };
+  const fetchImpl = fakeEngineFetch({ other: (request) => {
+    if (isQuotaCall(request)) { quotaReads += 1; return quotaReads === 1 ? sample.promise : json(week); }
+    if (isCatalogCall(request)) return json(CATALOG_A);
+    if (request.url.endsWith('/auth/desktop/exchange')) return json(exchanges++ === 0 ? session : sessionB);
+    return json(session);
+  } });
+  const engine = fakeEngineContext();
+  const { call, mittr } = await setUp(t, { fetchImpl, engine });
+  await signIn(call);
+  await until(async () => (await mittrModelsOf(mittr)).length === 2);
+  mittr.speech.state.block('stt', null);
+  const raw = call('GET', '/api/mittr/quota/me');
+  await until(() => quotaReads === 1);
+  const usage = engine.quotaProviders[0].fetchQuota();
+  await signIn(call);
+  await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' });
+  mittr.speech.state.block('stt', null);
+  sample.resolve(json(week));
+  assert.equal((await raw).status, 409);
+  assert.equal((await usage).ok, false);
+  assert.equal(quotaReads, 1);
+  assert.ok(mittr.speech.state.view().stt.blockedUntil);
+  assert.equal((await call('GET', '/api/mittr/quota/me')).status, 200);
+  assert.equal(mittr.speech.state.view().stt.blockedUntil, null);
+  assert.equal(quotaReads, 2);
 });
 
 const isWorkCall = (request) => request.url.endsWith('/desktop/work');
@@ -1930,10 +2025,9 @@ const managedFileOnDisk = (t, engine) => {
   const runtime = createManagedConfigRuntime({
     fsPromises: fs.promises,
     path,
-    dataDir: tempDataDir(t),
+    instanceDir: tempDataDir(t),
     env: {},
     readSettings: async () => ({}),
-    isAgentMemoryAvailable: () => false,
     contributeConfig: () => engine.contribute(),
   });
   const disk = {
@@ -2596,4 +2690,27 @@ test('the sidebar side is stored on this Mac and read back after a restart', asy
   assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'mittr-settings.json'), 'utf8')).sidebarSide, 'right');
   const again = await setUp(t, { dataDir, host: {} });
   assert.equal((await again.call('GET', '/api/mittr/appearance/settings')).body.sidebarSide, 'right');
+});
+
+test('sync applies an arbitrary newly entitled alias at the same version and exposes write failure for retry', async (t) => {
+  let payload = CATALOG_A;
+  const engine = fakeEngineContext();
+  const failures = failingWrites(engine);
+  const { call, fetchImpl } = await setUp(t, { engine, fetchImpl: platform({ catalog: () => json(payload) }) });
+  await signIn(call);
+  await until(() => renderedAliasesOf(engine).includes('a1'));
+  // Drain sign-in application before deliberately failing the next write.
+  await call('POST', '/api/mittr/catalog/sync');
+  payload = { ...CATALOG_A, models: [...CATALOG_A.models, { alias: 'opaque-next-42', label: 'New entitlement' }] };
+  failures.next = 1;
+  const failed = await call('POST', '/api/mittr/catalog/sync');
+  assert.equal(failed.status, 500);
+  assert.equal(failed.body.stored, true);
+  assert.equal(failed.body.applied, false);
+  assert.equal(renderedAliasesOf(engine).includes('opaque-next-42'), false);
+  failures.next = 0;
+  const before = catalogCalls(fetchImpl).length;
+  assert.equal((await call('POST', '/api/mittr/catalog/sync', { force: false })).status, 200);
+  assert.equal(catalogCalls(fetchImpl).length, before + 1);
+  assert.deepEqual(renderedAliasesOf(engine), ['a1', 'a2', 'opaque-next-42']);
 });

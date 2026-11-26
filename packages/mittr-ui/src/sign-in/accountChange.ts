@@ -75,6 +75,10 @@ export function beginSignInWait(): (handled: boolean) => void {
   };
 }
 
+export function reloadDeferred(): boolean {
+  return afterWait !== null;
+}
+
 export function reloadOrDefer(reloadNow: () => void, resyncThenReload: () => void): void {
   if (waits === 0) reloadNow();
   else afterWait = resyncThenReload;

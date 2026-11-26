@@ -7,7 +7,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const designCss = readFileSync(join(here, 'design.css'), 'utf8');
 const glass = readFileSync(join(here, 'glass.css'), 'utf8');
 const sky = readFileSync(join(here, 'GlassSky.tsx'), 'utf8');
-const button = readFileSync(join(here, '../../../ui/src/components/ui/button.tsx'), 'utf8');
+const button = readFileSync(join(here, '../../../ui/src/components/ui/button-variants.ts'), 'utf8');
 
 type Rule = { selectors: string[]; body: string };
 

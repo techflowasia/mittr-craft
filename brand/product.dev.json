@@ -21,6 +21,8 @@
     "OPENCHAMBER_MANAGED_PROCESS_REGISTRY": "~/.config/mittrcraft-dev/managed-opencode",
     "OPENCHAMBER_UPDATE_CHECK_DISABLED": "1",
     "OPENCHAMBER_MODELS_METADATA_DISABLED": "1",
+    "OPENCHAMBER_SHARE_PAGES_DISABLED": "1",
+    "OPENCHAMBER_PUSH_RELAY_DISABLED": "true",
     "MITTRCRAFT_ENGINE_HOME": "~/.config/mittrcraft-dev/engine",
     "MITTRCRAFT_DEEP_LINK_SCHEME": "mittrcraft-dev"
   },

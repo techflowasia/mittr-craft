@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { createMittrQuotaService } from './quota-service.js';
 import { fakeFetch, json } from './test-helpers.js';
+import { createSpeechState } from './voice/speech-state.js';
 
 const BROKER = { baseUrl: 'https://api-dev.mittr.asia', upstreamV1: 'https://api-dev.mittr.asia/v1' };
 const SESSION = { accessToken: 'at-1', subject: { userId: 'u-a' } };
@@ -28,6 +29,80 @@ const failure = async (promise) => {
   }
   throw new Error('expected the read to fail');
 };
+
+test('concurrent raw reads share only an in-flight sample', async () => {
+  let release;
+  const fetchImpl = fakeFetch(() => new Promise((resolve) => { release = resolve; }));
+  const { service } = setUp({ fetchImpl });
+  const first = service.readMine();
+  const second = service.readMine();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fetchImpl.calls.length, 1);
+  release(json(WEEK));
+  assert.deepEqual(await first, await second);
+  const next = service.readMine();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fetchImpl.calls.length, 2);
+  release(json(WEEK));
+  await next;
+});
+
+test('account generation fences A to B to A samples and late session refreshes', async () => {
+  let generation = 0;
+  let release;
+  const service = createMittrQuotaService({ broker: BROKER, accountGeneration: () => generation,
+    ensureFreshSession: async () => SESSION, fetchImpl: () => new Promise((resolve) => { release = resolve; }) });
+  const stale = service.readMine();
+  await new Promise((resolve) => setImmediate(resolve));
+  generation = 2;
+  release(json(WEEK));
+  assert.equal((await failure(stale)).reasonCode, 'account_changed');
+  let refreshed;
+  const late = createMittrQuotaService({ broker: BROKER, accountGeneration: () => generation,
+    ensureFreshSession: () => new Promise((resolve) => { refreshed = resolve; }),
+    fetchImpl: () => { assert.fail('old request must not fetch with the new account token'); } });
+  const reading = late.readMine();
+  generation += 1;
+  refreshed(SESSION);
+  assert.equal((await failure(reading)).reasonCode, 'account_changed');
+});
+
+test('a new generation reads independently while the old account sample is pending', async () => {
+  let generation = 0;
+  const releases = [];
+  const service = createMittrQuotaService({ broker: BROKER, accountGeneration: () => generation,
+    ensureFreshSession: async () => SESSION, fetchImpl: () => new Promise((resolve) => releases.push(resolve)) });
+  const first = service.readMine().catch((error) => error.reasonCode);
+  await new Promise((resolve) => setImmediate(resolve));
+  generation += 1;
+  const second = service.readMine();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(releases.length, 2);
+  releases[1](json(WEEK));
+  assert.deepEqual(await second, WEEK);
+  releases[0](json(WEEK));
+  assert.equal(await first, 'account_changed');
+});
+
+test('failed and malformed reads preserve speech blocks and a newer refusal survives a positive read', async (t) => {
+  const state = createSpeechState();
+  t.after(() => state.close());
+  state.block('stt', null);
+  for (const response of [json({}, 500), json({}), json({ ...WEEK, lines: [] }), json({ ...WEEK, lines: [{ ...WEEK.lines[1], used: '0' }] })]) {
+    const service = createMittrQuotaService({ broker: BROKER, ensureFreshSession: async () => SESSION, speechState: state, fetchImpl: async () => response });
+    await service.readMine().catch(() => {});
+    assert.ok(state.view().stt.blockedUntil);
+  }
+  let release;
+  const service = createMittrQuotaService({ broker: BROKER, ensureFreshSession: async () => SESSION, speechState: state,
+    fetchImpl: () => new Promise((resolve) => { release = resolve; }) });
+  const reading = service.readMine();
+  await new Promise((resolve) => setImmediate(resolve));
+  state.block('stt', null);
+  release(json(WEEK));
+  await reading;
+  assert.ok(state.view().stt.blockedUntil);
+});
 
 test('quota me reads this week from the platform with the account token', async () => {
   const { service, fetchImpl } = setUp();
@@ -134,6 +209,19 @@ test('quota me keeps role names and the agents behind a model', async () => {
     { modelKey: 'm:abc', kind: 'chat', label: '', labelKey: 'quota.role.decision', used: 10, limit: 100, source: 'default', agents: [{ key: 'assistant', label: 'General Assistant' }] },
     { modelKey: 'm:def', kind: 'chat', label: '', used: 1, limit: 100, source: 'default' },
   ]);
+});
+
+test('quota JSON preserves an own __proto__ alias status', async () => {
+  const body = JSON.parse(JSON.stringify({ ...WEEK, agentStatus: {
+    ['__proto__']: { modelKey: 'mk-1', left: 20, limit: 50, resetsAt: WEEK.resetsAt, state: 'near' },
+  } }));
+  const { service } = setUp({ fetchImpl: fakeFetch(() => json(body)) });
+  const parsed = await service.readMine();
+  assert.ok(Object.hasOwn(parsed.agentStatus ?? {}, '__proto__'));
+  const serialized = JSON.parse(JSON.stringify(parsed));
+  assert.deepEqual(Object.keys(serialized.agentStatus), ['__proto__']);
+  assert.equal(serialized.agentStatus.__proto__.modelKey, 'mk-1');
+  assert.equal(serialized.agentStatus.__proto__.left, 20);
 });
 
 test('agent status is keyed by alias', async () => {

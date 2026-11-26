@@ -1,0 +1,29 @@
+diff --git a/packages/web/server/lib/server-frame/server-utils-runtime.ts b/packages/web/server/lib/server-frame/server-utils-runtime.ts
+index 7ae59c5e8..a625b281c 100644
+--- a/packages/web/server/lib/server-frame/server-utils-runtime.ts
++++ b/packages/web/server/lib/server-frame/server-utils-runtime.ts
+@@ -8,7 +8,7 @@ import { isString } from '../shared/object-guards.js';
+ interface ServerUtilsDependencies extends Pick<OpenCodeProxyDependencies,
+   'getRuntime' | 'getOpenCodeAuthHeaders' | 'buildOpenCodeUrl' | 'ensureOpenCodeApiPrefix'
+   | 'getArchivedSessions' | 'getUnreadBaseline' | 'hiddenSessions' | 'getStoredSessionMetadata'
+-  | 'openCodeTrust' | 'mcpOAuthSignIn'> {
++  | 'openCodeTrust' | 'mcpOAuthSignIn' | 'responseRecovery'> {
+   fs: NonNullable<OpenCodeProxyDependencies['fs']> & Pick<typeof import('node:fs'), 'existsSync'>;
+   os: Pick<typeof import('node:os'), 'homedir'>;
+   path: Pick<typeof import('node:path'), 'join' | 'delimiter'>;
+@@ -65,6 +65,7 @@ export const createServerUtilsRuntime = (dependencies: ServerUtilsDependencies)
+     getSpaceEventHub = null,
+     hiddenSessions = null,
+     getStoredSessionMetadata = null,
++    responseRecovery = null,
+     openCodeTrust = null,
+     mcpOAuthSignIn = null,
+     readWorktreeBootstrapStatus,
+@@ -239,6 +240,7 @@ export const createServerUtilsRuntime = (dependencies: ServerUtilsDependencies)
+       getArchivedSessions,
+       getUnreadBaseline,
+       getStoredSessionMetadata,
++      responseRecovery,
+       mergeSpaceSessionList: isCallback(getMergeSpaceSessionList) ? getMergeSpaceSessionList() : null,
+       spaceEventHub: isCallback(getSpaceEventHub) ? getSpaceEventHub() : null,
+       hiddenSessions,

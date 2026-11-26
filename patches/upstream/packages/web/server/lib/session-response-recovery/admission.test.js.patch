@@ -1,0 +1,98 @@
+diff --git a/packages/web/server/lib/session-response-recovery/admission.test.js b/packages/web/server/lib/session-response-recovery/admission.test.js
+new file mode 100644
+index 000000000..7829ea982
+--- /dev/null
++++ b/packages/web/server/lib/session-response-recovery/admission.test.js
+@@ -0,0 +1,92 @@
++import { expect, it, vi } from 'vitest';
++import { createRecoveryAdmissionGate } from './admission.js';
++
++it('drains an already-started admission and refuses later automatic mutations while reserved', async () => {
++  let reserved = false;
++  const gate = createRecoveryAdmissionGate({ isReserved: () => reserved });
++  let release;
++  const held = new Promise(resolve => { release = resolve; });
++  const sent = gate.fetch(async () => { await held; return new Response('{}'); });
++  const first = sent('http://engine/api/session/ses_1/prompt', { method: 'POST' });
++  reserved = true;
++  let drained = false;
++  const drain = gate.drain('ses_1').then(() => { drained = true; });
++  await Promise.resolve();
++  expect(drained).toBe(false);
++  await expect(sent('http://engine/api/session/ses_1/synthetic', { method: 'POST' })).rejects.toThrow('response-recovery-reserved');
++  release(); await first; await drain;
++  expect(drained).toBe(true);
++});
++
++it('keeps ambiguous transport admission fenced after the HTTP request rejects', async () => {
++  const gate = createRecoveryAdmissionGate({ isReserved: () => false });
++  const send = gate.fetch(async () => { throw new Error('connection lost'); });
++  await expect(send('http://engine/api/session/ses_1/prompt', { method: 'POST' })).rejects.toThrow('connection lost');
++  await expect(gate.drain('ses_1')).rejects.toThrow('admission-uncertain');
++  expect(gate.isFenced('ses_1')).toBe(true);
++  await expect(send('http://engine/api/session/ses_1/prompt', { method: 'POST' })).rejects.toThrow('admission-uncertain');
++});
++
++it('tracks a streamed proxy admission until definitive upstream completion', async () => {
++  const gate = createRecoveryAdmissionGate({ isReserved: () => false });
++  const ticket = gate.begin('ses_1');
++  let drained = false;
++  const drain = gate.drain('ses_1').then(() => { drained = true; });
++  await Promise.resolve(); expect(drained).toBe(false);
++  ticket.finish(true); await drain;
++  expect(drained).toBe(true);
++  const uncertain = gate.begin('ses_1'); uncertain.finish(false);
++  await expect(gate.suspend()).rejects.toThrow('admission-uncertain');
++  expect(() => gate.resume()).toThrow('admission-uncertain');
++});
++
++it('bounds a deferred transport drain, aborts it and never releases its uncertainty', async () => {
++  vi.useFakeTimers();
++  try {
++    const gate = createRecoveryAdmissionGate({ isReserved: () => false });
++    let signal;
++    const send = gate.fetch(async (_input, init) => { signal = init.signal; return new Promise(() => {}); });
++    void send('http://engine/api/session/ses_1/prompt', { method: 'POST' });
++    const suspended = gate.suspend();
++    const rejected = expect(suspended).rejects.toThrow('admission-uncertain');
++    await vi.advanceTimersByTimeAsync(120_000); await rejected;
++    expect(signal.aborted).toBe(true);
++    expect(gate.isFenced('ses_1')).toBe(true);
++  } finally { vi.useRealTimers(); }
++});
++
++it('preserves the original generation through nested request scopes', async () => {
++  const gate = createRecoveryAdmissionGate({ isReserved: () => false });
++  let release;
++  const held = new Promise(resolve => { release = resolve; });
++  const send = gate.fetch(async () => new Response('{}'));
++  const work = gate.run(async () => {
++    await held;
++    return gate.run(() => send('http://engine/api/session/ses_1/prompt', { method: 'POST' }));
++  });
++  await gate.suspend(); gate.resume(); release();
++  await expect(work).rejects.toThrow('upstream-transition');
++});
++
++it('fences a sender that started reading before an upstream transition', async () => {
++  const gate = createRecoveryAdmissionGate({ isReserved: () => false });
++  let release;
++  const held = new Promise(resolve => { release = resolve; });
++  let mutations = 0;
++  const transport = gate.fetch(async () => { mutations++; return new Response('{}'); });
++  const work = gate.run(async () => { await held; return transport('http://engine/api/session/ses_1/prompt', { method: 'POST' }); });
++  await gate.suspend(); gate.resume(); release();
++  await expect(work).rejects.toThrow('upstream-transition');
++  expect(mutations).toBe(0);
++});
++
++it('closes admission synchronously and rejects clients captured before an upstream transition', async () => {
++  const gate = createRecoveryAdmissionGate({ isReserved: () => false });
++  const old = gate.fetch(async () => new Response('{}'), { capture: true });
++  await gate.suspend();
++  await expect(old('http://engine/api/session/ses_1/prompt', { method: 'POST' })).rejects.toThrow('upstream-transition');
++  gate.resume();
++  await expect(old('http://engine/api/session/ses_1/prompt', { method: 'POST' })).rejects.toThrow('upstream-transition');
++  const fresh = gate.fetch(async () => new Response('{}'), { capture: true });
++  expect((await fresh('http://engine/api/session/ses_1/prompt', { method: 'POST' })).ok).toBe(true);
++});

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import React from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { Window } from 'happy-dom';
 
 import { ModelEntryStatusPill } from '@/components/model-picker/ModelEntryStatusPill';
 import { ModelPickerList, type ModelPickerEntry, type ModelPickerProvider } from '@/components/model-picker/ModelPickerList';
@@ -20,6 +21,7 @@ const PROVIDERS: ModelPickerProvider[] = [
 
 const LABELS = {
   searchPlaceholder: 'Search models',
+  list: 'Models',
   noResults: 'No models',
   favorites: 'Favorites',
   recent: 'Recent',
@@ -79,41 +81,81 @@ function PickerWithEntryStatus(): React.ReactNode {
 
 const rowsOf = (html: string) => html.split('role="option"').slice(1);
 
+const DOM_GLOBALS = ['window', 'document', 'navigator', 'Node', 'Element', 'HTMLElement', 'requestAnimationFrame', 'cancelAnimationFrame', 'IS_REACT_ACT_ENVIRONMENT'] as const;
+
+const render = async (element: React.ReactElement): Promise<string> => {
+  const happyWindow = new Window({ url: 'http://localhost' });
+  const previous = DOM_GLOBALS.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const);
+  const values: Record<(typeof DOM_GLOBALS)[number], unknown> = {
+    window: happyWindow,
+    document: happyWindow.document,
+    navigator: happyWindow.navigator,
+    Node: happyWindow.Node,
+    Element: happyWindow.Element,
+    HTMLElement: happyWindow.HTMLElement,
+    requestAnimationFrame: happyWindow.requestAnimationFrame.bind(happyWindow),
+    cancelAnimationFrame: happyWindow.cancelAnimationFrame.bind(happyWindow),
+    IS_REACT_ACT_ENVIRONMENT: true,
+  };
+  for (const name of DOM_GLOBALS) Object.defineProperty(globalThis, name, { value: values[name], configurable: true, writable: true });
+  for (const [name, size] of [['clientHeight', 400], ['clientWidth', 380]] as const) {
+    Object.defineProperty(happyWindow.HTMLElement.prototype, name, {
+      configurable: true,
+      get(this: HTMLElement) { return this.classList.contains('overlay-scrollbar-target') ? size : 0; },
+    });
+  }
+  try {
+    const container = happyWindow.document.createElement('div');
+    happyWindow.document.body.appendChild(container);
+    const root = createRoot(container as unknown as HTMLElement);
+    await act(async () => root.render(element));
+    const html = container.innerHTML;
+    await act(async () => root.unmount());
+    return html;
+  } finally {
+    for (const [name, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+    await happyWindow.happyDOM.close();
+  }
+};
+
 afterEach(() => {
   resetProductUiPluginsForTests();
 });
 
 describe('ModelControls product picker', () => {
-  test('picker hides other providers when a plugin says so', () => {
+  test('picker hides other providers when a plugin says so', async () => {
     registerProductUiPlugin({
       id: 'acme-only',
       modelPicker: {
         useDecorations: () => ({ isProviderShown: (providerId) => providerId === 'acme', entryStatus: () => null }),
       },
     });
-    const html = renderToStaticMarkup(<PickerAsModelControlsWiresIt />);
+    const html = await render(<PickerAsModelControlsWiresIt />);
     expect(html).toContain('Acme Writer');
     expect(html).not.toContain('GPT Five');
   });
 
-  test('with no plugin every provider renders', () => {
-    const html = renderToStaticMarkup(<PickerAsModelControlsWiresIt />);
+  test('with no plugin every provider renders', async () => {
+    const html = await render(<PickerAsModelControlsWiresIt />);
     expect(html).toContain('Acme Writer');
     expect(html).toContain('GPT Five');
     expect(html).toContain('Auto pick');
   });
 
-  test('the Auto entry is offered only while a plugin shows its provider', () => {
+  test('the Auto entry is offered only while a plugin shows its provider', async () => {
     registerProductUiPlugin({
       id: 'acme-only',
       modelPicker: {
         useDecorations: () => ({ isProviderShown: (providerId) => providerId === 'acme', entryStatus: () => null }),
       },
     });
-    expect(renderToStaticMarkup(<PickerAsModelControlsWiresIt />)).not.toContain('Auto pick');
+    expect(await render(<PickerAsModelControlsWiresIt />)).not.toContain('Auto pick');
   });
 
-  test('a plugin status draws a pill before the thinking slot', () => {
+  test('a plugin status draws a pill before the thinking slot', async () => {
     registerProductUiPlugin({
       id: 'status',
       modelPicker: {
@@ -125,7 +167,7 @@ describe('ModelControls product picker', () => {
         }),
       },
     });
-    const [writer, gpt] = rowsOf(renderToStaticMarkup(<PickerWithEntryStatus />));
+    const [writer, gpt] = rowsOf(await render(<PickerWithEntryStatus />));
     expect(writer).toContain('aria-label="Writer is used up this week"');
     expect(writer).toContain('>Used up</span>');
     expect(writer.indexOf('Used up')).toBeLessThan(writer.indexOf('Thinking: Default'));
@@ -135,7 +177,7 @@ describe('ModelControls product picker', () => {
     expect(gpt).toContain('Thinking: Default');
   });
 
-  test('a status that does not block marks the row without disabling it', () => {
+  test('a status that does not block marks the row without disabling it', async () => {
     registerProductUiPlugin({
       id: 'status',
       modelPicker: {
@@ -145,15 +187,15 @@ describe('ModelControls product picker', () => {
         }),
       },
     });
-    const [writer] = rowsOf(renderToStaticMarkup(<PickerWithEntryStatus />));
+    const [writer] = rowsOf(await render(<PickerWithEntryStatus />));
     expect(writer).toContain('>12% left</span>');
     expect(writer).toContain('aria-label="12% left"');
     expect(writer).toContain('data-model-status="near"');
     expect(writer).not.toContain('aria-disabled');
   });
 
-  test('with no plugin no row is marked or blocked', () => {
-    const html = renderToStaticMarkup(<PickerWithEntryStatus />);
+  test('with no plugin no row is marked or blocked', async () => {
+    const html = await render(<PickerWithEntryStatus />);
     expect(html).not.toContain('data-model-status');
     expect(html).not.toContain('aria-disabled');
     expect(html).toContain('Thinking: Default');

@@ -1,4 +1,19 @@
 import { TRANSACTION_TTL_MS, type GateSchedule } from '../sign-in/signInGateController';
+import type { AccountsApi, MittrAccount, SwitchOutcome } from './accountsApi';
+
+export type AddedAccountDeps = Pick<AccountsApi, 'fetchAccountList' | 'retrySwitch'> & {
+  reloadOwed: boolean;
+  onAccounts: (accounts: MittrAccount[]) => void;
+};
+
+export async function addedAccountOutcome({ fetchAccountList, retrySwitch, reloadOwed, onAccounts }: AddedAccountDeps): Promise<SwitchOutcome> {
+  const list = await fetchAccountList().catch(() => null);
+  if (!list?.switchRefused) return retrySwitch();
+  onAccounts(list.accounts);
+  const outcome: SwitchOutcome = { signedIn: true, switchRefused: list.switchRefused };
+  if (reloadOwed) outcome.reloadOwed = true;
+  return outcome;
+}
 
 export type AddAccountDeps = {
   startAddAccount: () => Promise<boolean>;
@@ -8,7 +23,8 @@ export type AddAccountDeps = {
   onWaiting: () => void;
   onStartFailed: () => void;
   onFailed: () => void;
-  onAdded: () => boolean;
+  reloadDeferred?: () => boolean;
+  onAdded: (reloadOwed: boolean) => boolean;
   resyncThenReload: () => void;
 };
 
@@ -30,6 +46,7 @@ export function createAddAccountFlow({
   onWaiting,
   onStartFailed,
   onFailed,
+  reloadDeferred = () => false,
   onAdded,
   resyncThenReload,
 }: AddAccountDeps): AddAccountFlow {
@@ -67,7 +84,7 @@ export function createAddAccountFlow({
     },
     signedIn: () => {
       if (!endWait) return;
-      if (!onAdded()) resyncThenReload();
+      if (!onAdded(reloadDeferred())) resyncThenReload();
       finish(true);
     },
     signInFailed: () => {

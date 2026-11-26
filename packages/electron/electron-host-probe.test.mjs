@@ -10,6 +10,7 @@ const response = (status, payload = null) => ({
 
 const compatibleVersion = {
   status: 'ok',
+  openchamberVersion: '2.1.1',
   compatibility: {
     capabilities: ['api.runtime-url.v1'],
     apiVersion: 1,
@@ -30,14 +31,16 @@ const baseProbe = (overrides = {}) => probeElectronHostWithDeadline({
 test('uses the Chromium transport as the authoritative ready-state transport', async () => {
   const calls = [];
   const result = await baseProbe({
-    chromiumFetch: async (url) => {
-      calls.push(url);
+    chromiumFetch: async (url, options) => {
+      calls.push({ url, cache: options.cache });
       return url.endsWith('/api/version') ? response(200, compatibleVersion) : response(200, {});
     },
   });
 
   assert.equal(result.status, 'ok');
-  assert.deepEqual(calls.map((url) => new URL(url).pathname), ['/api/version', '/auth/session']);
+  assert.deepEqual(calls.map(({ url }) => new URL(url).pathname), ['/api/version', '/auth/session']);
+  // Each answer comes from the server, never from Chromium's HTTP cache.
+  assert.deepEqual(calls.map(({ cache }) => cache), ['no-store', 'no-store']);
 });
 
 test('shares one absolute deadline across version and session requests', async () => {
@@ -68,6 +71,22 @@ test('shares one absolute deadline across version and session requests', async (
   assert.equal(scheduled, 1);
   assert.equal(new Set(signals).size, 1);
   assert.deepEqual(result, { status: 'unreachable', latencyMs: 2_000 });
+});
+
+test('reports one round trip, the last request, as the latency', async () => {
+  let clock = 0;
+  const result = await baseProbe({
+    expectedServerId: 'server-a',
+    now: () => clock,
+    chromiumFetch: async (url) => {
+      // Health and version take 300ms between them; the session request 40ms.
+      if (url.endsWith('/health')) { clock += 200; return response(200, { serverId: 'server-a' }); }
+      if (url.endsWith('/api/version')) { clock += 100; return response(200, compatibleVersion); }
+      clock += 40;
+      return response(200, {});
+    },
+  });
+  assert.deepEqual(result, { status: 'ok', latencyMs: 40 });
 });
 
 test('checks unauthenticated identity before sending sanitized bearer headers', async () => {
@@ -101,6 +120,9 @@ for (const [name, versionResponse, expected] of [
   ['numeric compatibility', response(200, { status: 'ok', compatibility: 1 }), 'wrong-service'],
   ['array compatibility', response(200, { status: 'ok', compatibility: [] }), 'incompatible'],
   ['missing capability', response(200, { ...compatibleVersion, compatibility: { ...compatibleVersion.compatibility, capabilities: [] } }), 'incompatible'],
+  ['server before OpenCode 2', response(200, { ...compatibleVersion, openchamberVersion: '1.24.2' }), 'incompatible'],
+  ['server without a readable version', response(200, { ...compatibleVersion, openchamberVersion: 'unknown' }), 'ok'],
+  ['server without a version field', response(200, { status: 'ok', compatibility: compatibleVersion.compatibility }), 'ok'],
   ['newer API', response(200, { ...compatibleVersion, compatibility: { ...compatibleVersion.compatibility, apiVersion: 2 } }), 'update-recommended'],
   ['newer minimum client', response(200, { ...compatibleVersion, compatibility: { ...compatibleVersion.compatibility, minClientApiVersion: 2 } }), 'update-recommended'],
 ]) {

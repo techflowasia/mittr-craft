@@ -3,14 +3,16 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import '../../web/scripts/register-server-sources.mjs';
 
 import express from 'express';
 
-import { createStaticRoutesRuntime } from '../../web/server/lib/opencode/static-routes-runtime.js';
 import { listen } from './mittr/test-helpers.js';
 import { repoRoot } from './upstream-contract.js';
 import { createBrandedWeb, readWebBrand, registerBrandedWeb, servesApiOnly } from './web-brand.js';
 import { WEB_BRAND_COMMAND, generateWebBrand } from './web-brand-source.js';
+
+const { createStaticRoutesRuntime } = await import('../../web/server/lib/server-frame/static-routes-runtime.js');
 
 const readJson = (relative) => JSON.parse(fs.readFileSync(path.join(repoRoot, relative), 'utf8'));
 const BRAND = readWebBrand();

@@ -49,15 +49,27 @@ const uniqueName = (taken, line) => {
   }
 };
 
-const ownLines = (lines, models) => {
+const ownLines = (week, models) => {
   const names = new Map();
+  const chat = week.lines.filter((line) => line.kind === 'chat');
   for (const { alias, label } of models.items) {
-    if (!names.has(alias)) names.set(alias, label || alias);
+    const explicit = week.agentStatus && Object.hasOwn(week.agentStatus, alias) ? week.agentStatus[alias] : undefined;
+    const matches = explicit
+      ? chat.filter((line) => line.modelKey === explicit.modelKey)
+      : chat.filter((line) => line.agents?.some((agent) => agent.key === alias));
+    const candidates = matches.length || explicit ? matches : chat.filter((line) => line.modelKey === alias);
+    const keys = new Set(candidates.map((line) => line.modelKey));
+    if (keys.size !== 1) continue;
+    const key = candidates[0].modelKey;
+    if (!names.has(key)) names.set(key, new Set());
+    names.get(key).add(label || alias);
   }
-  return lines.flatMap((line) => {
+  const seen = new Set();
+  return week.lines.flatMap((line) => {
     if (SPEECH.has(line.kind)) return [line];
-    if (line.kind !== 'chat' || !names.has(line.modelKey)) return [];
-    return [{ ...line, label: names.get(line.modelKey) }];
+    if (line.kind !== 'chat' || !names.has(line.modelKey) || seen.has(line.modelKey)) return [];
+    seen.add(line.modelKey);
+    return [{ ...line, label: [...names.get(line.modelKey)].join(', ') }];
   });
 };
 
@@ -66,7 +78,7 @@ const windowSecondsOf = ({ weekStart, resetsAt }) => {
   return seconds > 0 ? seconds : null;
 };
 
-export const mittrQuotaProvider = ({ service, isSignedIn, isBrokerConfigured, catalogModels, buildResult, toUsageWindow }) => {
+export const mittrQuotaProvider = ({ service, isSignedIn, isBrokerConfigured, catalogModels, accountGeneration = () => 0, buildResult, toUsageWindow }) => {
   const result = (fields) => buildResult({ providerId: MITTR_PROVIDER_ID, providerName: 'Mittr', ...fields });
 
   const isConfigured = () => {
@@ -78,6 +90,8 @@ export const mittrQuotaProvider = ({ service, isSignedIn, isBrokerConfigured, ca
   };
 
   const fetchQuota = async () => {
+    const generation = accountGeneration();
+    const held = catalogModels();
     let week;
     try {
       week = await service.readMine();
@@ -87,24 +101,22 @@ export const mittrQuotaProvider = ({ service, isSignedIn, isBrokerConfigured, ca
 
     const resetAt = Date.parse(week.resetsAt);
     const windowSeconds = windowSecondsOf(week);
-    const held = catalogModels();
-    if (held?.configured !== true) return result({ ok: false, configured: true, error: READ_FAILED });
-    const lines = ownLines(week.lines, held);
+    if (generation !== accountGeneration() || held?.configured !== true) return result({ ok: false, configured: true, error: READ_FAILED });
+    const lines = ownLines(week, held);
     if (lines.length === 0) {
       return result({ ok: true, configured: true, usage: { windows: { [NO_MODEL]: toUsageWindow({ usedPercent: null, resetAt: null }) }, models: {} } });
     }
 
-    const models = {};
     const taken = new Set();
-    for (const line of lines) {
+    const models = Object.fromEntries(lines.map((line) => {
       const name = uniqueName(taken, line);
       taken.add(name);
-      models[name] = {
+      return [name, {
         windows: {
           [WEEKLY]: toUsageWindow({ usedPercent: usedPercentOf(line), windowSeconds, resetAt, valueLabel: leftLabel(line) }),
         },
-      };
-    }
+      }];
+    }));
     const overall = Math.max(...lines.map(usedPercentOf));
     return result({
       ok: true,
@@ -113,5 +125,5 @@ export const mittrQuotaProvider = ({ service, isSignedIn, isBrokerConfigured, ca
     });
   };
 
-  return { providerId: MITTR_PROVIDER_ID, providerName: 'Mittr', isConfigured, fetchQuota };
+  return { providerId: MITTR_PROVIDER_ID, providerName: 'Mittr', isConfigured, fetchScope: accountGeneration, fetchQuota };
 };

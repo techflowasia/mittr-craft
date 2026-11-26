@@ -132,6 +132,19 @@ describe('createSessionOwnershipIndex', () => {
     });
   });
 
+  test('does not file a session bound to the global project id under a sibling project', () => {
+    const ownership = createSessionOwnershipIndex(
+      [ownershipSession('leaked', { projectID: 'global', directory: '/parent/plain-b' })],
+      [{ id: 'repo-a', normalizedPath: '/parent/repo-a' }],
+      new Map(),
+      false,
+      [],
+      [{ id: 'global', worktree: '/parent/repo-a' }],
+    );
+
+    expect(ownership.bySessionId.has('leaked')).toBe(false);
+  });
+
   test('resolves a bare session projectID from authoritative global project metadata', () => {
     const ownership = createSessionOwnershipIndex(
       [ownershipSession('restored', { projectID: 'opencode-app', directory: '/deleted/worktrees/feature' })],
@@ -143,6 +156,23 @@ describe('createSessionOwnershipIndex', () => {
     );
 
     expect(ownership.bySessionId.get('restored')?.projectId).toBe('configured-app');
+  });
+
+  test('indexes an archived child from a deleted managed worktree when search passes it as a session', () => {
+    const child = { ...ownershipSession('archived-child', {
+      projectID: 'opencode-app', directory: '/deleted/worktrees/feature',
+    }), parentID: 'parent', time: { created: 1, updated: 1, archived: 1 } };
+
+    const ownership = createSessionOwnershipIndex(
+      [child],
+      [{ id: 'configured-app', normalizedPath: '/projects/app' }],
+      new Map(),
+      false,
+      [],
+      [{ id: 'opencode-app', worktree: '/projects/app' }],
+    );
+
+    expect(ownership.bySessionId.get('archived-child')?.projectId).toBe('configured-app');
   });
 
   test('prefers authoritative project metadata over conflicting embedded metadata', () => {
@@ -289,4 +319,3 @@ describe('createSessionOwnershipIndex', () => {
     expect(ownership.archivedSessionsByProject.get('workspace')?.map((session) => session.id)).toEqual(['archived-parent']);
   });
 });
-

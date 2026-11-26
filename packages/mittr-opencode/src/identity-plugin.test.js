@@ -3,9 +3,10 @@ import test from 'node:test';
 
 import { IDENTITY_PLUGIN_ID, identityLine, identityPluginSource } from './identity-plugin.js';
 
-// The opening lines of the OpenCode 2.0.22 system prompts, as the engine sends them.
+// The opening lines of the OpenCode 2.3.2 system prompts, as the engine sends them.
 const HARNESS = 'You are an AI agent running in OpenCode, a coding agent harness. Help the user accomplish their goals using the tools you have available.';
 const INTERACTIVE = 'You are opencode, an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.';
+const KIMI = "You are OpenCode, an interactive general AI agent running on a user's computer.";
 const CODING_AGENT = 'You are OpenCode, a coding agent that helps users with software engineering tasks. You are powered by {{MODEL_NAME}}, a large language model trained by Meta MSL.';
 
 const loadPlugin = async () => {
@@ -16,12 +17,12 @@ const loadPlugin = async () => {
   return { plugin, hooks };
 };
 
-test('the plugin registers one handler on the context, generate and compaction hooks', async () => {
+test('the plugin registers a handler on each of the context, generate and compaction hooks', async () => {
   const { plugin, hooks } = await loadPlugin();
   assert.equal(plugin.id, IDENTITY_PLUGIN_ID);
   assert.equal(IDENTITY_PLUGIN_ID, 'mittrcraft.identity');
   assert.deepEqual([...hooks.keys()], ['context', 'generate', 'compaction']);
-  assert.equal(new Set(hooks.values()).size, 1);
+  assert.ok([...hooks.values()].every((handler) => handler instanceof Function));
 });
 
 test('the older interactive opening line becomes MittrCraft and paths stay as they are', async () => {
@@ -30,11 +31,12 @@ test('the older interactive opening line becomes MittrCraft and paths stay as th
   hooks.get('context')(o);
   assert.ok(o.system[0].text.startsWith('You are MittrCraft, an interactive tool'), o.system[0].text);
   assert.ok(o.system[0].text.includes('.opencode/agents'));
-  assert.equal(o.system.length, 2);
+  assert.equal(o.system.length, 3);
   assert.ok(o.system[1].text.includes('answer MittrCraft'));
+  assert.ok(o.system[2].text.startsWith('Task completion:'));
 });
 
-test('the 2.0.22 harness opening line becomes the MittrCraft line', async () => {
+test('the harness opening line becomes the MittrCraft line', async () => {
   const { hooks } = await loadPlugin();
   const o = { system: [{ type: 'text', text: `${HARNESS}\n\n# Harness\n- Read .opencode/agents first.` }] };
   hooks.get('context')(o);
@@ -56,14 +58,21 @@ test('the coding-agent opening line becomes MittrCraft', async () => {
   assert.ok(o.system[0].text.startsWith('You are MittrCraft, a coding agent that helps users'), o.system[0].text);
 });
 
+test('the Kimi opening line becomes MittrCraft', async () => {
+  const { hooks } = await loadPlugin();
+  const o = { system: [{ type: 'text', text: KIMI }] };
+  hooks.get('context')(o);
+  assert.equal(o.system[0].text, "You are MittrCraft, an interactive general AI agent running on a user's computer.");
+});
+
 test('every system part loses the engine introduction, and none still introduces OpenCode', async () => {
   const { hooks } = await loadPlugin();
-  const o = { system: [{ type: 'text', text: HARNESS }, { type: 'text', text: INTERACTIVE }, { type: 'text', text: 'Project rules.' }] };
+  const o = { system: [{ type: 'text', text: HARNESS }, { type: 'text', text: INTERACTIVE }, { type: 'text', text: KIMI }, { type: 'text', text: 'Project rules.' }] };
   hooks.get('compaction')(o);
   const sent = o.system.map((part) => part.text).join('\n');
   assert.doesNotMatch(sent, /You are (an AI agent running in )?open ?code/i);
   assert.equal(o.system.at(-1).text, identityLine('MittrCraft'));
-  assert.equal(o.system[2].text, 'Project rules.');
+  assert.equal(o.system[3].text, 'Project rules.');
 });
 
 test('a handler that runs twice on the same prompt adds the identity line once', async () => {

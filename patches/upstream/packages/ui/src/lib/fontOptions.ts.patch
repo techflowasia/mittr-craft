@@ -1,0 +1,63 @@
+diff --git a/packages/ui/src/lib/fontOptions.ts b/packages/ui/src/lib/fontOptions.ts
+index 2bc25ad59..c41bcd038 100644
+--- a/packages/ui/src/lib/fontOptions.ts
++++ b/packages/ui/src/lib/fontOptions.ts
+@@ -1,6 +1,10 @@
+-export type UiFontOption = 'inter' | 'fixel' | 'geist-sans' | 'atkinson-hyperlegible' | 'source-sans-3' | 'roboto' | 'noto-sans' | 'dm-sans' | 'manrope' | 'system' | 'custom';
++import { productFontOptions, subscribeProductUiPlugins } from './product-plugins';
+ 
+-export type MonoFontOption = 'jetbrains-mono' | 'fira-code' | 'geist-mono' | 'commit-mono' | 'source-code-pro' | 'cascadia-code' | 'roboto-mono' | 'iosevka' | 'system-mono' | 'custom';
++type ProductFontId = string & Record<never, never>;
++
++export type UiFontOption = 'inter' | 'fixel' | 'geist-sans' | 'atkinson-hyperlegible' | 'source-sans-3' | 'roboto' | 'noto-sans' | 'dm-sans' | 'manrope' | 'system' | 'custom' | ProductFontId;
++
++export type MonoFontOption = 'jetbrains-mono' | 'fira-code' | 'geist-mono' | 'commit-mono' | 'source-code-pro' | 'cascadia-code' | 'roboto-mono' | 'iosevka' | 'system-mono' | 'custom' | ProductFontId;
+ 
+ interface FontsourceFaceSource {
+     family: string;
+@@ -195,6 +199,45 @@ export const DEFAULT_MONO_FONT: MonoFontOption = 'system-mono';
+ 
+ export const CUSTOM_FONT_ID = 'custom';
+ 
++const builtInUiFonts = [...UI_FONT_OPTIONS];
++const builtInCodeFonts = [...CODE_FONT_OPTIONS];
++
++const withProductFonts = <T extends string>(
++    contributed: ReturnType<typeof productFontOptions>,
++    builtIn: FontOptionDefinition<T>[],
++): FontOptionDefinition<T>[] => {
++    const taken = new Set<string>([CUSTOM_FONT_ID, ...builtIn.map((option) => option.id)]);
++    const added: FontOptionDefinition<T>[] = [];
++    for (const option of contributed) {
++        if (!option.id || !option.stack || taken.has(option.id)) {
++            continue;
++        }
++        taken.add(option.id);
++        added.push({ id: option.id as T, label: option.label, description: option.description, stack: option.stack });
++    }
++    return [...added, ...builtIn];
++};
++
++const replaceFonts = <T extends string>(
++    list: FontOptionDefinition<T>[],
++    map: Record<T, FontOptionDefinition<T>>,
++    next: FontOptionDefinition<T>[],
++) => {
++    list.splice(0, list.length, ...next);
++    for (const key of Object.keys(map)) {
++        delete map[key as T];
++    }
++    Object.assign(map, buildFontMap(next));
++};
++
++const syncProductFonts = () => {
++    replaceFonts(UI_FONT_OPTIONS, UI_FONT_OPTION_MAP, withProductFonts(productFontOptions('ui'), builtInUiFonts));
++    replaceFonts(CODE_FONT_OPTIONS, CODE_FONT_OPTION_MAP, withProductFonts(productFontOptions('mono'), builtInCodeFonts));
++};
++
++subscribeProductUiPlugins(syncProductFonts);
++syncProductFonts();
++
+ export const isUiFontOption = (value: unknown): value is UiFontOption =>
+     value === CUSTOM_FONT_ID || (typeof value === 'string' && value in UI_FONT_OPTION_MAP);
+ 

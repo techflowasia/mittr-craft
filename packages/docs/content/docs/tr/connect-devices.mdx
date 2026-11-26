@@ -13,12 +13,12 @@ Mobil uygulamayı, masaüstü uygulamasını ya da başka bir makinedeki tarayı
 2. Cihaza bir ad verin (ör. *My iPhone*), böylece sonra tanıyabilirsiniz.
 3. Cihazı nerede kullanacağınızı seçin:
    - **This computer only** — aynı makinede çalışan uygulamalar için
-   - **Home network only** — doğrudan Wi-Fi üzerinden bağlanır; bu ağın dışındayken çalışmaz
+   - **Home network only** — doğrudan Wi-Fi üzerinden bağlanır. **Evin dışındayken şifreli relay'e de izin ver** işaretli değilse cihaz bu ağın dışında çalışmaz ve bildirim almaz, çünkü bildirimler telefona internet üzerinden ulaşır
    - **Anywhere** — evde de dışarıda da çalışır; dışarıdaki trafik, kuruluma gerek olmadan uçtan uca şifreli bir tünel olan [Private Relay](/private-relay/) üzerinden gider
 4. **Create QR code** düğmesine basın.
 5. Diğer cihazda kodu tarayın:
    - **mobile app** — bağlanma ekranında (ya da instances listesinden) **Scan QR code** düğmesine dokunun
-   - **desktop app** — bunun yerine bağlantı bağlantısını kopyalayın ve **Settings → Remote Instances → Other OpenChamber servers → Import Link** içine yapıştırın
+   - **desktop app** — bunun yerine bağlantı bağlantısını kopyalayın ve masaüstü uygulamasının olduğu makinede açın; uygulama bağlanmadan önce onay ister. Bağlantıyı **Settings → Remote Instances → Other OpenChamber servers → Import Link** içine de yapıştırabilirsiniz
 
 İletişim kurulduğu anda iletişim kutusu kendiliğinden kapanır ve cihaz canlı durumuyla listede görünür. Hepsi bu kadar, eşleştirme tamam.
 
@@ -59,6 +59,12 @@ openchamber connect-url --relay --qr
 > Doğrudan yol yalnızca sunucu gerçekten ağınızda dinliyorsa çalışır. Varsayılan olarak OpenChamber yalnızca makinenin kendisinde dinler. Wi-Fi üzerinden erişilebilir olması için `--lan` ile başlatın. Komut, bağlantının doğrudan yolunun başka cihazlardan kullanılamayacağını anlarsa sizi (`[LAN_UNREACHABLE]`) uyarır. Bu durumda `--relay` bağlantısı yine çalışır, ama her zaman relay üzerinden gider.
 
 Yazdırılan bağlantı ve QR kodu, ayar iletişim kutusundakilerle tam aynıdır. Tek kullanımlık, süresi dolan ve iptal edilebilir.
+
+Bir masaüstü uygulamasını eşleştirmek için yazdırılan bağlantıyı o uygulamanın çalıştığı makinede açın. Uygulama onay ister ve bağlanır. macOS'ta:
+
+```bash
+open 'openchamber://connect?v=2&p=...'
+```
 
 ## İlgili
 

@@ -40,12 +40,14 @@ const { createRoot } = await import('react-dom/client');
 const { I18nProvider } = await import('@/lib/i18n');
 const { SyncProvider } = await import('@/sync/sync-context');
 const { useSessionUIStore } = await import('@/sync/session-ui-store');
+const { useProjectsStore } = await import('@/stores/useProjectsStore');
 const { registerProductUiPlugin, resetProductUiPluginsForTests } = await import('@/lib/product-plugins');
 const { ContextPanelContent } = await import('./ContextSidebarTab');
 
 const sdk = OpenCode.make({ baseUrl: 'http://api.example.test', fetch: async () => new Response('[]', { headers: { 'Content-Type': 'application/json' } }) });
 
 const panel = async (): Promise<string> => {
+  useProjectsStore.setState({ projects: [{ id: 'acme', path: '/acme' }] });
   useSessionUIStore.setState({ currentSessionId: 'ses_acme', currentSessionDirectory: '/acme' });
   const container = document.createElement('div');
   document.body.append(container);

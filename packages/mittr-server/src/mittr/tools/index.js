@@ -15,6 +15,7 @@ import { MITTR_TOOLS, MittrToolError, UPSTREAM_SWITCHES } from './registry.js';
 import { CAPTURE_TOOL } from './screenshots.js';
 import { registerMittrToolsSettingsRoutes } from './settings-routes.js';
 import { NOT_SIGNED_IN, registerWorkActions } from './work-lookup.js';
+import { createTodoStore, registerTodoActions } from './todo.js';
 
 export const CHROME_CLOSE_TIMEOUT_MS = 3_000;
 export const COMPUTER_STOP_TIMEOUT_MS = 3_000;
@@ -24,11 +25,14 @@ const TITLES = Object.freeze({
   [MITTR_TOOLS.chrome]: 'The Chrome tool',
   [MITTR_TOOLS.work]: 'The work tool',
   [MITTR_TOOLS.widgets]: 'The widgets tool',
+  [MITTR_TOOLS.todo]: 'The checklist tool',
   [UPSTREAM_SWITCHES.control]: 'The control tool',
   [UPSTREAM_SWITCHES.web]: 'The in-app browser tool',
 });
 
 const UPSTREAM_SWITCHED = new Set(Object.values(UPSTREAM_SWITCHES));
+
+export const DIRECT_TOOLS = Object.freeze([MITTR_TOOLS.todo]);
 
 export const enginePortOf = (opencode) => {
   try {
@@ -98,6 +102,7 @@ export function setupMittrTools(context, {
     [MITTR_TOOLS.chrome]: () => chromeDriverOffered() && drivers.chromePath() !== null,
     [MITTR_TOOLS.work]: () => signedIn(),
     [MITTR_TOOLS.widgets]: () => personalDesktop(),
+    [MITTR_TOOLS.todo]: () => signedIn(),
   };
   registerComputerActions(registry, {
     control: computerControl,
@@ -133,11 +138,14 @@ export function setupMittrTools(context, {
     doTask: () => stepper !== null && signedIn(),
   });
   registerWorkActions(registry, platform ?? {});
+  const todoStore = createTodoStore({ dataDir });
+  registerTodoActions(registry, { store: todoStore, activeAccountKey: platform.activeAccountKey, engineOnActiveHome: platform.engineOnActiveHome });
   const switchedOn = {
     [MITTR_TOOLS.computer]: ({ tools }) => tools.computer !== false,
     [MITTR_TOOLS.chrome]: ({ tools }) => tools.chrome !== false,
     [MITTR_TOOLS.work]: ({ upstream }) => upstream?.agentControlToolEnabled !== false,
     [MITTR_TOOLS.widgets]: ({ tools }) => tools.widgets !== false,
+    [MITTR_TOOLS.todo]: () => true,
     [UPSTREAM_SWITCHES.control]: ({ upstream }) => upstream?.agentControlToolEnabled !== false,
     [UPSTREAM_SWITCHES.web]: ({ upstream }) => upstream?.agentWebToolEnabled !== false,
   };
@@ -168,6 +176,7 @@ export function setupMittrTools(context, {
     if (name === CAPTURE_TOOL) return wrapCapture(await readSwitches()) ? null : new MittrToolError('The in-app browser tool is turned off in Settings', 403);
     if (!Object.hasOwn(offered, name)) return new MittrToolError('This tool is not available in this install', 503);
     if (!offered[name]()) {
+      if (name === MITTR_TOOLS.todo) return new MittrToolError('Sign in to Mittr to keep a conversation checklist', 401);
       return name === MITTR_TOOLS.work ? new MittrToolError(NOT_SIGNED_IN, 401) : new MittrToolError(`${TITLES[name]} is not available in this install`, 503);
     }
     return switchRefusal(name);
@@ -179,6 +188,7 @@ export function setupMittrTools(context, {
     resolveSessionDirectory: control.resolveSessionDirectory,
     refusalFor,
     screenshotFolder: control.SCREENSHOT_DIRECTORY,
+    activeAccountKey: platform.activeAccountKey,
     logger,
   });
   callback.register(app);
@@ -195,7 +205,7 @@ export function setupMittrTools(context, {
       });
     if (tools.length === 0 && !wrap) return '';
     const askPermissions = tools.some((tool) => tool.name === MITTR_TOOLS.chrome) ? [CHROME_PERMISSION] : [];
-    return toolsPluginSource({ tools, codeMode: switches.upstream?.agentToolsCodeMode === true, wrapCapture: wrap, askPermissions });
+    return toolsPluginSource({ tools, codeMode: true, direct: DIRECT_TOOLS, wrapCapture: wrap, askPermissions });
   };
 
   const render = async () => {
@@ -286,7 +296,18 @@ export function setupMittrTools(context, {
   const unsubscribeEvents = events.subscribe((event) => {
     for (const payload of event?.translated?.() ?? []) {
       if (payload.type === 'session.idle' && payload.properties?.aborted === true) callback.abortSession(payload.properties.sessionID);
-      if (payload.type === 'session.deleted') void chrome.closeSession(payload.properties?.info?.id);
+      if (payload.type === 'session.deleted') {
+        const sessionId = payload.properties?.info?.id;
+        void chrome.closeSession(sessionId);
+        const accountKey = platform.activeAccountKey();
+        if (accountKey && platform.engineOnActiveHome() === true && sessionId) {
+          try {
+            todoStore.remove(accountKey, sessionId);
+          } catch {
+            logger.warn('[mittr] a deleted conversation checklist could not be removed');
+          }
+        }
+      }
     }
   });
 

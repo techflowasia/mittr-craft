@@ -4,40 +4,35 @@ import { Icon } from '@/components/icon/Icon';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
-import { useI18n } from '@/lib/i18n';
+import { getInlineStartSide, useI18n } from '@/lib/i18n';
 import { WindowsWindowControls } from '@/components/desktop/WindowsWindowControls';
 import { formatShortcutForDisplay, getEffectiveShortcutCombo } from '@/lib/shortcuts';
 import { invokeDesktop } from '@/lib/desktop';
 import { useDesktopWindowControlsLayout } from '@/hooks/useDesktopWindowControlsLayout';
+import { publishTitlebarControlsWidth } from './titlebarControlsWidth';
+import { TooltipLabelWithShortcut } from '@/components/ui/action-toolbar';
 
 const ICON_BUTTON_CLASS =
-  'app-region-no-drag inline-flex h-8 w-8 items-center justify-center gap-2 rounded-md typography-ui-label font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring hover:bg-interactive-hover transition-colors';
+  'app-region-no-drag inline-flex h-6 w-6 items-center justify-center gap-2 rounded-md typography-ui-label font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring transition-colors';
 
-/**
- * Persistent top-left titlebar controls (app menu on frameless chrome + sidebar toggle).
- *
- * Rendered exactly once as an absolutely-positioned overlay above both the
- * sidebar and the header, so the buttons never migrate / re-mount between the
- * two while the sidebar animates open or closed — the panels slide *underneath*
- * a fixed control cluster instead. Its height tracks `--oc-header-height` and
- * its left padding clears the OS window controls via `--oc-titlebar-left-inset`.
- * The cluster's measured width is published as `--oc-titlebar-controls-width`
- * so the header can reserve matching space when the sidebar is collapsed.
- */
 export const TitlebarLeftControls: React.FC = () => {
-  const { t, locale } = useI18n();
+  const { t, locale, direction } = useI18n();
   const toggleSidebar = useUIStore((state) => state.toggleSidebar);
   const isSidebarOpen = useUIStore((state) => state.isSidebarOpen);
   const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
   const clusterRef = React.useRef<HTMLDivElement | null>(null);
 
   const toggleShortcut = formatShortcutForDisplay(getEffectiveShortcutCombo('toggle_sidebar', shortcutOverrides));
-  // Starting a session shares the titlebar row with the sidebar toggle, so it
-  // stays in one place whether the sidebar is open or collapsed.
   const handleNewSession = React.useCallback(() => {
     useUIStore.getState().closeMainSurfaces();
     useSessionUIStore.getState().openNewSessionDraft();
   }, []);
+  const tabsShown = useUIStore((state) => state.sessionTabsEnabled && !(
+    state.isScheduledTasksDialogOpen || state.isArchivePageOpen || state.isIntegrationsCatalogOpen
+    || state.isUsageStatsPageOpen || state.isSourceBoardOpen || state.isOverviewOpen
+    || state.worktreesPageProjectId !== null || (state.isolatedSpacesEnabled && state.spacesPageProjectId !== null)
+    || state.runOverviewKey !== null || state.openGuestPageId !== null
+  ));
   const { usesFramelessChrome, side: windowControlsSide } = useDesktopWindowControlsLayout();
 
   const handleOpenWindowsAppMenu = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
@@ -61,10 +56,8 @@ export const TitlebarLeftControls: React.FC = () => {
     }
 
     const publishWidth = () => {
-      // Prefer scrollWidth so negative child margins / overflow cannot under-report
-      // the space the overlay actually occupies over the header.
       const width = Math.max(node.getBoundingClientRect().width, node.scrollWidth);
-      document.documentElement.style.setProperty('--oc-titlebar-controls-width', `${Math.round(width)}px`);
+      publishTitlebarControlsWidth(width);
     };
 
     publishWidth();
@@ -80,20 +73,18 @@ export const TitlebarLeftControls: React.FC = () => {
   }, []);
 
   return (
-    // The overlay is a CSS no-drag zone so its buttons stay clickable. The
-    // header / sidebar strip beneath carve a matching no-drag region under it
-    // and remain drag regions everywhere else, so window dragging still works
-    // in the empty parts of the strip.
     <div
-      className="app-region-no-drag absolute left-0 top-0 z-30 flex select-none items-center pr-2"
+      data-titlebar-left-controls=""
+      className="app-region-no-drag absolute inset-s-0 top-0 z-30 flex select-none items-center pe-2"
       style={{
         height: 'var(--oc-header-height, 3rem)',
-        paddingLeft: 'var(--oc-titlebar-left-inset, 0.75rem)',
+        paddingInlineStart: 'var(--oc-titlebar-start-inset, 0.75rem)',
+        maxWidth: isSidebarOpen ? 'var(--oc-left-sidebar-width, 100%)' : undefined,
       }}
     >
-      <div ref={clusterRef} className="flex items-center gap-2">
-        {usesFramelessChrome && windowControlsSide === 'left' ? (
-          <WindowsWindowControls visible position="left" />
+      <div ref={clusterRef} className="flex min-w-0 items-center gap-2">
+        {usesFramelessChrome && windowControlsSide === getInlineStartSide(direction) ? (
+          <WindowsWindowControls visible position={windowControlsSide} />
         ) : null}
 
         {usesFramelessChrome ? (
@@ -105,7 +96,7 @@ export const TitlebarLeftControls: React.FC = () => {
                 aria-label={t('header.actions.openAppMenuAria')}
                 className={cn(ICON_BUTTON_CLASS, 'shrink-0')}
               >
-                <Icon name="menu-2" className="h-[18px] w-[18px]" />
+                <Icon name="menu-2" className="h-4 w-4" />
               </button>
             </TooltipTrigger>
             <TooltipContent>
@@ -119,10 +110,12 @@ export const TitlebarLeftControls: React.FC = () => {
             <button
               type="button"
               onClick={toggleSidebar}
+              data-sidebar-toggle=""
               aria-label={t('header.actions.openSessionsAria')}
-              className={cn(ICON_BUTTON_CLASS, 'shrink-0')}
+              aria-pressed={isSidebarOpen}
+              className={cn(ICON_BUTTON_CLASS, 'shrink-0', isSidebarOpen && 'text-foreground')}
             >
-              <Icon name="layout-left" className="h-[18px] w-[18px]" />
+              <Icon name="panel-left" className="h-4 w-4" />
             </button>
           </TooltipTrigger>
           <TooltipContent>
@@ -130,31 +123,20 @@ export const TitlebarLeftControls: React.FC = () => {
           </TooltipContent>
         </Tooltip>
 
-        {/* Labelled while the sidebar is open; collapses to an icon with a
-            tooltip so the cluster stays compact over the header otherwise. */}
-        {isSidebarOpen ? (
-          <button
-            type="button"
-            onClick={handleNewSession}
-            className={cn(ICON_BUTTON_CLASS, '-ml-1 w-auto shrink-0 px-2 font-normal')}
-          >
-            <Icon name="chat-new" className="h-[18px] w-[18px]" />
-            <span className="truncate">{t('sessions.sidebar.header.actions.newSession')}</span>
-          </button>
-        ) : (
+        {tabsShown ? null : (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 type="button"
                 onClick={handleNewSession}
                 aria-label={t('sessions.sidebar.header.actions.newSession')}
-                className={cn(ICON_BUTTON_CLASS, '-ml-1 shrink-0')}
+                className={cn(ICON_BUTTON_CLASS, '-ms-1 shrink-0')}
               >
-                <Icon name="chat-new" className="h-[18px] w-[18px]" />
+                <Icon name="edit-box" className="h-4 w-4" />
               </button>
             </TooltipTrigger>
             <TooltipContent>
-              <p>{t('sessions.sidebar.header.actions.newSession')}</p>
+              <TooltipLabelWithShortcut label={t('sessions.sidebar.header.actions.newSession')} shortcut={formatShortcutForDisplay(getEffectiveShortcutCombo('new_chat', shortcutOverrides), '')} />
             </TooltipContent>
           </Tooltip>
         )}

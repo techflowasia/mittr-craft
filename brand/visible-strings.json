@@ -7,21 +7,21 @@
   },
   {
     "file": "resources/web-dist/assets/*.js",
-    "from": "Waiting for OpenCode… (attempt ",
-    "to": "Waiting for the engine… (attempt ",
-    "count": 3
+    "from": "Waiting for OpenCode\\u2026 (attempt ",
+    "to": "Waiting for the engine\\u2026 (attempt ",
+    "count": 1
   },
   {
     "file": "resources/web-dist/assets/*.js",
     "from": "\"OpenCode health check reported not ready\"",
     "to": "\"The engine health check reported not ready\"",
-    "count": 3
+    "count": 1
   },
   {
     "file": "resources/web-dist/assets/*.js",
     "from": "\"OpenCode did not become ready in time\"",
     "to": "\"The engine did not become ready in time\"",
-    "count": 3
+    "count": 1
   },
   {
     "file": "resources/web-dist/assets/*.js",
@@ -31,8 +31,8 @@
   },
   {
     "file": "resources/web-dist/assets/*.js",
-    "from": "\"Reloading OpenCode configuration…\"",
-    "to": "\"Reloading the engine configuration…\"",
+    "from": "\"Reloading OpenCode configuration\\u2026\"",
+    "to": "\"Reloading the engine configuration\\u2026\"",
     "count": 1
   },
   {
@@ -69,12 +69,6 @@
     "file": "resources/web-dist/assets/*.js",
     "from": "\"Failed to restart OpenCode\"",
     "to": "\"Failed to restart the engine\"",
-    "count": 1
-  },
-  {
-    "file": "resources/web-dist/assets/*.js",
-    "from": "\"Failed to collect OpenCode status\"",
-    "to": "\"Failed to collect engine status\"",
     "count": 1
   },
   {
@@ -225,7 +219,7 @@
     "file": "resources/web-dist/assets/*.js",
     "from": "\"This OpenChamber surface has no Diff view.\"",
     "to": "\"This MittrCraft surface has no Diff view.\"",
-    "count": 1
+    "count": 2
   },
   {
     "file": "resources/web-dist/assets/*.js",
@@ -273,7 +267,7 @@
     "file": "resources/web-dist/assets/*.js",
     "from": "children:\"OpenChamber\"",
     "to": "children:\"MittrCraft\"",
-    "count": 3
+    "count": 4
   },
   {
     "file": "resources/web-dist/assets/*.js",
@@ -337,9 +331,15 @@
   },
   {
     "file": "resources/web-dist/assets/*.js",
-    "from": "name:\"OpenCode\",description:\"The OpenCode CLI default theme",
-    "to": "name:\"Terminal\",description:\"The engine CLI default theme",
-    "count": 2
+    "from": "name:\"OpenCode\",variant:\"dark\",description:\"Adapted from the OpenCode desktop theme.\"",
+    "to": "name:\"Terminal\",variant:\"dark\",description:\"Adapted from the engine desktop theme.\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "name:\"OpenCode\",variant:\"light\",description:\"Adapted from the OpenCode desktop theme.\"",
+    "to": "name:\"Terminal\",variant:\"light\",description:\"Adapted from the engine desktop theme.\"",
+    "count": 1
   },
   {
     "file": "resources/web-dist/assets/*.js",
@@ -369,7 +369,7 @@
     "file": "resources/web-dist/assets/*.js",
     "from": "author:\"OpenChamber\"",
     "to": "author:\"MittrCraft\"",
-    "count": 4
+    "count": 8
   },
   {
     "file": "resources/web-dist/assets/*.js",
@@ -519,7 +519,7 @@
     "file": "dist-bundle/main.mjs",
     "from": "\"OpenChamber Desktop\"",
     "to": "\"MittrCraft Desktop\"",
-    "count": 4
+    "count": 2
   },
   {
     "file": "dist-bundle/main.mjs",
@@ -648,31 +648,31 @@
     "count": 1
   },
   {
-    "file": ".product/web/server/index.js",
+    "file": ".product/web/server/lib/notifications/restart-notification.js",
     "from": "'OpenCode restarted during running responses.",
     "to": "'The engine restarted during running responses.",
-    "count": 1
+    "count": 2
   },
   {
-    "file": ".product/web/server/index.js",
+    "file": ".product/web/server/lib/notifications/restart-notification.js",
     "from": "'OpenCode restarted during a running response.",
     "to": "'The engine restarted during a running response.",
-    "count": 1
+    "count": 2
   },
   {
-    "file": ".product/web/server/index.js",
+    "file": ".product/web/server/runtime.js",
     "from": "'The notify tool is turned off in OpenChamber settings'",
     "to": "'The notify tool is turned off in MittrCraft settings'",
     "count": 1
   },
   {
-    "file": ".product/web/server/index.js",
+    "file": ".product/web/server/runtime.js",
     "from": "name.trim() : 'OpenChamber';",
     "to": "name.trim() : 'MittrCraft';",
     "count": 1
   },
   {
-    "file": ".product/web/server/index.js",
+    "file": ".product/web/server/runtime.js",
     "from": "return 'OpenChamber';",
     "to": "return 'MittrCraft';",
     "count": 1
@@ -685,44 +685,8 @@
   },
   {
     "file": ".product/web/server/lib/agent-tool/runtime.js",
-    "from": "description: 'OpenCode agent name;",
-    "to": "description: 'Engine agent name;",
-    "count": 1
-  },
-  {
-    "file": ".product/web/server/lib/agent-tool/runtime.js",
-    "from": "while the user is looking at OpenChamber.",
-    "to": "while the user is looking at MittrCraft.",
-    "count": 1
-  },
-  {
-    "file": ".product/web/server/lib/agent-tool/runtime.js",
-    "from": "The tool also runs OpenChamber projects",
-    "to": "The tool also runs MittrCraft projects",
-    "count": 1
-  },
-  {
-    "file": ".product/web/server/lib/agent-tool/runtime.js",
-    "from": "they follow it in OpenChamber and talk to it",
-    "to": "they follow it in MittrCraft and talk to it",
-    "count": 1
-  },
-  {
-    "file": ".product/web/server/lib/agent-tool/runtime.js",
-    "from": "web page in OpenChamber's browser panel",
-    "to": "web page in MittrCraft's browser panel",
-    "count": 1
-  },
-  {
-    "file": ".product/web/server/lib/agent-tool/runtime.js",
-    "from": "Send the user a notification through OpenChamber,",
-    "to": "Send the user a notification through MittrCraft,",
-    "count": 1
-  },
-  {
-    "file": ".product/web/server/lib/agent-tool/runtime.js",
-    "from": "description: \"OpenChamber action to perform\"",
-    "to": "description: \"MittrCraft action to perform\"",
+    "from": "description: `OpenChamber action to perform (",
+    "to": "description: `MittrCraft action to perform (",
     "count": 1
   },
   {
@@ -840,7 +804,7 @@
     "count": 1
   },
   {
-    "file": ".product/web/server/lib/dictation/local/worker-process.js",
+    "file": ".product/web/server/lib/dictation/local/worker-runtime.js",
     "from": "process.title = 'OpenChamber Dictation';",
     "to": "process.title = 'MittrCraft Dictation';",
     "count": 1
@@ -855,7 +819,7 @@
     "file": ".product/web/server/lib/enterprise-mode.js",
     "from": "model providers configured in OpenCode.",
     "to": "model providers configured in the engine.",
-    "count": 2
+    "count": 1
   },
   {
     "file": ".product/web/server/lib/enterprise-mode.js",
@@ -969,7 +933,7 @@
     "file": ".product/web/server/lib/gitlab/resources.js",
     "from": "than OpenChamber reads",
     "to": "than MittrCraft reads",
-    "count": 5
+    "count": 8
   },
   {
     "file": ".product/web/server/lib/guests/auth-store.js",
@@ -1026,7 +990,7 @@
     "count": 1
   },
   {
-    "file": ".product/web/server/lib/linear/status.js",
+    "file": ".product/web/server/lib/trackers/session-origin.js",
     "from": "`OpenChamber session ${",
     "to": "`MittrCraft session ${",
     "count": 1
@@ -1041,12 +1005,6 @@
     "file": ".product/web/server/lib/notifications/emit-route.js",
     "from": "title: parsed.data.title ?? 'OpenChamber',",
     "to": "title: parsed.data.title ?? 'MittrCraft',",
-    "count": 1
-  },
-  {
-    "file": ".product/web/server/lib/openchamber-control/actions.js",
-    "from": "while the user is away from OpenChamber;",
-    "to": "while the user is away from MittrCraft;",
     "count": 1
   },
   {
@@ -1089,7 +1047,7 @@
     "file": ".product/web/server/lib/opencode/auth.js",
     "from": "'OpenCode is not connected yet'",
     "to": "'The engine is not connected yet'",
-    "count": 1
+    "count": 3
   },
   {
     "file": ".product/web/server/lib/opencode/cli-upgrade.js",
@@ -1110,13 +1068,13 @@
     "count": 1
   },
   {
-    "file": ".product/web/server/lib/opencode/core-routes.js",
+    "file": ".product/web/server/lib/server-frame/core-routes.js",
     "from": "getServerLabel = () => 'OpenChamber',",
     "to": "getServerLabel = () => 'MittrCraft',",
     "count": 1
   },
   {
-    "file": ".product/web/server/lib/opencode/core-routes.js",
+    "file": ".product/web/server/lib/server-frame/core-routes.js",
     "from": "Restart your connected OpenCode server to apply the changes.",
     "to": "Restart your connected engine server to apply the changes.",
     "count": 1
@@ -1257,7 +1215,7 @@
     "file": ".product/web/server/lib/opencode/managed-plugin-config.js",
     "from": "before OpenChamber can inject its",
     "to": "before MittrCraft can inject its",
-    "count": 2
+    "count": 6
   },
   {
     "file": ".product/web/server/lib/opencode/network-runtime.js",
@@ -1266,7 +1224,7 @@
     "count": 1
   },
   {
-    "file": ".product/web/server/lib/opencode/openchamber-routes.js",
+    "file": ".product/web/server/lib/self-update/openchamber-routes.js",
     "from": "'Update queued; OpenChamber will restart after installation completes'",
     "to": "'Update queued; MittrCraft will restart after installation completes'",
     "count": 1
@@ -1275,13 +1233,13 @@
     "file": ".product/web/server/lib/opencode/proxy.js",
     "from": "'OpenCode upstream timed out'",
     "to": "'Engine upstream timed out'",
-    "count": 1
+    "count": 4
   },
   {
     "file": ".product/web/server/lib/opencode/proxy.js",
     "from": "'OpenCode service unavailable'",
     "to": "'Engine service unavailable'",
-    "count": 4
+    "count": 6
   },
   {
     "file": ".product/web/server/lib/opencode/proxy.js",
@@ -1290,13 +1248,13 @@
     "count": 1
   },
   {
-    "file": ".product/web/server/lib/opencode/pwa-manifest-routes.js",
+    "file": ".product/web/server/lib/appearance/pwa-manifest-routes.js",
     "from": "const DEFAULT_PWA_APP_NAME = 'OpenChamber';",
     "to": "const DEFAULT_PWA_APP_NAME = 'MittrCraft';",
     "count": 1
   },
   {
-    "file": ".product/web/server/lib/opencode/pwa-manifest-routes.js",
+    "file": ".product/web/server/lib/appearance/pwa-manifest-routes.js",
     "from": "'Web interface companion for OpenCode AI coding agent'",
     "to": "'MittrCraft, a workspace for AI coding agents'",
     "count": 1
@@ -1380,13 +1338,13 @@
     "count": 1
   },
   {
-    "file": ".product/web/server/lib/opencode/server-startup-runtime.js",
+    "file": ".product/web/server/lib/server-frame/server-startup-runtime.js",
     "from": "'OpenChamber startup IPC channel",
     "to": "'MittrCraft startup IPC channel",
     "count": 1
   },
   {
-    "file": ".product/web/server/lib/opencode/server-utils-runtime.js",
+    "file": ".product/web/server/lib/server-frame/server-utils-runtime.js",
     "from": "'Timed out waiting for OpenCode port'",
     "to": "'Timed out waiting for the engine port'",
     "count": 1
@@ -1404,31 +1362,31 @@
     "count": 1
   },
   {
-    "file": ".product/web/server/lib/opencode/shared.js",
+    "file": ".product/web/server/lib/opencode/config-files.js",
     "from": "`OpenCode configuration at ",
     "to": "`Engine configuration at ",
     "count": 1
   },
   {
-    "file": ".product/web/server/lib/opencode/shared.js",
+    "file": ".product/web/server/lib/opencode/config-files.js",
     "from": "'Failed to read OpenCode configuration'",
     "to": "'Failed to read the engine configuration'",
     "count": 1
   },
   {
-    "file": ".product/web/server/lib/opencode/shared.js",
+    "file": ".product/web/server/lib/opencode/config-files.js",
     "from": "'Failed to write OpenCode configuration'",
     "to": "'Failed to write the engine configuration'",
     "count": 1
   },
   {
-    "file": ".product/web/server/lib/opencode/static-routes-runtime.js",
+    "file": ".product/web/server/lib/server-frame/static-routes-runtime.js",
     "from": "<title>OpenChamber API-only mode</title>",
     "to": "<title>MittrCraft API-only mode</title>",
     "count": 1
   },
   {
-    "file": ".product/web/server/lib/opencode/static-routes-runtime.js",
+    "file": ".product/web/server/lib/server-frame/static-routes-runtime.js",
     "from": "OpenChamber is running in API-only mode",
     "to": "MittrCraft is running in API-only mode",
     "count": 2
@@ -1495,9 +1453,9 @@
   },
   {
     "file": ".product/web/server/lib/relay/service.js",
-    "from": "owned by another local OpenChamber process",
-    "to": "owned by another local MittrCraft process",
-    "count": 1
+    "from": "owned by another OpenChamber process",
+    "to": "owned by another MittrCraft process",
+    "count": 2
   },
   {
     "file": ".product/web/server/lib/security/bind-host.js",
@@ -1542,7 +1500,7 @@
     "count": 1
   },
   {
-    "file": ".product/web/server/lib/spaces/journey.js",
+    "file": ".product/web/server/lib/spaces/model-grants.js",
     "from": "is not set for OpenChamber, so there is no key to give.",
     "to": "is not set for MittrCraft, so there is no key to give.",
     "count": 1
@@ -1653,7 +1611,7 @@
     "file": ".product/web/server/lib/quota/providers/opencode-go.js",
     "from": "'OpenCode Go usage data could not be parsed'",
     "to": "'Go plan usage data could not be parsed'",
-    "count": 1
+    "count": 2
   },
   {
     "file": "resources/web-dist/assets/*.js",
@@ -1695,7 +1653,7 @@
     "file": "resources/web-dist/assets/*.js",
     "from": "children:\"@openchamber_dev\"",
     "to": "children:\"\"",
-    "count": 3
+    "count": 2
   },
   {
     "file": "resources/web-dist/assets/*.js",
@@ -1711,8 +1669,20 @@
   },
   {
     "file": "resources/web-dist/assets/*.js",
-    "from": "(\"walkthrough.help.guide\"),onClick:()=>{",
-    "to": "(\"walkthrough.help.guide\"),hidden:!0,onClick:()=>{",
+    "from": "{type:\"button\",variant:\"ghost\",size:\"sm\",className:\"walkthrough-header__option\",\"aria-label\":{{id}},onClick:{{id}},children:{{id}}}",
+    "to": "{hidden:!0}",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "{type:\"button\",variant:\"ghost\",size:\"sm\",onClick:{{id}},children:[{{id}}.jsx({{id}},{name:\"question\",className:\"size-4\"}),{{id}}(\"walkthrough.help.guide\")]}",
+    "to": "{hidden:!0}",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "{type:\"button\",variant:\"ghost\",size:{{id}},className:\"w-full\",onClick:{{id}},children:[{{id}},{{id}}]}",
+    "to": "{hidden:!0}",
     "count": 1
   },
   {
@@ -1731,6 +1701,1482 @@
     "file": "resources/web-dist/assets/*.js",
     "from": "=\"https://docs.openchamber.dev/classification-providers/\",",
     "to": "=\"\",",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-memory/dreaming.js",
+    "from": "'OpenCode did not say which session it created'",
+    "to": "'The engine did not say which session it created'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "Show it while the user is in OpenChamber too,",
+    "to": "Show it while the user is in MittrCraft too,",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "Default: OpenCode's temporary folder",
+    "to": "Default: the engine's temporary folder",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "no access to OpenChamber, the network session",
+    "to": "no access to MittrCraft, the network session",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "\"OpenChamber projects, sessions and worktrees. ",
+    "to": "\"MittrCraft projects, sessions and worktrees. ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "\"Scheduled tasks: prompts OpenChamber runs on a schedule,",
+    "to": "\"Scheduled tasks: prompts MittrCraft runs on a schedule,",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "\"OpenChamber's browser panel, to check your work by looking at it",
+    "to": "\"MittrCraft's browser panel, to check your work by looking at it",
+    "count": 2
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "shown in OpenChamber's Project knowledge panel",
+    "to": "shown in MittrCraft's Project knowledge panel",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "the image model the user chose in OpenChamber's settings",
+    "to": "the image model the user chose in MittrCraft's settings",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "\"Without path the files go to OpenCode's temporary folder",
+    "to": "\"Without path the files go to the engine's temporary folder",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "\"Provider usage limits as OpenChamber's Settings > Usage",
+    "to": "\"Provider usage limits as MittrCraft's Settings > Usage",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "\"Read OpenChamber's terminal panel:",
+    "to": "\"Read MittrCraft's terminal panel:",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "many agents, which OpenChamber runs in the background",
+    "to": "many agents, which MittrCraft runs in the background",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "\"This OpenCode cannot ask the user to approve a command,",
+    "to": "\"This engine cannot ask the user to approve a command,",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "Since OpenCode 2.3.0 a tool",
+    "to": "Since engine 2.3.0 a tool",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "'OpenChamber projects, sessions and worktrees: dispatch",
+    "to": "'MittrCraft projects, sessions and worktrees: dispatch",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "'Scheduled tasks: prompts OpenChamber runs on a schedule'",
+    "to": "'Scheduled tasks: prompts MittrCraft runs on a schedule'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "\"OpenChamber's terminal panel, read-only:",
+    "to": "\"MittrCraft's terminal panel, read-only:",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/agent-tool/runtime.js",
+    "from": "steer, and OpenCode does that without",
+    "to": "steer, and the engine does that without",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/auto-review/runtime.js",
+    "from": "`OpenCode ${method}",
+    "to": "`Engine ${method}",
+    "count": 2
+  },
+  {
+    "file": ".product/web/server/lib/extension-waits/runtime.js",
+    "from": "`OpenCode ${method}",
+    "to": "`Engine ${method}",
+    "count": 2
+  },
+  {
+    "file": ".product/web/server/lib/pr-watch/runtime.js",
+    "from": "`OpenCode ${method}",
+    "to": "`Engine ${method}",
+    "count": 2
+  },
+  {
+    "file": ".product/web/server/lib/auto-review/runtime.js",
+    "from": "`OpenCode returned no record for session ",
+    "to": "`The engine returned no record for session ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/message-queue/runtime.js",
+    "from": "`OpenCode returned no record for session ",
+    "to": "`The engine returned no record for session ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/changelog/update-notes.js",
+    "from": "'https://api.openchamber.dev/v1/changelog/full'",
+    "to": "''",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/changelog/update-notes.js",
+    "from": "'https://raw.githubusercontent.com/openchamber/openchamber/main/changelog/index.json'",
+    "to": "''",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/changelog/update-notes.js",
+    "from": "'https://downloads.openchamber.dev/desktop/canary/canary-notes.json'",
+    "to": "''",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/changelog/update-notes.js",
+    "from": "'https://github.com/openchamber/openchamber/releases/download/canary/canary-notes.json'",
+    "to": "''",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/changelog/update-notes.js",
+    "from": "'https://github.com/openchamber/openchamber/pull/'",
+    "to": "''",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/diagnostics/local-files.js",
+    "from": "'Message stream WS proxy error: Error: OpenCode service unavailable', ['message-stream WS', 'OpenCode service unavailable',",
+    "to": "'Message stream WS proxy error: Error: Engine service unavailable', ['message-stream WS', 'Engine service unavailable',",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/diagnostics/local-files.js",
+    "from": "'[PushWatcher] disconnected OpenCode service unavailable', ['PushWatcher', 'OpenCode service unavailable',",
+    "to": "'[PushWatcher] disconnected Engine service unavailable', ['PushWatcher', 'Engine service unavailable',",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/diagnostics/local-files.js",
+    "from": "const event = { at, source: component, action:",
+    "to": "const event = { at, source: component.replace(/^Open[C]ode$/, 'engine'), action:",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/diagnostics/local-files.js",
+    "from": "/^Could not list OpenChamber servers on the remote host\\b/",
+    "to": "/^Could not list servers on the remote host\\b/",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/diagnostics/local-files.js",
+    "from": ": it runs OpenChamber\\b/",
+    "to": ": it runs version\\b/",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/diagnostics/local-files.js",
+    "from": "path.join(home, 'Library', 'Logs', 'OpenChamber')",
+    "to": "path.join(home, 'Library', 'Logs', 'MittrCraft')",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/extension-waits/runtime.js",
+    "from": "extension: 'OpenChamber',",
+    "to": "extension: 'MittrCraft',",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/extension-waits/runtime.js",
+    "from": "'OpenCode could not be asked'",
+    "to": "'The engine could not be asked'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/pr-watch/runtime.js",
+    "from": "extension: 'OpenChamber',",
+    "to": "extension: 'MittrCraft',",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/pr-watch/runtime.js",
+    "from": "'OpenCode could not be asked'",
+    "to": "'The engine could not be asked'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/extension-waits/runtime.js",
+    "from": "with something OpenChamber could not read'",
+    "to": "with something MittrCraft could not read'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/extension-waits/runtime.js",
+    "from": "`OpenChamber already follows ",
+    "to": "`MittrCraft already follows ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/extension-waits/runtime.js",
+    "from": "`OpenChamber could not save the wait,",
+    "to": "`MittrCraft could not save the wait,",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/extension-waits/runtime.js",
+    "from": "`OpenChamber could not save the stop,",
+    "to": "`MittrCraft could not save the stop,",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/gerrit/provider.js",
+    "from": " is older than OpenChamber supports (3.8)`",
+    "to": " is older than MittrCraft supports (3.8)`",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/gerrit/resources.js",
+    "from": "'Gerrit project has more branches than OpenChamber reads'",
+    "to": "'Gerrit project has more branches than MittrCraft reads'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/gitea/client.js",
+    "from": " list is longer than OpenChamber reads`",
+    "to": " list is longer than MittrCraft reads`",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/gitea/provider.js",
+    "from": " is older than OpenChamber supports (",
+    "to": " is older than MittrCraft supports (",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/gitea/resources.js",
+    "from": " than OpenChamber scans for a branch`",
+    "to": " than MittrCraft scans for a branch`",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/gitea/resources.js",
+    "from": " than OpenChamber reads`",
+    "to": " than MittrCraft reads`",
+    "count": 4
+  },
+  {
+    "file": ".product/web/server/lib/guests/agent-context.js",
+    "from": "'Build an OpenChamber extension'",
+    "to": "'Build a MittrCraft extension'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/host-callback.js",
+    "from": "'OpenChamber could not handle the request'",
+    "to": "'MittrCraft could not handle the request'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/opencode-provider/index.js",
+    "from": "'OpenCode transfer exceeds the limit.'",
+    "to": "'Engine transfer exceeds the limit.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/opencode-provider/index.js",
+    "from": "'This service has no OpenCode access.'",
+    "to": "'This service has no engine access.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/opencode-provider/index.js",
+    "from": "'OpenCode access is no longer approved.'",
+    "to": "'Engine access is no longer approved.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/opencode-provider/index.js",
+    "from": "'OpenCode access covers the listed reads only.'",
+    "to": "'Engine access covers the listed reads only.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/opencode-provider/index.js",
+    "from": "'OpenCode response has no status.'",
+    "to": "'Engine response has no status.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/opencode-provider/index.js",
+    "from": "'OpenCode redirected the request;",
+    "to": "'The engine redirected the request;",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/opencode-provider/index.js",
+    "from": "'OpenCode request stalled.'",
+    "to": "'Engine request stalled.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/opencode-provider/index.js",
+    "from": "'The host-selected OpenCode request failed.'",
+    "to": "'The host-selected engine request failed.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/opencode-provider/index.js",
+    "from": "'OpenCode provider has no TCP address.'",
+    "to": "'Engine provider has no TCP address.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/opencode-provider/index.js",
+    "from": "'OpenCode access is not approved.'",
+    "to": "'Engine access is not approved.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/opencode-provider/index.js",
+    "from": "'The OpenCode provider stopped.'",
+    "to": "'The engine provider stopped.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/routes.js",
+    "from": "'No global OpenCode config here.'",
+    "to": "'No global engine config here.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/routes.js",
+    "from": "'Failed to write the OpenCode config.'",
+    "to": "'Failed to write the engine config.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/service-host-api.js",
+    "from": "'OpenChamber could not reach the session.'",
+    "to": "'MittrCraft could not reach the session.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/service.js",
+    "from": "'Stop the previous OpenCode provider before replacing it.'",
+    "to": "'Stop the previous engine provider before replacing it.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/service.js",
+    "from": "'OpenCode access is unavailable on this host.'",
+    "to": "'Engine access is unavailable on this host.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/limit-failover/runtime.js",
+    "from": "// OpenCode's own decision stands",
+    "to": "// The engine's own decision stands",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/notifications/extension-channels.js",
+    "from": " answered something OpenChamber cannot use: ",
+    "to": " answered something MittrCraft cannot use: ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/quota/extension-quota.js",
+    "from": " answered something OpenChamber cannot use: ",
+    "to": " answered something MittrCraft cannot use: ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/source-control/extension-provider.js",
+    "from": " answered something OpenChamber cannot use: ",
+    "to": " answered something MittrCraft cannot use: ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/trackers/extension-tracker.js",
+    "from": " answered something OpenChamber cannot use: ",
+    "to": " answered something MittrCraft cannot use: ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/actions.js",
+    "from": "A worktree on an OpenChamber-generated placeholder branch",
+    "to": "A worktree on a MittrCraft-generated placeholder branch",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/actions.js",
+    "from": "Only files in this session\\'s folder or OpenCode\\'s temp folder",
+    "to": "Only files in this session\\'s folder or the engine\\'s temp folder",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/generate-image.js",
+    "from": "Settings > General > OpenChamber Tools",
+    "to": "Settings > General > MittrCraft Tools",
+    "count": 3
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/generate-image.js",
+    "from": "'The image tool is turned off in OpenChamber settings'",
+    "to": "'The image tool is turned off in MittrCraft settings'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/later-pages.js",
+    "from": "`OpenChamber could not save the page,",
+    "to": "`MittrCraft could not save the page,",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/later-pages.js",
+    "from": "`OpenChamber could not save the answer,",
+    "to": "`MittrCraft could not save the answer,",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/later-pages.js",
+    "from": "`OpenCode answered ${",
+    "to": "`The engine answered ${",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/session-warming/runtime.js",
+    "from": "`OpenCode answered ${",
+    "to": "`The engine answered ${",
+    "count": 2
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/project-knowledge.js",
+    "from": "'No OpenChamber window is connected to show the plan'",
+    "to": "'No MittrCraft window is connected to show the plan'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/project-knowledge.js",
+    "from": "'The project knowledge tool is turned off in OpenChamber settings'",
+    "to": "'The project knowledge tool is turned off in MittrCraft settings'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/render-page.js",
+    "from": "'The render tool is turned off in OpenChamber settings'",
+    "to": "'The render tool is turned off in MittrCraft settings'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/secret-request.js",
+    "from": "'The secret tool is turned off in OpenChamber settings'",
+    "to": "'The secret tool is turned off in MittrCraft settings'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/service.js",
+    "from": "`OpenCode is paused for ${",
+    "to": "`The engine is paused for ${",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/scheduled-tasks/model-catalog.js",
+    "from": "`OpenCode is paused for ${",
+    "to": "`The engine is paused for ${",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/small-model/client.js",
+    "from": "`OpenCode is paused for ${",
+    "to": "`The engine is paused for ${",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/service.js",
+    "from": "Ask the user to open the folder in OpenChamber and trust it.`",
+    "to": "Ask the user to open the folder in MittrCraft and trust it.`",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/scheduled-tasks/model-catalog.js",
+    "from": "Ask the user to open the folder in OpenChamber and trust it.`",
+    "to": "Ask the user to open the folder in MittrCraft and trust it.`",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/service.js",
+    "from": "`OpenCode refused the answer: ",
+    "to": "`The engine refused the answer: ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/service.js",
+    "from": "'OpenCode did not take the answer'",
+    "to": "'The engine did not take the answer'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/terminal-read.js",
+    "from": "'The terminal tool is turned off in OpenChamber settings'",
+    "to": "'The terminal tool is turned off in MittrCraft settings'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/usage-read.js",
+    "from": "'OpenChamber action was cancelled'",
+    "to": "'MittrCraft action was cancelled'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/usage-read.js",
+    "from": "`OpenCode did not say which providers are configured",
+    "to": "`The engine did not say which providers are configured",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-control/usage-read.js",
+    "from": "'The usage tool is turned off in OpenChamber settings'",
+    "to": "'The usage tool is turned off in MittrCraft settings'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-sessions/routes.js",
+    "from": "in project/global settings or OpenCode config,",
+    "to": "in project/global settings or the engine config,",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-sessions/work-naming.js",
+    "from": "'Only a placeholder branch OpenChamber generated is renamed here;",
+    "to": "'Only a placeholder branch MittrCraft generated is renamed here;",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-sessions/work-naming.js",
+    "from": " is a placeholder OpenChamber generated, and it is not pushed.`",
+    "to": " is a placeholder MittrCraft generated, and it is not pushed.`",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/openchamber-sessions/worktree-move.js",
+    "from": "`OpenChamber: session ",
+    "to": "`MittrCraft: session ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode-trust/index.js",
+    "from": "'OpenCode is paused for this folder until",
+    "to": "'The engine is paused for this folder until",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/auth.js",
+    "from": "'This OpenCode connection cannot write a login'",
+    "to": "'This engine connection cannot write a login'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/lifecycle.js",
+    "from": "'An external OpenCode server cannot be stopped by OpenChamber.'",
+    "to": "'An external engine server cannot be stopped by MittrCraft.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/mcp-oauth.js",
+    "from": "'MCP sign-in cannot finish over the private relay with this OpenCode version, because the provider has to redirect the browser to an address that reaches OpenChamber directly. Update OpenCode to 2.2.6 or newer, or open OpenChamber at its LAN or tunnel address and sign in from there.'",
+    "to": "'MCP sign-in cannot finish over the private relay with this engine version, because the provider has to redirect the browser to an address that reaches MittrCraft directly. Update the engine to 2.2.6 or newer, or open MittrCraft at its LAN or tunnel address and sign in from there.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/mcp-oauth.js",
+    "from": "'MCP sign-in cannot finish here with this OpenCode version, because OpenCode runs on another machine and only that machine can receive the provider\\'s redirect. Update OpenCode to 2.2.6 or newer, sign in where OpenCode runs,",
+    "to": "'MCP sign-in cannot finish here with this engine version, because the engine runs on another machine and only that machine can receive the provider\\'s redirect. Update the engine to 2.2.6 or newer, sign in where the engine runs,",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/mcp-oauth.js",
+    "from": "'OpenCode has not picked up the sign-in address",
+    "to": "'The engine has not picked up the sign-in address",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/mcp-oauth.js",
+    "from": "'OpenChamber cannot finish this sign-in from here. If OpenChamber is still waiting for it,",
+    "to": "'MittrCraft cannot finish this sign-in from here. If MittrCraft is still waiting for it,",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/mcp-oauth.js",
+    "from": "start the sign-in again from the server\\'s page in OpenChamber.'",
+    "to": "start the sign-in again from the server\\'s page in MittrCraft.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/mcp-oauth.js",
+    "from": "which usually means OpenCode stopped or",
+    "to": "which usually means the engine stopped or",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/mcp-oauth.js",
+    "from": "Start the sign-in again from the server\\'s page in OpenChamber.'",
+    "to": "Start the sign-in again from the server\\'s page in MittrCraft.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/mcp-oauth.js",
+    "from": "'OpenCode started the sign-in without a state value,",
+    "to": "'The engine started the sign-in without a state value,",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/mcp-oauth.js",
+    "from": "'OpenChamber could not prepare this MCP sign-in.",
+    "to": "'MittrCraft could not prepare this MCP sign-in.",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/plugin-routes.js",
+    "from": "'Plugin switches apply only to the OpenCode OpenChamber starts'",
+    "to": "'Plugin switches apply only to the engine MittrCraft starts'",
+    "count": 2
+  },
+  {
+    "file": ".product/web/server/lib/opencode/plugins.js",
+    "from": "`OpenCode cannot load plugin ",
+    "to": "`The engine cannot load plugin ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/plugins.js",
+    "from": "'A rule in the OpenCode config allows this plugin, so OpenChamber cannot switch it off'",
+    "to": "'A rule in the engine config allows this plugin, so MittrCraft cannot switch it off'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/plugins.js",
+    "from": "'Plugin switches are only available for the OpenCode OpenChamber starts'",
+    "to": "'Plugin switches are only available for the engine MittrCraft starts'",
+    "count": 2
+  },
+  {
+    "file": ".product/web/server/lib/opencode/providers.js",
+    "from": "or a supported built-in OpenCode adapter'",
+    "to": "or a supported built-in engine adapter'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/session-runtime.js",
+    "from": "'OpenChamber restarted OpenCode while a response was still running.",
+    "to": "'MittrCraft restarted the engine while a response was still running.",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/session-runtime.js",
+    "from": "`OpenCode restart continuation failed with ",
+    "to": "`Engine restart continuation failed with ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/session-title-plugin.js",
+    "from": "the plan mode bug in OpenChamber, it still skips",
+    "to": "the plan mode bug in MittrCraft, it still skips",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/session-title-plugin.js",
+    "from": "// Free OpenCode models failed",
+    "to": "// Free Zen models failed",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/opencode/session-title-plugin.js",
+    "from": "as OpenCode built it.",
+    "to": "as the engine built it.",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/pr-watch/runtime.js",
+    "from": "`OpenChamber has no ${",
+    "to": "`MittrCraft has no ${",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/quota/providers/opencode-go.js",
+    "from": "'No active OpenCode Go subscription on the selected Console account'",
+    "to": "'No active Go plan subscription on the selected Console account'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/quota/providers/opencode-go.js",
+    "from": "'OpenCode Go key expired. Connect an OpenCode Console account on the OpenCode card in Providers.'",
+    "to": "'Go plan key expired. Connect a Console account on the Zen card in Providers.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/quota/providers/opencode-go.js",
+    "from": "'OpenCode Console sign-in expired. Sign in again in Providers.'",
+    "to": "'Console sign-in expired. Sign in again in Providers.'",
+    "count": 2
+  },
+  {
+    "file": ".product/web/server/lib/quota/providers/opencode-go.js",
+    "from": "`OpenCode Console Go status API returned HTTP ",
+    "to": "`Console Go plan status API returned HTTP ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/quota/providers/opencode-go.js",
+    "from": "'OpenCode Console Go status returned an unreadable response'",
+    "to": "'Console Go plan status returned an unreadable response'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/quota/providers/opencode-zen.js",
+    "from": "'OpenCode Zen authentication failed'",
+    "to": "'Zen authentication failed'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/quota/providers/opencode-zen.js",
+    "from": "`OpenCode Zen usage API returned HTTP ",
+    "to": "`Zen usage API returned HTTP ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/quota/providers/opencode-zen.js",
+    "from": "'OpenCode Zen model page could not be parsed'",
+    "to": "'Zen model page could not be parsed'",
+    "count": 3
+  },
+  {
+    "file": ".product/web/server/lib/quota/providers/opencode-zen.js",
+    "from": "'OpenCode Zen model pagination could not be parsed'",
+    "to": "'Zen model pagination could not be parsed'",
+    "count": 2
+  },
+  {
+    "file": ".product/web/server/lib/quota/providers/opencode-zen.js",
+    "from": "'OpenCode Zen usage data could not be parsed'",
+    "to": "'Zen usage data could not be parsed'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/quota/providers/opencode.js",
+    "from": "providerName = 'OpenCode Zen';",
+    "to": "providerName = 'Zen';",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/scheduled-tasks/runtime.js",
+    "from": "session defaults unavailable, using OpenCode defaults:'",
+    "to": "session defaults unavailable, using engine defaults:'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/self-update/openchamber-routes.js",
+    "from": "'version and since must be OpenChamber versions'",
+    "to": "'version and since must be MittrCraft versions'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/self-update/openchamber-routes.js",
+    "from": "'Update OpenChamber on the computer it runs on.'",
+    "to": "'Update MittrCraft on the computer it runs on.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/self-update/openchamber-routes.js",
+    "from": "`OpenChamber ${updateInfo.version} needs OpenCode ${",
+    "to": "`MittrCraft ${updateInfo.version} needs engine ${",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/self-update/openchamber-routes.js",
+    "from": ". Update OpenCode first.`",
+    "to": ". Update the engine first.`",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/session-knowledge/runtime.js",
+    "from": " is a placeholder OpenChamber generated, not one the user chose,`",
+    "to": " is a placeholder MittrCraft generated, not one the user chose,`",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/session-knowledge/runtime.js",
+    "from": "not from OpenChamber's theme.",
+    "to": "not from MittrCraft's theme.",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/session-todos/routes.js",
+    "from": "'OpenCode did not answer'",
+    "to": "'The engine did not answer'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/small-model/client.js",
+    "from": ". Open the folder in OpenChamber and trust its configuration",
+    "to": ". Open the folder in MittrCraft and trust its configuration",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/small-model/client.js",
+    "from": "'OpenCode on this computer is not running'",
+    "to": "'The engine on this computer is not running'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/small-model/client.js",
+    "from": "'OpenCode answered no provider list'",
+    "to": "'The engine answered no provider list'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/source-control/outbound-handles.js",
+    "from": "and the account has none OpenChamber can send'",
+    "to": "and the account has none MittrCraft can send'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/spaces/journey.js",
+    "from": "'OpenChamber closed before the code arrived.",
+    "to": "'MittrCraft closed before the code arrived.",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/spaces/journey.js",
+    "from": "`OpenChamber is not signed in to ${",
+    "to": "`MittrCraft is not signed in to ${",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/spaces/login-keeper.js",
+    "from": " login cannot be renewed by OpenChamber`",
+    "to": " login cannot be renewed by MittrCraft`",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/spaces/model-grants.js",
+    "from": "`The providers of OpenCode on this computer could not be read: ",
+    "to": "`The providers of the engine on this computer could not be read: ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/spaces/model-grants.js",
+    "from": " could not be read from OpenCode on this computer,",
+    "to": " could not be read from the engine on this computer,",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/spaces/model-grants.js",
+    "from": "`OpenChamber has no key saved for ${",
+    "to": "`MittrCraft has no key saved for ${",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/spaces/space-opencode.js",
+    "from": "label: 'OpenChamber space',",
+    "to": "label: 'MittrCraft space',",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/spaces/space-opencode.js",
+    "from": " login row inside the space: OpenCode answered ${",
+    "to": " login row inside the space: the engine answered ${",
+    "count": 2
+  },
+  {
+    "file": ".product/web/server/lib/spaces/tools-pack.js",
+    "from": "'Packing local tools requires an OpenChamber checkout.'",
+    "to": "'Packing local tools requires a MittrCraft checkout.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/trackers/extension-tracker.js",
+    "from": "'The sign-in needs the address this OpenChamber is opened at.'",
+    "to": "'The sign-in needs the address this MittrCraft is opened at.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/trackers/routes.js",
+    "from": "'You can close this tab and return to OpenChamber.'",
+    "to": "'You can close this tab and return to MittrCraft.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/tunnels/providers/tailscale.js",
+    "from": "'OpenChamber has no local port to share yet'",
+    "to": "'MittrCraft has no local port to share yet'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/workflows/agent-session.js",
+    "from": "`OpenCode refused the synthetic message with ",
+    "to": "`The engine refused the synthetic message with ",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/workflows/runtime.js",
+    "from": "'Workflows are turned off in OpenChamber settings'",
+    "to": "'Workflows are turned off in MittrCraft settings'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/workflows/runtime.js",
+    "from": "'Started without approval: OpenChamber settings let agents",
+    "to": "'Started without approval: MittrCraft settings let agents",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/workflows/runtime.js",
+    "from": "the user allows that in OpenChamber settings.",
+    "to": "the user allows that in MittrCraft settings.",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/workflows/runtime.js",
+    "from": "error: 'OpenChamber restarted' }",
+    "to": "error: 'MittrCraft restarted' }",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/workflows/runtime.js",
+    "from": "'OpenChamber restarted while the workflow ran.'",
+    "to": "'MittrCraft restarted while the workflow ran.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/workflows/runtime.js",
+    "from": "'OpenChamber shut down while the workflow ran.'",
+    "to": "'MittrCraft shut down while the workflow ran.'",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/authoring/skill.txt",
+    "from": "description: Build, change or publish an OpenChamber extension.",
+    "to": "description: Build, change or publish a MittrCraft extension.",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/authoring/skill.txt",
+    "from": "# Writing an OpenChamber extension",
+    "to": "# Writing a MittrCraft extension",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/authoring/skill.txt",
+    "from": "### OpenCode plugin",
+    "to": "### Engine plugin",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/authoring/skill.txt",
+    "from": "It runs inside OpenCode with the user's full access",
+    "to": "It runs inside the engine with the user's full access",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/authoring/skill.txt",
+    "from": "the extension's OpenCode plugin registers",
+    "to": "the extension's engine plugin registers",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/authoring/skill.txt",
+    "from": "maps the provider ID OpenCode reports",
+    "to": "maps the provider ID the engine reports",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/authoring/skill.txt",
+    "from": "- https://github.com/openchamber/openchamber/tree/main/packages/sdk/examples: whole extensions. `agent-desk` uses nearly every point, `session-events-log` hears events, `notification-webhook` is a notification channel, `tracker-provider` a tracker, `github-token` an integration, `checklist-editor` a file editor, `opencode-plugin` an OpenCode plugin.\n",
+    "to": "",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/authoring/skill.txt",
+    "from": "5. To reach the directory at https://openchamber.dev/extensions, write to feedback@openchamber.dev. Offer the user this letter with the fields filled in, and send it only after they read it:\n\n```text\nSubject: OpenChamber extension for the directory\n\nExtension name:\nRepository URL:\nCategory (Workflow / Usage / Monitoring / Preview & files / DevOps / Agent setup / Memory / Providers / Themes):\nWhat it does:\n```\n\n",
+    "to": "",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"This OpenChamber desktop app is older than its server",
+    "to": "\"This MittrCraft desktop app is older than its server",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"The OpenChamber window is not being drawn",
+    "to": "\"The MittrCraft window is not being drawn",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "OpenCode did not start in time.",
+    "to": "The engine did not start in time.",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"The runtime changed while OpenCode was starting.\"",
+    "to": "\"The runtime changed while the engine was starting.\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "OpenCode service unavailable",
+    "to": "Engine service unavailable",
+    "count": 3
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "characters: OpenChamber names its",
+    "to": "characters: MittrCraft names its",
+    "count": 4
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "'must be an OpenCode provider id,",
+    "to": "'must be an engine provider id,",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "name:\"OpenCode Zen\"",
+    "to": "name:\"Zen\"",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"This OpenChamber surface has no side panel.\"",
+    "to": "\"This MittrCraft surface has no side panel.\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "with the page's own Send in OpenChamber.",
+    "to": "with the page's own Send in MittrCraft.",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "ask the user to open the page in OpenChamber with its PIN.",
+    "to": "ask the user to open the page in MittrCraft with its PIN.",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"OpenChamber has not seen that shell.\"",
+    "to": "\"MittrCraft has not seen that shell.\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"OpenCode no longer keeps that shell's output.\"",
+    "to": "\"The engine no longer keeps that shell's output.\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`The user referenced another OpenChamber session,",
+    "to": "`The user referenced another MittrCraft session,",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"the agent of that session\":\"OpenChamber\"",
+    "to": "\"the agent of that session\":\"MittrCraft\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`The user attached a message from another OpenChamber session,",
+    "to": "`The user attached a message from another MittrCraft session,",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "source:\"OpenCode process\"",
+    "to": "source:\"Engine process\"",
+    "count": 4
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "source:\"OpenCode API\"",
+    "to": "source:\"Engine API\"",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": " function=probeOpenCode ",
+    "to": " function=probeEngine ",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"processes not counted (Windows, or OpenCode not on this machine)\"",
+    "to": "\"processes not counted (Windows, or the engine not on this machine)\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": " MB, OpenCode itself ",
+    "to": " MB, the engine itself ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "[`OpenChamber: ",
+    "to": "[`MittrCraft: ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`OpenCode: ${",
+    "to": "`Engine: ${",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`Last OpenCode start error: ",
+    "to": "`Last engine start error: ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": ", OpenCode running=",
+    "to": ", engine running=",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`OpenChamber diagnostic timeline",
+    "to": "`MittrCraft diagnostic timeline",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\nOpenCode load: ",
+    "to": "\nEngine load: ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "only its health and the OpenCode API probes were read",
+    "to": "only its health and the engine API probes were read",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "OpenCode log files and output: not read",
+    "to": "Engine log files and output: not read",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "bounded history of OpenCode lifecycle transitions",
+    "to": "bounded history of engine lifecycle transitions",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"web\",\"OpenCode\",\"startup\"",
+    "to": "\"web\",\"engine\",\"startup\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "displayName:\"OpenChamber Schedule\"",
+    "to": "displayName:\"MittrCraft Schedule\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "displayName:\"OpenChamber Knowledge\"",
+    "to": "displayName:\"MittrCraft Knowledge\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "displayName:\"OpenChamber Usage\"",
+    "to": "displayName:\"MittrCraft Usage\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "displayName:\"OpenChamber Render\"",
+    "to": "displayName:\"MittrCraft Render\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "displayName:\"OpenChamber Image\"",
+    "to": "displayName:\"MittrCraft Image\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "displayName:\"OpenChamber Secret\"",
+    "to": "displayName:\"MittrCraft Secret\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "displayName:\"OpenChamber Workflow\"",
+    "to": "displayName:\"MittrCraft Workflow\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "={displayName:\"OpenCode\",category:\"system\"",
+    "to": "={displayName:\"MittrCraft\",category:\"system\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": ", from the OpenChamber night watercolour",
+    "to": ", from the MittrCraft night watercolour",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": ", from the OpenChamber day watercolour",
+    "to": ", from the MittrCraft day watercolour",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"OpenChamber accents aged to one muted lightness",
+    "to": "\"MittrCraft accents aged to one muted lightness",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/share-document.js",
+    "from": "name:\"OpenChamber\",variant:",
+    "to": "name:\"MittrCraft\",variant:",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/share-document.js",
+    "from": "name:\"OpenCode\",variant:\"dark\",description:\"Adapted from the OpenCode desktop theme.\"",
+    "to": "name:\"Terminal\",variant:\"dark\",description:\"Adapted from the engine desktop theme.\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/share-document.js",
+    "from": "name:\"OpenCode\",variant:\"light\",description:\"Adapted from the OpenCode desktop theme.\"",
+    "to": "name:\"Terminal\",variant:\"light\",description:\"Adapted from the engine desktop theme.\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/share-document.js",
+    "from": "\"The OpenChamber signature - ",
+    "to": "\"The MittrCraft signature - ",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/share-document.js",
+    "from": "Vitesse syntax over OpenCode-deep neutrals",
+    "to": "Vitesse syntax over deep neutrals",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/share-document.js",
+    "from": "IDE-inspired colors for OpenChamber - ",
+    "to": "IDE-inspired colors for MittrCraft - ",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/share-document.js",
+    "from": "\"Artem Evsevev, adapted for OpenChamber\"",
+    "to": "\"Artem Evsevev, adapted for MittrCraft\"",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/share-document.js",
+    "from": "author:\"OpenChamber\"",
+    "to": "author:\"MittrCraft\"",
+    "count": 8
+  },
+  {
+    "file": "resources/web-dist/share-document.js",
+    "from": "author:\"OpenCode\"",
+    "to": "author:\"MittrCraft\"",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/share-document.js",
+    "from": ", from the OpenChamber night watercolour",
+    "to": ", from the MittrCraft night watercolour",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/share-document.js",
+    "from": ", from the OpenChamber day watercolour",
+    "to": ", from the MittrCraft day watercolour",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/share-document.js",
+    "from": "\"OpenChamber accents aged to one muted lightness",
+    "to": "\"MittrCraft accents aged to one muted lightness",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "publisher:\"OpenChamber\"",
+    "to": "publisher:\"Built in\"",
+    "count": 3
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "homepage:\"https://github.com/openchamber/opencode-search-providers\"",
+    "to": "homepage:\"\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "homepage:\"https://github.com/openchamber/openchamber-excalidraw\"",
+    "to": "homepage:\"\"",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "homepage:\"https://github.com/openchamber/openchamber-resource-monitor\"",
+    "to": "homepage:\"\"",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "(\"integrationsCatalog.info.website\")}),t.jsx(\"dd\",{className:\"min-w-0\",children:t.jsxs(\"a\",{href:e.homepage,",
+    "to": "(\"integrationsCatalog.info.website\"),hidden:!e.homepage}),t.jsx(\"dd\",{className:\"min-w-0\",hidden:!e.homepage,children:t.jsxs(\"a\",{href:e.homepage,",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "{type:\"button\",size:\"sm\",variant:\"secondary\",onClick:()=>{{{id}}({{id}}.homepage)}",
+    "to": "{type:\"button\",size:\"sm\",variant:\"secondary\",hidden:!0,onClick:()=>{}",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`https://openchamber.dev/${e}/extensions/`:\"https://openchamber.dev/extensions/\"",
+    "to": "\"\":\"\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"data-settings-item\":\"extensions.browse\",",
+    "to": "\"data-settings-item\":\"extensions.browse\",hidden:!0,",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "descriptionKey:\"settings.extensions.browse.hint\",keywords:[\"community\",\"catalog\",\"marketplace\",\"store\",\"gallery\",\"website\",\"discover\",\"find\",\"extension\"],isAvailable:{{id}}=>!{{id}}.isVSCode&&!{{id}}.enterpriseMode",
+    "to": "descriptionKey:\"settings.extensions.browse.hint\",keywords:[\"community\",\"catalog\",\"marketplace\",\"store\",\"gallery\",\"website\",\"discover\",\"find\",\"extension\"],isAvailable:()=>!1",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "=\"https://github.com/openchamber/openchamber/releases\",",
+    "to": "=\"\",",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "{href:{{id}},target:\"_blank\",rel:\"noopener noreferrer\",className:\"flex items-center gap-1.5 typography-meta text-muted-foreground transition-colors hover:text-foreground\"",
+    "to": "{hidden:!0,target:\"_blank\",rel:\"noopener noreferrer\",className:\"flex items-center gap-1.5 typography-meta text-muted-foreground transition-colors hover:text-foreground\"",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "zenity --entry --title=\"OpenChamber SSH\"",
+    "to": "zenity --entry --title=\"MittrCraft SSH\"",
+    "count": 2
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "kdialog --title \"OpenChamber SSH\"",
+    "to": "kdialog --title \"MittrCraft SSH\"",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "[{href:{{id}},icon:\"github-fill\",label:\"GitHub\"},{href:{{id}},icon:\"discord-fill\",label:\"Discord\"},{href:{{id}},icon:\"twitter-xfill\",label:\"@openchamber_dev\"}].map(",
+    "to": "[].map(",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "komputera, OpenChambera i serwer",
+    "to": "komputera, MittrCrafta i serwer",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "[/^OpenCode process exited before serving with ",
+    "to": "[/^Engine process exited before serving with ",
+    "count": 2
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "[/^Timeout waiting for OpenCode to start\\b/",
+    "to": "[/^Timeout waiting for the engine to start\\b/",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "[/^Timed out waiting for OpenCode (?:port|to become ready)\\b/",
+    "to": "[/^Timed out waiting for the engine (?:port|to become ready)\\b/",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "[/^External OpenCode server on port ",
+    "to": "[/^External engine server on port ",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "[/did not identify itself as OpenCode 2\\.x/,\"server is not OpenCode 2.x\"]",
+    "to": "[/did not identify itself as engine 2\\.x/,\"server is not engine 2.x\"]",
     "count": 1
   }
 ]

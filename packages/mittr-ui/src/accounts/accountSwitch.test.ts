@@ -9,6 +9,8 @@ const held = () => {
   return { promise, settle };
 };
 
+const V1 = { code: 'MITTR_ENGINE_V1_HISTORY', message: 'Open MittrCraft 2.1.1 once.' };
+
 const lost = () => Promise.reject(new Error('offline'));
 
 const harness = (retrySwitch: AccountSwitchDeps['retrySwitch'] = async () => ({ signedIn: true })) => {
@@ -214,6 +216,92 @@ describe('account switch', () => {
     expect(failing.holds()).toBe(0);
     await failing.accountSwitch.retry();
     expect(failing.holds()).toBe(0);
+  });
+
+  test('a switch the server refused says why; closing it returns to the account still running, with no reload', async () => {
+    const { accountSwitch, log, holds } = harness();
+    await accountSwitch.run(() => Promise.reject(new HttpError(409, { error: V1.message, code: V1.code })));
+    expect(accountSwitch.state()).toBe('failed');
+    expect(accountSwitch.problem()).toEqual(V1);
+
+    await accountSwitch.dismiss();
+    expect(accountSwitch.state()).toBe('idle');
+    expect(accountSwitch.problem()).toBeNull();
+    expect(holds()).toBe(0);
+    expect(log).toEqual(['hold', 'release']);
+  });
+
+  test('a lost answer and a refusal without words carry no reason', async () => {
+    const { accountSwitch } = harness();
+    await accountSwitch.run(lost);
+    expect(accountSwitch.problem()).toBeNull();
+
+    const silent = harness();
+    await silent.accountSwitch.run(() => Promise.reject(new HttpError(500)));
+    expect(silent.accountSwitch.problem()).toBeNull();
+  });
+
+  test('an engine that did not start says why, and a new attempt forgets it', async () => {
+    const answer = held();
+    const { accountSwitch } = harness(() => answer.promise);
+    await accountSwitch.run(async () => ({ signedIn: true, engineRestarted: false, engineError: V1 }));
+    expect(accountSwitch.state()).toBe('not-restarted');
+    expect(accountSwitch.problem()).toEqual(V1);
+
+    const retrying = accountSwitch.retry();
+    expect(accountSwitch.state()).toBe('switching');
+    expect(accountSwitch.problem()).toBeNull();
+    answer.settle({ signedIn: true, engineRestarted: false });
+    await retrying;
+    expect(accountSwitch.state()).toBe('not-restarted');
+    expect(accountSwitch.problem()).toBeNull();
+  });
+
+  test('from an engine that did not start, another account can be switched to instead', async () => {
+    const { accountSwitch, log } = harness();
+    await accountSwitch.run(async () => ({ signedIn: true, userId: 'u-b', engineRestarted: false, engineError: V1 }));
+    await accountSwitch.instead(async () => ({ signedIn: true, userId: 'u-a' }));
+    expect(log).toEqual(['hold', 'announce', 'reload']);
+
+    const idle = harness();
+    let asked = 0;
+    await idle.accountSwitch.instead(async () => { asked += 1; return { signedIn: true }; });
+    expect(asked).toBe(0);
+    expect(idle.accountSwitch.state()).toBe('idle');
+  });
+
+  test('when that account is refused too, closing goes back to the engine that did not start, never to the app', async () => {
+    const { accountSwitch, log, holds } = harness();
+    const busy = { code: 'MITTR_ENGINE_DATABASE_BUSY', message: 'Another copy is open.' };
+    await accountSwitch.run(async () => ({ signedIn: true, userId: 'u-b', engineRestarted: false, engineError: V1 }));
+    await accountSwitch.instead(() => Promise.reject(new HttpError(409, { error: busy.message, code: busy.code })));
+    expect(accountSwitch.state()).toBe('failed');
+    expect(accountSwitch.problem()).toEqual(busy);
+
+    await accountSwitch.dismiss();
+    expect(accountSwitch.state()).toBe('not-restarted');
+    expect(accountSwitch.problem()).toEqual(V1);
+    expect(holds()).toBe(1);
+    expect(log).toEqual(['hold']);
+  });
+
+  test('an account added but not switched to stays on the current one: no announcement, no reload, and closing is idle', async () => {
+    const { accountSwitch, log } = harness();
+    await accountSwitch.run(async () => ({ signedIn: true, userId: 'u-a', switchRefused: V1 }));
+    expect(accountSwitch.state()).toBe('failed');
+    expect(accountSwitch.problem()).toEqual({ ...V1, added: true });
+    await accountSwitch.dismiss();
+    expect(accountSwitch.state()).toBe('idle');
+    expect(log).toEqual(['hold', 'release']);
+  });
+
+  test('an account added but not switched to, in a window that still owes a reload, resyncs and reloads once it is closed', async () => {
+    const { accountSwitch, log } = harness();
+    await accountSwitch.run(async () => ({ signedIn: true, userId: 'u-a', switchRefused: V1, reloadOwed: true }));
+    expect(accountSwitch.state()).toBe('failed');
+    expect(log).toEqual(['hold']);
+    await accountSwitch.dismiss();
+    expect(log).toEqual(['hold', 'retry-switch', 'announce', 'reload']);
   });
 
   test('only a failed request can be closed: a switch under way stays', async () => {

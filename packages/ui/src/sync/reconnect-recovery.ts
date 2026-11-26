@@ -21,11 +21,17 @@ type ReconnectCandidateOptions = {
 
 type BootstrapSessionRevisionOptions = {
   baselineRevision: number
+  partial?: boolean
   eventRevision?: Record<string, number>
   deletedRevision?: Record<string, number>
 }
 
 const getParentId = (session: Session): string | undefined => session.parentID
+
+const isSameSession = (left: Session, right: Session): boolean => (
+  left === right
+  || (left.time?.updated === right.time?.updated && JSON.stringify(left) === JSON.stringify(right))
+)
 
 const includeAncestorSessions = (
   parentIds: string[],
@@ -59,6 +65,9 @@ export function mergeBootstrapSessions(
   for (const session of rootSessions) sessionsById.set(session.id, session)
 
   const includedIds = new Set(rootIds)
+  if (revisions?.partial) {
+    for (const session of existingSessions) includedIds.add(session.id)
+  }
   const pendingParentIds: string[] = []
   for (const session of completeSessions) {
     const parentId = getParentId(session)
@@ -85,10 +94,19 @@ export function mergeBootstrapSessions(
     includeAncestorSessions(pendingParentIds, includedIds, sessionsById, deletedIds)
   }
 
-  const sessions = [...includedIds]
+  const existingById = new Map(existingSessions.map((session) => [session.id, session]))
+  const merged = [...includedIds]
     .map((id) => sessionsById.get(id))
     .filter((session): session is Session => Boolean(session))
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    .map((session) => {
+      const existing = existingById.get(session.id)
+      return existing && isSameSession(existing, session) ? existing : session
+    })
+  const sessions = merged.length === existingSessions.length
+    && merged.every((session, index) => session === existingSessions[index])
+    ? existingSessions
+    : merged
   const rootCount = sessions.reduce((count, session) => (
     getParentId(session) ? count : count + 1
   ), 0)
@@ -104,9 +122,6 @@ export function getReconnectCandidateSessionIds(state: ReconnectMaterializationS
   }
 
   for (const [sessionId, messages] of Object.entries(state.message ?? {})) {
-    // Plumbing roles (synthetic, skill, shell, switches) can trail a still
-    // streaming assistant message, so recovery looks at the last
-    // conversation message rather than the last record.
     const lastMessage = getLastConversationMessage(messages)
     if (isIncompleteAssistantTurn(lastMessage)) {
       ids.add(sessionId)
@@ -131,8 +146,6 @@ export function getReconnectCandidateSessionIds(state: ReconnectMaterializationS
     }
   }
 
-  // Parentage in cached history is not live work. Recover ancestors only when
-  // their child is active, viewed, or has an unresolved materialized snapshot.
   if (ids.size > 0) {
     const sessionsById = new Map(state.session.map((session) => [session.id, session]))
     const pending = [...ids]

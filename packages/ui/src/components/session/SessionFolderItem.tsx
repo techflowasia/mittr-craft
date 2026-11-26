@@ -5,18 +5,16 @@ import { useI18n } from '@/lib/i18n';
 import { Icon } from "@/components/icon/Icon";
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { CollapsedActivityIndicator } from './sidebar/sessions/collapsedActivityIndicator';
+import { FileTreeChevron } from '@/components/views/files/FileTreeRowParts';
+import { sessionTreeRowPaddingLeft } from './sidebar/sessions/sessionTreeGeometry';
 import type { CollapsedActivityState } from './sidebar/sessions/collapsedActivityState';
 
 interface SessionFolderItemProps<TSessionNode> {
   folder: SessionFolder;
-  /**
-   * Optional display label override. Flat folder rendering shows nested
-   * folders at the top level with a "Parent / Child" path instead of
-   * indentation.
-   */
   displayName?: string;
   sessions: readonly TSessionNode[];
-  /** Sub-folders that belong directly to this folder */
+  memberCount?: number;
+  projectLabel?: string;
   subFolderItems?: React.ReactNode;
   isCollapsed: boolean;
   collapsedActivityState?: CollapsedActivityState;
@@ -34,22 +32,19 @@ interface SessionFolderItemProps<TSessionNode> {
   onRenameDraftChange?: (value: string) => void;
   onRenameSave?: () => void;
   onRenameCancel?: () => void;
-  /** Ref callback from useDroppable – attach to folder header to make it a drop zone */
   droppableRef?: (node: HTMLElement | null) => void;
-  /** Whether a draggable session is currently hovering over this folder */
   isDropTarget?: boolean;
-  /** Create a new session scoped to this folder */
   onNewSession?: () => void;
-  /** Visual indent depth (0 = root folder, 1 = sub-folder) */
   depth?: number;
-  /** Hide folder action buttons (rename/delete/new) */
+  canExpand?: boolean;
   hideActions?: boolean;
-  /** Whether folder belongs to archived section */
   archivedBucket?: boolean;
 }
 
 const SessionFolderItemBase = <TSessionNode,>({
   folder,
+  memberCount,
+  projectLabel,
   displayName,
   sessions,
   subFolderItems,
@@ -71,6 +66,7 @@ const SessionFolderItemBase = <TSessionNode,>({
   isDropTarget = false,
   onNewSession,
   depth = 0,
+  canExpand = true,
   hideActions = false,
   archivedBucket = false,
 }: SessionFolderItemProps<TSessionNode>) => {
@@ -119,7 +115,6 @@ const SessionFolderItemBase = <TSessionNode,>({
     [isRenaming, onRenameDraftChange],
   );
 
-  // Auto-focus rename when externally triggered
   React.useEffect(() => {
     if (!isRenaming) return;
     const focusInput = () => {
@@ -137,27 +132,27 @@ const SessionFolderItemBase = <TSessionNode,>({
   }, [isRenaming]);
 
   const folderIconName = isCollapsed ? 'folder' : 'folder-open';
-  void depth;
+  const toggleable = !renaming && canExpand;
 
   return (
     <div className="oc-folder">
-      {/* Folder header – also acts as a drop zone when droppableRef is provided */}
       <div
         ref={droppableRef}
+        style={{ paddingInlineStart: sessionTreeRowPaddingLeft(depth) }}
         className={cn(
           'group/folder relative flex items-center justify-between gap-1.5 py-1 min-w-0 rounded-md',
           'cursor-pointer',
           isDropTarget && 'bg-primary/10 ring-1 ring-inset ring-primary/30',
         )}
-        onClick={renaming ? undefined : (event) => {
+        onClick={!toggleable ? undefined : (event) => {
           // SAFETY: this handler is attached to the div rendered directly above.
           (event.currentTarget as HTMLElement).blur();
           onToggle();
         }}
-        role={renaming ? undefined : 'button'}
-        tabIndex={renaming ? undefined : 0}
+        role={!toggleable ? undefined : 'button'}
+        tabIndex={!toggleable ? undefined : 0}
         onKeyDown={
-          renaming
+          !toggleable
             ? undefined
             : (event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
@@ -166,20 +161,20 @@ const SessionFolderItemBase = <TSessionNode,>({
                 }
               }
         }
-        aria-label={isCollapsed
+        aria-label={!toggleable ? undefined : isCollapsed
           ? t('sessions.sidebar.folderItem.expandAria', { folderName: folder.name })
           : t('sessions.sidebar.folderItem.collapseAria', { folderName: folder.name })}
       >
         <div className={cn(
-          'min-w-0 flex items-center gap-1.5 pl-1.5 flex-1',
+          'min-w-0 flex items-center gap-0.5 flex-1',
           archivedBucket
-            ? (alwaysShowActions ? 'pr-7' : 'group-hover/folder:pr-7 group-focus-within/folder:pr-7')
-            // Actions overlay on hover (new session, rename, delete = three
-            // 24px buttons anchored at the right edge); reserve room only
-            // while they are revealed, mirroring session-row behavior.
-            : (alwaysShowActions ? 'pr-20' : 'group-hover/folder:pr-20 group-focus-within/folder:pr-20'),
+            ? (alwaysShowActions ? 'pe-7' : 'group-hover/folder:pe-7 group-has-[:focus-visible]/folder:pe-7')
+            : (alwaysShowActions ? 'pe-20' : 'group-hover/folder:pe-20 group-has-[:focus-visible]/folder:pe-20'),
         )}>
-          <Icon name={folderIconName} className={cn('h-3.5 w-3.5 flex-shrink-0', isDropTarget ? 'text-primary' : 'text-muted-foreground')} />
+          {canExpand
+            ? <FileTreeChevron expanded={!isCollapsed} />
+            : <span aria-hidden className="size-3.5 flex-shrink-0" />}
+          <Icon name={folderIconName} className={cn('mx-px h-3 w-3 flex-shrink-0', isDropTarget ? 'text-primary' : 'text-muted-foreground')} />
 
           {renaming ? (
             <form
@@ -239,38 +234,33 @@ const SessionFolderItemBase = <TSessionNode,>({
             <div className="min-w-0 flex items-center gap-1.5 flex-1">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className={cn('typography-ui-label font-semibold truncate', isDropTarget ? 'text-primary' : 'text-muted-foreground')}>
+                  <span className={cn('typography-ui-label font-medium truncate', isDropTarget ? 'text-primary' : 'oc-group-label')}>
                     {displayName ?? folder.name}
                   </span>
                 </TooltipTrigger>
-                <TooltipContent side="right" sideOffset={8} className="max-w-xs">
+                <TooltipContent side="top" sideOffset={6} className="max-w-xs">
                   {displayName ?? folder.name}
                 </TooltipContent>
               </Tooltip>
-              <span className="typography-micro text-muted-foreground/70 flex-shrink-0">
-                • {sessions.length}
+              <span className="typography-micro text-muted-foreground flex-shrink-0">
+                • {memberCount ?? sessions.length}
               </span>
+              {projectLabel ? <span className="min-w-0 truncate typography-micro text-muted-foreground">{projectLabel}</span> : null}
               {collapsedActivityState ? (
                 <CollapsedActivityIndicator state={collapsedActivityState} />
               ) : null}
-              {isCollapsed ? (
-                <Icon name="arrow-right-s" className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-              ) : (
-                <Icon name="arrow-down-s" className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-              )}
             </div>
           )}
 
         </div>
 
-        {/* Action buttons */}
         {!renaming && (!hideActions || archivedBucket) ? (
           <div
             className={cn(
-              'absolute right-0.5 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5 transition-opacity',
+              'absolute inset-e-0.5 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5',
               alwaysShowActions
                 ? 'opacity-100'
-                : 'opacity-0 pointer-events-none group-hover/folder:opacity-100 group-hover/folder:pointer-events-auto group-focus-within/folder:opacity-100 group-focus-within/folder:pointer-events-auto',
+                : 'opacity-0 pointer-events-none group-hover/folder:opacity-100 group-hover/folder:pointer-events-auto group-has-[:focus-visible]/folder:opacity-100 group-has-[:focus-visible]/folder:pointer-events-auto',
             )}
           >
             <div className="flex items-center gap-0.5">
@@ -298,7 +288,7 @@ const SessionFolderItemBase = <TSessionNode,>({
                   className="inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-interactive-hover/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   aria-label={t('sessions.sidebar.folderItem.renameAria', { folderName: folder.name })}
                 >
-                  <Icon name="pencil-ai" className="h-3.5 w-3.5" />
+                  <Icon name="pencil-ai" className="h-3 w-3" />
                 </button>
               ) : null}
               <button
@@ -312,23 +302,20 @@ const SessionFolderItemBase = <TSessionNode,>({
                   ? t('sessions.sidebar.folderItem.deleteArchivedInFolderAria', { folderName: folder.name })
                   : t('sessions.sidebar.folderItem.deleteFolderAria', { folderName: folder.name })}
               >
-                <Icon name="delete-bin" className="h-3.5 w-3.5" />
+                <Icon name="delete-bin" className="h-3 w-3" />
               </button>
             </div>
           </div>
         ) : null}
       </div>
 
-      {/* Folder body */}
       {!isCollapsed && renderBody ? (
         <div className="pb-1">
-          {/* Sub-folders first */}
           {subFolderItems}
-          {/* Then sessions */}
           {sessions.length > 0 ? (
             children
           ) : !subFolderItems ? (
-            <div className="py-1 pl-1.5 text-left typography-micro text-muted-foreground/70">
+            <div className="py-1 ps-1.5 text-start typography-micro text-muted-foreground">
               {t('sessions.sidebar.folderItem.emptyFolder')}
             </div>
           ) : null}

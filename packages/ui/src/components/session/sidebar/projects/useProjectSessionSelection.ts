@@ -24,22 +24,13 @@ type Args = {
   setSessionSwitcherOpen: (open: boolean) => void;
 };
 
-export type MissingProjectSessionSelection =
+type MissingProjectSessionSelection =
   | { kind: 'preserve-current' }
   | { kind: 'open-draft' }
   | { kind: 'select-session'; sessionId: string }
   | { kind: 'none' };
 
-/**
- * Resolves the active-project action after its rendered session map does not
- * contain the current session.
- *
- * Authoritative ownership wins. If ownership is still unknown, a session that
- * already appears under another project's rendered map is treated as foreign,
- * while a session missing from every rendered map is preserved so stale
- * worktree metadata can catch up.
- */
-export function resolveMissingProjectSessionSelection<T>({
+function resolveMissingProjectSessionSelection<T>({
   activeProjectId,
   currentSessionId,
   currentSessionOwnerProjectId,
@@ -87,7 +78,7 @@ export function resolveMissingProjectSessionSelection<T>({
   return { kind: 'select-session', sessionId: targetSessionId };
 }
 
-export const useProjectSessionSelection = (args: Args): void => {
+const useProjectSessionSelection = (args: Args): void => {
   const {
     projectSections,
     activeProjectId,
@@ -166,11 +157,6 @@ export const useProjectSessionSelection = (args: Args): void => {
       return;
     }
 
-    // The project active when the list mounts (app start, the sidebar
-    // reopening or switching modes) is not a project the user just switched
-    // to. What opens then belongs to the launch (the last session, a link, or
-    // the draft); picking this project's remembered or first session here
-    // replaced it with a session the user never chose.
     if (previousActiveProjectRef.current === null) {
       previousActiveProjectRef.current = activeProjectId;
       return;
@@ -201,8 +187,6 @@ export const useProjectSessionSelection = (args: Args): void => {
       fallbackSessionId: projectSessionMeta.firstSessionByProject.get(activeProjectId)?.id ?? null,
     });
 
-    // Keep the project unprocessed while ownership/maps may still catch up,
-    // so a later owner of another project can still select B.
     if (selection.kind === 'preserve-current') {
       if (currentSessionOwnerProjectId === activeProjectId) {
         previousActiveProjectRef.current = activeProjectId;

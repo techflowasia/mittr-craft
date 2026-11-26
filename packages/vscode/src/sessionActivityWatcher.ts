@@ -1,15 +1,21 @@
 import { OpenCode, type OpenCodeClient, type OpenCodeEvent } from '@opencode/client';
 import type { OpenCodeManager } from './opencode';
+import { openCodeTrust } from './opencodeTrust';
 
-// Session activity tracking (mirrors web server and desktop behavior)
 type ActivityPhase = 'idle' | 'busy' | 'cooldown';
 
 interface SessionActivity {
   sessionId: string;
   phase: ActivityPhase;
+  startedAt?: number;
 }
 
-const sessionActivityPhases = new Map<string, { phase: ActivityPhase; updatedAt: number }>();
+type SessionActivitySnapshotEntry = {
+  type: ActivityPhase;
+  startedAgoMs?: number;
+};
+
+const sessionActivityPhases = new Map<string, { phase: ActivityPhase; updatedAt: number; startedAt?: number }>();
 const sessionActivityCooldowns = new Map<string, NodeJS.Timeout>();
 const SESSION_COOLDOWN_DURATION_MS = 2000;
 
@@ -31,11 +37,6 @@ const createActivityClient = (manager: OpenCodeManager, baseUrl: string): OpenCo
   headers: manager.getOpenCodeAuthHeaders(),
 });
 
-/**
- * `GET /api/session/active` is the authoritative set of sessions running an
- * agent loop. Anything not in it is idle, including sessions this process
- * believed were busy before the stream dropped.
- */
 const reconcileSessionActivityFromStatus = async (client: OpenCodeClient): Promise<void> => {
   const active = await client.session.active({ signal: AbortSignal.timeout(8_000) });
   const activeSessionIds = new Set(Object.keys(active || {}));
@@ -51,7 +52,7 @@ const reconcileSessionActivityFromStatus = async (client: OpenCodeClient): Promi
   }
 };
 
-const setSessionActivityPhase = (sessionId: string, phase: ActivityPhase): void => {
+const setSessionActivityPhase = (sessionId: string, phase: ActivityPhase, startedAt?: number): void => {
   if (!sessionId) return;
 
   const existingTimer = sessionActivityCooldowns.get(sessionId);
@@ -61,9 +62,18 @@ const setSessionActivityPhase = (sessionId: string, phase: ActivityPhase): void 
   }
 
   const current = sessionActivityPhases.get(sessionId);
-  if (current?.phase === phase) return;
+  if (current?.phase === phase) {
+    if (phase === 'busy' && startedAt !== undefined && startedAt !== current.startedAt) {
+      sessionActivityPhases.set(sessionId, { ...current, updatedAt: Date.now(), startedAt });
+    }
+    return;
+  }
 
-  sessionActivityPhases.set(sessionId, { phase, updatedAt: Date.now() });
+  sessionActivityPhases.set(sessionId, {
+    phase,
+    updatedAt: Date.now(),
+    startedAt: phase === 'busy' ? startedAt : undefined,
+  });
 
   chatViewProvider?.postMessage({
     type: 'openchamber:session-activity',
@@ -92,26 +102,19 @@ const setSessionActivityPhase = (sessionId: string, phase: ActivityPhase): void 
   }
 };
 
-export const getSessionActivitySnapshot = (): Record<string, { type: ActivityPhase }> => {
-  const snapshot: Record<string, { type: ActivityPhase }> = {};
+export const getSessionActivitySnapshot = (): Record<string, SessionActivitySnapshotEntry> => {
+  const now = Date.now();
+  const snapshot: Record<string, SessionActivitySnapshotEntry> = {};
   for (const [sessionId, data] of sessionActivityPhases.entries()) {
-    snapshot[sessionId] = { type: data.phase };
+    const entry: SessionActivitySnapshotEntry = { type: data.phase };
+    if (data.phase === 'busy' && data.startedAt !== undefined) {
+      entry.startedAgoMs = Math.max(0, now - data.startedAt);
+    }
+    snapshot[sessionId] = entry;
   }
   return snapshot;
 };
 
-/**
- * Live activity comes from the live channel only.
- *
- * `session.execution.*` is the signal that matters: a normal OpenCode 2.x turn
- * emits started → succeeded and NO `session.status` or `session.idle` at all, so
- * anything waiting on those would never see the session go busy. The two status
- * events are still handled because they do arrive outside a normal turn (retry,
- * explicit status pushes) and they are cheap to honour.
- *
- * A finished run passes through `cooldown` so the UI does not flip the indicator
- * off the instant the last token lands.
- */
 const deriveSessionActivity = (event: OpenCodeEvent): SessionActivity | null => {
   switch (event.type) {
     case 'session.status': {
@@ -122,7 +125,7 @@ const deriveSessionActivity = (event: OpenCodeEvent): SessionActivity | null => 
       };
     }
     case 'session.execution.started':
-      return { sessionId: event.data.sessionID, phase: 'busy' };
+      return { sessionId: event.data.sessionID, phase: 'busy', startedAt: Date.now() };
     case 'session.execution.succeeded':
       return { sessionId: event.data.sessionID, phase: 'cooldown' };
     case 'session.execution.failed':
@@ -206,21 +209,23 @@ export const startGlobalEventWatcher = async (
           );
         }
 
-        // The stream is lazy: it is only proven connected once a frame arrives.
         let connected = false;
 
         for await (const event of client.event.subscribe({ signal })) {
           if (!connected) {
             connected = true;
-            // A healthy connection clears the backoff, so a long-lived watcher
-            // does not carry a 30s delay into its next reconnect.
             attempt = 0;
             console.log('[VSCode:Activity] connected');
+            openCodeTrust.followLocations(true);
+          }
+
+          if (event.type === 'location.shutdown' && event.location?.directory) {
+            void openCodeTrust.forget(event.location.directory);
           }
 
           const activity = deriveSessionActivity(event);
           if (activity) {
-            setSessionActivityPhase(activity.sessionId, activity.phase);
+            setSessionActivityPhase(activity.sessionId, activity.phase, activity.startedAt);
           }
 
           if (signal.aborted) {
@@ -233,6 +238,7 @@ export const startGlobalEventWatcher = async (
         }
         console.warn('[VSCode:Activity] disconnected', error instanceof Error ? error.message : error);
       }
+      openCodeTrust.followLocations(false);
 
       const backoffMs = Math.min(1000 * Math.pow(2, Math.min(attempt, 5)), 30000);
       await new Promise(r => setTimeout(r, backoffMs));
@@ -245,6 +251,7 @@ export const startGlobalEventWatcher = async (
 export const stopGlobalEventWatcher = (): void => {
   globalEventWatcherStartToken += 1;
   clearGlobalEventWatcherRetry();
+  openCodeTrust.followLocations(false);
 
   if (globalEventWatcherAbortController) {
     try {

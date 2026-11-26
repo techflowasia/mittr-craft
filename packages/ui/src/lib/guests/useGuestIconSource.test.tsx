@@ -40,7 +40,7 @@ describe('guest icon loading', () => {
     revoked = [];
     reply = async () => svg();
     window = new Window({ url: 'http://localhost/' });
-    for (const [key, value] of Object.entries({ window, document: window.document, navigator: window.navigator, IS_REACT_ACT_ENVIRONMENT: true })) {
+    for (const [key, value] of Object.entries({ window, document: window.document, Event: window.Event, CustomEvent: window.CustomEvent, navigator: window.navigator, IS_REACT_ACT_ENVIRONMENT: true })) {
       globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
       Object.defineProperty(globalThis, key, { configurable: true, value });
     }
@@ -114,6 +114,14 @@ describe('guest icon loading', () => {
     });
     expect(created).toBe(1);
     expect(icon).toBe('blob:fixture-1');
+  });
+
+  test('answers an inline SVG data URI as it is, with no request', async () => {
+    const inline = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg"><path d="M2 6h15"/></svg>')}`;
+    await render(inline);
+    expect(icon).toBe(inline);
+    expect(requests).toEqual([]);
+    expect(created).toBe(0);
   });
 
   test('keeps a fallback instead of materializing an HTML error response', async () => {

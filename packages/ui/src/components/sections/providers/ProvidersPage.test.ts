@@ -1,18 +1,18 @@
 import { describe, expect, test } from 'bun:test';
 import type { ConnectionInfo, IntegrationInfo } from '@opencode/client';
-import { requiresProviderAuth, shouldLoadAvailableProviders } from './providerAvailability';
 import {
   findIntegrationForProvider,
   getCredentialConnections,
   getKeyMethod,
-  getOAuthMethods,
   getProviderConnections,
   getProviderCardStatus,
   getSignInIntegrationId,
+  getSignInMethods,
   providerHasCredentials,
-  shouldAutoOpenAuthPanel,
+  providerHoldsStoredLogin,
   shouldShowApiKeyAuth,
   shouldShowModelsSection,
+  usesMachineCredentials,
 } from './providerAuth';
 
 const integration = (overrides: Partial<IntegrationInfo> = {}): IntegrationInfo => ({
@@ -25,21 +25,6 @@ const integration = (overrides: Partial<IntegrationInfo> = {}): IntegrationInfo 
 
 const credential: ConnectionInfo = { type: 'credential', id: 'cred_1', label: 'API key', method: 'key' };
 const envConnection: ConnectionInfo = { type: 'env', name: 'ANTHROPIC_API_KEY' };
-
-describe('ProvidersPage available provider loading', () => {
-  test('loads available providers only in add-provider mode', () => {
-    expect(shouldLoadAvailableProviders(false)).toBe(false);
-    expect(shouldLoadAvailableProviders(true)).toBe(true);
-  });
-});
-
-describe('ProvidersPage provider authentication', () => {
-  test('does not require credentials for a custom provider defined in config', () => {
-    expect(requiresProviderAuth(true, false, true)).toBe(false);
-    expect(requiresProviderAuth(true, false, false)).toBe(true);
-    expect(requiresProviderAuth(true, true, false)).toBe(false);
-  });
-});
 
 describe('integration method helpers', () => {
   test('findIntegrationForProvider matches a provider to the integration of the same id', () => {
@@ -59,15 +44,16 @@ describe('integration method helpers', () => {
     expect(shouldShowApiKeyAuth(undefined)).toBe(true);
   });
 
-  test('getOAuthMethods keeps only oauth methods, in declared order', () => {
+  test('getSignInMethods keeps oauth and external methods, in declared order', () => {
     const methods: IntegrationInfo['methods'] = [
       { type: 'key', label: 'API Key' },
       { type: 'oauth', id: 'browser', label: 'OAuth' },
       { type: 'env', names: ['OPENAI_API_KEY'] },
+      { type: 'external', id: 'aws-profile', label: 'AWS profile' },
       { type: 'oauth', id: 'device', label: 'Device' },
     ];
-    expect(getOAuthMethods(integration({ methods })).map((method) => method.id)).toEqual(['browser', 'device']);
-    expect(getOAuthMethods(undefined)).toEqual([]);
+    expect(getSignInMethods(integration({ methods })).map((method) => method.id)).toEqual(['browser', 'aws-profile', 'device']);
+    expect(getSignInMethods(undefined)).toEqual([]);
   });
 
   test('getKeyMethod returns the key method when the integration accepts one', () => {
@@ -124,14 +110,9 @@ describe('provider credential state helpers', () => {
     expect(providerHasCredentials({ connections: [], optionsApiKey: null })).toBe(false);
   });
 
-  test('OAuth-only provider without credentials opens the panel and hides models', () => {
+  test('OAuth-only provider without credentials hides models', () => {
     const hasCredentials = providerHasCredentials({ connections: [] });
     expect(hasCredentials).toBe(false);
-    expect(shouldAutoOpenAuthPanel({
-      integrationsLoaded: true,
-      hasCredentials,
-      userDismissed: false,
-    })).toBe(true);
     expect(shouldShowModelsSection({
       modelCount: 1,
       integrationsLoaded: true,
@@ -142,11 +123,6 @@ describe('provider credential state helpers', () => {
   test('provider with a stored credential shows Connected and models', () => {
     const hasCredentials = providerHasCredentials({ connections: [credential] });
     expect(hasCredentials).toBe(true);
-    expect(shouldAutoOpenAuthPanel({
-      integrationsLoaded: true,
-      hasCredentials,
-      userDismissed: false,
-    })).toBe(false);
     expect(shouldShowModelsSection({
       modelCount: 3,
       integrationsLoaded: true,
@@ -187,24 +163,11 @@ describe('provider credential state helpers', () => {
     // After the integration refetch, the stored credential shows up.
     const after = providerHasCredentials({ connections: [credential] });
     expect(after).toBe(true);
-    expect(shouldAutoOpenAuthPanel({
-      integrationsLoaded: true,
-      hasCredentials: after,
-      userDismissed: false,
-    })).toBe(false);
     expect(shouldShowModelsSection({
       modelCount: 2,
       integrationsLoaded: true,
       hasCredentials: after,
     })).toBe(true);
-  });
-
-  test('explicit hide keeps the auth panel closed while credentials are still missing', () => {
-    expect(shouldAutoOpenAuthPanel({
-      integrationsLoaded: true,
-      hasCredentials: false,
-      userDismissed: true,
-    })).toBe(false);
   });
 
   test('models stay visible while integrations are still loading', () => {
@@ -246,5 +209,74 @@ describe('getProviderCardStatus', () => {
 
   test('a provider with no integration gets no status instead of a false warning', () => {
     expect(status([integration({ id: 'openai' })])).toBe(null);
+  });
+
+  test('a stored login with no model says so, and a needed new sign-in outranks it', () => {
+    const noModels = (connections: ConnectionInfo[]) => getProviderCardStatus({
+      integrations: [integration({ connections })],
+      providerId: 'anthropic',
+      noModels: true,
+    });
+    expect(noModels([credential])).toEqual({ kind: 'noModels' });
+    expect(noModels([{ ...credential, status: { status: 'needs_auth', message: 'Signed out.' } }])).toEqual({ kind: 'reauthNeeded' });
+  });
+});
+
+describe('providerHoldsStoredLogin', () => {
+  test('reads the integration OpenCode uses for the provider', () => {
+    const consoleLogin = integration({ id: 'opencode', connections: [credential] });
+    expect(providerHoldsStoredLogin([consoleLogin], { id: 'opencode-go', integrationID: 'opencode' })).toBe(true);
+    expect(providerHoldsStoredLogin([consoleLogin], { id: 'opencode-go' })).toBe(false);
+  });
+
+  test('a login the provider page would not list does not count', () => {
+    const consoleLogin = integration({ id: 'opencode', connections: [credential] });
+    expect(providerHoldsStoredLogin([consoleLogin], { id: 'console-openai', integrationID: 'opencode' })).toBe(false);
+  });
+
+  test('an environment key or an unread list is no stored login', () => {
+    expect(providerHoldsStoredLogin([integration({ connections: [envConnection] })], { id: 'anthropic' })).toBe(false);
+    expect(providerHoldsStoredLogin(null, { id: 'anthropic' })).toBe(false);
+  });
+});
+
+describe('Vertex with Application Default Credentials', () => {
+  // What OpenCode serves for Vertex signed in with
+  // `gcloud auth application-default login` and a project in config.
+  const vertexIntegration = integration({
+    id: 'google-vertex',
+    name: 'Vertex',
+    methods: [{ type: 'key' }, { type: 'env', names: ['GOOGLE_VERTEX_API_KEY'] }],
+  });
+  const vertexPackage = '@opencode/ai/providers/google-vertex';
+  const vertex = { id: 'google-vertex', package: vertexPackage, settings: { project: 'my-project', location: 'global' } };
+
+  test('a project OpenCode resolved means credentials on the machine', () => {
+    expect(usesMachineCredentials(vertex)).toBe(true);
+    expect(usesMachineCredentials({ ...vertex, settings: { location: 'global' } })).toBe(false);
+    expect(usesMachineCredentials({ ...vertex, settings: { project: '' } })).toBe(false);
+    expect(usesMachineCredentials({ id: 'anthropic', package: '@opencode/ai/providers/anthropic', settings: { project: 'my-project' } })).toBe(false);
+    expect(usesMachineCredentials(undefined)).toBe(false);
+  });
+
+  test('a config alias on the Vertex package counts like Vertex itself', () => {
+    expect(usesMachineCredentials({ ...vertex, id: 'vertex-eu' })).toBe(true);
+    expect(usesMachineCredentials({ ...vertex, package: '@opencode/ai/providers/openai-compatible' })).toBe(true);
+    expect(usesMachineCredentials({ ...vertex, id: 'other', package: '@opencode/ai/providers/openai-compatible' })).toBe(false);
+  });
+
+  test('shows From environment and the models section instead of a sign-in prompt', () => {
+    const machineCredentials = usesMachineCredentials(vertex);
+    expect(getProviderCardStatus({ integrations: [vertexIntegration], providerId: 'google-vertex', machineCredentials }))
+      .toEqual({ kind: 'environment' });
+    const hasCredentials = providerHasCredentials({ connections: [], machineCredentials });
+    expect(hasCredentials).toBe(true);
+    expect(shouldShowModelsSection({ modelCount: 2, integrationsLoaded: true, hasCredentials })).toBe(true);
+  });
+
+  test('a stored key still counts as a connected account', () => {
+    const keyed = integration({ ...vertexIntegration, connections: [credential] });
+    expect(getProviderCardStatus({ integrations: [keyed], providerId: 'google-vertex', machineCredentials: true }))
+      .toEqual({ kind: 'connected' });
   });
 });

@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import type { SyncEvent } from "@/lib/opencode/events"
-import type { Message, Part, SessionOutcome } from "@/lib/opencode/model"
+import type { Message, Part, SessionOutcome, ToolPart } from "@/lib/opencode/model"
 import { getRuntimeKey } from "@/lib/runtime-switch"
 import { ChildStoreManager } from "./child-store"
 import { createEventRoutingIndex, handleEvent, markRecordedInterruptedTurn } from "./sync-context"
+import { materializeSessionSnapshots, type MaterializedMessageRecord } from "./materialization"
+import { deriveRecoveredQuestions, noteQuestionFormSnapshot, resetRecoverableQuestions, useRecoverableQuestionsStore } from "./recoverable-questions"
 
 const cleanups: Array<() => void> = []
 afterEach(() => { for (const cleanup of cleanups.splice(0).reverse()) cleanup() })
@@ -17,8 +19,10 @@ const runningTool: Part = {
   id: "prt_t", messageID: "msg_a", sessionID: "ses_1", type: "tool", tool: "bash", callID: "c",
   state: { status: "running", input: {}, time: { start: 2 } },
 }
-const idle = (outcome: SessionOutcome, id = "msg_i"): Message => (
-  { id, sessionID: "ses_1", role: "idle", time: { created: 3 }, outcome }
+const quota = { type: "provider", message: "quota exceeded" }
+
+const idle = (outcome: SessionOutcome, id = "msg_i", error?: typeof quota): Message => (
+  { id, sessionID: "ses_1", role: "idle", time: { created: 3 }, outcome, error }
 )
 
 function setup(messages: Message[]) {
@@ -35,7 +39,56 @@ const isStopped = (message: Message | undefined) => (
   message?.role === "assistant" && message.time.completed !== undefined && message.error?.type === "aborted"
 )
 
+const failedWith = (message: Message | undefined) => (
+  message?.role === "assistant" && message.time.completed !== undefined && message.closedLocally ? message.error : undefined
+)
+
 describe("markRecordedInterruptedTurn", () => {
+  for (const outcome of ["interrupted", "failed", "succeeded", undefined] as const) {
+    test(`a completed message with a stale question recovers only with an interrupted or failed record: ${outcome}`, () => {
+      resetRecoverableQuestions()
+      const { store } = setup([])
+      const question = { ...runningTool, tool: "question" }
+      const completed = { ...openAssistant, time: { created: 2, completed: 3 } }
+      const records: MaterializedMessageRecord[] = [{ info: completed, parts: [question] }]
+      if (outcome) records.push({ info: idle(outcome), parts: [] })
+      const snapshot = materializeSessionSnapshots(store.getState(), "ses_1", records)
+      store.setState({ message: snapshot.message, part: snapshot.part })
+      noteQuestionFormSnapshot("/repo", [{
+        id: "frm_1", sessionID: "ses_1", title: "Question", fields: [{ key: "q0", type: "string" }],
+        metadata: { kind: "question", tool: { messageID: "msg_a", id: "prt_t" } },
+      }])
+
+      markRecordedInterruptedTurn(store, "ses_1")
+
+      const recovered = deriveRecoveredQuestions(store.getState(), useRecoverableQuestionsStore.getState(), new Set(["ses_1"]))
+      expect(recovered).toHaveLength(outcome === "interrupted" || outcome === "failed" ? 1 : 0)
+      // The server's completed assistant record remains authoritative.
+      expect(store.getState().message.ses_1[0]).toBe(completed)
+      const settled = store.getState()
+      markRecordedInterruptedTurn(store, "ses_1")
+      expect(store.getState()).toBe(settled)
+      resetRecoverableQuestions()
+    })
+  }
+
+  for (const state of [
+    { status: "completed", input: {}, output: "answered", time: { start: 2, end: 3 } },
+    { status: "error", input: {}, error: "Interaction cancelled because the location shut down", errorType: "aborted", time: { start: 2, end: 3 } },
+  ] satisfies ToolPart["state"][]) {
+    test(`a recorded interruption preserves the question's terminal ${state.status} outcome`, () => {
+      const completed = { ...openAssistant, time: { created: 2, completed: 3 } }
+      const { store } = setup([user, completed, idle("interrupted")])
+      const question: ToolPart = { ...runningTool, type: "tool", tool: "question", state }
+      store.setState({ part: { msg_a: [question] } })
+
+      markRecordedInterruptedTurn(store, "ses_1")
+
+      expect(store.getState().part.msg_a[0]).toBe(question)
+      expect(store.getState().message.ses_1[1]).toBe(completed)
+    })
+  }
+
   for (const outcome of ["interrupted", "failed"] as const) {
     test(`marks the turn OpenCode recorded as ${outcome}`, () => {
       const { store } = setup([user, openAssistant, idle(outcome)])
@@ -47,6 +100,14 @@ describe("markRecordedInterruptedTurn", () => {
       expect(tool?.type === "tool" && tool.state.status).toBe("error")
     })
   }
+
+  test("a failed turn recorded with its error shows that error, not a stop", () => {
+    const { store } = setup([user, openAssistant, idle("failed", "msg_i", quota)])
+
+    markRecordedInterruptedTurn(store, "ses_1")
+
+    expect(failedWith(store.getState().message.ses_1[1])).toEqual(quota)
+  })
 
   test("leaves an unfinished turn with no record open (#4156)", () => {
     // Another OpenCode process on the same database (the TUI) is running it.
@@ -98,7 +159,7 @@ describe("settle events", () => {
 
     receive({ type: "session.error", properties: { sessionID: "ses_1", error: { type: "unknown", message: "boom" } } })
 
-    expect(isStopped(store.getState().message.ses_1[1])).toBe(true)
+    expect(failedWith(store.getState().message.ses_1[1])).toEqual({ type: "unknown", message: "boom" })
   })
 
   for (const outcome of [undefined, "succeeded"] as const) {

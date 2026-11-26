@@ -7,17 +7,10 @@ type ConfirmRequest = {
   title: string;
   message: string;
   action: string;
+  decline?: string;
+  destructive?: boolean;
 };
 
-/**
- * A yes-or-no question asked in the product's own dialog.
- *
- * Native `window.confirm` sits outside the page's focus tree: on Windows it can
- * leave Electron's renderer unable to accept text, and in a webview it does
- * not open at all. `confirm` resolves `true` for the action, `false` for cancel
- * or dismissal, and `false` when the owner unmounts while the question is
- * open, so a caller never waits on an answer nobody can give.
- */
 export function useConfirmDialog() {
   const { t } = useI18n();
   const [request, setRequest] = React.useState<ConfirmRequest | null>(null);
@@ -37,7 +30,6 @@ export function useConfirmDialog() {
   }, []);
 
   const confirm = React.useCallback((next: ConfirmRequest): Promise<boolean> => {
-    // A second question while one is open answers the first with "no" first.
     pending.current?.(false);
     return new Promise((resolve) => {
       pending.current = resolve;
@@ -53,8 +45,8 @@ export function useConfirmDialog() {
           <DialogDescription className="whitespace-pre-line">{request?.message}</DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button size="sm" variant="outline" autoFocus onClick={() => settle(false)}>{t('dialog.common.actions.cancel')}</Button>
-          <Button size="sm" onClick={() => settle(true)}>{request?.action}</Button>
+          <Button size="sm" variant="outline" autoFocus onClick={() => settle(false)}>{request?.decline ?? t('dialog.common.actions.cancel')}</Button>
+          <Button size="sm" variant={request?.destructive ? 'destructive' : 'default'} onClick={() => settle(true)}>{request?.action}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

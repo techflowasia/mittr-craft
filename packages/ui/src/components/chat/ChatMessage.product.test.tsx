@@ -9,6 +9,7 @@ import { OpenCode } from '@opencode/client';
 
 import type { RuntimeAPIs } from '@/lib/api/types';
 import type { AssistantMessage, Message, Part } from '@/lib/opencode/model';
+import type { MessageSlice } from './lib/turns/timelineRows';
 import type { TurnGroupingContext } from './lib/turns/types';
 
 plugin({
@@ -56,6 +57,8 @@ const { ThemeSystemProvider } = await import('@/contexts/ThemeSystemContext');
 const { registerProductUiPlugin, resetProductUiPluginsForTests } = await import('@/lib/product-plugins');
 const { RuntimeAPIContext } = await import('@/contexts/runtimeAPIContext');
 const { SyncProvider } = await import('@/sync/sync-context');
+const { MessageSliceContext } = await import('./message/messageSliceContext');
+const { LiveFinalActivityContext } = await import('./components/liveActivityContext');
 const { default: ChatMessage } = await import('./ChatMessage');
 
 const unavailable = (): never => { throw new Error('rendering a message must not call runtime APIs'); };
@@ -106,7 +109,7 @@ const turn = (isLatestTurn: boolean): TurnGroupingContext => ({
   hasReasoning: false,
 });
 
-const render = async (message: { info: Message; parts: Part[] }, context?: TurnGroupingContext): Promise<string> => {
+const render = async (message: { info: Message; parts: Part[] }, context?: TurnGroupingContext, slice: MessageSlice | null = null, fold: React.ContextType<typeof LiveFinalActivityContext> = null): Promise<string> => {
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
@@ -117,7 +120,11 @@ const render = async (message: { info: Message; parts: Part[] }, context?: TurnG
           <SyncProvider sdk={sdk} directory="/project">
             <I18nProvider>
               <ThemeSystemProvider>
-                <ChatMessage message={message} turnGroupingContext={context} />
+                <MessageSliceContext.Provider value={slice}>
+                  <LiveFinalActivityContext.Provider value={fold}>
+                    <ChatMessage message={message} turnGroupingContext={context} />
+                  </LiveFinalActivityContext.Provider>
+                </MessageSliceContext.Provider>
               </ThemeSystemProvider>
             </I18nProvider>
           </SyncProvider>
@@ -181,6 +188,56 @@ describe('ChatMessage product hooks', () => {
     expect(await render({ info: assistant(), parts }, turn(false))).toContain('msg_reply|1|false');
     expect(await render({ info: assistant(), parts })).toContain('msg_reply|1|false');
     expect(await render({ info: user, parts: [textPart('msg_ask', 'Question')] }, turn(true))).not.toContain('data-probe');
+  });
+
+  test('a reply drawn as several rows carries the footer slot on its last row only, and every row keeps the marks its bubble is joined by', async () => {
+    registerProductUiPlugin({
+      id: 'footer-probe',
+      slots: { 'assistant-message-footer': () => <span data-probe="footer" /> },
+    });
+    const text = 'First words. Middle words. Last words.';
+    const parts = [textPart('msg_reply', text)];
+    const partId = parts[0].id;
+    const first: MessageSlice = { to: { partId, offset: 13 }, index: 0, count: 3 };
+    const middle: MessageSlice = { from: { partId, offset: 13 }, to: { partId, offset: 27 }, index: 1, count: 3 };
+    const last: MessageSlice = { from: { partId, offset: 27 }, index: 2, count: 3 };
+    const draw = (slice: MessageSlice) => render({ info: assistant(), parts }, turn(true), slice);
+    const rows = [await draw(first), await draw(middle), await draw(last)];
+    expect(rows.map((html) => html.includes('data-probe="footer"'))).toEqual([false, false, true]);
+    expect(rows.every((html) => html.includes('data-assistant-bubble'))).toBe(true);
+    expect(rows.map((html) => [html.includes('data-message-slice='), html.includes('data-message-continues=')])).toEqual([[false, true], [true, true], [true, false]]);
+    for (const html of rows) {
+      const host = document.createElement('div');
+      host.innerHTML = html;
+      expect(host.querySelector('[data-message-row] > .chat-message-column > [data-assistant-bubble]')).not.toBeNull();
+    }
+  });
+
+  test('every step of one turn marks which of its edges meet another step, and the answer under a closed activity fold keeps its own top', async () => {
+    const steps = { opening: [true, false], middle: [false, false], closing: [false, true], only: [true, true] } as const;
+    const joins = async ([first, last]: readonly [boolean, boolean], slice: MessageSlice | null = null, fold?: { expanded: boolean }) => {
+      const html = await render(
+        { info: assistant(), parts: [textPart('msg_reply', 'Here it is')] },
+        { ...turn(true), isFirstAssistantInTurn: first, isLastAssistantInTurn: last },
+        slice,
+        fold ? { messageId: 'msg_reply', contentId: 'fold', pages: [], expanded: fold.expanded } : null,
+      );
+      const host = document.createElement('div');
+      host.innerHTML = html;
+      const bubble = host.querySelector('[data-assistant-bubble]');
+      return [bubble?.hasAttribute('data-reply-joins-above'), bubble?.hasAttribute('data-reply-joins-below')];
+    };
+    expect(await joins(steps.only)).toEqual([false, false]);
+    expect(await joins(steps.opening)).toEqual([false, true]);
+    expect(await joins(steps.middle)).toEqual([true, true]);
+    expect(await joins(steps.closing)).toEqual([true, false]);
+    const cut = { partId: 'msg_reply:text:0', offset: 4 };
+    expect(await joins(steps.middle, { to: cut, index: 0, count: 2 })).toEqual([true, false]);
+    expect(await joins(steps.middle, { from: cut, index: 1, count: 2 })).toEqual([false, true]);
+    expect(await joins(steps.closing, null, { expanded: false })).toEqual([false, false]);
+    expect(await joins(steps.closing, null, { expanded: true })).toEqual([true, false]);
+    const alone = await render({ info: assistant(), parts: [textPart('msg_reply', 'Here it is')] });
+    expect(alone).not.toContain('data-reply-joins');
   });
 
   test('the assistant message body carries the bubble marker and the user message does not', async () => {

@@ -1,9 +1,9 @@
 diff --git a/packages/electron/product.test.mjs b/packages/electron/product.test.mjs
 new file mode 100644
-index 000000000..0bb1e2ac6
+index 000000000..0b6e1fc46
 --- /dev/null
 +++ b/packages/electron/product.test.mjs
-@@ -0,0 +1,214 @@
+@@ -0,0 +1,274 @@
 +import assert from 'node:assert/strict';
 +import fs from 'node:fs';
 +import os from 'node:os';
@@ -18,6 +18,7 @@ index 000000000..0bb1e2ac6
 +  readSplashSvg,
 +  resolveAppNames,
 +  serverVersionEnv,
++  withoutProductToken,
 +} from './product.mjs';
 +
 +const HOME = '/home/someone';
@@ -48,12 +49,13 @@ index 000000000..0bb1e2ac6
 +    desktopPort: 57123,
 +    links: {
 +      bugReport: 'https://github.com/openchamber/openchamber/issues/new?template=bug_report.yml',
-+      ideas: 'https://github.com/openchamber/openchamber/discussions/categories/ideas',
++      ideas: 'https://github.com/openchamber/openchamber/issues/new?template=feature_request.yml',
 +      discord: 'https://discord.gg/ZYRSdnwwKA',
 +    },
 +    updaterFeed: { provider: 'github', owner: 'openchamber', repo: 'openchamber' },
 +    splashSvg: null,
 +    env: {},
++    envDefaults: {},
 +    ensureDirs: [],
 +    serverPlugins: [],
 +    serverReportsAppVersion: false,
@@ -176,6 +178,45 @@ index 000000000..0bb1e2ac6
 +  assert.deepEqual(env, { A: '1' });
 +});
 +
++test('envDefaults fill only unset keys', () => {
++  const product = { env: {}, envDefaults: { ACME_BROKER_URL: 'https://api.example.test' } };
++
++  const launched = { ACME_BROKER_URL: 'http://127.0.0.1:3000' };
++  applyProductEnv(product, launched);
++  assert.equal(launched.ACME_BROKER_URL, 'http://127.0.0.1:3000');
++
++  const empty = {};
++  applyProductEnv(product, empty);
++  assert.equal(empty.ACME_BROKER_URL, 'https://api.example.test');
++
++  const blank = { ACME_BROKER_URL: '  ' };
++  applyProductEnv(product, blank);
++  assert.equal(blank.ACME_BROKER_URL, 'https://api.example.test');
++});
++
++test('a product env value still wins over a launch value when the product also has defaults', () => {
++  const env = { A: 'launch', B: 'launch' };
++  applyProductEnv({ env: { A: 'product' }, envDefaults: { A: 'default', B: 'default', C: '~/c' } }, env);
++  assert.deepEqual(env, { A: 'product', B: 'launch', C: '~/c' });
++});
++
++test('readProduct expands ~/ in envDefaults', () => {
++  const product = readProduct({ appPath: APP_PATH, fs: productFile({ envDefaults: { A: '~/a' } }), homeDir: HOME });
++  assert.deepEqual(product.envDefaults, { A: path.join(HOME, 'a') });
++});
++
++test('a product env value ignores a launch override', () => {
++  const product = readProduct({
++    appPath: APP_PATH,
++    fs: productFile({ env: { ACME_BROKER_URL: 'https://fixed.example.test', ACME_BROKER_FIXED: '1' } }),
++    homeDir: HOME,
++  });
++  const env = { ACME_BROKER_URL: 'https://example.invalid' };
++  applyProductEnv(product, env);
++  assert.equal(env.ACME_BROKER_URL, 'https://fixed.example.test');
++  assert.equal(env.ACME_BROKER_FIXED, '1');
++});
++
 +test('the server reports its own version unless the product asks for the app version', () => {
 +  const upstream = readProduct({ appPath: APP_PATH, fs: fakeFs({}), homeDir: HOME });
 +  assert.deepEqual(serverVersionEnv(upstream, '2.1.1'), {});
@@ -200,13 +241,13 @@ index 000000000..0bb1e2ac6
 +test('app name comes from product', () => {
 +  const product = readProduct({
 +    appPath: APP_PATH,
-+    fs: productFile({ appName: 'MittrCraft', linuxDesktopName: 'mittrcraft.desktop' }),
++    fs: productFile({ appName: 'Acme', linuxDesktopName: 'acme.desktop' }),
 +    homeDir: HOME,
 +  });
 +  assert.deepEqual(resolveAppNames(product, { isDev: true }), {
-+    appName: 'MittrCraft',
-+    linuxDesktopName: 'mittrcraft.desktop',
-+    devUserDataName: 'MittrCraft Dev',
++    appName: 'Acme',
++    linuxDesktopName: 'acme.desktop',
++    devUserDataName: 'Acme Dev',
 +  });
 +  assert.equal(resolveAppNames(product, { isDev: false }).devUserDataName, null);
 +});
@@ -217,4 +258,23 @@ index 000000000..0bb1e2ac6
 +    linuxDesktopName: 'openchamber.desktop',
 +    devUserDataName: 'OpenChamber Dev',
 +  });
++});
++
++test('a user agent loses the token Electron builds from the app name, and nothing else', () => {
++  const chrome = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.7339.41 Safari/537.36';
++  const withToken = (token) => chrome.replace('Chrome/', `${token} Chrome/`);
++  assert.equal(withoutProductToken(withToken('Acme/1.22.0'), { appName: 'Acme' }), chrome);
++  assert.equal(withoutProductToken(withToken('AcmeDev/1.22.0-rc.1'), { appName: 'Acme Dev' }), chrome);
++  assert.equal(withoutProductToken(withToken('AcmeDev/1.22.0'), { appName: 'Acme' }), withToken('AcmeDev/1.22.0'));
++  assert.equal(withoutProductToken(withToken('A+c/1.0'), { appName: 'A+c' }), chrome);
++  assert.equal(withoutProductToken(withToken('Electron/45.0.0'), UPSTREAM_PRODUCT), withToken('Electron/45.0.0'));
++  assert.equal(withoutProductToken(undefined, { appName: 'Acme' }), '');
++});
++
++test('the shell drops the product token wherever it hands out a plain browser user agent', () => {
++  for (const file of ['entry.mjs', 'main.mjs']) {
++    const source = fs.readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
++    const calls = [...source.matchAll(/plainChromeUserAgent\((\w+)/g)].map((match) => match[1]);
++    assert.deepEqual(calls, ['withoutProductToken'], file);
++  }
 +});

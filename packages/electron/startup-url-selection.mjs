@@ -3,6 +3,27 @@ export const resolveStartupUrlProbePlan = ({ development, packagedUi, skipLocalS
   probeHmrUi: development === true && packagedUi !== true,
 });
 
+export const describeStartupEnvironmentOverrides = ({ skipLocalServer, serverUrl }) => {
+  const lines = [];
+  if (skipLocalServer) {
+    lines.push('OPENCHAMBER_SKIP_LOCAL_SERVER=1 is set: not starting the built-in server');
+  }
+  const raw = (serverUrl ?? '').trim();
+  if (raw) {
+    let origin = '';
+    try {
+      const url = new URL(raw);
+      if (url.protocol === 'http:' || url.protocol === 'https:') origin = url.origin;
+    } catch {
+      // Not a URL: startup ignores it, and the line below says so.
+    }
+    lines.push(origin
+      ? `OPENCHAMBER_SERVER_URL is set: opening ${origin}`
+      : 'OPENCHAMBER_SERVER_URL is set but is not an http(s) address: ignoring it');
+  }
+  return lines;
+};
+
 export const shouldIgnoreLoopbackConnectionLimit = ({ development, packagedUi }) => (
   development !== true || packagedUi === true
 );

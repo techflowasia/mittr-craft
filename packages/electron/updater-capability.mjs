@@ -2,11 +2,20 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { UPSTREAM_PRODUCT } from './product.mjs';
 
+export const readLinuxPackageType = (resourcesPath = process.resourcesPath) => {
+  try {
+    return fs.readFileSync(path.join(resourcesPath, 'package-type'), 'utf8').trim();
+  } catch {
+    return '';
+  }
+};
+
 export const assertUpdaterCapability = ({
   platform = process.platform,
   packaged,
   updaterFeed = UPSTREAM_PRODUCT.updaterFeed,
   appImagePath = process.env.APPIMAGE,
+  packageType = readLinuxPackageType(),
   access = fs.accessSync,
   stat = fs.statSync,
 } = {}) => {
@@ -14,8 +23,9 @@ export const assertUpdaterCapability = ({
   if (platform !== 'linux' || !packaged) return;
 
   if (!appImagePath) {
+    if (packageType === 'deb' || packageType === 'rpm') return;
     throw new Error(
-      'Updates require the packaged Linux AppImage. Start OpenChamber from its .AppImage file, not an extracted or repackaged copy.',
+      'Updates require the packaged Linux AppImage, .deb or .rpm. Start OpenChamber from its .AppImage file or install a package, not an extracted or repackaged copy.',
     );
   }
   if (!path.isAbsolute(appImagePath)) {

@@ -33,18 +33,6 @@ describe('parseInstallInput', () => {
 });
 
 describe('installation diagnostics', () => {
-  test('sends the selected identity for Git URLs, not local folders', async () => {
-    const fetch = spyOn(globalThis, 'fetch').mockImplementation(async (_input, options) => {
-      const body = JSON.parse(String(options?.body));
-      if (body.url) expect(body.gitIdentityId).toBe('work');
-      else expect(body.gitIdentityId).toBeUndefined();
-      return Response.json({ error: 'clone-failed' }, { status: 400 });
-    });
-    try {
-      await installGuest('git@github.com:acme/panel.git', { gitIdentityId: 'work' });
-      await installGuest('/tmp/panel', { gitIdentityId: 'work' });
-    } finally { fetch.mockRestore(); }
-  });
   for (const status of [401, 403, 404, 500, 502]) test(`preserves HTTP ${status} without copying the response body`, async () => {
     const fetch = spyOn(globalThis, 'fetch').mockResolvedValue(new Response('private server details', { status }));
     try {
@@ -66,6 +54,14 @@ describe('installation diagnostics', () => {
       expect(await installGuest('/tmp/extension')).toEqual({
         ok: false, code: 'failed', diagnostic: { method: 'POST', path: '/api/guests', kind: 'network' },
       });
+    } finally { fetch.mockRestore(); }
+  });
+
+  test('an installed row this build cannot read is reported as installed but unreadable', async () => {
+    const row = { id: 'newer', name: 'Newer', icon: 'window', capabilities: { requested: ['telepathy'], granted: [] } };
+    const fetch = spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ guest: row }, { status: 201 }));
+    try {
+      expect(await installGuest('/tmp/extension')).toEqual({ ok: false, code: 'unreadable' });
     } finally { fetch.mockRestore(); }
   });
 

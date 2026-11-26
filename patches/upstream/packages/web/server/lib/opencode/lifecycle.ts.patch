@@ -1,0 +1,226 @@
+diff --git a/packages/web/server/lib/opencode/lifecycle.ts b/packages/web/server/lib/opencode/lifecycle.ts
+index f559d084f..52d48713e 100644
+--- a/packages/web/server/lib/opencode/lifecycle.ts
++++ b/packages/web/server/lib/opencode/lifecycle.ts
+@@ -138,10 +138,13 @@ export interface OpenCodeLifecycleDependencies {
+   getWarmupDirectories?: () => Promise<Array<string | null>>;
+   noProjectDirectory?: string | null;
+   onOpenCodeRestarted?: (() => void) | null;
++  beforeOpenCodeRestart?: (reason: string) => Promise<void>;
++  onEngineReady?: () => void | Promise<void>;
+   managedStartupTimeoutMs?: number;
+   now?: () => number;
+   topUpV1SessionMigration?: typeof topUpV1Migration;
+-  checkOpenCodeBinary?: (launch: ManagedOpenCodeLaunchSpec) => Promise<string>;
++  isBundledOpenCodePath?: (binary: string | null | undefined) => boolean;
++  checkOpenCodeBinary?: (launch: ManagedOpenCodeLaunchSpec, options?: { env?: ProcessEnvironment }) => Promise<string>;
+   diagnosticJournal?: DiagnosticJournal;
+ }
+ 
+@@ -293,9 +296,12 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+     getWarmupDirectories = async () => [],
+     noProjectDirectory = null,
+     onOpenCodeRestarted = null,
++    beforeOpenCodeRestart = () => Promise.resolve(),
++    onEngineReady = () => {},
+     managedStartupTimeoutMs = 30_000,
+     now = Date.now,
+     topUpV1SessionMigration = topUpV1Migration,
++    isBundledOpenCodePath = () => false,
+     checkOpenCodeBinary = requireOpenCodeV2,
+     diagnosticJournal = serverDiagnosticJournal,
+   } = deps;
+@@ -864,7 +870,10 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+ 
+     await applyOpencodeBinaryFromSettings({ strict: true });
+     const resolvedBinary = ensureOpencodeCliEnv();
+-    const preflight = checkOpenCodeBinary(resolveManagedOpenCodeLaunchSpec(resolvedBinary));
++    const managedOpenCodeEnv = await getManagedOpenCodeEnv();
++    const preflight = checkOpenCodeBinary(resolveManagedOpenCodeLaunchSpec(resolvedBinary), {
++      env: { ...process.env, ...managedOpenCodeEnv },
++    });
+     managedPreflight = preflight.then(() => true, () => false);
+     await preflight;
+     recordStartupPerformance('opencode.binary.ready', {
+@@ -883,7 +892,6 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+     const shellEnv = getManagedOpenCodeShellEnvSnapshot
+       ? getManagedOpenCodeShellEnvSnapshot() || {}
+       : {};
+-    const managedOpenCodeEnv = await getManagedOpenCodeEnv();
+     recordStartupPerformance('opencode.environment.ready', {
+       attempt,
+       durationMs: performance.now() - phaseStartedAt,
+@@ -892,9 +900,12 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+     phaseStartedAt = performance.now();
+ 
+     const inheritedEnv = overlayEnvironment({ ...shellEnv, ...process.env, PATH: envPath }, getUserEnvironment());
++    for (const [key, value] of Object.entries(managedOpenCodeEnv)) {
++      if (value === undefined) delete inheritedEnv[key];
++    }
+ 
+     try {
+-      const topUp = topUpV1SessionMigration({ env: inheritedEnv });
++      const topUp = isBundledOpenCodePath(resolvedBinary) ? null : topUpV1SessionMigration({ env: { ...inheritedEnv, ...managedOpenCodeEnv } });
+       if (topUp && topUp.status !== 'skipped') {
+         console.log('[OpenCode] V1 session migration top-up:', topUp);
+       }
+@@ -981,12 +992,22 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+     }
+   };
+ 
++  const notifyEngineReady = async () => {
++    try {
++      await onEngineReady();
++    } catch (error) {
++      console.warn('An OpenCode ready listener failed:', error instanceof Error ? error.message : error);
++    }
++  };
++
+   const startOpenCode = async () => {
+     managedPreflight = null;
+     const lastError: LifecycleFailure = { cause: null };
+     for (let attempt = 1; attempt <= START_OPEN_CODE_MAX_ATTEMPTS; attempt += 1) {
+       try {
+-        return await startOpenCodeOnce(attempt);
++        const serverInstance = await startOpenCodeOnce(attempt);
++        notifyEngineReady();
++        return serverInstance;
+       } catch (error) {
+         lastError.cause = error;
+         if (state.isShuttingDown || isBinaryRejected(error)) {
+@@ -1006,9 +1027,18 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+       }
+     }
+ 
++    managedProcessEnv = null;
+     throw lastError.cause;
+   };
+ 
++  let engineLaunchQueue: Promise<void> = Promise.resolve();
++  let processStartedByRestart: ManagedOpenCodeProcess | null = null;
++  const runEngineLaunchExclusive = <T>(task: () => Promise<T>) => {
++    const run = engineLaunchQueue.then(task);
++    engineLaunchQueue = run.then(() => undefined, () => undefined);
++    return run;
++  };
++
+   const restartOpenCode = async (reason = 'managed-restart', { whileStopped }: { whileStopped?: () => Promise<void> } = {}) => {
+     if (state.isShuttingDown) return;
+     if (whileStopped && state.isExternalOpenCode) throw new Error('An external OpenCode server cannot be stopped by OpenChamber.');
+@@ -1020,11 +1050,13 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+       await state.currentRestartPromise.catch(() => {});
+       if (state.isShuttingDown) return;
+     }
++    const drained = beforeOpenCodeRestart(reason);
+     while (bootstrapRetryRun) await bootstrapRetryRun;
+     if (state.isShuttingDown) return;
+ 
+     const whileStoppedError: LifecycleFailure = { cause: null };
+-    state.currentRestartPromise = (async () => {
++    state.currentRestartPromise = runEngineLaunchExclusive(async () => {
++      await drained;
+       managedPreflight = null;
+       state.isRestartingOpenCode = true;
+       if (!state.isExternalOpenCode) diagnosticJournal.record('managed restart started');
+@@ -1046,6 +1078,7 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+           state.lastOpenCodeError = null;
+           state.openCodeNotReadySince = 0;
+           syncToHmrState();
++          await onEngineReady();
+         } else {
+           diagnosticJournal.record('external unavailable');
+           state.lastOpenCodeError = `External OpenCode server on port ${probePort} is not responding`;
+@@ -1104,6 +1137,7 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+ 
+       state.lastOpenCodeError = null;
+       state.openCodeProcess = await startOpenCode();
++      processStartedByRestart = state.openCodeProcess;
+       diagnosticJournal.record('managed restart ready');
+       syncToHmrState();
+ 
+@@ -1117,7 +1151,7 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+       } catch (error) {
+         console.warn('Failed to rebind event stream after OpenCode restart:', optionalErrorFields(error)?.message ?? error);
+       }
+-    })();
++    });
+ 
+     try {
+       await state.currentRestartPromise;
+@@ -1139,7 +1173,7 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+     if (whileStoppedError.cause) throw whileStoppedError.cause;
+   };
+ 
+-  const waitForOpenCodeReady = async (timeoutMs = 20000, intervalMs = 400) => {
++  const waitForOpenCodeReady = async (timeoutMs = 20000, intervalMs = 400, { notify = true } = {}) => {
+     if (!state.openCodePort) {
+       throw new Error('OpenCode port is not available');
+     }
+@@ -1171,6 +1205,7 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+         if (!isSupportedOpenCodeVersion(info.version)) throw new UnsupportedOpenCodeVersionError(info.version);
+         state.isOpenCodeReady = true;
+         state.lastOpenCodeError = null;
++        if (notify && !state.openCodeProcess) await notifyEngineReady();
+         return;
+       } catch (error) {
+         lastError.cause = error;
+@@ -1304,6 +1339,7 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+     diagnosticJournal.record('external connected');
+     syncToHmrState();
+     stopExternalReadinessRecheck();
++    await notifyEngineReady();
+   };
+ 
+   const scheduleExternalReadinessRecheck = () => {
+@@ -1318,6 +1354,7 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+     const bootstrapStartedAt = performance.now();
+     const bootstrapError: LifecycleFailure = { cause: null };
+     let unsupportedExternalVersion = null;
++    let attachedExternal = false;
+     recordStartupPerformance('opencode.bootstrap.start');
+     try {
+       try {
+@@ -1335,6 +1372,7 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+       syncFromHmrState();
+       if (await isOpenCodeProcessHealthy()) {
+         console.log(`[HMR] Reusing existing OpenCode process on port ${state.openCodePort}`);
++        await notifyEngineReady();
+       } else if (env.ENV_SKIP_OPENCODE_START && env.ENV_EFFECTIVE_PORT) {
+         const label = env.ENV_CONFIGURED_OPENCODE_HOST ? env.ENV_CONFIGURED_OPENCODE_HOST.origin : `http://localhost:${env.ENV_EFFECTIVE_PORT}`;
+         console.log(`Using external OpenCode server at ${label} (skip-start mode)`);
+@@ -1346,6 +1384,7 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+         state.lastOpenCodeError = null;
+         state.openCodeNotReadySince = 0;
+         syncToHmrState();
++        attachedExternal = true;
+       } else if (env.ENV_EFFECTIVE_PORT && await probeExternalOpenCode(env.ENV_EFFECTIVE_PORT, env.ENV_CONFIGURED_OPENCODE_HOST?.origin)) {
+         const label = env.ENV_CONFIGURED_OPENCODE_HOST ? env.ENV_CONFIGURED_OPENCODE_HOST.origin : `http://localhost:${env.ENV_EFFECTIVE_PORT}`;
+         console.log(`Auto-detected existing OpenCode server at ${label}`);
+@@ -1357,6 +1396,7 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+         state.lastOpenCodeError = null;
+         state.openCodeNotReadySince = 0;
+         syncToHmrState();
++        attachedExternal = true;
+       } else if (env.ENV_EFFECTIVE_PORT && (unsupportedExternalVersion = await readUnsupportedExternalOpenCodeVersion(
+         env.ENV_EFFECTIVE_PORT,
+         env.ENV_CONFIGURED_OPENCODE_HOST?.origin,
+@@ -1378,12 +1418,16 @@ export const createOpenCodeLifecycleRuntime = (deps: OpenCodeLifecycleDependenci
+           syncToHmrState();
+         }
+ 
+-        state.openCodeProcess = await startOpenCode();
+-        syncToHmrState();
++        await runEngineLaunchExclusive(async () => {
++          if (state.openCodeProcess && state.openCodeProcess === processStartedByRestart) return;
++          state.openCodeProcess = await startOpenCode();
++          syncToHmrState();
++        });
+       }
+       await waitForOpenCodePort();
+       try {
+-        await waitForOpenCodeReady();
++        await waitForOpenCodeReady(20000, 400, { notify: !attachedExternal });
++        if (attachedExternal) await notifyEngineReady();
+       } catch (error) {
+         bootstrapError.cause = error;
+         if (state.isExternalOpenCode) diagnosticJournal.record('external unavailable');

@@ -13,7 +13,7 @@ const UPSTREAM_DEFINITIONS = {
   ],
 };
 
-const UPSTREAM_ALL = ['session.list', 'session.create', 'schedule.status', 'memory.save', 'notify.send', 'browser.open'];
+const UPSTREAM_ALL = ['session.list', 'session.create', 'schedule.status', 'memory.save', 'notify.send', 'browser.open', 'session.markDone'];
 
 const recordingLogger = () => {
   const warnings = [];
@@ -227,6 +227,7 @@ test('an action registered twice, under an unknown tool or with an upstream name
   assert.throws(() => registry.register({ ...entry, action: 'memory.save' }), /memory\.save is an upstream action/);
   assert.throws(() => registry.register({ ...entry, action: 'schedule.status' }), /schedule\.status is an upstream action/);
   assert.throws(() => registry.register({ ...entry, action: 'notify.send' }), /notify\.send is an upstream action/);
+  assert.throws(() => registry.register({ ...entry, action: 'session.markDone' }), /session\.markDone is an upstream action/);
   assert.throws(() => registry.defineTool({ name: CHROME, description: 'again', parameters: {} }), /mittrcraft_chrome is already defined/);
   assert.equal(registry.has('session.create'), false);
   assert.equal(registry.has('memory.save'), false);
@@ -352,7 +353,7 @@ test('a voice-only action answers the switch it names, not its tool\'s', async (
 });
 
 test('the MittrCraft tool names are fixed', () => {
-  assert.deepEqual(MITTR_TOOLS, { computer: 'mittrcraft_computer', chrome: 'mittrcraft_chrome', work: 'mittrcraft_work', widgets: 'mittrcraft_widgets' });
+  assert.deepEqual(MITTR_TOOLS, { computer: 'mittrcraft_computer', chrome: 'mittrcraft_chrome', work: 'mittrcraft_work', widgets: 'mittrcraft_widgets', todo: 'mittrcraft_todo' });
 });
 
 test('an action kept off voice is refused by voice and runs for agents and http', async () => {

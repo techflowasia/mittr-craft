@@ -5,6 +5,7 @@
  *
  *   node scripts/mittr/build-desktop.mjs --flavor dev|prod
  *   node scripts/mittr/build-desktop.mjs --flavor dev --gate
+ *   node scripts/mittr/build-desktop.mjs --flavor dev --target zip
  *   node scripts/mittr/build-desktop.mjs --check-strings [--flavor dev|prod] [--gate]
  *
  * It runs upstream's `package` chain one step at a time so the visible-string
@@ -42,9 +43,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { z } from 'zod';
 
+import { readPinnedOpenCodeServerVersion, verifyOpenCodeServer } from '../../packages/electron/scripts/opencode-server-staging.mjs';
 import { resolveTargetArchitecture } from '../../packages/electron/scripts/target-architecture.mjs';
 import { matcherFor } from '../../packages/mittr-server/src/brand-matcher.js';
 import { resolveBunExecutable } from '../lib/bun-executable.mjs';
+import { loadAsar } from './brand-leak-scan.mjs';
+import { stripBuildPaths, verifyNoBuildPaths } from './build-paths.mjs';
+import { leaveOutClosedEngineParts, verifyLeftOut } from './engine-left-out.mjs';
+import { checkEngineNotices } from './engine-notices.mjs';
 import { AGENT_BROWSER_RESOURCE_DIR, CUA_DRIVER_RESOURCE_DIR, NOTICES_RESOURCE, assertDriverArchitecture, checkDriverSources, checkNotices, stageDrivers, verifyPackedDrivers } from './drivers.mjs';
 import { RIPGREP_RESOURCE_DIR, defaultRipgrepArchive, readPinnedArchive, readRipgrepPin, stageRipgrep, verifyPackedRipgrep } from './ripgrep.mjs';
 import { VAD_DIR, VAD_WEB_DIST, checkBundledOrtVersion, checkVadNotices, readVadPins, resolveVadSources, stageVadAssets, verifyPackedVadAssets } from './vad-assets.mjs';
@@ -56,23 +62,27 @@ const stagingDir = path.join(electronDir, '.product');
 const pluginsDir = path.join(electronDir, 'product-plugins');
 const serverPluginEntry = path.join(repoRoot, 'packages', 'mittr-server', 'src', 'plugin.js');
 const serverPluginBundle = path.join(pluginsDir, 'mittr-server.mjs');
-const webServerSource = path.join(repoRoot, 'packages', 'web', 'server');
+const webServerBuild = path.join(repoRoot, 'packages', 'web', 'build', 'server');
 
 const FLAVORS = ['dev', 'prod'];
-const USAGE = `Usage: node scripts/mittr/build-desktop.mjs --flavor ${FLAVORS.join('|')} [--gate]`;
+const USAGE = `Usage: node scripts/mittr/build-desktop.mjs --flavor ${FLAVORS.join('|')} [--gate] [--target zip]`;
 
 const DEV_NAME = 'MittrCraft Dev';
 const DEV_FOLDER = 'mittrcraft-dev';
 const GATE = Object.freeze({ appName: 'MittrCraft Gate', idSuffix: '.gate', folder: 'mittrcraft-gate', desktopPort: 57188 });
 
+export const ENGINE_RESOURCE_DIR = 'opencode-server';
 export const RIPGREP_STAGING = `.product/${RIPGREP_RESOURCE_DIR}`;
 export const AGENT_BROWSER_STAGING = `.product/${AGENT_BROWSER_RESOURCE_DIR}`;
 export const CUA_DRIVER_STAGING = `.product/${CUA_DRIVER_RESOURCE_DIR}`;
 
-// The web server is packed straight from its workspace source, so its
+// The web server is packed straight from its workspace build, so its
 // visible strings are replaced in a staged copy that is packed in its place.
 const STAGED_SERVER = '.product/web/server';
 const PACKED_WEB = 'node_modules/@openchamber/web';
+const PACKED_SERVER = `${PACKED_WEB}/build/server`;
+
+const BUILD_PATH_DIRS = ['resources/web-dist', `resources/${ENGINE_RESOURCE_DIR}`, 'dist-bundle', '.product/web'];
 
 // Build output the visible-string replacement may touch, relative to
 // `packages/electron`.
@@ -238,20 +248,55 @@ export const applyVisibleStrings = ({ entries, rootDir }) => {
  * and source HTML inside the package are left out: the desktop serves the UI
  * from `resources/web-dist`, for its own window and the loopback server alike.
  */
+// Limit exclusions to app-owned code and confirmed test inputs. In particular,
+// a runtime asset directory named fixtures is not automatically test data.
+const SERVER_TEST_FILES = [
+  '**/*.{test,spec}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}',
+  'lib/{git,source-control}/storage-process.{fixture,test-support}.js',
+  'lib/{gitea,gerrit,forgejo}/fixtures/**',
+  'lib/spaces/places/{fake-docker,docker-live-support,contract-suite,escape-suite,memory-place}.{js,js.map}',
+  'lib/spaces/code-in-bait.{js,js.map}',
+  'lib/fs/folder-watch-test-helpers.{js,js.map}',
+];
+const SERVER_TYPE_FILES = ['**/*.d.ts'];
+const SERVER_LEFT_OUT = [...SERVER_TEST_FILES, ...SERVER_TYPE_FILES];
+
 export const stagedServerFiles = (asarUnpack = []) => {
-  const serverPrefix = `${PACKED_WEB}/server/`;
+  const serverPrefix = `${PACKED_SERVER}/`;
   const unpacked = asarUnpack.filter((pattern) => pattern.startsWith(serverPrefix));
   return [
-    `!${PACKED_WEB}/server{,/**}`,
+    `!${PACKED_SERVER}{,/**}`,
     ...unpacked,
     `!${PACKED_WEB}/{dist,public}{,/**}`,
     `!${PACKED_WEB}/*.html`,
+    ...SERVER_LEFT_OUT.map((pattern) => `!${serverPrefix}${pattern}`),
+    '!node_modules/@openchamber/sdk/**/*.{test,spec}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}',
+    '!node_modules/@openchamber/sdk/scripts/fixtures{,/**}',
     {
       from: STAGED_SERVER,
-      to: `${PACKED_WEB}/server`,
-      filter: ['**/*', ...unpacked.map((pattern) => `!${pattern.slice(serverPrefix.length)}`)],
+      to: PACKED_SERVER,
+      filter: ['**/*', ...unpacked.map((pattern) => `!${pattern.slice(serverPrefix.length)}`), ...SERVER_LEFT_OUT.map((pattern) => `!${pattern}`)],
     },
   ];
+};
+
+// These are source modules, not credential data. A disposable-copy filter once
+// dropped their parent directory and produced an app that could not start.
+const REQUIRED_SERVER_FILES = ['lib/quota/credentials/providers.js', 'lib/quota/credentials/store.js'];
+
+export const assertServerRuntimeFiles = (serverDir) => {
+  for (const file of REQUIRED_SERVER_FILES) {
+    if (!fs.existsSync(path.join(serverDir, file)) || !fs.statSync(path.join(serverDir, file)).isFile()) {
+      throw new Error(`required server runtime file is missing: ${file} in ${serverDir}`);
+    }
+  }
+};
+
+export const assertPackedServerRuntimeFiles = (files) => {
+  const packed = new Set(files.map((file) => file.replace(/^\//, '')));
+  for (const file of REQUIRED_SERVER_FILES) {
+    if (!packed.has(`${PACKED_SERVER}/${file}`)) throw new Error(`packed server runtime file is missing: ${file}`);
+  }
 };
 
 const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -281,7 +326,17 @@ export const parseBuildArgs = (argv) => {
   const flavor = parseFlavor(argv);
   const gate = argv.includes('--gate');
   if (gate && flavor !== 'dev') throw new Error(`--gate builds only from --flavor dev\n${USAGE}`);
-  return { flavor, gate };
+  const index = argv.indexOf('--target');
+  const named = index !== -1 || argv.some((arg) => arg.startsWith('--target='));
+  const target = index === -1 ? argv.find((arg) => arg.startsWith('--target='))?.slice('--target='.length) : argv[index + 1];
+  if (named && target !== 'zip') throw new Error(`--target accepts only zip\n${USAGE}`);
+  return named ? { flavor, gate, target } : { flavor, gate };
+};
+
+export const selectBuildTarget = (config, target, platform = process.platform) => {
+  if (!target) return config;
+  if (platform !== 'darwin') throw new Error('--target zip is supported only on macOS');
+  return { ...config, mac: { ...config.mac, target: ['zip'] } };
 };
 
 const gateName = (text) => text.replaceAll(DEV_NAME, GATE.appName);
@@ -307,7 +362,7 @@ const gateOverlay = (overlay) => {
     protocols: overlay.protocols.map((protocol) => ({ ...protocol, name: gateName(protocol.name) })),
     mac: {
       ...overlay.mac,
-      extendInfo: { ...overlay.mac.extendInfo, NSLocalNetworkUsageDescription: gateName(overlay.mac.extendInfo.NSLocalNetworkUsageDescription) },
+      extendInfo: Object.fromEntries(Object.entries(overlay.mac.extendInfo).map(([key, value]) => [key, typeof value === 'string' ? gateName(value) : value])),
     },
     linux: {
       ...overlay.linux,
@@ -365,13 +420,14 @@ export const assertConsistent = ({ product, builderConfig }) => {
   if (problems.length > 0) throw new Error(`brand files disagree: ${problems.join('; ')}`);
 };
 
-const findDmg = ({ productName, startedAt }) => {
-  const distDir = path.join(electronDir, 'dist');
-  if (!fs.existsSync(distDir)) return null;
-  return fs.readdirSync(distDir)
-    .filter((name) => name.startsWith(`${productName}-`) && name.endsWith('.dmg'))
+export const requireMacArtifact = ({ productName, startedAt, target, distDir }) => {
+  const extension = target ?? 'dmg';
+  const artifact = fs.existsSync(distDir) ? fs.readdirSync(distDir)
+    .filter((name) => name.startsWith(`${productName}-`) && name.endsWith(`.${extension}`))
     .map((name) => path.join(distDir, name))
-    .find((file) => fs.statSync(file).mtimeMs >= startedAt) ?? null;
+    .find((file) => fs.statSync(file).isFile() && fs.statSync(file).mtimeMs >= startedAt) : null;
+  if (!artifact) throw new Error(`no ${productName} ${extension} was produced in packages/electron/dist`);
+  return artifact;
 };
 
 /**
@@ -390,12 +446,16 @@ export const stringsToCheck = (argv, dir = brandDir) => {
 };
 
 const checkStrings = (argv) => {
+  if (!fs.existsSync(webServerBuild)) {
+    console.error(`[mittr] the server runtime is not built: ${path.relative(repoRoot, webServerBuild)} is missing; run bun run build:server first`);
+    return 1;
+  }
   let failed = false;
   for (const { label, entries } of stringsToCheck(argv)) {
     const { results, mismatches } = planVisibleStrings({
       entries,
       rootDir: electronDir,
-      sources: { [`${STAGED_SERVER}/`]: webServerSource },
+      sources: { [`${STAGED_SERVER}/`]: webServerBuild },
     });
     if (mismatches.length === 0) {
       console.log(`[mittr] ${label}: all ${results.length} visible-string entries match`);
@@ -456,6 +516,13 @@ export const checkRipgrepArchive = ({ env = process.env } = {}) => {
   return { pin, archive };
 };
 
+export const verifyPackedEngine = ({ appPath, version = readPinnedOpenCodeServerVersion(), arch = resolveTargetArchitecture().node, verify = verifyOpenCodeServer }) => {
+  const dir = path.join(appPath, 'Contents', 'Resources', ENGINE_RESOURCE_DIR);
+  if (!fs.existsSync(dir)) throw new Error(`the packed app has no OpenCode server: ${dir}`);
+  verifyLeftOut({ serverDir: dir });
+  return verify(dir, { platform: 'darwin', arch, version, runtime: process.execPath });
+};
+
 const checkMittrUiClasses = () => {
   const assets = path.join(repoRoot, 'packages', 'web', 'dist', 'assets');
   const sheets = fs.readdirSync(assets).filter((name) => name.endsWith('.css')).flatMap((name) => ['--css', path.join(assets, name)]);
@@ -473,7 +540,7 @@ const main = async () => {
     process.exitCode = checkStrings(process.argv.slice(2));
     return;
   }
-  const { flavor, gate } = parseBuildArgs(process.argv.slice(2));
+  const { flavor, gate, target } = parseBuildArgs(process.argv.slice(2));
   const { pin: ripgrepPin, archive: ripgrepArchive } = checkRipgrepArchive();
   assertDriverArchitecture(resolveTargetArchitecture().node);
   const drivers = checkDriverSources();
@@ -488,7 +555,7 @@ const main = async () => {
 
   const { readProduct } = await import(pathToFileURL(path.join(electronDir, 'product.mjs')).href);
   const upstreamBuild = readJson(path.join(electronDir, 'package.json')).build;
-  const merged = mergeBuilderConfig(upstreamBuild, builderOverlay);
+  const merged = selectBuildTarget(mergeBuilderConfig(upstreamBuild, builderOverlay), target);
   const builderConfig = { ...merged, files: [...merged.files, ...stagedServerFiles(merged.asarUnpack)] };
   assertConsistent({ product: productOverride, builderConfig });
 
@@ -496,6 +563,7 @@ const main = async () => {
 
   step('1/8 workspace build');
   run(bun, ['run', 'build'], repoRoot);
+  assertServerRuntimeFiles(webServerBuild);
   checkMittrUiClasses();
 
   step('2/8 server plugin bundle');
@@ -511,7 +579,8 @@ const main = async () => {
   if (productOverride.splashSvg) {
     fs.copyFileSync(path.join(brandDir, productOverride.splashSvg), path.join(stagingDir, productOverride.splashSvg));
   }
-  fs.cpSync(webServerSource, path.join(electronDir, STAGED_SERVER), { recursive: true });
+  fs.cpSync(webServerBuild, path.join(electronDir, STAGED_SERVER), { recursive: true });
+  assertServerRuntimeFiles(path.join(electronDir, STAGED_SERVER));
   const ripgrep = stageRipgrep({ archive: ripgrepArchive, pin: ripgrepPin, outDir: path.join(electronDir, RIPGREP_STAGING) });
   console.log(`[mittr] ripgrep ${ripgrepPin.version} staged for the engine: ${path.relative(repoRoot, ripgrep.binary)}`);
   const staged = stageDrivers({ pins: drivers.pins, agentBrowserBinary: drivers.agentBrowserBinary, cuaArchive: drivers.cuaArchive, outDir: stagingDir });
@@ -523,25 +592,23 @@ const main = async () => {
   console.log(`[mittr] product: ${product.appName}, scheme ${product.deepLinkProtocol}, port ${product.desktopPort}`);
 
   step('4/8 upstream desktop build steps');
-  // Staging the engine runs `opencode --version`, which appends to the log
-  // under the XDG data home; keep that out of the builder's own OpenCode.
-  const engineProbeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-build-engine-'));
-  try {
-    const engineProbeEnv = {
-      ...process.env,
-      ...Object.fromEntries(['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'].map((key) => [key, path.join(engineProbeHome, key)])),
-    };
-    run(bun, ['run', 'build:web-assets'], electronDir);
-    run(bun, ['run', 'prepare:opencode-cli'], electronDir, engineProbeEnv);
-    run(bun, ['run', 'bundle:main'], electronDir);
-    run(bun, ['run', 'rebuild:native'], electronDir);
-  } finally {
-    fs.rmSync(engineProbeHome, { recursive: true, force: true });
-  }
+  run(bun, ['run', 'build:web-assets'], electronDir);
+  run(bun, ['run', 'prepare:opencode-server'], electronDir);
+  run(bun, ['run', 'verify:opencode-server'], electronDir);
+  const leftOut = leaveOutClosedEngineParts({ serverDir: path.join(electronDir, 'resources', ENGINE_RESOURCE_DIR) });
+  console.log(`[mittr] left out of the engine: ${leftOut.chunk}`);
+  const engineNotices = checkEngineNotices();
+  console.log(`[mittr] the notices carry the ${engineNotices.listed.length} open packages the engine bundles`);
+  run(bun, ['run', 'bundle:main'], electronDir);
+  run(bun, ['run', 'rebuild:native'], electronDir);
   const webDist = path.join(electronDir, 'resources', VAD_WEB_DIST);
   const vadStaged = stageVadAssets({ pins: vadPins, sources: vadSources, outDir: path.join(webDist, VAD_DIR) });
   const ortChunks = checkBundledOrtVersion({ webDist, pins: vadPins, required: true });
   console.log(`[mittr] ${vadStaged.length} VAD files staged beside the renderer: ${path.relative(repoRoot, path.join(webDist, VAD_DIR))}; ${ortChunks.length} bundled ONNX Runtime chunks carry the pinned version`);
+
+  for (const { file, count } of stripBuildPaths({ rootDir: electronDir, dirs: BUILD_PATH_DIRS, buildRoot: repoRoot })) {
+    console.log(`[mittr] ${count}x the repository folder in ${file}`);
+  }
 
   step('5/8 visible strings');
   for (const { file, from, count } of applyVisibleStrings({ entries: visibleStrings, rootDir: electronDir })) {
@@ -560,20 +627,25 @@ const main = async () => {
   run(process.execPath, [path.join('scripts', 'package.mjs'), '--config', configFile], electronDir);
 
   step('7/8 result');
-  const dmg = findDmg({ productName: builderConfig.productName, startedAt });
-  if (process.platform === 'darwin' && !dmg) throw new Error(`no ${builderConfig.productName} dmg was produced in packages/electron/dist`);
-  console.log(dmg ?? `[mittr] no dmg on ${process.platform}; see packages/electron/dist`);
+  const artifact = process.platform === 'darwin'
+    ? requireMacArtifact({ productName: builderConfig.productName, startedAt, target, distDir: path.join(electronDir, 'dist') })
+    : null;
+  console.log(artifact ?? `[mittr] see packages/electron/dist on ${process.platform}`);
 
   if (process.platform === 'darwin') {
     step('8/8 licence, brand-leak scan, ripgrep, drivers and notices');
     const appPath = findPackedApp({ productName: builderConfig.productName, distDir: path.join(electronDir, 'dist'), startedAt });
     if (!appPath) throw new Error(`no ${builderConfig.productName}.app was produced in packages/electron/dist`);
-    verifyPackedApp({ appPath, scan: runLeakScan });
+    assertPackedServerRuntimeFiles(loadAsar().listPackage(path.join(appPath, 'Contents', 'Resources', 'app.asar')));
     verifyPackedRipgrep({ appPath, pin: ripgrepPin });
+    const engine = verifyPackedEngine({ appPath });
     const packedDrivers = verifyPackedDrivers({ appPath, pins: drivers.pins });
     const packedVad = verifyPackedVadAssets({ appPath, pins: vadPins });
-    console.log(`[mittr] ${LICENCE_RESOURCE} and ripgrep ${ripgrepPin.version} are packed and the brand-leak scan passed: ${appPath}`);
+    const checkedForPaths = verifyNoBuildPaths({ appPath, buildRoot: repoRoot });
+    verifyPackedApp({ appPath, scan: runLeakScan });
+    console.log(`[mittr] ${LICENCE_RESOURCE}, ripgrep ${ripgrepPin.version} and the OpenCode server ${engine.version} are packed and the brand-leak scan passed: ${appPath}`);
     console.log(`[mittr] agent-browser ${packedDrivers.agentBrowserVersion}, cua-driver ${packedDrivers.cuaDriverVersion} (team ${packedDrivers.cuaTeamIdentifier}) and ${NOTICES_RESOURCE} are packed`);
+    console.log(`[mittr] none of ${checkedForPaths} packed text files names the repository or the home folder`);
     console.log(`[mittr] ${packedVad.length} VAD files are packed under Contents/Resources/${VAD_WEB_DIST}/${VAD_DIR} with their pinned sha256 values`);
   }
 };

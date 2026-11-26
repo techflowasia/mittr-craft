@@ -1,6 +1,7 @@
 import type { PermissionMode } from './utils/permissionAutoAccept';
 import { create } from 'zustand';
-import type { Agent } from '@/lib/opencode/model';
+import { findCatalogModel, type Agent } from '@/lib/opencode/model';
+import { isAutoModel } from '@/lib/routing/autoModel';
 
 type BtwModelSelection = { providerId: string; modelId: string };
 export type BtwSelection = {
@@ -9,48 +10,44 @@ export type BtwSelection = {
   variant: string | null | undefined;
 };
 
-export const resolveBtwSelection = ({ agents, savedAgent, savedModel, savedVariant, composerModel, composerVariant }: {
+export const btwModelAvailability = (
+  providers: readonly { id: string; models: readonly { id: string; modelID: string }[] }[],
+  autoReady: boolean,
+): ((model: BtwModelSelection) => boolean) | undefined => {
+  if (providers.length === 0) return undefined;
+  return ({ providerId, modelId }) => {
+    if (isAutoModel(providerId, modelId)) return autoReady;
+    const provider = providers.find((candidate) => candidate.id === providerId);
+    return Boolean(provider && findCatalogModel(provider.models, modelId));
+  };
+};
+
+export const resolveBtwSelection = ({ agents, savedAgent, savedModel, savedVariant, composerModel, composerVariant, isModelAvailable }: {
   agents: readonly Pick<Agent, 'name' | 'hidden' | 'mode'>[];
   savedAgent: string | null;
   savedModel: BtwModelSelection | null;
   savedVariant?: string | null;
   composerModel: BtwModelSelection | null;
   composerVariant: string | null | undefined;
+  isModelAvailable?: (model: BtwModelSelection) => boolean;
 }): BtwSelection => {
   const selectable = agents.filter((agent) => !agent.hidden && (agent.mode === 'primary' || agent.mode === 'all'));
   const agent = selectable.find((candidate) => candidate.name === savedAgent)
     ?? selectable.find((candidate) => candidate.name === 'plan')
     ?? selectable[0];
+  const savedUsable = savedModel !== null && (isModelAvailable === undefined || isModelAvailable(savedModel));
   return {
     agent: agent?.name,
-    model: savedModel ?? composerModel,
-    variant: savedModel ? savedVariant : composerVariant,
+    model: savedUsable ? savedModel : composerModel,
+    variant: savedUsable ? savedVariant : composerVariant,
   };
 };
 
-/**
- * UI-only state for the `/btw` peek panel.
- *
- * The panel's identity is NOT stored here: it is derived from session
- * metadata (`openchamber.btwSessionID` on the parent — see
- * `sessionBtwMetadata`), so the panel appears only in the session `/btw` was
- * typed into and survives reloads. This store keeps only transient
- * per-parent presentation state that has no authoritative home:
- *
- * - `collapsed`: the panel is minimized to the composer chip; the composer
- *   talks to the main session again until it is expanded.
- * - `creating`: `/btw` is between submit and the parent-metadata link
- *   landing, so the panel can show its starting state immediately.
- * - `destroying`: close was clicked; hides the panel optimistically while the
- *   unlink/delete round-trip completes.
- * - `pending`: `/btw` has opened an unsent local composer. No fork exists yet.
- */
 type BtwPanelUIState = {
   collapsed?: boolean;
   creating?: boolean;
   destroying?: boolean;
   pending?: boolean;
-  /** The shield button's choice for the fork; absent means the new session takes the default from Settings. */
   pendingPermissionMode?: PermissionMode;
   pendingSend?: symbol;
 };

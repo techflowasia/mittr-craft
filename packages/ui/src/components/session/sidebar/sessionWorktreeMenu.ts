@@ -3,6 +3,7 @@ import {
   replaceRepositoryWorktrees,
   type ProjectRef,
 } from '@/lib/worktrees/worktreeManager';
+import { checkoutHoldsSubfolder } from '@/lib/worktrees/worktreePaths';
 import type { WorktreeMetadata } from '@/types/worktree';
 import { normalizePath } from '@/lib/pathNormalization';
 
@@ -24,7 +25,7 @@ export type StartSessionWorktreeMenuLoadResult = {
 };
 
 type SessionWorktreeMenuState = {
-  refreshState: 'loading' | 'error' | null;
+  refreshState: 'error' | null;
   showNewWorktreeAction: boolean;
 };
 
@@ -247,6 +248,13 @@ export const buildSessionWorktreeMenuTargets = (args: {
     if (!normalizedPath || targetsByPath.has(normalizedPath)) {
       return;
     }
+    if (
+      normalizedProjectPath
+      && normalizedPath !== normalizedSourceDirectory
+      && checkoutHoldsSubfolder(normalizedPath, normalizedProjectPath)
+    ) {
+      return;
+    }
     targetsByPath.set(normalizedPath, {
       ...target,
       metadata: cloneMetadata({
@@ -313,11 +321,6 @@ export const buildSessionWorktreeMenuTargets = (args: {
   return [...primaryTargets, ...linkedTargets];
 };
 
-// A restored session can keep a source directory whose worktree was deleted:
-// that path no longer matches any known worktree or configured project root,
-// so directory-based resolution fails. The session's worktree metadata still
-// records the owning project root in projectDirectory, so fall back to it
-// before giving up. Without an owner the menu cannot list sibling worktrees.
 export const resolveSessionWorktreeMenuProject = (
   args: StartSessionWorktreeMenuLoadArgs,
   deps: Pick<WorktreeTopologyRefreshDependencies, 'projects' | 'resolveProject'>,
@@ -415,13 +418,10 @@ export const commitDiscoveredRawWorktreesByProject = (args: {
 
 export const getSessionWorktreeMenuState = (args: {
   targets: ReadonlyArray<SessionWorktreeMenuTarget>;
-  isRefreshing: boolean;
   loadFailed: boolean;
 }): SessionWorktreeMenuState => {
   return {
-    refreshState: args.isRefreshing
-      ? 'loading'
-      : (args.loadFailed && args.targets.length === 0 ? 'error' : null),
+    refreshState: args.loadFailed && args.targets.length === 0 ? 'error' : null,
     showNewWorktreeAction: true,
   };
 };

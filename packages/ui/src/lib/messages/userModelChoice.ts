@@ -1,6 +1,6 @@
-import type { Message, Part } from '@/lib/opencode/model'
+import type { Message, Part, Session } from '@/lib/opencode/model'
 
-type UserModelChoice = {
+export type UserModelChoice = {
   id: string
   agent?: string
   providerID?: string
@@ -8,13 +8,6 @@ type UserModelChoice = {
   variant?: string
 }
 
-/**
- * The agent/model a turn actually ran on.
- *
- * OpenCode v2 user messages carry no model: the server records the choice on
- * the assistant reply, so the reply is the authority for what the composer
- * should show.
- */
 export const extractAssistantModelChoice = (message: Message): UserModelChoice | null => {
   if (message.role !== 'assistant') {
     return null
@@ -28,12 +21,6 @@ export const extractAssistantModelChoice = (message: Message): UserModelChoice |
   }
 }
 
-/**
- * Find the latest turn's model/agent choice.
- *
- * Messages whose parts have not been loaded yet are skipped so an incomplete
- * snapshot cannot be treated as authoritative.
- */
 export const findLatestUserModelChoice = (
   messages: readonly Message[],
   getParts: (messageId: string) => Part[] | undefined,
@@ -55,12 +42,28 @@ export const findLatestUserModelChoice = (
   return null
 }
 
-/**
- * When the user has a manual session model override, historical user-message
- * metadata must not overwrite it. After a real send the selection store is
- * updated to match the message, so a conflict means the picker was changed
- * after the last prompt — keep the override.
- */
+export const extractSessionRecordModelChoice = (session: Session | undefined): UserModelChoice | null => {
+  const model = session?.model
+  if (!session || !model?.providerID || !model.id) return null
+  return {
+    id: `session:${session.id}`,
+    agent: undefined,
+    providerID: model.providerID,
+    modelID: model.id,
+    variant: model.variant?.trim() || undefined,
+  }
+}
+
+export const areModelChoicesEqual = (left: UserModelChoice | null, right: UserModelChoice | null): boolean => {
+  if (left === right) return true
+  if (!left || !right) return false
+  return left.id === right.id
+    && left.agent === right.agent
+    && left.providerID === right.providerID
+    && left.modelID === right.modelID
+    && left.variant === right.variant
+}
+
 export const shouldPreserveManualModelOverride = ({
   selectionSource,
   savedSessionModel,

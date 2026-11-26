@@ -1,32 +1,20 @@
 import type { SessionSidebarRenderContext } from '../sessionSidebarRowModel';
 import { getRuntimeKey } from '@/lib/runtime-switch';
-import { matchesRankQuery } from '@/lib/search/fuzzySearch';
+import { matchesRankQuery, SIDEBAR_SEARCH } from '@/lib/search/fuzzySearch';
 import { normalizePath } from '@/lib/pathNormalization';
 import { isChatDirectoryPath } from '@/lib/chatDirectories';
 import { resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
-import { getPinnedSessionKey } from '@/stores/useSessionPinnedStore';
+import { getPinnedSessionKey } from '@/lib/sessionPins';
+import type { Session } from '@/lib/opencode/model';
 import type { WorktreeMetadata } from '@/types/worktree';
 import type { SessionNode } from '../types';
+import { isWorkflowAgentSession } from '@/lib/sessionWorkflowMetadata';
 
-/**
- * Per-row render extras precomputed once per group render and threaded down to
- * each `SessionNodeItem`. Hoisting these out of the row `React.memo` comparator
- * turns an O(rows × subtree-depth) walk into per-row `Set.has`/string compares.
- *
- * The child variant intentionally omits `childRenderExtrasFor` — the resolver is
- * shared from the group and re-passed, so it does not need to recurse through
- * each child's extras object.
- */
 export type SessionNodeChildRenderExtras = {
   subtreeContainsEditing: Set<string>;
   menuOpenSessionId: string | null;
   nodeStructureKey: string;
   blockingBadgeSessionScopes?: readonly BlockingBadgeSessionScope[];
-  /**
-   * Bumped once a minute by the owning list so rows that render a relative
-   * timestamp ("5m") re-render and recompute it. Only the Recent list
-   * supplies it; elsewhere the rows carry no time-dependent label.
-   */
   relativeTimeTick?: number;
 };
 
@@ -34,14 +22,6 @@ export type SessionNodeRenderExtras<TNode = SessionNode> = SessionNodeChildRende
   childRenderExtrasFor?: (child: TNode) => SessionNodeChildRenderExtras;
 };
 
-/**
- * Walk `nodes` and add `node.session.id` to `result` for every node
- * whose subtree contains `targetId`. This is used to precompute, once
- * per SessionGroupSection render, which rows need to update when
- * `editingId` changes. With M visible rows, this
- * turns an O(M × subtree-depth) walk inside `SessionNodeItem.areEqual`
- * into a single O(M) `Set.has` per row.
- */
 export const collectSubtreeContainingId = (
   nodes: SessionNode[],
   targetId: string | null,
@@ -113,12 +93,6 @@ export const getSessionWorktreeMenuDisabled = ({
   isMovingToWorktree: boolean;
 }): boolean => !sessionDirectory || isStreaming || isMovingToWorktree;
 
-/**
- * Choose which (directory, sessionIDs) scopes a sidebar row's blocking-request
- * badges should count. An expanded row counts only its own session; a collapsed
- * parent row additionally rolls up the hidden descendants of its subtree,
- * grouped by the directory store each descendant actually lives in.
- */
 export const selectBlockingBadgeSessionScopes = (
   node: SessionNode,
   isExpanded: boolean,
@@ -134,8 +108,10 @@ export const selectBlockingBadgeSessionScopes = (
       sessionIDs.push(current.session.id);
       sessionIDsByDirectory.set(directory, sessionIDs);
     }
-    if (current === node && isExpanded) return;
-    for (const child of current.children) visit(child);
+    for (const child of current.children) {
+      if (current === node && isExpanded && !isWorkflowAgentSession(child.session)) continue;
+      visit(child);
+    }
   };
   visit(node);
   return [...sessionIDsByDirectory].map(([directory, sessionIDs]) => ({ directory, sessionIDs }));
@@ -169,10 +145,6 @@ type FolderHierarchyEntry = {
   parentId?: string | null;
 };
 
-/**
- * Preserve stored folder order while projecting every disconnected or cyclic
- * component from a deterministic root. The persisted parent links stay as-is.
- */
 export const normalizeFolderRoots = <T extends FolderHierarchyEntry>(folders: readonly T[]): T[] => {
   const folderById = new Map(folders.map((folder) => [folder.id, folder]));
   const childrenByParentId = new Map<string, T[]>();
@@ -257,12 +229,10 @@ export const selectFolderIdsForProjection = (
 
     let keep = malformedIds.has(folderId);
     if (!keep && options.archivedBucket && entry.nodeCount === 0) {
-      // Preserve the archived empty-folder rule: search does not make an
-      // empty folder visible unless a descendant has archived content.
       keep = (childIdsByParentId.get(folderId) ?? []).some(shouldKeep);
     } else {
       if (!keep && !options.searchQuery) keep = true;
-      if (!keep && (entry.nodeCount > 0 || (!isIdQuery && matchesRankQuery([entry.name], options.searchQuery)))) keep = true;
+      if (!keep && (entry.nodeCount > 0 || (!isIdQuery && matchesRankQuery([entry.name], options.searchQuery, SIDEBAR_SEARCH)))) keep = true;
       if (!keep) keep = (childIdsByParentId.get(folderId) ?? []).some(shouldKeep);
     }
 
@@ -287,11 +257,6 @@ const getSessionObjectVersion = (session: object): number => {
   return version;
 };
 
-/**
- * Build a key encoding descendant IDs and session object versions. This lets
- * row memoization detect one changed descendant without recursively comparing
- * every subtree after a reference-only grouping rebuild.
- */
 export const computeNodeStructureKey = (node: SessionNode): string => {
   if (node.children.length === 0) {
     return '';
@@ -341,33 +306,6 @@ export const nodeHasPinnedMembershipChange = (
   return visit(prevNode, nextNode);
 };
 
-/**
- * Visibility classes for the row's right-edge badges (pending permissions /
- * questions). The hover actions paint over the row's right edge, and they are
- * also forced visible while the row menu is open — without hover, so the
- * hover reveal padding does not apply and the actions would cover the badges.
- * The badges therefore yield exactly like the date/branch metadata label:
- * hidden while the actions are hover-revealed or the menu is open. Rows with
- * always-visible actions reserve permanent padding instead, so their badges
- * never conflict and must stay visible.
- */
-export const selectRowBadgeVisibilityClass = (input: {
-  actionsAlwaysVisible: boolean;
-  menuOpen: boolean;
-  hideOnHoverClass: string;
-}): string => {
-  if (input.actionsAlwaysVisible) return '';
-  return `transition-opacity duration-150 ${input.menuOpen ? 'opacity-0' : input.hideOnHoverClass}`;
-};
-
-/**
- * Branch line for a row's tooltip and recent-list marker. An explicit
- * `secondaryMeta` means the owning projection already filtered the branch
- * (Recent and Timeline hide HEAD; Recent also hides a branch equal to the
- * project label), so a null `branchLabel` there is a deliberate filter and
- * must not fall through to the raw worktree branch. Project and Chats rows
- * pass no `secondaryMeta` and keep the worktree fallback.
- */
 export const resolveTooltipBranchLabel = (
   secondaryMeta: { projectLabel?: string | null; branchLabel?: string | null } | null | undefined,
   worktreeBranch: string | null | undefined,
@@ -377,10 +315,6 @@ export const resolveTooltipBranchLabel = (
     : (worktreeBranch ?? null)
 );
 
-/**
- * The worktree directory and branch whose change request a row shows. The
- * row's worktree is the only source of the pair; VS Code renders no PR badges.
- */
 export const resolveSessionPrLookup = (
   worktree: WorktreeMetadata | null | undefined,
   isVSCode: boolean,
@@ -391,10 +325,6 @@ export const resolveSessionPrLookup = (
   return branch && directory ? { directory, branch } : null;
 };
 
-/**
- * Resolve the session id whose sidebar menu is open, or null if no
- * menu is open. Only one row can have its menu open at a time.
- */
 export const resolveMenuOpenSessionId = (
   nodes: SessionNode[],
   menuKey: string | null,
@@ -417,4 +347,28 @@ export const resolveMenuOpenSessionId = (
   };
   nodes.forEach((node) => visit(node));
   return result;
+};
+
+export const collectNodeDescendantIds = (root: SessionNode): string[] => {
+  const out: string[] = [];
+  const walk = (n: SessionNode) => {
+    n.children.forEach((child) => {
+      out.push(child.session.id);
+      walk(child);
+    });
+  };
+  walk(root);
+  return out;
+};
+
+export const collectNodeDescendantSessions = (root: SessionNode): Session[] => {
+  const out: Session[] = [];
+  const walk = (current: SessionNode) => {
+    current.children.forEach((child) => {
+      out.push(child.session);
+      walk(child);
+    });
+  };
+  walk(root);
+  return out;
 };

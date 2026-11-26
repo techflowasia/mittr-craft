@@ -9,6 +9,7 @@ for (const [name, value] of Object.entries({
   document: browser.document,
   navigator: browser.navigator,
   localStorage: browser.localStorage,
+  CustomEvent: browser.CustomEvent,
   IS_REACT_ACT_ENVIRONMENT: true,
 })) {
   originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));

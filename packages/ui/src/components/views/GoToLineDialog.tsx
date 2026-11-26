@@ -5,13 +5,15 @@ import { EditorView } from '@codemirror/view';
 
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
 type GoToLineDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  view: EditorView | null;
+  // external: https://github.com/facebook/react/issues/34840 Editor refs keep dev profiling from traversing cross-origin frames.
+  viewRef: React.RefObject<EditorView | null>;
   variant?: 'overlay' | 'inline';
 };
 
@@ -54,8 +56,9 @@ const moveSelectionToLine = (view: EditorView, lineNumber: number, preferredChar
   });
 };
 
-export function GoToLineDialog({ open, onOpenChange, view, variant = 'overlay' }: GoToLineDialogProps) {
+export function GoToLineDialog({ open, onOpenChange, viewRef, variant = 'overlay' }: GoToLineDialogProps) {
   const { t } = useI18n();
+  const view = viewRef.current;
   const [inputValue, setInputValue] = React.useState('');
   const initialCursorRef = React.useRef<CursorSnapshot | null>(null);
   const committedRef = React.useRef(false);
@@ -77,15 +80,13 @@ export function GoToLineDialog({ open, onOpenChange, view, variant = 'overlay' }
     setInputValue('');
   }, [open, view]);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     if (!open) {
       return;
     }
 
-    window.requestAnimationFrame(() => {
-      inputRef.current?.focus();
-      inputRef.current?.select();
-    });
+    inputRef.current?.focus();
+    inputRef.current?.select();
   }, [open]);
 
   React.useEffect(() => {
@@ -117,8 +118,6 @@ export function GoToLineDialog({ open, onOpenChange, view, variant = 'overlay' }
     });
   }, [view]);
 
-  // Closed from outside (the toolbar button) without going to a line: put
-  // the cursor back, as Escape and an outside click do.
   const wasOpenRef = React.useRef(open);
   React.useEffect(() => {
     if (wasOpenRef.current && !open) restoreInitialSelection();
@@ -154,8 +153,6 @@ export function GoToLineDialog({ open, onOpenChange, view, variant = 'overlay' }
       if (!panel || !(target instanceof Element) || panel.contains(target)) {
         return;
       }
-      // The toolbar button closes the panel with its own click; closing here
-      // first would let that click open it again.
       if (target.closest('[data-go-to-line-toggle]')) return;
       handleOpenChange(false);
     };
@@ -201,7 +198,7 @@ export function GoToLineDialog({ open, onOpenChange, view, variant = 'overlay' }
       <div
         ref={panelRef}
         data-editor-overlay
-        className="ml-1 flex h-6 items-center gap-1"
+        className="ms-1 flex h-6 items-center gap-1"
       >
         <Input
           ref={inputRef}
@@ -218,17 +215,24 @@ export function GoToLineDialog({ open, onOpenChange, view, variant = 'overlay' }
             }
           }}
           placeholder={t('goToLineDialog.field.linePlaceholderShort')}
-          className="h-6 w-20 rounded-md border-border/70 bg-transparent px-2 typography-meta"
+          className="h-6 w-20 rounded-md border-edge bg-transparent px-2 typography-meta"
         />
-        <Button
-          variant="outline"
-          size="xs"
-          onClick={handleSubmit}
-          disabled={!view || lineNumber === null}
-          className="h-6 px-2"
-        >
-          {t('goToLineDialog.actions.go')}
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex">
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={handleSubmit}
+                disabled={!view || lineNumber === null}
+                className="h-6 px-2"
+              >
+                {t('goToLineDialog.actions.go')}
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" sideOffset={6}>{t('filesView.editor.goToLine')}</TooltipContent>
+        </Tooltip>
       </div>
     );
   }
@@ -238,7 +242,7 @@ export function GoToLineDialog({ open, onOpenChange, view, variant = 'overlay' }
       ref={panelRef}
       data-editor-overlay
       className={cn(
-        'absolute left-3 top-3 z-40 w-[min(32rem,calc(100%-1.5rem))] rounded-xl border border-[var(--interactive-border)] bg-[color:color-mix(in_srgb,var(--surface-elevated)_94%,transparent)] p-2.5 shadow-lg backdrop-blur-sm transition-all',
+        'absolute inset-s-3 top-3 z-40 w-[min(32rem,calc(100%-1.5rem))] rounded-xl border border-[var(--interactive-border)] bg-[color:color-mix(in_srgb,var(--surface-elevated)_94%,transparent)] p-2.5 shadow-lg backdrop-blur-sm transition-all',
         open ? 'pointer-events-auto translate-y-0 opacity-100' : 'pointer-events-none -translate-y-1 opacity-0',
       )}
     >
@@ -258,7 +262,7 @@ export function GoToLineDialog({ open, onOpenChange, view, variant = 'overlay' }
             }
           }}
           placeholder={t('goToLineDialog.field.linePlaceholder')}
-          className="h-8 w-full rounded-md border-border/70 bg-surface-elevated/60 typography-ui-label"
+          className="h-8 w-full rounded-md border-edge bg-surface-elevated/60 typography-ui-label"
         />
         <div className="mt-2 rounded-md bg-primary/15 px-3 py-1.5 typography-ui-label text-foreground/95">
           {helperText}

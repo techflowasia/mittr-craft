@@ -40,7 +40,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import ts from 'typescript';
 import { z } from 'zod';
 
 import { resolveBunExecutable } from '../lib/bun-executable.mjs';
@@ -88,53 +87,117 @@ export const findNeedles = (text) => [...text.matchAll(NEEDLE_PATTERN)]
 const NEEDLE_TEST = new RegExp(NEEDLE_PATTERN.source);
 const hasNeedle = (text) => NEEDLE_TEST.test(text);
 
-const isStringNode = (node) => ts.isStringLiteral(node)
-  || ts.isNoSubstitutionTemplateLiteral(node)
-  || ts.isTemplateHead(node)
-  || ts.isTemplateMiddle(node)
-  || ts.isTemplateTail(node);
+let parser;
+const loadParser = () => {
+  if (!parser) {
+    let require = createRequire(path.join(repoRoot, 'package.json'));
+    require = createRequire(require.resolve('vite/package.json'));
+    parser = require('rollup/parseAst');
+  }
+  return parser;
+};
+
+const isNode = (value) => typeof value?.type === 'string';
+
+const childNodes = (node) => Object.entries(node)
+  .filter(([key]) => key !== 'type' && key !== 'start' && key !== 'end')
+  .flatMap(([, value]) => (Array.isArray(value) ? value.filter(isNode) : isNode(value) ? [value] : []));
+
+const stringText = (node) => {
+  if (node.type === 'Literal' && typeof node.value === 'string') return node.value;
+  if (node.type === 'TemplateElement') return node.value.cooked ?? node.value.raw;
+  return undefined;
+};
+
+const literalSpan = (node) => (node.type === 'TemplateElement'
+  ? { start: node.start - 1, end: node.end + (node.tail ? 1 : 2) }
+  : { start: node.start, end: node.end });
+
+const FUNCTION_TYPES = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']);
+
+const isConsoleCall = (node) => node.type === 'CallExpression'
+  && node.callee.type === 'MemberExpression'
+  && !node.callee.computed
+  && node.callee.object.type === 'Identifier'
+  && node.callee.object.name === 'console';
 
 // Text passed to `console.*` is log output, which a person using the app does
 // not see.
-const isConsoleArgument = (node) => {
-  for (let current = node.parent; current && !ts.isSourceFile(current); current = current.parent) {
-    if (ts.isFunctionLike(current)) return false;
-    if (ts.isCallExpression(current)) {
-      const callee = current.expression;
-      if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) && callee.expression.text === 'console') return true;
-    }
+const isConsoleArgument = (node, parents) => {
+  for (let current = parents.get(node); current; current = parents.get(current)) {
+    if (FUNCTION_TYPES.has(current.type)) return false;
+    if (isConsoleCall(current)) return true;
   }
   return false;
 };
 
 // The key when the literal is the value of an object property: that is how a
-// translation dictionary looks in the bundle.
-const propertyKey = (node) => {
-  const { parent } = node;
-  if (!parent || !ts.isPropertyAssignment(parent) || parent.initializer !== node) return undefined;
-  const { name } = parent;
-  return ts.isStringLiteral(name) || ts.isIdentifier(name) || ts.isNoSubstitutionTemplateLiteral(name) ? name.text : undefined;
+// translation dictionary looks in the bundle. The bundler writes a value that
+// holds both quote kinds as a template without placeholders, which is the
+// same plain string.
+const propertyKey = (node, parents) => {
+  let value = node;
+  if (node.type === 'TemplateElement') {
+    const template = parents.get(node);
+    if (template?.type !== 'TemplateLiteral' || template.expressions.length > 0) return undefined;
+    value = template;
+  }
+  const parent = parents.get(value);
+  if (parent?.type !== 'Property' || parent.value !== value || parent.computed || parent.shorthand || parent.method || parent.kind !== 'init') return undefined;
+  const { key } = parent;
+  if (key.type === 'Identifier') return key.name;
+  return key.type === 'Literal' && typeof key.value === 'string' ? key.value : undefined;
+};
+
+const lineStarts = (source) => {
+  const starts = [0];
+  for (let index = source.indexOf('\n'); index !== -1; index = source.indexOf('\n', index + 1)) starts.push(index + 1);
+  return starts;
+};
+
+const lineAt = (starts, offset) => {
+  let low = 0;
+  let high = starts.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (starts[middle] <= offset) low = middle;
+    else high = middle - 1;
+  }
+  return low + 1;
 };
 
 /** String literals and template text in a script, with their 1-based line. */
 export const scriptStrings = (source, fileName) => {
-  const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  let program;
+  try {
+    program = loadParser().parseAst(source, { allowReturnOutsideFunction: true });
+  } catch (error) {
+    throw new Error(`${fileName} could not be parsed: ${error.message}`);
+  }
+  const starts = lineStarts(source);
+  const parents = new WeakMap();
   const strings = [];
-  const visit = (node) => {
-    if (isStringNode(node) && hasNeedle(node.text) && !isConsoleArgument(node)) {
-      const start = node.getStart(sourceFile);
+  const pending = [program];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    const text = stringText(node);
+    if (text !== undefined && hasNeedle(text) && !isConsoleArgument(node, parents)) {
+      const { start, end } = literalSpan(node);
       const codeStart = Math.max(0, start - CODE_CONTEXT);
       strings.push({
-        line: sourceFile.getLineAndCharacterOfPosition(start).line + 1,
-        text: node.text,
-        code: source.slice(codeStart, node.end + CODE_CONTEXT),
-        literal: { start: start - codeStart, end: node.end - codeStart },
-        key: propertyKey(node),
+        line: lineAt(starts, start),
+        text,
+        code: source.slice(codeStart, end + CODE_CONTEXT),
+        literal: { start: start - codeStart, end: end - codeStart },
+        key: propertyKey(node, parents),
       });
     }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
+    const children = childNodes(node);
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      parents.set(children[index], node);
+      pending.push(children[index]);
+    }
+  }
   return strings;
 };
 
@@ -283,7 +346,7 @@ const isScannable = (file) => SCRIPT_EXTENSIONS.has(path.extname(file)) || TEXT_
 // The app's own files at the asar root, and the web server, whose messages
 // reach the UI as errors, statuses and pages. Other packages in
 // `node_modules` are third-party code; tests are not run by the app.
-const SERVER_PREFIX = 'node_modules/@openchamber/web/server/';
+const SERVER_PREFIX = 'node_modules/@openchamber/web/build/server/';
 const isScannedAsarFile = (file) => isScannable(file) && !/\.test\.[cm]?js$/.test(file)
   && (!file.startsWith('node_modules/') || file.startsWith(SERVER_PREFIX));
 

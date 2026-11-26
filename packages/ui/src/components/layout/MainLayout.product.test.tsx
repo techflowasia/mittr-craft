@@ -137,16 +137,16 @@ describe('MainLayout product surface', () => {
 
 describe('MainLayout sidebar side', () => {
   const row = (html: string): string => {
-    const start = html.lastIndexOf('<div', html.indexOf('<aside'));
+    const start = html.lastIndexOf('<div', html.indexOf('<div data-left-sidebar') - 1);
     return html.slice(start, html.indexOf('>', start) + 1);
   };
-  const aside = (html: string): string => html.slice(html.indexOf('<aside'), html.indexOf('</aside>'));
+  const aside = (html: string): string => html.slice(html.indexOf('<div data-left-sidebar'), html.indexOf('</aside>'));
 
   test('with no plugin the sidebar sits on the left', async () => {
     const html = await layout();
     expect(row(html)).toContain('data-sidebar-side="left"');
     expect(row(html)).not.toContain('flex-row-reverse');
-    expect(aside(html)).toContain('border-r');
+    expect(aside(html)).toContain('class="absolute inset-e-0 top-0 ');
     expect(aside(html)).toContain('class="app-region-no-drag shrink-0"');
   });
 
@@ -157,7 +157,7 @@ describe('MainLayout sidebar side', () => {
     expect(row(html)).toContain('data-sidebar-side="right"');
     expect(row(html)).toContain('flex-row-reverse');
     expect(html.indexOf('<aside')).toBeLessThan(html.indexOf('data-product-region="column"'));
-    expect(aside(html)).toContain('border-l');
+    expect(aside(html)).toContain('class="absolute inset-s-0 top-0 ');
     expect(aside(html)).not.toContain('app-region-no-drag');
     side = 'left';
   });

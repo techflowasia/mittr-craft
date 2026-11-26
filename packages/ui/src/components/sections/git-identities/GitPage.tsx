@@ -1,5 +1,8 @@
 import { isCompleteIdentity } from '@/lib/api/git-identity';
-import { identityAccountConnected, identityDisplayName } from '@/lib/source-control/identity';
+import { useDeviceInfo } from '@/lib/device';
+import { identityAccountConnected, identityDisplayName, unavailableAccountReason } from '@/lib/source-control/identity';
+import { useSourceControlDescriptorOf, useSourceControlProviderRegistry } from '@/lib/source-control/providers/registry';
+import { ProviderIcon } from '@/components/sourceControl/ProviderIcon';
 import React from 'react';
 import { toast } from '@/components/ui';
 import {
@@ -19,7 +22,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { useGitIdentitiesStore, type GitIdentityProfile } from '@/stores/useGitIdentitiesStore';
-import { useConnectedAccountIds, useSourceControlAuthStore } from '@/stores/useSourceControlAuthStore';
+import { getSourceControlAuthKey, useConnectedAccountIds, useSourceControlAuthStore } from '@/stores/useSourceControlAuthStore';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useShallow } from 'zustand/react/shallow';
 import { GitSettings } from '@/components/sections/openchamber/GitSettings';
@@ -38,8 +41,6 @@ const ICON_MAP: Record<string, IconName> = {
   graduation: 'graduation-cap',
   code: 'code',
   heart: 'heart',
-  github: 'github',
-  gitlab: 'gitlab',
 };
 
 const COLOR_MAP: Record<string, string> = {
@@ -52,6 +53,7 @@ const COLOR_MAP: Record<string, string> = {
 
 export const GitPage: React.FC = () => {
   const { t } = useI18n();
+  const { isMobile } = useDeviceInfo();
   const { sourceControl } = useRuntimeAPIs();
   const refreshIdentityAccounts = useSourceControlAuthStore((state) => state.refreshIdentityAccounts);
   const {
@@ -73,8 +75,6 @@ export const GitPage: React.FC = () => {
     loadDefaultGitIdentityId: s.loadDefaultGitIdentityId,
     setDefaultGitIdentityId: s.setDefaultGitIdentityId,
   })));
-  // An identity whose account was disconnected has to say so, so the accounts
-  // of the instances these identities name are read when the page opens.
   React.useEffect(() => {
     void refreshIdentityAccounts(sourceControl, profiles.map((profile) => profile.account));
   }, [refreshIdentityAccounts, sourceControl, profiles]);
@@ -123,19 +123,19 @@ export const GitPage: React.FC = () => {
       <SettingsPageLayout
         title={t('settings.page.git.title')}
         showSaveStatus
+        namedBySidebar
         className="px-4 @xl:px-6 @3xl:px-12"
       >
         <SettingsSection
           title={t('settings.gitIdentities.page.section.title')}
           headerAction={(
             <Button size="sm" variant="outline" onClick={() => openEditor('new')}>
-              <Icon name="add" className="w-3.5 h-3.5 mr-1" /> {t('settings.common.badge.new')}
+              <Icon name="add" className="w-3.5 h-3.5 me-1" /> {t('settings.common.badge.new')}
             </Button>
           )}
           settingsItem="git.identities"
         >
-          <div className="rounded-lg bg-[var(--surface-elevated)]/70 overflow-hidden flex flex-col">
-            {/* Global identity */}
+          <div className={cn('flex flex-col', !isMobile && 'overflow-hidden rounded-lg bg-[var(--surface-elevated)]/70')}>
             {globalIdentity && (
               <IdentityRow
                 profile={globalIdentity}
@@ -147,7 +147,6 @@ export const GitPage: React.FC = () => {
               />
             )}
 
-            {/* Custom profiles */}
             {profiles.map((profile, i) => (
               <IdentityRow
                 key={profile.id}
@@ -160,7 +159,6 @@ export const GitPage: React.FC = () => {
               />
             ))}
 
-            {/* Empty state */}
             {!globalIdentity && profiles.length === 0 && (
               <div className="py-8 px-4 text-center text-muted-foreground">
                 <Icon name="shield-keyhole" className="mx-auto mb-2 h-8 w-8 opacity-40" />
@@ -174,14 +172,12 @@ export const GitPage: React.FC = () => {
         <GitSettings />
       </SettingsPageLayout>
 
-      {/* Editor dialog */}
       <GitIdentityEditorDialog
         open={editorOpen}
         onOpenChange={setEditorOpen}
         profileId={editorProfileId}
       />
 
-      {/* Delete confirmation */}
       <Dialog
         open={deleteDialogProfile !== null}
         onOpenChange={(open) => {
@@ -209,7 +205,6 @@ export const GitPage: React.FC = () => {
   );
 };
 
-// --- Identity row ---
 
 interface IdentityRowProps {
   profile: GitIdentityProfile;
@@ -231,15 +226,27 @@ const IdentityRow: React.FC<IdentityRowProps> = ({
   hasBorder,
 }) => {
   const { t } = useI18n();
+  const { isMobile } = useDeviceInfo();
   const connectedAccountIds = useConnectedAccountIds();
+  const authEntries = useSourceControlAuthStore((state) => state.entries);
   const [contextMenuOpen, setContextMenuOpen] = React.useState(false);
-  const iconName = ICON_MAP[profile.icon || 'branch'] || 'git-branch';
-  // What keeps this identity from being chosen: a missing key, or an account
-  // that was disconnected.
+  const descriptorOf = useSourceControlDescriptorOf();
+  const providers = useSourceControlProviderRegistry((state) => state.byId);
+  const iconName = ICON_MAP[profile.icon || 'branch'];
+  const iconProvider = !iconName && profile.icon ? providers.get(profile.icon) : undefined;
+  const accountNoteKey = (account: NonNullable<GitIdentityProfile['account']>) => (
+    unavailableAccountReason(
+      account,
+      authEntries[getSourceControlAuthKey(account)]?.status?.accounts ?? null,
+      descriptorOf(account.provider).auth.cliTransport,
+    ) === 'cli-not-in-use'
+      ? 'settings.gitIdentities.page.cliAccountInactive' as const
+      : 'settings.gitIdentities.page.accountGone' as const
+  );
   const noteKey = !isCompleteIdentity(profile)
     ? 'settings.gitIdentities.page.incomplete' as const
-    : !identityAccountConnected(profile, connectedAccountIds)
-      ? 'settings.gitIdentities.page.accountGone' as const
+    : profile.account && !identityAccountConnected(profile, connectedAccountIds)
+      ? accountNoteKey(profile.account)
       : null;
   const noteIsWarning = noteKey !== null;
   const iconColor = COLOR_MAP[profile.color || ''];
@@ -262,7 +269,7 @@ const IdentityRow: React.FC<IdentityRowProps> = ({
           onClick={(e: React.MouseEvent) => { e.stopPropagation(); onDelete(); }}
           className="text-destructive focus:text-destructive"
         >
-          <Icon name="delete-bin" className="h-4 w-4 mr-px" />
+          <Icon name="delete-bin" className="h-4 w-4 me-px" />
           {t('settings.common.actions.delete')}
         </Item>
       )}
@@ -275,8 +282,11 @@ const IdentityRow: React.FC<IdentityRowProps> = ({
         render={
           <div
             className={cn(
-              'group flex items-center justify-between gap-3 px-4 py-2.5 transition-colors hover:bg-[var(--interactive-hover)]/30 cursor-pointer',
-              hasBorder && 'border-b border-[var(--surface-subtle)]'
+              'group flex cursor-pointer items-center justify-between gap-3',
+              isMobile
+                ? 'min-h-11 rounded-md px-0 py-1.5 active:bg-interactive-hover'
+                : 'px-4 py-2.5 transition-colors hover:bg-[var(--interactive-hover)]/30',
+              !isMobile && hasBorder && 'border-b border-[var(--surface-subtle)]',
             )}
             onClick={onEdit}
             role="button"
@@ -290,7 +300,13 @@ const IdentityRow: React.FC<IdentityRowProps> = ({
         }
       >
       <div className="flex items-center gap-3 min-w-0">
-        <Icon name={iconName} className="w-4 h-4 shrink-0" style={{ color: iconColor }} />
+        {iconProvider ? (
+          <span className="inline-flex shrink-0" style={{ color: iconColor }}>
+            <ProviderIcon descriptor={iconProvider} className="w-4 h-4 shrink-0" />
+          </span>
+        ) : (
+          <Icon name={iconName ?? 'git-branch'} className="w-4 h-4 shrink-0" style={{ color: iconColor }} />
+        )}
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             <span className="typography-ui-label text-foreground truncate">{identityDisplayName(profile, t)}</span>
@@ -300,7 +316,7 @@ const IdentityRow: React.FC<IdentityRowProps> = ({
               </span>
             )}
           </div>
-          <div className="typography-micro text-muted-foreground/60 truncate leading-tight">
+          <div className="typography-micro text-muted-foreground truncate leading-tight">
             {!isReadOnly && noteKey
               ? <span className={noteIsWarning ? 'text-[var(--status-warning)]' : undefined}>{t(noteKey)}</span>
               : profile.userEmail}
@@ -313,10 +329,10 @@ const IdentityRow: React.FC<IdentityRowProps> = ({
           <Button
             size="icon"
             variant="ghost"
-            className="h-6 w-6 shrink-0 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100"
+            className={cn('shrink-0 opacity-100 transition-opacity pointer-fine:hidden', isMobile ? 'size-9' : 'h-6 w-6 md:opacity-0 md:group-hover:opacity-100')}
             onClick={(e) => e.stopPropagation()}
           >
-            <Icon name="more-2" className="h-3.5 w-3.5" />
+            <Icon name="more" className={isMobile ? 'size-4' : 'h-3.5 w-3.5'} />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-fit min-w-28">

@@ -1,0 +1,69 @@
+import { defineConfig } from "oxlint";
+
+// This config runs the rules that have a backlog: the vendored anti-slop plugin
+// and OpenChamber's own ratcheted rules, through `bun run deslop` and the
+// ratchet in `bun run check:changed`. The general-purpose lint is
+// `oxlint.config.ts`, run by `bun run lint`.
+export default defineConfig({
+  categories: {
+    correctness: "off",
+  },
+  ignorePatterns: [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/out/**",
+    "**/.next/**",
+    "**/ios/**",
+    "**/android/**",
+    ".agents/**",
+    ".claude/**",
+    ".conductor/**",
+    ".opencode/**",
+    ".openchamber/**",
+    ".tmp/**",
+    // Bundles built from the TypeScript sources beside them; the sources are linted.
+    "packages/sdk/examples/**/*.js",
+    "patches/**",
+    "bun-patches/**",
+    "tools/oxlint/**",
+  ],
+  jsPlugins: [
+    { name: "anti-slop", specifier: "./tools/oxlint/anti-slop/index.ts" },
+    { name: "openchamber", specifier: "./tools/oxlint/openchamber/index.ts" },
+  ],
+  rules: {
+    "anti-slop/no-chained-type-assertions": "error",
+    "anti-slop/no-conditional-empty-object-spread": "error",
+    "anti-slop/no-known-value-widening": "error",
+    "anti-slop/no-module-mocking": "error",
+    "anti-slop/no-object-parameters": "error",
+    "anti-slop/no-reflect-apply": "error",
+    "anti-slop/no-reflect-get": "error",
+    "anti-slop/no-runtime-typeof": "error",
+    "anti-slop/no-shape-in-symbol-names": "error",
+    "anti-slop/no-unknown-parameters": "error",
+    "anti-slop/no-unknown-returns": "error",
+    "anti-slop/no-unknown-type-aliases": "error",
+    "anti-slop/no-unsafe-dictionary-type": "error",
+    "anti-slop/no-widen-then-assert": "error",
+    "anti-slop/require-safety-comment-for-type-assertion": "error",
+    "openchamber/no-app-imports-in-opencode": "error",
+    "openchamber/no-comments": "error",
+    "openchamber/no-effects-in-components": "error",
+    "openchamber/no-module-mocks-in-tests": "error",
+    "openchamber/no-raw-fetch": "error",
+    "openchamber/no-real-waits-in-tests": "error",
+    "openchamber/no-source-text-in-tests": "error",
+    "openchamber/no-timers": "error",
+    "openchamber/no-wire-client-imports": "error",
+  },
+  overrides: [{
+    files: ["packages/web/server/**/*.ts", "packages/web/bin/**/*.ts"],
+    rules: {
+      "anti-slop/no-runtime-typeof": ["error", { allowInTypeGuards: true, allowInParsers: ["(?:^|/)packages/web/server/lib/shared/[^/]+\\.ts$"] }],
+      "anti-slop/no-unknown-parameters": ["error", { allowInTypeGuards: true, allowInParsers: ["(?:^|/)packages/web/server/lib/shared/[^/]+\\.ts$"] }],
+      "anti-slop/no-unsafe-dictionary-type": ["error", { allowInTypeGuards: true }],
+    },
+  }],
+});

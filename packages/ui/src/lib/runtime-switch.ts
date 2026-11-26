@@ -1,5 +1,6 @@
 import { refreshRuntimeUrlAuthToken, setRuntimeBearerToken, setRuntimeExtraHeaders } from '@/lib/runtime-auth';
 import { configureRuntimeUrlResolver } from '@/lib/runtime-url';
+import { isVSCodeBootstrapPresent } from '@/lib/vscodeBootstrap';
 import {
   activateRelayTunnel,
   deactivateRelayTunnel,
@@ -18,6 +19,8 @@ const RUNTIME_ENDPOINT_WILL_CHANGE_EVENT = 'openchamber:runtime-endpoint-will-ch
 
 let activeApiBaseUrl = '';
 let activeRuntimeKey = '';
+let instanceGeneration = 0;
+let activeSshForwarded: boolean | null = null;
 
 const setWindowRuntimeValue = <K extends '__OPENCHAMBER_API_BASE_URL__' | '__OPENCHAMBER_CLIENT_TOKEN__' | '__OPENCHAMBER_RUNTIME_HEADERS__'>(
   runtimeWindow: typeof window & {
@@ -41,26 +44,20 @@ const normalizeRuntimeUrlKey = (value: string): string => {
     const url = new URL(value);
     url.hash = '';
     url.search = '';
-    // Normalise pathname so root `/` becomes empty and no path ends with `/`.
     url.pathname = url.pathname.replace(/\/+$/, '') || '/';
-    // url.toString() still appends `/` when pathname is `/`; strip it
-    // so every key uses the bare-origin form: `url:https://example.com`.
     return `url:${url.toString().replace(/\/+$/, '')}`;
   } catch {
     return `url:${value.trim().replace(/\/+$/, '') || 'default'}`;
   }
 };
 
-// Runtime keys that mean "no instance connected": the uninitialized default
-// (`normalizeRuntimeUrlKey` of an empty/unparseable base URL) and the mobile
-// disconnect state (`MobileApp` switches to it when the connection drops).
-// Per-instance client state (e.g. the scoped theme entry) must not be read
-// from or written under them.
 export const MOBILE_DISCONNECTED_RUNTIME_KEY = 'mobile-disconnected';
 const UNINITIALIZED_RUNTIME_KEY = 'url:default';
 
 export const isTransientRuntimeKey = (runtimeKey: string): boolean =>
-  runtimeKey === '' || runtimeKey === UNINITIALIZED_RUNTIME_KEY || runtimeKey === MOBILE_DISCONNECTED_RUNTIME_KEY;
+  runtimeKey === ''
+  || runtimeKey === MOBILE_DISCONNECTED_RUNTIME_KEY
+  || (runtimeKey === UNINITIALIZED_RUNTIME_KEY && !isVSCodeBootstrapPresent());
 
 const readInjectedApiBaseUrl = (): string => {
   if (typeof window === 'undefined') return '';
@@ -85,16 +82,12 @@ const sameOrigin = (left: string, right: string): boolean => {
 
 export const getRuntimeApiBaseUrl = (): string => activeApiBaseUrl || readInjectedApiBaseUrl();
 
-// `getRuntimeKey` keys caches, stores, and persisted state across the whole UI,
-// so it runs on store reads, event handling, and render paths. Before the
-// runtime endpoint is explicitly initialised, every call re-derived the key by
-// trimming two injected globals and constructing three `URL` objects, which
-// made this one of the most expensive functions during streaming.
-//
-// The result depends only on `activeApiBaseUrl` and the two injected globals,
-// and `switchRuntimeEndpoint` writes the injected API base URL at runtime, so
-// the cache is validated against the raw, untrimmed values. That comparison
-// allocates nothing and still recomputes the moment any input changes.
+export const isSshForwardedRuntime = (): boolean => {
+  if (activeSshForwarded !== null) return activeSshForwarded;
+  const apiBaseUrl = getRuntimeApiBaseUrl();
+  return Boolean(apiBaseUrl && apiBaseUrl === globalThis.window?.__OPENCHAMBER_SSH_FORWARD_API_URL__);
+};
+
 let cachedRuntimeKey = '';
 let cachedActiveApiBaseUrl: string | null = null;
 let cachedRawApiBaseUrl: string | undefined;
@@ -132,6 +125,12 @@ export const getRuntimeKey = (): string => {
   return cachedRuntimeKey;
 };
 
+export const captureRuntimeInstance = (): (() => boolean) => {
+  const generation = instanceGeneration;
+  const runtimeKey = getRuntimeKey();
+  return () => generation === instanceGeneration && runtimeKey === getRuntimeKey();
+};
+
 export const initializeRuntimeEndpoint = (options: { apiBaseUrl?: string | null; runtimeKey?: string | null } = {}): void => {
   if (activeApiBaseUrl || activeRuntimeKey) {
     return;
@@ -144,25 +143,28 @@ export const initializeRuntimeEndpoint = (options: { apiBaseUrl?: string | null;
     return;
   }
 
-  // An empty API base uses same-origin HTTP, including Electron's Vite proxy.
-  // Give it an instance identity while keeping requests relative to that proxy.
   const localOrigin = readInjectedLocalOrigin();
   const isLocal = localOrigin && (!apiBaseUrl || sameOrigin(apiBaseUrl, localOrigin));
   activeApiBaseUrl = apiBaseUrl;
   activeRuntimeKey = options.runtimeKey?.trim() || (isLocal ? 'local' : normalizeRuntimeUrlKey(apiBaseUrl || sameOriginBaseUrl));
 };
 
-export const switchRuntimeEndpoint = (options: { apiBaseUrl: string; clientToken?: string | null; runtimeKey?: string | null; requestHeaders?: Record<string, string> | null; relay?: RelayRuntimeDescriptor | null }): void => {
+export const switchRuntimeEndpoint = (options: { apiBaseUrl: string; clientToken?: string | null; runtimeKey?: string | null; requestHeaders?: Record<string, string> | null; relay?: RelayRuntimeDescriptor | null; sshForwarded?: boolean }): void => {
   const apiBaseUrl = options.apiBaseUrl.trim();
   const previousApiBaseUrl = getRuntimeApiBaseUrl();
   const previousRuntimeKey = getRuntimeKey();
   const runtimeKey = options.runtimeKey?.trim() || normalizeRuntimeUrlKey(apiBaseUrl);
+  const sshForwarded = options.sshForwarded ?? (
+    apiBaseUrl === previousApiBaseUrl && runtimeKey === previousRuntimeKey && isSshForwardedRuntime()
+  );
   const detail = { apiBaseUrl, previousApiBaseUrl, runtimeKey, previousRuntimeKey };
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent<RuntimeEndpointChangedDetail>(RUNTIME_ENDPOINT_WILL_CHANGE_EVENT, { detail }));
   }
   activeApiBaseUrl = apiBaseUrl;
   activeRuntimeKey = runtimeKey;
+  if (runtimeKey !== previousRuntimeKey) instanceGeneration += 1;
+  activeSshForwarded = sshForwarded;
   if (typeof window !== 'undefined') {
     const runtimeWindow = window as typeof window & {
       __OPENCHAMBER_API_BASE_URL__?: string;
@@ -176,9 +178,6 @@ export const switchRuntimeEndpoint = (options: { apiBaseUrl: string; clientToken
   configureRuntimeUrlResolver({ apiBaseUrl, realtimeBaseUrl: apiBaseUrl });
   setRuntimeExtraHeaders(options.requestHeaders || null);
   setRuntimeBearerToken(options.clientToken || null);
-  // Relay mode routes runtime HTTP/WS through an E2EE tunnel instead of the
-  // network. Activate the tunnel BEFORE minting the url token, since the mint
-  // itself rides the tunnel (runtimeFetch -> tunnel.fetch).
   if (options.relay) {
     activateRelayTunnel(options.relay);
   } else {

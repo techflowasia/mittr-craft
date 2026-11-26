@@ -35,7 +35,7 @@ const errorOf = (error) => {
   return { status, error: failure };
 };
 
-export function createToolsCallback({ crypto, registry, resolveSessionDirectory, refusalFor, screenshotFolder, logger = console }) {
+export function createToolsCallback({ crypto, registry, resolveSessionDirectory, refusalFor, screenshotFolder, activeAccountKey = () => null, logger = console }) {
   const mint = () => crypto.randomBytes(32).toString('base64url');
   let pending = mint();
   let active = null;
@@ -126,6 +126,8 @@ export function createToolsCallback({ crypto, registry, resolveSessionDirectory,
       }
     }
     const requested = textOrUndefined(input.action) ?? UNKNOWN;
+    // Capture before directory lookup or switch checks yield to an account change.
+    const accountKey = activeAccountKey();
     const controller = new AbortController();
     const abortOnClose = () => {
       if (!res.writableEnded) controller.abort();
@@ -148,6 +150,7 @@ export function createToolsCallback({ crypto, registry, resolveSessionDirectory,
         tool,
         via: 'engine',
       };
+      if (accountKey) ctx.accountKey = accountKey;
       const source = sourceOf(body);
       if (source) ctx.source = source;
       const data = await registry.execute(action, argumentsOf(input, action), ctx);

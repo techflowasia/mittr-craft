@@ -1,0 +1,23 @@
+diff --git a/packages/web/server/lib/dispatch-results/runtime.test.js b/packages/web/server/lib/dispatch-results/runtime.test.js
+index bb90523ee..278877a6d 100644
+--- a/packages/web/server/lib/dispatch-results/runtime.test.js
++++ b/packages/web/server/lib/dispatch-results/runtime.test.js
+@@ -199,6 +199,18 @@ describe('buildDispatchResultMessage', () => {
+ });
+ 
+ describe('dispatch results runtime', () => {
++  it.each(['ses_child', 'ses_parent'])('defers delivery while recovery reserves %s, including after archive awaits', async reservedID => {
++    let reserved = null;
++    const { runtime, openCode } = await createRuntime({
++      responseRecovery: { isReserved: id => id === reserved },
++      isSessionArchived: async () => { reserved = reservedID; return false; },
++    });
++    openCode.state.records.ses_child.push(user(11), assistant('Done', 12), idle('succeeded', 13));
++    await runtime.register({ parentSessionId: 'ses_parent', sessionId: 'ses_child', dispatchedAt: 10 });
++    await settle();
++    expect(openCode.state.synthetic).toEqual([]);
++    expect(runtime.pending()).toHaveLength(1);
++  });
+   it('delivers the answer to the parent and wakes it once the turn ends', async () => {
+     const { runtime, openCode, emit, dataDir, replayAfterDelivery } = await createRuntime();
+     openCode.state.active.ses_child = { type: 'running' };

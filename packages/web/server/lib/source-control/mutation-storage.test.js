@@ -95,6 +95,27 @@ describe('source-control mutation storage', () => {
     await expect(store.claim(claimFor('key-one', 'different'))).resolves.toEqual({ status: 'conflict', record: claimed.record });
   });
 
+  it('claims with binding revision 0, the no-binding repository state', async () => {
+    const { store } = await makeStore({ now: () => 100 });
+    const zero = claimFor('zero-revision', 'digest-zero', {
+      target: { ...claimFor('zero-revision').target, bindingRevision: 0 },
+    });
+
+    await expect(store.claim(zero)).resolves.toMatchObject({ status: 'claimed' });
+    await expect(store.read('zero-revision')).resolves.toMatchObject({ key: 'zero-revision' });
+    await expect(store.list()).resolves.toHaveLength(1);
+  });
+
+  it('still rejects binding revisions that are not non-negative safe integers', async () => {
+    const { store } = await makeStore({ now: () => 100 });
+    for (const [index, bindingRevision] of [-1, 1.5, Number.NaN].entries()) {
+      const invalid = claimFor(`bad-revision-${index}`, `digest-bad-${index}`, {
+        target: { ...claimFor(`bad-revision-${index}`).target, bindingRevision },
+      });
+      await expect(store.claim(invalid)).rejects.toMatchObject({ code: 'INVALID_SOURCE_CONTROL_MUTATIONS' });
+    }
+  });
+
   it.each(['constructor', '__proto__'])('treats the opaque key %s as data', async (key) => {
     const { store } = await makeStore({ now: () => 100 });
     const claimed = await store.claim(claimFor(key));
@@ -136,6 +157,21 @@ describe('source-control mutation storage', () => {
       .rejects.toMatchObject({ code: 'SOURCE_CONTROL_MUTATION_CONFLICT', record: completed });
     await expect(store.complete('key-one', 'different', { state: 'succeeded' }))
       .rejects.toMatchObject({ code: 'SOURCE_CONTROL_MUTATION_CONFLICT', record: completed });
+  });
+
+  it('keeps the ready/draft transition result through completion, replay and reload', async () => {
+    const { filePath, store } = await makeStore({ now: () => 100 });
+    for (const [kind, result] of [['change-request-ready', { ready: true }], ['change-request-draft', { draft: true }]]) {
+      await store.claim(claimFor(kind, `digest-${kind}`, { kind }));
+      const completed = await store.complete(kind, `digest-${kind}`, { state: 'succeeded', result });
+      expect(completed.result).toEqual(result);
+      await expect(store.complete(kind, `digest-${kind}`, { state: 'succeeded', result })).resolves.toEqual(completed);
+    }
+
+    const reopened = createMutationStore({ filePath });
+    for (const [kind, result] of [['change-request-ready', { ready: true }], ['change-request-draft', { draft: true }]]) {
+      await expect(reopened.read(kind)).resolves.toMatchObject({ state: 'succeeded', result });
+    }
   });
 
   it('stores only compact failed replay metadata', async () => {

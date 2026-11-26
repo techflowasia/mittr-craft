@@ -1,0 +1,67 @@
+diff --git a/packages/ui/src/stores/useQuotaStore.test.ts b/packages/ui/src/stores/useQuotaStore.test.ts
+index 4a843280d..0c3c85843 100644
+--- a/packages/ui/src/stores/useQuotaStore.test.ts
++++ b/packages/ui/src/stores/useQuotaStore.test.ts
+@@ -50,6 +50,7 @@ mock.module("@/stores/useConfigStore", () => ({
+ }))
+ 
+ const { useQuotaStore } = await import("./useQuotaStore")
++const { registerQuotaProviderRefreshHook } = await import('@/lib/quota/providers')
+ 
+ describe("Usage quotas are loaded once per ready instance", () => {
+   beforeEach(() => {
+@@ -61,6 +62,54 @@ describe("Usage quotas are loaded once per ready instance", () => {
+     useQuotaStore.getState().resetForRuntimeSwitch()
+   })
+ 
++  test("concurrent Usage refreshes run one extension and extension failure does not suppress the quota read", async () => {
++    let calls = 0;
++    const stop = registerQuotaProviderRefreshHook('claude', async () => { calls += 1; throw new Error('extension offline'); });
++    try {
++      await Promise.all([useQuotaStore.getState().fetchProviderQuota('claude'), useQuotaStore.getState().fetchProviderQuota('claude')]);
++      expect(calls).toBe(1);
++      expect(useQuotaStore.getState().results[0]?.ok).toBe(true);
++      expect(fetched.filter(path => path.startsWith('/api/quota/'))).toHaveLength(1);
++    } finally { stop(); }
++  });
++
++  test('a never-settling refresh hook cannot block the ordinary quota read or occupy loading', async () => {
++    const stop = registerQuotaProviderRefreshHook('claude', () => new Promise(() => {}));
++    try {
++      const result = await Promise.race([useQuotaStore.getState().fetchProviderQuota('claude'), new Promise(resolve => setTimeout(() => resolve('blocked'), 50))]);
++      expect(result).toBe(true);
++      expect(fetched).toContain('/api/quota/claude');
++      expect(useQuotaStore.getState().isLoading).toBe(false);
++    } finally { stop(); }
++  });
++
++  test('invalidation aborts a pending hook and a new owner starts an independent read', async () => {
++    const signals: AbortSignal[] = [];
++    const stop = registerQuotaProviderRefreshHook('claude', ({ signal }) => { signals.push(signal); return new Promise(() => {}); });
++    try {
++      const old = useQuotaStore.getState().fetchProviderQuota('claude');
++      await Promise.resolve();
++      useQuotaStore.getState().invalidateProvider('claude');
++      const fresh = useQuotaStore.getState().fetchProviderQuota('claude');
++      const result = await Promise.race([fresh, new Promise(resolve => setTimeout(() => resolve('blocked'), 50))]);
++      expect(result).toBe(true);
++      expect(signals[0]?.aborted).toBe(true);
++      expect(signals).toHaveLength(2);
++      await old;
++      expect(useQuotaStore.getState().isLoading).toBe(false);
++    } finally { stop(); }
++  });
++
++  test("provider invalidation preserves unrelated provider data and fences an old completion", async () => {
++    await useQuotaStore.getState().fetchProviderQuota('claude');
++    const previous = useQuotaStore.getState().results[0];
++    const old = useQuotaStore.getState().fetchProviderQuota('codex');
++    useQuotaStore.getState().invalidateProvider('codex');
++    await old;
++    expect(useQuotaStore.getState().results).toEqual([previous]);
++    expect(useQuotaStore.getState().isFetchingProvider.codex).toBeUndefined();
++  });
++
+   test("nothing is fetched while the instance has not reported itself initialised", async () => {
+     isInitialized = false
+     await useQuotaStore.getState().ensureLoadedForRuntime()

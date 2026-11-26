@@ -13,7 +13,7 @@
 
 Start agent work, see what changed, and take it through review and release. Your projects and sessions remain available when you switch devices or step away.
 
-![OpenChamber Chat](docs/references/chat_example.png)
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/references/desktop_dark.png"><img src="docs/references/desktop_light.png" alt="OpenChamber desktop app"></picture>
 
 <details>
 <summary>More screenshots</summary>
@@ -21,8 +21,9 @@ Start agent work, see what changed, and take it through review and release. Your
 ![VS Code Extension](packages/vscode/extension.jpg)
 
 <p>
-<img src="docs/references/pwa_chat_example.png" width="45%" alt="OpenChamber PWA chat">
-<img src="docs/references/pwa_diff_example.png" width="45%" alt="OpenChamber PWA diff review">
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/references/mobile/new_session_dark.png"><img src="docs/references/mobile/new_session_light.png" width="30%" alt="OpenChamber mobile new session"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/references/mobile/chat_dark.png"><img src="docs/references/mobile/chat_light.png" width="30%" alt="OpenChamber mobile chat"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/references/mobile/context_usage_dark.png"><img src="docs/references/mobile/context_usage_light.png" width="30%" alt="OpenChamber mobile context and usage"></picture>
 </p>
 
 </details>
@@ -81,7 +82,16 @@ Run a prompt once, daily, weekly, or on a cron schedule. Scheduled tasks can use
 
 Download the latest release from [GitHub Releases](https://github.com/openchamber/openchamber/releases/latest). Desktop bundles the matching OpenCode CLI, so no separate OpenCode installation is required.
 
-Linux releases are available as x86_64 and ARM64 AppImages. Make the downloaded AppImage executable and keep it in a writable location for in-app updates:
+The nightly build of `main` is in the [Canary release](https://github.com/openchamber/openchamber/releases/tag/canary). Tomorrow's release, available tonight.
+
+Linux releases come for x86_64 and ARM64 as a `.deb` (Debian, Ubuntu), an `.rpm` (Fedora, openSUSE) and an AppImage. The packages install OpenChamber into the app menu, and in-app updates ask for your password to install the new package:
+
+```bash
+sudo apt install ./OpenChamber-*-linux-amd64.deb    # Debian, Ubuntu
+sudo dnf install ./OpenChamber-*-linux-x86_64.rpm   # Fedora
+```
+
+The AppImage needs no install. Make it executable and keep it in a writable location for in-app updates; on its first start it adds itself to the app menu:
 
 ```bash
 chmod +x OpenChamber-*.AppImage
@@ -94,9 +104,13 @@ Linux AppImages require FUSE (`libfuse.so.2`). Without FUSE, run with `APPIMAGE_
 
 Install [OpenChamber from the Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=fedaykindev.openchamber), or search for "OpenChamber" in Extensions.
 
+### iOS and Android
+
+Join the iOS beta on [TestFlight](https://testflight.apple.com/join/5ek6GU1E). For Android, download the `.apk` from the [Canary release](https://github.com/openchamber/openchamber/releases/tag/canary).
+
 ### CLI for Web and PWA
 
-Requires Node.js 22+. CLI/Web and VS Code use your installed [OpenCode CLI](https://opencode.ai).
+Requires Node.js 24.14+. CLI/Web and VS Code use your installed [OpenCode CLI](https://opencode.ai).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/openchamber/openchamber/main/scripts/install.sh | bash
@@ -146,7 +160,7 @@ OpenChamber is an independent project and is not affiliated with the OpenCode te
 
 ## Contributing
 
-Bug fixes and small improvements are welcome as PRs. Features and behavior changes start in an [Ideas discussion](https://github.com/openchamber/openchamber/discussions/categories/ideas) so we agree on the product side before anyone writes code. Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a PR; it has the setup, the review contract, and what happens to large unplanned PRs. Documentation authoring guidance lives in [`packages/docs`](packages/docs/README.md).
+Bug fixes are welcome as PRs that link their bug report. Features and behavior changes start as a [feature request](https://github.com/openchamber/openchamber/issues/new?template=feature_request.yml), and building starts once it is marked `accepted`. Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening a PR; it has the setup, the review contract, and what happens to a PR without a linked issue. Documentation authoring guidance lives in [`packages/docs`](packages/docs/README.md).
 
 Bugs go to [issues](https://github.com/openchamber/openchamber/issues/new/choose). Questions go to [Q&A discussions](https://github.com/openchamber/openchamber/discussions/categories/q-a).
 

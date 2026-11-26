@@ -1,0 +1,153 @@
+import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { areSharePagesAvailable, areSharePagesDisabled } from '../opencode/managed-config-file.js';
+import { shareGroupId } from './store.js';
+
+const serverDir = fileURLToPath(new URL('../../', import.meta.url));
+const sourceLoader = pathToFileURL(path.join(serverDir, '../scripts/register-server-sources.mjs')).href;
+const cleanups = [];
+
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+});
+
+const openGroup = (relayBase) => ({
+  version: 1,
+  id: shareGroupId(crypto, 'ses_1', 'call_1'),
+  sessionId: 'ses_1',
+  callId: 'call_1',
+  title: 'Plan',
+  kind: 'page',
+  expectAnswer: false,
+  summary: null,
+  createdAt: Date.now(),
+  expiresAt: Date.now() + 3_600_000,
+  relayBase,
+  documentState: 'preparing',
+  recipients: [
+    { recipientId: 'r1', label: 'Acme', pin: '123456', linkKey: 'a'.repeat(43), shareId: 'b'.repeat(22), url: `${relayBase}/p/${'b'.repeat(22)}`, status: 'open', opens: [], answeredAt: null, answer: null, delivery: null, relayClosed: false, error: null },
+    { recipientId: 'r2', label: 'Beta', pin: '654321', linkKey: 'c'.repeat(43), shareId: null, url: null, status: 'preparing', opens: [], answeredAt: null, answer: null, delivery: null, relayClosed: false, error: null },
+  ],
+});
+
+const startServer = async (extraEnv) => {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'share-off-')));
+  cleanups.push(() => fs.rm(root, { recursive: true, force: true }));
+  const relayed = [];
+  const relay = http.createServer((req, res) => {
+    relayed.push(`${req.method} ${req.url}`);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ states: [], id: 'x', url: 'x' }));
+  });
+  await new Promise((resolve) => relay.listen(0, '127.0.0.1', resolve));
+  cleanups.push(() => { relay.closeAllConnections(); return new Promise((resolve) => relay.close(resolve)); });
+  const relayBase = `http://127.0.0.1:${relay.address().port}`;
+
+  const dataDir = path.join(root, 'data');
+  await fs.mkdir(path.join(dataDir, 'share-pages'), { recursive: true });
+  const group = openGroup(relayBase);
+  await fs.writeFile(path.join(dataDir, 'share-pages', `${group.id}.json`), JSON.stringify(group));
+
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(GIT_|OPENCODE_|OPENCHAMBER_|XDG_|VITEST|NODE_OPTIONS)/.test(name)));
+  const script = `
+    const { startWebUiServer } = await import(process.env.PROBE_SERVER_URL);
+    const handle = await startWebUiServer({ port: 0, host: '127.0.0.1', attachSignals: false, exitOnShutdown: false });
+    console.log('PROBE_PORT=' + handle.httpServer.address().port);
+  `;
+  const child = spawn(process.execPath, ['--import', sourceLoader, '--input-type=module', '-e', script], {
+    env: {
+      ...inherited,
+      HOME: root,
+      XDG_CONFIG_HOME: path.join(root, '.config'),
+      XDG_DATA_HOME: path.join(root, '.local', 'share'),
+      XDG_STATE_HOME: path.join(root, '.local', 'state'),
+      XDG_CACHE_HOME: path.join(root, '.cache'),
+      OPENCHAMBER_DATA_DIR: dataDir,
+      OPENCODE_SKIP_START: 'true',
+      OPENCODE_PORT: '9',
+      OPENCHAMBER_UPDATE_CHECK_DISABLED: '1',
+      OPENCHAMBER_RELAY_URL: relayBase.replace('http:', 'ws:'),
+      PROBE_SERVER_URL: pathToFileURL(path.join(serverDir, 'index.js')).href,
+      ...extraEnv,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  cleanups.push(async () => {
+    if (child.exitCode !== null) return;
+    const exited = new Promise((resolve) => child.once('exit', resolve));
+    child.kill('SIGKILL');
+    await exited;
+  });
+  let output = '';
+  const started = Promise.withResolvers();
+  const read = (chunk) => {
+    output += chunk;
+    const port = /PROBE_PORT=(\d+)/.exec(output)?.[1];
+    if (port) started.resolve(port);
+  };
+  child.stdout.on('data', read);
+  child.stderr.on('data', read);
+  child.on('exit', () => started.reject(new Error(output)));
+  const base = `http://127.0.0.1:${await started.promise}`;
+  const send = async (route, { method = 'GET', body } = {}) => {
+    const response = await fetch(`${base}${route}`, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+    return { status: response.status, body: await response.json().catch(() => null) };
+  };
+  return { relayBase, relayed, send };
+};
+
+const CARD = '/api/openchamber/sessions/ses_1/share-pages/call_1';
+
+describe('OPENCHAMBER_SHARE_PAGES_DISABLED', () => {
+  it('turns sharing off for 1 and true, and leaves it alone otherwise', () => {
+    for (const value of ['1', 'true', ' TRUE ']) {
+      expect(areSharePagesDisabled({ OPENCHAMBER_SHARE_PAGES_DISABLED: value })).toBe(true);
+      expect(areSharePagesAvailable({ OPENCHAMBER_SHARE_PAGES_DISABLED: value })).toBe(false);
+    }
+    for (const env of [{}, { OPENCHAMBER_SHARE_PAGES_DISABLED: '' }, { OPENCHAMBER_SHARE_PAGES_DISABLED: '0' }]) {
+      expect(areSharePagesDisabled(env)).toBe(false);
+      expect(areSharePagesAvailable(env)).toBe(true);
+    }
+  });
+
+  it('makes no relay call for a stored share, uploads nothing and opens no link', async () => {
+    const { relayBase, relayed, send } = await startServer({ OPENCHAMBER_SHARE_PAGES_DISABLED: '1' });
+
+    expect(await send('/api/openchamber/received-pages/config')).toEqual({ status: 200, body: { available: false, bases: [] } });
+    for (const [route, options] of [
+      [CARD],
+      [`${CARD}/document`, { method: 'POST', body: { html: '<p>secret</p>', title: 'Plan', source: null } }],
+      [`${CARD}/recipients/r1/cancel`, { method: 'POST', body: {} }],
+      ['/api/openchamber/received-pages'],
+      ['/api/openchamber/received-pages', { method: 'POST', body: { url: `${relayBase}/p/${'b'.repeat(22)}#${'a'.repeat(43)}` } }],
+    ]) {
+      expect(await send(route, options), route).toMatchObject({ status: 403, body: { code: 'enterprise_mode' } });
+    }
+    expect(relayed).toEqual([]);
+  }, 30_000);
+
+  it('leaves the stored share polled without it', async () => {
+    const { relayed, send } = await startServer({});
+
+    await expect.poll(() => relayed, { timeout: 10_000 }).toContain('POST /p/states');
+    expect((await send(CARD)).status).toBe(200);
+  }, 30_000);
+
+  it('is the only way a server file asks whether sharing is available', async () => {
+    const files = (await fs.readdir(serverDir, { recursive: true })).filter((file) => file.endsWith('.ts'));
+    const asking = [];
+    for (const file of files) {
+      const name = file.split(path.sep).join('/');
+      if (name === 'lib/share-pages/relay-client.ts') continue;
+      if ((await fs.readFile(path.join(serverDir, file), 'utf8')).includes('isSharingAvailable')) asking.push(name);
+    }
+    expect(asking).toEqual(['lib/opencode/managed-config-file.ts']);
+  });
+});

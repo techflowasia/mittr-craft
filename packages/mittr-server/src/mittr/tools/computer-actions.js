@@ -80,11 +80,33 @@ export const TURNED_OFF_MID_ACTION = 'The Computer tool was turned off while thi
 export function registerComputerActions(registry, { control, launchApp, writeScreenshot, offered, logger = console }) {
   const driver = async (tool, args, { signal, computerToken }, ownGrant) => {
     if (!offered()) throw new MittrToolError(TURNED_OFF_MID_ACTION, 503);
+    const options = { signal, token: computerToken };
+    const request = async (waitForPermissions = false) => {
+      const result = await control.request(tool, args, { ...options, waitForPermissions });
+      // Capture failures can arrive in a successful JSON envelope.
+      if (tool === 'get_desktop_state' && !trimmedText(result?.screenshot_png_b64)) {
+        const grant = missingGrant(JSON.stringify(result ?? null), ownGrant);
+        if (grant) throw new Error(`${grant} permission not granted`);
+      }
+      return result;
+    };
     try {
-      return await control.request(tool, args, { signal, token: computerToken });
+      return await request();
     } catch (error) {
-      const grant = error instanceof MittrToolError ? null : missingGrant(String(error?.message ?? ''), ownGrant);
-      throw grant ? grantRefusal(grant) : error;
+      const grant = error instanceof MittrToolError
+        ? (error.code === 'computer_permissions_pending' ? ownGrant : null)
+        : missingGrant(String(error?.message ?? ''), ownGrant);
+      if (!grant) throw error;
+      if (control.requestPermissions && control.canRequestPermissions !== false) {
+        const granted = await control.requestPermissions({ ...options, grant, directCapture: ownGrant === SCREEN_RECORDING });
+        if (!granted) throw grantRefusal(grant);
+        if (!offered()) throw new MittrToolError(TURNED_OFF_MID_ACTION, 503);
+        try { return await request(true); } catch (again) {
+          const stillMissing = again instanceof MittrToolError ? null : missingGrant(String(again?.message ?? ''), ownGrant);
+          throw stillMissing ? grantRefusal(stillMissing) : again;
+        }
+      }
+      throw grantRefusal(grant);
     }
   };
 

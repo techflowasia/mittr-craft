@@ -20,16 +20,17 @@ import {
   SettingsCardChip,
   SettingsCardIcon,
   SettingsCardPill,
-  SettingsCardSearch,
+  SettingsCardToolbar,
   type SettingsCardTone,
 } from '@/components/sections/shared/SettingsCards';
 import { useSettingsDirectory } from '@/hooks/useSettingsDirectory';
 import { useI18n } from '@/lib/i18n';
 import { rankByQuery } from '@/lib/search/fuzzySearch';
 import { cn } from '@/lib/utils';
-import { selectMcpServersForDirectory, useMcpConfigStore, type McpDraft } from '@/stores/useMcpConfigStore';
+import { hasLoadedMcpConfigsForDirectory, selectMcpServersForDirectory, useMcpConfigStore, type McpDraft } from '@/stores/useMcpConfigStore';
 import { useMcpStore } from '@/stores/useMcpStore';
 import type { McpServerStatus } from '@/lib/opencode/model';
+import { useIntegrationPolicyBlock } from '@/components/sections/shared/useIntegrationPolicyBlock';
 import { MCP_DRAFT_OAUTH_UNSET } from './mcpDraft';
 
 const nextServerName = (existing: readonly { name: string }[]): string => {
@@ -43,8 +44,13 @@ const nextServerName = (existing: readonly { name: string }[]): string => {
   return name;
 };
 
-const StatusPill: React.FC<{ status: McpServerStatus['status']['status'] | undefined; enabled: boolean }> = ({ status, enabled }) => {
+const StatusPill: React.FC<{
+  status: McpServerStatus['status']['status'] | undefined;
+  enabled: boolean;
+  blocked: boolean;
+}> = ({ status, enabled, blocked }) => {
   const { t } = useI18n();
+  if (blocked) return <SettingsCardPill tone="warning">{t('settings.mcp.grid.status.blockedByPolicy')}</SettingsCardPill>;
   if (!enabled) return <SettingsCardPill tone="neutral">{t('settings.mcp.grid.status.disabled')}</SettingsCardPill>;
   const pill: { tone: SettingsCardTone; label: string } | null = status === 'connected'
     ? { tone: 'success', label: t('settings.mcp.page.status.label.connected') }
@@ -58,7 +64,6 @@ const StatusPill: React.FC<{ status: McpServerStatus['status']['status'] | undef
   return pill ? <SettingsCardPill tone={pill.tone}>{pill.label}</SettingsCardPill> : null;
 };
 
-/** Browse view of the MCP page: one card per configured server with its live status. */
 export const McpGrid: React.FC = () => {
   const { t } = useI18n();
   const settingsDirectory = useSettingsDirectory();
@@ -72,6 +77,8 @@ export const McpGrid: React.FC = () => {
   const [isDeleting, setIsDeleting] = React.useState(false);
   const servers = useMcpConfigStore((state) => selectMcpServersForDirectory(state, settingsDirectory));
   const mcpStatus = useMcpStore((state) => state.getStatusForDirectory(settingsDirectory));
+  const configsLoaded = useMcpConfigStore((state) => hasLoadedMcpConfigsForDirectory(state, settingsDirectory));
+  const isBlocked = useIntegrationPolicyBlock(settingsDirectory);
   const refreshStatus = useMcpStore((state) => state.refresh);
   const getErrorForDirectory = useMcpStore((state) => state.getErrorForDirectory);
   const [isRefreshing, setIsRefreshing] = React.useState(false);
@@ -84,7 +91,6 @@ export const McpGrid: React.FC = () => {
   const handleRefresh = () => {
     if (isRefreshing) return;
     setIsRefreshing(true);
-    // Keep the spinner up long enough to read as a refresh.
     const minSpin = new Promise((resolve) => setTimeout(resolve, 500));
     void Promise.all([refreshStatus({ directory: settingsDirectory, silent: true }), minSpin])
       .then(() => {
@@ -137,38 +143,49 @@ export const McpGrid: React.FC = () => {
     setIsDeleting(false);
   };
 
-  const filtered = rankByQuery([...servers], query, (server) => [
-    server.name,
-    server.type === 'local' ? server.command?.join(' ') ?? '' : server.url ?? '',
+  // external: #5935 OpenCode reports Console MCP servers with no editable config entry.
+  const configNames = new Set(servers.map((server) => server.name));
+  const runtimeServers = configsLoaded
+    ? Object.values(mcpStatus).filter((server) => !configNames.has(server.name))
+    : [];
+  const rows = [
+    ...servers.map((server) => ({ kind: 'config' as const, server })),
+    ...runtimeServers.map((server) => ({ kind: 'runtime' as const, server })),
+  ];
+  const filtered = rankByQuery(rows, query, (row) => [
+    row.server.name,
+    row.kind === 'config'
+      ? row.server.type === 'local' ? row.server.command?.join(' ') ?? '' : row.server.url ?? ''
+      : '',
   ]);
   const hasQuery = query.trim().length > 0;
 
   return (
     <SettingsPageLayout
       title={t('settings.page.mcp.title')}
-      description={t('settings.mcp.grid.description')}
-      headerEnd={(
-        <div className="flex w-full items-center gap-2 @xl:w-auto">
-          <SettingsProjectSelector className="min-w-0 flex-1 @xl:w-56 @xl:flex-none" />
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9 shrink-0 text-muted-foreground"
-            disabled={isRefreshing}
-            onClick={handleRefresh}
-            aria-label={t('settings.mcp.sidebar.actions.refreshStatusAria')}
-            title={t('settings.mcp.sidebar.actions.refreshStatusTitle')}
-          >
-            <Icon name="refresh" className={cn('size-4', isRefreshing && 'animate-spin')} />
-          </Button>
-        </div>
-      )}
+      namedBySidebar
     >
-      {servers.length > 0 ? (
-        <SettingsCardSearch value={query} onChange={setQuery} placeholder={t('settings.mcp.grid.searchPlaceholder')} />
-      ) : null}
+      <SettingsCardToolbar
+        search={rows.length > 0 ? { value: query, onChange: setQuery, placeholder: t('settings.mcp.grid.searchPlaceholder') } : null}
+        actions={(
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-7 shrink-0 px-0 text-muted-foreground"
+              disabled={isRefreshing}
+              onClick={handleRefresh}
+              aria-label={t('settings.mcp.sidebar.actions.refreshStatusAria')}
+              title={t('settings.mcp.sidebar.actions.refreshStatusTitle')}
+            >
+              <Icon name="refresh" className={cn('size-4', isRefreshing && 'animate-spin')} />
+            </Button>
+            <SettingsProjectSelector className="min-w-0 w-56" />
+          </>
+        )}
+      />
 
-      {servers.length === 0 ? (
+      {rows.length === 0 ? (
         <p className="py-6 typography-meta text-muted-foreground">{t('settings.mcp.grid.empty')}</p>
       ) : filtered.length === 0 ? (
         <p className="py-6 typography-meta text-muted-foreground">{t('settings.mcp.grid.noMatches', { query: query.trim() })}</p>
@@ -183,8 +200,29 @@ export const McpGrid: React.FC = () => {
             settingsItem="mcp.create"
           />
         )}
-        {filtered.map((server) => {
+        {filtered.map((row) => {
+          if (row.kind === 'runtime') {
+            const blocked = isBlocked(`mcp:${row.server.name}`);
+            return (
+              <SettingsCard
+                key={row.server.name}
+                icon={<SettingsCardIcon name="server" />}
+                title={row.server.name}
+                badges={(
+                  <StatusPill
+                    status={row.server.status.status}
+                    enabled={row.server.status.status !== 'disabled'}
+                    blocked={blocked}
+                  />
+                )}
+                muted={row.server.status.status === 'disabled' || blocked}
+                footer={<SettingsCardChip>{t('settings.mcp.grid.runtimeProvided')}</SettingsCardChip>}
+              />
+            );
+          }
+          const server = row.server;
           const enabled = server.disabled !== true;
+          const blocked = isBlocked(`mcp:${server.name}`);
           const target = server.type === 'local' ? server.command?.join(' ') : server.url;
           return (
             <SettingsCard
@@ -192,8 +230,10 @@ export const McpGrid: React.FC = () => {
               icon={<SettingsCardIcon name={server.type === 'local' ? 'server' : 'global'} />}
               title={server.name}
               subtitle={target || undefined}
-              badges={<StatusPill status={mcpStatus[server.name]?.status.status} enabled={enabled} />}
-              muted={!enabled}
+              badges={(
+                <StatusPill status={mcpStatus[server.name]?.status.status} enabled={enabled} blocked={blocked} />
+              )}
+              muted={!enabled || blocked}
               footer={(
                 <>
                   <span>

@@ -1,0 +1,44 @@
+diff --git a/packages/web/server/lib/server-frame/shutdown-runtime.test.js b/packages/web/server/lib/server-frame/shutdown-runtime.test.js
+index 268c2501f..5408d321a 100644
+--- a/packages/web/server/lib/server-frame/shutdown-runtime.test.js
++++ b/packages/web/server/lib/server-frame/shutdown-runtime.test.js
+@@ -53,6 +53,39 @@ describe('graceful shutdown runtime', () => {
+     vi.restoreAllMocks();
+   });
+ 
++  it('stops recovery synchronously and drains it before upstream teardown', async () => {
++    let release;
++    let stopped = false;
++    let upstreamClosed = false;
++    const held = new Promise(resolve => { release = resolve; });
++    const runtime = createRuntime(null, {
++      responseRecovery: { stop: () => { stopped = true; return held; } },
++      shouldSkipOpenCodeStop: () => false,
++      getOpenCodeProcess: () => ({ close: async () => { upstreamClosed = true; } }),
++    });
++    const shuttingDown = runtime.gracefulShutdown({ exitProcess: false });
++    try {
++      expect(stopped).toBe(true);
++      await Promise.resolve();
++      expect(upstreamClosed).toBe(false);
++    } finally { release(); await shuttingDown; }
++    expect(upstreamClosed).toBe(true);
++  });
++
++  it('continues upstream teardown after recovery journal drain rejects without logging its error', async () => {
++    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
++    let closed = false;
++    const runtime = createRuntime(null, {
++      responseRecovery: { stop: async () => { throw new Error('sensitive diagnostic'); } },
++      shouldSkipOpenCodeStop: () => false,
++      getOpenCodeProcess: () => ({ close: async () => { closed = true; } }),
++    });
++    await runtime.gracefulShutdown({ exitProcess: false });
++    expect(closed).toBe(true);
++    expect(warning).toHaveBeenCalledWith('[response-recovery] shutdown drain failed; journal persistence is not confirmed');
++    expect(JSON.stringify(warning.mock.calls)).not.toContain('sensitive diagnostic');
++  });
++
+   it('clears the server close timeout when the server closes first', async () => {
+     vi.useFakeTimers();
+     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});

@@ -9,7 +9,7 @@ export class MittrToolError extends Error {
 
 export const NO_TOOL_NAME = 'MittrCraft tool call without a tool name';
 
-export const MITTR_TOOLS = Object.freeze({ computer: 'mittrcraft_computer', chrome: 'mittrcraft_chrome', work: 'mittrcraft_work', widgets: 'mittrcraft_widgets' });
+export const MITTR_TOOLS = Object.freeze({ computer: 'mittrcraft_computer', chrome: 'mittrcraft_chrome', work: 'mittrcraft_work', widgets: 'mittrcraft_widgets', todo: 'mittrcraft_todo' });
 
 export const UPSTREAM_SWITCHES = Object.freeze({ control: 'control', web: 'web' });
 
@@ -83,9 +83,9 @@ export function createMittrActionRegistry({ control, logger = console }) {
     },
 
     register({ action, tool, title, description, effect, voiceOnly = false, switchedBy = tool, available = () => true, surfaces = [...SURFACES], execute }) {
+      if (upstreamActions.has(action)) throw new Error(`${action} is an upstream action`);
       if (!ACTION_NAME.test(action)) throw new Error(`${action} is not a lowercase, dot-separated action name`);
       if (actions.has(action)) throw new Error(`${action} is already registered`);
-      if (upstreamActions.has(action)) throw new Error(`${action} is an upstream action`);
       if (!tools.has(tool)) throw new Error(`${tool} is not a defined tool`);
       if (!EFFECTS.has(effect)) throw new Error(`${action} has no effect of read or change`);
       if (!(execute instanceof Function)) throw new Error(`${action} has no execute function`);

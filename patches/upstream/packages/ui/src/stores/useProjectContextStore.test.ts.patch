@@ -1,0 +1,248 @@
+diff --git a/packages/ui/src/stores/useProjectContextStore.test.ts b/packages/ui/src/stores/useProjectContextStore.test.ts
+index 246bf0452..0578a5a1d 100644
+--- a/packages/ui/src/stores/useProjectContextStore.test.ts
++++ b/packages/ui/src/stores/useProjectContextStore.test.ts
+@@ -399,6 +399,137 @@ describe('saveTodos', () => {
+     await pending;
+   });
+ 
++  test('older responses cannot undo rapid add, toggle, reorder, and delete', async () => {
++    const a = { id: 'a', text: 'A', completed: false, createdAt: 1 };
++    const b = { id: 'b', text: 'B', completed: false, createdAt: 2 };
++    const snapshots = [[a], [a, b], [{ ...a, completed: true }, b], [b, { ...a, completed: true }], [b]];
++    const gates = snapshots.map(() => deferred<ContextPayload>());
++    const sent: ContextPayload['todos'][] = [];
++    handlers.saveTodos = (todos) => {
++      const index = sent.length;
++      sent.push(todos);
++      return gates[index].promise;
++    };
++    const saves = snapshots.map((todos) => store().saveTodos(PROJECT, todos));
++    handlers.fetch = async () => ({ ...emptyPayload(), todos: [b] });
++    let midLoad: Promise<void> = Promise.resolve();
++    for (let index = 0; index < gates.length; index += 1) {
++      gates[index].resolve({ ...emptyPayload(), todos: snapshots[index] });
++      expect(await saves[index]).toBe(true);
++      expect(entry().todos).toEqual([b]);
++      if (index === 0) {
++        midLoad = store().load(PROJECT, { force: true });
++        expect(entry().todos).toEqual([b]);
++      }
++    }
++    await midLoad;
++    expect(sent).toEqual(snapshots);
++    expect(entry().todos).toEqual([b]);
++    await store().load(PROJECT, { force: true });
++    expect(entry().todos).toEqual([b]);
++  });
++
++  test('failed older saves preserve newer edits and a later success clears the error', async () => {
++    const first = deferred<ContextPayload>();
++    const second = deferred<ContextPayload>();
++    let count = 0;
++    handlers.saveTodos = () => (++count === 1 ? first.promise : second.promise);
++    const a = { id: 'a', text: 'A', completed: false, createdAt: 1 };
++    const one = store().saveTodos(PROJECT, [a]);
++    const two = store().saveTodos(PROJECT, [{ ...a, completed: true }]);
++    first.reject(new Error('offline'));
++    expect(await one).toBe(false);
++    expect(entry().todos[0].completed).toBe(true);
++    second.resolve({ ...emptyPayload(), todos: [{ ...a, completed: true }] });
++    expect(await two).toBe(true);
++    expect(entry().error).toBeNull();
++  });
++
++  test('a failed queue restores the last confirmed list, not an unsaved optimistic list', async () => {
++    const a = { id: 'a', text: 'confirmed', completed: false, createdAt: 1 };
++    await store().saveTodos(PROJECT, [a]);
++    const gate = deferred<ContextPayload>();
++    handlers.saveTodos = () => gate.promise;
++    const one = store().saveTodos(PROJECT, []);
++    const two = store().saveTodos(PROJECT, [{ ...a, text: 'unsaved' }]);
++    gate.reject(new Error('disk full'));
++    expect(await one).toBe(false);
++    expect(await two).toBe(false);
++    expect(entry().todos).toEqual([a]);
++    expect(entry().error).toBe('disk full');
++  });
++
++  test('a later failure rolls back to an earlier queued success including server normalization', async () => {
++    const first = deferred<ContextPayload>();
++    const second = deferred<ContextPayload>();
++    let count = 0;
++    handlers.saveTodos = () => (++count === 1 ? first.promise : second.promise);
++    const a = { id: 'a', text: 'normalized', completed: false, createdAt: 1 };
++    const one = store().saveTodos(PROJECT, [{ ...a, text: ' normalized ' }]);
++    const two = store().saveTodos(PROJECT, []);
++    first.resolve({ ...emptyPayload(), todos: [a] });
++    expect(await one).toBe(true);
++    expect(entry().todos).toEqual([]);
++    second.reject(new Error('read only'));
++    expect(await two).toBe(false);
++    expect(entry().todos).toEqual([a]);
++    handlers.fetch = failWith('offline');
++    await store().load(PROJECT, { force: true });
++    expect(entry().todos).toEqual([a]);
++    expect(entry().error).toBe('offline');
++  });
++
++  test('an unrelated project can save while this project is waiting', async () => {
++    const gate = deferred<ContextPayload>();
++    handlers.saveTodos = (todos) => todos.length === 0 ? gate.promise : Promise.resolve({ ...emptyPayload(), todos });
++    const pending = store().saveTodos(PROJECT, []);
++    const other = { id: 'other', path: '/other' };
++    const todos = [{ id: 'other', text: 'other', completed: false, createdAt: 1 }];
++    expect(await store().saveTodos(other, todos)).toBe(true);
++    expect(store().getEntry(other).todos).toEqual(todos);
++    gate.resolve(emptyPayload());
++    expect(await pending).toBe(true);
++    expect(store().getEntry(other).todos).toEqual(todos);
++  });
++
++  test('a load started before a completed save cannot restore stale todos', async () => {
++    const gate = deferred<ContextPayload>();
++    handlers.fetch = () => gate.promise;
++    const loading = store().load(PROJECT);
++    const a = { id: 'a', text: 'new', completed: false, createdAt: 1 };
++    await store().saveTodos(PROJECT, [a]);
++    gate.resolve(emptyPayload());
++    await loading;
++    expect(entry().todos).toEqual([a]);
++  });
++
++  test('a load begun during a write stays stale after that write settles', async () => {
++    const gate = deferred<ContextPayload>();
++    handlers.fetch = () => gate.promise;
++    const a = { id: 'a', text: 'new', completed: false, createdAt: 1 };
++    const saving = store().saveTodos(PROJECT, [a]);
++    const loading = store().load(PROJECT);
++    await saving;
++    gate.resolve(emptyPayload());
++    await loading;
++    expect(entry().todos).toEqual([a]);
++  });
++
++  test('a runtime reset rejects old todo completions and queued dispatches', async () => {
++    const gate = deferred<ContextPayload>();
++    handlers.saveTodos = () => gate.promise;
++    const one = store().saveTodos(PROJECT, []);
++    const two = store().saveTodos(PROJECT, []);
++    await Promise.resolve();
++    expect(calls.saveTodos).toBe(1);
++    store().reset();
++    gate.resolve(emptyPayload());
++    expect(await one).toBe(false);
++    expect(await two).toBe(false);
++    expect(calls.saveTodos).toBe(1);
++    expect(entry().loaded).toBe(false);
++  });
++
+   test('sends one todo when the change names it and shows the list the server committed', async () => {
+     const mine = { id: 'mine', text: 'mine', completed: false, createdAt: 1 };
+     const agents = { id: 'agent', text: 'from an agent', completed: false, createdAt: 2 };
+@@ -627,6 +758,105 @@ describe('plans', () => {
+   });
+ });
+ 
++describe('review regressions', () => {
++  test('an older forced load is read again after a newer failed todo save, never applied stale', async () => {
++    const todos = [{ id: 'a', text: 'confirmed', completed: false, createdAt: 1 }];
++    await store().saveTodos(PROJECT, todos);
++    const gate = deferred<ContextPayload>();
++    let reads = 0;
++    handlers.fetch = () => (++reads === 1 ? gate.promise : Promise.resolve({ ...emptyPayload(), todos }));
++    const loading = store().load(PROJECT, { force: true });
++    handlers.saveTodos = failWith('disk full');
++    expect(await store().saveTodos(PROJECT, [])).toBe(false);
++    expect(entry().todos).toEqual(todos);
++    expect(entry().error).toBe('disk full');
++    gate.resolve(emptyPayload());
++    await loading;
++    expect(reads).toBe(2);
++    expect(entry().todos).toEqual(todos);
++    expect(entry().error).toBeNull();
++  });
++
++  for (const kind of ['note', 'plan'] as const) {
++    for (const outcome of ['success', 'failure'] as const) {
++      test(`old runtime ${kind} creation ${outcome} cannot suppress destination todo hydration`, async () => {
++        const gate = deferred<ContextPayload>();
++        if (kind === 'note') {
++          handlers.createNote = async () => ({ note: note(), context: await gate.promise });
++        } else {
++          handlers.create = async () => ({ plan: planLink(), context: await gate.promise });
++        }
++        const pending = kind === 'note'
++          ? store().createNote(PROJECT, { body: 'old runtime' })
++          : store().createPlan(PROJECT, { title: 'old runtime', body: 'body' });
++        await Promise.resolve();
++        store().reset();
++        if (outcome === 'success') gate.resolve(emptyPayload());
++        else gate.reject(new Error('old runtime failure'));
++        expect(await pending).toBeNull();
++        expect(entry().loaded).toBe(false);
++        expect(entry().error).toBeNull();
++        const todos = [{ id: 'b', text: 'destination', completed: false, createdAt: 1 }];
++        handlers.fetch = async () => ({ ...emptyPayload(), todos });
++        await store().load(PROJECT);
++        expect(calls.fetch).toBe(1);
++        expect(entry().todos).toEqual(todos);
++      });
++    }
++  }
++
++  for (const action of ['saveNoteBody', 'setNotePinned', 'deleteNote', 'savePlan', 'setPlanPinned', 'deletePlan'] as const) {
++    for (const outcome of ['success', 'failure'] as const) {
++      test(`reset rejects ${action} ${outcome} without changing the destination cache`, async () => {
++        const gate = deferred<ContextPayload>();
++        handlers.updateNote = async () => { await gate.promise; return note(); };
++        handlers.deleteNote = () => gate.promise;
++        handlers.update = async () => { await gate.promise; return { plan: planLink(), raw: '# A' }; };
++        handlers.pinPlan = async () => { await gate.promise; return planLink(); };
++        handlers.remove = () => gate.promise;
++        const run = () => {
++          switch (action) {
++            case 'saveNoteBody': return store().saveNoteBody(PROJECT, 'n1', 'new');
++            case 'setNotePinned': return store().setNotePinned(PROJECT, 'n1', true);
++            case 'deleteNote': return store().deleteNote(PROJECT, 'n1');
++            case 'savePlan': return store().savePlan(PROJECT, 'p1', '# New');
++            case 'setPlanPinned': return store().setPlanPinned(PROJECT, 'p1', true);
++            case 'deletePlan': return store().deletePlan(PROJECT, 'p1');
++          }
++        };
++        const pending = run();
++        await Promise.resolve();
++        store().reset();
++        const todos = [{ id: 'b', text: 'destination', completed: false, createdAt: 1 }];
++        handlers.fetch = async () => ({ ...emptyPayload(), todos });
++        await store().load(PROJECT);
++        const destination = entry();
++        if (outcome === 'success') gate.resolve(emptyPayload());
++        else gate.reject(new Error('old runtime failure'));
++        expect(await pending).toBe(false);
++        expect(entry()).toBe(destination);
++      });
++    }
++  }
++
++  test('reset cancels queued note and plan dispatch behind an old write', async () => {
++    const gate = deferred<ContextPayload>();
++    handlers.saveTodos = () => gate.promise;
++    const saving = store().saveTodos(PROJECT, []);
++    const creatingNote = store().createNote(PROJECT, { body: 'queued' });
++    const creatingPlan = store().createPlan(PROJECT, { title: 'queued', body: 'body' });
++    await Promise.resolve();
++    store().reset();
++    gate.resolve(emptyPayload());
++    expect(await saving).toBe(false);
++    expect(await creatingNote).toBeNull();
++    expect(await creatingPlan).toBeNull();
++    expect(calls.createNote).toBe(0);
++    expect(calls.create).toBe(0);
++    expect(entry().loaded).toBe(false);
++  });
++});
++
+ describe('reset', () => {
+   test('drops every cached project', async () => {
+     await store().load(PROJECT);

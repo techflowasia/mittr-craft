@@ -184,3 +184,9 @@ export const prepareCliEnvironment = ({ env, homeDir, pluginPath, productEnv, pa
 };
 
 export const readProductEnv = (productFile) => JSON.parse(fs.readFileSync(productFile, 'utf8')).env ?? {};
+
+export const serverCliOf = (webDir, { exists = fs.existsSync, bunVersion = process.versions.bun } = {}) => {
+  const source = path.join(webDir, 'bin', 'cli.js');
+  const sourceRuns = bunVersion || exists(path.join(webDir, 'scripts', 'register-server-sources.mjs'));
+  return sourceRuns && exists(source) ? source : path.join(webDir, 'build', 'bin', 'cli.js');
+};

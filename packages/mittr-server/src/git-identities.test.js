@@ -86,7 +86,7 @@ const readThroughUpstream = (home, dataDir) => {
     console.log(JSON.stringify(getProfiles()));
   `;
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
-  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+  const result = spawnSync(process.execPath, ['--import', pathToFileURL(path.join(repoRoot, 'packages/web/scripts/register-server-sources.mjs')).href, '--input-type=module', '-e', script], {
     encoding: 'utf8',
     env: {
       ...env,

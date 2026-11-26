@@ -4,12 +4,22 @@ import { Icon } from '@/components/icon/Icon';
 import { GuestIcon } from '@/components/layout/GuestRailIcon';
 import { SettingsPageLayout } from '@/components/sections/shared/SettingsPageLayout';
 import {
+  SETTINGS_HELPER_CLASS,
   SETTINGS_ICON_BUTTON_CLASS,
+  SettingsFieldRow,
   SettingsSection,
-  SettingsStackedField,
 } from '@/components/sections/shared/SettingsSection';
+import {
+  SETTINGS_CARD_GRID_CLASS,
+  SettingsAddCard,
+  SettingsBackButton,
+  SettingsCard,
+  SettingsCardChip,
+  SettingsCardPill,
+  type SettingsCardAction,
+  type SettingsCardTone,
+} from '@/components/sections/shared/SettingsCards';
 import { Button } from '@/components/ui/button';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Dialog,
   DialogContent,
@@ -20,9 +30,11 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { GuestApprovalDialog } from './GuestApprovalDialog';
+import { OpenCodePluginBanner } from './OpenCodePluginBanner';
 import { toast } from '@/components/ui';
-import { setGuestServiceSocketPath } from '@/lib/guests/service';
+import { loadGuestServiceFailure, setGuestServiceSocketPath } from '@/lib/guests/service';
 import { guestNeedsApproval } from '@/lib/guests/capabilities';
+import { SESSION_EVENT_LABEL_KEYS } from '@/lib/guests/session-event-labels';
 import { useEnterpriseMode } from '@/stores/useEnterprisePolicyStore';
 import { guestPackageIconSrc, resolveGuestIconName } from '@/lib/guests/icon';
 import { getGuestSourceUrl } from '@/lib/guests/source-url';
@@ -30,32 +42,41 @@ import { approveGuestCapabilities, installGuest, setGuestEnabled, uninstallGuest
 import { errorToastKey, updateErrorToastKey } from './extensionToasts';
 import { closeGuestTabsById } from '@/lib/guests/tabs';
 import { loadGuestCatalog } from '@/lib/guests/load-catalog';
+import { openCodePluginNotice } from '@/lib/guests/opencode-plugin';
+import { useGuestInstallRequestStore } from '@/lib/guests/install-request';
 import { describeGuestRequestFailure } from '@/lib/guests/request-failure';
 import { getGitIdentities, getGlobalGitIdentity } from '@/lib/gitApi';
-import { getRuntimeKey } from '@/lib/runtime-switch';
+import { captureRuntimeInstance, getRuntimeKey } from '@/lib/runtime-switch';
 import type { GitIdentityProfile } from '@/stores/useGitIdentitiesStore';
 import { IdentityDropdown } from '@/components/views/git/GitHeader';
 import { checkGuestUpdates, updateGuest } from '@/lib/guests/updates';
-import type { GuestSource, InstalledGuest } from '@/lib/guests/types';
+import type { GuestSource, InstalledGuest, UnreadableGuest } from '@/lib/guests/types';
 import { useGuestsStore } from '@/lib/guests/store';
-import { useI18n, type I18nKey } from '@/lib/i18n';
+import { useI18n, type I18nKey, type Locale } from '@/lib/i18n';
 import { getRuntimeUrlResolver } from '@/lib/runtime-url';
 import { cn } from '@/lib/utils';
+import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { openExternalUrl } from '@/lib/url';
 import { canRequestNativeDirectoryAccess, pathForDroppedFile, requestDirectoryAccess, requestFileAccess } from '@/lib/desktop';
 import type { PublicSocketBinding } from '@openchamber/sdk';
 
 
-/**
- * What the user handed us to install: a typed path or URL (also what the
- * desktop resolves from a picker or a drop), or a `.zip` File the browser
- * holds that has to travel to the host.
- */
 type InstallSource =
   | { kind: 'input'; input: string; gitIdentityId?: string }
   | { kind: 'file'; file: File };
 
 const isZipFile = (file: File): boolean => file.name.toLowerCase().endsWith('.zip');
+
+const WEBSITE_LOCALE_PATHS = {
+  uk: 'uk', 'zh-CN': 'zh', 'zh-TW': 'zh', es: 'es', 'pt-BR': 'pt', ko: 'ko',
+  pl: 'pl', fr: 'fr', ja: 'ja', de: 'de', tr: 'tr', nl: 'nl',
+  en: null, ar: null, he: null,
+} as const satisfies Record<Locale, string | null>;
+
+const communityExtensionsUrl = (locale: Locale): string => {
+  const path = WEBSITE_LOCALE_PATHS[locale];
+  return path ? `https://openchamber.dev/${path}/extensions/` : 'https://openchamber.dev/extensions/';
+};
 
 
 const sourceKey = (source?: GuestSource): I18nKey => {
@@ -191,8 +212,38 @@ const SocketOverrideRow: React.FC<{
   );
 };
 
-type ExtensionCardProps = {
-  guest: InstalledGuest;
+const extensionState = (guest: InstalledGuest) => {
+  const enabled = guest.enabled !== false;
+  const enterpriseBlocked = (guest.enterpriseBlocked?.length ?? 0) > 0;
+  const needsApproval = !enterpriseBlocked && guestNeedsApproval(guest);
+  const builtIn = guest.source === 'bundled';
+  const statusKey: I18nKey = enterpriseBlocked
+    ? 'settings.extensions.status.enterpriseBlocked'
+    : needsApproval
+      ? 'settings.extensions.status.needsApproval'
+      : enabled
+        ? 'settings.extensions.status.enabled'
+        : 'settings.extensions.status.disabled';
+  const statusTone: SettingsCardTone = enterpriseBlocked || needsApproval ? 'warning' : enabled ? 'success' : 'neutral';
+  return {
+    enabled,
+    enterpriseBlocked,
+    needsApproval,
+    builtIn,
+    canRemove: Boolean(guest.source && guest.source !== 'bundled'),
+    sourceUrl: getGuestSourceUrl(guest),
+    update: guest.source === 'git' ? guest.update : undefined,
+    statusKey,
+    statusTone,
+  };
+};
+
+const useGuestIconSrc = (guest: InstalledGuest) => React.useMemo(
+  () => guestPackageIconSrc(guest.id, guest.icon, getRuntimeUrlResolver().authenticatedAsset),
+  [guest.id, guest.icon],
+);
+
+type ExtensionHandlers = {
   busy: boolean;
   onReview: (guest: InstalledGuest) => void;
   onRemove: (id: string, name: string) => Promise<void>;
@@ -200,202 +251,340 @@ type ExtensionCardProps = {
   onUpdate: (guest: InstalledGuest) => Promise<void>;
 };
 
-const ExtensionCard: React.FC<ExtensionCardProps> = ({
+const ExtensionCard: React.FC<ExtensionHandlers & { guest: InstalledGuest; onOpen: () => void }> = ({
   guest,
   busy,
+  onOpen,
   onReview,
   onRemove,
   onSetEnabled,
   onUpdate,
 }) => {
   const { t } = useI18n();
-  const [open, setOpen] = React.useState(false);
-  const enabled = guest.enabled !== false;
-  // Enterprise mode refuses what this package asks for; approving cannot change that.
-  const enterpriseBlocked = (guest.enterpriseBlocked?.length ?? 0) > 0;
-  const needsApproval = !enterpriseBlocked && guestNeedsApproval(guest);
-  const permissions = servicePermissionList(guest);
-  const canRemove = Boolean(guest.source && guest.source !== 'bundled');
-  const builtIn = guest.source === 'bundled';
-  const sourceUrl = getGuestSourceUrl(guest);
-  // Only a git install can move forward; folder and zip cards never get this.
-  const update = guest.source === 'git' ? guest.update : undefined;
-  const iconSrc = React.useMemo(
-    () => guestPackageIconSrc(guest.id, guest.icon, getRuntimeUrlResolver().authenticatedAsset),
-    [guest.id, guest.icon],
+  const state = extensionState(guest);
+  const iconSrc = useGuestIconSrc(guest);
+  const actions: SettingsCardAction[] = busy ? [] : [
+    ...(state.update ? [{
+      label: t('settings.extensions.update.action'),
+      icon: 'arrow-up-s' as const,
+      onSelect: () => void onUpdate(guest),
+    }] : []),
+    ...(state.needsApproval ? [{
+      label: t('settings.extensions.review'),
+      icon: 'shield-check' as const,
+      onSelect: () => onReview(guest),
+    }] : []),
+    ...(state.enterpriseBlocked ? [] : [{
+      label: state.enabled ? t('settings.extensions.actions.disable') : t('settings.extensions.actions.enable'),
+      icon: state.enabled ? 'pause' as const : 'play' as const,
+      onSelect: () => void onSetEnabled(guest.id, guest.name, !state.enabled),
+    }]),
+    ...(state.sourceUrl ? [{
+      label: t('settings.extensions.actions.openSource'),
+      icon: 'external-link' as const,
+      onSelect: () => void openExternalUrl(state.sourceUrl ?? ''),
+    }] : []),
+    ...(state.canRemove ? [{
+      label: t('settings.extensions.remove'),
+      icon: 'delete-bin' as const,
+      destructive: true,
+      onSelect: () => void onRemove(guest.id, guest.name),
+    }] : []),
+  ];
+  return (
+    <SettingsCard
+      icon={<GuestIcon icon={resolveGuestIconName(guest.icon)} iconSrc={iconSrc} className="size-5 text-foreground" />}
+      title={guest.name}
+      badges={(
+        <>
+          {state.update ? (
+            <SettingsCardPill tone="info">{t('settings.extensions.update.badge', { version: state.update.version })}</SettingsCardPill>
+          ) : null}
+          <SettingsCardPill tone={state.statusTone}>{t(state.statusKey)}</SettingsCardPill>
+        </>
+      )}
+      footer={(
+        <>
+          <span className="truncate">{extensionMeta(guest, t)}</span>
+          {state.builtIn ? <SettingsCardChip>{t('settings.extensions.source.bundled')}</SettingsCardChip> : null}
+        </>
+      )}
+      muted={!state.enabled}
+      onOpen={onOpen}
+      actionsLabel={t('settings.extensions.grid.actionsAria', { name: guest.name })}
+      actions={actions}
+    />
   );
-  // The path is one unbreakable word; it lives in the expanded body so the
-  // header line never clamps right after the version.
-  const meta = [
-    builtIn ? null : t(sourceKey(guest.source)),
-    guest.version ? `v${guest.version}` : null,
-    guest.entry ? null : t('settings.extensions.source.noPanel'),
-  ].filter(Boolean).join(' · ');
+};
+
+const extensionMeta = (guest: InstalledGuest, t: ReturnType<typeof useI18n>['t']): string => [
+  guest.source === 'bundled' ? null : t(sourceKey(guest.source)),
+  guest.version ? `v${guest.version}` : null,
+  guest.entry ? null : t('settings.extensions.source.noPanel'),
+].filter(Boolean).join(' · ');
+
+const ExtensionDetail: React.FC<ExtensionHandlers & { guest: InstalledGuest; onBack: () => void }> = ({
+  guest,
+  busy,
+  onBack,
+  onReview,
+  onRemove,
+  onSetEnabled,
+  onUpdate,
+}) => {
+  const { t } = useI18n();
+  const state = extensionState(guest);
+  const iconSrc = useGuestIconSrc(guest);
+  const permissions = servicePermissionList(guest);
+  const [serviceFailure, setServiceFailure] = React.useState<{ at: number; output: string } | null>(null);
+  const watchesService = Boolean(guest.service) && guest.enabled !== false;
+  React.useEffect(() => {
+    if (!watchesService) return;
+    let current = true;
+    void loadGuestServiceFailure(guest.id).then((failure) => {
+      if (current) setServiceFailure(failure);
+    });
+    return () => { current = false; };
+  }, [guest.id, guest.revision, watchesService]);
   const location = guest.path || guest.id;
-  const statusLabel = enterpriseBlocked
-    ? t('settings.extensions.status.enterpriseBlocked')
-    : needsApproval
-    ? t('settings.extensions.status.needsApproval')
-    : enabled
-      ? t('settings.extensions.status.enabled')
-      : t('settings.extensions.status.disabled');
-  const statusClassName = enterpriseBlocked || needsApproval
-    ? 'bg-[var(--status-warning)]/15 text-[var(--status-warning)]'
-    : enabled
-      ? 'bg-[var(--status-success)]/15 text-[var(--status-success)]'
-      : 'bg-[var(--surface-muted)] text-muted-foreground';
+  const hasPermissions = Boolean(permissions) || Boolean(guest.service);
+  const opencodePlugins = useGuestsStore((store) => store.opencodePlugins);
+  const [pluginAdded, setPluginAdded] = React.useState<string | null>(null);
+  React.useEffect(() => { setPluginAdded(null); }, [guest.id]);
+  const pluginNotice = openCodePluginNotice({
+    guest,
+    plugins: opencodePlugins,
+    active: state.enabled && !state.needsApproval && !state.enterpriseBlocked,
+    added: pluginAdded,
+  });
+  const hasNotices = state.enterpriseBlocked || state.needsApproval || Boolean(state.update) || pluginNotice !== null;
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <div className="overflow-hidden rounded-xl border border-[var(--interactive-border)] bg-[var(--surface-elevated)]">
-        <CollapsibleTrigger
-          className="flex w-full min-w-0 items-center gap-3 px-4 py-3 text-left hover:bg-[var(--interactive-hover)]/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--interactive-focus-ring)]"
-        >
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-[var(--surface-muted)]">
-            <GuestIcon
-              icon={resolveGuestIconName(guest.icon)}
-              iconSrc={iconSrc}
-              className="size-5 text-foreground"
-            />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-foreground">{guest.name}</div>
-            <p className="mt-0.5 truncate text-xs leading-snug text-muted-foreground">
-              {meta}
-            </p>
-          </div>
-          {builtIn ? (
-            <span className="shrink-0 rounded-full border border-[var(--interactive-border)] px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-              {t('settings.extensions.source.bundled')}
-            </span>
+    <SettingsPageLayout
+      title={guest.name}
+      titleLeading={(
+        <>
+          <SettingsBackButton label={t('settings.extensions.detail.back')} onClick={onBack} />
+          <GuestIcon icon={resolveGuestIconName(guest.icon)} iconSrc={iconSrc} className="size-5 shrink-0 text-foreground" />
+        </>
+      )}
+      titleAccessory={<SettingsCardPill tone={state.statusTone}>{t(state.statusKey)}</SettingsCardPill>}
+      headerEnd={(
+        <div className="flex items-center gap-2">
+          {state.enterpriseBlocked ? null : (
+            <Button
+              type="button"
+              size="sm"
+              variant={state.enabled ? 'outline' : 'default'}
+              disabled={busy}
+              aria-label={state.enabled
+                ? t('settings.extensions.actions.disable.aria', { name: guest.name })
+                : t('settings.extensions.actions.enable.aria', { name: guest.name })}
+              onClick={() => void onSetEnabled(guest.id, guest.name, !state.enabled)}
+            >
+              {state.enabled ? t('settings.extensions.actions.disable') : t('settings.extensions.actions.enable')}
+            </Button>
+          )}
+          {state.canRemove ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="text-[var(--status-error)] hover:text-[var(--status-error)]"
+              disabled={busy}
+              aria-label={t('settings.extensions.remove.aria', { name: guest.name })}
+              onClick={() => void onRemove(guest.id, guest.name).then(onBack)}
+            >
+              <Icon name="delete-bin" className="size-3.5" />
+              {t('settings.extensions.remove')}
+            </Button>
           ) : null}
-          {update ? (
-            <span className="max-w-40 shrink-0 truncate rounded-full bg-[var(--status-info)]/15 px-2 py-0.5 text-[10px] font-medium text-[var(--status-info)]">
-              {t('settings.extensions.update.badge', { version: update.version })}
-            </span>
-          ) : null}
-          <span
-            aria-live="polite"
-            className={cn('max-w-36 shrink-0 truncate rounded-full px-2 py-0.5 text-[10px] font-medium', statusClassName)}
-          >
-            {statusLabel}
-          </span>
-          <Icon
-            name="arrow-down-s"
-            className={cn(
-              'size-4 shrink-0 text-muted-foreground transition-transform duration-150 ease-out motion-reduce:transition-none',
-              open && 'rotate-180',
-            )}
-          />
-        </CollapsibleTrigger>
-        <CollapsibleContent className="border-t border-[var(--interactive-border)] px-4 py-4">
-          <div className="space-y-3">
-            <p className="typography-meta truncate font-mono text-muted-foreground" title={location}>
-              {location}
-            </p>
-            {enterpriseBlocked ? <p className="typography-meta text-foreground">{t('settings.extensions.enterpriseBlocked')}</p> : null}
-            {builtIn ? <p className="typography-meta text-muted-foreground">{t('settings.extensions.builtIn.info')}</p> : null}
-            {permissions ? (
-              <p className="typography-meta truncate text-muted-foreground">
-                {t('settings.extensions.service.permissions', { list: permissions })}
-              </p>
-            ) : null}
-            {guest.service ? (
-              <p className="typography-meta text-muted-foreground">
-                {t('settings.extensions.service.warning')}
-              </p>
-            ) : null}
-            {enabled
-              ? (guest.service?.socketBindings ?? []).map((binding) => (
-                <SocketOverrideRow
-                  key={binding.id}
-                  guest={guest}
-                  binding={binding}
-                  busy={busy}
-                  onSaved={loadGuestCatalog}
-                />
-              ))
-              : null}
-            <div className="flex flex-wrap items-center gap-2">
-              {update ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={busy}
-                  aria-label={t('settings.extensions.update.action.aria', { name: guest.name, version: update.version })}
-                  onClick={() => void onUpdate(guest)}
-                >
-                  {t('settings.extensions.update.action')}
-                </Button>
-              ) : null}
-              {needsApproval ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={busy}
-                  aria-label={t('settings.extensions.review.aria', { name: guest.name })}
-                  onClick={() => onReview(guest)}
-                >
-                  {t('settings.extensions.review')}
-                </Button>
-              ) : null}
-              {enabled ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  aria-label={t('settings.extensions.actions.disable.aria', { name: guest.name })}
-                  onClick={() => void onSetEnabled(guest.id, guest.name, false)}
-                >
-                  {t('settings.extensions.actions.disable')}
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={busy}
-                  aria-label={t('settings.extensions.actions.enable.aria', { name: guest.name })}
-                  onClick={() => void onSetEnabled(guest.id, guest.name, true)}
-                >
-                  {t('settings.extensions.actions.enable')}
-                </Button>
-              )}
-              {canRemove ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="destructive"
-                  disabled={busy}
-                  aria-label={t('settings.extensions.remove.aria', { name: guest.name })}
-                  onClick={() => void onRemove(guest.id, guest.name)}
-                >
-                  {t('settings.extensions.remove')}
-                </Button>
-              ) : null}
-              {sourceUrl ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="ml-auto"
-                  onClick={() => void openExternalUrl(sourceUrl)}
-                >
-                  <Icon name="external-link" className="size-4" />
-                  {t('settings.extensions.actions.openSource')}
-                </Button>
-              ) : null}
+        </div>
+      )}
+    >
+      {hasNotices ? (
+        <SettingsSection contentClassName="space-y-2">
+          {state.enterpriseBlocked ? (
+            <div className="rounded-lg bg-[var(--status-warning)]/10 p-3 typography-meta text-[var(--status-warning)]">
+              {t('settings.extensions.enterpriseBlocked')}
             </div>
+          ) : null}
+          {state.needsApproval ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--status-warning)]/10 p-3">
+              <span className="typography-meta text-[var(--status-warning)]">{t('settings.extensions.status.needsApproval')}</span>
+              <Button
+                type="button"
+                size="sm"
+                disabled={busy}
+                aria-label={t('settings.extensions.review.aria', { name: guest.name })}
+                onClick={() => onReview(guest)}
+              >
+                {t('settings.extensions.review')}
+              </Button>
+            </div>
+          ) : null}
+          {state.update ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[var(--status-info)]/10 p-3">
+              <span className="typography-meta text-[var(--status-info)]">
+                {t('settings.extensions.update.badge', { version: state.update.version })}
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                disabled={busy}
+                aria-label={t('settings.extensions.update.action.aria', { name: guest.name, version: state.update.version })}
+                onClick={() => void onUpdate(guest)}
+              >
+                {t('settings.extensions.update.action')}
+              </Button>
+            </div>
+          ) : null}
+          {pluginNotice ? (
+            <OpenCodePluginBanner guest={guest} notice={pluginNotice} busy={busy} onAdded={setPluginAdded} />
+          ) : null}
+        </SettingsSection>
+      ) : null}
+
+      <SettingsSection
+        title={t('settings.extensions.detail.section.details')}
+        contentClassName="space-y-3"
+      >
+        <div>
+          <SettingsFieldRow label={t('settings.extensions.detail.field.source')}>
+            <span className="typography-ui-label text-foreground">{t(sourceKey(guest.source))}</span>
+            {state.sourceUrl ? (
+              <Button type="button" size="sm" variant="ghost" onClick={() => void openExternalUrl(state.sourceUrl ?? '')}>
+                <Icon name="external-link" className="size-3.5" />
+                {t('settings.extensions.actions.openSource')}
+              </Button>
+            ) : null}
+          </SettingsFieldRow>
+          {guest.version ? (
+            <SettingsFieldRow label={t('settings.extensions.detail.field.version')}>
+              <span className="typography-ui-label tabular-nums text-foreground">{`v${guest.version}`}</span>
+            </SettingsFieldRow>
+          ) : null}
+          <SettingsFieldRow label={t('settings.extensions.detail.field.location')} alignEnd={false} controlClassName="min-w-0 @xl:flex-1">
+            <span dir="ltr" className="typography-meta min-w-0 truncate font-mono text-muted-foreground" title={location}>{location}</span>
+          </SettingsFieldRow>
+        </div>
+        {state.builtIn ? <p className={SETTINGS_HELPER_CLASS}>{t('settings.extensions.builtIn.info')}</p> : null}
+        {serviceFailure ? (
+          <div className="flex flex-col gap-1">
+            <p className="typography-meta text-[var(--status-error)]">{t('settings.extensions.service.failed')}</p>
+            {serviceFailure.output ? (
+              <pre dir="ltr" className="max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-muted p-2 typography-micro text-muted-foreground">{serviceFailure.output}</pre>
+            ) : null}
           </div>
-        </CollapsibleContent>
-      </div>
-    </Collapsible>
+        ) : null}
+        {guest.needsConfiguration ? (
+          <p className="typography-meta text-[var(--status-warning)]">{t('settings.extensions.service.needsConfiguration', { message: guest.needsConfiguration })}</p>
+        ) : null}
+      </SettingsSection>
+
+      {hasPermissions ? (
+        <SettingsSection title={t('settings.extensions.detail.section.permissions')} contentClassName="space-y-3">
+          {permissions ? (
+            <p className="typography-meta text-foreground">{t('settings.extensions.service.permissions', { list: permissions })}</p>
+          ) : null}
+          {guest.sessionEvents ? (
+            <p className="typography-meta text-foreground">
+              {t('settings.extensions.service.sessionEvents', {
+                list: guest.sessionEvents.events.map((type) => t(SESSION_EVENT_LABEL_KEYS[type])).join(', '),
+              })}
+            </p>
+          ) : null}
+          {guest.service?.keepRunning || guest.service?.schedule ? (
+            <p className="typography-meta text-foreground">
+              {t('settings.extensions.service.runsAlone', {
+                list: [
+                  ...(guest.service.keepRunning ? [t('settings.extensions.capability.service.keepRunning')] : []),
+                  ...(guest.service.schedule ?? []).map((entry) => entry.cron),
+                ].join(', '),
+              })}
+            </p>
+          ) : null}
+          {guest.waits?.length ? (
+            <p className="typography-meta text-foreground">
+              {t('settings.extensions.service.waits', { list: guest.waits.map((wait) => wait.title).join(', ') })}
+            </p>
+          ) : null}
+          {guest.notifications ? (
+            <p className="typography-meta text-foreground">{t('settings.extensions.service.providesNotifications')}</p>
+          ) : null}
+          {guest.tracker ? (
+            <p className="typography-meta text-foreground">{t('settings.extensions.service.providesTracker', { label: guest.tracker.label })}</p>
+          ) : null}
+          {guest.quota ? (
+            <p className="typography-meta text-foreground">
+              {guest.quota.providers.length > 0
+                ? t('settings.extensions.service.providesQuota', { list: guest.quota.providers.join(', ') })
+                : t('settings.extensions.service.providesQuota.none')}
+            </p>
+          ) : null}
+          {guest.capabilities.requested.includes('opencode') ? (
+            <p className="typography-meta text-foreground">{t('settings.extensions.capability.opencode.detail')}</p>
+          ) : null}
+          {guest.service ? (
+            <p className="typography-meta text-[var(--status-warning)]">{t('settings.extensions.service.warning')}</p>
+          ) : null}
+          {state.enabled
+            ? (guest.service?.socketBindings ?? []).map((binding) => (
+              <SocketOverrideRow
+                key={binding.id}
+                guest={guest}
+                binding={binding}
+                busy={busy}
+                onSaved={loadGuestCatalog}
+              />
+            ))
+            : null}
+        </SettingsSection>
+      ) : null}
+    </SettingsPageLayout>
+  );
+};
+
+const UnreadableExtensionCard: React.FC<{
+  guest: UnreadableGuest;
+  busy: boolean;
+  onRemove: (id: string, name: string) => Promise<void>;
+}> = ({ guest, busy, onRemove }) => {
+  const { t } = useI18n();
+  const name = guest.name ?? guest.id ?? t('settings.extensions.unreadable.unnamed');
+  const removableId = guest.builtIn ? null : guest.id;
+  return (
+    <SettingsCard
+      icon={<Icon name="error-warning" className="size-5 text-[var(--status-error)]" />}
+      title={name}
+      badges={<SettingsCardPill tone="error">{t('settings.extensions.status.unreadable')}</SettingsCardPill>}
+      footer={(
+        <>
+          <span className="min-w-0 flex-1 truncate" title={t('settings.extensions.unreadable.hint')}>{t('settings.extensions.unreadable.hint')}</span>
+          {removableId ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="shrink-0 !font-normal"
+              disabled={busy}
+              aria-label={t('settings.extensions.remove.aria', { name })}
+              onClick={() => void onRemove(removableId, name)}
+            >
+              {t('settings.extensions.remove')}
+            </Button>
+          ) : null}
+        </>
+      )}
+    />
   );
 };
 
 export const ExtensionsPage: React.FC = () => {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const guests = useGuestsStore((state) => state.guests);
+  const updatable = React.useMemo(() => guests.filter((guest) => guest.source === 'git' && guest.update), [guests]);
+  const unreadable = useGuestsStore((state) => state.unreadable);
   const status = useGuestsStore((state) => state.status);
   const catalogFailure = useGuestsStore((state) => state.failure);
   const runtimeKey = useGuestsStore((state) => state.runtimeKey);
@@ -410,15 +599,19 @@ export const ExtensionsPage: React.FC = () => {
   const [installValue, setInstallValue] = React.useState('');
   const enterpriseMode = useEnterpriseMode();
   const [busy, setBusy] = React.useState(false);
+  const [newlyAddedId, setNewlyAddedId] = React.useState<string | null>(null);
   const [checking, setChecking] = React.useState(false);
   const checkedOnOpen = React.useRef(false);
   const [reinstall, setReinstall] = React.useState<{ source: InstallSource; name: string } | null>(null);
   const [approval, setApproval] = React.useState<InstalledGuest | null>(null);
+  React.useEffect(() => {
+    if (!approval) setNewlyAddedId(null);
+  }, [approval]);
   const [dropActive, setDropActive] = React.useState(false);
+  const [addOpen, setAddOpen] = React.useState(false);
+  const [selectedId, setSelectedId] = React.useState<string | null>(null);
   const dragDepth = React.useRef(0);
   const zipInputRef = React.useRef<HTMLInputElement | null>(null);
-  // Desktop on its own machine can hand the server a path; every other
-  // runtime that shows this page (web, remote desktop instance) uploads.
   const nativePaths = canRequestNativeDirectoryAccess();
 
   React.useEffect(() => {
@@ -452,8 +645,6 @@ export const ExtensionsPage: React.FC = () => {
   }, [identityData, runtimeKey, t]);
   const selectedGitIdentity = identities.find((profile) => profile.id === selectedGitIdentityId) ?? identities[0];
 
-  // One quiet check per page open, once the catalog is in. The server
-  // answers from its hour cache, so this is cheap on a revisit.
   React.useEffect(() => {
     if (status !== 'ready' || checkedOnOpen.current) return;
     checkedOnOpen.current = true;
@@ -480,30 +671,56 @@ export const ExtensionsPage: React.FC = () => {
     }
   };
 
+  const updateErrorToast = (result: Extract<Awaited<ReturnType<typeof updateGuest>>, { ok: false }>) => {
+    toast.error(
+      result.code === 'host-too-old' && result.required
+        ? t('settings.extensions.toast.hostTooOld', { version: result.required })
+        : t(updateErrorToastKey(result.code)),
+    );
+  };
+
   const update = async (guest: InstalledGuest) => {
     setBusy(true);
     const result = await updateGuest(guest.id);
     setBusy(false);
     if (!result.ok) {
-      toast.error(
-        result.code === 'host-too-old' && result.required
-          ? t('settings.extensions.toast.hostTooOld', { version: result.required })
-          : t(updateErrorToastKey(result.code)),
-      );
+      updateErrorToast(result);
       return;
     }
-    // Open panels still run the old bundle; the next open loads the new one.
-    closeGuestTabsById(guest.id);
     toast.success(t('settings.extensions.toast.updated', {
       name: result.guest.name,
       version: result.guest.version ?? '',
     }));
     await loadGuestCatalog();
-    // A version that asks for more than the user approved goes through the
-    // same review dialog an install does.
     if (guestNeedsApproval(result.guest)) {
       setApproval(result.guest);
     }
+  };
+
+  const updateAll = async () => {
+    const targets = updatable;
+    const isCurrent = captureRuntimeInstance();
+    setBusy(true);
+    let updated = 0;
+    let needsApproval: InstalledGuest | null = null;
+    for (const guest of targets) {
+      const result = await updateGuest(guest.id);
+      if (!isCurrent()) return;
+      if (!result.ok) {
+        updateErrorToast(result);
+        continue;
+      }
+      updated += 1;
+      if (!needsApproval && guestNeedsApproval(result.guest)) needsApproval = result.guest;
+    }
+    setBusy(false);
+    if (updated > 0) {
+      toast.success(updated === targets.length
+        ? t('settings.extensions.toast.updatedAll', { count: updated })
+        : t('settings.extensions.toast.updatedSome', { count: updated, total: targets.length }));
+    }
+    await loadGuestCatalog();
+    if (needsApproval) setApproval(needsApproval);
   };
 
   const finishInstall = async (
@@ -511,13 +728,20 @@ export const ExtensionsPage: React.FC = () => {
     source: InstallSource,
     options: { allowConflictDialog?: boolean } = {},
   ): Promise<boolean> => {
+    if (!result.ok && result.code === 'unreadable') {
+      setInstallValue('');
+      setReinstall(null);
+      toast.error(t(errorToastKey(result.code)));
+      await loadGuestCatalog();
+      return false;
+    }
     if (!result.ok) {
       if (
         options.allowConflictDialog !== false
         && (result.code === 'id-taken' || result.code === 'already-installed')
       ) {
         const existing = result.id
-          ? guests.find((guest) => guest.id === result.id)
+          ? guests.find((guest) => guest.id === result.id) ?? unreadable.find((guest) => guest.id === result.id)
           : undefined;
         setReinstall({
           source,
@@ -534,13 +758,14 @@ export const ExtensionsPage: React.FC = () => {
         );
       } else {
         toast.error(t(errorToastKey(result.code)), {
-          description: result.diagnostic ? describeGuestRequestFailure(result.diagnostic, t) : undefined,
+          description: result.reason ?? (result.diagnostic ? describeGuestRequestFailure(result.diagnostic, t) : undefined),
         });
       }
       return false;
     }
     setInstallValue('');
     setReinstall(null);
+    setAddOpen(false);
     toast.success(
       result.replaced
         ? t('settings.extensions.toast.reinstalled', { name: result.guest.name })
@@ -548,6 +773,7 @@ export const ExtensionsPage: React.FC = () => {
     );
     await loadGuestCatalog();
     if (guestNeedsApproval(result.guest)) {
+      setNewlyAddedId(result.guest.id);
       setApproval(result.guest);
     }
     return true;
@@ -566,6 +792,21 @@ export const ExtensionsPage: React.FC = () => {
     if (getRuntimeKey() !== requestRuntimeKey) return;
     await finishInstall(result, source, { allowConflictDialog: !options.replace });
   };
+
+  const installRequest = useGuestInstallRequestStore((state) => state.request);
+  const runInstallRef = React.useRef(runInstall);
+  runInstallRef.current = runInstall;
+  React.useEffect(() => {
+    if (!installRequest || status !== 'ready' || busy) return;
+    const request = useGuestInstallRequestStore.getState().take();
+    if (!request) return;
+    if (request.confirmed) {
+      void runInstallRef.current({ kind: 'input', input: request.source });
+      return;
+    }
+    setInstallValue(request.source);
+    setAddOpen(true);
+  }, [busy, installRequest, status]);
 
   const add = async () => {
     const trimmed = installValue.trim();
@@ -599,7 +840,6 @@ export const ExtensionsPage: React.FC = () => {
 
   const onZipPicked = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
-    // Clear so picking the same file again (after a failed try) fires change.
     event.target.value = '';
     if (!file) return;
     if (!isZipFile(file)) {
@@ -628,7 +868,6 @@ export const ExtensionsPage: React.FC = () => {
   };
 
   const onDrop = async (event: React.DragEvent<HTMLDivElement>) => {
-    // Without this the shell (or the browser) navigates to the dropped file.
     event.preventDefault();
     dragDepth.current = 0;
     setDropActive(false);
@@ -638,8 +877,6 @@ export const ExtensionsPage: React.FC = () => {
     const entry = item?.webkitGetAsEntry() ?? null;
     const isDirectory = entry?.isDirectory === true;
     const isZip = file !== null && !isDirectory && isZipFile(file);
-    // Fastest route: the desktop on its own machine names the path and the
-    // server reads it; nothing travels over the wire.
     const path = file && nativePaths ? pathForDroppedFile(file) : null;
     if (path && (isDirectory || isZip)) {
       await runInstall({ kind: 'input', input: path });
@@ -689,7 +926,6 @@ export const ExtensionsPage: React.FC = () => {
     await loadGuestCatalog();
   };
 
-  // Declining at install is the same as never installing: the package goes.
   const decline = async (guest: InstalledGuest) => {
     setApproval(null);
     await remove(guest.id, guest.name);
@@ -714,42 +950,51 @@ export const ExtensionsPage: React.FC = () => {
     await loadGuestCatalog();
   };
 
-  return (
-    <SettingsPageLayout
-      title={t('settings.page.extensions.title')}
-      description={t('settings.page.extensions.description')}
-    >
-      {unsupported ? null : (
-        <SettingsSection
-          title={t('settings.extensions.add.action')}
-          info={enterpriseMode ? (
-            <>
-              <span className="block">{t('settings.extensions.add.enterpriseRule')}</span>
-              <span className="mt-2 block">{t('settings.extensions.add.info')}</span>
-            </>
-          ) : t('settings.extensions.add.info')}
-        >
-          <SettingsStackedField
-            label={t('settings.extensions.add.label')}
-            info={t(nativePaths ? 'settings.extensions.add.drop' : 'settings.extensions.add.drop.zipOnly')}
-            settingsItem="extensions.add"
-            controlClassName="w-full max-w-none"
+  const dropHandlers = {
+    onDragEnter,
+    onDragOver,
+    onDragLeave,
+    onDrop: (event: React.DragEvent<HTMLDivElement>) => void onDrop(event),
+  };
+  const handlers: ExtensionHandlers = {
+    busy,
+    onReview: setApproval,
+    onRemove: remove,
+    onSetEnabled: setEnabled,
+    onUpdate: update,
+  };
+  const selectedGuest = selectedId ? guests.find((guest) => guest.id === selectedId) ?? null : null;
+  const phone = isMobileSurfaceRuntime();
+
+  const dialogs = (
+    <>
+      <Dialog open={addOpen} onOpenChange={(open) => { if (!busy) setAddOpen(open); }}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{t('settings.extensions.grid.addTitle')}</DialogTitle>
+            <DialogDescription>
+              {enterpriseMode ? (
+                <>
+                  <span className="block">{t('settings.extensions.add.enterpriseRule')}</span>
+                  <span className="mt-2 block">{t('settings.extensions.add.info')}</span>
+                </>
+              ) : t('settings.extensions.add.info')}
+            </DialogDescription>
+          </DialogHeader>
+          <div
+            className={cn(
+              'relative space-y-2',
+              !phone && 'rounded-lg border border-dashed border-[color-mix(in_srgb,var(--foreground)_14%,transparent)] p-3 transition-colors',
+              dropActive && 'border-primary bg-primary/5',
+            )}
+            {...(phone ? {} : dropHandlers)}
           >
-            <div
-              className={cn(
-                'relative -m-1 flex min-w-0 flex-1 items-center gap-2 rounded-md border border-dashed border-transparent p-1 transition-colors',
-                dropActive && 'border-primary bg-primary/5',
-              )}
-              onDragEnter={onDragEnter}
-              onDragOver={onDragOver}
-              onDragLeave={onDragLeave}
-              onDrop={(event) => void onDrop(event)}
-            >
-              {dropActive ? (
-                <span className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-md bg-background/80 typography-ui-label text-primary">
-                  {t('settings.extensions.add.drop.active')}
-                </span>
-              ) : null}
+            {dropActive ? (
+              <span className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-background/80 typography-ui-label text-primary">
+                {t('settings.extensions.add.drop.active')}
+              </span>
+            ) : null}
+            <div className="flex min-w-0 items-center gap-2">
               <div className="relative flex min-w-0 flex-1 items-center">
                 <Input
                   value={installValue}
@@ -762,10 +1007,7 @@ export const ExtensionsPage: React.FC = () => {
                   }}
                   placeholder={t('settings.extensions.add.placeholder')}
                   aria-label={t('settings.extensions.add.label')}
-                  className={cn(
-                    'h-8 min-w-0 flex-1 rounded-md pl-3',
-                    nativePaths ? 'pr-14' : 'pr-8',
-                  )}
+                  className={cn('h-8 min-w-0 flex-1 rounded-md ps-3', nativePaths ? 'pe-14' : 'pe-8')}
                   disabled={busy}
                 />
                 <input
@@ -777,7 +1019,7 @@ export const ExtensionsPage: React.FC = () => {
                   aria-hidden="true"
                   onChange={(event) => void onZipPicked(event)}
                 />
-                <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
+                <div className="absolute inset-e-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
                   {nativePaths ? (
                     <Button
                       type="button"
@@ -806,7 +1048,7 @@ export const ExtensionsPage: React.FC = () => {
                   </Button>
                 </div>
               </div>
-              <div className="shrink-0" data-settings-item="extensions.gitIdentity">
+              <div className="shrink-0">
                 <IdentityDropdown
                   activeProfile={selectedGitIdentity}
                   identities={identities}
@@ -815,70 +1057,32 @@ export const ExtensionsPage: React.FC = () => {
                   iconOnly
                 />
               </div>
-              <Button
-                type="button"
-                size="sm"
-                disabled={busy}
-                aria-label={t('settings.extensions.add.aria')}
-                onClick={() => void add()}
-              >
-                <Icon name="add" className="h-4 w-4" />
-                {t('settings.extensions.add.action')}
-              </Button>
             </div>
-          </SettingsStackedField>
-          {identityLoadFailed ? <p className="typography-meta text-destructive">{t('settings.extensions.identity.loadFailed')}</p> : null}
-        </SettingsSection>
-      )}
-
-      <SettingsSection
-        title={t('settings.extensions.section.installed')}
-        contentClassName="space-y-3"
-        headerAction={unsupported ? null : (
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            data-settings-item="extensions.updates.check"
-            disabled={busy || checking || status !== 'ready'}
-            aria-label={t('settings.extensions.updates.check.aria')}
-            onClick={() => void checkForUpdates()}
-          >
-            <Icon name="refresh" className={cn('h-4 w-4', checking && 'animate-spin')} />
-            {t('settings.extensions.updates.check')}
-          </Button>
-        )}
-      >
-        {status === 'error' || catalogFailure ? (
-          <p className="typography-meta whitespace-pre-line text-destructive">
-            {t('settings.extensions.toast.loadFailed')}
-            {catalogFailure ? `\n${describeGuestRequestFailure(catalogFailure, t)}` : ''}
-          </p>
-        ) : null}
-        {unsupported ? (
-          <p className="typography-meta text-muted-foreground">{t('settings.extensions.unsupported')}</p>
-        ) : null}
-        {status === 'ready' && guests.length === 0 ? (
-          <p className="typography-meta text-muted-foreground">{t('settings.extensions.empty')}</p>
-        ) : null}
-        {guests.map((guest) => (
-          <ExtensionCard
-            key={guest.id}
-            guest={guest}
-            busy={busy}
-            onReview={setApproval}
-            onRemove={remove}
-            onSetEnabled={setEnabled}
-            onUpdate={update}
-          />
-        ))}
-      </SettingsSection>
+            {isMobileSurfaceRuntime() ? null : (
+              <p className="typography-micro text-muted-foreground">
+                {t(nativePaths ? 'settings.extensions.add.drop' : 'settings.extensions.add.drop.zipOnly')}
+              </p>
+            )}
+            {identityLoadFailed ? <p className="typography-meta text-destructive">{t('settings.extensions.identity.loadFailed')}</p> : null}
+          </div>
+          <DialogFooter>
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => setAddOpen(false)}>
+              {t('settings.common.actions.cancel')}
+            </Button>
+            <Button size="sm" disabled={busy} aria-label={t('settings.extensions.add.aria')} onClick={() => void add()}>
+              {busy ? <Icon name="loader-4" className="size-3.5 animate-spin" /> : <Icon name="add" className="h-4 w-4" />}
+              {t('settings.extensions.add.action')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <GuestApprovalDialog
         guest={approval}
         busy={busy}
         onApprove={(guest) => void approve(guest)}
         onDecline={(guest) => void decline(guest)}
+        onLater={approval && approval.id !== newlyAddedId ? () => setApproval(null) : undefined}
         onDismiss={() => setApproval(null)}
       />
 
@@ -918,6 +1122,113 @@ export const ExtensionsPage: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </SettingsPageLayout>
+    </>
+  );
+
+
+  if (selectedGuest) {
+    return (
+      <>
+        <ExtensionDetail guest={selectedGuest} onBack={() => setSelectedId(null)} {...handlers} />
+        {dialogs}
+      </>
+    );
+  }
+
+  const hasItems = guests.length > 0 || unreadable.length > 0;
+
+  return (
+    <>
+      <SettingsPageLayout
+        title={t('settings.page.extensions.title')}
+        namedBySidebar
+        headerEnd={unsupported ? null : (
+          <div className="flex items-center gap-2">
+            {enterpriseMode ? null : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9 shrink-0 gap-1.5"
+                data-settings-item="extensions.browse"
+                title={t('settings.extensions.browse.hint')}
+                onClick={() => void openExternalUrl(communityExtensionsUrl(locale))}
+              >
+                <Icon name="compass-3" className="size-4" />
+                {t('settings.extensions.browse.label')}
+                <Icon name="external-link" className="size-3.5 text-muted-foreground" />
+              </Button>
+            )}
+            {updatable.length > 1 ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9 shrink-0"
+                disabled={busy || checking}
+                onClick={() => void updateAll()}
+              >
+                {t('settings.extensions.updates.all')}
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 shrink-0 text-muted-foreground"
+              data-settings-item="extensions.updates.check"
+              disabled={busy || checking || status !== 'ready'}
+              aria-label={t('settings.extensions.updates.check.aria')}
+              title={t('settings.extensions.updates.check')}
+              onClick={() => void checkForUpdates()}
+            >
+              <Icon name="refresh" className={cn('size-4', checking && 'animate-spin')} />
+            </Button>
+          </div>
+        )}
+      >
+        <div className="relative" {...(unsupported ? {} : dropHandlers)}>
+          {dropActive && !addOpen ? (
+            <span className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border border-dashed border-primary bg-background/80 typography-ui-label text-primary">
+              {t('settings.extensions.add.drop.active')}
+            </span>
+          ) : null}
+
+          {status === 'error' || catalogFailure ? (
+            <p className="mb-4 typography-meta whitespace-pre-line text-destructive">
+              {t('settings.extensions.toast.loadFailed')}
+              {catalogFailure ? `\n${describeGuestRequestFailure(catalogFailure, t)}` : ''}
+            </p>
+          ) : null}
+          {unsupported ? (
+            <p className="typography-meta text-muted-foreground">{t('settings.extensions.unsupported')}</p>
+          ) : (
+            <div className={SETTINGS_CARD_GRID_CLASS}>
+              <SettingsAddCard
+                label={t('settings.extensions.grid.addTitle')}
+                hint={t('settings.extensions.grid.addHint')}
+                onClick={() => setAddOpen(true)}
+                settingsItem="extensions.add"
+              />
+              {guests.map((guest) => (
+                <ExtensionCard key={guest.id} guest={guest} onOpen={() => setSelectedId(guest.id)} {...handlers} />
+              ))}
+              {unreadable.map((guest, index) => (
+                <UnreadableExtensionCard
+                  key={guest.id ?? `unreadable-${index}`}
+                  guest={guest}
+                  busy={busy}
+                  onRemove={remove}
+                />
+              ))}
+            </div>
+          )}
+          {status === 'ready' && !hasItems && !unsupported ? (
+            <p className="pt-4 typography-meta text-muted-foreground">{t('settings.extensions.empty')}</p>
+          ) : null}
+        </div>
+      </SettingsPageLayout>
+      {dialogs}
+    </>
   );
 };

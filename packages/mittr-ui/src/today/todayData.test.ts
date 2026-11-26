@@ -41,6 +41,7 @@ const EMPTY: TodayState = {
   unseenCount: {},
   unseenHasError: {},
   quota: { status: 'idle' },
+  catalogAliases: ['mittr-fast', 'mittr-pro'],
   work: { status: 'loading', items: [] },
   scheduled: [],
   now: new Date(2026, 9, 22, 14, 0).getTime(),
@@ -50,6 +51,12 @@ const EMPTY: TodayState = {
 const near: AgentStatus = { modelKey: 'mittr-fast', left: 15, limit: 100, resetsAt: '2026-10-26T00:00:00.000Z', state: 'near', percentLeft: 15 };
 
 describe('Today rows', () => {
+  test('internal buckets stay hidden and catalog updates expose only their visible aliases', () => {
+    const quota = { status: 'ok', quota: { agentStatus: new Map([['internal', near], ['new-alias', near]]) } } satisfies TodayState['quota'];
+    expect(alerts({ ...EMPTY, quota, catalogAliases: [] })).toEqual([]);
+    expect(alerts({ ...EMPTY, quota, catalogAliases: ['new-alias'] }).map(row => row.id)).toEqual(['quota:new-alias']);
+  });
+
   test('empty stores give no rows at all', () => {
     expect(waiting(EMPTY)).toEqual([]);
     expect(running(EMPTY)).toEqual([]);
@@ -61,7 +68,7 @@ describe('Today rows', () => {
     const rows = waiting({
       ...EMPTY,
       sessions: [session('ses_a')],
-      blocking: new Map([['ses_a', { directory: '/work/app', permissions: [{ id: 'per_1', sessionID: 'ses_a', action: 'bash', resources: ['rm -rf dist'] }], forms: [] }]]),
+      blocking: new Map([['ses_a', { directory: '/work/app', permissions: [{ id: 'per_1', sessionID: 'ses_a', action: 'bash', resources: ['rm -rf dist'] }], forms: [], pages: [] }]]),
     });
     expect(rows.map(({ kind, title, detail }) => ({ kind, title, detail }))).toEqual([{ kind: 'approval', title: 'Room ses_a', detail: 'bash: rm -rf dist' }]);
     rows[0].open();
@@ -71,9 +78,21 @@ describe('Today rows', () => {
   test('a waiting form is a question row', () => {
     const rows = waiting({
       ...EMPTY,
-      blocking: new Map([['ses_b', { directory: '/work/app', permissions: [], forms: [{ id: 'form_1', sessionID: 'ses_b', title: 'Which branch?' }] }]]),
+      blocking: new Map([['ses_b', { directory: '/work/app', permissions: [], forms: [{ id: 'form_1', sessionID: 'ses_b', title: 'Which branch?' }], pages: [] }]]),
     });
     expect(rows.map(({ kind, title, detail }) => ({ kind, title, detail }))).toEqual([{ kind: 'question', title: 'Untitled room', detail: 'Which branch?' }]);
+  });
+
+  test('a page waiting for an answer is a question row next to the forms', () => {
+    const rows = waiting({
+      ...EMPTY,
+      blocking: new Map([['ses_b', { directory: '/work/app', permissions: [], forms: [{ id: 'form_1', sessionID: 'ses_b', title: 'Which branch?' }], pages: [{ id: 'call_1', sessionID: 'ses_b', title: 'Pick a plan' }, { id: 'call_2', sessionID: 'ses_b', title: ' ' }] }]]),
+    });
+    expect(rows.map(({ id, kind, detail }) => ({ id, kind, detail }))).toEqual([
+      { id: 'question:form_1', kind: 'question', detail: 'Which branch?' },
+      { id: 'page:call_1', kind: 'question', detail: 'Pick a plan' },
+      { id: 'page:call_2', kind: 'question', detail: 'Question' },
+    ]);
   });
 
   test('a finished room not opened yet is a review row, and an errored one an alert instead', () => {

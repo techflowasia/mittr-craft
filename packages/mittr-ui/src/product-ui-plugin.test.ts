@@ -50,6 +50,20 @@ describe('MittrCraft UI plugin', () => {
     expect(offenders).toEqual([]);
   });
 
+  test('no merged English value calls the engine MittrCraft or shows an engine version as the app version', () => {
+    const engineAsApp = [
+      /MittrCraft that MittrCraft/,
+      /MittrCraft starts MittrCraft/,
+      /MittrCraft, MittrCraft/,
+      /start this MittrCraft/,
+      /MittrCraft (?:plugins?|config)\b/,
+      /MittrCraft (?:older than )?v?\d+\.\d/,
+    ];
+    const offenders = Object.entries(merged)
+      .flatMap(([key, value]) => engineAsApp.filter((pattern) => pattern.test(value)).map((pattern) => `${key}: ${pattern}`));
+    expect(offenders).toEqual([]);
+  });
+
   test('the About dialog says only "Version" under the app name and drops the community tagline', () => {
     expect(merged['aboutDialog.openChamberVersionLabel']).toBe('Version {version}');
     expect(merged['aboutDialog.footerNote']).toBe('');

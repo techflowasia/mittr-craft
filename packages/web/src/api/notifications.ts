@@ -1,4 +1,5 @@
 import type { NotificationPayload, NotificationsAPI } from '@openchamber/ui/lib/api/types';
+import { navigateFromNotification } from '@openchamber/ui/lib/router/notificationNavigation';
 
 const SW_READY_TIMEOUT_MS = 1500;
 const NOTIFICATION_DEDUPE_TTL_MS = 5000;
@@ -58,6 +59,7 @@ const focusOrOpenNotificationTarget = (target?: NotificationTarget): void => {
     if (!target) return;
     const current = `${window.location.pathname}${window.location.search}`;
     if (current === target.url) return;
+    if (navigateFromNotification(target.url)) return;
     window.location.assign(target.url);
   } catch {
     // Navigation is best-effort; the notification was already shown.
@@ -204,9 +206,9 @@ const notifyWithWebAPI = async (payload?: NotificationPayload): Promise<boolean>
     return false;
   }
 
-  // Background push is the delivery channel when the web/PWA client is not
-  // focused. Keep the main notification toggle and templates enabled, but avoid
-  // also showing the same foreground notification from a hidden page.
+
+
+
   if (!isClientFocused() && await hasActivePushSubscription()) {
     return true;
   }
@@ -216,8 +218,8 @@ const notifyWithWebAPI = async (payload?: NotificationPayload): Promise<boolean>
   }
 
   try {
-    // Some installed PWAs expose Notification.permission but only allow
-    // notifications through an active service worker registration.
+
+
     if (await notifyWithServiceWorker(payload)) {
       return true;
     }
@@ -258,6 +260,7 @@ const notifyWithDesktop = async (payload?: NotificationPayload): Promise<boolean
         kind: payload?.kind,
         sessionId: payload?.sessionId,
         directory: payload?.directory,
+        runtimeKey: payload?.runtimeKey,
         requireHidden: payload?.requireHidden,
         showWhenFocused: payload?.showWhenFocused,
       },

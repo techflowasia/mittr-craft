@@ -11,14 +11,14 @@ import {
   DropdownMenuTrigger,
 } from '../../../ui/src/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../../ui/src/components/ui/tooltip';
-import { beginSignInWait } from '../sign-in/accountChange';
+import { beginSignInWait, reloadDeferred } from '../sign-in/accountChange';
 import { desktopBridge, scheduleWithTimers, type GateListen } from '../sign-in/signInGateController';
 import { SIGN_IN_COMPLETED_EVENT, SIGN_IN_FAILED_EVENT } from '../sign-in/signInGateState';
 import { mittrT, useMittrT } from '../strings/mittrT';
 import { AccountSwitchDialog } from './AccountSwitchDialog';
 import { accountName, accountsApi, initialsOf, type MittrAccount } from './accountsApi';
 import { resyncThenReload, useAccountSwitch } from './accountSwitch';
-import { createAddAccountFlow } from './addAccount';
+import { addedAccountOutcome, createAddAccountFlow } from './addAccount';
 import { FOOTER_BUTTON_CLASS } from './footerButtonClass';
 import { menuActions, type MenuActions } from './menuActions';
 
@@ -77,7 +77,7 @@ export function MittrAccountMenuView({ open, onOpenChange, ...items }: MittrAcco
               {initials ? (
                 <span className="flex size-6 items-center justify-center rounded-full border border-border typography-micro font-medium">{initials}</span>
               ) : (
-                <Icon name="user" className="h-4.5 w-4.5" />
+                <Icon name="user" className="h-4 w-4" />
               )}
             </button>
           </DropdownMenuTrigger>
@@ -103,7 +103,8 @@ export function MittrAccountMenu(): React.ReactNode {
   const [open, setOpen] = React.useState(false);
   const [accounts, setAccounts] = React.useState<MittrAccount[] | null>(null);
   const [loadFailed, setLoadFailed] = React.useState(false);
-  const { accountSwitch, state } = useAccountSwitch();
+  const switching = useAccountSwitch();
+  const { accountSwitch } = switching;
   const [addAccount] = React.useState(() => createAddAccountFlow({
     startAddAccount: () => accountsApi.startAddAccount(),
     cancelAddAccount: () => { void accountsApi.cancelAddAccount(); },
@@ -112,9 +113,10 @@ export function MittrAccountMenu(): React.ReactNode {
     onWaiting: () => { toast.info(mittrT('mittr.accounts.add.waiting')); },
     onStartFailed: () => { toast.error(mittrT('mittr.accounts.add.startFailed')); },
     onFailed: () => { toast.error(mittrT('mittr.accounts.add.failed')); },
-    onAdded: () => {
+    reloadDeferred,
+    onAdded: (reloadOwed) => {
       if (accountSwitch.state() !== 'idle') return false;
-      void accountSwitch.run(accountsApi.retrySwitch);
+      void accountSwitch.run(() => addedAccountOutcome({ ...accountsApi, reloadOwed, onAccounts: setAccounts }));
       return true;
     },
     resyncThenReload: () => {
@@ -172,11 +174,7 @@ export function MittrAccountMenu(): React.ReactNode {
         onOpenChange={onOpenChange}
         {...menuActions({ addAccount, runSwitch: (change) => { void accountSwitch.run(change); }, api: accountsApi })}
       />
-      <AccountSwitchDialog
-        state={state}
-        onRetry={() => { void accountSwitch.retry(); }}
-        onDismiss={() => { void accountSwitch.dismiss(); }}
-      />
+      <AccountSwitchDialog {...switching} />
     </>
   );
 }

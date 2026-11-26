@@ -1,0 +1,132 @@
+diff --git a/packages/web/server/lib/session-goal/runtime.ts b/packages/web/server/lib/session-goal/runtime.ts
+index b0506fe26..ae8878fd3 100644
+--- a/packages/web/server/lib/session-goal/runtime.ts
++++ b/packages/web/server/lib/session-goal/runtime.ts
+@@ -4,6 +4,7 @@ import path from 'path';
+ 
+ import { assertPromptResponse } from '../opencode/prompt-response.js';
+ import { GOAL_OBJECTIVE_CHAR_LIMIT, readObjective } from './objectives.js';
++import { announceGoalEnd, createContinuationReview, type ContinuationReviewer, type GoalEndListener } from './continuation-review.js';
+ import {
+   GOAL_MISSION_INSTRUCTIONS,
+   GOAL_REPORT_INSTRUCTIONS,
+@@ -25,6 +26,7 @@ import type { createJevClient } from '../routing/jev.js';
+ import type { generateSmallModelText, GeneratedTextResult } from '../small-model/index.js';
+ import type { SessionMetadata } from '../openchamber-sessions/session-metadata-store.js';
+ import type { AuditInput } from './audit.js';
++import type { ResponseRecoveryOwner } from '../session-response-recovery/owner.js';
+ 
+ type GoalChecker = 'classifier' | 'small-model';
+ type GoalStatus = typeof GOAL_STATUSES[number];
+@@ -80,6 +82,10 @@ interface GoalRuntimeOptions extends Pick<SessionActivityOptions, 'buildOpenCode
+   getMaxAutoTurns?: () => number;
+   persistSessionGoal?: ((sessionId: string, directory: string, goal: SessionGoal, canWrite: ((metadata: SessionMetadataInput) => boolean) | null) => Promise<SessionMetadata | boolean | void>) | null;
+   readSessionMetadata?: ((sessionId: string) => Promise<SessionMetadataInput>) | null;
++  responseRecovery?: Pick<ResponseRecoveryOwner, 'isReserved' | 'admissions'> | null;
++  reviewContinuation?: ContinuationReviewer | null;
++  onGoalEnded?: GoalEndListener | null;
++  fetchImpl?: typeof fetch;
+ }
+ 
+ type SessionMetadataInput = SessionMetadata | null | undefined;
+@@ -162,7 +168,7 @@ const escapeXmlText = (value: string) => String(value ?? '')
+   .replace(/</g, '&lt;')
+   .replace(/>/g, '&gt;');
+ 
+-const buildContinuationPrompt = (goal: SessionGoal) => {
++const buildContinuationPrompt = (goal: SessionGoal, note: string) => {
+   const remaining = goal.tokenBudget !== null
+     ? Math.max(0, goal.tokenBudget - goal.tokensUsed)
+     : null;
+@@ -184,6 +190,7 @@ const buildContinuationPrompt = (goal: SessionGoal) => {
+     '',
+     ...budgetLines,
+     '',
++    ...(note ? [note, ''] : []),
+     GOAL_MISSION_INSTRUCTIONS,
+     '- Keep the full objective intact, whatever its size.',
+     '- Inspect the current worktree and external state first; they outrank earlier conversation.',
+@@ -430,6 +437,10 @@ export const createSessionGoalRuntime = ({
+   getMaxAutoTurns = () => readGoalSettings().maxAutoTurns,
+   persistSessionGoal = null,
+   readSessionMetadata = null,
++  responseRecovery = null,
++  reviewContinuation = null,
++  onGoalEnded = null,
++  fetchImpl = (...args) => fetch(...args),
+ }: GoalRuntimeOptions): SessionGoalRuntime => {
+   const timers = new Map<string, TimerEntry>();
+   const inflight = new Set<string>();
+@@ -455,7 +466,7 @@ export const createSessionGoalRuntime = ({
+     const headers = { ...acceptHeaders, ...getOpenCodeAuthHeaders() };
+     const requestBody: Pick<RequestInit, 'body'> = {};
+     if (body) requestBody.body = JSON.stringify(body);
+-    const response = await fetch(url, {
++    const response = await fetchImpl(url, {
+       method,
+       headers,
+       ...requestBody,
+@@ -611,16 +622,19 @@ export const createSessionGoalRuntime = ({
+     return { verdict, evaluationProviderID: checked.evaluationProviderID, evaluationModelID: checked.evaluationModelID };
+   };
+ 
+-  const sendContinuation = async ({ sessionId, directory, goal }: GoalSession) => {
++  const reviewTurn = createContinuationReview(reviewContinuation);
++
++  const sendContinuation = async ({ sessionId, directory, goal, note }: GoalSession & { note: string }) => {
++    if (stopped || responseRecovery?.isReserved(sessionId)) return;
+     await openCodeFetch(`/api/session/${encodeURIComponent(sessionId)}/prompt`, {
+       directory,
+       method: 'POST',
+-      body: { text: buildContinuationPrompt(goal) },
++      body: { text: buildContinuationPrompt(goal, note) },
+     });
+   };
+ 
+   const tick = async (sessionId: string, directory: string) => {
+-    if (!isEnabled()) return;
++    if (!isEnabled() || responseRecovery?.isReserved(sessionId)) return;
+     const maxAutoTurns = getMaxAutoTurns();
+ 
+     const attempt = readAttempts.get(sessionId) ?? { failures: 0, activityFailures: 0 };
+@@ -889,6 +903,14 @@ export const createSessionGoalRuntime = ({
+       }
+     }
+ 
++    if (responseRecovery?.isReserved(sessionId)) return;
++    const review = await reviewTurn({ sessionId, directory, goalId: goal.id, resumed: goal.statusReason === 'resumed' });
++    if (review.block) {
++      const latest = await readGoal(sessionId);
++      if (latest?.id !== goal.id || latest.status !== 'active' || latest.updatedAt !== goal.updatedAt) return;
++      await settleGoal({ sessionId, directory, goal, status: 'blocked', statusReason: review.block, tokensUsed, tokensBaseline, tokensCommitted, lastAccountedMessageID });
++      return;
++    }
+     const written = await writeGoal(sessionId, directory, goal.id, (current) => {
+       const patch: Partial<SessionGoal> = {
+         tokensUsed,
+@@ -918,7 +940,7 @@ export const createSessionGoalRuntime = ({
+     }
+ 
+     console.log(`[session-goal] continuing ${sessionId} (turn ${written.turnsUsed}/${maxAutoTurns}, tokens ${written.tokensUsed}${written.tokenBudget ? `/${written.tokenBudget}` : ''})`);
+-    await sendContinuation({ sessionId, directory, goal: { ...written, objective: effectiveObjective } });
++    await sendContinuation({ sessionId, directory, goal: { ...written, objective: effectiveObjective }, note: review.note });
+   };
+ 
+   const finishInflight = (sessionId: string) => {
+@@ -938,7 +960,7 @@ export const createSessionGoalRuntime = ({
+       }
+       timers.delete(sessionId);
+       inflight.add(sessionId);
+-      tick(sessionId, directory)
++      (responseRecovery?.admissions ? responseRecovery.admissions.run(() => tick(sessionId, directory)) : tick(sessionId, directory))
+         .catch((cause: unknown) => {
+           console.warn('[session-goal] tick failed:', errorDetail(cause));
+         })
+@@ -968,6 +990,7 @@ export const createSessionGoalRuntime = ({
+     if (!goal || goal.status !== 'active') {
+       readAttempts.delete(sessionId);
+       clearTimer(sessionId);
++      if (!goal || goal.status === 'complete') announceGoalEnd(onGoalEnded, { sessionId, directory, reason: goal ? 'complete' : 'cleared' });
+       return;
+     }
+     if (goal.turnsUsed !== 0 && goal.statusReason !== 'resumed') return;

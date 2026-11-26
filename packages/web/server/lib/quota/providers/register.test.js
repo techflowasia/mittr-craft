@@ -131,8 +131,41 @@ describe('registerQuotaProvider', () => {
   });
 });
 
+it('coalesces only within the current provider identity and request scope', async () => {
+  let scope = 0;
+  const releases = [];
+  const unregister = registerQuotaProvider(entry('x-scoped', {
+    fetchScope: () => scope,
+    fetchQuota: () => new Promise((resolve) => releases.push(resolve)),
+  }));
+  try {
+    const first = fetchQuotaForProvider('x-scoped');
+    expect(fetchQuotaForProvider('x-scoped')).toBe(first);
+    scope += 1;
+    const second = fetchQuotaForProvider('x-scoped');
+    expect(second).not.toBe(first);
+    releases[0]({ ok: true, owner: 'A' });
+    releases[1]({ ok: true, owner: 'B' });
+    expect(await first).toMatchObject({ owner: 'A' });
+    expect(await second).toMatchObject({ owner: 'B' });
+  } finally { unregister(); }
+});
+
+it('a replacement registration never inherits the removed provider request', async () => {
+  let release;
+  const firstUnregister = registerQuotaProvider(entry('x-replaced', { fetchQuota: () => new Promise((resolve) => { release = resolve; }) }));
+  const first = fetchQuotaForProvider('x-replaced');
+  firstUnregister();
+  const unregister = registerQuotaProvider(entry('x-replaced', { fetchQuota: async () => ({ owner: 'replacement' }) }));
+  try {
+    expect(await fetchQuotaForProvider('x-replaced')).toEqual({ owner: 'replacement' });
+    release({ owner: 'removed' });
+    expect(await first).toEqual({ owner: 'removed' });
+  } finally { unregister(); }
+});
+
 describe('an exclusive quota provider', () => {
-  const providerModules = import.meta.glob(['./*.js', './*/index.js', '!./*.test.js', '!./index.js', '!./registered.js'], { eager: true });
+  const providerModules = import.meta.glob(['./*.ts', './*/index.ts', '!./*.d.ts', '!./index.ts', '!./registered.ts'], { eager: true });
   const BUILT_IN_IDS = [...new Set(Object.values(providerModules).flatMap((module) => [module.providerId, module.providerIdAddon]).filter(Boolean))];
   it('while it is registered no built-in provider is listed, fetched, or reads the keychain', async () => {
     expect(BUILT_IN_IDS.length).toBeGreaterThan(20);

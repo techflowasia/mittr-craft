@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { test } from 'node:test';
 import { createDeepLinkRegistry } from './deep-link-registry.mjs';
 
@@ -99,4 +100,15 @@ test('host names match the way a URL hostname does, ignoring case', async () => 
   const registry = createDeepLinkRegistry();
   registry.register({ host: 'Auth', handle: () => {} });
   assert.equal(await registry.dispatch(authLink), true);
+});
+
+test('a link to the extension gallery stays with the app', () => {
+  const registry = createDeepLinkRegistry();
+  assert.throws(() => registry.register({ host: 'extensions', handle: () => {} }), /belongs to the app/);
+});
+
+test('the app shows a window for a handled link only through showWindow', () => {
+  const source = fs.readFileSync(new URL('./main.mjs', import.meta.url), 'utf8');
+  const shown = [...source.matchAll(/^\s*(\w+(?:\.\w+)*)\.show\(\);/gm)].map((match) => match[1]);
+  assert.deepEqual(shown, ['notification']);
 });

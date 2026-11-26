@@ -100,6 +100,55 @@ function waitFor(predicate, timeoutMs = 1000) {
 }
 
 describe('DictationStreamManager', () => {
+  it('retains unchecked segment keys and joins unchecked transcript values', async () => {
+    const session = new FakeSttSession();
+    const { manager, messages } = createManager(session);
+    await manager.handleStart('d1', FORMAT, {});
+
+    const segmentId = { id: 'segment' };
+    session.emit('committed', { segmentId });
+    session.emit('transcript', { segmentId, transcript: 42, isFinal: 'yes' });
+    manager.handleFinish('d1', -1);
+
+    expect(messages.find((message) => message.type === 'final').payload.text).toBe('42');
+    expect(session.closed).toBe(true);
+  });
+
+  it('passes an unchecked language hint to correction unchanged', async () => {
+    const session = new FakeSttSession();
+    const messages = [];
+    const language = { hint: 'uk' };
+    let correctionOptions;
+    const manager = new DictationStreamManager({
+      emit: (message) => messages.push(message),
+      createSttSession: async () => ({ session }),
+      correctTranscript: async (text, options) => {
+        correctionOptions = options;
+        return text;
+      },
+    });
+    await manager.handleStart('d1', FORMAT, { correct: true, language });
+    session.emit('committed', { segmentId: 'segment' });
+    session.emit('transcript', { segmentId: 'segment', transcript: 'hello', isFinal: true });
+    manager.handleFinish('d1', -1);
+
+    await waitFor(() => messages.some((message) => message.type === 'final'));
+    expect(correctionOptions.language).toBe(language);
+  });
+
+  it('retains inherited, non-string rejection messages', async () => {
+    const message = { code: 'provider_failure' };
+    const messages = [];
+    const manager = new DictationStreamManager({
+      emit: (event) => messages.push(event),
+      createSttSession: async () => {
+        throw Object.create({ message });
+      },
+    });
+    await manager.handleStart('d1', FORMAT, {});
+    expect(messages.find((event) => event.type === 'error').payload.error).toBe(message);
+  });
+
   it('transcribes ordered chunks and emits final text', async () => {
     const session = new FakeSttSession();
     const { manager, messages } = createManager(session);
@@ -349,5 +398,63 @@ describe('DictationStreamManager', () => {
 
     expect(session.commits).toBe(0);
     expect(session.clears).toBe(1);
+  });
+
+  describe('correction pass', () => {
+    const dictate = async ({ correct, correctTranscript }) => {
+      const session = new FakeSttSession({ transcriptBySegment: () => 'таку з дибав' });
+      const messages = [];
+      const manager = new DictationStreamManager({
+        emit: (msg) => messages.push(msg),
+        createSttSession: async () => ({ session }),
+        correctTranscript,
+      });
+      await manager.handleStart('d1', FORMAT, { correct, language: 'uk' });
+      manager.handleChunk({ dictationId: 'd1', seq: 0, audioBase64: loudChunkBase64() });
+      manager.handleFinish('d1', 0);
+      return { manager, messages, session };
+    };
+
+    it('sends the corrected text as final when the start options ask for it', async () => {
+      const calls = [];
+      const { messages, session } = await dictate({
+        correct: true,
+        correctTranscript: async (text, options) => {
+          calls.push({ text, options });
+          return 'такий і здибав';
+        },
+      });
+      await waitFor(() => messages.some((m) => m.type === 'final'));
+      expect(messages.find((m) => m.type === 'final').payload.text).toBe('такий і здибав');
+      expect(calls).toEqual([{ text: 'таку з дибав', options: { language: 'uk' } }]);
+      expect(session.closed).toBe(true);
+    });
+
+    it('leaves the text alone without the start option', async () => {
+      let called = false;
+      const { messages } = await dictate({ correct: false, correctTranscript: async () => { called = true; return 'x'; } });
+      await waitFor(() => messages.some((m) => m.type === 'final'));
+      expect(messages.find((m) => m.type === 'final').payload.text).toBe('таку з дибав');
+      expect(called).toBe(false);
+    });
+
+    it('keeps the dictation when the correction fails', async () => {
+      const { messages } = await dictate({ correct: true, correctTranscript: async () => { throw new Error('boom'); } });
+      await waitFor(() => messages.some((m) => m.type === 'final'));
+      expect(messages.find((m) => m.type === 'final').payload.text).toBe('таку з дибав');
+    });
+
+    it('emits nothing after a cancel during the correction', async () => {
+      let release;
+      const { manager, messages } = await dictate({
+        correct: true,
+        correctTranscript: () => new Promise((resolve) => { release = resolve; }),
+      });
+      await waitFor(() => release !== undefined);
+      manager.handleCancel('d1');
+      release('late');
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(messages.some((m) => m.type === 'final')).toBe(false);
+    });
   });
 });

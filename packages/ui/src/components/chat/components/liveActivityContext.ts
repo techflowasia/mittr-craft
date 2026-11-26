@@ -1,9 +1,12 @@
 import { createContext } from 'react';
 
-/** Only the final message splits its non-text parts from its answer/footer. */
+import type { ShownPart } from '../lib/turns/liveActivity';
+
 export const LiveFinalActivityContext = createContext<{
     messageId: string;
     expanded: boolean;
     contentId: string;
-    animateCollapse: boolean;
+    pages: readonly ShownPart[];
 } | null>(null);
+
+export const LiveTurnHoistedPagesContext = createContext<ReadonlySet<string> | null>(null);

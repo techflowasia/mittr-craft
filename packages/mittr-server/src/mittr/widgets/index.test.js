@@ -1,17 +1,19 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import '../../../../web/scripts/register-server-sources.mjs';
 
 import express from 'express';
 
-import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
-import { SCREENSHOT_DIRECTORY, writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { createMittrSettings } from '../mittr-settings.js';
 import { deferred, listen, serve, tempDataDir, until } from '../test-helpers.js';
 import { registerMittrControlRoutes } from '../tools/control-routes.js';
 import { setupMittrTools } from '../tools/index.js';
 import { MITTR_TOOLS, createMittrActionRegistry } from '../tools/registry.js';
 import { notifyThroughServer, setupMittrWidgets } from './index.js';
+
+const { OPENCHAMBER_ALL_ACTIONS } = await import('../../../../web/server/lib/openchamber-control/actions.js');
+const { SCREENSHOT_DIRECTORY, writeScreenshot } = await import('../../../../web/server/lib/openchamber-control/screenshots.js');
 
 const ALICE = 'a1a1a1a1a1a1a1a1';
 const BOB = 'b2b2b2b2b2b2b2b2';

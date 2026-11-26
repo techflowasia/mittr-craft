@@ -1,0 +1,19 @@
+diff --git a/packages/web/server/lib/permission-auto-accept/contracts.ts b/packages/web/server/lib/permission-auto-accept/contracts.ts
+index 49bb5d27f..3a26e160c 100644
+--- a/packages/web/server/lib/permission-auto-accept/contracts.ts
++++ b/packages/web/server/lib/permission-auto-accept/contracts.ts
+@@ -1,5 +1,5 @@
+ import type { GlobalMessageStreamHub } from '../event-stream/global-hub.js';
+-import type { JsonValue } from '../shared/json-values.js';
++import type { JsonObject, JsonValue } from '../shared/json-values.js';
+ import type { RoutingPermission } from '../routing/jev.js';
+ import type { PermissionMode } from './modes.js';
+ 
+@@ -50,6 +50,7 @@ export interface PermissionAutoAcceptOptions {
+   evaluatePermission?: ((permission: RoutingPermission, directory: PermissionDirectory) => Promise<{ action: string } | null | undefined>) | null | undefined;
+   onPermissionReplied?: ((permissionId: string) => void) | null | undefined;
+   resolveLegacyEnabledMode?: (() => Promise<PermissionMode>) | undefined;
++  neverAutoAnswer?: ((permission: JsonObject) => boolean) | undefined;
+   readDefaultMode?: (() => Promise<JsonValue | undefined>) | undefined;
+   fetchImpl?: typeof fetch;
+   retryDelaysMs?: number[];

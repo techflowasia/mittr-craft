@@ -1,0 +1,54 @@
+diff --git a/packages/web/server/lib/dispatch-results/runtime.ts b/packages/web/server/lib/dispatch-results/runtime.ts
+index f59189be8..2c6c03913 100644
+--- a/packages/web/server/lib/dispatch-results/runtime.ts
++++ b/packages/web/server/lib/dispatch-results/runtime.ts
+@@ -3,6 +3,7 @@ import path from 'path';
+ import { z } from 'zod';
+ import { unwrapOpenCodeResponse } from '../opencode/response-envelope.js';
+ import { createSessionActivityProbe } from '../opencode/session-activity.js';
++import type { ResponseRecoveryOwner } from '../session-response-recovery/owner.js';
+ 
+ const FILE_NAME = 'dispatch-results.json';
+ const FILE_VERSION = 1;
+@@ -106,6 +107,7 @@ export interface DispatchResultsOptions {
+   getOpenCodeAuthHeaders: () => Record<string, string>;
+   dataDir: string;
+   isSessionArchived?: (sessionId: string) => boolean | Promise<boolean>;
++  responseRecovery?: Pick<ResponseRecoveryOwner, 'isReserved' | 'admissions'> | null;
+   fetchImpl?: typeof fetch;
+   now?: () => number;
+   quietMs?: number;
+@@ -220,6 +222,7 @@ export function createDispatchResultsRuntime({
+   getOpenCodeAuthHeaders,
+   dataDir,
+   isSessionArchived = async () => false,
++  responseRecovery = null,
+   fetchImpl = fetch,
+   now = Date.now,
+   quietMs = QUIET_MS,
+@@ -334,6 +337,7 @@ export function createDispatchResultsRuntime({
+   const deliver = async (entry: DispatchEntry, message: DispatchResultMessage) => {
+     const archived = await Promise.resolve(isSessionArchived(entry.parentSessionId)).catch(() => false);
+     const resume = archived !== true;
++    if (responseRecovery?.isReserved(entry.sessionId) || responseRecovery?.isReserved(entry.parentSessionId)) return false;
+     try {
+       await openCodeRequest(`/api/session/${encodeURIComponent(entry.parentSessionId)}/synthetic`, z.unknown().transform(() => undefined), {
+         method: 'POST',
+@@ -365,7 +369,7 @@ export function createDispatchResultsRuntime({
+     clearTimer(sessionId);
+     const timer = setTimeout(() => {
+       timers.delete(sessionId);
+-      tick(sessionId).catch((cause: unknown) => {
++      (responseRecovery?.admissions ? responseRecovery.admissions.run(() => tick(sessionId)) : tick(sessionId)).catch((cause: unknown) => {
+         console.warn('[dispatch-results] tick failed:', (hasMessage(cause) ? cause.message : undefined) ?? cause);
+       });
+     }, Math.max(0, delayMs));
+@@ -426,7 +430,7 @@ export function createDispatchResultsRuntime({
+           title: watched.kind === 'ended' ? watched.title : '',
+           outcome,
+         });
+-        await deliver(entry, message);
++        if (!await deliver(entry, message)) return arm(sessionId, settleRecheckMs);
+         for (const item of group) entries.delete(item.entry.id);
+         await persist();
+         console.log(`[dispatch-results] delivered the ${outcome.state} result of ${sessionId} to ${entry.parentSessionId}`);

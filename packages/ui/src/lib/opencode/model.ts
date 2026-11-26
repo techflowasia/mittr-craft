@@ -1,29 +1,23 @@
-/**
- * OpenChamber's session domain model.
- *
- * This is the shape every store, reducer, and component works with. OpenCode
- * v2 wire types (`@opencode/client`) never leave the adapter layer: the
- * projection in `./projection.ts` and the event reducer are the only code that
- * knows how the server encodes sessions and messages. Keeping the model here
- * means a server-side rename is an adapter change, not a 200-file change.
- *
- * Messages keep the "message + ordered parts" layout the sync stores are tuned
- * for (`message: Record<sessionID, Message[]>`, `part: Record<messageID,
- * Part[]>`). An assistant message's content items become parts with
- * deterministic ids (see `partIds`), so a streaming delta can address the part
- * it grows without a lookup by position.
- */
 
 import type {
   AgentInfo,
   CommandInfo,
   ConfigEntry,
+  ConnectionInfo,
+  FormField as FormFieldWire,
   FormInfo,
+  FormValue as FormValueWire,
+  FormWhen as FormWhenWire,
+  IntegrationExternalMethod as IntegrationExternalMethodWire,
+  IntegrationInfo,
+  IntegrationKeyMethod as IntegrationKeyMethodWire,
+  IntegrationOAuthMethod as IntegrationOAuthMethodWire,
   JsonValue,
   McpServer,
   ModelInfo,
   ModelRef,
   PermissionRequest as PermissionRequestWire,
+  PermissionEffect as PermissionEffectWire,
   PermissionRuleset,
   ProviderInfo,
   SessionForkBoundary,
@@ -34,27 +28,24 @@ import type {
   TokenUsageInfo,
 } from "@opencode/client"
 
-// ---------------------------------------------------------------------------
-// Catalog / configuration (wire shapes are already stable value objects)
-// ---------------------------------------------------------------------------
 
-/**
- * An agent as the UI keys it. On the wire an agent has `id` (`build`), which
- * is what prompts, session switches, and settings refer to, and `name`
- * (`Build`), which is only for display. The UI has always keyed agents by
- * `name`, so the domain record keeps `name` as the machine key (equal to `id`)
- * and carries the wire name as `displayName`.
- */
 export type Agent = Omit<AgentInfo, "name"> & { name: string; displayName: string }
 export type Command = CommandInfo
 export type Skill = SkillInfo
 export type Provider = ProviderInfo
+export type Integration = IntegrationInfo
+export type IntegrationConnection = ConnectionInfo
+export type IntegrationExternalMethod = IntegrationExternalMethodWire
+export type IntegrationKeyMethod = IntegrationKeyMethodWire
+export type IntegrationOAuthMethod = IntegrationOAuthMethodWire
+export type FormField = FormFieldWire
+export type FormValue = FormValueWire
+export type FormWhen = FormWhenWire
+export type PermissionEffect = PermissionEffectWire
 export type Model = ModelInfo
 export type McpServerStatus = McpServer
-/** Version-control facts about a directory the UI shows (current and default branch). */
 export type Vcs = { branch?: string; defaultBranch?: string }
 
-/** A project OpenCode knows: its canonical root (`worktree`) and any sandboxes. */
 export type Project = {
   id: string
   worktree: string
@@ -65,20 +56,22 @@ export type Project = {
   time: { created: number; updated: number }
   sandboxes: string[]
 }
-/** A discovered configuration source; only `document` entries carry settings. */
 export type ConfigDocument = Extract<ConfigEntry, { type: "document" }>
-/** One merged configuration document (lowest to highest priority entries folded). */
 export type Config = ConfigDocument["info"]
-export type ConfigSource = ConfigEntry
 export type { JsonValue, ModelRef, PermissionRuleset, TokenUsageInfo }
 
-/**
- * Finds a catalog model by the id a selection holds. `id` is the catalog key
- * that pickers, favorites, and session model refs store; `modelID` is the name
- * sent to the provider API and defaults to `id`. They differ for derived
- * entries such as `gpt-6-luna-fast`, whose `modelID` is `gpt-6-luna`, so an
- * exact `id` match wins and `modelID` only answers ids nothing is keyed by.
- */
+export type ModelSelection = Omit<ModelRef, "variant"> & { variant?: string | null }
+
+export function toModelRef({ providerID, id, variant }: ModelSelection): ModelRef {
+  return variant ? { providerID, id, variant } : { providerID, id }
+}
+
+export function isSameModelRef(current: ModelRef, next: ModelRef): boolean {
+  return current.providerID === next.providerID
+    && current.id === next.id
+    && (current.variant ?? "default") === (next.variant ?? "default")
+}
+
 export function findCatalogModel<T extends { id: string; modelID: string }>(
   models: readonly T[] | undefined,
   id: string,
@@ -87,22 +80,14 @@ export function findCatalogModel<T extends { id: string; modelID: string }>(
   return models.find((model) => model.id === id) ?? models.find((model) => model.modelID === id)
 }
 
-/** Free-form JSON attached to sessions, messages, and prompts. */
 export type Metadata = Record<string, JsonValue>
 
-/**
- * Returns the same object without keys whose value is `undefined`, so domain
- * records built from optional wire fields stay free of phantom properties.
- */
 export function compact<T extends object>(value: T): T {
   // SAFETY: only keys with an undefined value are dropped; every remaining
   // key keeps its declared type, so the result still satisfies T.
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as T
 }
 
-// ---------------------------------------------------------------------------
-// Session
-// ---------------------------------------------------------------------------
 
 export type SessionStatus = SessionStatusWire
 
@@ -112,9 +97,7 @@ export type Session = {
   id: string
   parentID?: string
   projectID: string
-  /** Absolute directory the session runs in (`location.directory` on the wire). */
   directory: string
-  /** Optional subdirectory inside `directory` the session is scoped to. */
   subpath?: string
   title: string
   agent?: string
@@ -138,9 +121,6 @@ export type Session = {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Messages
-// ---------------------------------------------------------------------------
 
 export type StructuredError = SessionStructuredError
 
@@ -153,6 +133,7 @@ type MessageBase = {
 export type UserMessage = MessageBase & {
   role: "user"
   time: { created: number }
+  skills?: Array<{ id: string; name: string }>
 }
 
 export type AssistantFinish = "stop" | "length" | "tool-calls" | "content-filter" | "error" | "unknown"
@@ -161,9 +142,8 @@ export type AssistantMessage = MessageBase & {
   role: "assistant"
   time: {
     created: number
-    /** First streamed token. */
+    firstToken?: number
     streamed?: number
-    /** Whole step finished (text and every tool call). */
     completed?: number
   }
   agent: string
@@ -172,29 +152,29 @@ export type AssistantMessage = MessageBase & {
   variant?: string
   finish?: AssistantFinish
   error?: StructuredError
+  closedLocally?: true
   cost?: number
   tokens?: TokenUsageInfo
   snapshot?: { start?: string; end?: string; files?: string[] }
   retry?: { attempt: number; at: number; error: StructuredError }
 }
 
-/** Context OpenCode injected on the client's behalf (our context attachments land here). */
 export type SyntheticMessage = MessageBase & {
   role: "synthetic"
   time: { created: number }
   text: string
   description?: string
+  pending?: true
 }
 
-/** Text OpenCode itself added (instruction updates, notices). */
-export type SystemMessage = MessageBase & {
+type SystemMessage = MessageBase & {
   role: "system"
   time: { created: number }
   text: string
   description?: string
 }
 
-export type SkillMessage = MessageBase & {
+type SkillMessage = MessageBase & {
   role: "skill"
   time: { created: number }
   skill: string
@@ -202,14 +182,13 @@ export type SkillMessage = MessageBase & {
   text: string
 }
 
-export type ShellMessage = MessageBase & {
+type ShellMessage = MessageBase & {
   role: "shell"
   time: { created: number; completed?: number }
   shellID: string
   command: string
   status: "running" | "exited" | "timeout" | "killed"
   exit?: number
-  /** Signal that killed the command; live events only, OpenCode does not persist it. */
   signal?: string
   output?: { output: string; cursor: number; size: number; truncated: boolean }
 }
@@ -220,37 +199,38 @@ export type CompactionMessage = MessageBase & {
   status: "running" | "completed" | "failed"
   reason: "auto" | "manual"
   summary: string
+  model?: ModelRef
   error?: StructuredError
   cost?: number
   tokens?: TokenUsageInfo
 }
 
-export type AgentSwitchedMessage = MessageBase & {
+type AgentSwitchedMessage = MessageBase & {
   role: "agent-switched"
   time: { created: number }
   agent: string
   previous?: string
 }
 
-export type ModelSwitchedMessage = MessageBase & {
+type ModelSwitchedMessage = MessageBase & {
   role: "model-switched"
   time: { created: number }
   model: ModelRef
   previous?: ModelRef
 }
 
-export type LocationSwitchedMessage = MessageBase & {
+type LocationSwitchedMessage = MessageBase & {
   role: "location-switched"
   time: { created: number }
   directory: string
   previous?: string
 }
 
-/** v2.0.3: the turn ended; `outcome` says how. Carries nothing to render. */
-export type IdleMessage = MessageBase & {
+type IdleMessage = MessageBase & {
   role: "idle"
   time: { created: number }
   outcome: SessionOutcome
+  error?: StructuredError
 }
 
 export type Message =
@@ -266,11 +246,8 @@ export type Message =
   | LocationSwitchedMessage
   | IdleMessage
 
-export type MessageRole = Message["role"]
+type MessageRole = Message["role"]
 
-// ---------------------------------------------------------------------------
-// Parts
-// ---------------------------------------------------------------------------
 
 type PartBase = {
   id: string
@@ -281,7 +258,6 @@ type PartBase = {
 export type TextPart = PartBase & {
   type: "text"
   text: string
-  /** Set while the text is still streaming; `end` lands with the final text. */
   time?: { start: number; end?: number }
   metadata?: Metadata
 }
@@ -299,22 +275,20 @@ export type FilePart = PartBase & {
   url: string
 }
 
-export type AgentPart = PartBase & {
+type AgentPart = PartBase & {
   type: "agent"
   name: string
 }
 
-/** Tool arguments as the model produced them. */
 export type ToolInput = Record<string, JsonValue>
 
-export type ToolStatePending = {
+type ToolStatePending = {
   status: "pending"
   input: ToolInput
-  /** Raw streamed argument JSON while the model is still emitting the call. */
   raw: string
 }
 
-export type ToolStateRunning = {
+type ToolStateRunning = {
   status: "running"
   input: ToolInput
   metadata?: Metadata
@@ -324,18 +298,18 @@ export type ToolStateRunning = {
 export type ToolStateCompleted = {
   status: "completed"
   input: ToolInput
-  /** Concatenated text content of the tool result. */
   output: string
   metadata?: Metadata
   time: { start: number; end: number }
   attachments?: FilePart[]
 }
 
-export type ToolStateError = {
+type ToolStateError = {
   status: "error"
   input: ToolInput
   error: string
-  /** Partial text content the tool produced before failing, if any. */
+  errorType?: string
+  errorSource?: "local"
   output?: string
   metadata?: Metadata
   time: { start: number; end: number }
@@ -345,12 +319,9 @@ export type ToolState = ToolStatePending | ToolStateRunning | ToolStateCompleted
 
 export type ToolPart = PartBase & {
   type: "tool"
-  /** Tool call id assigned by the model provider. */
   callID: string
-  /** Tool name (`shell`, `edit`, `openchamber_web`, ...); see `./tools`. */
   tool: string
   state: ToolState
-  /** The provider actually executed the call (false for replayed/synthetic calls). */
   executed?: boolean
 }
 
@@ -358,26 +329,13 @@ export type Part = TextPart | ReasoningPart | FilePart | AgentPart | ToolPart
 
 export type PartType = Part["type"]
 
-// ---------------------------------------------------------------------------
-// Requests the agent makes of the user
-// ---------------------------------------------------------------------------
 
 export type PermissionRequest = PermissionRequestWire
 export type PermissionReply = "once" | "always" | "reject"
 
-/** OpenCode v2 replaced the question tool with typed forms. */
 export type FormRequest = FormInfo
 
-// ---------------------------------------------------------------------------
-// Part identity
-// ---------------------------------------------------------------------------
 
-/**
- * Deterministic part ids. Text and reasoning items on the wire are addressed
- * by `(assistantMessageID, ordinal)`; tools by their call id. Deriving the part
- * id from those keys lets the reducer grow the right part on a delta without
- * scanning, and lets a projected page and a live stream agree on identity.
- */
 export const partIds = {
   text: (messageID: string, ordinal: number) => `${messageID}:text:${ordinal}`,
   reasoning: (messageID: string, ordinal: number) => `${messageID}:reasoning:${ordinal}`,
@@ -387,27 +345,14 @@ export const partIds = {
   userAgent: (messageID: string, index: number) => `${messageID}:agent:${index}`,
 } as const
 
-export const FINAL_TOOL_STATUSES: ReadonlySet<ToolState["status"]> = new Set(["completed", "error"])
-export const ACTIVE_TOOL_STATUSES: ReadonlySet<ToolState["status"]> = new Set(["pending", "running"])
-
 export const isFinalToolStatus = (status: string): boolean => status === "completed" || status === "error"
 
-/** Assistant reply messages carry parts; every other role is a single record. */
 export const hasParts = (message: Message): message is UserMessage | AssistantMessage =>
   message.role === "user" || message.role === "assistant"
 
 export const isConversationRole = (role: MessageRole): role is "user" | "assistant" =>
   role === "user" || role === "assistant"
 
-/**
- * The newest message that is part of the conversation.
- *
- * OpenCode v2 interleaves plumbing roles — `synthetic`, `system`, `skill`,
- * `shell`, `compaction` and the `*-switched` notices — with `user` and
- * `assistant`. "The last message" is only meaningful once those are skipped:
- * a prompt plugin appending a synthetic message must not read as the turn
- * having moved on.
- */
 export const getLastConversationMessage = (
   messages: readonly Message[] | undefined,
 ): UserMessage | AssistantMessage | undefined => {
@@ -419,7 +364,6 @@ export const getLastConversationMessage = (
   return undefined
 }
 
-/** Same rule as `getLastConversationMessage`, for the `{ info, parts }` records the chat works with. */
 export const getLastConversationRecord = <T extends { info: Message }>(
   records: readonly T[] | undefined,
 ): T | undefined => {
@@ -431,6 +375,5 @@ export const getLastConversationRecord = <T extends { info: Message }>(
   return undefined
 }
 
-/** An assistant turn OpenCode started and has not reported completed. */
 export const isIncompleteAssistantTurn = (message: Message | undefined): boolean =>
   message?.role === "assistant" && message.time.completed === undefined

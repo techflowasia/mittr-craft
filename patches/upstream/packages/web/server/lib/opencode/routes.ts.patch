@@ -1,0 +1,28 @@
+diff --git a/packages/web/server/lib/opencode/routes.ts b/packages/web/server/lib/opencode/routes.ts
+index 74d4b267d..64842907c 100644
+--- a/packages/web/server/lib/opencode/routes.ts
++++ b/packages/web/server/lib/opencode/routes.ts
+@@ -225,13 +225,14 @@ export const registerOpenCodeRoutes = <Settings extends { opencodeBinary?: unkno
+   app.get('/api/opencode/upgrade-status', async (_req, res) => {
+     try {
+       const capability = getOpenCodeUpgradeCapability();
++      const unchecked = capability.reason === 'bundled' && process.env.OPENCHAMBER_UPDATE_CHECK_DISABLED === '1';
+       const [healthResponse, latestVersion] = await Promise.all([
+         fetch(buildOpenCodeUrl('/api/info', ''), {
+           method: 'GET',
+           headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
+           signal: AbortSignal.timeout(OPENCODE_INFO_TIMEOUT_MS),
+         }),
+-        fetchLatestOpenCodeVersion(),
++        unchecked ? null : fetchLatestOpenCodeVersion(),
+       ]);
+       const rawInfo: unknown = await healthResponse.json().catch(() => null);
+       const info = routeInputFields(rawInfo);
+@@ -242,6 +243,7 @@ export const registerOpenCodeRoutes = <Settings extends { opencodeBinary?: unkno
+         });
+       }
+       const currentVersion = isString(info?.version) ? info.version.replace(/^v/, '') : null;
++      if (unchecked) return res.json({ available: false, currentVersion, latestVersion: null, upgrade: capability });
+       if (!currentVersion || !latestVersion) {
+         return res.json({ available: null, currentVersion, latestVersion: latestVersion || null, upgrade: capability });
+       }

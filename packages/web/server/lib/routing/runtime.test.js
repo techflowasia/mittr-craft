@@ -1,9 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
-import { createRoutingRuntime, readOpenCodeKeys, requestTextOf } from './runtime.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { attachmentHint, createRoutingRuntime, readOpenCodeKeys, requestTextOf, routingRequestTextOf } from './runtime.js';
 import { resolveEffectiveConfig } from './store.js';
 import { excerptHead, excerptHeadTail, turnsToHistory } from './history.js';
 import { createJevClient, decidePermission, decideRouting } from './jev.js';
-import { classifierEndpoint, normalizeCustomEndpointUrl, resolveClassifier } from './classifier.js';
+import { classifierEndpoint, parseCustomEndpointUrl, resolveClassifier } from './classifier.js';
 
 const AUTO = { providerID: 'openchamber', id: 'auto' };
 const FALLBACK = { model: { providerID: 'anthropic', modelID: 'claude-sonnet-5' }, variant: 'medium' };
@@ -19,7 +19,13 @@ const readyConfig = () => {
   return config;
 };
 
-const makeRuntime = ({ config = readyConfig(), token = 'key', classifierSource = null, customEndpoint = null, providerKeys = {}, zenPromotionActive = true, enterprise = false, pinned = null, catalog = [], answers, askError } = {}) => {
+const makeRuntime = ({
+  config = readyConfig(), token = 'key', classifierSource = null, customEndpoint = null, geminiKey = null, providerKeys = {}, zenPromotionActive = true,
+  enterprise = false, pinned = null, catalog = [], answers, askError, lastAnswer = null, configEntries = [], nowMs = 1_000_000_000,
+  warmSessions = [],
+  // The agent OpenCode holds per session; tests switch it the way a send does.
+  sessionAgents = {},
+} = {}) => {
   const events = [];
   const store = {
     readConfig: vi.fn(async () => config),
@@ -32,8 +38,15 @@ const makeRuntime = ({ config = readyConfig(), token = 'key', classifierSource =
     readCustomEndpoint: vi.fn(async () => customEndpoint),
     writeCustomEndpoint: vi.fn(async () => undefined),
     clearCustomEndpoint: vi.fn(async () => undefined),
+    readGeminiKey: vi.fn(async () => geminiKey),
+    writeGeminiKey: vi.fn(async () => undefined),
+    clearGeminiKey: vi.fn(async () => undefined),
   };
   const jev = { ask: vi.fn(async () => { if (askError) throw askError; return { answers, ms: 12 }; }) };
+  const readConfigEntries = vi.fn(async () => {
+    if (configEntries instanceof Error) throw configEntries;
+    return configEntries;
+  });
   const runtime = createRoutingRuntime({
     dataDir: '/unused',
     buildOpenCodeUrl: () => 'http://127.0.0.1:1/',
@@ -41,7 +54,7 @@ const makeRuntime = ({ config = readyConfig(), token = 'key', classifierSource =
     broadcastGlobalUiEvent: (event) => events.push(event),
     store,
     jev,
-    readProviderKeys: () => ({ zenKey: null, openrouterKey: null, vercelKey: null, ...providerKeys }),
+    readProviderKeys: () => ({ zenKey: null, openrouterKey: null, vercelKey: null, geminiKey: null, ...providerKeys }),
     zenPromotionActive,
     enterpriseMode: () => enterprise,
     readPinnedEndpoint: () => pinned,
@@ -49,8 +62,16 @@ const makeRuntime = ({ config = readyConfig(), token = 'key', classifierSource =
       if (catalog instanceof Error) throw catalog;
       return catalog;
     },
+    readSessionHistory: async () => ({ history: [], lastAnswer }),
+    readConfigEntries,
+    readSessionAgent: async ({ sessionId }) => {
+      if (sessionAgents.unreadable) throw new Error('OpenCode down');
+      return sessionAgents[sessionId] ?? null;
+    },
+    isSessionWarm: (sessionId) => warmSessions.includes(sessionId),
+    now: () => nowMs,
   });
-  return { runtime, store, jev, events };
+  return { runtime, store, jev, events, readConfigEntries };
 };
 
 describe('requestTextOf', () => {
@@ -63,6 +84,54 @@ describe('requestTextOf', () => {
   it('keeps the command name when it has no arguments', () => {
     expect(requestTextOf({ name: 'review', text: '' })).toBe('/review');
     expect(requestTextOf({ name: 'review' })).toBe('/review');
+  });
+});
+
+describe('requestTextOf a form reply', () => {
+  it('is the values the user filled in', () => {
+    expect(requestTextOf({ answer: { q1: 'refactor the parser', q2: ['tests', 'docs'], q3: true } })).toBe('refactor the parser\ntests\ndocs\ntrue');
+  });
+});
+
+describe('attachmentHint', () => {
+  it('describes a pasted image from its data URL and names it', () => {
+    expect(attachmentHint({ text: "what's wrong?", files: [{ uri: 'data:image/png;base64,iVBORw0KGgo=', name: 'screenshot.png' }] }))
+      .toBe('\n\n[The user attached an image: screenshot.png]');
+  });
+  it('counts several images and lists at most three names', () => {
+    const files = ['a.png', 'b.jpg', 'c.webp', 'd.gif'].map((name) => ({ uri: 'data:image/png;base64,AAAA', name }));
+    expect(attachmentHint({ text: 'compare these', files })).toBe(
+      '\n\n[The user attached 4 images: a.png, b.jpg, c.webp]',
+    );
+  });
+  it('recognizes a non-data URI by its image extension', () => {
+    expect(attachmentHint({ text: 'look', files: [{ uri: 'file:///repo/shots/FIGURE-1.PNG', name: 'FIGURE-1.PNG' }] }))
+      .toBe('\n\n[The user attached an image: FIGURE-1.PNG]');
+  });
+  it('stays silent without images, without files, or for non-image attachments', () => {
+    expect(attachmentHint({ text: 'read the log', files: [{ uri: 'file:///repo/notes.txt', name: 'notes.txt' }] })).toBe('');
+    expect(attachmentHint({ text: 'sign this', files: [{ uri: 'data:application/pdf;base64,JVBERi0=', name: 'contract.pdf' }] })).toBe('');
+    expect(attachmentHint({ text: 'no files here' })).toBe('');
+    expect(attachmentHint({ text: '' })).toBe('');
+  });
+  it('survives a malformed files value', () => {
+    expect(attachmentHint({ text: 'hi', files: 'nope' })).toBe('');
+    expect(attachmentHint({ text: 'hi', files: [{ uri: 42, name: null }] })).toBe('');
+  });
+});
+
+describe('routingRequestTextOf', () => {
+  it('appends the attachment fact to the words being classified', () => {
+    const body = { text: "what's wrong?", files: [{ uri: 'data:image/png;base64,iVBORw0KGgo=', name: 'screenshot.png' }] };
+    expect(routingRequestTextOf(body)).toBe("what's wrong?\n\n[The user attached an image: screenshot.png]");
+  });
+  it('is byte-identical to requestTextOf when nothing image-shaped is attached', () => {
+    const body = { text: 'fix the typo in README', files: [{ uri: 'file:///repo/notes.txt', name: 'notes.txt' }] };
+    expect(routingRequestTextOf(body)).toBe(requestTextOf(body));
+  });
+  it('keeps the slash-command form for a command body with an image', () => {
+    const body = { name: 'review', text: ' src ', files: [{ uri: 'data:image/jpeg;base64,/9j/', name: 'shot.jpg' }] };
+    expect(routingRequestTextOf(body)).toBe('/review src\n\n[The user attached an image: shot.jpg]');
   });
 });
 
@@ -113,6 +182,16 @@ describe('resolveAutoSelection', () => {
     expect(resolved.agent).toBe('plan');
     expect(resolved.decision).toMatchObject({ category: 'hard', reason: 'routed', confidence: 0.97 });
     expect(events.at(-1)).toMatchObject({ type: 'openchamber:routing.decision', properties: { sessionId: 's1', category: 'hard' } });
+  });
+
+  it('asks with the instructions as one string, the form the Test probe uses and Kev accepts (#4175)', async () => {
+    const { runtime, jev } = makeRuntime({ answers: { category: { choice: 'hard', confidence: 0.97 } } });
+    await runtime.resolveAutoSelection(send());
+    await runtime.testClassifier();
+    const [routing, probe] = jev.ask.mock.calls.map(([request]) => request);
+    expect(routing.questions.category.instructions).toEqual(expect.any(String));
+    expect(routing.questions.category.instructions).toContain('The thing to classify is `request`');
+    expect(probe.questions.probe.instructions).toEqual(expect.any(String));
   });
 
   it('uses the fallback pair and keeps the composer agent when the category has no model', async () => {
@@ -173,6 +252,173 @@ describe('resolveAutoSelection', () => {
   });
 });
 
+describe('the agent a category set', () => {
+  // `hard` runs as plan, `trivial` names no agent.
+  const route = async (made, choice, agent = null) => {
+    made.answers.category = { choice, confidence: 0.95 };
+    const resolved = await made.runtime.resolveAutoSelection({ sessionId: 's1', model: AUTO, agent, requestText: 'go' });
+    if (resolved.agent) made.sessionAgents.s1 = resolved.agent;
+    return resolved;
+  };
+  const setup = (sessionAgents = { s1: 'build' }) => {
+    const answers = {};
+    return { ...makeRuntime({ answers, sessionAgents }), answers, sessionAgents };
+  };
+
+  it('goes back to the agent before routing when the next category names none (#6392)', async () => {
+    const made = setup();
+    expect((await route(made, 'hard')).agent).toBe('plan');
+    // In Auto the composer shows the session's agent, so a queued send names plan.
+    expect((await route(made, 'trivial', 'plan')).agent).toBe('build');
+    expect((await route(made, 'trivial')).agent).toBeNull();
+    expect(made.sessionAgents.s1).toBe('build');
+  });
+
+  it('does not hold the routed category for a queued send while the cache is warm', async () => {
+    const answers = {};
+    const sessionAgents = { s1: 'build' };
+    const lastAnswer = { providerID: 'openai', modelID: 'gpt-6-astra', completed: 1_000_000_000 - 60_000 };
+    const made = { ...makeRuntime({ answers, sessionAgents, lastAnswer }), answers, sessionAgents };
+    await route(made, 'hard');
+    const resolved = await route(made, 'trivial', 'plan');
+    expect(resolved.decision.cacheHold).toBeUndefined();
+    expect(resolved.agent).toBe('build');
+  });
+
+  it('goes back on a classifier failure too', async () => {
+    const made = setup();
+    await route(made, 'hard');
+    made.jev.ask.mockRejectedValueOnce(new Error('Jev down'));
+    const resolved = await made.runtime.resolveAutoSelection({ sessionId: 's1', model: AUTO, agent: null, requestText: 'go' });
+    expect(resolved.decision.reason).toBe('error');
+    expect(resolved.agent).toBe('build');
+  });
+
+  it('keeps an agent the user chose, before Auto or since', async () => {
+    const chosenBefore = setup({ s1: 'plan' });
+    expect((await route(chosenBefore, 'hard')).agent).toBe('plan');
+    expect((await route(chosenBefore, 'trivial')).agent).toBeNull();
+
+    const switchedSince = setup();
+    await route(switchedSince, 'hard');
+    switchedSince.sessionAgents.s1 = 'review';
+    expect((await route(switchedSince, 'trivial')).agent).toBeNull();
+
+    const leftAuto = setup();
+    await route(leftAuto, 'hard');
+    leftAuto.runtime.noteModelSelection('s1', { providerID: 'anthropic', id: 'claude-opus-5' });
+    expect((await route(leftAuto, 'trivial')).agent).toBeNull();
+  });
+
+  it('follows a composer agent other than the routed one', async () => {
+    const made = setup();
+    await route(made, 'hard');
+    expect((await route(made, 'trivial', 'review')).agent).toBe('review');
+    expect((await route(made, 'trivial')).agent).toBeNull();
+  });
+
+  it('remembers the first agent across several routed agents', async () => {
+    const config = readyConfig();
+    config.categories = config.categories.map((c) => (c.id === 'research' ? { ...c, agent: 'review' } : c));
+    const answers = {};
+    const sessionAgents = { s1: 'build' };
+    const made = { ...makeRuntime({ config, answers, sessionAgents }), answers, sessionAgents };
+    await route(made, 'hard');
+    expect((await route(made, 'research')).agent).toBe('review');
+    expect((await route(made, 'trivial')).agent).toBe('build');
+  });
+
+  it('retries the switch back when it did not take, and leaves the agent when it cannot read it', async () => {
+    const made = setup();
+    await route(made, 'hard');
+    made.answers.category = { choice: 'trivial', confidence: 0.95 };
+    const send = { sessionId: 's1', model: AUTO, agent: null, requestText: 'go' };
+    // The caller's switch failed, so the session is still on plan.
+    expect((await made.runtime.resolveAutoSelection(send)).agent).toBe('build');
+    expect((await made.runtime.resolveAutoSelection(send)).agent).toBe('build');
+
+    made.sessionAgents.unreadable = true;
+    expect((await made.runtime.resolveAutoSelection(send)).agent).toBeNull();
+    made.sessionAgents.unreadable = false;
+    expect((await made.runtime.resolveAutoSelection(send)).agent).toBe('build');
+  });
+});
+
+describe('preserving the prompt cache', () => {
+  const NOW = 1_000_000_000;
+  const MINUTE = 60_000;
+  const HARD = { providerID: 'openai', modelID: 'gpt-6-astra' };
+  // Hard on its own model and the composer's agent, so only the model differs.
+  const cacheConfig = () => {
+    const config = readyConfig();
+    config.categories = config.categories.map((c) => (c.id === 'hard' ? { ...c, agent: null } : c));
+    return config;
+  };
+  const answeredBy = (model, minutesAgo) => ({ ...model, completed: NOW - minutesAgo * MINUTE });
+  const route = async ({ choice, config = cacheConfig(), lastAnswer, configEntries, agent = 'build', warmSessions }) => {
+    const made = makeRuntime({ config, lastAnswer, configEntries, warmSessions, nowMs: NOW, answers: { category: { choice, confidence: 0.95 } } });
+    const resolved = await made.runtime.resolveAutoSelection({ sessionId: 's1', model: AUTO, agent, requestText: 'push it' });
+    return { ...made, resolved };
+  };
+
+  it('stays on the warm model instead of moving down, and records what Jev asked for', async () => {
+    const { resolved, readConfigEntries } = await route({ choice: 'trivial', lastAnswer: answeredBy(HARD, 2) });
+    expect(resolved.model).toEqual({ providerID: 'openai', id: 'gpt-6-astra', variant: 'high' });
+    expect(resolved.agent).toBe('build');
+    expect(resolved.decision).toMatchObject({ category: 'hard', reason: 'routed', cacheHold: { requested: 'trivial' } });
+    expect(readConfigEntries).not.toHaveBeenCalled();
+  });
+
+  it('moves down once the cache has expired, and moves up at any time', async () => {
+    const cold = await route({ choice: 'trivial', lastAnswer: answeredBy(HARD, 6) });
+    expect(cold.resolved.model).toMatchObject({ providerID: 'anthropic', id: 'claude-sonnet-5' });
+    expect(cold.resolved.decision.cacheHold).toBeUndefined();
+
+    const up = await route({ choice: 'hard', lastAnswer: answeredBy(FALLBACK.model, 1) });
+    expect(up.resolved.model).toMatchObject({ providerID: 'openai', id: 'gpt-6-astra' });
+  });
+
+  it("counts OpenCode's session warming: its duration plus one cache lifetime", async () => {
+    const warming = [{ info: { model: 'anthropic/claude-sonnet-5' } }, { info: { warming: true } }];
+    expect((await route({ choice: 'trivial', lastAnswer: answeredBy(HARD, 20), configEntries: warming })).resolved.decision.category).toBe('hard');
+    expect((await route({ choice: 'trivial', lastAnswer: answeredBy(HARD, 36), configEntries: warming })).resolved.decision.category).toBe('trivial');
+
+    const hour = [{ info: { warming: { duration: '3600000 millis' } } }];
+    expect((await route({ choice: 'trivial', lastAnswer: answeredBy(HARD, 50), configEntries: hour })).resolved.decision.category).toBe('hard');
+
+    const turnedOff = [{ info: { warming: true } }, { info: { warming: false } }];
+    expect((await route({ choice: 'trivial', lastAnswer: answeredBy(HARD, 20), configEntries: turnedOff })).resolved.decision.category).toBe('trivial');
+  });
+
+  it('holds a session OpenChamber keeps warm without reading the OpenCode config', async () => {
+    const { resolved, readConfigEntries } = await route({ choice: 'trivial', lastAnswer: answeredBy(HARD, 50), warmSessions: ['s1'] });
+    expect(resolved.decision.category).toBe('hard');
+    expect(readConfigEntries).not.toHaveBeenCalled();
+  });
+
+  it('treats the cache as cold when the OpenCode config cannot be read', async () => {
+    const { resolved } = await route({ choice: 'trivial', lastAnswer: answeredBy(HARD, 20), configEntries: new Error('OpenCode down') });
+    expect(resolved.decision.category).toBe('trivial');
+  });
+
+  it('switches as before with the setting off, for a category of the user, or when the agent would change', async () => {
+    const off = cacheConfig();
+    off.preserveCache = false;
+    expect((await route({ choice: 'trivial', config: off, lastAnswer: answeredBy(HARD, 1) })).resolved.decision.category).toBe('trivial');
+
+    const own = cacheConfig();
+    own.categories.push({ id: 'docs', builtin: false, enabled: true, name: 'Docs', description: 'Docs', model: null, variant: null, agent: null });
+    expect((await route({ choice: 'docs', config: own, lastAnswer: answeredBy(HARD, 1) })).resolved.decision.category).toBe('docs');
+
+    // readyConfig's hard category runs the plan agent.
+    expect((await route({ choice: 'trivial', config: readyConfig(), lastAnswer: answeredBy(HARD, 1) })).resolved.decision.category).toBe('trivial');
+  });
+
+  it('switches when the session has no settled answer to have warmed a cache', async () => {
+    expect((await route({ choice: 'trivial', lastAnswer: null })).resolved.decision.category).toBe('trivial');
+  });
+});
+
 describe('jev endpoint', () => {
   const capture = async (source, keys = {}) => {
     let call = null;
@@ -218,6 +464,16 @@ describe('jev endpoint', () => {
     expect(vercel.body.model).toBe('typesafe-ai/jev');
   });
 
+  it('sends a Gemini key to Google in x-goog-api-key, never as a bearer or in the URL, in Google\'s request shape', async () => {
+    const gemini = await capture('gemini', { geminiKey: 'g-secret' });
+    expect(gemini.url).toBe('https://generativelanguage.googleapis.com/v1beta/decisions');
+    expect(gemini.url).not.toContain('g-secret');
+    expect(gemini.headers['x-goog-api-key']).toBe('g-secret');
+    expect(gemini.headers.authorization).toBeUndefined();
+    expect(gemini.headers['x-opencode-client']).toBeUndefined();
+    expect(gemini.body).toEqual({ input: '"x"', questions: {}, model: 'gemini-decision-1' });
+  });
+
   it('sends a custom endpoint its own URL and model, with the key as a bearer only when one is saved', async () => {
     const url = 'https://jev.example.com/v1/systemone';
     const keyed = await capture('custom', { customEndpoint: { url, model: 'jev-1.13', key: 'own-secret' } });
@@ -231,19 +487,19 @@ describe('jev endpoint', () => {
   });
 });
 
-describe('normalizeCustomEndpointUrl', () => {
-  it('takes the full System One URL, an OpenAI-style /v1 base, or an API root', () => {
-    expect(normalizeCustomEndpointUrl(' https://openrouter.ai/api/v1/systemone/ ')).toBe('https://openrouter.ai/api/v1/systemone');
-    expect(normalizeCustomEndpointUrl('https://openrouter.ai/api/v1')).toBe('https://openrouter.ai/api/v1/systemone');
-    expect(normalizeCustomEndpointUrl('https://api.typesafe.ai')).toBe('https://api.typesafe.ai/v1/systemone');
-    expect(normalizeCustomEndpointUrl('http://127.0.0.1:8080/jev/')).toBe('http://127.0.0.1:8080/jev/v1/systemone');
+describe('parseCustomEndpointUrl', () => {
+  it('keeps the pasted URL exactly, appending nothing to its path', () => {
+    expect(parseCustomEndpointUrl(' https://openrouter.ai/api/v1/systemone ')).toBe('https://openrouter.ai/api/v1/systemone');
+    expect(parseCustomEndpointUrl('https://proxy.company.internal/v1/decision')).toBe('https://proxy.company.internal/v1/decision');
+    expect(parseCustomEndpointUrl('https://jev.example.com/v1')).toBe('https://jev.example.com/v1');
+    expect(parseCustomEndpointUrl('http://127.0.0.1:8080/jev/?team=a#frag')).toBe('http://127.0.0.1:8080/jev/?team=a');
   });
 
   it('refuses other schemes, credentials in the URL and non-URLs', () => {
-    expect(() => normalizeCustomEndpointUrl('ftp://example.com')).toThrow(expect.objectContaining({ status: 400 }));
-    expect(() => normalizeCustomEndpointUrl('file:///etc/passwd')).toThrow(expect.objectContaining({ status: 400 }));
-    expect(() => normalizeCustomEndpointUrl('https://user:secret@example.com/v1')).toThrow(expect.objectContaining({ status: 400 }));
-    expect(() => normalizeCustomEndpointUrl('example.com/v1')).toThrow(expect.objectContaining({ status: 400 }));
+    expect(() => parseCustomEndpointUrl('ftp://example.com')).toThrow(expect.objectContaining({ status: 400 }));
+    expect(() => parseCustomEndpointUrl('file:///etc/passwd')).toThrow(expect.objectContaining({ status: 400 }));
+    expect(() => parseCustomEndpointUrl('https://user:secret@example.com/v1')).toThrow(expect.objectContaining({ status: 400 }));
+    expect(() => parseCustomEndpointUrl('example.com/v1')).toThrow(expect.objectContaining({ status: 400 }));
   });
 });
 
@@ -263,6 +519,15 @@ describe('resolveClassifier', () => {
     expect(resolveClassifier({ selected: 'zen-promo', typesafeKey: null, zenKey: null, zenPromotionActive: false }).effective).toBeNull();
     expect(resolveClassifier({ selected: 'zen-promo', typesafeKey: null, zenKey: 'z', vercelKey: 'v', zenPromotionActive: false }).effective).toBe('vercel');
     expect(resolveClassifier({ selected: 'vercel', typesafeKey: null, openrouterKey: 'o', zenPromotionActive: true }).effective).toBe('openrouter');
+  });
+
+  it('keeps a usable Gemini pick, and never falls back to Gemini that was not picked', () => {
+    expect(resolveClassifier({ selected: 'gemini', typesafeKey: 'k', geminiKey: 'g', zenPromotionActive: true }).effective).toBe('gemini');
+    expect(resolveClassifier({ selected: 'gemini', geminiKey: null, zenKey: 'z', zenPromotionActive: true }).effective).toBe('zen-key');
+    expect(resolveClassifier({ selected: 'zen-promo', geminiKey: 'g', zenKey: 'z', zenPromotionActive: false }).effective).toBe('zen-key');
+    expect(resolveClassifier({ selected: 'zen-promo', geminiKey: 'g', zenPromotionActive: false }).effective).toBeNull();
+    expect(resolveClassifier({ selected: 'vercel', geminiKey: 'g', zenPromotionActive: true }).effective).toBeNull();
+    expect(resolveClassifier({ selected: 'off', geminiKey: 'g', zenPromotionActive: true }).effective).toBeNull();
   });
 
   it('keeps a usable OpenRouter or Vercel pick', () => {
@@ -290,13 +555,51 @@ describe('readOpenCodeKeys', () => {
       openrouter: { type: 'api', key: 'or-saved' },
       vercel: { type: 'oauth', access: 'a', refresh: 'r', expires: 0 },
     });
-    expect(await readOpenCodeKeys({ readAuth, env })).toEqual({ zenKey: 'zen', openrouterKey: 'or-saved', vercelKey: 'gw-env' });
+    expect(await readOpenCodeKeys({ readAuth, env })).toEqual({ zenKey: 'zen', openrouterKey: 'or-saved', vercelKey: 'gw-env', geminiKey: null });
   });
 
   it('keeps the variables when the credential store cannot be read, and ignores blank ones', async () => {
     const readAuth = () => { throw new Error('locked'); };
-    expect(await readOpenCodeKeys({ readAuth, env })).toEqual({ zenKey: null, openrouterKey: 'or-env', vercelKey: 'gw-env' });
-    expect(await readOpenCodeKeys({ readAuth: () => ({}), env: { OPENROUTER_API_KEY: '  ' } })).toEqual({ zenKey: null, openrouterKey: null, vercelKey: null });
+    expect(await readOpenCodeKeys({ readAuth, env })).toEqual({ zenKey: null, openrouterKey: 'or-env', vercelKey: 'gw-env', geminiKey: null });
+    expect(await readOpenCodeKeys({ readAuth: () => ({}), env: { OPENROUTER_API_KEY: '  ' } })).toEqual({ zenKey: null, openrouterKey: null, vercelKey: null, geminiKey: null });
+  });
+
+  it('reads the Google key saved in OpenCode before the variables, which it takes in OpenCode\'s order', async () => {
+    const googleEnv = { GOOGLE_API_KEY: ' ', GOOGLE_GENERATIVE_AI_API_KEY: 'g-env', GEMINI_API_KEY: 'gemini-env' };
+    expect((await readOpenCodeKeys({ readAuth: () => ({ google: { type: 'api', key: 'g-saved' } }), env: googleEnv })).geminiKey).toBe('g-saved');
+    expect((await readOpenCodeKeys({ readAuth: () => ({}), env: googleEnv })).geminiKey).toBe('g-env');
+    expect((await readOpenCodeKeys({ readAuth: () => ({}), env: { GEMINI_API_KEY: 'gemini-env' } })).geminiKey).toBe('gemini-env');
+    // A Google sign-in is OAuth, not a key the Decisions API takes.
+    expect((await readOpenCodeKeys({ readAuth: () => ({ google: { type: 'oauth', access: 'a', refresh: 'r', expires: 0 } }), env: {} })).geminiKey).toBeNull();
+  });
+
+  it('counts a Google key that cannot go in a header as absent', async () => {
+    const broken = { GOOGLE_API_KEY: 'g-env\nsecret', GEMINI_API_KEY: 'gemini-env' };
+    expect((await readOpenCodeKeys({ readAuth: () => ({ google: { type: 'api', key: 'g saved' } }), env: broken })).geminiKey).toBe('gemini-env');
+    expect((await readOpenCodeKeys({ readAuth: () => ({}), env: { GEMINI_API_KEY: 'g\u0007env' } })).geminiKey).toBeNull();
+  });
+});
+
+describe('routeSend', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('switches a form reply onto the routed model and agent, judged on the answer', async () => {
+    const calls = [];
+    vi.stubGlobal('fetch', vi.fn(async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input);
+      const body = input instanceof Request ? await input.clone().text() : init?.body;
+      calls.push({ path: url.pathname, body: JSON.parse(body) });
+      return new Response(null, { status: 204 });
+    }));
+    const { runtime, jev } = makeRuntime({ answers: { category: { choice: 'hard', confidence: 0.97 } } });
+
+    await runtime.routeSend({ sessionId: 's1', directory: '/repo', body: { answer: { plan: 'rewrite the scheduler' } } });
+
+    expect(jev.ask.mock.calls[0][0].state.request).toBe('rewrite the scheduler');
+    expect(calls).toEqual([
+      { path: '/api/session/s1/model', body: { model: { providerID: 'openai', id: 'gpt-6-astra', variant: 'high' } } },
+      { path: '/api/session/s1/agent', body: { agent: 'plan' } },
+    ]);
   });
 });
 
@@ -315,13 +618,22 @@ describe('evaluatePermission', () => {
   // The v2 shape permission auto-accept hands over: `action` and `resources`.
   const permission = { id: 'p1', sessionID: 's1', action: 'bash', resources: ['git push --force'], metadata: { command: 'git push --force origin main' } };
 
-  it('tells Jev what the request does and to what', async () => {
+  it('tells Jev what the request does and to what, with string instructions and boolean criteria (#6028)', async () => {
     const { runtime, jev } = makeRuntime({ answers: { ask: { noul: 0.1 }, kind: { choice: 'read_only' } } });
     await runtime.evaluatePermission(permission, '/repo');
-    expect(jev.ask.mock.calls[0][0].state.permission).toEqual({
+    const request = jev.ask.mock.calls[0][0];
+    expect(request.state.permission).toEqual({
       type: 'bash',
       patterns: ['git push --force'],
       metadata: { command: 'git push --force origin main' },
+    });
+    expect(request.questions.ask).toEqual({
+      type: 'noul',
+      instructions: expect.any(String),
+      criteria: {
+        true: expect.any(String),
+        false: expect.any(String),
+      },
     });
   });
 
@@ -426,16 +738,71 @@ describe('classifier pick', () => {
     });
   });
 
+  it('uses a Gemini key saved in OpenChamber before the Google key from OpenCode, and never shows it', async () => {
+    const own = makeRuntime({ classifierSource: 'gemini', geminiKey: 'own-g', providerKeys: { geminiKey: 'opencode-g' }, answers: {} });
+    expect(await own.runtime.classifierEndpoint()).toMatchObject({ headers: { 'x-goog-api-key': 'own-g' }, format: 'gemini' });
+    const state = await own.runtime.describe();
+    expect(state).toMatchObject({ geminiKeyPresent: true, classification: { selected: 'gemini', effective: 'gemini' } });
+    expect(JSON.stringify(state)).not.toContain('own-g');
+
+    const borrowed = makeRuntime({ classifierSource: 'gemini', providerKeys: { geminiKey: 'opencode-g' }, answers: {} });
+    expect(await borrowed.runtime.classifierEndpoint()).toMatchObject({ headers: { 'x-goog-api-key': 'opencode-g' } });
+    expect(await borrowed.runtime.describe()).toMatchObject({ geminiKeyPresent: false, classification: { effective: 'gemini' } });
+
+    const none = makeRuntime({ token: null, classifierSource: 'gemini', answers: {} });
+    expect(await none.runtime.describe()).toMatchObject({ geminiKeyPresent: false, jevAvailable: false, classification: { effective: null } });
+  });
+
+  it('saves a Gemini key, picks it, and removes it', async () => {
+    const { runtime, store } = makeRuntime({ answers: {} });
+    await runtime.setGeminiKey(' g-secret ');
+    expect(store.writeGeminiKey).toHaveBeenCalledWith('g-secret');
+    expect(store.writeClassifierSource).toHaveBeenCalledWith('gemini');
+    await expect(runtime.setGeminiKey('  ')).rejects.toMatchObject({ status: 400 });
+    await runtime.clearGeminiKey();
+    expect(store.clearGeminiKey).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a Gemini key with a line break, a space or a control character inside, without echoing it', async () => {
+    const { runtime, store } = makeRuntime({ answers: {} });
+    for (const key of ['AIza-fake\nsecret', 'AIza fake-secret', 'AIza-fake\u0000secret', 'AIza-fakeé-secret']) {
+      const refusal = await runtime.setGeminiKey(key).catch((error) => error);
+      expect(refusal).toMatchObject({ status: 400 });
+      expect(refusal.message).not.toContain('secret');
+    }
+    expect(store.writeGeminiKey).not.toHaveBeenCalled();
+    expect(store.writeClassifierSource).not.toHaveBeenCalled();
+  });
+
+  it('counts a saved Gemini key that cannot go in a header as absent', async () => {
+    const { runtime } = makeRuntime({ classifierSource: 'gemini', geminiKey: 'own-g\nsecret', providerKeys: { geminiKey: 'opencode-g' }, answers: {} });
+    expect(await runtime.classifierEndpoint()).toMatchObject({ headers: { 'x-goog-api-key': 'opencode-g' } });
+    expect(await runtime.describe()).toMatchObject({ geminiKeyPresent: false });
+  });
+
+  it('refuses a Gemini key and the Gemini pick in enterprise mode, and keeps a saved one unused', async () => {
+    const { runtime, store, jev } = makeRuntime({ enterprise: true, classifierSource: 'gemini', geminiKey: 'own-g', answers: { ask: { noul: 0.1 } } });
+    await expect(runtime.setGeminiKey('g-secret')).rejects.toMatchObject({ status: 403 });
+    await expect(runtime.setClassifierSource('gemini')).rejects.toMatchObject({ status: 403 });
+    expect(store.writeGeminiKey).not.toHaveBeenCalled();
+    expect(store.writeClassifierSource).not.toHaveBeenCalled();
+    expect(await runtime.classifierEndpoint()).toBeNull();
+    expect(await runtime.evaluatePermission({ id: 'p1', action: 'bash', resources: [] })).toMatchObject({ action: 'hold', unavailable: true });
+    expect(jev.ask).not.toHaveBeenCalled();
+    await runtime.clearGeminiKey();
+    expect(store.clearGeminiKey).toHaveBeenCalledTimes(1);
+  });
+
   it('picks TypeSafe when a key is saved', async () => {
     const { runtime, store } = makeRuntime({ answers: {} });
     await runtime.setToken('secret');
     expect(store.writeClassifierSource).toHaveBeenCalledWith('typesafe');
   });
 
-  it('saves a custom endpoint with its URL normalized and picks it', async () => {
+  it('saves a custom endpoint with its URL as pasted and picks it', async () => {
     const { runtime, store } = makeRuntime({ answers: {} });
-    await runtime.setCustomEndpoint({ url: 'https://jev.example.com/v1/', model: ' jev-latest ', key: ' own-secret ' });
-    expect(store.writeCustomEndpoint).toHaveBeenCalledWith({ url: 'https://jev.example.com/v1/systemone', model: 'jev-latest', key: 'own-secret' });
+    await runtime.setCustomEndpoint({ url: ' https://jev.example.com/v1/decision ', model: ' jev-latest ', key: ' own-secret ' });
+    expect(store.writeCustomEndpoint).toHaveBeenCalledWith({ url: 'https://jev.example.com/v1/decision', model: 'jev-latest', key: 'own-secret' });
     expect(store.writeClassifierSource).toHaveBeenCalledWith('custom');
   });
 
@@ -504,7 +871,7 @@ describe('describe', () => {
   it('keeps `classifier` parseable for v2.0.2 clients and puts the full picture in `classification`', async () => {
     const zen = await makeRuntime({ token: null, classifierSource: 'zen-promo', answers: {} }).runtime.describe();
     expect(zen.classifier.sources.map((s) => s.id)).toEqual(['zen-promo', 'zen-key', 'typesafe']);
-    expect(zen.classification.sources.map((s) => s.id)).toEqual(['off', 'zen-promo', 'zen-key', 'openrouter', 'vercel', 'typesafe', 'custom']);
+    expect(zen.classification.sources.map((s) => s.id)).toEqual(['off', 'zen-promo', 'zen-key', 'openrouter', 'vercel', 'gemini', 'typesafe', 'custom']);
 
     const off = await makeRuntime({ token: null, answers: {} }).runtime.describe();
     expect(off.classifier).toBeNull();
@@ -532,5 +899,43 @@ describe('describe', () => {
     const none = await makeRuntime({ token: null, answers: {} }).runtime.describe();
     expect(none.customEndpoint).toBeNull();
     expect(none.classification.sources.find((s) => s.id === 'custom')).toEqual({ id: 'custom', usable: false });
+  });
+});
+
+describe('testClassifier', () => {
+  const probe = { choice: 'blue', confidence: 0.98 };
+
+  it('reports the source, model and round trip of the provider answering now', async () => {
+    const { runtime, jev, store } = makeRuntime({ classifierSource: 'typesafe', answers: { probe } });
+    expect(await runtime.testClassifier()).toEqual({ ok: true, source: 'typesafe', model: expect.any(String), ms: 12 });
+    expect(jev.ask.mock.calls[0][1].headers.authorization).toBe('Bearer key');
+    expect(store.writeClassifierSource).not.toHaveBeenCalled();
+  });
+
+  it('names the failure: HTTP status, timeout, unparsable answer, nothing usable', async () => {
+    const http = makeRuntime({ classifierSource: 'typesafe', askError: Object.assign(new Error('Jev responded 401'), { status: 401 }) });
+    expect(await http.runtime.testClassifier()).toMatchObject({ ok: false, reason: 'http', status: 401, source: 'typesafe' });
+    const timeout = makeRuntime({ classifierSource: 'typesafe', askError: Object.assign(new Error('timed out'), { code: 'timeout' }) });
+    expect(await timeout.runtime.testClassifier()).toMatchObject({ ok: false, reason: 'timeout' });
+    const garbled = makeRuntime({ classifierSource: 'typesafe', answers: { probe: { nope: true } } });
+    expect(await garbled.runtime.testClassifier()).toMatchObject({ ok: false, reason: 'unparsable' });
+    const off = makeRuntime({ classifierSource: 'off' });
+    expect(await off.runtime.testClassifier()).toEqual({ ok: false, reason: 'unavailable' });
+  });
+
+  it('tests typed custom endpoint fields without saving them, reusing the saved key when the field is empty', async () => {
+    const { runtime, jev, store } = makeRuntime({
+      customEndpoint: { url: 'https://old.example/v1/decision', model: 'm', key: 'saved' },
+      answers: { probe },
+    });
+    const result = await runtime.testClassifier({ url: 'https://new.example/v1/decision', model: 'jev-x', key: '' });
+    expect(result).toMatchObject({ ok: true, source: 'custom', model: 'jev-x' });
+    expect(jev.ask.mock.calls[0][1]).toMatchObject({ url: 'https://new.example/v1/decision', headers: { authorization: 'Bearer saved' } });
+    expect(store.writeCustomEndpoint).not.toHaveBeenCalled();
+  });
+
+  it('refuses typed endpoints in enterprise mode', async () => {
+    const { runtime } = makeRuntime({ enterprise: true });
+    await expect(runtime.testClassifier({ url: 'https://x.example', model: 'm' })).rejects.toMatchObject({ status: 403 });
   });
 });

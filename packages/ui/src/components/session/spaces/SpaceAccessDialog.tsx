@@ -1,16 +1,3 @@
-/**
- * The grant dialog of an isolated space (DESIGN.md, user journey step 4): model keys per provider,
- * the domains the space may reach, and the attempts its gatekeeper refused, each opened from here.
- * Every grant goes through the host at once; nothing is saved at the end. A grant cannot be taken
- * back (decision 4), so opened domains show without a remove button.
- *
- * The journal lives in the gatekeeper's memory only: it holds nothing from before the last start,
- * and the dialog says so, so that an empty list never reads as "the agent tried nothing" when the
- * record is simply gone. It is read when the dialog opens and on "Refresh", never polled.
- *
- * Mounted once by the main layout, opened from the space's group and the session header; never in
- * VS Code (decision 16).
- */
 
 import React from 'react';
 
@@ -23,12 +10,13 @@ import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { useI18n, type I18nKey } from '@/lib/i18n';
 import { getCurrentIntlLocale } from '@/lib/i18n/intl';
 import { blockedAttemptsOf, isDomainName, providerAccessOf, type BlockReason } from '@/lib/spaces/space-access';
-import { grantSpaceAccess, type SpaceEntry } from '@/lib/spaces/spaces-api';
+import { SPACE_LOGIN_ONLY_PROVIDERS } from '@/lib/spaces/model-access';
+import { grantSpaceAccess, providerGrantOf, type SpaceEntry } from '@/lib/spaces/spaces-api';
 import { runSpaceAction, spaceMenuActionsOf } from '@/lib/spaces/space-repair';
 import { refreshSpacesJourney, useSpacesStore } from '@/lib/spaces/spaces-store';
 import { useUIStore } from '@/stores/useUIStore';
 import { ModelKeySource } from './ModelKeySource';
-import { isKeySourceComplete, modelGrantOf, useSpaceModelProviders, type KeySourceChoice } from './spaceModelKeys';
+import { defaultKeySource, isAccessChoiceComplete, modelGrantOf, usableHostLoginOf, useSpaceHostLogins, useSpaceModelProviders, type HostLoginOffer, type KeySourceChoice, type SpaceModelProviderOption } from './spaceModelKeys';
 import { failureOfError, spaceFailureText } from './spaceFailureText';
 import { useOpenSpaceDomain, useSpaceJournal } from './spaceNetwork';
 
@@ -43,7 +31,6 @@ const REASON_TEXT = {
   other: 'spaces.access.reason.other',
 } satisfies Record<BlockReason, I18nKey>;
 
-/** A time of the journal in the user's language: the hour when it is today, the date as well when it is not. */
 const formatJournalTime = (value: string): string => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -61,16 +48,33 @@ const Section: React.FC<{ title: string; action?: React.ReactNode; children: Rea
   </section>
 );
 
-const ModelRow: React.FC<{ entry: SpaceEntry; provider: ReturnType<typeof useSpaceModelProviders>[number]; initiallyOpen: boolean }> = ({ entry, provider, initiallyOpen }) => {
+type ModelRowProps = {
+  entry: SpaceEntry;
+  provider: SpaceModelProviderOption;
+  initiallyOpen: boolean;
+  logins: ReadonlyMap<string, HostLoginOffer> | null;
+  refreshLogins: () => void;
+};
+
+const ModelRow: React.FC<ModelRowProps> = ({ entry, provider, initiallyOpen, logins, refreshLogins }) => {
   const { t } = useI18n();
   const access = providerAccessOf(entry, provider.id);
-  const grant = entry.grants.find((candidate) => candidate.kind === 'model' && candidate.provider === provider.id);
+  const grant = providerGrantOf(entry.grants, provider.id);
+  const offer = usableHostLoginOf(logins, provider.id);
+  const hostLogin = logins?.get(provider.id) ?? null;
+  const loginName = offer?.name ?? hostLogin?.name ?? provider.name;
   const [open, setOpen] = React.useState(initiallyOpen);
+  const fallbackSource = defaultKeySource(provider, offer);
   const [choice, setChoice] = React.useState<KeySourceChoice>(() => ({
-    source: grant?.kind === 'model' && grant.source.kind === 'typed' ? 'typed' : 'env',
-    envName: grant?.kind === 'model' && grant.source.kind === 'env' ? grant.source.name : provider.envName,
+    source: grant?.kind === 'model' ? grant.source.kind : fallbackSource,
+    envName: grant?.kind === 'model' && grant.source.kind === 'env' ? grant.source.name : provider.key?.envName ?? '',
     value: '',
   }));
+  const touched = React.useRef(false);
+  React.useEffect(() => {
+    if (touched.current || !provider.key) return;
+    setChoice((current) => ({ ...current, source: grant?.kind === 'model' ? grant.source.kind : fallbackSource }));
+  }, [fallbackSource, grant, provider.key]);
   const [giving, setGiving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -80,25 +84,35 @@ const ModelRow: React.FC<{ entry: SpaceEntry; provider: ReturnType<typeof useSpa
     try {
       const grant = await grantSpaceAccess(entry.id, modelGrantOf(provider, choice));
       useSpacesStore.getState().noteGrantGiven(entry.id, grant);
-      useSpacesStore.getState().noteProviderGranted(entry.id, provider.id);
       await refreshSpacesJourney().catch(() => undefined);
       setOpen(false);
       setChoice((current) => ({ ...current, value: '' }));
     } catch (failure) {
       if (!(failure instanceof Error)) throw failure;
-      setError(spaceFailureText(t, failureOfError(failure)));
+      const refusal = failureOfError(failure);
+      if (refusal.code.startsWith('login_')) refreshLogins();
+      setError(spaceFailureText(t, refusal, { name: loginName }));
     } finally {
       setGiving(false);
     }
   };
 
-  const state = access === 'granted'
-    ? (grant?.kind === 'model' && grant.source.kind === 'env'
-      ? <span className="text-muted-foreground">{t('spaces.access.model.grantedFromEnv', { name: grant.source.name })}</span>
-      : <span className="text-muted-foreground">{t('spaces.access.model.granted')}</span>)
-    : access === 'needs_again'
-      ? <span className="text-status-warning">{t('spaces.access.model.needsAgain')}</span>
-      : <span className="text-muted-foreground">{t('spaces.access.model.none')}</span>;
+  const state = (() => {
+    if (access === 'granted') {
+      if (grant?.kind === 'login') return <span className="text-muted-foreground">{t('spaces.access.model.grantedLogin', { name: loginName })}</span>;
+      if (grant?.kind === 'custom') return <span className="text-muted-foreground">{t(provider.custom?.hasKey ? 'spaces.access.model.grantedCustom' : 'spaces.access.model.granted')}</span>;
+      if (grant?.kind === 'model' && grant.source.kind === 'env') return <span className="text-muted-foreground">{t('spaces.access.model.grantedFromEnv', { name: grant.source.name })}</span>;
+      if (grant?.kind === 'model' && grant.source.kind === 'stored') return <span className="text-muted-foreground">{t('spaces.access.model.grantedStored')}</span>;
+      return <span className="text-muted-foreground">{t('spaces.access.model.granted')}</span>;
+    }
+    if (access === 'needs_again') {
+      if (grant?.kind !== 'login') return <span className="text-status-warning">{t('spaces.access.model.needsAgain')}</span>;
+      if (hostLogin?.state === 'expired') return <span className="text-status-warning">{t('spaces.access.model.loginExpired', { name: loginName })}</span>;
+      if (logins !== null && hostLogin === null) return <span className="text-status-warning">{t('spaces.access.model.loginSignedOut', { name: loginName })}</span>;
+      return <span className="text-status-warning">{t('spaces.access.model.loginNeedsAgain', { name: loginName })}</span>;
+    }
+    return <span className="text-muted-foreground">{t('spaces.access.model.none')}</span>;
+  })();
 
   return (
     <div className="space-y-1.5">
@@ -108,22 +122,22 @@ const ModelRow: React.FC<{ entry: SpaceEntry; provider: ReturnType<typeof useSpa
           <div className="typography-meta break-words">{state}</div>
         </div>
         {!open ? (
-          <Button variant="outline" size="xs" className="shrink-0" onClick={() => setOpen(true)} disabled={entry.state !== 'running'}>
-            {access === 'granted' ? t('spaces.access.model.change') : t('spaces.access.model.give')}
+          <Button variant="outline" size="xs" className="shrink-0" onClick={() => setOpen(true)} disabled={entry.state !== 'running' || (!provider.key && !offer && !provider.custom) || Boolean(provider.custom?.blocked)}>
+            {access === 'granted' ? t(grant?.kind === 'custom' ? 'spaces.access.model.renewCustom' : grant?.kind === 'login' ? 'spaces.access.model.changeLogin' : 'spaces.access.model.change') : t('spaces.access.model.give')}
           </Button>
         ) : null}
       </div>
-      {open ? (
-        <div className="space-y-2 pl-3">
-          <ModelKeySource providerName={provider.name} choice={choice} onChange={(change) => setChoice((current) => ({ ...current, ...change }))} />
+      {open || provider.custom?.blocked ? (
+        <div className="space-y-2 ps-3">
+          <ModelKeySource provider={provider} login={offer} choice={choice} onChange={(change) => { touched.current = true; setChoice((current) => ({ ...current, ...change })); }} machine={entry.machine} />
           {error ? <p className="typography-meta text-status-error">{error}</p> : null}
-          <div className="flex gap-2">
-            <Button size="xs" onClick={() => void give()} disabled={giving || !isKeySourceComplete(choice)} className="gap-1.5">
+          {open ? <div className="flex gap-2">
+            <Button size="xs" onClick={() => void give()} disabled={giving || (!provider.key && !offer && !provider.custom) || !isAccessChoiceComplete(provider, choice)} className="gap-1.5">
               {giving ? <Icon name="loader-4" className="h-3 w-3 animate-spin" /> : null}
-              {t('spaces.access.model.submit')}
+              {t(choice.source === 'login' || provider.custom ? 'spaces.access.model.submitLogin' : 'spaces.access.model.submit')}
             </Button>
             <Button variant="ghost" size="xs" onClick={() => { setOpen(false); setError(null); }} disabled={giving}>{t('spaces.create.cancel')}</Button>
-          </div>
+          </div> : null}
         </div>
       ) : null}
     </div>
@@ -161,7 +175,8 @@ const NetworkSection: React.FC<{ entry: SpaceEntry; domains: ReturnType<typeof u
           onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); void submit(); } }}
           placeholder={t('spaces.create.network.domainPlaceholder')}
           aria-label={t('spaces.create.network.domainPlaceholder')}
-          className="h-9 flex-1"
+          inputSize="compact"
+          className="flex-1"
           disabled={entry.state !== 'running'}
         />
         <Button variant="outline" size="sm" onClick={() => void submit()} disabled={entry.state !== 'running' || input.trim() === '' || domains.opening !== null}>
@@ -199,7 +214,9 @@ const BlockedSection: React.FC<{ entry: SpaceEntry; journal: ReturnType<typeof u
             return (
               <li key={`${attempt.reason}:${attempt.host}:${attempt.port}`} className="flex items-start gap-2">
                 <div className="min-w-0 flex-1">
-                  <div className="font-mono typography-meta text-foreground break-all">{attempt.reason === 'port' ? `${attempt.host}:${attempt.port}` : attempt.host}</div>
+                  {attempt.host === ''
+                    ? <div className="typography-meta text-foreground">{t('spaces.access.blocked.unreadableHost')}</div>
+                    : <div className="font-mono typography-meta text-foreground break-all">{attempt.reason === 'port' ? `${attempt.host}:${attempt.port}` : attempt.host}</div>}
                   <div className="typography-micro text-muted-foreground">
                     {t(REASON_TEXT[attempt.reason], { port: attempt.port })}
                     {' · '}
@@ -226,7 +243,6 @@ const BlockedSection: React.FC<{ entry: SpaceEntry; journal: ReturnType<typeof u
   );
 };
 
-/** A stopped space can be given nothing; it can be started from here, as from its group. */
 const StoppedNotice: React.FC<{ spaceId: string }> = ({ spaceId }) => {
   const { t } = useI18n();
   const action = useSpacesStore((state) => state.actions.get(spaceId));
@@ -251,19 +267,21 @@ const StoppedNotice: React.FC<{ spaceId: string }> = ({ spaceId }) => {
 
 const SpaceAccessBody: React.FC<{ entry: SpaceEntry; focusProviderId: string | null }> = ({ entry, focusProviderId }) => {
   const { t } = useI18n();
-  const providers = useSpaceModelProviders(entry.projectDirectory);
+  const hostLogins = useSpaceHostLogins(true);
+  const loginOnly = SPACE_LOGIN_ONLY_PROVIDERS.filter((id) => hostLogins.logins?.has(id) || entry.grants.some((grant) => grant.kind === 'login' && grant.provider === id));
+  const providers = useSpaceModelProviders(entry.projectDirectory, loginOnly);
   const running = entry.state === 'running';
   const journal = useSpaceJournal(entry.id, running);
   const domains = useOpenSpaceDomain(entry.id);
   return (
-    <div className="space-y-5 pr-3">
+    <div className="space-y-5 pe-3">
       <p className="typography-meta text-muted-foreground">{t('spaces.access.intro')}</p>
       {!running ? <StoppedNotice spaceId={entry.id} /> : null}
       <Section title={t('spaces.access.models.label')}>
         {providers.length === 0 ? <p className="typography-meta text-muted-foreground">{t('spaces.create.access.noneAvailable')}</p> : (
           <div className="space-y-3">
             {providers.map((provider) => (
-              <ModelRow key={provider.id} entry={entry} provider={provider} initiallyOpen={running && provider.id === focusProviderId} />
+              <ModelRow key={provider.id} entry={entry} provider={provider} initiallyOpen={running && provider.id === focusProviderId} logins={hostLogins.logins} refreshLogins={hostLogins.refresh} />
             ))}
           </div>
         )}
@@ -295,7 +313,6 @@ export const SpaceAccessDialog: React.FC = () => {
   const open = target !== null;
   const [readError, setReadError] = React.useState<string | null>(null);
 
-  // A space the list has not answered for yet, in a window that has not read it: read it now.
   const missing = target !== null && entry === undefined;
   React.useEffect(() => {
     if (!missing) return;
@@ -308,8 +325,6 @@ export const SpaceAccessDialog: React.FC = () => {
   }, [missing, t, target?.spaceId]);
 
   const title = entry ? t('spaces.access.title', { name: entry.name }) : t('spaces.group.access.give');
-  // Keyed by the space and the provider asked for, so opening it again for a missing key opens that
-  // provider's row, and another space starts from nothing typed.
   const body = !target ? null : entry
     ? <SpaceAccessBody key={`${target.spaceId}:${target.providerId ?? ''}`} entry={entry} focusProviderId={target.providerId} />
     : <p className={readError ? 'typography-meta text-status-error' : 'typography-meta text-muted-foreground'}>{readError ?? t('spaces.access.loading')}</p>;

@@ -59,7 +59,8 @@ const parse = (source: string, within: string[] = []): Rule[] => {
 const rules = parse(css);
 
 const REGIONS = [
-  '[data-product-region="shell"] aside:has(+ [data-product-region="column"])',
+  '[data-product-region="shell"] [data-left-sidebar]',
+  '[data-product-region="shell"] [data-left-sidebar] > [data-sidebar-peek]',
   '[data-product-region="column"] > header',
   '[data-product-region="main"]',
   '[data-context-panel]',
@@ -136,6 +137,84 @@ describe('glass.css', () => {
     expect(rules.some((rule) => rule.selectors.some((selector) => selector.startsWith('html.mittr-glass [data-product-region="column"]') && !selector.includes('>') && !selector.includes('.border-border')))).toBe(false);
   });
 
+  test('a sidebar peeking over the chat is frosted itself, and the column behind it drops the filter that would hold its z-index down', () => {
+    const column = 'html.mittr-glass [data-product-region="shell"] [data-left-sidebar]:has(> [data-sidebar-peek])';
+    const overlay = 'html.mittr-glass [data-product-region="shell"] [data-left-sidebar] > [data-sidebar-peek]';
+    const outside = rules.filter((rule) => rule.within.length === 0);
+    const dropped = outside.findIndex((rule) => rule.selectors.includes(column) && /(^|[^-])backdrop-filter:\s*none/.test(rule.body) && /-webkit-backdrop-filter:\s*none/.test(rule.body));
+    const frosted = outside.findIndex((rule) => rule.selectors.includes('html.mittr-glass [data-product-region="shell"] [data-left-sidebar]') && BLUR.test(rule.body));
+    expect(frosted).toBeGreaterThanOrEqual(0);
+    expect(dropped).toBeGreaterThan(frosted);
+    expect(outside.some((rule) => rule.selectors.includes(overlay) && BLUR.test(rule.body) && /background-color:/.test(rule.body))).toBe(true);
+    const sidebar = readFileSync(join(here, '../../../ui/src/components/layout/Sidebar.tsx'), 'utf8');
+    expect(sidebar).toContain('data-sidebar-peek={peeking ? peekState : undefined}');
+  });
+
+  test('a turn is one bubble: the edges between its steps, and between the rows of one step, are square, unlined, and cast no shadow on each other', () => {
+    const declared = (selector: string): string => rules.filter((rule) => rule.within.length === 0 && rule.selectors.includes(selector)).map((rule) => rule.body).join('\n');
+    for (const selector of [
+      'html.mittr-glass [data-assistant-bubble][data-reply-joins-below]',
+      'html.mittr-glass [data-message-continues] > .chat-message-column > [data-assistant-bubble]',
+    ]) {
+      const below = declared(selector);
+      expect(/border-bottom:\s*0/.test(below)).toBe(true);
+      expect(/border-end-start-radius:\s*0/.test(below)).toBe(true);
+      expect(/border-end-end-radius:\s*0/.test(below)).toBe(true);
+      expect(/padding-bottom:\s*1px/.test(below)).toBe(true);
+      expect(/margin-bottom:\s*-1px/.test(below)).toBe(true);
+      expect(/clip-path:\s*inset\(-100px -100px 0\)/.test(below)).toBe(true);
+    }
+    for (const selector of [
+      'html.mittr-glass [data-assistant-bubble][data-reply-joins-above]',
+      'html.mittr-glass [data-message-slice] > .chat-message-column > [data-assistant-bubble]',
+    ]) {
+      const above = declared(selector);
+      expect(/border-top:\s*0/.test(above)).toBe(true);
+      expect(/border-start-start-radius:\s*0/.test(above)).toBe(true);
+      expect(/border-start-end-radius:\s*0/.test(above)).toBe(true);
+      expect(/padding-top:\s*0/.test(above)).toBe(true);
+      expect(/clip-path:\s*inset\(0 -100px -100px\)/.test(above)).toBe(true);
+    }
+    expect(/clip-path:\s*inset\(0 -100px\)/.test(declared('html.mittr-glass [data-assistant-bubble][data-reply-joins-above][data-reply-joins-below]'))).toBe(true);
+    const message = readFileSync(join(here, '../../../ui/src/components/chat/ChatMessage.tsx'), 'utf8');
+    expect(message).toContain('data-message-slice={sliceName}');
+    expect(message).toContain("data-message-continues={slice?.to ? '' : undefined}");
+    expect(message).toContain("data-reply-joins-above={joinsReplyAbove ? '' : undefined}");
+    expect(message).toContain("data-reply-joins-below={joinsReplyBelow ? '' : undefined}");
+  });
+
+  test('inside a bubble no line parts the answer from the steps above it, and the shadow fits the gap under a turn', () => {
+    const line = rules.filter((rule) => rule.within.length === 0 && rule.selectors.includes('html.mittr-glass [data-assistant-bubble] .message-content-text > .h-px[aria-hidden="true"]'));
+    expect(line).toHaveLength(1);
+    expect(line[0].body).toContain('height: 0');
+    const parts = readFileSync(join(here, '../../../ui/src/components/chat/message/body/useAssistantRenderedParts.tsx'), 'utf8');
+    expect(/key=\{`final-answer-divider-\$\{messageId\}`\}\s*aria-hidden="true"\s*className="[^"]*\bh-px\b/.test(parts)).toBe(true);
+    for (const match of css.matchAll(/--mittr-bubble-shadow:\s*([^;]+);/g)) {
+      for (const layer of match[1].split(/,(?![^(]*\))/)) {
+        const [, y, blur, spread] = /^\s*0 (\d+)px (\d+)px(?: (-?\d+)px)?/.exec(layer) ?? [];
+        expect(Number(y) + Number(blur) + Number(spread ?? 0)).toBeLessThanOrEqual(8);
+      }
+    }
+  });
+
+  test('the transcript fades out under the composer, where the background it would fade into is see-through', () => {
+    const faded = rules.filter((rule) => rule.selectors.includes('html.mittr-glass [data-scrollbar="chat"].chat-scroll'));
+    expect(faded).toHaveLength(1);
+    expect(guarded(faded[0])).toBe(true);
+    expect(faded[0].body).toContain('mask-image: linear-gradient(to bottom');
+    const viewport = readFileSync(join(here, '../../../ui/src/components/chat/column/ChatViewport.tsx'), 'utf8');
+    expect(viewport).toContain("'data-scrollbar': 'chat'");
+    expect(viewport).toContain('chat-scroll overlay-scrollbar-target');
+  });
+
+  test('the steps previewed under a running activity header are plain rows, not bubbles of their own', () => {
+    const preview = rules.filter((rule) => rule.within.length === 0 && rule.selectors.includes('html.mittr-glass [data-live-turn-activity] [data-assistant-bubble][data-assistant-bubble]'));
+    expect(preview).toHaveLength(1);
+    for (const line of ['background: none', 'border: 0', 'padding: 0', 'box-shadow: none', 'clip-path: none']) expect(preview[0].body).toContain(line);
+    const fold = readFileSync(join(here, '../../../ui/src/components/chat/components/LiveTurnActivity.tsx'), 'utf8');
+    expect(fold).toContain('data-live-turn-activity={turn.turnId}');
+  });
+
   test('I6: the mini-chat window is frosted, not raw sky', () => {
     const mini = rules.filter((rule) => rule.within.length === 0 && rule.selectors.includes('html.mittr-glass.mittr-glass-mini #root > :not(.mittr-glass-sky)'));
     expect(mini.some((rule) => VEIL.test(rule.body) && BLUR.test(rule.body))).toBe(true);
@@ -155,6 +234,35 @@ describe('glass.css', () => {
     expect(rules.some((rule) => rule.selectors.some((selector) => selector.includes('[role="dialog"]')) && /overflow\s*:/.test(rule.body))).toBe(false);
     expect(BLUR.test(dialog?.body ?? '')).toBe(true);
     expect(rules.some((rule) => rule.selectors.some((selector) => selector.includes('[role="menu"]')) && /border-radius:\s*16px/.test(rule.body))).toBe(true);
+  });
+
+  test('a sidebar header is bare until it sticks, frosted while it does, and solid where glass is off', () => {
+    const selector = 'html.mittr-glass [data-product-region="shell"] [data-left-sidebar] .sticky.bg-sidebar';
+    const resting = rules.filter((rule) => rule.within.length === 0 && rule.selectors.includes(selector));
+    expect(resting).toHaveLength(1);
+    expect(resting[0].body).toContain('container-type: scroll-state');
+    expect(resting[0].body).toContain('background: none');
+    const stuck = rules.filter((rule) => rule.within.includes('@container scroll-state(stuck: top)') && rule.selectors.includes(`${selector}::before`));
+    expect(stuck).toHaveLength(1);
+    expect(stuck[0].body).toContain('background-color: var(--mittr-glass-header)');
+    expect(BLUR.test(stuck[0].body)).toBe(true);
+    const layer = 'html.mittr-glass [data-product-region="shell"] [data-left-sidebar] [data-sidebar-crossfade-layer]';
+    expect(rules.some((rule) => rule.within.length === 0 && rule.selectors.includes(layer) && rule.body.includes('container-type: scroll-state'))).toBe(true);
+    const carried = rules.filter((rule) => rule.within.includes('@container scroll-state(stuck: top)') && rule.selectors.includes(`${layer} .sticky.bg-sidebar`));
+    expect(carried).toHaveLength(1);
+    expect(carried[0].body).toContain('background-color: var(--mittr-glass-header)');
+    expect(BLUR.test(carried[0].body)).toBe(true);
+    const headers = readFileSync(join(here, '../../../ui/src/components/session/sidebar/projects/CrossfadeZoneHeaders.tsx'), 'utf8');
+    expect(headers).toContain("layer.dataset.sidebarCrossfadeLayer = 'true'");
+    expect(headers).toContain("layer.className = 'pointer-events-none sticky top-0");
+    for (const within of FALLBACKS) {
+      expect(rules.some((rule) => rule.within.includes(within) && rule.selectors.includes(selector) && rule.body.includes('var(--mittr-glass-solid)'))).toBe(true);
+    }
+    for (const file of ['SessionProjectScroller.tsx', 'sortableItems.tsx']) {
+      const source = readFileSync(join(here, '../../../ui/src/components/session/sidebar/projects', file), 'utf8');
+      expect(source).toContain("'sticky top-0 z-20'");
+      expect(source).toContain("'bg-sidebar'");
+    }
   });
 
   test('the solid fallback colours are opaque in both modes', () => {

@@ -11,6 +11,13 @@ import {
 
 export type { RecoveryVariant } from './desktopRecoveryConfig';
 
+export type ServerUpdateState =
+  | { kind: 'idle' }
+  | { kind: 'updating' }
+  | { kind: 'refused'; error: string | null }
+  | { kind: 'auth' }
+  | { kind: 'timeout' };
+
 export type DesktopConnectionRecoveryProps = {
   variant: RecoveryVariant;
   hostLabel?: string;
@@ -19,9 +26,34 @@ export type DesktopConnectionRecoveryProps = {
   onUseLocal?: () => void;
   onUseRemote?: () => void;
   isRetrying?: boolean;
+  onUpdateServer?: () => void;
+  serverUpdate?: ServerUpdateState;
 };
 
-/** Maps iconKey from config to actual icon component */
+const MANUAL_SERVER_UPDATE_COMMAND = 'openchamber update';
+
+function ServerUpdateFailure({ state }: { state: ServerUpdateState }) {
+  const { t } = useI18n();
+  if (state.kind === 'idle' || state.kind === 'updating') return null;
+  const message = state.kind === 'refused'
+    ? t('onboarding.desktopRecovery.remoteIncompatible.updateRefused')
+    : state.kind === 'auth'
+      ? t('onboarding.desktopRecovery.remoteIncompatible.updateAuth')
+      : t('onboarding.desktopRecovery.remoteIncompatible.updateTimeout');
+  return (
+    <div className="space-y-2">
+      <p className="typography-meta text-[var(--status-error)]">{message}</p>
+      {state.kind === 'refused' && state.error && (
+        <p className="typography-meta text-muted-foreground">{state.error}</p>
+      )}
+      <p className="typography-meta text-muted-foreground">{t('onboarding.desktopRecovery.remoteIncompatible.manualUpdate')}</p>
+      <code className="block select-text rounded-md border border-border bg-background/50 px-3 py-2 font-mono text-sm text-foreground">
+        {MANUAL_SERVER_UPDATE_COMMAND}
+      </code>
+    </div>
+  );
+}
+
 function getRecoveryIcon(iconKey: 'local' | 'remote'): React.ReactNode {
   switch (iconKey) {
     case 'local':
@@ -39,7 +71,10 @@ export function DesktopConnectionRecovery({
   onUseLocal,
   onUseRemote,
   isRetrying = false,
+  onUpdateServer,
+  serverUpdate = { kind: 'idle' },
 }: DesktopConnectionRecoveryProps) {
+  const updatingServer = serverUpdate.kind === 'updating';
   const { t } = useI18n();
   const config = getDesktopRecoveryConfig(variant, hostLabel, hostUrl);
   const retryLabelKey = (config.retryLabelKey ?? 'onboarding.desktopRecovery.actions.retryConnection') as Parameters<typeof t>[0];
@@ -59,7 +94,6 @@ export function DesktopConnectionRecovery({
   return (
     <div className="flex flex-col items-center justify-center h-full p-8">
       <div className="w-full max-w-md space-y-6">
-        {/* Icon and title */}
         <div className="flex flex-col items-center space-y-3 text-center">
           <div
             className="p-3 rounded-full"
@@ -83,7 +117,6 @@ export function DesktopConnectionRecovery({
           </p>
         </div>
 
-        {/* Host info if available */}
         {hostUrl && (variant === 'remote-unreachable' || variant === 'remote-wrong-service' || variant === 'remote-incompatible') && (
           <div className="rounded-lg border border-border bg-background/50 p-3">
             <div className="text-xs text-muted-foreground mb-1">{t('onboarding.remoteConnection.field.serverAddress')}</div>
@@ -91,12 +124,33 @@ export function DesktopConnectionRecovery({
           </div>
         )}
 
-        {/* Action buttons */}
         <div className="flex flex-col gap-2">
+          {onUpdateServer && (
+            <>
+              <Button
+                onClick={onUpdateServer}
+                disabled={updatingServer || isRetrying}
+                className="w-full"
+              >
+                <Icon name={updatingServer ? 'loader' : 'download'} className={cn('h-4 w-4', updatingServer && 'animate-spin')} />
+                {updatingServer
+                  ? t('onboarding.desktopRecovery.remoteIncompatible.updatingServer')
+                  : t('onboarding.desktopRecovery.remoteIncompatible.updateServer')}
+              </Button>
+              {updatingServer && (
+                <p className="typography-meta text-center text-muted-foreground">
+                  {t('onboarding.desktopRecovery.remoteIncompatible.updatingHint')}
+                </p>
+              )}
+              <ServerUpdateFailure state={serverUpdate} />
+            </>
+          )}
+
           {config.showRetry && onRetry && (
             <Button
               onClick={onRetry}
-              disabled={isRetrying}
+              disabled={isRetrying || updatingServer}
+              variant={onUpdateServer ? 'outline' : 'default'}
               className="w-full"
             >
               <Icon name="refresh" className={cn('h-4 w-4', isRetrying && 'animate-spin')} />
@@ -111,7 +165,7 @@ export function DesktopConnectionRecovery({
               <Button
                 variant="outline"
                 onClick={onUseLocal}
-                disabled={isRetrying}
+                disabled={isRetrying || updatingServer}
                 className="flex-1"
               >
                 <Icon name="macbook" className="h-4 w-4" />
@@ -123,7 +177,7 @@ export function DesktopConnectionRecovery({
               <Button
                 variant="outline"
                 onClick={onUseRemote}
-                disabled={isRetrying}
+                disabled={isRetrying || updatingServer}
                 className="flex-1"
               >
                 <Icon name="server" className="h-4 w-4" />

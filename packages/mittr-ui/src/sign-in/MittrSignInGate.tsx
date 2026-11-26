@@ -237,13 +237,7 @@ export function MittrSignInGateBody({ controller, snapshot, broken, switching, c
       >
         {children}
       </MittrSignInGateView>
-      {switching ? (
-        <AccountSwitchDialog
-          state={switching.state}
-          onRetry={() => { void switching.accountSwitch.retry(); }}
-          onDismiss={() => { void switching.accountSwitch.dismiss(); }}
-        />
-      ) : null}
+      {switching ? <AccountSwitchDialog {...switching} /> : null}
     </MittrErrorBoundary>
   );
 }

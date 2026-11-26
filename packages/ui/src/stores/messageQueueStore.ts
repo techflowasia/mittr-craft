@@ -9,7 +9,8 @@ import { contextPartMetadataSchema, type ContextPartMetadata } from '@/lib/messa
 import { updateDesktopSettings } from '@/lib/persistence';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { isVSCodeRuntime } from '@/lib/desktop';
-import { runtimeFetch } from '@/lib/runtime-fetch';
+import { runtimeFetch, type RuntimeFetchOptions } from '@/lib/runtime-fetch';
+import { spaceIdOfDirectory } from '@/lib/spaces/space-route';
 import { normalizePath } from '@/lib/pathNormalization';
 import { getQueuedMessagePreview } from '@/lib/messages/queuedMessagePreview';
 
@@ -17,17 +18,14 @@ export type FollowUpBehavior = 'steer' | 'queue';
 
 const DEFAULT_FOLLOW_UP_BEHAVIOR: FollowUpBehavior = 'queue';
 
-export const isFollowUpBehavior = (value: unknown): value is FollowUpBehavior => (
+const isFollowUpBehavior = (value: unknown): value is FollowUpBehavior => (
     value === 'steer' || value === 'queue'
 );
 
-export const normalizeFollowUpBehavior = (
+const normalizeFollowUpBehavior = (
     value: unknown,
     legacyQueueModeEnabled?: boolean | null,
 ): FollowUpBehavior => {
-    // "immediate" was removed: on a busy session it was wire-identical to
-    // "steer" (OpenCode only supports delivery "steer" | "queue", defaulting
-    // to "steer"), so collapse any persisted/legacy "immediate" onto "steer".
     if (value === 'immediate') {
         return 'steer';
     }
@@ -47,12 +45,6 @@ export const normalizeFollowUpBehavior = (
     return DEFAULT_FOLLOW_UP_BEHAVIOR;
 };
 
-/**
- * Who delivers the queue. Web, desktop, and mobile talk to an OpenChamber
- * server that owns the queue and sends it whether or not any UI is open. VS
- * Code has no server of its own, so the extension UI keeps the local queue
- * and the foreground auto-send hook.
- */
 export const isServerOwnedMessageQueue = (): boolean => !isVSCodeRuntime();
 
 export interface QueuedMessageSendConfig {
@@ -62,62 +54,49 @@ export interface QueuedMessageSendConfig {
     variant?: string;
 }
 
-/**
- * Context captured with a queued message: whatever the composer had attached
- * when the message was queued. It leaves the composer with the message, so
- * delivery (by the server, or by the auto-send hook in VS Code) carries it and
- * editing the message brings it back.
- */
+export interface QueuedMessageGoal {
+    objective?: string;
+    tokenBudget: number | null;
+}
+
 export type QueuedContextPart =
     | {
-        /** An attached context item: a draft chip or a linked issue/PR. Restored on edit. */
         kind: 'context';
         text: string;
         metadata: ContextPartMetadata;
-        /**
-         * Delivered as its own synthetic part right before this one. Nothing writes it any
-         * more (attached PRs no longer carry review instructions); messages queued before
-         * that still do, and are delivered as they were captured.
-         */
         instructions?: string;
     }
     | {
-        /** Derived from the message text (the skill instruction); re-derived when the text is sent again, so never restored. */
         kind: 'instruction';
         text: string;
     }
     | {
-        /** Handed to the composer by another surface (conflict resolution); restored as pending on edit. */
         kind: 'synthetic';
         text: string;
     };
 
 export interface QueuedMessage {
     id: string;
-    /** What the user typed, for display and editing. */
     content: string;
-    /** What is delivered: `content` without its leading agent mention, file mentions already resolved. */
     text: string;
-    /** Agent mentioned at the start of `content`, delivered as an agent part. */
     agentMention?: string;
     attachments?: AttachedFile[];
-    /** Absent on a server projection item; a take brings it back. */
     context?: QueuedContextPart[];
-    /** Bounded display-only context summary retained in server projections. */
     contextPreview?: string;
     createdAt: number;
-    /** Send config captured at queue time — used as-is when auto-sending */
     sendConfig?: QueuedMessageSendConfig;
+    goal?: QueuedMessageGoal;
+    scheduledTask?: z.infer<typeof scheduledTaskSchema>;
 }
 
 interface QueuedMessageInput {
     content: string;
-    /** Defaults to `content`. */
     text?: string;
     agentMention?: string;
     attachments?: AttachedFile[];
     context?: QueuedContextPart[];
     sendConfig?: QueuedMessageSendConfig;
+    goal?: QueuedMessageGoal;
 }
 
 export type MessageQueueTarget = {
@@ -147,15 +126,17 @@ export const parseMessageQueueKey = (key: string): MessageQueueTarget | null => 
     return createMessageQueueTarget(sessionParts.join('\n'), directory, runtimeKey);
 };
 
-// ---------------------------------------------------------------------------
-// Server contract (packages/web/server/lib/message-queue)
-// ---------------------------------------------------------------------------
 
 const serverSendConfigSchema = z.object({
     providerID: z.string().min(1),
     modelID: z.string().min(1),
     agent: z.string().optional(),
     variant: z.string().optional(),
+});
+
+const serverGoalSchema = z.object({
+    objective: z.string().min(1).optional(),
+    tokenBudget: z.number().int().positive().nullable(),
 });
 
 const serverAttachmentSchema = z.object({
@@ -165,7 +146,7 @@ const serverAttachmentSchema = z.object({
     size: z.number(),
     source: z.enum(['local', 'server', 'vscode']),
     serverPath: z.string().optional(),
-    /** Present only on a taken item; broadcasts and snapshots omit payloads. */
+    agentPath: z.string().optional(),
     dataUrl: z.string().optional(),
 });
 
@@ -180,18 +161,26 @@ const serverContextPartSchema = z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('synthetic'), text: z.string() }),
 ]);
 
-const serverItemSchema = z.object({
+const serverItemBaseSchema = z.object({
     id: z.string().min(1),
     createdAt: z.number(),
     content: z.string(),
     text: z.string(),
     agentMention: z.string().optional(),
     attachments: z.array(serverAttachmentSchema),
-    /** Present only on a taken item; broadcasts and snapshots omit it like attachment payloads. */
     context: z.array(serverContextPartSchema).optional(),
     contextPreview: z.string().optional(),
     sendConfig: serverSendConfigSchema,
+    goal: serverGoalSchema.optional(),
 });
+
+const scheduledTaskSchema = z.object({
+    projectId: z.string().min(1), taskId: z.string().min(1),
+});
+const serverItemSchema = z.union([
+    serverItemBaseSchema.extend({ scheduledTask: scheduledTaskSchema, sendConfig: serverSendConfigSchema.partial() }),
+    serverItemBaseSchema,
+]);
 
 const serverSessionSchema = z.object({
     sessionId: z.string().min(1),
@@ -239,7 +228,6 @@ const decodeDataUrl = (dataUrl: string): ArrayBuffer | null => {
     }
 };
 
-/** A taken item carries its payload; a projection item has an empty file. */
 const toAttachedFile = (attachment: ServerQueueAttachment): AttachedFile => {
     const dataUrl = attachment.dataUrl ?? '';
     const bytes = dataUrl ? decodeDataUrl(dataUrl) : null;
@@ -253,6 +241,7 @@ const toAttachedFile = (attachment: ServerQueueAttachment): AttachedFile => {
         source: attachment.source,
     };
     if (attachment.serverPath) file.serverPath = attachment.serverPath;
+    if (attachment.agentPath) file.agentPath = attachment.agentPath;
     return file;
 };
 
@@ -262,8 +251,11 @@ const toQueuedMessage = (item: ServerQueueItem): QueuedMessage => {
         content: item.content,
         text: item.text,
         createdAt: item.createdAt,
-        sendConfig: { ...item.sendConfig },
     };
+    const selection = serverSendConfigSchema.safeParse(item.sendConfig);
+    if (selection.success) message.sendConfig = selection.data;
+    if (item.goal) message.goal = item.goal;
+    if ('scheduledTask' in item) message.scheduledTask = item.scheduledTask;
     if (item.agentMention) message.agentMention = item.agentMention;
     if (item.attachments.length > 0) message.attachments = item.attachments.map(toAttachedFile);
     if (item.context) message.context = item.context;
@@ -281,12 +273,12 @@ type ServerQueueItemInput = {
     context: QueuedContextPart[];
     contextPreview?: string;
     sendConfig: QueuedMessageSendConfig;
+    goal?: QueuedMessageGoal;
 };
 
 type ServerQueueRequestBody =
     | { directory: string; item: ServerQueueItemInput }
-    | { itemIds: string[] }
-    | { held: boolean };
+    | { itemIds: string[] };
 
 const toServerAttachment = (attachment: AttachedFile): ServerQueueAttachmentInput => {
     const input: ServerQueueAttachmentInput = {
@@ -298,6 +290,7 @@ const toServerAttachment = (attachment: AttachedFile): ServerQueueAttachmentInpu
         dataUrl: attachment.dataUrl,
     };
     if (attachment.serverPath) input.serverPath = attachment.serverPath;
+    if (attachment.agentPath) input.agentPath = attachment.agentPath;
     return input;
 };
 
@@ -310,12 +303,13 @@ const toServerItemInput = (message: QueuedMessageInput, sendConfig: QueuedMessag
         sendConfig,
     };
     if (message.agentMention) item.agentMention = message.agentMention;
+    if (message.goal) item.goal = message.goal;
     const contextPreview = getQueuedMessagePreview({ content: '', context: message.context });
     if (contextPreview) item.contextPreview = contextPreview;
     return item;
 };
 
-const requestJson = async <T,>(schema: z.ZodType<T>, path: string, init?: RequestInit): Promise<T> => {
+const requestJson = async <T,>(schema: z.ZodType<T>, path: string, init?: RuntimeFetchOptions): Promise<T> => {
     const response = await runtimeFetch(path, init);
     if (!response.ok) {
         const error: Error & { status?: number } = new Error(`Message queue request failed (${response.status})`);
@@ -334,11 +328,17 @@ const jsonInit = (method: string, body?: ServerQueueRequestBody): RequestInit =>
 
 const sessionPath = (sessionId: string) => `/api/message-queue/sessions/${encodeURIComponent(sessionId)}`;
 
-/**
- * Runtime keys whose queue the server owns, established by a successful
- * hydration. Their entries are a projection and must not be persisted: a
- * stale local copy would resurrect messages the server already delivered.
- */
+const queueOwnerOf = (directory: string): string => spaceIdOfDirectory(directory) ?? '';
+const ownerRevisionKey = (runtimeKey: string, owner: string): string => `${runtimeKey}\n${owner}`;
+
+const toOwner = (target: MessageQueueTarget, init: RequestInit): RuntimeFetchOptions => ({ ...init, directory: target.directory });
+
+const readOwnerSnapshot = (owner: string, signal?: AbortSignal) => requestJson(
+    serverSnapshotSchema,
+    '/api/message-queue',
+    { directory: owner ? `/spaces/${owner}` : null, signal },
+);
+
 const serverOwnedRuntimeKeys = new Set<string>();
 type LegacyQueueMigration = {
     items: Array<{ target: MessageQueueTarget; message: QueuedMessage }>;
@@ -346,29 +346,14 @@ type LegacyQueueMigration = {
 };
 const legacyMigrations = new Map<string, LegacyQueueMigration>();
 
-/** Server revision last applied per queue key; older snapshots are ignored. */
 const appliedRevisions = new Map<string, number>();
-/** A full snapshot also owns sessions it omits, including previously unseen keys. */
 const snapshotRevisions = new Map<string, number>();
 let hydrationGeneration = 0;
 
 interface MessageQueueState {
-    queuedMessages: Record<string, QueuedMessage[]>; // runtime + directory + session → queue
+    queuedMessages: Record<string, QueuedMessage[]>;
     quarantinedLegacyMessages: Record<string, QueuedMessage[]>;
     followUpBehavior: FollowUpBehavior;
-    /**
-     * Queued messages whose send is currently awaiting the server, per target.
-     *
-     * A queued item is removed only after its send resolves, so between
-     * dispatch and resolution it is still visible to every other reader — and
-     * a composer submit merges the whole queue into its own send. Over a relay
-     * that window is seconds, long enough for the same message to be delivered
-     * twice. Dispatchers must skip entries listed here.
-     *
-     * Never persisted: a restart has no in-flight sends, and a stale flag would
-     * strand a queued message permanently. With a server-owned queue this
-     * mirrors the server's in-flight item.
-     */
     sendingIds: Record<string, string[]>;
 }
 
@@ -376,36 +361,27 @@ interface MessageQueueActions {
     addToQueue: (target: MessageQueueTarget, message: QueuedMessageInput) => Promise<void>;
     removeFromQueue: (target: MessageQueueTarget, messageId: string) => void;
     reorderQueue: (target: MessageQueueTarget, fromId: string, toId: string) => void;
-    /** Removes the message and returns it in full, attachments included. */
     popToInput: (target: MessageQueueTarget, messageId: string) => Promise<QueuedMessage | null>;
-    /**
-     * Removes what the composer is about to send itself — one message or every
-     * message not already being delivered — and returns it in full.
-     */
     takeForSend: (target: MessageQueueTarget, messageId?: string) => Promise<QueuedMessage[]>;
     clearQueue: (target: MessageQueueTarget) => void;
-    /** Drops the local projection only (the session is gone); never a server call. */
     forgetQueue: (target: MessageQueueTarget) => void;
     clearAllQueues: () => void;
     markSending: (target: MessageQueueTarget, messageId: string) => void;
     clearSending: (target: MessageQueueTarget, messageId: string) => void;
     getSendableQueue: (target: MessageQueueTarget) => QueuedMessage[];
+    followSessionMove: (destination: MessageQueueTarget) => void;
+    locateQueuedMessage: (target: MessageQueueTarget, messageId: string) => MessageQueueTarget;
     setFollowUpBehavior: (behavior: FollowUpBehavior) => void;
     getQueueForTarget: (target: MessageQueueTarget) => QueuedMessage[];
-    /** Server-owned queue: load the authoritative queue for the active runtime. */
     hydrate: () => Promise<void>;
-    /** Server-owned queue: re-read after an event-stream gap. */
     resync: () => Promise<void>;
-    /** Server-owned queue: apply one session's authoritative state (broadcast or response). */
-    applyServerSession: (session: ServerQueueSession, revision: number, expectedRuntimeKey: string) => void;
-    /** Server-owned queue: tell the server to hold or release a session's delivery. */
-    setServerHold: (sessionId: string, held: boolean) => Promise<void>;
+    refreshSpaceQueue: (spaceId: string) => Promise<void>;
+    applyServerSession: (session: ServerQueueSession, revision: number, expectedRuntimeKey: string, owner?: string) => void;
     resetForRuntimeSwitch: (previousRuntimeKey: string | null | undefined) => void;
 }
 
 type MessageQueueStore = MessageQueueState & MessageQueueActions;
 
-/** Messages persisted before version 3 carried only `content`. */
 type PersistedQueuedMessage = Omit<QueuedMessage, 'text'> & { text?: string };
 
 type PersistedMessageQueueState = {
@@ -451,18 +427,19 @@ const removeMessageLocally = (
     return { queuedMessages: { ...state.queuedMessages, [key]: newQueue } };
 };
 
-/** Every projection of one session in this runtime, whatever directory it was keyed under. */
 const clearSessionProjection = (
     state: Pick<MessageQueueState, 'queuedMessages' | 'sendingIds'>,
     runtimeKey: string,
     sessionId: string,
     revision: number,
+    owner?: string,
 ): Pick<MessageQueueState, 'queuedMessages' | 'sendingIds'> => {
     let queuedMessages = state.queuedMessages;
     let sendingIds = state.sendingIds;
     for (const key of new Set([...Object.keys(queuedMessages), ...Object.keys(sendingIds)])) {
         const parsed = parseMessageQueueKey(key);
         if (parsed?.runtimeKey !== runtimeKey || parsed.sessionId !== sessionId) continue;
+        if (owner !== undefined && queueOwnerOf(parsed.directory) !== owner) continue;
         if ((appliedRevisions.get(key) ?? -1) > revision) continue;
         appliedRevisions.set(key, revision);
         queuedMessages = withoutKey(queuedMessages, key);
@@ -471,46 +448,57 @@ const clearSessionProjection = (
     return { queuedMessages, sendingIds };
 };
 
+const newestSessionRevision = (runtimeKey: string, owner: string, sessionId: string): number => {
+    let newest = -1;
+    for (const [key, revision] of appliedRevisions) {
+        if (revision <= newest) continue;
+        const parsed = parseMessageQueueKey(key);
+        if (parsed?.runtimeKey === runtimeKey && parsed.sessionId === sessionId && queueOwnerOf(parsed.directory) === owner) {
+            newest = revision;
+        }
+    }
+    return newest;
+};
+
 export const useMessageQueueStore = create<MessageQueueStore>()(
     devtools(
         persist(
             (set, get) => {
                 let hydration: { runtimeKey: string; promise: Promise<void> } | null = null;
                 let resyncRequested = false;
-                const applyServerSession = (session: ServerQueueSession, revision: number, expectedRuntimeKey: string) => {
+                const applyServerSession = (session: ServerQueueSession, revision: number, expectedRuntimeKey: string, owner = '') => {
                     if (expectedRuntimeKey !== getRuntimeKey()) return;
-                    if ((snapshotRevisions.get(expectedRuntimeKey) ?? -1) > revision) return;
+                    if (queueOwnerOf(session.directory) !== owner) return;
+                    if ((snapshotRevisions.get(ownerRevisionKey(expectedRuntimeKey, owner)) ?? -1) > revision) return;
                     const target = createMessageQueueTarget(session.sessionId, session.directory, expectedRuntimeKey);
                     if (!target) {
-                        // Servers before 1.22.2 drop a session's directory once its
-                        // queue is empty. A session id is unique across directories,
-                        // so an empty session still says which projection is done.
                         if (session.items.length > 0) return;
                         set((state) => clearSessionProjection(state, expectedRuntimeKey, session.sessionId, revision));
                         return;
                     }
                     const key = getMessageQueueKey(target);
-                    if ((appliedRevisions.get(key) ?? -1) > revision) return;
-                    appliedRevisions.set(key, revision);
+                    if (newestSessionRevision(expectedRuntimeKey, owner, session.sessionId) > revision) return;
                     set((state) => {
+                        const cleared = clearSessionProjection(state, expectedRuntimeKey, session.sessionId, revision, owner);
+                        appliedRevisions.set(key, revision);
                         const queue = session.items.map(toQueuedMessage);
                         const queuedMessages = queue.length > 0
-                            ? { ...state.queuedMessages, [key]: queue }
-                            : withoutKey(state.queuedMessages, key);
+                            ? { ...cleared.queuedMessages, [key]: queue }
+                            : cleared.queuedMessages;
                         const sendingIds = session.sendingId
-                            ? { ...state.sendingIds, [key]: [session.sendingId] }
-                            : withoutKey(state.sendingIds, key);
+                            ? { ...cleared.sendingIds, [key]: [session.sendingId] }
+                            : cleared.sendingIds;
                         return { queuedMessages, sendingIds };
                     });
                 };
 
-                /** Server state wins; a failed round-trip re-reads it instead of guessing. */
                 const refreshSession = async (target: MessageQueueTarget) => {
+                    const owner = queueOwnerOf(target.directory);
                     try {
-                        const snapshot = await requestJson(serverSnapshotSchema, '/api/message-queue');
+                        const snapshot = await readOwnerSnapshot(owner);
                         const session = snapshot.sessions.find((entry) => entry.sessionId === target.sessionId)
                             ?? { sessionId: target.sessionId, directory: target.directory, items: [], sendingId: null };
-                        applyServerSession(session, snapshot.revision, target.runtimeKey);
+                        applyServerSession(session, snapshot.revision, target.runtimeKey, owner);
                     } catch {
                         // Offline: keep the optimistic projection; the next broadcast or hydration corrects it.
                     }
@@ -522,12 +510,46 @@ export const useMessageQueueStore = create<MessageQueueStore>()(
                     init: RequestInit,
                 ) => {
                     try {
-                        const result = await requestJson(serverSessionResponseSchema, path, init);
-                        applyServerSession(result.session, result.revision, target.runtimeKey);
+                        const result = await requestJson(serverSessionResponseSchema, path, toOwner(target, init));
+                        applyServerSession(result.session, result.revision, target.runtimeKey, queueOwnerOf(target.directory));
                     } catch (error) {
                         console.warn('[queue] server update failed:', error);
                         await refreshSession(target);
                     }
+                };
+
+                const applyOwnerSnapshot = (snapshot: z.infer<typeof serverSnapshotSchema>, runtimeKey: string, owner: string): boolean => {
+                    const revisionKey = ownerRevisionKey(runtimeKey, owner);
+                    if ((snapshotRevisions.get(revisionKey) ?? -1) > snapshot.revision) return false;
+                    snapshotRevisions.set(revisionKey, snapshot.revision);
+                    set((state) => {
+                        const isNewerThanSnapshot = (key: string) => (appliedRevisions.get(key) ?? -1) > snapshot.revision;
+                        const isOwned = (key: string) => {
+                            const parsed = parseMessageQueueKey(key);
+                            return parsed?.runtimeKey === runtimeKey && queueOwnerOf(parsed.directory) === owner;
+                        };
+                        const keep = (key: string) => !isOwned(key) || isNewerThanSnapshot(key);
+                        const queuedMessages: Record<string, QueuedMessage[]> = {};
+                        const sendingIds: Record<string, string[]> = {};
+                        for (const [key, queue] of Object.entries(state.queuedMessages)) {
+                            if (keep(key)) queuedMessages[key] = queue;
+                        }
+                        for (const [key, ids] of Object.entries(state.sendingIds)) {
+                            if (keep(key)) sendingIds[key] = ids;
+                        }
+                        for (const session of snapshot.sessions) {
+                            if (queueOwnerOf(session.directory) !== owner) continue;
+                            const target = createMessageQueueTarget(session.sessionId, session.directory, runtimeKey);
+                            if (!target) continue;
+                            const key = getMessageQueueKey(target);
+                            if (newestSessionRevision(runtimeKey, owner, session.sessionId) > snapshot.revision) continue;
+                            appliedRevisions.set(key, snapshot.revision);
+                            if (session.items.length > 0) queuedMessages[key] = session.items.map(toQueuedMessage);
+                            if (session.sendingId) sendingIds[key] = [session.sendingId];
+                        }
+                        return { queuedMessages, sendingIds };
+                    });
+                    return true;
                 };
 
                 return {
@@ -549,6 +571,7 @@ export const useMessageQueueStore = create<MessageQueueStore>()(
                         if (message.agentMention) queuedMessage.agentMention = message.agentMention;
                         if (message.attachments && message.attachments.length > 0) queuedMessage.attachments = message.attachments;
                         if (message.context && message.context.length > 0) queuedMessage.context = message.context;
+                        if (message.goal) queuedMessage.goal = message.goal;
 
                         set((state) => {
                             const currentQueue = state.queuedMessages[key] ?? [];
@@ -576,13 +599,12 @@ export const useMessageQueueStore = create<MessageQueueStore>()(
                         const historyIdentity = createInputHistoryIdentity(target.runtimeKey, target.directory, target.sessionId);
                         const historySubmission = createInputHistorySubmission(message.content, message.attachments ?? []);
                         try {
-                            const result = await requestJson(serverSessionResponseSchema, `${sessionPath(target.sessionId)}/items`, jsonInit('POST', {
+                            const result = await requestJson(serverSessionResponseSchema, `${sessionPath(target.sessionId)}/items`, toOwner(target, jsonInit('POST', {
                                 directory: target.directory,
                                 item: toServerItemInput(message, message.sendConfig),
-                            }));
-                            // The optimistic entry is replaced by the server's copy of the queue.
+                            })));
                             set((state) => removeMessageLocally(state, key, id));
-                            applyServerSession(result.session, result.revision, target.runtimeKey);
+                            applyServerSession(result.session, result.revision, target.runtimeKey, queueOwnerOf(target.directory));
                             if (historyIdentity) {
                                 useInputHistoryStore.getState().appendSubmissions(historyIdentity, [historySubmission]);
                             }
@@ -634,17 +656,18 @@ export const useMessageQueueStore = create<MessageQueueStore>()(
                         const key = getMessageQueueKey(target);
                         if (isServerOwnedMessageQueue()) {
                             try {
+                                const owner = queueOwnerOf(target.directory);
                                 if (messageId) {
                                     const result = await requestJson(
                                         serverTakeResponseSchema,
                                         `${sessionPath(target.sessionId)}/items/${encodeURIComponent(messageId)}/take`,
-                                        jsonInit('POST'),
+                                        toOwner(target, jsonInit('POST')),
                                     );
-                                    applyServerSession(result.session, result.revision, target.runtimeKey);
+                                    applyServerSession(result.session, result.revision, target.runtimeKey, owner);
                                     return [toQueuedMessage(result.item)];
                                 }
-                                const result = await requestJson(serverTakeAllResponseSchema, `${sessionPath(target.sessionId)}/take`, jsonInit('POST'));
-                                applyServerSession(result.session, result.revision, target.runtimeKey);
+                                const result = await requestJson(serverTakeAllResponseSchema, `${sessionPath(target.sessionId)}/take`, toOwner(target, jsonInit('POST')));
+                                applyServerSession(result.session, result.revision, target.runtimeKey, owner);
                                 return result.items.map(toQueuedMessage);
                             } catch (error) {
                                 await refreshSession(target);
@@ -670,9 +693,6 @@ export const useMessageQueueStore = create<MessageQueueStore>()(
                     clearQueue: (target) => {
                         const key = getMessageQueueKey(target);
                         set((state) => {
-                            // Clearing drops what is still queued, never a message
-                            // already handed to the server: that send will resolve
-                            // and must find its entry to remove or restore.
                             const sending = state.sendingIds[key] ?? [];
                             const retained = (state.queuedMessages[key] ?? []).filter((m) => sending.includes(m.id));
                             if (retained.length > 0) {
@@ -727,6 +747,42 @@ export const useMessageQueueStore = create<MessageQueueStore>()(
                         return queue.filter((message) => !sending.includes(message.id));
                     },
 
+                    followSessionMove: (destination) => {
+                        if (isServerOwnedMessageQueue()) return;
+                        const destinationKey = getMessageQueueKey(destination);
+                        set((state) => {
+                            const queuedMessages = { ...state.queuedMessages };
+                            const sendingIds = { ...state.sendingIds };
+                            let moved = false;
+                            for (const key of new Set([...Object.keys(state.queuedMessages), ...Object.keys(state.sendingIds)])) {
+                                if (key === destinationKey) continue;
+                                const parsed = parseMessageQueueKey(key);
+                                if (parsed?.runtimeKey !== destination.runtimeKey || parsed.sessionId !== destination.sessionId) continue;
+                                moved = true;
+                                const messages = queuedMessages[key] ?? [];
+                                delete queuedMessages[key];
+                                if (messages.length > 0) {
+                                    const existing = queuedMessages[destinationKey] ?? [];
+                                    queuedMessages[destinationKey] = [...existing, ...messages.filter((message) => !existing.some((entry) => entry.id === message.id))];
+                                }
+                                const ids = sendingIds[key] ?? [];
+                                delete sendingIds[key];
+                                if (ids.length > 0) sendingIds[destinationKey] = [...new Set([...(sendingIds[destinationKey] ?? []), ...ids])];
+                            }
+                            return moved ? { queuedMessages, sendingIds } : {};
+                        });
+                    },
+
+                    locateQueuedMessage: (target, messageId) => {
+                        const { queuedMessages, sendingIds } = get();
+                        for (const key of new Set([...Object.keys(queuedMessages), ...Object.keys(sendingIds)])) {
+                            const parsed = parseMessageQueueKey(key);
+                            if (parsed?.runtimeKey !== target.runtimeKey || parsed.sessionId !== target.sessionId) continue;
+                            if (queuedMessages[key]?.some((message) => message.id === messageId) || sendingIds[key]?.includes(messageId)) return parsed;
+                        }
+                        return target;
+                    },
+
                     setFollowUpBehavior: (behavior) => {
                         set({ followUpBehavior: behavior });
                         void updateDesktopSettings({ followUpBehavior: behavior });
@@ -743,8 +799,6 @@ export const useMessageQueueStore = create<MessageQueueStore>()(
                         const generation = ++hydrationGeneration;
                         const isCurrent = () => generation === hydrationGeneration && runtimeKey === getRuntimeKey();
                         const promise = (async () => {
-                            // Migration and recovery share one request owner so
-                            // reconnects cannot upload a legacy message twice.
                             let migration = legacyMigrations.get(runtimeKey);
                             if (!migration) {
                                 const items = Object.entries(get().queuedMessages).flatMap(([key, queue]) => {
@@ -764,10 +818,10 @@ export const useMessageQueueStore = create<MessageQueueStore>()(
                                 const next = migration.items.shift();
                                 if (!next?.message.sendConfig) continue;
                                 const { target, message } = next;
-                                const upload = requestJson(serverSessionResponseSchema, `${sessionPath(target.sessionId)}/items`, jsonInit('POST', {
+                                const upload = requestJson(serverSessionResponseSchema, `${sessionPath(target.sessionId)}/items`, toOwner(target, jsonInit('POST', {
                                     directory: target.directory,
                                     item: toServerItemInput(message, next.message.sendConfig),
-                                })).then(() => undefined).catch((error) => {
+                                }))).then(() => undefined).catch((error) => {
                                     console.warn('[queue] failed to migrate a locally queued message to the server:', error);
                                 });
                                 migration.pending = upload;
@@ -781,7 +835,7 @@ export const useMessageQueueStore = create<MessageQueueStore>()(
                                 resyncRequested = false;
                                 let snapshot: z.infer<typeof serverSnapshotSchema>;
                                 try {
-                                    snapshot = await requestJson(serverSnapshotSchema, '/api/message-queue', { signal: AbortSignal.timeout(15_000) });
+                                    snapshot = await readOwnerSnapshot('', AbortSignal.timeout(15_000));
                                 } catch (error) {
                                     if (!isCurrent()) return;
                                     if (resyncRequested) continue;
@@ -789,31 +843,7 @@ export const useMessageQueueStore = create<MessageQueueStore>()(
                                 }
                                 if (!isCurrent()) return;
                                 serverOwnedRuntimeKeys.add(runtimeKey);
-                                if ((snapshotRevisions.get(runtimeKey) ?? -1) > snapshot.revision) continue;
-                                snapshotRevisions.set(runtimeKey, snapshot.revision);
-                                set((state) => {
-                                    // A broadcast newer than this snapshot wins, listed in it or not.
-                                    const isNewerThanSnapshot = (key: string) => (appliedRevisions.get(key) ?? -1) > snapshot.revision;
-                                    const keep = (key: string) => parseMessageQueueKey(key)?.runtimeKey !== runtimeKey || isNewerThanSnapshot(key);
-                                    const queuedMessages: Record<string, QueuedMessage[]> = {};
-                                    const sendingIds: Record<string, string[]> = {};
-                                    for (const [key, queue] of Object.entries(state.queuedMessages)) {
-                                        if (keep(key)) queuedMessages[key] = queue;
-                                    }
-                                    for (const [key, ids] of Object.entries(state.sendingIds)) {
-                                        if (keep(key)) sendingIds[key] = ids;
-                                    }
-                                    for (const session of snapshot.sessions) {
-                                        const target = createMessageQueueTarget(session.sessionId, session.directory, runtimeKey);
-                                        if (!target) continue;
-                                        const key = getMessageQueueKey(target);
-                                        if (isNewerThanSnapshot(key)) continue;
-                                        appliedRevisions.set(key, snapshot.revision);
-                                        if (session.items.length > 0) queuedMessages[key] = session.items.map(toQueuedMessage);
-                                        if (session.sendingId) sendingIds[key] = [session.sendingId];
-                                    }
-                                    return { queuedMessages, sendingIds };
-                                });
+                                if (!applyOwnerSnapshot(snapshot, runtimeKey, '')) continue;
                             } while (resyncRequested && isCurrent());
                         })();
                         const run = { runtimeKey, promise };
@@ -824,33 +854,39 @@ export const useMessageQueueStore = create<MessageQueueStore>()(
                     },
 
                     resync: () => {
-                        // Share legacy migration with bootstrap. A recovery edge
-                        // during its snapshot read still earns one trailing read.
                         if (hydration?.runtimeKey === getRuntimeKey()) resyncRequested = true;
                         return get().hydrate();
                     },
 
-                    applyServerSession,
-
-                    setServerHold: async (sessionId, held) => {
+                    refreshSpaceQueue: async (spaceId) => {
                         if (!isServerOwnedMessageQueue()) return;
-                        const response = await runtimeFetch(`${sessionPath(sessionId)}/hold`, jsonInit('PUT', { held }));
-                        if (!response.ok) throw new Error(`Message queue hold request failed (${response.status})`);
+                        const runtimeKey = getRuntimeKey();
+                        let snapshot: z.infer<typeof serverSnapshotSchema>;
+                        try {
+                            snapshot = await readOwnerSnapshot(spaceId, AbortSignal.timeout(15_000));
+                        } catch {
+                            return;
+                        }
+                        if (runtimeKey !== getRuntimeKey()) return;
+                        serverOwnedRuntimeKeys.add(runtimeKey);
+                        applyOwnerSnapshot(snapshot, runtimeKey, spaceId);
                     },
+
+                    applyServerSession,
 
                     resetForRuntimeSwitch: (previousRuntimeKey) => {
                         hydrationGeneration += 1;
                         hydration = null;
                         resyncRequested = false;
                         if (previousRuntimeKey) {
-                            snapshotRevisions.delete(previousRuntimeKey);
+                            for (const key of snapshotRevisions.keys()) {
+                                if (key.startsWith(`${previousRuntimeKey}\n`)) snapshotRevisions.delete(key);
+                            }
                             for (const key of appliedRevisions.keys()) {
                                 if (parseMessageQueueKey(key)?.runtimeKey === previousRuntimeKey) appliedRevisions.delete(key);
                             }
                         }
                         if (!previousRuntimeKey || !serverOwnedRuntimeKeys.has(previousRuntimeKey)) return;
-                        // The previous runtime's projection belongs to its server;
-                        // switching back re-hydrates it from there.
                         set((state) => {
                             const queuedMessages: Record<string, QueuedMessage[]> = {};
                             const sendingIds: Record<string, string[]> = {};
@@ -891,16 +927,15 @@ export const useMessageQueueStore = create<MessageQueueStore>()(
 
 export const messageQueueUpdatedEventSchema = z.object({
     type: z.literal('openchamber:message-queue.updated'),
-    properties: z.object({ revision: z.number(), session: serverSessionSchema }),
+    properties: z.object({ revision: z.number(), session: serverSessionSchema, spaceId: z.string().optional() }),
 });
 
 export type MessageQueueUpdatedEvent = z.infer<typeof messageQueueUpdatedEventSchema>;
 
-/** `openchamber:message-queue.updated` broadcast → projection. */
 export const applyMessageQueueUpdatedEvent = (payload: SyncEvent | MessageQueueUpdatedEvent, expectedRuntimeKey: string): void => {
     if (!isServerOwnedMessageQueue()) return;
     const parsed = messageQueueUpdatedEventSchema.safeParse(payload);
     if (!parsed.success) return;
-    const { session, revision } = parsed.data.properties;
-    useMessageQueueStore.getState().applyServerSession(session, revision, expectedRuntimeKey);
+    const { session, revision, spaceId } = parsed.data.properties;
+    useMessageQueueStore.getState().applyServerSession(session, revision, expectedRuntimeKey, spaceId ?? '');
 };

@@ -1,9 +1,3 @@
-// Adapted from T3 Code's libghostty-vt browser adapter (MIT, T3 Tools Inc.).
-// See LICENSE-T3CODE in this directory.
-
-// This order mirrors GhosttyKey in ghostty/vt/key/event.h. The values are
-// intentionally derived from the official W3C-aligned enum instead of
-// maintaining a second keyboard protocol.
 const ghosttyKeyboardCodes = [
   'Unidentified',
   'Backquote',
@@ -235,13 +229,24 @@ export function loadGhosttyKeyboardLayoutMap(): Promise<GhosttyKeyboardLayoutMap
   return promise;
 }
 
-// Browsers do not expose consumed modifiers; treat Shift as consumed for
-// unchorded character input.
 export function ghosttyConsumedMods(
-  event: Pick<KeyboardEvent, 'altKey' | 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'>,
+  event: Pick<KeyboardEvent, 'altKey' | 'code' | 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'>,
+  layoutMap?: GhosttyKeyboardLayoutMap,
+  macOption = false,
 ): number {
-  if (!event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return 0;
-  return [...event.key].length === 1 ? 1 : 0;
+  if (event.ctrlKey || event.metaKey || [...event.key].length !== 1) return 0;
+  const shift = event.shiftKey ? 1 : 0;
+  if (!event.altKey) return shift;
+  return macOption && isOptionComposedSymbol(event, layoutMap) ? shift | (1 << 2) : 0;
+}
+
+function isOptionComposedSymbol(
+  event: Pick<KeyboardEvent, 'code' | 'key'>,
+  layoutMap?: GhosttyKeyboardLayoutMap,
+): boolean {
+  if (!/^[!-/:-@[-`{-~]$/u.test(event.key)) return false;
+  const base = layoutMap?.get(event.code) ?? /^(?:Key|Digit)(.)$/u.exec(event.code)?.[1]?.toLowerCase();
+  return event.key !== base;
 }
 
 export function ghosttyUnshiftedCodepoint(
@@ -261,8 +266,6 @@ export function ghosttyUnshiftedCodepoint(
     if (lowercase !== event.key && [...lowercase].length === 1) {
       return lowercase.codePointAt(0) ?? 0;
     }
-    // Without layout data the unshifted form of a shifted key is unknowable;
-    // reporting the shifted character as unshifted corrupts Kitty alternate keys.
     return 0;
   }
   return event.key.codePointAt(0) ?? 0;

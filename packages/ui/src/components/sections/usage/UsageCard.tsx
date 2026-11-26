@@ -1,5 +1,5 @@
 import type { QuotaProviderId, UsageWindow } from '@/types';
-import { formatQuotaValueLabel, formatQuotaResetLabel, formatWindowLabel } from '@/lib/quota';
+import { formatQuotaWindowValueLabel, formatQuotaResetLabel, formatWindowLabel } from '@/lib/quota';
 import { UsageProgressBar } from './UsageProgressBar';
 import { useQuotaStore } from '@/stores/useQuotaStore';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -13,6 +13,7 @@ interface UsageCardProps {
   subtitle?: string | null;
   showToggle?: boolean;
   toggleEnabled?: boolean;
+  toggleDisabled?: boolean;
   onToggle?: (enabled: boolean) => void;
   providerId?: QuotaProviderId;
 }
@@ -23,6 +24,7 @@ export const UsageCard: React.FC<UsageCardProps> = ({
   subtitle,
   showToggle = false,
   toggleEnabled = false,
+  toggleDisabled = false,
   onToggle,
   providerId,
 }) => {
@@ -30,15 +32,11 @@ export const UsageCard: React.FC<UsageCardProps> = ({
   const displayMode = useQuotaStore((state) => state.displayMode);
   const timeFormatPreference = useUIStore((state) => state.timeFormatPreference);
   const displayPercent = displayMode === 'remaining' ? window.remainingPercent : window.usedPercent;
-  // A balance-only window (DeepSeek's credits balance) carries a value label
-  // and no percentage. An empty track with a "used" caption under it read as
-  // "0% used", so the bar and its caption only render when there is a share
-  // to show; the reset time still does.
   const hasPercent = displayPercent !== null;
   const barLabel = displayMode === 'remaining'
     ? t('settings.usage.card.bar.remaining')
     : t('settings.usage.card.bar.used');
-  const percentLabel = formatQuotaValueLabel(window.valueLabel, displayPercent);
+  const percentLabel = formatQuotaWindowValueLabel(window, displayPercent, t);
   const resetLabel = formatQuotaResetLabel(window.resetAt, window.resetAfterFormatted ?? window.resetAtFormatted, timeFormatPreference);
   const resetText = resetLabel ? t('settings.usage.card.resetsAt', { time: resetLabel }) : '';
   const windowLabel = formatWindowLabel(title);
@@ -50,8 +48,9 @@ export const UsageCard: React.FC<UsageCardProps> = ({
           {showToggle && (
             <Checkbox
               checked={toggleEnabled}
+              disabled={toggleDisabled}
               onChange={(checked) => onToggle?.(checked)}
-              ariaLabel={t('settings.usage.card.showInHeaderAria')}
+              ariaLabel={t('settings.usage.page.options.showInWorkStatusAria')}
             />
           )}
           <div className="min-w-0 flex flex-col">

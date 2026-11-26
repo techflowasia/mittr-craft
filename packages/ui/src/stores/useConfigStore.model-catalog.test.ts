@@ -2,12 +2,17 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 
 let proxyAnswer: () => Promise<Response> = async () => { throw new Error('server unreachable'); };
 
+const realRuntimeFetch = { ...(await import('@/lib/runtime-fetch')) };
+
 mock.module('@/lib/runtime-fetch', () => ({
+  ...realRuntimeFetch,
   runtimeFetch: mock(async () => proxyAnswer()),
+  fetchBypassingRuntimeBridge: (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
 }));
 
 const { registerProductUiPlugin, resetProductUiPluginsForTests } = await import('@/lib/product-plugins');
-const { fetchModelsDevMetadata } = await import('./useConfigStore');
+await import('./useConfigStore');
+const { fetchModelsDevMetadata } = await import('./config/metadata');
 
 const realFetch = globalThis.fetch;
 let directCalls: string[] = [];

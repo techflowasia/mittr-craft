@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { resolveBunExecutable } from '../lib/bun-executable.mjs';
 import { findNeedles } from './brand-leak-scan.mjs';
+import * as desktopBuilder from './build-desktop.mjs';
 import {
   AGENT_BROWSER_STAGING,
   CUA_DRIVER_STAGING,
@@ -32,6 +34,116 @@ import {
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const readJson = (relative) => JSON.parse(fs.readFileSync(path.join(repoRoot, relative), 'utf8'));
 
+// Use the installed builder's filters: mapped files and dependency collection
+// apply different rules, and both routes must exclude app-owned tests.
+const electronRequire = createRequire(path.join(repoRoot, 'packages/electron/package.json'));
+const builderRequire = createRequire(electronRequire.resolve('electron-builder'));
+const { FileMatcher, getFileMatchers, getNodeModuleFileMatcher } = builderRequire('app-builder-lib/out/fileMatcher.js');
+
+test('packaged app-owned tests and confirmed fixtures are excluded without stripping runtime assets', () => {
+  const upstream = readJson('packages/electron/package.json').build;
+  for (const flavor of ['dev', 'prod']) {
+    const merged = mergeBuilderConfig(upstream, readBrand({ flavor }).overlay);
+    const entries = stagedServerFiles(merged.asarUnpack);
+    const mapped = entries.at(-1);
+    const mappedFilter = new FileMatcher('/staged', '/packed', (value) => value, mapped.filter).createFilter();
+    const dependencyFilter = getNodeModuleFileMatcher('/app', '/packed', (value) => value, {}, {
+      config: { ...merged, files: [...merged.files, ...entries] }, debugLogger: { isEnabled: false },
+    }).createFilter();
+    const stat = { isDirectory: () => false };
+    for (const relative of [
+      'lib/agent-memory/actions.test.js',
+      'lib/example.spec.mjs',
+      'lib/git/storage-process.fixture.js',
+      'lib/source-control/storage-process.fixture.js',
+      'runtime.d.ts',
+      'lib/gitea/client.d.ts',
+      'lib/gitea/fixtures/api.json',
+      'lib/gitea/fixtures/fake-fetch.js',
+      'lib/gerrit/fixtures/fake-fetch.js.map',
+      'lib/forgejo/fixtures/api.json',
+      'lib/spaces/places/fake-docker.js',
+      'lib/spaces/places/fake-docker.js.map',
+      'lib/spaces/places/docker-live-support.js',
+      'lib/spaces/places/contract-suite.js',
+      'lib/spaces/places/escape-suite.js',
+      'lib/spaces/places/memory-place.js',
+      'lib/spaces/code-in-bait.js',
+      'lib/fs/folder-watch-test-helpers.js',
+    ]) {
+      assert.equal(mappedFilter(`/staged/${relative}`, stat), false, `${flavor}: staged ${relative}`);
+      assert.equal(dependencyFilter(`/app/node_modules/@openchamber/web/build/server/${relative}`, stat), false, `${flavor}: workspace ${relative}`);
+    }
+    for (const relative of ['src/host.test.ts', 'scripts/bundle-guest.test.ts', 'scripts/fixtures/guest-entry.ts']) {
+      assert.equal(dependencyFilter(`/app/node_modules/@openchamber/sdk/${relative}`, stat), false, `${flavor}: sdk ${relative}`);
+    }
+    for (const relative of ['lib/agent-memory/actions.js', 'lib/quota/index.js', 'lib/session-response-recovery/index.js', 'lib/fixtures/production.json', 'lib/gitea/client.js', 'lib/gitea/client.js.map', 'lib/spaces/places/docker.js', 'lib/spaces/places/registry.js', 'lib/spaces/code-in.js', 'lib/terminal/bun-pty-support.js', 'lib/quota/credentials/providers.js', 'lib/quota/credentials/store.js']) {
+      assert.equal(mappedFilter(`/staged/${relative}`, stat), true, `${flavor}: runtime ${relative}`);
+    }
+    for (const relative of ['node_modules/@openchamber/sdk/dist/index.js', 'node_modules/@openchamber/sdk/scripts/bundle-guest.mjs', 'node_modules/zod/v4/core/tests/index.test.js', 'node_modules/effect/ai-docs/src/51_http-server/fixtures/api/Api.js']) {
+      assert.equal(dependencyFilter(`/app/${relative}`, stat), true, `${flavor}: preserved ${relative}`);
+    }
+    // Unpacked helpers/extensions are deliberately re-included by the main
+    // file matcher, not the dependency matcher that ignores positive globs.
+    const mainFilter = getFileMatchers({ ...merged, files: [...merged.files, ...entries] }, 'files', '/packed', {
+      defaultSrc: '/app', globalOutDir: '/app/dist', macroExpander: (value) => value, customBuildOptions: {},
+    })[0].createFilter();
+    for (const relative of ['lib/git/credential-helper.js', 'built-in-extensions/example/panel/main.js']) {
+      assert.equal(mainFilter(`/app/node_modules/@openchamber/web/build/server/${relative}`, stat), true, `${flavor}: unpacked ${relative}`);
+    }
+  }
+});
+
+test('the canonical builder accepts explicit ZIP-only packaging and rejects unsupported targets', () => {
+  assert.deepEqual(parseBuildArgs(['--flavor', 'dev', '--target', 'zip']), { flavor: 'dev', gate: false, target: 'zip' });
+  assert.deepEqual(parseBuildArgs(['--flavor=prod', '--target=zip']), { flavor: 'prod', gate: false, target: 'zip' });
+  assert.throws(() => parseBuildArgs(['--flavor', 'dev', '--target', 'dmg']), /target/);
+  assert.throws(() => parseBuildArgs(['--flavor', 'dev', '--target']), /target/);
+});
+
+test('required quota runtime modules must exist in staging and the packaged archive', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-runtime-files-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  assert.throws(() => desktopBuilder.assertServerRuntimeFiles(root), /quota\/credentials\/providers.js/);
+  for (const name of ['providers.js', 'store.js']) {
+    const file = path.join(root, 'lib/quota/credentials', name);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, 'export {};');
+  }
+  assert.doesNotThrow(() => desktopBuilder.assertServerRuntimeFiles(root));
+  const files = ['/node_modules/@openchamber/web/build/server/lib/quota/credentials/providers.js', '/node_modules/@openchamber/web/build/server/lib/quota/credentials/store.js'];
+  assert.throws(() => desktopBuilder.assertPackedServerRuntimeFiles(files.slice(1)), /quota\/credentials\/providers.js/);
+  assert.doesNotThrow(() => desktopBuilder.assertPackedServerRuntimeFiles(files));
+});
+
+test('ZIP selection changes only macOS targets and requires a fresh ZIP result', (t) => {
+  const upstream = readJson('packages/electron/package.json').build;
+  const original = structuredClone(upstream);
+  assert.deepEqual(desktopBuilder.selectBuildTarget(upstream, undefined, 'darwin'), upstream);
+  const zip = desktopBuilder.selectBuildTarget(upstream, 'zip', 'darwin');
+  assert.deepEqual(zip.mac.target, ['zip']);
+  assert.deepEqual({ ...zip, mac: upstream.mac }, upstream);
+  assert.deepEqual(upstream, original);
+  assert.throws(() => desktopBuilder.selectBuildTarget(upstream, 'zip', 'linux'), /macOS/);
+  assert.throws(() => desktopBuilder.selectBuildTarget(upstream, 'zip', 'win32'), /macOS/);
+  const dist = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-results-'));
+  t.after(() => fs.rmSync(dist, { recursive: true, force: true }));
+  const options = { productName: 'Fixture Dev', distDir: dist, startedAt: 2000, target: 'zip' };
+  assert.throws(() => desktopBuilder.requireMacArtifact(options), /no Fixture Dev zip/);
+  const artifact = path.join(dist, 'Fixture Dev-1.0-mac-arm64.zip');
+  fs.writeFileSync(artifact, 'zip');
+  fs.utimesSync(artifact, new Date(1000), new Date(1000));
+  assert.throws(() => desktopBuilder.requireMacArtifact(options), /no Fixture Dev zip/);
+  fs.utimesSync(artifact, new Date(3000), new Date(3000));
+  assert.equal(desktopBuilder.requireMacArtifact(options), artifact);
+  assert.throws(() => desktopBuilder.requireMacArtifact({ ...options, target: undefined }), /no Fixture Dev dmg/);
+});
+
+test('product overlays carry their exact custom desktop versions', () => {
+  assert.equal(readBrand({ flavor: 'dev' }).overlay.extraMetadata.version, '2.7.3+mittr.1.0.2');
+  assert.equal(readBrand({ flavor: 'prod' }).overlay.extraMetadata.version, '2.7.3+mittr.1.0.2');
+});
+
 test('the brand overlay keeps upstream packaging and changes only our keys', () => {
   const upstream = readJson('packages/electron/package.json').build;
   const merged = mergeBuilderConfig(upstream, readJson('brand/electron-builder.dev.json'));
@@ -39,7 +151,8 @@ test('the brand overlay keeps upstream packaging and changes only our keys', () 
   assert.equal(merged.appId, 'dev.mittrcraft.desktop.dev');
   assert.equal(merged.productName, 'MittrCraft Dev');
   assert.equal(merged.publish, null);
-  assert.equal(merged.afterPack, null);
+  assert.equal(merged.afterPack, '../../scripts/mittr/after-pack.cjs');
+  assert.equal(path.resolve(repoRoot, 'packages/electron', merged.afterPack), path.join(repoRoot, 'scripts/mittr/after-pack.cjs'));
   assert.deepEqual(merged.asarUnpack, upstream.asarUnpack);
   assert.deepEqual(merged.mac.target, upstream.mac.target);
   assert.equal(merged.mac.entitlements, upstream.mac.entitlements);
@@ -51,7 +164,8 @@ test('the brand overlay keeps upstream packaging and changes only our keys', () 
 
   const resources = Object.fromEntries(merged.extraResources.map((entry) => [entry.to, entry.from]));
   assert.equal(resources['web-dist'], 'resources/web-dist');
-  assert.equal(resources['opencode-cli'], 'resources/opencode-cli');
+  assert.equal(resources['opencode-server'], 'resources/opencode-server');
+  assert.equal(resources['opencode-cli'], undefined);
   assert.equal(resources['icons/tray'], '../../brand/icons/tray');
   assert.equal(resources['icons/tray/status'], 'resources/icons/tray/status');
   assert.equal(merged.extraResources.length, Object.keys(resources).length);
@@ -125,6 +239,15 @@ test('Dev keeps its engine apart from the installed app', () => {
   }
 });
 
+test('both flavors turn upstream\'s share pages off, which the leak allowlist relies on', () => {
+  for (const flavor of ['dev', 'prod']) {
+    assert.equal(readJson(`brand/product.${flavor}.json`).env.OPENCHAMBER_SHARE_PAGES_DISABLED, '1', flavor);
+  }
+  const reasons = readJson('brand/leak-allowlist.json').filter(({ snippet }) => /PUBLIC_SHARE_ORIGIN|relay\.openchamber\.dev/.test(snippet)).map(({ reason }) => reason);
+  assert.equal(reasons.length, 2);
+  for (const reason of reasons) assert.match(reason, /OPENCHAMBER_SHARE_PAGES_DISABLED/);
+});
+
 test('both flavors pack the splash logo their product file names', () => {
   for (const flavor of ['dev', 'prod']) {
     const { splashSvg } = readJson(`brand/product.${flavor}.json`);
@@ -141,13 +264,41 @@ test('both flavors pack the splash logo their product file names', () => {
 const LEFT_OUT_LINKS = new Map([
   [
     '{className:"app-region-no-drag mt-6 inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground",href:',
-    '?"https://github.com/openchamber/openchamber/releases/latest":"https://opencode.ai/download",',
+    ['?"https://github.com/openchamber/openchamber/releases/latest":"https://opencode.ai/download",'],
   ],
-  ['("walkthrough.help.guide"),onClick:()=>{', '="https://docs.openchamber.dev/walkthrough/",'],
+  ['{type:"button",variant:"ghost",size:"sm",className:"walkthrough-header__option","aria-label":{{id}},onClick:{{id}},children:{{id}}}', ['="https://docs.openchamber.dev/walkthrough/",']],
+  ['{type:"button",variant:"ghost",size:"sm",onClick:{{id}},children:[{{id}}.jsx({{id}},{name:"question",className:"size-4"}),{{id}}("walkthrough.help.guide")]}', ['="https://docs.openchamber.dev/walkthrough/",']],
+  ['{type:"button",variant:"ghost",size:{{id}},className:"w-full",onClick:{{id}},children:[{{id}},{{id}}]}', ['="https://docs.openchamber.dev/walkthrough/",']],
   [
     '," ",{{id}}.jsx({{id}},{onClick:()=>{{{id}}({{id}})},children:{{id}}("settings.classification.page.docsLink")})]',
-    '="https://docs.openchamber.dev/classification-providers/",',
+    ['="https://docs.openchamber.dev/classification-providers/",'],
   ],
+  [
+    '("integrationsCatalog.info.website")}),t.jsx("dd",{className:"min-w-0",children:t.jsxs("a",{href:e.homepage,',
+    [
+      'homepage:"https://github.com/openchamber/opencode-search-providers"',
+      'homepage:"https://github.com/openchamber/openchamber-excalidraw"',
+      'homepage:"https://github.com/openchamber/openchamber-resource-monitor"',
+    ],
+  ],
+  [
+    '{type:"button",size:"sm",variant:"secondary",onClick:()=>{{{id}}({{id}}.homepage)}',
+    ['homepage:"https://github.com/openchamber/openchamber-excalidraw"', 'homepage:"https://github.com/openchamber/openchamber-resource-monitor"'],
+  ],
+  ['"data-settings-item":"extensions.browse",', ['`https://openchamber.dev/${e}/extensions/`:"https://openchamber.dev/extensions/"']],
+  [
+    'descriptionKey:"settings.extensions.browse.hint",keywords:["community","catalog","marketplace","store","gallery","website","discover","find","extension"],isAvailable:{{id}}=>!{{id}}.isVSCode&&!{{id}}.enterpriseMode',
+    ['`https://openchamber.dev/${e}/extensions/`:"https://openchamber.dev/extensions/"'],
+  ],
+  [
+    '{href:{{id}},target:"_blank",rel:"noopener noreferrer",className:"flex items-center gap-1.5 typography-meta text-muted-foreground transition-colors hover:text-foreground"',
+    ['="https://github.com/openchamber/openchamber/releases",'],
+  ],
+]);
+
+const SUPPORTING_ENTRIES = new Map([
+  ['const event = { at, source: component, action:', '"web","OpenCode","startup"'],
+  ["'https://raw.githubusercontent.com/openchamber/openchamber/main/changelog/index.json'", "'https://api.openchamber.dev/v1/changelog/full'"],
 ]);
 
 test('every visible-strings entry replaces an upstream name or link and keeps none, or leaves out a link to one', () => {
@@ -155,10 +306,18 @@ test('every visible-strings entry replaces an upstream name or link and keeps no
   for (const entry of entries) {
     assert.deepEqual(findNeedles(entry.to), [], entry.to);
     if (LEFT_OUT_LINKS.has(entry.from)) {
-      assert.ok(entry.to.includes('hidden:!0') || entry.to.length < entry.from.length, entry.from);
-      const blanked = entries.find((other) => other.from === LEFT_OUT_LINKS.get(entry.from));
-      assert.deepEqual(findNeedles(blanked?.to ?? 'missing'), [], entry.from);
-      assert.match(blanked?.to ?? '', /^[=?]["":,]*$/, entry.from);
+      assert.ok(entry.to.includes('hidden:!') || entry.to.length < entry.from.length, entry.from);
+      for (const link of LEFT_OUT_LINKS.get(entry.from)) {
+        const blanked = entries.find((other) => other.from === link);
+        assert.notDeepEqual(findNeedles(blanked?.from ?? ''), [], link);
+        assert.deepEqual(findNeedles(blanked?.to ?? 'missing'), [], entry.from);
+        assert.match(blanked?.to ?? '', /^(?:[=?]|homepage:)?["":,]*$/, entry.from);
+      }
+      continue;
+    }
+    if (SUPPORTING_ENTRIES.has(entry.from)) {
+      const partner = entries.find((other) => other.from === SUPPORTING_ENTRIES.get(entry.from));
+      assert.notDeepEqual(findNeedles(partner?.from ?? ''), [], entry.from);
       continue;
     }
     assert.notDeepEqual(findNeedles(entry.from), [], entry.from);
@@ -208,7 +367,8 @@ test('each flavor names itself, points the links it emits at its own scheme and 
     }
     // The window title is the app's name, Dev or not.
     assert.ok(entries.some((entry) => entry.from === '="OpenChamber",' && entry.to === `="${appName}",`), flavor);
-    for (const entry of entries.filter((entry) => !isLink(entry))) {
+    const isLogFolder = (entry) => /\bLogs\b|\blogs\b/.test(entry.from);
+    for (const entry of entries.filter((entry) => !isLink(entry) && !isLogFolder(entry))) {
       assert.ok(entry.to.includes(`"${appName}"`), `${flavor}: ${entry.to}`);
     }
     const blocked = entries.find((entry) => entry.from.includes('"openchamber-ui"'));
@@ -216,15 +376,59 @@ test('each flavor names itself, points the links it emits at its own scheme and 
   }
 });
 
+const applyEntries = (text, entries) => entries.reduce((result, { from, to }) => result.replaceAll(from, to), text);
+
+test('the status report names, and reads startup logs from, the log folder of the app that made it', () => {
+  for (const options of [{ flavor: 'dev' }, { flavor: 'prod' }, { flavor: 'dev', gate: true }]) {
+    const { product, visibleStrings } = readBrand(options);
+    const shown = (text) => applyEntries(text, visibleStrings);
+    assert.equal(shown('"~/Library/Logs/OpenChamber/main.log"'), `"~/Library/Logs/${product.appName}/main.log"`);
+    assert.equal(shown('"~/.config/OpenChamber/logs/main.log"'), `"~/.config/${product.appName}/logs/main.log"`);
+    assert.equal(shown('"%APPDATA%\\\\OpenChamber\\\\logs\\\\main.log"'), `"%APPDATA%\\\\${product.appName}\\\\logs\\\\main.log"`);
+    assert.equal(shown("path.join(home, 'Library', 'Logs', 'OpenChamber')"), `path.join(home, 'Library', 'Logs', '${product.appName}')`);
+  }
+});
+
+test('the status report still recognises the SSH log lines the app writes once both are renamed', () => {
+  const entries = readVisibleStrings('prod');
+  const read = (relative) => fs.readFileSync(path.join(repoRoot, relative), 'utf8');
+  const writer = applyEntries(read('packages/electron/ssh-manager.mjs'), entries.filter(({ file }) => file === 'dist-bundle/main.mjs'));
+  const reader = applyEntries(read('packages/web/server/lib/diagnostics/local-files.ts'), entries.filter(({ file }) => file.endsWith('/diagnostics/local-files.js')));
+  const table = reader.slice(reader.indexOf('const SSH_MESSAGES = ['), reader.indexOf('];', reader.indexOf('const SSH_MESSAGES = [')));
+  const actionFor = (message) => [...table.matchAll(/pattern: \/(.+)\/, action: '([^']+)'/g)]
+    .find(([, pattern]) => new RegExp(pattern).test(message))?.[2];
+  const listing = /`(Could not list [^$`]*)\$\{/.exec(writer)[1];
+  const version = /`(it runs [^$`]*)\$\{runningVersion\}/.exec(writer)[1];
+  assert.equal(actionFor(`${listing}timed out`), 'remote server discovery failed');
+  assert.equal(actionFor(`Replacing the managed server on remote port 4096: ${version}2.7.2`), 'remote server version replaced');
+  assert.equal(findNeedles(listing + version).length, 0);
+});
+
+test('no packed server module imports a file the build leaves out', () => {
+  const filter = new FileMatcher('/staged', '/packed', (value) => value, stagedServerFiles().at(-1).filter).createFilter();
+  const packed = (relative) => filter(`/staged/${relative}`, { isDirectory: () => false });
+  const root = path.join(repoRoot, 'packages/web/server');
+  const sources = fs.globSync('**/*.{ts,js}', { cwd: root }).filter((file) => !/\.(test|spec)\.|\.d\.ts$|test-support|\.fixture\./.test(file));
+  assert.ok(sources.length > 500, String(sources.length));
+  const broken = sources.filter((file) => packed(file.replace(/\.ts$/, '.js'))).flatMap((file) => {
+    const text = fs.readFileSync(path.join(root, file), 'utf8').replace(/^import type .*$/gm, '');
+    return [...text.matchAll(/(?:from|import)\s*\(?\s*['"](\.{1,2}\/[^'"]+)['"]/g)]
+      .map((match) => path.join(path.dirname(file), match[1]).split(path.sep).join('/'))
+      .filter((target) => !target.startsWith('..') && !packed(target))
+      .map((target) => `${file} -> ${target}`);
+  });
+  assert.deepEqual(broken, []);
+});
+
 test('the staged server is packed in place of the workspace copy, except the files upstream unpacks', () => {
   const upstream = readJson('packages/electron/package.json').build;
   const entries = stagedServerFiles(upstream.asarUnpack);
-  const serverUnpacked = upstream.asarUnpack.filter((pattern) => pattern.startsWith('node_modules/@openchamber/web/server/'));
+  const serverUnpacked = upstream.asarUnpack.filter((pattern) => pattern.startsWith('node_modules/@openchamber/web/build/server/'));
   assert.ok(serverUnpacked.length > 0);
-  assert.equal(entries[0], '!node_modules/@openchamber/web/server{,/**}');
+  assert.equal(entries[0], '!node_modules/@openchamber/web/build/server{,/**}');
   for (const pattern of serverUnpacked) assert.ok(entries.includes(pattern), pattern);
   const mapped = entries.at(-1);
-  assert.deepEqual([mapped.from, mapped.to], ['.product/web/server', 'node_modules/@openchamber/web/server']);
+  assert.deepEqual([mapped.from, mapped.to], ['.product/web/server', 'node_modules/@openchamber/web/build/server']);
   assert.ok(mapped.filter.includes('!lib/git/credential-helper.js'));
   assert.ok(entries.includes('!node_modules/@openchamber/web/{dist,public}{,/**}'));
 });
@@ -348,9 +552,39 @@ test('both flavors pack the staged ripgrep folder as Resources/ripgrep', () => {
   for (const flavor of ['dev', 'prod']) {
     const merged = mergeBuilderConfig(upstream, readJson(`brand/electron-builder.${flavor}.json`));
     assert.ok(merged.extraResources.some((entry) => entry.from === RIPGREP_STAGING && entry.to === 'ripgrep'), flavor);
-    assert.ok(merged.extraResources.some((entry) => entry.to === 'opencode-cli'), `${flavor} lost the engine`);
+    assert.ok(merged.extraResources.some((entry) => entry.from === 'resources/opencode-server' && entry.to === 'opencode-server'), `${flavor} lost the engine`);
+    assert.equal(merged.extraResources.filter((entry) => entry.to === 'ripgrep').length, 1, `${flavor} packs two ripgreps`);
   }
   assert.equal(RIPGREP_STAGING, '.product/ripgrep');
+  const main = fs.readFileSync(path.join(repoRoot, 'scripts/mittr/build-desktop.mjs'), 'utf8');
+  assert.equal(main.includes("'prepare:ripgrep'"), false, 'the build stages upstream\'s ripgrep as well as the pinned one');
+});
+
+test('the build stages and checks the pinned OpenCode server, and checks the packed one at the end', (t) => {
+  const main = fs.readFileSync(path.join(repoRoot, 'scripts/mittr/build-desktop.mjs'), 'utf8');
+  const body = main.slice(main.indexOf('const main = async () => {'));
+  const prepare = body.indexOf("run(bun, ['run', 'prepare:opencode-server'], electronDir)");
+  const verify = body.indexOf("run(bun, ['run', 'verify:opencode-server'], electronDir)");
+  assert.ok(prepare > body.indexOf("step('4/8") && verify > prepare && verify < body.indexOf("step('5/8"), 'the engine is not staged and checked in step 4');
+  const leftOut = body.indexOf('leaveOutClosedEngineParts(');
+  assert.ok(leftOut > verify && leftOut < body.indexOf("step('5/8"), 'the closed engine part is not left out after the staged engine is checked');
+  assert.equal(body.includes('opencode-cli'), false);
+  assert.ok(body.indexOf('verifyPackedEngine(') > body.indexOf("step('8/8"), 'the packed engine is not checked in step 8');
+
+  const { appPath } = fakeApp(t);
+  assert.throws(() => desktopBuilder.verifyPackedEngine({ appPath, version: '2.3.2', arch: 'arm64' }), /no OpenCode server/);
+  const engineDir = path.join(appPath, 'Contents', 'Resources', desktopBuilder.ENGINE_RESOURCE_DIR);
+  fs.mkdirSync(path.join(engineDir, 'chunks'), { recursive: true });
+  fs.writeFileSync(path.join(engineDir, 'left-out.json'), JSON.stringify({ plugins: ['opencode.provider.some-agent'] }));
+  const closed = path.join(engineDir, 'chunks', 'agent-sdk-ab12.mjs');
+  fs.writeFileSync(closed, '');
+  assert.throws(() => desktopBuilder.verifyPackedEngine({ appPath, version: '2.3.2', arch: 'arm64', verify: () => ({}) }), /closed licence/);
+  fs.rmSync(closed);
+  const calls = [];
+  const result = desktopBuilder.verifyPackedEngine({ appPath, version: '2.3.2', arch: 'arm64', verify: (dir, options) => { calls.push([dir, options]); return { version: options.version, ran: true }; } });
+  assert.deepEqual(result, { version: '2.3.2', ran: true });
+  assert.deepEqual(calls, [[engineDir, { platform: 'darwin', arch: 'arm64', version: '2.3.2', runtime: process.execPath }]]);
+  assert.equal(readJson('packages/electron/package.json').devDependencies['@opencode/server'], '2.3.2');
 });
 
 test('the build checks the pinned ripgrep archive before any build step, and stops on a missing or wrong one', (t) => {
@@ -447,6 +681,8 @@ test('a gate build is the Dev build under its own bundle id, name and data folde
   assert.equal(gate.overlay.productName, 'MittrCraft Gate');
   assert.deepEqual(gate.overlay.protocols, [{ name: 'MittrCraft Gate', schemes: ['mittrcraft-dev'] }]);
   assert.equal(gate.overlay.mac.extendInfo.NSLocalNetworkUsageDescription, 'MittrCraft Gate needs access to devices and services on your local network.');
+  assert.equal(gate.overlay.mac.extendInfo.NSAppleEventsUsageDescription, 'Lets commands that you or an agent run in MittrCraft Gate control other apps.');
+  assert.equal(gate.overlay.mac.extendInfo.CFBundleIconName, null);
   assert.equal(gate.overlay.linux.executableName, 'mittrcraft-gate');
   assert.deepEqual(gate.overlay.linux.desktop.entry, { Name: 'MittrCraft Gate', Comment: 'Desktop runtime for MittrCraft Gate', Icon: 'mittrcraft-gate', StartupWMClass: 'mittrcraft-gate' });
   assert.deepEqual(gate.overlay.extraResources, dev.overlay.extraResources);
@@ -459,7 +695,14 @@ test('a gate build is the Dev build under its own bundle id, name and data folde
   assert.deepEqual(gate.visibleStrings.map(({ file, from, count }) => ({ file, from, count })), dev.visibleStrings.map(({ file, from, count }) => ({ file, from, count })));
   assert.deepEqual(
     gate.visibleStrings.filter((entry, index) => entry.to !== dev.visibleStrings[index].to).map(({ to }) => to),
-    ['="MittrCraft Gate",', '{className:"text-lg font-semibold",children:"MittrCraft Gate"}'],
+    [
+      '="MittrCraft Gate",',
+      '{className:"text-lg font-semibold",children:"MittrCraft Gate"}',
+      '"%APPDATA%\\\\MittrCraft Gate\\\\logs\\\\main.log"',
+      '"~/Library/Logs/MittrCraft Gate/main.log"',
+      '"~/.config/MittrCraft Gate/logs/main.log"',
+      "path.join(home, 'Library', 'Logs', 'MittrCraft Gate')",
+    ],
   );
 
   const upstream = readJson('packages/electron/package.json').build;

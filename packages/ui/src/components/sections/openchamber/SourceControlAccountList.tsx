@@ -1,5 +1,6 @@
 import React from 'react';
-import { Icon } from '@/components/icon/Icon';
+import { ProviderIcon } from '@/components/sourceControl/ProviderIcon';
+import { useSourceControlProvider } from '@/lib/source-control/providers/registry';
 import type { SourceControlAuthAccount } from '@/lib/api/types';
 
 type SourceControlAccountGroup = {
@@ -27,25 +28,18 @@ const groupSourceControlAccounts = (
   return Array.from(groups.values());
 };
 
-/**
- * A short handle for one credential of an account that has several.
- *
- * Re-authenticating adds a credential rather than replacing one, because
- * anything already bound to the old credential must keep reading as that
- * credential rather than being silently retargeted. So one person can appear
- * with two rows of the same kind, and only then does a row need a handle; a
- * reference with no short form is internal and never shown.
- */
 const credentialHandle = (id: string): string | null =>
   /[0-9a-f]{8}(?=-[0-9a-f]{4}-)/i.exec(id)?.[0] ?? null;
+
+const ProviderMark: React.FC<{ provider: string }> = ({ provider }) => (
+  <ProviderIcon descriptor={useSourceControlProvider(provider)} variant="fill" className="size-4 text-muted-foreground" />
+);
 
 type SourceControlAccountListProps = {
   accounts: SourceControlAuthAccount[];
   avatarAlt: (username: string) => string;
   sourceLabel: (account: SourceControlAuthAccount) => string;
-  /** What is wrong with a credential, or null when it works. */
   statusLabel: (account: SourceControlAuthAccount) => string | null;
-  /** Marks the credential this account acts as when nothing names another. */
   currentLabel: string;
   renderActions: (account: SourceControlAuthAccount) => React.ReactNode;
 };
@@ -68,16 +62,13 @@ export const SourceControlAccountList: React.FC<SourceControlAccountListProps> =
               <img
                 src={user.avatarUrl}
                 alt={avatarAlt(user.username)}
-                className="size-9 shrink-0 rounded-full border border-border bg-muted object-cover"
+                className="size-9 shrink-0 oc-tile-inset rounded-full object-cover"
                 loading="lazy"
                 referrerPolicy="no-referrer"
               />
             ) : (
-              <div className="flex size-9 shrink-0 items-center justify-center rounded-full border border-border bg-muted">
-                <Icon
-                  name={user.provider === 'github' ? 'github-fill' : user.provider === 'gitlab' ? 'gitlab' : 'git-branch'}
-                  className="size-4 text-muted-foreground"
-                />
+              <div className="flex size-9 shrink-0 items-center justify-center oc-tile-inset rounded-full">
+                <ProviderMark provider={user.provider} />
               </div>
             )}
             <div className="min-w-0">
@@ -89,17 +80,16 @@ export const SourceControlAccountList: React.FC<SourceControlAccountListProps> =
               </div>
             </div>
           </div>
-          <div className="ml-12 mt-2 divide-y divide-[var(--surface-subtle)]">
+          <div className="ms-12 mt-2 divide-y divide-[var(--surface-subtle)]">
             {group.accounts.map((account) => {
               const source = sourceLabel(account);
               const status = statusLabel(account);
-              // Rows of different kinds already tell themselves apart.
               const handle = group.accounts.some((other) => other !== account && sourceLabel(other) === source)
                 ? credentialHandle(account.id) : null;
               return (
                 <div
                   key={account.id}
-                  className="flex flex-col gap-2 py-2 first:pt-0 last:pb-0 @xl:flex-row @xl:items-center @xl:justify-between"
+                  className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 py-2 first:pt-0 last:pb-0"
                 >
                   <div className="flex flex-wrap items-center gap-1.5 typography-micro text-muted-foreground">
                     <span>{source}</span>
@@ -112,9 +102,9 @@ export const SourceControlAccountList: React.FC<SourceControlAccountListProps> =
                       <span className="font-mono">{handle}</span>
                     </> : null}
                     {group.accounts.length > 1 && account.current
-                      ? <span className="rounded-full border border-border px-1.5">{currentLabel}</span> : null}
+                      ? <span className="oc-tile-inset rounded-full px-1.5">{currentLabel}</span> : null}
                   </div>
-                  <div className="flex flex-wrap gap-2">{renderActions(account)}</div>
+                  <div className="ms-auto flex flex-wrap justify-end gap-2">{renderActions(account)}</div>
                 </div>
               );
             })}

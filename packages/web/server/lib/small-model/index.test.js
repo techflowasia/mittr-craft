@@ -4,13 +4,14 @@ import http from 'node:http';
 import os from 'os';
 import path from 'path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
+import { GUEST_GENERATE_PROMPT_MAX, GUEST_GENERATE_SYSTEM_MAX, GUEST_GENERATE_TIMEOUT_MS } from '@openchamber/sdk';
 
 // The settings override is read straight from disk, so without this the suite
 // would resolve whatever small model the developer running it has configured.
 const TEMP_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'small-model-settings-'));
 process.env.OPENCHAMBER_DATA_DIR = TEMP_DATA_DIR;
 
-const { generateSmallModelText, describeSmallModel, listAuthenticatedProviders, setUnavailableRetryDelaysForTest } = await import('./index.js');
+const { generateSmallModelText, describeSmallModel, listAuthenticatedProviders, setUnavailableRetryDelaysForTest, generationBudgetMs } = await import('./index.js');
 const { configureOpenCodeRuntimeProviders, resetOpenCodeRuntimeProviders } = await import('./client.js');
 
 // A real OpenCode stub over HTTP. The module talks to OpenCode through
@@ -20,9 +21,19 @@ const state = {
   models: [],
   providers: [],
   defaultModel: null,
+  defaultResponse: undefined,
+  // The model OpenCode's `title` agent carries from config, or null for none.
+  titleModel: null,
+  // OpenCode answers 404 for `title` while a cold location loads its agents.
+  titleMissing: false,
   generate: () => ({ text: 'generated' }),
   requests: [],
   generateErrors: [],
+  trustRefusal: false,
+  trustAll: false,
+  // Holds each /api/experimental/generate/text response open, so a client-side
+  // deadline can fire mid-request.
+  generateDelayMs: 0,
 };
 
 const MODEL = (overrides = {}) => ({
@@ -61,15 +72,40 @@ beforeAll(async () => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(payload));
     };
+    if (state.trustAll) {
+      res.writeHead(403, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ code: 'opencode_trust_required', directory: '/proj', error: 'Trust required' }));
+    }
     if (url.pathname === '/api/model') return send({ location: LOCATION, data: state.models });
-    if (url.pathname === '/api/model/default') return send({ location: LOCATION, data: state.defaultModel });
+    if (url.pathname === '/api/model/default') return send(state.defaultResponse ?? { location: LOCATION, data: state.defaultModel });
     if (url.pathname === '/api/provider') return send({ location: LOCATION, data: state.providers });
-    if (url.pathname === '/api/experimental/generate') {
+    if (url.pathname === '/api/agent/title') {
+      if (state.titleMissing) {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ _tag: 'AgentNotFoundError', agentID: 'title', message: 'Agent not found: title' }));
+      }
+      const agent = {
+        id: 'title',
+        name: 'Title',
+        request: { settings: {}, headers: {}, body: {} },
+        mode: 'primary',
+        hidden: true,
+        permissions: [],
+      };
+      if (state.titleModel) agent.model = state.titleModel;
+      return send({ location: LOCATION, data: agent });
+    }
+    if (url.pathname === '/api/experimental/generate/text') {
+      if (state.trustRefusal) {
+        res.writeHead(403, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ code: 'opencode_trust_required', directory: '/proj', error: 'Trust required' }));
+      }
       const error = state.generateErrors.shift();
       if (error) {
-        res.writeHead(400, { 'content-type': 'application/json' });
+        res.writeHead({ ModelNotFoundError: 404, ServiceUnavailableError: 503 }[error._tag] ?? 400, { 'content-type': 'application/json' });
         return res.end(JSON.stringify(error));
       }
+      if (state.generateDelayMs) await new Promise((resolve) => setTimeout(resolve, state.generateDelayMs));
       return send({ location: LOCATION, data: state.generate(body) });
     }
     res.writeHead(404).end('{}');
@@ -87,9 +123,15 @@ beforeEach(() => {
   state.models = [MODEL()];
   state.providers = [{ id: 'anthropic', name: 'Anthropic', activation: 'auto', package: 'x' }];
   state.defaultModel = MODEL();
+  state.defaultResponse = undefined;
+  state.titleModel = null;
+  state.titleMissing = false;
   state.generate = () => ({ text: 'generated' });
   state.requests = [];
   state.generateErrors = [];
+  state.trustRefusal = false;
+  state.trustAll = false;
+  state.generateDelayMs = 0;
   configureOpenCodeRuntimeProviders({
     buildOpenCodeUrl: (requestPath) => `${baseUrl}${requestPath.startsWith('/') ? requestPath : `/${requestPath}`}`,
     getOpenCodeAuthHeaders: () => ({ Authorization: 'Basic test' }),
@@ -97,10 +139,15 @@ beforeEach(() => {
   resetOpenCodeRuntimeProviders();
 });
 
-const lastGenerate = () => state.requests.filter((entry) => entry.path === '/api/experimental/generate').at(-1);
+const lastGenerate = () => state.requests.filter((entry) => entry.path === '/api/experimental/generate/text').at(-1);
 
 describe('generateSmallModelText', () => {
-  const unavailable = { _tag: 'InvalidRequestError', message: 'Model unavailable: zai-coding-plan/glm-5.3-flash' };
+  const unavailable = {
+    _tag: 'ModelNotFoundError',
+    providerID: 'zai-coding-plan',
+    modelID: 'glm-5.3-flash',
+    message: 'Model not found: zai-coding-plan/glm-5.3-flash',
+  };
   const options = { prompt: 'write a commit', model: 'zai-coding-plan/glm-5.3-flash' };
 
   beforeEach(() => setUnavailableRetryDelaysForTest([1, 1, 1]));
@@ -110,7 +157,7 @@ describe('generateSmallModelText', () => {
     state.generateErrors = [unavailable];
     const result = await generateSmallModelText(options);
     expect(result.text).toBe('generated');
-    const calls = state.requests.filter((entry) => entry.path === '/api/experimental/generate');
+    const calls = state.requests.filter((entry) => entry.path === '/api/experimental/generate/text');
     expect(calls).toHaveLength(2);
     expect(calls[0].body).toEqual(calls[1].body);
   });
@@ -119,27 +166,34 @@ describe('generateSmallModelText', () => {
     state.generateErrors = [unavailable, unavailable, unavailable];
     const result = await generateSmallModelText(options);
     expect(result.text).toBe('generated');
-    expect(state.requests.filter((entry) => entry.path === '/api/experimental/generate')).toHaveLength(4);
+    expect(state.requests.filter((entry) => entry.path === '/api/experimental/generate/text')).toHaveLength(4);
   });
 
   it('reports persistent model unavailability once the backoff runs out', async () => {
     state.generateErrors = [unavailable, unavailable, unavailable, unavailable];
     await expect(generateSmallModelText(options)).rejects.toMatchObject({
-      message: unavailable.message, statusCode: 503, code: 'small-model-unavailable',
+      message: 'Model unavailable: zai-coding-plan/glm-5.3-flash', statusCode: 503, code: 'small-model-unavailable',
     });
-    expect(state.requests.filter((entry) => entry.path === '/api/experimental/generate')).toHaveLength(4);
+    expect(state.requests.filter((entry) => entry.path === '/api/experimental/generate/text')).toHaveLength(4);
+  });
+
+  it('retries while the location plugins are still activating', async () => {
+    state.generateErrors = [{ _tag: 'ServiceUnavailableError', service: 'plugin', message: 'Location plugins did not finish activating' }];
+    const result = await generateSmallModelText(options);
+    expect(result.text).toBe('generated');
+    expect(state.requests.filter((entry) => entry.path === '/api/experimental/generate/text')).toHaveLength(2);
   });
 
   it('does not retry other invalid requests', async () => {
     state.generateErrors = [{ _tag: 'InvalidRequestError', message: 'Invalid prompt' }];
     await expect(generateSmallModelText(options)).rejects.toMatchObject({ message: 'Invalid prompt' });
-    expect(state.requests.filter((entry) => entry.path === '/api/experimental/generate')).toHaveLength(1);
+    expect(state.requests.filter((entry) => entry.path === '/api/experimental/generate/text')).toHaveLength(1);
   });
 
   it('does not retry provider failures with the same message', async () => {
     state.generateErrors = [{ _tag: 'ServiceUnavailableError', message: unavailable.message }];
     await expect(generateSmallModelText(options)).rejects.toMatchObject({ _tag: 'ServiceUnavailableError' });
-    expect(state.requests.filter((entry) => entry.path === '/api/experimental/generate')).toHaveLength(1);
+    expect(state.requests.filter((entry) => entry.path === '/api/experimental/generate/text')).toHaveLength(1);
   });
 
   it('cancels without sending the retry', async () => {
@@ -150,7 +204,7 @@ describe('generateSmallModelText', () => {
     const timer = setTimeout(() => controller.abort(), 100);
     try {
       await expect(pending).rejects.toThrow();
-      expect(state.requests.filter((entry) => entry.path === '/api/experimental/generate')).toHaveLength(1);
+      expect(state.requests.filter((entry) => entry.path === '/api/experimental/generate/text')).toHaveLength(1);
     } finally {
       clearTimeout(timer);
     }
@@ -160,7 +214,19 @@ describe('generateSmallModelText', () => {
     setUnavailableRetryDelaysForTest();
     state.generateErrors = [unavailable];
     await expect(generateSmallModelText({ ...options, timeoutMs: 100 })).rejects.toThrow();
-    expect(state.requests.filter((entry) => entry.path === '/api/experimental/generate')).toHaveLength(1);
+    expect(state.requests.filter((entry) => entry.path === '/api/experimental/generate/text')).toHaveLength(1);
+  });
+
+  it('reports a blown deadline as a 504 generation-timeout naming the model and budget', async () => {
+    state.generateDelayMs = 2_500;
+    // The explicit timeoutMs also proves override: the derived budget for this
+    // small prompt would be ~60 s, so only the caller's 1 s deadline can fire.
+    await expect(generateSmallModelText({ prompt: 'hi', directory: '/proj', timeoutMs: 1_000 }))
+      .rejects.toMatchObject({
+        statusCode: 504,
+        code: 'generation-timeout',
+        message: expect.stringContaining('anthropic/claude-haiku-4-5 did not finish within the 1s budget for this prompt size'),
+      });
   });
 
   it('sends the prompt to /api/generate on the resolved model', async () => {
@@ -208,6 +274,33 @@ describe('generateSmallModelText', () => {
     expect(lastGenerate().body.model).toEqual({ id: 'gpt-5.6-luna', providerID: 'openai' });
   });
 
+  it('forwards a default envelope id without inventing a provider', async () => {
+    state.defaultResponse = { location: LOCATION, data: null, id: 'model' };
+
+    const result = await generateSmallModelText({ prompt: 'hi' });
+
+    expect(result).toMatchObject({ modelID: 'model', providerID: undefined, source: 'default' });
+    expect(lastGenerate().body.model).toEqual({ id: 'model' });
+  });
+
+  it('forwards unchecked identifiers and uses the default directory for non-strings', async () => {
+    const result = await generateSmallModelText({
+      prompt: 'hi',
+      directory: 17,
+      preferredProviderID: 23,
+      preferredModelID: { name: 'model' },
+    });
+
+    expect(result).toMatchObject({ providerID: 23, modelID: { name: 'model' }, source: 'session-model' });
+    expect(lastGenerate().body.model).toEqual({ providerID: 23, id: { name: 'model' } });
+    expect(lastGenerate().headers['x-opencode-directory']).toBeUndefined();
+  });
+
+  it('keeps the malformed generation-text fallback', async () => {
+    state.generate = () => ({ text: 17 });
+    expect((await generateSmallModelText({ prompt: 'hi' })).text).toBe('');
+  });
+
   it('sends an explicit Claude Code model like any other', async () => {
     const result = await generateSmallModelText({ prompt: 'hi', model: 'claude-code/haiku', directory: '/proj' });
 
@@ -215,13 +308,12 @@ describe('generateSmallModelText', () => {
     expect(lastGenerate().body.model).toEqual({ id: 'haiku', providerID: 'claude-code' });
   });
 
-  it('stays on the session provider when the caller forbids switching', async () => {
+  it('falls back to the session model when its provider has no small one', async () => {
     const result = await generateSmallModelText({
       prompt: 'hi',
       directory: '/proj',
       preferredProviderID: 'openai',
       preferredModelID: 'gpt-5.6-luna',
-      restrictToPreferredProvider: true,
     });
 
     expect(result).toMatchObject({ providerID: 'openai', modelID: 'gpt-5.6-luna', source: 'session-model' });
@@ -241,7 +333,6 @@ describe('generateSmallModelText', () => {
       directory: '/proj',
       preferredProviderID: 'anthropic',
       preferredModelID: 'claude-sonnet-5',
-      restrictToPreferredProvider: true,
     });
 
     // Newest active haiku of the session provider; the other provider's
@@ -257,15 +348,15 @@ describe('generateSmallModelText', () => {
     ];
     state.defaultModel = state.models[0];
 
-    // Anthropic has no small family here; the caller allows leaving it, yet
-    // the connected Google flash is not someone's pick for this content.
+    // Anthropic has no small family here, yet the connected Google flash is
+    // not someone's pick for this content.
     const withProvider = await generateSmallModelText({
       prompt: 'hi',
       directory: '/proj',
       preferredProviderID: 'anthropic',
       preferredModelID: 'claude-sonnet-5',
     });
-    expect(withProvider).toMatchObject({ providerID: 'anthropic', modelID: 'claude-sonnet-5', source: 'default' });
+    expect(withProvider).toMatchObject({ providerID: 'anthropic', modelID: 'claude-sonnet-5', source: 'session-model' });
 
     const withoutProvider = await generateSmallModelText({ prompt: 'hi', directory: '/proj' });
     expect(withoutProvider).toMatchObject({ providerID: 'anthropic', modelID: 'claude-sonnet-5', source: 'default' });
@@ -284,10 +375,48 @@ describe('generateSmallModelText', () => {
       directory: '/proj',
       preferredProviderID: 'my-proxy',
       preferredModelID: 'my-big-model',
-      restrictToPreferredProvider: true,
     });
 
     expect(result).toMatchObject({ providerID: 'my-proxy', modelID: 'gemini-3.6-flash', source: 'session-provider-small' });
+  });
+
+  it('counts every lab\'s flash as a flash, keeps a session already on a small model, and ranks flash before luna', async () => {
+    state.models = [
+      MODEL({ id: 'deepseek-v4-pro', modelID: 'deepseek-v4-pro', providerID: 'deepseek', family: 'deepseek-thinking' }),
+      MODEL({ id: 'deepseek-v4.1-flash', modelID: 'deepseek-v4.1-flash', providerID: 'deepseek', family: 'deepseek-flash' }),
+      MODEL({ id: 'glm-5.3', modelID: 'glm-5.3', providerID: 'zai', family: 'glm' }),
+      MODEL({ id: 'glm-5.3-flash', modelID: 'glm-5.3-flash', providerID: 'zai', family: 'glm-flash' }),
+      MODEL({ id: 'mimo-v2.6-pro', modelID: 'mimo-v2.6-pro', providerID: 'xiaomi', family: 'mimo' }),
+      MODEL({ id: 'mimo-v2.6-flash', modelID: 'mimo-v2.6-flash', providerID: 'xiaomi', family: 'mimo' }),
+      MODEL({ id: 'kimi-k3', modelID: 'kimi-k3', providerID: 'gateway', family: 'kimi-k3' }),
+      MODEL({ id: 'deepseek-v4.1-flash', modelID: 'deepseek-v4.1-flash', providerID: 'gateway', family: 'deepseek-flash' }),
+      MODEL({ id: 'glm-5.3-flash', modelID: 'glm-5.3-flash', providerID: 'gateway', family: 'glm-flash', time: { released: 2 } }),
+      MODEL({ id: 'gpt-6-luna', modelID: 'gpt-6-luna', providerID: 'gateway', family: 'gpt-luna', time: { released: 3 } }),
+      MODEL({ id: 'claude-sonnet-5', modelID: 'claude-sonnet-5', providerID: 'luna-only', family: 'claude-sonnet' }),
+      MODEL({ id: 'gpt-6-luna', modelID: 'gpt-6-luna', providerID: 'luna-only', family: 'gpt-luna' }),
+    ];
+
+    const pick = (providerID, modelID) => generateSmallModelText({ prompt: 'hi', directory: '/proj', preferredProviderID: providerID, preferredModelID: modelID });
+
+    expect(await pick('deepseek', 'deepseek-v4-pro')).toMatchObject({ modelID: 'deepseek-v4.1-flash', source: 'session-provider-small' });
+    expect(await pick('zai', 'glm-5.3')).toMatchObject({ modelID: 'glm-5.3-flash', source: 'session-provider-small' });
+    expect(await pick('xiaomi', 'mimo-v2.6-pro')).toMatchObject({ modelID: 'mimo-v2.6-flash', source: 'session-provider-small' });
+    expect(await pick('gateway', 'deepseek-v4.1-flash')).toMatchObject({ modelID: 'deepseek-v4.1-flash', source: 'session-model' });
+    expect(await pick('gateway', 'kimi-k3')).toMatchObject({ modelID: 'glm-5.3-flash', source: 'session-provider-small' });
+    expect(await pick('luna-only', 'claude-sonnet-5')).toMatchObject({ modelID: 'gpt-6-luna', source: 'session-provider-small' });
+  });
+
+  it('moves past a small session model that OpenCode reports unusable', async () => {
+    state.models = [
+      MODEL({ id: 'claude-haiku-4-5', modelID: 'claude-haiku-4-5', family: 'claude-haiku', enabled: false }),
+      MODEL({ id: 'claude-haiku-4-6', modelID: 'claude-haiku-4-6', family: 'claude-haiku', status: 'deprecated' }),
+      MODEL({ id: 'claude-haiku-5', modelID: 'claude-haiku-5', family: 'claude-haiku', capabilities: { input: ['image'], output: ['image'] } }),
+      MODEL({ id: 'claude-haiku-5-5', modelID: 'claude-haiku-5-5', family: 'claude-haiku' }),
+    ];
+    for (const modelID of ['claude-haiku-4-5', 'claude-haiku-4-6', 'claude-haiku-5']) {
+      expect(await generateSmallModelText({ prompt: 'hi', directory: '/proj', preferredProviderID: 'anthropic', preferredModelID: modelID }))
+        .toMatchObject({ modelID: 'claude-haiku-5-5', source: 'session-provider-small' });
+    }
   });
 
   it('picks Claude Code haiku as the small model like any other provider', async () => {
@@ -309,10 +438,230 @@ describe('generateSmallModelText', () => {
       directory: '/proj',
       preferredProviderID: 'anthropic',
       preferredModelID: 'claude-sonnet-5',
-      restrictToPreferredProvider: true,
     });
 
     expect(result).toMatchObject({ providerID: 'anthropic', modelID: 'claude-sonnet-5', source: 'session-model' });
+  });
+
+  it('sends a session title to the small model configured for OpenCode', async () => {
+    state.titleModel = { id: 'gpt-5-mini', providerID: 'openai' };
+
+    const result = await generateSmallModelText({
+      prompt: 'hi',
+      directory: '/proj',
+      preferredProviderID: 'anthropic',
+      preferredModelID: 'claude-haiku-4-5',
+    });
+
+    // Configured on purpose, so it may leave the session provider the way
+    // OpenCode's own titles do.
+    expect(result).toMatchObject({ providerID: 'openai', modelID: 'gpt-5-mini', source: 'config' });
+    expect(lastGenerate().body.model).toEqual({ id: 'gpt-5-mini', providerID: 'openai' });
+  });
+
+  it('sends the thinking variant a caller names with its own model', async () => {
+    state.models = [MODEL({ variants: [{ id: 'low' }, { id: 'high' }] })];
+
+    const result = await generateSmallModelText({
+      prompt: 'hi', directory: '/proj', model: 'anthropic/claude-haiku-4-5', variant: 'high',
+    });
+    expect(result).toMatchObject({ providerID: 'anthropic', modelID: 'claude-haiku-4-5', source: 'request' });
+    expect(lastGenerate().body.model).toEqual({ id: 'claude-haiku-4-5', providerID: 'anthropic', variant: 'high' });
+  });
+
+  it('sends the thinking variant saved beside the small model override', async () => {
+    state.models = [MODEL({ variants: [{ id: 'low' }, { id: 'high' }] })];
+    fs.writeFileSync(
+      path.join(TEMP_DATA_DIR, 'settings.json'),
+      JSON.stringify({
+        smallModelUseDefault: false,
+        smallModelOverride: 'anthropic/claude-haiku-4-5',
+        smallModelVariant: 'high',
+      }),
+    );
+
+    try {
+      const result = await generateSmallModelText({ prompt: 'hi', directory: '/proj' });
+      expect(result).toMatchObject({ providerID: 'anthropic', modelID: 'claude-haiku-4-5', source: 'settings' });
+      expect(lastGenerate().body.model).toEqual({
+        id: 'claude-haiku-4-5',
+        providerID: 'anthropic',
+        variant: 'high',
+      });
+    } finally {
+      fs.rmSync(path.join(TEMP_DATA_DIR, 'settings.json'), { force: true });
+    }
+  });
+
+  it('reads the saved variant from the profile preferences file', async () => {
+    state.models = [MODEL({ variants: [{ id: 'high' }] })];
+    const preferencesPath = path.join(TEMP_DATA_DIR, 'preferences.json');
+    fs.writeFileSync(
+      preferencesPath,
+      JSON.stringify({
+        version: 1,
+        fields: {
+          smallModelUseDefault: { value: false, updatedAt: 1 },
+          smallModelOverride: { value: 'anthropic/claude-haiku-4-5', updatedAt: 1 },
+          smallModelVariant: { value: 'high', updatedAt: 1 },
+        },
+      }),
+    );
+
+    try {
+      await generateSmallModelText({ prompt: 'hi', directory: '/proj' });
+      expect(lastGenerate().body.model).toEqual({
+        id: 'claude-haiku-4-5',
+        providerID: 'anthropic',
+        variant: 'high',
+      });
+    } finally {
+      fs.rmSync(preferencesPath, { force: true });
+    }
+  });
+
+  it('drops a saved variant the catalog does not list for the model', async () => {
+    state.models = [MODEL({ variants: [{ id: 'low' }] })];
+    fs.writeFileSync(
+      path.join(TEMP_DATA_DIR, 'settings.json'),
+      JSON.stringify({
+        smallModelUseDefault: false,
+        smallModelOverride: 'anthropic/claude-haiku-4-5',
+        smallModelVariant: 'high',
+      }),
+    );
+
+    try {
+      await generateSmallModelText({ prompt: 'hi', directory: '/proj' });
+      expect(lastGenerate().body.model).toEqual({ id: 'claude-haiku-4-5', providerID: 'anthropic' });
+    } finally {
+      fs.rmSync(path.join(TEMP_DATA_DIR, 'settings.json'), { force: true });
+    }
+  });
+
+  it('drops a saved variant when the known model lists no variants', async () => {
+    state.models = [MODEL()];
+    fs.writeFileSync(
+      path.join(TEMP_DATA_DIR, 'settings.json'),
+      JSON.stringify({
+        smallModelUseDefault: false,
+        smallModelOverride: 'anthropic/claude-haiku-4-5',
+        smallModelVariant: 'high',
+      }),
+    );
+
+    try {
+      await generateSmallModelText({ prompt: 'hi', directory: '/proj' });
+      expect(lastGenerate().body.model).toEqual({ id: 'claude-haiku-4-5', providerID: 'anthropic' });
+    } finally {
+      fs.rmSync(path.join(TEMP_DATA_DIR, 'settings.json'), { force: true });
+    }
+  });
+
+  it('treats a malformed variant dictionary as no variants', async () => {
+    state.models = [MODEL({ variants: { constructor: { id: 'high' } } })];
+
+    await generateSmallModelText({ prompt: 'hi', model: 'anthropic/claude-haiku-4-5', variant: 'high' });
+
+    expect(lastGenerate().body.model).toEqual({ id: 'claude-haiku-4-5', providerID: 'anthropic' });
+  });
+
+  it('keeps a saved variant when the catalog does not know the model', async () => {
+    state.models = [];
+    fs.writeFileSync(
+      path.join(TEMP_DATA_DIR, 'settings.json'),
+      JSON.stringify({
+        smallModelUseDefault: false,
+        smallModelOverride: 'anthropic/claude-haiku-4-5',
+        smallModelVariant: 'high',
+      }),
+    );
+
+    try {
+      await generateSmallModelText({ prompt: 'hi', directory: '/proj' });
+      expect(lastGenerate().body.model).toEqual({
+        id: 'claude-haiku-4-5',
+        providerID: 'anthropic',
+        variant: 'high',
+      });
+    } finally {
+      fs.rmSync(path.join(TEMP_DATA_DIR, 'settings.json'), { force: true });
+    }
+  });
+
+  it('ignores the saved variant while the default small model is used', async () => {
+    state.models = [MODEL({ variants: [{ id: 'high' }] })];
+    state.defaultModel = state.models[0];
+    fs.writeFileSync(
+      path.join(TEMP_DATA_DIR, 'settings.json'),
+      JSON.stringify({
+        smallModelUseDefault: true,
+        smallModelOverride: 'openai/gpt-5.6-luna',
+        smallModelVariant: 'high',
+      }),
+    );
+
+    try {
+      const result = await generateSmallModelText({ prompt: 'hi', directory: '/proj' });
+      expect(result).toMatchObject({ providerID: 'anthropic', modelID: 'claude-haiku-4-5', source: 'default' });
+      expect(lastGenerate().body.model).toEqual({ id: 'claude-haiku-4-5', providerID: 'anthropic' });
+    } finally {
+      fs.rmSync(path.join(TEMP_DATA_DIR, 'settings.json'), { force: true });
+    }
+  });
+
+  it('sends the thinking variant on OpenCode\'s title agent model', async () => {
+    state.titleModel = { id: 'gpt-5-mini', providerID: 'openai', variant: 'low' };
+    state.models = [MODEL({
+      id: 'gpt-5-mini',
+      modelID: 'gpt-5-mini',
+      providerID: 'openai',
+      variants: [{ id: 'low' }],
+    })];
+
+    const result = await generateSmallModelText({
+      prompt: 'hi',
+      directory: '/proj',
+      preferredProviderID: 'anthropic',
+      preferredModelID: 'claude-haiku-4-5',
+    });
+
+    expect(result).toMatchObject({ providerID: 'openai', modelID: 'gpt-5-mini', source: 'config' });
+    expect(lastGenerate().body.model).toEqual({
+      id: 'gpt-5-mini',
+      providerID: 'openai',
+      variant: 'low',
+    });
+  });
+
+  // A commit message or a spoken summary names the composer's provider and
+  // model; OpenCode's default (its first available model when none is set)
+  // can be another provider's.
+  it('takes the composer model, not OpenCode\'s default from another provider', async () => {
+    state.models = [
+      MODEL({ id: 'claude-opus-5', modelID: 'claude-opus-5', family: 'claude-opus' }),
+      MODEL({ id: 'gpt-5.6', modelID: 'gpt-5.6', providerID: 'openai', family: 'gpt' }),
+    ];
+    state.defaultModel = state.models[1];
+
+    const result = await generateSmallModelText({
+      prompt: 'hi',
+      directory: '/proj',
+      preferredProviderID: 'anthropic',
+      preferredModelID: 'claude-opus-5',
+    });
+
+    expect(result).toMatchObject({ providerID: 'anthropic', modelID: 'claude-opus-5', source: 'session-model' });
+    expect(state.requests.some((entry) => entry.body?.model?.providerID === 'openai')).toBe(false);
+  });
+
+  it('keeps OpenCode\'s default when it is on the named provider', async () => {
+    state.models = [MODEL({ id: 'claude-opus-5', modelID: 'claude-opus-5', family: 'claude-opus' })];
+    state.defaultModel = state.models[0];
+
+    const result = await generateSmallModelText({ prompt: 'hi', directory: '/proj', preferredProviderID: 'anthropic' });
+
+    expect(result).toMatchObject({ providerID: 'anthropic', modelID: 'claude-opus-5', source: 'default' });
   });
 
   it('refuses rather than switch provider when the session has no model of its own', async () => {
@@ -320,7 +669,6 @@ describe('generateSmallModelText', () => {
       prompt: 'hi',
       directory: '/proj',
       preferredProviderID: 'openai',
-      restrictToPreferredProvider: true,
     })).rejects.toMatchObject({ statusCode: 404 });
   });
 
@@ -376,6 +724,36 @@ describe('oversized input', () => {
   });
 });
 
+describe('generationBudgetMs', () => {
+  it('keeps small prompts at the historical 60 s base', () => {
+    expect(generationBudgetMs(0)).toBe(60_000);
+    // A few hundred chars — a title, a commit message without diffs — sits
+    // within a breath of the old flat default.
+    expect(generationBudgetMs(400)).toBe(64_000);
+  });
+
+  it('covers the ~43 KB commit-message diff from issue #5017 (~11k tokens)', () => {
+    // ~490 s: well above the 1.5-2 min prefill the issue measured on 4 GB-VRAM
+    // local models, and far above the flat 60 s that always killed the request.
+    const budget = generationBudgetMs(43_000);
+    expect(budget).toBe(60_000 + 10_750 * 40);
+    expect(budget).toBeGreaterThan(120_000);
+  });
+
+  it('caps at the 900 s walkthrough ceiling', () => {
+    expect(generationBudgetMs(10_000_000)).toBe(900_000);
+  });
+
+  it('finishes before an extension stops waiting for the largest guest request', () => {
+    // The SDK's guest wait must outlast this deadline, or the guest gives up
+    // while the model still works and the answer is thrown away. Changing the
+    // formula here fails this test instead of silently breaking that order.
+    const budget = generationBudgetMs(GUEST_GENERATE_PROMPT_MAX + GUEST_GENERATE_SYSTEM_MAX);
+    expect(budget).toBe(780_000);
+    expect(budget).toBeLessThan(GUEST_GENERATE_TIMEOUT_MS);
+  });
+});
+
 describe('structured output', () => {
   const schema = { type: 'object', properties: { title: { type: 'string' } } };
 
@@ -416,7 +794,7 @@ describe('structured output', () => {
     await expect(generateSmallModelText({ prompt: 'describe', directory: '/proj', responseSchema: schema }))
       .rejects.toMatchObject({ statusCode: 422, code: 'structured-output-unsupported' });
 
-    expect(state.requests.filter((entry) => entry.path === '/api/experimental/generate')).toHaveLength(2);
+    expect(state.requests.filter((entry) => entry.path === '/api/experimental/generate/text')).toHaveLength(2);
   });
 });
 
@@ -453,6 +831,73 @@ describe('describeSmallModel', () => {
     }
   });
 
+  it('reports the override thinking variant', async () => {
+    state.models = [MODEL({ variants: [{ id: 'low' }, { id: 'high' }] })];
+    fs.writeFileSync(
+      path.join(TEMP_DATA_DIR, 'settings.json'),
+      JSON.stringify({
+        smallModelUseDefault: false,
+        smallModelOverride: 'anthropic/claude-haiku-4-5',
+        smallModelVariant: 'high',
+      }),
+    );
+
+    try {
+      const described = await describeSmallModel({ directory: '/proj' });
+      expect(described).toMatchObject({
+        providerID: 'anthropic',
+        modelID: 'claude-haiku-4-5',
+        variant: 'high',
+        source: 'settings',
+      });
+    } finally {
+      fs.rmSync(path.join(TEMP_DATA_DIR, 'settings.json'), { force: true });
+    }
+  });
+
+  it('reports the small model configured for OpenCode before its own pick', async () => {
+    state.titleModel = { id: 'gpt-5-mini', providerID: 'openai' };
+
+    const described = await describeSmallModel({ directory: '/proj', preferredProviderID: 'anthropic' });
+
+    expect(described).toMatchObject({ providerID: 'openai', modelID: 'gpt-5-mini', source: 'config' });
+    const agentRead = state.requests.find((entry) => entry.path === '/api/agent/title');
+    expect(agentRead.headers['x-opencode-directory']).toBe(encodeURIComponent('/proj'));
+  });
+
+  it('skips a configured small model whose provider has lost its login', async () => {
+    state.titleModel = { id: 'gpt-5-mini', providerID: 'openai' };
+    state.models = [
+      MODEL({ id: 'gpt-5-mini', modelID: 'gpt-5-mini', providerID: 'openai', enabled: false }),
+      MODEL({ family: 'claude-haiku' }),
+    ];
+
+    const described = await describeSmallModel({ directory: '/proj', preferredProviderID: 'anthropic' });
+
+    expect(described).toMatchObject({ providerID: 'anthropic', modelID: 'claude-haiku-4-5', source: 'session-provider-small' });
+  });
+
+  it('falls through to its own pick when OpenCode has no title agent yet', async () => {
+    state.titleMissing = true;
+
+    expect(await describeSmallModel({ directory: '/proj' })).toMatchObject({ source: 'default' });
+  });
+
+  it('lets the settings override outrank the OpenCode config', async () => {
+    state.titleModel = { id: 'gpt-5-mini', providerID: 'openai' };
+    fs.writeFileSync(
+      path.join(TEMP_DATA_DIR, 'settings.json'),
+      JSON.stringify({ smallModelUseDefault: false, smallModelOverride: 'anthropic/claude-haiku-4-5' }),
+    );
+
+    try {
+      const described = await describeSmallModel({ directory: '/proj' });
+      expect(described).toMatchObject({ providerID: 'anthropic', modelID: 'claude-haiku-4-5', source: 'settings' });
+    } finally {
+      fs.rmSync(path.join(TEMP_DATA_DIR, 'settings.json'), { force: true });
+    }
+  });
+
   it('reports hasLogin false for a model OpenCode has disabled', async () => {
     state.models = [MODEL({ enabled: false })];
 
@@ -478,6 +923,67 @@ describe('describeSmallModel', () => {
 
     expect(await describeSmallModel({ directory: '/proj' })).toBeNull();
   });
+
+  describe('free zen models without a login', () => {
+    const zen = (id, apiKey = 'public') => MODEL({ id, modelID: id, providerID: 'opencode', family: id, settings: { apiKey } });
+
+    afterEach(() => fs.rmSync(path.join(TEMP_DATA_DIR, 'settings.json'), { force: true }));
+
+    it('answers null on a setup with no login, where OpenCode\'s default is a free zen model', async () => {
+      state.models = [zen('big-pickle'), zen('deepseek-v4.1-flash-free')];
+      state.defaultModel = state.models[0];
+
+      expect(await describeSmallModel({ directory: '/proj' })).toBeNull();
+      expect(await describeSmallModel({ directory: '/proj', preferredProviderID: 'opencode', preferredModelID: 'big-pickle' })).toBeNull();
+    });
+
+    it('moves past a saved free zen model as if none were saved', async () => {
+      state.models = [MODEL(), zen('deepseek-v4.1-flash-free')];
+      fs.writeFileSync(
+        path.join(TEMP_DATA_DIR, 'settings.json'),
+        JSON.stringify({ smallModelUseDefault: false, smallModelOverride: 'opencode/deepseek-v4.1-flash-free' }),
+      );
+
+      expect(await describeSmallModel({ directory: '/proj' })).toMatchObject({ providerID: 'anthropic', source: 'default' });
+    });
+
+    it('moves past a free zen walkthrough model and OpenCode title model', async () => {
+      state.models = [MODEL(), zen('big-pickle')];
+      state.titleModel = { id: 'big-pickle', providerID: 'opencode' };
+
+      expect(await describeSmallModel({ directory: '/proj', overrideModel: 'opencode/big-pickle' }))
+        .toMatchObject({ providerID: 'anthropic', source: 'default' });
+    });
+
+    it('keeps a zen model behind a real zen credential', async () => {
+      state.models = [MODEL(), zen('gpt-5-nano', 'zen-key')];
+      fs.writeFileSync(
+        path.join(TEMP_DATA_DIR, 'settings.json'),
+        JSON.stringify({ smallModelUseDefault: false, smallModelOverride: 'opencode/gpt-5-nano' }),
+      );
+
+      expect(await describeSmallModel({ directory: '/proj' })).toMatchObject({ providerID: 'opencode', modelID: 'gpt-5-nano', source: 'settings' });
+    });
+  });
+
+  it.each([
+    ['http://127.0.0.1:8080/v1', true],
+    ['http://localhost:1234/v1', true],
+    ['http://[::1]:11434/v1', true],
+    ['http://192.168.1.20:8080/v1', true],
+    ['http://100.101.102.103:8080/v1', true],
+    ['http://gpu-box:8080/v1', true],
+    ['http://llm.home.arpa/v1', true],
+    ['https://api.example.com/v1', false],
+    ['http://8.8.8.8/v1', false],
+    [undefined, false],
+  ])('reports whether %s is a local endpoint', async (baseURL, local) => {
+    state.models = [MODEL({ id: 'qwen3', modelID: 'qwen3', providerID: 'llama', settings: baseURL ? { baseURL } : {} })];
+
+    const described = await describeSmallModel({ directory: '/proj', preferredProviderID: 'llama', preferredModelID: 'qwen3' });
+
+    expect(described).toMatchObject({ source: 'session-model', localEndpoint: local });
+  });
 });
 
 describe('listAuthenticatedProviders', () => {
@@ -499,10 +1005,32 @@ describe('listAuthenticatedProviders', () => {
     expect(await listAuthenticatedProviders()).toEqual(['anthropic']);
   });
 
+  it('leaves out zen without a login and offers it with a real credential', async () => {
+    const zen = (apiKey) => MODEL({ id: 'big-pickle', modelID: 'big-pickle', providerID: 'opencode', settings: { apiKey } });
+    state.providers = [{ id: 'opencode', name: 'OpenCode', activation: 'enabled', package: 'x' }];
+
+    state.models = [zen('public')];
+    expect(await listAuthenticatedProviders()).toEqual([]);
+
+    resetOpenCodeRuntimeProviders();
+    state.models = [zen('zen-key')];
+    expect(await listAuthenticatedProviders()).toEqual(['opencode']);
+  });
+
   it('offers Claude Code', async () => {
     state.models = [MODEL(), MODEL({ id: 'sonnet', modelID: 'sonnet', providerID: 'claude-code' })];
 
     expect(await listAuthenticatedProviders()).toContain('claude-code');
+  });
+
+  // OpenCode 2 answers with an empty catalog while it starts; caching that
+  // kept the pickers empty after the models arrived.
+  it('offers a provider as soon as a cold catalog fills in', async () => {
+    state.models = [];
+    expect(await listAuthenticatedProviders()).toEqual([]);
+
+    state.models = [MODEL()];
+    expect(await listAuthenticatedProviders()).toEqual(['anthropic']);
   });
 
   it('answers an empty list when OpenCode is not reachable', async () => {
@@ -510,10 +1038,150 @@ describe('listAuthenticatedProviders', () => {
 
     expect(await listAuthenticatedProviders()).toEqual([]);
   });
+
+  // The model list is directory-scoped, so an unscoped read answers for
+  // OpenCode's own working directory, which need not be where the user works.
+  it('scopes the model and provider reads to the requested directory', async () => {
+    configureOpenCodeRuntimeProviders({
+      buildOpenCodeUrl: (requestPath) => `${baseUrl}${requestPath.startsWith('/') ? requestPath : `/${requestPath}`}`,
+      getOpenCodeAuthHeaders: () => ({ Authorization: 'Basic test' }),
+      getDefaultDirectory: () => '/last/project',
+    });
+
+    await listAuthenticatedProviders('/proj/sub dir');
+
+    const reads = state.requests.filter((entry) => entry.path === '/api/model' || entry.path === '/api/provider');
+    expect(reads.length).toBeGreaterThan(0);
+    expect(reads.every((entry) => entry.headers['x-opencode-directory'] === encodeURIComponent('/proj/sub dir'))).toBe(true);
+  });
+});
+
+describe('small model routes', () => {
+  it.each([null, undefined])('rejects the preview handler when the service rejects with %s', async (failure) => {
+    let preview;
+    registerSmallModelRoutes({
+      get(_path, handler) { preview = handler; },
+      post() {},
+    }, {
+      getSmallModelService: async () => { throw failure; },
+    });
+    const response = { json() {}, status() { return response; } };
+
+    await expect(preview({ query: {} }, response)).rejects.toThrow(
+      new TypeError(process.versions.bun
+        ? `${failure} is not an object (evaluating 'error.message')`
+        : `Cannot read properties of ${failure} (reading 'message')`),
+    );
+  });
+
+  it.each(['failed', 17, false, Symbol('failure')])('keeps the preview fallback for primitive rejection %s', async (failure) => {
+    let preview;
+    registerSmallModelRoutes({
+      get(_path, handler) { preview = handler; },
+      post() {},
+    }, { getSmallModelService: async () => { throw failure; } });
+    let payload;
+    const response = { json(value) { payload = value; }, status() { return response; } };
+
+    await preview({ query: {} }, response);
+
+    expect(payload).toEqual({ error: 'Failed to resolve small model' });
+  });
+
+  it('forwards inherited and unchecked generation fields', async () => {
+    let generate;
+    let received;
+    registerSmallModelRoutes({
+      get() {},
+      post(_path, handler) { generate = handler; },
+    }, {
+      getSmallModelService: async () => ({
+        generateSmallModelText: async (input) => { received = input; return { text: '' }; },
+      }),
+    });
+    const response = { json() {}, status() { return response; } };
+    const body = Object.create({ prompt: 'hi', directory: 17, preferredProviderID: 'constructor' });
+
+    await generate({ body }, response);
+
+    expect(received).toEqual({
+      prompt: 'hi', directory: 17, preferredProviderID: 'constructor',
+      system: undefined, maxOutputTokens: undefined, model: undefined, preferredModelID: undefined,
+    });
+  });
+
+  it('forwards the request directory to the provider list', async () => {
+    let getHandler;
+    const providerCalls = [];
+    registerSmallModelRoutes({
+      get(_path, handler) { getHandler = handler; },
+      post() {},
+    }, {
+      getSmallModelService: async () => ({
+        describeSmallModel: async () => null,
+        listAuthenticatedProviders: async (directory) => {
+          providerCalls.push(directory);
+          return ['anthropic'];
+        },
+      }),
+    });
+    const response = { json() {}, status() { return response; } };
+
+    await getHandler({ query: { directory: '/proj/sub dir' } }, response);
+
+    expect(providerCalls).toEqual(['/proj/sub dir']);
+  });
 });
 
 
 describe('small model failure response', () => {
+  it('reports a folder trust refusal instead of blaming the model', async () => {
+    let generate;
+    registerSmallModelRoutes({ get() {}, post(_path, handler) { generate = handler; } }, {
+      getSmallModelService: async () => ({ generateSmallModelText }),
+    });
+    state.trustRefusal = true;
+    let status;
+    let payload;
+    const response = { status(value) { status = value; return response; }, json(value) { payload = value; } };
+    await generate({ body: { prompt: 'commit', model: 'anthropic/claude-haiku-4-5', directory: '/proj' } }, response);
+    expect(status).toBe(403);
+    expect(payload.code).toBe('opencode_trust_required');
+    expect(payload.error).toContain('/proj');
+  });
+
+  it('reports trust refusal during model resolution without an explicit model', async () => {
+    state.trustAll = true;
+    await expect(generateSmallModelText({ prompt: 'commit', directory: '/proj' })).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'opencode_trust_required',
+      message: expect.stringContaining('/proj'),
+    });
+    expect(state.requests.some((request) => request.path === '/api/experimental/generate/text')).toBe(false);
+  });
+
+  it('preserves the trust refusal on the model preview route', async () => {
+    let preview;
+    registerSmallModelRoutes({ get(_path, handler) { preview = handler; }, post() {} }, {
+      getSmallModelService: async () => ({ describeSmallModel, listAuthenticatedProviders }),
+    });
+    state.trustAll = true;
+    let status;
+    let payload;
+    const response = { status(value) { status = value; return response; }, json(value) { payload = value; } };
+    await preview({ query: { directory: '/proj' } }, response);
+    expect(status).toBe(403);
+    expect(payload).toMatchObject({ code: 'opencode_trust_required', directory: '/proj' });
+  });
+
+  it('preserves trust refusal from the provider list when the model catalog is cached', async () => {
+    expect(await listAuthenticatedProviders('/proj')).toEqual(['anthropic']);
+    state.trustAll = true;
+    await expect(listAuthenticatedProviders('/proj')).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'opencode_trust_required',
+    });
+  });
   it('preserves the model-specific reason without advice to change settings', async () => {
     let generate;
     registerSmallModelRoutes({
@@ -523,10 +1191,13 @@ describe('small model failure response', () => {
       getSmallModelService: async () => ({ generateSmallModelText }),
     });
     setUnavailableRetryDelaysForTest([1]);
-    state.generateErrors = [
-      { _tag: 'InvalidRequestError', message: 'Model unavailable: zai-coding-plan/glm-5.3-flash' },
-      { _tag: 'InvalidRequestError', message: 'Model unavailable: zai-coding-plan/glm-5.3-flash' },
-    ];
+    const missing = {
+      _tag: 'ModelNotFoundError',
+      providerID: 'zai-coding-plan',
+      modelID: 'glm-5.3-flash',
+      message: 'Model not found: zai-coding-plan/glm-5.3-flash',
+    };
+    state.generateErrors = [missing, missing];
     let status;
     let payload;
     const response = {
@@ -540,5 +1211,87 @@ describe('small model failure response', () => {
       code: 'small-model-unavailable',
     });
     setUnavailableRetryDelaysForTest();
+  });
+
+  const registerWithFailure = (failure) => {
+    let generate;
+    registerSmallModelRoutes({
+      get() {},
+      post(_path, handler) { generate = handler; },
+    }, {
+      getSmallModelService: async () => ({ generateSmallModelText: () => Promise.reject(failure) }),
+    });
+    return generate;
+  };
+
+  const respond = () => {
+    let status;
+    let payload;
+    const response = {
+      status(value) { status = value; return response; },
+      json(value) { payload = value; },
+    };
+    return { response, read: () => ({ status, payload }) };
+  };
+
+  it.each(['direct', 'wrapped'])('preserves a %s trust refusal in both routes', async (wrapping) => {
+    const refusal = Object.assign(new Error('Open /proj and trust its configuration.'), {
+      statusCode: 403,
+      code: 'opencode_trust_required',
+      directory: '/proj',
+    });
+    const fail = async () => {
+      throw wrapping === 'wrapped' ? new Error('Fetch failed', { cause: refusal }) : refusal;
+    };
+    const handlers = [];
+    registerSmallModelRoutes({
+      get(_path, handler) { handlers.push(handler); },
+      post(_path, handler) { handlers.push(handler); },
+    }, {
+      getSmallModelService: async () => ({ describeSmallModel: fail, generateSmallModelText: fail }),
+    });
+    for (const handler of handlers) {
+      const { response, read } = respond();
+      await handler({ query: { directory: '/proj' }, body: { prompt: 'commit', directory: '/proj' } }, response);
+      expect(read()).toEqual({
+        status: 403,
+        payload: { error: refusal.message, code: refusal.code, directory: refusal.directory },
+      });
+    }
+  });
+
+  it('keeps other 403 failures separate from folder trust refusals', async () => {
+    const generate = registerWithFailure(Object.assign(new Error('Access denied'), {
+      statusCode: 403,
+      code: 'access_denied',
+      directory: '/proj',
+    }));
+    const { response, read } = respond();
+    await generate({ body: { prompt: 'commit' } }, response);
+    expect(read()).toEqual({
+      status: 403,
+      payload: {
+        error: 'The selected Small Model could not complete this action. Choose another model in Settings → Sessions → Small Model and try again.',
+        code: 'access_denied',
+      },
+    });
+  });
+
+  it('surfaces a generation-timeout as its own message with status 504', async () => {
+    const message = 'ollama/qwen2.5:latest did not finish within the 490s budget for this prompt size';
+    const generate = registerWithFailure(Object.assign(new Error(message), { statusCode: 504, code: 'generation-timeout' }));
+    const { response, read } = respond();
+    await generate({ body: { prompt: 'commit' } }, response);
+    expect(read()).toEqual({ status: 504, payload: { error: message, code: 'generation-timeout' } });
+  });
+
+  it('keeps the generic text for other 5xx failures', async () => {
+    const generate = registerWithFailure(Object.assign(new Error('boom'), { statusCode: 500 }));
+    const { response, read } = respond();
+    await generate({ body: { prompt: 'commit' } }, response);
+    expect(read()).toEqual({
+      status: 500,
+      payload: { error: 'The selected Small Model could not complete this action. Choose another model in Settings → Sessions → Small Model and try again.' },
+    });
   });
 });

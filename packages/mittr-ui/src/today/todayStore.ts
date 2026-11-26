@@ -15,6 +15,9 @@ export type TodayPages = {
   isScheduledTasksDialogOpen: boolean;
   isArchivePageOpen: boolean;
   isUsageStatsPageOpen: boolean;
+  isIntegrationsCatalogOpen: boolean;
+  isSourceBoardOpen: boolean;
+  isOverviewOpen: boolean;
   worktreesPageProjectId: string | null;
   spacesPageProjectId: string | null;
   runOverviewKey: string | null;
@@ -44,6 +47,9 @@ const pageOpen = (pages: TodayPages): boolean =>
   pages.isScheduledTasksDialogOpen
   || pages.isArchivePageOpen
   || pages.isUsageStatsPageOpen
+  || pages.isIntegrationsCatalogOpen
+  || pages.isSourceBoardOpen
+  || pages.isOverviewOpen
   || pages.worktreesPageProjectId !== null
   || pages.spacesPageProjectId !== null
   || pages.runOverviewKey !== null
@@ -113,7 +119,7 @@ export function createTodayStore(deps: TodayStoreDeps): TodayStore {
 const listenSessionRowClicks = (onClick: () => void): (() => void) => {
   if (!('document' in globalThis)) return () => {};
   const handler = (event: MouseEvent) => {
-    if (isSessionOpenClick(event.target)) onClick();
+    if (isSessionOpenClick(event.target, event)) onClick();
   };
   document.addEventListener('click', handler, true);
   return () => document.removeEventListener('click', handler, true);

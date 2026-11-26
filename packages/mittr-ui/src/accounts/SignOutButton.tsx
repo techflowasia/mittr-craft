@@ -11,7 +11,8 @@ export type SignOutButtonProps = { onSignedOut?: (signedIn: boolean) => void };
 
 export function SignOutButton({ onSignedOut }: SignOutButtonProps): React.ReactNode {
   const t = useMittrT();
-  const { accountSwitch, state } = useAccountSwitch();
+  const switching = useAccountSwitch();
+  const { accountSwitch, state } = switching;
   const signOut = () => (onSignedOut
     ? runSignOut({ signOutActive: accountsApi.signOutActive, onSignedOut, accountSwitch })
     : accountSwitch.run(accountsApi.signOutActive));
@@ -25,11 +26,7 @@ export function SignOutButton({ onSignedOut }: SignOutButtonProps): React.ReactN
       >
         {t('mittr.accounts.signOut')}
       </Button>
-      <AccountSwitchDialog
-        state={state}
-        onRetry={() => { void accountSwitch.retry(); }}
-        onDismiss={() => { void accountSwitch.dismiss(); }}
-      />
+      <AccountSwitchDialog {...switching} />
     </>
   );
 }
@@ -37,7 +34,7 @@ export function SignOutButton({ onSignedOut }: SignOutButtonProps): React.ReactN
 export function AboutSettingsSignOut(): React.ReactNode {
   const t = useMittrT();
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-border/40 px-4 py-3">
+    <div className="flex items-center justify-between gap-4 border-b border-[var(--surface-subtle)] px-4 py-3">
       <span className={SETTINGS_FIELD_LABEL_CLASS}>{t('mittr.accounts.about.label')}</span>
       <SignOutButton />
     </div>

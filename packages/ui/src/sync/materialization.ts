@@ -2,6 +2,7 @@ import type { Message, Part } from "@/lib/opencode/model"
 import { mergeMessages } from "./optimistic"
 import type { SessionMaterializationReason } from "./event-reducer"
 import { sortMessagesChronologically } from "./message-ordering"
+import { toolContentShellChars } from "@/lib/opencode/toolContentShells"
 
 const STREAMING_PART_FIELDS = ["text", "output"] as const
 const ACTIVE_TOOL_STATUSES = new Set(["pending", "running"])
@@ -124,9 +125,6 @@ function finalizeActiveToolsInCompletedMessage(message: Message, parts: Part[]):
 }
 
 function haveEquivalentPartSnapshots(left: Part[] | undefined, right: Part[]): boolean {
-  // `undefined` means "parts never fetched", which is NOT equivalent to a
-  // fetched-empty snapshot — the empty array must be committed so
-  // getSessionMaterializationStatus can tell the two apart.
   if (!left) return false
   if (left.length !== right.length) return false
 
@@ -185,6 +183,13 @@ function mergeMaterializedPart(existing: Part | undefined, next: Part): Part {
   if (!existing) return next
 
   if (existing.type === "tool" && next.type === "tool") {
+    if (
+      existing.state.status === next.state.status
+      && toolContentShellChars(next) !== null
+      && toolContentShellChars(existing) === null
+    ) {
+      return existing
+    }
     const existingStatus = (existing as { state?: { status?: unknown } }).state?.status
     const nextStatus = (next as { state?: { status?: unknown } }).state?.status
     if (
@@ -195,10 +200,6 @@ function mergeMaterializedPart(existing: Part | undefined, next: Part): Part {
     ) {
       return existing
     }
-    // A snapshot fetched just before a call started can land after the live
-    // `called`/`progress` events. OpenCode publishes progress metadata only
-    // on change (a subagent's child `sessionID` exactly once), so letting the
-    // stale copy win would lose it until the call settles.
     if (existing.state.status === "running" && next.state.status === "pending") {
       return existing
     }
@@ -312,21 +313,21 @@ export function materializeSessionSnapshots(
   const currentMessages = existingMessages ?? []
   const incomingByID = new Map(nextMessages.map((message) => [message.id, message] as const))
   let reconciledCurrentMessages = currentMessages
+  let deliveredWhileAway = false
   for (let index = 0; index < currentMessages.length; index += 1) {
     const existing = currentMessages[index]
     const incoming = incomingByID.get(existing.id)
-    // A completion the server reports supersedes a turn this client still
-    // holds open, and the local interruption mark (`interruptedTurnToolParts`)
-    // it may have put on it. Any other existing record wins over the snapshot.
-    if (
-      existing.role !== "assistant"
-      || incoming?.role !== "assistant"
-      || incoming.time.completed === undefined
-      || (existing.time.completed !== undefined && existing.error?.type !== "aborted")
-    ) continue
+    const delivered = existing.role === "synthetic" && existing.pending === true && incoming?.role === "synthetic"
+    const completed = existing.role === "assistant"
+      && incoming?.role === "assistant"
+      && incoming.time.completed !== undefined
+      && (existing.time.completed === undefined || existing.closedLocally === true)
+    if (!incoming || (!delivered && !completed)) continue
+    deliveredWhileAway ||= delivered
     if (reconciledCurrentMessages === currentMessages) reconciledCurrentMessages = [...currentMessages]
     reconciledCurrentMessages[index] = incoming
   }
+  if (deliveredWhileAway) reconciledCurrentMessages = sortMessagesChronologically(reconciledCurrentMessages)
   const messages = mergeMessages(reconciledCurrentMessages, nextMessages)
   const messagesChanged = messages !== currentMessages || (existingMessages === undefined && snapshots.length === 0)
 
@@ -347,9 +348,6 @@ export function materializeSessionSnapshots(
       isAssistant,
     )
     const nextParts = finalizeActiveToolsInCompletedMessage(record.info, mergedParts)
-    // For non-assistant messages an empty snapshot keeps the old "absent"
-    // representation; only assistant messages need the explicit [] marker
-    // (getSessionMaterializationStatus checks only assistant messages).
     const equivalent = existing
       ? haveEquivalentPartSnapshots(existing, nextParts)
       : nextParts.length === 0 && !isAssistant
@@ -360,10 +358,6 @@ export function materializeSessionSnapshots(
     if (nextParts.length === 0 && !isAssistant) {
       delete nextPartState[messageID]
     } else {
-      // Store fetched-empty as an explicit [] (not absence): an assistant
-      // message the server returned with zero parts (e.g. aborted before any
-      // output) is authoritatively empty and must count as renderable, or
-      // the ensure-renderable effects retry syncSession forever.
       nextPartState[messageID] = nextParts
     }
     partsChanged = true
@@ -378,9 +372,14 @@ export function materializeSessionSnapshots(
   }
 }
 
+export type SessionMaterializationStatusOptions = {
+  historyCovered?: boolean
+}
+
 export function getSessionMaterializationStatus(
   state: MaterializedState,
   sessionID: string,
+  options: SessionMaterializationStatusOptions = {},
 ): SessionMaterializationStatus {
   const messages = state.message[sessionID]
   if (!messages) {
@@ -390,19 +389,15 @@ export function getSessionMaterializationStatus(
   const missingPartMessageIDs: string[] = []
   for (const message of messages) {
     if (message.role !== "assistant") continue
-    // `undefined` = parts never fetched (not renderable yet). An explicit []
-    // is a fetched-empty snapshot (e.g. aborted assistant turn) and counts
-    // as renderable — otherwise sessions containing such a message can never
-    // reach renderable state and ensure-renderable callers loop forever.
     const parts = state.part[message.id]
-    if (!parts) {
-      missingPartMessageIDs.push(message.id)
-    }
+    if (parts) continue
+    if (options.historyCovered && message.time.completed === undefined) continue
+    missingPartMessageIDs.push(message.id)
   }
 
   return {
     hasMessages: true,
-    renderable: missingPartMessageIDs.length === 0,
+    renderable: options.historyCovered !== false && missingPartMessageIDs.length === 0,
     missingPartMessageIDs,
   }
 }

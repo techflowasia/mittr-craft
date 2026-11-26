@@ -2,9 +2,8 @@ import { beforeEach, describe, expect, test } from 'bun:test';
 import type { Session } from '@/lib/opencode/model';
 
 import {
-  isGlobalSessionRecencyOnlyUpdate,
+  isGlobalSessionDeferrableUpdate,
   resolveGlobalSessionDirectory,
-  mergeLiveSessionWithGlobalSession,
   useGlobalSessionsStore,
 } from './useGlobalSessionsStore';
 
@@ -219,34 +218,7 @@ describe('useGlobalSessionsStore', () => {
   });
 });
 
-describe('mergeLiveSessionWithGlobalSession', () => {
-  test('keeps the live record when it is the newer one', () => {
-    const live = buildSession('Live', { time: { created: 1, updated: 5 } });
-    const global = buildSession('Global', { time: { created: 1, updated: 3 } });
-
-    const merged = mergeLiveSessionWithGlobalSession(live, global);
-    expect(merged.title).toBe('Live');
-    expect(merged.time?.updated).toBe(5);
-  });
-
-  test('preserves directory from global when live omits it', () => {
-    const live = buildSession('Live', { time: { created: 1, updated: 5 } });
-    const global = buildSession('Global', { directory: '/repo/app' });
-
-    const merged = mergeLiveSessionWithGlobalSession(live, global);
-    expect(resolveGlobalSessionDirectory(merged)).toBe('/repo/app');
-  });
-
-  test('live directory takes precedence over global when present', () => {
-    const live = buildSession('Live', { directory: '/repo/worktree' });
-    const global = buildSession('Global', { directory: '/repo/app' });
-
-    const merged = mergeLiveSessionWithGlobalSession(live, global);
-    expect(resolveGlobalSessionDirectory(merged)).toBe('/repo/worktree');
-  });
-});
-
-describe('isGlobalSessionRecencyOnlyUpdate', () => {
+describe('isGlobalSessionDeferrableUpdate', () => {
   test('accepts an updated timestamp while preserving omitted directory metadata', () => {
     const existing = buildSession('Session', {
       directory: '/repo/app',
@@ -256,7 +228,7 @@ describe('isGlobalSessionRecencyOnlyUpdate', () => {
       time: { created: 1, updated: 3 },
     });
 
-    expect(isGlobalSessionRecencyOnlyUpdate(existing, incoming)).toBe(true);
+    expect(isGlobalSessionDeferrableUpdate(existing, incoming)).toBe(true);
   });
 
   test('rejects title and archive changes as structural updates', () => {
@@ -269,14 +241,37 @@ describe('isGlobalSessionRecencyOnlyUpdate', () => {
       time: { created: 1, updated: 3, archived: 4 },
     });
 
-    expect(isGlobalSessionRecencyOnlyUpdate(existing, renamed)).toBe(false);
-    expect(isGlobalSessionRecencyOnlyUpdate(existing, archived)).toBe(false);
+    expect(isGlobalSessionDeferrableUpdate(existing, renamed)).toBe(false);
+    expect(isGlobalSessionDeferrableUpdate(existing, archived)).toBe(false);
   });
 
   test('rejects a parent change as a structural update', () => {
     const existing = buildSession('Session', { parentID: 'parent-a', time: { created: 1, updated: 2 } });
     const reparented = buildSession('Session', { parentID: 'parent-b', time: { created: 1, updated: 3 } });
 
-    expect(isGlobalSessionRecencyOnlyUpdate(existing, reparented)).toBe(false);
+    expect(isGlobalSessionDeferrableUpdate(existing, reparented)).toBe(false);
+  });
+
+  test('defers spend, which every step of a turn changes, even without a new updated time', () => {
+    const existing = buildSession('Session', { time: { created: 1, updated: 2 } });
+    const respent = buildSession('Session', { cost: 5, time: { created: 1, updated: 3 } });
+    const retokened = buildSession('Session', {
+      tokens: { input: 1, output: 2, reasoning: 0, cache: { read: 0, write: 0 } },
+      time: { created: 1, updated: 2 },
+    });
+
+    expect(isGlobalSessionDeferrableUpdate(existing, respent)).toBe(true);
+    expect(isGlobalSessionDeferrableUpdate(existing, retokened)).toBe(true);
+  });
+
+  test('rejects a selection change and an unchanged record', () => {
+    const existing = buildSession('Session', { time: { created: 1, updated: 2 } });
+    const reselected = buildSession('Session', {
+      model: { providerID: 'p', id: 'm' },
+      time: { created: 1, updated: 3 },
+    });
+
+    expect(isGlobalSessionDeferrableUpdate(existing, reselected)).toBe(false);
+    expect(isGlobalSessionDeferrableUpdate(existing, buildSession('Session', { time: { created: 1, updated: 2 } }))).toBe(false);
   });
 });

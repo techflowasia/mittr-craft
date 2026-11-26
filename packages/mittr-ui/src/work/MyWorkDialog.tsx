@@ -117,7 +117,7 @@ export function WorkRow({ item, color, onOpenUrl, goWork }: WorkRowProps): React
   return (
     <div
       className={cn(
-        'flex items-center gap-2 rounded-md border-y border-r border-l-2 border-border py-1.5 pl-2.5 pr-2',
+        'flex items-center gap-2 rounded-md border-y border-e border-s-2 border-border py-1.5 ps-2.5 pe-2',
         url && 'transition-colors hover:bg-interactive-hover/50',
       )}
       style={{ borderLeftColor: color }}
@@ -275,13 +275,13 @@ export function MyWorkDialogView({ state, filter, prefs, query, onQuery, onFilte
     <div className="min-h-[280px] space-y-4">
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Icon name="search" className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Icon name="search" className="absolute inset-s-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
             onChange={(event) => onQuery(event.target.value)}
             placeholder={t('mittr.work.filter.placeholder')}
             aria-label={t('mittr.work.filter.label')}
-            className="h-8 pl-8 typography-small"
+            className="h-8 ps-8 typography-small"
           />
         </div>
         <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading}>

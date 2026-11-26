@@ -1,0 +1,20 @@
+diff --git a/packages/ui/src/lib/opencode/client.retry-preflight.test.ts b/packages/ui/src/lib/opencode/client.retry-preflight.test.ts
+new file mode 100644
+index 000000000..065821f00
+--- /dev/null
++++ b/packages/ui/src/lib/opencode/client.retry-preflight.test.ts
+@@ -0,0 +1,14 @@
++import { test, expect } from 'bun:test'
++import { opencodeClient } from './client'
++
++test('final retry preflight rejects before the prompt dispatch boundary', async () => {
++  let prepared = false
++  let dispatched = false
++  await expect(opencodeClient.sendMessage({
++    id: 'retry-preflight', providerID: 'retry-preflight', text: 'Continue',
++    beforePromptDispatch: async () => { prepared = true; throw new Error('newer turn') },
++    onPromptDispatch: () => { dispatched = true },
++  })).rejects.toThrow('newer turn')
++  expect(prepared).toBe(true)
++  expect(dispatched).toBe(false)
++})

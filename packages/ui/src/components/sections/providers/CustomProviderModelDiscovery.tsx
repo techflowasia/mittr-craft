@@ -12,22 +12,15 @@ import { useI18n } from '@/lib/i18n';
 import { formatGoalTokens } from '@/lib/sessionGoalMetadata';
 import type { DiscoveredModel } from './custom-provider-form';
 
-/** Below this many results the list is short enough to scan without a filter. */
 const SEARCH_THRESHOLD = 8;
 
 type Props = {
   models: readonly DiscoveredModel[];
-  /** Model ids already in the form; they show as added and cannot be picked again. */
   existingIds: ReadonlySet<string>;
   onAdd: (selected: DiscoveredModel[]) => void;
   onCancel: () => void;
 };
 
-/**
- * The one-time review step after asking a provider for its models: pick
- * which ones to add, then the panel closes. Nothing here stays in sync with
- * the provider afterwards.
- */
 export const CustomProviderModelDiscovery: React.FC<Props> = ({ models, existingIds, onAdd, onCancel }) => {
   const { t } = useI18n();
   const [query, setQuery] = React.useState('');
@@ -76,7 +69,7 @@ export const CustomProviderModelDiscovery: React.FC<Props> = ({ models, existing
         <div className="relative">
           <Icon
             name="search"
-            className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+            className="pointer-events-none absolute inset-s-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
             aria-hidden
           />
           <Input
@@ -91,13 +84,13 @@ export const CustomProviderModelDiscovery: React.FC<Props> = ({ models, existing
             }}
             placeholder={t('settings.agents.modelSelector.searchPlaceholder')}
             aria-label={t('settings.agents.modelSelector.searchPlaceholder')}
-            className="h-8 rounded-md pl-8"
+            className="h-8 rounded-md ps-8"
           />
         </div>
       ) : null}
 
       <ScrollableOverlay
-        outerClassName="max-h-[min(18rem,45dvh)] rounded-md border border-border/60"
+        outerClassName="oc-tile-inset max-h-[min(18rem,45dvh)] rounded-md"
         className="px-2 py-1"
         disableHorizontal
         preventOverscroll

@@ -1,5 +1,6 @@
 import React from 'react';
 
+import { readEffortRevision } from '../../../ui/src/lib/modelEfforts';
 import { isApplyingServerSettings, updateDesktopSettings } from '../../../ui/src/lib/persistence';
 import { useConfigStore } from '../../../ui/src/stores/useConfigStore';
 import { useSelectionStore } from '../../../ui/src/sync/selection-store';
@@ -17,9 +18,16 @@ export type LastPickDeps = {
   save: (defaults: PickDefaults) => void;
 };
 
-type ChatRecord = { model: string | null; agent: string | null; variant: string | null | undefined };
+type Pick = { sessionId: string; value: string | null };
 
-type Batch = { before: ConfigState; sessionId: string | null; record: ChatRecord | null };
+type Batch = {
+  before: ConfigState;
+  sessionId: string | null;
+  recordAgent: string | null;
+  agentPick: string | null;
+  modelPick: string | null;
+  effortRevision: number;
+};
 
 const modelOf = (state: ConfigState): string | null => (
   state.currentProviderId && state.currentModelId ? `${state.currentProviderId}/${state.currentModelId}` : null
@@ -32,29 +40,18 @@ const selectionMoved = (next: ConfigState, prev: ConfigState): boolean => (
   || next.currentVariantSelection.override !== prev.currentVariantSelection.override
 );
 
-const chatRecord = (sessionId: string | null, state: ConfigState): ChatRecord | null => {
-  if (!sessionId) return null;
-  const selection = useSelectionStore.getState();
-  const model = selection.getSessionModelSelection(sessionId);
-  return {
-    model: model ? `${model.providerId}/${model.modelId}` : null,
-    agent: selection.getSessionAgentSelection(sessionId),
-    variant: state.currentAgentName
-      ? selection.getAgentModelVariantForSession(sessionId, state.currentAgentName, state.currentProviderId, state.currentModelId)
-      : undefined,
-  };
-};
+const effortRevision = (state: ConfigState): number => readEffortRevision(state.currentProviderId, state.currentModelId);
 
-const pickedDefaults = ({ before, record }: Batch, now: ConfigState, isProviderOffered: (providerId: string) => boolean): PickDefaults => {
+const pickedDefaults = ({ before, sessionId, recordAgent, agentPick, modelPick, effortRevision: startRevision }: Batch, now: ConfigState, isProviderOffered: (providerId: string) => boolean): PickDefaults => {
   const defaults: PickDefaults = {};
   const model = modelOf(now);
   const modelMoved = model !== modelOf(before);
   const override = now.currentVariantSelection.override;
-  const modelPicked = modelMoved && now.selectionSource === 'manual' && model !== record?.model;
+  const modelPicked = modelMoved && now.selectionSource === 'manual' && (sessionId === null || model === modelPick);
   const effortPicked = !modelMoved
     && override !== undefined
     && (override !== before.currentVariantSelection.override || now.currentVariant !== before.currentVariant)
-    && !(record && record.variant === override);
+    && (sessionId === null || effortRevision(now) !== startRevision);
   if (model && (modelPicked || effortPicked) && isProviderOffered(now.currentProviderId)
     && (model !== now.settingsDefaultModel || now.currentVariant !== now.settingsDefaultVariant)) {
     defaults.defaultModel = model;
@@ -62,7 +59,7 @@ const pickedDefaults = ({ before, record }: Batch, now: ConfigState, isProviderO
   }
   const agent = now.currentAgentName;
   if (agent && now.agentSelectionSource === 'manual' && agent !== before.currentAgentName
-    && agent !== record?.agent && agent !== now.settingsDefaultAgent) {
+    && (agent !== recordAgent || agent === agentPick) && agent !== now.settingsDefaultAgent) {
     defaults.defaultAgent = agent;
   }
   return defaults;
@@ -81,6 +78,8 @@ const keepSelection = (state: ConfigState) => ({
 
 export function startLastPickMemory({ isProviderOffered, signedIn, save }: LastPickDeps): () => void {
   let batch: Batch | null = null;
+  let agentPick: Pick | null = null;
+  let modelPick: Pick | null = null;
   let writing = false;
   let stopped = false;
 
@@ -110,15 +109,58 @@ export function startLastPickMemory({ isProviderOffered, signedIn, save }: LastP
     if (Object.keys(defaults).length > 0) record(defaults);
   };
 
+  const noteAgentPick = (sessionId: string, agent: string | null) => {
+    const pick: Pick = { sessionId, value: agent };
+    agentPick = pick;
+    queueMicrotask(() => {
+      if (agentPick === pick) agentPick = null;
+    });
+  };
+
+  const noteModelPick = (sessionId: string, model: string) => {
+    if (batch) {
+      if (batch.sessionId === sessionId) batch.modelPick = model;
+      return;
+    }
+    const pick: Pick = { sessionId, value: model };
+    modelPick = pick;
+    queueMicrotask(() => {
+      if (modelPick === pick) modelPick = null;
+    });
+  };
+
+  const stopPicks = useSelectionStore.subscribe((state, prev) => {
+    const sessionId = useSessionUIStore.getState().currentSessionId;
+    if (!sessionId) return;
+    if (state.sessionPickedAgents !== prev.sessionPickedAgents
+      && state.sessionAgentSelections !== prev.sessionAgentSelections
+      && state.sessionFollowedAgents === prev.sessionFollowedAgents) {
+      noteAgentPick(sessionId, state.sessionAgentSelections.get(sessionId) ?? null);
+    }
+    if (state.sessionPickedModels !== prev.sessionPickedModels) {
+      const model = state.getSessionModelPick(sessionId);
+      if (model && ![...prev.sessionPickedModels.values()].includes(model)) noteModelPick(sessionId, `${model.providerId}/${model.modelId}`);
+    }
+  });
+
   const stop = useConfigStore.subscribe((state, prev) => {
     if (writing || batch || isApplyingServerSettings() || !selectionMoved(state, prev)) return;
     const sessionId = useSessionUIStore.getState().currentSessionId;
-    batch = { before: prev, sessionId, record: chatRecord(sessionId, state) };
+    const pickFor = (pick: Pick | null): string | null => (pick && pick.sessionId === sessionId ? pick.value : null);
+    batch = {
+      before: prev,
+      sessionId,
+      recordAgent: sessionId ? useSelectionStore.getState().getSessionAgentSelection(sessionId) : null,
+      agentPick: pickFor(agentPick),
+      modelPick: pickFor(modelPick),
+      effortRevision: effortRevision(state),
+    };
     queueMicrotask(flush);
   });
 
   return () => {
     stopped = true;
+    stopPicks();
     stop();
   };
 }

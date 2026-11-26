@@ -1,44 +1,25 @@
-/**
- * Pinning the composer to the visual viewport in mobile browsers.
- *
- * Capacitor has a keyboard choreography that resizes the shell, so the
- * composer stays where it belongs on its own. A mobile browser has nothing of
- * the sort: Safari pans the visual viewport over an unchanged layout instead
- * of shrinking it, so a composer positioned in normal flow ends up partly
- * off-screen or behind the keyboard. Both effects here exist to put it back,
- * and both are deliberately restricted to non-Capacitor mobile.
- *
- * Neither is verifiable from a test: they are corrections for specific WebKit
- * behaviors, and every guard in them marks a case that was observed breaking.
- */
 
 import React from 'react';
 
-import { isCapacitorApp } from '@/lib/platform';
+import { isCapacitorApp, isIPadDevice } from '@/lib/platform';
 import type { ComposerEditorHandle } from '../editor/ComposerEditor';
 
-// Android mobile browsers are the pan-mode holdouts this pin exists for on
-// the CHAT screen too: interactive-widget=resizes-content is ignored by a
-// fair share of Android WebView/Chrome builds, and unlike iOS Safari they do
-// not reliably reveal the focused field either — the composer just stays
-// behind the keyboard. iOS keeps its browser-native reveal on the chat
-// screen, so this stays Android-only there.
-// Callers are browser-only React effects, so navigator always exists here.
 const isAndroidBrowser = (): boolean => /Android/i.test(navigator.userAgent);
+
+// external: #4326 iPad standalone Safari can reopen the keyboard without revealing the field or firing a viewport resize.
+const isIPadHomeScreenApp = (): boolean => (
+    isIPadDevice() && window.matchMedia?.('(display-mode: standalone)').matches === true
+);
 
 export interface MobileViewportPinOptions {
     isMobile: boolean;
-    /** Composer expanded to fullscreen on mobile. */
     isFullscreen: boolean;
-    /** The new-session draft screen is showing. */
     isDraftScreen: boolean;
-    /** The composer has focus, i.e. the keyboard is up. */
     isFocused: boolean;
     formRef: React.RefObject<HTMLFormElement | null>;
     editorRef: React.RefObject<ComposerEditorHandle | null>;
 }
 
-/** Clear every style the pin writes, returning the form to normal flow. */
 function releaseForm(form: HTMLFormElement): void {
     form.style.position = '';
     form.style.left = '';
@@ -50,10 +31,62 @@ function releaseForm(form: HTMLFormElement): void {
     form.style.background = '';
 }
 
+// external: #5072 Silent keyboard changes require measurement, but per-frame polling keeps a settled page rendering.
+const SETTLE_MS = 1000;
+const IDLE_CHECK_MS = 250;
+
+interface PinTracker {
+    wake: () => void;
+    stop: () => void;
+}
+
+function createPinTracker(measure: () => boolean): PinTracker {
+    let running = false;
+    let frame = 0;
+    let check: number | undefined;
+    let activeUntil = 0;
+
+    const stop = () => {
+        running = false;
+        cancelAnimationFrame(frame);
+        window.clearTimeout(check);
+    };
+    const tick = (now = performance.now()) => {
+        if (measure()) activeUntil = now + SETTLE_MS;
+        if (!running) return;
+        if (now < activeUntil) frame = requestAnimationFrame(tick);
+        else check = window.setTimeout(tick, IDLE_CHECK_MS);
+    };
+    const wake = () => {
+        stop();
+        running = true;
+        activeUntil = performance.now() + SETTLE_MS;
+        tick();
+    };
+    return { wake, stop };
+}
+
+function listenForPinMoves(form: HTMLFormElement, vv: VisualViewport, wake: () => void): () => void {
+    const resize = new ResizeObserver(wake);
+    resize.observe(form);
+    form.addEventListener('focusin', wake);
+    form.addEventListener('pointerdown', wake);
+    vv.addEventListener('resize', wake);
+    vv.addEventListener('scroll', wake);
+    window.addEventListener('resize', wake);
+    return () => {
+        resize.disconnect();
+        form.removeEventListener('focusin', wake);
+        form.removeEventListener('pointerdown', wake);
+        vv.removeEventListener('resize', wake);
+        vv.removeEventListener('scroll', wake);
+        window.removeEventListener('resize', wake);
+    };
+}
+
 export function useMobileViewportPin(options: MobileViewportPinOptions): void {
     const { isMobile, isFullscreen, isDraftScreen, isFocused, formRef, editorRef } = options;
 
-    // Fullscreen: fix the form over the whole visible viewport and track the pan.
     React.useLayoutEffect(() => {
         if (!isMobile || !isFullscreen || isCapacitorApp()) return;
         const vv = window.visualViewport;
@@ -61,16 +94,10 @@ export function useMobileViewportPin(options: MobileViewportPinOptions): void {
         const editor = editorRef.current;
         if (!vv || !form) return;
 
-        // The form is trapped inside lower stacking contexts (the composer
-        // wrapper's z-10), so it cannot out-stack the app header with z-index
-        // alone — hide the header for the duration via a root class instead.
         document.documentElement.classList.add('oc-browser-kb-fullscreen');
 
         const apply = () => {
             const top = Math.max(0, Math.floor(vv.offsetTop));
-            // Stale-visualViewport guard: when the layout viewport is
-            // keyboard-resized (interactive-widget), its clientHeight is the
-            // authoritative above-keyboard height.
             const layoutHeight = document.documentElement.clientHeight;
             form.style.position = 'fixed';
             form.style.left = '0';
@@ -94,9 +121,6 @@ export function useMobileViewportPin(options: MobileViewportPinOptions): void {
             window.removeEventListener('scroll', apply, true);
             document.documentElement.classList.remove('oc-browser-kb-fullscreen');
             releaseForm(form);
-            // Back in flow: the browser panned for the fullscreen session and
-            // will not re-reveal the still-focused field on its own, which left
-            // the composer parked behind the keyboard.
             requestAnimationFrame(() => {
                 if (editor?.isFocused()) {
                     editor.getScrollDOM()?.scrollIntoView({ block: 'nearest' });
@@ -105,10 +129,6 @@ export function useMobileViewportPin(options: MobileViewportPinOptions): void {
         };
     }, [editorRef, formRef, isFullscreen, isMobile]);
 
-    // Keyboard up: anchor the normal-height composer to the visible bottom.
-    // Draft screen on every mobile browser; chat screen only on Android,
-    // where neither viewport resizing nor the focused-field reveal can be
-    // relied on (iOS chat keeps the browser's own reveal).
     React.useLayoutEffect(() => {
         if (!isMobile || isCapacitorApp()) return;
         if (isFullscreen || !isFocused) return;
@@ -117,7 +137,6 @@ export function useMobileViewportPin(options: MobileViewportPinOptions): void {
         const form = formRef.current;
         if (!vv || !form) return;
 
-        // Keep the in-flow horizontal geometry (page paddings) while fixed.
         const rect = form.getBoundingClientRect();
         form.style.position = 'fixed';
         form.style.left = `${Math.floor(rect.left)}px`;
@@ -125,33 +144,58 @@ export function useMobileViewportPin(options: MobileViewportPinOptions): void {
         form.style.zIndex = '40';
         form.style.background = 'var(--background)';
 
-        // Safari's visualViewport events are unreliable mid keyboard pan (they
-        // can simply not fire), so track the pan with a rAF loop instead —
-        // cheap math per frame, a style write only when the value changes.
         let lastTop = Number.NaN;
-        let frame = 0;
-        const track = () => {
-            // iOS standalone (PWA) can serve stale visualViewport metrics after
-            // the keyboard rises (full pre-keyboard height, intermittently),
-            // parking the form behind the keyboard. When interactive-widget
-            // resizes the layout viewport, documentElement.clientHeight is the
-            // true above-keyboard bottom — anchor to whichever is smaller. In
-            // pan-mode browsers clientHeight stays full height, so the min
-            // keeps the visual-viewport anchor there.
+        const tracker = createPinTracker(() => {
             const layoutBottom = document.documentElement.clientHeight;
             const vvBottom = vv.offsetTop + vv.height;
             const top = Math.max(0, Math.floor(Math.min(vvBottom, layoutBottom) - form.offsetHeight));
-            if (top !== lastTop) {
-                lastTop = top;
-                form.style.top = `${top}px`;
-            }
-            frame = requestAnimationFrame(track);
-        };
-        track();
+            if (top === lastTop) return false;
+            lastTop = top;
+            form.style.top = `${top}px`;
+            return true;
+        });
+        const stopListening = listenForPinMoves(form, vv, tracker.wake);
+        tracker.wake();
 
         return () => {
-            cancelAnimationFrame(frame);
+            stopListening();
+            tracker.stop();
             releaseForm(form);
         };
     }, [formRef, isDraftScreen, isFocused, isFullscreen, isMobile]);
+
+    React.useLayoutEffect(() => {
+        if (isCapacitorApp() || !isIPadHomeScreenApp()) return;
+        if (isMobile && (isFullscreen || isDraftScreen)) return;
+        const vv = window.visualViewport;
+        const form = formRef.current;
+        if (!vv || !form) return;
+
+        let lift = 0;
+        const setLift = (next: number): boolean => {
+            if (next === lift) return false;
+            lift = next;
+            form.style.top = next > 0 ? `${-next}px` : '';
+            return true;
+        };
+        const tracker = createPinTracker(() => {
+            if (!form.contains(document.activeElement)) {
+                tracker.stop();
+                return setLift(0);
+            }
+            const visibleBottom = Math.min(vv.offsetTop + vv.height, document.documentElement.clientHeight);
+            const rect = form.getBoundingClientRect();
+            const covered = Math.max(0, Math.ceil(rect.bottom + lift - visibleBottom));
+            const fits = rect.top + lift - covered >= vv.offsetTop;
+            return setLift(fits ? covered : 0);
+        });
+        const stopListening = listenForPinMoves(form, vv, tracker.wake);
+        tracker.wake();
+
+        return () => {
+            stopListening();
+            tracker.stop();
+            form.style.top = '';
+        };
+    }, [formRef, isDraftScreen, isFullscreen, isMobile]);
 }

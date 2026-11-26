@@ -4,7 +4,7 @@ import { describe, expect, test } from 'bun:test';
 import type { Session } from '@/lib/opencode/model';
 import type { WorktreeMetadata } from '@/types/worktree';
 import { getRuntimeKey } from '@/lib/runtime-switch';
-import { getPinnedSessionKey } from '@/stores/useSessionPinnedStore';
+import { getPinnedSessionKey } from '@/lib/sessionPins';
 import {
   computeNodeStructureKey,
   canShowSessionWorktreeMenu,
@@ -14,7 +14,6 @@ import {
   resolveTooltipBranchLabel,
   selectFolderRootNodes,
   selectBlockingBadgeSessionScopes,
-  selectRowBadgeVisibilityClass,
 } from './sessionNodeItemUtils';
 import type { SessionNode } from '../types';
 
@@ -68,6 +67,21 @@ describe('selectBlockingBadgeSessionScopes', () => {
 
     expect(selectBlockingBadgeSessionScopes(root, true, '/repo')).toEqual([
       { directory: '/repo', sessionIDs: ['root'] },
+    ]);
+  });
+
+  test('an expanded row still counts the workflow agents under it, which have no rows', () => {
+    const agentChild = withDirectory({ session: session('agent-child', 'Agent child'), children: [], worktree: null }, '/repo');
+    const agent = withDirectory({
+      session: { ...session('agent', 'Agent'), metadata: { openchamber: { kind: 'workflow-agent' } } },
+      children: [agentChild],
+      worktree: null,
+    }, '/repo');
+    const child = withDirectory({ session: session('child', 'Child'), children: [], worktree: null }, '/repo');
+    const root = withDirectory({ session: session('root', 'Root'), children: [child, agent], worktree: null }, '/repo');
+
+    expect(selectBlockingBadgeSessionScopes(root, true, '/repo')).toEqual([
+      { directory: '/repo', sessionIDs: ['root', 'agent', 'agent-child'] },
     ]);
   });
 
@@ -169,44 +183,6 @@ describe('selectFolderRootNodes', () => {
     };
 
     expect(selectFolderRootNodes(['missing-root', 'child'], new Map([['child', child]]))).toEqual([child]);
-  });
-});
-
-describe('selectRowBadgeVisibilityClass', () => {
-  const hideOnHoverClass = 'group-hover:opacity-0 group-focus-within:opacity-0';
-
-  test('defers to the caller hover rule so the badge fades with the date label (#2284)', () => {
-    const className = selectRowBadgeVisibilityClass({
-      actionsAlwaysVisible: false,
-      menuOpen: false,
-      hideOnHoverClass,
-    });
-
-    expect(className).toContain(hideOnHoverClass);
-  });
-
-  test('hides the badge unconditionally while the row menu keeps the actions visible without hover', () => {
-    const className = selectRowBadgeVisibilityClass({
-      actionsAlwaysVisible: false,
-      menuOpen: true,
-      hideOnHoverClass,
-    });
-
-    expect(className).not.toBe('');
-    expect(className).not.toContain(hideOnHoverClass);
-  });
-
-  test('keeps the badge always visible when actions have reserved permanent padding', () => {
-    expect(selectRowBadgeVisibilityClass({
-      actionsAlwaysVisible: true,
-      menuOpen: false,
-      hideOnHoverClass,
-    })).toBe('');
-    expect(selectRowBadgeVisibilityClass({
-      actionsAlwaysVisible: true,
-      menuOpen: true,
-      hideOnHoverClass,
-    })).toBe('');
   });
 });
 

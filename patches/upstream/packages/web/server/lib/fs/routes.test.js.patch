@@ -1,8 +1,8 @@
 diff --git a/packages/web/server/lib/fs/routes.test.js b/packages/web/server/lib/fs/routes.test.js
-index 8b853c407..e8398df9c 100644
+index 4cc1873d5..0c56d9bd7 100644
 --- a/packages/web/server/lib/fs/routes.test.js
 +++ b/packages/web/server/lib/fs/routes.test.js
-@@ -1919,6 +1919,27 @@ describe('fs managed chats root', () => {
+@@ -2404,6 +2404,27 @@ describe('fs managed chats root', () => {
      expect(recovered.body.chatsRoot).toBe('/home/user/.config/openchamber/chats');
    });
  

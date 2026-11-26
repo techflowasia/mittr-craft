@@ -6,6 +6,7 @@ import {
   busySendOutcome,
   codeModeCall,
   codeModeCatalogHas,
+  codeModePathOf,
   directToolNames,
   failuresOf,
   headerReport,
@@ -243,19 +244,25 @@ test('a Code Mode catalog line names the tool', () => {
   assert.equal(codeModeCatalogHas(system, 'mittr_probe_code'), true);
   assert.equal(codeModeCatalogHas(system, 'mittr_probe_direct'), false);
   assert.equal(codeModeCatalogHas('The mittr_probe_code tool is described here.', 'mittr_probe_code'), false);
+  const namespaced = '# Code Mode\n## Available tools\n- openchamber (1 tool, none shown) // OpenChamber projects\n- acme-web (2 tools, none shown) // Web';
+  assert.equal(codeModePathOf(namespaced, 'openchamber'), 'tools.openchamber');
+  assert.equal(codeModePathOf(namespaced, 'acme-web'), 'tools["acme-web"]');
+  assert.equal(codeModePathOf(namespaced, 'open'), null);
   assert.deepEqual(directToolNames({ tools: [{ type: 'function', function: { name: 'mittr_probe_direct' } }, { type: 'function', function: { name: 'execute' } }] }), ['mittr_probe_direct', 'execute']);
 });
 
 test('agent-tools stop conditions follow the brief', () => {
   const cell = (model, call, markerSeen) => ({ model, call, markerSeen });
   const allSeen = [cell('m1', 'direct', true), cell('m1', 'code', true), cell('mimg', 'direct', true), cell('mimg', 'code', true)];
-  const base = { P13: { pass: true }, P13b: { pass: true }, P14: { cells: allSeen }, P15: { path: 'E' }, P16: { autoAnswers: true }, P17: { pass: true }, P18: { pass: true } };
+  const base = { P13: { pass: true }, P13b: { pass: true }, P13c: { pass: true }, P14: { cells: allSeen }, P15: { path: 'E' }, P16: { autoAnswers: true }, P17: { pass: true }, P18: { pass: true } };
   const ok = agentToolsStopConditions(base);
   assert.equal(ok.P13.stop, false);
   assert.equal(ok.P14.action, 'none');
   assert.equal(ok.P15.path, 'E');
   assert.match(ok.P16.action, /needs the A-30 hook/);
   assert.equal(agentToolsStopConditions({ ...base, P13: { pass: false } }).P13.stop, true);
+  assert.equal(ok.P13c.stop, false);
+  assert.equal(agentToolsStopConditions({ ...base, P13c: { pass: false } }).P13c.stop, true);
   assert.match(agentToolsStopConditions({ ...base, P13b: { pass: false } }).P13b.action, /hook route/);
   assert.match(agentToolsStopConditions({ ...base, P14: { cells: [cell('m1', 'direct', false), cell('mimg', 'direct', false)] } }).P14.action, /stop the image half/);
   assert.match(agentToolsStopConditions({ ...base, P14: { cells: [cell('m1', 'direct', false), cell('mimg', 'direct', true)] } }).P14.action, /adds input/);

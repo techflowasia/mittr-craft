@@ -23,7 +23,7 @@ const sessionFor = (userId, displayName, over = {}) => ({
   ...over,
 });
 
-const harness = async (t, { fetchImpl = fakeFetch(), sessions = [], signInRefusal, onSignIn, onAccountChange, storeOptions = {} } = {}) => {
+const harness = async (t, { fetchImpl = fakeFetch(), sessions = [], signInRefusal, onSignIn, onAccountChange, beforeAccountMutation, accountMutationSettled, storeOptions = {} } = {}) => {
   const dataDir = tempDataDir(t);
   const store = createAccountStore({ dataDir, encrypt, decrypt, sharedHistoryExists: () => false, ...storeOptions });
   for (const session of sessions) store.write(session);
@@ -39,6 +39,8 @@ const harness = async (t, { fetchImpl = fakeFetch(), sessions = [], signInRefusa
     signInRefusal: typeof signInRefusal === 'string' ? () => signInRefusal : signInRefusal,
     onSignIn,
     onAccountChange,
+    beforeAccountMutation,
+    accountMutationSettled,
   });
   return { auth, store, clock, fetchImpl, dataDir, call: await serve(t, app) };
 };
@@ -48,6 +50,110 @@ const startSignIn = async (call) => {
   assert.equal(status, 200);
   return new URL(body.authorizeUrl);
 };
+
+test('repair settles its own transition on no-op and failure', async t => {
+  const tokens = []; const ended = [];
+  const { call, store } = await harness(t, {
+    beforeAccountMutation: async () => { const token = Symbol(); tokens.push(token); return token; },
+    accountMutationSettled: async token => { ended.push(token); },
+  });
+  assert.equal((await call('POST', '/api/mittr/auth/accounts/repair')).status, 200);
+  store.repair = () => { throw new Error('write failed'); };
+  assert.equal((await call('POST', '/api/mittr/auth/accounts/repair')).status, 500);
+  assert.deepEqual(ended, tokens);
+  assert.equal(ended.length, 2);
+});
+
+test('account activation drains recovery before changing the account store', async (t) => {
+  const drained = deferred();
+  const entered = deferred();
+  const { call, store } = await harness(t, {
+    sessions: [sessionFor('u-a', 'A'), sessionFor('u-b', 'B')],
+    beforeAccountMutation: async () => { entered.resolve(); await drained.promise; },
+  });
+  const request = call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' });
+  const reached = await Promise.race([entered.promise.then(() => true), request.then(() => false)]);
+  try {
+    assert.equal(reached, true);
+    assert.equal(store.read().subject.userId, 'u-b');
+  } finally { drained.resolve(); }
+  assert.equal((await request).status, 200);
+  assert.equal(store.read().subject.userId, 'u-a');
+});
+
+test('a switch during a revoked-refresh drain does not announce the new account as signed out', async (t) => {
+  const held = deferred();
+  const entered = deferred();
+  const changes = [];
+  const { store, auth } = await harness(t, {
+    sessions: [sessionFor('u-b', 'B'), sessionFor('u-a', 'A', { expiresAt: NOW + 1 })],
+    fetchImpl: fakeFetch(() => json({}, 401)),
+    beforeAccountMutation: async () => { entered.resolve(); await held.promise; },
+    onAccountChange: next => { changes.push(next); },
+  });
+  const refreshing = auth.ensureFreshSession();
+  await entered.promise;
+  store.activate('u-b');
+  held.resolve();
+  await refreshing;
+  assert.equal(store.read().subject.userId, 'u-b');
+  assert.deepEqual(changes, []);
+});
+
+test('a failed pre-mutation drain leaves the active account unchanged', async (t) => {
+  const { call, store } = await harness(t, {
+    sessions: [sessionFor('u-a', 'A'), sessionFor('u-b', 'B')],
+    beforeAccountMutation: async () => { throw new Error('captured owner unavailable'); },
+  });
+  assert.equal((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' })).status, 500);
+  assert.equal(store.read().subject.userId, 'u-b');
+});
+
+test('cancelling sign-in while recovery drains prevents storing its account', async (t) => {
+  const held = deferred();
+  const entered = deferred();
+  const { call, store } = await harness(t, {
+    fetchImpl: fakeFetch(() => json(sessionFor('u-a', 'A'))),
+    beforeAccountMutation: async () => { entered.resolve(); await held.promise; },
+  });
+  await startSignIn(call);
+  const request = call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=c1` });
+  await entered.promise;
+  try { assert.equal((await call('DELETE', '/api/mittr/auth/start')).status, 200); }
+  finally { held.resolve(); }
+  assert.equal((await request).status, 409);
+  assert.equal(store.read(), null);
+});
+
+for (const operation of ['sign-in', 'sign-out', 'refresh-revoked', 'repair']) {
+  test(`${operation} drains before mutating account ownership`, async (t) => {
+    let store;
+    let drains = 0;
+    const fetchImpl = fakeFetch(() => operation === 'refresh-revoked' ? json({}, 401) : json(sessionFor('u-b', 'B')));
+    const result = await harness(t, {
+      sessions: [sessionFor('u-a', 'A', { expiresAt: NOW + 1 })], fetchImpl,
+      beforeAccountMutation: async () => {
+        drains++;
+        assert.equal(store.read()?.subject.userId, 'u-a');
+      },
+    });
+    store = result.store;
+    if (operation === 'sign-in') {
+      await startSignIn(result.call);
+      assert.equal((await result.call('POST', '/api/mittr/auth/callback', { url: `${DEV_CALLBACK}?code=c1` })).status, 200);
+      assert.equal(store.read()?.subject.userId, 'u-b');
+    } else if (operation === 'sign-out') {
+      assert.equal((await result.call('DELETE', '/api/mittr/auth/session')).status, 200);
+      assert.equal(store.read(), null);
+    } else if (operation === 'repair') {
+      assert.equal((await result.call('POST', '/api/mittr/auth/accounts/repair')).status, 200);
+    } else {
+      await result.auth.ensureFreshSession();
+      assert.equal(store.read(), null);
+    }
+    assert.equal(drains, 1);
+  });
+}
 
 test('start returns the platform authorize URL', async (t) => {
   const { call } = await harness(t);

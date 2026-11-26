@@ -1,23 +1,15 @@
-/**
- * Settings → Web search state: the providers OpenCode offers, the `websearch`
- * config choice, and how each provider's optional key is supplied.
- *
- * OpenCode owns all three. The store reads them on demand (the page asks, and
- * `catalogRefresh` re-reads after `websearch.updated`, `config.updated` or a
- * credential change once the page has asked at least once). A failed read
- * never replaces a good snapshot of the same scope with an empty one.
- */
 
 import { create } from 'zustand';
 import { z } from 'zod';
 import { opencodeClient } from '@/lib/opencode/client';
 import {
   listWebSearchProviders,
-  readWebSearchAccess,
+  readWebSearchAccounts,
   readWebSearchSelection,
   removeWebSearchKey,
-  saveWebSearchKey,
+  saveWebSearchCredential,
   webSearchSelectionToConfig,
+  type WebSearchConnectAnswer,
   type WebSearchProvider,
   type WebSearchProviderAccess,
   type WebSearchSelection,
@@ -30,13 +22,8 @@ export type WebSearchSnapshot = {
   scope: string;
   providers: WebSearchProvider[];
   selection: WebSearchSelection;
-  /** `null` when the integration list could not be read: key status unknown, not "no key". */
   access: Record<string, WebSearchProviderAccess> | null;
-  /**
-   * The project config whose `websearch` overrides what Settings writes, so a
-   * choice here would snap back. `null` when none, or when the check failed
-   * (unknown is treated as "not overridden" so the page stays usable).
-   */
+  connectable: WebSearchProvider[];
   projectOverride: string | null;
 };
 
@@ -49,9 +36,8 @@ type WebSearchState =
 type WebSearchStore = {
   state: WebSearchState;
   load: () => Promise<void>;
-  /** Resolves `false` when the write failed; the previous choice is restored. */
   setSelection: (selection: WebSearchSelection) => Promise<boolean>;
-  saveKey: (providerId: string, key: string) => Promise<boolean>;
+  saveKey: (providerId: string, input: { key: string; answer: WebSearchConnectAnswer }) => Promise<boolean>;
   removeKey: (providerId: string) => Promise<boolean>;
 };
 
@@ -59,8 +45,6 @@ const currentDirectory = (): string | null => opencodeClient.getDirectory()?.tri
 
 export const getWebSearchScopeKey = (): string => JSON.stringify([getRuntimeKey(), currentDirectory()]);
 
-// Only the newest read may commit, and a choice written while a read was in
-// flight wins over the config that read saw.
 let readGeneration = 0;
 let selectionRevision = 0;
 let selectionWritesInFlight = 0;
@@ -106,14 +90,26 @@ export const useWebSearchStore = create<WebSearchStore>()((set, get) => ({
         opencodeClient.getConfig(directory),
       ]);
       const projectOverride = await overridePromise;
-      const access = await readWebSearchAccess(directory, providers.map((provider) => provider.id)).catch(() => null);
+      const accounts = await readWebSearchAccounts(directory, providers.map((provider) => provider.id)).catch(() => null);
       if (generation !== readGeneration || getWebSearchScopeKey() !== scope) return;
       const current = get().state;
       const localChoiceIsNewer = selectionRevision !== revisionAtStart || selectionWritesInFlight > 0;
       const selection = localChoiceIsNewer && current.kind === 'ready' && current.snapshot.scope === scope
         ? current.snapshot.selection
         : readWebSearchSelection(config);
-      set({ state: { kind: 'ready', snapshot: { scope, providers, selection, access, projectOverride } } });
+      set({
+        state: {
+          kind: 'ready',
+          snapshot: {
+            scope,
+            providers,
+            selection,
+            access: accounts?.access ?? null,
+            connectable: accounts?.connectable ?? [],
+            projectOverride,
+          },
+        },
+      });
     } catch (error) {
       if (generation !== readGeneration || getWebSearchScopeKey() !== scope) return;
       console.warn('[web-search] failed to read providers', error);
@@ -153,13 +149,10 @@ export const useWebSearchStore = create<WebSearchStore>()((set, get) => ({
 
     if (!failed) {
       reportSettingsSaveState('saved');
-      // OpenCode reads its config fresh on the next request; drop the copy
-      // cached for the page's read.
       opencodeClient.clearConfigCache();
       return true;
     }
     reportSettingsSaveState('error');
-    // Roll back only if no newer choice was made meanwhile.
     const latest = get().state;
     if (revision === selectionRevision && latest.kind === 'ready' && latest.snapshot.scope === current.snapshot.scope) {
       set({ state: { kind: 'ready', snapshot: { ...latest.snapshot, selection: previous } } });
@@ -167,15 +160,16 @@ export const useWebSearchStore = create<WebSearchStore>()((set, get) => ({
     return false;
   },
 
-  saveKey: async (providerId, key) => {
+  saveKey: async (providerId, input) => {
+    const current = get().state;
+    const connect = current.kind === 'ready' ? current.snapshot.access?.[providerId]?.connect : null;
+    if (!connect) return false;
     try {
-      await saveWebSearchKey(providerId, key);
+      await saveWebSearchCredential(currentDirectory(), providerId, connect, input);
     } catch (error) {
       console.warn('[web-search] failed to save the key', error);
       return false;
     }
-    // OpenCode announces the credential change; reading now shows it without
-    // waiting for the event's debounce.
     void get().load();
     return true;
   },
@@ -197,7 +191,6 @@ export const useWebSearchStore = create<WebSearchStore>()((set, get) => ({
   },
 }));
 
-/** Re-read after a catalog event, but only once something asked for the data. */
 export const refreshWebSearchIfLoaded = async (): Promise<void> => {
   if (useWebSearchStore.getState().state.kind === 'idle') return;
   await useWebSearchStore.getState().load();

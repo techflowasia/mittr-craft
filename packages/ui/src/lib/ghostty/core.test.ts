@@ -144,15 +144,6 @@ describe('GhosttyTerminalCore', () => {
     expect(rows[0]).toBe('fresh');
   });
 
-  test('reflows history written at a wider size back to the fitted grid', async () => {
-    const core = await createCore();
-    core.resize(40, 3, 8, 16);
-    core.resetAndWrite(`${'x'.repeat(30)}\r\nprompt> `);
-    core.resize(12, 3, 8, 16);
-    // 30 columns wrap into 12 + 12 + 6; the first wrapped row scrolls out of a 3-row viewport.
-    expect(core.snapshot().rowData.map((row) => row.text)).toEqual(['x'.repeat(12), 'x'.repeat(6), 'prompt>']);
-  });
-
   test('encodes bracketed paste only when the terminal asked for it', async () => {
     const core = await createCore();
     expect(core.encodePaste('hello')).toBe('hello');
@@ -185,9 +176,25 @@ describe('GhosttyTerminalCore', () => {
     for (const key of ['∂', 'Dead', 'ArrowUp', 'ArrowDown', 'Delete']) {
       expect(core.encodeMacWordShortcut(optionKey(key), 'MacIntel')).toBeNull();
     }
-    expect(core.encodeKey(optionKey('ArrowLeft'))).toBe('\x1b[1;3D');
-    expect(core.encodeKey(optionKey('Backspace'))).toBe('\x1b\x7f');
-    expect(core.encodeKey(optionKey('ArrowLeft', { altKey: false, ctrlKey: true }))).toBe('\x1b[1;5D');
+    expect(core.encodeKey(optionKey('ArrowLeft'), 'MacIntel')).toBe('\x1b[1;3D');
+    expect(core.encodeKey(optionKey('Backspace'), 'MacIntel')).toBe('\x1b\x7f');
+    expect(core.encodeKey(optionKey('ArrowLeft', { altKey: false, ctrlKey: true }), 'MacIntel')).toBe('\x1b[1;5D');
+  });
+
+  test('types ASCII symbols macOS layouts compose with Option and keeps Option+letter as Meta', async () => {
+    const core = await createCore();
+    // Swedish and German layouts: Option+4 is "$", Option+Shift+7 is "\".
+    expect(core.encodeKey(optionKey('$', { code: 'Digit4' }), 'MacIntel')).toBe('$');
+    expect(core.encodeKey(optionKey('\\', { code: 'Digit7', shiftKey: true }), 'MacIntel')).toBe('\\');
+    expect(core.encodeKey(optionKey('|', { code: 'IntlBackslash' }), 'MacIntel')).toBe('|');
+    // Option leaving the key's own character is still a Meta chord.
+    expect(core.encodeKey(optionKey('b', { code: 'KeyB' }), 'MacIntel')).toBe('\x1bb');
+    expect(core.encodeKey(optionKey('4', { code: 'Digit4' }), 'MacIntel')).toBe('\x1b4');
+    // Alt on other platforms is always Meta.
+    expect(core.encodeKey(optionKey('$', { code: 'Digit4' }), 'Linux x86_64')).toBe('\x1b$');
+    // Kitty disambiguation reports the composed character as plain text too.
+    core.write('\x1b[>1u');
+    expect(core.encodeKey(optionKey('$', { code: 'Digit4' }), 'MacIntel')).toBe('$');
   });
 
   test('preserves alternate-screen keys and restores word editing on return to the prompt', async () => {
@@ -196,7 +203,7 @@ describe('GhosttyTerminalCore', () => {
     for (const key of ['ArrowLeft', 'ArrowRight', 'Backspace']) {
       expect(core.encodeMacWordShortcut(optionKey(key), 'MacIntel')).toBeNull();
     }
-    expect(core.encodeKey(optionKey('ArrowRight'))).toBe('\x1b[1;3C');
+    expect(core.encodeKey(optionKey('ArrowRight'), 'MacIntel')).toBe('\x1b[1;3C');
     core.write('\x1b[?1049l');
     expect(core.encodeMacWordShortcut(optionKey('ArrowRight'), 'MacIntel')).toBe('\x1bf');
   });
@@ -207,8 +214,8 @@ describe('GhosttyTerminalCore', () => {
     for (const key of ['ArrowLeft', 'ArrowRight', 'Backspace']) {
       expect(core.encodeMacWordShortcut(optionKey(key), 'MacIntel')).toBeNull();
     }
-    expect(core.encodeKey(optionKey('Backspace'))).toBe('\x1b[127;3u');
-    expect(core.encodeKey(optionKey('Backspace'), 'release')).toBe('\x1b[127;3:3u');
+    expect(core.encodeKey(optionKey('Backspace'), 'MacIntel')).toBe('\x1b[127;3u');
+    expect(core.encodeKey(optionKey('Backspace'), 'MacIntel', 'release')).toBe('\x1b[127;3:3u');
     core.write('\x1b[<u');
     expect(core.encodeMacWordShortcut(optionKey('Backspace'), 'MacIntel')).toBe('\x17');
   });

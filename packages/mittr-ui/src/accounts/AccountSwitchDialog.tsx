@@ -5,7 +5,8 @@ import { Button } from '../../../ui/src/components/ui/button';
 import { Dialog, DialogContent } from '../../../ui/src/components/ui/dialog';
 import type { MittrKey } from '../strings/mittrT';
 import { useMittrT } from '../strings/mittrT';
-import type { AccountSwitchState } from './accountSwitch';
+import { accountName, accountsApi, isEngineRefusal, type AccountsApi, type MittrAccount } from './accountsApi';
+import type { AccountSwitchBinding, AccountSwitchProblem, AccountSwitchState } from './accountSwitch';
 
 type ShownState = Exclude<AccountSwitchState, 'idle'>;
 
@@ -15,14 +16,23 @@ const STATE_TEXT = {
   failed: 'mittr.accounts.switch.failed',
 } satisfies Record<ShownState, MittrKey>;
 
+const titleKey = (state: ShownState, problem: AccountSwitchProblem | null): MittrKey => (
+  state === 'failed' && problem?.added ? 'mittr.accounts.add.notSwitched' : STATE_TEXT[state]
+);
+
 export type AccountSwitchStatusProps = {
   state: ShownState;
+  problem?: AccountSwitchProblem | null;
+  others?: MittrAccount[];
   onRetry: () => void;
   onDismiss: () => void;
-  retryRef?: React.Ref<HTMLButtonElement>;
+  onContinueAs?: (userId: string) => void;
+  firstActionRef?: React.Ref<HTMLButtonElement>;
 };
 
-export function AccountSwitchStatus({ state, onRetry, onDismiss, retryRef }: AccountSwitchStatusProps): React.ReactNode {
+const NO_ACCOUNTS: MittrAccount[] = [];
+
+export function AccountSwitchStatus({ state, problem = null, others = NO_ACCOUNTS, onRetry, onDismiss, onContinueAs, firstActionRef }: AccountSwitchStatusProps): React.ReactNode {
   const t = useMittrT();
   if (state === 'switching') {
     return (
@@ -32,42 +42,76 @@ export function AccountSwitchStatus({ state, onRetry, onDismiss, retryRef }: Acc
       </div>
     );
   }
+  const refusal = isEngineRefusal(problem) ? problem.message : null;
+  const canRetry = state === 'not-restarted' || (refusal === null && !problem?.added);
+  const ways = state === 'not-restarted' && refusal !== null && onContinueAs ? others : NO_ACCOUNTS;
   return (
     <div className="flex flex-col items-center gap-4 text-center">
-      <div className="flex flex-col gap-1">
-        <p role="alert" className="typography-ui-label text-foreground">{t(STATE_TEXT[state])}</p>
-        {state === 'not-restarted' ? (
+      <div role="alert" className="flex flex-col gap-1">
+        <p className="typography-ui-label text-foreground">{t(titleKey(state, problem))}</p>
+        {refusal !== null ? <p className="typography-meta text-muted-foreground [overflow-wrap:anywhere]">{refusal}</p> : null}
+        {state === 'not-restarted' && refusal === null ? (
           <p className="typography-meta text-muted-foreground">{t('mittr.accounts.switch.quitHint')}</p>
         ) : null}
       </div>
-      <div className="flex items-center justify-center gap-2">
-        <Button ref={retryRef} size="sm" onClick={onRetry}>{t('mittr.accounts.switch.retry')}</Button>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        {ways.map((account) => (
+          <Button key={account.userId} size="sm" variant="outline" onClick={() => onContinueAs?.(account.userId)}>
+            {t('mittr.signIn.continueAs', { name: accountName(account) })}
+          </Button>
+        ))}
+        {canRetry ? <Button ref={firstActionRef} size="sm" onClick={onRetry}>{t('mittr.accounts.switch.retry')}</Button> : null}
         {state === 'failed' ? (
-          <Button size="sm" variant="outline" onClick={onDismiss}>{t('mittr.accounts.switch.close')}</Button>
+          <Button ref={canRetry ? undefined : firstActionRef} size="sm" variant="outline" onClick={onDismiss}>{t('mittr.accounts.switch.close')}</Button>
         ) : null}
       </div>
     </div>
   );
 }
 
-export type AccountSwitchDialogProps = Omit<AccountSwitchStatusProps, 'state' | 'retryRef'> & { state: AccountSwitchState };
+export type AccountSwitchDialogProps = AccountSwitchBinding & { api?: Pick<AccountsApi, 'fetchAccounts' | 'activateAccount'> };
 
-export function AccountSwitchDialog({ state, onRetry, onDismiss }: AccountSwitchDialogProps): React.ReactNode {
+export function AccountSwitchDialog({ accountSwitch, state, problem, api = accountsApi }: AccountSwitchDialogProps): React.ReactNode {
   const t = useMittrT();
-  const retryRef = React.useRef<HTMLButtonElement>(null);
+  const firstActionRef = React.useRef<HTMLButtonElement>(null);
+  const [others, setOthers] = React.useState(NO_ACCOUNTS);
+  const offersWayBack = state === 'not-restarted' && isEngineRefusal(problem);
 
   React.useEffect(() => {
-    if (state === 'not-restarted' || state === 'failed') retryRef.current?.focus();
+    if (state === 'not-restarted' || state === 'failed') firstActionRef.current?.focus();
   }, [state]);
 
+  React.useEffect(() => {
+    if (!offersWayBack) return undefined;
+    let current = true;
+    api.fetchAccounts().then(
+      (accounts) => { if (current) setOthers(accounts.filter((account) => !account.active)); },
+      () => {},
+    );
+    return () => {
+      current = false;
+      setOthers(NO_ACCOUNTS);
+    };
+  }, [api, offersWayBack]);
+
   return (
-    <Dialog open={state !== 'idle'} onOpenChange={(open) => { if (!open) onDismiss(); }}>
+    <Dialog open={state !== 'idle'} onOpenChange={(open) => { if (!open) void accountSwitch.dismiss(); }}>
       <DialogContent
         showCloseButton={false}
-        className="max-w-xs"
-        aria-label={state === 'idle' ? undefined : t(STATE_TEXT[state])}
+        className="max-w-sm"
+        aria-label={state === 'idle' ? undefined : t(titleKey(state, problem))}
       >
-        {state === 'idle' ? null : <AccountSwitchStatus state={state} onRetry={onRetry} onDismiss={onDismiss} retryRef={retryRef} />}
+        {state === 'idle' ? null : (
+          <AccountSwitchStatus
+            state={state}
+            problem={problem}
+            others={others}
+            onRetry={() => { void accountSwitch.retry(); }}
+            onDismiss={() => { void accountSwitch.dismiss(); }}
+            onContinueAs={(userId) => { void accountSwitch.instead(() => api.activateAccount(userId)); }}
+            firstActionRef={firstActionRef}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );

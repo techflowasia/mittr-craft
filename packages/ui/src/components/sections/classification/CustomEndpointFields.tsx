@@ -10,17 +10,11 @@ import {
 import { useI18n } from '@/lib/i18n';
 import type { CustomEndpointInput } from '@/lib/routing/routingApi';
 import { useRoutingStore } from '@/stores/useRoutingStore';
+import { ClassifierTestButton } from './ClassifierTestButton';
 
-// Same footprint as the TypeSafe key row above.
 const ROW_CLASS = 'flex w-full min-w-0 items-center gap-2';
 const INPUT_CLASS = 'h-8 rounded-md px-3 min-w-0 flex-1';
 
-/**
- * The custom System One endpoint: URL, model and an optional key. Saving
- * picks it on the server, the way saving a TypeSafe key does. The key never
- * comes back from the server, so its field only replaces it. Its own section,
- * below the Jev pick, so the fields read as one block.
- */
 export const CustomEndpointFields: React.FC = () => {
   const { t } = useI18n();
   const saved = useRoutingStore((state) => state.customEndpoint);
@@ -33,7 +27,6 @@ export const CustomEndpointFields: React.FC = () => {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  // The server normalizes the URL, and another client may change it: show what is saved.
   React.useEffect(() => {
     setUrl(saved?.url ?? '');
     setModel(saved?.model ?? '');
@@ -56,16 +49,19 @@ export const CustomEndpointFields: React.FC = () => {
   const handleSave = () => {
     if (!canSave) return;
     const endpoint: CustomEndpointInput = { url: url.trim(), model: model.trim() };
-    // An empty key field keeps the saved key.
     const typedKey = key.trim();
     if (typedKey) endpoint.key = typedKey;
     void run(() => setCustomEndpoint(endpoint));
+  };
+  const draftEndpoint = (): CustomEndpointInput | null => {
+    if (!canSave) return null;
+    const typedKey = key.trim();
+    return typedKey ? { url: url.trim(), model: model.trim(), key: typedKey } : { url: url.trim(), model: model.trim() };
   };
   const saveOnEnter = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') handleSave();
   };
 
-  // Pinned by the server environment: shown, never edited (the server refuses).
   if (saved?.pinned) {
     return (
       <SettingsSection
@@ -94,7 +90,7 @@ export const CustomEndpointFields: React.FC = () => {
               value={url}
               onChange={(event) => setUrl(event.target.value)}
               onKeyDown={saveOnEnter}
-              placeholder="https://example.com/v1"
+              placeholder="https://example.com/v1/systemone"
               aria-label={t('settings.classification.custom.url.label')}
               className={INPUT_CLASS}
               disabled={busy}
@@ -133,7 +129,6 @@ export const CustomEndpointFields: React.FC = () => {
             />
           </div>
         </SettingsFieldRow>
-        {/* Save commits all three fields, so it sits under them in the control column, not in one field's row. */}
         <SettingsFieldRow label={null}>
           <Button size="sm" variant="outline" onClick={handleSave} disabled={busy || !canSave}>
             {t('settings.classification.custom.save')}
@@ -145,6 +140,9 @@ export const CustomEndpointFields: React.FC = () => {
           ) : null}
         </SettingsFieldRow>
         {error ? <p className={SETTINGS_DESCRIPTION_CLASS}>{error}</p> : null}
+        <SettingsFieldRow label={null}>
+          <ClassifierTestButton disabled={busy || !canSave} draft={draftEndpoint} />
+        </SettingsFieldRow>
       </div>
     </SettingsSection>
   );

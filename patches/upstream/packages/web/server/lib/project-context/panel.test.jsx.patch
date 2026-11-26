@@ -1,0 +1,285 @@
+diff --git a/packages/web/server/lib/project-context/panel.test.jsx b/packages/web/server/lib/project-context/panel.test.jsx
+new file mode 100644
+index 000000000..d19496a04
+--- /dev/null
++++ b/packages/web/server/lib/project-context/panel.test.jsx
+@@ -0,0 +1,279 @@
++import React, { act } from 'react';
++import { afterAll, expect, onTestFinished, test } from 'vitest';
++import { z } from 'zod';
++import { createRequire } from 'node:module';
++// Happy DOM belongs to UI's existing dev dependencies; do not add it to web.
++const { Window } = await import(createRequire(new URL('../../../../ui/package.json', import.meta.url)).resolve('happy-dom'));
++import express from 'express';
++import * as fsPromises from 'node:fs/promises';
++import path from 'node:path';
++import { createServer } from 'node:http';
++import { tmpdir } from 'node:os';
++import { registerProjectContextRoutes } from './routes.js';
++import { createProjectContextRuntime } from './runtime.js';
++// The panel imports the app's directory/settings stores. Serve their unrelated
++// bootstrap requests too, rather than mocking fetch or leaving rejected work.
++const bootstrapApp = express();
++bootstrapApp.get('/api/fs/home', (_req, res) => res.json({ home: '/fixture' }));
++bootstrapApp.put('/api/config/settings', (_req, res) => res.json({}));
++const bootstrapServer = createServer(bootstrapApp);
++await new Promise((resolve) => bootstrapServer.listen(0, '127.0.0.1', resolve));
++const bootstrapAddress = z.object({ port: z.number() }).parse(bootstrapServer.address());
++const bootstrapOrigin = `http://127.0.0.1:${bootstrapAddress.port}`;
++const browser = new Window({ url: bootstrapOrigin });
++const originals = new Map();
++for (const [name, value] of Object.entries({
++    window: browser, document: browser.document, navigator: browser.navigator, location: browser.location,
++    localStorage: browser.localStorage, Element: browser.Element, HTMLElement: browser.HTMLElement,
++    HTMLInputElement: browser.HTMLInputElement, HTMLTextAreaElement: browser.HTMLTextAreaElement, Node: browser.Node, DocumentFragment: browser.DocumentFragment,
++    Event: browser.Event, CustomEvent: browser.CustomEvent, MouseEvent: browser.MouseEvent, PointerEvent: browser.PointerEvent,
++    MutationObserver: browser.MutationObserver, ResizeObserver: browser.ResizeObserver,
++    getComputedStyle: browser.getComputedStyle.bind(browser), requestAnimationFrame: browser.requestAnimationFrame.bind(browser),
++    cancelAnimationFrame: browser.cancelAnimationFrame.bind(browser), IS_REACT_ACT_ENVIRONMENT: true,
++})) {
++    originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
++    Object.defineProperty(globalThis, name, { value, configurable: true, writable: true });
++}
++const { configureRuntimeUrlResolver, getRuntimeUrlResolver, setRuntimeUrlResolver } = await import('@/lib/runtime-url');
++const initialResolver = getRuntimeUrlResolver();
++configureRuntimeUrlResolver({ apiBaseUrl: bootstrapOrigin });
++const { createRoot } = await import('react-dom/client');
++const { I18nProvider } = await import('@/lib/i18n');
++const { ProjectNotesTodoPanel } = await import('@/components/session/project-context/ProjectNotesTodoPanel');
++const { useProjectContextStore } = await import('@/stores/useProjectContextStore');
++const { useUIStore } = await import('@/stores/useUIStore');
++const { fetchProjectContext, resolveProjectContextId } = await import('@/lib/projectContextApi');
++afterAll(async () => {
++    // Drain the directory store's debounced settings write before closing HTTP.
++    await new Promise((resolve) => setTimeout(resolve, 500));
++    setRuntimeUrlResolver(initialResolver);
++    await new Promise((resolve) => bootstrapServer.close(() => resolve()));
++    await browser.happyDOM.close();
++    for (const [name, descriptor] of originals) {
++        if (descriptor)
++            Object.defineProperty(globalThis, name, descriptor);
++        else
++            Reflect.deleteProperty(globalThis, name);
++    }
++});
++async function fixture() {
++    const projectsDirPath = await fsPromises.mkdtemp(path.join(tmpdir(), 'todo-panel-'));
++    const project = { id: 'ui-integration', path: '/fixture/todo-panel' };
++    const projectId = resolveProjectContextId(project);
++    const previousResolver = getRuntimeUrlResolver();
++    const previousUI = useUIStore.getState();
++    let runtime = createProjectContextRuntime({ fsPromises, path, projectsDirPath });
++    let rejectWrites = false;
++    let releaseWrite;
++    let holdNextWrite = false;
++    let writeStarted = false;
++    let successfulWrites = 0;
++    const statuses = [];
++    const app = express();
++    app.use((req, res, next) => {
++        if (req.method !== 'PUT')
++            return next();
++        res.on('finish', () => {
++            statuses.push(res.statusCode);
++            if (res.statusCode === 200)
++                successfulWrites += 1;
++        });
++        if (rejectWrites)
++            return res.status(503).json({ error: 'Fixture disk unavailable' });
++        if (holdNextWrite) {
++            holdNextWrite = false;
++            writeStarted = true;
++            releaseWrite = next;
++            return;
++        }
++        next();
++    });
++    // No global JSON parser: exercise the route-owned parser used in production.
++    let routes = express.Router();
++    registerProjectContextRoutes(routes, { projectContextRuntime: runtime });
++    app.use((req, res, next) => routes(req, res, next));
++    const server = createServer(app);
++    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
++    const address = z.object({ port: z.number() }).parse(server.address());
++    configureRuntimeUrlResolver({ apiBaseUrl: `http://127.0.0.1:${address.port}` });
++    useProjectContextStore.getState().reset();
++    const realSaveTodos = useProjectContextStore.getState().saveTodos;
++    const saves = [];
++    // Observe completion without replacing any store, API, HTTP or disk behavior.
++    useProjectContextStore.setState({ saveTodos: (owner, todos) => {
++            const saved = realSaveTodos(owner, todos);
++            saves.push(saved);
++            return saved;
++        } });
++    const drain = async () => {
++        await act(async () => { await Promise.all(saves); });
++    };
++    useUIStore.setState({ projectContextTab: 'todos', isMobile: false });
++    const host = document.createElement('div');
++    document.body.append(host);
++    let root = createRoot(host);
++    const mount = () => act(async () => root.render(<I18nProvider><ProjectNotesTodoPanel projectRef={project}/></I18nProvider>));
++    const settle = async (check) => {
++        await act(async () => { await expect.poll(check).toBeUndefined(); });
++    };
++    const ready = () => settle(() => { expect(useProjectContextStore.getState().getEntry(project).loaded).toBe(true); });
++    const button = (label) => {
++        const element = Array.from(host.querySelectorAll('button')).find((entry) => entry.getAttribute('aria-label') === label);
++        if (!element)
++            throw new Error(`Missing button: ${label}`);
++        return element;
++    };
++    const checkbox = (text) => {
++        const element = Array.from(host.querySelectorAll('[role="checkbox"]')).find((entry) => entry.getAttribute('aria-label')?.includes(text));
++        if (!element)
++            throw new Error(`Missing checkbox: ${text}`);
++        return element;
++    };
++    const type = async (text) => {
++        const input = host.querySelector('textarea');
++        const setter = Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype, 'value')?.set;
++        if (!input || !setter)
++            throw new Error('Todo input missing');
++        await act(async () => {
++            setter.call(input, text);
++            input.dispatchEvent(new browser.Event('input', { bubbles: true }));
++            input.dispatchEvent(new browser.Event('change', { bubbles: true }));
++        });
++        return input;
++    };
++    let cleaned = false;
++    const cleanup = async () => {
++        if (cleaned)
++            return;
++        cleaned = true;
++        releaseWrite?.();
++        await drain();
++        await act(async () => root.unmount());
++        host.remove();
++        useProjectContextStore.getState().reset();
++        useProjectContextStore.setState({ saveTodos: realSaveTodos });
++        useUIStore.setState(previousUI);
++        setRuntimeUrlResolver(previousResolver);
++        await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
++        await fsPromises.rm(projectsDirPath, { recursive: true, force: true });
++    };
++    onTestFinished(cleanup);
++    await mount();
++    await ready();
++    return {
++        host, project, statuses, settle, checkbox, drain,
++        writes: () => successfulWrites,
++        hold: () => { holdNextWrite = true; },
++        started: () => writeStarted,
++        release: () => { releaseWrite?.(); releaseWrite = undefined; },
++        fail: () => { rejectWrites = true; },
++        add: async (text, method) => {
++            const input = await type(text);
++            await act(async () => {
++                if (method === 'click')
++                    button('Add todo').click();
++                else
++                    input.dispatchEvent(new browser.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
++            });
++        },
++        toggle: (text) => act(async () => checkbox(text).click()),
++        delete: async (text) => {
++            const more = checkbox(text).closest('li')?.querySelector('button[aria-label="More actions"]');
++            if (!more)
++                throw new Error(`Missing menu: ${text}`);
++            await act(async () => more.click());
++            const item = Array.from(document.querySelectorAll('[role="menuitem"]')).find((entry) => entry.textContent?.trim() === 'Delete todo');
++            if (!item)
++                throw new Error(`Missing delete item: ${text}`);
++            await act(async () => item.click());
++        },
++        persisted: () => fetchProjectContext(project),
++        disk: async () => JSON.parse(await fsPromises.readFile(runtime.contextPathFor(projectId), 'utf8')),
++        restart: async () => {
++            await drain();
++            await act(async () => root.unmount());
++            useProjectContextStore.getState().reset();
++            // A new runtime reads the same files, not the old store or runtime's memory.
++            runtime = createProjectContextRuntime({ fsPromises, path, projectsDirPath });
++            routes = express.Router();
++            registerProjectContextRoutes(routes, { projectContextRuntime: runtime });
++            root = createRoot(host);
++            await mount();
++            await ready();
++        },
++        cleanup,
++    };
++}
++test('panel add by click and Enter, complete and delete survive HTTP, disk and cold remount', async () => {
++    const view = await fixture();
++    try {
++        await view.add('First task', 'click');
++        await view.settle(async () => { expect((await view.persisted()).todos.map((todo) => todo.text)).toEqual(['First task']); });
++        await view.add('Second task', 'enter');
++        await view.settle(() => { expect(view.writes()).toBe(2); });
++        await view.toggle('First task');
++        await view.settle(async () => { expect((await view.persisted()).todos.find((todo) => todo.text === 'First task')?.completed).toBe(true); });
++        expect((await view.disk()).todos).toEqual((await view.persisted()).todos);
++        await view.restart();
++        expect(view.checkbox('First task').getAttribute('aria-checked')).toBe('true');
++        expect(view.checkbox('Second task').getAttribute('aria-checked')).toBe('false');
++        await view.delete('First task');
++        await view.settle(() => { expect(view.writes()).toBe(4); });
++        await view.restart();
++        expect(view.host.textContent).not.toContain('First task');
++        expect((await view.persisted()).todos.map((todo) => todo.text)).toEqual(['Second task']);
++        await view.delete('Second task');
++        await view.settle(() => { expect(view.writes()).toBe(5); });
++        await view.restart();
++        expect(view.host.querySelector('[role="checkbox"]')).toBeNull();
++        expect((await view.persisted()).todos).toEqual([]);
++        expect((await view.disk()).todos).toEqual([]);
++        expect(view.statuses).toEqual([200, 200, 200, 200, 200]);
++    }
++    finally {
++        await view.cleanup();
++    }
++});
++test('rapid add then checkbox toggle retains the latest UI while the first HTTP save is held', async () => {
++    const view = await fixture();
++    try {
++        view.hold();
++        await view.add('Rapid task', 'click');
++        await view.settle(() => { expect(view.started()).toBe(true); });
++        await view.toggle('Rapid task');
++        expect(view.checkbox('Rapid task').getAttribute('aria-checked')).toBe('true');
++        view.release();
++        await view.settle(() => { expect(view.writes()).toBe(2); });
++        await view.drain();
++        expect(view.checkbox('Rapid task').getAttribute('aria-checked')).toBe('true');
++        expect((await view.persisted()).todos[0].completed).toBe(true);
++        await view.restart();
++        expect(view.checkbox('Rapid task').getAttribute('aria-checked')).toBe('true');
++    }
++    finally {
++        await view.cleanup();
++    }
++});
++test('failed HTTP saves roll the rendered checkbox and deleted row back to the persisted list', async () => {
++    const view = await fixture();
++    try {
++        await view.add('Durable task', 'enter');
++        await view.settle(() => { expect(view.writes()).toBe(1); });
++        view.fail();
++        await view.add('Rejected task', 'click');
++        await view.drain();
++        expect(view.host.textContent).not.toContain('Rejected task');
++        await view.toggle('Durable task');
++        await view.settle(() => { expect(useProjectContextStore.getState().getEntry(view.project).error).toBe('Fixture disk unavailable'); });
++        expect(view.checkbox('Durable task').getAttribute('aria-checked')).toBe('false');
++        await view.delete('Durable task');
++        await view.settle(() => { expect(view.statuses).toEqual([200, 503, 503, 503]); });
++        await view.settle(() => { expect(view.checkbox('Durable task').getAttribute('aria-checked')).toBe('false'); });
++        expect((await view.persisted()).todos.map((todo) => todo.text)).toEqual(['Durable task']);
++        await view.restart();
++        expect(view.checkbox('Durable task').getAttribute('aria-checked')).toBe('false');
++    }
++    finally {
++        await view.cleanup();
++    }
++});

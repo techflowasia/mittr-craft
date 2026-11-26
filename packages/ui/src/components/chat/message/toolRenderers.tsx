@@ -1,4 +1,6 @@
 import { carriesFileDiffs, isFileChangeTool } from '@/lib/opencode/tools';
+import type { JsonValue } from '@/lib/opencode/model';
+import { z } from 'zod';
 
 import { cn } from '@/lib/utils';
 import { typography } from '@/lib/typography';
@@ -24,14 +26,7 @@ export const coerceToText = (value: unknown, fallback = ''): string => {
     }
 };
 
-// Guards the renderer process against V8 "Zone Allocation failed" OOM crashes
-// (issue #2265). When a tool returns oversized external content — e.g. a fetched
-// web page with full-resolution base64 images inlined — the entire payload flows
-// through this module as a single JS string that is JSON.parsed, syntax
-// highlighted, and attached to the DOM. A large enough single string exceeds
-// V8's Zone allocator and hard-crashes the renderer before any virtualization or
-// CSS clip can help. Capping the string length before that work happens keeps a
-// useful head of the output while preventing the pathological allocation.
+// external: #2265 Cap oversized tool strings before parsing or rendering can exhaust the V8 Zone allocator.
 export const TOOL_OUTPUT_MAX_CHARS = 512 * 1024;
 
 export const capToolOutputText = (
@@ -112,7 +107,7 @@ const getToolMetadataPatch = (metadata?: Record<string, unknown>): string | unde
     return undefined;
 };
 
-export const tryParseJsonOutput = (output: string): { data: unknown; isJson: boolean } => {
+export const tryParseJsonOutput = (output: string): { data: JsonValue; isJson: boolean } => {
     if (!output || typeof output !== 'string') {
         return { data: null, isJson: false };
     }
@@ -132,7 +127,7 @@ export const tryParseJsonOutput = (output: string): { data: unknown; isJson: boo
     }
 
     try {
-        const parsed = JSON.parse(trimmed);
+        const parsed: JsonValue = JSON.parse(trimmed);
         if (parsed !== null && typeof parsed === 'object') {
             return { data: parsed, isJson: true };
         }
@@ -140,6 +135,64 @@ export const tryParseJsonOutput = (output: string): { data: unknown; isJson: boo
     } catch {
         return { data: null, isJson: false };
     }
+};
+
+const TEXT_BLOCK_UNWRAP_PASSES = 4;
+const textBlockSchema = z.object({ type: z.literal('text'), text: z.string() });
+type TextBlock = z.infer<typeof textBlockSchema>;
+
+const parseTextBlocks = (value: JsonValue): TextBlock[] | null => {
+    const blocks = Array.isArray(value) ? value : [value];
+    if (blocks.length === 0) {
+        return null;
+    }
+    const parsed: TextBlock[] = [];
+    for (const block of blocks) {
+        const result = textBlockSchema.safeParse(block);
+        if (!result.success) {
+            return null;
+        }
+        parsed.push(result.data);
+    }
+    return parsed;
+};
+
+const looksLikeJsonContainer = (text: string): boolean => {
+    const trimmed = text.trim();
+    return (trimmed.startsWith('[') && trimmed.endsWith(']')) || (trimmed.startsWith('{') && trimmed.endsWith('}'));
+};
+
+// external: #5067 OpenCode text-content results can be serialized in nested envelopes; unwrapping is bounded.
+export const unwrapTextBlocks = (data: JsonValue): string | null => {
+    let blocks = parseTextBlocks(data);
+    if (!blocks) {
+        return null;
+    }
+
+    let text = '';
+    for (let pass = 0; pass < TEXT_BLOCK_UNWRAP_PASSES; pass++) {
+        let joined = '';
+        for (const block of blocks) {
+            joined += (joined ? '\n' : '') + block.text;
+        }
+        text = joined;
+
+        if (!looksLikeJsonContainer(joined)) {
+            break;
+        }
+        let parsed: JsonValue;
+        try {
+            parsed = JSON.parse(joined);
+        } catch {
+            break;
+        }
+        const inner = parseTextBlocks(parsed);
+        if (!inner) {
+            break;
+        }
+        blocks = inner;
+    }
+    return text;
 };
 
 export const formatEditOutput = (output: string, toolName: string, metadata?: Record<string, unknown>): string => {
@@ -165,7 +218,7 @@ interface ParsedReadOutputLine {
     isInfo: boolean;
 }
 
-export interface ParsedReadToolOutput {
+interface ParsedReadToolOutput {
     type: 'file' | 'directory' | 'unknown';
     lines: ParsedReadOutputLine[];
 }
@@ -220,7 +273,6 @@ export const parseReadToolOutput = (output: string): ParsedReadToolOutput => {
         const adjacentToInfo = Boolean(prev?.isInfo || next?.isInfo);
         const hasNumber = line.lineNumber !== null;
 
-        // Drop numbered blank lines wrapped around helper/info rows.
         if (adjacentToInfo && hasNumber) {
             return false;
         }
@@ -261,7 +313,7 @@ export const renderGrepOutput = (output: string, isMobile: boolean, options?: { 
             <div
                 className={cn(
                     'space-y-2 w-full min-w-0',
-                    options?.unstyled ? null : 'p-3 bg-muted/20 rounded-xl border border-border/30'
+                    options?.unstyled ? null : 'p-3 oc-tile rounded-xl'
                 )}
                 style={typography.tool.popup}
             >
@@ -273,7 +325,7 @@ export const renderGrepOutput = (output: string, isMobile: boolean, options?: { 
                         <div className={cn('font-medium text-muted-foreground', isMobile ? 'typography-micro' : 'typography-code')}>
                             {filepath}
                         </div>
-                        <div className="pl-4 space-y-1">
+                        <div className="ps-4 space-y-1">
                             {matches.map((match, idx) => {
                                 if (!match.lineNum && !match.content) {
                                     return null;
@@ -330,7 +382,7 @@ export const renderGlobOutput = (output: string, isMobile: boolean, options?: { 
             <div
                 className={cn(
                     'space-y-2 w-full min-w-0',
-                    options?.unstyled ? null : 'p-3 bg-muted/20 rounded-xl border border-border/30'
+                    options?.unstyled ? null : 'p-3 oc-tile rounded-xl'
                 )}
                 style={typography.tool.popup}
             >
@@ -342,7 +394,7 @@ export const renderGlobOutput = (output: string, isMobile: boolean, options?: { 
                         <div className={cn('font-medium text-muted-foreground', isMobile ? 'typography-micro' : 'typography-code')}>
                             {dir}/
                         </div>
-                        <div className={cn('pl-4 grid gap-1', isMobile ? 'grid-cols-1' : 'grid-cols-2')}>
+                        <div className={cn('ps-4 grid gap-1', isMobile ? 'grid-cols-1' : 'grid-cols-2')}>
                             {groups[dir].sort().map((filename) => (
                                 <div key={filename} className={cn('flex items-center gap-2 min-w-0', isMobile ? 'typography-micro' : 'typography-code')}>
                                     <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={GLOB_DOT_STYLE} />
@@ -364,7 +416,7 @@ export const renderWebSearchOutput = (output: string, options?: { unstyled?: boo
         const parsed = parseWebSearchOutput(output);
         if (parsed) {
             return (
-                <div className={cn('w-full min-w-0', options?.unstyled ? null : 'p-2 bg-muted/20 rounded-xl border border-border/20')}>
+                <div className={cn('w-full min-w-0', options?.unstyled ? null : 'p-2 oc-tile rounded-xl')}>
                     <WebSearchResults output={parsed} providerId={null} />
                 </div>
             );
@@ -373,11 +425,11 @@ export const renderWebSearchOutput = (output: string, options?: { unstyled?: boo
             <div
                 className={cn(
                     'typography-code max-w-none w-full min-w-0',
-                    options?.unstyled ? null : 'p-3 bg-muted/20 rounded-xl border border-border/20'
+                    options?.unstyled ? null : 'p-3 oc-tile rounded-xl'
                 )}
                 style={typography.tool.popup}
             >
-                <SimpleMarkdownRenderer content={output} variant="tool" />
+                <SimpleMarkdownRenderer content={output} singleTilde={false} variant="tool" />
             </div>
         );
     } catch {
@@ -393,7 +445,7 @@ interface UnifiedDiffLine {
     content: string;
 }
 
-export interface UnifiedDiffHunk {
+interface UnifiedDiffHunk {
     file: string;
     oldStart: number;
     newStart: number;

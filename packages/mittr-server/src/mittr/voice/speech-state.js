@@ -26,6 +26,7 @@ const isTime = (value) => value === String(value) && !Number.isNaN(Date.parse(va
 
 export function createSpeechState({ now = Date.now } = {}) {
   const blocked = { stt: null, tts: null };
+  const refusedAt = { stt: 0, tts: 0 };
   const waiters = new Set();
   let revision = 0;
   let liftTimer = null;
@@ -65,7 +66,23 @@ export function createSpeechState({ now = Date.now } = {}) {
   return {
     block: (kind, resetsAt) => {
       if (!KINDS.includes(kind)) return;
-      change(kind, isTime(resetsAt) ? resetsAt : nextWeeklyReset(now()));
+      const value = isTime(resetsAt) ? resetsAt : nextWeeklyReset(now());
+      if (blocked[kind] === value) {
+        revision += 1;
+        notify();
+      }
+      change(kind, value);
+      refusedAt[kind] = revision;
+    },
+    reconcileQuota: (quota, startedAt) => {
+      if (!Number.isInteger(startedAt)) return;
+      for (const kind of KINDS) {
+        if (!current(kind) || refusedAt[kind] > startedAt) continue;
+        const lines = quota.lines.filter((line) => line.kind === kind);
+        if (lines.length && lines.every(({ used, limit }) => Number.isFinite(used) && used >= 0 && Number.isFinite(limit) && limit > used)) {
+          change(kind, null);
+        }
+      }
     },
     clear: (kind) => {
       if (KINDS.includes(kind)) change(kind, null);

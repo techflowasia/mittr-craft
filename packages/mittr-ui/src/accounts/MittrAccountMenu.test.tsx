@@ -112,9 +112,10 @@ describe('MittrAccountMenu', () => {
 });
 
 describe('the switch wait state', () => {
-  const status = (state: React.ComponentProps<typeof AccountSwitchStatus>['state']) => renderToStaticMarkup(
-    <AccountSwitchStatus state={state} onRetry={noop} onDismiss={noop} />,
+  const status = (state: React.ComponentProps<typeof AccountSwitchStatus>['state'], props: Partial<React.ComponentProps<typeof AccountSwitchStatus>> = {}) => renderToStaticMarkup(
+    <AccountSwitchStatus state={state} onRetry={noop} onDismiss={noop} {...props} />,
   );
+  const V1 = { code: 'MITTR_ENGINE_V1_HISTORY', message: 'Open MittrCraft 2.1.1 once.' };
   const buttons = (html: string) => [...html.matchAll(/<button[^>]*>([\s\S]*?)<\/button>/g)].map((match) => match[1].replace(/<[^>]+>/g, ''));
 
   test('a switch under way says so and offers nothing to press', () => {
@@ -129,6 +130,41 @@ describe('the switch wait state', () => {
     expect(html).toContain(escaped(mittrT('mittr.accounts.switch.notRestarted')));
     expect(html).toContain(escaped(mittrT('mittr.accounts.switch.quitHint')));
     expect(buttons(html)).toEqual([mittrT('mittr.accounts.switch.retry')]);
+  });
+
+  test('a refused switch shows why and offers Close only, since there is nothing to retry yet', () => {
+    const html = status('failed', { problem: V1 });
+    expect(html).toContain(escaped(mittrT('mittr.accounts.switch.failed')));
+    expect(html).toContain(V1.message);
+    expect(buttons(html)).toEqual([mittrT('mittr.accounts.switch.close')]);
+  });
+
+  test('an account added but not switched to says so, shows why and offers Close only', () => {
+    const html = status('failed', { problem: { ...V1, added: true } });
+    expect(html).toContain(escaped(mittrT('mittr.accounts.add.notSwitched')));
+    expect(html).not.toContain(escaped(mittrT('mittr.accounts.switch.failed')));
+    expect(html).toContain(V1.message);
+    expect(buttons(html)).toEqual([mittrT('mittr.accounts.switch.close')]);
+    expect(buttons(status('failed', { problem: { code: 'OTHER', message: 'raw', added: true } }))).toEqual([mittrT('mittr.accounts.switch.close')]);
+  });
+
+  test('an engine that refused to start shows why, Retry and a way back to each other account', () => {
+    const html = status('not-restarted', { problem: V1, others: [A], onContinueAs: noop });
+    expect(html).toContain(escaped(mittrT('mittr.accounts.switch.notRestarted')));
+    expect(html).toContain(V1.message);
+    expect(html).not.toContain(escaped(mittrT('mittr.accounts.switch.quitHint')));
+    expect(buttons(html)).toEqual([mittrT('mittr.signIn.continueAs', { name: 'Ann Lee' }), mittrT('mittr.accounts.switch.retry')]);
+  });
+
+  test('an error that is not the engine\'s own refusal keeps the plain words and actions', () => {
+    const raw = { code: null, message: 'EPIPE at socket' };
+    const stuck = status('not-restarted', { problem: raw, others: [A], onContinueAs: noop });
+    expect(stuck).not.toContain(raw.message);
+    expect(stuck).toContain(escaped(mittrT('mittr.accounts.switch.quitHint')));
+    expect(buttons(stuck)).toEqual([mittrT('mittr.accounts.switch.retry')]);
+    const failed = status('failed', { problem: raw });
+    expect(failed).not.toContain(raw.message);
+    expect(buttons(failed)).toEqual([mittrT('mittr.accounts.switch.retry'), mittrT('mittr.accounts.switch.close')]);
   });
 
   test('a failed request offers Retry and Close', () => {

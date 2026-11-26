@@ -68,6 +68,20 @@ test('translation values the product plugin rewrites are explained, keys are ids
   assert.deepEqual(result.leaks.map((hit) => [hit.text, hit.translation]), [['OpenCode Go', true]]);
 });
 
+test('a translation value written as a template without placeholders is still a translation', () => {
+  const source = 'const d={"a.title":`Quit OpenChamber\'s "app"`,"b.title":`Open ${x} OpenChamber`};';
+  const translations = {
+    keys: new Set(['a.title', 'b.title']),
+    values: new Map([
+      ['a.title', new Map([['Quit OpenChamber\'s "app"', ['Quit MittrCraft\'s "app"']]])],
+      ['b.title', new Map([['Open  OpenChamber', ['Open  MittrCraft']]])],
+    ]),
+  };
+  const result = classifyHits({ hits: scanSource({ file: 'web-dist/assets/fr.js', source }), allowlist: [], translations });
+  assert.deepEqual(texts(result.translated), ['Quit OpenChamber\'s "app"']);
+  assert.deepEqual(texts(result.leaks), [' OpenChamber']);
+});
+
 test('the same text outside a dictionary entry is not taken for a translation', () => {
   const translations = {
     keys: new Set(['nav.general']),
@@ -138,8 +152,8 @@ test('scanApp reads the plist, the web UI, the app files and the web server in a
     writeFiles(asarSource, {
       'dist-bundle/main.mjs': 'export const product = { appName: "OpenChamber" };',
       'node_modules/dep/index.js': 'module.exports = "OpenCode";',
-      'node_modules/@openchamber/web/server/lib/routes.js': 'res.json({ error: "OpenCode is restarting" });',
-      'node_modules/@openchamber/web/server/lib/routes.test.js': 'expect("OpenCode is restarting");',
+      'node_modules/@openchamber/web/build/server/lib/routes.js': 'res.json({ error: "OpenCode is restarting" });',
+      'node_modules/@openchamber/web/build/server/lib/routes.test.js': 'expect("OpenCode is restarting");',
     });
     await loadAsar().createPackage(asarSource, path.join(resources, 'app.asar'));
 
@@ -153,7 +167,7 @@ test('scanApp reads the plist, the web UI, the app files and the web server in a
     assert.equal(result.fileCount, 5);
     assert.deepEqual(result.leaks.map((hit) => `${hit.file}:${hit.line}:${hit.text}`), [
       'web-dist/assets/main-Ab12Cd34.js:1:Quit OpenChamber?',
-      'app.asar/node_modules/@openchamber/web/server/lib/routes.js:1:OpenCode is restarting',
+      'app.asar/node_modules/@openchamber/web/build/server/lib/routes.js:1:OpenCode is restarting',
     ]);
     assert.deepEqual(result.allowlisted.map((hit) => hit.file), ['app.asar/dist-bundle/main.mjs']);
     assert.deepEqual(result.unusedAllowlist, []);

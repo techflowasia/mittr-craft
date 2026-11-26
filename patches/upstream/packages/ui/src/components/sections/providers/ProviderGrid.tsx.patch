@@ -1,0 +1,20 @@
+diff --git a/packages/ui/src/components/sections/providers/ProviderGrid.tsx b/packages/ui/src/components/sections/providers/ProviderGrid.tsx
+index 83c19e1f4..c186ad961 100644
+--- a/packages/ui/src/components/sections/providers/ProviderGrid.tsx
++++ b/packages/ui/src/components/sections/providers/ProviderGrid.tsx
+@@ -5,6 +5,7 @@ import { SettingsProjectSelector } from '@/components/sections/shared/SettingsPr
+ import { ProviderLogo } from '@/components/ui/ProviderLogo';
+ import { Icon } from '@/components/icon/Icon';
+ import { useI18n, type I18nKey } from '@/lib/i18n';
++import { ProductSlot } from '@/lib/product-plugins';
+ import { runtimeFetch } from '@/lib/runtime-fetch';
+ import { rankByQuery } from '@/lib/search/fuzzySearch';
+ import type { Model, Provider } from '@/lib/opencode/model';
+@@ -208,6 +209,7 @@ export const ProviderGrid: React.FC<ProviderGridProps> = ({ providers, integrati
+       className="[&>section:first-of-type]:pt-8"
+     >
+       {locked ? <EnterpriseProvidersNotice directory={directory} integrations={integrations} /> : null}
++      <ProductSlot name="providers-page" />
+       <SettingsCardToolbar
+         search={providers.length > 0 ? { value: query, onChange: setQuery, placeholder: t('settings.providers.grid.searchPlaceholder') } : null}
+         actions={<SettingsProjectSelector className="min-w-0 w-56" />}

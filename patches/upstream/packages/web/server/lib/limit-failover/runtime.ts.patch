@@ -1,0 +1,26 @@
+diff --git a/packages/web/server/lib/limit-failover/runtime.ts b/packages/web/server/lib/limit-failover/runtime.ts
+index 885507a6e..db1ed117d 100644
+--- a/packages/web/server/lib/limit-failover/runtime.ts
++++ b/packages/web/server/lib/limit-failover/runtime.ts
+@@ -68,9 +68,20 @@ const PLUGIN_PACKAGE_JSON = `${JSON.stringify({
+ const PLUGIN_SOURCE = `const LIMIT_ERROR_TYPES = new Set(["provider.quota", "provider.free-limit", "provider.budget-limit", "provider.model-budget-limit", "provider.rate-limit"])
+ const ROUTE = ${JSON.stringify(ROUTE)}
+ 
++const TOKEN_SLOT = Symbol.for("openchamber.agent-tool.token")
++
++const keepCallbackToken = () => {
++  const token = process.env.OPENCHAMBER_AGENT_TOOL_TOKEN
++  if (token !== undefined) globalThis[TOKEN_SLOT] = token
++  delete process.env.OPENCHAMBER_AGENT_TOOL_TOKEN
++  return globalThis[TOKEN_SLOT]
++}
++
++keepCallbackToken()
++
+ const callback = () => {
+   const base = process.env.OPENCHAMBER_AGENT_TOOL_URL
+-  const token = process.env.OPENCHAMBER_AGENT_TOOL_TOKEN
++  const token = keepCallbackToken()
+   if (!base || !token || !URL.canParse(base)) return null
+   return { url: new URL(ROUTE, base).href, token }
+ }

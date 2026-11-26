@@ -1,17 +1,9 @@
-import { buildChangesTree, compactDirectory, type ChangesTreeDirectoryNode } from './git/changesTree';
+import { buildChangesTree, changedPathName as baseName, compactDirectory, type ChangesTreeDirectoryNode } from './git/changesTree';
 
 type DiffTreeRow<F extends { path: string }> =
   | { kind: 'directory'; key: string; depth: number; path: string; label: string; fileCount: number; expanded: boolean }
   | { kind: 'file'; key: string; depth: number; name: string; file: F };
 
-const baseName = (path: string): string => path.slice(path.lastIndexOf('/') + 1);
-
-/**
- * Flattens changed files into visible tree rows. A directory whose only
- * content is one subdirectory merges into it (`packages/ui/src`), so deep
- * monorepo paths don't cost one row per segment. Directories are expanded
- * unless their (merged) path is in `collapsed`.
- */
 export const buildDiffTreeRows = <F extends { path: string }>(
   files: F[],
   collapsed: ReadonlySet<string>,

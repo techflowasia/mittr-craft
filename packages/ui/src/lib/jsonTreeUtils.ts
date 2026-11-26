@@ -1,7 +1,3 @@
-/**
- * JSON Tree utilities for interactive JSON viewing.
- * Provides parsing, tree building, flattening, and path utilities.
- */
 
 type JsonTreeNodeType = 'object' | 'array' | 'string' | 'number' | 'boolean' | 'null';
 
@@ -17,10 +13,9 @@ export interface JsonTreeNode {
   childCount?: number;
 }
 
-export interface FlatJsonNode {
-  node: JsonTreeNode;
-  isExpanded: boolean;
-}
+export type FlatJsonNode =
+  | { kind: 'node'; key: string; node: JsonTreeNode; isExpanded: boolean }
+  | { kind: 'close'; key: string; node: JsonTreeNode };
 
 export interface JsonTreeOptions {
   maxDepth?: number;
@@ -125,12 +120,13 @@ export function flattenTree(root: JsonTreeNode | null, collapsedPaths: Set<strin
 
   function walk(node: JsonTreeNode) {
     const isExpanded = !collapsedPaths.has(node.id);
-    result.push({ node, isExpanded });
+    result.push({ kind: 'node', key: node.id, node, isExpanded });
 
-    if (node.isExpandable && isExpanded && node.children) {
+    if (isExpanded && node.children && node.children.length > 0) {
       for (const child of node.children) {
         walk(child);
       }
+      result.push({ kind: 'close', key: `close:${node.id}`, node });
     }
   }
 

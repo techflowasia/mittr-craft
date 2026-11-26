@@ -1,0 +1,179 @@
+diff --git a/packages/ui/src/sync/session-retry.test.ts b/packages/ui/src/sync/session-retry.test.ts
+new file mode 100644
+index 000000000..073607186
+--- /dev/null
++++ b/packages/ui/src/sync/session-retry.test.ts
+@@ -0,0 +1,173 @@
++import { test } from 'bun:test'
++import assert from 'node:assert/strict'
++import { createSessionRetry, canRetryTurn, CONTINUATION_PROMPT } from './session-retry'
++import { OpencodeApiError } from '@/lib/opencode/client'
++import { markAmbiguousTransportFailure } from '@/lib/relay/transport-error'
++import type { Session, Message, SessionStatus } from '@/lib/opencode/model'
++
++const session: Session = { id: 's', directory: '/project', projectID: 'p', title: '', cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 2, idle: 3 }, outcome: 'failed', model: { providerID: 'provider', id: 'model' } }
++const message: Message = { id: 'm', sessionID: 's', role: 'assistant', agent: 'build', providerID: 'provider', modelID: 'model', finish: 'error', time: { created: 2, completed: 3 } }
++function fixture() {
++  let active = false
++  let pending = false
++  let interrupted = true
++  let runtime = 'a'
++  let sends = 0
++  let interrupts = 0
++  let unknown = false
++  let staysBusy = false
++  let form = false
++  let loseResponse = false
++  let rejection: Error | null = null
++  let preflightFailure = false
++  let newerUser = false
++  let newUserOnStatus = false
++  let assistantID = 'm'
++  let deepTurn = false
++  let newerDuringPreparation = false
++  const retry = createSessionRetry({
++    runtimeKey: () => runtime,
++    client: {
++      getSession: async () => session,
++      getSessionMessages: async (_id, options) => deepTurn && !options.cursor ? { items: Array.from({ length: 50 }, (_, index) => ({ info: { ...message, id: `step-${index}` }, parts: [] })), cursor: { next: 'older' } } : ({ items: [{ info: { ...message, id: assistantID }, parts: [] }, { info: { id: newerUser ? 'new-user' : 'u', sessionID: 's', role: 'user', time: { created: 1 } }, parts: [] }], cursor: {} }),
++      getActiveSessionStatuses: async (): Promise<Record<string, SessionStatus> | null> => { if (newUserOnStatus) newerUser = true; return unknown ? null : active ? { s: { type: 'busy' } } : {} },
++      listPendingPermissions: async () => pending ? [{ sessionID: 's' }] : [],
++      listPendingForms: async () => form ? [{ sessionID: 's' }] : [],
++      abortSession: async () => { interrupts++; if (interrupted && !staysBusy) active = false; return interrupted },
++      sendMessage: async (input) => { if (preflightFailure) { preflightFailure = false; throw new Error('circuit open') }; assert.equal(input.text, CONTINUATION_PROMPT); assert.equal(input.id, 's'); if (newerDuringPreparation) newerUser = true; await input.beforePromptDispatch(); input.onPromptDispatch(); sends++; if (loseResponse) throw new Error('response lost'); if (rejection) { const error = rejection; rejection = null; throw error } return 'new' },
++    },
++  })
++  return { retry, setActive: () => { active = true }, setPending: () => { pending = true }, failInterrupt: () => { interrupted = false }, switchRuntime: () => { runtime = 'b' }, setUnknown: () => { unknown = true }, keepBusy: () => { staysBusy = true }, setForm: () => { form = true }, loseResponse: () => { loseResponse = true }, rejectWith: (error: Error) => { rejection = error }, failPreflight: () => { preflightFailure = true }, advanceAssistant: () => { assistantID = 'next-step' }, admitNewUserDuringStatus: () => { newUserOnStatus = true }, useDeepTurn: () => { deepTurn = true }, admitDuringPreparation: () => { newerDuringPreparation = true }, counts: () => ({ sends, interrupts }) }
++}
++test('only failed, interrupted or explicitly truncated latest turns qualify', () => {
++  assert.equal(canRetryTurn(session, message), true)
++  assert.equal(canRetryTurn({ ...session, outcome: 'succeeded' }, { ...message, finish: 'stop' }), false)
++  assert.equal(canRetryTurn({ ...session, outcome: 'succeeded' }, { ...message, finish: 'length' }), true)
++  assert.equal(canRetryTurn({ ...session, outcome: 'succeeded' }, { id: 'u', sessionID: 's', role: 'user', time: { created: 1 } }), true)
++})
++test('continues once across concurrent and stale-view clicks, without replay', async () => {
++  const f = fixture()
++  await Promise.all([f.retry('s', '/project', 'u', async () => true), f.retry('s', '/project', 'u', async () => true)])
++  await assert.rejects(f.retry('s', '/project', 'u', async () => true), /already continued/)
++  assert.deepEqual(f.counts(), { sends: 1, interrupts: 0 })
++})
++test('busy continuation requires confirmation and successful interruption', async () => {
++  const f = fixture(); f.setActive()
++  await f.retry('s', '/project', 'u', async () => false)
++  assert.deepEqual(f.counts(), { sends: 0, interrupts: 0 })
++  f.failInterrupt()
++  await assert.rejects(f.retry('s', '/project', 'u', async () => true))
++  assert.equal(f.counts().sends, 0)
++})
++test('pending permission is not a hang and is never interrupted', async () => {
++  const f = fixture(); f.setActive(); f.setPending()
++  await assert.rejects(f.retry('s', '/project', 'u', async () => true))
++  assert.deepEqual(f.counts(), { sends: 0, interrupts: 0 })
++})
++test('successful interrupt still requires authoritative idle', async () => {
++  const f = fixture(); f.setActive(); f.keepBusy()
++  await assert.rejects(f.retry('s', '/project', 'u', async () => true))
++  assert.deepEqual(f.counts(), { sends: 0, interrupts: 1 })
++})
++test('unknown activity and pending forms block continuation', async () => {
++  const f = fixture(); f.setUnknown()
++  await assert.rejects(f.retry('s', '/project', 'u', async () => true))
++  const g = fixture(); g.setForm()
++  await assert.rejects(g.retry('s', '/project', 'u', async () => true))
++  assert.equal(f.counts().sends + g.counts().sends, 0)
++})
++test('successful manual stop continues only after idle', async () => {
++  const f = fixture(); f.setActive()
++  await f.retry('s', '/project', 'u', async () => true)
++  assert.deepEqual(f.counts(), { sends: 1, interrupts: 1 })
++})
++test('lost POST response does not permit duplicate continuation', async () => {
++  const f = fixture(); f.loseResponse()
++  await assert.rejects(f.retry('s', '/project', 'u', async () => true))
++  await assert.rejects(f.retry('s', '/project', 'u', async () => true), /already continued/)
++  assert.equal(f.counts().sends, 1)
++})
++test('a prompt the engine answered with a rejection can be retried', async () => {
++  for (const status of [400, 404, 409, 500]) {
++    const f = fixture(); f.rejectWith(new OpencodeApiError('session.prompt', 'refused', { status }))
++    await assert.rejects(f.retry('s', '/project', 'u', async () => true), /refused/)
++    await f.retry('s', '/project', 'u', async () => true)
++    assert.equal(f.counts().sends, 2)
++  }
++})
++test('a failure that may have admitted the prompt is not sent again, and says so every time', async () => {
++  const failures = [
++    new OpencodeApiError('session.prompt', 'gateway', { status: 503 }),
++    new OpencodeApiError('session.prompt', 'gateway', { status: 504 }),
++    markAmbiguousTransportFailure(new OpencodeApiError('session.prompt', 'transport failure', {})),
++  ]
++  for (const failure of failures) {
++    const f = fixture(); f.rejectWith(failure)
++    await assert.rejects(f.retry('s', '/project', 'u', async () => true))
++    await assert.rejects(f.retry('s', '/project', 'u', async () => true), /already continued/)
++    await assert.rejects(f.retry('s', '/project', 'u', async () => true), /already continued/)
++    assert.equal(f.counts().sends, 1)
++  }
++})
++test('a second view clicking during a continuation shares its outcome', async () => {
++  const f = fixture(); f.setUnknown()
++  const results = await Promise.allSettled([f.retry('s', '/project', 'u', async () => true), f.retry('s', '/project', 'u', async () => true)])
++  assert.deepEqual(results.map((result) => result.status), ['rejected', 'rejected'])
++  const g = fixture()
++  const other = await Promise.allSettled([g.retry('s', '/project', 'u', async () => true), g.retry('s', '/project', 'newer', async () => true)])
++  assert.deepEqual(other.map((result) => result.status), ['fulfilled', 'rejected'])
++  assert.equal(g.counts().sends, 1)
++})
++test('proven pre-dispatch rejection leaves retry available', async () => {
++  const f = fixture(); f.failPreflight()
++  await assert.rejects(f.retry('s', '/project', 'u', async () => true))
++  await f.retry('s', '/project', 'u', async () => true)
++  assert.equal(f.counts().sends, 1)
++})
++test('assistant steps arriving during confirmation remain the same user turn', async () => {
++  const f = fixture(); f.setActive()
++  await f.retry('s', '/project', 'u', async () => { f.advanceAssistant(); return true })
++  assert.deepEqual(f.counts(), { sends: 1, interrupts: 1 })
++})
++test('new user during slower snapshot reads prevents abort and send', async () => {
++  for (const active of [false, true]) {
++    const f = fixture(); if (active) f.setActive(); f.admitNewUserDuringStatus()
++    await assert.rejects(f.retry('s', '/project', 'u', async () => true))
++    assert.deepEqual(f.counts(), { sends: 0, interrupts: 0 })
++  }
++})
++test('turn identity paginates past fifty assistant records and rejects a newer user at depth', async () => {
++  const f = fixture(); f.useDeepTurn()
++  await f.retry('s', '/project', 'u', async () => true)
++  assert.equal(f.counts().sends, 1)
++  const g = fixture(); g.useDeepTurn(); g.admitNewUserDuringStatus(); g.setActive()
++  await assert.rejects(g.retry('s', '/project', 'u', async () => true))
++  assert.deepEqual(g.counts(), { sends: 0, interrupts: 0 })
++})
++test('new user admitted during client preparation blocks actual prompt dispatch', async () => {
++  const f = fixture(); f.admitDuringPreparation()
++  await assert.rejects(f.retry('s', '/project', 'u', async () => true))
++  assert.equal(f.counts().sends, 0)
++})
++test('stale turn cannot continue', async () => {
++  const f = fixture()
++  await assert.rejects(f.retry('s', '/project', 'older', async () => true))
++  assert.equal(f.counts().sends, 0)
++})
++test('runtime switch during confirmation cannot interrupt or send elsewhere', async () => {
++  const f = fixture(); f.setActive()
++  await assert.rejects(f.retry('s', '/project', 'u', async () => { f.switchRuntime(); return true }))
++  assert.deepEqual(f.counts(), { sends: 0, interrupts: 0 })
++})
++
++test('a continuation that fails before its first wait can be tried again', async () => {
++  let calls = 0
++  const retry = createSessionRetry({
++    runtimeKey: () => 'a',
++    client: new Proxy({}, { get: () => () => { calls++; throw new Error('not connected') } }) as never,
++  })
++  await assert.rejects(retry('s', '/project', 'u', async () => true), /not connected/)
++  const first = calls
++  await assert.rejects(retry('s', '/project', 'u', async () => true), /not connected/)
++  assert.ok(calls > first)
++})

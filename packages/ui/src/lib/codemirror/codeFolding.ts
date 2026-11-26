@@ -2,9 +2,6 @@ import type { Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { foldGutter, foldKeymap } from '@codemirror/language';
 
-// Fold arrows in the gutter plus fold/unfold of the block at the cursor
-// (Cmd+Alt+[ / ] on macOS, Ctrl+Shift+[ / ] elsewhere). Fold-all and
-// unfold-all are left out: their Ctrl+Alt+[ / ] chords cycle favourite models.
 const FOLD_AT_CURSOR_KEYMAP = foldKeymap.filter((binding) => binding.mac !== undefined);
 
 const createFoldMarker = (open: boolean): HTMLElement => {
@@ -24,9 +21,11 @@ export const codeFolding = (): Extension => [
   foldGutter({ markerDOM: createFoldMarker }),
   keymap.of(FOLD_AT_CURSOR_KEYMAP),
   EditorView.theme({
-    '.cm-foldGutter .cm-gutterElement': { display: 'flex', alignItems: 'center', justifyContent: 'center' },
-    '.cm-fold-marker': { display: 'inline-flex', width: '14px', height: '14px', cursor: 'pointer', opacity: '0.6' },
+    '.cm-foldGutter': { width: '12px' },
+    '.cm-foldGutter .cm-gutterElement': { display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0' },
+    '.cm-gutters:has(> .cm-foldGutter)': { paddingRight: '2px' },
+    '.cm-fold-marker': { display: 'inline-flex', width: '12px', height: '12px', cursor: 'pointer', opacity: '0.6' },
     '.cm-fold-marker:hover': { opacity: '1' },
-    '.cm-fold-marker svg': { width: '14px', height: '14px', fill: 'currentColor' },
+    '.cm-fold-marker svg': { width: '12px', height: '12px', fill: 'currentColor' },
   }),
 ];

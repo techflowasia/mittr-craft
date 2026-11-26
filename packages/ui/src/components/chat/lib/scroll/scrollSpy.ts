@@ -1,3 +1,5 @@
+import { cancelWhenLayoutSettled, isLayoutAnimating, runWhenLayoutSettled } from '@/lib/layoutAnimation';
+
 type OffsetTurn = {
     id: string;
     top: number;
@@ -11,14 +13,8 @@ type ScrollSpyInput = {
     MutationObserver?: typeof globalThis.MutationObserver;
 };
 
-// Reading line offset below the container top. The active turn is the last
-// one whose top edge sits at or above this line — a monotonic rule that stays
-// stable while scrolling inside a long turn (no visibility-ratio flip-flop).
-const READ_LINE_OFFSET_PX = 100;
+const READ_LINE_VIEWPORT_FACTOR = 0.5;
 
-// The chat treats its bottom spacer as part of the pinned zone. Match that
-// boundary here so the rail reaches the final prompt even when its top never
-// crosses the reading line before the viewport enters that spacer.
 const BOTTOM_ANCHOR_MIN_PX = 48;
 const BOTTOM_ANCHOR_VIEWPORT_FACTOR = 0.1;
 
@@ -69,11 +65,15 @@ export const createScrollSpy = (input: ScrollSpyInput) => {
     let active: string | undefined;
     let dirty = true;
 
-    const nodes = new Map<string, HTMLElement>();
+    const nodes = new Map<HTMLElement, string>();
     let offsets: OffsetTurn[] = [];
 
     const schedule = () => {
         if (frame !== undefined) {
+            return;
+        }
+        if (isLayoutAnimating()) {
+            runWhenLayoutSettled(schedule);
             return;
         }
         frame = raf(() => {
@@ -91,8 +91,8 @@ export const createScrollSpy = (input: ScrollSpyInput) => {
         }
 
         const baseTop = container.getBoundingClientRect().top;
-        offsets = [...nodes].map(([key, element]) => ({
-            id: key,
+        offsets = [...nodes].map(([element, id]) => ({
+            id,
             top: element.getBoundingClientRect().top - baseTop + container.scrollTop,
         }));
         offsets.sort((a, b) => a.top - b.top);
@@ -111,7 +111,10 @@ export const createScrollSpy = (input: ScrollSpyInput) => {
 
         const next = isInBottomAnchorZone(container)
             ? offsets[offsets.length - 1]?.id
-            : pickOffsetTurnId(offsets, container.scrollTop + READ_LINE_OFFSET_PX);
+            : pickOffsetTurnId(
+                offsets,
+                container.scrollTop + container.clientHeight * READ_LINE_VIEWPORT_FACTOR,
+            );
         if (!next || next === active) {
             return;
         }
@@ -139,7 +142,7 @@ export const createScrollSpy = (input: ScrollSpyInput) => {
                 }, 100);
             });
             ro.observe(container);
-            for (const element of nodes.values()) {
+            for (const element of nodes.keys()) {
                 ro.observe(element);
             }
         }
@@ -176,13 +179,8 @@ export const createScrollSpy = (input: ScrollSpyInput) => {
         observe();
     };
 
-    const register = (element: HTMLElement, key: string) => {
-        const previous = nodes.get(key);
-        if (previous && previous !== element) {
-            ro?.unobserve(previous);
-        }
-
-        nodes.set(key, element);
+    const register = (element: HTMLElement, id: string) => {
+        nodes.set(element, id);
         if (ro) {
             ro.observe(element);
         }
@@ -190,14 +188,13 @@ export const createScrollSpy = (input: ScrollSpyInput) => {
         schedule();
     };
 
-    const unregister = (key: string) => {
-        const element = nodes.get(key);
-        if (!element) {
+    const unregister = (element: HTMLElement) => {
+        if (!nodes.has(element)) {
             return;
         }
 
         ro?.unobserve(element);
-        nodes.delete(key);
+        nodes.delete(element);
         dirty = true;
         schedule();
     };
@@ -208,7 +205,7 @@ export const createScrollSpy = (input: ScrollSpyInput) => {
     };
 
     const clear = () => {
-        for (const element of nodes.values()) {
+        for (const element of nodes.keys()) {
             ro?.unobserve(element);
         }
 
@@ -223,6 +220,7 @@ export const createScrollSpy = (input: ScrollSpyInput) => {
             caf(frame);
         }
         frame = undefined;
+        cancelWhenLayoutSettled(schedule);
         clearTimeout(roDebounce);
         roDebounce = undefined;
         clear();

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { leakReport, passed } from './prove-engine-child-env.mjs';
+import { codeModeCallOf, leakReport, passed } from './prove-engine-child-env.mjs';
 
 const VALUES = { ACME_TOKEN: 'acme-value-1', ACME_PASSWORD: 'acme-value-2' };
 
@@ -29,4 +29,15 @@ test('the proof passes only when nothing leaked, the shell was refused and both 
   assert.equal(passed({ ...clean, agentTool: { reachedWithToken: false } }), false);
   assert.equal(passed({ ...clean, mittrTool: { reachedWithToken: false } }), false);
   assert.equal(passed({ ...clean, guard: { checked: 3, refused: 1 } }), false);
+});
+
+const system = (text) => ({ messages: [{ role: 'system', content: text }, { role: 'user', content: 'go' }] });
+
+test('a Code Mode tool is called through execute, by its listed path or by the namespace the catalog names without showing it', () => {
+  const listed = system('# Code Mode\n## Available tools\n- acme_probe (1 tool)\n  - tools.acme_probe(input: {}): Promise<unknown> // Ping');
+  assert.deepEqual(codeModeCallOf(listed, 'acme_probe', { action: 'probe.ping' }), { name: 'execute', arguments: { code: 'return await tools.acme_probe({"action":"probe.ping"})' } });
+  const hidden = { messages: [{ role: 'system', content: [{ type: 'text', text: '# Code Mode\n- openchamber (1 tool, none shown) // Projects' }] }] };
+  assert.deepEqual(codeModeCallOf(hidden, 'openchamber', {}), { name: 'execute', arguments: { code: 'return await tools["openchamber"]({})' } });
+  assert.equal(codeModeCallOf(system('no catalog here'), 'openchamber', {}), null);
+  assert.equal(codeModeCallOf(listed, 'openchamber', {}), null);
 });

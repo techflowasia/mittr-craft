@@ -1,55 +1,49 @@
 import * as React from 'react';
 import { OpenChamberLogo } from '@/components/ui/OpenChamberLogo';
-import { AppStartupOverlay } from '@/components/ui/AppStartupOverlay';
 import { Icon } from '@/components/icon/Icon';
+import { Spinner } from '@/components/ui/spinner';
 import { Button } from '@/components/ui/button';
 import { DesktopHostSwitcherInline } from '@/components/desktop/DesktopHostSwitcher';
 import { useI18n } from '@/lib/i18n';
-import { hasCompatibleManagedDesktopOpenCode } from '@/lib/desktop';
 import { subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
-import { fetchOpenCodeCompatibility, recoverOpenCode, type OpenCodeCompatibility } from '@/lib/opencode/compatibility';
+import { recoverOpenCode, type OpenCodeCompatibility } from '@/lib/opencode/compatibility';
+import { runCompatibilityCheck, takeCompatibilityCheck, type CompatibilityCheck } from './openCodeCompatibilityCheck';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
-export const OpenCodeCompatibilityGate: React.FC<React.PropsWithChildren> = ({ children }) => {
+export const OpenCodeCompatibilityGate: React.FC<React.PropsWithChildren<{ enabled?: boolean }>> = ({ children, enabled = true }) => {
   const { t } = useI18n();
   const [compatibility, setCompatibility] = React.useState<OpenCodeCompatibility | null>(null);
-  const [checked, setChecked] = React.useState(false);
   const titleId = React.useId();
   const [operation, setOperation] = React.useState<'install-v2' | 'reconnect' | null>(null);
   const [failed, setFailed] = React.useState(false);
   const generation = React.useRef(0);
 
   React.useEffect(() => {
+    if (!enabled) return;
     let mounted = true;
-    const check = async () => {
+    const check = async (request: CompatibilityCheck) => {
       const revision = ++generation.current;
       try {
-        if (await hasCompatibleManagedDesktopOpenCode()) return;
-        if (!mounted || revision !== generation.current) return;
-        const result = await fetchOpenCodeCompatibility();
-        if (mounted && revision === generation.current) setCompatibility(result);
+        const result = await request;
+        if (result && mounted && revision === generation.current) setCompatibility(result);
       } catch {
         // An unavailable host or an older OpenChamber host keeps its existing
         // connection UI. Failed reads never dismiss a known incompatible CLI.
-      } finally {
-        if (mounted && revision === generation.current) setChecked(true);
       }
     };
-    void check();
+    void check(takeCompatibilityCheck());
     const unsubscribe = subscribeRuntimeEndpointChanged(() => {
       generation.current += 1;
       setCompatibility(null);
-      setChecked(false);
       setOperation(null);
       setFailed(false);
-      void check();
+      void check(runCompatibilityCheck());
     });
     return () => { mounted = false; generation.current += 1; unsubscribe(); };
-  }, []);
+  }, [enabled]);
 
   React.useEffect(() => {
     if (compatibility?.state === 'incompatible') {
-      // The application cannot initialize against v1. Recovery owns the screen
-      // before App mounts, including dismissal of the HTML loading overlay.
       document.getElementById('initial-loading')?.remove();
     }
   }, [compatibility]);
@@ -71,13 +65,9 @@ export const OpenCodeCompatibilityGate: React.FC<React.PropsWithChildren> = ({ c
     }
   };
 
-  if (!checked) {
-    return <AppStartupOverlay ready={false} />;
-  }
-  if (compatibility?.state !== 'incompatible') return <>{children}</>;
+  if (!enabled || compatibility?.state !== 'incompatible') return <>{children}</>;
   const external = compatibility.installation === 'external';
   const bundled = compatibility.installation === 'bundled';
-  // A 2.x below the minimum needs an update, not the v1 → v2 move.
   const minimum = compatibility.minimumVersion;
   const outdated = Boolean(minimum && compatibility.version?.startsWith('2.'));
   const descriptionKey = bundled
@@ -86,7 +76,7 @@ export const OpenCodeCompatibilityGate: React.FC<React.PropsWithChildren> = ({ c
       ? external ? 'opencodeCompatibility.outdatedExternal' : 'opencodeCompatibility.outdatedLocal'
       : external ? 'opencodeCompatibility.external' : 'opencodeCompatibility.local';
   return (
-    <section className="app-region-drag flex h-full min-h-0 items-center justify-center overflow-y-auto bg-background px-6 py-10 text-foreground select-none" aria-labelledby={titleId}>
+    <ScrollableOverlay as="section" outerClassName="h-full min-h-0 bg-background" className="app-region-drag flex items-center justify-center px-6 py-10 text-foreground select-none" aria-labelledby={titleId} disableHorizontal>
       <div className="flex w-full max-w-sm flex-col items-center text-center">
         <OpenChamberLogo width={48} height={48} />
         <h1 id={titleId} className="mt-6 text-xl font-semibold tracking-tight">{t(outdated ? 'opencodeCompatibility.outdatedTitle' : 'opencodeCompatibility.title')}</h1>
@@ -101,7 +91,6 @@ export const OpenCodeCompatibilityGate: React.FC<React.PropsWithChildren> = ({ c
             <span className="text-foreground">{outdated ? `${minimum}+` : '2.x'}</span>
           </div>
         )}
-        {/* With several installs, the path tells which one OpenChamber runs. */}
         {compatibility.binary && (
           <p className="mt-2 max-w-full break-all font-mono text-xs text-muted-foreground select-text">{compatibility.binary}</p>
         )}
@@ -109,12 +98,12 @@ export const OpenCodeCompatibilityGate: React.FC<React.PropsWithChildren> = ({ c
         <div className="app-region-no-drag mt-7 flex flex-wrap items-center justify-center gap-2">
           {compatibility.canInstall && (
             <Button disabled={operation !== null} onClick={() => void recover('install-v2')}>
-              <Icon name={operation === 'install-v2' ? 'refresh' : 'download'} className={operation === 'install-v2' ? 'size-4 animate-spin' : 'size-4'} />
+              {operation === 'install-v2' ? <Spinner className="size-4" /> : <Icon name="download" className="size-4" />}
               <span role={operation === 'install-v2' ? 'status' : undefined}>{t(operation === 'install-v2' ? 'opencodeCompatibility.installing' : outdated ? 'opencodeCompatibility.update' : 'opencodeCompatibility.install')}</span>
             </Button>
           )}
           <Button variant={compatibility.canInstall ? 'ghost' : 'default'} disabled={operation !== null} onClick={() => void recover('reconnect')}>
-            <Icon name="refresh" className={operation === 'reconnect' ? 'size-4 animate-spin' : 'size-4'} />
+            {operation === 'reconnect' ? <Spinner className="size-4" /> : <Icon name="refresh" className="size-4" />}
             <span role={operation === 'reconnect' ? 'status' : undefined}>{t(operation === 'reconnect' ? 'opencodeCompatibility.reconnecting' : 'opencodeCompatibility.reconnect')}</span>
           </Button>
         </div>
@@ -131,6 +120,6 @@ export const OpenCodeCompatibilityGate: React.FC<React.PropsWithChildren> = ({ c
           <DesktopHostSwitcherInline />
         </div>
       </div>
-    </section>
+    </ScrollableOverlay>
   );
 };

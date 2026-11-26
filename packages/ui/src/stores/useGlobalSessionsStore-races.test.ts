@@ -4,7 +4,14 @@ import type { Session } from "@/lib/opencode/model"
 import type { SessionPage } from "@/lib/opencode/client"
 
 import { opencodeClient } from "@/lib/opencode/client"
+import { flushPendingSessionWrites } from "@/sync/persist-cache"
 import { useGlobalSessionsStore } from "./useGlobalSessionsStore"
+
+// Every test starts from no pending global snapshot: a complete load of one
+// test would otherwise seed the next test's store.
+beforeEach(() => {
+  flushPendingSessionWrites()
+})
 
 type Deferred<T> = {
   promise: Promise<T>
@@ -115,6 +122,43 @@ describe("global session mutation reconciliation", () => {
     expect(useGlobalSessionsStore.getState().status).toBe("error")
   })
 
+  test("retains active and archived sessions after pagination stalls, then recovers on a complete refresh", async () => {
+    const active = session("active")
+    const archived = session("archived", "archived", 5)
+    useGlobalSessionsStore.getState().applySnapshot([active], [archived])
+    let calls = 0
+    opencodeClient.listSessionsPage = async () => {
+      calls += 1
+      return { sessions: [active], cursor: { next: "stalled" } }
+    }
+
+    const retained = await useGlobalSessionsStore.getState().loadSessions()
+
+    expect(calls).toBe(2)
+    expect(retained.activeSessions).toEqual([active])
+    expect(retained.archivedSessions).toEqual([archived])
+    expect(useGlobalSessionsStore.getState().status).toBe("error")
+
+    opencodeClient.listSessionsPage = async () => ({ sessions: [active, archived], cursor: {} })
+    await useGlobalSessionsStore.getState().loadSessions()
+
+    expect(useGlobalSessionsStore.getState().status).toBe("ready")
+    expect(useGlobalSessionsStore.getState().activeSessions).toEqual([active])
+    expect(useGlobalSessionsStore.getState().archivedSessions).toEqual([archived])
+  })
+
+  test("retains directory sessions when its pagination cannot establish completeness", async () => {
+    const active = { ...session("active"), directory: "/source" }
+    const archived = { ...session("archived", "archived", 5), directory: "/source" }
+    useGlobalSessionsStore.getState().applySnapshot([active], [archived])
+    opencodeClient.listSessionsPage = async () => ({ sessions: [active], cursor: { next: "stalled" } })
+
+    const retained = await useGlobalSessionsStore.getState().refreshSessionsForDirectories(["/source"])
+
+    expect(retained.activeSessions).toEqual([active])
+    expect(retained.archivedSessions).toEqual([archived])
+  })
+
   test("splits a restored session into the active list", async () => {
     const loading = useGlobalSessionsStore.getState().loadSessions()
 
@@ -152,6 +196,99 @@ describe("global session mutation reconciliation", () => {
 
     expect(useGlobalSessionsStore.getState().activeSessions.map((item) => item.id)).toEqual(["restored"])
     expect(useGlobalSessionsStore.getState().archivedSessions).toEqual([])
+  })
+})
+
+describe("live directory-store sessions offered to a load", () => {
+  const work = (state: "open" | "done") => ({ openchamber: { work: { state } } })
+  const inDirectory = (directory: string, base: Session, metadata?: Session["metadata"]): Session => {
+    const placed: Session = { ...base, directory }
+    if (metadata) placed.metadata = metadata
+    return placed
+  }
+
+  beforeEach(() => {
+    listRequest = deferred<Session[]>()
+    opencodeClient.listSessionsPage = listSessionsPage
+    useGlobalSessionsStore.getState().resetForRuntimeSwitch()
+  })
+
+  afterEach(() => {
+    opencodeClient.listSessionsPage = originalListSessionsPage
+  })
+
+  test("a directory refresh keeps the known record over an older live copy", async () => {
+    const closed = inDirectory("/repo", session("closed"), work("done"))
+    useGlobalSessionsStore.getState().applySnapshot([closed], [])
+    // Another directory's store still holds the session as it was before the
+    // user marked it done.
+    const liveCopy = inDirectory("/repo", session("closed"), work("open"))
+    const refreshing = useGlobalSessionsStore.getState().refreshSessionsForDirectories(["/worktree"], [liveCopy])
+
+    listRequest.resolve([])
+    await refreshing
+
+    expect(useGlobalSessionsStore.getState().activeSessions.map((item) => item.metadata)).toEqual([work("done")])
+  })
+
+  test("a directory refresh keeps the server's record over an older live copy", async () => {
+    const liveCopy = inDirectory("/repo", session("closed"), work("open"))
+    const refreshing = useGlobalSessionsStore.getState().refreshSessionsForDirectories(["/repo"], [liveCopy])
+
+    listRequest.resolve([inDirectory("/repo", session("closed"), work("done"))])
+    await refreshing
+
+    expect(useGlobalSessionsStore.getState().activeSessions.map((item) => item.metadata)).toEqual([work("done")])
+  })
+
+  test("a failed load keeps the known record over an older live copy", async () => {
+    const closed = inDirectory("/repo", session("closed"), work("done"))
+    useGlobalSessionsStore.getState().applySnapshot([closed], [])
+    const loading = useGlobalSessionsStore.getState().loadSessions([inDirectory("/repo", session("closed"), work("open"))])
+
+    listRequest.reject(new Error("unavailable"))
+    await loading
+
+    expect(useGlobalSessionsStore.getState().activeSessions.map((item) => item.metadata)).toEqual([work("done")])
+  })
+
+  test("a live copy does not bring an archived session back", async () => {
+    const archived = inDirectory("/repo", session("archived", "archived", 5))
+    useGlobalSessionsStore.getState().applySnapshot([], [archived])
+    const refreshing = useGlobalSessionsStore.getState().refreshSessionsForDirectories(
+      ["/worktree"],
+      [inDirectory("/repo", session("archived"))],
+    )
+
+    listRequest.resolve([])
+    await refreshing
+
+    expect(useGlobalSessionsStore.getState().activeSessions).toEqual([])
+    expect(useGlobalSessionsStore.getState().archivedSessions.map((item) => item.id)).toEqual(["archived"])
+  })
+
+  test("a live session the list does not hold yet is added", async () => {
+    const known = inDirectory("/repo", session("known"))
+    useGlobalSessionsStore.getState().applySnapshot([known], [])
+    const refreshing = useGlobalSessionsStore.getState().refreshSessionsForDirectories(
+      ["/worktree"],
+      [inDirectory("/other", session("unlisted"))],
+    )
+
+    listRequest.resolve([])
+    await refreshing
+
+    expect(useGlobalSessionsStore.getState().activeSessions.map((item) => item.id).sort()).toEqual(["known", "unlisted"])
+  })
+
+  test("a failed first load shows the live sessions", async () => {
+    const loading = useGlobalSessionsStore.getState().loadSessions([inDirectory("/repo", session("live"))])
+
+    listRequest.reject(new Error("unavailable"))
+    await loading
+
+    expect(useGlobalSessionsStore.getState().activeSessions.map((item) => item.id)).toEqual(["live"])
+    expect(useGlobalSessionsStore.getState().status).toBe("error")
   })
 })
 

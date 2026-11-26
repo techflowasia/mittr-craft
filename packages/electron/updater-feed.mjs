@@ -1,7 +1,38 @@
 import fs from 'node:fs';
+import { isDeepStrictEqual } from 'node:util';
 import { UPSTREAM_PRODUCT } from './product.mjs';
 
 export const PRODUCTION_UPDATER_FEED = UPSTREAM_PRODUCT.updaterFeed;
+
+export const CANARY_UPDATER_FEED = Object.freeze({
+  provider: 'generic',
+  url: 'https://github.com/openchamber/openchamber/releases/download/canary/',
+});
+
+export const STABLE_MIRROR_UPDATER_FEED = Object.freeze({
+  provider: 'generic',
+  url: 'https://downloads.openchamber.dev/desktop/stable/',
+});
+
+export const CANARY_MIRROR_UPDATER_FEED = Object.freeze({
+  provider: 'generic',
+  url: 'https://downloads.openchamber.dev/desktop/canary/',
+});
+
+export const MIRROR_FAILURE_BACKOFF_MS = 60 * 60 * 1000;
+
+export const pickUpdaterSource = ({ mirrorFailedAt = null, now = Date.now() } = {}) => (
+  mirrorFailedAt === null || now - mirrorFailedAt >= MIRROR_FAILURE_BACKOFF_MS ? 'mirror' : 'github'
+);
+
+export const isUpdateChannel = (value) => value === 'stable' || value === 'canary';
+
+export const isCanaryVersion = (version) => /-canary\./.test(String(version ?? ''));
+
+export const normalizeUpdateChannel = (value, appVersion) => {
+  if (isUpdateChannel(value)) return value;
+  return isCanaryVersion(appVersion) ? 'canary' : 'stable';
+};
 
 const isLoopbackHostname = (hostname) => {
   if (hostname === '::1' || hostname === '[::1]') return true;
@@ -33,13 +64,20 @@ export const resolveUpdaterFeed = ({
   environment = process.env,
   testBuild = false,
   productionFeed = PRODUCTION_UPDATER_FEED,
+  channel = 'stable',
+  source = 'github',
 } = {}) => {
+  const feed = !isDeepStrictEqual(productionFeed, PRODUCTION_UPDATER_FEED)
+    ? productionFeed
+    : channel === 'canary'
+      ? (source === 'mirror' ? CANARY_MIRROR_UPDATER_FEED : CANARY_UPDATER_FEED)
+      : (source === 'mirror' ? STABLE_MIRROR_UPDATER_FEED : PRODUCTION_UPDATER_FEED);
   if (environment.OPENCHAMBER_E2E !== '1'
     || testBuild !== true) {
-    return productionFeed;
+    return feed;
   }
 
   const url = parseLoopbackUpdaterUrl(environment.OPENCHAMBER_UPDATER_E2E_URL);
-  if (!url) return productionFeed;
+  if (!url) return feed;
   return { provider: 'generic', url };
 };

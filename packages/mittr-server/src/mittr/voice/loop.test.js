@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import '../../../../web/scripts/register-server-sources.mjs';
 
-import { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
 import { keyOf } from '../account-store.js';
 import { MITTR_TOOLS, MittrToolError, createMittrActionRegistry } from '../tools/registry.js';
 import { createVoiceConversation } from './conversation.js';
 import { runVoiceTurn } from './loop.js';
 import { VOICE_TOOLS } from './tools.js';
 
-const UPSTREAM = { control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS };
+const { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_SCHEDULE_ACTION_DEFINITIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } = await import('../../../../web/server/lib/openchamber-control/actions.js');
+
+const UPSTREAM = { control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, schedule: OPENCHAMBER_SCHEDULE_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS };
 const SAID = 'เปิดหน้าร้านแล้วอ่านราคาให้ฟังหน่อย';
 const ALL_ON = { control: true, web: true, chrome: true, computer: true };
 

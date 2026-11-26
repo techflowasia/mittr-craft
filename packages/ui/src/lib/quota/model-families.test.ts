@@ -130,3 +130,30 @@ describe('getDefaultModels for the claude provider', () => {
     expect(getDefaultModels('claude', models)).toEqual(models);
   });
 });
+
+describe('getDefaultModels for the OpenCode Zen provider', () => {
+  test('keeps every Zen model the workspace served', () => {
+    const models = ['big-pickle', 'minimax-m3.1-flash-free', 'mimo-v2.6-flash-free'];
+
+    expect(getDefaultModels('opencode', models)).toEqual(models);
+  });
+});
+
+describe('getDefaultModels and families for the antigravity provider', () => {
+  test('selects Gemini 3.x and Claude models for antigravity', () => {
+    const models = [
+      'gemini-3.8-flash',
+      'gemini-3.1-pro-high',
+      'claude-sonnet-5-5-low',
+      'claude-opus-5-5-high',
+      'gemini-2.0-flash',
+    ];
+
+    expect(getDefaultModels('antigravity', models)).toEqual([
+      'gemini-3.8-flash',
+      'gemini-3.1-pro-high',
+      'claude-sonnet-5-5-low',
+      'claude-opus-5-5-high',
+    ]);
+  });
+});

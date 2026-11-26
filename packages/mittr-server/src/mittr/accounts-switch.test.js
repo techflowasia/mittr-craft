@@ -36,7 +36,52 @@ const quietLogger = () => {
   return { warnings, log: () => {}, warn: (...args) => warnings.push(args.join(' ')), error: () => {} };
 };
 
-const harness = async (t, { sharedHistory = false, legacy = null, sessions = [], exchanges = [], fetchImpl = null, sync = async () => {}, cacheResults = [] } = {}) => {
+test('host account readiness is published only after cache and engine reach the target', async () => {
+  const events = [];
+  let active = 'a'; let launched = 'a';
+  const switcher = createAccountSwitcher({
+    store: { list: () => [{ userId: active, active: true }], engineHome: () => active, activate: id => { active = id; events.push('activate'); }, read: () => null },
+    opencode: {
+      beforeAccountMutation: async () => { events.push('drain'); return Symbol('transition'); },
+      launchedDataHome: () => launched,
+      refresh: async () => { launched = active; events.push('ready'); },
+      accountMutationSettled: async () => { events.push('settled'); },
+    },
+    engineDataHome: home => home,
+    applyCache: async () => { events.push('cache'); return true; }, sync: async () => {},
+  });
+  await switcher.switchTo('b');
+  assert.deepEqual(events, ['drain', 'activate', 'cache', 'ready', 'settled']);
+});
+
+test('queued reconciliation never reactivates an account superseded by another mutation', async () => {
+  let active = 'a'; let entered;
+  const started = new Promise(resolve => { entered = resolve; });
+  const held = deferred();
+  let first = true;
+  const switcher = createAccountSwitcher({
+    store: { list: () => [{ userId: active, active: true }], engineHome: () => active, activate: () => { throw new Error('stale activation'); }, read: () => null },
+    opencode: { refresh: async () => {} },
+    applyCache: async () => { if (first) { first = false; entered(); await held.promise; } return true; }, sync: async () => {},
+  });
+  const a = switcher.switchTo('a', { reconcile: true }); await started;
+  const b = switcher.switchTo('b', { reconcile: true });
+  active = 'c'; held.resolve();
+  await Promise.all([a, b]); assert.equal(active, 'c');
+});
+
+test('host readiness stays closed when engine cannot reach the account target', async () => {
+  let settled = 0;
+  const switcher = createAccountSwitcher({
+    store: { list: () => [{ userId: 'b', active: true }], engineHome: () => 'b', read: () => null },
+    opencode: { launchedDataHome: () => 'a', refresh: async () => {}, accountMutationSettled: async () => { settled++; } },
+    engineDataHome: home => home, applyCache: async () => true, sync: async () => {}, logger: quietLogger(),
+  });
+  await switcher.switchTo('b');
+  assert.equal(settled, 0);
+});
+
+const harness = async (t, { sharedHistory = false, legacy = null, sessions = [], exchanges = [], fetchImpl = null, sync = async () => {}, cacheResults = [], accountRefusal } = {}) => {
   const root = tempDataDir(t);
   const dataDir = path.join(root, 'data');
   const bases = engineBases({ homeDir: root, env: { MITTRCRAFT_ENGINE_HOME: path.join(root, 'engine') } });
@@ -59,14 +104,14 @@ const harness = async (t, { sharedHistory = false, legacy = null, sessions = [],
   const signIns = [];
   const logger = quietLogger();
   const engineEnvNow = () => engineEnv({ bases, accountHome: store.engineHome({ carryLegacy: false }), rule: ENGINE_DB_RULE });
-  const engine = { launched: null, joins: 0, failures: 0 };
+  const engine = { launched: null, joins: 0, failures: 0, error: null };
   const opencode = {
     refresh: async (reason) => {
       refreshes.push(reason);
       events.push('refresh');
       if (engine.failures > 0) {
         engine.failures -= 1;
-        throw new Error('engine did not come back');
+        throw engine.error ?? new Error('engine did not come back');
       }
       if (engine.joins > 0) {
         engine.joins -= 1;
@@ -121,6 +166,7 @@ const harness = async (t, { sharedHistory = false, legacy = null, sessions = [],
       return switcher.switchTo(next);
     },
     switchSettled: () => switcher.settledOnTarget(),
+    accountRefusal,
     logger,
   });
   return { auth, store, switcher, engine, bases, dataDir, refreshes, events, applied, syncs, switches, signIns, logger, engineEnvNow, call: await serve(t, app) };
@@ -132,6 +178,23 @@ const signIn = async (call) => {
 };
 
 const indexOf = (dataDir) => JSON.parse(fs.readFileSync(path.join(dataDir, 'mittr-accounts', 'index.json'), 'utf8'));
+
+test('direct account switching drains captured recovery before activating the target', async (t) => {
+  const { store } = await harness(t, { sessions: [A, B] });
+  const entered = deferred();
+  const drained = deferred();
+  const switcher = createAccountSwitcher({ store,
+    opencode: { beforeAccountMutation: async () => { entered.resolve(); await drained.promise; }, refresh: async () => {} },
+    applyCache: async () => true, sync: async () => {},
+  });
+  const change = switcher.switchTo('u-b');
+  const reached = await Promise.race([entered.promise.then(() => true), change.then(() => false)]);
+  try {
+    assert.equal(reached, true);
+    assert.equal(store.read().subject.userId, 'u-a');
+  } finally { drained.resolve(); }
+  assert.equal((await change).userId, 'u-b');
+});
 
 test('adding B keeps A signed in and activates B', async (t) => {
   const { call, store, dataDir } = await harness(t, { exchanges: [A, B] });
@@ -383,21 +446,112 @@ test('an engine that stays on the old home after two restarts is reported, and s
   assert.ok(logger.warnings.some((line) => line.includes('still on another account')), logger.warnings.join('\n'));
 });
 
-test('a restart that fails is logged and answered with engineRestarted false, and the next switch tries again', async (t) => {
+test('a restart that fails is logged and answered with engineRestarted false and why, and the next switch tries again, back to the first account too', async (t) => {
   const { switcher, engine, refreshes, logger, call } = await harness(t, { sessions: [A, B] });
-  engine.failures = 2;
+  engine.failures = 3;
+  const engineError = { code: null, message: 'engine did not come back' };
 
-  assert.deepEqual(await switcher.switchTo('u-b'), { signedIn: true, userId: 'u-b', displayName: 'B', engineRestarted: false });
+  assert.deepEqual(await switcher.switchTo('u-b'), { signedIn: true, userId: 'u-b', displayName: 'B', engineRestarted: false, engineError });
   assert.ok(logger.warnings.some((line) => line.includes('engine did not come back')), logger.warnings.join('\n'));
+  assert.equal(switcher.engineOnTarget(), false);
 
-  assert.deepEqual(await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' }), { status: 200, body: { signedIn: true, userId: 'u-a', displayName: 'A' } });
-  assert.deepEqual(refreshes, [SWITCHED]);
-
-  assert.deepEqual((await call('DELETE', '/api/mittr/auth/session')).body, { signedIn: true, userId: 'u-b', displayName: 'B', engineRestarted: false });
+  assert.deepEqual(await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' }), { status: 200, body: { signedIn: true, userId: 'u-a', displayName: 'A', engineRestarted: false, engineError } });
   assert.deepEqual(refreshes, [SWITCHED, SWITCHED]);
 
-  assert.deepEqual(await switcher.switchTo('u-b'), { signedIn: true, userId: 'u-b', displayName: 'B' });
+  assert.deepEqual((await call('DELETE', '/api/mittr/auth/session')).body, { signedIn: true, userId: 'u-b', displayName: 'B', engineRestarted: false, engineError });
   assert.deepEqual(refreshes, [SWITCHED, SWITCHED, SWITCHED]);
+
+  assert.deepEqual(await switcher.switchTo('u-b'), { signedIn: true, userId: 'u-b', displayName: 'B' });
+  assert.deepEqual(refreshes, [SWITCHED, SWITCHED, SWITCHED, SWITCHED]);
+});
+
+const V1_REFUSAL = { code: 'MITTR_ENGINE_V1_HISTORY', message: 'Your chats are still in the MittrCraft 1.x format' };
+
+for (const [host, launchedAfterStop] of [['still reports the home the engine ran on', (home) => home], ['reports none', () => null]]) {
+  test(`after an engine refused the target account and the host ${host}, switching back starts the engine again`, async (t) => {
+    const { call, switcher, engine, refreshes, bases } = await harness(t, { sessions: [A, B] });
+    engine.failures = 1;
+    engine.error = Object.assign(new Error(V1_REFUSAL.message), { code: V1_REFUSAL.code });
+
+    const refused = await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-b' });
+    assert.deepEqual(refused.body, { signedIn: true, userId: 'u-b', displayName: 'B', engineRestarted: false, engineError: V1_REFUSAL });
+    engine.launched = launchedAfterStop(engine.launched);
+    assert.equal(switcher.engineOnTarget(), false);
+    assert.equal(switcher.settledOnTarget(), false);
+
+    assert.deepEqual((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' })).body, { signedIn: true, userId: 'u-a', displayName: 'A' });
+    assert.deepEqual(refreshes, [SWITCHED, SWITCHED]);
+    assert.equal(engine.launched, bases.data);
+    assert.equal(switcher.settledOnTarget(), true);
+  });
+}
+
+test('an engine that came up on its own after a failed restart counts as running again', async (t) => {
+  const { switcher, engine, engineEnvNow } = await harness(t, { sessions: [A, B] });
+  engine.failures = 1;
+  await switcher.switchTo('u-b');
+  engine.launched = engineEnvNow().XDG_DATA_HOME;
+  assert.equal(switcher.engineOnTarget(), false);
+  switcher.engineReady();
+  assert.equal(switcher.engineOnTarget(), true);
+});
+
+test('with no engine running, an account is not on target but nothing runs on another account\'s home either', async (t) => {
+  const { switcher, engine, refreshes } = await harness(t, { sessions: [A, B] });
+  engine.launched = null;
+  assert.equal(switcher.engineOnTarget(), false);
+  assert.equal(switcher.engineOnAnotherHome(), false);
+  await switcher.correctEngineHome();
+  assert.deepEqual(refreshes, []);
+  assert.equal((await switcher.switchTo('u-a')).engineRestarted, undefined);
+  assert.deepEqual(refreshes, [SWITCHED]);
+});
+
+test('an engine MittrCraft does not manage, ready without a home, counts as on target', async (t) => {
+  const { switcher, engine, refreshes } = await harness(t, { sessions: [A, B] });
+  engine.launched = null;
+  switcher.engineReady();
+  assert.equal(switcher.engineOnTarget(), true);
+  assert.equal((await switcher.switchTo('u-b')).userId, 'u-b');
+  assert.deepEqual(refreshes, []);
+});
+
+test('an account whose chats the engine would refuse is not switched to, and the current one keeps running', async (t) => {
+  const asked = [];
+  const { call, store, switches, refreshes, switcher } = await harness(t, { sessions: [A, B], accountRefusal: async (userId) => { asked.push(userId); return userId === 'u-b' ? V1_REFUSAL : null; } });
+
+  assert.deepEqual(await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-b' }), { status: 409, body: { error: V1_REFUSAL.message, code: V1_REFUSAL.code } });
+  assert.deepEqual(asked, ['u-b']);
+  assert.equal(store.read().subject.userId, 'u-a');
+  assert.deepEqual([switches, refreshes], [[], []]);
+  assert.equal(switcher.settledOnTarget(), true);
+});
+
+test('the account list says why an added account was not switched to, until the next change', async (t) => {
+  const { call } = await harness(t, { sessions: [A], exchanges: [B], accountRefusal: async () => V1_REFUSAL });
+  assert.equal(Object.hasOwn((await call('GET', '/api/mittr/auth/accounts')).body, 'switchRefused'), false);
+  await signIn(call);
+  for (let read = 0; read < 2; read += 1) {
+    const { body } = await call('GET', '/api/mittr/auth/accounts');
+    assert.deepEqual(body.switchRefused, { userId: 'u-b', ...V1_REFUSAL });
+    assert.equal(body.accounts.length, 2);
+  }
+  await call('POST', '/api/mittr/auth/start');
+  assert.equal(Object.hasOwn((await call('GET', '/api/mittr/auth/accounts')).body, 'switchRefused'), false);
+});
+
+test('signing in to an account whose chats the engine would refuse keeps the sign-in and stays on the current account', async (t) => {
+  const { call, store, switches, refreshes } = await harness(t, { sessions: [A], exchanges: [B], accountRefusal: async () => V1_REFUSAL });
+
+  assert.deepEqual(await signIn(call), { status: 200, body: { signedIn: true, userId: 'u-a', displayName: 'A', switchRefused: V1_REFUSAL } });
+  assert.deepEqual(store.list().map(({ userId, active }) => [userId, active]), [['u-a', true], ['u-b', false]]);
+  assert.deepEqual([switches, refreshes], [[], []]);
+});
+
+test('a check that fails does not hold up the switch', async (t) => {
+  const { call, switches } = await harness(t, { sessions: [A, B], accountRefusal: async () => { throw new Error('unreadable'); } });
+  assert.equal((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-b' })).status, 200);
+  assert.deepEqual(switches, ['u-b']);
 });
 
 test('a correction after a ready on the wrong home restarts once, and only once for the same target', async (t) => {
@@ -431,7 +585,7 @@ test('a retry after a restart that failed brings the engine onto the active acco
   const { call, switcher, engine, refreshes, bases, switches } = await harness(t, { sessions: [A, B] });
   engine.failures = 1;
 
-  assert.deepEqual((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-b' })).body, { signedIn: true, userId: 'u-b', displayName: 'B', engineRestarted: false });
+  assert.deepEqual((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-b' })).body, { signedIn: true, userId: 'u-b', displayName: 'B', engineRestarted: false, engineError: { code: null, message: 'engine did not come back' } });
   assert.equal(switcher.engineOnTarget(), false);
 
   assert.deepEqual(await call('POST', '/api/mittr/auth/accounts/retry-switch'), { status: 200, body: { signedIn: true, userId: 'u-b', displayName: 'B' } });
@@ -448,7 +602,7 @@ test('a retry after signing out of the last account brings the engine onto the e
   const { call, switcher, engine, refreshes, bases } = await harness(t, { sharedHistory: true, sessions: [A] });
   engine.failures = 1;
 
-  assert.deepEqual((await call('DELETE', '/api/mittr/auth/session')).body, { signedIn: false, engineRestarted: false });
+  assert.deepEqual((await call('DELETE', '/api/mittr/auth/session')).body, { signedIn: false, engineRestarted: false, engineError: { code: null, message: 'engine did not come back' } });
   assert.equal(switcher.engineOnTarget(), false);
 
   assert.deepEqual((await call('POST', '/api/mittr/auth/accounts/retry-switch')).body, { signedIn: false });

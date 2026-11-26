@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { ToolPart } from '@/lib/opencode/model';
 import type { SubagentRun } from '@/lib/opencode/subagent-run';
-import { toBackgroundSubagentPart } from './backgroundSubagentPart';
+import { toBackgroundSubagentPart, toStoppedSubagentPart } from './backgroundSubagentPart';
 
 const call: ToolPart = {
     id: 'prt_1',
@@ -44,7 +44,21 @@ describe('toBackgroundSubagentPart', () => {
             .toMatchObject({ status: 'error', error: 'boom' });
     });
 
-    test('without a running child or a report the row stays as OpenCode left it', () => {
-        expect(toBackgroundSubagentPart(call, { kind: 'unknown' })).toBe(call);
+    test('without a running child or a report the row keeps its call but shows no launch notice as the answer', () => {
+        expect(toBackgroundSubagentPart(call, { kind: 'unknown' }).state)
+            .toEqual({ ...call.state, output: '' });
+    });
+});
+
+describe('toStoppedSubagentPart', () => {
+    test('a cancelled foreground call reads as finished with the notice, keeping its timing', () => {
+        const failed: ToolPart = {
+            ...call,
+            state: { status: 'error', input: call.state.input, error: 'Subagent cancelled (sessionID: ses_child)', time: { start: 1000, end: 5000 } },
+        };
+        expect(toStoppedSubagentPart(failed, 'Stopped by you.').state).toEqual({
+            status: 'completed', input: call.state.input, output: 'Stopped by you.', metadata: undefined, time: { start: 1000, end: 5000 },
+        });
+        expect(toStoppedSubagentPart(call, 'Stopped by you.')).toBe(call);
     });
 });

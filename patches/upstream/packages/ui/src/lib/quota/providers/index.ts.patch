@@ -1,0 +1,49 @@
+diff --git a/packages/ui/src/lib/quota/providers/index.ts b/packages/ui/src/lib/quota/providers/index.ts
+index 427d481d8..3969424b5 100644
+--- a/packages/ui/src/lib/quota/providers/index.ts
++++ b/packages/ui/src/lib/quota/providers/index.ts
+@@ -34,3 +34,44 @@ export const QUOTA_PROVIDERS: QuotaProviderMeta[] = [
+   { id: 'xai', name: 'xAI' },
+   { id: 'mistral', name: 'Mistral' },
+ ];
++
++type QuotaRefreshContext = { signal: AbortSignal };
++type QuotaRefreshHook = (context: QuotaRefreshContext) => Promise<void>;
++const refreshHooks = new Map<string, QuotaRefreshHook>();
++
++export function registerQuotaProviderRefreshHook(providerId: string, hook: QuotaRefreshHook): () => void {
++  refreshHooks.set(providerId, hook);
++  return () => { if (refreshHooks.get(providerId) === hook) refreshHooks.delete(providerId); };
++}
++
++export async function refreshQuotaProvider(providerId: string, context: QuotaRefreshContext): Promise<void> {
++  try { await refreshHooks.get(providerId)?.(context); } catch {
++    // An extension must not prevent the normal provider quota read.
++  }
++}
++
++const runTimeProviders = new Set<string>();
++
++export function registerQuotaProvider(meta: { id: string; name: string }, options?: { first?: boolean; exclusive?: boolean }): void {
++  if (QUOTA_PROVIDERS.some((provider) => provider.id === meta.id)) {
++    return;
++  }
++  const entry: QuotaProviderMeta = { id: meta.id as QuotaProviderId, name: meta.name };
++  runTimeProviders.add(entry.id);
++  if (options?.first) {
++    QUOTA_PROVIDERS.unshift(entry);
++  } else {
++    QUOTA_PROVIDERS.push(entry);
++  }
++  if (options?.exclusive) {
++    const kept = QUOTA_PROVIDERS.filter((provider) => runTimeProviders.has(provider.id));
++    QUOTA_PROVIDERS.splice(0, QUOTA_PROVIDERS.length, ...kept);
++  }
++}
++
++export function selectRegisteredQuotaProvider(id: string, select: (id: QuotaProviderId) => void): void {
++  const provider = QUOTA_PROVIDERS.find((entry) => entry.id === id);
++  if (provider) {
++    select(provider.id);
++  }
++}

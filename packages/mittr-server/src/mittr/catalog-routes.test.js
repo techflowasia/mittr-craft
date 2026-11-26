@@ -33,6 +33,8 @@ const setUp = async (t, {
   onModels = null,
   onCatalog = null,
   onEnablementChange = null,
+  now,
+  accountGeneration,
 } = {}) => {
   const app = express();
   const logger = recordingLogger();
@@ -52,6 +54,8 @@ const setUp = async (t, {
     onEnablementChange: onEnablementChange ?? (async (kind) => { changes.push(kind); }),
     fetchImpl,
     logger,
+    now,
+    accountGeneration,
   });
   return { ...routes, models, catalogs, changes, enablement, logger, dataDir, fetchImpl, ownCache, call: await serve(t, app) };
 };
@@ -160,9 +164,9 @@ test('a catalog that cannot be stored is not applied', async (t) => {
   assert.equal(logger.errors.length, 1);
 });
 
-test('a model listener that throws does not turn the sync into a rejection', async (t) => {
+test('a model application failure reports stored but unapplied instead of success', async (t) => {
   const { sync, logger } = await setUp(t, { onModels: async () => { throw new Error('config write failed'); } });
-  assert.deepEqual(await sync(), { status: 200, body: { bundleVersion: 7 } });
+  assert.deepEqual(await sync(), { status: 500, body: { error: 'Cannot apply the Mittr catalog', bundleVersion: 7, stored: true, applied: false } });
   assert.equal(logger.warnings.length, 1);
 });
 
@@ -199,7 +203,7 @@ test('a sync still in flight when the account switches files its answer under th
   active = cacheB;
   answer.resolve(json(PAYLOAD));
 
-  assert.equal((await pending).status, 200);
+  assert.equal((await pending).status, 409);
   assert.equal(cacheA.read().bundleVersion, 7);
   assert.equal(cacheB.read(), null);
   assert.deepEqual(models, []);
@@ -344,7 +348,8 @@ test('a sync for another account never joins one queued or running for this one'
   answers[1].resolve(json({ ...PAYLOAD, bundleVersion: 8 }));
   const results = await Promise.all([forA, forB, forBAgain]);
 
-  assert.deepEqual(results.map((result) => result.body.bundleVersion), [7, 8, 8]);
+  assert.deepEqual(results.map((result) => result.status), [409, 200, 200]);
+  assert.deepEqual(results.slice(1).map((result) => result.body.bundleVersion), [8, 8]);
   assert.equal(fetchImpl.calls.length, 2);
   assert.equal(cacheA.read().bundleVersion, 7);
   assert.equal(cacheB.read().bundleVersion, 8);
@@ -650,7 +655,7 @@ test('the catalog hears nobody when the account changed while the sync was out',
   active = cacheB;
   answer.resolve(json(PAYLOAD));
 
-  assert.equal((await pending).status, 200);
+  assert.equal((await pending).status, 409);
   assert.deepEqual(catalogs, []);
   assert.equal(cacheA.read().bundleVersion, 7);
   assert.equal(cacheB.read(), null);
@@ -671,16 +676,16 @@ test('the catalog hears nobody when the account changed while the models were be
     },
   });
 
-  assert.equal((await sync()).status, 200);
+  assert.equal((await sync()).status, 409);
   assert.equal(applied.length, 1);
   assert.deepEqual(catalogs, []);
   assert.equal(cacheA.read().bundleVersion, 7);
   assert.equal(cacheB.read(), null);
 });
 
-test('a catalog listener that throws does not turn the sync into a rejection', async (t) => {
+test('a catalog application failure reports stored but unapplied instead of success', async (t) => {
   const { sync, logger } = await setUp(t, { onCatalog: async () => { throw new Error('reconcile failed'); } });
-  assert.deepEqual(await sync(), { status: 200, body: { bundleVersion: 7 } });
+  assert.deepEqual(await sync(), { status: 500, body: { error: 'Cannot apply the Mittr catalog', bundleVersion: 7, stored: true, applied: false } });
   assert.equal(logger.warnings.length, 1);
 });
 
@@ -688,4 +693,109 @@ test('a catalog listener that throws does not stop the models from being applied
   const { sync, models } = await setUp(t, { onCatalog: async () => { throw new Error('reconcile failed'); } });
   await sync();
   assert.equal(models.length, 1);
+});
+
+test('omitted models preserve the cached roster and explicit empty removes it', async (t) => {
+  let payload = PAYLOAD;
+  const { sync, ownCache, models, call } = await setUp(t, { fetchImpl: fakeFetch(() => json(payload)) });
+  await sync();
+  payload = { bundleVersion: 7, skills: [] };
+  await sync();
+  assert.deepEqual(ownCache.read().models, { configured: true, items: PAYLOAD.models });
+  assert.deepEqual((await call('GET', '/api/mittr/catalog')).body.models.items.map((item) => item.alias), ['a1', 'a2']);
+  assert.deepEqual(models.at(-1), PAYLOAD.models);
+  payload = { bundleVersion: 7, models: [] };
+  await sync();
+  assert.deepEqual(ownCache.read().models, { configured: true, items: [] });
+  assert.deepEqual(models.at(-1), []);
+});
+
+test('automatic sync skips fresh applied data, expires, and manual sync always fetches', async (t) => {
+  let clock = 100;
+  const { sync, call, fetchImpl } = await setUp(t, { now: () => clock });
+  await sync();
+  assert.equal((await call('POST', '/api/mittr/catalog/sync', { force: false })).status, 200);
+  assert.equal(fetchImpl.calls.length, 1);
+  clock += 60_000;
+  await call('POST', '/api/mittr/catalog/sync', { force: false });
+  assert.equal(fetchImpl.calls.length, 2);
+  await call('POST', '/api/mittr/catalog/sync');
+  assert.equal(fetchImpl.calls.length, 3);
+});
+
+test('automatic refresh retries failed application at the same bundle version', async (t) => {
+  let fails = true;
+  const applied = [];
+  const { call, fetchImpl, ownCache } = await setUp(t, {
+    onModels: async (items) => {
+      if (fails) throw new Error('disk full');
+      applied.push(items);
+    },
+  });
+  const first = await call('POST', '/api/mittr/catalog/sync', { force: false });
+  assert.equal(first.status, 500);
+  assert.equal(first.body.stored, true);
+  assert.equal(first.body.applied, false);
+  assert.equal(ownCache.read().bundleVersion, 7);
+  fails = false;
+  assert.equal((await call('POST', '/api/mittr/catalog/sync', { force: false })).status, 200);
+  assert.equal(fetchImpl.calls.length, 2);
+  assert.deepEqual(applied, [PAYLOAD.models]);
+});
+
+test('automatic requests coalesce behind the running sync without another platform fetch', async (t) => {
+  const answer = deferred();
+  const { sync, fetchImpl } = await setUp(t, { fetchImpl: fakeFetch(() => answer.promise) });
+  const running = sync();
+  const waiting = [sync({ force: false }), sync({ force: false })];
+  answer.resolve(json(PAYLOAD));
+  assert.deepEqual((await Promise.all([running, ...waiting])).map((result) => result.status), [200, 200, 200]);
+  assert.equal(fetchImpl.calls.length, 1);
+});
+
+test('an account generation change fences a response even when the same cache becomes active again', async (t) => {
+  let generation = 0;
+  const answer = deferred();
+  const started = deferred();
+  const { sync, models, catalogs, ownCache } = await setUp(t, {
+    accountGeneration: () => generation,
+    fetchImpl: fakeFetch(() => { started.resolve(); return answer.promise; }),
+  });
+  const pending = sync();
+  await started.promise;
+  generation += 2;
+  answer.resolve(json(PAYLOAD));
+  assert.equal((await pending).status, 409);
+  assert.equal(ownCache.read().bundleVersion, 7);
+  assert.deepEqual(models, []);
+  assert.deepEqual(catalogs, []);
+});
+
+test('invalid force input is refused before platform work', async (t) => {
+  const { call, fetchImpl } = await setUp(t);
+  for (const body of [{ force: 'false' }, [], null]) {
+    assert.equal((await call('POST', '/api/mittr/catalog/sync', body)).status, 400);
+  }
+  assert.equal(fetchImpl.calls.length, 0);
+});
+
+test('a queued request never starts under an account other than its captured owner', async (t) => {
+  const dataDir = tempDataDir(t);
+  const a = createCatalogCache({ filePath: catalogCachePath(dataDir, '000000000000000a') });
+  const b = createCatalogCache({ filePath: catalogCachePath(dataDir, '000000000000000b') });
+  let active = a;
+  const answer = deferred();
+  const started = deferred();
+  const { sync, fetchImpl } = await setUp(t, {
+    cache: () => active,
+    fetchImpl: fakeFetch(() => { started.resolve(); return answer.promise; }),
+  });
+  const running = sync();
+  await started.promise;
+  const queued = sync();
+  active = b;
+  answer.resolve(json(PAYLOAD));
+  assert.deepEqual((await Promise.all([running, queued])).map((result) => result.status), [409, 409]);
+  assert.equal(fetchImpl.calls.length, 1);
+  assert.equal(b.read(), null);
 });

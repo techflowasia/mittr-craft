@@ -1,0 +1,66 @@
+diff --git a/packages/web/server/lib/self-update/openchamber-routes.ts b/packages/web/server/lib/self-update/openchamber-routes.ts
+index 2e7db7122..10cfbc240 100644
+--- a/packages/web/server/lib/self-update/openchamber-routes.ts
++++ b/packages/web/server/lib/self-update/openchamber-routes.ts
+@@ -33,6 +33,8 @@ type RouteUpdateInfo = Omit<UpdateCheckResult, 'currentVersion' | 'body'> & {
+   installBlocked?: string;
+   requiredOpenCodeVersion?: string;
+   openCodeVersion?: string;
++  updatesDisabled?: boolean;
++  date?: string | null;
+ };
+ 
+ type LaunchOptions = {
+@@ -90,6 +92,16 @@ const buildWindowsUpdateScript = ({ logPreamble, updateCmd, restartCmd }: { logP
+   '',
+ ].join('\r\n');
+ 
++const isUpdateCheckDisabled = (env: NodeJS.ProcessEnv) => {
++  const value = isString(env?.OPENCHAMBER_UPDATE_CHECK_DISABLED) ? env.OPENCHAMBER_UPDATE_CHECK_DISABLED.trim().toLowerCase() : '';
++  return value === '1' || value === 'true';
++};
++
++const isModelsMetadataDisabled = (env: NodeJS.ProcessEnv) => {
++  const value = isString(env?.OPENCHAMBER_MODELS_METADATA_DISABLED) ? env.OPENCHAMBER_MODELS_METADATA_DISABLED.trim().toLowerCase() : '';
++  return value === '1' || value === 'true';
++};
++
+ export const registerOpenChamberRoutes = (app: Application, dependencies: OpenChamberRouteDependencies) => {
+   const {
+     fs,
+@@ -199,6 +211,15 @@ export const registerOpenChamberRoutes = (app: Application, dependencies: OpenCh
+           packageManager: 'electron',
+           updateOwner: 'electron-updater',
+         };
++      } else if (isUpdateCheckDisabled(process.env)) {
++        updateInfo = {
++          available: false,
++          updatesDisabled: true,
++          currentVersion: updateRequest.currentVersion ?? null,
++          version: null,
++          body: null,
++          date: null,
++        };
+       } else {
+         const { checkForUpdates, isUnmanagedInstall } = await import('../package-manager.js');
+         updateInfo = await checkForUpdates(updateRequest);
+@@ -285,6 +306,8 @@ export const registerOpenChamberRoutes = (app: Application, dependencies: OpenCh
+         return;
+       }
+ 
++      if (isUpdateCheckDisabled(process.env)) return res.status(400).json({ error: 'No update available', updatesDisabled: true });
++
+       const { spawn: spawnChild, spawnSync } = await import('child_process');
+       const {
+         checkForUpdates,
+@@ -550,6 +573,10 @@ export const registerOpenChamberRoutes = (app: Application, dependencies: OpenCh
+   });
+ 
+   app.get('/api/openchamber/models-metadata', async (_req, res) => {
++    if (isModelsMetadataDisabled(process.env)) {
++      res.json({});
++      return;
++    }
+     try {
+       const { getModelsMetadata, toClientModelsMetadata } = await import('../opencode/models-metadata.js');
+       const { metadata, fromCache, stale } = await getModelsMetadata({

@@ -1,0 +1,50 @@
+diff --git a/packages/ui/src/components/layout/Sidebar.tsx b/packages/ui/src/components/layout/Sidebar.tsx
+index f2ba4022c..3cd08aa16 100644
+--- a/packages/ui/src/components/layout/Sidebar.tsx
++++ b/packages/ui/src/components/layout/Sidebar.tsx
+@@ -19,10 +19,12 @@ interface SidebarProps {
+     className?: string;
+     topBar?: React.ReactNode;
+     peek?: SidebarPeek;
++    side?: 'left' | 'right';
+ }
+ 
+-export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, className, topBar, peek }) => {
++export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, className, topBar, peek, side = 'left' }) => {
+     const { t, direction } = useI18n();
++    const isRightSide = side === 'right';
+     const sidebarWidth = useUIStore((state) => state.sidebarWidth);
+     const setSidebarWidth = useUIStore((state) => state.setSidebarWidth);
+     const [isResizing, setIsResizing] = React.useState(false);
+@@ -155,7 +157,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
+             return;
+         }
+ 
+-        const delta = (event.clientX - startXRef.current) * (direction === 'rtl' ? -1 : 1);
++        const delta = (event.clientX - startXRef.current) * ((direction === 'rtl') !== isRightSide ? -1 : 1);
+         const nextWidth = clampSidebarWidth(startWidthRef.current + delta);
+         if (resizingWidthRef.current === nextWidth) {
+             return;
+@@ -214,14 +216,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, isMobile, children, cl
+         >
+             {isOpen && (
+                 <div
+-                    className="pointer-events-none absolute inset-0 z-30 shadow-[inset_-0.5px_0_0_0_var(--oc-edge-strong)] rtl:shadow-[inset_0.5px_0_0_0_var(--oc-edge-strong)]"
++                    className={cn(
++                        'pointer-events-none absolute inset-0 z-30',
++                        isRightSide
++                            ? 'shadow-[inset_0.5px_0_0_0_var(--oc-edge-strong)] rtl:shadow-[inset_-0.5px_0_0_0_var(--oc-edge-strong)]'
++                            : 'shadow-[inset_-0.5px_0_0_0_var(--oc-edge-strong)] rtl:shadow-[inset_0.5px_0_0_0_var(--oc-edge-strong)]',
++                    )}
+                     aria-hidden="true"
+                 />
+             )}
+             {isOpen && (
+                 <div
+                     className={cn(
+-                        'absolute inset-e-0 top-0 z-20 h-full w-[3px] cursor-col-resize hover:bg-[var(--interactive-border)]/80 transition-colors',
++                        isRightSide ? 'absolute inset-s-0' : 'absolute inset-e-0',
++                        'top-0 z-20 h-full w-[3px] cursor-col-resize hover:bg-[var(--interactive-border)]/80 transition-colors',
+                         isResizing && 'bg-[var(--interactive-border)]'
+                     )}
+                     onPointerDown={handlePointerDown}

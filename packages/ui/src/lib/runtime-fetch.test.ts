@@ -1,10 +1,76 @@
 import { describe, expect, test } from 'bun:test';
 import { createRuntimeOpencodeClient } from '@/lib/opencode/client';
-import { addRuntimeProxyHeaders, buildRuntimeFetchUrl, isLatin1Safe, runtimeFetch, sanitizeHeadersForBrowser } from './runtime-fetch';
-import { clearRuntimeAuthCredentialProvider, setRuntimeBearerToken } from './runtime-auth';
+import { addRuntimeProxyHeaders, buildRuntimeFetchUrl, installRuntimeFetchBridge, isLatin1Safe, runtimeFetch, sanitizeHeadersForBrowser } from './runtime-fetch';
+import { clearRuntimeAuthCredentialProvider, setRuntimeBearerToken, setRuntimeExtraHeaders } from './runtime-auth';
 import { configureRuntimeUrlResolver, getRuntimeUrlResolver, setRuntimeUrlResolver } from './runtime-url';
+import { serveTestHttp } from './test-http-server';
 
 const originalFetch = globalThis.fetch;
+
+test('absolute runtime asset reads carry auth while external asset reads stay anonymous', async () => {
+  const previous = getRuntimeUrlResolver();
+  const runtime = await serveTestHttp((request, response) => {
+    response.end(JSON.stringify({ path: request.url, authorization: request.headers.authorization ?? null }));
+  });
+  const external = await serveTestHttp((request, response) => {
+    response.end(JSON.stringify({ path: request.url, authorization: request.headers.authorization ?? null }));
+  });
+  try {
+    configureRuntimeUrlResolver({ apiBaseUrl: new URL('/instance', runtime.url).toString() });
+    setRuntimeBearerToken('synthetic-runtime-token');
+    const path = '/instance/api/fs/raw?path=diagram.mmd';
+    const owned = await runtimeFetch(new URL(path, runtime.url));
+    expect(await owned.json()).toEqual({ path, authorization: 'Bearer synthetic-runtime-token' });
+    const unowned = await runtimeFetch(new URL(path, external.url));
+    expect(await unowned.json()).toEqual({ path, authorization: null });
+  } finally {
+    clearRuntimeAuthCredentialProvider();
+    setRuntimeUrlResolver(previous);
+    runtime.close();
+    external.close();
+  }
+});
+
+test('mobile runtime credentials cannot follow HTTP redirects through fetch or the bridge', async () => {
+  const previous = getRuntimeUrlResolver();
+  const originalWindow = globalThis.window;
+  let targetRequests = 0;
+  const target = await serveTestHttp((_request, response) => {
+    targetRequests += 1;
+    response.end('ok');
+  });
+  const source = await serveTestHttp((_request, response) => {
+    response.writeHead(302, { Location: target.url.toString() });
+    response.end();
+  });
+  try {
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: {
+      location: { protocol: 'capacitor:', origin: 'capacitor://localhost', href: 'capacitor://localhost' },
+      fetch: originalFetch,
+    } });
+    configureRuntimeUrlResolver({ apiBaseUrl: source.url.toString() });
+    setRuntimeExtraHeaders({ 'X-Proxy-Secret': 'synthetic-only' });
+    const url = new URL('/health', source.url);
+    for (const input of [url.toString(), url, new Request(url)]) {
+      await expect(runtimeFetch(input, { redirect: 'follow' })).rejects.toThrow();
+    }
+    installRuntimeFetchBridge();
+    for (const input of [url.toString(), url, new Request(url)]) {
+      await expect(window.fetch(input, { redirect: 'follow' })).rejects.toThrow();
+    }
+    expect(targetRequests).toBe(0);
+    // Requests without mobile proxy credentials retain normal redirect behavior.
+    setRuntimeExtraHeaders({});
+    expect((await runtimeFetch(url)).ok).toBe(true);
+    expect(targetRequests).toBe(1);
+  } finally {
+    setRuntimeExtraHeaders({});
+    setRuntimeUrlResolver(previous);
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: originalWindow });
+    source.close();
+    target.close();
+  }
+});
 
 describe('buildRuntimeFetchUrl', () => {
   test('preserves same-origin paths by default', () => {
@@ -538,10 +604,19 @@ describe('runtimeFetch header sanitization', () => {
 
 describe('runtimeFetch addresses isolated spaces', () => {
   const SPACE = 'a1b2c3d4e5f6';
-  const capture = async (input: string | URL | Request, init?: Parameters<typeof runtimeFetch>[1]): Promise<string> => {
-    let seen = '';
-    globalThis.fetch = (async (target: string | URL | Request) => {
-      seen = target instanceof Request ? target.url : target.toString();
+  const REPO = `/spaces/${SPACE}/repo`;
+  type Seen = { url: string; directory: string | null; encoding: string | null };
+  let lastHeaders = new Headers();
+  const capture = async (input: string | URL | Request, init?: Parameters<typeof runtimeFetch>[1]): Promise<Seen> => {
+    let seen: Seen = { url: '', directory: null, encoding: null };
+    globalThis.fetch = (async (target: string | URL | Request, requestInit?: RequestInit) => {
+      const request = new Request(target instanceof Request ? target : new URL(target.toString(), 'http://localhost:3000'), requestInit);
+      lastHeaders = request.headers;
+      seen = {
+        url: target instanceof Request ? target.url : target.toString(),
+        directory: request.headers.get('x-opencode-directory'),
+        encoding: request.headers.get('x-opencode-directory-encoding'),
+      };
       return new Response('{}', { status: 200 });
     }) as typeof fetch;
     try {
@@ -552,48 +627,46 @@ describe('runtimeFetch addresses isolated spaces', () => {
     return seen;
   };
 
-  test('prefixes a request whose directory query names a space, and leaves a host directory alone', async () => {
-    expect(await capture(`/api/git/status?directory=${encodeURIComponent(`/spaces/${SPACE}/repo`)}`))
-      .toBe(`/api/spaces/${SPACE}/git/status?directory=${encodeURIComponent(`/spaces/${SPACE}/repo`)}`);
-    expect(await capture('/api/git/status?directory=%2Fhome%2Fme%2Frepo')).toBe('/api/git/status?directory=%2Fhome%2Fme%2Frepo');
+  test('leaves the path of a request that names a space directory as it is: the server reads the directory', async () => {
+    const query = `/api/git/status?directory=${encodeURIComponent(REPO)}`;
+    expect(await capture(query)).toEqual({ url: query, directory: null, encoding: null });
+    expect((await capture('/api/fs/list', { headers: { 'x-opencode-directory': REPO } })).url).toBe('/api/fs/list');
+    expect((await capture('/api/fs/raw', { query: { path: '/x', directory: REPO } })).url)
+      .toBe(`/api/fs/raw?path=%2Fx&directory=${encodeURIComponent(REPO)}`);
   });
 
-  test('reads the directory header the SDK sets, URI-encoded, and a plain one', async () => {
-    // The SDK builds a Request on the page's own origin.
+  test('sends the caller directory option of a space as the directory header, and nothing for a host directory', async () => {
+    expect(await capture('/api/terminal/create', { method: 'POST', body: '{}', directory: REPO }))
+      .toEqual({ url: '/api/terminal/create', directory: encodeURIComponent(REPO), encoding: 'uri' });
+    expect(await capture('/api/terminal/create', { method: 'POST', body: '{}', directory: '/home/me/repo' }))
+      .toEqual({ url: '/api/terminal/create', directory: null, encoding: null });
+    // A caller's own headers stay beside it, in any shape.
+    await capture('/api/terminal/create', { method: 'POST', headers: [['Content-Type', 'application/json']], body: '{}', directory: REPO });
+    expect(lastHeaders.get('content-type')).toBe('application/json');
+    expect(lastHeaders.get('x-opencode-directory')).toBe(encodeURIComponent(REPO));
+  });
+
+  test('leaves a directory header the caller set itself, so a request naming two directories reaches the server as it is', async () => {
+    expect(await capture('/api/fs/list', { headers: { 'x-opencode-directory': '/home/me/repo' }, directory: REPO }))
+      .toEqual({ url: '/api/fs/list', directory: '/home/me/repo', encoding: null });
     const originalWindow = globalThis.window;
     Object.defineProperty(globalThis, 'window', {
       configurable: true,
       value: { location: { origin: 'http://localhost:3000', href: 'http://localhost:3000/index.html' } },
     });
     try {
-      const encoded = new Request('http://localhost:3000/api/session', { headers: { 'x-opencode-directory': encodeURIComponent(`/spaces/${SPACE}/repo`) } });
-      expect(await capture(encoded)).toBe(`http://localhost:3000/api/spaces/${SPACE}/session`);
+      // The SDK builds a Request on the page's own origin, with its header URI-encoded.
+      const sdk = new Request('http://localhost:3000/api/session', { headers: { 'x-opencode-directory': encodeURIComponent(REPO) } });
+      expect(await capture(sdk, { directory: `/spaces/${SPACE}/other` }))
+        .toEqual({ url: 'http://localhost:3000/api/session', directory: encodeURIComponent(REPO), encoding: null });
     } finally {
       Object.defineProperty(globalThis, 'window', { configurable: true, value: originalWindow });
     }
-    expect(await capture('/api/fs/list', { headers: { 'x-opencode-directory': `/spaces/${SPACE}/repo` } })).toBe(`/api/spaces/${SPACE}/fs/list`);
   });
 
-  test('takes the caller directory option for a request that names it only in a body', async () => {
-    expect(await capture('/api/terminal/create', { method: 'POST', directory: `/spaces/${SPACE}/repo` })).toBe(`/api/spaces/${SPACE}/terminal/create`);
-    expect(await capture('/api/fs/raw', { query: { path: '/x', directory: `/spaces/${SPACE}/repo` } }))
-      .toBe(`/api/spaces/${SPACE}/fs/raw?path=%2Fx&directory=${encodeURIComponent(`/spaces/${SPACE}/repo`)}`);
-  });
-
-  test('never prefixes twice, and leaves paths outside /api/ alone', async () => {
-    expect(await capture(`/api/spaces/${SPACE}/session?directory=${encodeURIComponent(`/spaces/${SPACE}/repo`)}`))
-      .toBe(`/api/spaces/${SPACE}/session?directory=${encodeURIComponent(`/spaces/${SPACE}/repo`)}`);
-    expect(await capture('/health', { directory: `/spaces/${SPACE}/repo` })).toBe('/health');
-  });
-
-  test('rewrites the path of an absolute URL on the configured runtime origin', async () => {
-    const previous = getRuntimeUrlResolver();
-    try {
-      configureRuntimeUrlResolver({ apiBaseUrl: 'https://api.example' });
-      expect(await capture(`https://api.example/api/git/status?directory=${encodeURIComponent(`/spaces/${SPACE}/repo`)}`))
-        .toBe(`https://api.example/api/spaces/${SPACE}/git/status?directory=${encodeURIComponent(`/spaces/${SPACE}/repo`)}`);
-    } finally {
-      setRuntimeUrlResolver(previous);
-    }
+  test('never rewrites a path, the older prefixed form included', async () => {
+    const prefixed = `/api/spaces/${SPACE}/session?directory=${encodeURIComponent(REPO)}`;
+    expect((await capture(prefixed)).url).toBe(prefixed);
+    expect((await capture('/health', { directory: REPO })).url).toBe('/health');
   });
 });

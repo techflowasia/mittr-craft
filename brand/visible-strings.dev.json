@@ -13,12 +13,6 @@
   },
   {
     "file": "resources/web-dist/assets/*.js",
-    "from": "schemas:{\"openchamber:\":",
-    "to": "schemas:{\"mittrcraft-dev:\":",
-    "count": 1
-  },
-  {
-    "file": "resources/web-dist/assets/*.js",
     "from": "\"shell\",\"openchamber\",\"openchamber-ui\"",
     "to": "\"shell\",\"openchamber\",\"mittrcraft-dev\",\"openchamber-ui\"",
     "count": 1
@@ -39,6 +33,60 @@
     "file": "resources/web-dist/assets/*.js",
     "from": "{className:\"text-lg font-semibold\",children:\"MittrCraft\"}",
     "to": "{className:\"text-lg font-semibold\",children:\"MittrCraft Dev\"}",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"openchamber://extensions/install?\"",
+    "to": "\"mittrcraft-dev://extensions/install?\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "`openchamber://session/${",
+    "to": "`mittrcraft-dev://session/${",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/authoring/skill.txt",
+    "from": "(openchamber://extensions/install?path=",
+    "to": "(mittrcraft-dev://extensions/install?path=",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/guests/authoring/skill.txt",
+    "from": "`openchamber://extensions/install?url=",
+    "to": "`mittrcraft-dev://extensions/install?url=",
+    "count": 1
+  },
+  {
+    "file": "dist-bundle/main.mjs",
+    "from": "`\"openchamber://session/${session.id}?source=jump-list\"`",
+    "to": "`\"mittrcraft-dev://session/${session.id}?source=jump-list\"`",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"%APPDATA%\\\\MittrCraft\\\\logs\\\\main.log\"",
+    "to": "\"%APPDATA%\\\\MittrCraft Dev\\\\logs\\\\main.log\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"~/Library/Logs/MittrCraft/main.log\"",
+    "to": "\"~/Library/Logs/MittrCraft Dev/main.log\"",
+    "count": 1
+  },
+  {
+    "file": "resources/web-dist/assets/*.js",
+    "from": "\"~/.config/MittrCraft/logs/main.log\"",
+    "to": "\"~/.config/MittrCraft Dev/logs/main.log\"",
+    "count": 1
+  },
+  {
+    "file": ".product/web/server/lib/diagnostics/local-files.js",
+    "from": "path.join(home, 'Library', 'Logs', 'MittrCraft')",
+    "to": "path.join(home, 'Library', 'Logs', 'MittrCraft Dev')",
     "count": 1
   }
 ]

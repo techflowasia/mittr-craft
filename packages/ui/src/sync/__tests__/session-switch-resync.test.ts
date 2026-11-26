@@ -1,5 +1,5 @@
 import { resetGlobalBlockingRequests, useGlobalBlockingRequestsStore } from "../global-blocking-requests"
-import { describe, expect, test, afterEach, beforeEach, mock } from "bun:test"
+import { describe, expect, test, afterEach, beforeEach, jest, mock } from "bun:test"
 import { create, type StoreApi } from "zustand"
 import type { SyncEvent, ToolTransition } from "@/lib/opencode/events"
 import type { FormRequest, PermissionRequest, ToolInput } from "@/lib/opencode/model"
@@ -68,6 +68,10 @@ mock.module("@/contexts/runtimeAPIRegistry", () => ({
 
 mock.module("@/stores/useConfigStore", () => ({
   markConfigCatalogStale: () => undefined,
+  invalidateConfigCatalogsForReload: () => undefined,
+  selectCatalogLoadedForDirectory: () => false,
+  selectConfigAgentsForDirectory: () => [],
+  invalidateConfigAgentsLoad: () => undefined,
   useConfigStore: {
     getState: () => ({ isConnected: true, hasEverConnected: true }),
     setState: () => undefined,
@@ -84,10 +88,14 @@ mock.module("sonner", () => ({
 }))
 
 const infoToasts: Array<{ title: string; id?: string }> = []
+const infoToastDescriptions: Array<string | undefined> = []
 
 mock.module("@/components/ui", () => ({
   toast: {
-    info: (title: string, options?: { id?: string }) => { infoToasts.push({ title, id: options?.id }) },
+    info: (title: string, options?: { id?: string; description?: string }) => {
+      infoToasts.push({ title, id: options?.id })
+      infoToastDescriptions.push(options?.description)
+    },
     error: () => undefined,
     success: () => undefined,
     dismiss: () => undefined,
@@ -354,26 +362,34 @@ describe("resyncBlockingRequestsForDirectory", () => {
       properties: { sessionID: "ses_a", messageID: "msg_assistant", partID, transition },
     }) as SyncEvent
     const send = (event: SyncEvent) => handleEvent("/repo", event, childStores, routingIndex, getRuntimeKey())
+    // Tool refreshes are delivered once their coalescing window ends.
+    const settle = () => jest.advanceTimersByTime(250)
 
+    jest.useFakeTimers()
     try {
       // Snapshot path: a completed `patch` refreshes once, a repeat and a read do not.
       send(partEvent("prt_patch", "patch", "pending"))
       send(partEvent("prt_patch", "patch", "completed"))
       send(partEvent("prt_patch", "patch", "completed"))
       send(partEvent("prt_read", "read", "completed"))
+      settle()
       expect(refreshes).toEqual([{ directory: "/repo" }])
 
       // Live path: OpenCode v2 settles a running shell call through a transition.
       send(partEvent("prt_shell", "shell", "running"))
       send(transitionEvent("prt_shell", { kind: "success", executed: true, output: "", end: 2 }))
+      settle()
       expect(refreshes).toHaveLength(2)
 
       // A failed edit may still have written the file.
       send(partEvent("prt_edit", "edit", "running"))
       send(transitionEvent("prt_edit", { kind: "failed", executed: true, error: "boom", end: 2 }))
+      settle()
       expect(refreshes).toHaveLength(3)
     } finally {
       unsubscribe()
+      sessionEvents.cancelPendingGitRefreshes()
+      jest.useRealTimers()
       childStores.disposeAll()
     }
   })
@@ -427,6 +443,32 @@ describe("resyncBlockingRequestsForDirectory", () => {
       childStores.disposeAll()
     }
   })
+
+  test("a compaction summary delta publishes a new message slice", () => {
+    const childStores = new ChildStoreManager()
+    const store = childStores.ensureChild("/repo", { bootstrap: false })
+    const routingIndex = createEventRoutingIndex()
+    const send = (event: SyncEvent) => handleEvent("/repo", event, childStores, routingIndex, getRuntimeKey())
+
+    try {
+      send({
+        type: "message.updated",
+        properties: {
+          info: { id: "msg_compact", sessionID: "ses_compact", role: "compaction", time: { created: 1 }, status: "running", reason: "auto", summary: "" },
+        },
+      })
+      const before = store.getState().message
+      send({ type: "message.compaction.delta", properties: { sessionID: "ses_compact", delta: "Summary so far" } })
+      const after = store.getState().message
+
+      // Subscribers only re-render on a new reference; an in-place write is invisible.
+      expect(after).not.toBe(before)
+      expect(before.ses_compact?.[0]).toMatchObject({ summary: "" })
+      expect(after.ses_compact?.[0]).toMatchObject({ summary: "Summary so far" })
+    } finally {
+      childStores.disposeAll()
+    }
+  })
 })
 
 // OpenChamber's server publishes these two frames on the same stream as
@@ -447,41 +489,47 @@ describe("OpenChamber-native frames", () => {
     Reflect.deleteProperty(globalThis, "document")
   })
 
-  test("raises the restart-interrupted toast and dispatches the agent-completion notification", () => {
-    const childStores = new ChildStoreManager()
-    const routingIndex = createEventRoutingIndex()
-    const event: SyncEvent = {
-      type: "openchamber.notification",
-      properties: {
-        kind: "opencode-restart-interrupted",
-        sessionId: "ses_a",
-        directory: "/repo",
-        title: "Agent finished",
-        body: "The turn completed",
-        tag: "ses_a",
-      },
-    }
+  for (const kind of ["opencode-restart-interrupted", "opencode-restart-resuming"]) {
+    test(`raises the ${kind} toast and dispatches the agent-completion notification`, () => {
+      const childStores = new ChildStoreManager()
+      const routingIndex = createEventRoutingIndex()
+      const event: SyncEvent = {
+        type: "openchamber.notification",
+        properties: {
+          kind,
+          sessionId: "ses_a",
+          directory: "/repo",
+          title: "Agent finished",
+          body: "The turn completed",
+          tag: "ses_a",
+        },
+      }
 
-    try {
-      handleEvent("global", event, childStores, routingIndex, getRuntimeKey())
+      try {
+        handleEvent("global", event, childStores, routingIndex, getRuntimeKey())
 
-      expect(infoToasts.map((entry) => entry.id)).toEqual(["opencode-restart-interrupted"])
-      expect(agentCompletions).toHaveLength(1)
-      expect(agentCompletions[0]).toMatchObject({
-        title: "Agent finished",
-        body: "The turn completed",
-        tag: "ses_a",
-        kind: "opencode-restart-interrupted",
-        sessionId: "ses_a",
-        directory: "/repo",
-        requireHidden: false,
-      })
-      // A global frame must not materialize a directory store on its way through.
-      expect(childStores.children.size).toBe(0)
-    } finally {
-      childStores.disposeAll()
-    }
-  })
+        expect(infoToasts.map((entry) => entry.id)).toEqual(["opencode-restart-interrupted"])
+        expect(infoToastDescriptions.at(-1)).toBe(kind === "opencode-restart-resuming"
+          ? "OpenCode restarted while a response was still running. The chat will resume automatically; send a message if it does not."
+          : "OpenCode restarted while a response was still running. Send a message to continue.")
+        expect(agentCompletions).toHaveLength(1)
+        expect(agentCompletions[0]).toMatchObject({
+          title: "Agent finished",
+          body: "The turn completed",
+          tag: "ses_a",
+          kind,
+          sessionId: "ses_a",
+          directory: "/repo",
+          runtimeKey: getRuntimeKey(),
+          requireHidden: false,
+        })
+        // A global frame must not materialize a directory store on its way through.
+        expect(childStores.children.size).toBe(0)
+      } finally {
+        childStores.disposeAll()
+      }
+    })
+  }
 
   test("raises an in-app toast for plugin notifications", () => {
     const childStores = new ChildStoreManager()
@@ -507,6 +555,7 @@ describe("OpenChamber-native frames", () => {
         body: "Ready to review",
         tag: "plugin-build-done",
         kind: "plugin",
+        runtimeKey: getRuntimeKey(),
         requireHidden: true,
       })
       expect(childStores.children.size).toBe(0)

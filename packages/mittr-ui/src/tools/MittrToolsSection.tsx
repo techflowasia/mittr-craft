@@ -4,7 +4,6 @@ import {
   SETTINGS_HELPER_CLASS,
   SETTINGS_OPTION_STACK_CLASS,
   SETTINGS_SELECT_ROW_TRIGGER_CLASS,
-  SETTINGS_SELECT_SIZE,
   SettingsCheckboxRow,
   SettingsFieldRow,
   SettingsSection,
@@ -63,7 +62,7 @@ function ProfileRow({ chrome, profiles, actions }: ChromeProps): React.ReactNode
     const listed = nameOf(profiles.list, chrome.profile ?? undefined) !== null;
     return (
       <Select value={listed && chrome.profile ? chrome.profile : undefined} onValueChange={actions.setProfile}>
-        <SelectTrigger size={SETTINGS_SELECT_SIZE} className={SETTINGS_SELECT_ROW_TRIGGER_CLASS} aria-label={label}>
+        <SelectTrigger className={SETTINGS_SELECT_ROW_TRIGGER_CLASS} aria-label={label}>
           <SelectValue>{(value) => nameOf(profiles.list, value) ?? mt('mittr.tools.chrome.profilePlaceholder')}</SelectValue>
         </SelectTrigger>
         <SelectContent>

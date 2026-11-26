@@ -1,0 +1,55 @@
+diff --git a/packages/web/server/lib/context-obligatory/runtime.test.js b/packages/web/server/lib/context-obligatory/runtime.test.js
+index a4b4267b3..f6321b01f 100644
+--- a/packages/web/server/lib/context-obligatory/runtime.test.js
++++ b/packages/web/server/lib/context-obligatory/runtime.test.js
+@@ -75,6 +75,50 @@ afterEach(() => {
+ });
+ 
+ describe('context obligatory runtime', () => {
++  it('refuses synthetic context admission if recovery reserves during context reads', async () => {
++    const { synthetic } = fakeOpenCode();
++    let reserved = false;
++    const { runtime } = makeRuntime({
++      responseRecovery: { isReserved: () => reserved },
++      readSessionMetadata: async () => { reserved = true; return pinnedMetadata(); },
++      persistContextCursor: async () => {},
++    });
++    await expect(runtime.restoreCompaction('ses_1', '/repo')).rejects.toThrow('response-recovery-reserved');
++    expect(synthetic).toEqual([]);
++  });
++  it('shares an awaitable restoration with the event handler and propagates failure', async () => {
++    const { fetchMock, synthetic } = fakeOpenCode();
++    let release;
++    const pending = new Promise(resolve => { release = resolve; });
++    const persistContextCursor = async () => pending;
++    const { runtime } = makeRuntime({ readSessionMetadata: async () => pinnedMetadata(), persistContextCursor });
++    const eventWork = runtime.processPayload(compactionEvent(), '/repo');
++    const recoveryWork = runtime.restoreCompaction('ses_1', '/repo');
++    let completed = false;
++    recoveryWork.then(() => { completed = true; });
++    await vi.waitFor(() => expect(synthetic).toHaveLength(1));
++    expect(completed).toBe(false);
++    release(); await Promise.all([eventWork, recoveryWork]);
++    expect(completed).toBe(true);
++    expect(fetchMock.mock.calls.filter(([url]) => new URL(url).pathname.endsWith('/synthetic'))).toHaveLength(1);
++  });
++
++  it('uses the recovery-owned context ID and checks cancellation before synthetic mutation', async () => {
++    const { synthetic } = fakeOpenCode();
++    const { runtime } = makeRuntime({ readSessionMetadata: async () => pinnedMetadata(), persistContextCursor: async () => {} });
++    await runtime.restoreCompaction('ses_1', '/repo', { contextID: 'msg_pins', signal: new AbortController().signal });
++    expect(synthetic[0].id).toBe('msg_pins');
++    const controller = new AbortController(); controller.abort();
++    await expect(runtime.restoreCompaction('ses_1', '/repo', { contextID: 'msg_other', signal: controller.signal })).rejects.toThrow();
++    expect(synthetic).toHaveLength(1);
++  });
++
++  it('rejects awaitable restoration when upstream context admission fails', async () => {
++    const { fetchMock } = fakeOpenCode();
++    fetchMock.mockRejectedValue(new Error('upstream unavailable'));
++    const { runtime } = makeRuntime({ readSessionMetadata: async () => pinnedMetadata(), persistContextCursor: async () => {} });
++    await expect(runtime.restoreCompaction('ses_1', '/repo')).rejects.toThrow('upstream unavailable');
++  });
+   it('re-sends pinned messages after a finished compaction and records the cursor', async () => {
+     const { synthetic } = fakeOpenCode();
+     const persistContextCursor = vi.fn(async () => undefined);

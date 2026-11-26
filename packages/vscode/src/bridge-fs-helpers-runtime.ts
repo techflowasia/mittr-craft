@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { execGit } from './bridge-git-process-runtime';
+import { normalizeWindowsDriveLetter } from './pathUtils';
 
 const MAX_FILE_ATTACH_SIZE_BYTES = 20 * 1024 * 1024;
 
@@ -115,8 +116,8 @@ export const readUriAsAttachment = async (
 };
 
 const isPathInside = (candidatePath: string, parentPath: string): boolean => {
-  const normalizedCandidate = path.resolve(candidatePath);
-  const normalizedParent = path.resolve(parentPath);
+  const normalizedCandidate = normalizeWindowsDriveLetter(path.resolve(candidatePath));
+  const normalizedParent = normalizeWindowsDriveLetter(path.resolve(parentPath));
   return normalizedCandidate === normalizedParent || normalizedCandidate.startsWith(`${normalizedParent}${path.sep}`);
 };
 
@@ -130,15 +131,17 @@ const gitCheckIgnoreNames = async (cwd: string, names: string[]): Promise<Set<st
     return new Set();
   }
 
-  const result = await execGitCheckIgnore(['check-ignore', '--', ...names], cwd);
+  const result = await execGit(['check-ignore', '--stdin', '-z'], cwd, {
+    timeoutMs: GIT_CHECK_IGNORE_TIMEOUT_MS,
+    input: `${names.join('\0')}\0`,
+  });
   if (result.exitCode !== 0 || !result.stdout) {
     return new Set();
   }
 
   return new Set(
     result.stdout
-      .split('\n')
-      .map((name: string) => name.trim())
+      .split('\0')
       .filter(Boolean),
   );
 };
@@ -211,6 +214,8 @@ const FILE_SEARCH_EXCLUDED_DIRS = new Set([
   'tmp',
   'logs',
 ]);
+
+const FILE_SEARCH_MAX_VISITED_FILES = 10_000;
 
 const shouldSkipSearchDirectory = (name: string, includeHidden: boolean) => {
   if (!name) {
@@ -291,29 +296,41 @@ const searchFilesystemFiles = async (
   includeHidden: boolean,
   respectGitignore: boolean,
   timeBudgetMs?: number,
+  signal?: AbortSignal,
 ) => {
   const normalizedQuery = (query || '').trim().toLowerCase();
   const matchAll = normalizedQuery.length === 0;
+  const workspaceSearch = includeHidden || !respectGitignore;
   const deadline = typeof timeBudgetMs === 'number' && timeBudgetMs > 0 ? Date.now() + timeBudgetMs : null;
 
   const rootUri = vscode.Uri.file(rootPath);
   const queue: vscode.Uri[] = [rootUri];
   const visited = new Set<string>([normalizeFsPath(rootUri.fsPath)]);
-  const collectLimit = matchAll ? limit : Math.max(limit * 3, 200);
   const candidates: Array<{ name: string; path: string; relativePath: string; extension?: string; score: number }> = [];
+  let inspectedFiles = 0;
+  const reachedSearchStop = () => (matchAll
+    ? candidates.length >= limit
+    : !workspaceSearch && inspectedFiles >= FILE_SEARCH_MAX_VISITED_FILES);
   const MAX_CONCURRENCY = 10;
 
-  while (queue.length > 0 && candidates.length < collectLimit) {
+  while (queue.length > 0 && !reachedSearchStop()) {
+    signal?.throwIfAborted();
     if (deadline && Date.now() > deadline) {
+      if (workspaceSearch) throw new Error('File search exceeded its time limit');
       break;
     }
     const batch = queue.splice(0, MAX_CONCURRENCY);
     const dirLists = await Promise.all(
-      batch.map((dir) => Promise.resolve(vscode.workspace.fs.readDirectory(dir)).catch(() => [] as [string, vscode.FileType][])),
+      batch.map((dir) => Promise.resolve(vscode.workspace.fs.readDirectory(dir)).catch((error) => {
+        if (workspaceSearch) throw error;
+        return [] as [string, vscode.FileType][];
+      })),
     );
 
     for (let index = 0; index < batch.length; index += 1) {
+      signal?.throwIfAborted();
       if (deadline && Date.now() > deadline) {
+        if (workspaceSearch) throw new Error('File search exceeded its time limit');
         break;
       }
       const currentDir = batch[index];
@@ -336,7 +353,9 @@ const searchFilesystemFiles = async (
         const absolute = normalizeFsPath(entryUri.fsPath);
 
         if (entryType === vscode.FileType.Directory) {
-          if (shouldSkipSearchDirectory(entryName, includeHidden)) {
+          if (workspaceSearch
+            ? ['.git', 'node_modules'].includes(entryName.toLowerCase())
+            : shouldSkipSearchDirectory(entryName, includeHidden)) {
             continue;
           }
           if (!visited.has(absolute)) {
@@ -352,6 +371,7 @@ const searchFilesystemFiles = async (
 
         const relativePath = normalizeFsPath(path.relative(rootPath, absolute) || path.basename(absolute));
         const extension = entryName.includes('.') ? entryName.split('.').pop()?.toLowerCase() : undefined;
+        inspectedFiles += 1;
 
         if (matchAll) {
           candidates.push({
@@ -374,16 +394,20 @@ const searchFilesystemFiles = async (
           }
         }
 
-        if (candidates.length >= collectLimit) {
+        if (reachedSearchStop()) {
           queue.length = 0;
           break;
         }
       }
 
-      if (candidates.length >= collectLimit) {
+      if (reachedSearchStop()) {
         break;
       }
     }
+  }
+
+  if (workspaceSearch && deadline && Date.now() > deadline) {
+    throw new Error('File search exceeded its time limit');
   }
 
   if (!matchAll) {
@@ -410,6 +434,7 @@ export const searchDirectory = async (
   limit = 60,
   includeHidden = false,
   respectGitignore = true,
+  signal?: AbortSignal,
 ) => {
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
   const rootPath = directory
@@ -418,6 +443,9 @@ export const searchDirectory = async (
   if (!rootPath) return [];
 
   const sanitizedQuery = query?.trim() || '';
+  if (includeHidden || !respectGitignore) {
+    return searchFilesystemFiles(rootPath, sanitizedQuery, limit, includeHidden, respectGitignore, 30_000, signal);
+  }
   if (!sanitizedQuery) {
     return searchFilesystemFiles(rootPath, '', limit, includeHidden, respectGitignore);
   }

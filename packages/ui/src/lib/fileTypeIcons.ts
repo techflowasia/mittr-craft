@@ -1,45 +1,75 @@
 import { getLanguageFromExtension } from '@/lib/toolHelpers';
 import { FILE_TYPE_ICON_IDS } from '@/lib/fileTypeIconIds';
-import spriteContent from '../assets/icons/file-types/sprite.svg?raw';
 
 type ThemeVariant = 'light' | 'dark';
 
 const FILE_TYPE_SPRITE_ROOT_ID = 'oc-file-type-icon-sprite-root';
 
-const mountFileTypeSprite = (): void => {
-  if (typeof document === 'undefined') {
-    return;
+let spriteRequested = false;
+
+const hasDocument = (): boolean => typeof document !== 'undefined';
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+const hideSpriteFromLayout = (root: HTMLElement): void => {
+  const sprite = root.querySelector('svg');
+  if (!sprite) return;
+  const paintServers = sprite.querySelectorAll('linearGradient, radialGradient, clipPath, mask, pattern, filter');
+  if (paintServers.length > 0) {
+    const holder = document.createElementNS(SVG_NS, 'svg');
+    holder.setAttribute('width', '0');
+    holder.setAttribute('height', '0');
+    const defs = document.createElementNS(SVG_NS, 'defs');
+    for (const server of paintServers) defs.appendChild(server);
+    holder.appendChild(defs);
+    root.appendChild(holder);
   }
-
-  if (document.getElementById(FILE_TYPE_SPRITE_ROOT_ID)) {
-    return;
-  }
-
-  const attach = () => {
-    if (document.getElementById(FILE_TYPE_SPRITE_ROOT_ID)) {
-      return;
-    }
-
-    const root = document.createElement('div');
-    root.id = FILE_TYPE_SPRITE_ROOT_ID;
-    root.setAttribute('aria-hidden', 'true');
-    root.style.position = 'absolute';
-    root.style.width = '0';
-    root.style.height = '0';
-    root.style.overflow = 'hidden';
-    root.innerHTML = spriteContent;
-    document.body.appendChild(root);
-  };
-
-  if (document.body) {
-    attach();
-    return;
-  }
-
-  document.addEventListener('DOMContentLoaded', attach, { once: true });
+  sprite.style.display = 'none';
 };
 
-mountFileTypeSprite();
+const mountFileTypeSprite = (spriteContent: string): void => {
+  if (!hasDocument() || document.getElementById(FILE_TYPE_SPRITE_ROOT_ID)) {
+    return;
+  }
+  const root = document.createElement('div');
+  root.id = FILE_TYPE_SPRITE_ROOT_ID;
+  root.setAttribute('aria-hidden', 'true');
+  root.style.position = 'absolute';
+  root.style.width = '0';
+  root.style.height = '0';
+  root.style.overflow = 'hidden';
+  root.innerHTML = spriteContent;
+  hideSpriteFromLayout(root);
+  document.body.appendChild(root);
+};
+
+const ensureFileTypeSprite = (): void => {
+  if (spriteRequested || !hasDocument()) {
+    return;
+  }
+  spriteRequested = true;
+  void import('../assets/icons/file-types/sprite.svg?raw').then(
+    (module) => mountFileTypeSprite(module.default),
+    (error) => {
+      spriteRequested = false;
+      console.warn('[file-type-icons] failed to load the icon sprite', error);
+    },
+  );
+};
+
+let preloadScheduled = false;
+
+export const preloadFileTypeSprite = (): void => {
+  if (preloadScheduled || typeof window === 'undefined') {
+    return;
+  }
+  preloadScheduled = true;
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(ensureFileTypeSprite, { timeout: 3_000 });
+  } else {
+    window.setTimeout(ensureFileTypeSprite, 1_000);
+  }
+};
 
 const fileNameIconMap: Record<string, string> = {
   dockerfile: 'docker',
@@ -243,6 +273,7 @@ export const getFileTypeIconHref = (
   filePath: string,
   options?: { extension?: string; themeVariant?: ThemeVariant }
 ): string => {
+  ensureFileTypeSprite();
   const resolvedBaseIconName = resolveIconName(filePath, options?.extension);
   const baseIconName = FILE_TYPE_ICON_IDS.has(resolvedBaseIconName) ? resolvedBaseIconName : fallbackIconName;
   const iconName = selectVariantIconName(baseIconName, options?.themeVariant || 'dark');

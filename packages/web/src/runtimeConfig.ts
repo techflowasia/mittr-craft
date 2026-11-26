@@ -1,6 +1,6 @@
 import { getRuntimeExtraHeadersSync, refreshLocalRuntimeUrlAuthToken, refreshRuntimeUrlAuthToken, setRuntimeBearerToken, setRuntimeExtraHeaders } from '@openchamber/ui/lib/runtime-auth';
 import { installRuntimeFetchBridge } from '@openchamber/ui/lib/runtime-fetch';
-import { initializeRuntimeEndpoint } from '@openchamber/ui/lib/runtime-switch';
+import { getRuntimeKey, initializeRuntimeEndpoint, subscribeRuntimeEndpointChanged } from '@openchamber/ui/lib/runtime-switch';
 import { warmDesktopHostStatuses } from '@openchamber/ui/lib/desktopHostStatus';
 import { restoreDesktopRelayRuntime } from '@openchamber/ui/lib/desktopRelayRestore';
 import { getInjectedBootOutcome } from '@openchamber/ui/lib/desktopBoot';
@@ -8,7 +8,7 @@ import { configureRuntimeUrlResolver } from '@openchamber/ui/lib/runtime-url';
 import { opencodeClient } from '@openchamber/ui/lib/opencode/client';
 import { createWebAPIs } from './api';
 
-// The switcher's statuses are warmed after boot settles, not during it.
+
 const HOST_STATUS_WARMUP_DELAY_MS = 3_000;
 
 const sameOrigin = (left: string, right: string): boolean => {
@@ -27,6 +27,11 @@ declare global {
     __OPENCHAMBER_RUNTIME_HEADERS__?: Record<string, string>;
     __OPENCHAMBER_LOCAL_ORIGIN__?: string;
     __OPENCHAMBER_RELAY_HOST_ID__?: string;
+    __OPENCHAMBER_EXPLICIT_RUNTIME__?: boolean;
+
+    __OPENCHAMBER_DESKTOP__?: {
+      invoke?: (cmd: string, args?: Record<string, string>) => Promise<void>;
+    };
   }
 }
 
@@ -36,6 +41,7 @@ type RuntimeBootstrapConfig = {
   localOrigin: string;
   runtimeHeaders?: Record<string, string>;
   relayHostId: string;
+  explicitRuntime: boolean;
 };
 
 export const readRuntimeBootstrapConfig = (): RuntimeBootstrapConfig => {
@@ -47,16 +53,17 @@ export const readRuntimeBootstrapConfig = (): RuntimeBootstrapConfig => {
     localOrigin: readString(window.__OPENCHAMBER_LOCAL_ORIGIN__),
     runtimeHeaders: window.__OPENCHAMBER_RUNTIME_HEADERS__,
     relayHostId: readString(window.__OPENCHAMBER_RELAY_HOST_ID__),
+    explicitRuntime: window.__OPENCHAMBER_EXPLICIT_RUNTIME__ === true,
   };
 };
 
-// Resolved once the desktop relay-host restore (if any) has picked a transport.
-// Immediately-resolved everywhere else. See createConfiguredWebAPIs.
+
+
 let desktopRelayRestoreReady: Promise<void> = Promise.resolve();
 export const getDesktopRelayRestoreReady = (): Promise<void> => desktopRelayRestoreReady;
 
 export const createConfiguredWebAPIs = () => {
-  const { apiBaseUrl, clientToken, localOrigin, runtimeHeaders, relayHostId } = readRuntimeBootstrapConfig();
+  const { apiBaseUrl, clientToken, localOrigin, runtimeHeaders, relayHostId, explicitRuntime } = readRuntimeBootstrapConfig();
   const bootOutcome = getInjectedBootOutcome();
   const desktopHostId = relayHostId || (bootOutcome?.target === 'remote' ? bootOutcome.hostId : '');
 
@@ -68,35 +75,57 @@ export const createConfiguredWebAPIs = () => {
     apiBaseUrl,
     runtimeKey: sameOrigin(apiBaseUrl, localOrigin) ? 'local' : (desktopHostId ? `host:${desktopHostId}` : null),
   });
+
+
+
+
+
+
+  const reportWindowRuntimeKey = (runtimeKey: string): void => {
+    const key = runtimeKey.trim();
+    const invoke = window.__OPENCHAMBER_DESKTOP__?.invoke;
+    if (!key || !invoke) return;
+    void invoke('desktop_set_window_runtime_key', { runtimeKey: key }).catch(() => {});
+  };
+  reportWindowRuntimeKey(getRuntimeKey());
+  subscribeRuntimeEndpointChanged((detail) => reportWindowRuntimeKey(detail.runtimeKey));
   setRuntimeBearerToken(clientToken || null);
   setRuntimeExtraHeaders(runtimeHeaders || null);
-  // createWebAPIs imports UI stores, which instantiate the SDK singleton
-  // before the endpoint above is configured.
+
+
   opencodeClient.reconnectToRuntimeBaseUrl();
   void refreshRuntimeUrlAuthToken(apiBaseUrl || undefined).catch(() => {});
   if (localOrigin && !sameOrigin(apiBaseUrl, localOrigin) && Object.keys(getRuntimeExtraHeadersSync()).length > 0) {
     void refreshLocalRuntimeUrlAuthToken(localOrigin).catch(() => {});
   }
   installRuntimeFetchBridge();
-  // Desktop only: reconnect a relay-capable host now that the fetch bridge is
-  // installed — either the host this window was opened for (injected id) or the
-  // default host on relaunch. No-op elsewhere; resolves in milliseconds when no
-  // relay host is involved. main.tsx holds the app render on this promise so
-  // the user sees the splash instead of a transient auth screen against an
-  // endpoint that is still being selected.
+
+
+
+
+
+  const restoreRelayRuntime = (): Promise<void> => {
+
+
+    if (relayHostId) return restoreDesktopRelayRuntime(relayHostId, { reconnectActive: true });
+
+    if (explicitRuntime) return Promise.resolve();
+
+    return restoreDesktopRelayRuntime();
+  };
   desktopRelayRestoreReady = Promise.race([
-    restoreDesktopRelayRuntime(relayHostId || undefined).catch(() => {}),
-    // Never hold the app hostage: a stuck probe/tunnel gives up to the UI.
+    restoreRelayRuntime().catch(() => {}),
+
     new Promise<void>((resolve) => { window.setTimeout(resolve, 10_000); }),
   ]).then(() => {
-    // Relay-capable windows may select a reachable direct leg before React
-    // subscribes to runtime-change events, so bind the SDK explicitly.
+
+
     opencodeClient.reconnectToRuntimeBaseUrl();
   });
-  // Learn every instance's reachability in the background, so the switcher opens
-  // on real values instead of probing for the first time under the user's
-  // cursor. After the endpoint is settled and past the app's own bootstrap:
-  // this is unprompted work and the machine's network is busiest at launch.
+
+
+
+
   void desktopRelayRestoreReady.then(() => {
     window.setTimeout(() => { void warmDesktopHostStatuses().catch(() => {}); }, HOST_STATUS_WARMUP_DELAY_MS);
   });

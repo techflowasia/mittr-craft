@@ -1,8 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import registry from '../../web/server/lib/opencode/settings-registry.json' with { type: 'json' };
 import { isPlainObject } from './mittr/values.js';
+
+const BUILT_REGISTRY = new URL('../../web/build/server/lib/settings/settings-registry.json', import.meta.url).href;
+const { default: registry } = await import('../../web/server/lib/settings/settings-registry.json', { with: { type: 'json' } })
+  .catch(() => import(BUILT_REGISTRY, { with: { type: 'json' } }));
 
 /**
  * Top-level `settings.json` keys upstream reads: the settings registry, plus

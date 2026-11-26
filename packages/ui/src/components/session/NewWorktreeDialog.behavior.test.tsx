@@ -23,15 +23,19 @@ let confirmReference: ReferenceConfirm | null = null;
 
 const projectStoreState = { getActiveProject: () => project };
 const githubAuthState = { status: { connected: true }, hasChecked: true };
-const linearAuthState = { status: null, hasChecked: true };
 const uiState = { isMobile: false };
 const gitState = { fetchBranches: async () => undefined };
 let worktreeCreations = 0;
 let lastSetupCommands: string[] | undefined;
+let lastCreateNames: { branchName?: string; worktreeName?: string } | undefined;
+let validatedNames: Array<{ branchName?: string; worktreeName?: string }> = [];
+let referenceProvider = 'github';
+let readContext: import('@/lib/api/types').SourceControlReadContext | null = null;
+let createdPath: string | null = null;
+let readIssue: () => Promise<import('@/lib/api/types').Issue | null> = async () => null;
 
 const selectProjectState = <T,>(selector: (state: typeof projectStoreState) => T): T => selector(projectStoreState);
 const selectSourceControlAuthEntry = () => githubAuthState;
-const selectLinearAuthState = <T,>(selector: (state: typeof linearAuthState) => T): T => selector(linearAuthState);
 const selectUIState = <T,>(selector: (state: typeof uiState) => T): T => selector(uiState);
 const selectGitState = <T,>(selector: (state: typeof gitState) => T): T => selector(gitState);
 
@@ -100,7 +104,7 @@ mock.module('@/components/ui/command', () => ({
 }));
 
 mock.module('@/components/ui/MobileOverlayPanel', () => ({
-  MobileOverlayPanel: ({ children, open }: React.PropsWithChildren<{ open: boolean }>) => open ? <div>{children}</div> : null,
+  MobileOverlayPanel: ({ children, open, subheader }: React.PropsWithChildren<{ open: boolean; subheader?: React.ReactNode }>) => open ? <div>{subheader}{children}</div> : null,
 }));
 mock.module('@/components/icon/Icon', () => ({ Icon: () => null }));
 mock.module('@/components/ui/dropdown-trigger', () => ({ dropdownTriggerVariants: () => '' }));
@@ -108,7 +112,6 @@ mock.module('@/lib/utils', () => ({ cn: (...values: Array<string | false | null 
 
 const actualProjectsStore = await import('@/stores/useProjectsStore');
 const actualSourceControlAuthStore = await import('@/stores/useSourceControlAuthStore');
-const actualLinearAuthStore = await import('@/stores/useLinearAuthStore');
 const actualUIStore = await import('@/stores/useUIStore');
 const actualGitStore = await import('@/stores/useGitStore');
 
@@ -119,10 +122,6 @@ mock.module('@/stores/useProjectsStore', () => ({
 mock.module('@/stores/useSourceControlAuthStore', () => ({
   ...actualSourceControlAuthStore,
   useSourceControlAuthEntry: selectSourceControlAuthEntry,
-}));
-mock.module('@/stores/useLinearAuthStore', () => ({
-  ...actualLinearAuthStore,
-  useLinearAuthStore: selectLinearAuthState,
 }));
 mock.module('@/stores/useUIStore', () => ({
   ...actualUIStore,
@@ -139,31 +138,38 @@ mock.module('@/sync/session-actions', () => ({
   updateSessionTitle: async () => undefined,
 }));
 mock.module('@/hooks/useRuntimeAPIs', () => ({
-  useRuntimeAPIs: () => ({ sourceControl: {}, git: null, linear: null }),
+  useRuntimeAPIs: () => ({ sourceControl: { issueGet: () => readIssue(), issueComments: async () => [] }, git: null }),
 }));
 mock.module('@/stores/useGitStore', () => ({
   ...actualGitStore,
   useGitBranches: () => ({ all: ['main'] }),
+  useGitBranchesFetchedAt: () => 1,
   useGitLoadingBranches: () => false,
   useGitStore: selectGitState,
 }));
 mock.module('@/lib/worktrees/worktreeManager', () => ({
   ...actualWorktreeManager,
-  validateWorktreeCreate: async () => ({ ok: true, errors: [] }),
+  validateWorktreeCreate: async (_project: unknown, args: { branchName?: string; worktreeName?: string }) => {
+    validatedNames.push({ branchName: args.branchName, worktreeName: args.worktreeName });
+    return { ok: true, errors: [] };
+  },
 }));
-mock.module('@/lib/worktrees/worktreeCreate', () => ({ createWorktreeWithDefaults: async (_project: { id: string; path: string }, args: { setupCommands?: string[] }) => {
+mock.module('@/lib/worktrees/worktreeCreate', () => ({ createWorktreeWithDefaults: async (_project: { id: string; path: string }, args: { setupCommands?: string[]; branchName?: string; worktreeName?: string }) => {
   worktreeCreations += 1;
   lastSetupCommands = args.setupCommands;
-  return null;
+  lastCreateNames = { branchName: args.branchName, worktreeName: args.worktreeName };
+  return createdPath ? { path: createdPath, branch: args.branchName, name: args.worktreeName } : null;
 } }));
 mock.module('@/lib/worktrees/worktreeBootstrap', () => ({ waitForWorktreeBootstrap: async () => undefined }));
 mock.module('@/lib/openchamberConfig', () => ({
+  getWorktreeCreateCommand: async () => '',
   getProjectSetup: async () => ({ setupWorktree: ['bun install'] }),
   getWorktreeSetupCommands: async () => [],
   getWorktreeSetupWaitEnabled: async () => false,
 }))
 mock.module('@/lib/sharedTrustConfirmation', () => ({
   resolveWorktreeSetupCommands: async () => ['trusted-from-project'],
+  resolveWorktreeSetupCommandsOrCancel: async () => ['trusted-from-project'],
 }));
 mock.module('@/lib/worktrees/worktreeStatus', () => ({ getRootBranch: async () => 'main' }));
 mock.module('@/lib/git/branchNameGenerator', () => ({
@@ -172,12 +178,13 @@ mock.module('@/lib/git/branchNameGenerator', () => ({
 }));
 
 const actualReferenceSources = await import('@/components/references/referenceSources');
-// The project's GitHub read context comes from its binding; these tests never
-// reach a PR, so no binding is read.
+// The project's read context comes from its binding; a test that reaches a
+// change request sets it here instead.
 mock.module('@/components/references/referenceSources', () => ({
   ...actualReferenceSources,
-  useGitHubReadContext: () => null,
-  useRepositoryReferenceProvider: () => 'github',
+  useRepositoryReadContext: () => readContext,
+  useRepositorySourceStatus: () => 'ready',
+  useRepositoryReferenceProvider: () => referenceProvider,
 }));
 mock.module('@/components/references/ReferencePickerDialog', () => ({
   ReferencePickerDialog: ({ onConfirm }: { onConfirm: ReferenceConfirm }) => {
@@ -252,6 +259,64 @@ const installDom = () => {
 };
 
 describe('NewWorktreeDialog behavior', () => {
+  test('linked context arriving after another draft opens keeps the created draft target', async () => {
+    const dom = installDom();
+    const root = createRoot(dom.container);
+    const { useSessionUIStore } = actualSessionUIStore;
+    const previousSession = useSessionUIStore.getState();
+    const { usePendingComposerReferences } = await import('@/components/chat/composer/pendingComposerReferences');
+    const { getRuntimeKey } = await import('@/lib/runtime-switch');
+    let resolveIssue!: (issue: import('@/lib/api/types').Issue) => void;
+    const issueRead = new Promise<import('@/lib/api/types').Issue>((resolve) => { resolveIssue = resolve; });
+    createdPath = '/workspace/worktree';
+    readIssue = () => issueRead;
+    readContext = {
+      provider: 'github', instance: 'github.com', directory: project.path, repositoryId: 'repo',
+      accountId: 'account', bindingRevision: 1, primaryRemote: 'origin',
+    };
+    usePendingComposerReferences.setState({ pending: [] });
+    try {
+      await act(async () => root.render(
+        <I18nProvider><NewWorktreeDialog open onOpenChange={() => undefined}
+          onWorktreeCreated={() => useSessionUIStore.setState({
+            currentSessionId: null,
+            newSessionDraft: { ...useSessionUIStore.getState().newSessionDraft, open: true, draftId: 700, workDraftId: 'work-a' },
+          })}
+          initialSelection={{
+            source: 'repository', includeDiff: false,
+            reference: {
+              kind: 'issue', provider: 'github', number: 7, title: 'Worktree issue', url: 'https://github.com/acme/app/issues/7',
+              body: '', bodyTruncated: false, createdAt: null, updatedAt: null, author: null, labels: [], commentCount: 0,
+              sourceRepo: { owner: 'acme', repo: 'app', source: 'origin' }, state: 'open',
+            },
+          }}
+        /></I18nProvider>,
+      ));
+      await clickButton(dom.container, (button) => button.textContent === 'Create worktree', 'create button');
+      expect(useSessionUIStore.getState().newSessionDraft.draftId).toBe(700);
+      expect(usePendingComposerReferences.getState().pending).toHaveLength(0);
+      await act(async () => useSessionUIStore.setState({
+        newSessionDraft: { ...useSessionUIStore.getState().newSessionDraft, draftId: 701, workDraftId: 'work-b' },
+      }));
+      await act(async () => resolveIssue({
+        provider: 'github', instance: 'github.com', id: '7', number: 7, title: 'Worktree issue', url: 'https://github.com/acme/app/issues/7',
+        project: { id: 'repo', owner: 'acme', name: 'app', provider: 'github', instance: 'github.com', url: 'https://github.com/acme/app' }, state: 'open',
+      }));
+      expect(usePendingComposerReferences.getState().consume({ kind: 'draft', workDraftId: 'work-b', runtimeKey: getRuntimeKey() })).toEqual([]);
+      expect(usePendingComposerReferences.getState().consume({ kind: 'draft', workDraftId: 'work-a', runtimeKey: getRuntimeKey() })).toMatchObject([
+        { kind: 'repository-issue', number: 7 },
+      ]);
+    } finally {
+      await act(async () => root.unmount());
+      useSessionUIStore.setState(previousSession);
+      usePendingComposerReferences.setState({ pending: [] });
+      createdPath = null;
+      readIssue = async () => null;
+      readContext = null;
+      dom.restore();
+    }
+  });
+
   for (const isMobile of [false, true]) {
     test(`${isMobile ? 'mobile' : 'desktop'} Enter in branch search does not create a worktree`, async () => {
       const dom = installDom();
@@ -324,6 +389,91 @@ describe('NewWorktreeDialog behavior', () => {
       });
     }
   }
+  test('opens on "PR or issue" with the item it was given already chosen', async () => {
+    const dom = installDom();
+    const root = createRoot(dom.container);
+    try {
+      await act(async () => root.render(
+        <I18nProvider>
+          <NewWorktreeDialog
+            open
+            onOpenChange={() => undefined}
+            initialSelection={{
+              source: 'repository',
+              includeDiff: false,
+              reference: {
+                kind: 'issue',
+                provider: 'github',
+                number: 7,
+                title: 'Started from the board',
+                url: 'https://github.com/acme/project/issues/7',
+                body: '',
+                bodyTruncated: false,
+                createdAt: null,
+                updatedAt: null,
+                author: null,
+                labels: [],
+                commentCount: 0,
+                sourceRepo: { owner: 'acme', repo: 'project', source: 'origin' },
+                state: 'open',
+              },
+            }}
+          />
+        </I18nProvider>,
+      ));
+      const branchInput = dom.container.querySelector<HTMLInputElement>('input[placeholder="feature/my-awesome-feature"]');
+      expect(branchInput?.value).toBe('issue-7-draft-name');
+      expect(dom.container.textContent).toContain('Started from the board');
+    } finally {
+      await act(async () => root.unmount());
+      dom.restore();
+    }
+  });
+
+  test('a change from a review host gets a branch named after the change, not its patchset ref', async () => {
+    const { useSourceControlProviderRegistry } = await import('@/lib/source-control/providers/registry');
+    const { githubLikeDescriptor, changeHostDescriptor } = await import('@/lib/source-control/providers/descriptor.fixture');
+    const previousRegistry = useSourceControlProviderRegistry.getState();
+    const ordered = [githubLikeDescriptor(), changeHostDescriptor()];
+    useSourceControlProviderRegistry.setState({ ordered, byId: new Map(ordered.map((entry) => [entry.id, entry])), status: 'ready', holdsList: true });
+    referenceProvider = 'review-host';
+    readContext = {
+      provider: 'review-host', instance: 'https://review.example.com', directory: project.path, repositoryId: 'repo', accountId: 'review#1', bindingRevision: 1, primaryRemote: 'origin',
+    };
+    validatedNames = [];
+    const dom = installDom();
+    const root = createRoot(dom.container);
+    try {
+      await act(async () => root.render(
+        <I18nProvider>
+          <NewWorktreeDialog
+            open
+            onOpenChange={() => undefined}
+            initialSelection={{
+              source: 'repository',
+              includeDiff: false,
+              reference: {
+                kind: 'pull', provider: 'review-host', number: 1234, title: 'A change', url: 'https://review.example.com/c/tools/app/+/1234',
+                body: '', bodyTruncated: false, createdAt: null, updatedAt: null, author: null, labels: [], commentCount: 0,
+                sourceRepo: { owner: 'tools', repo: 'app', source: 'origin' },
+                state: 'open', draft: false, head: 'refs/changes/34/1234/5', base: 'main', headSha: 'a'.repeat(40), headRepo: null,
+              },
+            }}
+          />
+        </I18nProvider>,
+      ));
+      const branchInput = dom.container.querySelector<HTMLInputElement>('input[placeholder="feature/my-awesome-feature"]');
+      expect(branchInput?.value).toBe('change-1234');
+      expect(validatedNames).toEqual([{ branchName: 'change-1234', worktreeName: 'change-1234' }]);
+    } finally {
+      await act(async () => root.unmount());
+      dom.restore();
+      referenceProvider = 'github';
+      readContext = null;
+      useSourceControlProviderRegistry.setState(previousRegistry);
+    }
+  });
+
   test('preserves selected issue values when available worktree names change', async () => {
     const dom = installDom();
     const root = createRoot(dom.container);
@@ -336,17 +486,19 @@ describe('NewWorktreeDialog behavior', () => {
         </I18nProvider>,
       ));
       await clickButton(dom.container, (button) => button.getAttribute('role') === 'button' && Boolean(button.textContent?.startsWith('PR or issue')), 'PR or issue option');
-      const startFromGitHub = dom.container.querySelector<HTMLButtonElement>('button[aria-label="A GitHub issue or pull request"]');
+      // The registry is empty here, so the provider reads by its id.
+      const startFromGitHub = dom.container.querySelector<HTMLButtonElement>('button[aria-label="A github issue or pull request"]');
       if (!startFromGitHub) throw new Error('Missing start-from-GitHub button');
       await act(async () => startFromGitHub.click());
       if (!confirmReference) throw new Error('Expected the reference picker to open');
 
       await act(async () => {
         await confirmReference?.([{
-          source: 'github',
+          source: 'repository',
           includeDiff: false,
           reference: {
             kind: 'issue',
+            provider: 'github',
             number: 42,
             title: 'Keep the selected issue',
             url: 'https://github.com/acme/project/issues/42',
@@ -408,6 +560,42 @@ describe('NewWorktreeDialog behavior', () => {
       expect(dom.container.querySelector('textarea')).toBeNull();
       await act(async () => { branchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); });
       expect(lastSetupCommands).toEqual(['trusted-from-project']);
+    } finally {
+      await act(async () => root.unmount());
+      dom.restore();
+    }
+  });
+
+  test('a branch name without Latin letters keeps the random folder name and stays creatable', async () => {
+    const dom = installDom();
+    const root = createRoot(dom.container);
+    lastCreateNames = undefined;
+    try {
+      await act(async () => root.render(<I18nProvider><NewWorktreeDialog open onOpenChange={() => undefined} /></I18nProvider>));
+      const branchInput = dom.container.querySelector<HTMLInputElement>('input[placeholder="feature/my-awesome-feature"]');
+      const folderInput = dom.container.querySelector<HTMLInputElement>('input[placeholder="my-worktree-directory"]');
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+      if (!branchInput || !folderInput || !setValue) throw new Error('Missing worktree form fields');
+      await act(async () => {
+        setValue.call(branchInput, '测试分支');
+        branchInput.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      expect(folderInput.value).toBe('draft-name');
+      const createButton = [...dom.container.querySelectorAll('button')].find((button) => button.textContent === 'Create worktree');
+      expect(createButton?.disabled).toBe(false);
+
+      await act(async () => {
+        setValue.call(branchInput, 'feature/测试');
+        branchInput.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      expect(folderInput.value).toBe('feature');
+
+      await act(async () => {
+        setValue.call(branchInput, '测试分支');
+        branchInput.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      await act(async () => { branchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); });
+      expect(lastCreateNames).toEqual({ branchName: '测试分支', worktreeName: 'draft-name' });
     } finally {
       await act(async () => root.unmount());
       dom.restore();

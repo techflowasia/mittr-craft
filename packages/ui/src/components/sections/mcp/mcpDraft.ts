@@ -1,10 +1,11 @@
 import type { McpDraft, McpOAuthConfig } from '@/stores/useMcpConfigStore';
 
-/**
- * The OAuth credential fields the page has no editor for. A save rebuilds the
- * whole `oauth` object, so whatever the entry already holds is carried in this
- * shape and written back untouched.
- */
+export const normalizeMcpServerName = (value: string): string =>
+  value.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+
+export const normalizeImportedMcpServerName = (value: string): string =>
+  normalizeMcpServerName(value.trim()).replace(/^[-_]+|[-_]+$/g, '');
+
 export const MCP_DRAFT_OAUTH_UNSET = {
   oauthEnabled: true,
   oauthClientId: '',
@@ -19,7 +20,6 @@ export type McpOAuthCarried = Pick<
   'oauthEnabled' | 'oauthClientId' | 'oauthClientSecret' | 'oauthScope' | 'oauthRedirectUri' | 'oauthCallbackPort'
 >;
 
-/** The stored OAuth block as the form carries it, so a save cannot lose it. */
 export const readCarriedOAuth = (oauth: McpOAuthConfig | false | undefined): McpOAuthCarried => {
   if (oauth === false) return { ...MCP_DRAFT_OAUTH_UNSET, oauthEnabled: false };
   if (!oauth) return MCP_DRAFT_OAUTH_UNSET;

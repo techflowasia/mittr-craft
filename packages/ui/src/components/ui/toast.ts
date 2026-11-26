@@ -44,30 +44,38 @@ const getToastCopyText = (message: string | React.ReactNode, data?: ExternalToas
   return reactNodeToText(message)
 }
 
-// Wrapper to automatically add OK button to success and info toasts, Copy button to error and warning toasts
-export const toast = {
+const DEFAULT_TOAST_DURATION_MS = 4000
+
+const withCountdown = (data?: ExternalToast): ExternalToast => {
+  const duration = data?.duration ?? DEFAULT_TOAST_DURATION_MS
+  if (!Number.isFinite(duration)) return { ...data }
+  return {
+    ...data,
+    className: [data?.className, "oc-toast-timed"].filter(Boolean).join(" "),
+    style: Object.assign({}, data?.style, { "--oc-toast-duration": `${duration}ms` }),
+  }
+}
+
+type ToastWithAction = (message: string | React.ReactNode, data?: ExternalToast) => string | number
+
+type AppToast = Omit<typeof sonnerToast, 'success' | 'info' | 'error' | 'warning'> & {
+  success: ToastWithAction
+  info: ToastWithAction
+  error: ToastWithAction
+  warning: ToastWithAction
+}
+
+export const toast: AppToast = {
   ...sonnerToast,
   success: (message: string | React.ReactNode, data?: ExternalToast) => {
-    return sonnerToast.success(message, {
-      ...data,
-      action: data?.action || {
-        label: 'OK',
-        onClick: () => {},
-      },
-    })
+    return sonnerToast.success(message, withCountdown(data))
   },
   info: (message: string | React.ReactNode, data?: ExternalToast) => {
-    return sonnerToast.info(message, {
-      ...data,
-      action: data?.action || {
-        label: 'OK',
-        onClick: () => {},
-      },
-    })
+    return sonnerToast.info(message, withCountdown(data))
   },
   error: (message: string | React.ReactNode, data?: ExternalToast) => {
     return sonnerToast.error(message, {
-      ...data,
+      ...withCountdown(data),
       action: data?.action || {
         label: 'Copy',
         onClick: () => copyToClipboard(getToastCopyText(message, data)),
@@ -76,7 +84,7 @@ export const toast = {
   },
   warning: (message: string | React.ReactNode, data?: ExternalToast) => {
     return sonnerToast.warning(message, {
-      ...data,
+      ...withCountdown(data),
       action: data?.action || {
         label: 'Copy',
         onClick: () => copyToClipboard(getToastCopyText(message, data)),

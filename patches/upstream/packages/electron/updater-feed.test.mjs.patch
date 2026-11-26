@@ -1,10 +1,18 @@
 diff --git a/packages/electron/updater-feed.test.mjs b/packages/electron/updater-feed.test.mjs
-index bee126834..32e450de8 100644
+index 66fa2d772..305857871 100644
 --- a/packages/electron/updater-feed.test.mjs
 +++ b/packages/electron/updater-feed.test.mjs
-@@ -72,3 +72,16 @@ test('invalid URLs fall back to the production feed even with both test gates',
-     }), PRODUCTION_UPDATER_FEED);
-   }
+@@ -1,6 +1,7 @@
+ import assert from 'node:assert/strict';
+ import test from 'node:test';
+ 
++import { readProduct, UPSTREAM_PRODUCT } from './product.mjs';
+ import {
+   CANARY_MIRROR_UPDATER_FEED,
+   CANARY_UPDATER_FEED,
+@@ -116,3 +117,46 @@ test('both channels read the mirror, and GitHub for an hour after the mirror fai
+   assert.equal(CANARY_MIRROR_UPDATER_FEED.url, 'https://downloads.openchamber.dev/desktop/canary/');
+   assert.equal(resolveUpdaterFeed({ environment: overrideEnvironment, testBuild: true, channel: 'stable', source: 'mirror' }).url, overrideEnvironment.OPENCHAMBER_UPDATER_E2E_URL);
  });
 +
 +test('a product without an updater feed resolves to no feed', () => {
@@ -13,9 +21,39 @@ index bee126834..32e450de8 100644
 +    resolveUpdaterFeed({ productionFeed: null, environment: overrideEnvironment }),
 +    null,
 +  );
++  assert.equal(resolveUpdaterFeed({ productionFeed: null, channel: 'canary', source: 'mirror' }), null);
 +});
 +
-+test('a product feed replaces the default production feed', () => {
++test('a product feed replaces the default production feed on every channel and source', () => {
 +  const productionFeed = { provider: 'generic', url: 'https://updates.example.test/' };
 +  assert.equal(resolveUpdaterFeed({ productionFeed }), productionFeed);
++  assert.equal(resolveUpdaterFeed({ productionFeed, channel: 'canary', source: 'mirror' }), productionFeed);
++});
++
++const missingProductFile = { readFileSync: () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); } };
++
++test('without a product.json the feeds follow the channel and source as upstream picks them', () => {
++  const { updaterFeed: productionFeed } = readProduct({ appPath: '/app', fs: missingProductFile, homeDir: '/home/acme' });
++  assert.notEqual(productionFeed, UPSTREAM_PRODUCT.updaterFeed);
++  for (const channel of ['stable', 'canary']) {
++    for (const source of ['github', 'mirror']) {
++      assert.equal(resolveUpdaterFeed({ productionFeed, channel, source }), resolveUpdaterFeed({ channel, source }));
++    }
++  }
++});
++
++test('a product that turns updates off or brings its own feed replaces every channel', () => {
++  const feed = { provider: 'generic', url: 'https://updates.example.test/' };
++  const from = (updaterFeed) => readProduct({
++    appPath: '/app',
++    fs: { readFileSync: () => JSON.stringify({ updaterFeed }) },
++    homeDir: '/home/acme',
++  }).updaterFeed;
++  for (const channel of ['stable', 'canary']) {
++    for (const source of ['github', 'mirror']) {
++      assert.equal(resolveUpdaterFeed({ productionFeed: from(null), channel, source }), null);
++      const own = resolveUpdaterFeed({ productionFeed: from({ ...feed, owner: null, repo: null }), channel, source });
++      assert.equal(own.url, feed.url);
++    }
++  }
 +});

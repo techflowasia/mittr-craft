@@ -1,0 +1,71 @@
+diff --git a/packages/ui/src/stores/useQuotaStore.ts b/packages/ui/src/stores/useQuotaStore.ts
+index dd6b33406..3793c784a 100644
+--- a/packages/ui/src/stores/useQuotaStore.ts
++++ b/packages/ui/src/stores/useQuotaStore.ts
+@@ -6,6 +6,7 @@ import type { QuotaProviderMeta } from '@/lib/quota';
+ import { fetchExtensionQuotaProviders, quotaProviderIds, quotaProviderList, sameExtensionQuotaProviders, type ExtensionQuotaProvider } from '@/lib/quota/extensionProviders';
+ import { getDesktopWindowVisibility, isDesktopShell, type DesktopSettings } from '@/lib/desktop';
+ import { isCapacitorApp } from '@/lib/platform';
++import { refreshQuotaProvider } from '@/lib/quota/providers';
+ import { getDefaultModels } from '@/lib/quota/model-families';
+ import { loadDesktopSettings, updateDesktopSettings } from '@/lib/persistence';
+ import { fetchConfiguredQuotaProviders, fetchQuota } from '@/lib/quota/fetchQuota';
+@@ -61,6 +62,7 @@ interface QuotaStore extends QuotaSettingsState {
+   ensureLoadedForRuntime: (options?: { refresh?: boolean; allProviders?: boolean; visibleOnly?: boolean }) => Promise<void>;
+   resetForRuntimeSwitch: () => void;
+   refreshAfterCredentialChange: () => Promise<void>;
++  invalidateProvider: (providerId: string) => void;
+ }
+ 
+ const resolveDropdownProviderIds = (saved: readonly string[] | null, known: readonly QuotaProviderId[]): QuotaProviderId[] => (
+@@ -237,8 +239,11 @@ export const useQuotaStore = create<QuotaStore>()(
+         const controller = new AbortController();
+         const promise = Promise.resolve().then(async () => {
+           try {
++            // Start both reads together. Extensions must not delay the ordinary read's deadline.
++            void refreshQuotaProvider(providerId, { signal: controller.signal });
++            if (controller.signal.aborted || generation !== quotaGeneration) return false;
+             const result = await fetchQuota(providerId, { signal: controller.signal });
+-            if (generation !== quotaGeneration) return false;
++            if (controller.signal.aborted || generation !== quotaGeneration) return false;
+             if (!result.ok && result.configured) {
+               const message = result.error || 'Failed to fetch quota';
+               set(state => {
+@@ -267,7 +272,7 @@ export const useQuotaStore = create<QuotaStore>()(
+             return false;
+           } finally {
+             if (quotaRequests.get(providerId)?.controller === controller) quotaRequests.delete(providerId);
+-            if (generation === quotaGeneration) {
++            if (!controller.signal.aborted && generation === quotaGeneration) {
+               set((state) => ({
+                 isFetchingProvider: { ...state.isFetchingProvider, [providerId]: quotaRequests.has(providerId) },
+                 isLoading: quotaRequests.size > 0,
+@@ -317,6 +322,28 @@ export const useQuotaStore = create<QuotaStore>()(
+         return inFlightRuntimeLoad;
+       },
+ 
++      invalidateProvider: (providerId) => {
++        for (const [id, request] of quotaRequests) {
++          if (id !== providerId) continue;
++          request.controller.abort();
++          quotaRequests.delete(id);
++        }
++        set(state => {
++          const refreshErrors = { ...state.refreshErrors };
++          const isFetchingProvider = { ...state.isFetchingProvider };
++          for (const provider of quotaProviderList(state.extensionProviders)) {
++            if (provider.id === providerId) delete refreshErrors[provider.id];
++          }
++          delete isFetchingProvider[providerId];
++          return {
++            results: state.results.filter(entry => entry.providerId !== providerId),
++            refreshErrors, isFetchingProvider,
++            error: Object.values(refreshErrors)[0] ?? null,
++            isLoading: quotaRequests.size > 0,
++          };
++        });
++      },
++
+       resetForRuntimeSwitch: () => {
+         quotaGeneration += 1;
+         configuredProvidersRequest = null;
