@@ -6,11 +6,12 @@ import { GlassSky } from './glass/GlassSky';
 import { MittrSurfaceContext, type MittrSurface } from './mittrSurface';
 import { MittrProjectFolderNotice } from './projectFolder/MittrProjectFolderNotice';
 import { SelectMittrUsage } from './quota/SelectMittrUsage';
+import { MittrAIRefresh } from './quota/mittrAIRefresh';
 import { MittrSignInGate } from './sign-in/MittrSignInGate';
 import { MittrSmallModelRefresh } from './smallModel/smallModelRefresh';
 import { MittrVoiceMount } from './voice/MittrVoiceRoot';
-import { MittrRecentSectionDefault } from './sidebar/recentSectionDefault';
 import './sidebar/projectActions.css';
+import './motion.css';
 
 export function MittrRoot({ children, surface }: { children: React.ReactNode; surface: MittrSurface }): React.ReactNode {
   return (
@@ -18,9 +19,9 @@ export function MittrRoot({ children, surface }: { children: React.ReactNode; su
       <GlassSky />
       <MittrDefaultFonts />
       <MittrSmallModelRefresh />
-      <MittrRecentSectionDefault />
       <MittrSignInGate>
         <SelectMittrUsage />
+        <MittrAIRefresh />
         <MittrProjectFolderNotice surface={surface} />
         <MittrVoiceMount />
         {surface === 'main' ? <MittrLastPick /> : null}

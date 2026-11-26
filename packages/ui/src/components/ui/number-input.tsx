@@ -79,7 +79,7 @@ const NumberInput = React.forwardRef<HTMLInputElement, NumberInputProps>(
       const handleCaptureClick = (event: MouseEvent) => {
         event.preventDefault()
         event.stopPropagation()
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         ;(event as any).stopImmediatePropagation?.()
         swallowNextClickCleanupRef.current?.()
       }
@@ -118,16 +118,8 @@ const NumberInput = React.forwardRef<HTMLInputElement, NumberInputProps>(
       return 0
     }, [fallbackValue, min, value])
 
-    // Tracks the most recent user-committed snapshot so back-to-back clicks
-    // within the same render cycle operate on the latest value, not the stale
-    // `value` prop (which only updates after the parent re-renders in response
-    // to onValueChange). See packages/ui/src/components/ui/number-input.test.tsx.
     const committedValueRef = React.useRef<number>(baseValue)
 
-    // Assumes a well-behaved controlled parent: when the parent updates the
-    // `value` prop, the effect syncs the ref. If a parent ever rejects or
-    // debounces `onValueChange`, the ref can briefly lead the prop. Today no
-    // production caller rejects; revisit if a debounced caller is added.
     React.useEffect(() => {
       committedValueRef.current = baseValue
     }, [baseValue])
@@ -237,9 +229,7 @@ const NumberInput = React.forwardRef<HTMLInputElement, NumberInputProps>(
     const handleMobileTouchActivate = (handler: () => void) => (event: React.TouchEvent) => {
       event.preventDefault()
       event.stopPropagation()
-      // Touch on iOS often triggers a follow-up click; ignore it.
       ignoreNextClickRef.current = true
-      // Also swallow the synthetic click anywhere (prevents layout-shift clicks).
       swallowNextClick()
       handler()
     }
@@ -258,7 +248,6 @@ const NumberInput = React.forwardRef<HTMLInputElement, NumberInputProps>(
       return (
         <div
           className={cn(
-            // NOTE: mobile.css enforces min-height:36px on buttons; match it to avoid clipping.
             "oc-surface-elevated flex h-8 shrink-0 items-stretch overflow-x-hidden overflow-y-hidden rounded-lg border border-border bg-surface-elevated select-none overscroll-contain",
             "[-webkit-user-select:none] [-webkit-touch-callout:none]",
             "disabled:pointer-events-none disabled:opacity-50",
@@ -272,7 +261,7 @@ const NumberInput = React.forwardRef<HTMLInputElement, NumberInputProps>(
             onTouchStart={handleMobileTouchActivate(handleMobileDecrement)}
             onClick={handleMobileClickActivate(handleMobileDecrement)}
             className={cn(
-              "grid h-full min-h-0 w-9 shrink-0 place-items-center overflow-x-hidden overflow-y-hidden border-r border-border p-0 leading-none touch-none",
+              "grid h-full min-h-0 w-9 shrink-0 place-items-center overflow-x-hidden overflow-y-hidden border-e border-border p-0 leading-none touch-none",
               "text-muted-foreground",
               "disabled:pointer-events-none disabled:opacity-50",
               !decrementDisabled && "active:bg-interactive-active"
@@ -284,7 +273,7 @@ const NumberInput = React.forwardRef<HTMLInputElement, NumberInputProps>(
           <div
             className={cn(
               "flex h-full min-w-0 flex-1 items-center justify-center bg-transparent px-1.5",
-              "text-center text-[16px] leading-none text-foreground [font-variant-numeric:tabular-nums]",
+              "text-center text-[1rem] leading-none text-foreground [font-variant-numeric:tabular-nums]",
               className
             )}
             aria-live="polite"
@@ -299,7 +288,7 @@ const NumberInput = React.forwardRef<HTMLInputElement, NumberInputProps>(
             onTouchStart={handleMobileTouchActivate(handleMobileIncrement)}
             onClick={handleMobileClickActivate(handleMobileIncrement)}
             className={cn(
-              "grid h-full min-h-0 w-9 shrink-0 place-items-center overflow-x-hidden overflow-y-hidden border-l border-border p-0 leading-none touch-none",
+              "grid h-full min-h-0 w-9 shrink-0 place-items-center overflow-x-hidden overflow-y-hidden border-s border-border p-0 leading-none touch-none",
               "text-muted-foreground",
               "disabled:pointer-events-none disabled:opacity-50",
               !incrementDisabled && "active:bg-interactive-active"
@@ -326,7 +315,7 @@ const NumberInput = React.forwardRef<HTMLInputElement, NumberInputProps>(
           disabled={decrementDisabled}
           onClick={() => commitValue(committedValueRef.current - step)}
           className={cn(
-            "flex h-full w-7 shrink-0 items-center justify-center overflow-x-hidden overflow-y-hidden border-r border-border p-0 leading-none touch-manipulation",
+            "flex h-full w-7 shrink-0 items-center justify-center overflow-x-hidden overflow-y-hidden border-e border-border p-0 leading-none touch-manipulation",
             "text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
             "disabled:pointer-events-none disabled:opacity-50",
             "transition-colors duration-150 ease-in-out"
@@ -363,7 +352,7 @@ const NumberInput = React.forwardRef<HTMLInputElement, NumberInputProps>(
           disabled={incrementDisabled}
           onClick={() => commitValue(committedValueRef.current + step)}
           className={cn(
-            "flex h-full w-7 shrink-0 items-center justify-center overflow-x-hidden overflow-y-hidden border-l border-border p-0 leading-none touch-manipulation",
+            "flex h-full w-7 shrink-0 items-center justify-center overflow-x-hidden overflow-y-hidden border-s border-border p-0 leading-none touch-manipulation",
             "text-muted-foreground hover:bg-interactive-hover hover:text-foreground",
             "disabled:pointer-events-none disabled:opacity-50",
             "transition-colors duration-150 ease-in-out"

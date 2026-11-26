@@ -5,12 +5,15 @@ import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useGlobalSessionStatusStore } from '@/sync/global-session-status';
 import {
   buildSessionRetentionCandidates,
+  inWorkKeepsSessions,
+  isSessionKeptByUser,
   RETENTION_INTERVAL_MS,
   RETENTION_KEEP_RECENT,
   runSessionRetentionCleanup,
   useSessionRetentionRunStore,
 } from '@/sync/session-retention';
 import { useUIStore } from '@/stores/useUIStore';
+import { useSessionPinnedStore } from '@/stores/useSessionPinnedStore';
 
 const EMPTY_SESSIONS: Session[] = [];
 type CleanupOptions = { autoRun?: boolean; enabled?: boolean };
@@ -29,10 +32,14 @@ export const useSessionAutoCleanup = ({ autoRun = true, enabled = true }: Cleanu
   const status = useGlobalSessionsStore((state) => state.status);
   const activeSessionIds = useGlobalSessionStatusStore((state) => state.activeSessionIds);
   const isRunning = useSessionRetentionRunStore((state) => state.isRunning);
+  const pinnedIds = useSessionPinnedStore((state) => state.ids);
+  const workKeeps = useUIStore(inWorkKeepsSessions);
 
   React.useEffect(() => {
-    if (needsGlobalSessions) void ensureGlobalSessionsLoaded();
-  }, [needsGlobalSessions]);
+    if (!needsGlobalSessions) return;
+    if (autoRun && autoDeleteLastRunAt && Date.now() - autoDeleteLastRunAt < RETENTION_INTERVAL_MS) return;
+    void ensureGlobalSessionsLoaded();
+  }, [needsGlobalSessions, autoRun, autoDeleteLastRunAt]);
 
   const candidates = React.useMemo(() => buildSessionRetentionCandidates({
     sessions: [...activeSessions, ...archivedSessions],
@@ -41,7 +48,8 @@ export const useSessionAutoCleanup = ({ autoRun = true, enabled = true }: Cleanu
     action,
     onlyArchived,
     activeSessionIds,
-  }), [activeSessions, archivedSessions, currentSessionId, autoDeleteAfterDays, action, onlyArchived, activeSessionIds]);
+    isKept: (session) => isSessionKeptByUser(session, pinnedIds, workKeeps),
+  }), [activeSessions, archivedSessions, currentSessionId, autoDeleteAfterDays, action, onlyArchived, activeSessionIds, pinnedIds, workKeeps]);
 
   React.useEffect(() => {
     if (!enabled || !autoRun || !autoDeleteEnabled || autoDeleteAfterDays <= 0

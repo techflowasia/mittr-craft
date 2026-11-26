@@ -7,6 +7,7 @@ import {
   DEFAULT_UI_FONT,
   UI_FONT_OPTIONS,
   UI_FONT_OPTION_MAP,
+  customFontStack,
   isMonoFontOption,
   isUiFontOption,
 } from './fontOptions';
@@ -63,6 +64,7 @@ describe('font options a product plugin contributes', () => {
       fontOptions: {
         ui: [
           { id: 'inter', label: 'Not Inter', description: '', stack: 'serif' },
+          { id: 'custom', label: 'Not custom', description: '', stack: 'serif' },
           { id: 'dup', label: 'One', description: '', stack: 'serif' },
           { id: 'dup', label: 'Two', description: '', stack: 'serif' },
           { id: '', label: 'Empty', description: '', stack: 'serif' },
@@ -98,4 +100,25 @@ describe('font options a product plugin contributes', () => {
       scope.document = previous.document;
     }
   });
+});
+
+const fallback = 'ui-monospace, "SFMono-Regular", monospace';
+
+test('a single family is quoted and followed by the fallback', () => {
+  expect(customFontStack('Maple Mono NF CN', fallback)).toBe(`"Maple Mono NF CN", ${fallback}`);
+});
+
+test('a comma list becomes one quoted family per entry, then the fallback', () => {
+  expect(customFontStack('"Cascadia Mono", "Microsoft YaHei"', fallback))
+    .toBe(`"Cascadia Mono", "Microsoft YaHei", ${fallback}`);
+});
+
+test('empty entries are dropped and characters that could end the value are stripped', () => {
+  expect(customFontStack(' Inter , , Geo;rgia{} ', fallback))
+    .toBe(`"Inter", "Georgia", ${fallback}`);
+});
+
+test('a value with no usable family returns the fallback alone', () => {
+  expect(customFontStack('  , ; {} ', fallback)).toBe(fallback);
+  expect(customFontStack('', fallback)).toBe(fallback);
 });

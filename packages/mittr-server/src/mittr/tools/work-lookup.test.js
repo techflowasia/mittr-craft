@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
+import '../../../../web/scripts/register-server-sources.mjs';
 
-import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
 import { ENGINE_DB_RULE, engineBases, engineEnv } from '../../engine-home.js';
 import { createAccountStore, keyOf } from '../account-store.js';
 import { createAccountSwitcher } from '../accounts-switch.js';
@@ -10,6 +10,8 @@ import { ACCOUNT_CHANGED, PLATFORM_TIMED_OUT } from '../platform.js';
 import { decrypt, deferred, encrypt, fakeFetch, json, tempDataDir } from '../test-helpers.js';
 import { MITTR_TOOLS, createMittrActionRegistry } from './registry.js';
 import { MAX_PLANE_LINK_CHARS, WORK_TOOL_DESCRIPTION, createWorkLookup, registerWorkActions } from './work-lookup.js';
+
+const { OPENCHAMBER_ALL_ACTIONS } = await import('../../../../web/server/lib/openchamber-control/actions.js');
 
 const BROKER = { baseUrl: 'https://platform.example.test' };
 const ACCESS_TOKEN = 'at-work-7f3a9c';

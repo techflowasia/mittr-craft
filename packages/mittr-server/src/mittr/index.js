@@ -15,6 +15,7 @@ import { registerAppearanceSettingsRoutes } from './appearance-settings-routes.j
 import { syncDefaultModel } from './default-model.js';
 import { createEnablementStore } from './enablement.js';
 import { engineEnvFragment, engineEnvPluginDir, materializeEngineEnvPlugin } from './engine-env-plugin.js';
+import { engineLeftOutFragment } from './engine-left-out.js';
 import { ensureMittrCredential, forgetMittrCredential } from './engine-credential.js';
 import { identityFragment, identityPluginDir, materializeIdentityPlugin } from './identity.js';
 import { registerMittrIntegrationsRoutes } from './integrations-routes.js';
@@ -22,7 +23,7 @@ import { mintLocalToken } from './local-token.js';
 import { catalogMcpServers, heldMcpNames, mcpFragment, sweepLegacyUserMcp } from './mcp-fragment.js';
 import { createMittrSettings } from './mittr-settings.js';
 import { createModelRefusalHandler, createThrottle } from './model-refusal.js';
-import { MITTR_PROVIDER_ID, policiesFragment } from './policies.js';
+import { MITTR_PROVIDER_ID, policiesFragment, syncUserConfigLock } from './policies.js';
 import { setupMittrProjectFolders } from './project-folder.js';
 import { loopbackProxyExemption, mittrProviderFragment, shimBaseUrl } from './provider-config.js';
 import { registerProviderLockRoutes } from './provider-lock-routes.js';
@@ -108,6 +109,7 @@ export function setupMittr(context, {
   credentialRetryMs = CREDENTIAL_RETRY_MS,
   engineConfigDir = null,
   engineDataHome = null,
+  engineHomeRefusal = async () => null,
   now = Date.now,
   mintShimKey = mintLocalToken,
   companySignIn = false,
@@ -194,7 +196,23 @@ export function setupMittr(context, {
     && path.resolve(userConfig.path) === path.join(path.resolve(engineConfigDir), 'opencode.json');
   if (engineConfigDir && userConfig && !ownsEngineUserConfig) {
     logger.warn(`[mittr] the engine reads its config from ${path.resolve(engineConfigDir)}, not ${path.dirname(path.resolve(userConfig.path))}; the default model is left alone`);
+    logger.warn(`[mittr] the provider lock is only in the managed config, and an allow in ${path.join(path.resolve(engineConfigDir), 'opencode.json')} outranks it`);
   }
+  let userLockError = null;
+  const followProviderLock = (settings) => {
+    if (!ownsEngineUserConfig) return;
+    userLockError = null;
+    try {
+      if (syncUserConfigLock({ userConfig, showOtherProviders: settings.showOtherProviders })) {
+        logger.log(settings.showOtherProviders === true
+          ? '[mittr] the provider lock is out of the engine user config'
+          : '[mittr] the provider lock is the last rule in the engine user config');
+      }
+    } catch (error) {
+      userLockError = error;
+      logger.warn('[mittr] could not bring the engine user config to the provider switch; the managed config still carries it:', error?.message ?? error);
+    }
+  };
   const sweepLegacyConnectorsQuietly = () => {
     if (!ownsEngineUserConfig) return;
     try {
@@ -252,13 +270,18 @@ export function setupMittr(context, {
   // Both are defined below and first called once setup has returned.
   let shim = null;
   let audit = null;
+  let catalogAccountGeneration = 0;
   const syncCatalog = () => catalog.sync();
   let accountSync = null;
   let startupSyncDone = false;
   let startupSyncRunning = false;
+  let startupSyncUnder = null;
   const syncAfterAccountChange = () => {
-    const outcome = syncCatalog();
-    accountSync = { key: activeAccountKey(), outcome };
+    const key = activeAccountKey();
+    const covered = startupSyncUnder?.key === key && startupSyncUnder.generation === catalogAccountGeneration;
+    const outcome = covered ? startupSyncUnder.outcome : syncCatalog();
+    startupSyncUnder = null;
+    accountSync = { key, outcome };
     void outcome.then((result) => {
       if (result?.status !== 200 && accountSync?.outcome === outcome) startupSyncDone = false;
     });
@@ -284,10 +307,15 @@ export function setupMittr(context, {
     logger,
   });
 
+  opencode.registerRecoveryAccount?.({
+    identity: () => store.list({ carryLegacy: false }).find(account => account.active)?.userId ?? 'signed-out',
+    ready: () => switcher.settledOnTarget(),
+  });
+
   let disposed = false;
   let correction = null;
   const correctEngineHomeSoon = () => {
-    if (switcher.engineOnTarget() || correction || disposed) return;
+    if (!switcher.engineOnAnotherHome() || correction || disposed) return;
     correction = setTimeout(() => {
       correction = null;
       void switcher.correctEngineHome();
@@ -302,24 +330,34 @@ export function setupMittr(context, {
     scheme,
     fetchImpl,
     signInRefusal: refusal,
-    onSignIn: () => switcher.afterSignIn(),
+    beforeAccountMutation: () => opencode.beforeAccountMutation?.(),
+    accountMutationSettled: token => opencode.accountMutationSettled?.(token),
+    onSignIn: () => {
+      catalogAccountGeneration += 1;
+      return switcher.afterSignIn();
+    },
     // A sign-out or a switch ends every answer still streaming on the
     // account that was active, whether or not the engine restarts. The
     // account now active brings its own models.
     onAccountChange: (nextUserId) => {
+      catalogAccountGeneration += 1;
       shim?.abortInFlight();
       answeredByLog.clear();
       audit?.clear();
       voice.accountChanged();
       widgets.accountChanged();
       void tools.accountChanged();
-      return switcher.switchTo(nextUserId);
+      return switcher.switchTo(nextUserId, { reconcile: true });
     },
     switchSettled: () => switcher.settledOnTarget(),
+    accountRefusal: async (userId) => {
+      const home = store.homeOf(userId);
+      return home === undefined ? null : engineHomeRefusal(home);
+    },
     logger,
   });
 
-  const engineOnActiveHome = () => !signedIn() || switcher.engineOnTarget();
+  const engineOnActiveHome = () => !signedIn() || !switcher.engineOnAnotherHome();
 
   // A new key every run: one that leaked from an earlier run opens nothing.
   const localToken = mintShimKey();
@@ -349,7 +387,9 @@ export function setupMittr(context, {
     ensureFreshSession,
     cache: activeCatalogCache,
     enablement,
-    onModels: (items) => onModels(items, { listKnown: true }),
+    accountGeneration: () => catalogAccountGeneration,
+    now,
+    onModels: (items) => applyModels(items, { listKnown: true }),
     onCatalog: async (stored) => {
       applySkillsQuietly(stored);
       sweepLegacyConnectorsQuietly();
@@ -373,8 +413,6 @@ export function setupMittr(context, {
     logger,
   });
 
-  const quotaService = createMittrQuotaService({ broker, ensureFreshSession, fetchImpl });
-  registerMittrQuotaRoutes(app, { service: quotaService });
   registerMittrWorkRoutes(app, { broker, ensureFreshSession, fetchImpl, logger });
   registerMittrIntegrationsRoutes(app, { express, broker, ensureFreshSession, fetchImpl, logger });
   const registry = createMittrActionRegistry({ control, logger });
@@ -417,6 +455,8 @@ export function setupMittr(context, {
     keys: createSpeechKeys({ dataDir }),
     state: createSpeechState({ now }),
   };
+  const quotaService = createMittrQuotaService({ broker, ensureFreshSession, fetchImpl, accountGeneration: () => catalogAccountGeneration, speechState: speech.state });
+  registerMittrQuotaRoutes(app, { service: quotaService });
   const speechRoutes = registerSpeechRoutes(app, {
     express,
     ...speech,
@@ -494,6 +534,7 @@ export function setupMittr(context, {
     const rendered = models;
     const connectors = managedConnectors({ log: true });
     const settings = await mittrSettings.read();
+    followProviderLock(settings);
     const engineEnvPlugin = await engineEnvConfig();
     const identity = await identityConfig();
     const toolsConfig = await tools.render();
@@ -503,6 +544,7 @@ export function setupMittr(context, {
       engineEnvPlugin,
       identity,
       server.port() === null ? {} : mittrProviderFragment({ shimBaseUrl: shimBaseUrl(server.port()), models: rendered }),
+      engineLeftOutFragment({ env, resourcesDir, logger }),
       connectors,
       toolsConfig.fragment,
       ENGINE_SHARE_OFF,
@@ -550,7 +592,11 @@ export function setupMittr(context, {
     startupSyncRunning = true;
     try {
       const covering = accountSync?.key === activeAccountKey() ? await accountSync.outcome : null;
-      const outcome = covering?.status === 200 ? covering : await syncCatalog();
+      const readCatalog = () => {
+        startupSyncUnder = { key: activeAccountKey(), generation: catalogAccountGeneration, outcome: syncCatalog() };
+        return startupSyncUnder.outcome;
+      };
+      const outcome = covering?.status === 200 ? covering : await readCatalog();
       if (outcome?.status === 200 || (outcome?.status === 401 && !signedIn())) startupSyncDone = true;
     } finally {
       startupSyncRunning = false;
@@ -558,6 +604,7 @@ export function setupMittr(context, {
   };
   const unsubscribeReady = opencode.onReady(() => {
     engineStarted = true;
+    switcher.engineReady();
     correctEngineHomeSoon();
     void startupSync();
     forgetMittrCredential(opencode);
@@ -639,7 +686,12 @@ export function setupMittr(context, {
   registerProviderLockRoutes(app, {
     express,
     mittrSettings,
-    managedConfig: { refresh: rewriteProviderLock },
+    managedConfig: {
+      refresh: async () => {
+        await rewriteProviderLock();
+        if (userLockError) throw userLockError;
+      },
+    },
     events,
     logger,
   });
@@ -677,6 +729,7 @@ export function setupMittr(context, {
       isSignedIn: signedIn,
       isBrokerConfigured: () => Boolean(broker.baseUrl),
       catalogModels: activeCatalogModels,
+      accountGeneration: () => catalogAccountGeneration,
       ...context.quotaResult,
     }), { exclusive: true });
   } catch (error) {

@@ -3,7 +3,7 @@
   "productName": "MittrCraft Dev",
   "copyright": "Copyright © 2026 MittrCraft",
   "extraMetadata": {
-    "version": "2.1.1+mittr.1",
+    "version": "2.7.3+mittr.1.0.2",
     "description": "MittrCraft desktop app",
     "author": "MittrCraft"
   },
@@ -64,12 +64,13 @@
       "to": "THIRD_PARTY_NOTICES.md"
     }
   ],
-  "afterPack": null,
+  "afterPack": "../../scripts/mittr/after-pack.cjs",
   "mac": {
     "icon": "../../brand/icons/icon.icns",
     "extendInfo": {
       "CFBundleIconName": null,
-      "NSLocalNetworkUsageDescription": "MittrCraft Dev needs access to devices and services on your local network."
+      "NSLocalNetworkUsageDescription": "MittrCraft Dev needs access to devices and services on your local network.",
+      "NSAppleEventsUsageDescription": "Lets commands that you or an agent run in MittrCraft Dev control other apps."
     },
     "signIgnore": [
       "/Contents/Resources/cua-driver/"

@@ -1,13 +1,25 @@
 diff --git a/packages/ui/src/main.tsx b/packages/ui/src/main.tsx
-index abcb601f2..310728372 100644
+index eb5296c31..14de529b9 100644
 --- a/packages/ui/src/main.tsx
 +++ b/packages/ui/src/main.tsx
-@@ -18,6 +18,8 @@ import { initializeLocale, I18nProvider } from './lib/i18n'
- import type { RuntimeAPIs } from './lib/api/types'
+@@ -19,6 +19,9 @@ import type { RuntimeAPIs } from './lib/api/types'
  import { installRuntimeEndpointReset } from './apps/runtimeEndpointReset'
- 
-+import.meta.glob('../../*/src/product-ui-plugin.{ts,tsx}', { eager: true })
+ import { forgetLayoutForSafeStart, isDesktopSafeStart } from './lib/desktopSafeStart'
+ import { prefetchOpenCodeCompatibility } from './components/update/openCodeCompatibilityCheck'
++import { ProductRoot } from './lib/product-plugins'
 +
++import.meta.glob('../../*/src/product-ui-plugin.{ts,tsx}', { eager: true })
+ 
  declare global {
    interface Window {
-     __OPENCHAMBER_RUNTIME_APIS__?: RuntimeAPIs;
+@@ -72,7 +75,9 @@ createRoot(rootElement).render(
+       <ThemeSystemProvider>
+         <ThemeProvider>
+           <SessionAuthGate>
+-            <App apis={runtimeAPIs} />
++            <ProductRoot surface="main">
++              <App apis={runtimeAPIs} />
++            </ProductRoot>
+           </SessionAuthGate>
+         </ThemeProvider>
+       </ThemeSystemProvider>

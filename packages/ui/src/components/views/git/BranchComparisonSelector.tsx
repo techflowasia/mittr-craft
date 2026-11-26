@@ -5,6 +5,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { dropdownTriggerVariants } from '@/components/ui/dropdown-trigger';
 import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
+import { HoverTooltip } from '@/components/ui/row-tooltip';
 import { useI18n } from '@/lib/i18n';
 import { useTabletLayout } from '@/lib/device';
 import { rankByQuery } from '@/lib/search/fuzzySearch';
@@ -13,19 +14,24 @@ import { branchRefLabel } from './baseBranch';
 
 interface BranchComparisonSelectorProps {
   branches: readonly string[];
+  defaultBranches?: Readonly<Record<string, string>>;
+  primaryRemote?: string | null;
   currentBranch: string | null;
   base: string | null;
   onSelect: (ref: string) => void;
+  automatic?: boolean;
+  onSelectAutomatic?: () => void;
   mobile?: boolean;
 }
 
-export function BranchComparisonSelector({ branches, currentBranch, base, onSelect, mobile = false }: BranchComparisonSelectorProps) {
+export function BranchComparisonSelector({ branches, defaultBranches, primaryRemote, currentBranch, base, onSelect, automatic = false, onSelectAutomatic, mobile = false }: BranchComparisonSelectorProps) {
   const { t } = useI18n();
   const tabletLayout = useTabletLayout();
   const useSheet = mobile && !tabletLayout.enabled;
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const label = base ? branchRefLabel(base) : t('gitView.pr.field.baseBranch');
+  const primaryDefault = primaryRemote && defaultBranches?.[primaryRemote] ? `remotes/${primaryRemote}/${defaultBranches[primaryRemote]}` : null;
 
   const changeOpen = (nextOpen: boolean) => {
     setOpen(nextOpen);
@@ -34,12 +40,11 @@ export function BranchComparisonSelector({ branches, currentBranch, base, onSele
   const trigger = (
     <Button
       variant="outline"
-      className={cn(dropdownTriggerVariants({ size: mobile ? 'default' : 'sm' }), 'min-w-0 max-w-48')}
+      className={cn(dropdownTriggerVariants({ size: mobile ? 'mobile' : 'default' }), 'min-w-0 max-w-48')}
       data-mobile-comparison-trigger={mobile || undefined}
       aria-label={t('gitView.pr.field.baseBranch')}
       aria-haspopup={useSheet ? 'dialog' : undefined}
       aria-expanded={useSheet ? open : undefined}
-      title={label}
       disabled={!currentBranch}
       onClick={useSheet ? () => changeOpen(true) : undefined}
     >
@@ -49,12 +54,11 @@ export function BranchComparisonSelector({ branches, currentBranch, base, onSele
     </Button>
   );
   const picker = (
-    <Command shouldFilter={false} className={mobile ? '[&_[data-slot=command-input-wrapper]]:h-11' : undefined} onKeyDown={(event) => {
+    <Command shouldFilter={false} onKeyDown={(event) => {
       if (event.key !== 'Escape') event.stopPropagation();
     }}>
       <CommandInput
         autoFocus={!useSheet}
-        className={mobile ? 'h-11' : undefined}
         value={search}
         onValueChange={setSearch}
         placeholder={t('gitView.branch.searchPlaceholder')}
@@ -62,11 +66,22 @@ export function BranchComparisonSelector({ branches, currentBranch, base, onSele
       />
       <CommandList className={mobile ? 'max-h-[min(45dvh,24rem)]' : undefined}>
         <CommandEmpty>{t('gitView.branch.empty')}</CommandEmpty>
+        {onSelectAutomatic && !search.trim() && (
+          <CommandGroup>
+            <CommandItem value="automatic" className={mobile ? 'min-h-11' : undefined} onSelect={() => {
+              onSelectAutomatic();
+              changeOpen(false);
+            }}>
+              <span className="min-w-0 flex-1 truncate">{t('gitView.branch.comparisonBaseAutomatic')}</span>
+              {automatic && <Icon name="check" className="size-3.5" />}
+            </CommandItem>
+          </CommandGroup>
+        )}
         <CommandGroup>
           {open && rankByQuery(
             [...new Set(branches)]
               .filter((name) => name !== currentBranch)
-              .sort()
+              .sort((a, b) => Number(b === primaryDefault) - Number(a === primaryDefault) || (a < b ? -1 : a > b ? 1 : 0))
               .map((name) => ({
                 ref: name.startsWith('remotes/') ? `refs/${name}` : `refs/heads/${name}`,
                 label: branchRefLabel(name),
@@ -78,8 +93,8 @@ export function BranchComparisonSelector({ branches, currentBranch, base, onSele
               onSelect(branch.ref);
               changeOpen(false);
             }}>
-              <span className="min-w-0 flex-1 truncate" title={branch.ref}>{branch.label}</span>
-              {(branch.ref === base || branch.label === base) && <Icon name="check" className="size-3.5" />}
+              <span dir="ltr" className="oc-ui-start-align min-w-0 flex-1 truncate" title={branch.ref}>{branch.label}</span>
+              {!automatic && (branch.ref === base || branch.label === base) && <Icon name="check" className="size-3.5" />}
             </CommandItem>
           ))}
         </CommandGroup>
@@ -96,7 +111,9 @@ export function BranchComparisonSelector({ branches, currentBranch, base, onSele
   }
   return (
     <DropdownMenu open={open} onOpenChange={changeOpen}>
-      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+      <HoverTooltip label={base ? t('contextTooltips.diff.branchCompared', { branch: label }) : t('contextTooltips.diff.branchChoose')} side="bottom">
+        <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+      </HoverTooltip>
       <DropdownMenuContent align="start" className="w-72 max-w-[calc(100vw-2rem)] p-0">
         {picker}
       </DropdownMenuContent>

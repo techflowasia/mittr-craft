@@ -1,25 +1,25 @@
 diff --git a/packages/ui/src/components/ui/OpenChamberLogo.tsx b/packages/ui/src/components/ui/OpenChamberLogo.tsx
-index f49241581..b3d5b3fef 100644
+index a60558185..2ec790bcf 100644
 --- a/packages/ui/src/components/ui/OpenChamberLogo.tsx
 +++ b/packages/ui/src/components/ui/OpenChamberLogo.tsx
-@@ -1,6 +1,7 @@
- import React, { useMemo } from 'react';
+@@ -2,6 +2,7 @@ import React, { useId, useMemo } from 'react';
+ import { useReducedMotion } from 'motion/react';
  import { useOptionalThemeSystem } from '@/contexts/useThemeSystem';
  import { useI18n } from '@/lib/i18n';
 +import { getProductLogo } from '@/lib/product-plugins';
+ import { useWaitingPhase } from '@/hooks/useDurationTicker';
+ import { OPEN_CHAMBER_LOGO_ART as ART } from './openChamberLogoArt';
  
- const LEFT_FACE_CELL_OPACITIES = [
-   0.2, 0.45, 0.15, 0.55,
-@@ -79,7 +80,7 @@ const generateFaceGrid = (
-   return cells;
- };
+@@ -13,7 +14,7 @@ interface OpenChamberLogoProps {
+   variant?: 'default' | 'splash';
+ }
  
 -export const OpenChamberLogo: React.FC<OpenChamberLogoProps> = ({
 +const DefaultOpenChamberLogo: React.FC<OpenChamberLogoProps> = ({
    className = '',
    width = 70,
    height = 70,
-@@ -286,3 +287,14 @@ export const OpenChamberLogo: React.FC<OpenChamberLogoProps> = ({
+@@ -92,3 +93,14 @@ export const OpenChamberLogo: React.FC<OpenChamberLogoProps> = ({
      </svg>
    );
  };

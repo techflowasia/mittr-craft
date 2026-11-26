@@ -1,14 +1,5 @@
-/**
- * Client for the OpenChamber project context routes.
- *
- * Notes, todos, and plan markdown are owned by the server
- * (`packages/web/server/lib/project-context`). This module only speaks HTTP:
- * it resolves no storage paths and never reads plan files directly, so the
- * shared UI has no knowledge of where any of it lives on disk.
- *
- * Every function throws on failure. An authoritative read must never resolve
- * to an empty value that a caller could mistake for "the project has nothing".
- */
+
+import { z } from 'zod';
 
 import { createProjectIdFromPath } from './projectId';
 import { runtimeFetch } from './runtime-fetch';
@@ -18,6 +9,8 @@ export interface ProjectTodoItem {
   text: string;
   completed: boolean;
   createdAt: number;
+  planId?: string;
+  dependsOn?: string[];
 }
 
 export interface ProjectPlanLink {
@@ -26,9 +19,34 @@ export interface ProjectPlanLink {
   title: string;
   createdAt: number;
   pinned: boolean;
-  /** The user's own plan, or one from the team's shared plans folder. */
   source?: 'shared' | 'personal';
+  progress?: ProjectPlanProgress;
+  session?: ProjectPlanSession;
 }
+
+export interface ProjectPlanProgress {
+  done: number;
+  total: number;
+}
+
+export interface ProjectPlanSession {
+  sessionId: string;
+  linkedAt: number;
+}
+
+const planProgressSchema = z.object({ done: z.number().int().min(0), total: z.number().int().min(1) })
+  .refine((value) => value.done <= value.total);
+const planSessionSchema = z.object({ sessionId: z.string().min(1), linkedAt: z.number() });
+
+const toPlanLink = (plan: ProjectPlanLink): ProjectPlanLink => {
+  const { progress, session, ...link } = plan;
+  const parsedProgress = planProgressSchema.safeParse(progress);
+  const parsedSession = planSessionSchema.safeParse(session);
+  const checked: ProjectPlanLink = link;
+  if (parsedProgress.success) checked.progress = parsedProgress.data;
+  if (parsedSession.success) checked.session = parsedSession.data;
+  return checked;
+};
 
 export type ProjectNoteSource = 'manual' | 'selection' | 'agent';
 
@@ -39,21 +57,25 @@ export interface ProjectNote {
   updatedAt: number;
   source: ProjectNoteSource;
   pinned: boolean;
-  /** The message this note was distilled from, when it came from a chat. */
   origin?: { sessionId: string; messageId?: string };
+  planId?: string;
 }
 
 interface ProjectContextData {
   notes: ProjectNote[];
   todos: ProjectTodoItem[];
   plans: ProjectPlanLink[];
-  /** Absolute path of the team's shared plans folder when the project has one. */
   sharedPlansDir: string | null;
+  notesTodosStore: ProjectNotesTodosStore | null;
 }
+
+export type ProjectNotesTodosStore = string;
+const NOTES_TODOS_STORE_TOKEN = /^(local|repository):/;
 
 interface ProjectPlanContent extends ProjectPlanLink {
   body: string;
   raw: string;
+  path?: string;
 }
 
 export interface ProjectRef {
@@ -61,25 +83,15 @@ export interface ProjectRef {
   path: string;
 }
 
-/**
- * A saved project plan plus the project that owns it, carried as one value so
- * a viewer can never end up with a plan id whose owner it has to guess.
- * PlanView resolves no owner on its own: the panel (or the persisted tab,
- * or the mobile surface) that opened the plan knows the owner exactly.
- */
 export interface SavedProjectPlanTarget {
   projectRef: ProjectRef;
   planId: string;
 }
 
 export const PROJECT_NOTE_BODY_MAX_LENGTH = 3000;
-export const PROJECT_TODO_TEXT_MAX_LENGTH = 120;
+export const PROJECT_TODO_TEXT_MAX_LENGTH = 1000;
+export const PROJECT_PLAN_TITLE_MAX_LENGTH = 160;
 
-/**
- * Split a plan document into title and body, mirroring the server's own rule so
- * an unsaved editor buffer and an imported file title exactly the way the
- * stored file will.
- */
 export const parsePlanMarkdown = (raw: string, fallback: string): { title: string; body: string } => {
   const normalized = (typeof raw === 'string' ? raw : '').replace(/\r\n?/g, '\n');
   const heading = normalized.match(/^\s*#\s+(.+?)\s*(?:\n+|$)/);
@@ -96,11 +108,6 @@ export const parsePlanMarkdown = (raw: string, fallback: string): { title: strin
   };
 };
 
-/**
- * The storage id is derived from the project path, not from `project.id`.
- * Project ids in settings have churned across versions; the path-derived id is
- * what the server uses to name the config file, so both sides must agree on it.
- */
 export const resolveProjectContextId = (project: ProjectRef | null | undefined): string => {
   const projectPath = typeof project?.path === 'string' ? project.path.trim() : '';
   if (!projectPath) {
@@ -136,11 +143,13 @@ const parseContext = (payload: unknown): ProjectContextData => {
   if (!record || typeof record !== 'object') {
     throw new Error('Malformed project context response');
   }
+  const store = record.notesTodosStore ?? null;
   return {
     notes: Array.isArray(record.notes) ? record.notes : [],
     todos: Array.isArray(record.todos) ? record.todos : [],
-    plans: Array.isArray(record.plans) ? record.plans : [],
+    plans: Array.isArray(record.plans) ? record.plans.map(toPlanLink) : [],
     sharedPlansDir: typeof record.sharedPlansDir === 'string' ? record.sharedPlansDir : null,
+    notesTodosStore: store !== null && NOTES_TODOS_STORE_TOKEN.test(store) ? store : null,
   };
 };
 
@@ -161,12 +170,46 @@ export const fetchProjectContext = async (
 export const saveProjectTodos = async (
   project: ProjectRef,
   todos: ProjectTodoItem[],
+  store: ProjectNotesTodosStore | null,
 ): Promise<ProjectContextData> => {
   const response = await runtimeFetch(`${basePath(requireProjectId(project))}/todos`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ todos }),
+    body: JSON.stringify(store ? { todos, store } : { todos }),
   });
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to save project todos'));
+  }
+  return parseContext(await response.json());
+};
+
+export type ProjectTodoChange =
+  | { kind: 'create'; id: string; text: string }
+  | { kind: 'complete'; id: string; completed: boolean }
+  | { kind: 'edit'; id: string; text: string }
+  | { kind: 'delete'; id: string };
+
+export const writeProjectTodo = async (
+  project: ProjectRef,
+  change: ProjectTodoChange,
+): Promise<ProjectContextData | null> => {
+  const base = `${basePath(requireProjectId(project))}/todos`;
+  const json = (method: 'POST' | 'PATCH', body: { id: string; text: string } | { text: string } | { completed: boolean }): RequestInit => ({
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const [url, init] = change.kind === 'create'
+    ? [base, json('POST', { id: change.id, text: change.text })]
+    : change.kind === 'complete'
+      ? [`${base}/${encodeURIComponent(change.id)}`, json('PATCH', { completed: change.completed })]
+      : change.kind === 'edit'
+        ? [`${base}/${encodeURIComponent(change.id)}`, json('PATCH', { text: change.text })]
+        : [`${base}/${encodeURIComponent(change.id)}`, { method: 'DELETE' }];
+  const response = await runtimeFetch(url, init);
+  if (response.status === 404 && change.kind !== 'create') {
+    return null;
+  }
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, 'Failed to save project todos'));
   }
@@ -196,12 +239,6 @@ export const createProjectNote = async (
   return { note: payload.note, context: parseContext(payload.context) };
 };
 
-/**
- * Patch a note. Only the supplied fields are sent, so pinning cannot roll back
- * an edit that landed between the two requests.
- *
- * Resolves `null` when the note is gone.
- */
 export const updateProjectNote = async (
   project: ProjectRef,
   noteId: string,
@@ -242,7 +279,6 @@ export const deleteProjectNote = async (
   return parseContext(await response.json());
 };
 
-/** Resolves `null` when the plan is gone. */
 export const setProjectPlanPinned = async (
   project: ProjectRef,
   planId: string,
@@ -263,13 +299,9 @@ export const setProjectPlanPinned = async (
     throw new Error(await readErrorMessage(response, 'Failed to update plan'));
   }
   const payload = await response.json() as { plan?: ProjectPlanLink };
-  return payload?.plan ?? null;
+  return payload?.plan ? toPlanLink(payload.plan) : null;
 };
 
-/**
- * Plans are addressed by id. The caller supplies content, never a path, so a
- * plan can only ever be created inside the project's own plans directory.
- */
 export const createProjectPlan = async (
   project: ProjectRef,
   value: { title: string; body: string },
@@ -286,10 +318,9 @@ export const createProjectPlan = async (
   if (!payload?.plan) {
     throw new Error('Malformed plan create response');
   }
-  return { plan: payload.plan, context: parseContext(payload.context) };
+  return { plan: toPlanLink(payload.plan), context: parseContext(payload.context) };
 };
 
-/** Resolves `null` only when the plan or its markdown is genuinely gone. */
 export const fetchProjectPlan = async (
   project: ProjectRef,
   planId: string,
@@ -308,12 +339,6 @@ export const fetchProjectPlan = async (
   return await response.json() as ProjectPlanContent;
 };
 
-/**
- * Overwrite a plan's markdown with the editor's exact buffer.
- *
- * Resolves `null` when the plan or its file is gone, so an editor open on a
- * deleted plan reports that instead of silently recreating it.
- */
 export const updateProjectPlan = async (
   project: ProjectRef,
   planId: string,
@@ -337,7 +362,7 @@ export const updateProjectPlan = async (
   if (!payload?.plan) {
     throw new Error('Malformed plan save response');
   }
-  return { plan: payload.plan, raw: typeof payload.raw === 'string' ? payload.raw : raw };
+  return { plan: toPlanLink(payload.plan), raw: typeof payload.raw === 'string' ? payload.raw : raw };
 };
 
 export const deleteProjectPlan = async (
@@ -354,11 +379,6 @@ export const deleteProjectPlan = async (
   return parseContext(await response.json());
 };
 
-/**
- * Move a plan between the user's folder and the team's shared plans folder.
- * The plan gets a new id on the other side; resolves `null` when it is gone.
- * Sharing needs a shared plans folder set for the project (Project settings).
- */
 const movePlan = async (
   project: ProjectRef,
   planId: string,
@@ -374,11 +394,40 @@ const movePlan = async (
   if (!response.ok) {
     throw new Error(await readErrorMessage(response, direction === 'share' ? 'Failed to share plan' : 'Failed to make plan personal'));
   }
+  return readPlanWithContext(response, 'Malformed plan move response');
+};
+
+const readPlanWithContext = async (
+  response: Response,
+  malformedMessage: string,
+): Promise<{ plan: ProjectPlanLink; context: ProjectContextData }> => {
   const payload = await response.json() as { plan?: ProjectPlanLink; context?: unknown };
   if (!payload?.plan) {
-    throw new Error('Malformed plan move response');
+    throw new Error(malformedMessage);
   }
-  return { plan: payload.plan, context: parseContext(payload.context) };
+  return { plan: toPlanLink(payload.plan), context: parseContext(payload.context) };
+};
+
+export const linkProjectPlanSession = async (
+  project: ProjectRef,
+  planId: string,
+  sessionId: string,
+): Promise<{ plan: ProjectPlanLink; context: ProjectContextData } | null> => {
+  const response = await runtimeFetch(
+    `${basePath(requireProjectId(project))}/plans/${encodeURIComponent(planId)}/session`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId }),
+    },
+  );
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'Failed to link plan to session'));
+  }
+  return readPlanWithContext(response, 'Malformed plan session response');
 };
 
 export const shareProjectPlan = (project: ProjectRef, planId: string) => movePlan(project, planId, 'share');

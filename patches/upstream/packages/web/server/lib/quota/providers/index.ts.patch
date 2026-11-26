@@ -1,0 +1,79 @@
+diff --git a/packages/web/server/lib/quota/providers/index.ts b/packages/web/server/lib/quota/providers/index.ts
+index f9d9059cf..684260114 100644
+--- a/packages/web/server/lib/quota/providers/index.ts
++++ b/packages/web/server/lib/quota/providers/index.ts
+@@ -3,6 +3,8 @@ import { readOpenCodeCredentials } from '../../opencode/auth.js';
+ import { extensionQuotaProvider, extensionQuotaProviderEntries } from '../extension-registry.js';
+ import { QuotaRouteError } from '../route-error.js';
+ import { buildResult } from '../utils/index.js';
++import { builtInQuotaProvidersShown, registeredQuotaProviders, reserveQuotaProviderIds } from './registered.js';
++import type { QuotaFetchScope } from './registered.js';
+ import type { LegacyAuthFile } from '../../opencode/auth.js';
+ import type { QuotaResult } from '../utils/contracts.js';
+ 
+@@ -11,6 +13,7 @@ interface QuotaProvider {
+   readonly providerName: string;
+   readonly isConfigured: (auth: LegacyAuthFile) => boolean;
+   readonly fetchQuota: () => Promise<QuotaResult<string | null>>;
++  readonly fetchScope?: (() => QuotaFetchScope) | undefined;
+ }
+ 
+ interface QuotaProviderRegistry {
+@@ -219,10 +222,24 @@ const registry: QuotaProviderRegistry = {
+ 
+ export { attachExtensionQuotaProvider, detachExtensionQuotaProvider } from '../extension-registry.js';
+ 
+-const providerOf = (providerId: string | null) => (Object.hasOwn(registry, String(providerId)) ? registry[String(providerId)] : extensionQuotaProvider(providerId));
+-const providerEntries = (): [string | null, QuotaProvider][] => [...Object.entries(registry), ...extensionQuotaProviderEntries()];
++reserveQuotaProviderIds(Object.keys(registry));
+ 
+-const pendingFetches = new Map<string | null, Promise<QuotaResult<string | null, string | null>>>();
++const builtInProviders = (): [string, QuotaProvider][] => (builtInQuotaProvidersShown() ? Object.entries(registry) : []);
++
++const providerOf = (providerId: string | null): QuotaProvider | null | undefined => (
++  Object.hasOwn(registry, String(providerId))
++    ? (builtInQuotaProvidersShown() ? registry[String(providerId)] : undefined)
++    : registeredQuotaProviders().get(String(providerId)) ?? extensionQuotaProvider(providerId)
++);
++const providerEntries = (): [string | null, QuotaProvider][] => [...builtInProviders(), ...extensionQuotaProviderEntries(), ...registeredQuotaProviders()];
++
++export { registerQuotaProvider } from './registered.js';
++
++const pendingFetches = new Map<string | null, {
++  provider: QuotaProvider | null | undefined;
++  scope: QuotaFetchScope;
++  promise: Promise<QuotaResult<string | null, string | null>>;
++}>();
+ 
+ const NOT_ON_USAGE_PAGE = new Set<string | null>([copilot.providerIdAddon]);
+ 
+@@ -248,8 +265,7 @@ export const listConfiguredQuotaProviders = async () => {
+   return configured;
+ };
+ 
+-const fetchQuotaForProviderUncoalesced = async (providerId: string | null) => {
+-  const provider = providerOf(providerId);
++const fetchQuotaForProviderUncoalesced = async (providerId: string | null, provider: QuotaProvider | null | undefined) => {
+ 
+   if (!provider) {
+     return buildResult({
+@@ -276,13 +292,15 @@ const fetchQuotaForProviderUncoalesced = async (providerId: string | null) => {
+ };
+ 
+ export const fetchQuotaForProvider = (providerId: string | null) => {
++  const provider = providerOf(providerId);
++  const scope = provider?.fetchScope?.();
+   const existing = pendingFetches.get(providerId);
+-  if (existing) return existing;
++  if (existing && existing.provider === provider && Object.is(existing.scope, scope)) return existing.promise;
+ 
+-  const pending = fetchQuotaForProviderUncoalesced(providerId).finally(() => {
+-    if (pendingFetches.get(providerId) === pending) pendingFetches.delete(providerId);
++  const pending = fetchQuotaForProviderUncoalesced(providerId, provider).finally(() => {
++    if (pendingFetches.get(providerId)?.promise === pending) pendingFetches.delete(providerId);
+   });
+-  pendingFetches.set(providerId, pending);
++  pendingFetches.set(providerId, { provider, scope, promise: pending });
+   return pending;
+ };
+ 

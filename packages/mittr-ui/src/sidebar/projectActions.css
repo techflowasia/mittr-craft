@@ -4,10 +4,16 @@
   color: color-mix(in srgb, var(--foreground) 72%, transparent);
 }
 
-.group\/project [class~="group-hover/project:pr-20"] {
-  padding-right: 5rem;
+.group\/project [class*="[--oc-actions-reserve:"] {
+  padding-inline-end: calc(var(--oc-actions-reserve, 0px) * var(--padding-scale, 1));
 }
 
-.group\/project [class~="group-hover/project:pr-14"] {
-  padding-right: 3.5rem;
+.group\/project [class*="[--oc-actions-reserve:"] > [class*="oc-actions-mask"] {
+  padding-inline-start: 0;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.group\/project [class*="[--oc-actions-reserve:"] > :is([class~="group-hover/project:opacity-0"], [class~="opacity-0"]) {
+  opacity: 1;
 }

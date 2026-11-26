@@ -1,9 +1,4 @@
-// Module-level singleton holding the active relay tunnel client, if the runtime
-// is in relay mode. Kept in its own module so runtime-switch, runtime-fetch,
-// runtime-url, and the event pipeline can all read it without an import cycle
-// (runtime-switch <-> runtime-url).
-
-import { createRelayTunnelClient, type RelayTunnelClient } from './tunnel-client';
+import { createRelayTunnelClient, type RelayTunnelClient, type RelayTunnelStatus } from './tunnel-client';
 
 export interface RelayRuntimeDescriptor {
   relayUrl: string;
@@ -14,6 +9,25 @@ export interface RelayRuntimeDescriptor {
 
 let activeTunnel: RelayTunnelClient | null = null;
 let activeDescriptor: RelayRuntimeDescriptor | null = null;
+const activeStatusListeners = new Set<(status: RelayTunnelStatus) => void>();
+let detachActiveStatus: (() => void) | null = null;
+
+const setActiveTunnel = (tunnel: RelayTunnelClient | null): void => {
+  detachActiveStatus?.();
+  detachActiveStatus = null;
+  activeTunnel = tunnel;
+  if (!tunnel) return;
+  detachActiveStatus = tunnel.subscribeStatus((status) => {
+    for (const listener of activeStatusListeners) listener(status);
+  });
+};
+
+export const subscribeActiveRelayTunnelStatus = (listener: (status: RelayTunnelStatus) => void): (() => void) => {
+  activeStatusListeners.add(listener);
+  return () => {
+    activeStatusListeners.delete(listener);
+  };
+};
 
 const descriptorsEqual = (a: RelayRuntimeDescriptor, b: RelayRuntimeDescriptor): boolean =>
   a.relayUrl === b.relayUrl &&
@@ -33,36 +47,29 @@ export const getActiveRelayDescriptor = (): Omit<RelayRuntimeDescriptor, 'grant'
 
 export const isRelayModeActive = (): boolean => activeTunnel !== null;
 
-/**
- * Activates relay mode with the given descriptor, replacing any previous tunnel.
- * Reuses the existing client when the descriptor is unchanged so a redundant
- * runtime switch does not tear down a live tunnel.
- */
 export const activateRelayTunnel = (descriptor: RelayRuntimeDescriptor): RelayTunnelClient => {
   if (activeTunnel && activeDescriptor && descriptorsEqual(activeDescriptor, descriptor)) {
     return activeTunnel;
   }
   activeTunnel?.close();
   activeDescriptor = descriptor;
-  activeTunnel = createRelayTunnelClient(descriptor);
-  return activeTunnel;
+  const tunnel = createRelayTunnelClient(descriptor);
+  setActiveTunnel(tunnel);
+  return tunnel;
 };
 
-/**
- * Adopts an ALREADY-OPEN tunnel client (e.g. the connect flow's probe tunnel)
- * as the active runtime tunnel, so the immediately following
- * `activateRelayTunnel` with an equal descriptor reuses it instead of paying a
- * second WebSocket connect + E2EE handshake. Replaces any previous tunnel.
- */
 export const adoptRelayTunnel = (descriptor: RelayRuntimeDescriptor, client: RelayTunnelClient): void => {
-  if (activeTunnel === client) return;
+  if (activeTunnel === client) {
+    activeDescriptor = descriptor;
+    return;
+  }
   activeTunnel?.close();
   activeDescriptor = descriptor;
-  activeTunnel = client;
+  setActiveTunnel(client);
 };
 
 export const deactivateRelayTunnel = (): void => {
   activeTunnel?.close();
-  activeTunnel = null;
+  setActiveTunnel(null);
   activeDescriptor = null;
 };

@@ -19,40 +19,6 @@ import { useProjectsStore } from '@/stores/useProjectsStore';
 import { startConfigUpdate } from '@/lib/configUpdate';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 
-const FALLBACK_SOURCES: SkillsCatalogSource[] = [
-  {
-    id: 'anthropic',
-    label: 'Anthropic',
-    description: "Anthropic's public skills repository",
-    source: 'anthropics/skills',
-    defaultSubpath: 'skills',
-    sourceType: 'github',
-  },
-  {
-    id: 'openai',
-    label: 'OpenAI',
-    description: "OpenAI's curated skills",
-    source: 'openai/skills',
-    defaultSubpath: 'skills/.curated',
-    sourceType: 'github',
-  },
-  {
-    id: 'cursor',
-    label: 'Cursor',
-    description: "Cursor's plugin skills",
-    source: 'cursor/plugins',
-    defaultSubpath: 'pstack/skills',
-    sourceType: 'github',
-  },
-  {
-    id: 'mattpocock',
-    label: 'Matt Pocock',
-    description: 'Matt Pocock skills collection',
-    source: 'mattpocock/skills',
-    sourceType: 'github',
-  },
-];
-
 const SKILLS_CATALOG_LOAD_CACHE_TTL_MS = 5000;
 const DEFAULT_SKILLS_CATALOG_CACHE_KEY = '__default__';
 const skillsCatalogLastLoadedAt = new Map<string, number>();
@@ -84,7 +50,7 @@ const getRequestDirectory = (): string | null => {
   return null;
 };
 
-export interface SkillsCatalogState {
+interface SkillsCatalogState {
   sources: SkillsCatalogSource[];
   itemsBySource: Record<string, SkillsCatalogItem[]>;
   selectedSourceId: string | null;
@@ -112,9 +78,9 @@ export interface SkillsCatalogState {
 export const useSkillsCatalogStore = create<SkillsCatalogState>()(
   devtools(
     (set, get) => ({
-      sources: FALLBACK_SOURCES,
+      sources: [],
       itemsBySource: {},
-      selectedSourceId: FALLBACK_SOURCES[0]?.id ?? null,
+      selectedSourceId: null,
       loadedSourceIds: {},
 
       isLoadingCatalog: false,
@@ -135,7 +101,7 @@ export const useSkillsCatalogStore = create<SkillsCatalogState>()(
         const cacheKey = getSkillsCatalogCacheKey(currentDirectory);
         const now = Date.now();
         const loadedAt = skillsCatalogLastLoadedAt.get(cacheKey) ?? 0;
-        const hasCachedCatalog = get().sources.length > 0;
+        const hasCachedCatalog = loadedAt > 0;
         if (!options?.refresh && hasCachedCatalog && now - loadedAt < SKILLS_CATALOG_LOAD_CACHE_TTL_MS) {
           return true;
         }
@@ -174,7 +140,7 @@ export const useSkillsCatalogStore = create<SkillsCatalogState>()(
                 throw new Error(lastError.message);
               }
 
-              const sources = (payload.sources && payload.sources.length > 0) ? payload.sources : previous.sources;
+              const sources = payload.sources ?? previous.sources;
               const itemsBySource = options?.refresh ? {} : (get().itemsBySource || {});
               const loadedSourceIds = options?.refresh ? {} : (get().loadedSourceIds || {});
               const currentSelected = get().selectedSourceId;
@@ -224,9 +190,6 @@ export const useSkillsCatalogStore = create<SkillsCatalogState>()(
           return false;
         }
 
-        // Deduplicate concurrent loads of the same source: the background
-        // loader effect can restart while a request for this source is
-        // already in flight.
         if (!options?.refresh) {
           const inFlight = sourceLoadInFlight.get(sourceId);
           if (inFlight) {

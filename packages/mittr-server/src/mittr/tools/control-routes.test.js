@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import '../../../../web/scripts/register-server-sources.mjs';
 
 import express from 'express';
 
-import { OpenChamberControlError } from '../../../../web/server/lib/openchamber-control/error.js';
 import { deferred, serve } from '../test-helpers.js';
 import { SESSION_FROM_THIS_MACHINE_ONLY, registerMittrControlRoutes } from './control-routes.js';
 import { MittrToolError, createMittrActionRegistry } from './registry.js';
+
+const { OpenChamberControlError } = await import('../../../../web/server/lib/openchamber-control/error.js');
 
 const ROUTE = '/api/mittr/control';
 

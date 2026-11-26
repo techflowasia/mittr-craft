@@ -1,4 +1,6 @@
 import { isVSCodeRuntime } from '@/lib/desktop';
+import { opencodeClient } from '@/lib/opencode/client';
+import { getRuntimeKey } from '@/lib/runtime-switch';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 
 export const applyPersistedDirectoryPreferences = async (): Promise<void> => {
@@ -14,14 +16,19 @@ export const applyPersistedDirectoryPreferences = async (): Promise<void> => {
     console.warn('Failed to read saved directory preferences:', error);
   }
 
-  // Home directory is intentionally NOT restored from localStorage here.
-  // The persisted value is only a boot-time cache already consumed by the
-  // directory store's initial state; replaying it through
-  // synchronizeHomeDirectory would persist a possibly stale value back into
-  // desktop settings, overriding the authoritative resolution
-  // (initializeHomeDirectory → /api/fs/home) that runs on every startup.
 
   if (savedDirectory && !isVSCodeRuntime()) {
+    const runtimeKey = getRuntimeKey();
+    const currentDirectory = useDirectoryStore.getState().currentDirectory;
+    const availability = await opencodeClient.getDirectoryAvailability(savedDirectory);
+    if (getRuntimeKey() !== runtimeKey
+      || useDirectoryStore.getState().currentDirectory !== currentDirectory
+      || window.localStorage.getItem('lastDirectory') !== savedDirectory) return;
+
+    if (availability === 'missing') {
+      await useDirectoryStore.getState().goToNoProjectDirectory();
+      return;
+    }
     useDirectoryStore.getState().setDirectory(savedDirectory, { showOverlay: false });
   }
 };

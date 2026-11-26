@@ -1,7 +1,9 @@
 import * as React from "react"
 
+import { useEmojiPicker } from "@/components/emoji/useEmojiPicker"
 import { useI18n } from "@/lib/i18n"
 import { cn } from "@/lib/utils"
+import { PopupOverlayScrollbar } from "./AttachedOverlayScrollbar"
 import { ScrollableOverlay } from "./ScrollableOverlay"
 
 type TextareaProps = React.ComponentProps<"textarea"> & {
@@ -13,21 +15,16 @@ type TextareaProps = React.ComponentProps<"textarea"> & {
   hasError?: boolean;
   resizedHeight?: number | null;
   onResizeHeightChange?: (height: number) => void;
-  /**
-   * AlignUI "simple" mode: render a bare textarea (no compound wrapper).
-   * Used for chat composer or anywhere the textarea is embedded inside an
-   * existing styled container.
-   */
   simple?: boolean;
-  /**
-   * Slot rendered in the bottom-right (next to the resize handle).
-   * Typically a `<TextareaCharCounter />`.
-   */
   endSlot?: React.ReactNode;
 };
 
-/** Keep in sync with the textarea's `min-h-[82px]` below. */
 const TEXTAREA_MIN_HEIGHT = 82;
+
+const textareaMinHeight = (textarea: HTMLTextAreaElement | null): number => {
+  const rendered = textarea ? Number.parseFloat(window.getComputedStyle(textarea).minHeight) : Number.NaN;
+  return Number.isFinite(rendered) ? Math.max(rendered, TEXTAREA_MIN_HEIGHT) : TEXTAREA_MIN_HEIGHT;
+};
 
 function ResizeHandle({
   onResizeStart,
@@ -42,7 +39,6 @@ function ResizeHandle({
       aria-orientation="horizontal"
       aria-label={ariaLabel}
       onPointerDown={onResizeStart}
-      // generous hit area; SVG renders centered in the bottom-right corner
       className="pointer-events-auto -m-2 flex size-7 cursor-ns-resize items-end justify-end p-2 touch-none select-none"
     >
       <svg
@@ -84,21 +80,38 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
   ) => {
     const { t } = useI18n();
     const wrapperRef = React.useRef<HTMLDivElement>(null);
+    const fieldRef = React.useRef<HTMLTextAreaElement | null>(null);
+    const [field, setField] = React.useState<HTMLTextAreaElement | null>(null);
+    const setFieldRef = React.useCallback((node: HTMLTextAreaElement | null) => {
+      fieldRef.current = node;
+      setField(node);
+    }, []);
+    React.useImperativeHandle<HTMLTextAreaElement | null, HTMLTextAreaElement | null>(ref, () => fieldRef.current);
+    const emojiPicker = useEmojiPicker(fieldRef);
     const dragStateRef = React.useRef<{ startY: number; startHeight: number; minHeight: number } | null>(null);
     const [resizedHeight, setResizedHeight] = React.useState<number | null>(null);
-    const effectiveResizedHeight = controlledResizedHeight ?? resizedHeight;
+    const storedResizedHeight = controlledResizedHeight ?? resizedHeight;
+    const [heightFloor, setHeightFloor] = React.useState(0);
+    React.useLayoutEffect(() => {
+      if (storedResizedHeight === null) return;
+      const wrapper = wrapperRef.current;
+      const column = wrapper?.querySelector<HTMLElement>(':scope > div');
+      const footer = wrapper?.querySelector<HTMLElement>('[data-textarea-footer]');
+      if (!wrapper || !column || !footer) return;
+      const wrapperStyle = window.getComputedStyle(wrapper);
+      const floor = textareaMinHeight(wrapper.querySelector('textarea'))
+        + footer.offsetHeight
+        + (Number.parseFloat(window.getComputedStyle(column).rowGap) || 0)
+        + (Number.parseFloat(wrapperStyle.paddingTop) || 0)
+        + (Number.parseFloat(wrapperStyle.paddingBottom) || 0);
+      setHeightFloor((current) => (current === floor ? current : floor));
+    }, [storedResizedHeight]);
+    const effectiveResizedHeight = storedResizedHeight === null ? null : Math.max(storedResizedHeight, heightFloor);
 
     const handleResizeStart = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
       const wrapper = wrapperRef.current;
       if (!wrapper) return;
       const startHeight = wrapper.getBoundingClientRect().height;
-      /**
-       * The floor is the textarea's own minimum plus everything else the
-       * wrapper stacks around it — the counter row, the gap, the padding.
-       * Clamping to the textarea minimum alone left no room for that row, so
-       * dragging the handle far enough pushed the counter out through the
-       * bottom border instead of stopping.
-       */
       const innerTextarea = wrapper.querySelector('textarea');
       const chromeHeight = innerTextarea
         ? Math.max(0, startHeight - innerTextarea.getBoundingClientRect().height)
@@ -106,7 +119,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
       dragStateRef.current = {
         startY: event.clientY,
         startHeight,
-        minHeight: TEXTAREA_MIN_HEIGHT + chromeHeight,
+        minHeight: textareaMinHeight(innerTextarea) + chromeHeight,
       };
       const target = event.currentTarget;
       target.setPointerCapture(event.pointerId);
@@ -135,7 +148,6 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
     }, [onResizeHeightChange]);
 
     const focusInnerTextarea = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-      // Clicking the wrapper chrome (below/around the textarea) should focus it.
       const target = event.target as HTMLElement;
       if (target.closest('textarea, button, [role="separator"]')) return;
       const textarea = wrapperRef.current?.querySelector('textarea');
@@ -145,32 +157,34 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
       }
     }, []);
 
-    // Simple mode: bare textarea, caller owns the wrapper.
     if (simple) {
       return (
-        <ScrollableOverlay
-          as="textarea"
-          ref={ref as React.Ref<HTMLTextAreaElement>}
-          disableHorizontal
-          fillContainer={fillContainer}
-          useScrollShadow={useScrollShadow}
-          scrollShadowSize={scrollShadowSize}
-          outerClassName={outerClassName}
-          scrollbarClassName={scrollbarClassName}
-          className={cn(
-            "block w-full appearance-none resize-none bg-transparent text-foreground typography-markdown outline-none",
-            "px-3 py-2 md:typography-ui-label",
-            "placeholder:text-muted-foreground focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
-            fillContainer ? "[field-sizing:fixed]" : "field-sizing-content",
-            className,
-          )}
-          spellCheck={false}
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="off"
-          disabled={disabled}
-          {...props}
-        />
+        <>
+          <ScrollableOverlay
+            as="textarea"
+            ref={fieldRef}
+            disableHorizontal
+            fillContainer={fillContainer}
+            useScrollShadow={useScrollShadow}
+            scrollShadowSize={scrollShadowSize}
+            outerClassName={outerClassName}
+            scrollbarClassName={scrollbarClassName}
+            className={cn(
+              "block w-full appearance-none resize-none bg-transparent text-foreground typography-markdown outline-none",
+              "px-3 py-2 md:typography-ui-label",
+              "placeholder:text-muted-foreground focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
+              fillContainer ? "[field-sizing:fixed]" : "field-sizing-content",
+              className,
+            )}
+            spellCheck={false}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            disabled={disabled}
+            {...props}
+          />
+          {emojiPicker}
+        </>
       );
     }
 
@@ -178,38 +192,24 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
       <div
         ref={wrapperRef}
         onPointerDown={focusInnerTextarea}
-        // minHeight guards a stored height from before the floor was fixed, and
-        // any future row added to the wrapper: the box never shrinks below what
-        // it contains, so nothing can spill through the border again.
         style={effectiveResizedHeight !== null
           ? { height: `${effectiveResizedHeight}px`, minHeight: 'fit-content' }
           : undefined}
         className={cn(
           "oc-surface-elevated group/textarea relative flex w-full flex-col rounded-[var(--radius-xl)] bg-surface-elevated pb-2.5",
-          "ring-1 ring-inset ring-border/60 transition duration-200 ease-out",
+          "oc-raised oc-field",
           "hover:[&:not(:focus-within)]:[background-image:linear-gradient(var(--interactive-hover),var(--interactive-hover))]",
-          // Scoped to the textarea, not any disabled descendant: an endSlot
-          // control that disables itself (an add button with an empty field)
-          // would otherwise take pointer events away from the whole wrapper,
-          // leaving the field unclickable and the button permanently disabled.
           "has-[textarea:disabled]:pointer-events-none has-[textarea:disabled]:opacity-50",
-          !hasError && [
-            "hover:[&:not(:focus-within)]:ring-transparent",
-            "focus-within:ring-2 focus-within:ring-[var(--interactive-focus-ring)]",
-          ],
-          hasError && [
-            "ring-[var(--status-error)]",
-            "focus-within:ring-2 focus-within:ring-[var(--status-error)]",
-          ],
           outerClassName,
         )}
+        data-invalid={hasError || undefined}
       >
         <div className="flex h-full min-h-0 flex-1 flex-col gap-2">
           <textarea
-              ref={ref}
+              ref={setFieldRef}
               className={cn(
-                "block w-full flex-1 min-h-0 appearance-none resize-none bg-transparent text-foreground typography-markdown outline-none",
-                "min-h-[82px] pl-3 pr-2.5 pt-2.5 md:typography-ui-label",
+                "overlay-scrollbar-target block w-full flex-1 min-h-0 appearance-none resize-none bg-transparent text-foreground typography-markdown outline-none",
+                "min-h-[82px] ps-3 pe-2.5 pt-2.5 md:typography-ui-label",
                 "focus-visible:outline-none disabled:cursor-not-allowed",
                 !disabled && [
                   "placeholder:select-none placeholder:text-muted-foreground placeholder:transition placeholder:duration-200 placeholder:ease-out",
@@ -226,11 +226,13 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
               disabled={disabled}
               {...props}
             />
-          <div className="flex items-center justify-end gap-1.5 pl-3 pr-2.5">
+          <div data-textarea-footer className="flex items-center justify-end gap-1.5 ps-3 pe-2.5">
             {endSlot}
             <ResizeHandle onResizeStart={handleResizeStart} ariaLabel={t('textarea.resizeHandleAria')} />
           </div>
         </div>
+        <PopupOverlayScrollbar scroller={field} disableHorizontal />
+        {emojiPicker}
       </div>
     )
   }

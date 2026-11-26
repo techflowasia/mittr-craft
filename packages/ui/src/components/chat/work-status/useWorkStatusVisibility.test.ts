@@ -1,20 +1,43 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { CONTEXT_ZONE_DEFAULT_WIDTH } from '@/lib/workspace/zones';
 
+type ZoneView = { isOpen: boolean; expanded: boolean; activeTabId: string | null };
 type PanelState = {
   isOpen: boolean;
-  tabs: { id: string; mode: string }[];
+  expanded?: boolean;
+  tabs: { id: string; mode: string; targetPath?: string | null }[];
   activeTabId: string | null;
+  zones?: { left: ZoneView; bottom: ZoneView };
 };
 
 let panelByDirectory: Record<string, PanelState> = {};
+/** The store's surface placement, as far as these tests move anything. */
+type SurfacePlacement = { git?: 'left' };
+let surfaceZones: SurfacePlacement = {};
 let panelEnabled = true;
 let effectiveDirectory: string | undefined = '/repo';
+/** The store's stored zone sizes, as far as these tests resize anything. */
+type ZoneSizes = { right?: number };
+let zoneSizes: ZoneSizes = {};
+const TREE_WIDTH = 240;
+let sidebarOpen = true;
+/** The session sidebar as the document has it: drawn width and the width it was set to. */
+let sidebar: { drawn: number; set: number } | null = null;
 
 mock.module('@/stores/useUIStore', () => ({
   useUIStore: (selector: (state: unknown) => unknown) =>
-    selector({ contextPanelByDirectory: panelByDirectory, workStatusPanelEnabled: panelEnabled }),
+    selector({
+      contextPanelByDirectory: panelByDirectory,
+      contextSurfaceZones: surfaceZones,
+      workStatusPanelEnabled: panelEnabled,
+      isSidebarOpen: sidebarOpen,
+      contextZoneSizes: zoneSizes,
+      contextEditorVisible: true,
+      contextEditorTreeVisible: true,
+      contextEditorTreeWidth: TREE_WIDTH,
+    }),
   normalizeContextPanelDirectoryKey: (value: string) => value,
 }));
 
@@ -57,6 +80,9 @@ const installMinimalDom = () => {
     activeElement: null,
     addEventListener: () => undefined,
     removeEventListener: () => undefined,
+    querySelector: () => (sidebar
+      ? { getBoundingClientRect: () => ({ width: sidebar?.drawn ?? 0 }), style: { width: `${sidebar.set}px` } }
+      : null),
   };
   const container = {
     nodeType: 1,
@@ -105,12 +131,15 @@ const renderVisibility = (args: Args, rowWidth: number) => {
     getBoundingClientRect: () => ({ width: rowWidth }),
     closest: () => null,
   } as unknown as HTMLDivElement;
-  const result = { visible: false, fits: false };
+  const result = { visible: false, fits: false, roomy: false, roomyBesidePanel: false, renders: 0 };
 
   const Probe: React.FC = () => {
-    const { rowRef, visible, fits } = useWorkStatusVisibility(args);
+    const { rowRef, visible, fits, roomy, roomyBesidePanel } = useWorkStatusVisibility(args);
     result.visible = visible;
     result.fits = fits;
+    result.roomy = roomy;
+    result.roomyBesidePanel = roomyBesidePanel;
+    result.renders += 1;
     React.useLayoutEffect(() => {
       rowRef(rowNode);
       return () => rowRef(null);
@@ -122,6 +151,8 @@ const renderVisibility = (args: Args, rowWidth: number) => {
   return {
     result,
     rowNode,
+    /** Renders again after the test changed the stubbed store. */
+    rerender: () => { act(() => { root.render(React.createElement(Probe)); }); },
     teardown: () => {
       act(() => { root.unmount(); });
       dom.restore();
@@ -133,6 +164,9 @@ beforeEach(() => {
   panelByDirectory = {};
   panelEnabled = true;
   effectiveDirectory = '/repo';
+  zoneSizes = {};
+  sidebarOpen = true;
+  sidebar = null;
   observed = [];
   notify = null;
 });
@@ -195,20 +229,6 @@ describe('useWorkStatusVisibility', () => {
     dom.restore();
   });
 
-  test('measures a container the panel cannot resize, never the chat column', () => {
-    // The measured element must not depend on whether the panel is showing:
-    // otherwise hiding the panel widens it and re-shows the panel, forever.
-    // In the app this is the chat area (chat + context panel); here `closest`
-    // finds nothing, so the hook falls back to the row it was given.
-    const { rowNode, teardown } = renderVisibility(
-      { isMobile: false, isVSCode: false },
-      REQUIRED,
-    );
-    expect(observed).toHaveLength(1);
-    expect(observed[0]).toBe(rowNode);
-    teardown();
-  });
-
   test('reacts to a live resize across the threshold', () => {
     const { result, teardown } = renderVisibility(
       { isMobile: false, isVSCode: false },
@@ -235,6 +255,127 @@ describe('useWorkStatusVisibility', () => {
     );
     expect(result.visible).toBe(false);
     expect(observed).toEqual([rowNode]);
+    teardown();
+  });
+
+  test('stays beside the chat while a surface is open in the left zone', () => {
+    // Only the right zone shares this card's slot.
+    const closed = { isOpen: false, expanded: false, activeTabId: null };
+    surfaceZones = { git: 'left' };
+    panelByDirectory['/repo'] = {
+      isOpen: false,
+      tabs: [{ id: 'tab-1', mode: 'git' }],
+      activeTabId: null,
+      zones: { left: { isOpen: true, expanded: false, activeTabId: 'tab-1' }, bottom: closed },
+    };
+    const { result, teardown } = renderVisibility({ isMobile: false, isVSCode: false }, REQUIRED);
+    expect(result.visible).toBe(true);
+    teardown();
+    surfaceZones = {};
+  });
+
+  test('keeps reporting room for the column while the context panel covers it', () => {
+    // The right slot keeps the card's column on this, so closing the context
+    // panel narrows the slot straight to the card instead of to nothing first.
+    panelByDirectory['/repo'] = { isOpen: true, tabs: [{ id: 'tab-1', mode: 'git' }], activeTabId: 'tab-1' };
+    const { result, teardown } = renderVisibility({ isMobile: false, isVSCode: false }, REQUIRED);
+    expect(result.fits).toBe(false);
+    expect(result.roomy).toBe(true);
+    teardown();
+  });
+
+  test('stays beside the open context panel when the chat area fits both', () => {
+    panelByDirectory['/repo'] = { isOpen: true, tabs: [{ id: 'tab-1', mode: 'git' }], activeTabId: 'tab-1' };
+    const fitting = renderVisibility({ isMobile: false, isVSCode: false }, REQUIRED + CONTEXT_ZONE_DEFAULT_WIDTH);
+    expect(fitting.result.visible).toBe(true);
+    expect(fitting.result.roomyBesidePanel).toBe(true);
+    fitting.teardown();
+
+    observed = [];
+    const short = renderVisibility({ isMobile: false, isVSCode: false }, REQUIRED + CONTEXT_ZONE_DEFAULT_WIDTH - 1);
+    expect(short.result.visible).toBe(false);
+    expect(short.result.roomy).toBe(true);
+    short.teardown();
+  });
+
+  test('knows before the context panel opens whether the card will stay beside it', () => {
+    // The slot decides its target width on the commit that opens the panel.
+    panelByDirectory['/repo'] = { isOpen: false, tabs: [{ id: 'tab-1', mode: 'git' }], activeTabId: 'tab-1' };
+    const { result, teardown } = renderVisibility({ isMobile: false, isVSCode: false }, REQUIRED + CONTEXT_ZONE_DEFAULT_WIDTH);
+    expect(result.visible).toBe(true);
+    expect(result.roomyBesidePanel).toBe(true);
+    teardown();
+  });
+
+  test('measures the context panel at the width the user resized it to', () => {
+    zoneSizes = { right: 400 };
+    panelByDirectory['/repo'] = { isOpen: true, tabs: [{ id: 'tab-1', mode: 'git' }], activeTabId: 'tab-1' };
+    const { result, rerender, teardown } = renderVisibility({ isMobile: false, isVSCode: false }, REQUIRED + 450);
+    expect(result.visible).toBe(true);
+
+    // Released wider: the card yields without the chat area moving.
+    zoneSizes = { right: 500 };
+    rerender();
+    expect(result.visible).toBe(false);
+    expect(result.roomy).toBe(true);
+    teardown();
+  });
+
+  test('measures Files showing only its tree at the tree width', () => {
+    panelByDirectory['/repo'] = { isOpen: true, tabs: [{ id: 'tab-1', mode: 'file', targetPath: null }], activeTabId: 'tab-1' };
+    const { result, teardown } = renderVisibility({ isMobile: false, isVSCode: false }, REQUIRED + TREE_WIDTH);
+    expect(result.visible).toBe(true);
+    teardown();
+  });
+
+  test('yields to an expanded context panel however wide the chat area is', () => {
+    panelByDirectory['/repo'] = { isOpen: true, expanded: true, tabs: [{ id: 'tab-1', mode: 'git' }], activeTabId: 'tab-1' };
+    const { result, teardown } = renderVisibility({ isMobile: false, isVSCode: false }, REQUIRED * 4);
+    expect(result.visible).toBe(false);
+    expect(result.roomyBesidePanel).toBe(false);
+    teardown();
+  });
+
+  test('decides from the width the area settles at while the sidebar unfolds', () => {
+    panelByDirectory['/repo'] = { isOpen: true, tabs: [{ id: 'tab-1', mode: 'git' }], activeTabId: 'tab-1' };
+    // Folded, the sidebar leaves the area room for the card beside the panel.
+    sidebarOpen = false;
+    sidebar = { drawn: 0, set: 0 };
+    const besidePanel = REQUIRED + CONTEXT_ZONE_DEFAULT_WIDTH;
+    const { result, rerender, teardown } = renderVisibility({ isMobile: false, isVSCode: false }, besidePanel + 100);
+    expect(result.roomyBesidePanel).toBe(true);
+
+    // Told to unfold to 280 and not moved yet: the area will lose that room.
+    sidebarOpen = true;
+    sidebar = { drawn: 0, set: 280 };
+    rerender();
+    expect(result.roomyBesidePanel).toBe(false);
+    expect(result.roomy).toBe(true);
+
+    // Halfway there, and arrived: the same answer on every frame.
+    sidebar = { drawn: 140, set: 280 };
+    act(() => { notify?.([{ contentRect: { width: besidePanel - 40 } }]); });
+    expect(result.roomyBesidePanel).toBe(false);
+    sidebar = { drawn: 280, set: 280 };
+    act(() => { notify?.([{ contentRect: { width: besidePanel - 180 } }]); });
+    expect(result.roomyBesidePanel).toBe(false);
+
+    teardown();
+  });
+
+  test('does not re-render while the width moves on one side of the threshold', () => {
+    // A sidebar animation changes the chat area's width on every frame; only
+    // crossing the threshold may re-render the chat that owns this hook.
+    const { result, teardown } = renderVisibility({ isMobile: false, isVSCode: false }, REQUIRED + 300);
+    const rendersBefore = result.renders;
+    for (let frame = 1; frame <= 12; frame += 1) {
+      act(() => { notify?.([{ contentRect: { width: REQUIRED + 300 - frame * 20 } }]); });
+    }
+    // React may render once to confirm an unchanged state before bailing out.
+    expect(result.renders).toBeLessThanOrEqual(rendersBefore + 1);
+    act(() => { notify?.([{ contentRect: { width: REQUIRED - 20 } }]); });
+    expect(result.renders).toBeGreaterThan(rendersBefore);
+    expect(result.visible).toBe(false);
     teardown();
   });
 
@@ -323,20 +464,26 @@ describe('useWorkStatusVisibility', () => {
     teardown();
   });
 
-  test('stays hidden on mobile and in VS Code regardless of width', () => {
+  test('stays hidden on mobile regardless of width', () => {
     const mobile = renderVisibility(
       { isMobile: true, isVSCode: false },
       REQUIRED * 2,
     );
     expect(mobile.result.visible).toBe(false);
     mobile.teardown();
+  });
+
+  test('in VS Code fits on width alone, past a context panel it never mounts', () => {
+    // A skill citation opens the right zone in the store even there.
+    panelByDirectory['/repo'] = { isOpen: true, tabs: [{ id: 'tab-1', mode: 'file', targetPath: '/repo/a.md' }], activeTabId: 'tab-1' };
+    const wide = renderVisibility({ isMobile: false, isVSCode: true }, REQUIRED);
+    expect(wide.result.fits).toBe(true);
+    expect(wide.result.visible).toBe(true);
+    wide.teardown();
 
     observed = [];
-    const vscode = renderVisibility(
-      { isMobile: false, isVSCode: true },
-      REQUIRED * 2,
-    );
-    expect(vscode.result.visible).toBe(false);
-    vscode.teardown();
+    const narrow = renderVisibility({ isMobile: false, isVSCode: true }, REQUIRED - 1);
+    expect(narrow.result.fits).toBe(false);
+    narrow.teardown();
   });
 });

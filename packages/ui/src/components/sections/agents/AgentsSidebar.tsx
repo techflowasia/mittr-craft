@@ -19,7 +19,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { useSettingsDirectory } from '@/hooks/useSettingsDirectory';
-import { selectAgentsForDirectory, useAgentsStore, isAgentBuiltIn, isAgentManageable, type AgentScope, type AgentWithExtras } from '@/stores/useAgentsStore';
+import { selectAgentsForDirectory, selectDisabledAgentsForDirectory, useAgentsStore, isAgentBuiltIn, isAgentHidden, isAgentManageable, type AgentScope, type AgentWithExtras } from '@/stores/useAgentsStore';
+import { isPrimaryMode } from '@/components/chat/mobileControlsUtils';
 import { useShallow } from 'zustand/react/shallow';
 import { cn } from '@/lib/utils';
 import type { Agent } from '@/lib/opencode/model';
@@ -30,7 +31,7 @@ import { matchesRankQuery } from '@/lib/search/fuzzySearch';
 import { SidebarGroup } from '@/components/sections/shared/SidebarGroup';
 import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
-import { SETTINGS_PANEL_TITLE_CLASS } from '@/components/sections/shared/SettingsSection';
+import { SETTINGS_SECTION_TITLE_CLASS } from '@/components/sections/shared/SettingsSection';
 
 interface AgentsSidebarProps {
   onItemSelect?: () => void;
@@ -52,6 +53,8 @@ export const AgentsSidebar: React.FC<AgentsSidebarProps> = ({ onItemSelect }) =>
     createAgent,
     deleteAgent,
     loadAgents,
+    loadDisabledAgents,
+    updateAgent,
     fetchAgentEntity,
   } = useAgentsStore(useShallow((s) => ({
     selectedAgentName: s.selectedAgentName,
@@ -60,22 +63,46 @@ export const AgentsSidebar: React.FC<AgentsSidebarProps> = ({ onItemSelect }) =>
     createAgent: s.createAgent,
     deleteAgent: s.deleteAgent,
     loadAgents: s.loadAgents,
+    loadDisabledAgents: s.loadDisabledAgents,
+    updateAgent: s.updateAgent,
     fetchAgentEntity: s.fetchAgentEntity,
   })));
 
-  // Settings browses whichever project its own selector points at; the app
-  // stays where it is.
   const settingsDirectory = useSettingsDirectory();
   const agents = useAgentsStore((state) => selectAgentsForDirectory(state, settingsDirectory));
 
+  const disabledAgents = useAgentsStore((state) => selectDisabledAgentsForDirectory(state, settingsDirectory));
+  const [pendingToggleAgent, setPendingToggleAgent] = React.useState<string | null>(null);
+
   React.useEffect(() => {
     void loadAgents(settingsDirectory);
-  }, [loadAgents, settingsDirectory]);
+    void loadDisabledAgents(settingsDirectory);
+  }, [loadAgents, loadDisabledAgents, settingsDirectory]);
+
+  const selectablePrimaryCount = agents.filter((agent) => isPrimaryMode(agent.mode) && !isAgentHidden(agent)).length;
+  const canDisable = (agent: Agent) => !(isPrimaryMode(agent.mode) && !isAgentHidden(agent) && selectablePrimaryCount <= 1);
+
+  const setAgentDisabled = async (name: string, disabled: boolean) => {
+    setPendingToggleAgent(name);
+    try {
+      await updateAgent(name, { disabled }, settingsDirectory);
+      if (disabled && selectedAgentName === name) setSelectedAgent(null);
+      toast.success(disabled
+        ? t('settings.agents.sidebar.toast.agentDisabled', { name })
+        : t('settings.agents.sidebar.toast.agentEnabled', { name }));
+    } catch {
+      toast.error(disabled
+        ? t('settings.agents.sidebar.toast.disableFailed')
+        : t('settings.agents.sidebar.toast.enableFailed'));
+    } finally {
+      setPendingToggleAgent(null);
+    }
+  };
+  const shownDisabledAgents = disabledAgents.filter((agent) => matchesRankQuery([agent.name, agent.description], query));
 
   const bgClass = 'bg-background';
 
   const handleCreateNew = () => {
-    // Generate unique name
     const baseName = 'new-agent';
     let newName = baseName;
     let counter = 1;
@@ -84,7 +111,6 @@ export const AgentsSidebar: React.FC<AgentsSidebarProps> = ({ onItemSelect }) =>
       counter++;
     }
 
-    // Set draft and open the page for editing
     setAgentDraft({ name: newName, scope: 'user' });
     setSelectedAgent(newName);
     onItemSelect?.();
@@ -142,9 +168,6 @@ export const AgentsSidebar: React.FC<AgentsSidebarProps> = ({ onItemSelect }) =>
       newName = `${baseName}-copy-${copyNumber}`;
     }
 
-    // Copy the agent's OWN stored entry, not the resolved `AgentInfo`: the
-    // resolved view merges global config and built-in defaults, and baking
-    // those into a new file would silently widen the copy's permissions.
     // SAFETY: the agents store attaches `scope` to every entry it loads.
     const extAgent = agent as AgentWithExtras & { scope?: AgentScope };
     const envelope = await fetchAgentEntity(agent.name, settingsDirectory);
@@ -196,8 +219,6 @@ export const AgentsSidebar: React.FC<AgentsSidebarProps> = ({ onItemSelect }) =>
       return;
     }
 
-    // A rename is a copy under a new name plus a delete, so it reads the
-    // agent's OWN stored entry for the same reason duplicating does.
     // SAFETY: the agents store attaches `scope` to every entry it loads.
     const renameExt = renameDialogAgent as AgentWithExtras & { scope?: AgentScope };
     const renameEnvelope = await fetchAgentEntity(renameDialogAgent.name, settingsDirectory);
@@ -212,7 +233,6 @@ export const AgentsSidebar: React.FC<AgentsSidebarProps> = ({ onItemSelect }) =>
     }, settingsDirectory);
 
     if (createResult.ok) {
-      // Delete old agent
       const deleteResult = await deleteAgent(renameDialogAgent.name, renameExt.scope, settingsDirectory);
       if (deleteResult.ok) {
         toast.success(t('settings.agents.sidebar.toast.agentRenamed', { name: sanitizedName }));
@@ -240,13 +260,12 @@ export const AgentsSidebar: React.FC<AgentsSidebarProps> = ({ onItemSelect }) =>
     }
   };
 
-  // Hidden custom agents stay manageable here even though pickers exclude them.
-  const manageableAgents = agents.filter(isAgentManageable);
+  const disabledNames = new Set(disabledAgents.map((agent) => agent.name));
+  const manageableAgents = agents.filter((agent) => isAgentManageable(agent) && !disabledNames.has(agent.name));
   const shownAgents = manageableAgents.filter((agent) => matchesRankQuery([agent.name, agent.description], query));
   const builtInAgents = shownAgents.filter(isAgentBuiltIn);
   const customAgents = shownAgents.filter((agent) => !isAgentBuiltIn(agent));
 
-  // Group custom agents by subfolder
   const { groupedCustomAgents, ungroupedCustomAgents } = useMemo(() => {
     const groups: Record<string, typeof customAgents> = {};
     const ungrouped: typeof customAgents = [];
@@ -268,7 +287,7 @@ export const AgentsSidebar: React.FC<AgentsSidebarProps> = ({ onItemSelect }) =>
   return (
     <div className={cn('flex h-full flex-col', bgClass)}>
       <div className="border-b px-3 pt-4 pb-3">
-        <h2 className={`${SETTINGS_PANEL_TITLE_CLASS} mb-3`}>{t('settings.agents.sidebar.title')}</h2>
+        <h2 className={`${SETTINGS_SECTION_TITLE_CLASS} mb-3`}>{t('settings.agents.sidebar.title')}</h2>
         <SettingsProjectSelector className="mb-3" />
         <div className="flex items-center justify-between gap-2">
           <span className="typography-meta text-muted-foreground">{t('settings.agents.sidebar.total', { count: manageableAgents.length })}</span>
@@ -311,6 +330,7 @@ export const AgentsSidebar: React.FC<AgentsSidebarProps> = ({ onItemSelect }) =>
 
                     }}
                     onDuplicate={() => void handleDuplicateAgent(agent)}
+                    onDisable={canDisable(agent) ? () => void setAgentDisabled(agent.name, true) : undefined}
                     getAgentModeIcon={getAgentModeIcon}
                     isMenuOpen={openMenuAgent === agent.name}
                     onMenuOpenChange={(open) => setOpenMenuAgent(open ? agent.name : null)}
@@ -325,7 +345,6 @@ export const AgentsSidebar: React.FC<AgentsSidebarProps> = ({ onItemSelect }) =>
                   {t('settings.agents.sidebar.section.custom')}
                 </div>
 
-                {/* Grouped agents by subfolder */}
                 {groupedCustomAgents.map(({ name: groupName, agents: groupAgents }) => (
                   <SidebarGroup
                     key={groupName}
@@ -346,6 +365,7 @@ export const AgentsSidebar: React.FC<AgentsSidebarProps> = ({ onItemSelect }) =>
                         onRename={() => handleOpenRenameDialog(agent)}
                         onDelete={() => handleDeleteAgent(agent)}
                         onDuplicate={() => void handleDuplicateAgent(agent)}
+                        onDisable={canDisable(agent) ? () => void setAgentDisabled(agent.name, true) : undefined}
                         getAgentModeIcon={getAgentModeIcon}
                         isMenuOpen={openMenuAgent === agent.name}
                         onMenuOpenChange={(open) => setOpenMenuAgent(open ? agent.name : null)}
@@ -354,7 +374,6 @@ export const AgentsSidebar: React.FC<AgentsSidebarProps> = ({ onItemSelect }) =>
                   </SidebarGroup>
                 ))}
 
-                {/* Ungrouped agents (flat in root agents dir) */}
                 {ungroupedCustomAgents.map((agent) => (
                   <AgentListItem
                     key={agent.name}
@@ -368,6 +387,7 @@ export const AgentsSidebar: React.FC<AgentsSidebarProps> = ({ onItemSelect }) =>
                     onRename={() => handleOpenRenameDialog(agent)}
                     onDelete={() => handleDeleteAgent(agent)}
                     onDuplicate={() => void handleDuplicateAgent(agent)}
+                    onDisable={canDisable(agent) ? () => void setAgentDisabled(agent.name, true) : undefined}
                     getAgentModeIcon={getAgentModeIcon}
                     isMenuOpen={openMenuAgent === agent.name}
                     onMenuOpenChange={(open) => setOpenMenuAgent(open ? agent.name : null)}
@@ -375,6 +395,33 @@ export const AgentsSidebar: React.FC<AgentsSidebarProps> = ({ onItemSelect }) =>
                 ))}
               </>
             )}
+          </>
+        )}
+
+        {shownDisabledAgents.length > 0 && (
+          <>
+            <div className="px-2 pb-1.5 pt-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              {t('settings.agents.sidebar.section.disabled')}
+            </div>
+            {shownDisabledAgents.map((agent) => (
+              <div key={agent.name} className="flex items-center gap-2 rounded-md px-1.5 py-1">
+                <div className="min-w-0 flex-1">
+                  <div className="typography-ui-label truncate text-muted-foreground">{agent.name}</div>
+                  {agent.description ? (
+                    <div className="typography-micro truncate leading-tight text-muted-foreground">{agent.description}</div>
+                  ) : null}
+                </div>
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={pendingToggleAgent === agent.name}
+                  onClick={() => void setAgentDisabled(agent.name, false)}
+                  aria-label={t('settings.agents.sidebar.actions.enableAria', { name: agent.name })}
+                >
+                  {t('settings.agents.sidebar.actions.enable')}
+                </Button>
+              </div>
+            ))}
           </>
         )}
       </ScrollableOverlay>
@@ -410,7 +457,6 @@ export const AgentsSidebar: React.FC<AgentsSidebarProps> = ({ onItemSelect }) =>
         </DialogContent>
       </Dialog>
 
-      {/* Rename Dialog */}
       <Dialog open={renameDialogAgent !== null} onOpenChange={(open) => !open && setRenameDialogAgent(null)}>
         <DialogContent>
           <DialogHeader>
@@ -455,6 +501,7 @@ interface AgentListItemProps {
   onDelete?: () => void;
   onRename?: () => void;
   onDuplicate: () => void;
+  onDisable?: () => void;
   getAgentModeIcon: (mode?: string) => React.ReactNode;
   isMenuOpen: boolean;
   onMenuOpenChange: (open: boolean) => void;
@@ -467,6 +514,7 @@ const AgentListItem: React.FC<AgentListItemProps> = ({
   onDelete,
   onRename,
   onDuplicate,
+  onDisable,
   getAgentModeIcon,
   isMenuOpen,
   onMenuOpenChange,
@@ -479,17 +527,23 @@ const AgentListItem: React.FC<AgentListItemProps> = ({
     <>
       {onRename && (
         <Item onClick={(e: React.MouseEvent) => { e.stopPropagation(); onRename(); }}>
-          <Icon name="edit" className="h-4 w-4 mr-px" />
+          <Icon name="edit" className="h-4 w-4 me-px" />
           {t('settings.common.actions.rename')}
         </Item>
       )}
       <Item onClick={(e: React.MouseEvent) => { e.stopPropagation(); onDuplicate(); }}>
-        <Icon name="file-copy" className="h-4 w-4 mr-px" />
+        <Icon name="file-copy" className="h-4 w-4 me-px" />
         {t('settings.common.actions.duplicate')}
       </Item>
+      {onDisable && (
+        <Item onClick={(e: React.MouseEvent) => { e.stopPropagation(); onDisable(); }}>
+          <Icon name="eye-off" className="h-4 w-4 me-px" />
+          {t('settings.agents.sidebar.actions.disable')}
+        </Item>
+      )}
       {onDelete && (
         <Item onClick={(e: React.MouseEvent) => { e.stopPropagation(); onDelete(); }} className="text-destructive focus:text-destructive">
-          <Icon name="delete-bin" className="h-4 w-4 mr-px" />
+          <Icon name="delete-bin" className="h-4 w-4 me-px" />
           {t('settings.common.actions.delete')}
         </Item>
       )}
@@ -502,7 +556,7 @@ const AgentListItem: React.FC<AgentListItemProps> = ({
       <div className="flex min-w-0 flex-1 items-center">
         <button
           onClick={onSelect}
-          className="flex min-w-0 flex-1 flex-col gap-0 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex min-w-0 flex-1 flex-col gap-0 rounded-sm text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           tabIndex={0}
         >
           <div className="flex items-center gap-1.5">
@@ -511,14 +565,14 @@ const AgentListItem: React.FC<AgentListItemProps> = ({
             </span>
             {getAgentModeIcon(agent.mode)}
             {(extAgent.scope || isAgentBuiltIn(agent)) && (
-              <span className="typography-micro text-muted-foreground bg-muted px-1 rounded flex-shrink-0 leading-none pb-px border border-border/50">
+              <span className="typography-micro text-muted-foreground bg-muted px-1 rounded flex-shrink-0 leading-none pb-px border border-edge">
                 {isAgentBuiltIn(agent) ? t('settings.agents.sidebar.badge.system') : extAgent.scope}
               </span>
             )}
           </div>
 
           {agent.description && (
-            <div className="typography-micro text-muted-foreground/60 truncate leading-tight">
+            <div className="typography-micro text-muted-foreground truncate leading-tight">
               {agent.description}
             </div>
           )}
@@ -528,9 +582,9 @@ const AgentListItem: React.FC<AgentListItemProps> = ({
           <DropdownMenuTrigger asChild>
             <Button size="sm"
               variant="ghost"
-              className="h-6 w-6 px-0 flex-shrink-0 -mr-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100"
+              className="h-6 w-6 px-0 flex-shrink-0 -me-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 pointer-fine:hidden"
             >
-              <Icon name="more-2" className="h-3.5 w-3.5" />
+              <Icon name="more" className="h-3.5 w-3.5" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-fit min-w-20">

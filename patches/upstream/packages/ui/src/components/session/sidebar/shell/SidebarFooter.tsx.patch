@@ -1,0 +1,38 @@
+diff --git a/packages/ui/src/components/session/sidebar/shell/SidebarFooter.tsx b/packages/ui/src/components/session/sidebar/shell/SidebarFooter.tsx
+index 7a9ab66bb..298f0247a 100644
+--- a/packages/ui/src/components/session/sidebar/shell/SidebarFooter.tsx
++++ b/packages/ui/src/components/session/sidebar/shell/SidebarFooter.tsx
+@@ -8,6 +8,7 @@ import { DesktopInstanceMenu } from '@/components/desktop/DesktopInstanceMenu';
+ import { TooltipLabelWithShortcut } from '@/components/ui/action-toolbar';
+ import { formatShortcutForDisplay, getEffectiveShortcutCombo } from '@/lib/shortcuts';
+ import { useUIStore } from '@/stores/useUIStore';
++import { ProductSlot } from '@/lib/product-plugins';
+ 
+ type Props = {
+   onOpenSettings: () => void;
+@@ -37,14 +38,17 @@ export function SidebarFooter({
+   return (
+     <div className="flex shrink-0 items-center justify-start gap-1 px-2.5 py-2">
+       {showRuntimeButtons ? (
+-        <Tooltip>
+-          <TooltipTrigger asChild>
+-            <button type="button" onClick={onOpenSettings} className={footerButtonClassName} aria-label={t('sessions.sidebar.footer.actions.settings')}>
+-              <Icon name="settings-3" className="h-4 w-4" />
+-            </button>
+-          </TooltipTrigger>
+-          <TooltipContent side="top" sideOffset={4}><TooltipLabelWithShortcut label={t('sessions.sidebar.footer.actions.settings')} shortcut={formatShortcutForDisplay(getEffectiveShortcutCombo('open_settings', shortcutOverrides), '')} /></TooltipContent>
+-        </Tooltip>
++        <>
++          <Tooltip>
++            <TooltipTrigger asChild>
++              <button type="button" onClick={onOpenSettings} className={footerButtonClassName} aria-label={t('sessions.sidebar.footer.actions.settings')}>
++                <Icon name="settings-3" className="h-4 w-4" />
++              </button>
++            </TooltipTrigger>
++            <TooltipContent side="top" sideOffset={4}><TooltipLabelWithShortcut label={t('sessions.sidebar.footer.actions.settings')} shortcut={formatShortcutForDisplay(getEffectiveShortcutCombo('open_settings', shortcutOverrides), '')} /></TooltipContent>
++          </Tooltip>
++          <ProductSlot name="sidebar-footer" />
++        </>
+       ) : null}
+       {showUpdateButton ? (
+         <Tooltip>

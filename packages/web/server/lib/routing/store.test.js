@@ -11,6 +11,7 @@ const sampleConfig = (patch = {}) => ({
   enabled: true,
   fallback: { model: { providerID: 'anthropic', modelID: 'claude-sonnet-5' }, variant: 'medium' },
   minConfidence: 0.6,
+  preserveCache: true,
   safetyNet: { enabled: true, threshold: 0.6 },
   categories: resolveEffectiveConfig(null).categories,
   ...patch,
@@ -42,6 +43,18 @@ describe('routing store', () => {
       'my-refactors': { builtin: false, name: 'My refactors', description: 'Refactors across modules.' },
     });
     expect(await store.readConfig()).toEqual(config);
+  });
+
+  it('keeps the cache setting on until it is turned off, also for clients that do not send it', async () => {
+    expect(resolveEffectiveConfig(null).preserveCache).toBe(true);
+    expect(resolveEffectiveConfig({ version: 1, enabled: true }).preserveCache).toBe(true);
+
+    const store = createRoutingStore({ dataDir: await tempDir() });
+    await store.writeConfig(sampleConfig({ preserveCache: false }));
+    expect((await store.readConfig()).preserveCache).toBe(false);
+
+    const { preserveCache: _omitted, ...older } = sampleConfig();
+    expect(parseEffectiveConfig(older).preserveCache).toBe(true);
   });
 
   it('records a removed built-in as deleted and keeps the others', async () => {
@@ -122,6 +135,25 @@ describe('routing store', () => {
     await store.clearCustomEndpoint();
     expect(await store.readCustomEndpoint()).toBeNull();
     expect(await store.readToken()).toBe('ts-secret');
+  });
+
+  it('keeps the Gemini key in its own 0600 file apart from the TypeSafe key, and reads a broken file as none', async () => {
+    const dir = await tempDir();
+    const store = createRoutingStore({ dataDir: dir });
+    expect(await store.readGeminiKey()).toBeNull();
+    await store.writeToken('ts-secret');
+    await store.writeGeminiKey('g-secret');
+    expect(await store.readGeminiKey()).toBe('g-secret');
+    expect(await store.readToken()).toBe('ts-secret');
+    const file = path.join(dir, 'classifier-gemini-key.json');
+    if (process.platform !== 'win32') expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
+    await store.writeClassifierSource('gemini');
+    expect(await store.readClassifierSource()).toBe('gemini');
+    await store.clearGeminiKey();
+    expect(await store.readGeminiKey()).toBeNull();
+    expect(await store.readToken()).toBe('ts-secret');
+    await fs.writeFile(file, '{"key":');
+    expect(await store.readGeminiKey()).toBeNull();
   });
 
   it('reads a hand-edited custom endpoint with an unsafe URL as none', async () => {

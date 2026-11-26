@@ -5,7 +5,7 @@ export interface ChatMessageEntry {
     parts: Part[];
 }
 
-type TurnActivityKind = 'tool' | 'reasoning' | 'justification';
+type TurnActivityKind = 'tool' | 'reasoning';
 
 export interface TurnMessageRecord {
     messageId: string;
@@ -27,26 +27,11 @@ export interface TurnActivityRecord extends TurnPartRecord {
     kind: TurnActivityKind;
 }
 
-export interface TurnDiffStats {
-    additions: number;
-    deletions: number;
-    files: number;
-}
-
 export interface TurnChangedFile {
     file: string;
-    /** Absent when neither the turn diff nor the tool call reports line counts. */
     additions?: number;
     deletions?: number;
-    /** False when the turn diff view has no entry for this path, so a pill cannot open it. */
     inTurnDiff?: boolean;
-}
-
-export interface TurnActivityGroup {
-    id: string;
-    anchorMessageId: string;
-    afterToolPartId: string | null;
-    parts: TurnActivityRecord[];
 }
 
 export interface TurnSummaryRecord {
@@ -71,13 +56,12 @@ export interface TurnRecord {
     messages: TurnMessageRecord[];
     assistantMessageIds: string[];
     assistantMessages: ChatMessageEntry[];
+    waitingNotices?: ChatMessageEntry[];
     activityParts: TurnActivityRecord[];
-    activitySegments: TurnActivityGroup[];
     summary: TurnSummaryRecord;
     summaryText?: string;
     hasTools: boolean;
     hasReasoning: boolean;
-    diffStats?: TurnDiffStats;
     changedFiles?: TurnChangedFile[];
     stream: TurnStreamState;
     startedAt?: number;
@@ -110,27 +94,22 @@ export interface TurnProjectionResult {
     ungroupedMessageIds: Set<string>;
 }
 
-export type Turn = Pick<TurnRecord, 'turnId' | 'userMessage' | 'assistantMessages'>;
+export type Turn = Pick<TurnRecord, 'turnId' | 'userMessage' | 'assistantMessages' | 'waitingNotices'>;
 
 export interface TurnGroupingContext {
     turnId: string;
-    activityOwnerMessageId?: string;
     isFirstAssistantInTurn: boolean;
     isLastAssistantInTurn: boolean;
-    hasEarlierAssistantText?: boolean;
+    opensAnswerText?: boolean;
+    earlierAssistantText?: string[];
     isLatestTurn: boolean;
     summaryBody?: string;
     activityParts?: TurnActivityRecord[];
-    activityGroupSegments?: TurnActivityGroup[];
     headerMessageId?: string;
     hasTools: boolean;
     hasReasoning: boolean;
-    diffStats?: TurnDiffStats;
     changedFiles?: TurnChangedFile[];
     userMessageCreatedAt?: number;
-    /** Model variant ("thinking" etc.) the turn ran with, read off its assistant messages. */
     assistantVariant?: string;
     isWorking: boolean;
-    isGroupExpanded?: boolean;
-    toggleGroup?: () => void;
 }

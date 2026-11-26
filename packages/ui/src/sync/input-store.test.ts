@@ -1,7 +1,18 @@
-import { beforeEach, describe, expect, test } from "bun:test"
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { strToU8, zipSync } from "fflate"
 import { useInputStore } from "./input-store"
 import { getChatDraftIdentityKey } from "@/lib/chatDraftPersistence"
+import { opencodeClient } from "@/lib/opencode/client"
+
+// A HEIC conversion that fails the way the vendored decoder does for Apple's
+// HDR gain-map photos.
+const decodeHeic = async (): Promise<Blob> => {
+  throw new Error("ERR_LIBHEIF format not supported")
+}
+
+mock.module("heic2any", () => ({
+  default: async () => decodeHeic(),
+}))
 
 class MockFileReader {
   result: string | ArrayBuffer | null = null
@@ -100,6 +111,76 @@ describe("input-store attachments", () => {
     useInputStore.getState().setAttachedFiles([])
   })
 
+  testWithMockFileReader("refuses a file over 10 MB without reading it when it has no path on disk", async () => {
+    const big = new File([new Uint8Array(10 * 1024 * 1024 + 1)], "place.rbxl")
+
+    await expect(useInputStore.getState().addAttachedFile(big)).rejects.toThrow("place.rbxl")
+
+    expect(pendingReaders).toHaveLength(0)
+    expect(useInputStore.getState().attachedFiles).toEqual([])
+  })
+
+  testWithMockFileReader("refuses a file over 20 MB without suggesting an @-mention, which OpenCode would refuse too", async () => {
+    const huge = new File([new Uint8Array(20 * 1024 * 1024 + 1)], "map.png", { type: "image/png" })
+
+    let message = ""
+    try {
+      await useInputStore.getState().addAttachedFile(huge)
+    } catch (error) {
+      message = error instanceof Error ? error.message : ""
+    }
+
+    expect(message.includes("map.png")).toBe(true)
+    expect(message.includes("@")).toBe(false)
+    expect(pendingReaders).toHaveLength(0)
+    expect(useInputStore.getState().attachedFiles).toEqual([])
+  })
+
+  testWithMockFileReader("saves a HEIC the decoder cannot read where OpenCode runs and attaches a note naming it", async () => {
+    const write = spyOn(opencodeClient, "writeOpenCodeTempFiles").mockImplementation(async (_directory, files) => (
+      files.map(({ filename }) => ({ filename, path: `/tmp/opencode/openchamber/abc/${filename}` }))
+    ))
+    try {
+      const adding = useInputStore.getState().addAttachedFile(new File(["heic-data"], "IMG_4015.heic", { type: "image/heic" }))
+      await waitForReaderCount(1)
+      resolveReader(pendingReaders[0], "data:text/plain;base64,bm90ZQ==")
+      expect(await adding).toBe(true)
+
+      // The original bytes, unconverted, under the original name.
+      const [, files] = write.mock.calls[0]
+      expect(files.map(({ filename }) => filename)).toEqual(["IMG_4015.heic"])
+      expect(new TextDecoder().decode(files[0].bytes)).toBe("heic-data")
+      const [file] = useInputStore.getState().attachedFiles
+      expect(file?.mimeType).toBe("text/plain")
+      expect(file?.filename).toBe("IMG_4015.heic")
+      expect(file?.agentPath).toBe("/tmp/opencode/openchamber/abc/IMG_4015.heic")
+      expect(await file?.file?.text()).toContain("/tmp/opencode/openchamber/abc/IMG_4015.heic")
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  testWithMockFileReader("names a HEIC the decoder cannot read when saving it where OpenCode runs fails too", async () => {
+    const write = spyOn(opencodeClient, "writeOpenCodeTempFiles").mockImplementation(async () => {
+      throw new Error("OpenCode is not reachable")
+    })
+    try {
+      await expect(
+        useInputStore.getState().addAttachedFile(new File(["heic-data"], "IMG_4015.heic", { type: "image/heic" })),
+      ).rejects.toThrow("IMG_4015.heic could not be converted from HEIC to JPEG")
+
+      expect(pendingReaders).toHaveLength(0)
+      expect(useInputStore.getState().attachedFiles).toEqual([])
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  test("refuses a VS Code file over 20 MB, which OpenCode would refuse on every send", () => {
+    expect(() => useInputStore.getState().addVSCodeFileAttachment("/workspace/map.bin", "map.bin", 20 * 1024 * 1024 + 1)).toThrow("map.bin")
+    expect(useInputStore.getState().attachedFiles).toEqual([])
+  })
+
   testWithMockFileReader("does not attach a local file that finishes reading after attachments are cleared", async () => {
     const addPromise = useInputStore.getState().addAttachedFile(new File(["hello"], "hello.txt", { type: "text/plain" }))
     expect(pendingReaders).toHaveLength(1)
@@ -127,6 +208,48 @@ describe("input-store attachments", () => {
     expect(await local).toBe(false)
     await selection
     expect(useInputStore.getState().attachedFiles).toBe(ready)
+  })
+
+  testWithMockFileReader("files an attachment into the named slot without taking the current one", async () => {
+    const current = { runtimeKey: "runtime", directory: "/repo", sessionId: "current" }
+    const composer = { runtimeKey: "runtime", directory: "/repo", sessionId: "fork" }
+    const input = useInputStore.getState()
+    input.selectAttachmentDraft(current)
+
+    const addPromise = input.addAttachedFile(new File(["hello"], "hello.txt", { type: "text/plain" }), composer)
+    await waitForReaderCount(1)
+    resolveReader(pendingReaders[0], "data:text/plain;base64,aGVsbG8=")
+    await addPromise
+
+    expect(input.getAttachedFiles()).toEqual([])
+    expect(input.getAttachedFiles(composer).map((attachment) => attachment.filename)).toEqual(["hello.txt"])
+    expect(useInputStore.getState().attachmentDraftKey).toBe(getChatDraftIdentityKey(current))
+  })
+
+  testWithMockFileReader("restores an attachment into the named slot", async () => {
+    const current = { runtimeKey: "runtime", directory: "/repo", sessionId: "current" }
+    const composer = { runtimeKey: "runtime", directory: "/repo", sessionId: "fork" }
+    const input = useInputStore.getState()
+    input.selectAttachmentDraft(current)
+
+    input.addRestoredAttachment({ url: "data:text/plain;base64,aGVsbG8=", mimeType: "text/plain", filename: "ready.txt" }, composer)
+
+    expect(input.getAttachedFiles()).toEqual([])
+    expect(input.getAttachedFiles(composer).map((attachment) => attachment.filename)).toEqual(["ready.txt"])
+  })
+
+  testWithMockFileReader("keeps concurrent appends into the selected named slot", async () => {
+    const target = { runtimeKey: "runtime", directory: "/repo", sessionId: "fork" }
+    const input = useInputStore.getState()
+    input.selectAttachmentDraft(target)
+    const first = input.addAttachedFile(new File(["one"], "one.txt", { type: "text/plain" }), target)
+    const second = input.addAttachedFile(new File(["two"], "two.txt", { type: "text/plain" }), target)
+    await waitForReaderCount(2)
+    resolveReader(pendingReaders[0], "data:text/plain;base64,b25l")
+    expect(await first).toBe(true)
+    resolveReader(pendingReaders[1], "data:text/plain;base64,dHdv")
+    expect(await second).toBe(true)
+    expect(input.getAttachedFiles(target).map((file) => file.filename)).toEqual(["one.txt", "two.txt"])
   })
 
   testWithMockFileReader("does not attach a local file after attached files are replaced", async () => {
@@ -179,6 +302,22 @@ describe("input-store attachments", () => {
     expect(useInputStore.getState().attachedFiles.map((file) => file.filename)).toEqual(["restored.txt"])
   })
 
+  testWithMockFileReader("a selection added again comes back as the same attachment, whatever its chip is named", async () => {
+    useInputStore.getState().clearAttachedFiles()
+    const file = new File(["hello"], "app/[slug]/page.tsx:12", { type: "text/plain" })
+    const first = useInputStore.getState().addVSCodeSelectionAttachment("/repo/app/[slug]/page.tsx", file)
+    resolveReader(pendingReaders[0], "data:text/plain;base64,aGVsbG8=")
+    await first
+    const [attached] = useInputStore.getState().attachedFiles
+    expect(attached?.filename).toBe("app/(slug)/page.tsx:12")
+
+    await useInputStore.getState().addVSCodeSelectionAttachment("/repo/app/[slug]/page.tsx", file)
+    const again = useInputStore.getState().attachedFiles
+    expect(again).toHaveLength(1)
+    expect(again[0]?.filename).toBe(attached?.filename)
+    expect(again[0]?.id).not.toBe(attached?.id)
+  })
+
   testWithMockFileReader("does not attach a VS Code selection that finishes reading after attachments are cleared", async () => {
     const addPromise = useInputStore.getState().addVSCodeSelectionAttachment(
       "/workspace/hello.txt",
@@ -191,6 +330,33 @@ describe("input-store attachments", () => {
     await addPromise
 
     expect(useInputStore.getState().attachedFiles).toEqual([])
+  })
+
+  test("moves the selected draft's files onto another draft, merged with its own", () => {
+    const parent = { runtimeKey: "runtime", directory: "/repo", sessionId: "parent" }
+    const btw = { ...parent, sessionId: "btw-pending:parent" }
+    const input = useInputStore.getState()
+    input.selectAttachmentDraft(btw)
+    input.addRestoredAttachment({ url: "data:text/plain;base64,aGVsbG8=", mimeType: "text/plain", filename: "earlier.txt" })
+    input.selectAttachmentDraft(parent)
+    input.addRestoredAttachment({ url: "data:image/png;base64,AQID", mimeType: "image/png", filename: "image-1.png" })
+
+    input.moveAttachedFiles(parent, btw)
+
+    expect(useInputStore.getState().attachedFiles).toEqual([])
+    input.selectAttachmentDraft(btw)
+    expect(useInputStore.getState().attachedFiles.map((file) => file.filename)).toEqual(["earlier.txt", "image-1.png"])
+    input.selectAttachmentDraft(parent)
+    expect(useInputStore.getState().attachedFiles).toEqual([])
+  })
+
+  test("leaves files in place when the drafts are the same", () => {
+    const parent = { runtimeKey: "runtime", directory: "/repo", sessionId: "parent" }
+    const input = useInputStore.getState()
+    input.selectAttachmentDraft(parent)
+    input.addRestoredAttachment({ url: "data:image/png;base64,AQID", mimeType: "image/png", filename: "image-1.png" })
+    input.moveAttachedFiles(parent, { ...parent })
+    expect(useInputStore.getState().attachedFiles.map((file) => file.filename)).toEqual(["image-1.png"])
   })
 
   test("does not leave local file reads pending after a reader error", async () => {
@@ -567,5 +733,28 @@ describe("input-store pinned composer addressing", () => {
     useInputStore.getState().selectAttachmentDraft(main)
     expect(useInputStore.getState().attachedFiles.map((entry) => entry.id)).toEqual(["a"])
     expect(useInputStore.getState().attachmentDrafts.get(getChatDraftIdentityKey(pinned))?.map((entry) => entry.id)).toEqual(["b"])
+  })
+})
+
+describe("input-store draft submit", () => {
+  beforeEach(() => {
+    useInputStore.setState({ pendingDraftSubmit: null })
+  })
+
+  test("the requested draft takes its first message once", () => {
+    useInputStore.getState().requestDraftSubmit(7, "Fix the build")
+
+    expect(useInputStore.getState().consumePendingDraftSubmit(7)).toBe("Fix the build")
+    expect(useInputStore.getState().consumePendingDraftSubmit(7)).toBeNull()
+  })
+
+  test("another draft or a session drops the message instead of sending it", () => {
+    useInputStore.getState().requestDraftSubmit(7, "Fix the build")
+    expect(useInputStore.getState().consumePendingDraftSubmit(8)).toBeNull()
+    expect(useInputStore.getState().pendingDraftSubmit).toBeNull()
+
+    useInputStore.getState().requestDraftSubmit(7, "Fix the build")
+    expect(useInputStore.getState().consumePendingDraftSubmit(null)).toBeNull()
+    expect(useInputStore.getState().pendingDraftSubmit).toBeNull()
   })
 })

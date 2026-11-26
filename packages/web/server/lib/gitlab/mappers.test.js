@@ -24,6 +24,25 @@ describe('GitLab provider mappers', () => {
       ...projectPayload,
       ssh_url_to_repo: 'git@gitlab.example.com:other/repo.git',
     }, identity)).toBeNull();
+    expect(mapGitLabProject({
+      ...projectPayload,
+      ssh_url_to_repo: 'git@gitlab-ssh.example.net:other/repo.git',
+    }, identity)).toBeNull();
+    expect(mapGitLabProject({
+      ...projectPayload,
+      ssh_url_to_repo: 'https://gitlab-ssh.example.net/group/team/repo.git',
+    }, identity)).toBeNull();
+    expect(mapGitLabProject({ ...projectPayload, ssh_url_to_repo: 42 }, identity)).toBeNull();
+  });
+
+  it('accepts an SSH clone host that differs from the web address', () => {
+    for (const sshUrl of ['git@gitlab-ssh.example.net:group/team/repo.git', 'ssh://git@gitlab-ssh.example.net:2222/group/team/repo.git']) {
+      expect(mapGitLabProject({
+        ...projectPayload,
+        http_url_to_repo: 'https://gitlab.example.com/group/team/repo.git',
+        ssh_url_to_repo: sshUrl,
+      }, identity)).toMatchObject({ id: '7', cloneUrl: 'https://gitlab.example.com/group/team/repo.git', sshUrl });
+    }
   });
 
   it('maps issues without confusing incidents or malformed entries', () => {
@@ -37,11 +56,31 @@ describe('GitLab provider mappers', () => {
     expect(mapGitLabNote({ id: 1, body: 'changed title', system: true }, identity)).toBeNull();
     expect(mapGitLabNote({ id: 2, body: 'Review', author: { id: 2, username: 'alex' }, position: { new_path: 'src/a.ts', new_line: 8 } }, identity, 'mr-url'))
       .toMatchObject({ id: '2', body: 'Review', path: 'src/a.ts', line: 8, url: 'mr-url' });
+    expect(mapGitLabNote({ id: 3, body: '', position: { new_path: 42, old_path: 'old.ts', new_line: '8', old_line: 0 } }, identity))
+      .not.toHaveProperty('path');
+    expect(mapGitLabNote({ id: 4, body: '', position: { old_path: 'old.ts', new_line: '8', old_line: 0 } }, identity))
+      .toMatchObject({ path: 'old.ts', line: 0 });
+  });
+
+  it('reads a normalized note URL once with its original receiver', () => {
+    const reads = [];
+    const payload = {
+      id: 5,
+      body: 'Review',
+      get web_url() {
+        reads.push(this);
+        return reads.length === 1 ? 'first-url' : 'second-url';
+      },
+    };
+    expect(mapGitLabNote(payload, identity)).toMatchObject({ url: 'first-url' });
+    expect(reads).toEqual([payload]);
   });
 
   it('maps diffs and aggregates pipeline jobs', () => {
     expect(mapGitLabDiff({ new_path: 'src/new.ts', old_path: 'src/old.ts', renamed_file: true, diff: '@@' }))
       .toEqual({ path: 'src/new.ts', status: 'renamed', patch: '@@', additions: 0, deletions: 0 });
+    expect(mapGitLabDiff({ new_path: 42, old_path: 'src/old.ts' }))
+      .toEqual({ path: 42, status: 'modified' });
     // Hunks arrive without file headers, so a line starting `+++` is content.
     expect(mapGitLabDiff({ new_path: 'a.md', old_path: 'a.md', diff: '@@ -1,2 +1,3 @@\n context\n-old\n+new\n+++ added\n\\ No newline at end of file\n' }))
       .toMatchObject({ additions: 2, deletions: 1 });

@@ -18,7 +18,6 @@ export type FlattenedTreeRow<F extends TreeFile = GitStatus['files'][number]> =
       key: string;
       kind: 'directory';
       depth: number;
-      /** Display label; merged single-child chains read `ui/src`. */
       label: string;
       directory: ChangesTreeDirectoryNode<F>;
     }
@@ -28,6 +27,9 @@ export type FlattenedTreeRow<F extends TreeFile = GitStatus['files'][number]> =
       depth: number;
       file: F;
     };
+
+export const changedPathName = (path: string): string =>
+  path.slice(path.lastIndexOf('/', path.length - 2) + 1);
 
 const normalizePathForTree = (value: string): string =>
   value.replace(/\\/g, '/').replace(/^\/+/, '').trim();
@@ -79,11 +81,6 @@ export const buildChangesTree = <F extends TreeFile>(entries: F[]): ChangesTreeD
   return root;
 };
 
-/**
- * Follows a chain of directories that hold nothing but one subdirectory, so
- * `packages/ui/src` renders as one row instead of three. The returned node is
- * the deepest one; its path keys expansion state.
- */
 export const compactDirectory = <F extends TreeFile>(
   directory: ChangesTreeDirectoryNode<F>,
 ): { node: ChangesTreeDirectoryNode<F>; label: string } => {

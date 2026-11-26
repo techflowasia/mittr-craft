@@ -1,0 +1,153 @@
+diff --git a/packages/web/server/lib/session-goal/runtime.test.js b/packages/web/server/lib/session-goal/runtime.test.js
+index 2ec9df577..40cea7dda 100644
+--- a/packages/web/server/lib/session-goal/runtime.test.js
++++ b/packages/web/server/lib/session-goal/runtime.test.js
+@@ -458,6 +458,19 @@ describe('session goal session-read recovery', () => {
+ });
+ 
+ describe('session goal tick on v2 messages', () => {
++  it('never adds a goal retry over a structured response length failure', async () => {
++    quiet();
++    const { calls } = v2OpenCode({ messages: [assistantRecord({ error: { type: 'provider', message: 'Length', response: { body: '{"error":{"code":"response_length_limit"}}' } } })] });
++    const { runtime } = makeRuntime({ ...wired({ openchamber: { goal: activeGoal() } }), getSmallModelService: async () => ({ generateText: async () => ({ text: smallModelSays({ remaining: true }) }) }) });
++    await runTick(runtime);
++    expect(calls.filter(call => call.method === 'POST')).toEqual([]);
++  });
++  it('does not read or audit a session reserved by response recovery', async () => {
++    const { calls } = v2OpenCode({ messages: [assistantRecord()] });
++    const { runtime } = makeRuntime({ ...wired({ openchamber: { goal: activeGoal() } }), responseRecovery: { isReserved: () => true } });
++    await runTick(runtime);
++    expect(calls).toEqual([]);
++  });
+   it('reads the flat v2 assistant record, audits it, and continues on the same model and agent', async () => {
+     vi.spyOn(console, 'log').mockImplementation(() => {});
+     const { calls } = v2OpenCode({
+@@ -1127,3 +1140,128 @@ describe('session goal runtime', () => {
+     warning.mockRestore();
+   });
+ });
++
++describe('session goal continuation review', () => {
++  const keepGoing = async () => ({ generateSmallModelText: async () => ({ text: smallModelSays({ remaining: true }) }) });
++  const userTurn = { id: 'msg_u1', sessionID: SESSION_ID, type: 'user', text: 'Finish the task', time: { created: 1 } };
++  const prompts = (calls) => calls.filter((call) => call.method === 'POST' && call.path.endsWith('/prompt'));
++
++  it('asks the review before each continuation and puts its note in the prompt', async () => {
++    quiet();
++    const { calls } = v2OpenCode({ messages: [userTurn, assistantRecord()] });
++    const seam = wired({ openchamber: { goal: activeGoal() } });
++    const reviewContinuation = vi.fn(async () => ({ note: 'Your last run repeated `npx jest` 4 times. Change your approach.' }));
++    const { runtime } = makeRuntime({ ...seam, getSmallModelService: keepGoing, reviewContinuation });
++
++    await runTick(runtime);
++
++    expect(reviewContinuation).toHaveBeenCalledWith({ sessionId: SESSION_ID, directory: '/repo', goalId: 'goal_1', resumed: false });
++    const [prompt] = prompts(calls);
++    expect(prompt.body.text).toContain('Your last run repeated `npx jest` 4 times. Change your approach.');
++    expect(prompt.body.text).toContain('Finish the task');
++    expect(seam.persistSessionGoal.mock.calls.at(-1)[2]).toMatchObject({ status: 'active', turnsUsed: 1 });
++  });
++
++  it('settles the goal as blocked with the review\'s reason, notifies, and sends nothing', async () => {
++    quiet();
++    const { calls } = v2OpenCode({ messages: [userTurn, assistantRecord()] });
++    const seam = wired({ openchamber: { goal: activeGoal() } });
++    const { runtime, emitGoalNotification } = makeRuntime({
++      ...seam,
++      getSmallModelService: keepGoing,
++      reviewContinuation: async () => ({ block: 'looping: same command 35 times, no file changed', note: 'ignored' }),
++    });
++
++    await runTick(runtime);
++
++    expect(seam.persistSessionGoal.mock.calls.at(-1)[2]).toMatchObject({ status: 'blocked', statusReason: 'looping: same command 35 times, no file changed' });
++    expect(emitGoalNotification).toHaveBeenCalledTimes(1);
++    expect(prompts(calls)).toEqual([]);
++  });
++
++  it('tells the review a resumed goal is resumed', async () => {
++    vi.useFakeTimers();
++    try {
++      quiet();
++      v2OpenCode({ messages: [userTurn, assistantRecord()] });
++      const goal = activeGoal({ turnsUsed: 2, statusReason: 'resumed' });
++      const reviewContinuation = vi.fn(async () => null);
++      const { runtime } = makeRuntime({ ...wired({ openchamber: { goal } }), getSmallModelService: keepGoing, reviewContinuation });
++
++      await runtime.notifyGoalChanged(SESSION_ID, '/repo', { openchamber: { goal } });
++      await vi.advanceTimersByTimeAsync(250);
++
++      expect(reviewContinuation).toHaveBeenCalledWith(expect.objectContaining({ resumed: true }));
++    } finally {
++      vi.useRealTimers();
++    }
++  });
++
++  it('is not asked when the check settles the goal as complete', async () => {
++    quiet();
++    v2OpenCode({ messages: [userTurn, assistantRecord()] });
++    const reviewContinuation = vi.fn(async () => ({ block: 'looping' }));
++    const { runtime } = makeRuntime({
++      ...wired({ openchamber: { goal: activeGoal() } }),
++      getSmallModelService: async () => ({ generateSmallModelText: async () => ({ text: smallModelSays({ all_done: true }) }) }),
++      reviewContinuation,
++    });
++
++    await runTick(runtime);
++
++    expect(reviewContinuation).not.toHaveBeenCalled();
++  });
++
++  it('does not block a goal that was resumed or changed while the review ran', async () => {
++    quiet();
++    const { calls } = v2OpenCode({ messages: [userTurn, assistantRecord()] });
++    let goal = activeGoal({ updatedAt: 5 });
++    const seam = {
++      readSessionMetadata: vi.fn(async () => ({ openchamber: { goal } })),
++      persistSessionGoal: vi.fn(async (_id, _dir, next) => { goal = next; }),
++    };
++    const { runtime, emitGoalNotification } = makeRuntime({
++      ...seam,
++      getSmallModelService: keepGoing,
++      reviewContinuation: async () => {
++        goal = { ...goal, statusReason: 'resumed', updatedAt: 9 };
++        return { block: 'looping: same command 35 times' };
++      },
++    });
++
++    await runTick(runtime);
++
++    expect(goal.status).toBe('active');
++    expect(emitGoalNotification).not.toHaveBeenCalled();
++    expect(prompts(calls)).toEqual([]);
++  });
++
++  it.each([
++    ['cleared', null, 'cleared'],
++    ['complete', activeGoal({ status: 'complete' }), 'complete'],
++    ['blocked', activeGoal({ status: 'blocked' }), null],
++    ['paused', activeGoal({ status: 'paused' }), null],
++  ])('tells the extension when a goal is %s only for an ending', async (_label, goal, reason) => {
++    const onGoalEnded = vi.fn();
++    const { runtime } = makeRuntime({ ...wired(), onGoalEnded });
++
++    await runtime.notifyGoalChanged(SESSION_ID, '/repo', { openchamber: { goal } });
++
++    expect(onGoalEnded.mock.calls).toEqual(reason ? [[{ sessionId: SESSION_ID, directory: '/repo', reason }]] : []);
++  });
++
++  it('continues without a note when the review fails', async () => {
++    quiet();
++    const { calls } = v2OpenCode({ messages: [userTurn, assistantRecord()] });
++    const { runtime } = makeRuntime({
++      ...wired({ openchamber: { goal: activeGoal() } }),
++      getSmallModelService: keepGoing,
++      reviewContinuation: async () => { throw new Error('review broke'); },
++    });
++
++    await runTick(runtime);
++
++    expect(prompts(calls)).toHaveLength(1);
++    expect(console.warn).toHaveBeenCalledWith('[session-goal] continuation review failed:', expect.anything());
++  });
++});

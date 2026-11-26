@@ -1,9 +1,3 @@
-// The model providers a space can be given a key for, and what the create dialog needs to know
-// about each: the API the gatekeeper's window forwards to, and the environment variable a key is
-// usually kept in on the host. The list is the server's (`provider_not_supported` refuses any
-// other, see "Grants" in `packages/web/server/lib/spaces/DOCUMENTATION.md`); OpenCode 2's catalog
-// carries neither the API address nor the variable name, so both are the defaults of each
-// provider's own SDK, which is what OpenCode inside talks to through the window.
 
 type SpaceModelProvider = {
   id: string;
@@ -21,3 +15,9 @@ export const SPACE_MODEL_PROVIDERS: readonly SpaceModelProvider[] = [
   { id: 'deepseek', upstream: 'https://api.deepseek.com/v1', envName: 'DEEPSEEK_API_KEY' },
   { id: 'xai', upstream: 'https://api.x.ai/v1', envName: 'XAI_API_KEY' },
 ];
+
+export const SPACE_LOGIN_NAMES: ReadonlyMap<string, string> = new Map([['openai', 'ChatGPT'], ['github-copilot', 'GitHub Copilot']]);
+
+export const SPACE_LOGIN_ONLY_PROVIDERS: readonly string[] = Array.from(SPACE_LOGIN_NAMES.keys()).filter((id) => !SPACE_MODEL_PROVIDERS.some((provider) => provider.id === id));
+
+export const isSpaceGrantableProvider = (providerId: string): boolean => SPACE_MODEL_PROVIDERS.some((provider) => provider.id === providerId) || SPACE_LOGIN_NAMES.has(providerId);

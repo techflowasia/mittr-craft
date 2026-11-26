@@ -1,0 +1,17 @@
+diff --git a/packages/ui/src/lib/quota/ownEntries.ts b/packages/ui/src/lib/quota/ownEntries.ts
+new file mode 100644
+index 000000000..bfed1fa2e
+--- /dev/null
++++ b/packages/ui/src/lib/quota/ownEntries.ts
+@@ -0,0 +1,11 @@
++import { z } from 'zod';
++
++/** Validate values as tuples so Zod's record output cannot discard own __proto__ keys. */
++export function ownEntriesSchema<T extends z.ZodType>(valueSchema: T) {
++  return z.preprocess(
++    value => value != null && Object.prototype.toString.call(value) === '[object Object]'
++      ? Object.entries(value)
++      : null,
++    z.array(z.tuple([z.string(), valueSchema])),
++  );
++}

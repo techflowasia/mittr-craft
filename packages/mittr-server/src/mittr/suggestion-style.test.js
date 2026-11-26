@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
+import '../../../web/scripts/register-server-sources.mjs';
 
 import { repoRoot } from '../upstream-contract.js';
 import { createSuggestionStyle, NEXT_STEP_SUGGESTION_RULES } from './suggestion-style.js';

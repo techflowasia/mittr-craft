@@ -4,11 +4,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import '../../web/scripts/register-server-sources.mjs';
 
-import registry from '../../web/server/lib/opencode/settings-registry.json' with { type: 'json' };
-import { flattenPreferences, seedPreferencesFrom } from '../../web/server/lib/opencode/settings-files.js';
+import registry from '../../web/server/lib/settings/settings-registry.json' with { type: 'json' };
 import { MITTR_SETTINGS_KEYS, UPSTREAM_SETTINGS_KEYS, migrateSettingsOnce } from './settings.js';
 import { repoRoot } from './upstream-contract.js';
+
+const { flattenPreferences, seedPreferencesFrom } = await import('../../web/server/lib/settings/settings-files.js');
 
 const UPSTREAM_KEYS = new Set(['themeId', 'projects', 'desktopLocalPort', 'openchamberWidgetMode', 'OpenChamberBanner']);
 const MITTR_KEYS = new Set(['agentChromeToolEnabled', 'voiceStepCap']);

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { RunningShell } from '@/lib/opencode/background-shell';
+import type { RunningShell, ShellEnd } from '@/lib/opencode/background-shell';
 import type { SyncEvent } from '@/lib/opencode/events';
 import {
+  ENDED_SHELLS_MAX,
   applyBackgroundShellEvents,
   backgroundShellRevision,
   directoriesWithRunningShells,
@@ -11,6 +12,7 @@ import {
   sessionsInTree,
   backgroundShellsOfSessions,
   useBackgroundShellsStore,
+  waitForShellSettle,
 } from './background-shells';
 
 const shell = (id: string, sessionID = 'ses_1'): RunningShell => ({
@@ -22,7 +24,10 @@ const shell = (id: string, sessionID = 'ses_1'): RunningShell => ({
 });
 
 const started = (value: RunningShell): SyncEvent => ({ type: 'shell.started', properties: { shell: value } });
-const ended = (shellID: string): SyncEvent => ({ type: 'shell.ended', properties: { shellID } });
+const ended = (shellID: string, end: ShellEnd = { kind: 'exited', status: 'exited', exit: 0 }, endedAt = 5000): SyncEvent => (
+  { type: 'shell.ended', properties: { shellID, end, endedAt } }
+);
+const endedIds = () => [...useBackgroundShellsStore.getState().ended.keys()];
 // The call that started a command settles while it runs: it went to the background.
 const settledInBackground = (shellID: string): SyncEvent => ({
   type: 'message.tool.transition',
@@ -96,6 +101,75 @@ describe('background shell index', () => {
     applyBackgroundShellEvents('/private/tmp/repo', [started(shell('sh_exited'))]);
     await refreshBackgroundShells('/tmp/repo', async () => ({ directory: '/private/tmp/repo', shells: [] }));
     expect(ids()).toEqual([]);
+  });
+});
+
+describe('ended commands', () => {
+  test('an exit keeps the command with its status, exit code and end time', () => {
+    applyBackgroundShellEvents('/repo', [started(shell('sh_1')), settledInBackground('sh_1')]);
+    applyBackgroundShellEvents('/repo', [ended('sh_1', { kind: 'exited', status: 'exited', exit: 2 }, 7000)]);
+    expect(useBackgroundShellsStore.getState().ended.get('sh_1')).toEqual({
+      ...shell('sh_1'), directory: '/repo', background: true, status: 'exited', exit: 2, endedAt: 7000,
+    });
+  });
+
+  test('a running command removed is stopped; an exited one removed later stays exited', () => {
+    applyBackgroundShellEvents('/repo', [started(shell('sh_stop')), started(shell('sh_done'))]);
+    applyBackgroundShellEvents('/repo', [
+      ended('sh_stop', { kind: 'removed' }),
+      ended('sh_done', { kind: 'exited', status: 'timeout' }),
+      ended('sh_done', { kind: 'removed' }),
+    ]);
+    const { ended: byId } = useBackgroundShellsStore.getState();
+    expect(byId.get('sh_stop')?.status).toBe('stopped');
+    expect(byId.get('sh_done')?.status).toBe('timeout');
+    expect(byId.get('sh_done')?.exit).toBeUndefined();
+  });
+
+  test('after a stop note, the kill that ends the command reads as stopped; an exit with a code does not', () => {
+    const note = (shellID: string): SyncEvent => ({
+      type: 'message.updated',
+      properties: { info: { id: `msg_${shellID}`, sessionID: 'ses_1', role: 'synthetic', text: 'stopped', metadata: { openchamberShellCancellation: { shellID } }, time: { created: 3000 } } },
+    });
+    applyBackgroundShellEvents('/repo', [started(shell('sh_killed')), started(shell('sh_survived'))]);
+    applyBackgroundShellEvents('/repo', [
+      note('sh_killed'),
+      note('sh_survived'),
+      // OpenCode reports the kill as an exit without a code, before the removal.
+      ended('sh_killed', { kind: 'exited', status: 'exited' }),
+      ended('sh_killed', { kind: 'removed' }),
+      ended('sh_survived', { kind: 'exited', status: 'exited', exit: 0 }),
+    ]);
+    const { ended: byId } = useBackgroundShellsStore.getState();
+    expect(byId.get('sh_killed')?.status).toBe('stopped');
+    expect(byId.get('sh_survived')?.status).toBe('exited');
+  });
+
+  test('without a stop note, an exit without a code stays an exit', () => {
+    applyBackgroundShellEvents('/repo', [started(shell('sh_1'))]);
+    applyBackgroundShellEvents('/repo', [ended('sh_1', { kind: 'exited', status: 'exited' })]);
+    expect(useBackgroundShellsStore.getState().ended.get('sh_1')?.status).toBe('exited');
+  });
+
+  test('a command a list no longer has ended without a known status', () => {
+    applyBackgroundShellEvents('/repo', [started(shell('sh_gap'))]);
+    replaceDirectoryShells('/repo', [], backgroundShellRevision());
+    expect(useBackgroundShellsStore.getState().ended.get('sh_gap')?.status).toBe('unknown');
+  });
+
+  test('an end the index never saw running records nothing', () => {
+    applyBackgroundShellEvents('/repo', [ended('sh_unknown')]);
+    expect(endedIds()).toEqual([]);
+  });
+
+  test('only the latest ends are kept, and a runtime switch forgets them', () => {
+    const count = ENDED_SHELLS_MAX + 5;
+    const ids = Array.from({ length: count }, (_, index) => `sh_${index}`);
+    applyBackgroundShellEvents('/repo', ids.map((id) => started(shell(id))));
+    applyBackgroundShellEvents('/repo', ids.map((id, index) => ended(id, undefined, index)));
+    expect(endedIds()).toEqual(ids.slice(5));
+    resetBackgroundShells();
+    expect(endedIds()).toEqual([]);
   });
 });
 
@@ -175,5 +249,61 @@ describe('background or waited for', () => {
     replaceDirectoryShells('/repo', [shell('sh_waited'), shell('sh_listed')], backgroundShellRevision());
     expect(isBackground('sh_listed')).toBe(true);
     expect(isBackground('sh_waited')).toBe(false);
+  });
+});
+
+describe('waiting for a call to settle in the background', () => {
+  const outcome = async (settled: Promise<string>): Promise<string> => settled.catch((error: Error) => `rejected: ${error.message}`);
+
+  test('resolves on the call settling, not on the flag a list sets', async () => {
+    replaceDirectoryShells('/repo', [shell('sh_1')], backgroundShellRevision());
+    expect(isBackground('sh_1')).toBe(true);
+    const wait = waitForShellSettle('sh_1', 1000);
+    let result: string | undefined;
+    void wait.settled.then((value) => { result = value; });
+    await Promise.resolve();
+    expect(result).toBeUndefined();
+
+    applyBackgroundShellEvents('/repo', [settledInBackground('sh_1')]);
+    expect(await wait.settled).toBe('background');
+  });
+
+  test('resolves ended when the command ends first', async () => {
+    applyBackgroundShellEvents('/repo', [started(shell('sh_1'))]);
+    const wait = waitForShellSettle('sh_1', 1000);
+    applyBackgroundShellEvents('/repo', [ended('sh_1')]);
+    expect(await wait.settled).toBe('ended');
+  });
+
+  test('resolves ended when a list read no longer has the command', async () => {
+    applyBackgroundShellEvents('/repo', [started(shell('sh_1'))]);
+    const wait = waitForShellSettle('sh_1', 1000);
+    replaceDirectoryShells('/repo', [], backgroundShellRevision());
+    expect(await wait.settled).toBe('ended');
+  });
+
+  test('a settle and an end in one batch resolve background, with the command already gone from the index', async () => {
+    applyBackgroundShellEvents('/repo', [started(shell('sh_1'))]);
+    const wait = waitForShellSettle('sh_1', 1000);
+    applyBackgroundShellEvents('/repo', [settledInBackground('sh_1'), ended('sh_1')]);
+    expect(await wait.settled).toBe('background');
+    expect(ids()).toEqual([]);
+  });
+
+  test('rejects after the timeout, on a cancel and on a runtime switch, and a later event changes nothing', async () => {
+    applyBackgroundShellEvents('/repo', [started(shell('sh_1')), started(shell('sh_2')), started(shell('sh_3'))]);
+    const timedOut = waitForShellSettle('sh_1', 5);
+    expect(await outcome(timedOut.settled)).toBe('rejected: The command did not move to the background in time.');
+    const cancelled = waitForShellSettle('sh_2', 1000);
+    cancelled.cancel();
+    expect(await outcome(cancelled.settled)).toBe('rejected: Cancelled.');
+    const switched = waitForShellSettle('sh_3', 1000);
+    resetBackgroundShells();
+    expect(await outcome(switched.settled)).toBe('rejected: The runtime changed.');
+
+    // Nothing is left waiting: the events of a new wait resolve only that wait.
+    const next = waitForShellSettle('sh_1', 1000);
+    applyBackgroundShellEvents('/repo', [settledInBackground('sh_1'), settledInBackground('sh_2')]);
+    expect(await next.settled).toBe('background');
   });
 });

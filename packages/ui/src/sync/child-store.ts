@@ -2,16 +2,14 @@ import { create, type StoreApi } from "zustand"
 import type { DirState, State } from "./types"
 import { INITIAL_STATE, MAX_DIR_STORES, DIR_IDLE_TTL_MS, EVICTION_GRACE_MS } from "./types"
 import { pickDirectoriesToEvict, canDisposeDirectory, hasPendingBlockingRequests } from "./eviction"
-import { readDirCache, persistVcs, persistProjectMeta, persistIcon, persistSessions } from "./persist-cache"
+import { forgetDirCache, readDirCache, persistVcs, persistProjectMeta, persistIcon, persistSessions } from "./persist-cache"
 import { normalizePath } from "@/lib/pathNormalization"
 import { startSessionLoadPerformanceEvent } from "./session-load-performance"
 import { countSyncPerformance } from "./performance-diagnostics"
 import { isFilesystemError } from "@/lib/api/files-errors"
 
 export type DirectoryStore = State & {
-  /** Apply a partial state update */
   patch: (partial: Partial<State>) => void
-  /** Replace state wholesale (used during bootstrap) */
   replace: (next: State) => void
 }
 
@@ -163,6 +161,19 @@ const notifyChangedBlockingRequests = <T,>(
   }
 }
 
+const notifyAllFormSubscribers = (store: StoreApi<DirectoryStore>): void => {
+  const subscribers = formSubscribersByStore.get(store)
+  if (!subscribers || subscribers.size === 0) return
+  const listeners = new Set<BlockingRequestSubscriber>()
+  for (const sessionListeners of subscribers.values()) {
+    for (const listener of sessionListeners) listeners.add(listener)
+  }
+  for (const listener of listeners) {
+    countSyncPerformance("formChangeCallbacks")
+    listener()
+  }
+}
+
 const notifyChangedSessionMessages = (
   store: StoreApi<DirectoryStore>,
   current: State,
@@ -272,14 +283,24 @@ type ManualBootstrapDemand = {
   revision: number
 }
 
-function createDirectoryStore(directory: string): StoreApi<DirectoryStore> {
-  // Restore cached metadata from localStorage
+function holdsLiveState(state: State | undefined): boolean {
+  if (!state) return false
+  if (hasPendingBlockingRequests(state)) return true
+  for (const status of Object.values(state.session_status ?? {})) {
+    if (status && status.type !== "idle") return true
+  }
+  return false
+}
+
+function ownsAnySession(state: State, sessionIDs: ReadonlySet<string>): boolean {
+  if (state.session.some((session) => sessionIDs.has(session.id))) return true
+  return Object.keys(state.session_status ?? {}).some((sessionID) => sessionIDs.has(sessionID))
+}
+
+function createDirectoryStore(directory: string, seedSessions: boolean): StoreApi<DirectoryStore> {
   const cached = readDirCache(directory)
 
-  // Stale-while-revalidate: seed the session list from cache so the sidebar
-  // paints chats instantly. Bootstrap replaces it with the authoritative list
-  // while preserving session mutations that happened after the request began.
-  const cachedSessions = cached.sessions ?? INITIAL_STATE.session
+  const cachedSessions = (seedSessions ? cached.sessions : undefined) ?? INITIAL_STATE.session
 
   const store = create<DirectoryStore>()((set) => ({
     ...INITIAL_STATE,
@@ -294,7 +315,6 @@ function createDirectoryStore(directory: string): StoreApi<DirectoryStore> {
     replace: (next) => set(next),
   }))
 
-  // Subscribe to persist metadata changes back to localStorage
   store.subscribe((state, prev) => {
     if (state.vcs !== prev.vcs) persistVcs(directory, state.vcs)
     if (state.projectMeta !== prev.projectMeta) persistProjectMeta(directory, state.projectMeta)
@@ -302,6 +322,7 @@ function createDirectoryStore(directory: string): StoreApi<DirectoryStore> {
     if (state.session !== prev.session) persistSessions(directory, state.session)
     notifyChangedBlockingRequests(permissionSubscribersByStore, "permissionChangeCallbacks", store, state.permission, prev.permission)
     notifyChangedBlockingRequests(formSubscribersByStore, "formChangeCallbacks", store, state.form, prev.form)
+    if (state.status !== prev.status) notifyAllFormSubscribers(store)
     notifyChangedSessionMessages(store, state, prev)
   })
 
@@ -313,6 +334,7 @@ export class ChildStoreManager {
   private readonly lifecycle = new Map<string, DirState>()
   private readonly pins = new Map<string, number>()
   private evictionScheduled = false
+  private bootstrapNotificationScheduled = false
   private readonly disposers = new Map<string, () => void>()
   private readonly registrySubscribers = new Set<() => void>()
   private readonly bootstrapSubscribers = new Set<() => void>()
@@ -323,9 +345,11 @@ export class ChildStoreManager {
   private readonly bootstrapStates = new Map<string, DirectoryBootstrapState>()
   private readonly bootstrapFailures = new Map<string, DirectoryBootstrapFailureReason>()
   private readonly initializations = new Map<string, DirectoryInitialization>()
+  private readonly staleDirectories = new Set<string>()
 
   private onBootstrap?: (context: DirectoryBootstrapContext) => Promise<void> | void
   private onDispose?: (directory: string) => void
+  private readonly seedsSessions?: (directory: string) => boolean
   private isBooting?: (directory: string) => boolean
   private isLoadingSessions?: (directory: string) => boolean
   private isCurrentScope?: () => boolean
@@ -337,6 +361,10 @@ export class ChildStoreManager {
   private manualBootstrapDemandRevision = 0
   private disposed = false
 
+  constructor(options: { seedsSessions?: (directory: string) => boolean } = {}) {
+    this.seedsSessions = options.seedsSessions
+  }
+
   private notifyRegistrySubscribers() {
     for (const subscriber of this.registrySubscribers) {
       subscriber()
@@ -344,7 +372,12 @@ export class ChildStoreManager {
   }
 
   private notifyBootstrapSubscribers() {
-    for (const subscriber of this.bootstrapSubscribers) subscriber()
+    if (this.bootstrapNotificationScheduled) return
+    this.bootstrapNotificationScheduled = true
+    queueMicrotask(() => {
+      this.bootstrapNotificationScheduled = false
+      for (const subscriber of this.bootstrapSubscribers) subscriber()
+    })
   }
 
   configure(callbacks: {
@@ -363,8 +396,6 @@ export class ChildStoreManager {
     this.isLoadingSessions = callbacks.isLoadingSessions
     this.isCurrentScope = callbacks.isCurrentScope
     this.bootstrapConcurrency = Math.max(1, Math.floor(callbacks.bootstrapConcurrency ?? 2))
-    // A list may have finished before reconfiguration invalidated its still-
-    // running initialization. It no longer owns a scheduler slot to requeue it.
     const interrupted = [...this.initializations].filter(([, initialization]) => initialization.state === "running")
     for (const [directory] of interrupted) this.initializations.delete(directory)
     for (const [directory] of interrupted) {
@@ -392,14 +423,6 @@ export class ChildStoreManager {
     this.scheduleEviction()
   }
 
-  /**
-   * Coalesce eviction into one pass per tick.
-   *
-   * `ensureChild` runs during render, once per sidebar row, and used to sort
-   * and scan every directory synchronously on each call. Deferring the pass
-   * also lets a whole render commit — and with it every pin effect — settle
-   * before anything is considered for disposal.
-   */
   private scheduleEviction() {
     if (this.evictionScheduled || this.disposed) return
     this.evictionScheduled = true
@@ -426,8 +449,6 @@ export class ChildStoreManager {
       return
     }
     this.pins.delete(normalizedDirectory)
-    // Releasing the final consumer is an explicit lifecycle edge, not a render-
-    // path access, so this pass stays synchronous.
     this.runEviction()
   }
 
@@ -449,7 +470,7 @@ export class ChildStoreManager {
 
     let store = this.children.get(normalizedDirectory)
     if (!store) {
-      store = createDirectoryStore(normalizedDirectory)
+      store = createDirectoryStore(normalizedDirectory, this.seedsSessions?.(normalizedDirectory) ?? true)
       this.children.set(normalizedDirectory, store)
       this.notifyRegistrySubscribers()
     }
@@ -494,6 +515,62 @@ export class ChildStoreManager {
     })
     this.ensureChild(normalizedDirectory, { bootstrap: false })
     this.queueBootstrap(nextDemand)
+  }
+
+  refreshAfterStreamRestart(currentDirectory?: string | null): ReadonlySet<string> {
+    const queued = new Set<string>()
+    if (this.disposed) return queued
+    for (const [directory, store] of this.children) {
+      if (store.getState().status === "loading") continue
+      this.staleDirectories.add(directory)
+    }
+    const current = currentDirectory ? normalizePath(currentDirectory) : null
+    if (current && this.staleDirectories.has(current)) {
+      this.requestBootstrap({ directory: current, priority: "selected", reason: "server-connected", force: true })
+      queued.add(current)
+    }
+    for (const directory of [...this.staleDirectories]) {
+      if (queued.has(directory) || !this.staleDirectories.has(directory)) continue
+      const demand = this.aggregateBootstrapDemand(directory)
+      if (demand && demand.priority !== "background") {
+        this.queueBootstrap({ ...demand, force: true })
+        queued.add(directory)
+        continue
+      }
+      if (!holdsLiveState(this.children.get(directory)?.getState())) continue
+      this.queueBootstrap({ directory, priority: "background", reason: "server-connected", force: true })
+      queued.add(directory)
+    }
+    return queued
+  }
+
+  refreshStaleDirectoriesWithActiveSessions(activeSessionIDs: ReadonlySet<string>): ReadonlySet<string> {
+    const queued = new Set<string>()
+    if (this.disposed || activeSessionIDs.size === 0) return queued
+    for (const directory of [...this.staleDirectories]) {
+      if (this.bootstrapQueue.has(directory) || !this.staleDirectories.has(directory)) continue
+      const state = this.children.get(directory)?.getState()
+      if (!state || !ownsAnySession(state, activeSessionIDs)) continue
+      this.queueBootstrap({ directory, priority: "background", reason: "server-connected", force: true })
+      queued.add(directory)
+    }
+    return queued
+  }
+
+  retryFailedBootstraps(): ReadonlySet<string> {
+    const queued = new Set<string>()
+    if (this.disposed) return queued
+    for (const [directory, state] of [...this.bootstrapStates]) {
+      if (state !== "failed") continue
+      const demand = this.aggregateBootstrapDemand(directory)
+      if (demand && demand.priority !== "background") {
+        this.queueBootstrap({ ...demand, force: true })
+        queued.add(directory)
+        continue
+      }
+      this.staleDirectories.add(directory)
+    }
+    return queued
   }
 
   setBootstrapDemand(owner: string, demands: DirectoryBootstrapDemand[]): void {
@@ -582,8 +659,10 @@ export class ChildStoreManager {
     this.pumpBootstrapQueue()
   }
 
-  private queueBootstrap(demand: DirectoryBootstrapDemand, notify = true): boolean {
-    const directory = demand.directory
+  private queueBootstrap(input: DirectoryBootstrapDemand, notify = true): boolean {
+    const directory = input.directory
+    const reuse = !input.force && input.priority !== "background" && this.staleDirectories.has(directory)
+    const demand = reuse ? { ...input, force: true } : input
     const store = this.children.get(directory)
     const state = this.bootstrapStates.get(directory)
     if (!demand.force && (state === "complete" || state === "failed" || store?.getState().status === "complete")) {
@@ -636,6 +715,7 @@ export class ChildStoreManager {
       const next = this.nextBootstrap()
       if (!next) return
       this.bootstrapQueue.delete(next.directory)
+      this.staleDirectories.delete(next.directory)
       const token = {}
       const running: RunningBootstrap = {
         ...next,
@@ -652,9 +732,6 @@ export class ChildStoreManager {
         queuedMs: Math.max(0, Date.now() - next.enqueuedAt),
       })
 
-      // Initialization outlives the list scheduler's slot. Keep commit authority
-      // tied to this store and run sequence, not the slot's transient token.
-      // A newer bootstrap or runtime generation invalidates both phases.
       const runSequence = ++this.bootstrapRunSequence
       this.directoryBootstrapRuns.set(next.directory, runSequence)
       const store = this.children.get(next.directory)
@@ -748,6 +825,17 @@ export class ChildStoreManager {
     })
   }
 
+  forgetDirectory(directory: string): void {
+    const normalizedDirectory = normalizePath(directory)
+    if (!normalizedDirectory) return
+    const store = this.children.get(normalizedDirectory)
+    if (store && store.getState().session.length > 0) {
+      store.setState({ session: [], sessionTotal: 0, sessionListSource: "empty" })
+    }
+    forgetDirCache(normalizedDirectory)
+    this.disposeDirectory(normalizedDirectory)
+  }
+
   disposeDirectory(directory: string): boolean {
     if (
       !canDisposeDirectory({
@@ -771,6 +859,7 @@ export class ChildStoreManager {
     this.bootstrapFailures.delete(directory)
     this.directoryBootstrapRuns.delete(directory)
     this.initializations.delete(directory)
+    this.staleDirectories.delete(directory)
     for (const demands of this.bootstrapDemandsByOwner.values()) demands.delete(directory)
     this.children.delete(directory)
     this.notifyRegistrySubscribers()
@@ -808,7 +897,6 @@ export class ChildStoreManager {
     return hasPendingBlockingRequests(this.children.get(directory)?.getState())
   }
 
-  /** Apply a state mutation to a directory's store */
   update(directory: string, fn: (state: State) => Partial<State>) {
     const store = this.children.get(directory)
     if (!store) return
@@ -817,7 +905,6 @@ export class ChildStoreManager {
     store.setState(patch)
   }
 
-  /** Get current state of a directory store (snapshot) */
   getState(directory: string): State | undefined {
     return this.children.get(directory)?.getState()
   }
@@ -837,6 +924,7 @@ export class ChildStoreManager {
     this.bootstrapStates.clear()
     this.bootstrapFailures.clear()
     this.initializations.clear()
+    this.staleDirectories.clear()
     this.directoryBootstrapRuns.clear()
     this.bootstrapDemandsByOwner.clear()
     this.manualBootstrapDemands.clear()
@@ -847,6 +935,24 @@ export class ChildStoreManager {
     this.registrySubscribers.add(listener)
     return () => {
       this.registrySubscribers.delete(listener)
+    }
+  }
+
+  private subscribeRegistryForReaders(syncStoreSubscriptions: () => void, listener: () => void): () => void {
+    let queued = false
+    let active = true
+    const unsubscribe = this.subscribeRegistry(() => {
+      syncStoreSubscriptions()
+      if (queued) return
+      queued = true
+      queueMicrotask(() => {
+        queued = false
+        if (active) listener()
+      })
+    })
+    return () => {
+      active = false
+      unsubscribe()
     }
   }
 
@@ -873,10 +979,7 @@ export class ChildStoreManager {
     }
 
     syncStoreSubscriptions()
-    const unsubscribeRegistry = this.subscribeRegistry(() => {
-      syncStoreSubscriptions()
-      listener()
-    })
+    const unsubscribeRegistry = this.subscribeRegistryForReaders(syncStoreSubscriptions, listener)
 
     return () => {
       unsubscribeRegistry()
@@ -910,10 +1013,7 @@ export class ChildStoreManager {
     }
 
     syncStoreSubscriptions()
-    const unsubscribeRegistry = this.subscribeRegistry(() => {
-      syncStoreSubscriptions()
-      listener()
-    })
+    const unsubscribeRegistry = this.subscribeRegistryForReaders(syncStoreSubscriptions, listener)
 
     return () => {
       unsubscribeRegistry()

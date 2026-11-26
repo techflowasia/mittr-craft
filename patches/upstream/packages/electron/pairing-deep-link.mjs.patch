@@ -1,0 +1,25 @@
+diff --git a/packages/electron/pairing-deep-link.mjs b/packages/electron/pairing-deep-link.mjs
+index b512a90fa..10089a53f 100644
+--- a/packages/electron/pairing-deep-link.mjs
++++ b/packages/electron/pairing-deep-link.mjs
+@@ -52,7 +52,7 @@ const candidatePreview = (candidate) => {
+  * `target` is the first direct address by priority, else the relay display
+  * address (`relay://<serverId>`, the form stored for relay-only hosts).
+  */
+-export const parsePairingDeepLink = (raw, { protocol = 'openchamber', now = Date.now() } = {}) => {
++export const parsePairingDeepLink = (raw, { protocol = 'openchamber', now = Date.now(), fallbackLabel = 'OpenChamber' } = {}) => {
+   let url;
+   try {
+     url = new URL(readText(raw));
+@@ -75,8 +75,10 @@ export const parsePairingDeepLink = (raw, { protocol = 'openchamber', now = Date
+   if (candidates.length === 0) return null;
+   const preferred = candidates.find((candidate) => candidate.direct) || candidates[0];
+   return {
+-    label: readText(payload.label) || 'OpenChamber',
++    label: readText(payload.label) || fallbackLabel,
+     fingerprint: readText(payload.fingerprint),
+     target: preferred.target,
+   };
+ };
++
++export const rendererPairingLink = (raw) => readText(raw).replace(/^[a-z][a-z0-9+.-]*:/i, 'openchamber:');

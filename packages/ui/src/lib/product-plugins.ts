@@ -88,6 +88,7 @@ export type ProductUiPlugin = {
   composerShiftEnter?: (state: ComposerTextState) => ComposerEdit | null;
   sidebarSide?: ProductSidebarSideSource;
   fontOptions?: ProductFontOptions;
+  toolNames?: Readonly<Record<string, string>>;
 };
 
 type Substitution = { pattern: RegExp; to: string };
@@ -160,10 +161,10 @@ const updateDecorationHooks = (): void => {
   useComposedDecorations = next.length === 0 ? usePassThroughDecorations : next.reduce(combineDecorationHooks);
 };
 
-const guardDictationBlock = (useBlock: UseDictationBlock): UseDictationBlock => {
+const guardDictationBlock = (readBlock: UseDictationBlock): UseDictationBlock => {
   function useGuardedDictationBlock(): DictationBlock {
     try {
-      return useBlock();
+      return readBlock();
     } catch {
       return notBlocked;
     }
@@ -356,6 +357,15 @@ export function productComposerShiftEnter(state: ComposerTextState): ComposerEdi
 
 export function productFontOptions(kind: keyof ProductFontOptions): ProductFontOption[] {
   return plugins.flatMap((plugin) => plugin.fontOptions?.[kind] ?? []);
+}
+
+export function productToolName(toolName: string): string | undefined {
+  for (const plugin of plugins) {
+    if (plugin.toolNames && Object.hasOwn(plugin.toolNames, toolName)) {
+      return plugin.toolNames[toolName];
+    }
+  }
+  return undefined;
 }
 
 const sidebarSideSourceOf = (current: ProductUiPlugin[]): ProductSidebarSideSource | undefined => {

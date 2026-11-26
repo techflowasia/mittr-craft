@@ -1,21 +1,28 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { Window } from 'happy-dom';
 
 import type { TerminalHandlers } from '@/lib/api/types';
 import { useTerminalStore } from '@/stores/useTerminalStore';
+import { noteSpaceCreationRequest, resetSpaceCreationRequests } from '@/lib/spaces/space-creation-requests';
+import type { SpaceEntry } from '@/lib/spaces/spaces-api';
+import { useSpacesStore } from '@/lib/spaces/spaces-store';
 
 let effectiveDirectory = '/repo';
 const openContextPreviewCalls: Array<[string, string]> = [];
-const createSessionCalls: Array<{ cwd: string }> = [];
+type CreateSessionOptions = { cwd: string; cols: number; rows: number };
+const createSessionCalls: CreateSessionOptions[] = [];
+let viewportAutoResize = true;
+const viewportResizes = new Map<string, (cols: number, rows: number) => void>();
 const connectCalls: string[] = [];
+const closeCalls: string[] = [];
 const ensureDirectoryCalls: string[] = [];
 const openContextPreview = (directory: string, url: string) => {
   openContextPreviewCalls.push([directory, url]);
 };
-const createSession = async ({ cwd }: { cwd: string }) => {
-  createSessionCalls.push({ cwd });
+const createSession = async (options: CreateSessionOptions) => {
+  createSessionCalls.push(options);
   return { sessionId: 'unused', cols: 80, rows: 24, status: 'running' as const };
 };
 let connectBehavior: (sessionId: string, handlers: TerminalHandlers) => { close: () => void } = () => ({ close: () => undefined });
@@ -23,7 +30,7 @@ const terminalRuntime = {
   createSession,
   sendInput: async () => undefined,
   resize: async () => undefined,
-  close: async () => undefined,
+  close: async (sessionId: string) => { closeCalls.push(sessionId); },
   updateAppearance: async () => undefined,
   connect: (sessionId: string, handlers: TerminalHandlers) => {
     connectCalls.push(sessionId);
@@ -35,8 +42,16 @@ const runtimeApis = {
   terminal: terminalRuntime,
 };
 const i18n = { t: (key: string) => key };
+let deviceInfo = { isMobile: false, isTablet: false, hasTouchOnlyPointer: false };
+const pasteClipboardCalls: string[] = [];
 
-const sessionUiState = {
+// The two fields the view reads: a selected session, or an open draft and what it waits for.
+type SessionUiState = {
+  currentSessionId: string | null;
+  newSessionDraft: { open: boolean; pendingWorktreeRequestId: string | null } | null;
+};
+
+const sessionUiState: SessionUiState = {
   currentSessionId: 'session-1',
   newSessionDraft: null,
 };
@@ -48,6 +63,7 @@ const uiState = {
   terminalShell: 'zsh',
   terminalLoginShells: ['zsh'],
   showTerminalQuickKeysOnDesktop: false,
+  terminalCloseOnExit: true,
   openContextPreview,
 };
 
@@ -93,24 +109,31 @@ mock.module('@/contexts/useThemeSystem', () => ({
   }),
 }));
 mock.module('@/hooks/useFontPreferences', () => ({ useFontPreferences: () => ({ monoFont: 'geist-mono' }) }));
-mock.module('@/lib/device', () => ({ useDeviceInfo: () => ({ isMobile: false, isTablet: false, hasTouchOnlyPointer: false }) }));
+mock.module('@/lib/device', () => ({
+  useDeviceInfo: () => deviceInfo,
+  // Dialogs ask whether to lay out as a tablet; these tests run on a phone or a desktop.
+  useTabletLayout: () => ({ enabled: false, roomyForPanels: false }),
+}));
 mock.module('@/stores/useUIStore', () => ({ useUIStore: useUiStoreMock }));
 mock.module('@/stores/useInlineCommentDraftStore', () => ({ useInlineCommentDraftStore: () => ({ addDraft: () => undefined }) }));
 mock.module('@/components/terminal/TerminalViewport', () => ({
   TerminalViewport: React.forwardRef(function TerminalViewportMock(
     { sessionKey, chunks, isVisible, onResize }: { sessionKey: string; chunks: unknown[]; isVisible: boolean; onResize: (cols: number, rows: number) => void },
-    ref: React.ForwardedRef<{ focus: () => void; fit: () => void; getSelection: () => null }>,
+    ref: React.ForwardedRef<{ focus: () => void; fit: () => void; getSelection: () => null; pasteClipboard: () => Promise<void> }>,
   ) {
     React.useImperativeHandle(ref, () => ({
       focus: () => undefined,
       fit: () => undefined,
       getSelection: () => null,
-    }), []);
+      pasteClipboard: async () => { pasteClipboardCalls.push(sessionKey); },
+    }), [sessionKey]);
     // A real surface reports its fitted grid once it is visible; a visible tab
     // spawns its shell only after that report.
     React.useEffect(() => {
-      if (isVisible) onResize(100, 30);
-    }, [isVisible, onResize]);
+      viewportResizes.set(sessionKey, onResize);
+      if (isVisible && viewportAutoResize) onResize(100, 30);
+      return () => { viewportResizes.delete(sessionKey); };
+    }, [isVisible, onResize, sessionKey]);
 
     return React.createElement('div', {
       'data-terminal-viewport': 'true',
@@ -136,7 +159,7 @@ mock.module('@/components/ui/sortable-tabs-strip', () => ({
     )),
   ),
 }));
-mock.module('@/lib/i18n', () => ({ useI18n: () => i18n }));
+mock.module('@/lib/i18n', () => ({ useI18n: () => i18n, isRightToLeft: () => false }));
 
 const { TerminalView } = await import('./TerminalView');
 
@@ -182,11 +205,17 @@ describe('TerminalView project action tab indicator', () => {
 
   beforeEach(() => {
     effectiveDirectory = '/repo';
+    viewportAutoResize = true;
+    viewportResizes.clear();
     openContextPreviewCalls.length = 0;
     createSessionCalls.length = 0;
     connectCalls.length = 0;
+    closeCalls.length = 0;
+    uiState.terminalCloseOnExit = true;
     ensureDirectoryCalls.length = 0;
     connectBehavior = () => ({ close: () => undefined });
+    deviceInfo = { isMobile: false, isTablet: false, hasTouchOnlyPointer: false };
+    pasteClipboardCalls.length = 0;
     windowInstance = new Window({ url: 'http://localhost/' });
     Object.assign(globalThis, {
       window: windowInstance,
@@ -233,6 +262,40 @@ describe('TerminalView project action tab indicator', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     useTerminalStore.getState().clearAll();
+    sessionUiState.currentSessionId = 'session-1';
+    sessionUiState.newSessionDraft = null;
+    resetSpaceCreationRequests();
+    useSpacesStore.getState().resetForRuntimeSwitch();
+  });
+
+  test('a draft waiting for a new space opens no shell until the space runs, then opens it in the space', async () => {
+    const space: SpaceEntry = {
+      id: 'a1b2c3d4e5f6', name: 'Fix login', placeId: 'docker', machine: null,
+      projectDirectory: '/repo', projectFolder: { path: '/repo', found: null }, directory: '/spaces/a1b2c3d4e5f6/repo',
+      state: 'preparing', stoppedIdle: false, step: 'creating', failure: null, network: { mode: 'allowlist', domains: [] },
+      grants: [], access: null, needsAccess: [], accessFailures: [], damage: null, setup: null,
+    };
+    // The draft stays on the project's folder while its chip names the space.
+    sessionUiState.currentSessionId = null;
+    sessionUiState.newSessionDraft = { open: true, pendingWorktreeRequestId: 'worktree_space' };
+    noteSpaceCreationRequest('worktree_space', space.id);
+    useSpacesStore.getState().addJourneyEntry(space);
+
+    await act(async () => root.render(React.createElement(TerminalView, { visible: true })));
+    await flushEffects();
+    expect(host.textContent).toContain('spaces.draft.preparing');
+    expect(createSessionCalls).toEqual([]);
+
+    await act(async () => useSpacesStore.getState().addJourneyEntry({ ...space, state: 'running', step: null }));
+    await flushEffects();
+    expect(ensureDirectoryCalls).toEqual(['/spaces/a1b2c3d4e5f6/repo']);
+    expect(host.querySelector('[data-terminal-viewport]')?.getAttribute('data-session-key')?.startsWith('/spaces/a1b2c3d4e5f6/repo::')).toBe(true);
+
+    // What the panel hands to the draft stays on the draft's folder.
+    const tabId = useTerminalStore.getState().getDirectoryState('/spaces/a1b2c3d4e5f6/repo')!.tabs[0]!.id;
+    await act(async () => useTerminalStore.getState().setTabPreviewUrl('/spaces/a1b2c3d4e5f6/repo', tabId, 'https://preview.example.test'));
+    host.querySelector<HTMLElement>('[aria-label="terminalView.preview.openTitle"]')?.click();
+    expect(openContextPreviewCalls).toEqual([['/repo', 'https://preview.example.test']]);
   });
 
   test('closing the last tab closes the surface instead of only replacing the tab', async () => {
@@ -270,7 +333,73 @@ describe('TerminalView project action tab indicator', () => {
     expect(useTerminalStore.getState().getDirectoryState('/repo')!.tabs).toHaveLength(2);
   });
 
-  test('shows a spinner only for active project-action tabs and keeps terminal or action icons elsewhere', async () => {
+  const exitActiveTab = async (label: string) => {
+    const store = useTerminalStore.getState();
+    const tab = store.getDirectoryState('/repo')!.tabs.find((entry) => entry.label === label)!;
+    store.setTabSessionId('/repo', tab.id, `srv-${label}`);
+    store.setActiveTab('/repo', tab.id);
+    connectBehavior = (_sessionId, handlers) => {
+      void Promise.resolve().then(() => handlers.onEvent({ type: 'exit', exitCode: 0 }));
+      return { close: () => undefined };
+    };
+    await act(async () => root.render(React.createElement(TerminalView, { visible: true })));
+    await flushEffects();
+    return tab.id;
+  };
+
+  test('a shell that exits closes its tab and releases the server session', async () => {
+    const tabId = await exitActiveTab('Interactive');
+
+    expect(closeCalls).toEqual(['srv-Interactive']);
+    expect(useTerminalStore.getState().getDirectoryState('/repo')!.tabs.some((tab) => tab.id === tabId)).toBe(false);
+  });
+
+  test('a shell that exits keeps its tab when closing on exit is off', async () => {
+    uiState.terminalCloseOnExit = false;
+    const tabId = await exitActiveTab('Interactive');
+
+    expect(closeCalls).toEqual([]);
+    expect(useTerminalStore.getState().getDirectoryState('/repo')!.tabs.find((tab) => tab.id === tabId)?.lifecycle).toBe('exited');
+  });
+
+  test('a project action that exits closes its tab too', async () => {
+    const tabId = await exitActiveTab('Build');
+
+    expect(closeCalls).toEqual(['srv-Build']);
+    expect(useTerminalStore.getState().getDirectoryState('/repo')!.tabs.some((tab) => tab.id === tabId)).toBe(false);
+  });
+
+  test('a project action the server force-kills on stop closes its tab without a second close', async () => {
+    const store = useTerminalStore.getState();
+    const tab = store.getDirectoryState('/repo')!.tabs.find((entry) => entry.label === 'Build')!;
+    store.setTabSessionId('/repo', tab.id, 'srv-Build');
+    store.setActiveTab('/repo', tab.id);
+    connectBehavior = (_sessionId, handlers) => {
+      void Promise.resolve().then(() => {
+        // The action runner's own subscription sees the message first and clears the session.
+        useTerminalStore.getState().setTabSessionId('/repo', tab.id, null);
+        handlers.onError?.(Object.assign(new Error('Terminal was killed'), { code: 'KILLED' }), true);
+      });
+      return { close: () => undefined };
+    };
+    await act(async () => root.render(React.createElement(TerminalView, { visible: true })));
+    await flushEffects();
+
+    expect(closeCalls).toEqual([]);
+    expect(useTerminalStore.getState().getDirectoryState('/repo')!.tabs.some((entry) => entry.id === tab.id)).toBe(false);
+    expect(host.textContent).not.toContain('terminalView.error.connectionFailed');
+  });
+
+  test('a project action that exits keeps its output when closing on exit is off', async () => {
+    uiState.terminalCloseOnExit = false;
+    const tabId = await exitActiveTab('Build');
+
+    expect(closeCalls).toEqual([]);
+    expect(useTerminalStore.getState().getDirectoryState('/repo')!.tabs.find((tab) => tab.id === tabId)?.lifecycle).toBe('exited');
+    expect(readBufferContent('/repo', tabId)).toContain('terminalView.stream.processExitedMessage');
+  });
+
+  test('shows the shared spinner while a project action starts, runs or stops, and its own icon otherwise', async () => {
     await act(async () => {
       root.render(React.createElement(TerminalView, { visible: false }));
     });
@@ -278,17 +407,40 @@ describe('TerminalView project action tab indicator', () => {
     const tabs = Array.from(host.querySelectorAll('[data-tab-id]'));
     expect(tabs).toHaveLength(3);
 
-    const interactiveTab = tabs.find((tab) => tab.querySelector('[data-tab-label]')?.textContent === 'Interactive');
-    const runningActionTab = tabs.find((tab) => tab.querySelector('[data-tab-label]')?.textContent === 'Build');
-    const exitedActionTab = tabs.find((tab) => tab.querySelector('[data-tab-label]')?.textContent === 'Deploy');
+    const tab = (label: string) => tabs.find((entry) => entry.querySelector('[data-tab-label]')?.textContent === label);
 
-    expect(interactiveTab?.querySelector('[data-icon]')?.getAttribute('data-icon')).toBe('terminal');
-    expect(runningActionTab?.querySelector('[data-icon]')?.getAttribute('data-icon')).toBe('loader-4');
-    expect(runningActionTab?.querySelector('[data-icon]')?.className).toContain('animate-spin');
-    expect(runningActionTab?.querySelector('[data-icon]')?.className).toContain('motion-reduce:animate-none');
-    expect(runningActionTab?.querySelector('[data-icon]')?.className).toContain('text-muted-foreground');
-    expect(exitedActionTab?.querySelector('[data-icon]')?.getAttribute('data-icon')).toBe('play');
-    expect(host.querySelectorAll('[data-icon="loader-4"]').length).toBe(1);
+    expect(tab('Interactive')?.querySelector('[data-icon]')?.getAttribute('data-icon')).toBe('terminal');
+    expect(tab('Build')?.querySelector('[data-spinner]')).not.toBeNull();
+    expect(tab('Deploy')?.querySelector('[data-icon]')?.getAttribute('data-icon')).toBe('play');
+    expect(host.querySelectorAll('.animate-spin').length).toBe(0);
+
+    const buildTabId = useTerminalStore.getState().getDirectoryState('/repo')!.tabs.find((entry) => entry.label === 'Build')!.id;
+    await act(async () => {
+      useTerminalStore.getState().setTabLifecycle('/repo', buildTabId, 'stopping');
+    });
+
+    expect(host.querySelectorAll('[data-spinner]').length).toBe(1);
+  });
+
+  test('offers Paste next to Copy only on touch terminals and pastes into the active tab', async () => {
+    await act(async () => {
+      root.render(React.createElement(TerminalView, { visible: false }));
+    });
+    expect(host.querySelector('[aria-label="terminalView.actions.copySelection"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="terminalView.actions.paste"]')).toBeNull();
+
+    deviceInfo = { isMobile: true, isTablet: false, hasTouchOnlyPointer: true };
+    await act(async () => {
+      root.render(React.createElement(TerminalView, { visible: true }));
+    });
+    await flushEffects();
+    const paste = host.querySelector<HTMLButtonElement>('[aria-label="terminalView.actions.paste"]');
+    expect(paste?.parentElement?.previousElementSibling?.querySelector('[aria-label="terminalView.actions.copySelection"]')).not.toBeNull();
+    expect(paste?.querySelector('[data-icon]')?.getAttribute('data-icon')).toBe('clipboard');
+
+    const activeTabId = useTerminalStore.getState().getDirectoryState('/repo')!.activeTabId;
+    await act(async () => { paste?.click(); });
+    expect(pasteClipboardCalls).toEqual([`/repo::${activeTabId}`]);
   });
 
   test('uses the explicit terminal directory for terminal tabs and session creation while preview ownership stays on the host directory', async () => {
@@ -311,7 +463,7 @@ describe('TerminalView project action tab indicator', () => {
     expect(createSessionCalls.length).toBe(1);
     expect(createSessionCalls[0]?.cwd).toBe('/repo');
 
-    const previewButton = host.querySelector<HTMLElement>('[title="terminalView.preview.openTitle"]');
+    const previewButton = host.querySelector<HTMLElement>('[aria-label="terminalView.preview.openTitle"]');
     expect(previewButton).not.toBeNull();
     previewButton?.click();
     expect(openContextPreviewCalls).toEqual([['/repo-worktree', 'https://preview.example.test']]);
@@ -395,6 +547,43 @@ describe('TerminalView project action tab indicator', () => {
     expect(store.getActiveTab('/repo')?.lifecycle).toBe('exited');
   });
 
+  test('a terminal that keeps failing to reconnect shows the error and Try again until it is back', async () => {
+    const store = useTerminalStore.getState();
+    const tab = store.getDirectoryState('/repo')!.tabs.find((entry) => entry.label === 'Interactive')!;
+    store.setTabSessionId('/repo', tab.id, 'srv-Interactive');
+    store.setActiveTab('/repo', tab.id);
+    let handlers: TerminalHandlers | null = null;
+    connectBehavior = (_sessionId, next) => {
+      // A later subscription replays the snapshot another holder of the session cached.
+      if (handlers) next.onEvent({ type: 'snapshot', sequence: 0, data: '', status: 'running' });
+      handlers = next;
+      return { close: () => undefined };
+    };
+    await act(async () => root.render(React.createElement(TerminalView, { visible: true })));
+    await flushEffects();
+    const emit = async (attempt: number) => act(async () => handlers!.onEvent({ type: 'reconnecting', attempt, maxAttempts: Number.POSITIVE_INFINITY }));
+    const tryAgainButton = () => Array.from(host.querySelectorAll('button')).find((button) => button.textContent === 'terminalView.actions.tryAgain');
+
+    // A short outage recovers within a few attempts and shows nothing.
+    for (let attempt = 1; attempt <= 4; attempt += 1) await emit(attempt);
+    expect(host.textContent).not.toContain('terminalView.error.cannotConnect');
+
+    await emit(5);
+    expect(host.textContent).toContain('terminalView.error.cannotConnect');
+    expect(tryAgainButton()).toBeDefined();
+
+    await act(async () => tryAgainButton()!.click());
+    expect(connectCalls).toEqual(['srv-Interactive', 'srv-Interactive']);
+    expect(host.textContent).toContain('terminalView.error.cannotConnect');
+    // The retry dials once and fails: its count starts over, and the error stays.
+    await act(async () => handlers!.onError?.(new Error('Terminal WebSocket closed'), false));
+    await emit(1);
+    expect(host.textContent).toContain('terminalView.error.cannotConnect');
+
+    await act(async () => handlers!.onEvent({ type: 'snapshot', sequence: 1, data: '$ ', status: 'running' }));
+    expect(host.textContent).not.toContain('terminalView.error.cannotConnect');
+  });
+
   test('would fail if revisit attach skipped the active running project-action snapshot restore', async () => {
     const state = useTerminalStore.getState().getDirectoryState('/repo');
     const actionTab = state?.tabs.find((tab) => tab.label === 'Build');
@@ -462,5 +651,118 @@ describe('TerminalView project action tab indicator', () => {
     expect(tabLabels).not.toContain('Worktree Terminal');
     expect(connectCalls).toEqual(['srv-parent-build']);
     expect(createSessionCalls.length).toBe(0);
+  });
+
+  const resetViewportScenario = () => {
+    viewportAutoResize = false;
+    useTerminalStore.getState().clearAll();
+    useTerminalStore.getState().ensureDirectory('/repo');
+    return useTerminalStore.getState().getDirectoryState('/repo')!.tabs[0]!.id;
+  };
+  const resizeViewport = (tabId: string, cols = 100, rows = 30) => act(async () => {
+    viewportResizes.get(`/repo::${tabId}`)!(cols, rows);
+  });
+  const pendingCreate = () => {
+    let complete!: (session: Awaited<ReturnType<typeof createSession>>) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<Awaited<ReturnType<typeof createSession>>>((resolve, refuse) => { complete = resolve; reject = refuse; });
+    return { promise, reject, resolve: () => complete({ sessionId: 'pty-1', cols: 100, rows: 30, status: 'running' }) };
+  };
+
+  test('viewport identity uses the authoritative terminal directory and excludes the PTY session id', async () => {
+    const tabId = resetViewportScenario();
+    await act(async () => root.render(<TerminalView visible />));
+    const viewport = host.querySelector('[data-terminal-viewport]');
+    expect(viewport).not.toBeNull();
+    await act(async () => useTerminalStore.getState().setTabSessionId('/repo', tabId, 'resolved-pty'));
+    expect(host.querySelector('[data-terminal-viewport]')).toBe(viewport);
+    useTerminalStore.setState((state) => ({ sessions: new Map(state.sessions).set('/other', state.sessions.get('/repo')!) }));
+    await act(async () => root.render(<TerminalView visible directory="/other" />));
+    expect(host.querySelector('[data-terminal-viewport]')).not.toBe(viewport);
+    expect(host.querySelector('[data-terminal-viewport]')?.getAttribute('data-session-key')).toBe(`/other::${tabId}`);
+  });
+
+  test('every open tab keeps its viewport mounted and only the active one is visible', async () => {
+    const first = resetViewportScenario();
+    const second = useTerminalStore.getState().createTab('/repo');
+    useTerminalStore.getState().setActiveTab('/repo', second);
+    await act(async () => root.render(<TerminalView visible />));
+    const viewports = Array.from(host.querySelectorAll('[data-terminal-viewport]'));
+    expect(viewports).toHaveLength(2);
+    expect(viewports.map((node) => node.getAttribute('data-visible'))).toEqual(['false', 'true']);
+    await act(async () => useTerminalStore.getState().setActiveTab('/repo', first));
+    expect(Array.from(host.querySelectorAll('[data-terminal-viewport]'))).toEqual(viewports);
+    expect(viewports.map((node) => node.getAttribute('data-visible'))).toEqual(['true', 'false']);
+  });
+
+  test('scrollback is read from the buffer slice, not from the tab', async () => {
+    const tabId = resetViewportScenario();
+    await act(async () => root.render(<TerminalView visible />));
+    expect(host.querySelector('[data-terminal-viewport]')?.getAttribute('data-chunk-count')).toBe('0');
+    await act(async () => useTerminalStore.getState().replaceBuffer('/repo', tabId, 'saved output', 7));
+    expect(host.querySelector('[data-terminal-viewport]')?.getAttribute('data-chunk-count')).toBe('1');
+  });
+
+  test('spawns a visible tab at the fitted grid and a hidden one at the estimate', async () => {
+    const tabId = resetViewportScenario();
+    await act(async () => root.render(<TerminalView visible />));
+    expect(createSessionCalls).toEqual([]);
+    await resizeViewport(tabId);
+    expect(createSessionCalls).toHaveLength(1);
+    expect(createSessionCalls[0]).toMatchObject({ cwd: '/repo', cols: 100, rows: 30 });
+    await act(async () => root.unmount());
+    resetViewportScenario();
+    createSessionCalls.length = 0;
+    root = createRoot(host);
+    await act(async () => root.render(<TerminalView visible />));
+    await act(async () => root.render(<TerminalView visible={false} />));
+    await act(async () => {
+      const hidden = useTerminalStore.getState().createTab('/repo');
+      useTerminalStore.getState().setActiveTab('/repo', hidden);
+    });
+    expect(createSessionCalls).toHaveLength(1);
+    expect(createSessionCalls[0]).toMatchObject({ cols: 80, rows: 24 });
+  });
+
+  test('deduplicates create attempts while the viewport layout settles', async () => {
+    const tabId = resetViewportScenario();
+    const pending = pendingCreate();
+    const create = spyOn(terminalRuntime, 'createSession').mockImplementation((options) => {
+      createSessionCalls.push(options);
+      return pending.promise;
+    });
+    try {
+      await act(async () => root.render(<TerminalView visible />));
+      await resizeViewport(tabId);
+      await resizeViewport(tabId, 101, 31);
+      expect(createSessionCalls).toHaveLength(1);
+      await act(async () => pending.resolve());
+      expect(useTerminalStore.getState().getActiveTab('/repo')!.terminalSessionId).toBe('pty-1');
+    } finally { create.mockRestore(); }
+  });
+
+  test('lets the session-ID effect own stream startup after creating a tab', async () => {
+    const tabId = resetViewportScenario();
+    await act(async () => root.render(<TerminalView visible />));
+    await resizeViewport(tabId);
+    expect(connectCalls).toEqual(['unused']);
+    expect(useTerminalStore.getState().getActiveTab('/repo')!.terminalSessionId).toBe('unused');
+  });
+
+  test('clears a current tab from connecting when a strict-mode create rejects', async () => {
+    const tabId = resetViewportScenario();
+    const pending = pendingCreate();
+    const create = spyOn(terminalRuntime, 'createSession').mockImplementation((options) => {
+      createSessionCalls.push(options);
+      return pending.promise;
+    });
+    try {
+      await act(async () => root.render(<React.StrictMode><TerminalView visible /></React.StrictMode>));
+      await resizeViewport(tabId);
+      expect(useTerminalStore.getState().getActiveTab('/repo')!.isConnecting).toBe(true);
+      await act(async () => pending.reject(new Error('create refused')));
+      expect(useTerminalStore.getState().getActiveTab('/repo')!.isConnecting).toBe(false);
+      expect(host.textContent).toContain('create refused');
+    } finally { create.mockRestore(); }
   });
 });

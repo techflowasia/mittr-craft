@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { AssistantMessage, Part, ToolPart, ToolStateCompleted } from '@/lib/opencode/model';
-import { getLiveFinalMessage, getTurnsWithLaterAssistant, hasLiveActivity } from './liveActivity';
+import { attachSyntheticContext } from '../attachSyntheticContext';
+import { getLiveFinalMessage, getShownPages, getTurnsWithLaterAssistant, hasLiveActivity, uiPageMessageId } from './liveActivity';
 import { projectTurnRecords } from './projectTurnRecords';
 import { summarizeLiveActivity } from './liveActivitySummary';
 import type { ChatMessageEntry } from './types';
@@ -22,6 +23,14 @@ function user(id = 'user', hidden = false): ChatMessageEntry {
     return {
         info: { id, sessionID: 'session', role: 'user', time: { created: 1 } },
         parts: hidden ? [] : [text(`Request ${id}`)],
+    };
+}
+
+function notice(id: string, role: 'system' | 'idle'): ChatMessageEntry {
+    const base = { id, sessionID: 'session', time: { created: 3 } };
+    return {
+        info: role === 'system' ? { ...base, role, text: 'Instructions updated' } : { ...base, role, outcome: 'succeeded' },
+        parts: [],
     };
 }
 
@@ -81,6 +90,10 @@ describe('live turn boundaries', () => {
         expect(getLiveFinalMessage([assistant('form', [text('Which?'), tool('form', 'form', { status: 'running' })])])).toBeUndefined();
     });
 
+    test('a stop step whose only text is a zero-width space is not a final answer', () => {
+        expect(getLiveFinalMessage([assistant('blank', [text('\u200B')], { finish: 'stop' })])).toBeUndefined();
+    });
+
     test('plumbing messages after the final answer stay transparent', () => {
         const final = assistant('final', [text('Done')], { finish: 'stop' });
         const synthetic: ChatMessageEntry = {
@@ -90,12 +103,64 @@ describe('live turn boundaries', () => {
         expect(getLiveFinalMessage([final, synthetic])).toBe(final);
     });
 
-    test('activity eligibility follows visible sorted activity rather than any assistant prose', () => {
+    test('a notice between two answers splits the turn, so each answer stays outside Activity', () => {
+        const first = assistant('first', [text('First answer')], { finish: 'stop' });
+        const second = assistant('second', [tool('read', 'read'), text('Second answer')], { finish: 'stop' });
+        const turns = projectTurnRecords(attachSyntheticContext([
+            user(), first, notice('idle', 'idle'), notice('instructions', 'system'), second,
+        ]), { mergeHiddenUserTurns: true }).turns;
+
+        expect(turns.map((turn) => turn.turnId)).toEqual(['user', 'instructions']);
+        expect(turns.map((turn) => getLiveFinalMessage(turn.assistantMessages))).toEqual([first, second]);
+        expect([...getTurnsWithLaterAssistant(turns)]).toEqual(['user']);
+    });
+
+    test('a notice between the steps of one run leaves the turn whole', () => {
+        const step = assistant('step', [text('Checking'), tool('read', 'read')], { finish: 'tool-calls' });
+        const final = assistant('final', [text('Done')], { finish: 'stop' });
+        const turns = projectTurnRecords(attachSyntheticContext([
+            user(), step, notice('instructions', 'system'), final,
+        ])).turns;
+
+        expect(turns).toHaveLength(1);
+        expect(turns[0].assistantMessageIds).toEqual(['step', 'final']);
+        expect(getLiveFinalMessage(turns[0].assistantMessages)).toBe(final);
+    });
+
+    test('a notice after an answer that the next prompt follows opens no turn', () => {
+        const messages = attachSyntheticContext([
+            user(), assistant('a', [text('Done')], { finish: 'stop' }), notice('idle', 'idle'), user('next'),
+        ]);
+
+        expect(messages.map((message) => message.info.id)).toEqual(['user', 'a', 'next']);
+        expect(projectTurnRecords(messages).turns.map((turn) => turn.turnId)).toEqual(['user', 'next']);
+    });
+
+    test('a notice row alone makes no fold, so it shows above the answer', () => {
+        const messages = attachSyntheticContext([
+            user(),
+            { info: { id: 'n1', sessionID: 'session', role: 'synthetic', time: { created: 1 }, text: 'wait', description: 'Waiting for quota reset' }, parts: [] },
+            assistant('a', [text('Done')], { finish: 'stop' }),
+        ]);
+        const turn = projectTurnRecords(messages).turns[0];
+
+        expect(turn.activityParts).toHaveLength(1);
+        expect(hasLiveActivity(turn, true)).toBe(false);
+    });
+
+    test('activity eligibility follows tools and visible reasoning rather than any assistant prose', () => {
         const reasoning: Part = { type: 'reasoning', id: 'thinking', messageID: 'a', sessionID: 'session', text: 'Thinking', time: { start: 1, end: 2 } };
         const turn = projectTurnRecords([user(), assistant('a', [reasoning, text('Done')], { finish: 'stop' })]).turns[0];
         expect(hasLiveActivity(turn, false)).toBe(false);
         expect(hasLiveActivity(turn, true)).toBe(true);
         expect(hasLiveActivity(projectTurnRecords([user(), assistant('a', [text('Hello')], { finish: 'stop' })]).turns[0], true)).toBe(false);
+    });
+
+    test('a turn that only ran subagents gets no fold', () => {
+        const onlySubagent = projectTurnRecords([user(), assistant('a', [tool('sub', 'subagent'), text('Done')], { finish: 'stop' })]).turns[0];
+        expect(hasLiveActivity(onlySubagent, true)).toBe(false);
+        const withRead = projectTurnRecords([user(), assistant('a', [tool('sub', 'subagent'), tool('read', 'read'), text('Done')], { finish: 'stop' })]).turns[0];
+        expect(hasLiveActivity(withRead, true)).toBe(true);
     });
 });
 
@@ -234,5 +299,52 @@ describe('live activity report', () => {
             { file: '/project/noop', additions: 0, deletions: 0, status: 'modified' },
             { file: '/project/empty', additions: 0, deletions: 0, status: 'added' },
         ] } })])])).toMatchObject({ files: 1, additions: 0, deletions: 0, hasCompleteDiff: true });
+    });
+});
+
+describe('getShownPages', () => {
+    test('a rendered page maps to the final row only when the collapsed turn has a final answer', () => {
+        const page = { ...tool('page', 'openchamber_render', { input: { action: 'render.page', parameters: { ui: 'root = Stack([])' } }, metadata: { openchamber: { ok: true } } }), messageID: 'source' };
+        const source = assistant('source', [page], { finish: 'tool-calls' });
+        const answer = assistant('answer', [text('Done')], { finish: 'stop' });
+        const pending = projectTurnRecords([user(), source], { showTurnChangedFiles: false }).turns[0];
+        const complete = projectTurnRecords([user(), source, answer], { showTurnChangedFiles: false }).turns[0];
+        expect(uiPageMessageId(pending, false, 'source', 'page')).toBe('source');
+        expect(uiPageMessageId(complete, false, 'source', 'page')).toBe('answer');
+        expect(uiPageMessageId(complete, true, 'source', 'page')).toBe('source');
+    });
+
+    test('keeps text with a UI block in view, except the final answer and code samples', () => {
+        const block = text('Overview:\n```openui-lang\nroot = Stack([])\n```');
+        const sample = text('```openui-lang literal\nroot = Stack([])\n```');
+        const step = assistant('step', [block, sample], { finish: 'tool-calls' });
+        const answer = assistant('answer', [text('```openui-lang\nroot = Stack([])\n```')], { finish: 'stop' });
+        expect(getShownPages([step, answer], answer)).toEqual([block]);
+    });
+
+    test('a form stays in view while it waits and folds with Activity once it settles; a page that only shows stays', () => {
+        const form = { action: 'render.page', parameters: { ui: 'root = Stack([])', title: 'Scope', awaitAnswer: true } };
+        const page = { action: 'render.page', parameters: { html: '<p>a</p>', title: 'Mockup' } };
+        const waiting = tool('waiting', 'openchamber_render', { status: 'running', input: form });
+        const answered = tool('answered', 'openchamber_render', { input: form, metadata: { openchamber: { ok: true, answer: { answered: true, summary: 'Minimal', data: {} } } } });
+        const inChat = tool('in-chat', 'openchamber_render', { input: form, metadata: { openchamber: { ok: true, answer: { answered: false } } } });
+        const stopped = tool('stopped', 'openchamber_render', { status: 'error', input: form, error: 'aborted' });
+        const shown = tool('shown', 'openchamber_render', { input: page, metadata: { openchamber: { ok: true } } });
+        const step = assistant('step', [waiting, answered, inChat, stopped, shown], { finish: 'tool-calls' });
+        expect(getShownPages([step]).map((part) => part.id)).toEqual(['waiting', 'shown']);
+    });
+
+    test('a settled form after shown text stays between it and the reply; a secret card still folds', () => {
+        const form = { action: 'render.page', parameters: { ui: 'root = Stack([])', title: 'Scope', awaitAnswer: true } };
+        const answer = { metadata: { openchamber: { ok: true, answer: { answered: true, summary: 'Minimal', data: {} } } } };
+        const lead = text('Overview:\n```openui-lang\nroot = Stack([])\n```\nThe one decision:');
+        const asked = tool('asked', 'openchamber_render', { input: form, ...answer });
+        const again = tool('again', 'openchamber_render', { input: form, ...answer });
+        const reply = assistant('reply', [text('It stayed scoped.')], { finish: 'stop' });
+        const step = assistant('step', [lead, asked, again], { finish: 'tool-calls' });
+        expect(getShownPages([step, reply], reply)).toEqual([lead, asked, again]);
+
+        const secret = tool('secret', 'openchamber_secret', { input: { action: 'secret.request', parameters: { name: 'TOKEN' } } });
+        expect(getShownPages([assistant('step', [lead, secret], { finish: 'tool-calls' })])).toEqual([lead]);
     });
 });

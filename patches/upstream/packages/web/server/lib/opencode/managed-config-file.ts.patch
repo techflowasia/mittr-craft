@@ -1,0 +1,143 @@
+diff --git a/packages/web/server/lib/opencode/managed-config-file.ts b/packages/web/server/lib/opencode/managed-config-file.ts
+index 407803c43..24c4a2c4d 100644
+--- a/packages/web/server/lib/opencode/managed-config-file.ts
++++ b/packages/web/server/lib/opencode/managed-config-file.ts
+@@ -1,3 +1,8 @@
++import { parse as parseJsonc } from 'jsonc-parser';
++import type { ParseError } from 'jsonc-parser';
++
++import { isPlainObject, mergeEngineConfig } from '../server-plugins.js';
++import type { EngineConfig } from '../server-plugins.js';
+ import { appendManagedCommand, appendManagedPermissions, appendManagedPolicies, appendManagedPlugin, appendManagedSkills } from './managed-plugin-config.js';
+ import { managedPermissionRules } from '../agent-tool/runtime.js';
+ import { isLimitFailoverConfigured } from '../limit-failover/policy.js';
+@@ -34,6 +39,7 @@ export interface ManagedConfigDependencies {
+   listExtensionPluginDirectories?: () => Promise<string[]>;
+   openchamberVersion?: string;
+   readPluginDenials?: () => Array<{ action: string; resource: string; effect: string }>;
++  contributeConfig?: () => EngineConfig | Promise<EngineConfig>;
+ }
+ 
+ interface ManagedConfigFile {
+@@ -44,6 +50,13 @@ interface ManagedConfigFile {
+   policies?: Parameters<typeof appendManagedPolicies>[1];
+ }
+ 
++export const areSharePagesDisabled = (env: NodeJS.ProcessEnv = process.env) => {
++  const value = (env.OPENCHAMBER_SHARE_PAGES_DISABLED ?? '').trim().toLowerCase();
++  return value === '1' || value === 'true';
++};
++
++export const areSharePagesAvailable = (env: NodeJS.ProcessEnv = process.env) => !areSharePagesDisabled(env) && isSharingAvailable();
++
+ export const MANAGED_CONFIG_FILE_NAME = 'opencode.managed.json';
+ 
+ const DISABLED_BUILTIN_PLUGINS = ['-opencode.browser'];
+@@ -52,6 +65,19 @@ const BUILTIN_IMAGE_PLUGIN = '-opencode.tool.image-generate';
+ 
+ const BUILTIN_AUTOMATION_PLUGIN = '-opencode.tool.automation';
+ 
++const CONTRIBUTED_LISTS = ['plugins', 'skills', 'permissions', 'policies'] as const;
++
++const withContribution = (managed: ManagedConfigFile, contributed: EngineConfig): EngineConfig => {
++  const config: EngineConfig = { ...contributed, ...managed };
++  for (const key of CONTRIBUTED_LISTS) {
++    const added = contributed[key];
++    if (Array.isArray(added)) config[key] = [...(managed[key] ?? []), ...added];
++  }
++  const commands = contributed.commands;
++  if (isPlainObject(commands)) config.commands = { ...commands, ...managed.commands };
++  return config;
++};
++
+ export const createManagedConfigRuntime = ({
+   fsPromises,
+   path,
+@@ -64,17 +90,40 @@ export const createManagedConfigRuntime = ({
+   listExtensionPluginDirectories = async () => [],
+   openchamberVersion,
+   readPluginDenials = () => [],
++  contributeConfig = async () => ({}),
+ }: ManagedConfigDependencies) => {
+   const filePath = path.join(instanceDir, MANAGED_CONFIG_FILE_NAME);
+ 
+   const ownsConfigFile = () => (env.OPENCODE_CONFIG ?? '').trim().length === 0;
++  let publishesConfigFile = ownsConfigFile();
+ 
+-  const writeConfigFile = async ({ disabled, directories, extensionPlugins, permissions, policies, skills, commands }: Awaited<ReturnType<typeof materializeEnabledPlugins>>) => {
++  const parseUserConfig = (text: string, source: string): EngineConfig => {
++    const errors: ParseError[] = [];
++    const parsed: unknown = text.trim() ? parseJsonc(text, errors, { allowTrailingComma: true }) : {};
++    if (errors.length > 0 || !isPlainObject(parsed)) {
++      throw new Error(`${source} must contain a valid JSON object before OpenChamber can move it under a server plugin's config`);
++    }
++    return parsed;
++  };
++
++  const readUserConfig = async () => {
++    const userFile = path.resolve((env.OPENCODE_CONFIG ?? '').trim());
++    const fileText = await fsPromises.readFile(userFile, 'utf8').catch((error: NodeJS.ErrnoException) => {
++      if (error instanceof Error && error.code === 'ENOENT') return '';
++      throw error;
++    });
++    return mergeEngineConfig(
++      parseUserConfig(fileText, `OPENCODE_CONFIG (${userFile})`),
++      parseUserConfig(env.OPENCODE_CONFIG_CONTENT ?? '', 'OPENCODE_CONFIG_CONTENT'),
++    );
++  };
++
++  const writeConfigFile = async ({ disabled, directories, extensionPlugins, permissions, policies, skills, commands }: Awaited<ReturnType<typeof materializeEnabledPlugins>>, contributed: EngineConfig) => {
+     await fsPromises.mkdir(instanceDir, { recursive: true });
+     const config: ManagedConfigFile = { plugins: [...disabled, ...directories, ...extensionPlugins], skills, commands };
+     if (policies.length > 0) config.policies = policies;
+     if (permissions.length > 0) config.permissions = permissions;
+-    const text = `${JSON.stringify(config, null, 2)}\n`;
++    const text = `${JSON.stringify(withContribution(config, contributed), null, 2)}\n`;
+     const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+     try {
+       await fsPromises.writeFile(tmp, text, { encoding: 'utf8', mode: 0o600 });
+@@ -94,7 +143,7 @@ export const createManagedConfigRuntime = ({
+     const includeKnowledge = settings?.agentKnowledgeToolEnabled !== false;
+     const includeNotify = settings?.agentNotifyToolEnabled === true;
+     const includeRender = settings?.agentRenderToolEnabled !== false;
+-    const includeShare = includeRender && isSharingAvailable();
++    const includeShare = includeRender && areSharePagesAvailable(env);
+     const includeImage = settings?.agentImageToolEnabled === true;
+     const includeSecret = settings?.agentSecretToolEnabled !== false;
+     const includeUsage = settings?.agentUsageToolEnabled === true;
+@@ -132,7 +181,7 @@ export const createManagedConfigRuntime = ({
+     writing = (async () => {
+       do {
+         writeAgain = false;
+-        await writeConfigFile(await materializeEnabledPlugins());
++        await writeConfigFile(await materializeEnabledPlugins(), await contributeConfig());
+       } while (writeAgain);
+     })().finally(() => {
+       writing = null;
+@@ -144,8 +193,17 @@ export const createManagedConfigRuntime = ({
+     const childEnv = agentToolRuntime ? agentToolRuntime.createChildEnv() : {};
+     if (ownsConfigFile()) {
+       await writeLatestConfigFile();
++      publishesConfigFile = true;
+       return { ...childEnv, OPENCODE_CONFIG: filePath };
+     }
++    const contributed = await contributeConfig();
++    if (Object.keys(contributed).length > 0) {
++      const userConfig = await readUserConfig();
++      await writeLatestConfigFile();
++      publishesConfigFile = true;
++      return { ...childEnv, OPENCODE_CONFIG: filePath, OPENCODE_CONFIG_CONTENT: JSON.stringify(userConfig) };
++    }
++    publishesConfigFile = false;
+     const enabled = await materializeEnabledPlugins();
+     let content = env.OPENCODE_CONFIG_CONTENT;
+     for (const directory of [...enabled.disabled, ...enabled.directories, ...enabled.extensionPlugins]) {
+@@ -159,7 +217,7 @@ export const createManagedConfigRuntime = ({
+   };
+ 
+   const refreshManagedConfigFile = async () => {
+-    if (!ownsConfigFile()) return { updated: false, reason: 'external-config' };
++    if (!publishesConfigFile) return { updated: false, reason: 'external-config' };
+     await writeLatestConfigFile();
+     return { updated: true };
+   };

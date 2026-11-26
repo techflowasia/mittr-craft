@@ -6,11 +6,9 @@ export interface RetryOptions {
   retryIf?: (error: unknown) => boolean
 }
 
-// undici tears down half-open upstream connection with `TypeError: terminated`
-// (exact failure from the #2470 logs); the SDK client also rejects reads with
-// normalized "request timed out" error after OPENCODE_REQUEST_TIMEOUT_MS.
-// Both are transient — managed process may be restarting.
+// external: #2470 Half-open undici connections and normalized SDK transport timeouts are transient read failures.
 const TRANSIENT_MESSAGES = [
+  "transport failure",
   "load failed",
   "network connection was lost",
   "network request failed",
@@ -28,10 +26,9 @@ const TRANSIENT_MESSAGES = [
 
 function isTransientError(error: unknown): boolean {
   if (!error) return false
+  if (error instanceof Error && error.cause instanceof DOMException && error.cause.name === "AbortError") return false
   const message = String(error instanceof Error ? error.message : error).toLowerCase()
   if (TRANSIENT_MESSAGES.some((m) => message.includes(m))) return true
-  // Any HTTP 5xx is considered transient — server-side issues during warmup
-  // (OpenCode reading sessions from disk, bridge not ready, etc.) are retryable.
   const status = (error as { status?: number })?.status
   if (typeof status === "number" && status >= 500 && status < 600) return true
   return false

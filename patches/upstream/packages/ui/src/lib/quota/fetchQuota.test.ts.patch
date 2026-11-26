@@ -1,0 +1,41 @@
+diff --git a/packages/ui/src/lib/quota/fetchQuota.test.ts b/packages/ui/src/lib/quota/fetchQuota.test.ts
+index 74d0840f5..94827a09f 100644
+--- a/packages/ui/src/lib/quota/fetchQuota.test.ts
++++ b/packages/ui/src/lib/quota/fetchQuota.test.ts
+@@ -1,10 +1,16 @@
+ import { afterEach, expect, mock, test } from 'bun:test';
+ 
+ let responsePayload: unknown;
+-mock.module('@/lib/runtime-fetch', () => ({ runtimeFetch: async () => Response.json(responsePayload) }));
++let responseText: string | null = null;
++mock.module('@/lib/runtime-fetch', () => ({
++  runtimeFetch: async () => (responseText === null ? Response.json(responsePayload) : new Response(responseText, { status: 200 })),
++}));
+ const { fetchQuota } = await import('./fetchQuota');
+ 
+-afterEach(() => mock.restore());
++afterEach(() => {
++  responseText = null;
++  mock.restore();
++});
+ 
+ test('quota transport preserves structured Zen values for windows and models', async () => {
+   const window = {
+@@ -55,3 +61,17 @@ test('preserves semantic credits-used data through the quota response parser', a
+   expect(result.accountLabel).toBe('other@example.com');
+ });
+ 
++test('malformed prototype-named meter values are rejected rather than dropped', async () => {
++  responseText = '{"providerId":"codex","providerName":"Codex","ok":true,"configured":true,"usage":{"windows":{},"models":{"__proto__":{"windows":{"week":{"usedPercent":"bad"}}}}},"fetchedAt":1}';
++  await expect(fetchQuota('codex')).rejects.toThrow();
++});
++
++test('JSON own prototype-named model and window meters survive strict parsing', async () => {
++  const window = { usedPercent: 80, remainingPercent: 20, windowSeconds: null, resetAfterSeconds: null, resetAt: null, resetAtFormatted: null, resetAfterFormatted: null };
++  const meters = Object.fromEntries([['__proto__', { windows: Object.fromEntries([['__proto__', window]]) }], ['constructor', { windows: { week: window } }]]);
++  responseText = JSON.stringify({ providerId: 'codex', providerName: 'Codex', ok: true, configured: true, usage: { windows: {}, models: meters }, fetchedAt: 1 });
++  const result = await fetchQuota('codex');
++  expect(Object.keys(result.usage?.models ?? {})).toEqual(['__proto__', 'constructor']);
++  expect(result.usage?.models?.['__proto__'].windows['__proto__'].usedPercent).toBe(80);
++  expect(result.usage?.models?.['constructor'].windows.week.remainingPercent).toBe(20);
++});

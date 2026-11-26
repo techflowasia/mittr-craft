@@ -1,9 +1,6 @@
 import type { ProjectSortOrder } from '@/stores/useSessionDisplayStore';
 
-/** The fields any project list needs to be sortable. Both the desktop sidebar
-    and the mobile sessions drawer build their own richer project shapes on top
-    of the store entries, so this stays structural. */
-export type SortableProject = {
+type SortableProject = {
   id: string;
   label?: string | null;
   path: string;
@@ -14,10 +11,6 @@ export type SortableProject = {
 const compareLabels = (left: SortableProject, right: SortableProject): number =>
   (left.label || left.path).toLowerCase().localeCompare((right.label || right.path).toLowerCase());
 
-/** One ordering for every surface that lists projects, so the sidebar and the
-    mobile drawer answer the same setting the same way. `manualOrder` is the
-    user's drag order (`useProjectsStore.manualProjectOrder`); projects missing
-    from it keep their incoming position at the end. */
 export const sortProjectsByOrder = <T extends SortableProject>(
   projects: readonly T[],
   order: ProjectSortOrder,
@@ -46,4 +39,46 @@ export const sortProjectsByOrder = <T extends SortableProject>(
   }
 
   return sorted;
+};
+
+export const rankByLatestActivity = <T>(
+  items: readonly T[],
+  order: ProjectSortOrder,
+  projectIdOf: (item: T) => string,
+  sessionsByProject: ReadonlyMap<string, ReadonlyArray<{ time: { updated: number } }>>,
+): readonly T[] => {
+  if (order !== 'recent') return items;
+  const latest = (item: T): number => {
+    let newest = 0;
+    for (const session of sessionsByProject.get(projectIdOf(item)) ?? []) {
+      if (session.time.updated > newest) newest = session.time.updated;
+    }
+    return newest;
+  };
+  const ranked = items.map((item) => ({ item, at: latest(item) }));
+  ranked.sort((left, right) => right.at - left.at);
+  return ranked.map((entry) => entry.item);
+};
+
+export const orderByProjectRank = <T extends { id: string }>(
+  items: readonly T[],
+  rankById: ReadonlyMap<string, number>,
+): T[] => {
+  const rankOf = (item: T): number => rankById.get(item.id) ?? -1;
+  return [...items].sort((left, right) => rankOf(left) - rankOf(right));
+};
+
+export const holdOrder = <T>(
+  items: readonly T[],
+  heldIds: readonly string[],
+  idOf: (item: T) => string,
+): readonly T[] => {
+  const rank = new Map(heldIds.map((id, index) => [id, index]));
+  const held: T[] = [];
+  const fresh: T[] = [];
+  for (const item of items) {
+    (rank.has(idOf(item)) ? held : fresh).push(item);
+  }
+  held.sort((left, right) => (rank.get(idOf(left)) ?? 0) - (rank.get(idOf(right)) ?? 0));
+  return [...held, ...fresh];
 };

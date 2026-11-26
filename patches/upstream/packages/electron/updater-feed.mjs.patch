@@ -1,9 +1,10 @@
 diff --git a/packages/electron/updater-feed.mjs b/packages/electron/updater-feed.mjs
-index 8fb9aed8c..f11b8a128 100644
+index 0b8350506..c0d26922c 100644
 --- a/packages/electron/updater-feed.mjs
 +++ b/packages/electron/updater-feed.mjs
-@@ -1,10 +1,7 @@
+@@ -1,10 +1,8 @@
  import fs from 'node:fs';
++import { isDeepStrictEqual } from 'node:util';
 +import { UPSTREAM_PRODUCT } from './product.mjs';
  
 -export const PRODUCTION_UPDATER_FEED = Object.freeze({
@@ -13,22 +14,32 @@ index 8fb9aed8c..f11b8a128 100644
 -});
 +export const PRODUCTION_UPDATER_FEED = UPSTREAM_PRODUCT.updaterFeed;
  
- const isLoopbackHostname = (hostname) => {
-   if (hostname === '::1' || hostname === '[::1]') return true;
-@@ -35,13 +32,14 @@ export const parseLoopbackUpdaterUrl = (value) => {
+ export const CANARY_UPDATER_FEED = Object.freeze({
+   provider: 'generic',
+@@ -65,18 +63,21 @@ export const parseLoopbackUpdaterUrl = (value) => {
  export const resolveUpdaterFeed = ({
    environment = process.env,
    testBuild = false,
 +  productionFeed = PRODUCTION_UPDATER_FEED,
+   channel = 'stable',
+   source = 'github',
  } = {}) => {
+-  const productionFeed = channel === 'canary'
+-    ? (source === 'mirror' ? CANARY_MIRROR_UPDATER_FEED : CANARY_UPDATER_FEED)
+-    : (source === 'mirror' ? STABLE_MIRROR_UPDATER_FEED : PRODUCTION_UPDATER_FEED);
++  const feed = !isDeepStrictEqual(productionFeed, PRODUCTION_UPDATER_FEED)
++    ? productionFeed
++    : channel === 'canary'
++      ? (source === 'mirror' ? CANARY_MIRROR_UPDATER_FEED : CANARY_UPDATER_FEED)
++      : (source === 'mirror' ? STABLE_MIRROR_UPDATER_FEED : PRODUCTION_UPDATER_FEED);
    if (environment.OPENCHAMBER_E2E !== '1'
      || testBuild !== true) {
--    return PRODUCTION_UPDATER_FEED;
-+    return productionFeed;
+-    return productionFeed;
++    return feed;
    }
  
    const url = parseLoopbackUpdaterUrl(environment.OPENCHAMBER_UPDATER_E2E_URL);
--  if (!url) return PRODUCTION_UPDATER_FEED;
-+  if (!url) return productionFeed;
+-  if (!url) return productionFeed;
++  if (!url) return feed;
    return { provider: 'generic', url };
  };

@@ -7,6 +7,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
+import '../../web/scripts/register-server-sources.mjs';
+
 import {
   ENGLISH_SNAPSHOT_FILE,
   UPSTREAM_CONTRACT,
@@ -14,12 +16,40 @@ import {
   readEnglishOverrides,
   repoRoot,
 } from './upstream-contract.js';
+import { NEWEST_MIGRATION } from './engine-upgrade.js';
 import { AGENT_TOOL_TOKEN_SLOT } from './mittr/engine-env-plugin.js';
 import { SERVER_ONLY_SECRETS } from './plugin.js';
 
+const sourceLoader = pathToFileURL(path.join(repoRoot, 'packages/web/scripts/register-server-sources.mjs')).href;
 const source = (relative) => fs.readFileSync(path.join(repoRoot, relative), 'utf8');
 const importUpstream = (relative) => import(pathToFileURL(path.join(repoRoot, relative)).href);
 const item = (id) => UPSTREAM_CONTRACT.find((entry) => entry.id === id);
+const buttonSource = () => `${source('packages/ui/src/components/ui/button.tsx')}\n${source('packages/ui/src/components/ui/button-variants.ts')}`;
+const uiStoreSource = () => [
+  'packages/ui/src/stores/useUIStore.ts',
+  ...fs.globSync('packages/ui/src/stores/ui/*.ts', { cwd: repoRoot }).filter((file) => !/\.test\.ts$/.test(file)).sort(),
+].map((file) => source(file)).join('\n');
+
+const ENGINE_VERSION = '2.3.2';
+const engineVersion = () => JSON.parse(source('packages/electron/package.json')).devDependencies?.['@opencode/server'];
+const enginePackageDir = (name, fromDir) => {
+  for (let dir = fromDir; ; dir = path.dirname(dir)) {
+    const candidate = path.join(dir, 'node_modules', ...name.split('/'));
+    if (fs.existsSync(path.join(candidate, 'package.json'))) return fs.realpathSync(candidate);
+    assert.notEqual(path.dirname(dir), dir, `${name} is not installed beside the bundled engine`);
+  }
+};
+const engineSources = new Map();
+const engineSource = (name) => {
+  if (!engineSources.has(name)) {
+    const serverDir = enginePackageDir('@opencode/server', path.join(repoRoot, 'packages/electron'));
+    const dir = name === '@opencode/server' ? serverDir : enginePackageDir(name, name === '@opencode/util' ? enginePackageDir('@opencode/core', serverDir) : serverDir);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version, ENGINE_VERSION, `the installed ${name} is not the pinned engine`);
+    const files = fs.globSync('dist/**/*.js', { cwd: dir }).sort();
+    engineSources.set(name, files.map((file) => fs.readFileSync(path.join(dir, file), 'utf8')).join('\n'));
+  }
+  return engineSources.get(name);
+};
 const lineCount = (text, needle) => text.split(needle).length - 1;
 // `assert.match` prints the whole file on failure; these are long sources.
 const has = (text, pattern, message = `no longer matches ${pattern}`) => assert.ok(pattern.test(text), message);
@@ -60,15 +90,15 @@ const runProductRuntime = (t, product) => {
   delete childEnv.OPENCHAMBER_SERVER_PLUGINS;
   delete childEnv.OPENCHAMBER_HOST_APP_VERSION;
   delete childEnv.OPENCHAMBER_POLICY_FILE;
-  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+  const result = spawnSync(process.execPath, ['--import', sourceLoader, '--input-type=module', '-e', script], {
     encoding: 'utf8',
     env: {
       ...childEnv,
       HOME: home,
       CONTRACT_APP_PATH: appPath,
       CONTRACT_RUNTIME_URL: pathToFileURL(path.join(repoRoot, 'packages/electron/product-runtime.mjs')).href,
-      CONTRACT_SERVER_PLUGINS_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/server-plugins.js')).href,
-      CONTRACT_ENTERPRISE_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/enterprise-mode.js')).href,
+      CONTRACT_SERVER_PLUGINS_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/server-plugins.ts')).href,
+      CONTRACT_ENTERPRISE_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/enterprise-mode.ts')).href,
     },
   });
   assert.equal(result.status, 0, result.stderr);
@@ -83,7 +113,7 @@ const runInTempHome = (t, script, env = {}) => {
   const dataDir = path.join(home, 'data');
   fs.mkdirSync(dataDir);
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_')));
-  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+  const result = spawnSync(process.execPath, ['--import', sourceLoader, '--input-type=module', '-e', script], {
     encoding: 'utf8',
     env: { ...inherited, HOME: home, OPENCHAMBER_DATA_DIR: dataDir, ...env },
   });
@@ -121,7 +151,7 @@ const probeRealServer = (t, pluginSource, { uiPassword = '', method = 'GET', rou
   `;
   const home = tempDir(t, 'contract-home-');
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(GIT_|OPENCODE_|OPENCHAMBER_|XDG_)/.test(name)));
-  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+  const result = spawnSync(process.execPath, ['--import', sourceLoader, '--input-type=module', '-e', script], {
     encoding: 'utf8',
     timeout: 60_000,
     env: {
@@ -158,19 +188,19 @@ const pluginContext = (server) => {
 
 const checks = {
   'managed-opencode-env': () => {
-    const lifecycle = source('packages/web/server/lib/opencode/lifecycle.js');
+    const lifecycle = source('packages/web/server/lib/opencode/lifecycle.ts');
     has(lifecycle, /getManagedOpenCodeEnv = async \(\) => \(\{\}\)/, 'lifecycle no longer takes getManagedOpenCodeEnv with an empty default');
     has(lifecycle, /const managedOpenCodeEnv = await getManagedOpenCodeEnv\(\);/, 'lifecycle no longer reads the managed env before starting OpenCode');
     assert.ok(lineCount(lifecycle, '...managedOpenCodeEnv') >= 3, 'the managed env no longer reaches the preflight, the V1 top-up and the spawn');
 
-    const server = source('packages/web/server/index.js');
-    has(server, /getManagedOpenCodeEnv: async \(\) => \(\{\s*\.\.\.\(managedConfigRuntime \? await managedConfigRuntime\.buildManagedChildEnv\(\) : \{\}\),\s*\.\.\.\(await getServerPluginEngineEnv\(\)\),\s*\}\)/);
+    const server = source('packages/web/server/runtime.ts');
+    has(server, /getManagedOpenCodeEnv: async \(\) => \{\s*const managedEnv = managedConfigRuntime \? await managedConfigRuntime\.buildManagedChildEnv\(\) : \{\};\s*return \{ \.\.\.managedEnv, \.\.\.\(await getServerPluginEngineEnv\(\)\) \};\s*\},/);
     assert.ok(lineCount(server, '...(await getServerPluginEngineEnv())') >= 3, 'the plugin engine env no longer reaches the managed env, the v2 install and the CLI upgrade');
     has(server, /readOpenCodeCliVersion\([^)]*\), \{\s*env: \{ \.\.\.process\.env, \.\.\.\(await getServerPluginEngineEnv\(\)\) \}/);
   },
 
   'server-plugins-env': async (t) => {
-    const { readServerPluginSpecifiers, loadServerPlugins } = await importUpstream('packages/web/server/lib/server-plugins.js');
+    const { readServerPluginSpecifiers, loadServerPlugins } = await importUpstream('packages/web/server/lib/server-plugins.ts');
     assert.deepEqual(readServerPluginSpecifiers({}), []);
     assert.deepEqual(readServerPluginSpecifiers({ OPENCHAMBER_SERVER_PLUGINS: ' ' }), []);
     assert.deepEqual(readServerPluginSpecifiers({ OPENCHAMBER_SERVER_PLUGINS: '["/a/plugin.mjs"]' }), ['/a/plugin.mjs']);
@@ -186,27 +216,27 @@ const checks = {
     assert.deepEqual(await plugins.managedConfig(), {});
     await plugins.dispose();
 
-    const server = source('packages/web/server/index.js');
+    const server = source('packages/web/server/runtime.ts');
     const context = pluginContext(server);
     has(context, /^serverPlugins = await loadServerPlugins\(\{\s*specifiers: readServerPluginSpecifiers\(process\.env\),\s*context: \{\s*app,\s*express,\s*dataDir: OPENCHAMBER_DATA_DIR,\s*logger: console,/);
     for (const entry of [
       /settings: \{ read: \(\) => readSettingsFromDiskMigrated\(\) \},/,
-      /subscribe: \(listener\) => globalMessageStreamHub\.subscribeEvent\(listener\),/,
+      /subscribe: \(listener(?:: [^)]+)?\) => globalMessageStreamHub\.subscribeEvent\(listener\),/,
       /url: \(route = '\/'\) => buildOpenCodeUrl\(route\),/,
       /authHeaders: \(\) => getOpenCodeAuthHeaders\(\),/,
-      /restart: async \(reason\) => \{ await restartOpenCode\(reason\); \},/,
-      /refresh: async \(reason\) => \{ await refreshOpenCodeAfterConfigChange\(reason\); \},/,
+      /restart: async \(reason(?:\?: string)?\) => \{ await restartOpenCode\(reason\); \},/,
+      /refresh: async \(reason(?:: string)?\) => \{ await refreshOpenCodeAfterConfigChange\(reason\); \},/,
       /waitReady: \(\) => waitForOpenCodeReady\(\),/,
       /defaultDirectory: \(\) => openCodeLifecycleRuntime\.getDefaultOpenCodeDirectory\(\),/,
-      /git: \{ remoteUrl: \(directory\) => getRemoteUrl\(directory, 'origin'\) \},/,
-      /managedConfig: \{ refresh: \(\) => managedConfigRuntime\.refreshManagedConfigFile\(\) \},/,
+      /git: \{ remoteUrl: \(directory(?:: string)?\) => getRemoteUrl\(directory, 'origin'\) \},/,
+      /managedConfig: \{\s*refresh: \(\) => (?:\{[^}]*?return )?managedConfigRuntime\.refreshManagedConfigFile\(\);?\s*\}?,?\s*\},/,
       /host: options\.pluginHost \?\? null,/,
-      /requestScope: \(req\) => tunnelAuthController\.classifyRequestScope\(req\),/,
-      /onShutdown: \(handler\) => \{\s*serverPluginShutdownHandlers\.push\(handler\);\s*\},/,
+      /requestScope: \(req(?:: Request)?\) => tunnelAuthController\.classifyRequestScope\(req\),/,
+      /onShutdown: \(handler(?:: \(\) => [^)]+)?\) => \{\s*serverPluginShutdownHandlers\.push\(handler\);\s*\},/,
     ]) has(context, entry, `the server plugin context no longer has ${entry}`);
-    has(source('packages/web/server/lib/opencode/tunnel-auth.js'), /const classifyRequestScope = \(req\) => \{/);
+    has(source('packages/web/server/lib/tunnels/tunnel-auth.ts'), /const classifyRequestScope = \(req(?:: Request)?\) => \{/);
     has(server, /stopAllGuestServices: async \(\) => \{\s*try \{\s*await stopServerPlugins\(\);\s*\} finally \{\s*await stopAllGuestServices\(\);\s*\}\s*\},/, 'server plugins no longer stop inside the graceful shutdown');
-    const shutdown = source('packages/web/server/lib/opencode/shutdown-runtime.js');
+    const shutdown = source('packages/web/server/lib/server-frame/shutdown-runtime.ts');
     assert.ok(shutdown.indexOf('stopAllGuestServices,\n    ];') >= 0 && shutdown.indexOf('stopAllGuestServices,\n    ];') < shutdown.indexOf("console.log('Stopping OpenCode process...')"), 'graceful shutdown no longer stops guest services before OpenCode');
     has(server, /await serverPlugins\?\.dispose\(\);/);
 
@@ -215,12 +245,14 @@ const checks = {
   },
 
   'managed-config-contributions': async (t) => {
-    const { createManagedConfigRuntime, MANAGED_CONFIG_FILE_NAME } = await importUpstream('packages/web/server/lib/opencode/managed-config-file.js');
+    const { createManagedConfigRuntime, MANAGED_CONFIG_FILE_NAME } = await importUpstream('packages/web/server/lib/opencode/managed-config-file.ts');
     const contribution = {
       providers: { contract: { name: 'Contract' } },
       plugins: ['/contract/plugin'],
+      policies: [{ action: 'provider.use', resource: '*', effect: 'deny' }, { action: 'provider.use', resource: 'mittr', effect: 'allow' }],
       experimental: { policies: [{ action: 'provider.use', resource: '*', effect: 'deny' }] },
     };
+    const serverDenial = { action: 'plugin.use', resource: 'contract-plugin', effect: 'deny' };
     const runtime = (env) => {
       const dataDir = tempDir(t, 'contract-managed-');
       return {
@@ -228,10 +260,10 @@ const checks = {
         managed: createManagedConfigRuntime({
           fsPromises: fs.promises,
           path,
-          dataDir,
+          instanceDir: dataDir,
           env,
           readSettings: async () => ({}),
-          isAgentMemoryAvailable: () => false,
+          readPluginDenials: () => [serverDenial],
           contributeConfig: async () => contribution,
         }),
       };
@@ -239,10 +271,10 @@ const checks = {
 
     const owned = runtime({});
     assert.equal((await owned.managed.buildManagedChildEnv()).OPENCODE_CONFIG, path.join(owned.dataDir, MANAGED_CONFIG_FILE_NAME));
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(owned.dataDir, MANAGED_CONFIG_FILE_NAME), 'utf8')), {
-      ...contribution,
-      plugins: ['-opencode.browser', '/contract/plugin'],
-    });
+    const ownedFile = JSON.parse(fs.readFileSync(path.join(owned.dataDir, MANAGED_CONFIG_FILE_NAME), 'utf8'));
+    assert.deepEqual([ownedFile.providers, ownedFile.experimental], [contribution.providers, contribution.experimental]);
+    assert.deepEqual([ownedFile.plugins[0], ownedFile.plugins.at(-1)], ['-opencode.browser', '/contract/plugin']);
+    assert.deepEqual(ownedFile.policies, [serverDenial, ...contribution.policies], "the contributed policies are no longer the last of the managed file's top-level list");
 
     // OpenCode lets OPENCODE_CONFIG outrank project config and
     // OPENCODE_CONFIG_CONTENT for policies (P7 in the engine proof), so the
@@ -250,57 +282,74 @@ const checks = {
     const userDir = tempDir(t, 'contract-user-config-');
     const userFile = path.join(userDir, 'opencode.json');
     const userPolicy = { action: 'provider.use', resource: '*', effect: 'allow' };
-    fs.writeFileSync(userFile, JSON.stringify({ model: 'file/model', experimental: { policies: [userPolicy] } }));
+    const userTopPolicy = { action: 'provider.use', resource: 'openai', effect: 'allow' };
+    fs.writeFileSync(userFile, JSON.stringify({ model: 'file/model', policies: [userTopPolicy], experimental: { policies: [userPolicy] } }));
     const userOwned = runtime({ OPENCODE_CONFIG: userFile, OPENCODE_CONFIG_CONTENT: '{"model":"user/model"}' });
     const userEnv = await userOwned.managed.buildManagedChildEnv();
     assert.equal(userEnv.OPENCODE_CONFIG, path.join(userOwned.dataDir, MANAGED_CONFIG_FILE_NAME), 'a contribution no longer takes OPENCODE_CONFIG from the user');
-    assert.deepEqual(JSON.parse(fs.readFileSync(userEnv.OPENCODE_CONFIG, 'utf8')), { ...contribution, plugins: ['-opencode.browser', '/contract/plugin'] });
-    assert.deepEqual(JSON.parse(userEnv.OPENCODE_CONFIG_CONTENT), { model: 'user/model', experimental: { policies: [userPolicy] } });
+    const userOwnedFile = JSON.parse(fs.readFileSync(userEnv.OPENCODE_CONFIG, 'utf8'));
+    assert.deepEqual([userOwnedFile.providers, userOwnedFile.experimental], [contribution.providers, contribution.experimental]);
+    assert.deepEqual([userOwnedFile.plugins[0], userOwnedFile.plugins.at(-1)], ['-opencode.browser', '/contract/plugin']);
+    assert.deepEqual(userOwnedFile.policies, [serverDenial, ...contribution.policies], "the user's own policies reached the layer the lock is in");
+    assert.deepEqual(JSON.parse(userEnv.OPENCODE_CONFIG_CONTENT), { model: 'user/model', policies: [userTopPolicy], experimental: { policies: [userPolicy] } });
 
-    has(source('packages/web/server/lib/opencode/managed-config-file.js'), /import \{ mergeEngineConfig \} from '\.\.\/server-plugins\.js';/, 'the managed config no longer merges with the same rule');
-    const server = source('packages/web/server/index.js');
+    has(source('packages/web/server/lib/opencode/managed-config-file.ts'), /import \{[^}]*\bmergeEngineConfig\b[^}]*\} from '\.\.\/server-plugins\.js';/, 'the managed config no longer merges with the same rule');
+    const server = source('packages/web/server/runtime.ts');
     has(server, /managedConfigRuntime = createManagedConfigRuntime\(\{[^}]*contributeConfig: \(\) => \(serverPlugins \? serverPlugins\.managedConfig\(\) : \{\}\),\s*\}\);/, 'index.js no longer hands the managed config runtime what server plugins contribute');
   },
 
   'plugin-context-express': () => {
-    const server = source('packages/web/server/index.js');
+    const server = source('packages/web/server/runtime.ts');
     has(server, /^import express from 'express';$/m);
     has(pluginContext(server), /context: \{\s*app,\s*express,/, 'the plugin context no longer carries the server\'s express module');
   },
 
   'plugin-context-server-port': () => {
-    const server = source('packages/web/server/index.js');
-    has(server, /^let server = null;$/m);
+    const server = source('packages/web/server/runtime.ts');
+    has(server, /^let server(?:: [^=]+)? = null;$/m);
     has(server, /server = http\.createServer\(app\);/);
-    has(pluginContext(server), /server: \{\s*port: \(\) => \{\s*const address = server\?\.address\?\.\(\);\s*return address && Number\.isInteger\(address\.port\) \? address\.port : null;\s*\},\s*\},/, 'the plugin context no longer reports the bound port as getActivePort does');
+    has(pluginContext(server), /server: \{\s*port: \(\) => \{\s*const address = server\?\.address\?\.\(\);\s*return address && (?:!isString\(address\) && )?Number\.isInteger\(address\.port\) \? address\.port : null;\s*\},\s*\},/, 'the plugin context no longer reports the bound port as getActivePort does');
   },
 
   'git-remote-url': () => {
-    const server = source('packages/web/server/index.js');
-    has(server, /import \{ getRemoteUrl, resolvePrimaryWorktreeRoot \} from '\.\/lib\/git\/service\.js';/, 'index.js no longer imports getRemoteUrl from the git service');
-    has(pluginContext(server), /git: \{ remoteUrl: \(directory\) => getRemoteUrl\(directory, 'origin'\) \},/, 'the plugin context no longer carries git.remoteUrl as the origin remote');
-    has(source('packages/web/server/lib/git/service.js'), /export async function getRemoteUrl\(directory, remoteName = 'origin'\) \{\s*const git = await createGit\(directory\);\s*try \{\s*const url = await git\.remote\(\['get-url', '--', remoteName\]\);\s*return url\?\.trim\(\) \|\| null;\s*\} catch \{\s*return null;\s*\}\s*\}/, 'getRemoteUrl no longer answers the trimmed remote URL, or null on any failure');
+    const server = source('packages/web/server/runtime.ts');
+    has(server, /import \{[^}]*\bgetRemoteUrl\b[^}]*\} from '\.\/lib\/git\/service\.js';/, 'index.js no longer imports getRemoteUrl from the git service');
+    has(pluginContext(server), /git: \{ remoteUrl: \(directory(?:: string)?\) => getRemoteUrl\(directory, 'origin'\) \},/, 'the plugin context no longer carries git.remoteUrl as the origin remote');
+    has(source('packages/web/server/lib/git/service.ts'), /export async function getRemoteUrl\(directory(?:: string)?, remoteName = 'origin'\) \{\s*const git = await createGit\(directory\);\s*try \{\s*const url = await git\.remote\(\['get-url', '--', remoteName\]\);\s*return url\?\.trim\(\) \|\| null;\s*\} catch \{\s*return null;\s*\}\s*\}/, 'getRemoteUrl no longer answers the trimmed remote URL, or null on any failure');
   },
 
-  'engine-on-ready': () => {
-    const lifecycle = source('packages/web/server/lib/opencode/lifecycle.js');
+  'engine-on-ready': async () => {
+    const lifecycle = source('packages/web/server/lib/opencode/lifecycle.ts');
     has(lifecycle, /onEngineReady = \(\) => \{\},/, 'lifecycle no longer takes onEngineReady with a no-op default');
     has(lifecycle, /const serverInstance = await startOpenCodeOnce\(attempt\);\s*notifyEngineReady\(\);\s*return serverInstance;/, 'a managed start no longer notifies once it is ready');
     has(lifecycle, /state\.openCodeProcess = await startOpenCode\(\);/, 'a managed restart no longer goes through startOpenCode');
 
-    const server = source('packages/web/server/index.js');
-    has(server, /onEngineReady: notifyEngineReadyListeners,\s*\}\);/, 'index.js no longer fans the lifecycle\'s ready call out to plugins');
-    has(pluginContext(server), /onReady: \(listener\) => \{\s*engineReadyListeners\.add\(listener\);\s*return \(\) => engineReadyListeners\.delete\(listener\);\s*\},/);
+    const server = source('packages/web/server/runtime.ts');
+    const readyHook = server.match(/onEngineReady: (\(\) => \{\s*notifyEngineReadyListeners\(\);\s*void resumeResponseRecovery\(\)\.catch\(\(\) => console\.warn\('\[response-recovery\] readiness refused; recovery remains suspended'\)\);\s*\}),\s*\}\);/);
+    assert.ok(readyHook, 'index.js no longer fans lifecycle readiness out to plugins before requesting recovery resume');
+    // Execute the exact composed hook without importing or starting the server.
+    const calls = [];
+    const warnings = [];
+    const hook = new Function('notifyEngineReadyListeners', 'resumeResponseRecovery', 'console', `return (${readyHook[1]});`)(
+      () => calls.push('plugins'),
+      () => { calls.push('recovery'); return Promise.reject(new Error('drain uncertain')); },
+      { warn: message => warnings.push(message) },
+    );
+    hook();
+    await Promise.resolve();
+    assert.deepEqual(calls, ['plugins', 'recovery'], 'plugin readiness must not wait for recovery settlement');
+    assert.deepEqual(warnings, ['[response-recovery] readiness refused; recovery remains suspended']);
+    has(pluginContext(server), /onReady: \(listener(?:: \(\) => void)?\) => \{\s*engineReadyListeners\.add\(listener\);\s*return \(\) => engineReadyListeners\.delete\(listener\);\s*\},/);
   },
 
   'plugin-ui-event-broadcast': () => {
-    const server = source('packages/web/server/index.js');
+    const server = source('packages/web/server/runtime.ts');
     has(server, /const broadcastOpenChamberUiEvent = createGlobalUiEventBroadcaster\(\{\s*sseClients: uiOpenChamberEventClients,/);
-    has(pluginContext(server), /broadcast: \(type, payload\) => broadcastOpenChamberUiEvent\(\{ type, properties: payload \}\),/, 'a plugin event no longer goes out on the OpenChamber UI event stream');
+    has(pluginContext(server), /broadcast: \(type(?:: string)?, payload(?:: \w+)?\) => broadcastOpenChamberUiEvent\(\{ type, properties: payload \}\),/, 'a plugin event no longer goes out on the OpenChamber UI event stream');
   },
 
   'merge-engine-config': async () => {
-    const { mergeEngineConfig } = await importUpstream('packages/web/server/lib/server-plugins.js');
+    const { mergeEngineConfig } = await importUpstream('packages/web/server/lib/server-plugins.ts');
     assert.deepEqual(
       mergeEngineConfig(
         { model: 'a', providers: { x: { name: 'X' } }, plugins: ['/1'], experimental: { policies: [{ resource: '*', effect: 'deny' }] } },
@@ -313,7 +362,7 @@ const checks = {
         experimental: { policies: [{ resource: '*', effect: 'deny' }, { resource: 'x', effect: 'allow' }] },
       },
     );
-    const server = source('packages/web/server/index.js');
+    const server = source('packages/web/server/runtime.ts');
     has(server, /import \{ loadServerPlugins, mergeEngineConfig, readServerPluginSpecifiers \} from '\.\/lib\/server-plugins\.js';/);
     has(pluginContext(server), /^\s*mergeEngineConfig,$/m, 'the plugin context no longer carries mergeEngineConfig');
   },
@@ -338,11 +387,11 @@ const checks = {
     const start = main.indexOf('await startWebUiServer({');
     assert.ok(start >= 0, 'main.mjs no longer calls startWebUiServer with an options object');
     const call = main.slice(start, main.indexOf('\n  });', start));
-    has(call, /pluginHost: \{\s*secretStore: createSafeStorageSecretStore\(\{ safeStorage \}\),\s*deepLinks: \{ register: deepLinkRegistry\.register \},\s*confirm: createHostConfirm\(\{ dialog, windows: \(\) => BrowserWindow\.getAllWindows\(\), log \}\),\s*\},/, 'startWebUiServer no longer receives pluginHost with its confirm');
+    has(call, /pluginHost: \{\s*secretStore: createSafeStorageSecretStore\(\{ safeStorage \}\),\s*deepLinks: \{ register: deepLinkRegistry\.register \},\s*confirm: createHostConfirm\(\{ dialog, windows: \(\) => BrowserWindow\.getAllWindows\(\), showWindow, log \}\),\s*\},/, 'startWebUiServer no longer receives pluginHost with its confirm');
     has(main, /import \{ createHostConfirm \} from '\.\/host-confirm\.mjs';/);
     const { createHostConfirm } = await importUpstream('packages/electron/host-confirm.mjs');
     const shown = [];
-    const answering = (response) => createHostConfirm({ dialog: { showMessageBox: async (options) => { shown.push(options); return { response }; } }, windows: () => [], log: { warn: () => {} } });
+    const answering = (response) => createHostConfirm({ dialog: { showMessageBox: async (options) => { shown.push(options); return { response }; } }, windows: () => [], showWindow: () => {}, log: { warn: () => {} } });
     const question = { title: 'MittrCraft', message: 'Turn on the widget?', detail: 'https://api.example.test/', confirmLabel: 'Turn on', cancelLabel: 'Cancel' };
     assert.equal(await answering(1)(question), true);
     assert.equal(await answering(0)(question), false);
@@ -362,7 +411,7 @@ const checks = {
     keychain.answer = true;
     clock.at += 5_000;
     assert.equal(late.available(), true, 'the shell secret store keeps a no for the whole run, so a keychain prompt answered late needs a restart');
-    has(source('packages/web/server/index.js'), /host: options\.pluginHost \?\? null,/, 'the plugin context no longer reads options.pluginHost into host');
+    has(source('packages/web/server/runtime.ts'), /host: options\.pluginHost \?\? null,/, 'the plugin context no longer reads options.pluginHost into host');
   },
 
   'product-runtime-server-plugins': (t) => {
@@ -384,22 +433,22 @@ const checks = {
   'server-app-version': (t) => {
     assert.equal(runProductRuntime(t, { serverReportsAppVersion: true }).hostAppVersion, '9.8.7+contract.1');
     assert.equal(runProductRuntime(t, {}).hostAppVersion, null);
-    has(source('packages/web/server/index.js'), /const OPENCHAMBER_VERSION = \(\(\) => \{\s*(\/\/.*\n\s*)*const hostAppVersion = process\.env\.OPENCHAMBER_HOST_APP_VERSION\?\.trim\(\);\s*if \(hostAppVersion\) \{\s*return hostAppVersion;/, 'the server no longer reports the version the shell hands it');
+    has(source('packages/web/server/runtime.ts'), /const OPENCHAMBER_VERSION = \(\(\) => \{\s*(\/\/.*\n\s*)*const hostAppVersion = process\.env\.OPENCHAMBER_HOST_APP_VERSION\?\.trim\(\);\s*if \(hostAppVersion\) \{\s*return hostAppVersion;/, 'the server no longer reports the version the shell hands it');
     for (const flavor of ['dev', 'prod']) {
       assert.equal(JSON.parse(source(`brand/product.${flavor}.json`)).serverReportsAppVersion, true, flavor);
     }
   },
 
   'update-check-disabled-env': () => {
-    const routes = source('packages/web/server/lib/opencode/openchamber-routes.js');
-    has(routes, /\} else if \(isUpdateCheckDisabled\(process\.env\)\) \{[\s\S]{0,400}updatesDisabled: true,[\s\S]{0,300}\} else \{\s*const \{ checkForUpdates \} = await import\('\.\.\/package-manager\.js'\);/, 'the update check no longer stops before calling the update service when switched off');
+    const routes = source('packages/web/server/lib/self-update/openchamber-routes.ts');
+    has(routes, /\} else if \(isUpdateCheckDisabled\(process\.env\)\) \{[\s\S]{0,400}updatesDisabled: true,[\s\S]{0,300}\} else \{\s*const \{ checkForUpdates[^}]*\} = await import\('\.\.\/package-manager\.js'\);/, 'the update check no longer stops before calling the update service when switched off');
     for (const flavor of ['dev', 'prod']) {
       assert.equal(JSON.parse(source(`brand/product.${flavor}.json`)).env.OPENCHAMBER_UPDATE_CHECK_DISABLED, '1', flavor);
     }
   },
 
   'models-metadata-disabled-env': () => {
-    const routes = source('packages/web/server/lib/opencode/openchamber-routes.js');
+    const routes = source('packages/web/server/lib/self-update/openchamber-routes.ts');
     has(routes, /app\.get\('\/api\/openchamber\/models-metadata', async \(_req, res\) => \{\s*if \(isModelsMetadataDisabled\(process\.env\)\) \{\s*res\.json\(\{\}\);\s*return;\s*\}/, 'the models metadata route no longer answers an empty catalog before fetching models.dev when switched off');
     has(routes, /env\.OPENCHAMBER_MODELS_METADATA_DISABLED/, 'the models metadata switch is no longer read from OPENCHAMBER_MODELS_METADATA_DISABLED');
     for (const flavor of ['dev', 'prod']) {
@@ -408,7 +457,7 @@ const checks = {
   },
 
   'policy-file-env': async () => {
-    const { policyFilePaths } = await importUpstream('packages/web/server/lib/enterprise-mode.js');
+    const { policyFilePaths } = await importUpstream('packages/web/server/lib/enterprise-mode.ts');
     assert.deepEqual(policyFilePaths({ platform: 'darwin', env: { OPENCHAMBER_POLICY_FILE: '/x/policy.json' } }), ['/x/policy.json']);
     assert.deepEqual(policyFilePaths({ platform: 'darwin', env: {} }), ['/Library/Application Support/OpenChamber/policy.json']);
     for (const flavor of ['dev', 'prod']) {
@@ -418,7 +467,7 @@ const checks = {
   },
 
   'managed-process-registry-env': async (t) => {
-    const { createManagedProcessRegistry } = await importUpstream('packages/web/server/lib/opencode/managed-process-registry.js');
+    const { createManagedProcessRegistry } = await importUpstream('packages/web/server/lib/opencode/managed-process-registry.ts');
     const dir = '/contract/registry';
     const previous = process.env.OPENCHAMBER_MANAGED_PROCESS_REGISTRY;
     process.env.OPENCHAMBER_MANAGED_PROCESS_REGISTRY = dir;
@@ -445,14 +494,14 @@ const checks = {
   },
 
   'git-identities-legacy-path': (t) => {
-    const storage = source('packages/web/server/lib/git/identity-storage.js');
+    const storage = source('packages/web/server/lib/git/identity-storage.ts');
     has(storage, /const legacyDataDir = \(\) => path\.join\(os\.homedir\(\), '\.config', 'openchamber'\);/);
-    has(storage, /const current = readFile\(filePath, true\);\s*if \(current\) \{/, 'upstream no longer reads its own file before the legacy one');
+    has(storage, /const current = readFile\(storePath, true\);\s*if \(current\) \{/, 'upstream no longer reads its own file before the legacy one');
     const script = `
       const { getProfiles } = await import(process.env.CONTRACT_IDENTITIES_URL);
       console.log(JSON.stringify(getProfiles()));
     `;
-    const env = { CONTRACT_IDENTITIES_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/git/identity-storage.js')).href };
+    const env = { CONTRACT_IDENTITIES_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/git/identity-storage.ts')).href };
 
     const missing = runInTempHome(t, script, env);
     assert.deepEqual(missing.output, []);
@@ -494,7 +543,7 @@ const checks = {
       console.log(JSON.stringify(result));
     `;
     const run = runInTempHome(t, script, {
-      CONTRACT_SERVICE_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/git/service.js')).href,
+      CONTRACT_SERVICE_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/git/service.ts')).href,
       CONTRACT_REPO: repo,
       CONTRACT_COMMIT: commit,
     });
@@ -521,12 +570,12 @@ const checks = {
   },
 
   'plugin-routes-behind-api-auth': (t) => {
-    const server = source('packages/web/server/index.js');
+    const server = source('packages/web/server/runtime.ts');
     const baseRoutes = server.indexOf('const bootstrapResult = bootstrapRuntime.setupBaseRoutes(app, {');
     const plugins = server.indexOf('serverPlugins = await loadServerPlugins(');
     assert.ok(baseRoutes >= 0 && plugins > baseRoutes, 'the server no longer sets up its base routes, API auth among them, before it loads plugins');
-    has(source('packages/web/server/lib/opencode/bootstrap-runtime.js'), /registerAuthAndAccessRoutes\(app, \{/, 'the base routes no longer include auth and access');
-    const core = source('packages/web/server/lib/opencode/core-routes.js');
+    has(source('packages/web/server/lib/server-frame/bootstrap-runtime.ts'), /registerAuthAndAccessRoutes\(app, \{/, 'the base routes no longer include auth and access');
+    const core = source('packages/web/server/lib/server-frame/core-routes.ts');
     const access = core.slice(core.indexOf('export const registerAuthAndAccessRoutes = '), core.indexOf('export const registerSettingsUtilityRoutes = '));
     has(access, /app\.use\('\/api', async \(req, res, next\) => \{\s*try \{\s*await requireApiAuth\(req, res, next\);/, 'auth and access no longer guard every /api request');
 
@@ -558,7 +607,7 @@ const checks = {
   },
 
   'non-api-json-body': (t) => {
-    const core = source('packages/web/server/lib/opencode/core-routes.js');
+    const core = source('packages/web/server/lib/server-frame/core-routes.ts');
     const common = core.slice(core.indexOf('export const registerCommonRequestMiddleware = '));
     has(common, /\} else if \(req\.path\.startsWith\('\/api'\)\) \{\s*next\(\);\s*\} else \{\s*express\.json\(\{ limit: '50mb' \}\)\(req, res, next\);\s*\}/, 'the server no longer parses JSON bodies outside /api');
 
@@ -583,7 +632,7 @@ const checks = {
 
   'deep-link-raw': () => {
     const main = source('packages/electron/main.mjs');
-    has(main, /const parseDeepLink = \(raw\) => \{[\s\S]{0,200}const trimmed = raw\.trim\(\);[\s\S]{0,500}return \{ type, value, raw: trimmed \};/, 'a parsed deep link no longer carries the URL it came from as raw');
+    has(main, /const parseDeepLink = \(raw\) => \{[\s\S]{0,200}const trimmed = raw\.trim\(\);[\s\S]{0,800}return \{ type, value, raw: trimmed \};/, 'a parsed deep link no longer carries the URL it came from as raw');
     has(main, /if \(await deepLinkRegistry\.dispatch\(link\)\) return;/, 'registered handlers no longer receive the parsed link');
   },
 
@@ -594,7 +643,7 @@ const checks = {
       .filter((line) => /\bdictionary:\s|[{,]\s*dictionary\s*[,}]/.test(line) && !/dictionary: I18nDictionary/.test(line))
       .filter((line) => !line.includes('overlayDictionary(') && !/: current\.dictionary/.test(line));
     assert.deepEqual(raw, [], 'the i18n store sets a dictionary without the product overlay');
-    has(store, /const template = dictionary\[key\] \?\? overlayDictionary\(DEFAULT_LOCALE, enDict\)\[key\] \?\? key;/);
+    has(store, /return formatTemplate\(dictionary\[key\] \?\? overlayDictionary\(DEFAULT_LOCALE, enDict\)\[key\] \?\? key, params\);/, 'a missing key no longer falls back to the overlaid English');
     has(store, /subscribeProductUiPlugins\(\(\) => \{[\s\S]*?dictionaries\.get\(locale\)/);
 
     const plugins = source('packages/ui/src/lib/product-plugins.ts');
@@ -647,7 +696,7 @@ const checks = {
   'sign-in-gate-ui': () => {
     has(source('packages/ui/src/lib/runtime-fetch.ts'), /^export const runtimeFetch = async \(rawInput: string \| URL \| Request, init: RuntimeFetchOptions = \{\}\): Promise<Response> =>/m);
     has(source('packages/ui/src/lib/url.ts'), /^export const openExternalUrl = \(url: string\): Promise<boolean> =>\n  isExternalHttpUrl\(url\) \? openValidatedExternalUrl\(url\) : Promise\.resolve\(false\);$/m, 'openExternalUrl no longer opens only web addresses');
-    const button = source('packages/ui/src/components/ui/button.tsx');
+    const button = buttonSource();
     has(button, /^export \{ Button \}$/m);
     for (const size of ['default', 'lg']) has(button, new RegExp(`^\\s+${size}: "`, 'm'), `Button lost the ${size} size`);
     for (const file of ['packages/ui/src/main.tsx', 'packages/ui/src/apps/renderElectronMiniChatApp.tsx']) {
@@ -667,22 +716,46 @@ const checks = {
   'after-pack-hook': () => {
     const { file, sha256 } = item('after-pack-hook');
     const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(repoRoot, file))).digest('hex');
-    assert.equal(actual, sha256, `${file} changed upstream; our build drops it (afterPack: null), so read the change and decide`);
+    assert.equal(actual, sha256, `${file} changed upstream; our build runs scripts/mittr/after-pack.cjs instead, so read the change and decide`);
     assert.equal(JSON.parse(source('packages/electron/package.json')).build.afterPack, 'scripts/after-pack.cjs');
     for (const flavor of ['dev', 'prod']) {
-      assert.equal(JSON.parse(source(`brand/electron-builder.${flavor}.json`)).afterPack, null);
+      assert.equal(JSON.parse(source(`brand/electron-builder.${flavor}.json`)).afterPack, '../../scripts/mittr/after-pack.cjs', `the ${flavor} build no longer replaces upstream's after-pack hook with ours`);
     }
+    const upstream = source(file);
+    const ours = source('scripts/mittr/after-pack.cjs');
+    for (const [helper, names] of [['macos-executable-uuid.cjs', ['setExecutableUuid']], ['packaged-app-contents.cjs', ['readAsarFiles', 'findPackagedAppContentProblems']]]) {
+      const exported = source(`packages/electron/scripts/${helper}`).match(/^module\.exports = \{ ([^}]+) \};$/m)?.[1].split(', ') ?? [];
+      for (const name of names) {
+        assert.ok(exported.includes(name), `${helper} no longer exports ${name}`);
+        assert.ok(ours.includes(name), `our after-pack hook no longer uses ${name}`);
+      }
+      assert.ok(upstream.includes(`require('./${helper}')`), `upstream's after-pack hook no longer uses ${helper}`);
+    }
+    has(upstream, /setExecutableUuid\(executablePath, appInfo\.id\);\s*if \(context\.arch === Arch\.arm64\) \{\s*execFileSync\('codesign', \['--force', '--sign', '-', executablePath\]/, 'upstream\'s after-pack hook no longer sets the executable UUID and signs arm64 ad hoc');
+    has(ours, /setExecutableUuid\(executablePath, appInfo\.id\);/, 'our after-pack hook no longer gives the executable its own UUID');
   },
 
   'staged-server-packing': async () => {
     const { asarUnpack, nativeModules } = item('staged-server-packing');
     const upstreamBuild = JSON.parse(source('packages/electron/package.json')).build;
     assert.deepEqual(upstreamBuild.asarUnpack, asarUnpack, 'upstream changed what it keeps out of the asar');
-    const workspacePath = (pattern) => pattern.replace('node_modules/@openchamber/web/', 'packages/web/').replace(/\/\*\*\/\*$/, '');
-    const [generated, helpers] = [asarUnpack.filter((pattern) => pattern.endsWith('/**/*')), asarUnpack.filter((pattern) => !pattern.endsWith('/**/*'))];
+    const packedServer = 'node_modules/@openchamber/web/build/server/';
+    const serverPatterns = asarUnpack.filter((pattern) => pattern.startsWith(packedServer));
+    const workspacePath = (pattern) => pattern.replace('node_modules/@openchamber/web/build/', 'packages/web/').replace(/\/\*\*\/\*$/, '');
+    const [generated, helpers] = [serverPatterns.filter((pattern) => pattern.endsWith('/**/*')), serverPatterns.filter((pattern) => !pattern.endsWith('/**/*'))];
     for (const pattern of helpers) {
-      assert.ok(fs.existsSync(path.join(repoRoot, workspacePath(pattern))), `${workspacePath(pattern)} is gone`);
+      const file = workspacePath(pattern);
+      assert.ok(fs.existsSync(path.join(repoRoot, file)) || fs.existsSync(path.join(repoRoot, file.replace(/\.js$/, '.ts'))), `${file} is gone`);
     }
+
+    const webPackage = JSON.parse(source('packages/web/package.json'));
+    assert.equal(webPackage.exports['./server/*'].default, './build/server/*', 'a packed @openchamber/web/server import no longer resolves to the compiled server');
+    has(webPackage.scripts.build, /^bun run build:server && /, 'the web build no longer compiles the server first');
+    has(webPackage.scripts['build:server'], /build-builtin-extensions\.mjs && node scripts\/build-server\.mjs$/, 'the server build no longer builds the built-in extensions before compiling');
+    const serverBuild = source('packages/web/scripts/build-server.mjs');
+    has(serverBuild, /export async function buildServer\(outputDirectory = path\.join\(webRoot, 'build'\)\)/, 'the compiled server no longer goes to packages/web/build');
+    has(serverBuild, /if \(child === path\.join\('server', 'built-in-extensions'\)\) \{\s*await fs\.cp\(path\.join\(webRoot, child\), path\.join\(outputDirectory, child\), \{ recursive: true \}\);/, 'the server build no longer copies the built-in extensions');
+    has(serverBuild, /^const assetExtensions = new Set\(\['\.json', '\.txt', '\.cjs'\]\);$/m, 'the server build copies other source files beside the compiled ones');
 
     // The built-in extensions folder is build output (gitignored), so the
     // contract reads its source and the step that writes it, never the output.
@@ -690,35 +763,33 @@ const checks = {
     const sourceRegistry = JSON.parse(source('packages/extensions/registry.json'));
     assert.equal(sourceRegistry.version, 1);
     assert.ok(Array.isArray(sourceRegistry.extensions), 'packages/extensions/registry.json lists no extensions array');
-    const { DEFAULT_BUILTIN_ROOT } = await importUpstream('packages/web/server/lib/guests/builtins.js');
+    const { DEFAULT_BUILTIN_ROOT } = await importUpstream('packages/web/server/lib/guests/builtins.ts');
     assert.equal(path.relative(repoRoot, DEFAULT_BUILTIN_ROOT), 'packages/web/server/built-in-extensions', 'the server reads built-in extensions from another folder');
     const builder = source('scripts/build-builtin-extensions.mjs');
-    has(builder, /import \{[^}]*\bDEFAULT_BUILTIN_ROOT\b[^}]*\} from '\.\.\/packages\/web\/server\/lib\/guests\/builtins\.js';/, 'the extension build no longer takes its out dir from the server');
+    has(builder, /\{[^}]*\bDEFAULT_BUILTIN_ROOT\b[^}]*\} = await import\('\.\.\/packages\/web\/server\/lib\/guests\/builtins\.js'\);/, 'the extension build no longer takes its out dir from the server');
     has(builder, /sourceRoot = path\.join\(repoRoot, 'packages\/extensions'\), outDir = DEFAULT_BUILTIN_ROOT/, 'the extension build no longer writes the source registry to the folder we keep unpacked');
-    has(JSON.parse(source('packages/web/package.json')).scripts.build, /build-builtin-extensions\.mjs/, 'the web build no longer builds the built-in extensions before packing');
 
     const { stagedServerFiles } = await import(pathToFileURL(path.join(repoRoot, 'scripts/mittr/build-desktop.mjs')).href);
     const files = stagedServerFiles(upstreamBuild.asarUnpack);
-    for (const pattern of asarUnpack) assert.ok(files.includes(pattern), `${pattern} is no longer packed from the workspace`);
+    for (const pattern of serverPatterns) assert.ok(files.includes(pattern), `${pattern} is no longer packed from the staged server`);
 
     const rebuild = source('packages/electron/scripts/rebuild-native.mjs');
     has(rebuild, new RegExp(`onlyModules: \\[${nativeModules.map((name) => `'${name}'`).join(', ')}\\]`), 'upstream changed which native modules it rebuilds');
-    const webPackage = JSON.parse(source('packages/web/package.json'));
     for (const name of nativeModules) assert.ok(webPackage.dependencies?.[name] || webPackage.optionalDependencies?.[name], `${name} is no longer a web dependency`);
     const nativeInServer = fs.globSync('**/*.node', { cwd: path.join(repoRoot, 'packages/web/server') });
     assert.deepEqual(nativeInServer, [], 'a native module sits in the server folder, which the build packs from a copy');
 
-    has(source('packages/electron/main.mjs'), /process\.env\.OPENCHAMBER_DIST_DIR = resolveWebDistDir\(\);/);
-    has(source('packages/web/server/lib/opencode/static-routes-runtime.js'), /process\.env\.OPENCHAMBER_DIST_DIR/);
+    has(source('packages/electron/main.mjs'), /assignInjectedEnv\(process\.env, \{[^}]*\n {4}OPENCHAMBER_DIST_DIR: resolveWebDistDir\(\),/);
+    has(source('packages/web/server/lib/server-frame/static-routes-runtime.ts'), /process\.env\.OPENCHAMBER_DIST_DIR/);
   },
 
   'opencode-user-config-io': async (t) => {
     const configFileFor = (env) => {
       const home = tempDir(t, 'contract-home-');
       const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(OPENCODE_|XDG_)/.test(name)));
-      const result = spawnSync(process.execPath, ['--input-type=module', '-e', 'const { CONFIG_FILE } = await import(process.env.CONTRACT_SHARED_URL); console.log(JSON.stringify(CONFIG_FILE));'], {
+      const result = spawnSync(process.execPath, ['--import', sourceLoader, '--input-type=module', '-e', 'const { CONFIG_FILE } = await import(process.env.CONTRACT_SHARED_URL); console.log(JSON.stringify(CONFIG_FILE));'], {
         encoding: 'utf8',
-        env: { ...inherited, HOME: home, ...env, CONTRACT_SHARED_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/opencode/shared.js')).href },
+        env: { ...inherited, HOME: home, ...env, CONTRACT_SHARED_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/opencode/config-files.ts')).href },
       });
       assert.equal(result.status, 0, result.stderr);
       return { home, file: JSON.parse(result.stdout.trim().split('\n').at(-1)) };
@@ -732,7 +803,7 @@ const checks = {
     t.mock.method(console, 'log', () => {});
     t.mock.method(console, 'warn', () => {});
     t.mock.method(console, 'error', () => {});
-    const { readConfigFile, writeConfig } = await importUpstream('packages/web/server/lib/opencode/shared.js');
+    const { readConfigFile, writeConfig } = await importUpstream('packages/web/server/lib/opencode/config-files.ts');
     const file = path.join(tempDir(t, 'contract-user-config-'), 'opencode', 'opencode.json');
     assert.deepEqual(readConfigFile(file), {}, 'a missing user config no longer reads as {}');
     writeConfig({ model: 'mittr/a1' }, file);
@@ -751,18 +822,18 @@ const checks = {
     assert.throws(() => writeConfig({ model: 'mittr/a2' }, file), 'writeConfig no longer refuses a config it cannot parse');
     assert.equal(fs.readFileSync(file, 'utf8'), broken);
 
-    const server = source('packages/web/server/index.js');
-    has(server, /import \{\s*CONFIG_FILE as OPENCODE_USER_CONFIG_FILE,\s*readConfigFile as readOpenCodeConfigFile,\s*writeConfig as writeOpenCodeConfig,\s*\} from '\.\/lib\/opencode\/shared\.js';/);
-    has(pluginContext(server), /opencode: \{[^]*?userConfig: \{\s*path: OPENCODE_USER_CONFIG_FILE,\s*read: \(\) => readOpenCodeConfigFile\(OPENCODE_USER_CONFIG_FILE\),\s*write: \(config\) => writeOpenCodeConfig\(config, OPENCODE_USER_CONFIG_FILE\),\s*\},/, 'the plugin context no longer hands plugins the user config as opencode.userConfig');
+    const server = source('packages/web/server/runtime.ts');
+    has(server, /import \{\s*CONFIG_FILE as OPENCODE_USER_CONFIG_FILE,\s*(?:OPENCODE_CONFIG_DIR,\s*)?readConfigFile as readOpenCodeConfigFile,\s*writeConfig as writeOpenCodeConfig,\s*\} from '\.\/lib\/opencode\/config-files\.js';/);
+    has(pluginContext(server), /opencode: \{[^]*?userConfig: \{\s*path: OPENCODE_USER_CONFIG_FILE,\s*read: \(\) => readOpenCodeConfigFile\(OPENCODE_USER_CONFIG_FILE\),\s*write: \(config(?:: [^)]+)?\) => writeOpenCodeConfig\(config, OPENCODE_USER_CONFIG_FILE\),\s*\},/, 'the plugin context no longer hands plugins the user config as opencode.userConfig');
   },
 
   'plugin-context-mcp-entity': async () => {
-    const server = source('packages/web/server/index.js');
+    const server = source('packages/web/server/runtime.ts');
     has(server, /^import \{ toMcpEntity \} from '\.\/lib\/opencode\/config-v2\.js';$/m, 'index.js no longer imports toMcpEntity from config-v2');
     has(pluginContext(server), /opencode: \{[^]*?mcpEntity: toMcpEntity,/, 'the plugin context no longer hands plugins toMcpEntity as opencode.mcpEntity');
-    has(source('packages/web/server/lib/opencode/config-v2.js'), /^export \{[^}]*\btoMcpEntity,/m, 'config-v2 no longer exports toMcpEntity');
+    has(source('packages/web/server/lib/opencode/config-v2.ts'), /^export (?:function toMcpEntity\b|\{[^}]*\btoMcpEntity,)/m, 'config-v2 no longer exports toMcpEntity');
 
-    const { toMcpEntity } = await importUpstream('packages/web/server/lib/opencode/config-v2.js');
+    const { toMcpEntity } = await importUpstream('packages/web/server/lib/opencode/config-v2.ts');
     assert.deepEqual(
       toMcpEntity({ type: 'local', command: ['npx', '-y', 'acme-mcp'], environment: { ACME_KEY: 'k' }, enabled: false }),
       { type: 'local', command: ['npx', '-y', 'acme-mcp'], environment: { ACME_KEY: 'k' }, disabled: true },
@@ -777,29 +848,29 @@ const checks = {
   },
 
   'plugin-context-control': async (t) => {
-    const server = source('packages/web/server/index.js');
-    has(server, /^import \{ OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS \} from '\.\/lib\/openchamber-control\/actions\.js';$/m, 'index.js no longer imports the agent tool and web action definitions');
+    const server = source('packages/web/server/runtime.ts');
+    has(server, /^import \{ OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_SCHEDULE_ACTION_DEFINITIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS \} from '\.\/lib\/openchamber-control\/actions\.js';$/m, 'index.js no longer imports the agent tool, schedule and web action definitions');
     has(server, /^import \{ SCREENSHOT_DIRECTORY, writeScreenshot \} from '\.\/lib\/openchamber-control\/screenshots\.js';$/m, 'index.js no longer imports the screenshot writer');
     has(server, /^import \{ OpenChamberControlError \} from '\.\/lib\/openchamber-control\/error\.js';$/m, 'index.js no longer imports the control error class');
     has(server, /^const openChamberControlService = createOpenChamberControlService\(\{$/m, 'index.js no longer builds one control service');
-    has(pluginContext(server), /control: \{\s*execute: openChamberControlService\.execute,\s*resolveSessionDirectory: openChamberControlService\.resolveSessionDirectory,\s*definitions: \(\) => \(\{ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS \}\),\s*all: OPENCHAMBER_ALL_ACTIONS,\s*ControlError: OpenChamberControlError,\s*writeScreenshot,\s*SCREENSHOT_DIRECTORY,\s*\},/, 'the plugin context no longer hands plugins the control service, its definitions, its error class and the screenshot writer as control');
+    has(pluginContext(server), /control: \{\s*execute: openChamberControlService\.execute,\s*resolveSessionDirectory: openChamberControlService\.resolveSessionDirectory,\s*definitions: \(\) => \(\{ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, schedule: OPENCHAMBER_SCHEDULE_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS \}\),\s*all: OPENCHAMBER_ALL_ACTIONS,\s*ControlError: OpenChamberControlError,\s*writeScreenshot,\s*SCREENSHOT_DIRECTORY,\s*\},/, 'the plugin context no longer hands plugins the control service, its definitions, its error class and the screenshot writer as control');
 
-    const service = source('packages/web/server/lib/openchamber-control/service.js');
-    has(service, /const execute = async \(action, input = \{\}, contextDirectory, options = \{\}\) => \{/, 'the control service execute no longer takes (action, input, contextDirectory, options)');
-    has(service, /browserAction\(action, input, options\.signal, contextDirectory, options\.contextSessionId\)/, 'the control service no longer passes options.signal and options.contextSessionId to page actions');
-    has(service, /return \{ execute, resolveSessionDirectory \};/, 'the control service no longer returns execute and resolveSessionDirectory');
+    const service = source('packages/web/server/lib/openchamber-control/service.ts');
+    has(service, /const execute = async \(action(?:: string)?, input(?:: ControlInput)? = \{\}, contextDirectory(?:\?: [^,]+)?, options(?:: ControlOptions)? = \{\}\) => \{/, 'the control service execute no longer takes (action, input, contextDirectory, options)');
+    has(service, /browserAction\((?:browserControl, )?action, input, options\.signal, contextDirectory, options\.contextSessionId\)/, 'the control service no longer passes options.signal and options.contextSessionId to page actions');
+    has(service, /return \{\s*execute,\s*resolveSessionDirectory[,\s]/, 'the control service no longer returns execute and resolveSessionDirectory');
 
-    const actions = await importUpstream('packages/web/server/lib/openchamber-control/actions.js');
-    const lists = { control: actions.OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: actions.OPENCHAMBER_WEB_ACTION_DEFINITIONS };
+    const actions = await importUpstream('packages/web/server/lib/openchamber-control/actions.ts');
+    const lists = { control: actions.OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, schedule: actions.OPENCHAMBER_SCHEDULE_ACTION_DEFINITIONS, web: actions.OPENCHAMBER_WEB_ACTION_DEFINITIONS };
     for (const [name, list] of Object.entries(lists)) {
       assert.ok(Array.isArray(list) && list.length > 0, `actions.js no longer exports the ${name} definitions`);
       for (const entry of list) {
         assert.ok(['action', 'title', 'description'].every((key) => entry[key] === String(entry[key]) && entry[key] !== ''), `a ${name} definition lost its action, title or description: ${JSON.stringify(entry)}`);
       }
     }
-    assert.ok(lists.control.some(({ action }) => action === 'session.list') && lists.web.some(({ action }) => action === 'browser.open'), 'the definitions no longer hold session.list and browser.open');
+    assert.ok(lists.control.some(({ action }) => action === 'session.list') && lists.schedule.some(({ action }) => action === 'schedule.list') && lists.web.some(({ action }) => action === 'browser.open'), 'the definitions no longer hold session.list, schedule.list and browser.open');
     const all = actions.OPENCHAMBER_ALL_ACTIONS;
-    assert.ok([...lists.control, ...lists.web].every(({ action }) => all.includes(action)), 'the full action list no longer holds every control and web definition');
+    assert.ok([...lists.control, ...lists.schedule, ...lists.web].every(({ action }) => all.includes(action)), 'the full action list no longer holds every control, schedule and web definition');
     for (const action of ['schedule.status', 'memory.save', 'notify.send']) assert.ok(all.includes(action), `the full action list no longer holds ${action}`);
     has(service, /const CONTROL_ACTIONS = new Set\(OPENCHAMBER_ALL_ACTIONS\);/, 'the control service no longer runs exactly the full action list');
 
@@ -807,7 +878,7 @@ const checks = {
     const registry = createMittrActionRegistry({ control: { all } });
     registry.defineTool({ name: 'contract_probe', description: 'probe', parameters: { type: 'object' } });
     for (const action of all) {
-      assert.throws(() => registry.register({ action, tool: 'contract_probe', title: 'T', description: 'D', effect: 'read', execute: async () => ({}) }), /is an upstream action/, `a Mittr action could take upstream's ${action}`);
+      assert.throws(() => registry.register({ action, tool: 'contract_probe', title: 'T', description: 'D', effect: 'read', execute: async () => ({}) }), /is an upstream action|is not a lowercase, dot-separated action name/, `a Mittr action could take upstream's ${action}`);
     }
     const { setupMittr } = await import('./mittr/index.js');
     const { fakeEngineContext } = await import('./mittr/test-helpers.js');
@@ -822,7 +893,7 @@ const checks = {
       assert.ok(!all.includes(action), `the Mittr action ${action} is an upstream action name`);
     }
 
-    const screenshots = await importUpstream('packages/web/server/lib/openchamber-control/screenshots.js');
+    const screenshots = await importUpstream('packages/web/server/lib/openchamber-control/screenshots.ts');
     assert.equal(screenshots.SCREENSHOT_DIRECTORY, path.join('.openchamber', 'screenshots'));
     const directory = tempDir(t, 'contract-shots-');
     const written = await screenshots.writeScreenshot({
@@ -836,20 +907,20 @@ const checks = {
     assert.deepEqual(written, { path: relative, absolutePath: path.join(directory, relative) }, 'writeScreenshot no longer answers the project-relative and absolute paths it wrote');
     assert.equal(fs.readFileSync(written.absolutePath, 'utf8'), 'acme');
 
-    const routes = source('packages/web/server/lib/openchamber-control/routes.js');
+    const routes = source('packages/web/server/lib/openchamber-control/routes.ts');
     has(routes, /req\.once\('aborted', abortOnDisconnect\);\s*res\.once\('close', abortOnDisconnect\);/, 'the control route no longer aborts the action when the request closes');
-    has(routes, /\.\.\.\(controlError\.partial === true \? \{\s*partial: true,\s*partialAction: controlError\.partialAction,\s*sessionId: controlError\.sessionId,\s*directory: controlError\.directory,\s*\} : \{\}\),/, 'the control route no longer answers the partial-result fields');
-    has(source('packages/web/server/lib/openchamber-control/error.js'), /Number\(error\?\.statusCode\) \|\| Number\(error\?\.status\) \|\| fallbackStatus/, 'asControlError no longer takes the status from statusCode, then status');
-    const controlError = source('packages/web/server/lib/openchamber-control/error.js');
+    has(routes, /const failure: ControlErrorDetails & \{ error: string \} = \{ error: controlError\.message \};\s*if \(controlError\.partial === true\) \{\s*failure\.partial = true;\s*failure\.partialAction = controlError\.partialAction;\s*failure\.sessionId = controlError\.sessionId;\s*failure\.directory = controlError\.directory;\s*\}\s*return res\.status\(controlError\.statusCode\)\.json\(failure\);/, 'the control route no longer answers the partial-result fields');
+    has(source('packages/web/server/lib/openchamber-control/error.ts'), /Number\((\w+)\?\.statusCode\) \|\| Number\(\1\?\.status\) \|\| fallbackStatus/, 'asControlError no longer takes the status from statusCode, then status');
+    const controlError = source('packages/web/server/lib/openchamber-control/error.ts');
     has(controlError, /^export class OpenChamberControlError extends Error \{$/m, 'error.js no longer exports the control error class the plugin context hands over, which the route matches to keep partial-result fields');
-    has(controlError, /if \(error instanceof OpenChamberControlError\) return error;/, 'asControlError no longer keeps the control error, partial fields and all, and rebuilds every other error');
-    const { OpenChamberControlError, asControlError } = await importUpstream('packages/web/server/lib/openchamber-control/error.js');
+    has(controlError, /if \((\w+) instanceof OpenChamberControlError\) return \1;/, 'asControlError no longer keeps the control error, partial fields and all, and rebuilds every other error');
+    const { OpenChamberControlError, asControlError } = await importUpstream('packages/web/server/lib/openchamber-control/error.ts');
     const kept = new OpenChamberControlError('x', 502, { partial: true });
     assert.equal(asControlError(kept, 'y'), kept, 'asControlError no longer hands back the control error itself');
     assert.ok(asControlError(new Error('z'), 'y') instanceof OpenChamberControlError, 'asControlError no longer rebuilds another error as the control error class');
 
-    const tunnelAuth = source('packages/web/server/lib/opencode/tunnel-auth.js');
-    has(tunnelAuth, /if \(activeTunnelHost && reqHost === activeTunnelHost\) \{\s*return 'tunnel';\s*\}\s*if \(isLocalHost\(reqHost, req\)\) \{\s*return 'local';\s*\}/, 'classifyRequestScope no longer answers tunnel for the tunnel host before local');
+    const tunnelAuth = source('packages/web/server/lib/tunnels/tunnel-auth.ts');
+    has(tunnelAuth, /if \(activeTunnelHost && reqHost === activeTunnelHost\) \{\s*return 'tunnel';\s*\}\s*if \(isLocalHost\(reqHost, req\)[^{\n]*\) \{\s*return 'local';\s*\}/, 'classifyRequestScope no longer answers tunnel for the tunnel host before local');
 
     const plugin = [
       `import { createMittrActionRegistry } from ${JSON.stringify(pathToFileURL(path.join(repoRoot, 'packages/mittr-server/src/mittr/tools/registry.js')).href)};`,
@@ -876,8 +947,8 @@ const checks = {
   },
 
   'mcp-user-layers': (t) => {
-    has(source('packages/web/server/lib/opencode/shared.js'), /userPaths: \[\s*path\.join\(OPENCODE_CONFIG_DIR, 'opencode\.json'\),\s*path\.join\(OPENCODE_CONFIG_DIR, 'opencode\.jsonc'\),\s*\],/, 'the user config layers are no longer opencode.json and opencode.jsonc in the config folder');
-    has(source('packages/web/server/lib/opencode/mcp.js'), /if \(!\/\^\[a-z0-9\]\[a-z0-9_-\]\*\[a-z0-9\]\$\|\^\[a-z0-9\]\$\/\.test\(name\)\) \{/, 'validateMcpName no longer allows exactly lowercase letters, digits, - and _ with a letter or digit at each end');
+    has(source('packages/web/server/lib/opencode/config-files.ts'), /userPaths: \[\s*path\.join\(OPENCODE_CONFIG_DIR, 'opencode\.json'\),\s*path\.join\(OPENCODE_CONFIG_DIR, 'opencode\.jsonc'\),\s*\],/, 'the user config layers are no longer opencode.json and opencode.jsonc in the config folder');
+    has(source('packages/web/server/lib/opencode/mcp.ts'), /if \(!\/\^\[a-z0-9\]\[a-z0-9_-\]\*\[a-z0-9\]\$\|\^\[a-z0-9\]\$\/\.test\(name\)\) \{/, 'validateMcpName no longer allows exactly lowercase letters, digits, - and _ with a letter or digit at each end');
 
     const configDir = tempDir(t, 'contract-mcp-config-');
     fs.writeFileSync(path.join(configDir, 'opencode.json'), JSON.stringify({
@@ -888,9 +959,9 @@ const checks = {
       },
     }));
     const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(OPENCODE_|XDG_)/.test(name)));
-    const result = spawnSync(process.execPath, ['--input-type=module', '-e', 'console.log = () => {}; const { listMcpConfigs } = await import(process.env.CONTRACT_MCP_URL); process.stdout.write(JSON.stringify(listMcpConfigs(undefined).map(({ name, scope, type }) => ({ name, scope, type })).sort((a, b) => a.name.localeCompare(b.name))));'], {
+    const result = spawnSync(process.execPath, ['--import', sourceLoader, '--input-type=module', '-e', 'console.log = () => {}; const { listMcpConfigs } = await import(process.env.CONTRACT_MCP_URL); process.stdout.write(JSON.stringify(listMcpConfigs(undefined).map(({ name, scope, type }) => ({ name, scope, type })).sort((a, b) => a.name.localeCompare(b.name))));'], {
       encoding: 'utf8',
-      env: { ...inherited, HOME: tempDir(t, 'contract-home-'), OPENCODE_CONFIG_DIR: configDir, CONTRACT_MCP_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/opencode/mcp.js')).href },
+      env: { ...inherited, HOME: tempDir(t, 'contract-home-'), OPENCODE_CONFIG_DIR: configDir, CONTRACT_MCP_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/opencode/mcp.ts')).href },
     });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout), [
@@ -901,17 +972,17 @@ const checks = {
   },
 
   'managed-config-private': async (t) => {
-    const managed = source('packages/web/server/lib/opencode/managed-config-file.js');
+    const managed = source('packages/web/server/lib/opencode/managed-config-file.ts');
     has(managed, /await fsPromises\.writeFile\(tmp, text, \{ encoding: 'utf8', mode: 0o600 \}\);\s*await fsPromises\.rename\(tmp, filePath\);/, 'the managed config is no longer written 0600 through a temp file and a rename');
-    has(source('packages/web/server/lib/opencode/shared.js'), /customPath: process\.env\.OPENCODE_CONFIG\s*\? path\.resolve\(process\.env\.OPENCODE_CONFIG\)\s*: null,/, 'Settings → MCP no longer takes its custom layer from the server\'s own OPENCODE_CONFIG');
+    has(source('packages/web/server/lib/opencode/config-files.ts'), /customPath: process\.env\.OPENCODE_CONFIG\s*\? path\.resolve\(process\.env\.OPENCODE_CONFIG\)\s*: null,/, 'Settings → MCP no longer takes its custom layer from the server\'s own OPENCODE_CONFIG');
 
-    const { createManagedConfigRuntime, MANAGED_CONFIG_FILE_NAME } = await importUpstream('packages/web/server/lib/opencode/managed-config-file.js');
+    const { createManagedConfigRuntime, MANAGED_CONFIG_FILE_NAME } = await importUpstream('packages/web/server/lib/opencode/managed-config-file.ts');
     assert.equal(MANAGED_CONFIG_FILE_NAME, 'opencode.managed.json', 'the managed file moved: the held-name check must not read it as the person\'s own OPENCODE_CONFIG');
-    has(managed, /const userFile = path\.resolve\(env\.OPENCODE_CONFIG\.trim\(\)\);[\s\S]*?parseUserConfig\(env\.OPENCODE_CONFIG_CONTENT \?\? '', 'OPENCODE_CONFIG_CONTENT'\),/, 'the person\'s own OPENCODE_CONFIG and OPENCODE_CONFIG_CONTENT are no longer the layers handed to the engine beside the managed file');
+    has(managed, /const userFile = path\.resolve\(\(?env\.OPENCODE_CONFIG(?: \?\? '')?\)?\.trim\(\)\);[\s\S]*?parseUserConfig\(env\.OPENCODE_CONFIG_CONTENT \?\? '', 'OPENCODE_CONFIG_CONTENT'\),/, 'the person\'s own OPENCODE_CONFIG and OPENCODE_CONFIG_CONTENT are no longer the layers handed to the engine beside the managed file');
     const dataDir = tempDir(t, 'contract-managed-private-');
     const env = {};
     const connector = { type: 'remote', url: 'https://acme.example/mcp', headers: { authorization: 'Bearer k' } };
-    const runtime = createManagedConfigRuntime({ fsPromises: fs.promises, path, dataDir, env, readSettings: async () => ({}), isAgentMemoryAvailable: () => false, contributeConfig: async () => ({ mcp: { servers: { 'acme-x': connector } } }) });
+    const runtime = createManagedConfigRuntime({ fsPromises: fs.promises, path, instanceDir: dataDir, env, readSettings: async () => ({}), contributeConfig: async () => ({ mcp: { servers: { 'acme-x': connector } } }) });
     const childEnv = await runtime.buildManagedChildEnv();
     const file = path.join(dataDir, MANAGED_CONFIG_FILE_NAME);
     assert.equal(childEnv.OPENCODE_CONFIG, file);
@@ -920,7 +991,7 @@ const checks = {
     if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600, 'the managed config is no longer private');
     await runtime.refreshManagedConfigFile();
     if (process.platform !== 'win32') assert.equal(fs.statSync(file).mode & 0o777, 0o600, 'a managed config refresh is no longer private');
-    assert.deepEqual(fs.readdirSync(dataDir), [MANAGED_CONFIG_FILE_NAME]);
+    assert.deepEqual(fs.readdirSync(dataDir).filter((name) => !['session-title', 'skills'].includes(name)), [MANAGED_CONFIG_FILE_NAME]);
   },
 
   'engine-integration-connect-key': () => {
@@ -938,7 +1009,7 @@ const checks = {
     assert.equal(chunks.filter((text) => list.test(text) && remove.test(text)).length, 1, 'the generated client no longer lists credentials under data or removes one with DELETE /api/credential/{id}');
     const { Credential } = await import(pathToFileURL(path.join(repoRoot, 'node_modules/@opencode/schema/dist/credential.js')).href);
     assert.deepEqual(Object.keys(Credential.Entry.fields).sort(), ['active', 'id', 'integrationID', 'label', 'value']);
-    assert.deepEqual(Object.keys(Credential.Key.fields).sort(), ['configuration', 'key', 'metadata', 'type']);
+    assert.deepEqual(Object.keys(Credential.Key.fields).sort(), ['key', 'metadata', 'type']);
   },
 
   'model-controls-product-picker': () => {
@@ -947,10 +1018,10 @@ const checks = {
     assert.equal(lineCount(controls, 'useProductModelPicker('), 1, 'ModelControls must call useProductModelPicker exactly once');
     has(controls, /const productModelPicker = useProductModelPicker\(agentMenuOpen \|\| activeMobilePanel === 'model'\);/, 'the picker decorations no longer follow whether the desktop list or the mobile sheet is open');
     has(controls, /const isProductModelAllowed = React\.useCallback\(\s*\(providerID: string\) => productModelPicker\.isProviderShown\(providerID\),/);
-    assert.equal(lineCount(controls, '<ModelPickerList'), 1, 'ModelControls renders another ModelPickerList');
-    const list = controls.slice(controls.indexOf('<ModelPickerList'), controls.indexOf('/>', controls.indexOf('maxHeightClassName=', controls.indexOf('<ModelPickerList'))));
-    assert.ok(list.includes('isModelAllowed={isProductModelAllowed}'), 'the desktop picker list no longer gets isModelAllowed from the product picker');
-    assert.equal(lineCount(controls, 'isProductModelAllowed('), 4, 'the mobile sheet no longer filters its providers, favorites and recents, or the Auto entry no longer follows the product picker');
+    assert.equal(lineCount(controls, '<ModelPickerList'), 2, 'ModelControls renders a ModelPickerList other than the desktop list and the mobile sheet');
+    assert.equal(lineCount(controls, 'isModelAllowed={isProductModelAllowed}'), 2, 'the desktop list or the mobile sheet no longer gets isModelAllowed from the product picker');
+    has(sliceBetween(controls, 'const renderMobileModelPanel = () => {', 'const renderMobileModelDetails = () => {'), /<ModelPickerList[\s\S]*?isModelAllowed=\{isProductModelAllowed\}/, 'the mobile sheet no longer filters its providers, favorites and recents through the product picker');
+    assert.equal(lineCount(controls, 'isProductModelAllowed('), 1, 'the Auto entry no longer follows the product picker, or the product picker filters somewhere else');
 
     const picker = source('packages/ui/src/components/model-picker/ModelPickerList.tsx');
     has(picker, /isModelAllowed\?: \(providerID: string, modelID: string\) => boolean;/);
@@ -963,24 +1034,26 @@ const checks = {
     const picker = source('packages/ui/src/components/model-picker/ModelPickerList.tsx');
     has(picker, /isEntryBlocked\?: \(entry: ModelPickerEntry\) => boolean;/, 'ModelPickerList no longer takes isEntryBlocked');
     has(picker, /const blocked = isEntryBlocked\?\.\(entry\) \?\? false;/, 'a row no longer asks whether its entry is blocked');
-    has(picker, /aria-disabled=\{disabled \|\| blocked \|\| undefined\}\s*tabIndex=\{-1\}\s*onClick=\{\(\) => \{ if \(!disabled && !blocked\) onSelect\(entry\); \}\}/, 'a blocked row is no longer aria-disabled or still answers a click');
+    has(picker, /aria-disabled=\{disabled \|\| blocked \|\| undefined\}\s*tabIndex=\{-1\}\s*onClick=\{\(\) => \{\s*if \(suppressClickRef\.current \|\| disabled \|\| blocked\) return;\s*onSelect\(entry\);\s*\}\}/, 'a blocked row is no longer aria-disabled or still answers a click');
     has(picker, /if \(disabled \|\| blocked \|\| event\.target !== event\.currentTarget\) return;\s*if \(event\.key === 'Enter' \|\| event\.key === ' '\) \{\s*event\.preventDefault\(\);\s*onSelect\(entry\);/, 'a blocked row still answers Enter or Space');
     has(picker, /else if \(activeEntry && !isEntryBlocked\?\.\(activeEntry\)\) onSelect\(activeEntry\);/, 'Enter in the search field can still choose a blocked entry');
     assert.equal(lineCount(picker, 'onSelect(entry)'), 2, 'ModelPickerList chooses an entry somewhere the blocked check does not cover');
     assert.equal(lineCount(picker, 'onSelect(activeEntry)'), 1, 'ModelPickerList chooses the highlighted entry somewhere the blocked check does not cover');
 
     const controls = source('packages/ui/src/components/chat/ModelControls.tsx');
+    has(controls, /const entryStatusOf = \(entry: ModelPickerEntry\) => productModelPicker\.entryStatus\(\{/, 'the entry status no longer comes from the product picker');
     assert.equal(lineCount(controls, 'productModelPicker.entryStatus('), 1, 'ModelControls must ask the product picker for an entry status exactly once');
     has(controls, /const isEntryBlocked = \(entry: ModelPickerEntry\) => entryStatusOf\(entry\)\?\.blocked === true;/, 'the blocked check no longer follows the entry status');
-    has(controls, /<ModelEntryStatusPill status=\{entryStatusOf\(entry\)\} isHighlighted=\{state\.isHighlighted\} \/>\s*\{renderThinkingSlot\(entry, state\)\}/, 'the row end is no longer the status pill followed by the thinking slot');
+    has(controls, /const renderRowEnd = \(entry: ModelPickerEntry, state: \{ isHighlighted: boolean; isSelected: boolean \}\) => \{\s*const status = entryStatusOf\(entry\);\s*const thinkingSlot = renderThinkingSlot\(entry, state\);\s*if \(!status\) return thinkingSlot;\s*return \(\s*<>\s*<ModelEntryStatusPill status=\{status\} isHighlighted=\{state\.isHighlighted\} \/>\s*\{thinkingSlot\}\s*<\/>/, 'the desktop row end is no longer the status pill followed by the thinking slot');
     assert.equal(lineCount(controls, 'renderRowEnd={renderRowEnd}'), 1, 'the desktop picker list no longer gets the composed row end');
-    assert.equal(lineCount(controls, 'isEntryBlocked={isEntryBlocked}'), 1, 'the desktop picker list no longer gets isEntryBlocked');
-    has(controls, /const mobileEntryStatus = entryStatusOf\(mobileEntry\);\s*const mobileEntryBlocked = isEntryBlocked\(mobileEntry\);/, 'the mobile sheet row no longer takes its status and blocked check from the same helpers');
-    has(controls, /onClick=\{\(\) => handleMobileModelApply\(providerId, modelId, resolvedVariant\)\}\s*disabled=\{mobileEntryBlocked\}\s*aria-disabled=\{mobileEntryBlocked \|\| undefined\}/, 'a blocked entry can be applied from the mobile sheet row');
-    has(controls, /onClick=\{\(\) => handleMobileModelApply\(providerId, modelId, variantOption\)\}\s*disabled=\{mobileEntryBlocked\}\s*aria-disabled=\{mobileEntryBlocked \|\| undefined\}/, 'a blocked entry can be applied from the mobile sheet effort buttons');
-    has(controls, /onClick=\{\(\) => openMobileVariantOverflow\(providerId, modelId\)\}\s*disabled=\{mobileEntryBlocked\}/, 'a blocked entry can be applied from the mobile effort panel');
-    assert.equal(lineCount(controls, 'handleMobileModelApply(providerId, modelId'), 2, 'the mobile sheet applies a model somewhere the blocked check does not cover');
-    has(controls, /<ModelEntryStatusPill status=\{mobileEntryStatus\} isHighlighted=\{false\} \/>/, 'the mobile sheet row no longer draws the status pill');
+    assert.equal(lineCount(controls, 'isEntryBlocked={isEntryBlocked}'), 2, 'the desktop list or the mobile sheet no longer gets isEntryBlocked');
+    const sheet = sliceBetween(controls, 'const renderMobileModelPanel = () => {', 'const renderMobileModelDetails = () => {');
+    has(sheet, /onSelect=\{\(entry\) => handleMobileModelApply\(entry\.providerID, entry\.modelID\)\}/, 'the mobile sheet no longer applies the row the list chose');
+    has(sheet, /isEntryBlocked=\{isEntryBlocked\}\s*renderRowEnd=\{\(entry, state\) => \{\s*const status = entryStatusOf\(entry\);\s*return status \? <ModelEntryStatusPill status=\{status\} isHighlighted=\{state\.isHighlighted\} \/> : null;/, 'the mobile sheet row no longer draws the status pill or no longer blocks a blocked entry');
+    const details = sliceBetween(controls, 'const renderMobileModelDetails = () => {', 'MobileOverlayPanel>');
+    has(details, /const detailsStatus = entryStatusOf\(mobileDetailsEntry\);\s*const detailsBlocked = detailsStatus\?\.blocked === true;/, 'the mobile model details no longer take their status from the same helper');
+    has(details, /onClick=\{\(\) => handleMobileModelApply\(providerID, modelID\)\} disabled=\{detailsBlocked\}/, 'a blocked entry can be applied from the mobile model details');
+    assert.equal(lineCount(controls, 'handleMobileModelApply('), 2, 'the mobile sheet applies a model somewhere the blocked check does not cover');
 
     has(source('packages/ui/src/components/model-picker/ModelEntryStatusPill.tsx'), /aria-label=\{status\.title \?\? status\.pill\}/, 'the status pill lost its aria-label');
     has(source('packages/ui/src/lib/product-plugins.ts'), /^export type ModelEntryStatus = \{ pill: string; title\?: string; tone: 'neutral' \| 'near'; blocked: boolean \};$/m, 'ModelEntryStatus changed shape');
@@ -1007,7 +1080,8 @@ const checks = {
     const builtIn = page.indexOf("title={t('settings.integrations.firstParty.title')}");
     const builtInEnd = page.indexOf('</SettingsSection>', builtIn);
     const slot = page.indexOf('<ProductSlot name="integrations-page" />');
-    const thirdParty = page.indexOf('<ThirdPartyIntegrationsSection');
+    const thirdParty = page.indexOf('<CatalogExtensionsSection />');
+    assert.ok(page.indexOf('<GuestIntegrationsSection />') > thirdParty, 'the third-party integrations no longer follow the catalog extensions');
     assert.ok(layout >= 0 && builtIn > layout && builtInEnd > builtIn && slot > builtInEnd && thirdParty > slot, 'the integrations-page slot is no longer inside the page layout, right after the built-in integrations section and before the third-party integrations');
     has(page.slice(builtInEnd, slot), /^<\/SettingsSection>\s*\) : null\}\s*$/, 'something now sits between the built-in integrations section and the integrations-page slot');
     has(source('packages/ui/src/lib/product-plugins.ts'), /'integrations-page': Record<never, never>;/);
@@ -1025,17 +1099,24 @@ const checks = {
   },
 
   'policy-schema': () => {
-    has(source('node_modules/@opencode/schema/dist/config/experimental.js'), /policies: ConfigPolicy\.Info\.pipe\(Schema\.Array, optional\)/, 'experimental.policies is no longer a list of policies');
+    has(source('node_modules/@opencode/schema/dist/config.js'), /^ {4}policies: ConfigPolicy\.Info\.pipe\(Schema\.Array, optional\)\.annotate\(\{\n {8}description: "Ordered policies controlling access to providers, tools, and integrations",/m, 'the engine config no longer takes a top-level list of policies');
+    has(source('node_modules/@opencode/schema/dist/config/experimental.js'), /policies: ConfigPolicy\.Info\.pipe\(Schema\.Array, optional\)\.annotate\(\{\s*description: "Deprecated: use top-level policies\./, 'experimental.policies is no longer the deprecated alias of the top-level policies');
     const policy = source('node_modules/@opencode/schema/dist/config/policy.js');
-    has(policy, /action: Schema\.Literals\(\[[^\]]*"provider\.use"[^\]]*\]\)/, 'a policy action can no longer be provider.use');
-    has(policy, /resource: Schema\.String,/);
+    has(policy, /^export const Action = Schema\.Literals\(\[[^\]]*"provider\.use",[^\]]*\]\);$/m, 'a policy action can no longer be provider.use');
+    has(policy, /const Statement = Schema\.Struct\(\{\s*action: Action,\s*resource: Schema\.String,\s*effect: Effect,\s*\}\);/, 'a policy is no longer { action, resource, effect }');
     has(policy, /export const Effect = Schema\.Literals\(\["allow", "deny"\]\);/);
+    has(policy, /if \(policy\.action !== "integration\.use"\)\s*return policy;/, 'the legacy policy rewrite now touches provider.use');
+    has(source('packages/mittr-server/src/mittr/policies.js'), /^export const policiesFragment = \(\{ showOtherProviders \}\) => \(\{\n {2}policies: policiesFor\(/m, 'the provider lock is no longer written as top-level policies');
   },
 
   'model-controls-add-provider-row': () => {
     const controls = source('packages/ui/src/components/chat/ModelControls.tsx');
-    has(controls, /\{!selection && productModelPicker\.offersAddProvider !== false && <div[^>]*>\s*<button\s+type="button"\s+onClick=\{openAddProviderSettings\}/, 'the add-provider row no longer follows the picker decorations');
-    assert.equal(lineCount(controls, 'onClick={openAddProviderSettings}'), 1, 'ModelControls offers another add-provider entry');
+    has(controls, /const offersAddProvider = productModelPicker\.offersAddProvider !== false;/, 'the add-provider entry no longer follows the picker decorations');
+    const action = "searchAction={selection || !offersAddProvider ? null : { label: t('chat.modelControls.addNewProvider'), icon: 'add', onSelect: openAddProviderSettings }}";
+    assert.equal(lineCount(controls, action), 2, 'the desktop list or the mobile sheet offers "Add new provider" without the picker decorations');
+    assert.equal(lineCount(controls, 'openAddProviderSettings }'), 2, 'ModelControls offers another add-provider entry');
+    assert.equal(lineCount(controls, 'onClick={openAddProviderSettings}'), 0, 'ModelControls offers another add-provider entry');
+    has(source('packages/ui/src/components/model-picker/ModelPickerList.tsx'), /\{searchAction \? \(\s*<button\s+type="button"\s+onClick=\{searchAction\.onSelect\}/, 'the picker list no longer draws the search action only when it is given');
     has(source('packages/ui/src/lib/product-plugins.ts'), /offersAddProvider: first\.offersAddProvider !== false && second\.offersAddProvider !== false,/, 'composed picker decorations no longer withhold the add-provider row when one plugin does');
     has(source('packages/mittr-ui/src/providers/useMittrPickerFilter.ts'), /offersAddProvider: showOtherProviders,/);
   },
@@ -1047,77 +1128,93 @@ const checks = {
     const logos = source('packages/ui/src/hooks/useProviderLogo.ts');
     has(logos, /providerId && remoteModelCatalogAllowed\(\) \? `https:\/\/models\.dev\/logos\/\$\{providerId\}\.svg` : null/, 'provider logos no longer ask whether the remote model catalog is allowed');
     assert.equal(lineCount(logos, 'models.dev/logos'), 1, 'another models.dev logo URL is built outside the remote-catalog check');
-    const store = source('packages/ui/src/stores/useConfigStore.ts');
+    const store = source('packages/ui/src/stores/config/metadata.ts');
+    has(store, /^import \{ remoteModelCatalogAllowed \} from '@\/lib\/product-plugins';$/m, 'the metadata load no longer asks whether the remote catalog is allowed');
     has(store, /const sources = remoteModelCatalogAllowed\(\) \? \[MODELS_DEV_PROXY_URL, MODELS_DEV_API_URL\] : \[MODELS_DEV_PROXY_URL\];/, 'the metadata load no longer skips models.dev when the remote catalog is off');
-    assert.equal(lineCount(store, 'MODELS_DEV_API_URL'), 2, 'models.dev is fetched from another place in the config store');
+    assert.equal(lineCount(store, 'MODELS_DEV_API_URL'), 2, 'models.dev is fetched from another place in the metadata store');
+    const elsewhere = fs.globSync('packages/ui/src/**/*.{ts,tsx}', { cwd: repoRoot })
+      .filter((file) => !/\.test\.tsx?$/.test(file) && file !== 'packages/ui/src/stores/config/metadata.ts' && file !== 'packages/ui/src/hooks/useProviderLogo.ts')
+      .filter((file) => source(file).includes('https://models.dev'));
+    assert.deepEqual(elsewhere, [], 'the window reaches models.dev from a place the remote-catalog switch does not cover');
     has(source('packages/mittr-ui/src/product-ui-plugin.tsx'), /remoteModelCatalog: false,/);
   },
 
-  'engine-outbound-switches': (t) => {
-    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
-    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run the probe with --only outbound again, then update this pin');
-    const binary = path.join(repoRoot, 'packages/electron/resources/opencode-cli/opencode');
-    if (!fs.existsSync(binary)) {
-      t.diagnostic('the engine binary is not prepared here, so only the pin is checked');
-      return;
-    }
-    const bytes = fs.readFileSync(binary);
-    for (const name of ['OPENCODE_DISABLE_MODELS_FETCH', 'OPENCODE_DISABLE_AUTOUPDATE']) {
-      assert.ok(bytes.includes(`process.env.${name}`), `the bundled engine no longer reads ${name}, so it reaches a third party again`);
-    }
+  'engine-outbound-switches': () => {
+    assert.equal(engineVersion(), ENGINE_VERSION, 'the bundled engine moved: run the probe with --only outbound again, then update this pin');
+    const serve = source('packages/electron/opencode-server/serve.mjs');
+    has(serve, /if \(options\.command === 'unsupported'\) \{[\s\S]*?process\.exit\(2\);\s*\}\s*const \{ configureAssets \}[\s\S]*?const \{ run \} = await import\('\.\/server\.mjs'\);/, 'the bundled engine runs something other than its server, which may check for its own updates');
+    const server = source('packages/electron/opencode-server/server.mjs');
+    has(server, /url: process\.env\.OPENCODE_MODELS_URL,\s*file: process\.env\.OPENCODE_MODELS_PATH,\s*fetch: !truthy\(process\.env\.OPENCODE_DISABLE_MODELS_FETCH\),/, 'the bundled engine no longer reads OPENCODE_DISABLE_MODELS_FETCH, so it reaches models.opencode.ai again');
+    const core = engineSource('@opencode/core');
+    has(core, /var defaultSource = "https:\/\/models\.opencode\.ai";/, 'the engine catalog moved off models.opencode.ai');
+    has(core, /const source = options\?\.url \|\| defaultSource;\s*const fetch = options\?\.fetch \?\? true;/, 'the engine catalog no longer takes the fetch switch');
+    for (const name of ['@opencode/server', '@opencode/core']) assert.ok(!engineSource(name).includes('OPENCODE_DISABLE_AUTOUPDATE'), `${name} reads OPENCODE_DISABLE_AUTOUPDATE again: decide whether the server-only engine updates itself`);
   },
 
-  'engine-ripgrep-bin': (t) => {
-    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
-    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: read how it finds rg again, then update this pin');
-    const binary = path.join(repoRoot, 'packages/electron/resources/opencode-cli/opencode');
-    if (!fs.existsSync(binary)) {
-      t.diagnostic('the engine binary is not prepared here, so only the pin is checked');
-      return;
-    }
-    const text = fs.readFileSync(binary, 'latin1');
-    assert.match(text, /\w+=process\.env\.XDG_CACHE_HOME\|\|/, 'the engine no longer takes its cache folder from XDG_CACHE_HOME');
-    assert.match(text, /bin:\w+\.join\(\w+,"bin"\)/, 'the engine bin folder is no longer <cache>/bin');
-    assert.match(text, /\.join\(\w+\.bin,"rg"\);if\(yield\*\w+\.isFile\(\w+\)/, 'the engine no longer runs <cache>/opencode/bin/rg before downloading one');
+  'engine-ripgrep-bin': () => {
+    assert.equal(engineVersion(), ENGINE_VERSION, 'the bundled engine moved: read how it finds rg again, then update this pin');
+    const roots = engineSource('@opencode/util');
+    has(roots, /const cache = process\.env\.XDG_CACHE_HOME \|\| \(home \? path\.join\(home, "\.cache"\) : undefined\);/, 'the engine no longer takes its cache folder from XDG_CACHE_HOME');
+    has(roots, /cache: path\.join\(cache, app\),/, 'the engine cache folder is no longer <XDG_CACHE_HOME>/opencode');
+    has(roots, /bin: path\.join\(cache, "bin"\),/, 'the engine bin folder is no longer <cache>/bin');
+    const core = engineSource('@opencode/core');
+    has(core, /const system = yield\* Effect\.sync\(\(\) => findExecutable\(process\.platform === "win32" \? "rg\.exe" : "rg"\)\);\s*if \(system && \(yield\* fs\.isFile\(system\)\.pipe\(Effect\.orDie\)\)\)\s*return system;\s*const target = path\.join\(global\.bin, `rg\$\{process\.platform === "win32" \? "\.exe" : ""\}`\);\s*if \(yield\* fs\.isFile\(target\)\.pipe\(Effect\.orDie\)\)\s*return target;/, 'the engine no longer runs the rg on PATH, then <cache>/opencode/bin/rg, before downloading one');
+    has(core, /const VERSION = "15\.1\.0";/, 'the engine downloads another ripgrep version');
   },
 
-  'engine-skill-folders': (t) => {
-    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
-    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run the probe with --only skills-mcp again, then update this pin');
-    const binary = path.join(repoRoot, 'packages/electron/resources/opencode-cli/opencode');
-    if (!fs.existsSync(binary)) {
-      t.diagnostic('the engine binary is not prepared here, so only the pin is checked');
-      return;
-    }
-    const text = fs.readFileSync(binary, 'latin1');
-    assert.match(text, /path:\w+\.make\(\w+\.join\(\w+,"skills"\)\)/, 'the engine no longer reads skills from <config dir>/skills');
-    assert.ok(text.includes('scan("{*.md,**/SKILL.md}",{cwd:'), 'the engine no longer finds a skill as <folder>/SKILL.md');
-    assert.match(text, /:\w+\.basename\(\w+\.dirname\(\w+\)\),/, 'the engine no longer takes a skill id from its folder name');
+  'engine-skill-folders': () => {
+    assert.equal(engineVersion(), ENGINE_VERSION, 'the bundled engine moved: run the probe with --only skills-mcp again, then update this pin');
+    const core = engineSource('@opencode/core');
+    has(core, /add\(DirectorySource2\.make\(\{ type: "directory", path: AbsolutePath2\.make\(path\.join\(directory, "skills"\)\) \}\)\);/, 'the engine no longer reads skills from <config dir>/skills');
+    has(core, /const skill = children\.find\(\(child\) => child\.type === "File" && child\.name === "SKILL\.md"\);/, 'the engine no longer finds a skill as <folder>/SKILL.md');
+    has(core, /if \(item\.depth === 0\)\s*files\.push\(\.\.\.children\.filter\(\(child\) => child\.type === "File" && child\.name\.endsWith\("\.md"\)\)/, 'the engine no longer takes a top-level .md as a skill');
+    has(core, /entries\.filter\(\(entry\) => !entry\.name\.startsWith\("\."\)/, 'the engine skill scan changed which folders it skips');
+    has(core, /const id = path\.dirname\(filepath\) === directory && path\.basename\(filepath\) !== "SKILL\.md" \? path\.basename\(filepath, "\.md"\) : path\.basename\(path\.dirname\(filepath\)\);/, 'the engine no longer takes a skill id from its folder name');
   },
+  'engine-session-database': () => {
+    assert.equal(engineVersion(), ENGINE_VERSION, 'the bundled engine moved: read its migrations and 1.x import again, then update this pin');
+    const core = engineSource('@opencode/core');
+    const ids = [...core.matchAll(/\bid: "(20\d{12}_\w+)"/g)].map((match) => match[1]);
+    assert.ok(ids.length > 20, 'the engine migrations are no longer found by id');
+    assert.equal(ids.sort().at(-1), NEWEST_MIGRATION, 'the engine ships a newer migration than the one the backup looks for');
+    has(core, /INSERT INTO \$\{sql\.identifier\("migration"\)\} \(id, time_completed\) VALUES \(\$\{migration\.id\},/, 'an applied migration is no longer recorded by id in the migration table');
+    const coreDir = enginePackageDir('@opencode/core', enginePackageDir('@opencode/server', path.join(repoRoot, 'packages/electron')));
+    const importer = JSON.parse(fs.readFileSync(path.join(coreDir, 'package.json'), 'utf8')).imports['#v1-migration'];
+    assert.deepEqual([importer.bun, importer.node, importer.default], ['./dist/database/v1-migration.bun.js', './dist/database/v1-migration.noop.js', './dist/database/v1-migration.noop.js'], 'the 1.x importer is no longer Bun only: the bundled engine may be able to import again');
+
+    const lifecycle = source('packages/web/server/lib/opencode/lifecycle.ts');
+    has(lifecycle, /await applyOpencodeBinaryFromSettings\(\{ strict: true \}\);\s*const resolvedBinary = ensureOpencodeCliEnv\(\);\s*const managedOpenCodeEnv = await getManagedOpenCodeEnv\(\);/, 'the engine binary is no longer settled before plugins give the engine environment');
+    const env = source('packages/web/server/lib/opencode/env-runtime.ts');
+    has(env, /if \(state\.resolvedOpencodeBinarySource !== 'bundled'\) \{\s*process\.env\.OPENCODE_BINARY = resolved;/, 'OPENCODE_BINARY no longer names a resolved CLI, or now names the bundled server too');
+    has(env, /process\.env\.OPENCHAMBER_BUNDLED_OPENCODE_SERVER_DIR,\s*desktopProcess\.resourcesPath \? path\.join\(desktopProcess\.resourcesPath, 'opencode-server'\) : null,/, 'the bundled server is looked for in other folders');
+    has(source('packages/web/server/lib/opencode/bundled-opencode-server.ts'), /^const ENTRY = 'serve\.mjs';$/m);
+  },
+
   'engine-share-config': () => {
     has(source('node_modules/@opencode/schema/dist/config.js'), /share: Schema\.Literals\(\["manual", "auto", "disabled"\]\)/, 'the engine config no longer takes share: "disabled"');
   },
 
   'engine-identity-hook': () => {
-    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
-    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P3 again, then update the identity plugin and this pin');
+    assert.equal(engineVersion(), ENGINE_VERSION, 'the bundled engine moved: run probe P3 again, then update the identity plugin and this pin');
   },
 
   'engine-launched-data-home': () => {
-    const server = source('packages/web/server/index.js');
+    const server = source('packages/web/server/runtime.ts');
     has(pluginContext(server), /launchedDataHome: \(\) => openCodeLifecycleRuntime\.getManagedOpenCodeProcessEnv\(\)\?\.XDG_DATA_HOME \?\? null,/, 'the plugin context no longer reports the data folder the engine was launched with');
 
-    const lifecycle = source('packages/web/server/lib/opencode/lifecycle.js');
+    const lifecycle = source('packages/web/server/lib/opencode/lifecycle.ts');
     has(lifecycle, /getManagedOpenCodeProcessEnv: \(\) => \(state\.isExternalOpenCode \? null : managedProcessEnv\),/, 'the lifecycle no longer reports the managed process env, or reports one for an external server');
     has(lifecycle, /const processEnv = [^;]*\.\.\.managedOpenCodeEnv,[\s\S]*?managedProcessEnv = processEnv;\s*let serverInstance;[\s\S]*?env: processEnv,/, 'the recorded env is no longer the one the managed process is spawned with');
+    has(lifecycle, /^ {2}let managedProcessEnv(?:: [^=]+)? = null;$/m, 'there is a launched env before the first launch');
+    has(lifecycle, /managedProcessEnv = null;\s*throw lastError\.cause;/, 'a launch that failed for good still reports its env');
   },
 
   'engine-refresh-restarts': () => {
-    const server = source('packages/web/server/index.js');
-    has(pluginContext(server), /refresh: async \(reason\) => \{ await refreshOpenCodeAfterConfigChange\(reason\); \},/, 'the plugin context no longer refreshes the managed OpenCode');
-    has(server, /const refreshOpenCodeAfterConfigChange = \(\.\.\.args\) => openCodeLifecycleRuntime\.refreshOpenCodeAfterConfigChange\(\.\.\.args\);/, 'index.js no longer refreshes through the lifecycle');
+    const server = source('packages/web/server/runtime.ts');
+    has(pluginContext(server), /refresh: async \(reason(?:: string)?\) => \{ await refreshOpenCodeAfterConfigChange\(reason\); \},/, 'the plugin context no longer refreshes the managed OpenCode');
+    has(server, /const refreshOpenCodeAfterConfigChange(?:: [^=]+)? = \(\.\.\.args\) => openCodeLifecycleRuntime\.refreshOpenCodeAfterConfigChange\(\.\.\.args\);/, 'index.js no longer refreshes through the lifecycle');
 
-    const lifecycle = source('packages/web/server/lib/opencode/lifecycle.js');
+    const lifecycle = source('packages/web/server/lib/opencode/lifecycle.ts');
     const start = lifecycle.indexOf('const refreshOpenCodeAfterConfigChange = async (reason');
     const end = lifecycle.indexOf('const bootstrapOpenCodeAtStartup', start);
     assert.ok(start >= 0 && end > start, 'the lifecycle no longer defines refreshOpenCodeAfterConfigChange before the startup bootstrap');
@@ -1131,10 +1228,11 @@ const checks = {
     has(footer, /^import \{ ProductSlot \} from '@\/lib\/product-plugins';$/m, 'SidebarFooter no longer imports ProductSlot');
     assert.equal(lineCount(footer, '<ProductSlot '), 1, 'SidebarFooter renders ProductSlot more than once, or not at all');
     const runtime = footer.indexOf('{showRuntimeButtons ? (');
-    const about = footer.indexOf("t('sessions.sidebar.footer.actions.aboutOpenChamber')");
+    const settings = footer.indexOf("aria-label={t('sessions.sidebar.footer.actions.settings')}");
     const slot = footer.indexOf('<ProductSlot name="sidebar-footer" />');
+    const runtimeEnd = footer.indexOf(') : null}', runtime);
     const update = footer.indexOf('{showUpdateButton ? (');
-    assert.ok(runtime >= 0 && about > runtime && slot > about && update > slot, 'the sidebar-footer slot is no longer after the runtime buttons and before the update button');
+    assert.ok(runtime >= 0 && settings > runtime && slot > settings && runtimeEnd > slot && update > runtimeEnd, 'the sidebar-footer slot is no longer among the runtime buttons, after settings and before the update button');
     has(source('packages/ui/src/lib/product-plugins.ts'), /'sidebar-footer': Record<never, never>;/);
   },
 
@@ -1152,7 +1250,7 @@ const checks = {
     const dialog = source('packages/ui/src/components/ui/AboutDialog.tsx');
     has(dialog, /^import \{ ProductSlot \} from '@\/lib\/product-plugins';$/m, 'AboutDialog no longer imports ProductSlot');
     assert.equal(lineCount(dialog, '<ProductSlot '), 1, 'AboutDialog renders ProductSlot more than once, or not at all');
-    const versions = dialog.indexOf("t('aboutDialog.openCodeVersionLabel'");
+    const versions = dialog.indexOf("{renderVersionRow('aboutDialog.openCodeVersionLabel', openCodeVersion)}");
     const slot = dialog.indexOf('<ProductSlot name="about-dialog" />');
     const diagnostics = dialog.indexOf('{showDiagnostics && (');
     assert.ok(versions >= 0 && slot > versions && diagnostics > slot, 'the about-dialog slot is no longer under the version lines');
@@ -1164,19 +1262,21 @@ const checks = {
     const page = source('packages/ui/src/components/sections/openchamber/AboutSettings.tsx');
     has(page, /^import \{ ProductSlot \} from '@\/lib\/product-plugins';$/m, 'AboutSettings no longer imports ProductSlot');
     assert.equal(lineCount(page, '<ProductSlot '), 1, 'AboutSettings renders ProductSlot more than once, or not at all');
-    const desktop = page.indexOf('// Desktop layout');
-    const updateError = page.lastIndexOf('{update.error && (');
+    const mobile = page.indexOf('if (isMobile) {');
+    const desktop = page.indexOf('const statusSeparator = ', mobile);
+    const updateRows = page.indexOf("<SettingsFieldRow label={t('settings.openchamber.about.field.openCodeVersion')}", desktop);
     const slot = page.indexOf('<ProductSlot name="about-settings" />');
-    const addresses = page.lastIndexOf("t('settings.openchamber.about.field.instanceUrls')");
-    assert.ok(desktop >= 0 && updateError > desktop && slot > updateError && addresses > slot, 'the about-settings slot is no longer in the desktop layout between the update rows and the instance addresses');
+    const addresses = page.indexOf("<InstanceServiceUrls label={t('settings.openchamber.about.field.instanceUrls')} />", desktop);
+    assert.ok(mobile >= 0 && desktop > mobile && updateRows > desktop && slot > updateRows && addresses > slot, 'the about-settings slot is no longer in the desktop layout between the update rows and the instance addresses');
+    has(page.slice(slot, addresses), /^<ProductSlot name="about-settings" \/>\s*$/, 'something now sits between the about-settings slot and the instance addresses');
     has(source('packages/ui/src/lib/product-plugins.ts'), /'about-settings': Record<never, never>;/);
   },
 
   'model-controls-auto-entry': () => {
     const controls = source('packages/ui/src/components/chat/ModelControls.tsx');
     has(controls, /const offeredAutoEntry = autoEntry && isProductModelAllowed\(autoEntry\.providerID\) \? autoEntry : null;/, 'the Auto entry no longer follows the picker decorations');
-    assert.equal(lineCount(controls, 'leadingEntry={offeredAutoEntry}'), 1, 'the desktop picker no longer leads with the offered Auto entry');
-    has(controls, /const mobileAutoEntry = offeredAutoEntry && /, 'the mobile sheet no longer offers only the offered Auto entry');
+    assert.equal(lineCount(controls, 'leadingEntry={offeredAutoEntry}'), 2, 'the desktop list or the mobile sheet no longer leads with the offered Auto entry');
+    has(sliceBetween(controls, 'const renderMobileModelPanel = () => {', 'const renderMobileModelDetails = () => {'), /leadingEntry=\{offeredAutoEntry\}/, 'the mobile sheet no longer offers only the offered Auto entry');
     assert.equal(controls.match(/\bautoEntry\b/g)?.length, 4, 'the Auto entry is used somewhere it does not follow the picker decorations');
     has(source('packages/ui/src/lib/routing/autoModel.ts'), /^export const AUTO_PROVIDER_ID = 'openchamber';$/m, 'the Auto sentinel provider moved');
     has(source('packages/mittr-ui/src/providers/useMittrPickerFilter.ts'), /isProviderShown: \(providerId\) => showOtherProviders \|\| providerId === MITTR_PROVIDER_ID,/);
@@ -1185,18 +1285,19 @@ const checks = {
   'config-store-fresh-providers': () => {
     const store = source('packages/ui/src/stores/useConfigStore.ts');
     has(store, /^export const useConfigStore = create<ConfigStore>\(\)\(/m, 'useConfigStore is no longer a zustand store with getState');
-    has(store, /loadProviders: \(options\?: \{ directory\?: string \| null; source\?: string; fresh\?: boolean \}\) => Promise<void>;/, 'loadProviders no longer takes fresh');
-    has(store, /if \(existing && options\?\.fresh\) \{\s*await existing\.catch\(\(\) => undefined\);/, 'a fresh provider load no longer waits out the one in flight');
-    has(store, /opencodeClient\.getProvidersForConfig\(fromDirectoryKey\(directoryKey\), \{ fresh: options\?\.fresh \}\)/, 'a fresh provider load no longer reaches the client as fresh');
+    has(source('packages/ui/src/stores/config/types.ts'), /loadProviders: \(options\?: \{ directory\?: string \| null; source\?: string; fresh\?: boolean \}\) => Promise<void>;/, 'loadProviders no longer takes fresh');
+    const providers = source('packages/ui/src/stores/config/providers.ts');
+    has(providers, /if \(existing && options\?\.fresh\) \{\s*await existing\.catch\(\(\) => undefined\);/, 'a fresh provider load no longer waits out the one in flight');
+    has(providers, /opencodeClient\.getProvidersForConfig\(fromDirectoryKey\(directoryKey\), \{ fresh: options\?\.fresh \}\)/, 'a fresh provider load no longer reaches the client as fresh');
     has(source('packages/ui/src/lib/opencode/client.ts'), /async getProvidersForConfig\(directory\?: string \| null, options\?: \{ fresh\?: boolean \}\): Promise<ProviderCatalog> \{[\s\S]{0,300}if \(existing && options\?\.fresh\) \{\s*await existing\.catch\(\(\) => undefined\)/, 'the client no longer waits out an in-flight provider read for a fresh one');
     has(source('packages/mittr-ui/src/providers/useMittrPickerFilter.ts'), /useConfigStore\.getState\(\)\.loadProviders\(\{ fresh: true, source: 'mittr:provider-lock' \}\)/);
   },
 
   'quota-provider-registry': async () => {
-    const { registerQuotaProvider: registerRegistered } = await importUpstream('packages/web/server/lib/quota/providers/registered.js');
-    const { registerQuotaProvider, fetchQuotaForProvider } = await importUpstream('packages/web/server/lib/quota/providers/index.js');
+    const { registerQuotaProvider: registerRegistered } = await importUpstream('packages/web/server/lib/quota/providers/registered.ts');
+    const { registerQuotaProvider, fetchQuotaForProvider } = await importUpstream('packages/web/server/lib/quota/providers/index.ts');
     assert.equal(typeof registerQuotaProvider, 'function', 'the quota provider registry no longer exports registerQuotaProvider');
-    assert.doesNotMatch(source('packages/web/server/lib/quota/providers/registered.js'), /^import /m, 'registered.js imports something, so the server would load it (and its imports) at start');
+    assert.doesNotMatch(source('packages/web/server/lib/quota/providers/registered.ts'), /^import (?!type )/m, 'registered.js imports something, so the server would load it (and its imports) at start');
     assert.equal(registerQuotaProvider, registerRegistered, 'the registry no longer takes its run-time providers from registered.js');
     const entry = { providerId: 'contract-probe', providerName: 'Probe', isConfigured: () => true, fetchQuota: async () => ({ providerId: 'contract-probe', ok: true }) };
     const unregister = registerQuotaProvider(entry);
@@ -1208,7 +1309,7 @@ const checks = {
     }
     assert.equal((await fetchQuotaForProvider('contract-probe')).ok, false, 'unregistering no longer removes the provider');
 
-    const { buildResult, toUsageWindow } = await importUpstream('packages/web/server/lib/quota/utils/formatters.js');
+    const { buildResult, toUsageWindow } = await importUpstream('packages/web/server/lib/quota/utils/formatters.ts');
     const window = toUsageWindow({ usedPercent: 60, windowSeconds: 604800, resetAt: 1_760_000_000_000, valueLabel: '20 of 50 left' });
     assert.deepEqual(
       { used: window.usedPercent, remaining: window.remainingPercent, seconds: window.windowSeconds, resetAt: window.resetAt, label: window.valueLabel },
@@ -1219,7 +1320,7 @@ const checks = {
     assert.equal(result.usage.windows.weekly, window);
     assert.equal(buildResult({ providerId: 'p', providerName: 'P', ok: false, configured: true, error: 'x' }).error, 'x');
 
-    const server = source('packages/web/server/index.js');
+    const server = source('packages/web/server/runtime.ts');
     has(pluginContext(server), /^\s+registerQuotaProvider,$/m, 'the server plugin context no longer hands plugins registerQuotaProvider');
     has(pluginContext(server), /^\s+quotaResult: \{ buildResult: buildQuotaResult, toUsageWindow \},$/m, 'the server plugin context no longer hands plugins the quota result helpers');
     has(server, /import \{ registerQuotaProvider \} from '\.\/lib\/quota\/providers\/registered\.js';/);
@@ -1227,7 +1328,7 @@ const checks = {
   },
 
   'quota-provider-exclusive': async () => {
-    const { registerQuotaProvider, builtInQuotaProvidersShown } = await importUpstream('packages/web/server/lib/quota/providers/registered.js');
+    const { registerQuotaProvider, builtInQuotaProvidersShown } = await importUpstream('packages/web/server/lib/quota/providers/registered.ts');
     assert.equal(builtInQuotaProvidersShown(), true, 'the built-in quota providers are hidden with no exclusive provider registered');
     const probe = { providerId: 'contract-alone', providerName: 'Alone', isConfigured: () => true, fetchQuota: async () => ({ providerId: 'contract-alone', ok: true }) };
     const unregister = registerQuotaProvider(probe, { exclusive: true });
@@ -1237,11 +1338,11 @@ const checks = {
       unregister();
     }
     assert.equal(builtInQuotaProvidersShown(), true, 'removing the exclusive provider no longer brings the built-in quota providers back');
-    const registry = source('packages/web/server/lib/quota/providers/index.js');
-    has(registry, /const builtInProviders = \(\) => \(builtInQuotaProvidersShown\(\) \? Object\.entries\(registry\) : \[\]\);/, 'the provider list no longer leaves the built-in providers out while an exclusive one is registered');
-    has(registry, /for \(const \[id, provider\] of \[\.\.\.builtInProviders\(\), \.\.\.registeredQuotaProviders\(\)\]\)/, 'the provider list no longer reads the built-in providers through the exclusive check');
-    has(registry, /Object\.hasOwn\(registry, providerId\)\s*\? \(builtInQuotaProvidersShown\(\) \? registry\[providerId\] : undefined\)/, 'the dispatcher no longer refuses a built-in provider while an exclusive one is registered');
-    assert.equal(lineCount(registry, 'registry[providerId]'), 1, 'the dispatcher reaches a built-in provider some other way');
+    const registry = source('packages/web/server/lib/quota/providers/index.ts');
+    has(registry, /const builtInProviders = \(\)(?:: [^=]+)? => \(builtInQuotaProvidersShown\(\) \? Object\.entries\(registry\) : \[\]\);/, 'the provider list no longer leaves the built-in providers out while an exclusive one is registered');
+    has(registry, /const providerEntries = \(\)(?:: [^=]+)? => \[\.\.\.builtInProviders\(\), \.\.\.extensionQuotaProviderEntries\(\), \.\.\.registeredQuotaProviders\(\)\];/, 'the provider list no longer reads the built-in providers through the exclusive check');
+    has(registry, /Object\.hasOwn\(registry, String\(providerId\)\)\s*\? \(builtInQuotaProvidersShown\(\) \? registry\[String\(providerId\)\] : undefined\)/, 'the dispatcher no longer refuses a built-in provider while an exclusive one is registered');
+    assert.equal(lineCount(registry, 'registry[String(providerId)]'), 1, 'the dispatcher reaches a built-in provider some other way');
     has(source('packages/mittr-server/src/mittr/index.js'), /\}\), \{ exclusive: true \}\);/, 'Mittr no longer registers as the only usage provider');
   },
 
@@ -1273,8 +1374,10 @@ const checks = {
     assert.equal(lineCount(message, 'translateProductMessageError('), 1, 'ChatMessage asks for a product error text more than once, or not at all');
     const memo = message.indexOf('const assistantError = React.useMemo(');
     const asked = message.indexOf('translateProductMessageError({ type, message: errorText, status, responseBody: response?.body, providerID: message.info.providerID })');
-    const upstreamText = message.indexOf('`Opencode failed to send message with error: ${detail}`');
+    const upstreamText = message.indexOf('return assistantErrorNotice(message.info);');
     assert.ok(memo >= 0 && asked > memo && upstreamText > asked, 'the product error text is no longer asked for first in the assistantError memo');
+    assert.equal(lineCount(message, 'assistantErrorNotice('), 1, 'ChatMessage reads upstream\'s error text somewhere the product text does not come first');
+    has(source('packages/ui/src/lib/messages/assistantError.ts'), /^export const assistantErrorNotice = \(info: Message\): AssistantErrorNotice \| null => \{/m, 'upstream\'s error texts moved out of assistantErrorNotice');
     has(message, /const \{ type, message: errorText, status, response \} = message\.info\.error;\s*const productText = translateProductMessageError\([^)]*\);\s*if \(productText !== null\) \{\s*return \{ text: productText \};/, 'a product error text no longer replaces the error text');
     has(message, /errorMessage=\{assistantErrorText\}/, 'the error text no longer reaches MessageBody');
     assert.equal(lineCount(message, '<ProductSlot '), 1, 'ChatMessage renders ProductSlot more than once, or not at all');
@@ -1282,25 +1385,28 @@ const checks = {
     const assistantBody = message.lastIndexOf('<MessageBody');
     const dialog = message.indexOf('<ToolOutputDialog');
     assert.ok(assistantBody >= 0 && slot > assistantBody && dialog > slot, 'the assistant-message-footer slot is no longer right under the assistant message body');
-    has(message, /\) : \(\s*<div className="relative" data-assistant-bubble="">\s*<MessageBody\s+sessionId=\{message\.info\.sessionID\}/, 'the last MessageBody is no longer the assistant branch, or its container lost data-assistant-bubble');
+    has(message, /\) : \(\s*<div\s+className="relative"\s+data-assistant-bubble=""\s+data-reply-joins-above=\{joinsReplyAbove \? '' : undefined\}\s+data-reply-joins-below=\{joinsReplyBelow \? '' : undefined\}\s*>\s*<MessageBody\s+sessionId=\{message\.info\.sessionID\}/, 'the last MessageBody is no longer the assistant branch, or its container lost data-assistant-bubble or the edges a turn\'s steps are joined by');
     assert.equal(lineCount(message, 'data-assistant-bubble'), 1, 'ChatMessage marks more than one container as the assistant bubble, or none');
     const plugins = source('packages/ui/src/lib/product-plugins.ts');
     has(plugins, /'assistant-message-footer': \{ message: \{ info: Message; parts: Part\[\] \}; isLatestTurn: boolean \};/);
     has(plugins, /type ProductMessageError = \{ type: string; message: string; status\?: number; responseBody\?: string; providerID\?: string \};/);
     has(plugins, /messageError\?: \(error: ProductMessageError\) => string \| null;/);
-    has(source('node_modules/@opencode/client/dist/promise/generated/types.d.ts'), /export type SessionStructuredError = \{\s*type: string;\s*message: string;\s*status\?: number;\s*response\?: \{\s*body: string;\s*\};\s*\};/, 'the engine error no longer carries type, message, status and response.body');
+    has(source('node_modules/@opencode/client/dist/promise/generated/types.d.ts'), /export type SessionStructuredError = \{\s*type: string;\s*message: string;\s*status\?: number;\s*response\?: \{\s*body: string;\s*\};[^}]*\};/, 'the engine error no longer carries type, message, status and response.body');
   },
 
   'session-store-send-message': () => {
     const store = source('packages/ui/src/sync/session-ui-store.ts');
-    const signature = /sendMessage: (?:async )?\(\s*content: string,\s*providerID: string,\s*modelID: string,\s*agent\?: string,\s*attachments\?: AttachedFile\[\],\s*agentMentionName\?: string,\s*additionalParts\?: Array<\{ text: string; attachments\?: AttachedFile\[\]; synthetic\?: boolean; [^>]*\}>,\s*variant\?: string,\s*inputMode\?: "normal" \| "shell",\s*options\?: SendMessageOptions,\s*\) =>/g;
+    const signature = /sendMessage: (?:async )?\(\s*content: string,\s*providerID: string,\s*modelID: string,\s*agent\?: string,\s*attachments\?: AttachedFile\[\],\s*agentMentionName\?: string,\s*additionalParts\?: Array<\{ text: string; attachments\?: AttachedFile\[\]; synthetic\?: boolean; [^>]*\}>,\s*variant\?: string(?: \| null)?,\s*inputMode\?: "normal" \| "shell",\s*options\?: SendMessageOptions,\s*\) =>/g;
     assert.equal(store.match(signature)?.length, 2, 'the store sendMessage no longer takes (content, providerID, modelID, agent, attachments, agentMentionName, additionalParts, variant, inputMode, options) in its type and its implementation');
-    has(store, /type SendMessageOptions = \{[^}]*\bsessionId\?: string\s+directory\?: string/, 'SendMessageOptions no longer takes sessionId and directory');
+    has(store, /^import type \{ SendMessageOptions \} from "\.\/send-message-options"$/m, 'the store sendMessage no longer takes upstream\'s SendMessageOptions');
+    has(source('packages/ui/src/sync/send-message-options.ts'), /export type SendMessageOptions = \{[^}]*\bsessionId\?: string\s+directory\?: string/, 'SendMessageOptions no longer takes sessionId and directory');
     has(store, /const targetSessionId = capturedTarget\?\.sessionId \?\? options\?\.sessionId \?\? get\(\)\.currentSessionId/, 'sendMessage no longer sends to options.sessionId');
-    has(store, /const files = attachments\?\.map\(\(a\) => \(\{\s*type: "file" as const,\s*mime: a\.mimeType,\s*url: a\.dataUrl,\s*filename: a\.filename,\s*\}\)\)/, 'attachments no longer travel as their dataUrl, mimeType and filename');
+    has(store, /const files = attachments\?\.map\(\(a\) => \(\{\s*type: "file" as const,\s*mime: a\.mimeType,\s*url: a\.dataUrl,\s*filename: attachmentWireName\(a\),\s*\}\)\)/, 'attachments no longer travel as their dataUrl, mimeType and filename');
+    has(source('packages/ui/src/lib/attachmentIdentity.ts'), /export const attachmentWireName = \(attachment: AttachmentIdentity\): string =>\s*attachment\.agentPath \?\? attachment\.filename;/, 'an attachment without a desktop path no longer travels under its filename');
     has(store, /const contextItems = \(params\.additionalParts \?\? \[\]\)\s*\.filter\(\(part\) => part\.text\.trim\(\)\.length > 0\)/, 'additional parts no longer become context items');
-    has(store, /const selection = resolveSendSelection\(params\.sessionId, requestDirectory, \{/, 'a send no longer switches the model and agent only when needed');
-    has(store, /\/\/ Normal prompt — optimistic insert so message appears instantly\s*await optimisticSend\(\{/, 'a normal prompt is no longer inserted optimistically');
+    has(store, /const sendSelection = \(\) => resolveCheckedSendSelection\(params\.sessionId, sendDirectory\(\), \{/, 'a send no longer switches the model and agent only when needed');
+    has(source('packages/ui/src/sync/session-selection.ts'), /export async function resolveCheckedSendSelection\([\s\S]{0,300}const selection = await resolveSendSelection\(sessionId, directory, desired\)/, 'the checked send selection no longer starts from resolveSendSelection');
+    has(store, /\n {2}await optimisticSend\(\{\s*runtimeKey: params\.runtimeKey,\s*sessionId: params\.sessionId,\s*content: params\.content,/, 'a normal prompt is no longer inserted optimistically');
     has(source('packages/ui/src/lib/opencode/client.ts'), /for \(const item of context\) \{\s*await admitSynthetic\(item\)\s*\}[\s\S]{0,200}await prompt\(skills\.attached\)/, 'the context is no longer admitted right before the prompt');
     has(source('packages/ui/src/stores/types/sessionTypes.ts'), /export interface AttachedFile \{\s*id: string;\s*file: File;\s*dataUrl: string;\s*mimeType: string;\s*filename: string;\s*size: number;\s*source: "local" \| "server" \| "vscode";/, 'AttachedFile changed');
   },
@@ -1311,15 +1417,15 @@ const checks = {
     has(refs, /export function getSyncParts\(messageId: string, directory\?: string\) \{\s*return getDirectoryState\(directory\)\?\.part\[messageId\] \?\? \[\]/, 'getSyncParts no longer reads the message parts');
     has(source('packages/ui/src/sync/types.ts'), /^ {2}message: Record<string, Message\[\]>\n {2}part: Record<string, Part\[\]>$/m);
     const model = source('packages/ui/src/lib/opencode/model.ts');
-    has(model, /export type SyntheticMessage = MessageBase & \{\s*role: "synthetic"\s*time: \{ created: number \}\s*text: string\s*description\?: string\s*\}/, 'SyntheticMessage changed');
+    has(model, /export type SyntheticMessage = MessageBase & \{\s*role: "synthetic"\s*time: \{ created: number \}\s*text: string\s*description\?: string\s*pending\?: true\s*\}/, 'SyntheticMessage changed');
     has(model, /export type FilePart = PartBase & \{\s*type: "file"\s*mime: string\s*filename\?: string\s*url: string\s*\}/, 'FilePart changed');
-    has(model, /export type AgentPart = PartBase & \{\s*type: "agent"\s*name: string\s*\}/, 'AgentPart changed');
+    has(model, /^(?:export )?type AgentPart = PartBase & \{\s*type: "agent"\s*name: string\s*\}/m, 'AgentPart changed');
     has(model, /^ {2}agent: string\n {2}providerID: string\n {2}modelID: string\n {2}variant\?: string$/m, 'the assistant message no longer carries its agent, provider, model and variant');
     has(source('packages/ui/src/sync/session-ui-store.ts'), /^ {2}getDirectoryForSession: \(sessionId: string\) => string \| null$/m);
   },
 
   'quota-retry-button-ui': () => {
-    const button = source('packages/ui/src/components/ui/button.tsx');
+    const button = buttonSource();
     has(button, /^ {8}outline:$/m, 'the Button outline variant is gone');
     has(button, /^ {8}xs: "/m, 'the Button xs size is gone');
     const sprite = source('packages/ui/src/components/icon/sprite.ts');
@@ -1335,17 +1441,22 @@ const checks = {
 
   'quota-store-dropdown-providers': () => {
     const store = source('packages/ui/src/stores/useQuotaStore.ts');
-    has(store, /^ {6}dropdownProviderIds: QUOTA_PROVIDERS\.map\(\(provider\) => provider\.id\),$/m, 'the store no longer starts from the registered providers');
-    has(store, /const dropdownProviderIds = data\.usageDropdownProviders\s*\? data\.usageDropdownProviders\.filter\(/, 'a saved dropdown list is no longer filtered into a new list');
-    has(store, /loadSettings: async \(\) => \{\s*const generation = quotaGeneration;\s*try \{\s*const settings = await loadSettingsFromRuntime\(\);\s*if \(generation !== quotaGeneration\) return;\s*set\(settings\);\s*\} catch/, 'loadSettings no longer sets the settings only after a read');
-    has(store, /await get\(\)\.loadSettings\(\);/, 'the runtime load no longer reads loadSettings from the store');
+    has(store, /^ {6}\.\.\.defaultQuotaSettings\(\),$/m, 'the store no longer starts from the default usage settings');
+    has(store, /const defaultQuotaSettings = \(extensionProviders: readonly ExtensionQuotaProvider\[\] = \[\]\): QuotaSettingsState => \(\{[^}]*dropdownProviderIds: quotaProviderIds\(extensionProviders\),/, 'the store no longer starts from the registered providers');
+    has(source('packages/ui/src/lib/quota/extensionProviders.ts'), /export const quotaProviderList = \(extensionProviders: readonly ExtensionQuotaProvider\[\]\): QuotaProviderMeta\[\] => \(\s*extensionProviders\.length === 0\s*\? QUOTA_PROVIDERS\s*: \[\.\.\.QUOTA_PROVIDERS, /, 'the provider list no longer starts with the registered providers');
+    has(store, /const savedDropdownProviderIds = data\.usageDropdownProviders \?\? null;/, 'the saved dropdown list no longer comes from usageDropdownProviders');
+    has(store, /const resolveDropdownProviderIds = \(saved: readonly string\[\] \| null, known: readonly QuotaProviderId\[\]\): QuotaProviderId\[\] => \(\s*saved === null\s*\? \[\.\.\.known\]\s*: saved\.filter\(/, 'a saved dropdown list is no longer filtered into a new list');
+    has(store, /loadSettings: async \(\) => \{\s*const generation = quotaGeneration;\s*try \{\s*const settings = await loadSettingsFromRuntime\(get\(\)\.extensionProviders\);\s*if \(generation !== quotaGeneration\) return;\s*set\(\{ \.\.\.settings, dropdownProviderIds: resolveDropdownProviderIds\(settings\.savedDropdownProviderIds, /, 'loadSettings no longer sets the settings only after a read');
+    has(store, /get\(\)\.loadSettings\(\)/, 'the runtime load no longer reads loadSettings from the store');
     for (const file of ['packages/ui/src/hooks/useTraySync.ts', 'packages/ui/src/components/sections/usage/UsagePage.tsx', 'packages/ui/src/components/sections/usage/UsageSidebar.tsx', 'packages/ui/src/components/layout/Header.tsx']) {
       assert.doesNotMatch(source(file), /import \{[^}]*\bloadSettings\b[^}]*\} from '@\/stores\/useQuotaStore'/, `${file} imports a loadSettings that is not the store's`);
     }
-    has(source('packages/ui/src/hooks/useTraySync.ts'), /useQuotaStore\.getState\(\)\.loadSettings\(\)/, 'the tray no longer loads the usage settings through the store');
+    has(source('packages/ui/src/hooks/useTraySync.ts'), /^import \{ refreshTrayQuotas, useQuotaStore \} from '@\/stores\/useQuotaStore';$/m, 'the tray no longer loads the usage settings through the store');
+    has(store, /export const refreshTrayQuotas = \(initial = false\) => \{[^}]*refreshVisibleQuotas\(true\);/, 'the tray refresh no longer goes through the store load');
     has(source('packages/ui/src/hooks/useTraySync.ts'), /if \(!dropdownProviderIds\.includes\(meta\.id\)\) continue;/, 'the tray no longer lists only the dropdown providers');
     has(source('packages/ui/src/components/usage/usageGroups.ts'), /\.filter\(\(providerMeta\) => dropdownProviderIds\.includes\(providerMeta\.id\)\)/, 'the work-status panel no longer lists only the dropdown providers');
-    has(source('packages/ui/src/components/sections/usage/UsagePage.tsx'), /void updateDesktopSettings\(\{ usageDropdownProviders: next \}\);/, 'the Usage page no longer saves the dropdown list as usageDropdownProviders');
+    has(source('packages/ui/src/components/sections/usage/UsagePage.tsx'), /void updateDesktopSettings\(\{ usageDropdownProviders: setProviderInDropdown\(selectedProviderId, enabled\) \}\);/, 'the Usage page no longer saves the dropdown list as usageDropdownProviders');
+    has(store, /setProviderInDropdown: \(providerId, shown\) => \{\s*const \{ savedDropdownProviderIds, dropdownProviderIds, extensionProviders \} = get\(\);\s*const base: readonly string\[\] = savedDropdownProviderIds \?\? dropdownProviderIds;/, 'the dropdown list the Usage page saves no longer starts from the shown list');
   },
 
   'account-menu-ui': () => {
@@ -1371,17 +1482,17 @@ const checks = {
   },
 
   'ui-auth-provider-registry': (t) => {
-    const server = source('packages/web/server/index.js');
-    has(server, /^import \{ createUiAuth, registerUiAuthProvider \} from '\.\/lib\/ui-auth\/ui-auth\.js';$/m);
-    has(pluginContext(server), /uiAuth: \{\s*registerProvider: registerUiAuthProvider,\s*passwordEnabled: \(\) => typeof uiPassword === 'string' && uiPassword\.trim\(\)\.length > 0,\s*createClient: \(options\) => remoteClientAuthRuntime\.createClient\(options\),\s*\},/, 'the plugin context no longer hands plugins the UI auth provider registry');
-    const clients = source('packages/web/server/lib/client-auth/remote-clients.js');
+    const server = source('packages/web/server/runtime.ts');
+    has(server, /^import \{ createUiAuth,[^}]*\bregisterUiAuthProvider \} from '\.\/lib\/ui-auth\/ui-auth\.js';$/m);
+    has(pluginContext(server), /uiAuth: \{\s*registerProvider: registerUiAuthProvider,\s*passwordEnabled: \(\) => (?:typeof uiPassword === 'string'|isString\(uiPassword\)) && uiPassword\.trim\(\)\.length > 0,\s*createClient: \((options|input)(?:: [^)]+)?\) => remoteClientAuthRuntime\.createClient\(\1\),\s*\},/, 'the plugin context no longer hands plugins the UI auth provider registry');
+    const clients = source('packages/web/server/lib/client-auth/remote-clients.ts');
     has(clients, /const createClient = async \(\{\s*label,\s*fallbackLabel,\s*expiresAt,\s*clientKind,\s*dedupeKey,\s*authMethod,/, 'createClient no longer takes fallbackLabel, expiresAt and authMethod');
-    has(clients, /return \{ client: publicClient\(client\), token \};/, 'createClient no longer answers { client, token }');
+    has(clients, /return \{ client: publicClient\(client\), token(?:, [^}]*)? \};/, 'createClient no longer answers { client, token }');
     has(clients, /^const MAX_LABEL_LENGTH = 80;$/m, 'the remote clients store no longer cuts a label at 80 UTF-16 units, which clientLabelFor fits');
     has(clients, /return trimmed\.length > MAX_LABEL_LENGTH \? trimmed\.slice\(0, MAX_LABEL_LENGTH\) : trimmed;/, 'the remote clients store no longer trims and cuts a label by UTF-16 length');
     has(server, /const remoteClientAuthRuntime = createRemoteClientAuthRuntime\(\{/, 'the server no longer builds the remote clients store the plugin context mints from');
-    has(server, /const uiPassword = typeof options\.uiPassword === 'string'\s*\? options\.uiPassword\s*: \(typeof process\.env\.OPENCHAMBER_UI_PASSWORD === 'string' \? process\.env\.OPENCHAMBER_UI_PASSWORD : null\);/, 'the server no longer reads the UI password where the plugin context sees it');
-    has(source('packages/web/server/lib/opencode/bootstrap-runtime.js'), /createUiAuth\(\{\s*password: uiPassword,/, 'the UI auth controller no longer gets the same UI password');
+    has(server, /const uiPassword = (?:typeof options\.uiPassword === 'string'|isString\(options\.uiPassword\))\s*\? options\.uiPassword\s*: \((?:typeof process\.env\.OPENCHAMBER_UI_PASSWORD === 'string'|isString\(process\.env\.OPENCHAMBER_UI_PASSWORD\)) \? process\.env\.OPENCHAMBER_UI_PASSWORD : null\);/, 'the server no longer reads the UI password where the plugin context sees it');
+    has(source('packages/web/server/lib/server-frame/bootstrap-runtime.ts'), /createUiAuth\(\{\s*password: uiPassword,/, 'the UI auth controller no longer gets the same UI password');
 
     const script = `
       const { createUiAuth, registerUiAuthProvider } = await import(process.env.CONTRACT_UI_AUTH_URL);
@@ -1428,7 +1539,7 @@ const checks = {
       console.log(JSON.stringify({ before, enabledWhileRegistered, refused: { status: refused.statusCode, body: refused.body }, status: { code: status.statusCode, body: status.body }, withSession, claims, cleared: [].concat(cleared.headers['set-cookie'])[0], urlTokenBefore, urlTokenAfterSignOut, reset: reset.body, sessionAfterReset, after, afterStatus: afterStatus.body }));
     `;
     const { output } = runInTempHome(t, script, {
-      CONTRACT_UI_AUTH_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/ui-auth/ui-auth.js')).href,
+      CONTRACT_UI_AUTH_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/ui-auth/ui-auth.ts')).href,
     });
     assert.equal(output.before, true, 'a server without a UI password no longer lets requests through when no provider is registered');
     assert.equal(output.enabledWhileRegistered, true, 'the controller no longer reports itself enabled while a provider is registered, so sockets would skip auth');
@@ -1455,26 +1566,30 @@ const checks = {
 
   'server-cli-entry': () => {
     const cli = source('packages/web/bin/cli.js');
-    has(cli, /^const isCliExecution = isModuleCliExecution\(process\.argv\[1\], import\.meta\.url, fs\.realpathSync, 'openchamber'\);$/m, 'cli.js no longer decides it runs by comparing argv[1] with its own path');
-    has(source('packages/web/bin/cli-entry.js'), /if \(pathToFileURL\(normalizedEntryPath\)\.href === pathToFileURL\(normalizedModulePath\)\.href\) \{\s*return true;\s*\}/);
-    assert.equal(JSON.parse(source('packages/web/package.json')).bin.openchamber, './bin/cli.js');
-    has(source('packages/web/bin/cli-entry.js'), /return parsedEntryName === expectedBinName\.trim\(\)\.toLowerCase\(\);/, 'cli.js no longer takes an entry file named openchamber as being run directly');
-    const startup = source('packages/web/bin/lib/cli-startup.js');
-    has(startup, /const entry = typeof process\.argv\[1\] === 'string' && process\.argv\[1\]\.trim\(\)\.length > 0\s*\? process\.argv\[1\]/, 'the startup entry no longer comes from argv[1]');
+    has(cli, /^const runtime = await import\('\.\/cli-runtime\.js'\);$/m, 'cli.js no longer runs the CLI runtime');
+    has(cli, /if \(!process\.versions\.bun && existsSync\(sourceLoader\)\) await import\(sourceLoader\.href\);/, 'cli.js no longer loads the TypeScript sources under Node');
+    has(source('packages/web/bin/cli-runtime.ts'), /^const isCliExecution = isModuleCliExecution\(process\.argv\[1\], new URL\('\.\/cli\.js', import\.meta\.url\)\.href, fs\.realpathSync, 'openchamber'\);$/m, 'the CLI no longer decides it runs by comparing argv[1] with cli.js');
+    has(source('packages/web/bin/cli-entry.ts'), /if \(pathToFileURL\(normalizedEntryPath\)\.href === pathToFileURL\(normalizedModulePath\)\.href\) \{\s*return true;\s*\}/);
+    assert.equal(JSON.parse(source('packages/web/package.json')).bin.openchamber, './build/bin/cli.js');
+    has(source('packages/web/bin/cli-entry.ts'), /return parsedEntryName === expectedBinName\.trim\(\)\.toLowerCase\(\);/, 'cli.js no longer takes an entry file named openchamber as being run directly');
+    const startup = source('packages/web/bin/lib/cli-startup.ts');
+    has(startup, /const entry = process\.argv\[1\] !== undefined && process\.argv\[1\]\.trim\(\)\.length > 0\s*\? process\.argv\[1\]/, 'the startup entry no longer comes from argv[1]');
     has(startup, /const args = \[resolveCliEntrypoint\(\), 'serve', '--foreground', '--port'/, 'the startup arguments no longer begin with the entry');
     assert.equal(lineCount(startup, 'buildStartupArgs(options)'), 3, 'the systemd unit, the macOS wrapper and the Windows wrapper no longer all take their command from buildStartupArgs');
     const wrapper = source('packages/mittr-server/bin/mittrcraft.mjs');
-    has(wrapper, /const SERVER_CLI = path\.resolve\(here, '\.\.', '\.\.', 'web', 'bin', 'cli\.js'\);/, 'the mittrcraft bin no longer points at the server CLI');
+    has(wrapper, /const SERVER_CLI = serverCliOf\(path\.resolve\(here, '\.\.', '\.\.', 'web'\)\);/, 'the mittrcraft bin no longer points at the server CLI');
     has(wrapper, /^process\.argv\[1\] = ENTRY;$/m, 'the mittrcraft bin no longer sets argv[1] to the entry that startup units run');
     assert.equal(source('packages/mittr-server/bin/openchamber.mjs'), "import './mittrcraft.mjs';\n");
-    has(source('packages/web/bin/lib/cli-args.js'), /uiPassword: process\.env\.OPENCHAMBER_UI_PASSWORD \|\| undefined,/, 'the CLI no longer reads OPENCHAMBER_UI_PASSWORD, the name the bin maps MITTRCRAFT_UI_PASSWORD onto');
-    has(source('packages/web/server/lib/security/bind-host.js'), /env\?\.OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN === 'true'/, 'the server no longer reads OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN');
-    has(source('packages/web/server/index.js'), /process\.env\.OPENCHAMBER_DATA_DIR/, 'the server no longer reads OPENCHAMBER_DATA_DIR');
-    has(source('packages/web/server/lib/server-plugins.js'), /const SERVER_PLUGINS_ENV = 'OPENCHAMBER_SERVER_PLUGINS';/);
+    has(source('packages/web/bin/lib/cli-args.ts'), /uiPassword: injectedEnvKeys\(process\.env\)\.has\('OPENCHAMBER_UI_PASSWORD'\)\s*\? undefined\s*: process\.env\.OPENCHAMBER_UI_PASSWORD \|\| undefined,/, 'the CLI no longer reads OPENCHAMBER_UI_PASSWORD, the name the bin maps MITTRCRAFT_UI_PASSWORD onto');
+    has(source('packages/web/server/lib/security/bind-host.ts'), /env\?\.OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN === 'true'/, 'the server no longer reads OPENCHAMBER_ALLOW_UNAUTHENTICATED_LAN');
+    has(source('packages/web/server/runtime.ts'), /process\.env\.OPENCHAMBER_DATA_DIR/, 'the server no longer reads OPENCHAMBER_DATA_DIR');
+    has(source('packages/web/server/lib/server-plugins.ts'), /const SERVER_PLUGINS_ENV = 'OPENCHAMBER_SERVER_PLUGINS';/);
     assert.ok(fs.existsSync(path.join(repoRoot, 'packages/mittr-server/bin', '..', '..', 'web', 'bin', 'cli.js')));
+    assert.ok(fs.existsSync(path.join(repoRoot, 'packages/web/scripts/register-server-sources.mjs')), 'the workspace server CLI no longer has the source loader the mittrcraft bin looks for');
+    assert.ok(JSON.parse(source('packages/web/package.json')).files.includes('build'), 'the packed web package no longer carries the built CLI');
     has(wrapper, /const PRODUCT = path\.resolve\(here, 'product-env\.json'\);/, 'the mittrcraft bin no longer reads the product env beside it');
     has(wrapper, /productEnv: readProductEnv\(PRODUCT\),/, 'the mittrcraft bin no longer fills in the product env');
-    has(source('packages/web/bin/cli.js'), /process\.env\.BUN_BINARY/, 'the server CLI no longer reads BUN_BINARY');
+    has(source('packages/web/bin/cli-runtime.ts'), /process\.env\.BUN_BINARY/, 'the server CLI no longer reads BUN_BINARY');
   },
 
   'session-auth-methods-slot': () => {
@@ -1522,10 +1637,10 @@ const checks = {
     has(checkbox, /^export const Checkbox = React\.memo/m, 'Checkbox is no longer exported');
     for (const prop of ['checked: boolean;', 'onChange: (checked: boolean) => void;', 'disabled?: boolean;', 'ariaLabel?: string;']) assert.ok(checkbox.includes(prop), `Checkbox no longer takes ${prop}`);
     has(source('packages/ui/src/components/ui/input.tsx'), /^export \{ Input \}$/m, 'Input is no longer exported');
-    const button = source('packages/ui/src/components/ui/button.tsx');
+    const button = buttonSource();
     has(button, /^export \{ Button \}$/m, 'Button is no longer exported');
     has(button, /^ {8}outline:$/m, 'Button no longer has an outline variant');
-    has(button, /^ {8}icon: "size-9",$/m, 'Button no longer has an icon size');
+    has(button, /^ {8}icon: "size-\d+",$/m, 'Button no longer has an icon size');
     const sprite = source('packages/ui/src/components/icon/sprite.ts');
     for (const name of ['user', 'lock', 'key', 'loader-4']) has(sprite, new RegExp(`^ {2}"${name}": `, 'm'), `the ${name} icon is gone`);
     const url = source('packages/ui/src/lib/runtime-url.ts');
@@ -1543,7 +1658,7 @@ const checks = {
         const relative = path.join(dir, entry.name);
         if (entry.isDirectory()) {
           if (entry.name !== 'node_modules') walk(relative);
-        } else if (/\.(?:js|mjs)$/.test(entry.name) && !/\.test\.(?:js|mjs)$/.test(entry.name)) {
+        } else if (/\.(?:js|mjs|ts)$/.test(entry.name) && !/\.(?:test|spec)\.(?:js|mjs|ts)$|\.d\.ts$/.test(entry.name)) {
           for (const [name] of source(relative).matchAll(secretName)) read.add(name);
         }
       }
@@ -1557,11 +1672,11 @@ const checks = {
   },
 
   'agent-tool-token-slot': async (t) => {
-    const runtime = source('packages/web/server/lib/agent-tool/runtime.js');
+    const runtime = source('packages/web/server/lib/agent-tool/runtime.ts');
     has(runtime, /const TOKEN_SLOT = Symbol\.for\("openchamber\.agent-tool\.token"\)/, 'the agent tool no longer keeps its token in the slot the engine environment plugin fills');
-    const { createAgentToolRuntime } = await importUpstream('packages/web/server/lib/agent-tool/runtime.js');
+    const { createAgentToolRuntime } = await importUpstream('packages/web/server/lib/agent-tool/runtime.ts');
     const dataDir = tempDir(t, 'contract-agent-tool-');
-    const tools = createAgentToolRuntime({ crypto, fsPromises: fs.promises, path, dataDir, getActivePort: () => 3901, executeAction: async () => ({}) });
+    const tools = createAgentToolRuntime({ crypto, fsPromises: fs.promises, path, instanceDir: dataDir, getActivePort: () => 3901, executeAction: async () => ({}) });
     const dir = await tools.materializePlugin({ includeControl: true, includeWeb: false });
     const slot = Symbol.for(AGENT_TOOL_TOKEN_SLOT);
     const before = { token: process.env.OPENCHAMBER_AGENT_TOOL_TOKEN, url: process.env.OPENCHAMBER_AGENT_TOOL_URL, slot: globalThis[slot], fetch: globalThis.fetch };
@@ -1574,7 +1689,7 @@ const checks = {
       assert.equal(globalThis[slot], 'acme-from-env');
       globalThis[slot] = 'acme-from-slot';
       const added = {};
-      await loaded.setup({ tool: { transform: (edit) => edit({ add: (tool) => { added[tool.name] = tool; } }) } });
+      await loaded.setup({ tool: { transform: (edit) => edit({ add: (tool) => { added[tool.name] = tool; }, remove: () => {}, namespace: () => {} }) } });
       globalThis.fetch = async (_url, init) => {
         sent.push(init.headers.authorization);
         return new Response(JSON.stringify({ schemaVersion: 1, ok: true, action: 'projects.list', data: {} }));
@@ -1593,24 +1708,26 @@ const checks = {
   },
 
   'engine-child-env': () => {
-    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
-    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run scripts/mittr/prove-engine-child-env.mjs again, then update this pin');
+    assert.equal(engineVersion(), ENGINE_VERSION, 'the bundled engine moved: run scripts/mittr/prove-engine-child-env.mjs again, then update this pin');
+    const server = source('packages/electron/opencode-server/server.mjs');
+    has(server, /const serve = Effect\.fnUntraced\(function\* \(options\) \{[\s\S]{0,200}const environmentPassword = process\.env\.OPENCODE_PASSWORD \|\| process\.env\.OPENCODE_SERVER_PASSWORD \|\| undefined;[\s\S]{0,200}const password = environmentPassword \?\? /, 'the bundled engine no longer reads its password once, when serve starts');
+    assert.equal(lineCount(server, 'process.env.OPENCODE_PASSWORD ||'), 1, 'the bundled engine reads its password again after start');
   },
 
   'login-shell-env-before-plugins': () => {
-    const server = source('packages/web/server/index.js');
+    const server = source('packages/web/server/runtime.ts');
     const applied = server.search(/^applyLoginShellEnvSnapshot\(\);$/m);
     const plugins = server.indexOf('serverPlugins = await loadServerPlugins({');
     assert.ok(applied > 0, 'index.js no longer applies the login-shell snapshot when it is imported');
     assert.ok(plugins > applied, 'plugins are no longer set up after the login-shell snapshot is applied');
-    const runtime = source('packages/web/server/lib/opencode/env-runtime.js');
+    const runtime = source('packages/web/server/lib/opencode/env-runtime.ts');
     const apply = runtime.slice(runtime.indexOf('const applyLoginShellEnvSnapshot = () => {'));
-    has(apply, /for \(const \[key, value\] of Object\.entries\(snapshot\)\) \{\s*if \(skipKeys\.has\(key\)\) \{\s*continue;\s*\}\s*const existing = process\.env\[key\];\s*if \(typeof existing === 'string' && existing\.length > 0\) \{\s*continue;\s*\}\s*process\.env\[key\] = value;/, 'the login-shell snapshot no longer fills every variable process.env lacks');
+    has(apply, /for \(const \[key, value\] of Object\.entries\(snapshot\)\) \{\s*if \(skipKeys\.has\(key\)\) \{\s*continue;\s*\}\s*const existing = process\.env\[key\];\s*if \((?:typeof existing === 'string'|isString\(existing\)) && existing\.length > 0\) \{\s*continue;\s*\}\s*process\.env\[key\] = value;/, 'the login-shell snapshot no longer fills every variable process.env lacks');
     has(apply, /const skipKeys = new Set\(\['PWD', 'OLDPWD', 'SHLVL', '_', 'ARGV0'\]\);/, 'the login-shell snapshot skips other variables now');
   },
 
   'plugin-engine-env-withholds': async (t) => {
-    const { loadServerPlugins } = await importUpstream('packages/web/server/lib/server-plugins.js');
+    const { loadServerPlugins } = await importUpstream('packages/web/server/lib/server-plugins.ts');
     const plugin = path.join(tempDir(t, 'contract-withhold-'), 'withhold.mjs');
     fs.writeFileSync(plugin, 'export default () => ({ engineEnv: () => ({ WITHHELD_SECRET: undefined }) });');
     const plugins = await loadServerPlugins({ specifiers: [plugin], context: { app: {}, dataDir: '/data', logger: console } });
@@ -1622,21 +1739,22 @@ const checks = {
     });
     assert.equal(child.stdout.trim(), 'true', 'an undefined variable reaches the child environment');
 
-    const lifecycle = source('packages/web/server/lib/opencode/lifecycle.js');
-    has(lifecycle, /const processEnv = stripAppImageLauncherEnv\(stripAppImageArgv0Leak\(applyProviderEnvAliases\(\{\s*\.\.\.shellEnv,\s*\.\.\.process\.env,\s*\.\.\.managedOpenCodeEnv,/, 'the engine start no longer spreads the managed env after the shell snapshot and process.env');
+    const lifecycle = source('packages/web/server/lib/opencode/lifecycle.ts');
+    has(lifecycle, /const inheritedEnv = overlayEnvironment\(\{ \.\.\.shellEnv, \.\.\.process\.env, PATH: envPath \}, getUserEnvironment\(\)\);\s*for \(const \[key, value\] of Object\.entries\(managedOpenCodeEnv\)\) \{\s*if \(value === undefined\) delete inheritedEnv\[key\];\s*\}/, 'a managed variable set to undefined no longer leaves the inherited engine env');
+    has(lifecycle, /assignInjectedEnv\(\s*\{ \.\.\.inheritedEnv \},\s*\{\s*\.\.\.managedOpenCodeEnv,/, 'the engine start no longer lays the managed env over the shell snapshot and process.env');
     has(lifecycle, /checkOpenCodeBinary\(resolveManagedOpenCodeLaunchSpec\(resolvedBinary\), \{\s*env: \{ \.\.\.process\.env, \.\.\.managedOpenCodeEnv \},/, 'the version preflight no longer spreads the managed env after process.env');
-    const server = source('packages/web/server/index.js');
+    const server = source('packages/web/server/runtime.ts');
     assert.equal(
-      lineCount(server, 'env: { ...getLoginShellEnvSnapshot(), ...process.env, ...(await getServerPluginEngineEnv()), PATH: buildManagedOpenCodePath() }'),
+      lineCount(server, 'env: { ...getLoginShellEnvSnapshot(), ...process.env, ...(await getServerPluginEngineEnv()), PATH: buildManagedOpenCodePath() }') + lineCount(server, 'env: { ...getLoginShellEnvSnapshot(), ...process.env, ...pluginEngineEnv, PATH: buildManagedOpenCodePath() }'),
       2,
       'the v2 install and the CLI upgrade no longer spread the plugin engine env after the shell snapshot and process.env',
     );
     has(server, /readOpenCodeCliVersion\(resolveManagedOpenCodeLaunchSpec\(binary\), \{\s*env: \{ \.\.\.process\.env, \.\.\.\(await getServerPluginEngineEnv\(\)\) \},/, 'the compatibility probe no longer spreads the plugin engine env after process.env');
-    has(server, /getManagedOpenCodeEnv: async \(\) => \(\{\s*\.\.\.\(managedConfigRuntime \? await managedConfigRuntime\.buildManagedChildEnv\(\) : \{\}\),\s*\.\.\.\(await getServerPluginEngineEnv\(\)\),\s*\}\)/, 'the plugin engine env is no longer the last layer of the managed env');
+    has(server, /getManagedOpenCodeEnv: async \(\) => \{\s*const managedEnv = managedConfigRuntime \? await managedConfigRuntime\.buildManagedChildEnv\(\) : \{\};\s*return \{ \.\.\.managedEnv, \.\.\.\(await getServerPluginEngineEnv\(\)\) \};\s*\},/, 'the plugin engine env is no longer the last layer of the managed env');
   },
 
   'update-install-disabled-env': () => {
-    const routes = source('packages/web/server/lib/opencode/openchamber-routes.js');
+    const routes = source('packages/web/server/lib/self-update/openchamber-routes.ts');
     const route = routes.slice(routes.indexOf("app.post('/api/openchamber/update-install'"));
     const guard = route.indexOf("if (isUpdateCheckDisabled(process.env)) return res.status(400).json({ error: 'No update available', updatesDisabled: true });");
     assert.ok(guard > 0, 'the update-install route no longer answers the switch');
@@ -1644,57 +1762,59 @@ const checks = {
       const at = route.indexOf(step);
       assert.ok(at > guard, `${step} no longer comes after the switch`);
     }
-    has(routes, /const isUpdateCheckDisabled = \(env\) => \{\s*const value = typeof env\?\.OPENCHAMBER_UPDATE_CHECK_DISABLED === 'string' \? env\.OPENCHAMBER_UPDATE_CHECK_DISABLED\.trim\(\)\.toLowerCase\(\) : '';\s*return value === '1' \|\| value === 'true';/, 'the switch no longer reads 1 or true');
+    has(routes, /const isUpdateCheckDisabled = \(env(?:: NodeJS\.ProcessEnv)?\) => \{\s*const value = (?:typeof env\?\.OPENCHAMBER_UPDATE_CHECK_DISABLED === 'string'|isString\(env\?\.OPENCHAMBER_UPDATE_CHECK_DISABLED\)) \? env\.OPENCHAMBER_UPDATE_CHECK_DISABLED\.trim\(\)\.toLowerCase\(\) : '';\s*return value === '1' \|\| value === 'true';/, 'the switch no longer reads 1 or true');
   },
 
   'api-only-switch': () => {
-    const server = source('packages/web/server/index.js');
+    const server = source('packages/web/server/runtime.ts');
     has(server, /const apiOnly = options\.apiOnly === true \|\| isEnvFlagEnabled\(process\.env\.OPENCHAMBER_API_ONLY\);/, 'API-only mode is no longer the option or OPENCHAMBER_API_ONLY');
-    has(server, /const isEnvFlagEnabled = \(value\) => \{\s*if \(value === true \|\| value === 1\) return true;\s*if \(typeof value !== 'string'\) return false;\s*const normalized = value\.trim\(\)\.toLowerCase\(\);\s*return normalized === '1' \|\| normalized === 'true';/, 'OPENCHAMBER_API_ONLY no longer reads 1 or true, trimmed and in any case');
-    has(source('packages/web/server/lib/opencode/startup-pipeline-runtime.js'), /if \(apiOnly\) \{\s*staticRoutesRuntime\.registerApiOnlyFallbackRoutes\(app\);\s*\} else \{\s*staticRoutesRuntime\.registerStaticRoutes\(app\);\s*\}/, 'API-only mode no longer replaces the web build with the API-only fallback');
-    const serverOptions = source('packages/web/server/lib/opencode/cli-options.js');
+    has(server, /const isEnvFlagEnabled = \(value(?:: [^)]+)?\) => \{\s*if \(value === true \|\| value === 1\) return true;\s*if \((?:typeof value !== 'string'|!isString\(value\))\) return false;\s*const normalized = value\.trim\(\)\.toLowerCase\(\);\s*return normalized === '1' \|\| normalized === 'true';/, 'OPENCHAMBER_API_ONLY no longer reads 1 or true, trimmed and in any case');
+    has(source('packages/web/server/lib/server-frame/startup-pipeline-runtime.ts'), /if \(apiOnly\) \{\s*staticRoutesRuntime\.registerApiOnlyFallbackRoutes\(app\);\s*\} else \{\s*staticRoutesRuntime\.registerStaticRoutes\(app\);\s*\}/, 'API-only mode no longer replaces the web build with the API-only fallback');
+    const serverOptions = source('packages/web/server/lib/server-frame/cli-options.ts');
     has(serverOptions, /if \(optionName === 'api-only'\) \{\s*options\.apiOnly = true;/, 'the server no longer reads --api-only');
     has(serverOptions, /const optionName = eqIndex >= 0 \? arg\.slice\(2, eqIndex\) : arg\.slice\(2\);/, 'the server no longer reads --api-only=<anything> as --api-only');
-    has(source('packages/web/bin/lib/cli-args.js'), /case 'api-only':\s*options\.apiOnly = true;/, 'the CLI no longer reads --api-only');
-    const serve = source('packages/web/bin/lib/commands-serve.js');
+    has(source('packages/web/bin/lib/cli-args.ts'), /case 'api-only':\s*options\.apiOnly = true;/, 'the CLI no longer reads --api-only');
+    const serve = source('packages/web/bin/lib/commands-serve.ts');
     has(serve, /startWebUiServer\(\{[^}]*apiOnly: options\.apiOnly === true,/, 'the foreground server no longer gets API-only mode from the CLI option');
     has(serve, /if \(options\.apiOnly === true\) \{\s*serverArgs\.push\('--api-only'\);/, 'the daemon no longer gets --api-only');
   },
 
   'serve-runtime-switch': () => {
-    const cli = source('packages/web/bin/cli.js');
-    has(cli, /function getBunBinary\(\) \{\s*if \(typeof process\.env\.BUN_BINARY === 'string' && process\.env\.BUN_BINARY\.trim\(\)\.length > 0\) \{\s*return process\.env\.BUN_BINARY\.trim\(\);/, 'BUN_BINARY no longer names the runtime first');
+    const cli = source('packages/web/bin/cli-runtime.ts');
+    has(cli, /function getBunBinary\(\) \{\s*if \(isString\(process\.env\.BUN_BINARY\) && process\.env\.BUN_BINARY\.trim\(\)\.length > 0\) \{\s*return process\.env\.BUN_BINARY\.trim\(\);/, 'BUN_BINARY no longer names the runtime first');
     has(cli, /spawnSync\(BUN_BIN, \['--version'\]/, 'the runtime is no longer probed with --version');
-    has(cli, /return isBunInstalled\(\) \? 'bun' : 'node';/, 'the server runtime is no longer the probed one');
-    const serve = source('packages/web/bin/lib/commands-serve.js');
-    has(serve, /const runtimeBin = preferredRuntime === 'bun' \? bunBin : process\.execPath;/, 'the daemon no longer runs on the probed runtime');
-    has(serve, /const child = spawn\(runtimeBin, serverArgs, \{[\s\S]{0,200}env: \{\s*\.\.\.process\.env,/, 'the daemon no longer gets an explicit copy of the CLI environment');
+    has(cli, /function getServerRuntimeBinary\(\) \{\s*if \(bunVersionRunsBunPty\(getInstalledBunVersion\(\)\)\) return BUN_BIN;\s*const bun = globalThis\.Bun;\s*if \(bun === undefined \|\| bunVersionRunsBunPty\(bun\.version\)\) return process\.execPath;/, 'the server runtime is no longer the probed Bun, else the runtime running the CLI');
+    const serve = source('packages/web/bin/lib/commands-serve.ts');
+    has(serve, /const runtimeBin = getServerRuntimeBinary\(\);/, 'the daemon no longer runs on the probed runtime');
+    has(serve, /const child = spawn\(runtimeBin, serverArgs, \{[\s\S]{0,200}env: assignInjectedEnv\(\{ \.\.\.withoutInjectedEnv\(process\.env\), /, 'the daemon no longer gets an explicit copy of the CLI environment');
+    has(source('packages/web/server/lib/injected-env.ts'), /export function withoutInjectedEnv\(env: NodeJS\.ProcessEnv\) \{\s*const injected = injectedEnvKeys\(env\);\s*return Object\.fromEntries\(Object\.entries\(env\)\.filter\(\(\[key\]\) => !injected\.has\(key\)\)\);/, 'the daemon environment now drops more than the variables a running OpenChamber recorded as injected');
   },
 
   'web-shell-after-plugins': () => {
-    const routes = source('packages/web/server/lib/opencode/static-routes-runtime.js');
-    has(routes, /const env = typeof process\.env\.OPENCHAMBER_DIST_DIR === 'string' \? process\.env\.OPENCHAMBER_DIST_DIR\.trim\(\) : '';\s*if \(env\) \{\s*return path\.resolve\(env\);\s*\}\s*return path\.join\(__dirname, '\.\.', 'dist'\);/, 'the web build is no longer found through OPENCHAMBER_DIST_DIR or beside the server');
+    const routes = source('packages/web/server/lib/server-frame/static-routes-runtime.ts');
+    has(routes, /const env = isString\(process\.env\.OPENCHAMBER_DIST_DIR\) \? process\.env\.OPENCHAMBER_DIST_DIR\.trim\(\) : '';\s*if \(env\) \{\s*return path\.resolve\(env\);\s*\}\s*return webPackagePaths\.dist;/, 'the web build is no longer found through OPENCHAMBER_DIST_DIR or beside the server');
+    has(source('packages/web/server/lib/web-package-paths.ts'), /dist: path\.join\(directory, 'dist'\),/, 'the web build beside the server is no longer packages/web/dist');
     has(routes, /app\.use\(express\.static\(distPath, \{/, 'the web build is no longer served by express.static');
     has(routes, /res\.sendFile\(path\.join\(distPath, 'index\.html'\)\);/, 'other app paths no longer get res.sendFile of index.html');
-    const manifest = source('packages/web/server/lib/opencode/pwa-manifest-routes.js');
+    const manifest = source('packages/web/server/lib/appearance/pwa-manifest-routes.ts');
     has(manifest, /app\.get\('\/manifest\.webmanifest', async \(req, res\) => \{/, 'the PWA manifest route moved');
     has(manifest, /res\.send\(JSON\.stringify\(manifest\)\);/, 'the PWA manifest is no longer sent with res.send');
     has(manifest, /description: 'Web interface companion for OpenCode AI coding agent',/, 'the PWA manifest description changed');
     has(manifest, /const DEFAULT_PWA_APP_NAME = 'OpenChamber';/, 'the PWA manifest default name changed');
-    has(source('packages/web/server/lib/opencode/startup-pipeline-runtime.js'), /staticRoutesRuntime\.registerStaticRoutes\(app\);/, 'the startup pipeline no longer mounts the web build');
-    const server = source('packages/web/server/index.js');
+    has(source('packages/web/server/lib/server-frame/startup-pipeline-runtime.ts'), /staticRoutesRuntime\.registerStaticRoutes\(app\);/, 'the startup pipeline no longer mounts the web build');
+    const server = source('packages/web/server/runtime.ts');
     const plugins = server.indexOf('serverPlugins = await loadServerPlugins({');
     const pipeline = server.indexOf('const startupPipelineResult = await startupPipelineRuntime.run({');
     assert.ok(plugins > 0 && pipeline > plugins, 'server plugins no longer set up before the startup pipeline mounts the web build');
   },
 
   noindex: () => {
-    const server = source('packages/web/server/index.js');
+    const server = source('packages/web/server/runtime.ts');
     has(server, /app\.use\(\(req, res, next\) => \{\s*res\.setHeader\('X-Robots-Tag', 'noindex, nofollow'\);/, 'no middleware sets X-Robots-Tag to noindex, nofollow');
     has(server, /app\.get\('\/robots\.txt', \(_req, res\) => \{\s*res\.type\('text\/plain'\)\.send\('User-agent: \*\\nDisallow: \/\\n'\);/, 'the robots.txt route no longer answers User-agent: * and Disallow: /');
     const header = server.search(/res\.setHeader\('X-Robots-Tag', 'noindex, nofollow'\)/);
     const robots = server.search(/app\.get\('\/robots\.txt'/);
-    const cors = server.indexOf("const origin = typeof req.headers.origin === 'string'");
+    const cors = server.indexOf("const origin = isString(req.headers.origin) ? req.headers.origin : '';");
     assert.ok(cors > 0, 'the CORS middleware is no longer in index.js');
     assert.ok(header >= 0 && header < cors, 'X-Robots-Tag is no longer set before the CORS middleware');
     assert.ok(robots >= 0 && robots < cors, 'robots.txt is no longer answered before the CORS middleware');
@@ -1708,16 +1828,17 @@ const checks = {
   },
 
   'plugin-context-settings-projects': () => {
-    has(pluginContext(source('packages/web/server/index.js')), /settings: \{ read: \(\) => readSettingsFromDiskMigrated\(\) \},/, 'the plugin context no longer reads upstream settings from disk');
-    const normalization = source('packages/web/server/lib/opencode/settings-normalization-runtime.js');
-    has(normalization, /const resolvedPath = rawPath \? safeRealpathSync\(path\.resolve\(normalizeDirectoryPath\(rawPath\)\)\) : '';/, 'a stored project path is no longer resolved to an absolute real path');
+    has(pluginContext(source('packages/web/server/runtime.ts')), /settings: \{ read: \(\) => readSettingsFromDiskMigrated\(\) \},/, 'the plugin context no longer reads upstream settings from disk');
+    const normalization = source('packages/web/server/lib/settings/settings-normalization-runtime.ts');
+    has(normalization, /const resolvedPath = rawPath \? safeRealpathSync\(path\.resolve\(normalizeDirectoryPath\(rawPath\)\)(?:, \w+)?\) : '';/, 'a stored project path is no longer resolved to an absolute real path');
     has(normalization, /next\.projects = normalizedProjects;/, 'settings no longer keep their projects list');
   },
 
   'project-folder-notice-ui': () => {
     has(source('packages/ui/src/stores/useProjectsStore.ts'), /^interface ProjectsStore \{[^}]*^ {2}activeProjectId: string \| null;$/ms, 'the projects store no longer names the selected project as activeProjectId');
     const toast = source('packages/ui/src/components/ui/toast.ts');
-    has(toast, /^ {2}info: \(message: string \| React\.ReactNode, data\?: ExternalToast\) => \{\n {4}return sonnerToast\.info\(message, \{\n {6}\.\.\.data,\n {6}action: data\?\.action \|\| \{/m, 'toast.info no longer passes its options, cancel included, and keeps a given action');
+    has(toast, /^ {2}info: \(message: string \| React\.ReactNode, data\?: ExternalToast\) => \{\n {4}return sonnerToast\.info\(message, withCountdown\(data\)\)\n {2}\},$/m, 'toast.info no longer passes its options, cancel included, and keeps a given action');
+    has(toast, /const withCountdown = \(data\?: ExternalToast\): ExternalToast => \{\s*const duration = [^\n]*\n\s*if \(!Number\.isFinite\(duration\)\) return \{ \.\.\.data \}\s*return \{\s*\.\.\.data,\s*className: [^\n]*\n\s*style: [^\n]*\n\s*\}\s*\}/, 'toast options no longer reach sonner whole, action and cancel included');
     has(source('packages/ui/src/components/ui/index.ts'), /^export \{ toast \} from '\.\/toast'$/m);
   },
 
@@ -1733,7 +1854,7 @@ const checks = {
     has(source('packages/ui/src/components/ui/collapsible.tsx'), /^const Collapsible = BaseCollapsible\.Root;$/m, 'Collapsible is no longer the Base UI root, which takes defaultOpen and onOpenChange');
     has(source('packages/ui/src/components/ui/collapsible.tsx'), /^export \{ Collapsible, CollapsibleTrigger, CollapsibleContent \};$/m);
     has(source('packages/ui/src/components/ui/input.tsx'), /^export \{ Input \}$/m);
-    const button = source('packages/ui/src/components/ui/button.tsx');
+    const button = buttonSource();
     has(button, /^\s+chip: cn\($/m, 'Button lost the chip variant');
     has(button, /aria-pressed:bg-interactive-selection/, 'a pressed chip no longer wears the selection colour');
     has(button, /^\s+outline:$/m, 'Button lost the outline variant');
@@ -1747,14 +1868,15 @@ const checks = {
 
   'session-create-selection': () => {
     const actions = source('packages/ui/src/sync/session-actions.ts');
-    has(actions, /^export type SessionCreateSelection = \{ model\?: ModelRef; agent\?: string \}$/m, 'SessionCreateSelection is no longer { model?: ModelRef; agent?: string }');
-    has(actions, /^export async function createSession\(\n {2}title\?: string,\n {2}directoryOverride\?: string \| null,\n {2}metadata\?: Metadata,\n {2}selectionTransition\?: "submitted-draft",\n {2}selection\?: SessionCreateSelection,\n {2}navigation: "open" \| "preserve" = "open",\n\): Promise<Session \| null> \{$/m, 'createSession no longer takes (title, directory, metadata, selectionTransition, selection, navigation)');
-    has(actions, /opencodeClient\.createSession\(\s*\{ title, metadata, model: selection\?\.model, agent: selection\?\.agent \},\s*effectiveDirectory,\s*\)/, 'createSession no longer creates the session on the selection');
-    has(actions, /if \(navigation === "open"\) useSessionUIStore\.getState\(\)\.setCurrentSession\(session\.id, sessionDirectory, selectionTransition\)/, "createSession no longer opens the session for 'open'");
+    has(actions, /^export type SessionCreateSelection = \{ model\?: ModelSelection; agent\?: string \}$/m, 'SessionCreateSelection is no longer { model?: ModelSelection; agent?: string }');
+    has(source('packages/ui/src/lib/opencode/model.ts'), /^export type ModelSelection = Omit<ModelRef, "variant"> & \{ variant\?: string \| null \}$/m, 'ModelSelection is no longer a ModelRef whose variant may be null');
+    has(actions, /^export async function createSession\(\n {2}title\?: string,\n {2}directoryOverride\?: string \| null,\n {2}metadata\?: Metadata,\n {2}selectionTransition\?: "submitted-draft",\n {2}selection\?: SessionCreateSelection,\n {2}navigation: "open" \| "preserve" = "open",\n(?: {2}\w+\?: string,\n)*\): Promise<Session \| null> \{$/m, 'createSession no longer takes (title, directory, metadata, selectionTransition, selection, navigation)');
+    has(actions, /opencodeClient\.createSession\(\s*\{ id, title, metadata: sessionMetadata, model: selection\?\.model, agent: selection\?\.agent \},\s*effectiveDirectory,\s*\)/, 'createSession no longer creates the session on the selection');
+    has(actions, /if \(navigation === "open"\) useSessionUIStore\.getState\(\)\.setCurrentSession\(session\.id, sessionDirectory, \{ transition: selectionTransition \}\)/, "createSession no longer opens the session for 'open'");
     has(actions, /console\.error\("\[session-actions\] createSession failed", error\)\s*return null\s*\}\s*\}/, 'a failed createSession no longer answers null');
-    has(source('node_modules/@opencode/client/dist/promise/generated/types.d.ts'), /export type ModelRef = \{\s*id: string;\s*providerID: string;\s*variant\?: string;\s*\};/, 'ModelRef is no longer { id, providerID, variant? }');
+    has(source('node_modules/@opencode/client/dist/promise/generated/types.d.ts'), /export type ModelRef = \{\s*id: string;\s*providerID: (?:string|ProviderID);\s*variant\?: string;\s*\};/, 'ModelRef is no longer { id, providerID, variant? }');
     has(source('packages/ui/src/sync/session-ui-store.ts'), /^ {2}initializeNewOpenChamberSession: \(sessionId: string, agents: unknown\[\]\) => void$/m, 'initializeNewOpenChamberSession(sessionId, agents) changed');
-    has(source('packages/ui/src/stores/useUIStore.ts'), /^ {2}closeMainSurfaces: \(\) => void;$/m, 'closeMainSurfaces() is gone');
+    has(uiStoreSource(), /^ {2}closeMainSurfaces: \(\) => void;$/m, 'closeMainSurfaces() is gone');
   },
 
   'work-tracking-settings-ui': () => {
@@ -1767,11 +1889,12 @@ const checks = {
     has(section, /interface SettingsControlGroupProps \{\s*title\?: React\.ReactNode;\s*description\?: React\.ReactNode;[^}]*\n {2}contentClassName\?: string;/s, 'SettingsControlGroup no longer takes title, description and contentClassName');
     has(section, /^export const SETTINGS_HELPER_CLASS = /m, 'SETTINGS_HELPER_CLASS is gone');
     const input = source('packages/ui/src/components/ui/input.tsx');
-    has(input, /^function Input\(\{ className, type, \.\.\.props \}: React\.ComponentProps<"input">\) \{$/m, 'Input no longer takes the input element props');
+    has(input, /^type InputProps = React\.ComponentProps<"input"> & \{/m, 'Input no longer takes the input element props');
+    has(input, /^function Input\(\{ className, type, [^}]*\.\.\.props \}: InputProps\) \{$/m, 'Input no longer takes the input element props');
     has(input, /^\s+type=\{type\}$/m, 'Input no longer passes its type through');
     has(input, /^\s+\{\.\.\.props\}\n\s+\/>$/m, 'Input no longer passes the rest of its props through last');
     has(input, /^export \{ Input \}$/m);
-    const button = source('packages/ui/src/components/ui/button.tsx');
+    const button = buttonSource();
     for (const variant of ['default', 'outline', 'ghost']) has(button, new RegExp(`^\\s+${variant}:`, 'm'), `Button lost the ${variant} variant`);
     has(button, /^\s+sm: "/m, 'Button lost the sm size');
     has(source('packages/ui/src/components/ui/index.ts'), /^export \{ toast \} from '\.\/toast'/m, 'toast is no longer exported from components/ui');
@@ -1785,8 +1908,16 @@ const checks = {
   },
 
   'guest-send-selection': () => {
-    const upstream = source('packages/ui/src/lib/guests/start-session.ts');
+    const upstream = source('packages/ui/src/lib/defaultSendSelection.ts');
     const ours = source('packages/mittr-ui/src/work/sendSelection.ts');
+    has(upstream, /^export const captureDefaultSendSelection = \(\) => \{$/m, 'upstream no longer exports captureDefaultSendSelection');
+    const guest = source('packages/ui/src/lib/guests/start-session.ts');
+    has(guest, /^import \{ captureDefaultSendSelection \} from '@\/lib\/defaultSendSelection';$/m, 'start-session.ts no longer takes its selection from captureDefaultSendSelection');
+    has(guest, /const sendSelection = captureDefaultSendSelection\(\);/, 'startGuestSession no longer starts on captureDefaultSendSelection()');
+    if (/from '\.\.\/\.\.\/\.\.\/ui\/src\/lib\/defaultSendSelection';/.test(ours)) {
+      has(ours, /^export \{ captureDefaultSendSelection as captureSendSelection \} from '\.\.\/\.\.\/\.\.\/ui\/src\/lib\/defaultSendSelection';$/m, 'sendSelection.ts no longer hands on upstream\'s captureDefaultSendSelection as captureSendSelection');
+      return;
+    }
     const arrowBody = (text, declaration) => {
       const start = text.indexOf(declaration);
       assert.ok(start >= 0, `${declaration} is gone`);
@@ -1804,79 +1935,78 @@ const checks = {
       ['const resolveDefaultAgentName = ', 'const resolveDefaultAgentName = '],
       ['const resolveDefaultModelSelection = ', 'const resolveDefaultModelSelection = '],
       ['const resolveDefaultVariant = ', 'const resolveDefaultVariant = '],
-      ['const captureGuestSendSelection = ', 'export const captureSendSelection = '],
+      ['export const captureDefaultSendSelection = ', 'export const captureSendSelection = '],
     ]) {
-      assert.equal(arrowBody(ours, mine), arrowBody(upstream, theirs), `${theirs.trim()} changed upstream; bring sendSelection.ts in line`);
+      assert.equal(arrowBody(ours, mine), arrowBody(upstream, theirs), `${theirs.trim()} changed upstream; bring sendSelection.ts in line, or hand on upstream's export, which is public since 2.7`);
     }
-    for (const [name, from] of [
-      ['parseModelIdentifier', 'lib/modelIdentifier'],
-      ['modelVariantNames', 'lib/modelVariants'],
-      ['useConfigStore', 'stores/useConfigStore'],
-      ['useSelectionStore', 'sync/selection-store'],
-    ]) {
-      assert.ok(upstream.includes(`import { ${name} } from '@/${from}';`), `start-session.ts no longer takes ${name} from @/${from}`);
-      assert.ok(ours.includes(`import { ${name} } from '../../../ui/src/${from}';`), `sendSelection.ts no longer takes ${name} from ${from}`);
-    }
-    has(upstream, /const sendSelection = captureGuestSendSelection\(\);/, 'startGuestSession no longer starts on captureGuestSendSelection()');
   },
 
   'agent-tool-settings-keys': () => {
-    const registry = JSON.parse(source('packages/web/server/lib/opencode/settings-registry.json'));
-    for (const key of ['agentControlToolEnabled', 'agentWebToolEnabled', 'agentToolsCodeMode']) {
-      assert.ok(Object.hasOwn(registry.fields, key), `the settings registry no longer has ${key}`);
-      has(source('packages/web/server/lib/opencode/settings-helpers.js'), new RegExp(`if \\(typeof candidate\\.${key} === 'boolean'\\) \\{\\s*result\\.${key} = candidate\\.${key};`), `${key} is no longer kept as a boolean`);
-    }
-    const runtime = source('packages/web/server/lib/opencode/settings-runtime.js');
+    const registry = JSON.parse(source('packages/web/server/lib/settings/settings-registry.json'));
+    for (const key of ['agentControlToolEnabled', 'agentWebToolEnabled']) assert.ok(Object.hasOwn(registry.fields, key), `the settings registry no longer has ${key}`);
+    assert.ok(!Object.hasOwn(registry.fields, 'agentToolsCodeMode'), 'the settings registry has a Code Mode switch again: let the MittrCraft tools follow it');
+    const helpers = source('packages/web/server/lib/settings/settings-helpers.ts');
+    has(helpers, /const AGENT_TOOL_BOOLEAN_KEYS = \[\s*'agentControlToolEnabled',/, 'agentControlToolEnabled is no longer one of the agent tool switches');
+    has(helpers, /for \(const key of AGENT_TOOL_BOOLEAN_KEYS\) \{\s*if \(isBoolean\(candidate\[key\]\)\) result\[key\] = candidate\[key\];/, 'agentControlToolEnabled is no longer kept as a boolean');
+    has(helpers, /if \(isBoolean\(candidate\.agentWebToolEnabled\)\) \{\s*result\.agentWebToolEnabled = candidate\.agentWebToolEnabled;/, 'agentWebToolEnabled is no longer kept as a boolean');
+    const runtime = source('packages/web/server/lib/settings/settings-runtime.ts');
     const managedKeys = runtime.slice(runtime.indexOf('const MANAGED_PLUGIN_SETTINGS_KEYS = new Set(['), runtime.indexOf(']);', runtime.indexOf('const MANAGED_PLUGIN_SETTINGS_KEYS')));
-    for (const key of ['agentControlToolEnabled', 'agentToolsCodeMode']) assert.ok(managedKeys.includes(`'${key}'`), `a change of ${key} no longer rewrites the managed config`);
-    const managed = source('packages/web/server/lib/opencode/managed-config-file.js');
+    for (const key of ['agentControlToolEnabled', 'agentWebToolEnabled']) assert.ok(managedKeys.includes(`'${key}'`), `a change of ${key} no longer rewrites the managed config`);
+    const managed = source('packages/web/server/lib/opencode/managed-config-file.ts');
     has(managed, /const includeControl = settings\?\.agentControlToolEnabled !== false;/, 'the control tool is no longer on unless set false');
-    has(managed, /const codeMode = settings\?\.agentToolsCodeMode === true;/, 'Code Mode is no longer off unless set true');
+    assert.ok(!/agentToolsCodeMode|codemode/i.test(managed), 'the managed config reads a Code Mode switch again');
+    const tools = source('packages/web/server/lib/agent-tool/runtime.ts');
+    for (const name of ['openchamber', 'openchamber_web']) {
+      has(tools, new RegExp(`name: '${name}',[^}]*?codeMode: true,`), `upstream's ${name} tool is no longer always behind Code Mode`);
+    }
+    has(source('packages/mittr-server/src/mittr/tools/index.js'), /\[MITTR_TOOLS\.work\]: \(\{ upstream \}\) => upstream\?\.agentControlToolEnabled !== false,/, 'the MittrCraft work tool no longer follows the control switch');
   },
 
   'managed-config-plugin-order': async (t) => {
-    const managed = source('packages/web/server/lib/opencode/managed-config-file.js');
-    has(managed, /plugins: \[\.\.\.DISABLED_BUILTIN_PLUGINS, \.\.\.pluginDirectories, \.\.\.\(contributed\.plugins \?\? \[\]\)\],/, 'the managed config no longer lists upstream\'s plugins before contributed ones');
-    const { createManagedConfigRuntime, MANAGED_CONFIG_FILE_NAME } = await importUpstream('packages/web/server/lib/opencode/managed-config-file.js');
+    const managed = source('packages/web/server/lib/opencode/managed-config-file.ts');
+    has(managed, /if \(Array\.isArray\(added\)\) config\[key\] = \[\.\.\.\(managed\[key\] \?\? \[\]\), \.\.\.added\];/, 'the managed config no longer lists upstream\'s plugins before contributed ones');
+    const { createManagedConfigRuntime, MANAGED_CONFIG_FILE_NAME } = await importUpstream('packages/web/server/lib/opencode/managed-config-file.ts');
     const dataDir = tempDir(t, 'contract-plugin-order-');
     const runtime = createManagedConfigRuntime({
       fsPromises: fs.promises,
       path,
-      dataDir,
+      instanceDir: dataDir,
       env: {},
       agentToolRuntime: { materializePlugin: async () => '/upstream/acme-agent-tool', createChildEnv: () => ({}) },
       readSettings: async () => ({}),
-      isAgentMemoryAvailable: () => false,
       contributeConfig: async () => ({ plugins: ['/plugins/acme-tools'] }),
     });
     const order = () => JSON.parse(fs.readFileSync(path.join(dataDir, MANAGED_CONFIG_FILE_NAME), 'utf8')).plugins.filter((entry) => entry.startsWith('/'));
     await runtime.buildManagedChildEnv();
-    assert.deepEqual(order(), ['/upstream/acme-agent-tool', '/plugins/acme-tools']);
+    const acme = () => order().filter((entry) => entry.includes('acme'));
+    assert.deepEqual(acme(), ['/upstream/acme-agent-tool', '/plugins/acme-tools']);
+    assert.equal(order().at(-1), '/plugins/acme-tools');
     await runtime.refreshManagedConfigFile();
-    assert.deepEqual(order(), ['/upstream/acme-agent-tool', '/plugins/acme-tools']);
+    assert.deepEqual(acme(), ['/upstream/acme-agent-tool', '/plugins/acme-tools']);
+    assert.equal(order().at(-1), '/plugins/acme-tools');
   },
 
   'session-idle-aborted-event': async () => {
-    const { translateWireEvent } = await importUpstream('packages/web/server/lib/event-stream/translate-v2.js');
+    const { translateWireEvent } = await importUpstream('packages/web/server/lib/event-stream/translate-v2.ts');
     const idle = translateWireEvent({ id: 'evt_1', type: 'session.execution.interrupted', data: { sessionID: 'ses_1', reason: 'user' } }).find((event) => event.type === 'session.idle');
     assert.equal(idle?.properties?.aborted, true, 'an interrupted turn no longer arrives as session.idle with aborted');
     assert.equal(idle.properties.sessionID, 'ses_1');
     const finished = translateWireEvent({ id: 'evt_2', type: 'session.execution.succeeded', data: { sessionID: 'ses_1' } }).find((event) => event.type === 'session.idle');
     assert.equal(finished?.properties?.aborted, undefined, 'a finished turn now reads as aborted');
-    has(source('packages/web/server/lib/event-stream/global-hub.js'), /translated\(\) \{\s*translated \?\?= translateWireEvent\(payload\);\s*return translated;\s*\},/, 'hub subscribers no longer get translated()');
-    has(source('packages/web/server/index.js'), /if \(payload\.type === 'session\.idle' && payload\.properties\?\.aborted === true\) \{\s*agentToolRuntime\?\.abortSession\?\.\(payload\.properties\.sessionID\);/, 'upstream\'s agent tool no longer aborts on the same signal');
+    has(source('packages/web/server/lib/event-stream/global-hub.ts'), /translated\(\) \{\s*translated \?\?= translateWireEvent\(payload\);\s*return translated;\s*\},/, 'hub subscribers no longer get translated()');
+    has(source('packages/web/server/runtime.ts'), /if \(payload\.type === 'session\.idle' && (?:'aborted' in payload\.properties && payload\.properties|payload\.properties\?)\.aborted === true\) \{\s*agentToolRuntime\?\.abortSession\?\.\(payload\.properties\.sessionID\);/, 'upstream\'s agent tool no longer aborts on the same signal');
   },
 
   'session-deleted-event': async () => {
-    const { translateWireEvent } = await importUpstream('packages/web/server/lib/event-stream/translate-v2.js');
+    const { translateWireEvent } = await importUpstream('packages/web/server/lib/event-stream/translate-v2.ts');
     const deleted = translateWireEvent({ id: 'evt_3', type: 'session.deleted', data: { sessionID: 'ses_1' } }).find((event) => event.type === 'session.deleted');
     assert.equal(deleted?.properties?.info?.id, 'ses_1', 'a deleted session no longer arrives as session.deleted with properties.info.id');
-    has(source('packages/web/server/lib/event-stream/global-hub.js'), /translated\(\) \{\s*translated \?\?= translateWireEvent\(payload\);\s*return translated;\s*\},/, 'hub subscribers no longer get translated()');
-    has(source('packages/web/server/index.js'), /subscribe: \(listener\) => globalMessageStreamHub\.subscribeEvent\(listener\),/, 'the plugin context no longer subscribes plugins to the global event hub');
+    has(source('packages/web/server/lib/event-stream/global-hub.ts'), /translated\(\) \{\s*translated \?\?= translateWireEvent\(payload\);\s*return translated;\s*\},/, 'hub subscribers no longer get translated()');
+    has(source('packages/web/server/runtime.ts'), /subscribe: \(listener(?:: [^)]+)?\) => globalMessageStreamHub\.subscribeEvent\(listener\),/, 'the plugin context no longer subscribes plugins to the global event hub');
   },
 
   'screenshot-directory': async (t) => {
-    const screenshots = await importUpstream('packages/web/server/lib/openchamber-control/screenshots.js');
+    const screenshots = await importUpstream('packages/web/server/lib/openchamber-control/screenshots.ts');
     const { readCapture } = await import('./mittr/tools/screenshots.js');
     assert.equal(screenshots.SCREENSHOT_DIRECTORY, path.join('.openchamber', 'screenshots'), 'the screenshot folder moved');
     const directory = tempDir(t, 'contract-capture-');
@@ -1895,8 +2025,8 @@ const checks = {
   },
 
   'web-capture-result': async (t) => {
-    const { createOpenChamberControlService } = await importUpstream('packages/web/server/lib/openchamber-control/service.js');
-    const { SCREENSHOT_DIRECTORY } = await importUpstream('packages/web/server/lib/openchamber-control/screenshots.js');
+    const { createOpenChamberControlService } = await importUpstream('packages/web/server/lib/openchamber-control/service.ts');
+    const { SCREENSHOT_DIRECTORY } = await importUpstream('packages/web/server/lib/openchamber-control/screenshots.ts');
     const service = createOpenChamberControlService({ browserControl: { request: async () => ({ base64: Buffer.from('acme').toString('base64'), mime: 'image/png', url: 'http://acme.example.test/' }) } });
     const session = tempDir(t, 'contract-web-session-');
     const elsewhere = tempDir(t, 'contract-web-elsewhere-');
@@ -1907,22 +2037,23 @@ const checks = {
     const other = await service.execute('browser.capture', { directory: elsewhere }, session);
     assert.ok(fs.existsSync(path.join(elsewhere, other.path)) && !fs.existsSync(path.join(session, other.path)), 'a capture no longer saves under the directory the input names');
 
-    const runtime = source('packages/web/server/lib/agent-tool/runtime.js');
+    const runtime = source('packages/web/server/lib/agent-tool/runtime.ts');
     has(runtime, /name: 'openchamber_web',/, 'the panel tool is no longer openchamber_web');
     has(runtime, /if \(valid\) return \{ content, metadata: \{ openchamber: /, 'the agent tool no longer returns its envelope as text content');
     has(runtime, /const args = \{ \.\.\.flattened, \.\.\.\(parameters \?\? \{\}\), action: requestedAction \}/, 'the agent tool no longer merges flattened inputs under parameters');
-    const managed = source('packages/web/server/lib/opencode/managed-config-file.js');
+    const managed = source('packages/web/server/lib/opencode/managed-config-file.ts');
     has(managed, /const includeWeb = settings\?\.agentWebToolEnabled !== false;/, 'the web tool is no longer on unless set false');
-    has(managed, /directories\.push\(await agentToolRuntime\.materializePlugin\(\{ includeControl, includeWeb, includeMemory, includeNotify, codeMode \}\)\);/, 'the panel tool no longer comes from the agent tool plugin in upstream\'s own plugin directories');
-    has(managed, /plugins: \[\.\.\.DISABLED_BUILTIN_PLUGINS, \.\.\.pluginDirectories, \.\.\.\(contributed\.plugins \?\? \[\]\)\],/, 'upstream\'s agent tool plugin no longer comes before the MittrCraft tools plugin, so tools.get may not find openchamber_web');
-    const settingsRuntime = source('packages/web/server/lib/opencode/settings-runtime.js');
+    has(managed, /directories\.push\(await agentToolRuntime\.materializePlugin\(\{ includeControl, [^}]*\bincludeWeb, [^}]*\}\)\);/, 'the panel tool no longer comes from the agent tool plugin in upstream\'s own plugin directories');
+    has(managed, /const config: ManagedConfigFile = \{ plugins: \[\.\.\.disabled, \.\.\.directories, \.\.\.extensionPlugins\],/, 'upstream\'s agent tool plugin no longer comes first in the managed plugins');
+    has(managed, /if \(Array\.isArray\(added\)\) config\[key\] = \[\.\.\.\(managed\[key\] \?\? \[\]\), \.\.\.added\];/, 'upstream\'s agent tool plugin no longer comes before the MittrCraft tools plugin, so tools.get may not find openchamber_web');
+    const settingsRuntime = source('packages/web/server/lib/settings/settings-runtime.ts');
     const managedKeys = settingsRuntime.slice(settingsRuntime.indexOf('const MANAGED_PLUGIN_SETTINGS_KEYS = new Set(['), settingsRuntime.indexOf(']);', settingsRuntime.indexOf('const MANAGED_PLUGIN_SETTINGS_KEYS')));
     assert.ok(managedKeys.includes("'agentWebToolEnabled'"), 'a change of agentWebToolEnabled no longer rewrites the managed config');
   },
 
   'permission-never-auto-answer': async (t) => {
-    const { createPermissionAutoAcceptRuntime } = await importUpstream('packages/web/server/lib/permission-auto-accept/runtime.js');
-    const { loadServerPlugins } = await importUpstream('packages/web/server/lib/server-plugins.js');
+    const { createPermissionAutoAcceptRuntime } = await importUpstream('packages/web/server/lib/permission-auto-accept/runtime.ts');
+    const { loadServerPlugins } = await importUpstream('packages/web/server/lib/server-plugins.ts');
     const plugin = path.join(tempDir(t, 'contract-never-auto-'), 'mark.mjs');
     fs.writeFileSync(plugin, 'export default () => ({ neverAutoAnswer: (permission) => permission?.action === "mittrcraft_chrome" });');
     const plugins = await loadServerPlugins({ specifiers: [plugin], context: { app: {}, dataDir: '/data', logger: console } });
@@ -1959,11 +2090,11 @@ const checks = {
     assert.deepEqual(asked, [], 'the safety classifier was asked about a marked request');
     assert.deepEqual(broadcasts.filter((event) => event.type === 'openchamber:permission-auto-accept.left-for-user').map((event) => event.properties.permissionId).sort(), ['per_careful', 'per_fast'], 'a marked request is no longer announced as left for the user');
     assert.equal(await runtime.isPermissionAutoAnswered('fast', '/project', 'per_fast'), false, 'a marked request in an auto session counts as answered automatically');
-    has(source('packages/web/server/index.js'), /neverAutoAnswer: \(permission\) => serverPlugins\?\.neverAutoAnswer\?\.\(permission\) === true,/, 'the server no longer hands the plugins\' neverAutoAnswer to the auto-accept runtime');
+    has(source('packages/web/server/runtime.ts'), /neverAutoAnswer: \(permission\) => serverPlugins\?\.neverAutoAnswer\?\.\(permission\) === true,/, 'the server no longer hands the plugins\' neverAutoAnswer to the auto-accept runtime');
   },
 
   'permission-event-shape': async () => {
-    const { translateWireEvent } = await importUpstream('packages/web/server/lib/event-stream/translate-v2.js');
+    const { translateWireEvent } = await importUpstream('packages/web/server/lib/event-stream/translate-v2.ts');
     const asked = translateWireEvent({ id: 'evt_1', type: 'permission.asked', data: { id: 'per_1', sessionID: 'ses_1', action: 'mittrcraft_chrome', resources: ['acme.example.test'], save: ['acme.example.test'], metadata: { host: 'acme.example.test' } } })
       .find((event) => event.type === 'permission.asked');
     assert.deepEqual(
@@ -1979,12 +2110,11 @@ const checks = {
     assert.equal(Permission.Event.Replied.type, 'permission.replied');
     assert.deepEqual(Object.keys(Permission.Event.Replied.fields.data.fields).sort(), ['reply', 'requestID', 'sessionID'], 'the raw permission.replied data no longer carries reply, requestID and sessionID');
     assert.deepEqual([...Permission.Reply.literals].sort(), ['always', 'once', 'reject'], 'a permission reply is no longer once, always or reject');
-    has(source('packages/web/server/lib/event-stream/global-hub.js'), /return \{\s*envelope,\s*payload,\s*directory,/, 'hub subscribers no longer get the raw payload');
+    has(source('packages/web/server/lib/event-stream/global-hub.ts'), /return \{\s*envelope,\s*payload,\s*directory,/, 'hub subscribers no longer get the raw payload');
   },
 
   'engine-permission-api': () => {
-    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
-    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P15 and P16 again, then update the Chrome site question and this pin');
+    assert.equal(engineVersion(), ENGINE_VERSION, 'the bundled engine moved: run probe P15 and P16 again, then update the Chrome site question and this pin');
     const dist = path.join(repoRoot, 'node_modules/@opencode/client/dist/chunks');
     const chunks = fs.readdirSync(dist).filter((name) => name.endsWith('.js')).map((name) => fs.readFileSync(path.join(dist, name), 'utf8')).join('\n');
     const routes = [
@@ -1999,7 +2129,7 @@ const checks = {
   },
 
   'session-assist-suggestion-style': async () => {
-    const { buildAssistSystemPrompt, registerSuggestionStyle } = await importUpstream('packages/web/server/lib/session-assist/prompt.js');
+    const { buildAssistSystemPrompt, registerSuggestionStyle } = await importUpstream('packages/web/server/lib/session-assist/prompt.ts');
     const targets = [{ recap: true, suggestion: true }, { recap: true, suggestion: false }, { recap: false, suggestion: true }];
     const before = targets.map((target) => buildAssistSystemPrompt(target));
     const upstreamLine = 'Only suggest work the coding agent can perform in the session.';
@@ -2024,19 +2154,19 @@ const checks = {
       unregister();
     }
     assert.deepEqual(targets.map((target) => buildAssistSystemPrompt(target)), before, 'unregistering no longer restores the prompt');
-    const server = source('packages/web/server/index.js');
+    const server = source('packages/web/server/runtime.ts');
     has(pluginContext(server), /^\s+registerSuggestionStyle,$/m, 'the server plugin context no longer hands plugins registerSuggestionStyle');
     has(server, /import \{ registerSuggestionStyle \} from '\.\/lib\/session-assist\/prompt\.js';/);
   },
 
   'session-assist-suggestion-runtime': () => {
-    const runtime = source('packages/web/server/lib/session-assist/runtime.js');
+    const runtime = source('packages/web/server/lib/session-assist/runtime.ts');
     has(runtime, /import \{ buildAssistPrompt, buildAssistSystemPrompt \} from '\.\/prompt\.js';/);
     has(runtime, /const generateAssist = async [\s\S]*?const system = buildAssistSystemPrompt\(targets\);/, 'the runtime no longer builds the system prompt for each generation');
     has(runtime, /suggestion: settings\.sessionSuggestionEnabled !== false,/, 'the runtime no longer reads sessionSuggestionEnabled');
     has(runtime, /suggestion: enabledTargets\.suggestion && allowed\.suggestion,/, 'a switched-off suggestion is no longer left out of the prompt');
-    has(runtime, /const hasCyrillic = \(text\) => \/\[\\u0400-\\u04FF\]\/\.test\(text\);/);
-    has(runtime, /const hasCjk = \(text\) => \/\[\\u3040-\\u30FF\\u4E00-\\u9FFF\\uAC00-\\uD7AF\]\/\.test\(text\);/);
+    has(runtime, /const hasCyrillic = \(text(?:: string)?\) => \/\[\\u0400-\\u04FF\]\/\.test\(text\);/);
+    has(runtime, /const hasCjk = \(text(?:: string)?\) => \/\[\\u3040-\\u30FF\\u4E00-\\u9FFF\\uAC00-\\uD7AF\]\/\.test\(text\);/);
     has(runtime, /if \(suggestion && scriptMismatch\(suggestion\)\) suggestion = '';/, 'the runtime no longer drops a suggestion in another script');
     has(runtime, /if \(!enabled\.suggestion \|\| !allowed\.suggestion\) suggestion = '';/, 'a suggestion switched off during generation is no longer dropped');
   },
@@ -2046,7 +2176,7 @@ const checks = {
     for (const name of ['SettingsSection', 'SettingsCheckboxRow', 'SettingsFieldRow']) {
       has(section, new RegExp(`^export const ${name}: React\\.FC<${name}Props> = \\(\\{`, 'm'), `${name} is no longer exported from SettingsSection`);
     }
-    for (const name of ['SETTINGS_HELPER_CLASS', 'SETTINGS_OPTION_STACK_CLASS', 'SETTINGS_SELECT_ROW_TRIGGER_CLASS', 'SETTINGS_SELECT_SIZE']) {
+    for (const name of ['SETTINGS_HELPER_CLASS', 'SETTINGS_OPTION_STACK_CLASS', 'SETTINGS_SELECT_ROW_TRIGGER_CLASS']) {
       has(section, new RegExp(`^export const ${name} = `, 'm'), `${name} is no longer exported from SettingsSection`);
     }
     has(section, /interface SettingsSectionProps \{[\s\S]*?title\?: React\.ReactNode;[\s\S]*?info\?: React\.ReactNode;[\s\S]*?children: React\.ReactNode;/, 'SettingsSection no longer takes title, info and children');
@@ -2054,7 +2184,7 @@ const checks = {
     has(section, /\{info != null \? <SettingsInfoHint>\{info\}<\/SettingsInfoHint> : null\}/, 'SettingsSection no longer puts info behind the info hint');
     has(source('packages/ui/src/components/ui/index.ts'), /^export \{ toast \} from '\.\/toast'/m, 'components/ui no longer exports toast');
     has(source('packages/ui/src/lib/i18n/messages/en.ts'), /^  'common\.loading': '[^']+',$/m, 'the English dictionary no longer has common.loading');
-    has(section, /interface SettingsCheckboxRowProps \{\s*checked: boolean;\s*onChange: \(checked: boolean\) => void;\s*label: React\.ReactNode;\s*description\?: React\.ReactNode;\s*disabled\?: boolean;\s*ariaLabel\?: string;[\s\S]*?info\?: React\.ReactNode;\s*\}/, 'SettingsCheckboxRow no longer takes checked, onChange, label, description, ariaLabel and info');
+    has(section, /interface SettingsCheckboxRowProps \{\s*checked: boolean;\s*onChange: \(checked: boolean\) => void;\s*label: React\.ReactNode;\s*description\?: React\.ReactNode;\s*disabled\?: boolean;\s*ariaLabel\?: string;[^}]*?info\?: React\.ReactNode;[^}]*\}/, 'SettingsCheckboxRow no longer takes checked, onChange, label, description, ariaLabel and info');
     has(section, /interface SettingsFieldRowProps \{\s*label: React\.ReactNode;\s*description\?: React\.ReactNode;[\s\S]*?info\?: React\.ReactNode;/, 'SettingsFieldRow no longer takes label and info');
     for (const name of ['SettingsRadioGroup', 'SettingsRadioOption']) {
       has(section, new RegExp(`^export const ${name}: React\\.FC<${name}Props> = \\(\\{`, 'm'), `${name} is no longer exported from SettingsSection`);
@@ -2066,16 +2196,15 @@ const checks = {
     const select = source('packages/ui/src/components/ui/select.tsx');
     has(select, /export \{\s*Select,\s*SelectContent,[\s\S]*?SelectItem,[\s\S]*?SelectTrigger,\s*SelectValue,\s*\}/, 'select.tsx no longer exports Select, SelectContent, SelectItem, SelectTrigger and SelectValue');
     has(select, /children\?: React\.ReactNode \| \(\(value: string \| undefined\) => React\.ReactNode\);/, 'SelectValue no longer takes a render function of the chosen value');
-    has(select, /size\?: "sm" \| "default" \| "lg" \| "chip" \| "settings"/, 'SelectTrigger no longer has the settings size');
-    const button = source('packages/ui/src/components/ui/button.tsx');
+    has(select, /^function SelectTrigger\(\{\s*className,\s*children,[\s\S]*?\}: React\.ComponentProps<typeof BaseSelect\.Trigger> & AsChildProps\) \{$/m, 'SelectTrigger no longer takes className and children');
+    const button = buttonSource();
     has(button, /^export \{ Button \}/m, 'Button is no longer exported');
     for (const variant of ['ghost', 'outline']) has(button, new RegExp(`^\\s+${variant}:`, 'm'), `Button lost its ${variant} variant`);
     has(button, /^\s+sm:/m, 'Button lost its sm size');
   },
 
   'engine-tool-plugin-api': () => {
-    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
-    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P13 to P18 again, then update the MittrCraft tools plugin and this pin');
+    assert.equal(engineVersion(), ENGINE_VERSION, 'the bundled engine moved: run probe P13 to P18 again, then update the MittrCraft tools plugin and this pin');
   },
   'composer-actions-slot': () => {
     const plugins = source('packages/ui/src/lib/product-plugins.ts');
@@ -2090,7 +2219,7 @@ const checks = {
     assert.equal(lineCount(footer, slotCall), 2, 'a composer-actions call site lost its side-question guard or its props');
     assert.equal(lineCount(footer, 'useProductDictationBlock()'), 1, 'ComposerFooter no longer reads the dictation block once');
     const mobile = footer.slice(footer.indexOf('{isMobile ? ('), footer.indexOf(') : ('));
-    has(mobile, /disabled=\{dictationActive \|\| dictationBlock\.blocked\}\s*title=\{dictationStartLabel\}\s*aria-label=\{dictationStartLabel\}\s*>\s*<Icon name="mic"[^\n]*\n\s*<\/button> : null\}\s*\{!isBtw \? <ProductSlot name="composer-actions"/, 'the mobile composer-actions slot no longer follows the blockable microphone');
+    has(mobile, /disabled=\{dictationActive \|\| dictationBlock\.blocked\}\s*aria-label=\{dictationStartLabel\}\s*>\s*<Icon name="mic"[^\n]*\n\s*<\/button><\/TooltipTrigger><TooltipContent side="top"><TooltipLabelWithShortcut label=\{dictationStartLabel\}[^\n]*<\/Tooltip> : null\}\s*\{!isBtw \? <ProductSlot name="composer-actions"/, 'the mobile composer-actions slot no longer follows the blockable microphone');
     const desktop = footer.slice(footer.indexOf(') : ('));
     has(desktop, /<MemoComposerDictation[^>]*disabled=\{dictationBlock\.blocked && !dictationActive\}[^>]*\/> : null\}\s*\{!isBtw \? <ProductSlot name="composer-actions"/, 'the desktop composer-actions slot no longer follows the blockable microphone');
     has(footer, /const dictationStartLabel = dictationBlock\.blocked && dictationBlock\.reason \? dictationBlock\.reason : t\('chat\.dictation\.start'\);/, 'the mobile microphone no longer names the block reason');
@@ -2101,25 +2230,25 @@ const checks = {
     has(layout, /^import \{ ProductSlot \} from '@\/lib\/product-plugins';$/m, 'MainLayout no longer imports ProductSlot');
     assert.equal(lineCount(layout, '<ProductSlot '), 1, 'MainLayout renders ProductSlot more than once, or not at all');
     has(layout, /<ErrorBoundary><ProductSlot name="main-surface" \/><\/ErrorBoundary>\s*<\/main>/, 'the main-surface slot is no longer the last child of <main>, inside an ErrorBoundary');
-    has(layout, /<main className="[^"]*" data-page-scroll-lock="true" data-product-region="main">/, '<main> lost data-product-region="main"');
+    has(layout, /<main (?:ref=\{\w+\} )?className="[^"]*" data-page-scroll-lock="true" data-product-region="main">/, '<main> lost data-product-region="main"');
     has(layout, /data-page-scroll-lock="true"\s+data-product-region="shell"\s+className="main-content-safe-area /, 'the layout root lost data-product-region="shell"');
     has(layout, /data-product-region="column">\s*<Header \/>/, 'the right column lost data-product-region="column", or no longer starts with the header');
     has(source('packages/ui/src/lib/product-plugins.ts'), /return elements\.length === 0 \? null : elements;/, 'ProductSlot no longer renders its components without a wrapper');
-    has(layout, /<main className="[^"]*" data-page-scroll-lock="true" data-product-region="main">\s*<div className=\{cn\('absolute inset-0', isSurfacePageOpen && 'invisible'\)\}>\s*<ErrorBoundary><ChatView /, 'ChatView is no longer held by the first child div of <main>');
-    has(layout, /data-chat-area="true">\s*<main /, '<main> is no longer first in the data-chat-area div');
-    has(layout, /<\/main>\s*<ContextPanel \/>/, 'ContextPanel no longer follows <main>');
+    has(layout, /<main (?:ref=\{\w+\} )?className="[^"]*" data-page-scroll-lock="true" data-product-region="main">\s*<div className=\{cn\('absolute inset-0', isSurfacePageOpen && 'invisible'\)\}>\s*<ErrorBoundary><ChatView /, 'ChatView is no longer held by the first child div of <main>');
+    has(layout, /data-chat-area="true">\s*<div className="[^"]*" data-workspace-chat="true">\s*<main /, '<main> is no longer first in the chat column, the data-chat-area div\'s first child');
+    has(layout, /<\/main>\s*<ContextPanel zone="bottom" \/>\s*<\/div>\s*<ContextPanel zone="right" \/>/, 'the bottom and right context panels no longer follow <main>');
     const main = layout.slice(layout.indexOf('<main '), layout.indexOf('</main>'));
     const slot = main.indexOf('<ProductSlot name="main-surface" />');
-    for (const page of ['<ChatView ', '<RunOverview />', '<ScheduledTasksDialog />', '<ArchiveView />', '<UsageStatsView />', '<WorktreesView />', '<SpacesView />', '<PluginPane ']) {
+    for (const page of ['<ChatView ', 'load={loadRunOverview}', 'load={loadScheduledTasksDialog}', 'load={loadArchiveView}', 'load={loadIntegrationsCatalogView}', 'load={loadUsageStatsView}', 'load={loadSourceBoardView}', 'load={loadOverviewView}', 'load={loadWorktreesView}', 'load={loadSpacesView}', '<PluginPane ']) {
       const at = main.indexOf(page);
       assert.ok(at >= 0 && at < slot, `${page} is no longer inside <main> before the main-surface slot`);
     }
   },
   'default-themes-in-data-dir': () => {
-    const server = source('packages/web/server/index.js');
+    const server = source('packages/web/server/runtime.ts');
     has(server, /^const OPENCHAMBER_USER_THEMES_DIR = path\.join\(OPENCHAMBER_USER_CONFIG_ROOT, 'themes'\);$/m, 'custom themes no longer live in <dataDir>/themes');
     has(server, /^const OPENCHAMBER_DATA_DIR = OPENCHAMBER_USER_CONFIG_ROOT;$/m, 'the plugin data dir is no longer the folder that holds themes');
-    has(source('packages/web/server/lib/opencode/theme-runtime.js'), /metadata: \{\n {8}\.\.\.metadata,\n {8}id: id\.trim\(\),/, 'a custom theme read from disk no longer keeps its metadata and id');
+    has(source('packages/web/server/lib/appearance/theme-runtime.ts'), /metadata: \{\n {8}\.\.\.metadata,\n {8}id: id\.trim\(\),/, 'a custom theme read from disk no longer keeps its metadata and id');
     has(source('packages/ui/src/contexts/ThemeSystemContext.tsx'), /customThemes\.forEach\(add\);[\s\S]*?themes\.forEach\(add\);/, 'custom themes no longer come before, and so replace, the built-ins with the same id');
     has(source('packages/ui/src/lib/theme/themes/index.ts'), /^export const DEFAULT_LIGHT_THEME_ID = 'openchamber-light' as const;\nexport const DEFAULT_DARK_THEME_ID = 'openchamber-dark' as const;$/m);
   },
@@ -2135,14 +2264,14 @@ const checks = {
     has(options, /^export const DEFAULT_MONO_FONT: MonoFontOption = 'system-mono';$/m);
     has(options, /^export const isUiFontOption = \(value: unknown\): value is UiFontOption =>$/m);
     has(options, /^export const isMonoFontOption = \(value: unknown\): value is MonoFontOption =>$/m);
-    const store = source('packages/ui/src/stores/useUIStore.ts');
+    const store = uiStoreSource();
     has(store, /^ {2}uiFont: UiFontOption;$/m);
     has(store, /^ {2}monoFont: MonoFontOption;$/m);
   },
 
   'design-shape-anchors': () => {
-    const button = source('packages/ui/src/components/ui/button.tsx');
-    has(button, /^const TINT_PRIMARY = \[\n {2}"bg-\[color-mix\(in_srgb,var\(--primary-base\)_10%,var\(--background\)\)\]",$/m, 'the default button no longer starts with the primary tint class design.css finds it by');
+    const button = buttonSource();
+    has(button, /^const TINT_PRIMARY = \[\n(?: {2}"[^"\n]+",\n)*? {2}"bg-\[color-mix\(in_srgb,var\(--primary-base\)_10%,var\(--background\)\)\]",$/m, 'the default button no longer carries the primary tint class design.css finds it by');
     has(button, /^ {8}default: TINT_PRIMARY,$/m, 'the default variant is no longer the primary tint');
     has(button, /data-slot="button"/);
     has(source('packages/ui/src/lib/typographyWatcher.ts'), /const styleContent = `:root \{\\n\$\{cssVars\}\\n\}\\n`;/, 'typographyWatcher no longer writes the type sizes on :root');
@@ -2150,7 +2279,7 @@ const checks = {
     has(generator, /styleContent = `:root \{\\n\$\{cssVars\}\\n\}\\n\\n:root:not\(\.dark\) \{\\n\$\{cssVars\}\\n\}`;/, 'the theme generator no longer writes its variables on :root and :root:not(.dark)');
     has(generator, /vars\.push\(`  --text-micro: \$\{typography\.micro\};`\);/, 'the theme generator no longer writes --text-micro without !important');
     has(source('packages/ui/src/lib/typography.ts'), /^export const SEMANTIC_TYPOGRAPHY = \{\n {2}markdown: '[\d.]+rem',\n {2}code: '[\d.]+rem',\n {2}uiHeader: '[\d.]+rem',\n {2}uiLabel: '[\d.]+rem',\n {2}meta: '[\d.]+rem',\n {2}micro: '[\d.]+rem',$/m, 'the semantic type sizes changed names or units');
-    has(source('packages/ui/src/styles/design-system.css'), /^@theme inline \{\n {2}--radius-none: 0;\n {2}--radius-sm: [^;]+;[^\n]*\n {2}--radius-md: [^;]+;[^\n]*\n {2}--radius-lg: [^;]+;[^\n]*\n {2}--radius-xl: [^;]+;/m, 'the radius scale no longer sits in @theme inline as sm/md/lg/xl');
+    has(source('packages/ui/src/styles/design-system.css'), /^@theme inline \{\n[^}]*?^ {2}--radius-none: 0;\n {2}--radius-sm: [^;]+;[^\n]*\n {2}--radius-md: [^;]+;[^\n]*\n {2}--radius-lg: [^;]+;[^\n]*\n {2}--radius-xl: [^;]+;/m, 'the radius scale no longer sits in @theme inline as sm/md/lg/xl');
   },
 
   'glass-look-anchors': () => {
@@ -2159,20 +2288,24 @@ const checks = {
     const themes = source('packages/ui/src/lib/theme/themes/index.ts');
     has(themes, /^export const DEFAULT_LIGHT_THEME_ID = 'openchamber-light' as const;$/m, 'the default light theme id changed');
     has(themes, /^export const DEFAULT_DARK_THEME_ID = 'openchamber-dark' as const;$/m, 'the default dark theme id changed');
-    has(source('packages/ui/src/components/layout/MainLayout.tsx'), /<\/Sidebar>\s*<div className="[^"]*" data-page-scroll-lock="true" data-product-region="column">\s*<Header \/>/, 'the sidebar is no longer right before the column, or the column no longer starts with the header');
+    const layout = source('packages/ui/src/components/layout/MainLayout.tsx');
+    has(layout, /<LeftSidebar isMobile=\{isMobile\} side=\{sidebarSide\} \/>\s*<div className="[^"]*" data-page-scroll-lock="true" data-product-region="column">\s*<Header \/>/, 'the sidebar is no longer right before the column, or the column no longer starts with the header');
+    has(layout, /const LeftSidebar = React\.memo<[^\n]*\n(?:[^\n]*\n){0,6}? {4}return \(\s*<Sidebar\b[\s\S]*?<\/Sidebar>\s*\);\s*\}\);/, 'the sidebar row entry no longer renders only the Sidebar');
     const sidebar = source('packages/ui/src/components/layout/Sidebar.tsx');
-    has(sidebar, /return \(\s*<aside\s+ref=\{sidebarRef\}/, 'Sidebar no longer renders an <aside> as its root');
-    has(sidebar, /<\/aside>\s*\);\s*\};\s*$/, 'Sidebar renders something after its <aside>');
+    has(sidebar, /return \(\s*<div\s+ref=\{sidebarRef\}\s+data-left-sidebar=""/, 'Sidebar no longer renders a <div data-left-sidebar> as its root');
+    has(sidebar, /<\/aside>\s*<\/div>\s*\);\s*\};\s*$/, 'Sidebar no longer ends its root with the <aside>');
+    assert.equal(lineCount(sidebar, '<aside'), 1, 'Sidebar renders another <aside>');
     has(source('packages/ui/src/components/layout/Header.tsx'), /return \(\s*<>\s*<header\s+ref=\{headerRef\}/, 'Header no longer renders a <header> first');
-    const input = source('packages/ui/src/components/chat/ChatInput.tsx');
-    has(input, /const chatInputRadius = isMobile \? '1\.5rem' : 'var\(--radius-xl\)';/, 'the desktop composer radius is no longer var(--radius-xl)');
-    has(input, /'oc-glass-composer',/, 'the composer box is no longer .oc-glass-composer');
+    has(source('packages/ui/src/components/chat/composer/input/useComposerPreferences.ts'), /const chatInputRadius = isMobile \? '[\d.]+rem' : 'var\(--radius-xl\)';/, 'the desktop composer radius is no longer var(--radius-xl)');
+    const form = source('packages/ui/src/components/chat/composer/input/renderComposerForm.tsx');
+    has(form, /'oc-surface-floating oc-composer-surface',[^\n]*\n[^\n]*\n\s*\)\}\s*style=\{\{ borderRadius: chatInputRadius \}\}\s*ref=\{dropZoneRef\}/, 'the composer box is no longer .oc-composer-surface with the composer radius');
+    assert.ok(!fs.globSync('packages/ui/src/**/*.{ts,tsx,css}', { cwd: repoRoot }).some((file) => source(file).includes('oc-glass-composer')), 'upstream draws .oc-glass-composer again');
     const css = source('packages/ui/src/styles/design-system.css');
-    has(css, /@layer base \{\s*:root \{[\s\S]*?--oc-glass-blur: 22px;\s*--oc-glass-opacity: 52%;\s*--oc-glass-popover-opacity: 50%;/, 'the --oc-glass-* variables are no longer on :root in @layer base');
+    has(css, /^@layer base \{\s*:root \{[^}]*?\n {4}--oc-glass-blur: [^;]+;\n {4}--oc-glass-opacity: [^;]+;[^}]*?\n {4}--oc-glass-popover-opacity: [^;]+;/, 'the --oc-glass-* variables are no longer on :root in @layer base');
     has(css, /:root\.desktop-runtime body,\s*:root\.desktop-runtime #root \{\s*background: var\(--background\) !important;/, 'the desktop no longer paints #root with var(--background)');
     has(source('packages/ui/src/components/layout/ContextPanel.tsx'), /<aside\s+ref=\{panelRef\}\s+data-context-panel="true"/, 'the context panel is no longer an <aside data-context-panel="true">');
-    has(source('packages/ui/src/components/layout/ContextPanelRail.tsx'), /return \(\s*<nav\s+aria-label=\{t\('contextRail\.aria\.rail'\)\}/, 'the context rail no longer renders a <nav> root');
-    has(source('packages/ui/src/components/layout/MainLayout.tsx'), /<div className="border-t border-border" data-page-scroll-lock="true">\s*<ErrorBoundary><ContextPanelRail \/><\/ErrorBoundary>\s*<\/div>/, 'the context rail is no longer in its own div beside the chat column');
+    has(source('packages/ui/src/components/layout/ContextPanelRail.tsx'), /return \(\s*<nav\s+(?:[\w-]+=\{[^}]*\}\s+|[\w-]+="[^"]*"\s+)*aria-label=\{t\('contextRail\.aria\.rail'\)\}/, 'the context rail no longer renders a <nav> root');
+    has(layout, /<div data-page-scroll-lock="true">\s*<ErrorBoundary><ContextPanelRail \/><\/ErrorBoundary>\s*<\/div>/, 'the context rail is no longer in its own div beside the chat column');
     const generator = source('packages/ui/src/lib/theme/cssGenerator.ts');
     has(generator, /--background: \$\{theme\.colors\.surface\.background\} !important;/, 'the theme no longer sets --background from surface.background');
     has(generator, /--surface-background: \$\{surface\.background\};/, 'the theme no longer emits --surface-background from surface.background');
@@ -2184,35 +2317,42 @@ const checks = {
     has(status, /type GlobalSessionStatusEntry = \{ status: SessionStatus; directory: string \};/, 'a global status entry is no longer { status, directory }');
     has(status, /^ {2}statusById: Map<string, GlobalSessionStatusEntry>;$/m, 'the global status store no longer keeps statusById');
     const blocking = source('packages/ui/src/sync/global-blocking-requests.ts');
-    has(blocking, /export type BlockingPermissionRequest = Pick<PermissionRequest, 'id' \| 'sessionID' \| 'action' \| 'resources'>;/, 'a blocking permission no longer keeps id, sessionID, action and resources');
+    has(blocking, /export type BlockingPermissionRequest = Pick<PermissionRequest, 'id' \| 'sessionID' \| 'action' \| 'resources'(?: \| '\w+')*>;/, 'a blocking permission no longer keeps id, sessionID, action and resources');
     has(blocking, /export type BlockingFormRequest = Pick<FormRequest, 'id' \| 'sessionID' \| 'title'>;/, 'a blocking form no longer keeps id, sessionID and title');
-    has(blocking, /export type PendingBlockingRequests = \{\s*directory: string;\s*permissions: readonly BlockingPermissionRequest\[\];\s*forms: readonly BlockingFormRequest\[\];\s*\};/, 'PendingBlockingRequests changed shape');
+    has(blocking, /^(?:export )?type PendingBlockingRequests = \{\s*directory: string;\s*permissions: readonly BlockingPermissionRequest\[\];\s*forms: readonly BlockingFormRequest\[\];[^}]*\};/m, 'PendingBlockingRequests changed shape');
     has(blocking, /^ {2}bySession: ReadonlyMap<string, PendingBlockingRequests>;$/m, 'the blocking index is no longer bySession');
-    has(source('packages/ui/src/sync/sync-context.tsx'), /applyGlobalSessionStatusEvents\(directory, events\)\s*applyGlobalBlockingRequestEvents\(directory, events\)/, 'the dispatcher no longer feeds the blocking index for every directory');
-    const scheduler = source('packages/web/server/lib/scheduled-tasks/runtime.js');
+    has(source('packages/ui/src/sync/directory-event-batch.ts'), /applyGlobalSessionStatusEvents\(directory, events\)\s*applyGlobalBlockingRequestEvents\(directory, events\)/, 'the dispatcher no longer feeds the blocking index for every directory');
+    const scheduler = source('packages/web/server/lib/scheduled-tasks/runtime.ts');
     has(scheduler, /^const DEFAULT_MAX_RUN_MS = 30 \* 60 \* 1000;$/m, 'the scheduled run limit is no longer 30 minutes');
     has(scheduler, /lastRunAt: runStartedAt,/, 'a scheduled run no longer records lastRunAt when it starts');
-    const notifications = source('packages/ui/src/sync/notification-store.ts');
-    has(notifications, /session: \{\s*unseenCount: Record<string, number>\s*unseenHasError: Record<string, boolean>\s*\}/, 'the notification index no longer has session unseenCount and unseenHasError');
+    const unread = source('packages/ui/src/sync/session-unread.ts');
+    has(unread, /^export const isSessionUnread = \(session: Session \| undefined\): boolean => \(/m, 'isSessionUnread(session) changed');
+    has(unread, /^export const isSessionUnreadWithError = \(session: Session \| undefined\): boolean =>/m, 'isSessionUnreadWithError(session) changed');
     const goals = source('packages/ui/src/lib/sessionGoalMetadata.ts');
     has(goals, /export type SessionGoalStatus = 'active' \| 'paused' \| 'blocked' \| 'budgetLimited' \| 'complete';/, 'the goal statuses changed');
-    has(goals, /export function getSessionGoal\(session: Session \| null \| undefined\): SessionGoalPayload \| null \{/, 'getSessionGoal changed its signature');
+    has(goals, /export function getSessionGoal\(session: (?:Session|Pick<Session, 'metadata'>) \| null \| undefined\): SessionGoalPayload \| null \{/, 'getSessionGoal changed its signature');
     has(goals, /export function formatGoalTokens\(count: number\): string \{/, 'formatGoalTokens is gone');
     const scheduled = source('packages/ui/src/lib/scheduledTasksApi.ts');
-    has(scheduled, /export type ScheduledTaskStatus = 'idle' \| 'running' \| 'success' \| 'error';/, 'a scheduled task no longer reports running');
+    has(scheduled, /export type ScheduledTaskStatus = 'idle' \| 'running'(?: \| '\w+')*;/, 'a scheduled task no longer reports running');
     has(scheduled, /export const fetchScheduledTasks = async \(projectID: string\): Promise<ScheduledTask\[\]> => \{/, 'fetchScheduledTasks changed its signature');
     has(scheduled, /state: \{[^}]*lastStatus\?: ScheduledTaskStatus;/, 'a scheduled task state no longer carries lastStatus');
   },
   'today-navigation': () => {
     const node = source('packages/ui/src/components/session/sidebar/sessions/SessionNodeItem.tsx');
-    const title = /<button\s+type="button"\s+aria-pressed=\{selectionModeEnabled \? isRowSelected : undefined\}([\s\S]*?)onClick=\{\(event\) => handleRowSelect\(event\)\}/.exec(node);
-    assert.ok(title, 'the row title button no longer selects the row, or no longer marks selection mode with aria-pressed');
-    assert.ok(!title[1].includes('aria-label'), 'the row title button now carries an aria-label');
-    has(node, /const handleRowBackgroundClick = [\s\S]*?closest\('button, a, input, \[role="menuitem"\], \[role="menu"\]'\)\) return;\s*handleRowSelect\(event\);/, 'a click on the row around its controls no longer selects it');
-    has(node, /const subsessionChevron = hasChildren \? \(\s*<span\s+role="button"/, 'the subsession chevron is no longer a span with role="button"');
-    for (const label of ['aria-label={workActionLabel}', "aria-label={t('sessions.sidebar.session.menu.label')}"]) has(node, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `a row action lost ${label}`);
+    const title = /<div\s+role="button"\s+tabIndex=\{0\}\s+data-session-row-main=""([\s\S]*?)onClick=\{\(event\) => interactions\.handleRowSelect\(event\)\}/.exec(node);
+    assert.ok(title, 'the row title (role="button", data-session-row-main) no longer selects the row');
+    assert.ok(title[1].includes('aria-pressed={selectionModeEnabled ? isRowSelected : undefined}'), 'the row title no longer marks selection mode with aria-pressed');
+    assert.ok(!title[1].includes('aria-label'), 'the row title now carries an aria-label');
+    assert.equal(lineCount(node, 'data-session-row-main'), 1, 'a row has more than one title');
+    has(node, /onClick=\{interactions\.handleRowBackgroundClick\}/, 'the row box no longer takes clicks around its controls');
+    has(source('packages/ui/src/components/session/sidebar/sessions/useSessionRowInteractions.ts'), /const handleRowBackgroundClick = \(event: React\.MouseEvent<HTMLDivElement>\) => \{\s*if \(isRowBoxClick\(event\)\) handleRowSelect\(event\);/, 'a click on the row around its controls no longer selects it');
+    has(source('packages/ui/src/components/session/sidebar/sessions/rowBoxClick.ts'), /const ROW_CONTROL_SELECTOR = 'button, a, input, textarea, \[role="button"\], \[role="menuitem"\], \[role="menu"\]';/, 'the row box counts other elements as controls');
+    const chevrons = source('packages/ui/src/components/session/sidebar/sessions/SessionRowChevrons.tsx');
+    has(chevrons, /export function SessionTreeChevron\([^)]*\): React\.ReactNode \{[\s\S]*?<span\s+role="button"[\s\S]*?aria-label=\{expanded/, 'the subsession chevron is no longer a span with role="button" and an aria-label');
+    const actions = source('packages/ui/src/components/session/sidebar/sessions/SessionRowActions.tsx');
+    for (const label of ['aria-label={workActionLabel}', "aria-label={t('sessions.sidebar.session.menu.label')}"]) has(actions, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `a row action lost ${label}`);
     const store = source('packages/ui/src/sync/session-ui-store.ts');
-    has(store, /draftId: nextDraftId\+\+,\s*open: true,/, 'opening a draft no longer takes a new draftId');
+    has(store, /const nextDraft: NewSessionDraftState = \{\s*draftId: nextDraftId\+\+,[^}]*?\n\s*open: true,/, 'opening a draft no longer takes a new draftId');
     has(store, /set\(\{\s*newSessionDraft: nextDraft,\s*currentSessionId: null,/, 'opening a draft no longer clears the selected session in the same update');
     has(store, /if \(options\?\.initialPrompt\) \{\s*useInputStore\.getState\(\)\.setPendingInputText\(options\.initialPrompt\)/, 'a draft no longer puts initialPrompt into the composer');
     has(store, /^ {2}openNewSessionDraft: \(options\?: Partial<NewSessionDraftState> & \{ automatic\?: boolean \}\) => void$/m, 'openNewSessionDraft changed its options');
@@ -2221,9 +2361,9 @@ const checks = {
     has(restore, /if \(useSessionUIStore\.getState\(\)\.currentSessionId\) return 'none';\s*const runtimeKey = getRuntimeKey\(\);\s*const persisted = readLastActiveSession\(runtimeKey\);/, 'the launch restore no longer reads readLastActiveSession(getRuntimeKey()) only while nothing is selected');
     has(restore, /void latest\.setCurrentSession\(\s*session\.id,/, 'the launch restore no longer selects the remembered session');
     has(source('packages/ui/src/sync/last-session-cache.ts'), /export function readLastActiveSession\(\s*runtimeKey: string,/, 'readLastActiveSession changed');
-    has(source('packages/ui/src/components/chat/ChatContainer.tsx'), /if \(live\.currentSessionId \|\| live\.newSessionDraft\.open\) return;[\s\S]{0,200}openNewSessionDraft\(\{ automatic: true \}\);/, 'the automatic first draft no longer waits for no session and no draft');
+    has(source('packages/ui/src/components/chat/column/useChatColumnSelection.ts'), /if \(live\.currentSessionId \|\| live\.newSessionDraft\.open\) return;[\s\S]{0,200}openNewSessionDraft\(\{ automatic: true \}\);/, 'the automatic first draft no longer waits for no session and no draft');
     has(source('packages/ui/src/components/session/sidebar/sessions/SessionNodeItem.tsx'), /data-session-row=\{session\.id\}/, 'a sidebar session row lost data-session-row');
-    const ui = source('packages/ui/src/stores/useUIStore.ts');
+    const ui = uiStoreSource();
     for (const field of ['isScheduledTasksDialogOpen: boolean;', 'isArchivePageOpen: boolean;', 'isUsageStatsPageOpen: boolean;', 'openGuestPageId: string | null;', 'worktreesPageProjectId: string | null;', 'spacesPageProjectId: string | null;', 'runOverviewKey: string | null;', 'closeMainSurfaces: () => void;', 'setSettingsDialogOpen: (open: boolean) => void;', 'setSettingsPage: (slug: string) => void;', 'setScheduledTasksDialogOpen: (open: boolean) => void;']) {
       assert.ok(ui.includes(field), `useUIStore no longer has ${field}`);
     }
@@ -2233,7 +2373,7 @@ const checks = {
     has(en, /'chat\.chatInput\.toast\.messageSendFailed': /, 'the composer send-failed key is gone');
   },
   'today-and-widget-controls': () => {
-    const button = source('packages/ui/src/components/ui/button.tsx');
+    const button = buttonSource();
     for (const variant of ['default', 'outline', 'ghost', 'destructive']) has(button, new RegExp(`^ {8}${variant}:`, 'm'), `the Button ${variant} variant is gone`);
     has(button, /^ {8}xs: "/m, 'the Button xs size is gone');
     const sprite = source('packages/ui/src/components/icon/sprite.ts');
@@ -2250,7 +2390,7 @@ const checks = {
     has(queue, /addToQueue: \(target: MessageQueueTarget, message: QueuedMessageInput\) => Promise<void>;/, 'addToQueue changed its signature');
     has(queue, /getQueueForTarget: \(target: MessageQueueTarget\) => QueuedMessage\[\];/, 'getQueueForTarget changed its signature');
     has(queue, /export interface QueuedMessageSendConfig \{\s*providerID: string;\s*modelID: string;\s*agent\?: string;\s*variant\?: string;\s*\}/, 'QueuedMessageSendConfig changed its fields');
-    has(queue, /interface QueuedMessageInput \{\s*content: string;[\s\S]*?sendConfig\?: QueuedMessageSendConfig;\s*\}/, 'QueuedMessageInput no longer takes content and sendConfig');
+    has(queue, /interface QueuedMessageInput \{\s*content: string;[^}]*?\n\s*sendConfig\?: QueuedMessageSendConfig;[^}]*\}/, 'QueuedMessageInput no longer takes content and sendConfig');
     has(queue, /if \(!message\.sendConfig\) \{\s*set\(\(state\) => removeMessageLocally\(state, key, id\)\);\s*throw new Error\('A queued message needs a provider and model to be delivered later\.'\);/, 'the server-owned queue no longer refuses a prompt without a sendConfig');
   },
 
@@ -2259,8 +2399,10 @@ const checks = {
   },
 
   'speech-config-store': () => {
-    const store = source('packages/ui/src/stores/useConfigStore.ts');
-    const contract = store.slice(store.indexOf('interface ConfigStore {'), store.indexOf('export const useConfigStore'));
+    has(source('packages/ui/src/stores/useConfigStore.ts'), /^ {16}\.\.\.createVoiceSettings\(set, get\),$/m, 'the config store no longer holds the voice settings');
+    const store = source('packages/ui/src/stores/config/voice.ts');
+    const types = source('packages/ui/src/stores/config/types.ts');
+    const contract = types.slice(types.indexOf('export interface ConfigStore {'));
     has(contract, /voiceProvider: 'browser' \| 'local' \| 'openai' \| 'openai-compatible' \| 'say';/, 'voiceProvider changed its values');
     has(contract, /sttProvider: 'local' \| 'openai-compatible';/, 'sttProvider changed its values');
     for (const field of ['sttServerUrl: string;', 'openaiCompatibleUrl: string;']) assert.ok(contract.includes(field), `the config store lost ${field}`);
@@ -2277,14 +2419,16 @@ const checks = {
     ]) assert.ok(contract.includes(setter), `the config store lost ${setter}`);
     has(store, /const saved = localStorage\.getItem\('sttProvider'\);[\s\S]*?return 'local' as const;/, "sttProvider no longer reads its own localStorage key with 'local' as the default");
     has(store, /const saved = localStorage\.getItem\('voiceProvider'\);[\s\S]*?return 'browser';/, "voiceProvider no longer reads its own localStorage key with 'browser' as the default");
-    has(source('packages/web/server/lib/dictation/runtime.js'), /app\.get\('\/api\/dictation\/status', async \(req, res\) => \{/, 'GET /api/dictation/status is gone');
-    has(source('packages/web/server/lib/dictation/service.js'), /installed: await isLocalSttModelInstalled\(modelsDir, id\),/, 'the dictation status no longer says which local models are installed');
+    has(source('packages/web/server/lib/dictation/runtime.ts'), /app\.get\('\/api\/dictation\/status', async \(req, res\) => \{/, 'GET /api/dictation/status is gone');
+    has(source('packages/web/server/lib/dictation/service.ts'), /installed: await isLocalSttModelInstalled\(modelsDir, id\),/, 'the dictation status no longer says which local models are installed');
   },
   'session-sync-hooks': () => {
-    const sync = source('packages/ui/src/sync/sync-context.tsx');
+    has(source('packages/ui/src/sync/sync-context.tsx'), /^export \{ useSessionStatus, [^}]*\buseSessionPermissions\b[^}]*\} from "\.\/session-request-hooks"$/m, 'sync-context no longer hands on useSessionStatus and useSessionPermissions');
+    const sync = source('packages/ui/src/sync/session-request-hooks.ts');
     has(sync, /^export function useSessionStatus\(sessionID: string, directory\?: string\) \{$/m, 'useSessionStatus changed its signature');
     has(sync, /^export function useSessionPermissions\(sessionID: string, directory\?: string, options\?: \{ bootstrap\?: boolean \}\) \{$/m, 'useSessionPermissions changed its signature');
-    has(sync, /if \(!ctx\) throw new Error\("useSyncRuntime must be used within <SyncProvider>"\)/, 'the sync hooks no longer need the SyncProvider; the narrator may move to the voice root');
+    has(sync, /useSyncRuntime\(\)/, 'the session request hooks no longer read the sync runtime');
+    has(source('packages/ui/src/sync/sync-runtime-context.ts'), /if \(!ctx\) throw new Error\("useSyncRuntime must be used within <SyncProvider>"\)/, 'the sync hooks no longer need the SyncProvider; the narrator may move to the voice root');
     const ui = source('packages/ui/src/sync/session-ui-store.ts');
     has(ui, /^  currentSessionId: string \| null$/m, 'the session UI store lost currentSessionId');
     has(ui, /^  currentSessionDirectory: string \| null$/m, 'the session UI store lost currentSessionDirectory');
@@ -2302,7 +2446,8 @@ const checks = {
     const reducer = source('packages/ui/src/sync/event-reducer.ts');
     has(reducer, /if \(patch\.outcome !== undefined\) next\.outcome = patch\.outcome/, 'a session patch no longer copies its outcome');
     has(reducer, /case "session\.patched": \{[\s\S]*?applySessionPatch\(sessions\[result\.index\], patch\)/, 'session.patched no longer applies the patch to the record');
-    has(source('packages/ui/src/sync/sync-context.tsx'), /^export function useSession\(sessionID\?: string \| null, directory\?: string\) \{$/m, 'useSession changed its signature');
+    has(source('packages/ui/src/sync/sync-context.tsx'), /^export \{ [^}]*\buseSession\b[^}]*\} from "\.\/live-session-hooks"$/m, 'sync-context no longer hands on useSession');
+    has(source('packages/ui/src/sync/live-session-hooks.ts'), /^export function useSession\(sessionID\?: string \| null, directory\?: string\) \{$/m, 'useSession changed its signature');
   },
 
   'dictation-capture-supported': () => {
@@ -2311,18 +2456,18 @@ const checks = {
   },
 
   'context-panel-browser': () => {
-    const store = source('packages/ui/src/stores/useUIStore.ts');
+    const store = uiStoreSource();
     has(store, /^export const normalizeContextPanelDirectoryKey = \(value: string\): string => /m, 'normalizeContextPanelDirectoryKey is gone');
     has(store, /type ContextPanelDirectoryState = \{\s*isOpen: boolean;[\s\S]*?tabs: ContextPanelTab\[\];\s*activeTabId: string \| null;/, 'a context panel state no longer has isOpen, tabs and activeTabId');
     has(store, /type ContextPanelTab = \{\s*id: string;\s*mode: ContextPanelMode;/, 'a context panel tab no longer has an id and a mode');
-    has(store, /contextPanelModeSchema = z\.enum\(\[[^\]]*'browser'/, "'browser' is no longer a context panel mode");
+    has(source('packages/ui/src/lib/surfaces/modes.ts'), /const BUILT_IN_CONTEXT_PANEL_MODES = \[[^\]]*'browser',/, "'browser' is no longer a context panel mode");
     has(store, /^  contextPanelByDirectory: Record<string, ContextPanelDirectoryState>;$/m, 'contextPanelByDirectory changed shape');
   },
 
   'voice-bar-ui': () => {
     const sprite = source('packages/ui/src/components/icon/sprite.ts');
     for (const name of ['loader-4', 'stop']) assert.ok(sprite.includes(`"${name}"`), `the icon sprite lost ${name}`);
-    const button = source('packages/ui/src/components/ui/button.tsx');
+    const button = buttonSource();
     has(button, /^\s+destructive:/m, 'Button lost its destructive variant');
     has(button, /^\s+sm:/m, 'Button lost its sm size');
   },
@@ -2340,44 +2485,45 @@ const checks = {
 
 const voiceServerChecks = {
   'agent-tool-progress': () => {
-    const template = source('packages/web/server/lib/agent-tool/runtime.js');
+    const template = source('packages/web/server/lib/agent-tool/runtime.ts');
     has(template, /const progress = \(extra\) => context\.progress\(\{\s*\$\{name\}: \{\s*schemaVersion: \$\{TOOL_SCHEMA_VERSION\},\s*action: args\.action,\s*description: title,\s*\.\.\.extra,/, 'the agent tool template no longer reports progress with schemaVersion, action and description');
     has(template, /await progress\(\)\s*\n\s*const endpoint = process\.env\.OPENCHAMBER_AGENT_TOOL_URL/, 'the agent tool template no longer reports progress before its callback');
     has(template, /await progress\(\{ ok: valid && result\.ok === true \}\)/, 'the agent tool template no longer reports progress with ok after its callback');
   },
 
   'dictation-openai-compatible': () => {
-    const service = source('packages/web/server/lib/dictation/service.js');
+    const service = source('packages/web/server/lib/dictation/service.ts');
     has(service, /options\.provider === 'openai-compatible' \? 'openai-compatible'/, 'dictation no longer has the openai-compatible provider');
-    has(service, /const config = options\.openaiCompatible \|\| \{\}/, 'dictation no longer reads options.openaiCompatible');
+    has(service, /const wireConfig = options\.openaiCompatible;\s*const config = hasConfigFields\(wireConfig\) \? wireConfig : \{\};/, 'dictation no longer reads options.openaiCompatible');
     has(service, /baseURL: config\.baseUrl,\s*model: config\.model,/, 'dictation no longer passes the base URL and model through');
     has(service, /apiKey: config\.apiKey \|\| readVoiceKey\('stt'\)/, 'dictation no longer fills its key from the stored stt key');
-    const session = source('packages/web/server/lib/dictation/openai-compatible-session.js');
+    const session = source('packages/web/server/lib/dictation/openai-compatible-session.ts');
     has(session, /const OPENAI_COMPATIBLE_SAMPLE_RATE = 16000;/, 'the openai-compatible session no longer works at 16 kHz');
     has(session, /pcm16ToWav\(committedPcm16, OPENAI_COMPATIBLE_SAMPLE_RATE\)/, 'the openai-compatible session no longer wraps its audio as WAV');
     has(session, /mimeType: 'audio\/wav'/, 'the openai-compatible session no longer sends audio/wav');
     has(session, /import \{ transcribeAudio \} from '\.\.\/tts\/stt\.js';/, 'the openai-compatible session no longer posts through tts/stt.js');
-    const stt = source('packages/web/server/lib/tts/stt.js');
-    has(stt, /client\.audio\.transcriptions\.create\(\{\s*file,\s*model,\s*response_format: 'json',/, 'tts/stt.js no longer posts file, model and response_format json');
+    const stt = source('packages/web/server/lib/tts/stt.ts');
+    has(stt, /const params: SpeechTranscriptionParams = \{\s*file,\s*model,\s*response_format: 'json',\s*\};[\s\S]{0,120}client\.audio\.transcriptions\.create\(params\)/, 'tts/stt.js no longer posts file, model and response_format json');
   },
 
   'tts-openai-compatible': () => {
-    const routes = source('packages/web/server/lib/tts/routes.js');
+    const routes = source('packages/web/server/lib/tts/routes.ts');
     has(routes, /app\.post\('\/api\/tts\/speak'/, '/api/tts/speak is gone');
-    has(routes, /const \{ text, voice = 'nova', model = 'gpt-4o-mini-tts', speed = 0\.9, instructions, providerId, modelId, apiKey, baseURL \} = req\.body \|\| \{\};/, '/api/tts/speak no longer takes baseURL');
-    has(routes, /readVoiceKey\(hasCustomBaseURL \? 'openaiCompatible' : 'openai'\)/, '/api/tts/speak no longer fills a custom server\'s key from the stored openaiCompatible key');
+    has(routes, /const \{ text, voice = 'nova', model = 'gpt-4o-mini-tts', speed = 0\.9, instructions, apiKey, baseURL(?:, \w+)* \} = speakBodySchema\.parse\(bodyOf\(req\.body\)\);/, '/api/tts/speak no longer takes baseURL');
+    has(routes, /const speakBodySchema = z\.object\(\{[^}]*\n {2}baseURL: z\.unknown\(\)\.optional\(\),/, '/api/tts/speak no longer accepts a baseURL in its body');
+    has(routes, /const requestKey = apiKey\?\.trim\(\) \? apiKey\.trim\(\) : undefined;\s*const clientKey = requestKey \?\? readVoiceKey\(hasCustomBaseURL \? 'openaiCompatible' : 'openai'\);/, '/api/tts/speak no longer fills a custom server\'s key from the stored openaiCompatible key');
     has(routes, /res\.setHeader\('Content-Type', result\.contentType\);/, '/api/tts/speak no longer answers with the speech server\'s content type');
-    const service = source('packages/web/server/lib/tts/service.js');
+    const service = source('packages/web/server/lib/tts/service.ts');
     has(service, /const contentType = response\.headers\.get\('content-type'\) \?\? 'audio\/mpeg';/, 'the TTS service no longer keeps the content type the server gave');
   },
 
   'voice-keys-file': (t) => {
-    const index = source('packages/web/server/index.js');
+    const index = source('packages/web/server/runtime.ts');
     has(index, /const OPENCHAMBER_USER_CONFIG_ROOT = process\.env\.OPENCHAMBER_DATA_DIR\s*\?\s*path\.resolve\(process\.env\.OPENCHAMBER_DATA_DIR\)/, 'the server data dir no longer comes from OPENCHAMBER_DATA_DIR');
     has(index, /const OPENCHAMBER_DATA_DIR = OPENCHAMBER_USER_CONFIG_ROOT;/, 'the server data dir moved');
     has(index, /dataDir: OPENCHAMBER_DATA_DIR,/, 'the plugin context no longer names the server data dir');
-    const keys = source('packages/web/server/lib/tts/voice-keys.js');
-    has(keys, /const VOICE_KEY_KINDS = \['openai', 'openaiCompatible', 'stt'\];/, 'the voice key kinds changed');
+    const keys = source('packages/web/server/lib/tts/voice-keys.ts');
+    has(keys, /const VOICE_KEY_KINDS(?:: VoiceKeyKind\[\])? = \['openai', 'openaiCompatible', 'stt'\];/, 'the voice key kinds changed');
     has(keys, /const storedKey = z\.string\(\)\.trim\(\)\.min\(1\)\.max\(1024\);/, 'a stored voice key is no longer 1 to 1024 characters');
     has(keys, /path\.resolve\(process\.env\.OPENCHAMBER_DATA_DIR\)/, 'the voice keys no longer follow OPENCHAMBER_DATA_DIR');
     has(keys, /path\.join\(resolveDataDir\(\), 'voice-keys\.json'\)/, 'the voice keys file moved');
@@ -2390,13 +2536,13 @@ const voiceServerChecks = {
       keys.install(['stt', 'openaiCompatible']);
       console.log(JSON.stringify({ stt: readVoiceKey('stt') === keys.current(), openaiCompatible: readVoiceKey('openaiCompatible') === keys.current(), described: describeVoiceKeys() }));
     `;
-    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+    const result = spawnSync(process.execPath, ['--import', sourceLoader, '--input-type=module', '-e', script], {
       encoding: 'utf8',
       env: {
         ...process.env,
         OPENCHAMBER_DATA_DIR: dataDir,
         CONTRACT_OURS_URL: pathToFileURL(path.join(repoRoot, 'packages/mittr-server/src/mittr/voice/speech-key.js')).href,
-        CONTRACT_UPSTREAM_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/tts/voice-keys.js')).href,
+        CONTRACT_UPSTREAM_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/tts/voice-keys.ts')).href,
       },
     });
     assert.equal(result.status, 0, result.stderr);
@@ -2410,39 +2556,39 @@ const voiceServerChecks = {
       const { normalizeCustomOpenAIBaseURL } = await import(process.env.CONTRACT_BASE_URL);
       console.log(JSON.stringify(normalizeCustomOpenAIBaseURL(${JSON.stringify(url)})));
     `;
-    const base = { ...process.env, CONTRACT_BASE_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/tts/base-url.js')).href };
+    const base = { ...process.env, CONTRACT_BASE_URL: pathToFileURL(path.join(repoRoot, 'packages/web/server/lib/tts/base-url.ts')).href };
     delete base.OPENCHAMBER_RUNTIME;
     delete base.OPENCHAMBER_ALLOW_REMOTE_OPENAI_COMPAT_URLS;
     for (const extra of [{}, { OPENCHAMBER_RUNTIME: 'desktop' }, { OPENCHAMBER_RUNTIME: 'web' }, { OPENCHAMBER_ALLOW_REMOTE_OPENAI_COMPAT_URLS: 'false' }]) {
-      const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', env: { ...base, ...extra } });
+      const result = spawnSync(process.execPath, ['--import', sourceLoader, '--input-type=module', '-e', script], { encoding: 'utf8', env: { ...base, ...extra } });
       assert.equal(result.status, 0, result.stderr);
       assert.deepEqual(JSON.parse(result.stdout.trim()), { value: url }, JSON.stringify(extra));
     }
-    const baseUrl = source('packages/web/server/lib/tts/base-url.js');
+    const baseUrl = source('packages/web/server/lib/tts/base-url.ts');
     has(baseUrl, /'127\.0\.0\.1',/, 'loopback is no longer an allowed local speech host');
     has(baseUrl, /if \(isEnterpriseMode\(\) && !isAllowedLocalHost\(parsed\.hostname\)\)/, 'enterprise mode no longer keeps a local speech host');
   },
 
   'control-voice-actions': async () => {
     const { VOICE_UPSTREAM_ACTIONS } = await import('./mittr/voice/tools.js');
-    const { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } = await importUpstream('packages/web/server/lib/openchamber-control/actions.js');
-    const upstream = new Set([...OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, ...OPENCHAMBER_WEB_ACTION_DEFINITIONS].map(({ action }) => action));
+    const { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_SCHEDULE_ACTION_DEFINITIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } = await importUpstream('packages/web/server/lib/openchamber-control/actions.ts');
+    const upstream = new Set([...OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, ...OPENCHAMBER_SCHEDULE_ACTION_DEFINITIONS, ...OPENCHAMBER_WEB_ACTION_DEFINITIONS].map(({ action }) => action));
     assert.deepEqual(VOICE_UPSTREAM_ACTIONS.filter((action) => !upstream.has(action)), []);
   },
 
   'control-voice-parameters': async (t) => {
     const { CONTROL_PARAMETER_PROPERTIES, WEB_PARAMETER_PROPERTIES } = await import('./mittr/voice/parameters.js');
-    const { createAgentToolRuntime } = await importUpstream('packages/web/server/lib/agent-tool/runtime.js');
+    const { createAgentToolRuntime } = await importUpstream('packages/web/server/lib/agent-tool/runtime.ts');
     const dataDir = tempDir(t, 'contract-agent-tool-');
-    const runtime = createAgentToolRuntime({ crypto, fsPromises: fs.promises, path, dataDir, getActivePort: () => 1, executeAction: async () => ({}), resolveSessionDirectory: async () => null });
-    const dir = await runtime.materializePlugin({ includeControl: true, includeWeb: true, includeMemory: false, includeNotify: false });
+    const runtime = createAgentToolRuntime({ crypto, fsPromises: fs.promises, path, instanceDir: dataDir, getActivePort: () => 1, executeAction: async () => ({}), resolveSessionDirectory: async () => null });
+    const dir = await runtime.materializePlugin({ includeControl: true, includeSchedule: true, includeWeb: true, includeMemory: false, includeNotify: false });
     const plugin = (await import(pathToFileURL(path.join(dir, 'index.js')).href)).default;
     const added = [];
-    await plugin.setup({ tool: { transform: async (fn) => fn({ add: (tool) => added.push(tool), get: () => undefined, update: () => {} }) } });
+    await plugin.setup({ tool: { transform: async (fn) => fn({ add: (tool) => added.push(tool), get: () => undefined, update: () => {}, remove: () => {}, namespace: () => {} }) } });
     const inputsOf = (name) => Object.keys(added.find((tool) => tool.name === name)?.input?.properties?.parameters?.properties ?? {});
-    const control = inputsOf('openchamber');
+    const control = [...inputsOf('openchamber'), ...inputsOf('openchamber_schedule')];
     const web = inputsOf('openchamber_web');
-    assert.ok(control.length > 0 && web.length > 0, 'upstream\'s plugin no longer adds the control and web tools');
+    assert.ok(inputsOf('openchamber').length > 0 && inputsOf('openchamber_schedule').length > 0 && web.length > 0, 'upstream\'s plugin no longer adds the control, schedule and web tools');
     assert.deepEqual(Object.keys(CONTROL_PARAMETER_PROPERTIES).filter((name) => !control.includes(name)), []);
     assert.deepEqual(Object.keys(WEB_PARAMETER_PROPERTIES).filter((name) => !web.includes(name)), []);
     const work = source('packages/mittr-server/src/mittr/tools/work-lookup.js');
@@ -2451,21 +2597,21 @@ const voiceServerChecks = {
   },
 
   'engine-voice-reads': () => {
-    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
-    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe-engine-v2.mjs --only voice (P19 to P24) again, then the voice session lookup and this pin');
+    assert.equal(engineVersion(), ENGINE_VERSION, 'the bundled engine moved: run probe-engine-v2.mjs --only voice (P19 to P24) again, then the voice session lookup and this pin');
     const probe = source('scripts/mittr/probe-engine-v2.mjs');
     for (const route of ['/permission', 'message.list(', '/interrupt', '/todo']) assert.ok(probe.includes(route), `the voice probe no longer reads ${route}`);
   },
 
   'session-interrupt-route': () => {
-    const { opencodeCli } = JSON.parse(source('packages/electron/package.json'));
-    assert.equal(opencodeCli?.version, '2.0.22', 'the bundled engine moved: run probe P22 again before trusting session.stop');
+    assert.equal(engineVersion(), ENGINE_VERSION, 'the bundled engine moved: run probe P22 again before trusting session.stop');
     has(source('scripts/mittr/probe-engine-v2.mjs'), /\/interrupt/, 'the probe no longer interrupts a session');
+    const client = fs.globSync('node_modules/@opencode/client/dist/chunks/*.js', { cwd: repoRoot }).map((file) => source(file)).join('\n');
+    has(client, /interrupt: \(input, requestOptions\) => request\(\{\s*method: "POST",\s*path: `\/api\/session\/\$\{encodeURIComponent\(input\.sessionID\)\}\/interrupt`,/, 'the engine client no longer stops a session with POST /api/session/:id/interrupt');
     has(source('packages/mittr-server/src/mittr/voice/actions.js'), /\/api\/session\/\$\{encodeURIComponent\(sessionId\)\}\/interrupt`, \{ method: 'POST', directory/, 'session.stop no longer posts the interrupt in the session directory');
   },
 
   'sanitize-for-tts': async () => {
-    const { sanitizeForTTS } = await importUpstream('packages/web/server/lib/text/summarization.js');
+    const { sanitizeForTTS } = await importUpstream('packages/web/server/lib/text/summarization.ts');
     const { speakable } = await import('./mittr/voice/speakable.js');
     const fixtures = [
       '## Done\n\nI fixed **the bug** in `app.js`.',
@@ -2482,13 +2628,13 @@ const voiceServerChecks = {
 Object.assign(checks, voiceServerChecks);
 
 checks['notification-emit-route'] = async () => {
-  const route = source('packages/web/server/lib/notifications/emit-route.js');
+  const route = source('packages/web/server/lib/notifications/emit-route.ts');
   has(route, /const NOTIFICATION_EMIT_PATH = '\/api\/notifications\/emit';/);
   has(route, /registerApiRoute: \(\) => \{\s*app\.post\(NOTIFICATION_EMIT_PATH, jsonBody, respond\);/);
-  const bootstrap = source('packages/web/server/lib/opencode/bootstrap-runtime.js');
+  const bootstrap = source('packages/web/server/lib/server-frame/bootstrap-runtime.ts');
   has(bootstrap, /notificationEmitRoutes\.registerApiRoute\(\);/, 'the notification route is no longer registered for API callers');
-  has(source('packages/web/server/lib/ui-auth/ui-auth.js'), /if \(hasUiAuthProviders\(\)\) \{\s*return requireProviderSession\(req, res, next, \{ allowClientAuth: true \}\);\s*\}\s*if \(!requireClientAuth\) \{\s*return next\(\);/, 'a local request with no UI password no longer passes API auth');
-  const { createPluginNotificationEmitter } = await importUpstream('packages/web/server/lib/notifications/emit-route.js');
+  has(source('packages/web/server/lib/ui-auth/ui-auth.ts'), /if \(hasUiAuthProviders\(\)\) \{\s*return requireProviderSession\(req, res, next, \{ allowClientAuth: true \}\);\s*\}\s*if \(!requireClientAuth\) \{\s*return next\(\);/, 'a local request with no UI password no longer passes API auth');
+  const { createPluginNotificationEmitter } = await importUpstream('packages/web/server/lib/notifications/emit-route.ts');
   const desktop = [];
   const ui = [];
   const emitter = createPluginNotificationEmitter({
@@ -2519,32 +2665,38 @@ Object.assign(checks, {
     has(panel, /const rawMessagesReplaced = useProductSlotFilled\('context-raw-messages'\);/);
     has(panel, /const sessionMessages = useSessionMessageRecords\(\s*currentSessionId \?\? '',\s*currentSessionDirectory \?\? undefined,\s*\);/, 'the panel no longer reads the session messages the slot is given');
     has(panel, /\{rawMessagesReplaced \? \(\s*<ErrorBoundary>\s*<ProductSlot name="context-raw-messages" sessionId=\{currentSessionId\} directory=\{currentSessionDirectory \?\? null\} messages=\{sessionMessages\} \/>\s*<\/ErrorBoundary>\s*\) : \(\s*<div>\s*<div className="typography-micro text-muted-foreground">\{t\('contextSidebar\.section\.rawMessages'\)\}<\/div>/, 'the slot no longer takes the place of the Raw Messages section');
-    const breakdown = panel.indexOf('{/* ── Context breakdown ── */}');
     const slot = panel.indexOf('<ProductSlot name="context-raw-messages"');
+    const breakdown = panel.indexOf('(segment.value / viewModel.breakdownTotal) * 100');
     assert.ok(breakdown >= 0 && slot > breakdown, 'the slot no longer follows the context breakdown');
+    assert.equal(lineCount(panel.slice(slot), 'viewModel.breakdown'), 0, 'part of the context breakdown now follows the slot');
   },
   'activity-timeline-reads': () => {
     const model = source('packages/ui/src/lib/opencode/model.ts');
-    const assistant = model.slice(model.indexOf('export type AssistantMessage'), model.indexOf('export type SyntheticMessage'));
+    const assistant = model.slice(model.indexOf('export type AssistantMessage = '), model.indexOf('export type SyntheticMessage = '));
     for (const field of [/completed\?: number/, /agent: string/, /modelID: string/, /tokens\?: TokenUsageInfo/]) has(assistant, field, `the assistant record lost ${field}`);
-    const shell = model.slice(model.indexOf('export type ShellMessage'), model.indexOf('export type CompactionMessage'));
+    const shell = model.slice(model.search(/^(?:export )?type ShellMessage = /m), model.search(/^(?:export )?type CompactionMessage = /m));
+    assert.ok(shell.length > 0, 'ShellMessage no longer comes before CompactionMessage');
+    has(model, /^ {2}\| ShellMessage$/m, 'a shell record is no longer one of the messages');
     has(shell, /time: \{ created: number; completed\?: number \}/);
     has(shell, /status: "running" \| "exited" \| "timeout" \| "killed"/);
-    has(model, /export type IdleMessage = MessageBase & \{\s*role: "idle"/);
-    const pending = model.slice(model.indexOf('export type ToolStatePending'), model.indexOf('export type ToolStateRunning'));
+    has(model, /^(?:export )?type IdleMessage = MessageBase & \{\s*role: "idle"/m);
+    has(model, /^ {2}\| IdleMessage$/m, 'an idle record is no longer one of the messages');
+    const pending = model.slice(model.search(/^(?:export )?type ToolStatePending = /m), model.search(/^(?:export )?type ToolStateRunning = /m));
     assert.ok(pending.includes('input: ToolInput') && !pending.includes('metadata'), 'a pending tool state now carries metadata, or no input');
     has(model, /export type \{ JsonValue, ModelRef, PermissionRuleset, TokenUsageInfo \}/);
     const tools = source('packages/ui/src/lib/opencode/tools.ts');
     has(tools, /^  subagent: "subagent",$/m);
     has(tools, /^export const isSubagentTool = is\(OPENCODE_TOOLS\.subagent\)$/m);
     has(source('packages/ui/src/components/chat/message/parts/taskToolModel.ts'), /return normalizeSessionIdCandidate\(record\.sessionID\) \?\? normalizeSessionIdCandidate\(record\.sessionId\);/, 'the child session is no longer read from sessionID or sessionId');
-    has(source('packages/ui/src/components/chat/message/parts/ToolPart.tsx'), /const metadataSessionId = readTaskSessionIdFromRecord\(metadata\);/, 'a subagent call no longer names its child in its result metadata first');
+    has(source('packages/ui/src/components/chat/message/parts/toolRow/subagentChildSession.ts'), /if \(state\.status === 'pending'\) return readTaskSessionIdFromRecord\(\{ sessionID: state\.input\.sessionID \}\);\s*return readTaskSessionIdFromRecord\(state\.metadata\)/, 'a subagent call no longer names its child in its result metadata first');
     has(source('packages/ui/src/components/chat/message/messageRole.ts'), /export const deriveMessageRole = \(/);
-    has(source('packages/ui/src/sync/sync-context.tsx'), /export function useAllLiveSessions\(\): Session\[\]/);
+    has(source('packages/ui/src/sync/live-session-hooks.ts'), /export function useAllLiveSessions\(\): Session\[\]/);
+    has(source('packages/ui/src/sync/sync-context.tsx'), /^export \{ [^}]*\buseAllLiveSessions\b[^}]*\} from "\.\/live-session-hooks"$/m, 'sync-context no longer hands on useAllLiveSessions');
     has(model, /parentID\?: string/);
-    const ui = source('packages/ui/src/stores/useUIStore.ts');
+    const ui = uiStoreSource();
     has(ui, /openContextPanelTab: \(directory: string, tab: ContextPanelTabDescriptor, options\?: \{ reveal\?: boolean \}\) => void;/);
     const descriptor = ui.slice(ui.indexOf('type ContextPanelTabDescriptor = {'), ui.indexOf('};', ui.indexOf('type ContextPanelTabDescriptor = {')));
+    assert.ok(descriptor.length > 0, 'ContextPanelTabDescriptor is gone');
     for (const field of [/mode: ContextPanelMode;/, /dedupeKey\?: string \| null;/, /label\?: string \| null;/, /readOnly\?: boolean;/]) has(descriptor, field, `the context panel tab lost ${field}`);
     has(source('packages/ui/src/lib/surfaces/modes.ts'), /^  'chat',$/m);
     has(ui, /^  isMobile: boolean;$/m);
@@ -2552,7 +2704,9 @@ Object.assign(checks, {
     has(source('packages/ui/src/sync/session-ui-store.ts'), /^  setCurrentSession: \(/m);
     has(source('packages/ui/src/lib/desktop.ts'), /export const isVSCodeRuntime = \(\): boolean =>/);
     has(source('packages/ui/src/lib/clipboard.ts'), /\| \{ ok: true; method: 'clipboard' \| 'execCommand' \}\s*\| \{ ok: false; error: string \};/);
-    has(source('packages/ui/src/components/code/WorkerHighlightedCode.tsx'), /export const WorkerHighlightedCode: React\.FC<WorkerHighlightedCodeProps>/);
+    const highlighted = source('packages/ui/src/components/code/HighlightedCode.tsx');
+    has(highlighted, /export const HighlightedCode: React\.FC<HighlightedCodeProps>/, 'HighlightedCode is gone');
+    has(highlighted, /interface HighlightedCodeProps \{\s*code: string;\s*language: string;\s*className\?: string;\s*style\?: React\.CSSProperties;[^}]*wrap\?: boolean;/, 'HighlightedCode no longer takes code, language, style and wrap');
     const sprite = source('packages/ui/src/components/icon/sprite.ts');
     for (const name of ['check', 'file-copy']) has(sprite, new RegExp(`^  "?${name}"?: \``, 'm'), `the ${name} icon is gone`);
     has(source('packages/ui/src/lib/i18n/index.ts'), /export \{ getCurrentIntlLocale \} from '\.\/intl';/);
@@ -2570,16 +2724,19 @@ checks['composer-shift-enter-hook'] = () => {
   has(gate, /if \(input\.inputMode !== 'normal' \|\| input\.autocompleteOpen\) return null;/);
   has(gate, /if \(shouldSubmitEnter\(input\)\) return null;/);
   has(source('packages/ui/src/components/chat/composer/keyboardPolicy.ts'), /export const shouldSubmitEnter = \(input: EnterKeyPolicyInput\): boolean => \{/);
-  const input = source('packages/ui/src/components/chat/ChatInput.tsx');
-  has(input, /^import \{ shiftEnterEdit \} from '\.\/composer\/shiftEnterEdit';$/m);
-  assert.equal(lineCount(input, 'shiftEnterEdit('), 1, 'ChatInput asks shiftEnterEdit more than once, or not at all');
-  const handler = input.slice(input.indexOf('const handleKeyDown = (e: KeyboardEvent) => {'), input.indexOf('const handleAbort = React.useCallback('));
-  const history = handler.indexOf("if (e.key === 'ArrowDown' && canNavigateHistoryDown) {");
+  const input = source('packages/ui/src/components/chat/composer/input/createComposerKeyHandler.ts');
+  has(input, /^import \{ shiftEnterEdit \} from '\.\.\/\.\.\/composer\/shiftEnterEdit';$/m);
+  assert.equal(lineCount(input, 'shiftEnterEdit('), 1, 'the composer key handler asks shiftEnterEdit more than once, or not at all');
+  const handler = input.slice(input.indexOf('const handleKeyDown = (e: KeyboardEvent) => {'));
+  const historyState = handler.indexOf('const canNavigateHistoryDown = ');
   const ask = handler.indexOf('const productEdit = ');
+  const listContinuation = handler.indexOf('getOrderedListContinuationEdit(message, selStart, selEnd)');
+  const history = handler.indexOf("if (e.key === 'ArrowUp' && canNavigateHistoryUp) {");
   const send = handler.indexOf("if (e.key === 'Enter' && shouldSubmitEnter({");
-  assert.ok(history >= 0 && ask > history && send > ask, 'the Shift+Enter hook no longer sits after the history keys and before the send branch');
+  assert.ok(historyState >= 0 && ask > historyState && listContinuation > ask && history > listContinuation && send > history, 'the Shift+Enter hook no longer sits before upstream\'s list continuation, the history keys and the send branch');
+  has(handler, /const productEdit = e\.key === 'Enter' && e\.shiftKey \? shiftEnterEdit\(\{[^}]*autocompleteOpen: isAnyAutocompleteOpen,[^}]*\}\) : null;/, 'the Shift+Enter hook no longer gets the composer state');
   has(handler, /if \(productEdit && composerRef\.current\) \{\s*e\.preventDefault\(\);\s*composerRef\.current\.replaceRange\(productEdit\.from, productEdit\.to, productEdit\.insert, productEdit\.selectionStart, productEdit\.selectionEnd\);\s*return;\s*\}/);
-  has(input, /handleKeyDown\(event\);\s*return event\.defaultPrevented;/, 'the editor no longer treats a prevented key as consumed');
+  has(source('packages/ui/src/components/chat/composer/input/useComposerEditorHandlers.ts'), /handleKeyDown\(event\);\s*return event\.defaultPrevented;/, 'the editor no longer treats a prevented key as consumed');
   has(source('packages/ui/src/components/chat/composer/editor/ComposerEditor.tsx'), /replaceRange\(from: number, to: number, text: string, selectionStart\?: number, selectionEnd\?: number\): void;/);
 };
 
@@ -2594,14 +2751,14 @@ Object.assign(checks, {
     const layout = source('packages/ui/src/components/layout/MainLayout.tsx');
     has(layout, /^import \{ useProductSidebarSide \} from '@\/lib\/product-plugins';$/m);
     has(layout, /const sidebarSide = useProductSidebarSide\(\);/);
-    has(layout, /<div className=\{cn\('flex flex-1 overflow-hidden', sidebarSide === 'right' && 'flex-row-reverse'\)\} data-page-scroll-lock="true" data-sidebar-side=\{sidebarSide\}>\s*<Sidebar\s/, 'the row no longer carries data-sidebar-side or no longer starts with the sidebar');
-    has(layout, /side=\{sidebarSide\}\s*topBar=\{sidebarSide === 'right' \? <div aria-hidden className="app-region-drag shrink-0" style=\{\{ height: 'var\(--oc-header-height, 3rem\)' \}\} \/> : <SidebarTopBar \/>\}/);
-    has(layout, /<\/Sidebar>\s*<div className="[^"]*" data-page-scroll-lock="true" data-product-region="column">/, 'the column no longer follows the sidebar in the row');
+    has(layout, /<div className=\{cn\('flex flex-1 overflow-hidden', sidebarSide === 'right' && 'flex-row-reverse'\)\} data-page-scroll-lock="true" data-sidebar-side=\{sidebarSide\}>\s*<LeftSidebar isMobile=\{isMobile\} side=\{sidebarSide\} \/>/, 'the row no longer carries data-sidebar-side or no longer starts with the sidebar');
+    has(layout, /side=\{side\}\s*topBar=\{side === 'right' \? <div aria-hidden className="app-region-drag shrink-0" style=\{\{ height: 'var\(--oc-header-height, 3rem\)' \}\} \/> : <SidebarTopBar [^>]*\/>\}/, 'the sidebar no longer gets its side, or a plain drag strip on the right');
+    has(layout, /<LeftSidebar isMobile=\{isMobile\} side=\{sidebarSide\} \/>\s*<div className="[^"]*" data-page-scroll-lock="true" data-product-region="column">/, 'the column no longer follows the sidebar in the row');
     const sidebar = source('packages/ui/src/components/layout/Sidebar.tsx');
     has(sidebar, /^    side\?: 'left' \| 'right';$/m);
-    has(sidebar, /const delta = isRightSide \? -pointerDelta : pointerDelta;/);
-    has(sidebar, /isRightSide \? 'border-l' : 'border-r',/);
-    has(sidebar, /isRightSide \? 'absolute left-0' : 'absolute right-0',/);
+    has(sidebar, /const delta = \(event\.clientX - startXRef\.current\) \* \(\(direction === 'rtl'\) !== isRightSide \? -1 : 1\);/, 'the drag is no longer negated for the right edge');
+    has(sidebar, /isRightSide\s*\? 'shadow-\[inset_0\.5px_0_0_0_var\(--oc-edge-strong\)\][^']*'\s*: 'shadow-\[inset_-0\.5px_0_0_0_var\(--oc-edge-strong\)\]/, 'the sidebar edge is no longer mirrored for the right edge');
+    has(sidebar, /isRightSide \? 'absolute inset-s-0' : 'absolute inset-e-0',/, 'the resize handle is no longer mirrored for the right edge');
   },
   'font-options-hook': () => {
     const plugins = source('packages/ui/src/lib/product-plugins.ts');
@@ -2627,11 +2784,15 @@ Object.assign(checks, {
     const header = source('packages/ui/src/components/layout/Header.tsx');
     has(header, /<header\s+ref=\{headerRef\}[\s\S]*?>\s*\{renderDesktop\(\)\}\s*<\/header>/, 'the header no longer holds only the desktop row');
     const row = header.slice(header.indexOf('const renderDesktop = () => ('));
-    has(row, /^const renderDesktop = \(\) => \(\s*<div\s+onMouseDown=\{handleDragStart\}[\s\S]*?role="tablist"\s+aria-label=\{t\('header\.navigation\.mainAria'\)\}\s*>\s*\{\/\*[\s\S]*?\*\/\}\s*<div\s+aria-hidden\s+className="shrink-0 self-stretch[^"]*"\s+style=\{\{ width: headerInsetSpacerWidth \}\}\s*\/>\s*\{\/\*[\s\S]*?\*\/\}\s*<div\s+aria-hidden\s+className="app-region-no-drag shrink-0 self-stretch[^"]*"\s+style=\{\{ width: headerControlsSpacerWidth \}\}\s*\/>/, 'the header row no longer starts with the two titlebar spacers');
-    has(header, /: 'var\(--oc-titlebar-left-inset, 0\.75rem\)';/);
+    has(row, /^const renderDesktop = \(\) => \(\s*<div\s+onMouseDown=\{handleDragStart\}[\s\S]*?role="tablist"\s+aria-label=\{t\('header\.navigation\.mainAria'\)\}\s*>\s*<div\s+aria-hidden\s+className="shrink-0 self-stretch[^"]*"\s+style=\{\{ width: headerInsetSpacerWidth[^\n]*\}\}\s*\/>\s*<div\s+ref=\{titlebarControlsWidthReaderRef\}\s+aria-hidden\s+className="app-region-no-drag shrink-0 self-stretch[^"]*"\s+style=\{\{ width: headerControlsSpacerWidth[^\n]*\}\}\s*\/>/, 'the header row no longer starts with the two titlebar spacers');
+    has(header, /const headerInsetSpacerWidth = isSidebarOpen \? '0\.75rem' : 'var\(--oc-titlebar-start-inset, 0\.75rem\)';/);
     has(header, /: 'calc\(var\(--oc-titlebar-controls-width, 5\.5rem\) \+ 0\.5rem\)';/);
-    has(source('packages/ui/src/components/layout/TitlebarLeftControls.tsx'), /document\.documentElement\.style\.setProperty\('--oc-titlebar-controls-width', `\$\{Math\.round\(width\)\}px`\);/);
-    has(source('packages/ui/src/components/layout/MainLayout.tsx'), /<TitlebarLeftControls \/>\s*\{\/\*[\s\S]*?\*\/\}\s*<div className=\{cn\('flex flex-1 overflow-hidden'/, 'TitlebarLeftControls is no longer rendered just before the row');
+    has(header, /document\.documentElement\.style\.setProperty\('--oc-titlebar-start-inset', titlebarStartInset\);/, 'the header no longer publishes --oc-titlebar-start-inset on the root');
+    const width = source('packages/ui/src/components/layout/titlebarControlsWidth.ts');
+    has(width, /^const PROPERTY = '--oc-titlebar-controls-width';$/m);
+    has(width, /else if \(reader\.style\.getPropertyValue\(PROPERTY\) !== published\) reader\.style\.setProperty\(PROPERTY, published\);/, 'the controls width is no longer set on each reader element');
+    has(source('packages/ui/src/components/layout/TitlebarLeftControls.tsx'), /publishTitlebarControlsWidth\(width\);/, 'TitlebarLeftControls no longer publishes its width');
+    has(source('packages/ui/src/components/layout/MainLayout.tsx'), /<TitlebarLeftControls \/>\s*<div className=\{cn\('flex flex-1 overflow-hidden'/, 'TitlebarLeftControls is no longer rendered just before the row');
     has(source('packages/ui/src/components/layout/MainLayout.tsx'), /data-product-region="column">\s*<Header \/>/, 'the header is no longer the column\'s first child');
   },
 });
@@ -2645,27 +2806,30 @@ const sliceBetween = (text, start, end) => {
 };
 
 checks['composer-last-pick'] = () => {
-  const config = source('packages/ui/src/stores/useConfigStore.ts');
+  has(source('packages/ui/src/stores/useConfigStore.ts'), /^ {16}\.\.\.createModelSelection\(set, get\),$/m, 'the config store no longer holds the model selection actions');
+  const picks = source('packages/ui/src/stores/config/modelSelection.ts');
   for (const [setter, next] of [
     ['setProvider: (providerId: string) => {', 'setModel: (modelId: string) => {'],
     ['setModel: (modelId: string) => {', 'setCurrentVariant: (variant: string | undefined) => {'],
   ]) {
-    has(sliceBetween(config, setter, next), /selectionSource: "manual"/, `${setter} no longer marks the model as picked`);
+    has(sliceBetween(picks, setter, next), /selectionSource: "manual"/, `${setter} no longer marks the model as picked`);
   }
-  has(sliceBetween(config, 'setCurrentVariantOverride: (override, inherited) => {', 'getCurrentModelVariants: () => {'), /currentVariantSelection: \{ override, inherited \},/);
-  const setAgent = sliceBetween(config, 'setAgent: (agentName: string | undefined, options?: { keepModel?: boolean }) => {', 'if (agentName && !options?.keepModel) {');
+  has(sliceBetween(picks, 'setCurrentVariantOverride: (override, inherited) => {', 'getCurrentModelVariants: () => {'), /currentVariantSelection: \{ override, inherited \},/);
+  const setAgent = sliceBetween(source('packages/ui/src/stores/config/agentSelection.ts'), 'setAgent: (agentName: string | undefined, options?: { keepModel?: boolean }) => {', 'if (agentName && !options?.keepModel) {');
   has(setAgent, /const agentSelectionSource = agentName \? "manual" as const : "auto" as const;/);
-  assert.ok(setAgent.indexOf('set((state) =>') < setAgent.indexOf('selState.saveSessionAgentSelection(currentSessionId, agentName);'), 'setAgent records the chat agent before it changes the composer');
+  assert.ok(setAgent.indexOf('set((state) =>') >= 0 && setAgent.indexOf('set((state) =>') < setAgent.indexOf('selState.saveSessionAgentSelection(currentSessionId, agentName);'), 'setAgent records the chat agent before it changes the composer');
   has(
-    sliceBetween(config, 'applyDefaultModelAgentSelection: (options) => {', 'return nextState;'),
-    /const nextState: Partial<ConfigStore> = \{\s*currentAgentName: resolvedAgentName,\s*currentProviderId: nextSnapshot\.currentProviderId,\s*currentModelId: nextSnapshot\.currentModelId,\s*currentVariant: resolvedVariant,\s*currentVariantSelection: \{ override: undefined, inherited: resolvedVariant \},\s*selectionSource: "auto",\s*agentSelectionSource: "auto",\s*directoryScoped: \{\s*\.\.\.state\.directoryScoped,\s*\[directoryKey\]: nextSnapshot,\s*\},\s*\};/,
+    sliceBetween(source('packages/ui/src/stores/config/defaultSelection.ts'), 'applyDefaultModelAgentSelection: (options) => {', 'return nextState;'),
+    /const nextState: Partial<ConfigStore> = \{\s*currentAgentName: resolvedAgentName,\s*currentProviderId: nextSnapshot\.currentProviderId,\s*currentModelId: nextSnapshot\.currentModelId,\s*currentVariant: resolvedVariant(?: \?\? undefined)?,\s*currentVariantSelection: \{ override: undefined, inherited: resolvedVariant \},\s*selectionSource: "auto",\s*agentSelectionSource: "auto",\s*directoryScoped: \{\s*\.\.\.state\.directoryScoped,\s*\[directoryKey\]: nextSnapshot,\s*\},\s*\};/,
     'applying the defaults writes more than the selection fields MittrCraft keeps, or no longer marks them auto',
   );
+  const defaults = source('packages/ui/src/stores/config/defaults.ts');
+  const persisted = source('packages/ui/src/stores/config/persistence.ts');
   for (const [name, field] of [['Model', 'model'], ['Variant', 'variant'], ['Agent', 'agent']]) {
-    has(config, new RegExp(`setSettingsDefault${name}: \\(${field}: string \\| undefined\\) => \\{\\s*recordOpenChamberDefaultsChange\\(\\);\\s*set\\(\\{ settingsDefault${name}: ${field} \\}\\);\\s*if \\(!useSessionUIStore\\.getState\\(\\)\\.currentSessionId\\) get\\(\\)\\.applyDefaultModelAgentSelection\\(\\);`));
-    has(config, new RegExp(`^ {20}settingsDefault${name}: state\\.settingsDefault${name},$`, 'm'), `config-store no longer persists settingsDefault${name}`);
+    has(defaults, new RegExp(`setSettingsDefault${name}: \\(${field}: string \\| undefined\\) => \\{\\s*recordOpenChamberDefaultsChange\\(\\);\\s*set\\(\\{ settingsDefault${name}: ${field} \\}\\);\\s*if \\(!useSessionUIStore\\.getState\\(\\)\\.currentSessionId\\) get\\(\\)\\.applyDefaultModelAgentSelection\\(\\);`));
+    has(persisted, new RegExp(`^ {4}settingsDefault${name}: state\\.settingsDefault${name},$`, 'm'), `config-store no longer persists settingsDefault${name}`);
   }
-  has(config, /const edited = revision !== openChamberDefaultsUserRevision;/);
+  has(defaults, /const edited = revision !== openChamberDefaultsUserRevision;/);
   const selection = source('packages/ui/src/sync/selection-store.ts');
   has(selection, /getSessionModelSelection: \(sessionId: string\) => \{ providerId: string; modelId: string \} \| null/);
   has(selection, /getSessionAgentSelection: \(sessionId: string\) => string \| null/);
@@ -2674,15 +2838,38 @@ checks['composer-last-pick'] = () => {
   const controls = source('packages/ui/src/components/chat/ModelControls.tsx');
   has(controls, /setProvider\(providerId\);\s*setModel\(modelId\);\s*if \(currentSessionId\) \{\s*saveSessionModelSelection\(currentSessionId, providerId, modelId\);/, 'a model pick no longer changes the composer before the chat records it');
   has(controls, /setCurrentVariantOverride\(\s*variant,\s*resolveInheritedVariantForModel\(providerId, modelId, agentNameOverride\),\s*\);[\s\S]{0,400}?saveAgentModelVariantForSession\(currentSessionId, effectiveAgentName, providerId, modelId, variant\);/, 'an effort pick no longer changes the composer before the chat records it');
-  has(controls, /setAgent\(agentName\);\s*addRecentAgent\(agentName\);[\s\S]{0,300}?saveSessionAgentSelection\(currentSessionId, agentName\);/, 'an agent pick no longer changes the composer before the chat records it');
+  has(controls, /if \(currentSessionId\) \{\s*pickSessionAgent\(currentSessionId, agentName\);\s*\}\s*setAgent\(agentName\);\s*addRecentAgent\(agentName\);/, 'an agent pick in a chat no longer records the chat\'s pick (pickSessionAgent) before it changes the composer');
+  has(selection, /pickSessionAgent: \(sessionId, agent\) =>\s*set\(\(s\) => \{[\s\S]*?selections\.set\(sessionId, agent\)\s*return \{ sessionPickedAgents: picked, sessionAgentSelections: selections \}/, 'pickSessionAgent no longer records the agent as the chat\'s selection and as its pick');
+  has(selection, /getSessionAgentPick: \(sessionId\) => get\(\)\.sessionPickedAgents\.get\(sessionId\) \?\? null,/, 'getSessionAgentPick no longer reads the chat\'s unsent agent pick');
+  has(selection, /pickSessionModel: \(sessionId, providerId, modelId\) => set\(\(state\) => \{\s*const sessionPickedModels = new Map\(state\.sessionPickedModels\)\s*sessionPickedModels\.set\(variantSessionKey\(sessionId\), \{ providerId, modelId \}\)\s*return \{ sessionPickedModels \}/, 'pickSessionModel no longer records a new object for each pick');
+  has(selection, /getSessionModelPick: \(sessionId\) => get\(\)\.sessionPickedModels\.get\(variantSessionKey\(sessionId\)\) \?\? null,/);
+  const modelPick = /const pickedSessionId = selection \? controlledSessionId : currentSessionId;\s*if \(pickedSessionId\) useSelectionStore\.getState\(\)\.pickSessionModel\(pickedSessionId, providerId, modelId\);/;
+  for (const [handler, next] of [
+    ['const handleProviderAndModelChange = (', 'closeMobilePanel();'],
+    ['const handleMobileModelApply = (providerId: string, modelId: string) => {', 'closeMobilePanel();'],
+  ]) {
+    const body = sliceBetween(controls, handler, next);
+    const applied = body.indexOf('tryApplyModelSelection(providerId, modelId');
+    const picked = body.search(modelPick);
+    assert.ok(applied >= 0 && picked > applied, `${handler} no longer records the chat's model pick (pickSessionModel) after it changes the composer`);
+    assert.ok(!/\b(?:await|setTimeout|queueMicrotask|requestAnimationFrame)\b/.test(body.slice(applied, picked)), `${handler} no longer records the model pick in the same tick`);
+  }
+  has(source('packages/ui/src/hooks/useKeyboardShortcuts.ts'), /if \(sessionId\) useSelectionStore\.getState\(\)\.pickSessionModel\(sessionId, next\.providerID, next\.modelID\);/, 'the model shortcut no longer records the chat\'s model pick');
+  has(sliceBetween(controls, 'const rememberVariantForModel = React.useCallback(', '}, [rememberVariantPicks]);'), /rememberEffort\(providerId, modelId, variant \?\? null\);/, 'rememberVariantForModel no longer goes through rememberEffort');
+  has(sliceBetween(controls, 'const handleVariantSelect = React.useCallback(', 'const handleAgentChange = React.useCallback('), /commitVariantSelectionForModel\(currentProviderId, currentModelId, variant \?\? null\);\s*rememberVariantForModel\(currentProviderId, currentModelId, variant \?\? null\);/, 'an effort pick no longer goes through rememberVariantForModel');
+  has(sliceBetween(picks, '    cycleCurrentVariant: () => {', '    setSelectedProvider:'), /get\(\)\.setCurrentVariantOverride\(nextOverride, inheritedVariant\);\s*rememberEffort\(state\.currentProviderId, state\.currentModelId, nextOverride \?\? null\);/, 'the effort shortcut no longer goes through rememberEffort after it changes the composer');
+  const restoring = sliceBetween(controls, 'const restoredSessionSelectionRef = React.useRef', 'const handleVariantSelect = React.useCallback(');
+  assert.ok(!restoring.includes('pickSessionModel('), 'restoring a chat records a model pick');
+  assert.ok(!restoring.includes('rememberVariantForModel(') && lineCount(restoring, 'rememberEffort(') === 1, 'restoring a chat records an effort pick');
+  has(source('packages/ui/src/lib/modelEfforts.ts'), /effortRevisions\.set\(effortMemoryKey\(providerID, modelID\), revision \+ 1\);/, 'rememberEffort no longer moves readEffortRevision');
   has(source('packages/ui/src/components/sections/openchamber/DefaultsSettings.tsx'), /await updateDesktopSettings\(\{ defaultModel: newValue \?\? '', defaultVariant: '' \}\);/);
   const persistence = source('packages/ui/src/lib/persistence.ts');
   has(persistence, /^export const isApplyingServerSettings = \(\): boolean =>/m);
   has(persistence, /^export const updateDesktopSettings = async \(changes: Partial<DesktopSettings>\): Promise<SettingsWriteResult> => \{/m);
-  const registry = JSON.parse(source('packages/web/server/lib/opencode/settings-registry.json'));
+  const registry = JSON.parse(source('packages/web/server/lib/settings/settings-registry.json'));
   for (const key of ['defaultModel', 'defaultVariant', 'defaultAgent']) assert.equal(registry.fields[key]?.scope, 'profile', `${key} is no longer a profile setting`);
-  has(source('packages/web/server/lib/opencode/settings-files.js'), /export const seedPreferencesFrom = \(document, now\) => buildPreferencesFields\(\{\}, document, now\);/);
-  has(source('packages/web/server/lib/opencode/settings-runtime.js'), /if \(preferences\.status === 'missing'\) \{\s*const seeded = seedPreferencesFrom\(instance, Date\.now\(\)\);/);
+  has(source('packages/web/server/lib/settings/settings-files.ts'), /export const seedPreferencesFrom = \(document(?:: SettingsDocument)?, now(?:: number)?\) => buildPreferencesFields\(\{\}, document, now\);/);
+  has(source('packages/web/server/lib/settings/settings-runtime.ts'), /if \(preferences\.status === 'missing'\) \{\s*const seeded = seedPreferencesFrom\(instance, Date\.now\(\)\);/);
 };
 
 test('every contract item has a check, and every check an item', () => {

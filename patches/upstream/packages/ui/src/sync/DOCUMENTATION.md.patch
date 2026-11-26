@@ -1,0 +1,52 @@
+diff --git a/packages/ui/src/sync/DOCUMENTATION.md b/packages/ui/src/sync/DOCUMENTATION.md
+index f9149d828..6d782c275 100644
+--- a/packages/ui/src/sync/DOCUMENTATION.md
++++ b/packages/ui/src/sync/DOCUMENTATION.md
+@@ -462,6 +462,47 @@ A failed read of the parent and a failed fork (an empty parent: OpenCode refuses
+ 
+ The records between an answer and that boundary belong to the answer's turn. One of them is the `idle` record that OpenCode writes when a turn ends. The store gets that record only from a transcript read, never from a live event. A cut at the next record would leave it out of a fork made after a reload and keep it in a fork made from the live transcript.
+ 
++## User-requested chat continuation
++
++`session-retry.ts` owns manual continuation for every shared chat runtime.
++`SessionRetry` offers Retry on the latest failed, interrupted, or length-limited
++turn only while verified idle. Busy, retrying, and unknown activity hide it,
++including when a persisted outcome still reports an older failure.
++Pending permissions and forms block continuation. If execution starts after an
++eligible click, the action still requires confirmation, a successful interrupt
++response, and a fresh active-session snapshot showing idle. Failed reads never
++count as idle.
++
++OpenCode 2.0.22 has no public run/resume endpoint. Its `prompt.resume` flag only
++wakes execution after admitting a new prompt. Retry therefore appends a short,
++explicit continuation user message to the same transcript. It does not revert,
++remove results, or resend the original request. The session's current server-owned
++model and agent stay selected. Existing tool results remain context, but the model
++may still repeat tools; this is not an exactly-once execution guarantee.
++
++The existing verified unanswered notice also exposes Retry while idle; it
++supplies availability rather than adding a new silence timer. The action always
++revalidates the server transcript and active status before continuing.
++
++The initiating user message identifies the turn. New assistant steps do not
++invalidate a stop confirmation; a newer user message does. A final transcript
++read runs after status/forms reads and again at the client's prompt-dispatch
++boundary, after asynchronous preparation. This catches locally or remotely
++admitted newer prompts observed by those reads. OpenCode has no compare-and-swap
++interrupt/prompt API: another client can still admit work between the last read
++and mutation. These checks reduce that window, not eliminate it.
++
++Clicks are serialized per runtime, directory, and session across mounted views;
++a second view clicking the same turn shares the running continuation's outcome.
++After dispatch, the same turn is suppressed locally even when the POST response
++is lost, because it may already have been admitted. Proven pre-dispatch failures
++release that suppression, including a provider circuit rejection or failed final
++turn validation. So does a rejection the engine answered: an error with a status
++that `isAmbiguousSendFailure` does not call ambiguous, so the prompt was not
++admitted. A suppressed click throws, so the control always says it did not
++continue. There is no automatic retry.
++A newer latest message is required for another continuation of that turn.
++
+ ## An interruption whose reason is `shutdown`
+ 
+ `session.execution.interrupted` carries a reason. `user`, `inactivity` and

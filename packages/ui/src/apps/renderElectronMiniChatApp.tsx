@@ -5,41 +5,28 @@ import '@/styles/katex-css';
 import '@/index.css';
 import '@/lib/debug';
 import { SessionAuthGate } from '@/components/auth/SessionAuthGate';
+import { preloadMarkdownRenderer } from '@/components/chat/markdownRendererLoader';
 import { ThemeProvider } from '@/components/providers/ThemeProvider';
 import { ThemeSystemProvider } from '@/contexts/ThemeSystemContext';
 import type { RuntimeAPIs } from '@/lib/api/types';
-import { startAppearanceAutoSave } from '@/lib/appearanceAutoSave';
-import { applyPersistedDirectoryPreferences } from '@/lib/directoryPersistence';
-import { initializeLocale, I18nProvider } from '@/lib/i18n';
+import { I18nProvider } from '@/lib/i18n';
 import { ProductRoot } from '@/lib/product-plugins';
-import { initializeAppearancePreferences, syncDesktopSettings } from '@/lib/persistence';
-import { startModelPrefsAutoSave } from '@/lib/modelPrefsAutoSave';
-import { startTypographyWatcher } from '@/lib/typographyWatcher';
+import { leaveLastActiveSessionToMainWindow } from '@/sync/last-session-cache';
+import { prefetchSessionBeforeMount } from '@/sync/sync-context';
 import { ElectronMiniChatApp } from './ElectronMiniChatApp';
+import { readMiniChatConfig } from './miniChatConfig';
+import { initializeSharedPreferences } from './initializeSharedPreferences';
 
 import.meta.glob('../../../*/src/product-ui-plugin.{ts,tsx}', { eager: true });
 
-const initializeSharedPreferences = () => {
-  initializeLocale();
-
-  void initializeAppearancePreferences().then(() => {
-    void Promise.all([
-      syncDesktopSettings(),
-      applyPersistedDirectoryPreferences(),
-    ]).catch((err) => {
-      console.error('[mini-chat-main] settings init failed:', err);
-    });
-
-    startAppearanceAutoSave();
-    startModelPrefsAutoSave();
-    startTypographyWatcher();
-  }).catch((err) => {
-    console.error('[mini-chat-main] appearance init failed:', err);
-  });
-};
-
 export function renderElectronMiniChatApp(apis: RuntimeAPIs) {
-  initializeSharedPreferences();
+  initializeSharedPreferences({ logLabel: '[mini-chat-main]' });
+  leaveLastActiveSessionToMainWindow();
+  preloadMarkdownRenderer();
+  const { mode, sessionId, directory } = readMiniChatConfig();
+  if (mode === 'session' && sessionId && directory) {
+    prefetchSessionBeforeMount({ sessionID: sessionId, directory });
+  }
 
   const rootElement = document.getElementById('root');
   if (!rootElement) {

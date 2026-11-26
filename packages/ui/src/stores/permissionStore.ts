@@ -11,7 +11,8 @@ import {
     type PermissionPolicySnapshot,
 } from "./utils/permissionAutoAccept";
 import { getAllSyncSessionMap } from "@/sync/sync-refs";
-import { runtimeFetch } from "@/lib/runtime-fetch";
+import { runtimeFetch, type RuntimeFetchOptions } from "@/lib/runtime-fetch";
+import { spaceIdOfDirectory } from "@/lib/spaces/space-route";
 import { isVSCodeRuntime } from "@/lib/desktop";
 import { createDeferredSafeJSONStorage } from "./utils/safeStorage";
 import { useSessionUIStore } from "@/sync/session-ui-store";
@@ -20,13 +21,15 @@ import { getRuntimeKey } from "@/lib/runtime-switch";
 
 interface PermissionStore {
     modes: PermissionModeMap;
+    spaceModes: Readonly<Record<string, PermissionModeMap>>;
     loaded: boolean;
     saving: boolean;
     lastAppliedRevision: number;
     legacyCandidate: Record<string, boolean> | null;
     legacyRuntimeKey: string | null;
     hydrate: () => Promise<void>;
-    applySnapshot: (snapshot: PermissionPolicySnapshot, expectedRuntimeKey?: string) => void;
+    applySnapshot: (snapshot: PermissionPolicySnapshot, expectedRuntimeKey?: string, owner?: string) => void;
+    refreshSpaceModes: (spaceId: string) => Promise<boolean>;
     reset: () => void;
     getSessionMode: (sessionId: string) => PermissionMode;
     setSessionMode: (sessionId: string, mode: PermissionMode) => Promise<void>;
@@ -39,18 +42,26 @@ const readSnapshot = async (response: Response): Promise<PermissionPolicySnapsho
     return policySnapshotFromWire(parsed.data);
 };
 
-const requestSnapshot = async (path: string, init?: RequestInit) => readSnapshot(await runtimeFetch(path, init));
+const requestSnapshot = async (path: string, init?: RuntimeFetchOptions) => readSnapshot(await runtimeFetch(path, init));
 
-// `enabled` rides along for servers from before the modes and for VS Code's
-// bridge, which know only on/off.
 const putSessionMode = (sessionId: string, mode: PermissionMode, directory?: string) => requestSnapshot(
     `/api/permission-auto-accept/sessions/${encodeURIComponent(sessionId)}`,
     {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode, enabled: mode !== "ask", directory }),
+        directory: directory ?? null,
     },
 );
+
+const modeOwnerOf = (directory: string | null | undefined): string => spaceIdOfDirectory(directory) ?? "";
+
+const sessionDirectoryOf = (sessionId: string, sessionById: ReadonlyMap<string, Session>): string | null => (
+    sessionById.get(sessionId)?.directory ?? useSessionUIStore.getState().getDirectoryForSession(sessionId)
+);
+
+const spaceRevisions = new Map<string, number>();
+const spaceRevisionKey = (runtimeKey: string, spaceId: string) => `${runtimeKey}\n${spaceId}`;
 
 const modeOf = (modes: PermissionModeMap, sessionById: ReadonlyMap<string, Session>, sessionId: string) =>
     resolvePermissionMode({ modes, sessions: [], sessionById, sessionID: sessionId });
@@ -73,12 +84,10 @@ const isCurrentOperation = (operation: PermissionOperation) => (
 
 const legacySessionsSchema = z.record(z.string().min(1), z.boolean());
 
-/** Version 1 kept the policy itself in localStorage as an on/off map. */
 const persistedV1Schema = z.object({
     autoAccept: legacySessionsSchema.catch({}).default({}),
 }).catch({ autoAccept: {} });
 
-/** Version 2 keeps only a not-yet-migrated version 1 policy. */
 const persistedV2Schema = z.object({
     legacyCandidate: legacySessionsSchema.nullable().catch(null).default(null),
     legacyRuntimeKey: z.string().nullable().catch(null).default(null),
@@ -86,6 +95,7 @@ const persistedV2Schema = z.object({
 
 export const usePermissionStore = create<PermissionStore>()(persist((set, get) => ({
     modes: {},
+    spaceModes: {},
     loaded: false,
     saving: false,
     lastAppliedRevision: -1,
@@ -124,12 +134,22 @@ export const usePermissionStore = create<PermissionStore>()(persist((set, get) =
         generation += 1;
         latestStartedSequence = 0;
         pendingSavingOperations.clear();
-        set({ modes: {}, loaded: false, saving: false, lastAppliedRevision: -1 });
+        spaceRevisions.clear();
+        set({ modes: {}, spaceModes: {}, loaded: false, saving: false, lastAppliedRevision: -1 });
     },
 
-    applySnapshot: (snapshot, expectedRuntimeKey) => {
+    applySnapshot: (snapshot, expectedRuntimeKey, owner = "") => {
         if (expectedRuntimeKey && expectedRuntimeKey !== getRuntimeKey()) return;
         const { revision } = snapshot;
+        if (owner) {
+            const key = spaceRevisionKey(expectedRuntimeKey ?? getRuntimeKey(), owner);
+            if (revision !== undefined) {
+                if (revision < (spaceRevisions.get(key) ?? -1)) return;
+                spaceRevisions.set(key, revision);
+            }
+            set((state) => ({ spaceModes: { ...state.spaceModes, [owner]: snapshot.modes } }));
+            return;
+        }
         set((state) => {
             if (revision === undefined) {
                 return state.lastAppliedRevision >= 0 ? state : { modes: snapshot.modes, loaded: true };
@@ -139,11 +159,25 @@ export const usePermissionStore = create<PermissionStore>()(persist((set, get) =
         });
     },
 
+    refreshSpaceModes: async (spaceId) => {
+        const runtimeKey = getRuntimeKey();
+        let snapshot: PermissionPolicySnapshot;
+        try {
+            snapshot = await requestSnapshot("/api/permission-auto-accept", { directory: `/spaces/${spaceId}` });
+        } catch {
+            return false;
+        }
+        get().applySnapshot(snapshot, runtimeKey, spaceId);
+        return true;
+    },
+
     getSessionMode: (sessionId) => {
         if (!sessionId) return "ask";
-        const modes = get().modes;
+        const sessionById = getAllSyncSessionMap();
+        const owner = modeOwnerOf(sessionDirectoryOf(sessionId, sessionById));
+        const modes = owner ? get().spaceModes[owner] ?? {} : get().modes;
         if (Object.keys(modes).length === 0) return "ask";
-        return modeOf(modes, getAllSyncSessionMap(), sessionId);
+        return modeOf(modes, sessionById, sessionId);
     },
 
     setSessionMode: async (sessionId, mode) => {
@@ -152,13 +186,13 @@ export const usePermissionStore = create<PermissionStore>()(persist((set, get) =
         pendingSavingOperations.add(operation.sequence);
         set({ saving: true });
         try {
-            const directory = useSessionUIStore.getState().getDirectoryForSession(sessionId)
+            const directory = sessionDirectoryOf(sessionId, getAllSyncSessionMap())
                 ?? opencodeClient.getDirectory()
                 ?? undefined;
             const snapshot = await putSessionMode(sessionId, mode, directory);
             if (!isCurrentOperation(operation)) return;
             if (snapshot.revision === undefined && operation.sequence !== latestStartedSequence) return;
-            get().applySnapshot(snapshot, operation.runtimeKey);
+            get().applySnapshot(snapshot, operation.runtimeKey, modeOwnerOf(directory));
             if (isCurrentOperation(operation) && isVSCodeRuntime() && mode !== "ask") {
                 const { reconcileVSCodePendingPermissions } = await import("@/sync/vscode-permission-auto-accept");
                 if (isCurrentOperation(operation)) {

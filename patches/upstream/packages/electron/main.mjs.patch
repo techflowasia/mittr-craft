@@ -1,8 +1,25 @@
 diff --git a/packages/electron/main.mjs b/packages/electron/main.mjs
-index 76f77f5bd..4950cd8f0 100644
+index 3431a1ddf..403be6149 100644
 --- a/packages/electron/main.mjs
 +++ b/packages/electron/main.mjs
-@@ -22,6 +22,7 @@ import {
+@@ -1,5 +1,5 @@
+ import { canReuseManagedOpenCodePreflight } from './opencode-readiness.mjs';
+-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, globalShortcut, ipcMain, Menu, MessageChannelMain, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, screen, session, shell, webContents } from 'electron';
++import { app, BrowserWindow, clipboard, ClipboardItem, dialog, globalShortcut, ipcMain, Menu, MessageChannelMain, nativeTheme, net as electronNet, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, shell, webContents } from 'electron';
+ import contextMenu from 'electron-context-menu';
+ import log from 'electron-log/main.js';
+ import dgram from 'node:dgram';
+@@ -19,6 +19,9 @@ import { replaceFileWithRetry } from './windows-file-replace.mjs';
+ import { persistMainWindowState } from './window-state.mjs';
+ import { attachWindowEvents, isNativeWindowVisible } from './window-events.mjs';
+ import { createTrayController } from './tray.mjs';
++import { createHostConfirm } from './host-confirm.mjs';
++import { createSafeStorageSecretStore } from './secret-store.mjs';
++import { createDeepLinkRegistry } from './deep-link-registry.mjs';
+ import { buildDockMenuTemplate, buildUnreadJumpList, isJumpListSessionId } from './dock-menu.mjs';
+ import { createSessionLinkGate } from './session-link-gate.mjs';
+ import { applyDevDockIdentity, applyDockBadge } from './dev-dock-identity.mjs';
+@@ -35,6 +38,7 @@ import {
    DEEP_LINK_PROTOCOL,
    MIN_WINDOW_HEIGHT,
    MIN_WINDOW_WIDTH,
@@ -10,20 +27,42 @@ index 76f77f5bd..4950cd8f0 100644
    UI_PROTOCOL,
    buildMainWindowOptions,
    buildRendererAdditionalArguments,
-@@ -55,10 +56,11 @@ import { isSplashColor, redactHostsConfigForRemote } from './remote-page-policy.
- import { isPackagedUiRuntimeRequest } from './packaged-ui-routing.mjs';
+@@ -85,7 +89,7 @@ import { settleMainProcessCompileCache } from './compile-cache.mjs';
  import { probeDirectHostWithRetry } from './host-probe-policy.mjs';
  import { probeElectronHostWithDeadline } from './electron-host-probe.mjs';
--import { assertUpdaterCapability } from './updater-capability.mjs';
-+import { assertUpdaterCapability, updateCheckWithoutFeed } from './updater-capability.mjs';
- import { checkForDesktopUpdate } from './updater-check.mjs';
- import { resolveUpdaterChannel } from './updater-channel.mjs';
+ import { requestRemoteHostUpdate } from './remote-host-update.mjs';
+-import { assertUpdaterCapability, readLinuxPackageType } from './updater-capability.mjs';
++import { assertUpdaterCapability, readLinuxPackageType, updateCheckWithoutFeed } from './updater-capability.mjs';
+ import { relaunchAfterExit } from './linux-relaunch.mjs';
+ import { installLinuxPackage } from './linux-package-install.mjs';
+ import { checkForDesktopUpdate, downloadPendingDesktopUpdate, markDesktopUpdateDownloaded } from './updater-check.mjs';
+@@ -102,6 +106,7 @@ import {
+   selectQuakeToggleAction,
+ } from './quake-mode.mjs';
  import { createContextMenuLabels, menuLabel, normalizeMenuLocale, roleMenuItem } from './menu-locales.mjs';
-+import { UPSTREAM_PRODUCT } from './product.mjs';
- import { resolveUpdaterFeed } from './updater-feed.mjs';
- import {
-   buildLinuxInstalledApps,
-@@ -214,7 +216,7 @@ const readAppMetadata = () => {
++import { UPSTREAM_PRODUCT, withoutProductToken } from './product.mjs';
+ import { menuAccelerator, normalizeMenuShortcuts } from './menu-shortcuts.mjs';
+ import { createCopyLinkMenuHook } from './context-menu-clipboard.mjs';
+ import { createCopyMenuAction } from './menu-copy-action.mjs';
+@@ -143,7 +148,7 @@ import { browserPanelKeyAction, browserPanelMouseAction, runBrowserPanelAction }
+ import { isSpaceId, spaceIdOfPreviewPartition, spacePreviewPartition, spacePreviewProxyConfig } from './space-preview.mjs';
+ import { shouldBlockGuestFrameNavigation } from './guest-frame-navigation.mjs';
+ import { createRelayDevTunnelBridge } from './relay-dev-tunnel.mjs';
+-import { parsePairingDeepLink } from './pairing-deep-link.mjs';
++import { parsePairingDeepLink, rendererPairingLink } from './pairing-deep-link.mjs';
+ import { attachRendererRecovery, takeSafeStart } from './renderer-recovery.mjs';
+ import { createLoadFailureWarningFilter } from './load-failure-warnings.mjs';
+ import { mintOutsideFileGrant } from '@openchamber/web/server/lib/fs/routes.js';
+@@ -165,7 +170,7 @@ try {
+ } catch {
+ }
+ 
+-log.initialize();
++log.initialize({ preload: false });
+ log.transports.file.maxSize = 5 * 1024 * 1024;
+ log.transports.file.level = 'info';
+ log.transports.console.level = isDev ? 'debug' : 'warn';
+@@ -266,7 +271,7 @@ const readAppMetadata = () => {
  const APP_METADATA = readAppMetadata();
  const APP_VERSION = APP_METADATA.version;
  
@@ -32,20 +71,29 @@ index 76f77f5bd..4950cd8f0 100644
  const LOOPBACK_BIND_HOST = '127.0.0.1';
  const LAN_BIND_HOST = '0.0.0.0';
  const MINI_CHAT_WINDOW_WIDTH = 520;
-@@ -230,9 +232,9 @@ const LOCAL_DESKTOP_CLIENT_DEDUPE_KEY = 'desktop-local';
- // connecting to someone else's server).
+@@ -278,9 +283,9 @@ const LOCAL_DESKTOP_CLIENT_KIND = 'desktop-local';
+ const LOCAL_DESKTOP_CLIENT_DEDUPE_KEY = 'desktop-local';
  const REMOTE_DESKTOP_CLIENT_KIND = 'desktop';
  const ENV_OVERRIDE_HOST_ID = '__env';
 -const GITHUB_BUG_REPORT_URL = 'https://github.com/openchamber/openchamber/issues/new?template=bug_report.yml';
--const GITHUB_IDEAS_URL = 'https://github.com/openchamber/openchamber/discussions/categories/ideas';
+-const GITHUB_FEATURE_REQUEST_URL = 'https://github.com/openchamber/openchamber/issues/new?template=feature_request.yml';
 -const DISCORD_INVITE_URL = 'https://discord.gg/ZYRSdnwwKA';
 +const GITHUB_BUG_REPORT_URL = PRODUCT.links.bugReport;
-+const GITHUB_IDEAS_URL = PRODUCT.links.ideas;
++const GITHUB_FEATURE_REQUEST_URL = PRODUCT.links.ideas;
 +const DISCORD_INVITE_URL = PRODUCT.links.discord;
  const INSTALLED_APPS_CACHE_TTL_SECS = 60 * 60 * 24;
  const INSTALLED_APPS_CACHE_FILE = 'discovered-apps.json';
- // Bump when discovery results change shape or matching semantics change, so cached
-@@ -1214,7 +1216,7 @@ const maybeShowNativeNotification = (rawInput) => {
+ const INSTALLED_APPS_CACHE_VERSION = 3;
+@@ -1048,7 +1053,7 @@ const isPanelSession = (candidate) => panelSessions.has(candidate);
+ const hardenPanelSession = (panelSession) => {
+   if (panelSessions.has(panelSession)) return;
+   panelSessions.add(panelSession);
+-  panelSession.setUserAgent(plainChromeUserAgent(panelSession.getUserAgent()));
++  panelSession.setUserAgent(plainChromeUserAgent(withoutProductToken(panelSession.getUserAgent(), PRODUCT)));
+ 
+   panelSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+     const allowed = shouldAllowBrowserPanelPermission({
+@@ -1312,7 +1317,7 @@ const maybeShowNativeNotification = (rawInput) => {
  
    const title = typeof payload.title === 'string' && payload.title.trim()
      ? payload.title.trim()
@@ -54,17 +102,94 @@ index 76f77f5bd..4950cd8f0 100644
    const body = typeof payload.body === 'string' ? payload.body : '';
    const sessionId = typeof payload.sessionId === 'string' && payload.sessionId.trim()
      ? payload.sessionId.trim()
-@@ -1812,7 +1814,7 @@ const parseConnectPairingDeepLinkPayload = (raw) => {
-     return {
-       pairingId,
-       secret,
--      label: typeof payload.label === 'string' && payload.label.trim() ? payload.label.trim() : 'OpenChamber',
-+      label: typeof payload.label === 'string' && payload.label.trim() ? payload.label.trim() : PRODUCT.appName,
-       fingerprint: typeof payload.fingerprint === 'string' && payload.fingerprint.trim() ? payload.fingerprint.trim() : '',
-       expiresAt: expiresAt || null,
-       candidates: candidates.sort((left, right) => left.priority - right.priority),
-@@ -2967,6 +2969,11 @@ const compareSemver = (left, right) => {
-   return 0;
+@@ -1466,6 +1471,11 @@ const spawnLocalServer = async () => {
+       : undefined,
+     onDesktopNotification: (payload) => maybeShowNativeNotification({ ...payload, runtimeKey: 'local' }),
+     getIsWindowFocused: isAnyWindowFocused,
++    pluginHost: {
++      secretStore: createSafeStorageSecretStore({ safeStorage }),
++      deepLinks: { register: deepLinkRegistry.register },
++      confirm: createHostConfirm({ dialog, windows: () => BrowserWindow.getAllWindows(), showWindow, log }),
++    },
+     getDesktopRuntimeConfig: () => ({
+       apiBaseUrl: state.apiBaseUrl || '',
+       requestHeaders: sanitizeRuntimeRequestHeaders(state.requestHeaders || {}),
+@@ -1810,6 +1820,21 @@ const setTaskbarProgress = (value) => {
+ };
+ 
+ const pendingDeepLinks = [];
++
++const deepLinkRegistry = createDeepLinkRegistry({
++  onEmit: (event) => {
++    const target = state.mainWindow && !state.mainWindow.isDestroyed()
++      ? state.mainWindow
++      : BrowserWindow.getAllWindows().find((window) => !window.isDestroyed());
++    if (target) {
++      if (target.isMinimized()) target.restore();
++      showWindow(target);
++      target.focus();
++    }
++    emitToAllWindows(event, {});
++  },
++  onError: (error, link) => log.warn('[electron] deep-link handler failed:', link.type, error),
++});
+ let pendingMarkAllRead = process.platform === 'win32' && process.argv.includes('--mark-all-read');
+ let mainWindowTrayActionsReady = false;
+ let lastJumpListKey = '';
+@@ -1965,11 +1990,12 @@ const confirmConnectDeepLink = async (payload) => {
+   }
+ };
+ 
+-const dispatchDeepLink = (link) => {
++const dispatchDeepLink = async (link) => {
+   if (!link) return;
++  if (await deepLinkRegistry.dispatch(link)) return;
+   log.info('[electron] dispatching deep-link', { type: link.type, valueLen: link.value?.length || 0 });
+   if (link.type === 'connect') {
+-    const pairing = parsePairingDeepLink(link.raw, { protocol: DEEP_LINK_PROTOCOL });
++    const pairing = parsePairingDeepLink(link.raw, { protocol: DEEP_LINK_PROTOCOL, fallbackLabel: PRODUCT.appName });
+     if (pairing) {
+       void confirmConnectDeepLink({
+         serverUrl: pairing.target,
+@@ -1979,7 +2005,7 @@ const dispatchDeepLink = (link) => {
+           log.info('[electron] connect pairing deep-link declined by user');
+           return;
+         }
+-        queueHostAction({ type: 'pairing', link: link.raw.trim() });
++        queueHostAction({ type: 'pairing', link: rendererPairingLink(link.raw) });
+       });
+       return;
+     }
+@@ -2029,7 +2055,7 @@ const flushPendingDeepLinks = ({ includeSessions }) => {
+       kept.push(link);
+       continue;
+     }
+-    dispatchDeepLink(link);
++    void dispatchDeepLink(link);
+   }
+   pendingDeepLinks.push(...kept);
+ };
+@@ -2049,7 +2075,7 @@ const handleDeepLinks = (urls) => {
+     const parsed = parseDeepLink(raw);
+     if (!parsed) continue;
+     if (isMainWindowReadyForDeepLink() && ((parsed.type !== 'session' && parsed.type !== 'extensions') || mainWindowSessionLinkGate.isListening())) {
+-      dispatchDeepLink(parsed);
++      void dispatchDeepLink(parsed);
+     } else {
+       pendingDeepLinks.push(parsed);
+     }
+@@ -3308,7 +3334,8 @@ const readUpdateChannel = () => normalizeUpdateChannel(readSettingsRoot().deskto
+ const applyUpdaterChannel = (channel, source = pickUpdaterSource({ mirrorFailedAt: state.updaterMirrorFailedAt })) => {
+   if (state.updaterChannel === channel && state.updaterSource === source) return;
+   if (state.updaterChannel !== null && state.updaterChannel !== channel) state.pendingUpdate = null;
+-  const feed = resolveUpdaterFeed({ testBuild: UPDATER_E2E_BUILD, channel, source });
++  const feed = resolveUpdaterFeed({ testBuild: UPDATER_E2E_BUILD, channel, source, productionFeed: PRODUCT.updaterFeed });
++  if (!feed) return;
+   const updaterChannel = [PRODUCTION_UPDATER_FEED, CANARY_UPDATER_FEED, STABLE_MIRROR_UPDATER_FEED, CANARY_MIRROR_UPDATER_FEED].includes(feed)
+     ? resolveUpdaterChannel({ platform: process.platform, architecture: process.arch })
+     : null;
+@@ -3329,6 +3356,11 @@ const applyUpdaterChannel = (channel, source = pickUpdaterSource({ mirrorFailedA
+   });
  };
  
 +const assertDesktopUpdaterCapability = () => assertUpdaterCapability({
@@ -75,19 +200,17 @@ index 76f77f5bd..4950cd8f0 100644
  const setupAutoUpdater = () => {
    if (!app.isPackaged) {
      return;
-@@ -2980,7 +2987,10 @@ const setupAutoUpdater = () => {
- 
-   const testBuild = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
-     && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
--  const feed = resolveUpdaterFeed({ testBuild });
-+  const feed = resolveUpdaterFeed({ testBuild, productionFeed: PRODUCT.updaterFeed });
-+  if (!feed) {
+@@ -3339,6 +3371,9 @@ const setupAutoUpdater = () => {
+   autoUpdater.fullChangelog = true;
+   autoUpdater.disableWebInstaller = false;
+   autoUpdater.logger = log;
++  if (!PRODUCT.updaterFeed) {
 +    return;
 +  }
-   const updaterChannel = feed.provider === 'github'
-     ? resolveUpdaterChannel({ platform: process.platform, architecture: process.arch })
-     : null;
-@@ -4424,7 +4434,11 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
+   applyUpdaterChannel(readUpdateChannel());
+ 
+   autoUpdater.on('download-progress', (progress) => {
+@@ -4634,7 +4669,11 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
      }
  
      case 'desktop_check_for_updates': {
@@ -97,10 +220,10 @@ index 76f77f5bd..4950cd8f0 100644
 +      const withoutFeed = updateCheckWithoutFeed({ updaterFeed: PRODUCT.updaterFeed, currentVersion: APP_VERSION });
 +      if (withoutFeed) return withoutFeed;
 +      assertDesktopUpdaterCapability();
-       const currentVersion = APP_VERSION;
-       const { available, updateInfo, updateResult, nextVersion, pendingUpdate } = await checkForDesktopUpdate({
-         autoUpdater,
-@@ -4448,7 +4462,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
+       if (state.updateCheck && readUpdateChannel() !== state.updaterChannel) {
+         await state.updateCheck.catch(() => null);
+       }
+@@ -4683,7 +4722,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
      }
  
      case 'desktop_download_and_install_update':
@@ -109,7 +232,7 @@ index 76f77f5bd..4950cd8f0 100644
        if (!state.pendingUpdate) {
          throw new Error('No pending update');
        }
-@@ -4505,7 +4519,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
+@@ -4710,7 +4749,7 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
  
      case 'desktop_restart': {
        const applyUpdate = Boolean(state.pendingUpdate?.downloaded && app.isPackaged);
@@ -118,7 +241,7 @@ index 76f77f5bd..4950cd8f0 100644
        log.info(`[electron] desktop_restart applyUpdate=${applyUpdate} packaged=${app.isPackaged}`);
        if (applyUpdate && process.platform === 'darwin' && typeof app.isInApplicationsFolder === 'function') {
          try {
-@@ -4753,9 +4767,28 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
+@@ -4978,9 +5017,28 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
    }
  };
  
@@ -127,7 +250,7 @@ index 76f77f5bd..4950cd8f0 100644
 +const helpLinkItems = (t) => {
 +  const linkItem = (key, url) => (url ? [{ label: t(key), click: () => shell.openExternal(url) }] : []);
 +  return [
-+    [...linkItem('reportABug', GITHUB_BUG_REPORT_URL), ...linkItem('discussAnIdea', GITHUB_IDEAS_URL)],
++    [...linkItem('reportABug', GITHUB_BUG_REPORT_URL), ...linkItem('suggestFeature', GITHUB_FEATURE_REQUEST_URL)],
 +    linkItem('joinDiscord', DISCORD_INVITE_URL),
 +  ].filter((group) => group.length > 0).flatMap((group) => [{ type: 'separator' }, ...group]);
 +};
@@ -146,9 +269,9 @@ index 76f77f5bd..4950cd8f0 100644
 -  const t = (key) => menuLabel(locale, key);
 +  const t = (key) => productMenuLabel(locale, key);
    const roleItem = (role, key) => roleMenuItem(locale, role, key);
-   const handleCopyAction = () => {
-     BrowserWindow.getFocusedWindow()?.webContents.copy();
-@@ -4767,10 +4800,7 @@ const buildMacMenu = (locale = 'en') => {
+ 
+   return Menu.buildFromTemplate([
+@@ -4988,10 +5046,7 @@ const buildMacMenu = (locale = 'en') => {
        label: t('app.name'),
        submenu: [
          { label: t('about'), click: () => dispatchAction('about') },
@@ -160,29 +283,29 @@ index 76f77f5bd..4950cd8f0 100644
          { type: 'separator' },
          { label: t('settings'), accelerator: 'Cmd+,', click: () => dispatchAction('settings') },
          { label: t('reloadWebview'), click: () => reloadMenuTargetWindow() },
-@@ -4855,11 +4885,7 @@ const buildMacMenu = (locale = 'en') => {
-         { label: t('toggleDeveloperTools'), accelerator: 'Cmd+Alt+I', click: () => openDevToolsForMenuTarget() },
+@@ -5074,11 +5129,7 @@ const buildMacMenu = (locale = 'en') => {
+         { label: t('toggleDeveloperTools'), accelerator: menuKey('toggle_developer_tools', 'Cmd+Alt+I'), click: () => openDevToolsForMenuTarget() },
          { type: 'separator' },
          { label: t('clearCache'), click: () => void handleInvoke(null, 'desktop_clear_cache') },
 -        { type: 'separator' },
 -        { label: t('reportABug'), click: () => shell.openExternal(GITHUB_BUG_REPORT_URL) },
--        { label: t('discussAnIdea'), click: () => shell.openExternal(GITHUB_IDEAS_URL) },
+-        { label: t('suggestFeature'), click: () => shell.openExternal(GITHUB_FEATURE_REQUEST_URL) },
 -        { type: 'separator' },
 -        { label: t('joinDiscord'), click: () => shell.openExternal(DISCORD_INVITE_URL) },
 +        ...helpLinkItems(t),
        ],
      },
    ]);
-@@ -4867,7 +4893,7 @@ const buildMacMenu = (locale = 'en') => {
+@@ -5086,7 +5137,7 @@ const buildMacMenu = (locale = 'en') => {
  
  const buildAutoHiddenMenu = (locale = 'en') => {
    const dispatchAction = (action) => dispatchMenuAction(action);
 -  const t = (key) => menuLabel(locale, key);
 +  const t = (key) => productMenuLabel(locale, key);
    const roleItem = (role, key) => roleMenuItem(locale, role, key);
-   const handleCopyAction = () => {
-     BrowserWindow.getFocusedWindow()?.webContents.copy();
-@@ -4879,10 +4905,7 @@ const buildAutoHiddenMenu = (locale = 'en') => {
+ 
+   return Menu.buildFromTemplate([
+@@ -5094,10 +5145,7 @@ const buildAutoHiddenMenu = (locale = 'en') => {
        label: t('app.name'),
        submenu: [
          { label: t('about'), click: () => dispatchAction('about') },
@@ -194,13 +317,13 @@ index 76f77f5bd..4950cd8f0 100644
          { type: 'separator' },
          { label: t('settings'), accelerator: 'Ctrl+,', click: () => dispatchAction('settings') },
          { label: t('reloadWebview'), click: () => reloadMenuTargetWindow() },
-@@ -4974,11 +4997,7 @@ const buildAutoHiddenMenu = (locale = 'en') => {
-         { label: t('showDiagnostics'), accelerator: 'Ctrl+Shift+L', click: () => dispatchAction('download-logs') },
+@@ -5189,11 +5237,7 @@ const buildAutoHiddenMenu = (locale = 'en') => {
+         { label: t('showDiagnostics'), accelerator: menuKey('show_diagnostics', 'Ctrl+Shift+L'), click: () => dispatchAction('download-logs') },
          { type: 'separator' },
          { label: t('clearCache'), click: () => void handleInvoke(null, 'desktop_clear_cache') },
 -        { type: 'separator' },
 -        { label: t('reportABug'), click: () => shell.openExternal(GITHUB_BUG_REPORT_URL) },
--        { label: t('discussAnIdea'), click: () => shell.openExternal(GITHUB_IDEAS_URL) },
+-        { label: t('suggestFeature'), click: () => shell.openExternal(GITHUB_FEATURE_REQUEST_URL) },
 -        { type: 'separator' },
 -        { label: t('joinDiscord'), click: () => shell.openExternal(DISCORD_INVITE_URL) },
 +        ...helpLinkItems(t),

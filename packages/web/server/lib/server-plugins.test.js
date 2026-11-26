@@ -1,9 +1,12 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import os from 'os';
 import path from 'path';
 import fsPromises from 'fs/promises';
+import { fileURLToPath } from 'node:url';
 
-import { loadServerPlugins, mergeEngineConfig, readServerPluginSpecifiers } from './server-plugins.js';
+import { createServiceHostApi } from './guests/service-host-api.js';
+import { createPermissionAutoAcceptRuntime } from './permission-auto-accept/runtime.js';
+import { createProgramAnswerGuard, loadServerPlugins, mergeEngineConfig, readServerPluginSpecifiers } from './server-plugins.js';
 
 const roots = [];
 
@@ -167,6 +170,62 @@ describe('server plugins', () => {
     expect(plugins.neverAutoAnswer({ action: 'acme_browser' })).toBe(false);
   });
 
+  it('goalContinuation joins the plugins\' notes and lets the first block win', async () => {
+    const specifiers = await writePlugins(
+      'export default () => ({ goalContinuation: async (input) => ({ note: `first ${input.sessionId}` }) });',
+      'export default () => ({});',
+      'export default () => ({ goalContinuation: () => ({ note: "second" }) });',
+    );
+    const blocking = await writePlugins(
+      'export default () => ({ goalContinuation: () => ({ note: "kept out" }) });',
+      'export default () => ({ goalContinuation: () => ({ block: "looping: same command 35 times" }) });',
+      'export default () => ({ goalContinuation: () => { throw new Error("never asked"); } });',
+    );
+    const input = { sessionId: 'ses_1', directory: '/repo', goalId: 'goal_1', resumed: false };
+
+    const notes = await loadServerPlugins({ specifiers, context: context() });
+    const blocks = await loadServerPlugins({ specifiers: blocking, context: context() });
+
+    expect(await notes.goalContinuation(input)).toEqual({ block: '', note: 'first ses_1\n\nsecond' });
+    expect(await blocks.goalContinuation(input)).toEqual({ block: 'looping: same command 35 times', note: '' });
+  });
+
+  it('a plugin whose goalContinuation fails is left out with a warning', async () => {
+    const warnings = [];
+    const specifiers = await writePlugins(
+      'export default () => ({ goalContinuation: async () => { throw new Error("acme failed"); } });',
+      'export default () => ({ goalContinuation: () => ({ note: "still here" }) });',
+    );
+
+    const plugins = await loadServerPlugins({ specifiers, context: { ...context(), logger: { warn: (...args) => warnings.push(args.join(' ')) } } });
+
+    expect(await plugins.goalContinuation({ sessionId: 'ses_1', directory: '', goalId: 'goal_1', resumed: false })).toEqual({ block: '', note: 'still here' });
+    expect(warnings).toEqual([expect.stringContaining('acme failed')]);
+  });
+
+  it('goalEnded tells every plugin, and one that fails does not stop the others', async () => {
+    const warnings = [];
+    const [first, second] = await writePlugins(
+      'export default (context) => ({ goalEnded: async () => { throw new Error("acme failed"); } });',
+      'export default (context) => ({ goalEnded: (input) => { context.seen.push(input); } });',
+    );
+    const seen = [];
+    const plugins = await loadServerPlugins({ specifiers: [first, second], context: { ...context(), seen, logger: { warn: (...args) => warnings.push(args.join(' ')) } } });
+
+    await plugins.goalEnded({ sessionId: 'ses_1', directory: '/repo', reason: 'complete' });
+
+    expect(seen).toEqual([{ sessionId: 'ses_1', directory: '/repo', reason: 'complete' }]);
+    expect(warnings).toEqual([expect.stringContaining('acme failed')]);
+  });
+
+  it('says whether any plugin marks permission requests', async () => {
+    const marking = await loadServerPlugins({ specifiers: await writePlugins('export default () => ({ neverAutoAnswer: () => false });'), context: context() });
+    const plain = await loadServerPlugins({ specifiers: await writePlugins('export default () => ({});'), context: context() });
+
+    expect(marking.holdsPermissions).toBe(true);
+    expect(plain.holdsPermissions).toBe(false);
+  });
+
   it('context is handed through unchanged', async () => {
     const [specifier] = await writePlugins(
       `export default (context) => { context.seen.push(context); return {}; };`,
@@ -208,5 +267,94 @@ describe('server plugins', () => {
       .toThrow('OPENCHAMBER_SERVER_PLUGINS must be a JSON array of absolute file paths');
     expect(() => readServerPluginSpecifiers({ OPENCHAMBER_SERVER_PLUGINS: '["relative/a.mjs"]' }))
       .toThrow('OPENCHAMBER_SERVER_PLUGINS must be a JSON array of absolute file paths');
+  });
+});
+
+describe('a permission request answered by an extension', () => {
+  const setUp = async (source, engine) => {
+    const plugins = await loadServerPlugins({ specifiers: await writePlugins(source), context: context() });
+    const fetchImpl = vi.fn(engine);
+    const runtime = createPermissionAutoAcceptRuntime({
+      globalEventHub: { subscribeEvent: () => () => {}, subscribeStatus: () => () => {} },
+      buildOpenCodeUrl: (route) => `http://opencode.test${route}`,
+      getOpenCodeAuthHeaders: () => ({}),
+      readSettingsFromDiskMigrated: async () => ({}),
+      persistSettings: async () => {},
+      neverAutoAnswer: (permission) => plugins.neverAutoAnswer(permission) === true,
+      fetchImpl,
+    });
+    const answer = vi.fn(async () => {});
+    const api = createServiceHostApi({
+      listGuests: async () => [{
+        id: 'desk',
+        name: 'Desk',
+        enabled: true,
+        service: { entry: 'service/main.js', runtime: 'host' },
+        sessionControl: { answers: true },
+        capabilityGrants: ['service', 'sessionControl', 'sessionAnswers'],
+      }],
+      control: {
+        answerPermission: createProgramAnswerGuard({
+          holdsPermissions: () => plugins.holdsPermissions,
+          isLeftForPerson: runtime.isLeftForPerson,
+          answer,
+        }),
+      },
+      guestIdOfToken: () => 'desk',
+    });
+    const call = (decision) => api.serve({ bearer: 'live', body: { method: 'sessions.answerPermission', input: { sessionId: 'ses_1', requestId: 'per_1', decision } } });
+    return { answer, call, fetchImpl };
+  };
+
+  const MARKS_BROWSER = 'export default () => ({ neverAutoAnswer: (permission) => permission.action === "acme_browser" });';
+  const pending = (action) => async () => Response.json({ data: { id: 'per_1', sessionID: 'ses_1', action, resources: ['api.example.test'] } });
+
+  it.each(['allow', 'deny'])('is refused on %s when a plugin leaves it for the person', async (decision) => {
+    const { answer, call, fetchImpl } = await setUp(MARKS_BROWSER, pending('acme_browser'));
+
+    expect(await call(decision)).toMatchObject({ status: 403, body: { error: { message: 'This request has to be answered by the person in the app' } } });
+    expect(String(fetchImpl.mock.calls[0][0])).toBe('http://opencode.test/api/session/ses_1/permission/per_1');
+    expect(answer).not.toHaveBeenCalled();
+  });
+
+  it('goes through when no plugin marks it, and when no plugin marks any the engine is not asked', async () => {
+    const marked = await setUp(MARKS_BROWSER, pending('bash'));
+    expect(await marked.call('allow')).toEqual({ status: 200, body: { result: { answered: true } } });
+    expect(marked.answer).toHaveBeenCalledWith({ sessionID: 'ses_1', requestID: 'per_1', decision: 'once', message: undefined });
+
+    const plain = await setUp('export default () => ({});', pending('acme_browser'));
+    expect(await plain.call('allow')).toMatchObject({ status: 200 });
+    expect(plain.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('is refused when the request cannot be read or does not parse', async () => {
+    const down = await setUp(MARKS_BROWSER, async () => new Response('', { status: 500 }));
+    expect(await down.call('allow')).toMatchObject({ status: 500 });
+    expect(down.answer).not.toHaveBeenCalled();
+
+    const unread = await setUp(MARKS_BROWSER, async () => new Response('not json'));
+    expect(await unread.call('allow')).toMatchObject({ status: 403 });
+    expect(unread.answer).not.toHaveBeenCalled();
+  });
+
+  it('that already settled is left for the answer call to say so', async () => {
+    const gone = await setUp(MARKS_BROWSER, async () => new Response('', { status: 404 }));
+    expect(await gone.call('allow')).toMatchObject({ status: 200 });
+    expect(gone.answer).toHaveBeenCalledTimes(1);
+  });
+
+  it('has no other way to be answered by the server than the two that check the plugins', async () => {
+    const root = fileURLToPath(new URL('../', import.meta.url));
+    const files = (await fsPromises.readdir(root, { recursive: true })).filter((file) => file.endsWith('.ts') && !file.endsWith('.d.ts'));
+    const replying = [];
+    for (const file of files) {
+      const source = await fsPromises.readFile(path.join(root, file), 'utf8');
+      if (/permission\.reply\(|\/permission\/\$\{.*\/reply`/.test(source)) replying.push(file.split(path.sep).join('/'));
+    }
+    expect(replying.sort()).toEqual(['lib/openchamber-control/service.ts', 'lib/permission-auto-accept/runtime.ts']);
+
+    const runtime = await fsPromises.readFile(path.join(root, 'runtime.ts'), 'utf8');
+    expect(runtime.split('openChamberControlService.answerPermission').length - 1).toBe(2);
+    expect(runtime).toMatch(/answerPermission: createProgramAnswerGuard\(\{[^}]*isLeftForPerson: async [^}]*answer: [^}]*openChamberControlService\.answerPermission\(input\),\s*\}\),/);
   });
 });

@@ -1,0 +1,131 @@
+diff --git a/packages/web/server/lib/context-obligatory/runtime.ts b/packages/web/server/lib/context-obligatory/runtime.ts
+index 5533cb26c..5dd208fdf 100644
+--- a/packages/web/server/lib/context-obligatory/runtime.ts
++++ b/packages/web/server/lib/context-obligatory/runtime.ts
+@@ -2,6 +2,7 @@ import { isRecord } from '../shared/guards.js';
+ import { assertPromptResponse } from '../opencode/prompt-response.js';
+ import { unwrapOpenCodeResponse } from '../opencode/response-envelope.js';
+ import { sessionParentId } from '../session-lineage.js';
++import type { ResponseRecoveryOwner } from '../session-response-recovery/owner.js';
+ const FETCH_TIMEOUT_MS = 15_000;
+ const MESSAGE_FETCH_LIMIT = 20;
+ 
+@@ -23,6 +24,13 @@ export interface ContextObligatoryOptions {
+     openchamber: { context_obligatory_last_compaction_message_id: unknown };
+   }) => Promise<StoredMetadata | void>) | null;
+   readSessionMetadata?: ((sessionId: string) => Promise<StoredMetadata | null | undefined>) | null;
++  responseRecovery?: Pick<ResponseRecoveryOwner, 'isReserved' | 'admissions'> | null;
++  fetchImpl?: typeof fetch;
++}
++
++export interface RestoreCompactionOptions {
++  contextID?: string;
++  signal?: AbortSignal;
+ }
+ 
+ export interface StoredMetadata {
+@@ -47,7 +55,7 @@ interface BoundaryFields extends StoredMetadata {
+ interface FetchOptions {
+   directory: string;
+   method?: string;
+-  body?: { text: string; resume: boolean };
++  body?: { text: string; resume: boolean; id?: string };
+   query?: Record<string, string>;
+ }
+ 
+@@ -96,8 +104,10 @@ export const createContextObligatoryRuntime = ({
+   getOpenCodeAuthHeaders,
+   persistContextCursor = null,
+   readSessionMetadata = null,
++  responseRecovery = null,
++  fetchImpl = (...args) => fetch(...args),
+ }: ContextObligatoryOptions) => {
+-  const inflight = new Set<string>();
++  const inflight = new Map<string, Promise<void>>();
+   let stopped = false;
+ 
+   const openCodeFetch = async (fetchPath: string, { directory, method = 'GET', body, query }: FetchOptions) => {
+@@ -116,7 +126,7 @@ export const createContextObligatoryRuntime = ({
+       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+     };
+     if (body) init.body = JSON.stringify(body);
+-    const response = await fetch(url, init);
++    const response = await fetchImpl(url, init);
+     if (method === 'POST' && fetchPath.endsWith('/synthetic')) {
+       await assertPromptResponse(response, 'session.synthetic');
+     } else if (!response.ok) {
+@@ -131,7 +141,9 @@ export const createContextObligatoryRuntime = ({
+     directory: string,
+     readSessionMetadata: NonNullable<ContextObligatoryOptions['readSessionMetadata']>,
+     persistContextCursor: NonNullable<ContextObligatoryOptions['persistContextCursor']>,
++    { contextID, signal }: RestoreCompactionOptions = {},
+   ) => {
++    signal?.throwIfAborted();
+     const session = await openCodeFetch(`/api/session/${encodeURIComponent(sessionId)}`, { directory });
+     if (sessionParentId(session)) return;
+     const stored = { metadata: await readSessionMetadata(sessionId) };
+@@ -171,13 +183,18 @@ export const createContextObligatoryRuntime = ({
+       .sort((left, right) => left.pinned.createdAt - right.pinned.createdAt);
+     if (entries.length === 0) return;
+ 
++    signal?.throwIfAborted();
++    if (stopped) throw new Error('Context restoration stopped');
++    const body: NonNullable<FetchOptions['body']> = {
++      text: buildContextPrompt(entries),
++      resume: false,
++    };
++    if (contextID) body.id = contextID;
++    if (responseRecovery?.isReserved(sessionId)) throw new Error('response-recovery-reserved');
+     await openCodeFetch(`/api/session/${encodeURIComponent(sessionId)}/synthetic`, {
+       directory,
+       method: 'POST',
+-      body: {
+-        text: buildContextPrompt(entries),
+-        resume: false,
+-      },
++      body,
+     });
+ 
+     await persistContextCursor(sessionId, directory, {
+@@ -185,6 +202,19 @@ export const createContextObligatoryRuntime = ({
+     });
+   };
+ 
++  const restoreCompaction = (sessionId: string, directory: string, options?: RestoreCompactionOptions) => {
++    if (stopped) return Promise.reject(new Error('Context restoration stopped'));
++    if (!persistContextCursor || !readSessionMetadata) {
++      return Promise.reject(new Error('Context restoration metadata store unavailable'));
++    }
++    const existing = inflight.get(sessionId);
++    if (existing) return existing;
++    const run = () => tick(sessionId, directory, readSessionMetadata, persistContextCursor, options);
++    const work = (responseRecovery?.admissions ? responseRecovery.admissions.run(run) : run()).finally(() => inflight.delete(sessionId));
++    inflight.set(sessionId, work);
++    return work;
++  };
++
+   let parkedNoticeLogged = false;
+   const processPayload = (payload: ContextObligatoryEvent | null | undefined, directoryHint = '') => {
+     if (stopped) return;
+@@ -197,17 +227,15 @@ export const createContextObligatoryRuntime = ({
+     }
+     if (payload?.type !== 'session.compacted') return;
+     const sessionId = payload.properties?.sessionID;
+-    if (!isSessionId(sessionId) || inflight.has(sessionId)) return;
++    if (!isSessionId(sessionId)) return;
+     const directory = payload.properties?.directory || directoryHint;
+-    inflight.add(sessionId);
+-    return tick(sessionId, directory, readSessionMetadata, persistContextCursor)
+-      .catch((error) => console.warn('[context-obligatory] injection failed:', error?.message || error))
+-      .finally(() => inflight.delete(sessionId));
++    return restoreCompaction(sessionId, directory)
++      .catch((error) => console.warn('[context-obligatory] injection failed:', error?.message || error));
+   };
+ 
+   const stop = () => {
+     stopped = true;
+   };
+ 
+-  return { processPayload, stop };
++  return { processPayload, restoreCompaction, stop };
+ };

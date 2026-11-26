@@ -1,8 +1,8 @@
 diff --git a/packages/web/server/lib/opencode/v1-migration-topup.test.js b/packages/web/server/lib/opencode/v1-migration-topup.test.js
-index 3f6c6fb9c..075036e59 100644
+index dd43052c7..a37f80c71 100644
 --- a/packages/web/server/lib/opencode/v1-migration-topup.test.js
 +++ b/packages/web/server/lib/opencode/v1-migration-topup.test.js
-@@ -272,3 +272,54 @@ describe.skipIf(!sqlite)('topUpV1Migration', () => {
+@@ -288,3 +288,54 @@ describe.skipIf(!sqlite)('topUpV1Migration', () => {
      expect(run()).toEqual({ status: 'skipped', missing: 0, revisited: 0, reason: 'nothing-missing' });
    });
  });

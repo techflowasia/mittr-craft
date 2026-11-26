@@ -2,81 +2,97 @@ import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { chooseAutoNestedRepo, discoversNestedRepos } from '@/lib/nestedRepositories';
+import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import {
+  useAutoNestedRepoSelection,
   useEffectiveGitDirectory,
+  useGitRepoUnreadable,
   useGitStore,
   useIsGitRepo,
+  useIsUnbornGitRepo,
   useNestedRepoSelection,
   useNestedRepos,
   useStaleClearedSelections,
 } from '@/stores/useGitStore';
 
 type UseNestedGitDirectoryOptions = {
-  /** False defers all probing/discovery work while the surface is hidden. */
   enabled?: boolean;
+  recheckOnOpen?: boolean;
 };
 
-/**
- * Resolves the repository a git surface operates on when the project root may
- * not itself be a git repository. Owns the full resolution flow: probing the
- * root, discovering nested repositories, auto-selecting the first one, and
- * dropping a selection whose repository disappeared.
- *
- * Consumers still fetch their own git data for the returned `gitDirectory`;
- * this hook only owns who that directory is.
- */
 export const useNestedGitDirectory = (
   root: string | null,
   options: UseNestedGitDirectoryOptions = {},
 ) => {
-  const { enabled = true } = options;
+  const { enabled = true, recheckOnOpen = false } = options;
   const { git } = useRuntimeAPIs();
+  const homeDirectory = useDirectoryStore((state) => state.homeDirectory);
+  const searchesNested = root ? discoversNestedRepos(root, homeDirectory) : false;
 
   const rootIsGitRepo = useIsGitRepo(root);
+  const rootIsUnborn = useIsUnbornGitRepo(root);
   const gitDirectory = useEffectiveGitDirectory(root);
   const nestedRepos = useNestedRepos(root);
   const nestedRepoSelection = useNestedRepoSelection(root);
+  const autoSelected = useAutoNestedRepoSelection(root);
   const staleClearedSelections = useStaleClearedSelections(root);
+  const currentNestedRepos = useNestedRepos(
+    gitDirectory && gitDirectory !== root ? gitDirectory : null,
+  );
+  const searchesCurrent = gitDirectory && gitDirectory !== root
+    ? discoversNestedRepos(gitDirectory, homeDirectory)
+    : false;
 
-  // Probe of the resolved repository, used to detect a stale selection. Null
-  // when there is nothing selected to probe.
   const selectedIsGitRepo = useIsGitRepo(
     gitDirectory && gitDirectory !== root ? gitDirectory : null,
   );
 
-  const { ensureStatus, ensureNestedRepos, selectNestedRepo, clearNestedRepoSelection } = useGitStore(
+  const rootUnreadable = useGitRepoUnreadable(root);
+  const unreadable = rootUnreadable !== null && root ? { directory: root, message: rootUnreadable } : null;
+  const selectedUnreadable = useGitRepoUnreadable(gitDirectory && gitDirectory !== root ? gitDirectory : null) !== null;
+
+  const { ensureStatus, recheckRepository, ensureNestedRepos, selectNestedRepo, clearNestedRepoSelection } = useGitStore(
     useShallow((state) => ({
       ensureStatus: state.ensureStatus,
+      recheckRepository: state.recheckRepository,
       ensureNestedRepos: state.ensureNestedRepos,
       selectNestedRepo: state.selectNestedRepo,
       clearNestedRepoSelection: state.clearNestedRepoSelection,
     })),
   );
 
-  // Probe the root itself so nested-repo resolution never depends on some
-  // other surface (e.g. the sidebar badge) having probed it first.
   React.useEffect(() => {
     if (!enabled || !root) return;
     if (rootIsGitRepo !== null) return;
     void ensureStatus(root, git);
   }, [enabled, ensureStatus, git, root, rootIsGitRepo]);
 
-  // Discover nested repositories once the root probe confirms it is not one.
   React.useEffect(() => {
-    if (!enabled || !root) return;
-    if (rootIsGitRepo !== false) return;
-    void ensureNestedRepos(root);
-  }, [enabled, ensureNestedRepos, root, rootIsGitRepo]);
+    if (!recheckOnOpen || !enabled || !root) return;
+    const rootState = useGitStore.getState().directories.get(root);
+    if (rootState?.isGitRepo !== false && rootState?.status?.unborn !== true) return;
+    void recheckRepository(root, git);
+  }, [enabled, git, recheckOnOpen, recheckRepository, root]);
 
-  // Auto-select the first nested repository so the surface opens straight
-  // into repository data; a picker (where rendered) switches between them.
-  // Repositories whose selection already failed a probe are skipped: without
-  // this, a corrupt repository (discovered via its .git entry but failing
-  // git status) would be re-picked right after every stale-clear and loop
-  // discovery + probe while the surface is visible. When every candidate has
-  // failed, no selection is made — surfaces settle into their unresolved
-  // state instead of churning requests. A manual picker pick is still free
-  // to select anything; it gets probed like any other.
+  React.useEffect(() => {
+    if (!enabled || !root || !searchesNested) return;
+    if (rootIsGitRepo === null) return;
+    void ensureNestedRepos(root);
+  }, [enabled, ensureNestedRepos, root, rootIsGitRepo, searchesNested]);
+
+  React.useEffect(() => {
+    if (!recheckOnOpen || !enabled || !root || !searchesNested) return;
+    void ensureNestedRepos(root, { force: true });
+  }, [enabled, ensureNestedRepos, recheckOnOpen, root, searchesNested]);
+
+  React.useEffect(() => {
+    if (!enabled || !gitDirectory || gitDirectory === root) return;
+    if (!searchesCurrent) return;
+    if (selectedIsGitRepo === null) return;
+    void ensureNestedRepos(gitDirectory, { force: recheckOnOpen });
+  }, [enabled, ensureNestedRepos, gitDirectory, recheckOnOpen, root, searchesCurrent, selectedIsGitRepo]);
+
   React.useEffect(() => {
     if (!enabled || !root) return;
     if (rootIsGitRepo !== false) return;
@@ -85,8 +101,10 @@ export const useNestedGitDirectory = (
     const candidates = staleClearedSelections
       ? nestedRepos.filter((repository) => !staleClearedSelections.has(repository))
       : nestedRepos;
-    if (candidates.length === 0) return;
-    selectNestedRepo(root, candidates[0]);
+    // external: #5357 a repository hidden in a dot-directory stays in the picker but is never picked automatically.
+    const autoPicked = chooseAutoNestedRepo(root, candidates);
+    if (!autoPicked) return;
+    selectNestedRepo(root, autoPicked, { persist: false });
   }, [
     enabled,
     nestedRepos,
@@ -97,12 +115,17 @@ export const useNestedGitDirectory = (
     staleClearedSelections,
   ]);
 
-  // A selected repository that is no longer a git repository is stale: drop
-  // the selection and re-scan so resolution reflects the current tree.
+  // external: #4886 a root with no commits is not a root that auto-selects a nested repository.
+  React.useEffect(() => {
+    if (!enabled || !root || !autoSelected) return;
+    if (rootIsGitRepo !== true || rootIsUnborn) return;
+    selectNestedRepo(root, root);
+  }, [autoSelected, enabled, root, rootIsGitRepo, rootIsUnborn, selectNestedRepo]);
+
   React.useEffect(() => {
     if (!enabled || !root || !nestedRepoSelection) return;
     if (!gitDirectory || gitDirectory === root) return;
-    if (selectedIsGitRepo !== false) return;
+    if (selectedIsGitRepo !== false && !selectedUnreadable) return;
     clearNestedRepoSelection(root);
     void ensureNestedRepos(root, { force: true });
   }, [
@@ -113,7 +136,28 @@ export const useNestedGitDirectory = (
     nestedRepoSelection,
     root,
     selectedIsGitRepo,
+    selectedUnreadable,
   ]);
 
-  return { rootIsGitRepo, gitDirectory, nestedRepos, nestedRepoSelection };
+  const discovered = Array.isArray(nestedRepos) && nestedRepos.length > 0 ? nestedRepos : null;
+  const currentDiscovered = Array.isArray(currentNestedRepos) && currentNestedRepos.length > 0
+    ? currentNestedRepos
+    : null;
+  const selectedRepository = gitDirectory && gitDirectory !== root ? gitDirectory : null;
+  let repositoryOptions: string[] | null = null;
+  if (selectedRepository) {
+    const options = [
+      ...(rootIsGitRepo === true && root ? [root] : []),
+      ...(discovered ?? []),
+      selectedRepository,
+      ...(currentDiscovered ?? []),
+    ];
+    repositoryOptions = [...new Set(options)];
+  } else if (discovered && root) {
+    repositoryOptions = rootIsGitRepo === true ? [root, ...discovered] : discovered;
+  }
+
+  const repositoriesKnown = rootIsGitRepo !== null && (!searchesNested || nestedRepos !== undefined);
+
+  return { rootIsGitRepo, gitDirectory, nestedRepos, nestedRepoSelection, repositoryOptions, repositoriesKnown, unreadable };
 };

@@ -2,14 +2,15 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import '../../../web/scripts/register-server-sources.mjs';
 
+const { buildResult, toUsageWindow } = await import('../../../web/server/lib/quota/utils/formatters.js');
+const { toMcpEntity } = await import('../../../web/server/lib/opencode/config-v2.js');
+const { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_SCHEDULE_ACTION_DEFINITIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } = await import('../../../web/server/lib/openchamber-control/actions.js');
+const { OpenChamberControlError } = await import('../../../web/server/lib/openchamber-control/error.js');
+const { SCREENSHOT_DIRECTORY, writeScreenshot } = await import('../../../web/server/lib/openchamber-control/screenshots.js');
 // Upstream's merge rule, by path: the server hands plugins this very function.
-import { buildResult, toUsageWindow } from '../../../web/server/lib/quota/utils/formatters.js';
-import { toMcpEntity } from '../../../web/server/lib/opencode/config-v2.js';
-import { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } from '../../../web/server/lib/openchamber-control/actions.js';
-import { OpenChamberControlError } from '../../../web/server/lib/openchamber-control/error.js';
-import { SCREENSHOT_DIRECTORY, writeScreenshot } from '../../../web/server/lib/openchamber-control/screenshots.js';
-import { mergeEngineConfig } from '../../../web/server/lib/server-plugins.js';
+const { mergeEngineConfig } = await import('../../../web/server/lib/server-plugins.js');
 
 export const quotaResult = { buildResult, toUsageWindow };
 
@@ -20,7 +21,7 @@ export const decrypt = (buffer) => Buffer.from(Buffer.from(buffer).toString('utf
 
 export const tempDataDir = (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mittr-auth-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 }));
   return dir;
 };
 
@@ -183,7 +184,7 @@ export const fakeEngineContext = ({ port = 4100, enginePort = 4096, userConfigFi
           return fake.controlAnswer(...args);
         },
         resolveSessionDirectory: async () => null,
-        definitions: () => ({ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS }),
+        definitions: () => ({ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, schedule: OPENCHAMBER_SCHEDULE_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS }),
         all: OPENCHAMBER_ALL_ACTIONS,
         ControlError: OpenChamberControlError,
         writeScreenshot,

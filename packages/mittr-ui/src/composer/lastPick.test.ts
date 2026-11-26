@@ -8,6 +8,7 @@ for (const [name, value] of Object.entries({
   document: browser.document,
   navigator: browser.navigator,
   localStorage: browser.localStorage,
+  CustomEvent: browser.CustomEvent,
 })) {
   originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
   Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
@@ -25,6 +26,7 @@ afterAll(() => {
 });
 
 const { getRuntimeKey } = await import('../../../ui/src/lib/runtime-switch');
+const { rememberEffort } = await import('../../../ui/src/lib/modelEfforts');
 const { useConfigStore } = await import('../../../ui/src/stores/useConfigStore');
 const { useProjectsStore } = await import('../../../ui/src/stores/useProjectsStore');
 const { useSelectionStore } = await import('../../../ui/src/sync/selection-store');
@@ -95,14 +97,19 @@ const startNewChat = () => {
   useConfigStore.getState().applyDefaultModelAgentSelection({});
 };
 
-const pickModel = (sessionId: string | null, providerId: string, modelId: string) => {
+const applyModel = (sessionId: string | null, providerId: string, modelId: string) => {
   const store = useConfigStore.getState();
   store.setProvider(providerId);
   store.setModel(modelId);
   if (sessionId) useSelectionStore.getState().saveSessionModelSelection(sessionId, providerId, modelId);
 };
 
-const pickEffort = (sessionId: string | null, variant: string | null) => {
+const pickModel = (sessionId: string | null, providerId: string, modelId: string) => {
+  applyModel(sessionId, providerId, modelId);
+  if (sessionId) useSelectionStore.getState().pickSessionModel(sessionId, providerId, modelId);
+};
+
+const applyEffort = (sessionId: string | null, variant: string | null) => {
   const store = useConfigStore.getState();
   store.setCurrentVariantOverride(variant, undefined);
   if (sessionId && store.currentAgentName) {
@@ -110,7 +117,19 @@ const pickEffort = (sessionId: string | null, variant: string | null) => {
   }
 };
 
+const pickEffort = (sessionId: string | null, variant: string | null) => {
+  applyEffort(sessionId, variant);
+  const { currentProviderId, currentModelId } = useConfigStore.getState();
+  rememberEffort(currentProviderId, currentModelId, variant);
+};
+
 const pickAgent = (agentName: string) => {
+  const sessionId = useSessionUIStore.getState().currentSessionId;
+  if (sessionId) useSelectionStore.getState().pickSessionAgent(sessionId, agentName);
+  useConfigStore.getState().setAgent(agentName);
+};
+
+const restoreAgent = (agentName: string) => {
   useConfigStore.getState().setAgent(agentName);
 };
 
@@ -127,7 +146,10 @@ beforeEach(() => {
   useSessionUIStore.setState({ currentSessionId: null });
   useSelectionStore.setState({
     sessionModelSelections: new Map(),
+    sessionPickedModels: new Map(),
     sessionAgentSelections: new Map(),
+    sessionPickedAgents: new Map(),
+    sessionFollowedAgents: new Map(),
     sessionAgentModelSelections: new Map(),
     agentModelVariantSelections: new Map(),
   });
@@ -210,6 +232,40 @@ describe('the last pick in the composer is where a new chat starts', () => {
     expect(useConfigStore.getState().settingsDefaultAgent).toBe('plan');
   });
 
+  test('an agent picked in an open chat is remembered, even though the chat records the pick first', async () => {
+    openChat('ses_a');
+    pickAgent('plan');
+    await settle();
+
+    startNewChat();
+
+    expect(composer().agent).toBe('plan');
+    expect(saved).toEqual([{ defaultAgent: 'plan' }]);
+  });
+
+  test('picking back the model an open chat started on is remembered', async () => {
+    useSelectionStore.getState().saveSessionModelSelection('ses_a', 'mittr', 'fast');
+    openChat('ses_a');
+    pickModel('ses_a', 'mittr', 'deep');
+    await settle();
+    pickModel('ses_a', 'mittr', 'fast');
+    await settle();
+
+    expect(saved).toEqual([{ defaultModel: 'mittr/deep', defaultVariant: '' }, { defaultModel: 'mittr/fast', defaultVariant: '' }]);
+  });
+
+  test('picking back the agent an open chat already runs on is remembered', async () => {
+    useSelectionStore.getState().followSessionAgent('ses_a', 'build');
+    openChat('ses_a');
+    pickAgent('plan');
+    await settle();
+    pickAgent('build');
+    await settle();
+
+    expect(useSelectionStore.getState().getSessionAgentPick('ses_a')).toBeNull();
+    expect(saved).toEqual([{ defaultAgent: 'plan' }, { defaultAgent: 'build' }]);
+  });
+
   test('an explicit Default effort is remembered as no effort', async () => {
     openChat('ses_a');
     pickModel('ses_a', 'mittr', 'deep');
@@ -252,13 +308,90 @@ describe('what is not a pick', () => {
     saved = [];
 
     openChat('ses_b');
-    pickModel('ses_b', 'mittr', 'fast');
-    pickAgent('build');
+    applyModel('ses_b', 'mittr', 'fast');
+    restoreAgent('build');
     await settle();
 
     expect(saved).toEqual([]);
     expect(useConfigStore.getState().settingsDefaultModel).toBe('mittr/deep');
     expect(useConfigStore.getState().settingsDefaultAgent).toBe('plan');
+  });
+
+  test('opening a chat this device never opened, such as one a schedule started, does not save its model', async () => {
+    openChat('ses_a');
+    pickModel('ses_a', 'mittr', 'deep');
+    await settle();
+    saved = [];
+
+    openChat('ses_from_schedule');
+    applyModel('ses_from_schedule', 'mittr', 'fast');
+    await settle();
+
+    expect(composer().model).toBe('mittr/fast');
+    expect(saved).toEqual([]);
+    expect(useConfigStore.getState().settingsDefaultModel).toBe('mittr/deep');
+  });
+
+  test('opening a chat this device never opened does not save its effort either', async () => {
+    openChat('ses_a');
+    pickModel('ses_a', 'mittr', 'deep');
+    await settle();
+    pickEffort('ses_a', 'low');
+    await settle();
+    saved = [];
+
+    openChat('ses_from_schedule');
+    applyEffort('ses_from_schedule', 'high');
+    await settle();
+
+    expect(composer()).toMatchObject({ model: 'mittr/deep', variant: 'high' });
+    expect(saved).toEqual([]);
+    expect(useConfigStore.getState().settingsDefaultVariant).toBe('low');
+  });
+
+  test('a model picked in another chat column is not this chat\'s pick', async () => {
+    openChat('ses_a');
+    useSelectionStore.getState().pickSessionModel('ses_column', 'mittr', 'deep');
+    applyModel('ses_a', 'mittr', 'deep');
+    await settle();
+
+    expect(saved).toEqual([]);
+  });
+
+  test('a model pick still unsent in a chat is not picked again when the chat is reopened', async () => {
+    openChat('ses_a');
+    pickModel('ses_a', 'mittr', 'deep');
+    await settle();
+    openChat('ses_b');
+    pickModel('ses_b', 'mittr', 'fast');
+    await settle();
+    saved = [];
+
+    openChat('ses_a');
+    applyModel('ses_a', 'mittr', 'deep');
+    await settle();
+
+    expect(useSelectionStore.getState().getSessionModelPick('ses_a')).toEqual({ providerId: 'mittr', modelId: 'deep' });
+    expect(saved).toEqual([]);
+    expect(useConfigStore.getState().settingsDefaultModel).toBe('mittr/fast');
+  });
+
+  test('reopening a chat whose agent pick is still unsent does not pick it again', async () => {
+    openChat('ses_a');
+    pickAgent('plan');
+    await settle();
+    openChat('ses_c');
+    pickAgent('build');
+    await settle();
+    saved = [];
+
+    openChat('ses_a');
+    restoreAgent('plan');
+    await settle();
+
+    expect(useSelectionStore.getState().getSessionAgentPick('ses_a')).toBe('plan');
+    expect(saved).toEqual([]);
+    expect(useConfigStore.getState().settingsDefaultAgent).toBe('build');
   });
 
   test('a model the picker does not offer is not saved, while the agent picked with it is', async () => {

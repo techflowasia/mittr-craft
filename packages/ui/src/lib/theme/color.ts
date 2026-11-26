@@ -28,7 +28,6 @@ function ratio(a: Color, b: Color): number {
 
 const hexColor = (c: Color): string => '#' + [c.r, c.g, c.b].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('');
 
-/** Compose alpha before measuring; a tinted surface is not a solid status color. */
 export function contrastRatio(foreground: string, background: string, canvas = '#ffffff'): number | null {
   const fg = parseColor(foreground), bg = parseColor(background), under = parseColor(canvas);
   if (!fg || !bg || !under) return null;
@@ -36,10 +35,8 @@ export function contrastRatio(foreground: string, background: string, canvas = '
   return ratio(over(fg, surface), surface);
 }
 
-/** Keep a readable author color; otherwise move it toward the readable neutral. */
 export function readableText(foreground: string, background: string, canvas = '#ffffff'): string {
   const fg = parseColor(foreground), bg = parseColor(background), under = parseColor(canvas);
-  // Legacy CSS colors outside hex/rgb remain valid CSS, but cannot be measured here.
   if (!fg || !bg || !under) return foreground;
   const surface = over(bg, under);
   if (ratio(over(fg, surface), surface) >= 4.5) return foreground;
@@ -59,6 +56,12 @@ export function onColor(background: string, canvas: string): string {
   const black = contrastRatio('#000000', background, canvas);
   const white = contrastRatio('#ffffff', background, canvas);
   return black !== null && white !== null && black >= white ? '#000000' : '#ffffff';
+}
+
+export function toHexColor(value: string): string | null {
+  const color = parseColor(value);
+  if (!color) return null;
+  return color.a < 1 ? `${hexColor(color)}${Math.round(color.a * 255).toString(16).padStart(2, '0')}` : hexColor(color);
 }
 
 export function withOpacity(value: string, alpha: number): string {
@@ -84,8 +87,26 @@ function oklab(color: Color) {
   };
 }
 
-/** Perceptual hue/chroma separation after alpha composition; brightness alone
- * must not turn two nearly identical status hues into a distinct pair. */
+function fromOklab(lab: { l: number; a: number; b: number }): Color {
+  const l = (lab.l + 0.3963377774 * lab.a + 0.2158037573 * lab.b) ** 3;
+  const m = (lab.l - 0.1055613458 * lab.a - 0.0638541728 * lab.b) ** 3;
+  const s = (lab.l - 0.0894841775 * lab.a - 1.291485548 * lab.b) ** 3;
+  const gamma = (v: number) => 255 * Math.min(1, Math.max(0, v <= 0.0031308 ? v * 12.92 : 1.055 * v ** (1 / 2.4) - 0.055));
+  return {
+    r: gamma(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
+    g: gamma(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
+    b: gamma(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
+    a: 1,
+  };
+}
+
+export function tintColor(accent: string, surface: string, amount: number, canvas = '#ffffff'): string {
+  const tint = parseColor(accent), base = parseColor(surface), under = parseColor(canvas);
+  if (!tint || !base || !under) return surface;
+  const x = oklab(over(base, under)), y = oklab(over(tint, under));
+  return hexColor(fromOklab({ l: x.l, a: x.a + (y.a - x.a) * amount, b: x.b + (y.b - x.b) * amount }));
+}
+
 export function chromaticDistance(first: string, second: string, background: string, canvas: string): number | null {
   const a = parseColor(first), b = parseColor(second), bg = parseColor(background), under = parseColor(canvas);
   if (!a || !b || !bg || !under) return null;
@@ -94,24 +115,10 @@ export function chromaticDistance(first: string, second: string, background: str
   return Math.hypot(x.a - y.a, x.b - y.b);
 }
 
-/** Rotate a validated color in OKLCH while retaining lightness. A neutral seed
- * starts from blue when a caller requests chroma. Clamp to the sRGB gamut. */
-export function rotateColorHue(value: string, degrees: number, minimumChroma = 0): string {
-  const parsed = parseColor(value);
-  if (!parsed) return value;
-  const lab = oklab(parsed);
-  const originalChroma = Math.hypot(lab.a, lab.b);
-  const chroma = Math.max(originalChroma, minimumChroma);
-  const hue = (originalChroma < 0.01 ? 250 * Math.PI / 180 : Math.atan2(lab.b, lab.a)) + degrees * Math.PI / 180;
-  const a = chroma * Math.cos(hue), b = chroma * Math.sin(hue);
-  const l = (lab.l + 0.3963377774 * a + 0.2158037573 * b) ** 3;
-  const m = (lab.l - 0.1055613458 * a - 0.0638541728 * b) ** 3;
-  const s = (lab.l - 0.0894841775 * a - 1.291485548 * b) ** 3;
-  const encode = (channel: number) => 255 * Math.max(0, Math.min(1, channel <= 0.0031308 ? 12.92 * channel : 1.055 * channel ** (1 / 2.4) - 0.055));
-  return hexColor({
-    r: encode(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s),
-    g: encode(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s),
-    b: encode(-0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s),
-    a: 1,
-  });
+export function colorHue(value: string, canvas: string): number | null {
+  const color = parseColor(value), background = parseColor(canvas);
+  if (!color || !background) return null;
+  const lab = oklab(over(color, background));
+  return Math.hypot(lab.a, lab.b) < 0.025 ? null : (Math.atan2(lab.b, lab.a) * 180 / Math.PI + 360) % 360;
 }
+

@@ -1,0 +1,25 @@
+diff --git a/packages/web/server/lib/event-stream/translate-v2.ts b/packages/web/server/lib/event-stream/translate-v2.ts
+index f77773d55..a4bff78c9 100644
+--- a/packages/web/server/lib/event-stream/translate-v2.ts
++++ b/packages/web/server/lib/event-stream/translate-v2.ts
+@@ -1,6 +1,9 @@
+ import { sessionParentId } from '../session-lineage.js';
+ import { isJsonObject as isRecord, isString, isNumber } from './guards.js';
+ import type { JsonObject, JsonValue } from './contracts.js';
++import { z } from 'zod';
++
++const structuredResponse = z.object({ body: z.string() });
+ 
+ const trimmed = (value: JsonValue | undefined) => (isString(value) ? value.trim() : '');
+ 
+@@ -22,7 +25,9 @@ export const wireEventDirectory = (payload: JsonValue) => {
+ const toServerError = (error: JsonValue | undefined) => {
+   if (!isRecord(error)) return { name: 'Error', type: 'Error', message: isString(error) ? error : '' };
+   const type = trimmed(error.type) || 'Error';
+-  return compact({ name: type, type, message: trimmed(error.message), status: error.status });
++  const parsedResponse = structuredResponse.safeParse(error.response);
++  const response = parsedResponse.success ? parsedResponse.data : undefined;
++  return compact({ name: type, type, message: trimmed(error.message), status: error.status, response });
+ };
+ 
+ const ABORTED_ERROR = {

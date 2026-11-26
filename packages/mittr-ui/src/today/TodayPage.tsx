@@ -7,10 +7,11 @@ import { useProjectsStore } from '../../../ui/src/stores/useProjectsStore';
 import { useUIStore } from '../../../ui/src/stores/useUIStore';
 import { useGlobalBlockingRequestsStore } from '../../../ui/src/sync/global-blocking-requests';
 import { useGlobalSessionStatusStore } from '../../../ui/src/sync/global-session-status';
-import { useNotificationStore } from '../../../ui/src/sync/notification-store';
+import { isSessionUnread, isSessionUnreadWithError } from '../../../ui/src/sync/session-unread';
 import { useSessionUIStore } from '../../../ui/src/sync/session-ui-store';
 import { MittrErrorBoundary } from '../MittrErrorBoundary';
 import { useQuotaMe } from '../quota/quotaMeStore';
+import { useQuotaAutoRefresh } from '../../../ui/src/stores/useQuotaStore';
 import { mittrT, useMittrT, type MittrKey } from '../strings/mittrT';
 import { mittrAvailable, mittrCatalogAliases, planGoWork, startGoWork, type GoWorkProject } from '../work/goWork';
 import { MyWorkDialog } from '../work/MyWorkDialog';
@@ -202,8 +203,18 @@ function TodayContent({ hide }: { hide: () => void }): React.ReactNode {
   const sessions = useGlobalSessionsStore((state) => state.activeSessions);
   const statusById = useGlobalSessionStatusStore((state) => state.statusById);
   const blocking = useGlobalBlockingRequestsStore((state) => state.bySession);
-  const notifications = useNotificationStore((state) => state.index.session);
+  const unseen = React.useMemo(() => {
+    const unseenCount: Record<string, number> = {};
+    const unseenHasError: Record<string, boolean> = {};
+    for (const session of sessions) {
+      if (isSessionUnread(session)) unseenCount[session.id] = 1;
+      if (isSessionUnreadWithError(session)) unseenHasError[session.id] = true;
+    }
+    return { unseenCount, unseenHasError };
+  }, [sessions]);
   const quota = useQuotaMe(true);
+  useQuotaAutoRefresh();
+  const providers = useConfigStore((state) => state.providers);
   const controller = useMyWorkController();
   const work = React.useSyncExternalStore(
     controller ? controller.subscribe : subscribeNothing,
@@ -238,9 +249,10 @@ function TodayContent({ hide }: { hide: () => void }): React.ReactNode {
     sessions,
     statusById,
     blocking,
-    unseenCount: notifications.unseenCount,
-    unseenHasError: notifications.unseenHasError,
+    unseenCount: unseen.unseenCount,
+    unseenHasError: unseen.unseenHasError,
     quota,
+    catalogAliases: mittrCatalogAliases(providers),
     work,
     scheduled,
     now,

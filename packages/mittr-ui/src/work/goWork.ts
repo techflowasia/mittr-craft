@@ -4,7 +4,7 @@ import { MITTR_PROVIDER_ID } from '../mittrProvider';
 import { mittrT, type MittrKey } from '../strings/mittrT';
 import { cardKeyOf, type WorkItem } from './workItems';
 
-export type GoWorkSelection = { providerID: string; modelID: string; agentName?: string; variant?: string };
+export type GoWorkSelection = { providerID: string; modelID: string; agentName?: string; variant?: string | null };
 
 export type GoWorkProject = { id: string; path: string; label?: string };
 

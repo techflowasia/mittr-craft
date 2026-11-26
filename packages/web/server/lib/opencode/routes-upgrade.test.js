@@ -36,6 +36,24 @@ const createApp = (overrides = {}) => {
 };
 
 describe('OpenCode upgrade routes', () => {
+  it.each([
+    ['/api/opencode/upgrade-status', 'available'],
+    ['/api/opencode/version', 'version'],
+  ])('answers %s when OpenCode accepts the request but never responds', async (route, field) => {
+    globalThis.fetch = vi.fn((url, init) => {
+      if (!String(url).endsWith('/api/info')) return Promise.resolve(jsonResponse({ version: '2.0.22' }));
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal.reason), { once: true });
+      });
+    });
+    const { app } = createApp();
+
+    const response = await request(app).get(route).timeout({ deadline: 5_000 }).expect(500);
+
+    expect(response.body).toEqual({ [field]: null, error: expect.any(String) });
+    expect(response.body.error).not.toBe('');
+  });
+
   it('uses the configured registry for the v2 package version without exposing URL credentials', async () => {
     const previousRegistry = process.env.npm_config_registry;
     const previousUserConfig = process.env.npm_config_userconfig;
@@ -95,6 +113,24 @@ describe('OpenCode upgrade routes', () => {
         reason: 'bundled',
       },
     });
+  });
+
+  it('asks no registry about a bundled binary when the build has no update check', async () => {
+    const asked = [];
+    globalThis.fetch = vi.fn(async (url) => {
+      asked.push(String(url));
+      return jsonResponse({ version: '1.18.8', pid: 1, urls: [], paths: { tmp: '/tmp' } });
+    });
+    vi.stubEnv('OPENCHAMBER_UPDATE_CHECK_DISABLED', '1');
+    try {
+      const { app } = createApp();
+      const response = await request(app).get('/api/opencode/upgrade-status').expect(200);
+      expect(response.body).toMatchObject({ available: false, currentVersion: '1.18.8', latestVersion: null });
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toContain('/api/info');
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('runs the managed CLI and leaves restart to the existing Reload action', async () => {

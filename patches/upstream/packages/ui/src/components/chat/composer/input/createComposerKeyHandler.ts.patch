@@ -1,0 +1,42 @@
+diff --git a/packages/ui/src/components/chat/composer/input/createComposerKeyHandler.ts b/packages/ui/src/components/chat/composer/input/createComposerKeyHandler.ts
+index f8adfafce..0f5074c87 100644
+--- a/packages/ui/src/components/chat/composer/input/createComposerKeyHandler.ts
++++ b/packages/ui/src/components/chat/composer/input/createComposerKeyHandler.ts
+@@ -15,6 +15,7 @@ import type { useComposerDraftHistory } from './useComposerDraftHistory';
+ import type { useComposerAutocompleteState } from './useComposerAutocompleteState';
+ import { useUIStore } from '@/stores/useUIStore';
+ import { shouldSubmitEnter } from '../../composer/keyboardPolicy';
++import { shiftEnterEdit } from '../../composer/shiftEnterEdit';
+ import { getDropdownNavigationKey } from '@/components/ui/dropdown-navigation';
+ import { isIMECompositionEvent } from '@/lib/ime';
+ import { eventMatchesShortcut, getEffectiveShortcutCombo, normalizeCombo } from '@/lib/shortcuts';
+@@ -161,6 +162,29 @@ export function createComposerKeyHandler({
+         const canNavigateHistoryUp = !isAnyAutocompleteOpen && (message.length === 0 || cursorAtStart);
+         const canNavigateHistoryDown = !isAnyAutocompleteOpen && (message.length === 0 || cursorAtEnd);
+ 
++        const productEdit = e.key === 'Enter' && e.shiftKey ? shiftEnterEdit({
++            key: e.key,
++            shiftKey: e.shiftKey,
++            altKey: e.altKey,
++            ctrlKey: e.ctrlKey,
++            metaKey: e.metaKey,
++            isMobile,
++            isDesktopExpanded,
++            enterToSend,
++            enterToSendConfigured,
++            returnKeySends: mobileReturnKeySends,
++            inputMode,
++            autocompleteOpen: isAnyAutocompleteOpen,
++            text: message,
++            selectionStart: composerRef.current?.getSelection().start ?? -1,
++            selectionEnd: composerRef.current?.getSelection().end ?? -1,
++        }) : null;
++        if (productEdit && composerRef.current) {
++            e.preventDefault();
++            composerRef.current.replaceRange(productEdit.from, productEdit.to, productEdit.insert, productEdit.selectionStart, productEdit.selectionEnd);
++            return;
++        }
++
+         if (inputMode === 'normal' && !isAnyAutocompleteOpen && !e.metaKey && !e.ctrlKey && !e.altKey) {
+             const ta = composerRef.current;
+             const selStart = ta?.getSelection().start ?? -1;

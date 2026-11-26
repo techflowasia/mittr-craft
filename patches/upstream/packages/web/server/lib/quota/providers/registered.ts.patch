@@ -1,0 +1,71 @@
+diff --git a/packages/web/server/lib/quota/providers/registered.ts b/packages/web/server/lib/quota/providers/registered.ts
+new file mode 100644
+index 000000000..88c8c93d1
+--- /dev/null
++++ b/packages/web/server/lib/quota/providers/registered.ts
+@@ -0,0 +1,65 @@
++import type { LegacyAuthFile } from '../../opencode/auth.js';
++import type { QuotaResult } from '../utils/contracts.js';
++
++export type QuotaFetchScope = string | number | boolean | bigint | symbol | object | null | undefined;
++
++export interface RegisteredQuotaProvider {
++  readonly providerId: string;
++  readonly providerName: string;
++  readonly isConfigured: (auth: LegacyAuthFile) => boolean;
++  readonly fetchQuota: () => Promise<QuotaResult<string | null>>;
++  readonly fetchScope?: (() => QuotaFetchScope) | undefined;
++}
++
++export interface QuotaProviderRegistration {
++  providerId: unknown;
++  providerName: string;
++  isConfigured: unknown;
++  fetchQuota: unknown;
++  fetchScope?: (() => QuotaFetchScope) | undefined;
++}
++
++const PROVIDER_ID = /^[a-z0-9][a-z0-9-]*$/;
++
++const entries = new Map<string, RegisteredQuotaProvider>();
++const reserved = new Set<string>();
++const exclusive = new Set<RegisteredQuotaProvider>();
++
++export const registeredQuotaProviders = () => entries;
++
++export const builtInQuotaProvidersShown = () => exclusive.size === 0;
++
++export const reserveQuotaProviderIds = (ids: Iterable<string>) => {
++  for (const id of ids) {
++    reserved.add(id);
++    entries.delete(id);
++  }
++};
++
++const isRegistration = (entry: QuotaProviderRegistration | null | undefined): entry is QuotaProviderRegistration & Pick<RegisteredQuotaProvider, 'providerId' | 'isConfigured' | 'fetchQuota'> =>
++  Boolean(entry) && typeof entry?.providerId === 'string' && PROVIDER_ID.test(entry.providerId)
++    && typeof entry.isConfigured === 'function' && typeof entry.fetchQuota === 'function';
++
++export const registerQuotaProvider = (entry: QuotaProviderRegistration | null | undefined, options?: { exclusive?: boolean }) => {
++  if (!isRegistration(entry)) {
++    throw new TypeError('A quota provider needs a providerId of lowercase letters, digits and dashes, isConfigured() and fetchQuota()');
++  }
++  if (reserved.has(entry.providerId) || entries.has(entry.providerId)) {
++    throw new Error(`Quota provider ${entry.providerId} is already registered`);
++  }
++  const registered: RegisteredQuotaProvider = {
++    providerId: entry.providerId,
++    providerName: entry.providerName,
++    isConfigured: entry.isConfigured,
++    fetchQuota: entry.fetchQuota,
++    fetchScope: entry.fetchScope
++  };
++  entries.set(entry.providerId, registered);
++  if (options?.exclusive === true) exclusive.add(registered);
++  return () => {
++    exclusive.delete(registered);
++    if (entries.get(entry.providerId) === registered) {
++      entries.delete(entry.providerId);
++    }
++  };
++};

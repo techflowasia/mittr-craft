@@ -1,0 +1,46 @@
+diff --git a/packages/web/server/lib/opencode/DOCUMENTATION.md b/packages/web/server/lib/opencode/DOCUMENTATION.md
+index 4e90655cc..e05adbaf7 100644
+--- a/packages/web/server/lib/opencode/DOCUMENTATION.md
++++ b/packages/web/server/lib/opencode/DOCUMENTATION.md
+@@ -237,6 +237,8 @@ unless an output schema is declared; and a tool call no longer receives
+ `context.directory` or `context.abort`, so the callback sends `context.sessionID`
+ and OpenChamber resolves the directory itself.
+ 
++Each managed start decides whether the running child reads the managed config file: the file is published when OpenChamber owns `OPENCODE_CONFIG`, or when a server plugin contributes config and the user's own file moves into `OPENCODE_CONFIG_CONTENT`. A later refresh writes only while the file is published and otherwise reports `external-config`.
++
+ The managed config file also carries `permissions` a managed tool needs
+ (`managedPermissionRules` in `../agent-tool/runtime.js`). OpenCode appends the
+ `permissions` of every config layer to each agent and reads a session's own
+@@ -263,6 +265,32 @@ in that user's sessions. On the fallback path the same rules are merged into
+ 
+ Worktree placement must include ancestor configs above the repository and every checkout-local config. The Settings reader keeps its existing editable layers and write targets; broadening that reader would change unrelated configuration editing. The worktree reader shares `getFolderConfigPaths` with the other ancestor-aware readers and is used directly by both runtimes.
+ 
++### Why share pages have a build switch
++
++`OPENCHAMBER_SHARE_PAGES_DISABLED` (`1` or `true`) turns shared pages off for a build that sends nothing to a relay. `areSharePagesAvailable` in `managed-config-file.ts` is the one answer every server consumer uses: the render tool does not offer `share`, the control service has no share runtime, a stored share is not polled, uploaded or closed, and a pasted or kept link is refused before any relay call. The routes answer 403 with `code: 'enterprise_mode'`, which the card and the composer already read as "hide". Unset, sharing follows the enterprise policy as before.
++
++### Why every generated plugin takes the callback token from one slot
++
++The agent tool plugin, the limit failover plugin and a server plugin's own engine plugins share the callback token through `Symbol.for('openchamber.agent-tool.token')` on the engine's `globalThis`. Whichever loads first moves it out of the environment, so the engine's child processes never inherit it, and the others still find it. A generated plugin that reads `OPENCHAMBER_AGENT_TOOL_TOKEN` from `process.env` alone finds nothing.
++
++### Why the V1 top-up is skipped for the bundled server
++
++The bundled server runs under Node, where OpenCode ships no V1 importer. A cursor written for it is never consumed, and an older OpenCode CLI that opens the same database later resumes it and rewrites chats that have 2.x turns. `startOpenCodeOnce` therefore calls the top-up only for a launch that is not the bundled server (`isBundledOpenCodePath`).
++
++### Why a failed launch forgets the launch environment
++
++`getManagedOpenCodeProcessEnv()` kept the previous launch's environment when a restart stopped OpenCode and the next launch failed before its spawn, so a caller read the data home of a process that no longer ran. A launch that fails for good now leaves none (null); the next launch records its own. The health monitor does not retry without a process, so the next start comes from an explicit restart or config refresh.
++
++## Response recovery lifecycle seams
++
++`createOpenCodeLifecycleRuntime` accepts `beforeOpenCodeRestart(reason)`. A restart invokes it synchronously before joining the launch queue, then awaits its result before changing readiness, closing the captured process or re-probing an external upstream. A failed drain prevents that restart. Server composition must keep recovery admission suspended until a valid upstream is ready again. The restart invalidates synchronously, even while an earlier start still holds the launch queue, so recovery stops admitting before the queue turn arrives.
++
++`createGracefulShutdownRuntime` accepts `responseRecovery`. Shutdown calls its `stop()` synchronously when admission closes and awaits the drain before upstream teardown. Response recovery is off (`../session-response-recovery/DOCUMENTATION.md`), so `server/runtime.ts` passes a `beforeOpenCodeRestart` that resolves at once and no `responseRecovery`: a restart and a shutdown wait for nothing here.
++
++External bootstrap notifies `onEngineReady` once after the final successful readiness check, for both skip-start and auto-detected attachment. This is independent of a retained HMR process handle. The generic waiter suppresses its own notification for that bootstrap check. Managed start retains its non-awaited notification, while healthy HMR reuse and external bootstrap await notification completion. The notification helper catches synchronous throws and asynchronous rejections without treating a healthy engine as a failed start: a listener that throws must not turn a started OpenCode into a failed start. `onEngineReady` runs after managed start, external attachment or re-probe, and healthy HMR reuse reach readiness. Bootstrap owns the external attachment notification even when a stale HMR process handle remains, so it is not also sent through the generic ready waiter, which would notify twice.
++
++Starts and restarts take turns through one launch queue, so a restart that arrives during the first start waits for it and closes it instead of launching a second process, and a launch that rejects does not hold up the next one. Bootstrap skips its own start when a restart that ran before its turn already started the engine, and still replaces a process left over from before a hot reload.
++
+ ## Public exports (auth.js)
+ `auth.js` is read-only. OpenCode 2.x owns every credential and, since 2.0.20,
+ hands them back over `GET /api/credential`, secrets included. OpenChamber needs

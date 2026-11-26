@@ -1,7 +1,11 @@
-import { getLastConversationRecord } from '@/lib/opencode/model';
+import { isInvisibleText } from '@/lib/invisibleText';
+import { getLastConversationRecord, type TextPart, type ToolPart } from '@/lib/opencode/model';
+import { isShownInPlace, openChamberToolCall, renderedPage } from '@/lib/opencode/tools';
+import { isSessionNoticePart } from '@/lib/opencode/session-notices';
+import { isStandaloneTool } from '../../message/parts/toolRenderUtils';
+import { fenceUiBlocks } from '../../uiBlocks/taggedBlocks';
 import type { ChatMessageEntry, TurnRecord } from './types';
 
-/** A queued user message alone does not retire the previous turn. */
 export function getTurnsWithLaterAssistant(turns: readonly TurnRecord[]): Set<string> {
     const retired = new Set<string>();
     let hasLaterAssistant = false;
@@ -14,18 +18,51 @@ export function getTurnsWithLaterAssistant(turns: readonly TurnRecord[]): Set<st
 }
 
 export function getLiveFinalMessage(messages: readonly ChatMessageEntry[]): ChatMessageEntry | undefined {
-    // Do not use projectTurnSummary's intermediate-text fallback. Compaction,
-    // synthetic prompts, skill and shell records are their own message roles
-    // in v2 and can trail the final answer, so the lookup skips them instead
-    // of reading the last record.
     const last = getLastConversationRecord(messages);
     return last?.info.role === 'assistant' && last.info.finish === 'stop'
-        && last.parts.some((part) => part.type === 'text' && part.text.trim().length > 0)
+        && last.parts.some((part) => part.type === 'text' && !isInvisibleText(part.text))
         ? last : undefined;
 }
 
 export function hasLiveActivity(turn: TurnRecord, showReasoning: boolean): boolean {
-    return turn.activitySegments.some((segment) => segment.parts.some((activity) => (
-        activity.kind === 'tool' || (showReasoning && activity.kind === 'reasoning')
-    )));
+    return turn.activityParts.some((activity) => (
+        (activity.part.type === 'tool' && !isStandaloneTool(activity.part.tool) && !isSessionNoticePart(activity.part))
+        || (showReasoning && activity.kind === 'reasoning')
+    ));
+}
+
+export type ShownPart = ToolPart | TextPart;
+
+const UI_BLOCK_FENCE = /^ {0,3}(`{3,}|~{3,})openui-lang[ \t]*$/m;
+
+export const isSettledAsk = (part: ToolPart): boolean => (
+    part.state.status !== 'running' && part.state.status !== 'pending'
+    && openChamberToolCall(part.tool, part.state.input)?.awaitsAnswer === true
+);
+
+const continuesShownText = (part: ToolPart, previous: ShownPart | undefined): boolean => (
+    previous !== undefined && isSettledAsk(part) && renderedPage(part.tool, part.state) !== null
+    && (previous.type === 'text' || isSettledAsk(previous))
+);
+
+export function getShownPages(messages: readonly ChatMessageEntry[], finalMessage?: ChatMessageEntry): ShownPart[] {
+    const shown: ShownPart[] = [];
+    for (const message of messages) {
+        for (const part of message.parts) {
+            if (part.type === 'tool') {
+                const inView = isShownInPlace(part.tool, part.state) && !isSettledAsk(part);
+                if (inView || continuesShownText(part, shown.at(-1))) shown.push(part);
+            } else if (part.type === 'text' && message !== finalMessage && UI_BLOCK_FENCE.test(fenceUiBlocks(part.text))) {
+                shown.push(part);
+            }
+        }
+    }
+    return shown;
+}
+
+export function uiPageMessageId(turn: TurnRecord | undefined, expanded: boolean, messageId: string, partId: string): string {
+    const final = turn ? getLiveFinalMessage(turn.assistantMessages) : undefined;
+    return !expanded && turn && final && getShownPages(turn.assistantMessages, final).some((part) => part.id === partId && part.messageID === messageId)
+        ? final.info.id
+        : messageId;
 }

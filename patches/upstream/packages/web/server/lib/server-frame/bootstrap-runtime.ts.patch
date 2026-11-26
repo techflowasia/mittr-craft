@@ -1,0 +1,36 @@
+diff --git a/packages/web/server/lib/server-frame/bootstrap-runtime.ts b/packages/web/server/lib/server-frame/bootstrap-runtime.ts
+index b05632ac4..d646fbf6a 100644
+--- a/packages/web/server/lib/server-frame/bootstrap-runtime.ts
++++ b/packages/web/server/lib/server-frame/bootstrap-runtime.ts
+@@ -15,6 +15,7 @@ import type { registerNotificationRoutes } from '../notifications/routes.js';
+ import type { OpenChamberRouteDependencies, registerOpenChamberRoutes } from '../self-update/openchamber-routes.js';
+ import type { SayTtsCapability } from '../tts/capability-runtime.js';
+ import type { createUiAuth } from '../ui-auth/ui-auth.js';
++import type { ResponseRecoveryOwner } from '../session-response-recovery/owner.js';
+ 
+ type AgentTool = Pick<ReturnType<typeof createAgentToolRuntime>, 'authorizeRequest' | 'registerRoutes'>;
+ type Notifications = Parameters<typeof registerNotificationRoutes>[1];
+@@ -43,6 +44,7 @@ type BaseRoutesOptions =
+   & { desktopUpdater: OpenChamberRouteDependencies['desktopUpdater'] }
+   & SayTtsDependencies
+   & {
++    responseRecovery?: (Pick<ResponseRecoveryOwner, 'beforeRequest'> & Partial<Pick<ResponseRecoveryOwner, 'admissions'>>) | null;
+     uiPassword: string | null;
+     sessionRuntime: Required<SessionSnapshots>;
+     agentToolRuntime: AgentTool;
+@@ -182,6 +184,15 @@ export const createBootstrapRuntime = (dependencies: BootstrapDependencies) => {
+       normalizeTunnelSessionTtlMs,
+     });
+ 
++    const { responseRecovery } = options;
++    if (responseRecovery) {
++      app.use((_req, _res, next) => {
++        if (responseRecovery.admissions) return responseRecovery.admissions.run(next);
++        return next();
++      });
++      app.use(responseRecovery.beforeRequest);
++    }
++
+     notificationEmitRoutes.registerApiRoute();
+ 
+     registerTtsRoutes(app, { sayTTSCapability });

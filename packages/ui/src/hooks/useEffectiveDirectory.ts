@@ -1,62 +1,93 @@
 import { useChatSessionSelection } from '@/components/chat/chatColumnSession';
-import { useSessionUIStore } from '@/sync/session-ui-store';
+import { useSessionUIStore, type NewSessionDraftState } from '@/sync/session-ui-store';
 import { useSessionWorktreeStore } from '@/sync/session-worktree-store';
 import { getAttachedSessionDirectory } from '@/sync/session-worktree-contract';
+import type { SessionWorktreeAttachment } from '@/stores/types/sessionTypes';
 import { useSessionDirectory } from '@/sync/sync-context';
+import { getAllSyncSessionMap } from '@/sync/sync-refs';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
-import { getChatsRootForHome } from '@/lib/chatDirectories';
+import { getChatsRoot } from '@/lib/chatDirectories';
+import { useChatsRoot } from '@/hooks/useChatsRoot';
 
-/**
- * Hook that resolves the effective working directory for tabs (Git, Diff, Files, Terminal).
- *
- * Priority order:
- * 1. Worktree metadata path (for worktree sessions)
- * 2. Session directory (for active sessions)
- * 3. Draft session directoryOverride (when creating a new session)
- * 4. For a Chat draft, the prepared chat directory or the managed Chats root —
- *    never the project the app was on before, which would leak that
- *    project's files, commands, and skills into the chat
- * 5. Fallback directory from DirectoryStore
- *
- * This ensures that tabs show content from the correct project directory
- * even when a draft session is being created.
- */
-export const useEffectiveDirectory = (): string | undefined => {
-    // Inside a chat column the session is the column's: a chat pinned in the
-    // side panel resolves its own session's directory, not the main chat's.
-    const currentSessionId = useChatSessionSelection().sessionId;
-    const newSessionDraft = useSessionUIStore((s) => s.newSessionDraft);
-    const currentSessionDirectory = useSessionDirectory(currentSessionId);
-    const worktreeAttachment = useSessionWorktreeStore((s) => currentSessionId ? s.getAttachment(currentSessionId) : undefined);
-    const worktreeMap = useSessionUIStore((s) => s.worktreeMetadata);
-    const fallbackDirectory = useDirectoryStore((s) => s.currentDirectory);
-    const homeDirectory = useDirectoryStore((s) => s.homeDirectory);
+type EffectiveDirectoryInputs = {
+    currentSessionId: string | null;
+    newSessionDraft: NewSessionDraftState;
+    currentSessionDirectory: string | undefined;
+    worktreeAttachment: SessionWorktreeAttachment | undefined;
+    worktreePath: string | undefined;
+    fallbackDirectory: string | null | undefined;
+    chatsRoot: string | null;
+};
 
-    // If we have an active session, use its directory
+const pickEffectiveDirectory = ({
+    currentSessionId,
+    newSessionDraft,
+    currentSessionDirectory,
+    worktreeAttachment,
+    worktreePath,
+    fallbackDirectory,
+    chatsRoot,
+}: EffectiveDirectoryInputs): string | undefined => {
     if (currentSessionId) {
+        if (currentSessionDirectory) {
+            return currentSessionDirectory;
+        }
         const attachmentDirectory = getAttachedSessionDirectory(worktreeAttachment);
         if (attachmentDirectory) {
             return attachmentDirectory;
         }
-        const worktreeMetadata = worktreeMap.get(currentSessionId);
-        if (worktreeMetadata?.path) {
-            return worktreeMetadata.path;
-        }
-        if (currentSessionDirectory) {
-            return currentSessionDirectory;
+        if (worktreePath) {
+            return worktreePath;
         }
     }
 
-    // If a draft session is open, use its directoryOverride
     if (newSessionDraft?.open && (newSessionDraft.bootstrapPendingDirectory || newSessionDraft.directoryOverride)) {
         return (newSessionDraft.bootstrapPendingDirectory || newSessionDraft.directoryOverride) ?? undefined;
     }
 
     if (newSessionDraft?.open && newSessionDraft.target === 'chat') {
-        const chatDirectory = newSessionDraft.preparedChatDirectory ?? getChatsRootForHome(homeDirectory);
-        if (chatDirectory) return chatDirectory;
+        return newSessionDraft.preparedChatDirectory ?? chatsRoot ?? undefined;
     }
 
-    // Fall back to the global directory
     return fallbackDirectory ?? undefined;
+};
+
+export const useEffectiveDirectory = (): string | undefined => {
+    const { sessionId: currentSessionId, directory: selectedDirectory } = useChatSessionSelection();
+    const newSessionDraft = useSessionUIStore((s) => s.newSessionDraft);
+    const currentSessionDirectory = useSessionDirectory(currentSessionId);
+    const worktreeAttachment = useSessionWorktreeStore((s) => currentSessionId ? s.getAttachment(currentSessionId) : undefined);
+    const worktreePath = useSessionUIStore((s) => currentSessionId ? s.worktreeMetadata.get(currentSessionId)?.path : undefined);
+    const fallbackDirectory = useDirectoryStore((s) => s.currentDirectory);
+    const chatsRoot = useChatsRoot();
+
+    return pickEffectiveDirectory({
+        currentSessionId,
+        newSessionDraft,
+        currentSessionDirectory,
+        worktreeAttachment,
+        worktreePath,
+        fallbackDirectory: currentSessionId ? selectedDirectory ?? fallbackDirectory : fallbackDirectory,
+        chatsRoot,
+    });
+};
+
+export const resolveEffectiveDirectory = (): string | undefined => {
+    const sessionUI = useSessionUIStore.getState();
+    const currentSessionId = sessionUI.currentSessionId;
+    const directoryState = useDirectoryStore.getState();
+
+    return pickEffectiveDirectory({
+        currentSessionId,
+        newSessionDraft: sessionUI.newSessionDraft,
+        currentSessionDirectory: currentSessionId
+            ? getAllSyncSessionMap().get(currentSessionId)?.directory
+            : undefined,
+        worktreeAttachment: currentSessionId
+            ? useSessionWorktreeStore.getState().getAttachment(currentSessionId)
+            : undefined,
+        worktreePath: currentSessionId ? sessionUI.worktreeMetadata.get(currentSessionId)?.path : undefined,
+        fallbackDirectory: directoryState.currentDirectory,
+        chatsRoot: getChatsRoot(),
+    });
 };

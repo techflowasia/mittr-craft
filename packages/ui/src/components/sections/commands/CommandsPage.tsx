@@ -31,11 +31,9 @@ import {
 import {
   SettingsSection,
   SettingsFieldRow,
-  SETTINGS_SELECT_SIZE,
   SETTINGS_CUSTOM_TRIGGER_CLASS,
 } from '@/components/sections/shared/SettingsSection';
 
-/** Everything the page writes into the command's config file. */
 interface CommandFormState {
   draftName: string;
   draftScope: CommandScope;
@@ -67,8 +65,6 @@ export const CommandsPage: React.FC = () => {
     setSelectedCommand: s.setSelectedCommand,
   })));
 
-  // Settings browses whichever project its own selector points at; the app
-  // stays where it is.
   const settingsDirectory = useSettingsDirectory();
   const commands = useCommandsStore((state) => selectCommandsForDirectory(state, settingsDirectory));
   const selectedCommand = selectedCommandName ? getCommandByName(selectedCommandName, settingsDirectory) : null;
@@ -83,7 +79,6 @@ export const CommandsPage: React.FC = () => {
   const [subagent, setSubagent] = React.useState(false);
   const [template, setTemplate] = React.useState('');
   const [isCreating, setIsCreating] = React.useState(false);
-  // What the command file currently holds; a save writes only the difference.
   const savedRef = React.useRef<CommandFormState | null>(null);
 
   const formIdentity = JSON.stringify([settingsDirectory, selectedCommandName]);
@@ -132,9 +127,6 @@ export const CommandsPage: React.FC = () => {
       const templateValue = selectedCommand.template || '';
       const pending = writeEchoRef.current;
       const echoes = [savedRef.current, pending?.identity === formIdentity ? pending.form : null];
-      // OpenCode re-reads the file right after our own write, so the store
-      // echoes back what we just saved. Only a genuinely different server
-      // value is allowed to replace what the user has in the form.
       if (
         sameCommand && echoes.some((saved) => saved &&
           saved.description === descriptionValue &&
@@ -187,8 +179,6 @@ export const CommandsPage: React.FC = () => {
     };
   }, [agent, description, draftScope, isNewCommand, model, subagent, template, variant]);
 
-  // An existing command writes itself; a new one only exists once the user
-  // confirms it, so an abandoned draft never reaches disk.
   const save = React.useCallback(async (): Promise<AutosaveResult> => {
     const saved = savedRef.current;
     const commandName = selectedCommandName?.trim();
@@ -221,7 +211,6 @@ export const CommandsPage: React.FC = () => {
         template: config.template || '',
       },
     };
-    // The store publishes its reload before updateCommand resolves.
     writeEchoRef.current = pending;
     try {
       const success = await updateCommand(commandName, config, settingsDirectory);
@@ -282,7 +271,7 @@ export const CommandsPage: React.FC = () => {
       <div className="flex h-full items-center justify-center">
         <div className="text-center text-muted-foreground">
           <Icon name="terminal-box" className="mx-auto mb-3 h-12 w-12 opacity-50" />
-          <p className="typography-body">{t('settings.commands.page.empty.title')}</p>
+          <p className="typography-ui-label">{t('settings.commands.page.empty.title')}</p>
           <p className="typography-meta mt-1 opacity-75">{t('settings.commands.page.empty.description')}</p>
         </div>
       </div>
@@ -300,7 +289,6 @@ export const CommandsPage: React.FC = () => {
       )}
       <SettingsSection
         title={t('settings.commands.page.section.identity')}
-        divider={false}
         contentClassName="space-y-0"
       >
         {isNewCommand && (
@@ -309,7 +297,7 @@ export const CommandsPage: React.FC = () => {
             label={t('settings.commands.page.field.commandName')}
           >
             <div className="flex items-center">
-              <span className="typography-ui-label text-muted-foreground mr-1">/</span>
+              <span className="typography-ui-label text-muted-foreground me-1">/</span>
               <Input
                 value={draftName}
                 onChange={(e) => setDraftName(e.target.value)}
@@ -318,8 +306,10 @@ export const CommandsPage: React.FC = () => {
               />
             </div>
             <Select value={draftScope} onValueChange={(v) => setDraftScope(v as CommandScope)}>
-              <SelectTrigger size={SETTINGS_SELECT_SIZE} className="w-fit min-w-[100px]">
-                <SelectValue placeholder={t('settings.agents.page.field.scopePlaceholder')} />
+              <SelectTrigger className="w-fit min-w-[100px]">
+                <SelectValue>
+                  {draftScope === 'project' ? t('settings.common.scope.project') : t('settings.common.scope.global')}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent align="end">
                 <SelectItem value="user">

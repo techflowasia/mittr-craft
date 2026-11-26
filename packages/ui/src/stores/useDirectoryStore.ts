@@ -3,9 +3,10 @@ import { devtools } from 'zustand/middleware';
 import { opencodeClient } from '@/lib/opencode/client';
 import { getNormalizedParentDirectory, normalizePath } from '@/lib/pathNormalization';
 import { getDesktopHomeDirectory, isVSCodeRuntime } from '@/lib/desktop';
-import { getVSCodeBootstrapConfig } from '@/lib/vscodeBootstrap';
-import { subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
+import { getVSCodeBootstrapConfig, isVSCodeWithoutWorkspace } from '@/lib/vscodeBootstrap';
+import { getRuntimeKey, subscribeRuntimeEndpointChanged } from '@/lib/runtime-switch';
 import { updateDesktopSettings } from '@/lib/persistence';
+import { getChatsRoot, resolveChatsRootDirectory } from '@/lib/chatDirectories';
 import { useFileSearchStore } from '@/stores/useFileSearchStore';
 import { streamDebugEnabled } from '@/stores/utils/streamDebug';
 import { getDeferredSafeStorage } from './utils/safeStorage';
@@ -24,12 +25,33 @@ interface DirectoryStore {
   goBack: () => void;
   goForward: () => void;
   goToParent: () => void;
-  goHome: () => Promise<void>;
-  synchronizeHomeDirectory: (path: string) => void;
+  goToNoProjectDirectory: () => Promise<void>;
+  synchronizeHomeDirectory: (path: string, chatsRoot?: string | null) => void;
+  resetForRuntimeSwitch: () => void;
 }
+
+export const isDirectoryUnknown = (state: Pick<DirectoryStore, 'currentDirectory' | 'isHomeReady'>): boolean =>
+  !state.isHomeReady && (state.currentDirectory === '/' || state.currentDirectory === '');
+
+const noProjectDirectory = (home: string, chatsRoot: string | null | undefined): string =>
+  isVSCodeWithoutWorkspace() ? chatsRoot || '' : (!isVSCodeRuntime() && chatsRoot) || home;
+
+const resolveChatsRoot = async (): Promise<string | null> => {
+  if (isVSCodeRuntime() && !isVSCodeWithoutWorkspace()) return null;
+  const runtimeKey = getRuntimeKey();
+  try {
+    const root = await resolveChatsRootDirectory();
+    if (getRuntimeKey() !== runtimeKey) return null;
+    if (isVSCodeWithoutWorkspace()) await opencodeClient.createDirectory(root);
+    return root;
+  } catch {
+    return null;
+  }
+};
 
 let cachedHomeDirectory: string | null = null;
 let homeResolveGeneration = 0;
+let bootHomeFallbacksApply = true;
 const safeStorage = getDeferredSafeStorage();
 const persistedLastDirectory = safeStorage.getItem('lastDirectory');
 const initialHasPersistedDirectory =
@@ -140,24 +162,10 @@ const normalizeHomeCandidate = (value?: string | null) => {
   return normalized && normalized !== '/' ? normalized : null;
 };
 
-const persistResolvedHome = (resolved: string) => {
-  cachedHomeDirectory = resolved;
-  if (typeof window !== 'undefined') {
-    safeStorage.setItem('homeDirectory', resolved);
-  }
-  void updateDesktopSettings({ homeDirectory: resolved });
-  return resolved;
-};
-
 const initializeHomeDirectory = async () => {
-  const acceptCandidate = (candidate?: string | null) => {
-    const normalized = normalizeHomeCandidate(candidate);
-    return normalized ? persistResolvedHome(normalized) : null;
-  };
-
   try {
     const fsHome = await opencodeClient.getFilesystemHome();
-    const resolved = acceptCandidate(fsHome);
+    const resolved = normalizeHomeCandidate(fsHome);
     if (resolved) {
       return resolved;
     }
@@ -165,9 +173,13 @@ const initializeHomeDirectory = async () => {
     console.warn('Failed to obtain filesystem home directory:', filesystemError);
   }
 
+  if (!bootHomeFallbacksApply) {
+    return '/';
+  }
+
   try {
     const info = await opencodeClient.getSystemInfo();
-    const resolved = acceptCandidate(info?.homeDirectory);
+    const resolved = normalizeHomeCandidate(info?.homeDirectory);
     if (resolved) {
       return resolved;
     }
@@ -177,7 +189,7 @@ const initializeHomeDirectory = async () => {
 
   try {
     const desktopHome = await getDesktopHomeDirectory();
-    const resolved = acceptCandidate(desktopHome);
+    const resolved = normalizeHomeCandidate(desktopHome);
     if (resolved) {
       return resolved;
     }
@@ -186,7 +198,7 @@ const initializeHomeDirectory = async () => {
   }
 
   const fallback = getHomeDirectory();
-  const resolvedFallback = acceptCandidate(fallback);
+  const resolvedFallback = normalizeHomeCandidate(fallback);
   if (resolvedFallback) {
     return resolvedFallback;
   }
@@ -212,13 +224,13 @@ const initialCurrentDirectory = (() => {
   if (persisted && !isVSCodeRuntime()) {
     return resolveDirectoryPath(persisted, initialHomeDirectory);
   }
-  return initialHomeDirectory;
+  return isVSCodeRuntime() && !isVSCodeWithoutWorkspace() ? initialHomeDirectory : '';
 })();
 
 if (initialCurrentDirectory) {
   opencodeClient.setDirectory(initialCurrentDirectory);
 }
-const initialIsHomeReady = Boolean(initialHomeDirectory && initialHomeDirectory !== '/');
+const initialIsHomeReady = Boolean(initialHomeDirectory && initialHomeDirectory !== '/' && initialCurrentDirectory);
 
 export const useDirectoryStore = create<DirectoryStore>()(
   devtools(
@@ -318,28 +330,50 @@ export const useDirectoryStore = create<DirectoryStore>()(
         if (parent) setDirectory(parent);
       },
 
-      goHome: async () => {
-        const homeDir =
-          cachedHomeDirectory ||
-          get().homeDirectory ||
-          (await initializeHomeDirectory());
-        get().setDirectory(homeDir);
+      goToNoProjectDirectory: async () => {
+        const runtimeKey = getRuntimeKey();
+        const leaving = get().currentDirectory;
+        const [homeDir, chatsRoot] = await Promise.all([
+          cachedHomeDirectory || get().homeDirectory || initializeHomeDirectory(),
+          resolveChatsRoot(),
+        ]);
+        if (getRuntimeKey() !== runtimeKey || get().currentDirectory !== leaving) return;
+        const directory = noProjectDirectory(homeDir, chatsRoot);
+        opencodeClient.setDirectory(directory);
+        invalidateFileSearchCache();
+        safeStorage.removeItem('lastDirectory');
+        void updateDesktopSettings({ lastDirectory: '' });
+        set((state) => {
+          const alreadyCurrent = state.directoryHistory[state.historyIndex] === directory;
+          const newHistory = alreadyCurrent ? state.directoryHistory : [...state.directoryHistory.slice(0, state.historyIndex + 1), directory];
+          return {
+            currentDirectory: directory,
+            directoryHistory: newHistory,
+            historyIndex: alreadyCurrent ? state.historyIndex : newHistory.length - 1,
+            hasPersistedDirectory: false,
+            isHomeReady: true,
+            isSwitchingDirectory: false,
+          };
+        });
       },
 
-      synchronizeHomeDirectory: (homePath: string) => {
+      synchronizeHomeDirectory: (homePath: string, chatsRoot?: string | null) => {
         const state = get();
         const resolvedHome = homePath;
         cachedHomeDirectory = resolvedHome;
         const needsUpdate = state.homeDirectory !== resolvedHome;
         const savedLastDirectory = safeStorage.getItem('lastDirectory');
         const hasSavedLastDirectory = typeof savedLastDirectory === 'string' && savedLastDirectory.length > 0;
+        const fallbackDirectory = noProjectDirectory(resolvedHome, chatsRoot);
         const shouldReplaceCurrent =
-          !hasSavedLastDirectory &&
+          isDirectoryUnknown(state) ||
+          (!hasSavedLastDirectory &&
           (
             state.currentDirectory === '/' ||
             state.currentDirectory === state.homeDirectory ||
+            state.currentDirectory === getChatsRoot() ||
             !state.currentDirectory
-          );
+          ));
 
         if (!needsUpdate && !shouldReplaceCurrent) {
           if (!state.isHomeReady) {
@@ -357,15 +391,16 @@ export const useDirectoryStore = create<DirectoryStore>()(
         const historyChanged = resolvedHistory.some((entry, index) => entry !== state.directoryHistory[index]);
         const currentChanged = Boolean(resolvedCurrent && resolvedCurrent !== state.currentDirectory);
 
+        const awaitingChatsRoot = shouldReplaceCurrent && (!isVSCodeRuntime() || isVSCodeWithoutWorkspace()) && !chatsRoot;
         const updates: Partial<DirectoryStore> = {
           homeDirectory: resolvedHome,
           hasPersistedDirectory: hasSavedLastDirectory,
-          isHomeReady: resolvedReady
+          isHomeReady: resolvedReady && !awaitingChatsRoot,
         };
 
         if (shouldReplaceCurrent) {
-          updates.currentDirectory = resolvedHome;
-          updates.directoryHistory = [resolvedHome];
+          updates.currentDirectory = fallbackDirectory;
+          updates.directoryHistory = [fallbackDirectory];
           updates.historyIndex = 0;
           updates.isSwitchingDirectory = false;
         } else if (currentChanged || historyChanged) {
@@ -377,16 +412,31 @@ export const useDirectoryStore = create<DirectoryStore>()(
 
         set(() => updates as Partial<DirectoryStore>);
 
-        if ((shouldReplaceCurrent || currentChanged) && resolvedReady) {
-          const nextDirectory = shouldReplaceCurrent ? resolvedHome : (resolvedCurrent as string);
+        if ((shouldReplaceCurrent || currentChanged) && resolvedReady && !awaitingChatsRoot) {
+          const nextDirectory = shouldReplaceCurrent ? fallbackDirectory : (resolvedCurrent as string);
           opencodeClient.setDirectory(nextDirectory);
           invalidateFileSearchCache();
-          safeStorage.setItem('lastDirectory', nextDirectory);
-          void updateDesktopSettings({ lastDirectory: nextDirectory });
-
+          if (!shouldReplaceCurrent) {
+            safeStorage.setItem('lastDirectory', nextDirectory);
+            void updateDesktopSettings({ lastDirectory: nextDirectory });
+          }
         }
 
         void updateDesktopSettings({ homeDirectory: resolvedHome });
+      },
+
+      resetForRuntimeSwitch: () => {
+        opencodeClient.setDirectory(undefined);
+        invalidateFileSearchCache();
+        set({
+          currentDirectory: '/',
+          directoryHistory: ['/'],
+          historyIndex: 0,
+          homeDirectory: '/',
+          hasPersistedDirectory: false,
+          isHomeReady: false,
+          isSwitchingDirectory: false,
+        });
       }
     }),
     {
@@ -395,20 +445,37 @@ export const useDirectoryStore = create<DirectoryStore>()(
   )
 );
 
-if (typeof window !== 'undefined') {
-  initializeHomeDirectory().then((home) => {
-    useDirectoryStore.getState().synchronizeHomeDirectory(home);
-  });
+let pendingHomeResolution: Promise<void> | null = null;
 
-  // Host switches happen in place (no page reload), so the home directory
-  // must be re-resolved from the new runtime's authoritative source instead
-  // of keeping the previous host's value cached.
-  subscribeRuntimeEndpointChanged(() => {
-    cachedHomeDirectory = null;
-    const generation = ++homeResolveGeneration;
-    initializeHomeDirectory().then((home) => {
+const resolveHomeDirectory = (): Promise<void> => {
+  const generation = ++homeResolveGeneration;
+  const resolution: Promise<void> = Promise.all([initializeHomeDirectory(), resolveChatsRoot()])
+    .then(([home, chatsRoot]) => {
       if (generation !== homeResolveGeneration) return;
-      useDirectoryStore.getState().synchronizeHomeDirectory(home);
+      const resolvedHome = normalizeHomeCandidate(home);
+      if (resolvedHome) safeStorage.setItem('homeDirectory', resolvedHome);
+      useDirectoryStore.getState().synchronizeHomeDirectory(home, chatsRoot);
+    })
+    .finally(() => {
+      if (pendingHomeResolution === resolution) pendingHomeResolution = null;
     });
+  pendingHomeResolution = resolution;
+  return resolution;
+};
+
+export const ensureHomeDirectoryResolved = async (): Promise<void> => {
+  if (pendingHomeResolution) await pendingHomeResolution;
+  if (useDirectoryStore.getState().isHomeReady) return;
+  await resolveHomeDirectory();
+};
+
+if (typeof window !== 'undefined') {
+  void resolveHomeDirectory();
+
+  subscribeRuntimeEndpointChanged((detail) => {
+    if (detail.runtimeKey !== detail.previousRuntimeKey) bootHomeFallbacksApply = false;
+    cachedHomeDirectory = null;
+    homeResolveGeneration += 1;
+    queueMicrotask(() => void resolveHomeDirectory());
   });
 }

@@ -1,0 +1,20 @@
+diff --git a/packages/ui/src/components/sections/integrations/IntegrationsPage.tsx b/packages/ui/src/components/sections/integrations/IntegrationsPage.tsx
+index 02f13a099..39a6770a9 100644
+--- a/packages/ui/src/components/sections/integrations/IntegrationsPage.tsx
++++ b/packages/ui/src/components/sections/integrations/IntegrationsPage.tsx
+@@ -2,6 +2,7 @@ import React from 'react';
+ import { SettingsPageLayout } from '@/components/sections/shared/SettingsPageLayout';
+ import { SettingsSection } from '@/components/sections/shared/SettingsSection';
+ import { useI18n } from '@/lib/i18n';
++import { ProductSlot } from '@/lib/product-plugins';
+ import { isVSCodeRuntime } from '@/lib/desktop';
+ import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
+ import { GuestIntegrationCard, GuestIntegrationsSection } from './GuestIntegrationsSection';
+@@ -77,6 +78,7 @@ export const IntegrationsPage: React.FC = () => {
+           {builtInGuests.map((guest) => <GuestIntegrationCard key={`${runtimeKey}:${guest.id}`} guest={guest} />)}
+         </SettingsSection>
+       ) : null}
++      <ProductSlot name="integrations-page" />
+       <CatalogExtensionsSection />
+       <GuestIntegrationsSection />
+     </SettingsPageLayout>

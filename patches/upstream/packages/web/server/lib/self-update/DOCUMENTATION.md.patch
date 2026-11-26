@@ -1,0 +1,12 @@
+diff --git a/packages/web/server/lib/self-update/DOCUMENTATION.md b/packages/web/server/lib/self-update/DOCUMENTATION.md
+index 7e9e12f96..0c08d445c 100644
+--- a/packages/web/server/lib/self-update/DOCUMENTATION.md
++++ b/packages/web/server/lib/self-update/DOCUMENTATION.md
+@@ -25,6 +25,7 @@ within a ten-minute overall deadline.
+ 
+ - `registerOpenChamberRoutes(app, dependencies)`: registers OpenChamber endpoints:
+   - `GET /api/openchamber/update-check`
++    - With `OPENCHAMBER_UPDATE_CHECK_DISABLED` set to `1` or `true`, a build that ships without an update service answers as a build with no update channel does (`available: false`, `updatesDisabled: true`), and the check never leaves the machine.
+     - A server installed from npm follows the update channel picked in
+       Settings → About (`serverUpdateChannel` in `settings.json`; without a
+       pick, Canary for a Canary build and Stable otherwise). On Canary the

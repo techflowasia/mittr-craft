@@ -32,3 +32,26 @@ export const shouldAllowBrowserPanelCertificateError = ({ url, error }) => {
     return false;
   }
 };
+
+const isHttpUrl = (url) => {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
+
+export const browserPanelWindowOpenTarget = ({ url, disposition, hasPostBody }) => {
+  if (!isHttpUrl(url)) return 'deny';
+  if (disposition === 'new-window') return 'popup';
+  if (hasPostBody) return 'in-place';
+  if (disposition === 'foreground-tab') return 'tab';
+  if (disposition === 'background-tab') return 'background-tab';
+  return 'in-place';
+};
+
+export const plainChromeUserAgent = (userAgent) => String(userAgent || '')
+  .replace(/\s(?:Electron|OpenChamber)\/\S+/gi, '')
+  .replace(/\s{2,}/g, ' ')
+  .trim();

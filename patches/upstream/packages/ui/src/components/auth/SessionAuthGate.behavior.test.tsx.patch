@@ -1,0 +1,16 @@
+diff --git a/packages/ui/src/components/auth/SessionAuthGate.behavior.test.tsx b/packages/ui/src/components/auth/SessionAuthGate.behavior.test.tsx
+index cc58f7d30..6a4b389e0 100644
+--- a/packages/ui/src/components/auth/SessionAuthGate.behavior.test.tsx
++++ b/packages/ui/src/components/auth/SessionAuthGate.behavior.test.tsx
+@@ -283,6 +283,11 @@ mock.module('@/lib/runtime-fetch', () => ({
+   }),
+ }));
+ 
++mock.module('@/lib/product-plugins', () => ({
++  ProductSlot: () => null,
++  translateProductSessionAuthDescription: () => null,
++}));
++
+ mock.module('@/stores/useDirectoryStore', () => ({
+   ensureHomeDirectoryResolved: () => {
+     ensureHomeCalls += 1;

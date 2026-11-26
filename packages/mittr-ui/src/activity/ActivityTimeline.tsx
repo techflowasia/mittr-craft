@@ -18,7 +18,7 @@ import {
 } from './activityModel';
 import { deriveUserSnippet, formatMessagePreviewClock, formatMessagePreviewDay } from './rawMessagePreview';
 
-const WorkerHighlightedCode = React.lazy(() => import('@/components/code/WorkerHighlightedCode').then((module) => ({ default: module.WorkerHighlightedCode })));
+const HighlightedCode = React.lazy(() => import('@/components/code/HighlightedCode').then((module) => ({ default: module.HighlightedCode })));
 
 export type ActivityTimelineProps = {
   messages: SessionMessage[];
@@ -192,7 +192,7 @@ const StepRow: React.FC<StepRowProps> = ({
                 </button>
               </div>
               <React.Suspense fallback={<pre style={{ margin: 0, padding: '0.75rem', fontSize: 'var(--text-micro)', whiteSpace: 'pre-wrap' }}>{json}</pre>}>
-                <WorkerHighlightedCode
+                <HighlightedCode
                   language="json"
                   code={json}
                   style={{

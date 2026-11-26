@@ -1,0 +1,29 @@
+diff --git a/packages/electron/pairing-deep-link.test.mjs b/packages/electron/pairing-deep-link.test.mjs
+index 32fbe244b..a7eadb735 100644
+--- a/packages/electron/pairing-deep-link.test.mjs
++++ b/packages/electron/pairing-deep-link.test.mjs
+@@ -1,6 +1,6 @@
+ import assert from 'node:assert/strict';
+ import test from 'node:test';
+-import { parsePairingDeepLink } from './pairing-deep-link.mjs';
++import { parsePairingDeepLink, rendererPairingLink } from './pairing-deep-link.mjs';
+ 
+ const hostEncPubJwk = { kty: 'EC', crv: 'P-256', x: 'x-coordinate', y: 'y-coordinate' };
+ const relayCandidate = { type: 'relay', relayUrl: 'wss://relay.openchamber.dev/ws', serverId: 'srv_abc', hostEncPubJwk, priority: 30 };
+@@ -41,3 +41,16 @@ test('rejects expired, secretless, and foreign links', () => {
+   assert.equal(parsePairingDeepLink(pairing([relayCandidate]).replace('openchamber://', 'other://')), null);
+   assert.equal(parsePairingDeepLink('openchamber://connect?v=2&p=not-json'), null);
+ });
++
++test('a link without a label is named after the app reading it', () => {
++  assert.equal(parsePairingDeepLink(pairing([relayCandidate], { label: '' }))?.label, 'OpenChamber');
++  assert.equal(parsePairingDeepLink(pairing([relayCandidate], { label: '' }), { fallbackLabel: 'Product' })?.label, 'Product');
++  assert.equal(parsePairingDeepLink(pairing([relayCandidate]), { fallbackLabel: 'Product' })?.label, 'Studio Mac');
++});
++
++test('the link handed to the window carries the scheme its parser reads, whatever the product opens', () => {
++  const link = pairing([relayCandidate]);
++  for (const scheme of ['mittrcraft', 'mittrcraft-dev', 'MittrCraft', 'openchamber']) {
++    assert.equal(rendererPairingLink(`  ${link.replace('openchamber:', `${scheme}:`)}\n`), link);
++  }
++});

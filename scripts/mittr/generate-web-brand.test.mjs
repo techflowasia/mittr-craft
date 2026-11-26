@@ -15,7 +15,7 @@ const tempDir = (t) => {
 
 const fixtureBrand = (t, extra = []) => {
   const dir = tempDir(t);
-  const pwa = '.product/web/server/lib/opencode/pwa-manifest-routes.js';
+  const pwa = '.product/web/server/lib/appearance/pwa-manifest-routes.js';
   fs.writeFileSync(path.join(dir, 'visible-strings.json'), JSON.stringify([
     { file: 'resources/web-dist/index.html', from: 'OpenChamber', to: 'MittrCraft', count: 2 },
     { file: pwa, from: "const DEFAULT_PWA_APP_NAME = 'OpenChamber';", to: "const DEFAULT_PWA_APP_NAME = 'MittrCraft';", count: 1 },

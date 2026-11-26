@@ -24,8 +24,9 @@
  *                           and once without them (the control), and record
  *                           every attempt to leave the machine
  *     [--only agent-tools]  run P13 to P18: plugin tools beside upstream's agent
- *                           tools, their images, their permission prompt, a
- *                           hot toggle and abort
+ *                           tools, the MittrCraft tools plugin itself (P13c),
+ *                           their images, their permission prompt, a hot
+ *                           toggle and abort
  *     [--only config-exposure]
  *                           put secret markers in a managed-config MCP entry
  *                           and record which engine config and MCP reads the
@@ -45,8 +46,8 @@ import { ENGINE_OUTBOUND_OFF, ENGINE_SHARE_OFF } from '../../packages/mittr-serv
 import { toEngineRefusal } from '../../packages/mittr-server/src/mittr/exhausted.js';
 import { catalogMcpEntity } from '../../packages/mittr-server/src/mittr/mcp-fragment.js';
 import { mintPermissionId } from '../../packages/mittr-server/src/mittr/tools/chrome-approvals.js';
+import { materializeToolsPlugin, toolsPluginSource } from '../../packages/mittr-server/src/mittr/tools/plugin-source.js';
 import { policiesFor } from '../../packages/mittr-server/src/mittr/policies.js';
-import { toMcpEntity } from '../../packages/web/server/lib/opencode/config-v2.js';
 
 import {
   HOOKED_HOST,
@@ -61,6 +62,10 @@ import {
   writeProbeToolPlugin,
 } from './probe-tool-plugin.mjs';
 import { handleMessage as stubMcpReply } from './stub-mcp-server.mjs';
+import { BUNDLED_ENGINE_MISSING, EGRESS_LOG_VARIABLE, bundledEngineCommand, bundledEngineEntry, engineProcessPattern, engineServeArgs, readEgressLog, writeEgressRecorder } from './isolated-env.mjs';
+
+await import('../../packages/web/scripts/register-server-sources.mjs');
+const { toMcpEntity } = await import('../../packages/web/server/lib/opencode/config-v2.js');
 
 export const mcpEntityFromCatalog = (raw) => catalogMcpEntity(raw, toMcpEntity);
 
@@ -146,6 +151,11 @@ export const nonLoopbackFromLog = (text) => {
   return [...found];
 };
 
+/** Non-loopback `host:port` targets the egress recorder saw an engine try, a lookup as `host`. */
+export const engineAttemptsOf = (entries) => [...new Set((entries ?? [])
+  .filter((entry) => entry && !isLoopbackHost(entry.host))
+  .map((entry) => (entry.kind === 'lookup' || entry.port === null || entry.port === undefined ? entry.host : `${entry.host}:${entry.port}`)))].sort();
+
 /** Mentions of the engine's own name, not counting paths such as `.opencode/`. */
 export const openCodeMentions = (text) => (String(text).match(/(?<![.\w/-])opencode\b/gi) ?? []).length;
 
@@ -178,12 +188,13 @@ export const stopConditionFor = (scenario, { pass, fallbackPass = null }) => {
 };
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const ENGINE = path.join(REPO, 'packages/electron/resources/opencode-cli/opencode');
+const ENGINE = bundledEngineEntry(REPO);
 const RESERVED_PORTS = new Set([57123, 57133]);
 const RESETS_AT = '2026-10-20T00:00:00+07:00';
 const CANARY_HOST = 'egress-canary.invalid';
 const SCENARIOS = ['P1', 'P2', 'P2b', 'P2c', 'P2-control', 'P3', 'P4', 'P5', 'P6', 'P7', 'proxy-control'];
 const HOSTED_MODEL = 'big-pickle';
+const isHostedTarget = (target) => target.split(':')[0] === 'opencode.ai';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const freePort = () =>
@@ -457,6 +468,9 @@ const startEngine = async ({ home, configFile, logFile, proxyPort, hookLog, onSp
   fs.mkdirSync(work, { recursive: true });
   const proxyUrl = `http://127.0.0.1:${proxyPort}`;
   const noProxy = '127.0.0.1,localhost,::1';
+  const egressDir = path.join(home, 'egress');
+  const egressLog = path.join(egressDir, `attempts-${port}-${Date.now()}.jsonl`);
+  const egressRecorder = writeEgressRecorder(egressDir);
   const env = {
     PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
     HOME: home,
@@ -478,18 +492,24 @@ const startEngine = async ({ home, configFile, logFile, proxyPort, hookLog, onSp
     all_proxy: proxyUrl,
     NO_PROXY: noProxy,
     no_proxy: noProxy,
+    NODE_USE_ENV_PROXY: '1',
+    NODE_OPTIONS: `--import=${pathToFileURL(egressRecorder).href}`,
+    [EGRESS_LOG_VARIABLE]: egressLog,
     MITTR_PROBE_HOOK_LOG: hookLog,
+    OPENCODE_LOG_LEVEL: 'DEBUG',
+    OPENCODE_PRINT_LOGS: '1',
     ...extraEnv,
   };
   fs.mkdirSync(env.TMPDIR, { recursive: true });
   const log = fs.openSync(logFile, 'a');
   const startedAt = Date.now();
-  const child = spawn(ENGINE, ['serve', '--hostname', '127.0.0.1', '--port', String(port), '--log-level', 'debug'], {
+  const launch = bundledEngineCommand(ENGINE, engineServeArgs(port));
+  const child = spawn(launch.command, launch.args, {
     cwd: work, env, detached: true, stdio: ['ignore', log, log],
   });
   fs.closeSync(log);
   const exited = new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
-  const engine = { child, pid: child.pid, exited, port, base: `http://127.0.0.1:${port}`, work };
+  const engine = { child, pid: child.pid, exited, port, base: `http://127.0.0.1:${port}`, work, egressLog };
   onSpawn(engine);
   engine.headers = {
     Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`,
@@ -882,13 +902,20 @@ const codeModeSection = (systemText) => {
   return at === -1 ? '' : text.slice(at);
 };
 
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+
 export const codeModePathOf = (systemText, name) => {
-  for (const line of codeModeSection(systemText).split('\n')) {
+  const lines = codeModeSection(systemText).split('\n');
+  for (const line of lines) {
     const match = line.match(/^\s+- (\S*?)\(/);
     if (!match) continue;
     const callPath = match[1];
     const last = callPath.split(/[.[\]"]+/).filter(Boolean).at(-1);
     if (last === name) return callPath;
+  }
+  for (const line of lines) {
+    const match = line.match(/^- (\S+) \(\d+ tools?(?:, none shown)?\)/);
+    if (match?.[1] === name) return IDENTIFIER.test(name) ? `tools.${name}` : `tools[${JSON.stringify(name)}]`;
   }
   return null;
 };
@@ -1137,6 +1164,7 @@ export const failuresOf = (result, scenarios = SCENARIOS) => {
     if (outbound.nonLoopbackRemotes.length > 0) failures.push(`outbound: lsof ${outbound.nonLoopbackRemotes.join(', ')}`);
     if (outbound.nonLoopbackHostsInLog.length > 0) failures.push(`outbound: log ${outbound.nonLoopbackHostsInLog.join(', ')}`);
     if (outbound.proxyNonLoopback.length > 0) failures.push(`outbound: proxy ${outbound.proxyNonLoopback.join(', ')}`);
+    if (outbound.engineAttempts?.length > 0) failures.push(`outbound: engine tried ${outbound.engineAttempts.join(', ')}`);
   }
   return failures;
 };
@@ -1148,7 +1176,12 @@ export const failuresOf = (result, scenarios = SCENARIOS) => {
  * provider, plugin and policies come from the real managed-config runtime, as
  * the server builds them. Locked runs: a turn on `other` is refused before any
  * request, `stub` answers, and `opencode` is refused with no egress (R52).
- * Open runs (R40): `other` answers and `opencode` stays refused.
+ * Open runs: `other` answers and the hosted free models are offered, as in
+ * 1.22 (owner, 20 Nov), so only opencode.ai may be tried. OpenCode 2.3
+ * lets the first file that names a provider decide it and reads the global
+ * folder before `OPENCODE_CONFIG`, so the server also writes the lock last in
+ * the global `opencode.json`; that run must hold against an allow in the same
+ * file, a global `opencode.jsonc`, the project file and `OPENCODE_CONFIG_CONTENT`.
  *
  * Diagnostics record which rule the engine obeys and are not part of the
  * verdict: the order inside one policy list, our lock placed only in
@@ -1159,14 +1192,15 @@ const probeUserPolicy = async ({ home, stubs, proxy, identityDir, startWith }) =
   const userFile = path.join(home, 'user-opencode.json');
   const repoFile = path.join(home, 'work', 'opencode.json');
   const globalFile = path.join(home, '.config', 'opencode', 'opencode.json');
+  const globalJsonc = path.join(home, '.config', 'opencode', 'opencode.jsonc');
   const other = providerEntry('Other', `http://127.0.0.1:${stubs.other.port}/v1`, ['m1']);
   const stub = providerEntry('Stub', `http://127.0.0.1:${stubs.stub.port}/v1`, ['m1']);
-  const allowAll = { providers: { other }, experimental: { policies: USER_ALLOW_POLICIES } };
+  const allowAll = { providers: { other }, policies: USER_ALLOW_POLICIES };
   const lock = policiesFor({ showOtherProviders: false, providerId: 'stub' });
   const fragment = (showOtherProviders) => ({
     providers: { stub },
     plugins: [identityDir],
-    experimental: { policies: policiesFor({ showOtherProviders, providerId: 'stub' }) },
+    policies: policiesFor({ showOtherProviders, providerId: 'stub' }),
   });
   let dataDirs = 0;
   const serverEnv = async ({ showOtherProviders, userEnv = {} }) => {
@@ -1174,7 +1208,7 @@ const probeUserPolicy = async ({ home, stubs, proxy, identityDir, startWith }) =
     const runtime = createManagedConfigRuntime({
       fsPromises: fs.promises,
       path,
-      dataDir: path.join(home, `p7-data-${dataDirs}`),
+      instanceDir: path.join(home, `p7-data-${dataDirs}`),
       env: userEnv,
       readSettings: async () => ({}),
       isAgentMemoryAvailable: () => false,
@@ -1186,7 +1220,7 @@ const probeUserPolicy = async ({ home, stubs, proxy, identityDir, startWith }) =
   const egressSince = (mark) => proxy.attempts.filter((a) => a.at >= mark && !a.loopback).map(({ kind, host, port }) => ({ kind, host, port }));
   const readJson = (file) => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null);
   const placeFiles = (files) => {
-    for (const file of [userFile, repoFile, globalFile]) fs.rmSync(file, { force: true });
+    for (const file of [userFile, repoFile, globalFile, globalJsonc]) fs.rmSync(file, { force: true });
     for (const [file, value] of Object.entries(files)) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       writeJsonAtomic(file, value);
@@ -1195,16 +1229,17 @@ const probeUserPolicy = async ({ home, stubs, proxy, identityDir, startWith }) =
 
   // The environment is built after the files are in place, as the server
   // builds it at each start from what is on disk then.
-  const run = async ({ label, files = {}, buildEnv, prompts }) => {
+  const run = async ({ label, files = {}, buildEnv, prompts, hostedAllowed = false }) => {
     placeFiles(files);
     const env = await buildEnv();
     const { client, collector, engine } = await startWith(env);
+    engine.hostedAllowed = hostedAllowed;
     const observed = {
       label,
       layers: {
-        OPENCODE_CONFIG: env.OPENCODE_CONFIG ? { file: path.relative(home, env.OPENCODE_CONFIG), policies: readJson(env.OPENCODE_CONFIG)?.experimental?.policies ?? null } : null,
-        OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT ? JSON.parse(env.OPENCODE_CONFIG_CONTENT).experimental?.policies ?? null : null,
-        files: Object.fromEntries(Object.entries(files).map(([file, value]) => [path.relative(home, file), value.experimental?.policies ?? null])),
+        OPENCODE_CONFIG: env.OPENCODE_CONFIG ? { file: path.relative(home, env.OPENCODE_CONFIG), policies: readJson(env.OPENCODE_CONFIG)?.policies ?? null } : null,
+        OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT ? JSON.parse(env.OPENCODE_CONFIG_CONTENT).policies ?? null : null,
+        files: Object.fromEntries(Object.entries(files).map(([file, value]) => [path.relative(home, file), value.policies ?? null])),
       },
     };
     try {
@@ -1219,6 +1254,7 @@ const probeUserPolicy = async ({ home, stubs, proxy, identityDir, startWith }) =
       await stopEngine(engine);
       placeFiles({});
     }
+    observed.engineAttempts = engineAttemptsOf(readEgressLog(engine.egressLog));
     return observed;
   };
   const allPrompts = [['other', 'm1'], ['stub', 'm1'], ['opencode', HOSTED_MODEL]];
@@ -1231,7 +1267,7 @@ const probeUserPolicy = async ({ home, stubs, proxy, identityDir, startWith }) =
   const lockedContent = await run({
     label: 'switch OFF; the user sets OPENCODE_CONFIG and allows every provider in OPENCODE_CONFIG_CONTENT',
     files: { [userFile]: { providers: { other } } },
-    buildEnv: () => serverEnv({ showOtherProviders: false, userEnv: userOwned({ experimental: { policies: USER_ALLOW_POLICIES } }) }),
+    buildEnv: () => serverEnv({ showOtherProviders: false, userEnv: userOwned({ policies: USER_ALLOW_POLICIES }) }),
     prompts: allPrompts,
   });
   const lockedFile = await run({
@@ -1251,15 +1287,17 @@ const probeUserPolicy = async ({ home, stubs, proxy, identityDir, startWith }) =
     files: { [repoFile]: allowAll },
     buildEnv: () => serverEnv({ showOtherProviders: true }),
     prompts: allPrompts,
+    hostedAllowed: true,
   });
   const open = await run({
     label: 'switch ON; the user sets OPENCODE_CONFIG and allows every provider in OPENCODE_CONFIG_CONTENT',
     files: { [userFile]: { providers: { other } } },
-    buildEnv: () => serverEnv({ showOtherProviders: true, userEnv: userOwned({ experimental: { policies: USER_ALLOW_POLICIES } }) }),
+    buildEnv: () => serverEnv({ showOtherProviders: true, userEnv: userOwned({ policies: USER_ALLOW_POLICIES }) }),
     prompts: allPrompts,
+    hostedAllowed: true,
   });
 
-  const oneList = (policies) => ({ OPENCODE_CONFIG: userFile, OPENCODE_CONFIG_CONTENT: JSON.stringify({ providers: { stub, other }, experimental: { policies } }) });
+  const oneList = (policies) => ({ OPENCODE_CONFIG: userFile, OPENCODE_CONFIG_CONTENT: JSON.stringify({ providers: { stub, other }, policies }) });
   const lockLastInList = await run({
     label: 'diagnostic: one list, the lock after the allows',
     files: { [userFile]: {} },
@@ -1275,7 +1313,7 @@ const probeUserPolicy = async ({ home, stubs, proxy, identityDir, startWith }) =
   const lockInContentUnderUserFile = await run({
     label: 'diagnostic: the lock only in OPENCODE_CONFIG_CONTENT, the allows in the user OPENCODE_CONFIG file',
     files: { [userFile]: allowAll },
-    buildEnv: async () => ({ OPENCODE_CONFIG: userFile, OPENCODE_CONFIG_CONTENT: JSON.stringify({ providers: { stub }, plugins: [identityDir], experimental: { policies: lock } }) }),
+    buildEnv: async () => ({ OPENCODE_CONFIG: userFile, OPENCODE_CONFIG_CONTENT: JSON.stringify({ providers: { stub }, plugins: [identityDir], policies: lock }) }),
     prompts: [['other', 'm1']],
   });
   const globalAllow = await run({
@@ -1285,11 +1323,40 @@ const probeUserPolicy = async ({ home, stubs, proxy, identityDir, startWith }) =
     prompts: [['other', 'm1']],
   });
 
+  const globalLocked = await run({
+    label: 'the lock last in the global opencode.json, as the server writes it there, against allows in that file, a global opencode.jsonc, the project file and OPENCODE_CONFIG_CONTENT',
+    files: {
+      [globalFile]: { providers: { other }, policies: [...USER_ALLOW_POLICIES, ...lock] },
+      [globalJsonc]: allowAll,
+      [repoFile]: allowAll,
+    },
+    buildEnv: () => serverEnv({ showOtherProviders: false, userEnv: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ policies: USER_ALLOW_POLICIES }) } }),
+    prompts: allPrompts,
+  });
+  const globalOpen = await run({
+    label: 'switch ON; the global opencode.json as the server leaves it, without our rules',
+    files: { [globalFile]: { providers: { other } } },
+    buildEnv: () => serverEnv({ showOtherProviders: true }),
+    prompts: allPrompts,
+    hostedAllowed: true,
+  });
+
+  const globalOpenDisabled = await run({
+    label: 'switch ON; the person turned one provider off in the global opencode.json',
+    files: { [globalFile]: { providers: { other }, disabled_providers: ['other'] } },
+    buildEnv: () => serverEnv({ showOtherProviders: true }),
+    prompts: allPrompts,
+    hostedAllowed: true,
+  });
+
   const locked = (o) => o.other.refusedByPolicy && o.other.stubRequests.other === 0 && o.stub.answered;
-  const hostedDenied = (o) => o.opencode.refusedByPolicy && o.opencode.egress.length === 0;
+  const listed = (o) => (Array.isArray(o.modelsListed) ? o.modelsListed : []);
+  const hostedDenied = (o) => o.opencode.refusedByPolicy && o.opencode.egress.length === 0 && o.engineAttempts.length === 0 && !listed(o).some((model) => model.startsWith('opencode/'));
+  const hostedOffered = (o) => listed(o).includes(`opencode/${HOSTED_MODEL}`) && o.engineAttempts.every(isHostedTarget);
   const refusedOther = (o) => o.other.refusedByPolicy && o.other.stubRequests.other === 0;
-  const pass = [lockedContent, lockedFile, lockedRepo].every((o) => locked(o) && hostedDenied(o))
-    && [openRepo, open].every((o) => o.other.answered && o.stub.answered && hostedDenied(o));
+  const pass = [lockedContent, lockedFile, lockedRepo, globalLocked].every((o) => locked(o) && hostedDenied(o))
+    && [openRepo, open, globalOpen].every((o) => o.other.answered && o.stub.answered && hostedOffered(o))
+    && !globalOpenDisabled.other.answered && globalOpenDisabled.other.stubRequests.other === 0 && globalOpenDisabled.stub.answered;
   return {
     pass,
     engineObeys: {
@@ -1297,7 +1364,11 @@ const probeUserPolicy = async ({ home, stubs, proxy, identityDir, startWith }) =
       lockFirstInOneList: refusedOther(lockFirstInList),
       lockInContentOverUserFile: refusedOther(lockInContentUnderUserFile),
       lockInManagedFileOverGlobal: refusedOther(globalAllow),
+      lockLastInGlobalFileOverEveryLayer: refusedOther(globalLocked),
     },
+    globalLocked,
+    globalOpen,
+    globalOpenDisabled,
     lockedContent,
     lockedFile,
     lockedRepo,
@@ -1369,13 +1440,14 @@ const probeOutbound = async ({ OpenCode, home, configFile, hookLog, stubs, proxy
       proxyNonLoopback: [...new Set(controlProxy.attempts.filter((a) => !a.loopback).map((a) => `${a.host}:${a.port}`))].sort(),
       nonLoopbackRemotes: [...controlSink.remotes].sort(),
       nonLoopbackHostsInLog: nonLoopbackFromLog(readLogs(controlHome, path.join(controlHome, 'engine.out.log'))).sort(),
+      engineAttempts: controlEngine ? engineAttemptsOf(readEgressLog(controlEngine.egressLog)) : [],
     };
   } finally {
     await stopControlSampler();
     await controlProxy.close();
   }
   return {
-    pass: Array.isArray(ours.models) && ours.models.includes('stub/m1') && ours.answered && control.proxyNonLoopback.length > 0,
+    pass: Array.isArray(ours.models) && ours.models.includes('stub/m1') && ours.answered && (control.proxyNonLoopback.length > 0 || control.engineAttempts.length > 0),
     ours: { env: ENGINE_OUTBOUND_OFF, ...ours },
     control,
   };
@@ -1517,7 +1589,7 @@ const runAsServer = ({ home, directory, managedFile = null }) => {
   };
   if (managedFile) env.OPENCODE_CONFIG = managedFile;
   const mcpUrl = pathToFileURL(path.join(REPO, 'packages/web/server/lib/opencode/mcp.js')).href;
-  const sharedUrl = pathToFileURL(path.join(REPO, 'packages/web/server/lib/opencode/shared.js')).href;
+  const sharedUrl = pathToFileURL(path.join(REPO, 'packages/web/server/lib/opencode/config-files.js')).href;
   const script = [
     `const { listMcpConfigs } = await import(${JSON.stringify(mcpUrl)});`,
     `const { readConfigLayers, getJsonEntrySource } = await import(${JSON.stringify(sharedUrl)});`,
@@ -1526,7 +1598,7 @@ const runAsServer = ({ home, directory, managedFile = null }) => {
     "const list = listMcpConfigs(directory).map((e) => ({ name: e.name, type: e.type, scope: e.scope, sectionKey: e.sectionKey, legacy: e.legacy, source: getJsonEntrySource(layers, 'mcp', e.name).path }));",
     'process.stdout.write(JSON.stringify({ paths: layers.paths, list }));',
   ].join('\n');
-  const out = spawnSync(process.execPath, ['--input-type=module', '-e', script], { env, cwd: REPO, encoding: 'utf8', timeout: 30_000 });
+  const out = spawnSync(process.execPath, ['--import', pathToFileURL(path.join(REPO, 'packages/web/scripts/register-server-sources.mjs')).href, '--input-type=module', '-e', script], { env, cwd: REPO, encoding: 'utf8', timeout: 30_000 });
   const rel = underHome(home);
   try {
     const parsed = JSON.parse(out.stdout);
@@ -1776,7 +1848,7 @@ const EXPOSURE_READS = [
   { name: 'mcp.list', path: '/api/mcp' },
 ];
 
-const engineProcesses = (port) => (spawnSync('pgrep', ['-f', `opencode serve --hostname 127.0.0.1 --port ${port}`], { encoding: 'utf8' }).stdout ?? '')
+const engineProcesses = (port) => (spawnSync('pgrep', ['-f', engineProcessPattern(port)], { encoding: 'utf8' }).stdout ?? '')
   .split('\n').filter(Boolean).map(Number).filter((pid) => pid && pid !== process.pid);
 
 const probeConfigExposure = async ({ home, configFile, baseConfig, connect, current }) => {
@@ -1999,7 +2071,11 @@ const probeProjectLayer = async ({ home, configFile, baseConfig, connect, curren
   };
 };
 
-const AGENT_TOOLS_SCENARIOS = ['P13', 'P13b', 'P14', 'P15', 'P16', 'P17', 'P18'];
+const AGENT_TOOLS_SCENARIOS = ['P13', 'P13b', 'P13c', 'P14', 'P15', 'P16', 'P17', 'P18'];
+const MITTR_PROBE_TOOLS = [
+  { name: 'mittrcraft_todo', description: 'Keep a checklist for this conversation. Read it first.', parameters: {}, definitions: [{ action: 'todo.read', title: 'Read the checklist', description: 'Reads the checklist.' }] },
+  { name: 'mittrcraft_work', description: 'Look up Mittr work items. Search by text.', parameters: { query: { type: 'string' } }, definitions: [{ action: 'work.search', title: 'Search work', description: 'Searches work.' }, { action: 'work.hang', title: 'Wait', description: 'Waits until stopped.' }] },
+];
 const P17_WINDOW_MS = 5000;
 const ASK_WAIT_MS = 10_000;
 const CONFIG_SETTLE_MS = 2000;
@@ -2007,9 +2083,10 @@ const IMAGE_MODEL = 'mimg';
 const TEXT_ONLY_MODEL = 'mtext';
 
 export const agentToolsStopConditions = (scenarios) => {
-  const { P13 = {}, P13b = {}, P14 = {}, P15 = {}, P16 = {}, P17 = {}, P18 = {} } = scenarios;
+  const { P13 = {}, P13b = {}, P13c = {}, P14 = {}, P15 = {}, P16 = {}, P17 = {}, P18 = {} } = scenarios;
   const conditions = {};
   conditions.P13 = P13.pass ? NO_ACTION : { action: "stop and report: no direct plugin tool beside upstream's, so Tasks 4-11 cannot proceed", stop: true };
+  conditions.P13c = P13c.pass ? NO_ACTION : { action: 'stop and report: the MittrCraft tools plugin does not register, run or stop on this engine', stop: true };
   conditions.P13b = P13b.pass ? NO_ACTION : { action: 'Task 5 takes the hook route (agent-tool/runtime.js, +1)', stop: false };
   const cells = (P14.cells ?? []).filter((cell) => !cell.diagnostic);
   const seen = (filter) => cells.filter(filter).some((cell) => cell.markerSeen);
@@ -2125,7 +2202,7 @@ const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
     crypto,
     fsPromises: fs.promises,
     path,
-    dataDir,
+    instanceDir: dataDir,
     getActivePort: () => callbackPort,
     getActiveHost: () => '127.0.0.1',
     executeAction: (action, input, directory, options) => control.execute(action, input, directory, options),
@@ -2176,6 +2253,19 @@ const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
     entry.reply = outcome?.data?.reply ?? null;
     res.json({ effect: 'ask', id, reply: entry.reply });
   });
+  const mittrToolsToken = randomBytes(24).toString('hex');
+  const mittrCalls = [];
+  app.post('/api/mittr/tools', express.json({ limit: '1mb' }), (req, res) => {
+    const entry = { at: Date.now(), authorized: req.headers.authorization === `Bearer ${mittrToolsToken}`, tool: req.body?.tool ?? null, action: req.body?.input?.action ?? null, sessionID: req.body?.sessionID ?? null, closedAt: null };
+    mittrCalls.push(entry);
+    req.socket.once('close', () => { entry.closedAt = Date.now(); });
+    if (!entry.authorized) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+    if (entry.action === 'work.hang') return;
+    res.json({ schemaVersion: 1, ok: true, action: entry.action, data: { tool: entry.tool } });
+  });
   agentToolRuntime.registerRoutes(app, express);
   const callbackServer = await new Promise((resolve, reject) => {
     const listening = app.listen(callbackPort, '127.0.0.1', (error) => (error ? reject(error) : resolve(listening)));
@@ -2197,7 +2287,7 @@ const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
   const managedRuntime = createManagedConfigRuntime({
     fsPromises: fs.promises,
     path,
-    dataDir,
+    instanceDir: dataDir,
     env: {},
     agentToolRuntime,
     readSettings: async () => ({ agentControlToolEnabled: true, agentWebToolEnabled: true, agentToolsCodeMode: false }),
@@ -2205,15 +2295,16 @@ const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
     contributeConfig: async () => {
       const fragment = {
         providers: { stub: stubProvider() },
-        plugins: [probeDir],
+        plugins: [probeDir, mittrToolsDir],
         ...ENGINE_SHARE_OFF,
-        experimental: { policies: [...policiesFor({ showOtherProviders: false, providerId: 'stub' }), ...managed.policies] },
+        policies: [...policiesFor({ showOtherProviders: false, providerId: 'stub' }), ...managed.policies],
       };
       if (managed.permissions.length > 0) fragment.permissions = managed.permissions;
       return fragment;
     },
   });
   writeProbeToolPlugin(probeDir);
+  const mittrToolsDir = await materializeToolsPlugin({ dataDir, source: toolsPluginSource({ tools: MITTR_PROBE_TOOLS, codeMode: true, direct: ['mittrcraft_todo'] }) });
   const childEnv = await managedRuntime.buildManagedChildEnv();
   const managedFile = managedRuntime.filePath;
   const managedPlugins = JSON.parse(fs.readFileSync(managedFile, 'utf8')).plugins.map((entry) => rel(entry));
@@ -2224,6 +2315,7 @@ const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
       ...childEnv,
       OPENCODE_CONFIG_DIR: configDir,
       MITTRCRAFT_TOOLS_URL: toolsUrl,
+      MITTRCRAFT_TOOLS_TOKEN: mittrToolsToken,
       MITTR_PROBE_RECORD_URL: `http://127.0.0.1:${callbackPort}/probe/record`,
       MITTR_PROBE_HANG_URL: `http://127.0.0.1:${hang.port}/hang`,
     },
@@ -2245,9 +2337,9 @@ const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
   const rawEvent = (event) => (event ? { id: event.id ?? null, type: event.type, created: event.created ?? null, location: event.location ? { directory: rel(event.location.directory) } : null, data: event.data } : null);
   const wirePayload = (event) => ({ id: event.id, type: event.type, created: event.created, location: event.location, data: event.data });
   const relDeep = (value) => JSON.parse(JSON.stringify(value ?? null).split(home).join('<home>'));
-  const codeCall = (body, name) => {
+  const codeCall = (body, name, args = {}) => {
     const callPath = codeModePathOf(systemPlainText(body), name);
-    return callPath && offeredTools(body).includes('execute') ? { name: 'execute', arguments: { code: `return await ${callPath}({})` } } : null;
+    return callPath && offeredTools(body).includes('execute') ? { name: 'execute', arguments: { code: `return await ${callPath}(${JSON.stringify(args)})` } } : null;
   };
 
   const turn = async ({ model = 'm1', label, pick, onAsked = null, settleMs = 30_000 }) => {
@@ -2313,8 +2405,9 @@ const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
   const executeRecord = recorder.entries.find((entry) => entry.kind === 'execute' && entry.tool === 'mittr_probe_direct') ?? null;
   const catalogLines = codeModeSection(system).split('\n').filter((line) => /mittr_probe|openchamber/.test(line)).map((line) => line.slice(0, 240));
   scenarios.P13 = {
-    pass: ['mittr_probe_direct', 'openchamber', 'openchamber_web'].every((name) => direct.includes(name))
-      && !direct.includes('mittr_probe_code') && codeModeCatalogHas(system, 'mittr_probe_code') && directResult?.envType === 'string',
+    pass: direct.includes('mittr_probe_direct')
+      && ['mittr_probe_code', 'openchamber', 'openchamber_web'].every((name) => !direct.includes(name) && codeModeCatalogHas(system, name))
+      && directResult?.envType === 'string',
     observed: {
       managedPlugins,
       directToolNames: direct,
@@ -2331,7 +2424,7 @@ const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
     },
   };
 
-  const webTurn = await turn({ label: 'P13b wrap', pick: () => ({ name: 'openchamber_web', arguments: { action: 'browser.snapshot', parameters: {} } }) });
+  const webTurn = await turn({ label: 'P13b wrap', pick: (body) => codeCall(body, 'openchamber_web', { action: 'browser.snapshot', parameters: {} }) });
   const webText = webTurn.toolTexts.join('\n');
   const transforms = recorder.entries.filter((entry) => entry.kind === 'transform');
   scenarios.P13b = {
@@ -2343,6 +2436,53 @@ const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
       wrapRan: recorder.entries.filter((entry) => entry.kind === 'wrap-ran').length,
       upstreamEnvelope: parsedJson(webTurn.toolTexts[0]?.split(WRAP_MARKER)[0] ?? '') ?? null,
       turn: brief(webTurn),
+    },
+  };
+
+  const todoTurn = await turn({ label: 'P13c todo', pick: () => ({ name: 'mittrcraft_todo', arguments: { action: 'todo.read', parameters: {} } }) });
+  const mittrSystem = systemPlainText(todoTurn.first?.body);
+  const mittrDirect = directToolNames(todoTurn.first?.body);
+  const workTurn = await turn({ label: 'P13c work', pick: (body) => codeCall(body, 'mittrcraft_work', { action: 'work.search', parameters: { query: 'probe' } }) });
+  const callFor = (t, tool) => mittrCalls.find((entry) => entry.sessionID === t.sessionID && entry.tool === tool) ?? null;
+  const hangRun = await (async () => {
+    const { sessionID } = await newSession(client, work, 'stub', 'm1');
+    stub.mode = 'tool';
+    stub.pickCall = (body) => (hasToolResult(body) ? null : codeCall(body, 'mittrcraft_work', { action: 'work.hang', parameters: {} }));
+    const mark = Date.now();
+    void client.session.prompt({ sessionID, text: 'probe P13c abort' }).catch(() => {});
+    const reached = await waitFor(() => mittrCalls.find((entry) => entry.sessionID === sessionID && entry.action === 'work.hang'), 10_000, 50);
+    const abortStatus = reached ? (await call('POST', `/api/session/${encodeURIComponent(sessionID)}/abort`)).status : null;
+    let abort = abortStatus === null ? null : { route: 'abort', status: abortStatus };
+    if (abortStatus !== null && abortStatus >= 300) {
+      let interruptError = null;
+      try { await client.session.interrupt({ sessionID }); } catch (error) { interruptError = errorText(error); }
+      abort = { route: 'interrupt', abortStatus, interruptError };
+    }
+    const closed = reached ? await waitFor(() => reached.closedAt, 5000, 50) : null;
+    const idle = await waitFor(() => sessionEvents(events.events, sessionID, mark).find(isIdleEvent), 10_000, 100);
+    stub.mode = 'ok';
+    stub.pickCall = null;
+    const summary = summarizeEvents(sessionEvents(events.events, sessionID, mark));
+    return { reached: Boolean(reached), abort, callbackClosed: Boolean(closed), idle: Boolean(idle), toolSucceeded: summary.some((e) => e.type === 'session.tool.success'), events: summary.slice(0, 24) };
+  })();
+  const todoCall = callFor(todoTurn, 'mittrcraft_todo');
+  const workCall = callFor(workTurn, 'mittrcraft_work');
+  const namespaceLine = codeModeSection(mittrSystem).split('\n').find((line) => line.startsWith('- mittrcraft_work ')) ?? null;
+  scenarios.P13c = {
+    pass: mittrDirect.includes('mittrcraft_todo') && !mittrDirect.includes('mittrcraft_work')
+      && codeModeCatalogHas(mittrSystem, 'mittrcraft_work')
+      && Boolean(todoCall?.authorized) && parsedJson(todoTurn.toolTexts[0] ?? '')?.ok === true
+      && workTurn.calledTool === 'execute' && Boolean(workCall?.authorized) && workTurn.toolTexts.some((text) => text.includes('work.search'))
+      && hangRun.reached && hangRun.callbackClosed && !hangRun.toolSucceeded,
+    observed: {
+      directToolNames: mittrDirect.filter((name) => name.startsWith('mittrcraft_')),
+      namespaceLine,
+      codeModePath: codeModePathOf(mittrSystem, 'mittrcraft_work'),
+      todoCall,
+      todoText: (todoTurn.toolTexts[0] ?? '').slice(0, 300),
+      workCall,
+      workTurn: brief(workTurn),
+      abort: hangRun,
     },
   };
 
@@ -2685,7 +2825,7 @@ const probeAgentTools = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
     ruleMatrix,
     askRuleDuringDecisions: { layer: 'managed config permissions', rules: managedAsk },
     evaluateHookCalls: hookRecords,
-    policySchema: 'experimental.policies entries take action provider.use or permission and effect allow or deny only (@opencode/schema 2.0.22 config/policy.js)',
+    policySchema: 'policies entries take action provider.use, tool.use, integration.connect, integration.use, mcp.use, skill.use, plugin.use or websearch.use and effect allow or deny only (@opencode/schema 2.3.2 config/policy.js)',
   };
 
   const hubSubscribers = new Set();
@@ -2868,7 +3008,7 @@ export const voiceStopConditions = (scenarios) => {
   const conditions = {};
   conditions.P19 = P19.pass ? NO_ACTION : { action: 'owner note: session.list withStatus does not give id, title and status per directory', stop: false };
   conditions.P20 = P20.pass ? NO_ACTION : { action: 'stop session.read_reply and report', stop: true };
-  conditions.P21 = P21.todoRoute ? NO_ACTION : { action: 'owner note: no todo route in OpenCode 2.0.22; the voice context says "todos unknown"', stop: false };
+  conditions.P21 = P21.todoRoute ? NO_ACTION : { action: 'owner note: no todo route in OpenCode 2.3.2; the voice context says "todos unknown"', stop: false };
   conditions.P22 = P22.pass ? NO_ACTION : { action: 'stop session.stop and report', stop: true };
   conditions.P23 = {
     action: P23.delivery === 'queued'
@@ -2961,7 +3101,7 @@ const probeVoiceReads = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
   writeJsonAtomic(configFile, {
     providers: { stub: providerEntry('Stub', `http://127.0.0.1:${stub.port}/v1`, ['m1']) },
     ...ENGINE_SHARE_OFF,
-    experimental: { policies: policiesFor({ showOtherProviders: false, providerId: 'stub' }) },
+    policies: policiesFor({ showOtherProviders: false, providerId: 'stub' }),
     permissions: [{ action: VOICE_PERMISSION, resource: '*', effect: 'ask' }],
   });
   const engine = await startEngine({ home, configFile, logFile, proxyPort: proxy.port, hookLog, onSpawn });
@@ -3256,7 +3396,7 @@ const probeVoiceReads = async ({ OpenCode, home, stub, proxy, hookLog, logFile, 
     sendConfigType: 'QueuedMessageSendConfig = { providerID, modelID, agent?, variant? }',
     source: [
       ...readSource('packages/ui/src/stores/messageQueueStore.ts', /isServerOwnedMessageQueue = |if \(!message\.sendConfig\)|A queued message needs|sessions\/\$\{encodeURIComponent\(sessionId\)\}|MAX_MESSAGES_PER_QUEUE = /),
-      ...readSource('packages/web/server/lib/message-queue/runtime.js', /app\.post\('\/api\/message-queue\/sessions\/:sessionId\/items'/),
+      ...readSource('packages/web/server/lib/message-queue/runtime.ts', /app\.post\('\/api\/message-queue\/sessions\/:sessionId\/items'/),
     ],
     storeRun: store,
     sendConfigRequired: Boolean(facts?.withoutSendConfig?.threw),
@@ -3291,7 +3431,7 @@ const main = async () => {
     return 2;
   }
   const scenarios = only === 'skills-mcp' ? SKILLS_MCP_SCENARIOS : only === 'agent-tools' ? AGENT_TOOLS_SCENARIOS : only === 'voice' ? VOICE_SCENARIOS : (only ? [only] : SCENARIOS);
-  if (!fs.existsSync(ENGINE)) throw new Error(`engine binary missing: ${ENGINE} (run prepare:opencode-cli)`);
+  if (!fs.existsSync(ENGINE)) throw new Error(`bundled engine missing: ${ENGINE} (${BUNDLED_ENGINE_MISSING})`);
 
   const { OpenCode } = await import('@opencode/client');
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'p2.')));
@@ -3361,7 +3501,7 @@ const main = async () => {
   };
   try {
     const versionEnv = { PATH: '/usr/bin:/bin', HOME: home, TMPDIR: home, XDG_CONFIG_HOME: path.join(home, '.config'), XDG_DATA_HOME: path.join(home, '.local/share'), XDG_STATE_HOME: path.join(home, '.local/state'), XDG_CACHE_HOME: path.join(home, '.cache') };
-    result.engineVersion = spawnSync(ENGINE, ['--version'], { encoding: 'utf8', env: versionEnv }).stdout.trim();
+    result.engineVersion = spawnSync(process.execPath, [ENGINE, '--version'], { encoding: 'utf8', env: versionEnv }).stdout.trim();
 
     stubs.stub = await startStub('stub');
     stubs.other = await startStub('other');
@@ -3378,7 +3518,7 @@ const main = async () => {
       },
       plugins: [recorderDir, identityDir, retryDir],
       ...ENGINE_SHARE_OFF,
-      experimental: { policies },
+      policies,
     });
     writeJsonAtomic(configFile, config(['m1'], policiesFor({ showOtherProviders: false, providerId: 'stub' })));
 
@@ -3431,7 +3571,7 @@ const main = async () => {
         baseConfig: () => ({
           providers: { stub: providerEntry('Stub', `http://127.0.0.1:${stubs.stub.port}/v1`, ['m1']) },
           ...ENGINE_SHARE_OFF,
-          experimental: { policies: policiesFor({ showOtherProviders: false, providerId: 'stub' }) },
+          policies: policiesFor({ showOtherProviders: false, providerId: 'stub' }),
         }),
         connect, current: () => ({ engine, collector }),
       });
@@ -3446,7 +3586,7 @@ const main = async () => {
         baseConfig: () => ({
           providers: { stub: providerEntry('Stub', `http://127.0.0.1:${stubs.stub.port}/v1`, ['m1']) },
           ...ENGINE_SHARE_OFF,
-          experimental: { policies: policiesFor({ showOtherProviders: false, providerId: 'stub' }) },
+          policies: policiesFor({ showOtherProviders: false, providerId: 'stub' }),
         }),
         connect, current: () => ({ engine, collector }),
       });
@@ -3460,7 +3600,7 @@ const main = async () => {
       const baseConfig = () => ({
         providers: { stub: providerEntry('Stub', `http://127.0.0.1:${stubs.stub.port}/v1`, ['m1']) },
         ...ENGINE_SHARE_OFF,
-        experimental: { policies: policiesFor({ showOtherProviders: false, providerId: 'stub' }) },
+        policies: policiesFor({ showOtherProviders: false, providerId: 'stub' }),
       });
       const found = await probeSkillsMcp({
         home, configFile, baseConfig, stub: stubs.stub, marker, stubLog,
@@ -3478,7 +3618,7 @@ const main = async () => {
         providers: { mittr: providerEntry('Mittr', shim.baseURL, ['m1']) },
         plugins: [recorderDir, identityDir, retryDir],
         ...ENGINE_SHARE_OFF,
-        experimental: { policies: policiesFor({ showOtherProviders: false, providerId: 'mittr' }) },
+        policies: policiesFor({ showOtherProviders: false, providerId: 'mittr' }),
       });
       const client = await connect();
       result.scenarios.shim = await probeShim({ client, collector, platform, shim, shimLog, work: engine.work });
@@ -3486,7 +3626,7 @@ const main = async () => {
     } else if (only === 'outbound') {
       result.scenarios.outbound = await probeOutbound({
         OpenCode, home, configFile, hookLog, stubs, proxy,
-        onSpawn: (spawned, { control = false } = {}) => { engines.push(spawned); if (!control) engine = spawned; },
+        onSpawn: (spawned, { control = false } = {}) => { spawned.control = control; engines.push(spawned); if (!control) engine = spawned; },
       });
     } else {
 
@@ -3595,9 +3735,15 @@ const main = async () => {
     const canaryMark = Date.now();
     const canary = await tryPrompt({ client, collector, stubs, work: engine.work, providerID: 'canary' });
     const canaryAttempts = proxy.attempts.filter((a) => a.at >= canaryMark && a.host === CANARY_HOST);
+    const canaryRecorded = readEgressLog(engine.egressLog).filter((entry) => entry.at >= canaryMark && entry.host === CANARY_HOST);
     result.scenarios['proxy-control'] = {
-      pass: canaryAttempts.length > 0,
-      observed: { attempts: canaryAttempts.map(({ kind, host, port }) => ({ kind, host, port })), canaryAnswered: canary.answered, error: canary.assistantError ?? canary.events.at(-1) ?? null },
+      pass: (canaryAttempts.length > 0 || canaryRecorded.length > 0) && !canary.answered,
+      observed: {
+        attempts: canaryAttempts.map(({ kind, host, port }) => ({ kind, host, port })),
+        recorded: canaryRecorded.map(({ kind, host, port }) => ({ kind, host, port })),
+        canaryAnswered: canary.answered,
+        error: canary.assistantError ?? canary.events.at(-1) ?? null,
+      },
     };
 
     await collector.stop();
@@ -3624,6 +3770,7 @@ const main = async () => {
       proxyLoopbackAttempts: proxy.attempts.filter((a) => a.loopback).length,
       proxyNonLoopback: [...new Set(proxy.attempts.filter((a) => !a.loopback && a.host !== CANARY_HOST).map((a) => `${a.host}:${a.port}`))].sort(),
       nonLoopbackHostsInLog: nonLoopbackFromLog(logText).filter((host) => host !== CANARY_HOST).sort(),
+      engineAttempts: [...new Set(engines.filter((started) => !started.control).flatMap((started) => engineAttemptsOf(readEgressLog(started.egressLog)).filter((target) => !(started.hostedAllowed && isHostedTarget(target)))))].filter((target) => target.split(':')[0] !== CANARY_HOST),
     };
     result.stubTotals = { stub: stubs.stub.posts().length, other: stubs.other.posts().length };
     result.finishedAt = new Date().toISOString();

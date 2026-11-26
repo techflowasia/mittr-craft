@@ -46,12 +46,12 @@ export const MobileAppUpdateToast: React.FC = () => {
           void openExternalUrl(downloadUrl);
         },
       },
-      cancel: {
-        label: t('mobileUpdate.toast.actions.dismiss'),
-        onClick: () => {
+      // external: https://github.com/emilkowalski/sonner/blob/main/src/index.tsx Sonner calls onDismiss for programmatic dismissal as well as closing or swiping.
+      onDismiss: () => {
+        const current = useUpdateStore.getState();
+        if (current.available && current.info?.version === version) {
           getDeferredSafeStorage().setItem(DISMISSED_VERSION_KEY, version);
-          toast.dismiss(TOAST_ID);
-        },
+        }
       },
     });
   }, [available, downloadUrl, runtimeType, t, version]);

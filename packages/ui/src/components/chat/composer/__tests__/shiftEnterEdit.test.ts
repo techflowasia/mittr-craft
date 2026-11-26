@@ -58,9 +58,9 @@ describe('shiftEnterEdit', () => {
     expect(shiftEnterEdit(press({ key: 'a' }))).toBeNull();
   });
 
-  test('Shift+Enter that sends stays a send', () => {
+  test('Shift+Enter breaks the line, and takes the edit, with Enter-to-send turned off too', () => {
     fill();
-    expect(shiftEnterEdit(press({ enterToSendConfigured: true, enterToSend: false }))).toBeNull();
+    expect(shiftEnterEdit(press({ enterToSendConfigured: true, enterToSend: false }))).toEqual(acmeEdit);
   });
 
   test('shell mode and an open picker keep their own Enter', () => {

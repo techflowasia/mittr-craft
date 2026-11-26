@@ -1,0 +1,21 @@
+diff --git a/packages/ui/src/components/ui/AboutDialog.tsx b/packages/ui/src/components/ui/AboutDialog.tsx
+index 9cad268ec..0720f4047 100644
+--- a/packages/ui/src/components/ui/AboutDialog.tsx
++++ b/packages/ui/src/components/ui/AboutDialog.tsx
+@@ -12,6 +12,7 @@ import { Spinner } from '@/components/ui/spinner';
+ import { useI18n } from '@/lib/i18n';
+ import { getDesktopAppVersion } from '@/lib/desktopNative';
+ import { runtimeFetch } from '@/lib/runtime-fetch';
++import { ProductSlot } from '@/lib/product-plugins';
+ 
+ const VERSION_SLOT = '\u0000';
+ 
+@@ -174,6 +175,8 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
+             </div>
+           </div>
+ 
++          <ProductSlot name="about-dialog" />
++
+           {showDiagnostics && (
+             <div className="flex flex-col items-center gap-2 pt-2">
+               <button

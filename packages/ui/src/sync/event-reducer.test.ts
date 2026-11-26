@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 
 import type { SyncEvent } from "@/lib/opencode/events"
 import type { Message, Part, PermissionRequest, Session } from "@/lib/opencode/model"
+import { toolContentShellChars } from "@/lib/opencode/toolContentShells"
 import { applyDirectoryEvent, reduceGlobalEvent } from "./event-reducer"
 import { INITIAL_STATE, type State } from "./types"
 
@@ -200,9 +201,13 @@ describe("message events", () => {
   })
 
   test("a reported completion lifts the local interruption mark", () => {
-    // `interruptedTurnToolParts` closes an open turn with `{type:"aborted"}`
-    // when idle status lands before the completion event flushes.
-    const marked = assistant({ time: { created: 10, completed: 15 }, error: { type: "aborted", message: "aborted" } })
+    // `interruptedTurnToolParts` closes an open turn locally when idle status
+    // lands before the completion event flushes.
+    const marked = assistant({
+      time: { created: 10, completed: 15 },
+      error: { type: "aborted", message: "aborted" },
+      closedLocally: true,
+    })
     const draft = state({ message: { ses_1: [marked] } })
     apply(draft, {
       type: "message.patched",
@@ -210,6 +215,7 @@ describe("message events", () => {
     })
     expect(draft.message.ses_1[0]).toMatchObject({ time: { completed: 20 }, finish: "stop" })
     expect("error" in draft.message.ses_1[0]).toBe(false)
+    expect("closedLocally" in draft.message.ses_1[0]).toBe(false)
 
     // A turn that really failed keeps the error the server sent.
     const failed = state({ message: { ses_1: [marked] } })
@@ -237,6 +243,13 @@ describe("message events", () => {
     const draft = state({ message: { ses_1: [user, assistant()] } })
     apply(draft, { type: "message.patched", properties: { sessionID: "ses_1", messageID: "msg_u", patch: { time: { created: 30 } } } })
     expect(draft.message.ses_1.map((m) => m.id)).toEqual(["msg_a", "msg_u"])
+  })
+
+  test("inbox delivery clears the pending mark of a synthetic message", () => {
+    const report: Message = { id: "msg_s", sessionID: "ses_1", role: "synthetic", time: { created: 5 }, text: "result", pending: true }
+    const draft = state({ message: { ses_1: [report] } })
+    apply(draft, { type: "message.patched", properties: { sessionID: "ses_1", messageID: "msg_s", patch: { time: { created: 30 } } } })
+    expect(draft.message.ses_1[0]).toEqual({ id: "msg_s", sessionID: "ses_1", role: "synthetic", time: { created: 30 }, text: "result" })
   })
 
   test("a shell message is patched by shell id", () => {
@@ -360,6 +373,43 @@ describe("streaming parts", () => {
         properties: { sessionID: "ses_1", part: { ...done, state: { status: "running", input: { command: "ls" }, time: { start: 11 } } } },
       }),
     ).toBe(false)
+  })
+
+  test("server outcomes replace local interrupted tools and preserve their start time", () => {
+    for (const transition of [
+      { kind: "success" as const, output: "answered", executed: true, end: 15 },
+      { kind: "failed" as const, error: "form cancelled", errorType: "tool.execution", executed: true, end: 15 },
+    ]) {
+      const draft = state({ part: { msg_a: [{
+        id: "call_q", sessionID: "ses_1", messageID: "msg_a", type: "tool", callID: "call_q", tool: "question",
+        state: { status: "error", input: {}, error: "Interrupted", errorSource: "local", time: { start: 10, end: 12 } },
+      }] } })
+      apply(draft, { type: "message.tool.transition", properties: { sessionID: "ses_1", messageID: "msg_a", partID: "call_q", transition } })
+      const part = draft.part.msg_a[0]
+      expect(part).toMatchObject({ state: { status: transition.kind === "success" ? "completed" : "error", time: { start: 10, end: 15 } } })
+      if (part.type !== "tool") throw new Error("expected tool")
+      expect("errorSource" in part.state).toBe(false)
+      if (transition.kind === "failed") expect(part.state).toMatchObject({ errorType: "tool.execution" })
+    }
+  })
+
+  test("a finished read keeps no result, since its row opens the file instead", () => {
+    const draft = state()
+    apply(draft, {
+      type: "message.part.updated",
+      properties: {
+        sessionID: "ses_1",
+        part: { id: "call_r", sessionID: "ses_1", messageID: "msg_a", type: "tool", callID: "call_r", tool: "read", state: { status: "running", input: { path: "a.ts" }, time: { start: 1 } } },
+      },
+    })
+    apply(draft, {
+      type: "message.tool.transition",
+      properties: { sessionID: "ses_1", messageID: "msg_a", partID: "call_r", transition: { kind: "success", output: "file body", executed: true, end: 2 } },
+    })
+    const done = draft.part.msg_a[0]
+    if (done.type !== "tool" || done.state.status !== "completed") throw new Error("expected completed tool")
+    expect(done.state).toEqual({ status: "completed", input: { path: "a.ts" }, output: "", metadata: { openchamberContentShell: { chars: 9 } }, time: { start: 1, end: 2 } })
+    expect(toolContentShellChars(done)).toBe(9)
   })
 
   test("a transition for an unknown call asks for materialization", () => {

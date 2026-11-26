@@ -15,21 +15,40 @@ const srcDir = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const COMMENT_INPUTS: Array<{ name: string; file: string; handler: string; guard: RegExp }> = [
   {
-    name: 'diff and file comments',
-    file: 'components/comments/InlineCommentInput.tsx',
+    // Chat quote comments and editing a pending comment above the composer
+    // type into this field.
+    name: 'comment text field',
+    file: 'components/comments/CommentTextEditor.tsx',
     handler: 'const handleKeyDown',
-    guard: /isIMECompositionEvent\(e\)\) return;/,
+    guard: /isIMECompositionEvent\(event\)\) return false;/,
   },
   {
-    name: 'chat quote comments',
-    file: 'components/chat/message/TextSelectionMenu.tsx',
-    handler: 'ref={commentInputRef}',
+    // Diff, file editor and file preview comments: a textarea, since the field
+    // lives inside other editors' DOM.
+    name: 'inline line comment',
+    file: 'components/comments/InlineCommentInput.tsx',
+    handler: 'const handleKeyDown',
     guard: /isIMECompositionEvent\(event\)\) return;/,
   },
   {
-    name: 'composer context chip editor',
-    file: 'components/chat/composer/ui/ComposerContextChips.tsx',
-    handler: 'ref={editRef}',
+    // Mobile selection comment: the shell replaces the composer, so its Enter
+    // attaches the comment (with "Return key sends" on) rather than sending.
+    name: 'mobile selection comment',
+    file: 'components/chat/composer/comment/MobileCommentComposer.tsx',
+    handler: 'const handleKeyDown',
+    guard: /isIMECompositionEvent\(event\)\) return false;/,
+  },
+  {
+    name: 'issues and PRs board reply',
+    file: 'components/sourceBoard/SourceBoardReply.tsx',
+    handler: 'const onKeyDown',
+    guard: /isIMECompositionEvent\(event\)\) return;/,
+  },
+  {
+    // The comment attached to a marked quote in a message.
+    name: 'quote mark comment',
+    file: 'components/chat/message/ChatQuoteMarkPopover.tsx',
+    handler: 'onKeyDown={(event) => {',
     guard: /isIMECompositionEvent\(event\)\) return;/,
   },
   {
@@ -53,12 +72,27 @@ describe('comment inputs ignore IME composition keystrokes', () => {
       const start = source.indexOf(input.handler);
       expect(start).toBeGreaterThan(-1);
 
-      const handler = source.slice(start, start + 900);
+      // From the input to the end of its key handler; the selection comment's
+      // input carries change, select and paste handlers before it.
+      const handler = source.slice(start, start + 1500);
       const guardIndex = handler.search(input.guard);
       const keyIndex = handler.search(/(event|e)\.key === '(Enter|Escape)'/);
 
       expect(guardIndex).toBeGreaterThan(-1);
       expect(keyIndex).toBeGreaterThan(guardIndex);
+    });
+  }
+});
+
+describe('comment surfaces type into the guarded comment field', () => {
+  for (const file of [
+    'components/chat/message/TextSelectionMenu.tsx',
+    'components/chat/composer/ui/ComposerContextRows.tsx',
+  ]) {
+    test(file, () => {
+      const source = readFileSync(join(srcDir, file), 'utf-8');
+      expect(source).toContain('<CommentTextEditor');
+      expect(source).not.toContain('<textarea');
     });
   }
 });

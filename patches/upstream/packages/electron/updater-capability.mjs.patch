@@ -1,17 +1,21 @@
 diff --git a/packages/electron/updater-capability.mjs b/packages/electron/updater-capability.mjs
-index 049b24713..7df0c603b 100644
+index 87e73f3f3..d4cc185d8 100644
 --- a/packages/electron/updater-capability.mjs
 +++ b/packages/electron/updater-capability.mjs
-@@ -1,13 +1,16 @@
+@@ -1,5 +1,6 @@
  import fs from 'node:fs';
  import path from 'node:path';
 +import { UPSTREAM_PRODUCT } from './product.mjs';
  
+ export const readLinuxPackageType = (resourcesPath = process.resourcesPath) => {
+   try {
+@@ -12,11 +13,13 @@ export const readLinuxPackageType = (resourcesPath = process.resourcesPath) => {
  export const assertUpdaterCapability = ({
    platform = process.platform,
    packaged,
 +  updaterFeed = UPSTREAM_PRODUCT.updaterFeed,
    appImagePath = process.env.APPIMAGE,
+   packageType = readLinuxPackageType(),
    access = fs.accessSync,
    stat = fs.statSync,
  } = {}) => {
@@ -19,7 +23,7 @@ index 049b24713..7df0c603b 100644
    if (platform !== 'linux' || !packaged) return;
  
    if (!appImagePath) {
-@@ -33,3 +36,10 @@ export const assertUpdaterCapability = ({
+@@ -43,3 +46,10 @@ export const assertUpdaterCapability = ({
      );
    }
  };

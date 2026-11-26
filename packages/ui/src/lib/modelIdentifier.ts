@@ -19,13 +19,7 @@ export const parseModelIdentifier = (value: string | undefined): ParsedModelIden
   };
 };
 
-/**
- * A model reference as OpenCode 2 stores it in config: `providerID/modelID`
- * with an optional `#variant` suffix. The split/join pair mirrors
- * `parseModelSelection`/`formatModelSelection` in the server's `config-v2.js`
- * so the Settings UI and the config writer agree on one spelling.
- */
-export interface ModelSelection {
+interface ModelSelection {
   providerID: string;
   modelID: string;
   variant?: string;

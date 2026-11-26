@@ -8,7 +8,7 @@ const askable = ({ title, message, detail, confirmLabel, cancelLabel } = {}) => 
   && textWithin(confirmLabel, LIMITS.label)
   && textWithin(cancelLabel, LIMITS.label);
 
-export const createHostConfirm = ({ dialog, windows, log = console }) => {
+export const createHostConfirm = ({ dialog, windows, showWindow, log = console }) => {
   let asking = false;
   return async (question) => {
     if (asking || !askable(question)) return false;
@@ -16,7 +16,7 @@ export const createHostConfirm = ({ dialog, windows, log = console }) => {
     try {
       const visible = windows().find((window) => !window.isDestroyed() && window.isVisible());
       if (visible) {
-        visible.show();
+        showWindow(visible);
         visible.focus();
       }
       const options = {

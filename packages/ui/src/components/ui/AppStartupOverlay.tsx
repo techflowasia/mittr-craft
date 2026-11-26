@@ -1,12 +1,22 @@
 import React from 'react';
 import { motion, useReducedMotion } from 'motion/react';
+import { useI18n } from '@/lib/i18n';
 import { OpenChamberLogo } from './OpenChamberLogo';
 
-// Mount only alongside the real app shell. Earlier auth/connection loaders
-// hand off without fading; this is the single reveal of the interactive UI.
+const SLOW_START_HINT_DELAY_MS = 10_000;
+
 export const AppStartupOverlay: React.FC<{ ready: boolean; animated?: boolean }> = ({ ready, animated = false }) => {
+  const { t } = useI18n();
   const [dismissed, setDismissed] = React.useState(false);
+  const [slow, setSlow] = React.useState(false);
   const reducedMotion = useReducedMotion();
+
+  React.useEffect(() => {
+    if (ready) return;
+    setSlow(false);
+    const timer = setTimeout(() => setSlow(true), SLOW_START_HINT_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [ready]);
 
   if (dismissed) return null;
 
@@ -23,6 +33,11 @@ export const AppStartupOverlay: React.FC<{ ready: boolean; animated?: boolean }>
       style={{ pointerEvents: ready ? 'none' : 'auto' }}
     >
       <OpenChamberLogo width={120} height={120} isAnimated={animated} variant="splash" />
+      {slow ? (
+        <p role="status" className="absolute inset-x-0 top-[calc(50%+84px)] px-6 text-center typography-small text-muted-foreground">
+          {t('startup.overlay.slow')}
+        </p>
+      ) : null}
     </motion.div>
   );
 };

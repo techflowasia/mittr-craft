@@ -1,8 +1,5 @@
 import type { Extension } from '@codemirror/state';
 
-// Static imports for the most common languages only.
-// Less common languages are loaded dynamically via loadLanguageByExtension
-// to keep the initial bundle lean.
 import { javascript } from '@codemirror/lang-javascript';
 import { json } from '@codemirror/lang-json';
 import { css } from '@codemirror/lang-css';
@@ -14,6 +11,7 @@ import { python } from '@codemirror/lang-python';
 import { Language, LanguageDescription, StreamLanguage, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags as t } from '@lezer/highlight';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
+import { getLanguageFromExtension } from '@/lib/toolHelpers';
 
 const shellLanguage = StreamLanguage.define(shell);
 
@@ -70,7 +68,15 @@ const matchLanguageDescriptionForFile = (filePath: string): LanguageDescription 
   if (!filename) {
     return null;
   }
-  return LanguageDescription.matchFilename(languages, filename);
+  const byFilename = LanguageDescription.matchFilename(languages, filename);
+  if (byFilename) {
+    return byFilename;
+  }
+  const languageName = getLanguageFromExtension(filePath);
+  if (!languageName || languageName === 'text') {
+    return null;
+  }
+  return LanguageDescription.matchLanguageName(languages, languageName);
 };
 
 const markdownHighlight = () => syntaxHighlighting(HighlightStyle.define([
@@ -79,7 +85,7 @@ const markdownHighlight = () => syntaxHighlighting(HighlightStyle.define([
   { tag: t.emphasis, fontStyle: 'italic' },
   { tag: t.strikethrough, textDecoration: 'line-through' },
   { tag: [t.link, t.url], color: 'var(--markdown-link, currentColor)', textDecoration: 'underline' },
-  { tag: t.monospace, backgroundColor: 'var(--surface-muted)' },
+  { tag: t.monospace, backgroundColor: 'color-mix(in srgb, var(--surface-muted) 30%, transparent)' },
   { tag: t.quote, color: 'var(--markdown-blockquote, currentColor)', fontStyle: 'italic' },
   { tag: t.list, color: 'color-mix(in srgb, var(--muted-foreground) 40%, var(--foreground) 60%)' },
   { tag: t.heading, color: 'var(--syntax-foreground)' },
@@ -89,11 +95,9 @@ export function languageByExtension(filePath: string): Extension | null {
   const normalized = filePath.toLowerCase();
   const filename = normalizeFileName(normalized);
 
-  // Special filenames
   switch (filename) {
     case 'makefile':
     case 'gnumakefile':
-      // No dedicated mode; shell is a decent fallback for Make-ish files.
       return shellLanguage;
   }
 
@@ -101,7 +105,6 @@ export function languageByExtension(filePath: string): Extension | null {
   const ext = idx >= 0 ? normalized.slice(idx + 1) : '';
 
   switch (ext) {
-    // JavaScript/TypeScript (most common — keep static)
     case 'ts':
     case 'tsx':
     case 'mts':
@@ -113,7 +116,6 @@ export function languageByExtension(filePath: string): Extension | null {
     case 'cjs':
       return javascript({ typescript: false, jsx: ext === 'jsx' });
 
-    // Web (keep static)
     case 'json':
     case 'jsonc':
     case 'json5':
@@ -146,7 +148,6 @@ export function languageByExtension(filePath: string): Extension | null {
         markdownHighlight(),
       ];
 
-    // Shell (keep static)
     case 'sh':
     case 'bash':
     case 'zsh':
@@ -154,14 +155,11 @@ export function languageByExtension(filePath: string): Extension | null {
     case 'env':
       return shellLanguage;
 
-    // Python (very common — keep static)
     case 'py':
     case 'pyw':
     case 'pyi':
       return python();
 
-    // Less common languages: return null so callers fall back to
-    // loadLanguageByExtension which dynamically imports from @codemirror/language-data.
     default:
       return null;
   }

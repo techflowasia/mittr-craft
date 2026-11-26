@@ -15,10 +15,28 @@
       "why": "Knip does not follow the product UI plugin's test files either, so the mittr-ui workspace names its spec files as entries too and the dead-code report stays identical to the base."
     }
   ],
+  "packages/electron/README.md": [
+    {
+      "hook": "desktop-build",
+      "why": "Documents the MittrCraft builder's ZIP-only macOS target and which test files it leaves out of the packaged server, next to upstream's own build notes."
+    },
+    {
+      "hook": "electron",
+      "why": "The desktop README's MittrCraft paragraph describes the 2.7.3 build: the packed OpenCode server in place of the CLI and the server build step that tests run from source without."
+    },
+    {
+      "hook": "desktop-build",
+      "why": "The MittrCraft build paragraph covers what the build strips from the package and checks."
+    }
+  ],
   "packages/electron/deep-link-registry.mjs": [
     {
       "hook": "electron-host",
       "why": "A plugin needs to receive deep links on its own hosts, so this registry lets it claim a host (never one the app owns), and the app's dispatcher offers it every link before its own handling."
+    },
+    {
+      "hook": "electron-host",
+      "why": "Extension links, new in 2.7, belong to the app, so a plugin cannot take them over."
     }
   ],
   "packages/electron/early-startup.mjs": [
@@ -35,12 +53,20 @@
     {
       "hook": "electron",
       "why": "A rebranded build has to change the app name, deep-link scheme, user-model id, default desktop port, help links and update feed without patching each constant by hand."
+    },
+    {
+      "hook": "product",
+      "why": "The in-app browser no longer tells sites the product's own name and version, as upstream's plain user agent intends."
     }
   ],
   "packages/electron/host-confirm.mjs": [
     {
       "hook": "electron-host",
       "why": "A plugin's question for the person is shown as a native message box over the visible window, with cancel as the default and the confirm label as the only yes; a question with missing or oversized text, a dialog that fails, and a second question while one is open are all answered no."
+    },
+    {
+      "hook": "electron-host",
+      "why": "Shows the window through the shell's showWindow, which clears a pending hide; a raw show left the window to vanish on the next full screen."
     }
   ],
   "packages/electron/main.mjs": [
@@ -50,7 +76,7 @@
     },
     {
       "hook": "menu",
-      "why": "The native menus take their labels from per-locale tables that spell the app's name inside them (\"About OpenChamber\", \"Über OpenChamber\", the application menu title and so on, in every language), so a product with its own name showed upstream's name in the menu bar."
+      "why": "The native menus take their labels from per-locale tables that spell the app's name inside them (\"About OpenChamber\", \"\u00dcber OpenChamber\", the application menu title and so on, in every language), so a product with its own name showed upstream's name in the menu bar."
     },
     {
       "hook": "updater",
@@ -67,6 +93,28 @@
     {
       "hook": "electron-host",
       "why": "A plugin that must not act on a request until the person at this Mac agrees (turning on something that runs on its own) had no way to ask through the operating system, where no other process can answer for them, so the desktop shell now also passes plugins confirm(question), which shows a native dialog with the cancel button as the default."
+    },
+    {
+      "hook": "electron-host",
+      "why": "A window brought back for a handled link goes through showWindow, as every other show in the shell does."
+    },
+    {
+      "hook": "desktop-build",
+      "why": "The log library's preload is off: nothing uses it, and it resolved to a path on the machine that built the app."
+    },
+    {
+      "hook": "product",
+      "why": "The in-app browser no longer tells sites the product's own name and version, as upstream's plain user agent intends."
+    }
+  ],
+  "packages/electron/pairing-deep-link.mjs": [
+    {
+      "hook": "electron",
+      "why": "A pairing link that carries no label named the new host after upstream's app, so a rebranded build showed OpenChamber in its host list. parsePairingDeepLink takes a fallbackLabel, which the desktop shell sets to the product's app name; without it the label is upstream's as before."
+    },
+    {
+      "hook": "electron",
+      "why": "A pairing link in the product's scheme is handed to the window in the scheme its parser reads; otherwise connecting failed."
     }
   ],
   "packages/electron/product-runtime.mjs": [
@@ -103,6 +151,10 @@
     {
       "hook": "product",
       "why": "A product could only force environment values over the launch environment, so a value a development run should be able to point elsewhere (a service URL, say) had no default a launch could still override; envDefaults fill only variables the launch left unset or blank."
+    },
+    {
+      "hook": "product",
+      "why": "Removes the product's own token from a user agent string."
     }
   ],
   "packages/electron/secret-store.mjs": [
@@ -127,6 +179,12 @@
       "why": "The wait before asking again after a no was measured on the wall clock, so setting the system clock backwards could keep a no for as long as the clock had moved; it is now measured on the monotonic clock."
     }
   ],
+  "packages/electron/test-support/native-electron.mjs": [
+    {
+      "hook": "secret-store",
+      "why": "The desktop shell now imports safeStorage for the plugin secret store, so the shared native substitute the electron tests load offers it too."
+    }
+  ],
   "packages/electron/updater-capability.mjs": [
     {
       "hook": "electron",
@@ -141,6 +199,10 @@
     {
       "hook": "electron",
       "why": "A rebranded build has to change the app name, deep-link scheme, user-model id, default desktop port, help links and update feed without patching each constant by hand."
+    },
+    {
+      "hook": "electron",
+      "why": "The default feed is recognised by value, so a build without its own feed keeps upstream's channels and mirrors."
     }
   ],
   "packages/ui/src/apps/renderElectronMiniChatApp.tsx": [
@@ -175,12 +237,6 @@
       "why": "A plugin that words the line under the sign-in title could not tell a local desktop, which has no company sign-in to offer, from a web or remote window, so the gate now also gives it the runtime it is in."
     }
   ],
-  "packages/ui/src/components/chat/ChatInput.tsx": [
-    {
-      "hook": "composer-shift-enter",
-      "why": "A build that edits text on Shift+Enter (continuing a Markdown list) had no way in short of editing the composer's key handler; the handler now asks shiftEnterEdit after the history keys and before the send branch, applies an answer as one editor edit and consumes the key, and with no plugin, or for plain Enter, a key that sends, shell mode or an open picker, nothing changes."
-    }
-  ],
   "packages/ui/src/components/chat/ChatMessage.tsx": [
     {
       "hook": "chat-message",
@@ -193,6 +249,14 @@
     {
       "hook": "main-surface",
       "why": "A downstream build that styles assistant replies as bubbles had no stable hook on the assistant message body, as user messages already have data-user-message-bubble; the assistant body container now carries data-assistant-bubble, which changes nothing on its own."
+    },
+    {
+      "hook": "chat-message",
+      "why": "2.7.3 draws one long reply as several rows that share its record, so the product footer slot repeated on every row; it now renders on the row that ends the message, as upstream's own footer does."
+    },
+    {
+      "hook": "chat-message",
+      "why": "One turn is drawn as several assistant messages, and a build that styles replies as bubbles drew each step as a card of its own, stacked and touching; the assistant body now says which of its edges meet another step of the same turn, which changes nothing on its own."
     }
   ],
   "packages/ui/src/components/chat/ModelControls.tsx": [
@@ -217,6 +281,40 @@
       "why": "The phone-sized model sheet builds its own rows, so an entry a product plugin marked as unavailable could still be applied there by its row, its effort chips or its more-efforts panel and showed no mark; the sheet now draws the same status pill and disables those buttons for a blocked entry, and without a plugin it is unchanged."
     }
   ],
+  "packages/ui/src/components/chat/SessionErrorNotice.tsx": [
+    {
+      "hook": "session-retry",
+      "why": "The verified unanswered notice also offers Retry while the session is idle, reusing its own availability check instead of adding another silence timer."
+    }
+  ],
+  "packages/ui/src/components/chat/SessionRetry.tsx": [
+    {
+      "hook": "session-retry",
+      "why": "The Retry control shown for the latest failed, interrupted or length-limited turn while the session is verified idle."
+    },
+    {
+      "hook": "session-retry",
+      "why": "A click whose turn had already gone resolved silently; it now fails visibly."
+    }
+  ],
+  "packages/ui/src/components/chat/SessionRetryControl.tsx": [
+    {
+      "hook": "session-retry",
+      "why": "The button and stop-and-continue confirmation used by the Retry control."
+    }
+  ],
+  "packages/ui/src/components/chat/column/ChatViewport.tsx": [
+    {
+      "hook": "session-retry",
+      "why": "A failed, interrupted or length-limited reply needs a Retry control in the chat, mounted beside the existing session error notice."
+    }
+  ],
+  "packages/ui/src/components/chat/composer/input/createComposerKeyHandler.ts": [
+    {
+      "hook": "composer-shift-enter",
+      "why": "A build that edits text on Shift+Enter (continuing a Markdown list) had no way in short of editing the composer's key handler; the handler now asks shiftEnterEdit after the history keys and before the send branch, applies an answer as one editor edit and consumes the key, and with no plugin, or for plain Enter, a key that sends, shell mode or an open picker, nothing changes."
+    }
+  ],
   "packages/ui/src/components/chat/composer/shiftEnterEdit.ts": [
     {
       "hook": "composer-shift-enter",
@@ -227,6 +325,12 @@
     {
       "hook": "composer-actions",
       "why": "A downstream build adds its own composer action beside the microphone (a voice assistant button) and can hold dictation off with a reason, without editing the footer on every upstream release. With no plugin nothing changes."
+    }
+  ],
+  "packages/ui/src/components/chat/sessionRetry.i18n.ts": [
+    {
+      "hook": "session-retry",
+      "why": "The Retry control's label, note, failure text and stop-and-continue confirmation in every shipped language, kept beside the control so upstream's message files stay untouched."
     }
   ],
   "packages/ui/src/components/layout/ContextSidebarTab.tsx": [
@@ -281,6 +385,10 @@
     {
       "hook": "about",
       "why": "The About page had no place for a product's own row, so a build that offers one there (signing out) would have had to edit the page; a slot after the update rows renders nothing when no plugin fills it."
+    },
+    {
+      "hook": "updater-ui",
+      "why": "With no update channel the page always offered the engine check, which can never find anything for an engine bundled with the app; it is now hidden there and kept for an engine the app does not pack."
     }
   ],
   "packages/ui/src/components/sections/providers/ProviderGrid.tsx": [
@@ -292,7 +400,7 @@
   "packages/ui/src/components/session/sidebar/shell/SidebarFooter.tsx": [
     {
       "hook": "sidebar-footer",
-      "why": "The sidebar footer had no place for a product's own control, so a build that adds one there (an account menu) would have had to edit the footer; a slot after the settings, usage, shortcuts and about buttons renders nothing when no plugin fills it and is shown wherever those buttons are."
+      "why": "The sidebar footer had no place for a product's own control, so a build that adds one there (an account menu) would have had to edit the footer; a slot after the settings button renders nothing when no plugin fills it and is shown wherever that button is."
     }
   ],
   "packages/ui/src/components/ui/AboutDialog.tsx": [
@@ -323,6 +431,12 @@
     {
       "hook": "ui",
       "why": "A build that bundles this UI needs a way to rename the product and swap the mark without editing UI source on every upstream release."
+    }
+  ],
+  "packages/ui/src/lib/opencode/client.ts": [
+    {
+      "hook": "session-retry",
+      "why": "Retry must re-read the transcript at the last moment before a prompt is admitted and remember that it dispatched, so the prompt call takes optional before-dispatch and on-dispatch callbacks; other callers are unchanged."
     }
   ],
   "packages/ui/src/lib/product-plugins.ts": [
@@ -389,6 +503,22 @@
     {
       "hook": "font-options",
       "why": "A product plugin can now give fontOptions, { ui, mono } lists of options with an id, label, description and stack and no source, and productFontOptions(kind) returns every plugin's options of one kind for the font option lists to merge in."
+    },
+    {
+      "hook": "tool-names",
+      "why": "A product plugin may name the tools its build adds."
+    }
+  ],
+  "packages/ui/src/lib/quota/fetchQuota.ts": [
+    {
+      "hook": "quota-refresh",
+      "why": "Quota windows and models are keyed by names the server chooses, so they are validated as own entries; a record schema would silently drop a key named __proto__."
+    }
+  ],
+  "packages/ui/src/lib/quota/ownEntries.ts": [
+    {
+      "hook": "quota-refresh",
+      "why": "The shared own-entries schema for quota payloads keyed by server-chosen names."
     }
   ],
   "packages/ui/src/lib/quota/providers/index.ts": [
@@ -399,6 +529,16 @@
     {
       "hook": "quota-ui",
       "why": "A build that reports usage from its own source may not want upstream's built-in providers on the Usage page, where listing them makes the page ask the server for each one, so registerQuotaProvider takes an exclusive option that leaves only the providers registered at run time on the list."
+    },
+    {
+      "hook": "quota-refresh",
+      "why": "A product has to refresh its own data whenever a provider's usage is refreshed, so a provider can register a refresh hook that runs alongside the ordinary quota read and can never block or fail it."
+    }
+  ],
+  "packages/ui/src/lib/toolHelpers.ts": [
+    {
+      "hook": "tool-names",
+      "why": "A tool a downstream build adds showed the words of its id as its name in the chat; a product plugin may now name it, and without a plugin the name is made from the id as before."
     }
   ],
   "packages/ui/src/main.tsx": [
@@ -411,10 +551,32 @@
       "why": "A product plugin could only rename the product and swap the logo, so a build that needs its own sign-in screen, account menu, model-picker marks or composer actions would have had to edit each upstream component; a root wrapper and named slots that render nothing when no plugin fills them let it add those at one-line call sites."
     }
   ],
-  "packages/ui/src/stores/useConfigStore.ts": [
+  "packages/ui/src/stores/DOCUMENTATION.md": [
+    {
+      "hook": "quota-refresh",
+      "why": "Documents the quota refresh hook, single-provider invalidation and the optional auto-refresh consumer."
+    },
+    {
+      "hook": "project-context",
+      "why": "Documents the project todo save ordering and the runtime-switch fence."
+    }
+  ],
+  "packages/ui/src/stores/config/metadata.ts": [
     {
       "hook": "model-catalog",
       "why": "A build that brings its own model list had no way to keep the window from asking models.dev for model metadata (when the server cannot answer) and for provider logos the UI does not bundle, which tells a third party the app is running; a product plugin that sets remoteModelCatalog to false now stops both, and without one nothing changes."
+    }
+  ],
+  "packages/ui/src/stores/useProjectContextStore.ts": [
+    {
+      "hook": "project-context",
+      "why": "Quick todo edits in the project notes panel could be undone: an earlier or failed save, or a load that started before a save, replaced newer todos. Todo saves now track a revision and the last confirmed list, and writes queued before a runtime switch are refused instead of reaching the new runtime."
+    }
+  ],
+  "packages/ui/src/stores/useQuotaStore.ts": [
+    {
+      "hook": "quota-refresh",
+      "why": "The store runs a provider's refresh hook beside the ordinary read and can drop just one provider's result after an account change."
     }
   ],
   "packages/ui/src/stores/useUpdateStore.ts": [
@@ -423,7 +585,381 @@
       "why": "A browser or remote client asks the server it is connected to for updates, and the store rebuilds that answer from a fixed list of fields, which dropped `updatesDisabled`."
     }
   ],
-  "packages/web/server/index.js": [
+  "packages/ui/src/sync/DOCUMENTATION.md": [
+    {
+      "hook": "session-retry",
+      "why": "Documents how a user-requested continuation works and what it cannot guarantee."
+    },
+    {
+      "hook": "session-retry",
+      "why": "Documents which failures release a continued turn and that a suppressed click throws."
+    }
+  ],
+  "packages/ui/src/sync/session-retry.ts": [
+    {
+      "hook": "session-retry",
+      "why": "Continues a failed turn in the same chat with a short continuation message, serialized per session and revalidated against the server transcript and status first."
+    },
+    {
+      "hook": "session-retry",
+      "why": "A prompt the engine answered with a rejection left the turn suppressed, and a suppressed click returned silently, so Retry became a dead button; an answered, unambiguous rejection now releases the turn and a suppressed click throws so the control says so."
+    }
+  ],
+  "packages/web/server/DOCUMENTATION.md": [
+    {
+      "hook": "server-plugins",
+      "why": "Upstream's lint takes no code comments, so the server plugin contract (hook order, dispose order, the plugin environment on every engine call, the host app version) is written in the server's module docs instead of beside the code."
+    },
+    {
+      "hook": "session-goal-review",
+      "why": "Goal mode kept re-prompting a session whose turns looped (the same command 35 times, edits that changed nothing) and had no way for a build to look at a turn before the next nudge or to save work first. The runtime now asks the server plugins once, right before each continuation; a plugin may add a note to the prompt or have the goal settled as blocked with its reason through the existing settlement notification. Without a plugin that answers, the prompt and the loop are unchanged."
+    },
+    {
+      "hook": "session-goal-review",
+      "why": "A build that saves work before each continuation needs to clean up when a goal completes or is cleared, so the runtime now tells server plugins (goalEnded) about those two endings. A review that timed out is no longer run alongside the next one for the same session, and a block from a review only settles a goal that is still the same, still active and not resumed during the review."
+    }
+  ],
+  "packages/web/server/lib/agent-tool/runtime.ts": [
+    {
+      "hook": "agent-tool-token",
+      "why": "The agent tool plugin read its callback token from the engine's environment on every call, so the token stayed there and every process the engine starts (its shell commands, terminals, MCP servers and formatters) inherited it and could call the callback as the agent tool; the plugin now moves the token out of the environment when it loads, keeps it for the engine process alone, and still finds it after the engine reloads the plugin."
+    }
+  ],
+  "packages/web/server/lib/context-obligatory/runtime.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "Restored context is a synthetic message sent into the session, so it is not admitted while a response recovery owns that session, and restoration is exposed as one awaitable, cancellable operation per session."
+    }
+  ],
+  "packages/web/server/lib/dispatch-results/runtime.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "A dispatched session's result wakes its parent with a new message, so delivery waits while a response recovery owns the child or the parent instead of racing the continuation."
+    }
+  ],
+  "packages/web/server/lib/enterprise-mode.ts": [
+    {
+      "hook": "enterprise",
+      "why": "A build shipped under another name has administrators who place its policy in that product's own folder, not OpenChamber's."
+    }
+  ],
+  "packages/web/server/lib/event-stream/translate-v2.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "The response-length failure is recognised from the provider's structured response body, which the v2 event translation dropped; the body now passes through with the error."
+    }
+  ],
+  "packages/web/server/lib/fs/routes.ts": [
+    {
+      "hook": "fs",
+      "why": "GET /api/fs/home resolved the legacy chats root under a fixed ~/.config/openchamber, so a server with its own OPENCHAMBER_DATA_DIR still reached into the default install's folder."
+    }
+  ],
+  "packages/web/server/lib/git/service.ts": [
+    {
+      "hook": "git-integrate",
+      "why": "Moving commits between worktrees checks the target branch out in a temporary worktree under a fixed ~/.config/openchamber/tmp, even when OPENCHAMBER_DATA_DIR puts the rest of the server's state elsewhere."
+    }
+  ],
+  "packages/web/server/lib/limit-failover/runtime.ts": [
+    {
+      "hook": "agent-tool-token",
+      "why": "The agent tool plugin moves the callback token out of the engine's environment, so the limit failover plugin, which read it only there, never reached the server and no failover happened; it now takes the token from the same slot and removes it from the environment when it loads first."
+    }
+  ],
+  "packages/web/server/lib/message-queue/runtime.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "A queued follow-up is new input from the person: it cancels a pending recovery, and a session that a recovery owns does not dispatch its queue at the same time."
+    }
+  ],
+  "packages/web/server/lib/openchamber-sessions/archive-store.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "Recovery has to tell a known-empty archive from one rebuilt after the file was unreadable, so the load result says whether it is authoritative; existing callers see the same answer as before."
+    }
+  ],
+  "packages/web/server/lib/openchamber-sessions/opencode-client.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "Session routes must send through the recovery admission gate, so the client takes the fetch it should use."
+    }
+  ],
+  "packages/web/server/lib/openchamber-sessions/routes.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "Archiving a session or continuing from it is new intent from the person, so it cancels that session's pending recovery first and refuses while the recovery's admission is uncertain."
+    }
+  ],
+  "packages/web/server/lib/opencode/DOCUMENTATION.md": [
+    {
+      "hook": "session-response-recovery",
+      "why": "Documents the restart, shutdown and readiness seams the recovery owner depends on."
+    }
+  ],
+  "packages/web/server/lib/opencode/lifecycle.ts": [
+    {
+      "hook": "opencode",
+      "why": "The V1 session top-up rewrites the migration cursor in OpenCode's database before the managed OpenCode starts, and it always looked for that database at ~/.local/share/opencode/opencode.db."
+    },
+    {
+      "hook": "engine-env",
+      "why": "Server plugins hand the managed OpenCode an environment that moves its config, data, state and cache folders, but the binary preflight, the compatibility version read, the v2 install and the CLI upgrade still ran the binary with the plain process environment, so each of them created and wrote the engine's default folders (its log among them) next to the ones the server actually uses."
+    },
+    {
+      "hook": "server-plugins",
+      "why": "A build's server plugin needed more of the server than the app, data dir and logger (the express module, the bound port, settings, UI events, the managed OpenCode and its readiness, git, request scope and shutdown) and had no way to add engine config, so a downstream build would have had to edit upstream's server for each provider, policy or plugin it adds."
+    },
+    {
+      "hook": "lifecycle",
+      "why": "The first start stored its process only once it had spawned, so a restart that arrived meanwhile (a config change right after the server began listening) found nothing to close and spawned a second engine, leaving one of the two running with no owner; starts and restarts now take turns."
+    },
+    {
+      "hook": "lifecycle",
+      "why": "A restart that arrived during the orphan reap, before the first start had joined the launch queue, still left bootstrap to spawn a second engine once the restart had started one, so bootstrap now skips its start when a restart already started the engine, and still replaces a process left over from a hot reload."
+    },
+    {
+      "hook": "session-response-recovery",
+      "why": "Recovery must stop admitting work before the engine restarts and reopen only once it is ready, so a restart awaits a drain first and every path that reaches readiness, external and reused engines included, notifies exactly once."
+    },
+    {
+      "hook": "v1-topup",
+      "why": "The bundled OpenCode 2.3 server has no importer for 1.x sessions, so reopening a finished import only left a cursor that an older engine would later resume over newer turns; the top-up is skipped for the bundled server."
+    },
+    {
+      "hook": "server-plugins",
+      "why": "After a launch that failed for good the server still reported the previous launch's data home, so a plugin could take a dead engine for a live one; the launch environment is forgotten then."
+    }
+  ],
+  "packages/web/server/lib/opencode/managed-config-file.ts": [
+    {
+      "hook": "managed-config",
+      "why": "A downstream build adds providers, policies and plugins to the managed OpenCode by returning a config fragment from its server plugin, which the managed config writer puts in the managed OPENCODE_CONFIG file beside OpenChamber's own plugins, keeping that layer even when the user set OPENCODE_CONFIG (their file and OPENCODE_CONFIG_CONTENT then move into OPENCODE_CONFIG_CONTENT), instead of editing upstream's writer."
+    },
+    {
+      "hook": "managed-config",
+      "why": "OpenCode lets a policy in OPENCODE_CONFIG outrank project config and OPENCODE_CONFIG_CONTENT, but a user's own OPENCODE_CONFIG file outranked a contribution merged into OPENCODE_CONFIG_CONTENT, so a contributed config now keeps the OPENCODE_CONFIG layer and the user's file and content move into OPENCODE_CONFIG_CONTENT."
+    },
+    {
+      "hook": "share-pages",
+      "why": "Shared pages upload through upstream's relay and were on by default; OPENCHAMBER_SHARE_PAGES_DISABLED takes the share option away from the agent tool and reports sharing as unavailable."
+    }
+  ],
+  "packages/web/server/lib/opencode/proxy.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "Mutating session requests that pass straight through the proxy count as admissions a recovery can wait for, while Stop is never queued behind the reply it interrupts. It is switched off (responseRecoveryActivationVerified is false) and then inert, because review showed it can block sending until a relaunch; the module docs list what must change first."
+    }
+  ],
+  "packages/web/server/lib/opencode/routes.ts": [
+    {
+      "hook": "update-check",
+      "why": "The engine update check asked the package registry about an engine bundled with the app, which it never offers to update; with OPENCHAMBER_UPDATE_CHECK_DISABLED it answers without asking."
+    }
+  ],
+  "packages/web/server/lib/permission-auto-accept/contracts.ts": [
+    {
+      "hook": "permission-auto-accept",
+      "why": "A downstream build has permission requests that must always reach the person, such as a question about signing in to a site, whatever permission mode the session is in, and the auto-accept runtime had no way to leave one for the user: an auto session answered it within milliseconds and a safety session handed it to the classifier. A server plugin may now return neverAutoAnswer(permission), and a request any plugin marks (or whose check throws) is held for the user in every mode, announced as left for the user, and never counted as answered automatically. With no plugin that marks a request nothing changes."
+    }
+  ],
+  "packages/web/server/lib/permission-auto-accept/runtime.ts": [
+    {
+      "hook": "permission-auto-accept",
+      "why": "A downstream build has permission requests that must always reach the person, such as a question about signing in to a site, whatever permission mode the session is in, and the auto-accept runtime had no way to leave one for the user: an auto session answered it within milliseconds and a safety session handed it to the classifier. A server plugin may now return neverAutoAnswer(permission), and a request any plugin marks (or whose check throws) is held for the user in every mode, announced as left for the user, and never counted as answered automatically. With no plugin that marks a request nothing changes."
+    },
+    {
+      "hook": "permission-auto-accept",
+      "why": "Tells the guard whether one open request is left for the person."
+    }
+  ],
+  "packages/web/server/lib/quota/DOCUMENTATION.md": [
+    {
+      "hook": "quota-refresh",
+      "why": "Documents the request scope a registered quota provider can supply."
+    }
+  ],
+  "packages/web/server/lib/quota/providers/index.ts": [
+    {
+      "hook": "quota-server",
+      "why": "A build's server plugin that has its own usage source had no way to show it on the Usage page, because the quota registry was a fixed table, so the provider list and the dispatcher now also read the providers registered at run time."
+    },
+    {
+      "hook": "quota-server",
+      "why": "A build that reports usage from its own source may not want upstream's built-in quota providers, several of which read another vendor's stored login (a keychain item, a config file) and call that vendor's usage API when the Usage page opens, so a provider registered as exclusive takes them out of the provider list and the dispatcher until it is removed."
+    },
+    {
+      "hook": "quota-refresh",
+      "why": "Concurrent quota reads were shared by provider id alone, so a read started for one account could answer for another; a registered provider can now give a request scope, and only reads with the same registration and scope are shared."
+    }
+  ],
+  "packages/web/server/lib/quota/providers/registered.ts": [
+    {
+      "hook": "quota-server",
+      "why": "Registering a quota provider at run time should not make the server load every provider module at start, so the run-time entries live in a module with no imports that the registry merges and the plugin context uses."
+    },
+    {
+      "hook": "quota-server",
+      "why": "The exclusive flag is kept beside the run-time entries, in the module with no imports, so the registry and the plugin context read the same state without loading every provider at start."
+    },
+    {
+      "hook": "quota-refresh",
+      "why": "Keeps a registered provider's fetchScope so the dispatcher can see it."
+    }
+  ],
+  "packages/web/server/lib/scheduled-tasks/runtime.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "Scheduled task prompts go through the recovery admission gate like every other automatic sender."
+    }
+  ],
+  "packages/web/server/lib/self-update/DOCUMENTATION.md": [
+    {
+      "hook": "update-check",
+      "why": "Upstream's lint takes no code comments, so what the update check answers when a build switches it off is written in the module docs instead of beside the code."
+    }
+  ],
+  "packages/web/server/lib/self-update/openchamber-routes.ts": [
+    {
+      "hook": "update-check",
+      "why": "A build that ships no updates through the update service had no way to stop the server's update check, which posts the platform, version and a persistent install id."
+    },
+    {
+      "hook": "models-metadata",
+      "why": "A build that brings its own model list had no way to stop the server from downloading the public models.dev catalog for every window that asks, which tells a third party the app is running; OPENCHAMBER_MODELS_METADATA_DISABLED makes the route answer an empty catalog without fetching."
+    },
+    {
+      "hook": "update-install",
+      "why": "With the update check switched off the install route still asked the update service and could install and restart into upstream's package, so OPENCHAMBER_UPDATE_CHECK_DISABLED now makes it answer that no update is available, with no request, install or restart."
+    }
+  ],
+  "packages/web/server/lib/server-frame/bootstrap-runtime.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "Stop and new input must cancel a recovery before the request is routed or proxied, so the base routes install the recovery's request hook right after authentication."
+    }
+  ],
+  "packages/web/server/lib/server-frame/server-utils-runtime.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "Passes the recovery owner through to the proxy it sets up."
+    }
+  ],
+  "packages/web/server/lib/server-frame/shutdown-runtime.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "Shutdown closes recovery admission at once and waits for its journal to drain before the engine is torn down, without logging the drain's error text."
+    }
+  ],
+  "packages/web/server/lib/server-plugins.ts": [
+    {
+      "hook": "server",
+      "why": "A build shipped under another name needs server-side behaviour of its own, such as extra variables for the managed OpenCode or a route of its own, without patching the server for each one."
+    },
+    {
+      "hook": "server-plugins",
+      "why": "A build's server plugin needed more of the server than the app, data dir and logger (the express module, the bound port, settings, UI events, the managed OpenCode and its readiness, git, request scope and shutdown) and had no way to add engine config, so a downstream build would have had to edit upstream's server for each provider, policy or plugin it adds."
+    },
+    {
+      "hook": "permission-auto-accept",
+      "why": "A downstream build has permission requests that must always reach the person, such as a question about signing in to a site, whatever permission mode the session is in, and the auto-accept runtime had no way to leave one for the user: an auto session answered it within milliseconds and a safety session handed it to the classifier. A server plugin may now return neverAutoAnswer(permission), and a request any plugin marks (or whose check throws) is held for the user in every mode, announced as left for the user, and never counted as answered automatically. With no plugin that marks a request nothing changes."
+    },
+    {
+      "hook": "permission-auto-accept",
+      "why": "The guard that refuses a program's answer to a request a plugin leaves for the person."
+    },
+    {
+      "hook": "session-goal-review",
+      "why": "Goal mode kept re-prompting a session whose turns looped (the same command 35 times, edits that changed nothing) and had no way for a build to look at a turn before the next nudge or to save work first. The runtime now asks the server plugins once, right before each continuation; a plugin may add a note to the prompt or have the goal settled as blocked with its reason through the existing settlement notification. Without a plugin that answers, the prompt and the loop are unchanged."
+    },
+    {
+      "hook": "session-goal-review",
+      "why": "A build that saves work before each continuation needs to clean up when a goal completes or is cleared, so the runtime now tells server plugins (goalEnded) about those two endings. A review that timed out is no longer run alongside the next one for the same session, and a block from a review only settles a goal that is still the same, still active and not resumed during the review."
+    }
+  ],
+  "packages/web/server/lib/session-assist/prompt.ts": [
+    {
+      "hook": "session-assist-suggestion",
+      "why": "A downstream build that wants a next-prompt suggestion after every reply, not only while requested work is unfinished, had no way to change the suggestion instructions short of editing the prompt. A server plugin may now register a suggestion style through registerSuggestionStyle on the plugin context; its suggestionRules() take the place of the suggestion instructions alone, while the recap, the JSON shape, the language rule, the suggestion switch and the runtime filters stay upstream's, and rules that throw or are not a non-empty list of text leave the built-in instructions. With no style registered the prompt is byte-identical."
+    }
+  ],
+  "packages/web/server/lib/session-goal/continuation-review.ts": [
+    {
+      "hook": "session-goal-review",
+      "why": "The continuation review's timeout, answer parsing and failure handling live beside the goal runtime instead of in it, so the runtime grows by its call site only. Goal mode kept re-prompting a session whose turns looped (the same command 35 times, edits that changed nothing) and had no way for a build to look at a turn before the next nudge or to save work first. The runtime now asks the server plugins once, right before each continuation; a plugin may add a note to the prompt or have the goal settled as blocked with its reason through the existing settlement notification. Without a plugin that answers, the prompt and the loop are unchanged."
+    },
+    {
+      "hook": "session-goal-review",
+      "why": "A build that saves work before each continuation needs to clean up when a goal completes or is cleared, so the runtime now tells server plugins (goalEnded) about those two endings. A review that timed out is no longer run alongside the next one for the same session, and a block from a review only settles a goal that is still the same, still active and not resumed during the review."
+    }
+  ],
+  "packages/web/server/lib/session-goal/runtime.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "Goal mode re-prompts a session on its own, so it holds off while a response recovery owns that session and rechecks right before it prompts."
+    },
+    {
+      "hook": "session-goal-review",
+      "why": "Goal mode kept re-prompting a session whose turns looped (the same command 35 times, edits that changed nothing) and had no way for a build to look at a turn before the next nudge or to save work first. The runtime now asks the server plugins once, right before each continuation; a plugin may add a note to the prompt or have the goal settled as blocked with its reason through the existing settlement notification. Without a plugin that answers, the prompt and the loop are unchanged."
+    },
+    {
+      "hook": "session-goal-review",
+      "why": "A build that saves work before each continuation needs to clean up when a goal completes or is cleared, so the runtime now tells server plugins (goalEnded) about those two endings. A review that timed out is no longer run alongside the next one for the same session, and a block from a review only settles a goal that is still the same, still active and not resumed during the review."
+    }
+  ],
+  "packages/web/server/lib/session-response-recovery/DOCUMENTATION.md": [
+    {
+      "hook": "session-response-recovery",
+      "why": "Documents the one-shot response-length continuation, its activation gates and its known limits."
+    }
+  ],
+  "packages/web/server/lib/session-response-recovery/admission.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "The admission gate every automatic sender and proxied mutation passes through, so a recovery can drain started work and refuse new work during a transition."
+    }
+  ],
+  "packages/web/server/lib/session-response-recovery/error.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "Recognises the structured response_length_limit failure, and nothing else, as eligible for continuation."
+    }
+  ],
+  "packages/web/server/lib/session-response-recovery/owner.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "The single server-side owner that turns events into at most one continuation per original instruction, cancelled by Stop or new input."
+    }
+  ],
+  "packages/web/server/lib/session-response-recovery/runtime.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "The continuation runtime: it consumes the allowance durably, sends one short continuation instruction instead of the original prompt, and fails closed on any ambiguous result."
+    }
+  ],
+  "packages/web/server/lib/session-response-recovery/store.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "The durable journal that records a consumed continuation before any request is sent, so a restart never continues twice."
+    }
+  ],
+  "packages/web/server/lib/session-response-recovery/transitions.ts": [
+    {
+      "hook": "session-response-recovery",
+      "why": "Tracks account mutations by token, so readiness cannot reopen recovery while any mutation is still settling."
+    }
+  ],
+  "packages/web/server/lib/ui-auth/ui-auth.ts": [
+    {
+      "hook": "ui-auth",
+      "why": "A build whose browser sign-in comes from a company directory had no way to open or check a UI session without a UI password; registerUiAuthProvider lets it issue and read sessions with the password sessions' secret and lifetimes, makes the session required while it is registered, and the session status names the providers and whether a password works."
+    },
+    {
+      "hook": "ui-auth",
+      "why": "On a server whose only sign-in is a registered provider, sign out everywhere did nothing and a provider sign-out left that session's URL tokens usable; the reset now rotates the secret provider sessions are signed with (refused while OPENCODE_JWT_SECRET pins it) and clears URL tokens, and clearSession revokes the URL tokens of the session it ends."
+    }
+  ],
+  "packages/web/server/runtime.ts": [
     {
       "hook": "server",
       "why": "A build shipped under another name needs server-side behaviour of its own, such as extra variables for the managed OpenCode or a route of its own, without patching the server for each one."
@@ -483,138 +1019,26 @@
     {
       "hook": "session-assist-suggestion",
       "why": "A downstream build that wants a next-prompt suggestion after every reply, not only while requested work is unfinished, had no way to change the suggestion instructions short of editing the prompt. A server plugin may now register a suggestion style through registerSuggestionStyle on the plugin context; its suggestionRules() take the place of the suggestion instructions alone, while the recap, the JSON shape, the language rule, the suggestion switch and the runtime filters stay upstream's, and rules that throw or are not a non-empty list of text leave the built-in instructions. With no style registered the prompt is byte-identical."
-    }
-  ],
-  "packages/web/server/lib/agent-tool/runtime.js": [
-    {
-      "hook": "agent-tool-token",
-      "why": "The agent tool plugin read its callback token from the engine's environment on every call, so the token stayed there and every process the engine starts (its shell commands, terminals, MCP servers and formatters) inherited it and could call the callback as the agent tool; the plugin now moves the token out of the environment when it loads, keeps it for the engine process alone, and still finds it after the engine reloads the plugin."
-    }
-  ],
-  "packages/web/server/lib/enterprise-mode.js": [
-    {
-      "hook": "enterprise",
-      "why": "A build shipped under another name has administrators who place its policy in that product's own folder, not OpenChamber's."
-    }
-  ],
-  "packages/web/server/lib/fs/routes.js": [
-    {
-      "hook": "fs",
-      "why": "GET /api/fs/home resolved the legacy chats root under a fixed ~/.config/openchamber, so a server with its own OPENCHAMBER_DATA_DIR still reached into the default install's folder."
-    }
-  ],
-  "packages/web/server/lib/git/service.js": [
-    {
-      "hook": "git-integrate",
-      "why": "Moving commits between worktrees checks the target branch out in a temporary worktree under a fixed ~/.config/openchamber/tmp, even when OPENCHAMBER_DATA_DIR puts the rest of the server's state elsewhere."
-    }
-  ],
-  "packages/web/server/lib/opencode/lifecycle.js": [
-    {
-      "hook": "opencode",
-      "why": "The V1 session top-up rewrites the migration cursor in OpenCode's database before the managed OpenCode starts, and it always looked for that database at ~/.local/share/opencode/opencode.db."
     },
     {
-      "hook": "engine-env",
-      "why": "Server plugins hand the managed OpenCode an environment that moves its config, data, state and cache folders, but the binary preflight, the compatibility version read, the v2 install and the CLI upgrade still ran the binary with the plain process environment, so each of them created and wrote the engine's default folders (its log among them) next to the ones the server actually uses."
+      "hook": "session-response-recovery",
+      "why": "A reply that stops at the provider's response limit needs one owner on the server that can continue it once, whichever window is open, so the server creates that owner before the queue, goal, dispatch and scheduled senders, hands it to them and to the proxy, and lets the account and engine lifecycle suspend and resume it. It is switched off (responseRecoveryActivationVerified is false) and then inert, because review showed it can block sending until a relaunch; the module docs list what must change first."
     },
     {
-      "hook": "server-plugins",
-      "why": "A build's server plugin needed more of the server than the app, data dir and logger (the express module, the bound port, settings, UI events, the managed OpenCode and its readiness, git, request scope and shutdown) and had no way to add engine config, so a downstream build would have had to edit upstream's server for each provider, policy or plugin it adds."
-    },
-    {
-      "hook": "lifecycle",
-      "why": "The first start stored its process only once it had spawned, so a restart that arrived meanwhile (a config change right after the server began listening) found nothing to close and spawned a second engine, leaving one of the two running with no owner; starts and restarts now take turns."
-    },
-    {
-      "hook": "lifecycle",
-      "why": "A restart that arrived during the orphan reap, before the first start had joined the launch queue, still left bootstrap to spawn a second engine once the restart had started one, so bootstrap now skips its start when a restart already started the engine, and still replaces a process left over from a hot reload."
-    }
-  ],
-  "packages/web/server/lib/opencode/managed-config-file.js": [
-    {
-      "hook": "managed-config",
-      "why": "A downstream build adds providers, policies and plugins to the managed OpenCode by returning a config fragment from its server plugin, which the managed config writer puts in the managed OPENCODE_CONFIG file beside OpenChamber's own plugins, keeping that layer even when the user set OPENCODE_CONFIG (their file and OPENCODE_CONFIG_CONTENT then move into OPENCODE_CONFIG_CONTENT), instead of editing upstream's writer."
-    },
-    {
-      "hook": "managed-config",
-      "why": "OpenCode lets a policy in OPENCODE_CONFIG outrank project config and OPENCODE_CONFIG_CONTENT, but a user's own OPENCODE_CONFIG file outranked a contribution merged into OPENCODE_CONFIG_CONTENT, so a contributed config now keeps the OPENCODE_CONFIG layer and the user's file and content move into OPENCODE_CONFIG_CONTENT."
-    }
-  ],
-  "packages/web/server/lib/opencode/openchamber-routes.js": [
-    {
-      "hook": "update-check",
-      "why": "A build that ships no updates through the update service had no way to stop the server's update check, which posts the platform, version and a persistent install id."
-    },
-    {
-      "hook": "models-metadata",
-      "why": "A build that brings its own model list had no way to stop the server from downloading the public models.dev catalog for every window that asks, which tells a third party the app is running; OPENCHAMBER_MODELS_METADATA_DISABLED makes the route answer an empty catalog without fetching."
-    },
-    {
-      "hook": "update-install",
-      "why": "With the update check switched off the install route still asked the update service and could install and restart into upstream's package, so OPENCHAMBER_UPDATE_CHECK_DISABLED now makes it answer that no update is available, with no request, install or restart."
-    }
-  ],
-  "packages/web/server/lib/opencode/v1-migration-topup.js": [
-    {
-      "hook": "opencode",
-      "why": "The V1 session top-up rewrites the migration cursor in OpenCode's database before the managed OpenCode starts, and it always looked for that database at ~/.local/share/opencode/opencode.db."
-    }
-  ],
-  "packages/web/server/lib/permission-auto-accept/runtime.js": [
-    {
-      "hook": "permission-auto-accept",
-      "why": "A downstream build has permission requests that must always reach the person, such as a question about signing in to a site, whatever permission mode the session is in, and the auto-accept runtime had no way to leave one for the user: an auto session answered it within milliseconds and a safety session handed it to the classifier. A server plugin may now return neverAutoAnswer(permission), and a request any plugin marks (or whose check throws) is held for the user in every mode, announced as left for the user, and never counted as answered automatically. With no plugin that marks a request nothing changes."
-    }
-  ],
-  "packages/web/server/lib/quota/providers/index.js": [
-    {
-      "hook": "quota-server",
-      "why": "A build's server plugin that has its own usage source had no way to show it on the Usage page, because the quota registry was a fixed table, so the provider list and the dispatcher now also read the providers registered at run time."
-    },
-    {
-      "hook": "quota-server",
-      "why": "A build that reports usage from its own source may not want upstream's built-in quota providers, several of which read another vendor's stored login (a keychain item, a config file) and call that vendor's usage API when the Usage page opens, so a provider registered as exclusive takes them out of the provider list and the dispatcher until it is removed."
-    }
-  ],
-  "packages/web/server/lib/quota/providers/registered.js": [
-    {
-      "hook": "quota-server",
-      "why": "Registering a quota provider at run time should not make the server load every provider module at start, so the run-time entries live in a module with no imports that the registry merges and the plugin context uses."
-    },
-    {
-      "hook": "quota-server",
-      "why": "The exclusive flag is kept beside the run-time entries, in the module with no imports, so the registry and the plugin context read the same state without loading every provider at start."
-    }
-  ],
-  "packages/web/server/lib/server-plugins.js": [
-    {
-      "hook": "server",
-      "why": "A build shipped under another name needs server-side behaviour of its own, such as extra variables for the managed OpenCode or a route of its own, without patching the server for each one."
-    },
-    {
-      "hook": "server-plugins",
-      "why": "A build's server plugin needed more of the server than the app, data dir and logger (the express module, the bound port, settings, UI events, the managed OpenCode and its readiness, git, request scope and shutdown) and had no way to add engine config, so a downstream build would have had to edit upstream's server for each provider, policy or plugin it adds."
+      "hook": "share-pages",
+      "why": "With OPENCHAMBER_SHARE_PAGES_DISABLED the server opens no share runtime, polls no stored share and accepts no shared link."
     },
     {
       "hook": "permission-auto-accept",
-      "why": "A downstream build has permission requests that must always reach the person, such as a question about signing in to a site, whatever permission mode the session is in, and the auto-accept runtime had no way to leave one for the user: an auto session answered it within milliseconds and a safety session handed it to the classifier. A server plugin may now return neverAutoAnswer(permission), and a request any plugin marks (or whose check throws) is held for the user in every mode, announced as left for the user, and never counted as answered automatically. With no plugin that marks a request nothing changes."
-    }
-  ],
-  "packages/web/server/lib/session-assist/prompt.js": [
-    {
-      "hook": "session-assist-suggestion",
-      "why": "A downstream build that wants a next-prompt suggestion after every reply, not only while requested work is unfinished, had no way to change the suggestion instructions short of editing the prompt. A server plugin may now register a suggestion style through registerSuggestionStyle on the plugin context; its suggestionRules() take the place of the suggestion instructions alone, while the recap, the JSON shape, the language rule, the suggestion switch and the runtime filters stay upstream's, and rules that throw or are not a non-empty list of text leave the built-in instructions. With no style registered the prompt is byte-identical."
-    }
-  ],
-  "packages/web/server/lib/ui-auth/ui-auth.js": [
-    {
-      "hook": "ui-auth",
-      "why": "A build whose browser sign-in comes from a company directory had no way to open or check a UI session without a UI password; registerUiAuthProvider lets it issue and read sessions with the password sessions' secret and lifetimes, makes the session required while it is registered, and the session status names the providers and whether a password works."
+      "why": "An extension that may answer permissions could answer one a server plugin leaves for the person; its answers now pass the same check."
     },
     {
-      "hook": "ui-auth",
-      "why": "On a server whose only sign-in is a registered provider, sign out everywhere did nothing and a provider sign-out left that session's URL tokens usable; the reset now rotates the secret provider sessions are signed with (refused while OPENCODE_JWT_SECRET pins it) and clears URL tokens, and clearSession revokes the URL tokens of the session it ends."
+      "hook": "session-goal-review",
+      "why": "Goal mode kept re-prompting a session whose turns looped (the same command 35 times, edits that changed nothing) and had no way for a build to look at a turn before the next nudge or to save work first. The runtime now asks the server plugins once, right before each continuation; a plugin may add a note to the prompt or have the goal settled as blocked with its reason through the existing settlement notification. Without a plugin that answers, the prompt and the loop are unchanged."
+    },
+    {
+      "hook": "session-goal-review",
+      "why": "A build that saves work before each continuation needs to clean up when a goal completes or is cleared, so the runtime now tells server plugins (goalEnded) about those two endings. A review that timed out is no longer run alongside the next one for the same session, and a block from a review only settles a goal that is still the same, still active and not resumed during the review."
     }
   ]
 }

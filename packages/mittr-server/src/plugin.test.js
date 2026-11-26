@@ -4,11 +4,13 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import express from 'express';
 
 import { engineBases } from './engine-home.js';
+import { BACKUP_DIR, ENGINE_V1_HISTORY } from './engine-upgrade.js';
 import { fakeEngineContext, listen, serve, until } from './mittr/test-helpers.js';
 import { mintLocalToken } from './mittr/local-token.js';
 import setup, { setupMittrServer } from './plugin.js';
@@ -275,12 +277,10 @@ test('setup with the server context mounts Mittr sign-in and keeps the engine en
   assert.deepEqual(await plugin.managedConfig(), {
     plugins: [path.join(dataDir, 'engine-plugins', 'mittrcraft-engine-env'), path.join(dataDir, 'engine-plugins', 'mittrcraft-identity'), path.join(dataDir, 'engine-plugins', 'mittrcraft-tools')],
     share: 'disabled',
-    experimental: {
-      policies: [
-        { action: 'provider.use', resource: '*', effect: 'deny' },
-        { action: 'provider.use', resource: 'mittr', effect: 'allow' },
-      ],
-    },
+    policies: [
+      { action: 'provider.use', resource: '*', effect: 'deny' },
+      { action: 'provider.use', resource: 'mittr', effect: 'allow' },
+    ],
   });
   await plugin.dispose();
 });
@@ -318,6 +318,37 @@ test('the server plugin marks the Chrome site question, and only it, as never an
 
   assert.equal(plugin.neverAutoAnswer({ action: 'mittrcraft_chrome', resources: ['acme.example.test'] }), true);
   assert.equal(plugin.neverAutoAnswer({ action: 'bash', resources: ['ls'] }), false);
+});
+
+test('the server plugin checkpoints a goal folder before a continuation even when the turn cannot be read', async (t) => {
+  const home = tempHome(t);
+  const dataDir = prodLayout(home);
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'goal-plugin-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const git = (...args) => spawnSync('git', args, { cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.test' } });
+  git('init', '-q');
+  fs.writeFileSync(path.join(repo, 'a.ts'), 'one\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'start');
+  fs.writeFileSync(path.join(repo, 'a.ts'), 'two\n');
+  const logger = recordingLogger();
+  const plugin = await setupMittrServer({
+    dataDir,
+    logger,
+    env: {},
+    homeDir: home,
+    context: { app: express(), express, dataDir, logger, host: null, ...fakeEngineContext({ port: 4100, enginePort: null }).context },
+  });
+  t.after(() => plugin.dispose());
+
+  const answer = await plugin.goalContinuation({ sessionId: 'ses_goal1', directory: repo, goalId: 'goal_1', resumed: false });
+
+  assert.match(answer.note, /refs\/mittrcraft\/goal\/ses_goal1\/1/);
+  assert.equal(git('show', 'refs/mittrcraft/goal/ses_goal1/1:a.ts').stdout, 'two\n');
+  assert.equal(fs.readFileSync(path.join(repo, 'a.ts'), 'utf8'), 'two\n');
+
+  await plugin.goalEnded({ sessionId: 'ses_goal1', directory: '', reason: 'complete' });
+  assert.equal(git('for-each-ref', 'refs/mittrcraft').stdout, '');
 });
 
 test('setup with the server context serves the hosted web UI with the MittrCraft brand', async (t) => {
@@ -771,4 +802,89 @@ test('while the engine is still on the shared home after a failed 1.x carry, the
 
 test('the default export is the server-plugin setup', () => {
   assert.ok(setup instanceof Function);
+});
+
+test('the engine does not start on 1.x chats, and each account home is checked on its own', async (t) => {
+  const home = tempHome(t);
+  const dataDir = path.join(home, '.config', 'mittrcraft');
+  const engineData = path.join(home, '.local', 'share', 'mittrcraft', 'engine');
+  const shared = path.join(engineData, 'opencode', 'opencode.db');
+  const account = path.join(engineData, 'accounts', ACCOUNT, 'opencode', 'opencode.db');
+  for (const [file, sql] of [[shared, "CREATE TABLE session (id TEXT); INSERT INTO session VALUES ('ses_1')"], [account, 'CREATE TABLE session_v2 (id TEXT)']]) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const db = new DatabaseSync(file);
+    db.exec(sql);
+    db.close();
+  }
+  const index = path.join(dataDir, 'mittr-accounts', 'index.json');
+  const accounts = [
+    { userId: 'user-first', displayName: 'First', home: null, signedIn: true },
+    { userId: 'user-second', displayName: 'Second', home: ACCOUNT, signedIn: true },
+  ];
+  writeFile(index, JSON.stringify({ active: 'user-first', accounts }));
+  const plugin = await setupMittrServer({ dataDir, logger: recordingLogger(), env: {}, homeDir: home });
+  await assert.rejects(plugin.engineEnv(), (error) => error.code === ENGINE_V1_HISTORY);
+  writeFile(index, JSON.stringify({ active: 'user-second', accounts }));
+  assert.equal((await plugin.engineEnv()).XDG_DATA_HOME, path.join(engineData, 'accounts', ACCOUNT));
+  writeFile(index, JSON.stringify({ active: 'user-first', accounts }));
+  await assert.rejects(plugin.engineEnv(), (error) => error.code === ENGINE_V1_HISTORY);
+  const backupsOf = (file) => fs.readdirSync(path.dirname(file)).filter((name) => name.startsWith(BACKUP_DIR));
+  assert.deepEqual(backupsOf(shared), []);
+
+  const db = new DatabaseSync(shared);
+  db.exec("CREATE TABLE session_v2 (id TEXT); INSERT INTO session_v2 VALUES ('ses_1')");
+  db.close();
+  assert.equal((await plugin.engineEnv()).XDG_DATA_HOME, engineData);
+  for (const file of [shared, account]) {
+    assert.equal(backupsOf(file).length, 1);
+    assert.equal(fs.existsSync(path.join(path.dirname(file), backupsOf(file)[0], 'opencode.db')), true);
+  }
+});
+
+const v1Database = (file) => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const db = new DatabaseSync(file);
+  db.exec("CREATE TABLE session (id TEXT); INSERT INTO session VALUES ('ses_1')");
+  db.close();
+};
+
+test('a standalone opencode the engine runs on is let onto 1.x chats, the bundled server is not', async (t) => {
+  const home = tempHome(t);
+  const dataDir = path.join(home, '.config', 'mittrcraft');
+  const engineData = path.join(home, '.local', 'share', 'mittrcraft', 'engine');
+  v1Database(path.join(engineData, 'opencode', 'opencode.db'));
+  writeFile(path.join(dataDir, 'mittr-accounts', 'index.json'), JSON.stringify({ active: 'u', accounts: [{ userId: 'u', displayName: 'U', home: null, signedIn: true }] }));
+  const opencode = path.join(home, 'bin', 'opencode');
+  fs.mkdirSync(path.dirname(opencode), { recursive: true });
+  fs.writeFileSync(opencode, Buffer.from('cffaedfe00000000', 'hex'), { mode: 0o755 });
+  const env = {};
+  const plugin = await setupMittrServer({ dataDir, logger: recordingLogger(), env, homeDir: home, resourcesDir: path.join(home, 'resources') });
+  await assert.rejects(plugin.engineEnv(), (error) => error.code === ENGINE_V1_HISTORY);
+  env.OPENCODE_BINARY = opencode;
+  assert.equal((await plugin.engineEnv()).XDG_DATA_HOME, engineData);
+  delete env.OPENCODE_BINARY;
+  await assert.rejects(plugin.engineEnv(), (error) => error.code === ENGINE_V1_HISTORY);
+});
+
+test('an account whose chats are still in the 1.x format is never switched to over a running engine, and the way back starts it again', async (t) => {
+  const { engine, call, signIn, shared } = await mittrPlugin(t);
+  assert.equal((await signIn()).body.userId, 'u-a');
+  const running = path.join(shared, 'accounts', homeOf('u-a'));
+  assert.equal(engine.launchedDataHome, running);
+  v1Database(path.join(shared, 'accounts', homeOf('u-b'), 'opencode', 'opencode.db'));
+
+  const added = (await signIn()).body;
+  assert.deepEqual([added.userId, added.engineRestarted, added.engineError.code], ['u-b', false, ENGINE_V1_HISTORY]);
+  assert.match(added.engineError.message, /MittrCraft 2\.1\.1/);
+  const restarts = engine.restarts.length;
+
+  assert.deepEqual((await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-a' })).body, { signedIn: true, userId: 'u-a', displayName: 'A' });
+  assert.equal(engine.restarts.length, restarts + 1);
+  assert.equal(engine.launchedDataHome, running);
+
+  const refused = await call('POST', '/api/mittr/auth/accounts/activate', { userId: 'u-b' });
+  assert.deepEqual([refused.status, refused.body.code], [409, ENGINE_V1_HISTORY]);
+  assert.match(refused.body.error, /MittrCraft 2\.1\.1/);
+  assert.equal(engine.restarts.length, restarts + 1);
+  assert.equal((await call('GET', '/api/mittr/auth/status')).body.userId, 'u-a');
 });

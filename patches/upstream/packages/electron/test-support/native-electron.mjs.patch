@@ -1,0 +1,12 @@
+diff --git a/packages/electron/test-support/native-electron.mjs b/packages/electron/test-support/native-electron.mjs
+index b3b655734..ceed9de07 100644
+--- a/packages/electron/test-support/native-electron.mjs
++++ b/packages/electron/test-support/native-electron.mjs
+@@ -71,6 +71,7 @@ export function installNativeElectron({ directory, app: appOverrides = {}, fetch
+     nativeImage: { createFromPath: () => ({ isEmpty: () => true }) },
+     powerMonitor: new EventEmitter(), powerSaveBlocker: {},
+     protocol: { registerSchemesAsPrivileged() {}, handle() {} },
++    safeStorage: {},
+     screen: {
+       getAllDisplays: () => [{ bounds: { x: 0, y: 0, width: 1920, height: 1080 } }],
+       getPrimaryDisplay: () => ({ workAreaSize: { width: 1920, height: 1080 } }),

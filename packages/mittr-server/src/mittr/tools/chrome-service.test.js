@@ -2,15 +2,17 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import '../../../../web/scripts/register-server-sources.mjs';
 
 import { MARKER_PNG } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
-import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
-import { writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { deferred, fakeFetch, json, tempDataDir } from '../test-helpers.js';
 import { BANNER_FILE, CONFIG_FILE, chromeSessionName, createChromeControl } from './chrome-control.js';
 import { createBrowserStepper } from './browser-stepper.js';
 import { NO_APPROVALS, chromeToolDescription, chromeToolParameters, createChromeService, registerChromeActions } from './chrome-service.js';
 import { MITTR_TOOLS, MittrToolError, createMittrActionRegistry } from './registry.js';
+
+const { OPENCHAMBER_ALL_ACTIONS } = await import('../../../../web/server/lib/openchamber-control/actions.js');
+const { writeScreenshot } = await import('../../../../web/server/lib/openchamber-control/screenshots.js');
 
 const BINARY = '/r/agent-browser/agent-browser';
 const SES_1 = chromeSessionName('ses_1');

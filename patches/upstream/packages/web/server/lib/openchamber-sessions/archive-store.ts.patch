@@ -1,0 +1,40 @@
+diff --git a/packages/web/server/lib/openchamber-sessions/archive-store.ts b/packages/web/server/lib/openchamber-sessions/archive-store.ts
+index 9566787de..87e12a284 100644
+--- a/packages/web/server/lib/openchamber-sessions/archive-store.ts
++++ b/packages/web/server/lib/openchamber-sessions/archive-store.ts
+@@ -32,7 +32,7 @@ export const createArchiveStore = ({
+   const filePath = path.join(dataDir, ARCHIVE_FILE_NAME);
+ 
+   const entries = new Map<string, number | null>();
+-  let loadPromise: Promise<{ ok: boolean; entries: Record<string, number | null> }> | null = null;
++  let loadPromise: Promise<{ ok: boolean; authoritative: boolean; entries: Record<string, number | null> }> | null = null;
+   let writable = false;
+   let transactionChain = Promise.resolve();
+   const runExclusive = <T>(work: () => Promise<T>) => {
+@@ -62,7 +62,7 @@ export const createArchiveStore = ({
+     return result;
+   };
+ 
+-  const readFile = async (): Promise<{ ok: true; stored: Map<string, number | null> } | { ok: false; stored: null }> => {
++  const readFile = async (): Promise<{ ok: true; stored: Map<string, number | null>; authoritative?: false } | { ok: false; stored: null }> => {
+     let raw;
+     try {
+       raw = await fsPromises.readFile(filePath, 'utf8');
+@@ -80,7 +80,7 @@ export const createArchiveStore = ({
+       console.warn(
+         `[openchamber-sessions] archive file was unreadable and was moved to ${backup}: ${(hasMessage(error) ? error.message : undefined) ?? error}`,
+       );
+-      return { ok: true, stored: new Map() };
++      return { ok: true, stored: new Map(), authoritative: false };
+     }
+   };
+ 
+@@ -95,7 +95,7 @@ export const createArchiveStore = ({
+         } else {
+           loadPromise = null;
+         }
+-        return { ok: result.ok, entries: snapshot() };
++        return { ok: result.ok, authoritative: result.ok && result.authoritative !== false, entries: snapshot() };
+       });
+     }
+     return loadPromise;

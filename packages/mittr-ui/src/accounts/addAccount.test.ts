@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 
-import { beginSignInWait, reloadOrDefer } from '../sign-in/accountChange';
+import { beginSignInWait, reloadDeferred, reloadOrDefer } from '../sign-in/accountChange';
 import { createAccountSwitch } from './accountSwitch';
-import { createAddAccountFlow, type AddAccountDeps } from './addAccount';
+import { HttpError, type AccountList, type MittrAccount, type SwitchOutcome } from './accountsApi';
+import { addedAccountOutcome, createAddAccountFlow, type AddAccountDeps } from './addAccount';
 
 const harness = (opened = true) => {
   const log: string[] = [];
@@ -133,6 +134,108 @@ describe('adding an account', () => {
     flow.dispose();
     flow.dispose();
     expect(log).toEqual(['wait', 'waiting', 'waiting', 'end']);
+  });
+});
+
+const A: MittrAccount = { userId: 'u-a', displayName: 'Ann Lee', active: true };
+const B: MittrAccount = { userId: 'u-b', displayName: 'Bo', active: false };
+const V1 = { code: 'MITTR_ENGINE_V1_HISTORY', message: 'Open MittrCraft 2.1.1 once.' };
+
+describe('an account added but not switched to', () => {
+  const flush = async () => {
+    for (let turn = 0; turn < 20; turn += 1) await Promise.resolve();
+  };
+
+  const asked = (list: () => Promise<AccountList>, reloadOwed = false) => {
+    const log: string[] = [];
+    const listed: MittrAccount[][] = [];
+    const outcome = addedAccountOutcome({
+      fetchAccountList: list,
+      retrySwitch: async () => { log.push('retry-switch'); return { signedIn: true, userId: 'u-b' }; },
+      reloadOwed,
+      onAccounts: (accounts) => listed.push(accounts),
+    });
+    return { outcome, log, listed };
+  };
+
+  test('the refusal in the account list ends the add with its reason and the list, and asks for no switch', async () => {
+    const refused = asked(async () => ({ accounts: [A, B], switchRefused: V1 }));
+    expect(await refused.outcome).toEqual({ signedIn: true, switchRefused: V1 });
+    expect(refused.listed).toEqual([[A, B]]);
+    expect(refused.log).toEqual([]);
+
+    expect(await asked(async () => ({ accounts: [A, B], switchRefused: V1 }), true).outcome).toEqual({ signedIn: true, switchRefused: V1, reloadOwed: true });
+  });
+
+  test('without a refusal, or with a list that cannot be read, the add resyncs as before', async () => {
+    for (const list of [async () => ({ accounts: [A, B], switchRefused: null }), () => Promise.reject(new HttpError(500))]) {
+      const added = asked(list);
+      expect(await added.outcome).toEqual({ signedIn: true, userId: 'u-b' });
+      expect(added.log).toEqual(['retry-switch']);
+      expect(added.listed).toEqual([]);
+    }
+  });
+
+  const window = () => {
+    const reloads: string[] = [];
+    const listed: MittrAccount[][] = [];
+    let timers = 0;
+    const retrySwitch = async (): Promise<SwitchOutcome> => ({ signedIn: true });
+    const accountSwitch = createAccountSwitch({
+      retrySwitch,
+      reload: () => reloadOrDefer(() => reloads.push('reload'), () => reloads.push('deferred')),
+      announce: () => {},
+      holdGate: () => () => {},
+    });
+    const flow = createAddAccountFlow({
+      startAddAccount: async () => true,
+      cancelAddAccount: () => {},
+      beginWait: beginSignInWait,
+      schedule: () => { timers += 1; return () => { timers -= 1; }; },
+      onWaiting: () => {},
+      onStartFailed: () => {},
+      onFailed: () => { throw new Error('the sign-in did not fail'); },
+      reloadDeferred,
+      onAdded: (reloadOwed) => {
+        void accountSwitch.run(() => addedAccountOutcome({
+          fetchAccountList: async () => ({ accounts: [A, B], switchRefused: V1 }),
+          retrySwitch,
+          reloadOwed,
+          onAccounts: (accounts) => listed.push(accounts),
+        }));
+        return true;
+      },
+      resyncThenReload: () => reloads.push('fallback'),
+    });
+    return { flow, accountSwitch, reloads, listed, timers: () => timers };
+  };
+
+  test('the wait ends at once, the reason is shown, and closing it leaves the window running without a reload', async () => {
+    const { flow, accountSwitch, reloads, listed, timers } = window();
+    await flow.start();
+    flow.signedIn();
+    expect(flow.waiting()).toBe(false);
+    expect(timers()).toBe(0);
+    await flush();
+    expect(accountSwitch.state()).toBe('failed');
+    expect(accountSwitch.problem()).toEqual({ ...V1, added: true });
+    expect(listed).toEqual([[A, B]]);
+
+    await accountSwitch.dismiss();
+    expect(accountSwitch.state()).toBe('idle');
+    expect(reloads).toEqual([]);
+  });
+
+  test('a reload that waited on the add still happens, after the reason is closed', async () => {
+    const { flow, accountSwitch, reloads } = window();
+    await flow.start();
+    reloadOrDefer(() => reloads.push('now'), () => reloads.push('deferred'));
+    flow.signedIn();
+    await flush();
+    expect(accountSwitch.state()).toBe('failed');
+    expect(reloads).toEqual([]);
+    await accountSwitch.dismiss();
+    expect(reloads).toEqual(['reload']);
   });
 });
 

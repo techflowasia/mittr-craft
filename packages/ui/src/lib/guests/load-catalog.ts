@@ -1,6 +1,5 @@
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { runtimeFetch } from '@/lib/runtime-fetch';
-import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 
 import { useGuestBadgeStore } from './badge-store.ts';
@@ -15,29 +14,32 @@ const alignCatalogRuntime = (runtimeKey: string): void => {
   }
 };
 
-let inFlight: { runtimeKey: string; request: Promise<void> } | null = null;
+let announcedChanges = 0;
+let inFlight: { runtimeKey: string; changes: number; request: Promise<void> } | null = null;
 
-/**
- * One request at a time per runtime: the rail, the composer, and the dialogs
- * all ask on mount. A request still running for the previous server is not
- * reused after a switch; its answer is dropped by the runtime check below,
- * and the new server gets its own request.
- */
 export const loadGuestCatalog = (): Promise<void> => {
   const runtimeKey = getRuntimeKey();
-  if (inFlight && inFlight.runtimeKey === runtimeKey) return inFlight.request;
-  const request = loadGuestCatalogOnce(runtimeKey).finally(() => {
-    if (inFlight?.request === request) inFlight = null;
-  });
-  inFlight = { runtimeKey, request };
+  const running = inFlight?.runtimeKey === runtimeKey ? inFlight : null;
+  if (running && running.changes === announcedChanges) return running.request;
+  const after = () => (getRuntimeKey() === runtimeKey ? loadGuestCatalogOnce(runtimeKey) : undefined);
+  const request = (running ? running.request.then(after) : loadGuestCatalogOnce(runtimeKey))
+    .finally(() => {
+      if (inFlight?.request === request) inFlight = null;
+    });
+  inFlight = { runtimeKey, changes: announcedChanges, request };
   return request;
+};
+
+export const reloadGuestCatalog = (): Promise<void> => {
+  announcedChanges += 1;
+  return loadGuestCatalog();
 };
 
 const loadGuestCatalogOnce = async (runtimeKey: string): Promise<void> => {
   alignCatalogRuntime(runtimeKey);
 
   const store = useGuestsStore.getState();
-  if (isVSCodeRuntime() || isMobileSurfaceRuntime()) {
+  if (isVSCodeRuntime()) {
     store.markUnsupported(runtimeKey);
     return;
   }
@@ -53,15 +55,15 @@ const loadGuestCatalogOnce = async (runtimeKey: string): Promise<void> => {
       return;
     }
     const content = await response.text().catch(() => null);
-    const guests = content === null ? null : parseGuestCatalogJson(content);
+    const catalog = content === null ? null : parseGuestCatalogJson(content);
     if (useGuestsStore.getState().runtimeKey !== runtimeKey) {
       return;
     }
-    if (!guests) {
+    if (!catalog) {
       store.markFailed(runtimeKey, { method: 'GET', path: '/api/guests', kind: 'invalid-response', status: response.status });
       return;
     }
-    useGuestsStore.getState().replaceCatalog(guests, runtimeKey);
+    useGuestsStore.getState().replaceCatalog(catalog.guests, runtimeKey, catalog.unreadable, catalog.opencodePlugins);
   } catch {
     useGuestsStore.getState().markFailed(runtimeKey, { method: 'GET', path: '/api/guests', kind: 'network' });
   }

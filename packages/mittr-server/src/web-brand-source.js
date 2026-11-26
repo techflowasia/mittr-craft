@@ -9,7 +9,7 @@ export const WEB_BRAND_FILE = path.join(here, 'web-brand.json');
 export const WEB_BRAND_COMMAND = 'node scripts/mittr/generate-web-brand.mjs';
 
 const WEB_DIST = 'resources/web-dist/';
-const PWA_ROUTES = '.product/web/server/lib/opencode/pwa-manifest-routes.js';
+const PWA_ROUTES = '.product/web/server/lib/appearance/pwa-manifest-routes.js';
 const PWA_NAME_MARKER = 'const DEFAULT_PWA_APP_NAME';
 
 const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));

@@ -1,10 +1,27 @@
-export type Locale = 'en' | 'de' | 'fr' | 'nl' | 'zh-CN' | 'zh-TW' | 'uk' | 'es' | 'pt-BR' | 'ko' | 'pl' | 'ja' | 'tr';
+export type Locale = 'en' | 'de' | 'fr' | 'nl' | 'zh-CN' | 'zh-TW' | 'uk' | 'es' | 'pt-BR' | 'ko' | 'pl' | 'ja' | 'tr' | 'ar' | 'he';
 
-export const LOCALES = ['en', 'de', 'fr', 'nl', 'zh-CN', 'zh-TW', 'uk', 'es', 'pt-BR', 'ko', 'pl', 'ja', 'tr'] as const satisfies readonly Locale[];
+export const LOCALES = ['en', 'de', 'fr', 'nl', 'zh-CN', 'zh-TW', 'uk', 'es', 'pt-BR', 'ko', 'pl', 'ja', 'tr', 'ar', 'he'] as const satisfies readonly Locale[];
 
 export const DEFAULT_LOCALE: Locale = 'en';
 
-export const LOCALE_LABEL_KEYS: Record<Locale, 'common.language.english' | 'common.language.french' | 'common.language.dutch' | 'common.language.simplifiedChinese' | 'common.language.traditionalChinese' | 'common.language.ukrainian' | 'common.language.spanish' | 'common.language.brazilianPortuguese' | 'common.language.korean' | 'common.language.polish' | 'common.language.german' | 'common.language.japanese' | 'common.language.turkish'> = {
+export type LayoutDirection = 'ltr' | 'rtl';
+
+const RTL_LOCALES: ReadonlySet<Locale> = new Set<Locale>(['ar', 'he']);
+
+export function getLocaleDirection(locale: Locale): LayoutDirection {
+  return RTL_LOCALES.has(locale) ? 'rtl' : 'ltr';
+}
+
+export function getInlineStartSide(direction: LayoutDirection): 'left' | 'right' {
+  return direction === 'rtl' ? 'right' : 'left';
+}
+
+// external: https://developer.mozilla.org/en-US/docs/Web/CSS/:dir WebKit before 16.4 rejects :dir(), so direction follows the nearest explicit dir attribute.
+export function isRightToLeft(element: Element): boolean {
+  return element.closest('[dir="rtl"], [dir="ltr"]')?.getAttribute('dir') === 'rtl';
+}
+
+export const LOCALE_LABEL_KEYS: Record<Locale, 'common.language.english' | 'common.language.french' | 'common.language.dutch' | 'common.language.simplifiedChinese' | 'common.language.traditionalChinese' | 'common.language.ukrainian' | 'common.language.spanish' | 'common.language.brazilianPortuguese' | 'common.language.korean' | 'common.language.polish' | 'common.language.german' | 'common.language.japanese' | 'common.language.turkish' | 'common.language.arabic' | 'common.language.hebrew'> = {
   en: 'common.language.english',
   fr: 'common.language.french',
   nl: 'common.language.dutch',
@@ -18,6 +35,8 @@ export const LOCALE_LABEL_KEYS: Record<Locale, 'common.language.english' | 'comm
   de: 'common.language.german',
   ja: 'common.language.japanese',
   tr: 'common.language.turkish',
+  ar: 'common.language.arabic',
+  he: 'common.language.hebrew',
 };
 
 export const LOCALE_STORAGE_KEY = 'openchamber.i18n.v1';
@@ -26,16 +45,16 @@ type StoredLocale = {
   locale?: unknown;
 };
 
-export function normalizeLocale(value: string | undefined | null): Locale {
+function supportedLocale(value: string | undefined | null): Locale | undefined {
   if (!value) {
-    return DEFAULT_LOCALE;
+    return undefined;
   }
 
   const normalized = value.toLowerCase().replace(/_/g, '-');
   if (normalized === 'zh-cn' || normalized === 'zh-hans' || normalized.startsWith('zh-hans-')) {
     return 'zh-CN';
   }
-  if (normalized === 'zh-tw' || normalized === 'zh-hant' || normalized.startsWith('zh-hant-')) {
+  if (normalized === 'zh-tw' || normalized === 'zh-hk' || normalized === 'zh-mo' || normalized === 'zh-hant' || normalized.startsWith('zh-hant-')) {
     return 'zh-TW';
   }
   if (normalized.startsWith('zh')) {
@@ -74,7 +93,17 @@ export function normalizeLocale(value: string | undefined | null): Locale {
   if (normalized === 'tr' || normalized.startsWith('tr-')) {
     return 'tr';
   }
-  return DEFAULT_LOCALE;
+  if (normalized === 'ar' || normalized.startsWith('ar-')) {
+    return 'ar';
+  }
+  if (normalized === 'he' || normalized.startsWith('he-') || normalized === 'iw' || normalized.startsWith('iw-')) {
+    return 'he';
+  }
+  return undefined;
+}
+
+export function normalizeLocale(value: string | undefined | null): Locale {
+  return supportedLocale(value) ?? DEFAULT_LOCALE;
 }
 
 function readStoredLocale(): Locale | undefined {
@@ -108,7 +137,6 @@ export function writeStoredLocale(locale: Locale): void {
 
 declare global {
   interface Window {
-    /** The host application's display language (VS Code sets it), used before the user picks a locale. */
     __OPENCHAMBER_HOST_LANGUAGE__?: string;
   }
 }
@@ -122,6 +150,11 @@ export function detectInitialLocale(): Locale {
   const hostLanguage = globalThis.window?.__OPENCHAMBER_HOST_LANGUAGE__;
   if (hostLanguage) {
     return normalizeLocale(hostLanguage);
+  }
+
+  for (const language of globalThis.window?.navigator.languages ?? []) {
+    const locale = supportedLocale(language);
+    if (locale) return locale;
   }
 
   return DEFAULT_LOCALE;

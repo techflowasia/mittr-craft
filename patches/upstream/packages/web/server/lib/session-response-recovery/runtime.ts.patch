@@ -1,0 +1,371 @@
+diff --git a/packages/web/server/lib/session-response-recovery/runtime.ts b/packages/web/server/lib/session-response-recovery/runtime.ts
+new file mode 100644
+index 000000000..dd82d4163
+--- /dev/null
++++ b/packages/web/server/lib/session-response-recovery/runtime.ts
+@@ -0,0 +1,365 @@
++import { randomUUID } from 'node:crypto';
++import { z } from 'zod';
++import { isResponseLengthLimit } from './error.js';
++import type { SessionClient } from '../openchamber-sessions/opencode-client-contract.js';
++import type { JsonValue } from '../shared/json-values.js';
++import type { ResponseRecoveryEntry, ResponseRecoveryStore } from './store.js';
++
++const DEADLINE_MS = 120_000;
++const ACTIVE = new Set(['checking', 'awaiting-result']);
++const CONTINUATION = 'Continue from where the response stopped. Preserve completed work and tool results. Inspect the current state before repeating any action. Do not restart the original request.';
++const identitySchema = z.object({ owner: z.string().min(1), generation: z.number().int().nonnegative(), account: z.string().min(1) });
++const errorSchema = z.object({ type: z.string(), message: z.string(), response: z.object({ body: z.string() }).optional() });
++const sessionSchema = z.object({ id: z.string(), parentID: z.string().optional(), location: z.object({ directory: z.string().min(1) }), model: z.object({ providerID: z.string(), id: z.string(), variant: z.string().optional() }), agent: z.string().min(1), time: z.object({ archived: z.number().optional() }), revert: z.object({}).optional() });
++const pageSchema = z.object({ data: z.array(z.object({ id: z.string(), type: z.string(), error: errorSchema.optional(), status: z.string().optional(), reason: z.string().optional() })), cursor: z.object({ next: z.string().nullable().optional() }).optional() });
++export const activeSchema = z.record(z.string(), z.object({ type: z.literal('running') }));
++export const childrenSchema = z.object({ data: z.array(z.object({ id: z.string(), parentID: z.string() })), cursor: z.object({ next: z.string().nullable().optional() }).optional() });
++const permissionsSchema = z.object({ data: z.array(z.object({ sessionID: z.string() })) });
++const formsSchema = z.array(z.object({}).passthrough());
++const inboxSchema = z.array(z.object({ id: z.string() }));
++const guardSchema = z.object({ known: z.literal(true), archived: z.literal(false), deleted: z.literal(false), liveChildren: z.literal(false) });
++const eventSchema = z.object({ id: z.string(), type: z.string(), durable: z.object({ aggregateID: z.string(), seq: z.number().int().nonnegative() }).optional(), data: z.object({ sessionID: z.string().optional() }).passthrough() });
++
++export type RecoveryChildrenInput = { parentID: string; limit: number; cursor?: string };
++export type RecoveryMessageInput = { sessionID: string; order: 'desc'; limit: number; cursor?: string };
++type SessionApi = SessionClient['session'];
++export type RecoveryGuard = { known: boolean; archived: boolean; deleted: boolean; liveChildren: boolean };
++type RecoveryRequestOptions = { signal: AbortSignal; headers?: Record<string, string> };
++type RecoveryPromptInput = {
++  sessionID: string; id: string; delivery: 'queue'; text: string;
++  metadata: { openchamber: { responseRecovery: { originalHumanMessageID: string; recoveryID: string } } };
++};
++export interface RecoveryClient {
++  session: {
++    get(input: { sessionID: string }, options: RecoveryRequestOptions): ReturnType<SessionApi['get']>;
++    active(options: RecoveryRequestOptions): ReturnType<SessionApi['active']>;
++    list(input: RecoveryChildrenInput, options: RecoveryRequestOptions): ReturnType<SessionApi['list']>;
++    prompt(input: RecoveryPromptInput, options: RecoveryRequestOptions): ReturnType<SessionApi['prompt']>;
++    interrupt(input: { sessionID: string }): ReturnType<SessionApi['interrupt']>;
++    inbox: {
++      list(input: { sessionID: string }, options: RecoveryRequestOptions): ReturnType<SessionApi['inbox']['list']>;
++      cancel(input: { sessionID: string; inboxID: string }): ReturnType<SessionApi['inbox']['cancel']>;
++    };
++    form: {
++      list(input: { sessionID: string }, options: RecoveryRequestOptions): ReturnType<SessionApi['form']['list']>;
++    };
++  };
++  message: {
++    list(input: RecoveryMessageInput, options: RecoveryRequestOptions): ReturnType<SessionClient['message']['list']>;
++  };
++  permission: {
++    request: {
++      list(input: { location: { directory: string } }, options: RecoveryRequestOptions): ReturnType<SessionClient['permission']['request']['list']>;
++    };
++  };
++}
++export type RecoveryArchiveStore = {
++  load(): Promise<{ ok: boolean; authoritative?: boolean }>;
++  getAll(): Promise<Record<string, number | null | undefined>>;
++};
++type RecoveryIdentity = z.infer<typeof identitySchema>;
++type RecoveryMessage = z.infer<typeof pageSchema>['data'][number];
++type TimerHandle = ReturnType<typeof setTimeout>;
++type RecoveryWait = {
++  kind: 'failure' | 'result'; promise: Promise<void>; resolve: () => void; reject: (reason: Error) => void;
++  started: boolean; delivered: boolean;
++};
++type RecoveryTransaction = {
++  sessionID: string; identity: RecoveryIdentity; api: RecoveryClient; active: boolean; cancelled: boolean; persisted: boolean;
++  abort: AbortController; lastSeq: number; errorSeq: number; errorEventID: string; failedMessageID: unknown; stepOnly: boolean;
++  events: Set<string>; work: Promise<void>; deadline: Promise<never>; timer: TimerHandle | undefined;
++  entry?: ResponseRecoveryEntry; wait?: RecoveryWait | null; cleanup?: Promise<void>; admission?: Promise<void>;
++  admissionState?: 'pending' | 'admitted' | 'uncertain'; mutation?: 'prompt'; resultSettled?: boolean; fenced?: boolean;
++  cancelReason?: string; configuration?: string; directory?: string;
++};
++type RecoverySnapshotEntry = ResponseRecoveryEntry | { sessionID: string; phase: 'cancelled' | 'checking' };
++type RecoveryRuntimeOptions = {
++  store: ResponseRecoveryStore;
++  client: () => RecoveryClient;
++  getIdentity: () => RecoveryIdentity;
++  readGuard: (sessionID: string, directory: string, options: RecoveryRequestOptions, api: RecoveryClient, upstreamArchived: number | undefined) => Promise<RecoveryGuard>;
++  broadcast?: (update: { revision: number; entry: RecoverySnapshotEntry }) => void;
++  setTimer?: (callback: () => void, ms: number) => TimerHandle;
++  clearTimer?: (timer: TimerHandle | undefined) => void;
++};
++const requireEntry = (transaction: RecoveryTransaction) => {
++  if (!transaction.entry) throw new Error('recovery-entry-missing');
++  return transaction.entry;
++};
++
++export function createSessionResponseRecoveryRuntime({ store, client, getIdentity, readGuard, broadcast = () => {}, setTimer = setTimeout, clearTimer = clearTimeout }: RecoveryRuntimeOptions) {
++  const sessions = new Map<string, RecoveryTransaction>();
++  let stopped = false;
++  let revision = 0;
++  const publish = (transaction: RecoveryTransaction) => { revision++; broadcast({ revision, entry: snapshotEntry(transaction) }); };
++  const snapshotEntry = (transaction: RecoveryTransaction): RecoverySnapshotEntry => transaction.entry ? { ...transaction.entry } : { sessionID: transaction.sessionID, phase: transaction.cancelled ? 'cancelled' : 'checking' };
++  const current = (transaction: RecoveryTransaction) => {
++    if (stopped || transaction.cancelled) throw new Error('cancelled');
++    const identity = identitySchema.parse(getIdentity());
++    if (JSON.stringify(identity) !== JSON.stringify(transaction.identity)) throw new Error('owner-changed');
++  };
++  const checked = async <T>(transaction: RecoveryTransaction, promise: Promise<T>): Promise<T> => {
++    const signal = transaction.abort.signal;
++    signal.throwIfAborted();
++    let onAbort = () => {};
++    const cancelled = new Promise<never>((_, reject) => { onAbort = () => reject(new Error('cancelled')); signal.addEventListener('abort', onAbort, { once: true }); });
++    try { const result = await Promise.race([promise, cancelled, transaction.deadline]); current(transaction); return result; }
++    finally { signal.removeEventListener('abort', onAbort); }
++  };
++  const save = async (transaction: RecoveryTransaction, phase: ResponseRecoveryEntry['phase'], reason?: string) => {
++    current(transaction);
++    transaction.entry = { ...requireEntry(transaction), phase };
++    if (reason) transaction.entry.reason = reason;
++    await checked(transaction, store.put(transaction.entry));
++    transaction.persisted = true;
++    publish(transaction);
++  };
++  const knownContinuations = (transaction: RecoveryTransaction) => store.list().filter(entry => entry.owner === transaction.identity.owner && entry.sessionID === transaction.sessionID);
++  const history = async (transaction: RecoveryTransaction) => {
++    const messages: RecoveryMessage[] = [];
++    const cursors = new Set<string>();
++    let cursor: string | undefined;
++    while (true) {
++      const input: RecoveryMessageInput = { sessionID: transaction.sessionID, order: 'desc', limit: 100 };
++      if (cursor) input.cursor = cursor;
++      const page = pageSchema.parse(await checked(transaction, transaction.api.message.list(input, { signal: transaction.abort.signal })));
++      messages.push(...page.data);
++      const human = page.data.find(message => message.type === 'user' && !knownContinuations(transaction).some(entry => entry.continuationID === message.id));
++      if (human) return { messages, human };
++      const next = page.cursor?.next;
++      if (!next) throw new Error('human-origin-unknown');
++      if (cursors.has(next)) throw new Error('message-cursor-loop');
++      cursors.add(next); cursor = next;
++    }
++  };
++  const fresh = async (transaction: RecoveryTransaction) => {
++    current(transaction);
++    const options = { signal: transaction.abort.signal };
++    const session = sessionSchema.parse(await checked(transaction, transaction.api.session.get({ sessionID: transaction.sessionID }, options)));
++    if (session.id !== transaction.sessionID || session.parentID || session.revert) throw new Error('session-ineligible');
++    const configuration = JSON.stringify({ location: session.location, model: session.model, agent: session.agent });
++    if (transaction.configuration && transaction.configuration !== configuration) throw new Error('configuration-changed');
++    transaction.configuration = configuration;
++    transaction.directory = session.location.directory;
++    guardSchema.parse(await checked(transaction, readGuard(transaction.sessionID, transaction.directory, options, transaction.api, session.time.archived)));
++    const active = activeSchema.parse(await checked(transaction, transaction.api.session.active(options)));
++    if (active[transaction.sessionID]) throw new Error('execution-active');
++    const locationOptions = { ...options, headers: { 'x-opencode-directory': encodeURIComponent(transaction.directory) } };
++    const permissions = permissionsSchema.parse(await checked(transaction, transaction.api.permission.request.list({ location: { directory: transaction.directory } }, locationOptions))).data;
++    if (permissions.some(item => item.sessionID === transaction.sessionID)) throw new Error('permission-pending');
++    const forms = formsSchema.parse(await checked(transaction, transaction.api.session.form.list({ sessionID: transaction.sessionID }, locationOptions)));
++    if (forms.length) throw new Error('form-pending');
++    const inbox = inboxSchema.parse(await checked(transaction, transaction.api.session.inbox.list({ sessionID: transaction.sessionID }, options)));
++    if (inbox.length) throw new Error('inbox-not-empty');
++    const result = await history(transaction);
++    if (transaction.entry && result.human.id !== transaction.entry.originalHumanMessageID) throw new Error('human-changed');
++    current(transaction);
++    return result;
++  };
++  const waiter = (transaction: RecoveryTransaction, kind: RecoveryWait['kind']) => {
++    let resolve: RecoveryWait['resolve'] = () => {}; let reject: RecoveryWait['reject'] = () => {};
++    const promise = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
++    promise.catch(() => {});
++    const wait: RecoveryWait = { kind, promise, resolve, reject, started: false, delivered: false };
++    transaction.wait = wait;
++    return wait;
++  };
++  const admitted = (transaction: RecoveryTransaction) => transaction.admissionState === 'admitted';
++  const clearWait = (transaction: RecoveryTransaction) => { transaction.wait = null; };
++  const admission = (value: Awaited<ReturnType<RecoveryClient['session']['prompt']>>, transaction: RecoveryTransaction, id: string, type: string) => {
++    const parsed = z.object({ id: z.literal(id), sessionID: z.literal(transaction.sessionID), type: z.literal(type) }).parse(value);
++    return parsed;
++  };
++  const cleanup = (transaction: RecoveryTransaction) => {
++    if (transaction.cleanup) return transaction.cleanup;
++    transaction.cleanup = (async () => {
++      const clean = async () => {
++        const results = await Promise.allSettled([
++          Promise.resolve().then(() => transaction.api.session.inbox.cancel({ sessionID: transaction.sessionID, inboxID: requireEntry(transaction).continuationID })),
++          Promise.resolve().then(() => transaction.api.session.interrupt({ sessionID: transaction.sessionID })),
++        ]);
++        return results.every(result => result.status === 'fulfilled');
++      };
++      let drained = false;
++      const drainage = (async () => {
++        const settledBeforeCleanup = transaction.admissionState;
++        let safe = await clean();
++        await transaction.admission;
++        if (transaction.admissionState === 'admitted' && settledBeforeCleanup !== 'admitted') safe = await clean() && safe;
++        drained = safe && transaction.admissionState === 'admitted';
++      })();
++      await Promise.race([drainage, transaction.deadline.catch(() => {})]);
++      transaction.fenced = !drained;
++    })();
++    return transaction.cleanup;
++  };
++  const run = async (transaction: RecoveryTransaction) => {
++    try {
++      if (transaction.stepOnly) {
++        const terminal = waiter(transaction, 'failure');
++        await checked(transaction, terminal.promise); clearWait(transaction);
++      }
++      const { messages, human } = await fresh(transaction);
++      if (!store.available()) throw new Error('journal-unavailable');
++      const consumed = store.get(transaction.identity.owner, transaction.sessionID, human.id);
++      if (consumed) { transaction.entry = consumed; transaction.persisted = true; return; }
++      const failed = messages.slice(0, messages.findIndex(message => message.id === human.id)).find(message => message.type === 'assistant');
++      if (!failed || !isResponseLengthLimit(failed.error) || (transaction.failedMessageID && failed.id !== transaction.failedMessageID)) throw new Error('failure-not-current');
++      transaction.entry = {
++        owner: transaction.identity.owner, generation: transaction.identity.generation, sessionID: transaction.sessionID,
++        originalHumanMessageID: human.id, recoveryID: randomUUID(),
++        continuationID: `msg_${randomUUID().replaceAll('-', '')}`, errorEventID: transaction.errorEventID,
++        errorSeq: transaction.errorSeq, failedMessageID: failed.id, phase: 'checking',
++      };
++      await save(transaction, 'checking');
++      await save(transaction, 'awaiting-result');
++      await fresh(transaction); current(transaction);
++      const result = waiter(transaction, 'result'); transaction.mutation = 'prompt';
++      const input: RecoveryPromptInput = { sessionID: transaction.sessionID, id: transaction.entry.continuationID, delivery: 'queue', text: CONTINUATION,
++        metadata: { openchamber: { responseRecovery: { originalHumanMessageID: transaction.entry.originalHumanMessageID, recoveryID: transaction.entry.recoveryID } } } };
++      transaction.admissionState = 'pending';
++      transaction.admission = Promise.resolve().then(() => transaction.api.session.prompt(input, { signal: transaction.abort.signal })).then(value => {
++        admission(value, transaction, input.id, 'user');
++        transaction.admissionState = 'admitted';
++      }).catch(() => { transaction.admissionState = 'uncertain'; });
++      await checked(transaction, transaction.admission);
++      if (!admitted(transaction)) throw new Error('admission-uncertain');
++      await checked(transaction, result.promise); clearWait(transaction);
++      await fresh(transaction);
++      await save(transaction, 'succeeded');
++    } catch {
++      if (transaction.mutation && (!transaction.resultSettled || transaction.admissionState !== 'admitted')) {
++        transaction.abort.abort();
++        await cleanup(transaction);
++      }
++      if (transaction.entry && store.available()) {
++        transaction.entry = { ...transaction.entry, phase: transaction.cancelled ? 'cancelled' : 'failed', reason: transaction.cancelled ? transaction.cancelReason : 'recovery-failed' };
++        try { await Promise.race([store.put(transaction.entry), transaction.deadline]); transaction.persisted = true; } catch { transaction.persisted = false; }
++        publish(transaction);
++      }
++    } finally {
++      await transaction.cleanup;
++      clearWait(transaction);
++      clearTimer(transaction.timer);
++      transaction.active = false;
++    }
++  };
++  const cancelSession = (sessionID: string, reason = 'cancelled') => {
++    const transaction = sessions.get(sessionID);
++    if (!transaction?.active || transaction.cancelled) return Promise.all([transaction?.work, transaction?.cleanup]);
++    transaction.cancelled = true; transaction.cancelReason = reason;
++    transaction.abort.abort(); transaction.wait?.reject(new Error('cancelled'));
++    if (transaction.entry && transaction.mutation) {
++      cleanup(transaction);
++    }
++    publish(transaction);
++    return Promise.all([transaction.work, transaction.cleanup]);
++  };
++  const processEvent = (raw: JsonValue): Promise<void> => {
++    const parsed = eventSchema.safeParse(raw);
++    if (!parsed.success || stopped) return Promise.resolve();
++    const event = parsed.data;
++    if (event.type === 'credential.switched' || event.type === 'credential.updated' || event.type === 'location.shutdown') { return cancelAll('owner-changed'); }
++    const sessionID = event.data.sessionID;
++    if (!sessionID) return Promise.resolve();
++    let transaction = sessions.get(sessionID);
++    if (transaction?.fenced) return Promise.resolve();
++    if (transaction && transaction.identity.owner !== getIdentity().owner) {
++      if (transaction.active) {
++        void cancelSession(sessionID, 'owner-changed');
++        return Promise.resolve();
++      }
++      sessions.delete(sessionID);
++      transaction = undefined;
++    }
++    if (transaction?.cancelled) {
++      if (transaction.active || event.type !== 'session.inbox.delivered' || !event.durable || event.durable.seq <= transaction.lastSeq || event.data.inboxID === transaction.entry?.continuationID) return Promise.resolve();
++      sessions.delete(sessionID);
++      return Promise.resolve();
++    }
++    if (transaction && !transaction.active && event.durable && transaction.lastSeq >= event.durable.seq) return Promise.resolve();
++    if (transaction?.active) {
++      const wait = transaction.wait;
++      if (event.durable) {
++        const seq = event.durable.seq;
++        if (event.durable.aggregateID !== sessionID || seq <= transaction.lastSeq) {
++          if (transaction.events.has(event.id)) return transaction.work;
++          wait?.reject(new Error('event-order-ambiguous')); return transaction.work;
++        }
++        if (wait && seq !== transaction.lastSeq + 1) wait.reject(new Error('event-gap'));
++        transaction.lastSeq = seq; transaction.events.add(event.id);
++      }
++      if (event.type === 'session.inbox.enqueued' && event.data.inboxID !== transaction.entry?.continuationID) {
++        cancelSession(sessionID, 'new-input'); return transaction.work;
++      }
++      if (['session.model.selected', 'session.agent.selected', 'session.location.switched', 'session.deleted', 'session.revert.staged', 'session.revert.committed', 'session.execution.interrupted'].includes(event.type)) {
++        cancelSession(sessionID, 'session-changed'); return transaction.work;
++      }
++      if (event.type === 'session.compaction.started') {
++        cancelSession(sessionID, 'conflicting-compaction'); return transaction.work;
++      }
++      if (transaction.entry && event.type === 'session.inbox.delivered' && event.data.inboxID !== transaction.entry.continuationID) {
++        cancelSession(sessionID, 'conflicting-delivery'); return transaction.work;
++      }
++      if (wait?.kind === 'failure' && event.type === 'session.execution.failed' && isResponseLengthLimit(event.data.error)) wait.resolve();
++      if (wait?.kind === 'result') {
++        if (event.type === 'session.execution.started') { if (wait.started || !event.durable) wait.reject(new Error('execution-ambiguous')); else wait.started = true; }
++        if (event.type === 'session.inbox.delivered') {
++          if (!wait.started || event.data.inboxID !== requireEntry(transaction).continuationID) wait.reject(new Error('delivery-ambiguous'));
++          else wait.delivered = true;
++        }
++        if (event.type === 'session.execution.failed') { transaction.resultSettled = true; wait.reject(new Error('continuation-failed')); }
++        if (event.type === 'session.execution.succeeded') {
++          if (!wait.started || !wait.delivered || !event.durable) wait.reject(new Error('result-ambiguous')); else { transaction.resultSettled = true; wait.resolve(); }
++        }
++      }
++      return transaction.work;
++    }
++    if (!['session.step.failed', 'session.execution.failed'].includes(event.type) || !isResponseLengthLimit(event.data.error) || !event.durable || event.durable.aggregateID !== sessionID || !store.available()) return Promise.resolve();
++    const identity = identitySchema.safeParse(getIdentity());
++    if (!identity.success) return Promise.resolve();
++    const errorSeq = event.durable.seq;
++    if (store.list().some(entry => entry.owner === identity.data.owner && entry.sessionID === sessionID && entry.errorSeq >= errorSeq)) return Promise.resolve();
++    const abort = new AbortController();
++    let timer: TimerHandle | undefined;
++    const deadline = new Promise<never>((_, reject) => {
++      timer = setTimer(() => { reject(new Error('recovery-timeout')); abort.abort(); }, DEADLINE_MS);
++    });
++    deadline.catch(() => {});
++    transaction = { sessionID, identity: identity.data, api: client(), active: true, cancelled: false, persisted: false,
++      abort, lastSeq: event.durable.seq, errorSeq: event.durable.seq, errorEventID: event.id,
++      failedMessageID: event.data.assistantMessageID, stepOnly: event.type === 'session.step.failed', events: new Set([event.id]),
++      work: Promise.resolve(), deadline, timer };
++    sessions.set(sessionID, transaction);
++    transaction.work = run(transaction);
++    return transaction.work;
++  };
++  const cancelAll = async (reason: string): Promise<void> => {
++    await Promise.all([...sessions.keys()].map(id => cancelSession(id, reason)));
++  };
++  return {
++    processEvent,
++    isReserved: (sessionID: string) => Boolean(sessions.get(sessionID)?.active || sessions.get(sessionID)?.fenced),
++    cancelSession, cancelAll,
++    snapshot(sessionID: string) {
++      const transaction = sessions.get(sessionID);
++      if (!transaction) return store.list().findLast(entry => entry.sessionID === sessionID) ?? null;
++      const entry = snapshotEntry(transaction);
++      return { ...entry, active: Boolean(transaction.active && !transaction.cancelled && transaction.persisted && store.available() && ACTIVE.has(entry.phase)) };
++    },
++    async stop() {
++      stopped = true;
++      await cancelAll('shutdown');
++      await Promise.all([...sessions.values()].map(transaction => transaction.cleanup));
++      let timer: TimerHandle | undefined;
++      const deadline = new Promise<never>((_, reject) => {
++        timer = setTimer(() => {
++          store.invalidate();
++          reject(new Error('recovery-journal-flush-timeout'));
++        }, DEADLINE_MS);
++      });
++      try { await Promise.race([store.flush(), deadline]); }
++      finally { clearTimer(timer); }
++    },
++  };
++}

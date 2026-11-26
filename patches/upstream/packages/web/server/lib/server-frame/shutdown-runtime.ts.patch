@@ -1,0 +1,38 @@
+diff --git a/packages/web/server/lib/server-frame/shutdown-runtime.ts b/packages/web/server/lib/server-frame/shutdown-runtime.ts
+index 427a7a3fc..be1be3235 100644
+--- a/packages/web/server/lib/server-frame/shutdown-runtime.ts
++++ b/packages/web/server/lib/server-frame/shutdown-runtime.ts
+@@ -34,6 +34,7 @@ interface ShutdownDependencies {
+   mergeFollowRuntime?: OptionalStop;
+   messageQueueRuntime?: OptionalStop;
+   dispatchResultsRuntime?: OptionalStop;
++  responseRecovery?: { stop: () => Promise<void> } | null;
+   workflowRuntime?: { shutdown: Cleanup } | null;
+   messageSearchRuntime?: OptionalStop;
+   scheduledTasksRuntime?: OptionalStop;
+@@ -91,6 +92,7 @@ export const createGracefulShutdownRuntime = (dependencies: ShutdownDependencies
+     mergeFollowRuntime,
+     messageQueueRuntime,
+     dispatchResultsRuntime,
++    responseRecovery,
+     workflowRuntime = null,
+     messageSearchRuntime,
+     scheduledTasksRuntime,
+@@ -147,6 +149,9 @@ export const createGracefulShutdownRuntime = (dependencies: ShutdownDependencies
+ 
+     setIsShuttingDown(true);
+     beginGuestServiceShutdown();
++    const recoveryDrained = responseRecovery?.stop().catch(() => {
++      console.warn('[response-recovery] shutdown drain failed; journal persistence is not confirmed');
++    });
+     extensionSessionEvents?.stop?.();
+     extensionServiceLifetime?.stop?.();
+     extensionWaitsRuntime?.stop?.();
+@@ -155,6 +160,7 @@ export const createGracefulShutdownRuntime = (dependencies: ShutdownDependencies
+     const exitProcess = isBoolean(options.exitProcess) ? options.exitProcess : getExitOnShutdown();
+ 
+     const cleanupOperations = [
++      () => recoveryDrained,
+       () => clearInterval(getRelayReconcileTimer() ?? undefined),
+       () => getGuestSurfaceRuntime()?.stop(),
+       () => getRealtimeProxyRuntime()?.stop(),

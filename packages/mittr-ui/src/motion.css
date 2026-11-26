@@ -1,0 +1,5 @@
+@media (prefers-reduced-motion: reduce) {
+  .mittr-motion-calm {
+    animation: none;
+  }
+}

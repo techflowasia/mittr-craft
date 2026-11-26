@@ -4,15 +4,19 @@ import crypto, { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { ENGINE_OUTBOUND_OFF } from '../../packages/mittr-server/src/engine-outbound.js';
 import { ENGINE_CHILD_SECRETS, materializeEngineEnvPlugin } from '../../packages/mittr-server/src/mittr/engine-env-plugin.js';
 import { materializeToolsPlugin, toolsPluginSource } from '../../packages/mittr-server/src/mittr/tools/plugin-source.js';
+import { BUNDLED_ENGINE_MISSING, bundledEngineCommand, bundledEngineEntry, engineServeArgs } from './isolated-env.mjs';
+
+await import('../../packages/web/scripts/register-server-sources.mjs');
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const ENGINE = path.join(REPO, 'packages/electron/resources/opencode-cli/opencode');
+const ENGINE = bundledEngineEntry(REPO);
 const RESERVED_PORTS = new Set([57123, 57133]);
 const TOOLS_ROUTE = '/mittr-tools/v1/call';
 const AGENT_TOOL_ROUTE = '/api/openchamber/agent-tool';
@@ -92,6 +96,25 @@ const chunk = (model, delta, finish = null) => JSON.stringify({
   ...(finish ? { usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 } } : {}),
 });
 
+const systemTextOf = (body) => (Array.isArray(body?.messages) ? body.messages : [])
+  .filter((message) => message?.role === 'system')
+  .map((message) => (Array.isArray(message.content) ? message.content.map((part) => part?.text ?? '').join('\n') : String(message.content ?? '')))
+  .join('\n');
+
+export const codeModeCallOf = (body, name, args) => {
+  const text = systemTextOf(body);
+  const at = text.indexOf('# Code Mode');
+  if (at === -1) return null;
+  const lines = text.slice(at).split('\n');
+  const call = (callPath) => ({ name: 'execute', arguments: { code: `return await ${callPath}(${JSON.stringify(args)})` } });
+  for (const line of lines) {
+    const match = line.match(/^\s+- (\S*?)\(/);
+    if (match && match[1].split(/[.[\]"]+/).filter(Boolean).at(-1) === name) return call(match[1]);
+  }
+  const listed = lines.some((line) => line.match(/^- (\S+) \(\d+ tools?(?:, none shown)?\)/)?.[1] === name);
+  return listed ? call(`tools[${JSON.stringify(name)}]`) : null;
+};
+
 const toolResults = (body) => (Array.isArray(body?.messages) ? body.messages : []).filter((message) => message?.role === 'tool').length;
 const offered = (body) => (Array.isArray(body?.tools) ? body.tools : []).map((tool) => tool?.function?.name ?? tool?.name).filter(Boolean);
 
@@ -108,7 +131,8 @@ const startStubModel = async (plan) => {
     seen.requests += 1;
     seen.offered = offered(body);
     const model = body?.model ?? 'm1';
-    const call = plan[toolResults(body)];
+    const step = plan[toolResults(body)];
+    const call = typeof step === 'function' ? step(body) : step;
     if (call && seen.offered.includes(call.name)) {
       sse(res, [
         chunk(model, { role: 'assistant', tool_calls: [{ index: 0, id: `call_${seen.requests}`, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.arguments) } }] }),
@@ -187,8 +211,8 @@ const readText = (file) => {
 };
 
 const run = async ({ withEnvPlugin }) => {
-  if (!fs.existsSync(ENGINE)) throw new Error(`no bundled engine at ${ENGINE}`);
-  const home = fs.realpathSync(fs.mkdtempSync('/tmp/p4.'));
+  if (!fs.existsSync(ENGINE)) throw new Error(`no bundled engine at ${ENGINE} (${BUNDLED_ENGINE_MISSING})`);
+  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'p4.')));
   const dataDir = path.join(home, 'data');
   const work = path.join(home, 'work');
   const out = path.join(home, 'out');
@@ -207,12 +231,12 @@ const run = async ({ withEnvPlugin }) => {
   ].join('; ');
   const model = await startStubModel([
     { name: 'shell', arguments: { command, description: 'Write the environment to a file' } },
-    { name: 'openchamber', arguments: { action: 'projects.list', parameters: {} } },
+    (body) => codeModeCallOf(body, 'openchamber', { action: 'projects.list', parameters: {} }),
     { name: PROBE_TOOL.name, arguments: { action: 'probe.ping', parameters: {} } },
   ]);
 
   const { createAgentToolRuntime } = await import(pathToFileURL(path.join(REPO, 'packages/web/server/lib/agent-tool/runtime.js')).href);
-  const agentTool = createAgentToolRuntime({ crypto, fsPromises: fs.promises, path, dataDir, getActivePort: () => callbacks.port, getActiveHost: () => '127.0.0.1', executeAction: async () => ({}) });
+  const agentTool = createAgentToolRuntime({ crypto, fsPromises: fs.promises, path, instanceDir: dataDir, getActivePort: () => callbacks.port, getActiveHost: () => '127.0.0.1', executeAction: async () => ({}) });
   const agentToolDir = await agentTool.materializePlugin({ includeControl: true, includeWeb: false });
   const toolsDir = await materializeToolsPlugin({ dataDir, source: toolsPluginSource({ tools: [PROBE_TOOL], codeMode: false }) });
   const plugins = [...(withEnvPlugin ? [await materializeEngineEnvPlugin({ dataDir })] : []), agentToolDir, toolsDir];
@@ -253,7 +277,8 @@ const run = async ({ withEnvPlugin }) => {
   };
   const reservedHolders = Object.fromEntries([...RESERVED_PORTS].map((port) => [port, listenerPids(port).length > 0 ? 'held by another process' : 'free']));
   const log = fs.openSync(path.join(home, 'engine.log'), 'a');
-  const child = spawn(ENGINE, ['serve', '--hostname', '127.0.0.1', '--port', String(enginePort)], { cwd: work, env, detached: true, stdio: ['ignore', log, log] });
+  const launch = bundledEngineCommand(ENGINE, engineServeArgs(enginePort));
+  const child = spawn(launch.command, launch.args, { cwd: work, env, detached: true, stdio: ['ignore', log, log] });
   fs.closeSync(log);
   const engine = { pid: child.pid, port: enginePort, base: `http://127.0.0.1:${enginePort}` };
   const guard = { checked: 0, refused: 0 };
@@ -295,7 +320,7 @@ const run = async ({ withEnvPlugin }) => {
       engineStatus: (readText(files.engineStatus) ?? '').trim(),
       toolsCallbackStatus: (readText(files.toolsStatus) ?? '').trim(),
       permissionsAnswered: answered.size,
-      toolsOffered: model.seen.offered.filter((name) => ['shell', 'openchamber', PROBE_TOOL.name].includes(name)),
+      toolsOffered: model.seen.offered.filter((name) => ['shell', 'execute', 'openchamber', PROBE_TOOL.name].includes(name)),
     };
 
     try {

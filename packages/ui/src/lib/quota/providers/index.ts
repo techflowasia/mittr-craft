@@ -12,6 +12,7 @@ export const QUOTA_PROVIDERS: QuotaProviderMeta[] = [
   { id: 'cursor', name: 'Cursor' },
   { id: 'github-copilot', name: 'GitHub Copilot' },
   { id: 'google', name: 'Google' },
+  { id: 'antigravity', name: 'Antigravity' },
   { id: 'kimi-for-coding', name: 'Kimi for Coding' },
   { id: 'nano-gpt', name: 'NanoGPT' },
   { id: 'openrouter', name: 'OpenRouter' },
@@ -22,6 +23,7 @@ export const QUOTA_PROVIDERS: QuotaProviderMeta[] = [
   { id: 'ollama-cloud', name: 'Ollama Cloud' },
   { id: 'wafer', name: 'Wafer.ai' },
   { id: 'opencode-go', name: 'OpenCode Go' },
+  { id: 'opencode', name: 'OpenCode Zen' },
   { id: 'deepinfra', name: 'DeepInfra' },
   { id: 'deepseek', name: 'DeepSeek' },
   { id: 'exe-dev', name: 'exe.dev' },
@@ -30,7 +32,23 @@ export const QUOTA_PROVIDERS: QuotaProviderMeta[] = [
   { id: 'kilo', name: 'Kilo Code' },
   { id: 'zenmux', name: 'ZenMux' },
   { id: 'xai', name: 'xAI' },
+  { id: 'mistral', name: 'Mistral' },
 ];
+
+type QuotaRefreshContext = { signal: AbortSignal };
+type QuotaRefreshHook = (context: QuotaRefreshContext) => Promise<void>;
+const refreshHooks = new Map<string, QuotaRefreshHook>();
+
+export function registerQuotaProviderRefreshHook(providerId: string, hook: QuotaRefreshHook): () => void {
+  refreshHooks.set(providerId, hook);
+  return () => { if (refreshHooks.get(providerId) === hook) refreshHooks.delete(providerId); };
+}
+
+export async function refreshQuotaProvider(providerId: string, context: QuotaRefreshContext): Promise<void> {
+  try { await refreshHooks.get(providerId)?.(context); } catch {
+    // An extension must not prevent the normal provider quota read.
+  }
+}
 
 const runTimeProviders = new Set<string>();
 

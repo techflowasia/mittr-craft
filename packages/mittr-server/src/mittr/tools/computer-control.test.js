@@ -86,7 +86,7 @@ const fakeDaemon = ({ socketPath = SOCKET, ensure = async () => {}, restart = as
   };
 };
 
-const control = (options) => createComputerControl({ binary: '/d', daemon: fakeDaemon(), ...options });
+const control = (options) => createComputerControl({ binary: '/d', daemon: fakeDaemon(), platform: 'darwin', ...options });
 
 const packedDriver = (t) => {
   const resourcesDir = path.join(tempDataDir(t), 'Resources');
@@ -845,6 +845,154 @@ test('a turn aborted before opening runs nothing', async () => {
   const { spawn, calls } = fakeSpawn();
   await assert.rejects(createLaunchApp({ spawn })('Calculator', { signal: AbortSignal.abort() }), { statusCode: 499 });
   assert.deepEqual(calls, []);
+});
+
+test('permission setup uses the exact bundled app and private result file, never a daemon or the public grant command', async (t) => {
+  const temporaryDirectory = tempDataDir(t);
+  const app = '/R/MittrCraft Dev.app/Contents/Resources/cua-driver/CuaDriver.app';
+  const executable = path.join(app, 'Contents/MacOS/cua-driver');
+  const { spawn, calls } = fakeSpawn(({ command, args }) => {
+    if (command === OPEN_COMMAND) {
+      const file = args[args.indexOf('--result-file') + 1];
+      assert.equal(path.dirname(file), temporaryDirectory);
+      assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+      fs.writeFileSync(file, JSON.stringify({ structuredContent: { accessibility: false, screen_recording: false, source: { attribution: 'driver-daemon', executable } } }));
+    }
+    return {};
+  });
+  const computer = control({ spawn, appBundle: () => app, temporaryDirectory });
+  const { signal } = new AbortController();
+  assert.equal(await computer.requestPermissions({ signal }), false);
+  assert.equal(await computer.requestPermissions({ signal }), false, 'a later denied use requests again');
+  assert.equal(calls.length, 2);
+  for (const call of calls) {
+    assert.equal(call.command, OPEN_COMMAND);
+    assert.deepEqual(call.args.slice(0, 6), ['-W', '-n', '-g', '-a', app, '--env']);
+    assert.ok(call.args.includes('__permissions-host-request'));
+    assert.ok(!call.args.includes('grant'));
+    assert.ok(!call.args.includes('serve'));
+    assert.equal(call.options.signal.aborted, false);
+  }
+  assert.deepEqual(fs.readdirSync(temporaryDirectory), []);
+});
+
+test('permission setup trusts only the bundled identity and required grant, including live capture readiness', async (t) => {
+  const app = '/R/CuaDriver.app';
+  const executable = `${app}/Contents/MacOS/cua-driver`;
+  let status = { accessibility: true, screen_recording: true, screen_recording_capturable: true, source: { attribution: 'driver-daemon', executable } };
+  const { spawn, calls } = fakeSpawn(({ args }) => {
+    const resultFile = args.indexOf('--result-file');
+    if (resultFile === -1) return;
+    fs.writeFileSync(args[resultFile + 1], JSON.stringify({ structuredContent: status }));
+  });
+  const computer = control({ spawn, appBundle: () => app, temporaryDirectory: tempDataDir(t) });
+  assert.equal(await computer.requestPermissions({ directCapture: true }), true);
+  assert.ok(calls[0].args.includes('--probe-direct-capture'));
+  status = { ...status, screen_recording_capturable: false };
+  assert.equal(await computer.requestPermissions({ directCapture: true }), false);
+  status = { ...status, source: { attribution: 'caller', executable } };
+  await assert.rejects(computer.requestPermissions(), /identity/);
+});
+
+test('permission setup starts nothing on unsupported platforms, missing app, pre-abort or a stale action token', async () => {
+  const { spawn, calls } = fakeSpawn();
+  await assert.rejects(control({ spawn, platform: 'linux' }).requestPermissions(), { statusCode: 501 });
+  await assert.rejects(control({ spawn, appBundle: () => null }).requestPermissions(), { statusCode: 503 });
+  await assert.rejects(control({ spawn, appBundle: () => '/R/CuaDriver.app' }).requestPermissions({ signal: AbortSignal.abort() }), { statusCode: 499 });
+  const daemon = { ...fakeDaemon(), token: () => 2 };
+  await assert.rejects(control({ spawn, daemon, appBundle: () => '/R/CuaDriver.app' }).requestPermissions({ token: 1 }), { statusCode: 503 });
+  assert.deepEqual(calls, []);
+});
+
+test('a cancelled or timed-out permission request kills only its exact LaunchServices host and removes its result file', async (t) => {
+  for (const mode of ['abort', 'timeout', 'stop', 'close']) {
+    const directory = tempDataDir(t);
+    const app = '/R/MittrCraft Dev.app/CuaDriver.app';
+    let hostCommand;
+    const signals = [];
+    const { spawn, calls } = fakeSpawn(({ command, args }) => {
+      if (command === OPEN_COMMAND) {
+        hostCommand = `${app}/Contents/MacOS/cua-driver ${args.slice(args.indexOf('--args') + 1).join(' ')}`;
+        return { code: null, exitOnKill: true };
+      }
+      return { stdout: `123 ${hostCommand}\n124 ${app}/Contents/MacOS/cua-driver serve --socket /other\n125 /Applications/CuaDriver.app/Contents/MacOS/cua-driver ${hostCommand}\n` };
+    });
+    const computer = control({ spawn, appBundle: () => app, temporaryDirectory: directory, permissionTimeoutMs: mode === 'timeout' ? 20 : 5000, permissionCleanupMs: 10, signalPid: (pid, signal) => signals.push([pid, signal]) });
+    const controller = new AbortController();
+    const pending = computer.requestPermissions({ signal: controller.signal });
+    const checked = assert.rejects(pending, mode === 'timeout' ? /timed out/ : { statusCode: 499 });
+    await until(() => Boolean(hostCommand));
+    if (mode === 'abort') {
+      controller.abort();
+      calls[0].child.emit('error', Object.assign(new Error('aborted'), { name: 'AbortError' }));
+    }
+    if (mode === 'stop' || mode === 'close') {
+      const stopping = computer[mode]();
+      calls[0].child.emit('error', Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      await stopping;
+    }
+    await checked;
+    assert.ok(signals.length > 0);
+    assert.ok(signals.every(([pid, signal]) => pid === 123 && signal === 'SIGKILL'));
+    assert.deepEqual(fs.readdirSync(directory), []);
+  }
+});
+
+test('an explicit no-action-started permission gate refusal polls only read-only readiness before sending the action again', async () => {
+  const pending = 'permissions_pending: macOS Accessibility or Screen Recording permission is still pending; no action started, retry after the permission gate completes';
+  let probes = 0;
+  const { spawn, calls } = fakeSpawn(({ args }) => {
+    if (args[1] === 'check_permissions') return ++probes === 1 ? { stderr: pending, code: 1 } : { stdout: '{"accessibility":true}' };
+    return probes === 0 ? { stderr: pending, code: 1 } : { stdout: '{"process_activated":true}' };
+  });
+  const computer = control({ spawn, readinessPollMs: 1 });
+  assert.deepEqual(await computer.request('bring_to_front', { pid: 42 }), { process_activated: true });
+  assert.deepEqual(calls.map(({ args }) => args.slice(1, 3)), [
+    ['bring_to_front', '{"pid":42}'],
+    ['check_permissions', '{"prompt":false}'],
+    ['check_permissions', '{"prompt":false}'],
+    ['bring_to_front', '{"pid":42}'],
+  ]);
+});
+
+test('permission readiness waits are bounded and cancel-aware and do not replay other failures', async () => {
+  const pending = 'permissions_pending: macOS Accessibility or Screen Recording permission is still pending; no action started, retry after the permission gate completes';
+  const stuck = fakeSpawn(() => ({ stderr: pending, code: 1 }));
+  await assert.rejects(control({ spawn: stuck.spawn, readinessTimeoutMs: 20, readinessPollMs: 1 }).request('list_apps'), /permission gate.*timed out/);
+  assert.equal(stuck.calls.filter(({ args }) => args[1] === 'list_apps').length, 1);
+  const controller = new AbortController();
+  const waiting = fakeSpawn(() => ({ stderr: pending, code: 1 }));
+  const request = control({ spawn: waiting.spawn, readinessPollMs: 5000 }).request('list_apps', {}, { signal: controller.signal });
+  const checked = assert.rejects(request, { statusCode: 499 });
+  await until(() => waiting.calls.length > 1);
+  controller.abort();
+  await checked;
+  for (const message of ['permissions_pending: permission denied', 'permission grant failed after action started']) {
+    const failed = fakeSpawn(() => ({ stderr: message, code: 1 }));
+    await assert.rejects(control({ spawn: failed.spawn }).request('bring_to_front'), { message });
+    assert.equal(failed.calls.length, 1);
+  }
+});
+
+test('an initial action can surface the exact gate refusal as typed pending without polling or replay', async () => {
+  const message = 'permissions_pending: macOS Accessibility or Screen Recording permission is still pending; no action started, retry after the permission gate completes';
+  const { spawn, calls } = fakeSpawn(() => ({ stderr: message, code: 1 }));
+  await assert.rejects(control({ spawn }).request('list_apps', {}, { waitForPermissions: false }), { statusCode: 403, code: 'computer_permissions_pending' });
+  assert.equal(calls.length, 1);
+});
+
+test('a stop while readiness is pending never replays the desktop action', async () => {
+  const pending = 'permissions_pending: macOS Accessibility or Screen Recording permission is still pending; no action started, retry after the permission gate completes';
+  let token = 0;
+  const daemon = { ...fakeDaemon(), token: () => token };
+  const { spawn, calls } = fakeSpawn(() => ({ stderr: pending, code: 1 }));
+  const computer = control({ spawn, daemon, readinessPollMs: 5 });
+  const request = computer.request('bring_to_front', { pid: 42 });
+  const checked = assert.rejects(request, { statusCode: 503 });
+  await until(() => calls.length > 1);
+  token += 1;
+  await checked;
+  assert.equal(calls.filter(({ args }) => args[1] === 'bring_to_front').length, 1);
 });
 
 test('a driver that answers more than the output cap is stopped and says so', async () => {

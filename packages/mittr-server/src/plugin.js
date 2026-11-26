@@ -8,7 +8,10 @@ import { installDefaultThemes } from './default-themes.js';
 import { ENGINE_DB_RULE, engineBases, engineConfigDir, engineEnv, sharedHistoryExists } from './engine-home.js';
 import { ENGINE_OUTBOUND_OFF } from './engine-outbound.js';
 import { bundledRipgrep, placeEngineRipgrep } from './engine-ripgrep.js';
+import { engineImportsV1 } from './engine-import.js';
+import { createEngineUpgrade } from './engine-upgrade.js';
 import { ensureGitIdentityStore } from './git-identities.js';
+import { createGoalGuard } from './goal-guard/index.js';
 import { setupMittr } from './mittr/index.js';
 import { MITTR_SETTINGS_KEYS, UPSTREAM_SETTINGS_KEYS, migrateSettingsOnce } from './settings.js';
 import { registerCompanySignIn } from './ui-auth/routes.js';
@@ -135,11 +138,14 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
       logger.warn('[mittr] could not put the bundled rg where the engine looks for it:', error?.message ?? error);
     }
   };
+  const upgrade = createEngineUpgrade({ logger, importsV1: () => engineImportsV1({ env, resourcesDir }) });
   const withheldNow = () => ({ ...withheld, ...Object.fromEntries(companySignInNamesIn(env).map((name) => [name, undefined])) });
-  const baseEngineEnv = (accountHome) => {
+  const baseEngineEnv = async (accountHome) => {
+    const home = engineEnv({ bases, accountHome, rule: ENGINE_DB_RULE });
+    await upgrade.prepare(home.XDG_DATA_HOME);
     placeRipgrep();
     return {
-      ...engineEnv({ bases, accountHome, rule: ENGINE_DB_RULE }),
+      ...home,
       ...ENGINE_OUTBOUND_OFF,
       ...withheldNow(),
     };
@@ -154,14 +160,18 @@ export const setupMittrServer = async ({ dataDir, logger, env, homeDir, context 
     sharedHistoryExists: () => sharedHistoryExists(bases),
     engineConfigDir: engineConfigDir({ bases, env }),
     engineDataHome: (accountHome) => engineEnv({ bases, accountHome, rule: ENGINE_DB_RULE }).XDG_DATA_HOME,
+    engineHomeRefusal: (accountHome) => upgrade.check(engineEnv({ bases, accountHome, rule: ENGINE_DB_RULE }).XDG_DATA_HOME),
     mintShimKey,
     companySignIn: companySignIn.enabled,
     resourcesDir,
   });
+  const goalGuard = createGoalGuard({ opencode: context.opencode, logger });
   return {
-    engineEnv: async () => ({ ...baseEngineEnv(mittr.engineHome()), ...(await mittr.engineEnv()), ...withheldNow() }),
+    engineEnv: async () => ({ ...(await baseEngineEnv(mittr.engineHome())), ...(await mittr.engineEnv()), ...withheldNow() }),
     managedConfig: mittr.managedConfig,
     neverAutoAnswer: mittr.neverAutoAnswer,
+    goalContinuation: goalGuard.review,
+    goalEnded: goalGuard.ended,
     dispose: async () => {
       try {
         await mittr.dispose();

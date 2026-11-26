@@ -68,17 +68,22 @@ const refusalCodeOf = async (response) => {
 /**
  * The Mittr catalog on the server: `GET /api/mittr/catalog` answers the
  * active account's cached catalog, and `POST /api/mittr/catalog/sync` fetches
- * it again. Both sit under `/api`, so they carry the UI's own auth.
+ * it again. Both sit under `/api`, so they carry the UI's own auth. Sync is
+ * forced by default; `{ force: false }` reuses a successful applied sync for
+ * 60 seconds within the same account generation and server run.
  *
  * `cache()` resolves the active account's cache on every request and sync, so
  * a sync after a switch writes the new account's file. A sync whose account
  * changed while it was out files the answer under the account it was asked
- * for and applies nothing: the models on screen belong to someone else now.
+ * for and applies nothing, answering 409. The generation also fences a
+ * switch away and back to the same account while the request is in flight.
  *
  * `onModels(items)` hears the new model list whenever the catalog carries
- * one, empty included. A failed, refused or unusable sync keeps the last
- * catalog and calls nobody: replacing it with nothing would take every model
- * away over a network blip.
+ * one, empty included. Omitted models retain that account's prior configured
+ * list. A failed, refused or unusable fetch keeps the last catalog and calls
+ * nobody. An application failure retains the newly stored catalog, answers
+ * 500 with `{ error, bundleVersion, stored: true, applied: false }`, and leaves
+ * freshness unset so the same version can be retried.
  *
  * Syncs run one after another, so an older answer never lands over a newer
  * one. Returns `{ sync, syncStored }`: `sync` reports rather than throws,
@@ -96,16 +101,25 @@ export function registerMittrCatalogRoutes(app, {
   onEnablementChange = async () => {},
   fetchImpl = (...args) => fetch(...args),
   logger = console,
+  now = Date.now,
+  accountGeneration = () => 0,
 }) {
   const endpoint = new URL(CATALOG_ENDPOINT, broker.baseUrl).toString();
   const failure = (status, error, extra = {}) => ({ status, body: { error, ...extra } });
 
-  const runSync = async ({ onStored } = {}) => {
-    const target = cache();
+  let fresh = null;
+  const runSync = async ({ key: target, generation, force, onStored }) => {
+    const isCurrent = () => cache() === target && accountGeneration() === generation;
+    if (!isCurrent()) return failure(409, ACCOUNT_CHANGED);
+    if (!force && fresh?.key === target && fresh.generation === generation && now() - fresh.at < 60_000) {
+      return fresh.result;
+    }
+    // A failed forced attempt also invalidates prior freshness.
+    fresh = null;
     // Refreshed first: a sync is often the first call after a long idle, just
     // when the access token has run out on a session that is still good.
     const session = await ensureFreshSession();
-    if (cache() !== target) return failure(409, ACCOUNT_CHANGED);
+    if (!isCurrent()) return failure(409, ACCOUNT_CHANGED);
     if (!session?.accessToken) return failure(401, NOT_SIGNED_IN);
 
     let response;
@@ -146,23 +160,30 @@ export function registerMittrCatalogRoutes(app, {
       await new Promise((resolve) => { setImmediate(resolve); });
     }
 
-    if (cache() === target) {
-      if (stored.models.configured) {
-        try {
-          await onModels(stored.models.items);
-        } catch (error) {
-          logger.warn('[mittr] applying the Mittr models failed:', error?.message ?? error);
-        }
-      }
-      if (cache() === target) {
-        try {
-          await onCatalog(stored);
-        } catch (error) {
-          logger.warn('[mittr] applying the Mittr catalog failed:', error?.message ?? error);
-        }
+    if (!isCurrent()) return failure(409, ACCOUNT_CHANGED);
+    let applied = true;
+    if (stored.models.configured) {
+      try {
+        await onModels(stored.models.items);
+      } catch (error) {
+        applied = false;
+        logger.warn('[mittr] applying the Mittr models failed:', error?.message ?? error);
       }
     }
-    return { status: 200, body: { bundleVersion: catalog.bundleVersion } };
+    if (!isCurrent()) return failure(409, ACCOUNT_CHANGED);
+    if (applied) {
+      try {
+        await onCatalog(stored);
+      } catch (error) {
+        applied = false;
+        logger.warn('[mittr] applying the Mittr catalog failed:', error?.message ?? error);
+      }
+    }
+    if (!isCurrent()) return failure(409, ACCOUNT_CHANGED);
+    if (!applied) return failure(500, 'Cannot apply the Mittr catalog', { bundleVersion: catalog.bundleVersion, stored: true, applied: false });
+    const result = { status: 200, body: { bundleVersion: catalog.bundleVersion } };
+    fresh = { key: target, generation, at: now(), result };
+    return result;
   };
 
   const queue = [];
@@ -174,7 +195,7 @@ export function registerMittrCatalogRoutes(app, {
       const entry = queue.shift();
       let result;
       try {
-        result = await runSync({ onStored: () => entry.listeners.forEach((listener) => listener()) });
+        result = await runSync({ ...entry, onStored: () => entry.listeners.forEach((listener) => listener()) });
       } catch (error) {
         logger.error('[mittr] catalog sync failed:', error?.message ?? error);
         result = failure(500, 'The Mittr catalog sync failed');
@@ -184,14 +205,16 @@ export function registerMittrCatalogRoutes(app, {
     busy = false;
   };
 
-  const sync = ({ onStored } = {}) => {
+  const sync = ({ onStored, force = true } = {}) => {
     const key = cache();
-    const waiting = queue.find((entry) => entry.key === key);
+    const generation = accountGeneration();
+    const waiting = queue.find((entry) => entry.key === key && entry.generation === generation);
     if (waiting) {
       if (onStored) waiting.listeners.push(onStored);
+      if (force) waiting.force = true;
       return waiting.result;
     }
-    const entry = { key, listeners: onStored ? [onStored] : [] };
+    const entry = { key, generation, force, listeners: onStored ? [onStored] : [] };
     entry.result = new Promise((settle) => { entry.settle = settle; });
     queue.push(entry);
     void drain();
@@ -202,8 +225,11 @@ export function registerMittrCatalogRoutes(app, {
     void sync({ onStored: resolve }).then(resolve);
   });
 
-  app.post('/api/mittr/catalog/sync', async (_req, res) => {
-    const { status, body } = await sync();
+  app.post('/api/mittr/catalog/sync', jsonBody(express, { limit: ENABLEMENT_BODY_LIMIT }), async (req, res) => {
+    if (req.body !== undefined && (!isRecord(req.body) || (req.body.force !== undefined && ![true, false].includes(req.body.force)))) {
+      return res.status(400).json({ error: 'force must be a boolean' });
+    }
+    const { status, body } = await sync({ force: req.body?.force !== false });
     return res.status(status).json(body);
   });
 

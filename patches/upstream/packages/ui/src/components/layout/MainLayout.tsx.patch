@@ -1,0 +1,80 @@
+diff --git a/packages/ui/src/components/layout/MainLayout.tsx b/packages/ui/src/components/layout/MainLayout.tsx
+index a0a6510d6..122c02ba5 100644
+--- a/packages/ui/src/components/layout/MainLayout.tsx
++++ b/packages/ui/src/components/layout/MainLayout.tsx
+@@ -22,6 +22,8 @@ import { SpaceActionsSheet, SpaceDeleteDialog } from '@/components/session/space
+ import { DiffWorkerProvider } from '@/contexts/DiffWorkerProvider';
+ import { ProjectActionsProvider } from './ProjectActionsProvider';
+ import { RunAutoFusion } from '@/lib/multirun/autoFusion';
++import { ProductSlot } from '@/lib/product-plugins';
++import { useProductSidebarSide } from '@/lib/product-plugins';
+ 
+ import { useUIStore } from '@/stores/useUIStore';
+ import { useSessionUIStore } from '@/sync/session-ui-store';
+@@ -72,16 +74,17 @@ const OnDemand: React.FC<{
+     return Component ? <Component /> : null;
+ };
+ 
+-const LeftSidebar = React.memo<{ isMobile: boolean }>(({ isMobile }) => {
++const LeftSidebar = React.memo<{ isMobile: boolean; side: 'left' | 'right' }>(({ isMobile, side }) => {
+     const isSidebarOpen = useUIStore((state) => state.isSidebarOpen);
+-    const peek = useSidebarPeek({ enabled: !isSidebarOpen && !isMobile, layoutAnimationMs: useLayoutAnimationMs() });
++    const peek = useSidebarPeek({ enabled: !isSidebarOpen && !isMobile && side === 'left', layoutAnimationMs: useLayoutAnimationMs() });
+     const [listControlsSlot, setListControlsSlot] = React.useState<HTMLDivElement | null>(null);
+     return (
+         <Sidebar
+             isOpen={isSidebarOpen}
+             isMobile={isMobile}
+             className="border-border"
+-            topBar={<SidebarTopBar actionsSlotRef={setListControlsSlot} />}
++            side={side}
++            topBar={side === 'right' ? <div aria-hidden className="app-region-drag shrink-0" style={{ height: 'var(--oc-header-height, 3rem)' }} /> : <SidebarTopBar actionsSlotRef={setListControlsSlot} />}
+             peek={peek}
+         >
+             <SessionSidebar isVisible={isSidebarOpen || peek.state !== false} listControlsSlot={listControlsSlot} />
+@@ -94,6 +97,7 @@ export const MainLayout: React.FC = () => {
+     useSessionListSync({ isVSCode: false });
+     usePaletteShortcuts();
+     useTerminalSessionKeepalive();
++    const sidebarSide = useProductSidebarSide();
+     const isolatedSpacesEnabled = useUIStore((state) => state.isolatedSpacesEnabled);
+     const setIsMobile = useUIStore((state) => state.setIsMobile);
+     const isSettingsDialogOpen = useUIStore((state) => state.isSettingsDialogOpen);
+@@ -163,6 +167,7 @@ export const MainLayout: React.FC = () => {
+             <ProjectActionsProvider>
+             <div
+                 data-page-scroll-lock="true"
++                data-product-region="shell"
+                 className="main-content-safe-area relative flex h-[100dvh] bg-background"
+             >
+                 <OnDemand needed={isCommandPaletteOpen} load={loadCommandPalette} onFailure={() => useUIStore.getState().setCommandPaletteOpen(false)} />
+@@ -182,9 +187,9 @@ export const MainLayout: React.FC = () => {
+                 ) : null}
+ 
+                 <TitlebarLeftControls />
+-                <div className="flex flex-1 overflow-hidden" data-page-scroll-lock="true">
+-                    <LeftSidebar isMobile={isMobile} />
+-                    <div className="relative flex flex-1 min-w-0 flex-col overflow-hidden bg-background" data-page-scroll-lock="true">
++                <div className={cn('flex flex-1 overflow-hidden', sidebarSide === 'right' && 'flex-row-reverse')} data-page-scroll-lock="true" data-sidebar-side={sidebarSide}>
++                    <LeftSidebar isMobile={isMobile} side={sidebarSide} />
++                    <div className="relative flex flex-1 min-w-0 flex-col overflow-hidden bg-background" data-page-scroll-lock="true" data-product-region="column">
+                         <Header />
+                         <div className="relative flex flex-1 min-h-0 overflow-hidden bg-background" data-page-scroll-lock="true">
+                             <div className="relative flex flex-1 min-w-0 flex-col overflow-hidden bg-background" data-page-scroll-lock="true">
+@@ -192,7 +197,7 @@ export const MainLayout: React.FC = () => {
+                                     <ContextPanel zone="left" />
+                                     <div className="relative flex flex-1 min-h-0 min-w-0 overflow-hidden" data-page-scroll-lock="true" data-chat-area="true">
+                                         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" data-workspace-chat="true">
+-                                        <main ref={mainRef} className="min-h-0 flex-1 overflow-hidden bg-background relative" data-page-scroll-lock="true">
++                                        <main ref={mainRef} className="min-h-0 flex-1 overflow-hidden bg-background relative" data-page-scroll-lock="true" data-product-region="main">
+                                             <div className={cn('absolute inset-0', isSurfacePageOpen && 'invisible')}>
+                                                 <ErrorBoundary><ChatView active={!isSettingsDialogOpen && !isSurfacePageOpen} /></ErrorBoundary>
+                                             </div>
+@@ -213,6 +218,7 @@ export const MainLayout: React.FC = () => {
+                                                 <ErrorBoundary><PluginPane mode={`plugin:${guestPage.id}`} surface="page" item={null}
+                                                     onDismiss={() => useUIStore.getState().setOpenGuestPage(null)} /></ErrorBoundary>
+                                             </div>}
++                                            <ErrorBoundary><ProductSlot name="main-surface" /></ErrorBoundary>
+                                         </main>
+                                         <ContextPanel zone="bottom" />
+                                         </div>

@@ -1,7 +1,7 @@
 // Deep-link hosts that in-process server plugins own. The app's own hosts stay
 // with its dispatcher and can never be registered here, so a plugin cannot
 // take over a link the app already understands.
-const APP_HOSTS = new Set(['connect', 'focus', 'session', 'host']);
+const APP_HOSTS = new Set(['connect', 'focus', 'session', 'extensions', 'host']);
 
 const normalizeHost = (host) => (typeof host === 'string' ? host.trim().toLowerCase() : '');
 

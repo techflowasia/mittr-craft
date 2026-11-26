@@ -2,32 +2,27 @@ import React from "react";
 import { useChatSessionSelection } from './chatColumnSession';
 import { WorkingPlaceholder } from "./message/parts/WorkingPlaceholder";
 import { BackgroundWorkButton } from "./components/BackgroundWorkButton";
+import type { AgentStatus } from "@/lib/agentStatus";
 
-// The floating assistant-status chip that hovers above the composer while the
-// agent works ("Claude is working…"). ONLY that. The composer's
-// own bar — pending changes, todos dropdown — is ComposerStatusBar: they used
-// to share this component, and every restyle of this chip (glass, placement)
-// silently dragged the composer bar and its dropdown along with it.
 
 const STATUS_ROW_CONTAINER_STYLE = { containerType: "inline-size" as const, containerName: "status-row" };
 
 interface StatusRowProps {
   isWorking?: boolean;
-  statusText?: string | null;
+  status?: AgentStatus | null;
   isGenericStatus?: boolean;
   isWaitingForPermission?: boolean;
   abortActive?: boolean;
-  retryInfo?: { attempt?: number; next?: number } | null;
+  retryInfo?: { attempt?: number; next?: number; resetsAt?: number } | null;
   agentName?: string;
   modelName?: string | null;
   providerId?: string | null;
-  /** Set while the turn waits on work OpenCode can move to the background. */
   onBackground?: () => void;
 }
 
 export const StatusRow: React.FC<StatusRowProps> = ({
   isWorking = false,
-  statusText = null,
+  status = null,
   isGenericStatus,
   isWaitingForPermission,
   abortActive,
@@ -48,23 +43,15 @@ export const StatusRow: React.FC<StatusRowProps> = ({
 
   return (
     <div
-      // The row renders inside the composer-anchored overlay, which owns the
-      // distance to the input and the horizontal column (the same ones the
-      // scroll-to-bottom pill uses).
       style={STATUS_ROW_CONTAINER_STYLE}
     >
-      {/* h-8 matches the turn footer's real row height: its h-8 action
-          buttons define the footer line, with the meta text centered in it. */}
-      {/* The glass chip lives here, not on the container: the root above is
-          an inline-size query container, whose width ignores its children —
-          a shrink-to-fit wrapper around it always collapsed to zero. */}
-      <div className="oc-glass-popover inline-flex w-max max-w-full items-center gap-2 h-8 whitespace-nowrap rounded-full [corner-shape:round] px-3">
-        <div className="flex items-center min-w-0 gap-2 overflow-x-hidden">
+      <div className="oc-surface-floating inline-flex w-max max-w-full items-center gap-2 h-7 whitespace-nowrap rounded-full [corner-shape:round] ps-1.5 pe-2">
+        <div className="flex items-center min-w-0 gap-2 overflow-x-clip">
           {shouldRenderPlaceholder ? (
             <WorkingPlaceholder
               key={currentSessionId ?? "no-session"}
               isWorking={isWorking}
-              statusText={statusText}
+              status={status}
               isGenericStatus={isGenericStatus}
               isWaitingForPermission={isWaitingForPermission}
               retryInfo={retryInfo}
@@ -74,7 +61,7 @@ export const StatusRow: React.FC<StatusRowProps> = ({
             />
           ) : null}
         </div>
-        {onBackground ? <BackgroundWorkButton onClick={onBackground} className="-mr-2 h-6 w-6" /> : null}
+        {onBackground ? <BackgroundWorkButton onClick={onBackground} className="-me-1.5 h-6 w-6" /> : null}
       </div>
     </div>
   );

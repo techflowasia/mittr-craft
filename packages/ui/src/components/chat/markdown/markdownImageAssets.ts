@@ -1,5 +1,5 @@
-import { spaceApiPath } from '@/lib/spaces/space-route';
 import { runtimeFetch } from '@/lib/runtime-fetch';
+import { readAssetBlob } from '@/lib/runtime-asset';
 import { getRuntimeUrlResolver, type RuntimeUrlResolver } from '@/lib/runtime-url';
 import { isFilePathWithinDirectory, toAbsoluteFilePath } from '@/lib/path-utils';
 
@@ -104,6 +104,12 @@ const validateDataImage = async (source: string): Promise<void> => {
   await validateImageBlob(new Blob([bytes]), match[1].toLowerCase());
 };
 
+export class ImageGrantRequestError extends Error {
+  constructor(readonly status: number) {
+    super(`Unable to prepare images (${status})`);
+  }
+}
+
 export const isLocalMarkdownImageSource = (source: string): boolean => (
   !/^(?:https?:)?\/\//i.test(source)
   && !/^data:image\/(?:png|jpeg|gif|webp);base64,/i.test(source)
@@ -114,12 +120,14 @@ export const prepareLocalMarkdownImages = async ({
   directory,
   sessionId,
   messageId,
+  callId,
   signal,
 }: {
   sources: readonly string[];
   directory: string;
   sessionId: string;
   messageId: string;
+  callId?: string;
   signal: AbortSignal;
 }): Promise<Map<string, PreparedMarkdownImage>> => {
   const resolver = getRuntimeUrlResolver();
@@ -128,7 +136,7 @@ export const prepareLocalMarkdownImages = async ({
     cache = new Map();
     prepareCaches.set(resolver, cache);
   }
-  const key = `${sessionId}\0${messageId}\0${directory}\0${sources.join('\0')}`;
+  const key = `${sessionId}\0${messageId}\0${callId ?? ''}\0${directory}\0${sources.join('\0')}`;
   const cached = cache.get(key);
   if (cached && cached.expiresAt > Date.now()) {
     cache.delete(key);
@@ -142,13 +150,12 @@ export const prepareLocalMarkdownImages = async ({
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ directory, messageId, sources }),
-      // The grant is issued by the server that holds the file: a space's for a space directory.
+      body: JSON.stringify({ directory, messageId, callId, sources }),
       directory,
       signal,
     },
   );
-  if (!response.ok) throw new Error(`Unable to prepare images (${response.status})`);
+  if (!response.ok) throw new ImageGrantRequestError(response.status);
   const payload = await response.json() as {
     results?: Array<{
       source?: string;
@@ -203,11 +210,30 @@ export const resolveMarkdownImageSource = async (
   throw new Error('Local image has not been prepared');
 };
 
-/**
- * VS Code has no OpenChamber server route for message-scoped temporary-file
- * grants. Preserve its existing workspace-only gallery path through the local
- * filesystem bridge, including the same size and signature validation.
- */
+const loadRawImageBlob = async (
+  query: { path: string; directory: string; allowOutsideWorkspace?: string; outsideFileGrant?: string },
+  signal: AbortSignal,
+): Promise<Blob> => {
+  const response = await runtimeFetch('/api/fs/raw', { query, signal });
+  if (!response.ok) throw new Error(`Unable to load image (${response.status})`);
+
+  const mimeType = (response.headers.get('content-type') ?? '').split(';', 1)[0]?.toLowerCase() ?? '';
+  const contentLength = Number(response.headers.get('content-length'));
+  if (Number.isFinite(contentLength) && contentLength > MAX_MARKDOWN_IMAGE_BYTES) {
+    throw new Error('Image is too large');
+  }
+
+  const blob = await readAssetBlob(response, MAX_MARKDOWN_IMAGE_BYTES, signal);
+  await validateImageBlob(blob, mimeType);
+  throwIfAborted(signal);
+  return blob;
+};
+
+const loadRawImageAsDataUrl = async (
+  query: { path: string; directory: string; allowOutsideWorkspace?: string; outsideFileGrant?: string },
+  signal: AbortSignal,
+): Promise<string> => blobToDataUrl(await loadRawImageBlob(query, signal));
+
 export const resolveWorkspaceMarkdownImageSource = async (
   source: string,
   directory: string,
@@ -231,29 +257,14 @@ export const resolveWorkspaceMarkdownImageSource = async (
     throw new Error('Image is too large');
   }
 
-  const response = await runtimeFetch('/api/fs/raw', {
-    query: { path: absolutePath, directory },
-    signal,
-  });
-  if (!response.ok) throw new Error(`Unable to load image (${response.status})`);
-
-  const mimeType = (response.headers.get('content-type') ?? '').split(';', 1)[0]?.toLowerCase() ?? '';
-  const contentLength = Number(response.headers.get('content-length'));
-  if (Number.isFinite(contentLength) && contentLength > MAX_MARKDOWN_IMAGE_BYTES) {
-    throw new Error('Image is too large');
-  }
-
-  const blob = await response.blob();
-  await validateImageBlob(blob, mimeType);
-  throwIfAborted(signal);
-  return blobToDataUrl(blob);
+  return loadRawImageAsDataUrl({ path: absolutePath, directory }, signal);
 };
 
 export const getPreparedMarkdownImageUrl = (
   image: Extract<PreparedMarkdownImage, { status: 'ready' }>,
   directory: string,
 ): string => getRuntimeUrlResolver().authenticatedAsset(
-  spaceApiPath('/api/fs/raw', directory),
+  '/api/fs/raw',
   {
     path: image.path,
     directory,
@@ -261,3 +272,33 @@ export const getPreparedMarkdownImageUrl = (
     outsideFileGrant: image.outsideFileGrant,
   },
   );
+
+export const loadMessageImageBlob = async ({ source, directory, sessionId, messageId, signal }: {
+  source: string;
+  directory: string;
+  sessionId: string;
+  messageId: string;
+  signal: AbortSignal;
+}): Promise<Blob> => {
+  const resolver = getRuntimeUrlResolver();
+  const prepared = (await prepareLocalMarkdownImages({ sources: [source], directory, sessionId, messageId, signal })).get(source);
+  if (prepared?.status !== 'ready') throw new Error('Image is unavailable');
+  if (getRuntimeUrlResolver() !== resolver) throw new DOMException('Runtime changed', 'AbortError');
+  return loadRawImageBlob({
+    path: prepared.path,
+    directory,
+    allowOutsideWorkspace: prepared.outsideFileGrant ? 'true' : undefined,
+    outsideFileGrant: prepared.outsideFileGrant,
+  }, signal);
+};
+
+export const loadPreparedImageAsDataUrl = (
+  image: Extract<PreparedMarkdownImage, { status: 'ready' }>,
+  directory: string,
+  signal: AbortSignal,
+): Promise<string> => loadRawImageAsDataUrl({
+  path: image.path,
+  directory,
+  allowOutsideWorkspace: image.outsideFileGrant ? 'true' : undefined,
+  outsideFileGrant: image.outsideFileGrant,
+}, signal);

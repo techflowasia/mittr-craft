@@ -3,24 +3,27 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import '../../../../web/scripts/register-server-sources.mjs';
 
 import { MARKER_PNG } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
-import { OPENCHAMBER_ALL_ACTIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
-import { writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { SCREEN_RECORDING_NOT_GRANTED, stubCuaDriver, stubCuaDriverCalls, tempDataDir } from '../test-helpers.js';
 import { APP_NAME_PATTERN, COMPUTER_TOOL_DESCRIPTION, TURNED_OFF_MID_ACTION, registerComputerActions } from './computer-actions.js';
 import { DRIVER_STOPPED, createComputerControl, createDriverDaemon } from './computer-control.js';
 import { MITTR_TOOLS, MittrToolError, createMittrActionRegistry } from './registry.js';
 import { MAX_IMAGE_BYTES } from './screenshots.js';
 
+const { OPENCHAMBER_ALL_ACTIONS } = await import('../../../../web/server/lib/openchamber-control/actions.js');
+const { writeScreenshot } = await import('../../../../web/server/lib/openchamber-control/screenshots.js');
+
 const ACCESSIBILITY_NOT_GRANTED = 'Accessibility is NOT granted for this process.';
 const GRANT_COMMAND_ONLY = 'run `cua-driver permissions grant` to request and verify it explicitly.';
 
-const setUp = ({ available = true, offered = () => true, answers = {}, launchApp = async () => {}, save = writeScreenshot, logger = { warn: () => {} } } = {}) => {
+const setUp = ({ available = true, offered = () => true, answers = {}, requestPermissions, launchApp = async () => {}, save = writeScreenshot, logger = { warn: () => {} } } = {}) => {
   const registry = createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, execute: async () => ({}) } });
   const requests = [];
   const control = {
     available,
+    requestPermissions,
     request: async (tool, args, options) => {
       requests.push({ tool, args, options });
       const answer = answers[tool];
@@ -305,6 +308,74 @@ test('a missing Accessibility grant names it and where to turn it on', async () 
   }
   const bringing = setUp({ answers: { list_apps: { apps: [{ name: 'Notes', pid: 4, running: true }] }, bring_to_front: new Error(ACCESSIBILITY_NOT_GRANTED) } });
   await assert.rejects(bringing.run('computer.bring_to_front', { app: 'Notes' }), refusedWith(403, message));
+});
+
+test('a fresh daemon permission gate requests consent immediately instead of treating pending as a final refusal', async () => {
+  let prompts = 0;
+  const { run, requests } = setUp({
+    answers: { list_apps: () => { if (prompts === 0) throw new MittrToolError('Permission gate pending', 403, { code: 'computer_permissions_pending' }); return { apps: [] }; } },
+    requestPermissions: async () => { prompts += 1; return true; },
+  });
+  assert.deepEqual(await run('computer.list_apps'), { apps: [] });
+  assert.equal(prompts, 1);
+  assert.equal(requests[0].options.waitForPermissions, false);
+  assert.equal(requests[1].options.waitForPermissions, true);
+});
+
+test('a missing grant requests once, denial stops, and a future action requests again', async () => {
+  const asked = [];
+  const { run, requests } = setUp({ answers: { list_apps: new Error(ACCESSIBILITY_NOT_GRANTED) }, requestPermissions: async (options) => { asked.push(options); return false; } });
+  for (let call = 0; call < 2; call += 1) {
+    await assert.rejects(run('computer.list_apps'), { statusCode: 403 });
+    assert.equal(asked.length, call + 1);
+    assert.equal(requests.length, call + 1, 'denial must not replay the action');
+  }
+  assert.equal(asked[0].grant, 'Accessibility');
+  assert.equal(asked[0].directCapture, false);
+});
+
+test('an approved permission request retries the action once, not the permission dialog', async () => {
+  let granted = false;
+  let prompts = 0;
+  const { run, requests } = setUp({
+    answers: { list_apps: () => { if (!granted) throw new Error(ACCESSIBILITY_NOT_GRANTED); return { apps: [] }; } },
+    requestPermissions: async () => { prompts += 1; granted = true; return true; },
+  });
+  assert.deepEqual(await run('computer.list_apps'), { apps: [] });
+  assert.equal(prompts, 1);
+  assert.equal(requests.length, 2);
+  const stillMissing = setUp({ answers: { list_apps: new Error(ACCESSIBILITY_NOT_GRANTED) }, requestPermissions: async () => { prompts += 1; return true; } });
+  await assert.rejects(stillMissing.run('computer.list_apps'), { statusCode: 403 });
+  assert.equal(prompts, 2);
+  assert.equal(stillMissing.requests.length, 2);
+});
+
+test('a missing capture grant in JSON requests live capture consent once and carries the action signal', async (t) => {
+  const directory = tempDataDir(t);
+  const { signal } = new AbortController();
+  const asked = [];
+  const { run, requests } = setUp({
+    answers: { get_desktop_state: { error: SCREEN_RECORDING_NOT_GRANTED } },
+    requestPermissions: async (options) => { asked.push(options); return false; },
+  });
+  await assert.rejects(run('computer.screenshot', {}, { directory, signal }), { statusCode: 403 });
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0].signal, signal);
+  assert.equal(asked[0].directCapture, true);
+  assert.equal(asked[0].grant, 'Screen Recording');
+  assert.equal(requests.length, 1);
+  assert.deepEqual(fs.readdirSync(directory), []);
+});
+
+test('permission setup cancellation and a tool disabled during setup send no further desktop action', async () => {
+  const cancelled = new MittrToolError('permission request cancelled', 499);
+  const stopped = setUp({ answers: { list_apps: new Error(ACCESSIBILITY_NOT_GRANTED) }, requestPermissions: async () => { throw cancelled; } });
+  await assert.rejects(stopped.run('computer.list_apps'), (error) => error === cancelled);
+  assert.equal(stopped.requests.length, 1);
+  let offered = true;
+  const disabled = setUp({ offered: () => offered, answers: { list_apps: new Error(ACCESSIBILITY_NOT_GRANTED) }, requestPermissions: async () => { offered = false; return true; } });
+  await assert.rejects(disabled.run('computer.list_apps'), { statusCode: 503 });
+  assert.equal(disabled.requests.length, 1);
 });
 
 test('a driver error that is not about a grant passes through as it is', async () => {

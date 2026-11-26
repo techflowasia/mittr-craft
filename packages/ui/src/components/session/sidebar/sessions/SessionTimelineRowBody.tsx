@@ -1,12 +1,15 @@
 import React from 'react';
+import { RowMarkTooltip } from './RowMarkTooltip';
 import { Icon } from '@/components/icon/Icon';
-import { ProviderLogo } from '@/components/ui/ProviderLogo';
-import { cn } from '@/lib/utils';
-import { PROJECT_COLOR_MAP, PROJECT_ICON_MAP, ProjectIconImage } from '@/lib/projectMeta';
+import { cn, formatDirectoryName } from '@/lib/utils';
+import { PROJECT_ICON_MAP, resolveProjectColor, ProjectIconImage } from '@/lib/projectMeta';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
+import { useZoneProjectNames } from './useZoneProjectNames';
 
 type TimelineRowProject = {
   id: string;
+  label?: string | null;
+  path?: string | null;
   icon?: string | null;
   color?: string | null;
   iconImage?: { mime: string; updatedAt: number; source: 'custom' | 'auto' } | null;
@@ -14,46 +17,34 @@ type TimelineRowProject = {
 };
 
 type Props = {
-  /** Chats rows inside the timeline: title and meta on one line, no project
-      or branch lines. */
   compact?: boolean;
   project: TimelineRowProject | null;
   projectLabel: string | null;
   title: React.ReactNode;
   titleClassName: string;
   branchLabel: string | null;
-  /** Replaces the branch at the start of the third line (a run row puts its
-      mark and lane count there). */
-  thirdLineLead?: React.ReactNode;
+  spaceMark?: string | null;
+  metaLineLead?: React.ReactNode;
+  leadToggle?: React.ReactNode;
+  leadIconClassName?: string;
+  leadMaskClassName?: string;
+  leadIcon?: React.ReactNode;
   statusDot: React.ReactNode;
-  /** Pin glyph shown in the meta cluster while the row is pinned. */
   pinnedMarker: React.ReactNode;
-  /** Elapsed-turn counter while running/unread, otherwise the compact date. */
   timeSlot: React.ReactNode;
   directoryIndicator: React.ReactNode;
   prBadge: React.ReactNode;
   zombieIndicator: React.ReactNode;
-  /** Goal status glyph; opens the third line's state cluster, so it stays
-      visible while a turn runs and while the hover actions cover line one. */
   goal?: React.ReactNode;
+  marks?: React.ReactNode;
   badges: React.ReactNode;
-  /** Jev's "looks done" check: it sits in the time cluster, where the hover
-      Done action appears, left of the status dot so the dot stays by the time. */
   doneHint?: React.ReactNode;
-  /** Provider of the session's model; its logo closes the third line. */
-  providerId?: string | null;
-  /** Reserves room for permanently shown action buttons on the first line. */
   metaPaddingClass?: string;
   hideMetaOnHoverClass: string;
-  /** Sets how far hover-revealed actions reach into the first line
-      (`--oc-actions-reserve`). */
   actionsReserveClass?: string;
-  /** Fades the first line's text away under hover-revealed actions. */
   actionsMaskClass?: string;
 };
 
-// Only rows whose project carries a custom image pay for the theme
-// subscription the image resolution needs.
 const ProjectImageIcon: React.FC<{ project: TimelineRowProject; fallback: React.ReactNode }> = ({ project, fallback }) => {
   const { currentTheme } = useThemeSystem();
   return <ProjectIconImage
@@ -64,26 +55,41 @@ const ProjectImageIcon: React.FC<{ project: TimelineRowProject; fallback: React.
   />;
 };
 
-const TimelineProjectIcon: React.FC<{ project: TimelineRowProject | null }> = ({ project }) => {
-  const iconName = project?.icon ? PROJECT_ICON_MAP[project.icon] : null;
-  const iconColor = project?.color ? (PROJECT_COLOR_MAP[project.color] ?? null) : null;
+export const TimelineProjectIcon: React.FC<{ project: TimelineRowProject; label: string | null }> = ({ project, label }) => {
+  const iconName = project.icon ? PROJECT_ICON_MAP[project.icon] : null;
+  const iconColor = resolveProjectColor(project.color);
   const glyph = iconName
-    ? <Icon name={iconName} className={cn('h-3.5 w-3.5', !iconColor && 'text-muted-foreground/75')} style={iconColor ? { color: iconColor } : undefined} />
-    : <Icon name="folder" className="h-3.5 w-3.5 text-muted-foreground/75" style={iconColor ? { color: iconColor } : undefined} />;
-  if (!project?.iconImage) {
-    return <span className="inline-flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center">{glyph}</span>;
-  }
-  return <span
-    className="inline-flex h-3.5 w-3.5 flex-shrink-0 items-center justify-center overflow-hidden rounded-[3px]"
-    style={project.iconBackground ? { backgroundColor: project.iconBackground } : undefined}
-  >
-    <ProjectImageIcon project={project} fallback={glyph} />
-  </span>;
+    ? <Icon name={iconName} className={cn('h-3 w-3', !iconColor && 'text-muted-foreground')} style={iconColor ? { color: iconColor } : undefined} />
+    : <Icon name="folder" className="h-3 w-3 text-muted-foreground" style={iconColor ? { color: iconColor } : undefined} />;
+  const labelProps = label ? { role: 'img', 'aria-label': label } : {};
+  const mark = project.iconImage
+    ? <span
+      className="inline-flex h-3 w-3 flex-shrink-0 items-center justify-center overflow-hidden rounded-[3px]"
+      style={project.iconBackground ? { backgroundColor: project.iconBackground } : undefined}
+      {...labelProps}
+    >
+      <ProjectImageIcon project={project} fallback={glyph} />
+    </span>
+    : <span className="inline-flex h-3 w-3 flex-shrink-0 items-center justify-center" {...labelProps}>{glyph}</span>;
+  return label ? <RowMarkTooltip label={label}>{mark}</RowMarkTooltip> : mark;
 };
 
-// Timeline rows carry their own context, because the list has no project,
-// worktree or folder headers above them: project on the first line, the title
-// on the second, branch and pull-request state on the third.
+const WHOLE_PROJECT_NAME_LENGTH = 8;
+
+export const TimelineProjectName: React.FC<{ project: TimelineRowProject; fallback?: string | null; separated: boolean }> = ({ project, fallback = null, separated }) => {
+  const name = project.label?.trim() || (project.path ? formatDirectoryName(project.path, null) : null) || fallback;
+  if (!name) return null;
+  return <>
+    <span
+      dir="auto"
+      className={cn('truncate typography-micro text-muted-foreground', name.length > WHOLE_PROJECT_NAME_LENGTH ? 'min-w-16 shrink-[999]' : 'shrink-0')}
+    >
+      {name}
+    </span>
+    {separated ? <span aria-hidden="true" className="flex-shrink-0 typography-micro text-muted-foreground/50">·</span> : null}
+  </>;
+};
+
 export const SessionTimelineRowBody: React.FC<Props> = ({
   compact = false,
   project,
@@ -91,7 +97,12 @@ export const SessionTimelineRowBody: React.FC<Props> = ({
   title,
   titleClassName,
   branchLabel,
-  thirdLineLead = null,
+  spaceMark = null,
+  metaLineLead = null,
+  leadToggle = null,
+  leadIconClassName,
+  leadMaskClassName,
+  leadIcon: leadIconOverride = null,
   statusDot,
   pinnedMarker,
   timeSlot,
@@ -99,60 +110,70 @@ export const SessionTimelineRowBody: React.FC<Props> = ({
   prBadge,
   zombieIndicator,
   goal = null,
+  marks = null,
   badges,
   doneHint = null,
-  providerId,
   metaPaddingClass,
   hideMetaOnHoverClass,
   actionsReserveClass,
   actionsMaskClass,
 }) => {
-  const hasThirdLine = !compact && (Boolean(branchLabel) || Boolean(thirdLineLead) || Boolean(prBadge) || Boolean(zombieIndicator) || Boolean(goal) || Boolean(badges) || Boolean(providerId));
-  // Compact rows have no third line, so their badges ride in the meta
-  // cluster: the hover actions overlay that cluster, and anything placed
-  // after it would sit underneath them.
-  const meta = <span className={cn('ml-auto flex flex-shrink-0 items-center gap-1 transition-opacity', metaPaddingClass, hideMetaOnHoverClass)}>
+  const meta = (withMarks: boolean) => <span className={cn('ms-auto flex flex-shrink-0 items-center gap-1', metaPaddingClass, hideMetaOnHoverClass)}>
+    {doneHint}
     {compact ? goal : null}
+    {compact ? zombieIndicator ?? prBadge : null}
+    {withMarks ? marks : null}
     {compact ? badges : null}
     {directoryIndicator}
     {pinnedMarker}
-    {doneHint}
     {statusDot}
-    <span className="typography-micro leading-none text-muted-foreground/50 tabular-nums">{timeSlot}</span>
+    {timeSlot ? <span className="typography-micro leading-none text-muted-foreground tabular-nums">{timeSlot}</span> : null}
   </span>;
+  const spaceIcon = spaceMark
+    ? <Icon name="instance" className="h-3 w-3 flex-shrink-0 text-muted-foreground" aria-hidden={false} role="img" aria-label={spaceMark} />
+    : null;
+  const projectNamed = useZoneProjectNames() && Boolean(project);
+  const leadIcon = project
+    ? <TimelineProjectIcon project={project} label={projectNamed ? null : projectLabel} />
+    : leadIconOverride ?? (!metaLineLead && branchLabel ? spaceIcon : null);
+  const maskedLead = Boolean(leadToggle && !leadIcon && leadMaskClassName);
+  const branchText = (
+    <span className={cn('min-w-0 truncate typography-micro text-muted-foreground', maskedLead && leadMaskClassName)}>{branchLabel}</span>
+  );
+  const branchLine = metaLineLead ?? (branchLabel ? <>{project ? spaceIcon : null}{branchText}</> : null);
+  const leadSlot = leadToggle && (leadIcon || !maskedLead) ? (
+    <span className="relative inline-flex size-3 flex-shrink-0 items-center justify-center">
+      {leadIcon ? <span className={cn('inline-flex', leadIconClassName)}>{leadIcon}</span> : null}
+      {leadToggle}
+    </span>
+  ) : maskedLead ? (
+    <span className="absolute inset-y-0 start-0 z-10 inline-flex w-3 items-center justify-center">{leadToggle}</span>
+  ) : leadIcon;
+  const titleLine = (
+    <div dir="auto" className={cn('oc-ui-start-align min-w-0 flex-1 truncate typography-ui-label font-normal', actionsMaskClass, titleClassName)}>{title}</div>
+  );
   if (compact) {
     return <div className={cn('@container relative flex w-full min-w-0 items-center gap-1', actionsReserveClass)}>
-      <div dir="auto" className={cn('min-w-0 flex-1 truncate typography-ui-label font-normal', actionsMaskClass, titleClassName)}>{title}</div>
-      {meta}
+      {titleLine}
+      {meta(true)}
     </div>;
   }
+  const secondLine = Boolean(leadToggle || leadIcon || branchLine || goal || zombieIndicator || prBadge || badges);
   return <div className="flex w-full min-w-0 flex-col gap-px">
-    {/* Fixed 20px first line: the hover actions are positioned against the
-        row from outside and rely on this height to sit exactly on it. */}
     <div className={cn('@container relative flex h-5 w-full min-w-0 items-center gap-1', actionsReserveClass)}>
-      <TimelineProjectIcon project={project} />
-      {projectLabel ? (
-        // Starts past the 14px project icon and the 4px gap.
-        <span className={cn('min-w-0 truncate typography-micro text-muted-foreground/85 [--oc-actions-inset:18px]', actionsMaskClass)}>{projectLabel}</span>
-      ) : null}
-      {meta}
+      {titleLine}
+      {meta(!secondLine)}
     </div>
-    <div dir="auto" className={cn('w-full min-w-0 truncate typography-ui-label font-normal', titleClassName)}>{title}</div>
-    {hasThirdLine ? (
-      <div className="flex w-full min-w-0 items-center gap-1">
-        {thirdLineLead ?? (branchLabel ? (
-          <>
-            <Icon name="git-branch" className="h-3 w-3 flex-shrink-0 text-muted-foreground/40" />
-            <span className="min-w-0 truncate typography-micro text-muted-foreground/50">{branchLabel}</span>
-          </>
-        ) : null)}
-        <span className="ml-auto flex flex-shrink-0 items-center gap-1">
-          {goal}
-          {zombieIndicator ?? prBadge}
-          {badges}
-          {providerId ? <ProviderLogo providerId={providerId} className="h-4 w-4 flex-shrink-0 opacity-45" /> : null}
-        </span>
-      </div>
-    ) : null}
+    {secondLine ? <div className="relative flex h-4 w-full min-w-0 items-center gap-1">
+      {leadSlot}
+      {project && projectNamed ? <TimelineProjectName project={project} fallback={projectLabel} separated={Boolean(branchLine) && !metaLineLead && !spaceIcon} /> : null}
+      {project ? branchLine : metaLineLead ?? (branchLabel ? branchText : null)}
+      <span className="ms-auto flex flex-shrink-0 items-center gap-1">
+        {goal}
+        {zombieIndicator ?? prBadge}
+        {marks}
+        {badges}
+      </span>
+    </div> : null}
   </div>;
 };

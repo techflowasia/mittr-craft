@@ -37,14 +37,14 @@ const seen = watched.filter((name) => name in process.env);
 const homes = Object.fromEntries(['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME', 'OPENCODE_CONFIG_DIR'].map((name) => [name, process.env[name] ?? null]));
 fs.appendFileSync(process.env.HOSTED_TEST_ENGINE_LOG, JSON.stringify({ args, companySignIn, seen, homes, pid: process.pid }) + '\\n');
 if (args.includes('--version')) {
-  console.log('2.0.22');
+  console.log('2.3.2');
   process.exit(0);
 }
 if (args[0] !== 'serve') process.exit(0);
 const value = (flag) => args[args.indexOf(flag) + 1];
 const server = http.createServer((req, res) => {
   res.setHeader('content-type', 'application/json');
-  res.end(req.url.startsWith('/api/info') ? JSON.stringify({ version: '2.0.22' }) : '{}');
+  res.end(req.url.startsWith('/api/info') ? JSON.stringify({ version: '2.3.2' }) : '{}');
 });
 server.listen(Number(value('--port')), value('--hostname'), () => console.log('server listening on http://' + value('--hostname') + ':' + server.address().port));
 process.on('SIGTERM', () => process.exit(0));

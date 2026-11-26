@@ -1,0 +1,39 @@
+diff --git a/packages/web/server/lib/message-queue/runtime.test.js b/packages/web/server/lib/message-queue/runtime.test.js
+index 265a281b2..0a5ec3fbb 100644
+--- a/packages/web/server/lib/message-queue/runtime.test.js
++++ b/packages/web/server/lib/message-queue/runtime.test.js
+@@ -98,7 +98,7 @@ const createOpenCode = () => {
+   return { state, fetchImpl };
+ };
+ 
+-const createRuntime = ({ dataDir = makeDataDir(), openCode = createOpenCode(), knowledge = null, retryDelayMs, resolveAutoSelection, now, beforeScheduledTaskSend, onScheduledTaskResult, persistSessionGoal, isDeliveryHeld, deliveryHoldReady } = {}) => {
++const createRuntime = ({ dataDir = makeDataDir(), openCode = createOpenCode(), knowledge = null, retryDelayMs, resolveAutoSelection, recovery, now, beforeScheduledTaskSend, onScheduledTaskResult, persistSessionGoal, isDeliveryHeld, deliveryHoldReady } = {}) => {
+   let eventHandler = () => {};
+   let statusHandler = () => {};
+   const broadcasts = [];
+@@ -114,6 +114,7 @@ const createRuntime = ({ dataDir = makeDataDir(), openCode = createOpenCode(), k
+     broadcastGlobalUiEvent: (event) => broadcasts.push(event),
+     onPromptSent: (sessionId) => promptSent.push(sessionId),
+     dataDir,
++    responseRecovery: recovery,
+     fetchImpl: openCode.fetchImpl,
+     dispatchQuietMs: 0,
+     abortHoldMs: 50,
+@@ -335,6 +336,17 @@ describe('scheduled task items', () => {
+ });
+ 
+ describe('auto routing', () => {
++  it('cancels recovery on new queued input and refuses a reserved dispatch', async () => {
++    const cancelled = [];
++    const { runtime, openCode } = createRuntime({ recovery: { cancelSession: id => { cancelled.push(id); }, isReserved: () => true } });
++    runtime.start();
++    await expect(runtime.enqueue(SESSION, DIRECTORY, item())).rejects.toThrow('response recovery admission is uncertain');
++    await settle();
++    expect(cancelled).toEqual([SESSION]);
++    expect(openCode.state.sent).toEqual([]);
++    expect(openCode.state.switched).toEqual([]);
++    await runtime.stop();
++  });
+   it('switches a queued prompt and a queued command onto the routed model and agent', async () => {
+     const resolveAutoSelection = vi.fn(async ({ model }) => (model?.id === 'auto'
+       ? { model: { providerID: 'openai', id: 'gpt-6-astra' }, agent: 'plan', decision: {} }

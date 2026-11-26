@@ -14,6 +14,7 @@ const STATUS_BY_REASON = {
   unreachable: 502,
   upstream_timeout: 504,
   not_configured: 503,
+  account_changed: 409,
 };
 
 const createQuotaReadError = (reasonCode) => (
@@ -67,12 +68,12 @@ const readAgentStatus = (value) => {
 
 const readAgentStatuses = (value) => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const statuses = {};
+  const statuses = [];
   for (const [alias, raw] of Object.entries(value)) {
     const status = readAgentStatus(raw);
-    if (status) statuses[alias] = status;
+    if (status) statuses.push([alias, status]);
   }
-  return Object.keys(statuses).length ? statuses : null;
+  return statuses.length ? Object.fromEntries(statuses) : null;
 };
 
 const readQuotaMe = (body) => {
@@ -93,12 +94,19 @@ export const createMittrQuotaService = ({
   ensureFreshSession,
   fetchImpl = (...args) => fetch(...args),
   timeoutMs = PLATFORM_TIMEOUT_MS,
+  accountGeneration = () => 0,
+  speechState,
 } = {}) => {
   const configured = Boolean(broker?.baseUrl) && typeof ensureFreshSession === 'function';
+  let pending = null;
 
-  const readMine = async () => {
+  const readSample = async (generation, speechRevision) => {
+    const assertCurrent = () => {
+      if (accountGeneration() !== generation) throw createQuotaReadError('account_changed');
+    };
     if (!configured) throw createQuotaReadError('not_configured');
     const session = await ensureFreshSession();
+    assertCurrent();
     if (!session?.accessToken) throw createQuotaReadError('not_signed_in');
 
     const timeout = AbortSignal.timeout(timeoutMs);
@@ -116,9 +124,26 @@ export const createMittrQuotaService = ({
     if (response.status === 403) throw createQuotaReadError('not_permitted');
     if (response.status === 404) throw createQuotaReadError('not_available');
     if (!response.ok) throw createQuotaReadError('upstream_failed');
-    const quota = readQuotaMe(await response.json().catch(() => null));
+    const body = await response.json().catch(() => null);
+    const quota = readQuotaMe(body);
     if (!quota) throw createQuotaReadError('upstream_failed');
+    assertCurrent();
+    if (speechState) {
+      const malformedKinds = new Set(body.lines.filter((line) => !readLine(line)).map((line) => line?.kind));
+      speechState.reconcileQuota({ lines: quota.lines.filter((line) => !malformedKinds.has(line.kind)) }, speechRevision);
+    }
     return quota;
+  };
+
+  const readMine = () => {
+    const generation = accountGeneration();
+    if (pending?.generation === generation) return pending.promise;
+    const speechRevision = speechState?.view().revision;
+    const promise = readSample(generation, speechRevision).finally(() => {
+      if (pending?.promise === promise) pending = null;
+    });
+    pending = { generation, promise };
+    return promise;
   };
 
   return { readMine };

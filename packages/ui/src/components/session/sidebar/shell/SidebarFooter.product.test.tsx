@@ -12,9 +12,6 @@ const footer = (props: { showRuntimeButtons?: boolean; showUpdateButton?: boolea
   <I18nProvider>
     <SidebarFooter
       onOpenSettings={noop}
-      onOpenUsage={noop}
-      onOpenShortcuts={noop}
-      onOpenAbout={noop}
       onOpenUpdate={noop}
       {...props}
     />

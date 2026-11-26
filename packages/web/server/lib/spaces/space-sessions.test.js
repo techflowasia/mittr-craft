@@ -103,8 +103,8 @@ describe('mergeSessionLists', () => {
     expect(merged.cursor).toEqual({ next: 'abc' });
     // A space whose project is not registered on this host is marked with no project and no directory.
     expect(merged.spaces).toEqual([
-      { id: ID, name: 'First', state: 'complete', sessions: 1, projectDirectory: '/home/me/repo', directory: `/spaces/${ID}/repo` },
-      { id: OTHER, name: '', state: 'stale', sessions: 2, projectDirectory: null, directory: null },
+      { id: ID, name: 'First', taskTitle: null, state: 'complete', sessions: 1, projectDirectory: '/home/me/repo', directory: `/spaces/${ID}/repo` },
+      { id: OTHER, name: '', taskTitle: null, state: 'stale', sessions: 2, projectDirectory: null, directory: null },
     ]);
   });
 });
@@ -129,6 +129,19 @@ describe('createSpaceSessionIndex', () => {
     const index = createSpaceSessionIndex({ logger: quiet });
     index.acceptSpaceList(ID, [record('s1', `/spaces/${ID}/repo`)], { complete: false });
     expect(index.snapshot()[0].state).toBe('partial');
+  });
+
+  it('drops the catalog events of OpenCode\'s own locations inside the space without a log line', () => {
+    const logs = [];
+    const index = createSpaceSessionIndex({ logger: { warn: (line) => logs.push(line) } });
+    expect(index.acceptSpaceEvent(ID, { type: 'skill.updated', location: { directory: '/home/space/.config/opencode' }, data: {} })).toBe(false);
+    expect(index.acceptSpaceEvent(ID, { type: 'provider.updated', location: { directory: '/home/space' }, data: {} })).toBe(false);
+    expect(logs).toEqual([]);
+    // Any other directory outside the root is still said.
+    expect(index.acceptSpaceEvent(ID, { type: 'session.created', data: { sessionID: 's9', location: { directory: '/home/spaces/other' } } })).toBe(false);
+    expect(index.acceptSpaceEvent(ID, { type: 'session.created', data: { sessionID: 's8', location: { directory: '/tmp' } } })).toBe(false);
+    expect(logs).toHaveLength(2);
+    expect(logs[0]).toContain('space_event_outside_root');
   });
 
   it('learns the host\'s ids from its list and its events, and lets no space take them', () => {

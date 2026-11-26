@@ -1,0 +1,209 @@
+diff --git a/packages/ui/src/components/chat/ModelControls.product.test.tsx b/packages/ui/src/components/chat/ModelControls.product.test.tsx
+new file mode 100644
+index 000000000..69c4f3fc7
+--- /dev/null
++++ b/packages/ui/src/components/chat/ModelControls.product.test.tsx
+@@ -0,0 +1,203 @@
++import { afterEach, describe, expect, test } from 'bun:test';
++import React, { act } from 'react';
++import { createRoot } from 'react-dom/client';
++import { Window } from 'happy-dom';
++
++import { ModelEntryStatusPill } from '@/components/model-picker/ModelEntryStatusPill';
++import { ModelPickerList, type ModelPickerEntry, type ModelPickerProvider } from '@/components/model-picker/ModelPickerList';
++import { registerProductUiPlugin, resetProductUiPluginsForTests, useProductModelPicker } from '@/lib/product-plugins';
++import { AUTO_MODEL_ID, AUTO_PROVIDER_ID } from '@/lib/routing/autoModel';
++
++// ModelControls draws its picker in a portal, which static markup does not
++// render, and the composer's stores cannot be stood in for without module
++// mocks. So this renders the real picker list the way ModelControls wires it:
++// one useProductModelPicker call, whose isProviderShown becomes the list's
++// isModelAllowed. The upstream contract pins that wiring in ModelControls.
++
++const PROVIDERS: ModelPickerProvider[] = [
++  { id: 'acme', name: 'Acme', models: [{ id: 'writer', name: 'Acme Writer' }] },
++  { id: 'openai', name: 'OpenAI', models: [{ id: 'gpt-5.5', name: 'GPT Five' }] },
++];
++
++const LABELS = {
++  searchPlaceholder: 'Search models',
++  list: 'Models',
++  noResults: 'No models',
++  favorites: 'Favorites',
++  recent: 'Recent',
++  keyboardHint: 'Navigate',
++};
++
++const noop = () => {};
++
++const AUTO_ENTRY = { providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID, model: { id: AUTO_MODEL_ID, name: 'Auto pick' } };
++
++function PickerAsModelControlsWiresIt(): React.ReactNode {
++  const productModelPicker = useProductModelPicker(true);
++  const offeredAutoEntry = productModelPicker.isProviderShown(AUTO_ENTRY.providerID) ? AUTO_ENTRY : null;
++  return (
++    <ModelPickerList
++      providers={PROVIDERS}
++      favoriteModels={[]}
++      recentModels={[]}
++      searchQuery=""
++      onSearchQueryChange={noop}
++      onSelect={noop}
++      labels={LABELS}
++      leadingEntry={offeredAutoEntry}
++      isModelAllowed={(providerID) => productModelPicker.isProviderShown(providerID)}
++    />
++  );
++}
++
++const THINKING_SLOT = <span>Thinking: Default</span>;
++
++function PickerWithEntryStatus(): React.ReactNode {
++  const productModelPicker = useProductModelPicker(true);
++  const entryStatusOf = (entry: ModelPickerEntry) => productModelPicker.entryStatus({
++    providerID: entry.providerID,
++    modelID: entry.modelID,
++    name: String(entry.model.name),
++  });
++  return (
++    <ModelPickerList
++      providers={PROVIDERS}
++      favoriteModels={[]}
++      recentModels={[]}
++      searchQuery=""
++      onSearchQueryChange={noop}
++      onSelect={noop}
++      labels={LABELS}
++      isEntryBlocked={(entry) => entryStatusOf(entry)?.blocked === true}
++      renderRowEnd={(entry, state) => (
++        <>
++          <ModelEntryStatusPill status={entryStatusOf(entry)} isHighlighted={state.isHighlighted} />
++          {THINKING_SLOT}
++        </>
++      )}
++    />
++  );
++}
++
++const rowsOf = (html: string) => html.split('role="option"').slice(1);
++
++const DOM_GLOBALS = ['window', 'document', 'navigator', 'Node', 'Element', 'HTMLElement', 'requestAnimationFrame', 'cancelAnimationFrame', 'IS_REACT_ACT_ENVIRONMENT'] as const;
++
++const render = async (element: React.ReactElement): Promise<string> => {
++  const happyWindow = new Window({ url: 'http://localhost' });
++  const previous = DOM_GLOBALS.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)] as const);
++  const values: Record<(typeof DOM_GLOBALS)[number], unknown> = {
++    window: happyWindow,
++    document: happyWindow.document,
++    navigator: happyWindow.navigator,
++    Node: happyWindow.Node,
++    Element: happyWindow.Element,
++    HTMLElement: happyWindow.HTMLElement,
++    requestAnimationFrame: happyWindow.requestAnimationFrame.bind(happyWindow),
++    cancelAnimationFrame: happyWindow.cancelAnimationFrame.bind(happyWindow),
++    IS_REACT_ACT_ENVIRONMENT: true,
++  };
++  for (const name of DOM_GLOBALS) Object.defineProperty(globalThis, name, { value: values[name], configurable: true, writable: true });
++  for (const [name, size] of [['clientHeight', 400], ['clientWidth', 380]] as const) {
++    Object.defineProperty(happyWindow.HTMLElement.prototype, name, {
++      configurable: true,
++      get(this: HTMLElement) { return this.classList.contains('overlay-scrollbar-target') ? size : 0; },
++    });
++  }
++  try {
++    const container = happyWindow.document.createElement('div');
++    happyWindow.document.body.appendChild(container);
++    const root = createRoot(container as unknown as HTMLElement);
++    await act(async () => root.render(element));
++    const html = container.innerHTML;
++    await act(async () => root.unmount());
++    return html;
++  } finally {
++    for (const [name, descriptor] of previous) {
++      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
++      else Reflect.deleteProperty(globalThis, name);
++    }
++    await happyWindow.happyDOM.close();
++  }
++};
++
++afterEach(() => {
++  resetProductUiPluginsForTests();
++});
++
++describe('ModelControls product picker', () => {
++  test('picker hides other providers when a plugin says so', async () => {
++    registerProductUiPlugin({
++      id: 'acme-only',
++      modelPicker: {
++        useDecorations: () => ({ isProviderShown: (providerId) => providerId === 'acme', entryStatus: () => null }),
++      },
++    });
++    const html = await render(<PickerAsModelControlsWiresIt />);
++    expect(html).toContain('Acme Writer');
++    expect(html).not.toContain('GPT Five');
++  });
++
++  test('with no plugin every provider renders', async () => {
++    const html = await render(<PickerAsModelControlsWiresIt />);
++    expect(html).toContain('Acme Writer');
++    expect(html).toContain('GPT Five');
++    expect(html).toContain('Auto pick');
++  });
++
++  test('the Auto entry is offered only while a plugin shows its provider', async () => {
++    registerProductUiPlugin({
++      id: 'acme-only',
++      modelPicker: {
++        useDecorations: () => ({ isProviderShown: (providerId) => providerId === 'acme', entryStatus: () => null }),
++      },
++    });
++    expect(await render(<PickerAsModelControlsWiresIt />)).not.toContain('Auto pick');
++  });
++
++  test('a plugin status draws a pill before the thinking slot', async () => {
++    registerProductUiPlugin({
++      id: 'status',
++      modelPicker: {
++        useDecorations: () => ({
++          isProviderShown: () => true,
++          entryStatus: (entry) => (entry.modelID === 'writer'
++            ? { pill: 'Used up', title: 'Writer is used up this week', tone: 'neutral', blocked: true }
++            : null),
++        }),
++      },
++    });
++    const [writer, gpt] = rowsOf(await render(<PickerWithEntryStatus />));
++    expect(writer).toContain('aria-label="Writer is used up this week"');
++    expect(writer).toContain('>Used up</span>');
++    expect(writer.indexOf('Used up')).toBeLessThan(writer.indexOf('Thinking: Default'));
++    expect(writer).toContain('aria-disabled="true"');
++    expect(gpt).not.toContain('Used up');
++    expect(gpt).not.toContain('aria-disabled');
++    expect(gpt).toContain('Thinking: Default');
++  });
++
++  test('a status that does not block marks the row without disabling it', async () => {
++    registerProductUiPlugin({
++      id: 'status',
++      modelPicker: {
++        useDecorations: () => ({
++          isProviderShown: () => true,
++          entryStatus: (entry) => (entry.modelID === 'writer' ? { pill: '12% left', tone: 'near', blocked: false } : null),
++        }),
++      },
++    });
++    const [writer] = rowsOf(await render(<PickerWithEntryStatus />));
++    expect(writer).toContain('>12% left</span>');
++    expect(writer).toContain('aria-label="12% left"');
++    expect(writer).toContain('data-model-status="near"');
++    expect(writer).not.toContain('aria-disabled');
++  });
++
++  test('with no plugin no row is marked or blocked', async () => {
++    const html = await render(<PickerWithEntryStatus />);
++    expect(html).not.toContain('data-model-status');
++    expect(html).not.toContain('aria-disabled');
++    expect(html).toContain('Thinking: Default');
++  });
++});

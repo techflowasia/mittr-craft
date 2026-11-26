@@ -1,6 +1,6 @@
 import React from 'react';
 import { isTerminalEventTarget } from '@/lib/terminalFocus';
-import { useUIStore } from '@/stores/useUIStore';
+import { DEFAULT_EDITOR_FONT_SIZE, useUIStore } from '@/stores/useUIStore';
 
 interface ThemeProviderProps {
   children: React.ReactNode;
@@ -27,11 +27,12 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
       const state = useUIStore.getState();
       const isTerminal = isTerminalEventTarget(active)
         || active?.matches('[data-terminal-hidden-input="true"]') === true;
-      const isEditor = active?.closest('.cm-editor') != null
+      // The rendered Markdown preview is sized by the editor font too.
+      const isEditor = active?.closest('.cm-editor, .oc-file-preview') != null
         && active?.closest('[data-chat-input="true"]') == null;
       if (action === 'zoom-reset') {
         if (isTerminal) state.setTerminalFontSize(14);
-        else if (isEditor) state.setEditorFontSize(13);
+        else if (isEditor) state.setEditorFontSize(DEFAULT_EDITOR_FONT_SIZE);
         else state.setFontSize(100);
       } else if (isTerminal) {
         state.setTerminalFontSize(state.terminalFontSize + (action === 'zoom-in' ? 1 : -1));

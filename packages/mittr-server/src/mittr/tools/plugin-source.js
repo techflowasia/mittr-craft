@@ -28,7 +28,12 @@ const inputOf = ({ definitions, parameters }) => ({
   additionalProperties: true,
 });
 
-const toolEntry = (tool, codeMode) => `      tools.add({
+const namespaceLine = (description) => String(description).split(/(?<=\.)\s/)[0];
+
+const namespaceEntry = (tool) => `      if (typeof tools.namespace === "function") tools.namespace(${JSON.stringify({ name: tool.name, description: namespaceLine(tool.description) })})
+`;
+
+const toolEntry = (tool, codeMode) => `${codeMode ? namespaceEntry(tool) : ''}      tools.add({
         name: ${JSON.stringify(tool.name)},
         description: ${JSON.stringify(tool.description)},
         options: { codemode: ${codeMode ? 'true' : 'false'} },
@@ -79,7 +84,8 @@ const withCapture = async (outcome, input, context) => {
     const { answer } = await post(link, { tool: CAPTURE_TOOL, internal: CAPTURE_IMAGE, path, directory, sessionID: context?.sessionID }, bounded.signal)
     const extra = answer?.ok === true ? picture(answer.data?.image, path) : []
     return extra.length === 0 ? outcome : { ...outcome, content: [...textOf(outcome.content), ...extra] }
-  } catch {
+  } catch (error) {
+    if (context?.signal?.aborted) throw error
     return outcome
   } finally {
     bounded.done()
@@ -120,7 +126,7 @@ const captureWrap = `      if (typeof tools.get === "function" && typeof tools.u
       }
 `;
 
-export const toolsPluginSource = ({ tools, codeMode, wrapCapture = false, captureTimeoutMs = CAPTURE_TIMEOUT_MS, askPermissions = [] }) => {
+export const toolsPluginSource = ({ tools, codeMode, direct = [], wrapCapture = false, captureTimeoutMs = CAPTURE_TIMEOUT_MS, askPermissions = [] }) => {
   const asks = askPermissions.length > 0;
   const titles = Object.fromEntries(tools.flatMap((tool) => tool.definitions.map(({ action, title }) => [action, title])));
   return `const SCHEMA_VERSION = ${SCHEMA_VERSION}
@@ -190,6 +196,7 @@ const send = async (tool, input, context, requested) => {
     if (answer) return result(contentOf(content, answer), answer.action, answer.ok)
     return failure({ message: "MittrCraft returned an invalid response", kind: "runtime", status })
   } catch (error) {
+    if (context?.signal?.aborted) throw error
     return failure({ message: error instanceof Error ? error.message : String(error), kind: "runtime" })
   }
 }
@@ -207,7 +214,7 @@ export default {
   id: ${JSON.stringify(TOOLS_PLUGIN_ID)},
   setup: async (ctx) => {
     await ctx.tool.transform((tools) => {
-${wrapCapture ? captureWrap : ''}${tools.map((tool) => toolEntry(tool, codeMode)).join('')}    })
+${wrapCapture ? captureWrap : ''}${tools.map((tool) => toolEntry(tool, codeMode && !direct.includes(tool.name))).join('')}    })
 ${asks ? askHook : ''}  },
 }
 `;

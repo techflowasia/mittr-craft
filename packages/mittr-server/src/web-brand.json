@@ -8,21 +8,21 @@
     },
     {
       "file": "assets/*.js",
-      "from": "Waiting for OpenCode… (attempt ",
-      "to": "Waiting for the engine… (attempt ",
-      "count": 3
+      "from": "Waiting for OpenCode\\u2026 (attempt ",
+      "to": "Waiting for the engine\\u2026 (attempt ",
+      "count": 1
     },
     {
       "file": "assets/*.js",
       "from": "\"OpenCode health check reported not ready\"",
       "to": "\"The engine health check reported not ready\"",
-      "count": 3
+      "count": 1
     },
     {
       "file": "assets/*.js",
       "from": "\"OpenCode did not become ready in time\"",
       "to": "\"The engine did not become ready in time\"",
-      "count": 3
+      "count": 1
     },
     {
       "file": "assets/*.js",
@@ -32,8 +32,8 @@
     },
     {
       "file": "assets/*.js",
-      "from": "\"Reloading OpenCode configuration…\"",
-      "to": "\"Reloading the engine configuration…\"",
+      "from": "\"Reloading OpenCode configuration\\u2026\"",
+      "to": "\"Reloading the engine configuration\\u2026\"",
       "count": 1
     },
     {
@@ -70,12 +70,6 @@
       "file": "assets/*.js",
       "from": "\"Failed to restart OpenCode\"",
       "to": "\"Failed to restart the engine\"",
-      "count": 1
-    },
-    {
-      "file": "assets/*.js",
-      "from": "\"Failed to collect OpenCode status\"",
-      "to": "\"Failed to collect engine status\"",
       "count": 1
     },
     {
@@ -226,7 +220,7 @@
       "file": "assets/*.js",
       "from": "\"This OpenChamber surface has no Diff view.\"",
       "to": "\"This MittrCraft surface has no Diff view.\"",
-      "count": 1
+      "count": 2
     },
     {
       "file": "assets/*.js",
@@ -274,7 +268,7 @@
       "file": "assets/*.js",
       "from": "children:\"OpenChamber\"",
       "to": "children:\"MittrCraft\"",
-      "count": 3
+      "count": 4
     },
     {
       "file": "assets/*.js",
@@ -338,9 +332,15 @@
     },
     {
       "file": "assets/*.js",
-      "from": "name:\"OpenCode\",description:\"The OpenCode CLI default theme",
-      "to": "name:\"Terminal\",description:\"The engine CLI default theme",
-      "count": 2
+      "from": "name:\"OpenCode\",variant:\"dark\",description:\"Adapted from the OpenCode desktop theme.\"",
+      "to": "name:\"Terminal\",variant:\"dark\",description:\"Adapted from the engine desktop theme.\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "name:\"OpenCode\",variant:\"light\",description:\"Adapted from the OpenCode desktop theme.\"",
+      "to": "name:\"Terminal\",variant:\"light\",description:\"Adapted from the engine desktop theme.\"",
+      "count": 1
     },
     {
       "file": "assets/*.js",
@@ -370,7 +370,7 @@
       "file": "assets/*.js",
       "from": "author:\"OpenChamber\"",
       "to": "author:\"MittrCraft\"",
-      "count": 4
+      "count": 8
     },
     {
       "file": "assets/*.js",
@@ -496,7 +496,7 @@
       "file": "assets/*.js",
       "from": "children:\"@openchamber_dev\"",
       "to": "children:\"\"",
-      "count": 3
+      "count": 2
     },
     {
       "file": "assets/*.js",
@@ -512,8 +512,20 @@
     },
     {
       "file": "assets/*.js",
-      "from": "(\"walkthrough.help.guide\"),onClick:()=>{",
-      "to": "(\"walkthrough.help.guide\"),hidden:!0,onClick:()=>{",
+      "from": "{type:\"button\",variant:\"ghost\",size:\"sm\",className:\"walkthrough-header__option\",\"aria-label\":{{id}},onClick:{{id}},children:{{id}}}",
+      "to": "{hidden:!0}",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "{type:\"button\",variant:\"ghost\",size:\"sm\",onClick:{{id}},children:[{{id}}.jsx({{id}},{name:\"question\",className:\"size-4\"}),{{id}}(\"walkthrough.help.guide\")]}",
+      "to": "{hidden:!0}",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "{type:\"button\",variant:\"ghost\",size:{{id}},className:\"w-full\",onClick:{{id}},children:[{{id}},{{id}}]}",
+      "to": "{hidden:!0}",
       "count": 1
     },
     {
@@ -536,6 +548,438 @@
     },
     {
       "file": "assets/*.js",
+      "from": "\"This OpenChamber desktop app is older than its server",
+      "to": "\"This MittrCraft desktop app is older than its server",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "\"The OpenChamber window is not being drawn",
+      "to": "\"The MittrCraft window is not being drawn",
+      "count": 2
+    },
+    {
+      "file": "assets/*.js",
+      "from": "OpenCode did not start in time.",
+      "to": "The engine did not start in time.",
+      "count": 2
+    },
+    {
+      "file": "assets/*.js",
+      "from": "\"The runtime changed while OpenCode was starting.\"",
+      "to": "\"The runtime changed while the engine was starting.\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "OpenCode service unavailable",
+      "to": "Engine service unavailable",
+      "count": 3
+    },
+    {
+      "file": "assets/*.js",
+      "from": "characters: OpenChamber names its",
+      "to": "characters: MittrCraft names its",
+      "count": 4
+    },
+    {
+      "file": "assets/*.js",
+      "from": "'must be an OpenCode provider id,",
+      "to": "'must be an engine provider id,",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "name:\"OpenCode Zen\"",
+      "to": "name:\"Zen\"",
+      "count": 2
+    },
+    {
+      "file": "assets/*.js",
+      "from": "\"This OpenChamber surface has no side panel.\"",
+      "to": "\"This MittrCraft surface has no side panel.\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "with the page's own Send in OpenChamber.",
+      "to": "with the page's own Send in MittrCraft.",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "ask the user to open the page in OpenChamber with its PIN.",
+      "to": "ask the user to open the page in MittrCraft with its PIN.",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "\"OpenChamber has not seen that shell.\"",
+      "to": "\"MittrCraft has not seen that shell.\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "\"OpenCode no longer keeps that shell's output.\"",
+      "to": "\"The engine no longer keeps that shell's output.\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "`The user referenced another OpenChamber session,",
+      "to": "`The user referenced another MittrCraft session,",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "\"the agent of that session\":\"OpenChamber\"",
+      "to": "\"the agent of that session\":\"MittrCraft\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "`The user attached a message from another OpenChamber session,",
+      "to": "`The user attached a message from another MittrCraft session,",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "source:\"OpenCode process\"",
+      "to": "source:\"Engine process\"",
+      "count": 4
+    },
+    {
+      "file": "assets/*.js",
+      "from": "source:\"OpenCode API\"",
+      "to": "source:\"Engine API\"",
+      "count": 2
+    },
+    {
+      "file": "assets/*.js",
+      "from": " function=probeOpenCode ",
+      "to": " function=probeEngine ",
+      "count": 2
+    },
+    {
+      "file": "assets/*.js",
+      "from": "\"processes not counted (Windows, or OpenCode not on this machine)\"",
+      "to": "\"processes not counted (Windows, or the engine not on this machine)\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": " MB, OpenCode itself ",
+      "to": " MB, the engine itself ",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "[`OpenChamber: ",
+      "to": "[`MittrCraft: ",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "`OpenCode: ${",
+      "to": "`Engine: ${",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "`Last OpenCode start error: ",
+      "to": "`Last engine start error: ",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": ", OpenCode running=",
+      "to": ", engine running=",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "`OpenChamber diagnostic timeline",
+      "to": "`MittrCraft diagnostic timeline",
+      "count": 2
+    },
+    {
+      "file": "assets/*.js",
+      "from": "\nOpenCode load: ",
+      "to": "\nEngine load: ",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "only its health and the OpenCode API probes were read",
+      "to": "only its health and the engine API probes were read",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "OpenCode log files and output: not read",
+      "to": "Engine log files and output: not read",
+      "count": 2
+    },
+    {
+      "file": "assets/*.js",
+      "from": "bounded history of OpenCode lifecycle transitions",
+      "to": "bounded history of engine lifecycle transitions",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "\"web\",\"OpenCode\",\"startup\"",
+      "to": "\"web\",\"engine\",\"startup\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "displayName:\"OpenChamber Schedule\"",
+      "to": "displayName:\"MittrCraft Schedule\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "displayName:\"OpenChamber Knowledge\"",
+      "to": "displayName:\"MittrCraft Knowledge\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "displayName:\"OpenChamber Usage\"",
+      "to": "displayName:\"MittrCraft Usage\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "displayName:\"OpenChamber Render\"",
+      "to": "displayName:\"MittrCraft Render\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "displayName:\"OpenChamber Image\"",
+      "to": "displayName:\"MittrCraft Image\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "displayName:\"OpenChamber Secret\"",
+      "to": "displayName:\"MittrCraft Secret\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "displayName:\"OpenChamber Workflow\"",
+      "to": "displayName:\"MittrCraft Workflow\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "={displayName:\"OpenCode\",category:\"system\"",
+      "to": "={displayName:\"MittrCraft\",category:\"system\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": ", from the OpenChamber night watercolour",
+      "to": ", from the MittrCraft night watercolour",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": ", from the OpenChamber day watercolour",
+      "to": ", from the MittrCraft day watercolour",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "\"OpenChamber accents aged to one muted lightness",
+      "to": "\"MittrCraft accents aged to one muted lightness",
+      "count": 2
+    },
+    {
+      "file": "share-document.js",
+      "from": "name:\"OpenChamber\",variant:",
+      "to": "name:\"MittrCraft\",variant:",
+      "count": 2
+    },
+    {
+      "file": "share-document.js",
+      "from": "name:\"OpenCode\",variant:\"dark\",description:\"Adapted from the OpenCode desktop theme.\"",
+      "to": "name:\"Terminal\",variant:\"dark\",description:\"Adapted from the engine desktop theme.\"",
+      "count": 1
+    },
+    {
+      "file": "share-document.js",
+      "from": "name:\"OpenCode\",variant:\"light\",description:\"Adapted from the OpenCode desktop theme.\"",
+      "to": "name:\"Terminal\",variant:\"light\",description:\"Adapted from the engine desktop theme.\"",
+      "count": 1
+    },
+    {
+      "file": "share-document.js",
+      "from": "\"The OpenChamber signature - ",
+      "to": "\"The MittrCraft signature - ",
+      "count": 2
+    },
+    {
+      "file": "share-document.js",
+      "from": "Vitesse syntax over OpenCode-deep neutrals",
+      "to": "Vitesse syntax over deep neutrals",
+      "count": 1
+    },
+    {
+      "file": "share-document.js",
+      "from": "IDE-inspired colors for OpenChamber - ",
+      "to": "IDE-inspired colors for MittrCraft - ",
+      "count": 2
+    },
+    {
+      "file": "share-document.js",
+      "from": "\"Artem Evsevev, adapted for OpenChamber\"",
+      "to": "\"Artem Evsevev, adapted for MittrCraft\"",
+      "count": 2
+    },
+    {
+      "file": "share-document.js",
+      "from": "author:\"OpenChamber\"",
+      "to": "author:\"MittrCraft\"",
+      "count": 8
+    },
+    {
+      "file": "share-document.js",
+      "from": "author:\"OpenCode\"",
+      "to": "author:\"MittrCraft\"",
+      "count": 2
+    },
+    {
+      "file": "share-document.js",
+      "from": ", from the OpenChamber night watercolour",
+      "to": ", from the MittrCraft night watercolour",
+      "count": 1
+    },
+    {
+      "file": "share-document.js",
+      "from": ", from the OpenChamber day watercolour",
+      "to": ", from the MittrCraft day watercolour",
+      "count": 1
+    },
+    {
+      "file": "share-document.js",
+      "from": "\"OpenChamber accents aged to one muted lightness",
+      "to": "\"MittrCraft accents aged to one muted lightness",
+      "count": 2
+    },
+    {
+      "file": "assets/*.js",
+      "from": "publisher:\"OpenChamber\"",
+      "to": "publisher:\"Built in\"",
+      "count": 3
+    },
+    {
+      "file": "assets/*.js",
+      "from": "homepage:\"https://github.com/openchamber/opencode-search-providers\"",
+      "to": "homepage:\"\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "homepage:\"https://github.com/openchamber/openchamber-excalidraw\"",
+      "to": "homepage:\"\"",
+      "count": 2
+    },
+    {
+      "file": "assets/*.js",
+      "from": "homepage:\"https://github.com/openchamber/openchamber-resource-monitor\"",
+      "to": "homepage:\"\"",
+      "count": 2
+    },
+    {
+      "file": "assets/*.js",
+      "from": "(\"integrationsCatalog.info.website\")}),t.jsx(\"dd\",{className:\"min-w-0\",children:t.jsxs(\"a\",{href:e.homepage,",
+      "to": "(\"integrationsCatalog.info.website\"),hidden:!e.homepage}),t.jsx(\"dd\",{className:\"min-w-0\",hidden:!e.homepage,children:t.jsxs(\"a\",{href:e.homepage,",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "{type:\"button\",size:\"sm\",variant:\"secondary\",onClick:()=>{{{id}}({{id}}.homepage)}",
+      "to": "{type:\"button\",size:\"sm\",variant:\"secondary\",hidden:!0,onClick:()=>{}",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "`https://openchamber.dev/${e}/extensions/`:\"https://openchamber.dev/extensions/\"",
+      "to": "\"\":\"\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "\"data-settings-item\":\"extensions.browse\",",
+      "to": "\"data-settings-item\":\"extensions.browse\",hidden:!0,",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "descriptionKey:\"settings.extensions.browse.hint\",keywords:[\"community\",\"catalog\",\"marketplace\",\"store\",\"gallery\",\"website\",\"discover\",\"find\",\"extension\"],isAvailable:{{id}}=>!{{id}}.isVSCode&&!{{id}}.enterpriseMode",
+      "to": "descriptionKey:\"settings.extensions.browse.hint\",keywords:[\"community\",\"catalog\",\"marketplace\",\"store\",\"gallery\",\"website\",\"discover\",\"find\",\"extension\"],isAvailable:()=>!1",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "=\"https://github.com/openchamber/openchamber/releases\",",
+      "to": "=\"\",",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "{href:{{id}},target:\"_blank\",rel:\"noopener noreferrer\",className:\"flex items-center gap-1.5 typography-meta text-muted-foreground transition-colors hover:text-foreground\"",
+      "to": "{hidden:!0,target:\"_blank\",rel:\"noopener noreferrer\",className:\"flex items-center gap-1.5 typography-meta text-muted-foreground transition-colors hover:text-foreground\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "[{href:{{id}},icon:\"github-fill\",label:\"GitHub\"},{href:{{id}},icon:\"discord-fill\",label:\"Discord\"},{href:{{id}},icon:\"twitter-xfill\",label:\"@openchamber_dev\"}].map(",
+      "to": "[].map(",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "komputera, OpenChambera i serwer",
+      "to": "komputera, MittrCrafta i serwer",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "[/^OpenCode process exited before serving with ",
+      "to": "[/^Engine process exited before serving with ",
+      "count": 2
+    },
+    {
+      "file": "assets/*.js",
+      "from": "[/^Timeout waiting for OpenCode to start\\b/",
+      "to": "[/^Timeout waiting for the engine to start\\b/",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "[/^Timed out waiting for OpenCode (?:port|to become ready)\\b/",
+      "to": "[/^Timed out waiting for the engine (?:port|to become ready)\\b/",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "[/^External OpenCode server on port ",
+      "to": "[/^External engine server on port ",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "[/did not identify itself as OpenCode 2\\.x/,\"server is not OpenCode 2.x\"]",
+      "to": "[/did not identify itself as engine 2\\.x/,\"server is not engine 2.x\"]",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
       "from": "\"openchamber://session/\"",
       "to": "\"mittrcraft://session/\"",
       "count": 1
@@ -548,12 +992,6 @@
     },
     {
       "file": "assets/*.js",
-      "from": "schemas:{\"openchamber:\":",
-      "to": "schemas:{\"mittrcraft:\":",
-      "count": 1
-    },
-    {
-      "file": "assets/*.js",
       "from": "\"shell\",\"openchamber\",\"openchamber-ui\"",
       "to": "\"shell\",\"openchamber\",\"mittrcraft\",\"openchamber-ui\"",
       "count": 1
@@ -562,6 +1000,18 @@
       "file": "assets/*.js",
       "from": "=\"OpenChamber\",",
       "to": "=\"MittrCraft\",",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "\"openchamber://extensions/install?\"",
+      "to": "\"mittrcraft://extensions/install?\"",
+      "count": 1
+    },
+    {
+      "file": "assets/*.js",
+      "from": "`openchamber://session/${",
+      "to": "`mittrcraft://session/${",
       "count": 1
     }
   ],

@@ -7,8 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
+import '../../web/scripts/register-server-sources.mjs';
 
-import { prepareCliEnvironment, readProductEnv } from './cli-env.js';
+import { prepareCliEnvironment, readProductEnv, serverCliOf } from './cli-env.js';
 import { engineBases, engineConfigDir } from './engine-home.js';
 import { repoRoot } from './upstream-contract.js';
 
@@ -70,6 +71,46 @@ test('the mittrcraft bin hands every argument on unchanged', (t) => {
   assert.equal(wrapped.status, direct.status);
   assert.equal(wrapped.stdout, direct.stdout);
   assert.equal(wrapped.stderr, direct.stderr);
+});
+
+const BUILT_CLI = path.join(repoRoot, 'packages/web/build/bin/cli.js');
+
+test('the bin runs the source server CLI only where its loader or Bun can run it, and the built CLI otherwise', () => {
+  const web = '/pkg/web';
+  const has = (...present) => (file) => present.includes(file);
+  const source = '/pkg/web/bin/cli.js';
+  const loader = '/pkg/web/scripts/register-server-sources.mjs';
+  const built = '/pkg/web/build/bin/cli.js';
+  assert.equal(serverCliOf(web, { exists: has(source, loader, built), bunVersion: undefined }), source);
+  assert.equal(serverCliOf(web, { exists: has(source, built), bunVersion: '1.4.5' }), source);
+  assert.equal(serverCliOf(web, { exists: has(source, built), bunVersion: undefined }), built);
+  assert.equal(serverCliOf(web, { exists: has(built), bunVersion: undefined }), built);
+  assert.equal(serverCliOf(web, { exists: has(loader, built), bunVersion: '1.4.5' }), built);
+});
+
+test('a packed copy, whose web package carries only its build, runs the built server CLI under Node', (t) => {
+  if (!fs.existsSync(BUILT_CLI)) {
+    t.skip('needs the built server: bun run --cwd packages/web build:server');
+    return;
+  }
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-packed-')));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const packageDir = path.join(root, 'packages', 'mittr-server');
+  const webDir = path.join(root, 'packages', 'web');
+  fs.mkdirSync(packageDir, { recursive: true });
+  fs.mkdirSync(webDir, { recursive: true });
+  fs.cpSync(path.join(repoRoot, 'packages/mittr-server/bin'), path.join(packageDir, 'bin'), { recursive: true });
+  fs.symlinkSync(path.join(repoRoot, 'packages/mittr-server/src'), path.join(packageDir, 'src'), 'dir');
+  fs.copyFileSync(path.join(repoRoot, 'packages/web/package.json'), path.join(webDir, 'package.json'));
+  fs.symlinkSync(path.join(repoRoot, 'packages/web/build'), path.join(webDir, 'build'), 'dir');
+  fs.symlinkSync(path.join(repoRoot, 'node_modules'), path.join(root, 'node_modules'), 'dir');
+
+  const packed = runIsolated(t, path.join(packageDir, 'bin', 'mittrcraft.mjs'), ['--help'], { OPENCHAMBER_DATA_DIR: path.join(root, 'data') });
+  const built = runIsolated(t, BUILT_CLI, ['--help']);
+
+  assert.equal(packed.status, 0, packed.stderr);
+  assert.ok(packed.stdout.includes('openchamber [COMMAND] [OPTIONS]'), packed.stdout);
+  assert.equal(packed.stdout, built.stdout);
 });
 
 const prepare = (env) => prepareCliEnvironment({ env, homeDir: '/home/person', pluginPath: PLUGIN, productEnv: PRODUCT_ENV });
@@ -234,9 +275,9 @@ test('a packed bin without brand/ finds its product env and answers --help', (t)
 
 test('a packed layout without .git gets the default data dir and the bin touches nothing', (t) => {
   const { root, packageDir } = packedBin(t, 'mittrcraft-packed-');
-  fs.mkdirSync(path.join(root, 'packages', 'web', 'bin'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'packages', 'web', 'build', 'bin'), { recursive: true });
   fs.writeFileSync(
-    path.join(root, 'packages', 'web', 'bin', 'cli.js'),
+    path.join(root, 'packages', 'web', 'build', 'bin', 'cli.js'),
     "console.log(JSON.stringify({ args: process.argv.slice(2), dataDir: process.env.OPENCHAMBER_DATA_DIR, plugins: process.env.OPENCHAMBER_SERVER_PLUGINS, broker: process.env.MITTRCRAFT_BROKER_URL }));\n",
   );
   fs.writeFileSync(path.join(root, 'packages', 'web', 'package.json'), '{"type":"module"}\n');
@@ -265,9 +306,9 @@ const PRODUCT_KEYS = [...Object.keys(PRODUCT_ENV), 'BUN_BINARY'];
 
 const runPackedEnvProbe = (t, extraEnv = {}) => {
   const { root, packageDir } = packedBin(t, 'mittrcraft-packed-env-');
-  fs.mkdirSync(path.join(root, 'packages', 'web', 'bin'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'packages', 'web', 'build', 'bin'), { recursive: true });
   fs.writeFileSync(
-    path.join(root, 'packages', 'web', 'bin', 'cli.js'),
+    path.join(root, 'packages', 'web', 'build', 'bin', 'cli.js'),
     `console.log(JSON.stringify(Object.fromEntries(${JSON.stringify(PRODUCT_KEYS)}.map((name) => [name, process.env[name] ?? null]))));\n`,
   );
   fs.writeFileSync(path.join(root, 'packages', 'web', 'package.json'), '{"type":"module"}\n');
@@ -294,6 +335,8 @@ test('a packed layout run applies the whole prod product env, with ~ as the home
     OPENCHAMBER_MANAGED_PROCESS_REGISTRY: path.join(home, '.config', 'mittrcraft', 'managed-opencode'),
     OPENCHAMBER_UPDATE_CHECK_DISABLED: '1',
     OPENCHAMBER_MODELS_METADATA_DISABLED: '1',
+    OPENCHAMBER_SHARE_PAGES_DISABLED: '1',
+    OPENCHAMBER_PUSH_RELAY_DISABLED: 'true',
     MITTRCRAFT_ENGINE_HOME: '',
     MITTRCRAFT_DEEP_LINK_SCHEME: 'mittrcraft',
     MITTRCRAFT_BROKER_URL: 'https://api.mittr.asia',
@@ -382,11 +425,17 @@ test('the npm pack of this package, beside only a sibling web and its own depend
   const ldapjs = path.dirname(createRequire(path.join(repoRoot, 'packages/mittr-server/package.json')).resolve('ldapjs/package.json'));
   fs.symlinkSync(ldapjs, path.join(packageDir, 'node_modules', 'ldapjs'), 'dir');
 
+  const repoWeb = path.join(repoRoot, 'packages/web');
+  assert.ok(fs.existsSync(path.join(repoWeb, 'build/server')), 'packages/web/build is not built; run bun run --cwd packages/web build:server first');
   const web = path.join(root, 'packages', 'web');
-  fs.mkdirSync(path.join(web, 'bin'), { recursive: true });
-  fs.symlinkSync(path.join(repoRoot, 'packages/web/server'), path.join(web, 'server'), 'dir');
-  fs.writeFileSync(path.join(web, 'package.json'), '{"type":"module"}\n');
-  fs.writeFileSync(path.join(web, 'bin', 'cli.js'), [
+  fs.mkdirSync(path.join(web, 'build', 'bin'), { recursive: true });
+  const shipped = JSON.parse(fs.readFileSync(path.join(repoWeb, 'package.json'), 'utf8')).files;
+  assert.ok(shipped.includes('build'));
+  fs.symlinkSync(path.join(repoWeb, 'build', 'server'), path.join(web, 'build', 'server'), 'dir');
+  for (const name of shipped.filter((entry) => entry !== 'build' && fs.existsSync(path.join(repoWeb, entry)))) {
+    fs.symlinkSync(path.join(repoWeb, name), path.join(web, name));
+  }
+  fs.writeFileSync(path.join(web, 'build', 'bin', 'cli.js'), [
     "import { pathToFileURL } from 'node:url';",
     'const plugins = JSON.parse(process.env.OPENCHAMBER_SERVER_PLUGINS);',
     'for (const plugin of plugins) await import(pathToFileURL(plugin).href);',
@@ -394,6 +443,7 @@ test('the npm pack of this package, beside only a sibling web and its own depend
     '',
   ].join('\n'));
   assert.equal(fs.existsSync(path.join(root, 'packages', 'mittr-opencode')), false);
+  assert.equal(fs.existsSync(path.join(web, 'server')), false);
 
   const result = runIsolated(t, path.join(packageDir, 'bin', 'mittrcraft.mjs'), ['serve', '--port', '9']);
   assert.equal(result.status, 0, result.stderr);
@@ -423,8 +473,8 @@ const freePort = () => new Promise((resolve, reject) => {
 
 const runPackedServe = (t, { pathValue, extraEnv = {}, args = ['serve'] }) => {
   const { root, packageDir } = packedBin(t, 'mittrcraft-packed-rg-');
-  fs.mkdirSync(path.join(root, 'packages', 'web', 'bin'), { recursive: true });
-  fs.writeFileSync(path.join(root, 'packages', 'web', 'bin', 'cli.js'), "console.log('server started');\n");
+  fs.mkdirSync(path.join(root, 'packages', 'web', 'build', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'packages', 'web', 'build', 'bin', 'cli.js'), "console.log('server started');\n");
   fs.writeFileSync(path.join(root, 'packages', 'web', 'package.json'), '{"type":"module"}\n');
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'mittrcraft-bin-')));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));

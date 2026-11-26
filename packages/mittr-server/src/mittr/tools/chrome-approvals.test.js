@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import '../../../../web/scripts/register-server-sources.mjs';
 
 import express from 'express';
 
-import { createPermissionAutoAcceptRuntime } from '../../../../web/server/lib/permission-auto-accept/runtime.js';
-import { translateWireEvent } from '../../../../web/server/lib/event-stream/translate-v2.js';
 import { createMittrSettings } from '../mittr-settings.js';
 import { listen, tempDataDir, until } from '../test-helpers.js';
 import {
@@ -18,6 +17,9 @@ import {
   mintPermissionId,
   subscribeApprovals,
 } from './chrome-approvals.js';
+
+const { createPermissionAutoAcceptRuntime } = await import('../../../../web/server/lib/permission-auto-accept/runtime.js');
+const { translateWireEvent } = await import('../../../../web/server/lib/event-stream/translate-v2.js');
 
 const HOST = 'acme.example.test';
 
@@ -195,6 +197,30 @@ test('Don\'t allow answers the refusal and grants nothing', async (t) => {
   await engine.answer(await nextRequest(engine), 'reject');
   assert.equal(await asked, 'reject');
   assert.equal(await approvals.isApproved('ses_1', HOST), false);
+  assert.deepEqual((await settings.read()).tools.chromeApprovedHosts, []);
+});
+
+test('reject ends this question without reasking, and a later call for the same session and site asks afresh', async (t) => {
+  const { engine, approvals, settings } = setUp(t);
+  const first = askFor(approvals, 'ses_1');
+  const firstId = await nextRequest(engine);
+  await engine.answer(firstId, 'reject');
+  assert.equal(await first, 'reject');
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(engine.state.creates.length, 1, 'rejection must not immediately raise another question');
+  assert.deepEqual(engine.pendingIds(), []);
+  assert.equal(await approvals.isApproved('ses_1', HOST), false);
+  assert.deepEqual((await settings.read()).tools.chromeApprovedHosts, []);
+
+  const later = askFor(approvals, 'ses_1');
+  const laterId = await nextRequest(engine);
+  assert.notEqual(laterId, firstId);
+  assert.equal(engine.state.creates.length, 2);
+  assert.equal(await approvals.isApproved('ses_1', HOST), false, 'asking again must not grant access');
+  await engine.answer(laterId, 'once');
+  assert.equal(await later, 'once');
+  assert.equal(await approvals.isApproved('ses_1', HOST), true);
+  assert.equal(await approvals.isApproved('ses_2', HOST), false);
   assert.deepEqual((await settings.read()).tools.chromeApprovedHosts, []);
 });
 

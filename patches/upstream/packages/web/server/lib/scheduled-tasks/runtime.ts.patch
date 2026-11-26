@@ -1,0 +1,43 @@
+diff --git a/packages/web/server/lib/scheduled-tasks/runtime.ts b/packages/web/server/lib/scheduled-tasks/runtime.ts
+index 95179f7dc..4a624f766 100644
+--- a/packages/web/server/lib/scheduled-tasks/runtime.ts
++++ b/packages/web/server/lib/scheduled-tasks/runtime.ts
+@@ -21,6 +21,8 @@ import type { SessionMetadata } from '../openchamber-sessions/session-metadata-s
+ import { isString } from '../shared/object-guards.js';
+ import type { createOpenCodeLifecycleRuntime } from '../opencode/lifecycle.js';
+ import type { createPermissionAutoAcceptRuntime } from '../permission-auto-accept/runtime.js';
++import type { ResponseRecoveryOwner } from '../session-response-recovery/owner.js';
++import type { FetchLike } from '../session-response-recovery/admission.js';
+ 
+ export interface ScheduledTasksDependencies extends Omit<ExistingSessionDependencies, 'createClient' | 'messageQueueRuntime' | 'projectConfigRuntime'> {
+   projectConfigRuntime: ScheduledTaskStore;
+@@ -31,6 +33,7 @@ export interface ScheduledTasksDependencies extends Omit<ExistingSessionDependen
+   emitTaskRunEvent?: (event: ScheduledTaskRunEvent) => void;
+   setSessionAutoAccept?: ReturnType<typeof createPermissionAutoAcceptRuntime>['setSessionPolicy'] | null;
+   sessionKnowledgeRuntime?: { sync: (sessionID: string, directory: string, prompt: string) => Promise<boolean> } | null;
++  responseRecovery?: Pick<ResponseRecoveryOwner, 'admissions'> | null;
+   persistSessionGoal?: Parameters<typeof createSessionGoal>[0]['persistSessionGoal'];
+   readSessionDefaults?: ((projectID: string) => Promise<ReturnType<typeof resolveSessionDefaults> | null>) | null;
+   resolveAutoSelection?: ReturnType<typeof createRoutingRuntime>['resolveAutoSelection'] | null;
+@@ -363,6 +366,7 @@ export const createScheduledTasksRuntime = (deps: ScheduledTasksDependencies) =>
+     emitTaskRunEvent,
+     setSessionAutoAccept,
+     sessionKnowledgeRuntime = null,
++    responseRecovery = null,
+     persistSessionGoal = null,
+     chatsScope = null,
+     readSessionDefaults = null,
+@@ -388,11 +392,12 @@ export const createScheduledTasksRuntime = (deps: ScheduledTasksDependencies) =>
+     const baseUrl = openCodeOrigin();
+     const headers = { ...getOpenCodeAuthHeaders() };
+     if (directory) headers['x-opencode-directory'] = encodeURIComponent(directory);
++    const transport: FetchLike = responseRecovery ? responseRecovery.admissions.fetch((...args) => fetch(...args), { capture: true }) : (...args) => fetch(...args);
+     return OpenCode.make({
+       baseUrl,
+       headers,
+       fetch: async (...args) => {
+-        const response = await fetch(...args);
++        const response = await transport(...args);
+         assertOpenCodeApiResponse(response);
+         return response;
+       },

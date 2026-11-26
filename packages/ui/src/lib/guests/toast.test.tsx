@@ -5,7 +5,9 @@ import { Window } from 'happy-dom';
 import { toast } from 'sonner';
 import type { ToastRequest } from '@openchamber/sdk';
 import { I18nProvider, useI18nStore } from '@/lib/i18n';
-import { showGuestToast } from './toast';
+import { allowGuestToast, showGuestToast } from './toast';
+
+let toastGuest = 0;
 
 describe('guest toast buttons', () => {
   let dom: Window;
@@ -49,7 +51,7 @@ describe('guest toast buttons', () => {
     originals.clear();
   });
   const show = async (request: ToastRequest) => {
-    showGuestToast(request);
+    showGuestToast(request, `guest-${toastGuest++}`);
     const options = notice.mock.calls.at(-1)?.[1];
     const action = options?.action;
     if (!options || !React.isValidElement(action)) throw new Error('Toast buttons missing');
@@ -61,6 +63,28 @@ describe('guest toast buttons', () => {
     if (!button) throw new Error(`Missing button: ${label}`);
     await act(async () => button.click());
   };
+
+  test('button toasts get distinct v4 IDs without crypto.randomUUID', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis.crypto, 'randomUUID');
+    Object.defineProperty(globalThis.crypto, 'randomUUID', { configurable: true, value: undefined });
+    try {
+      const requests: ToastRequest[] = [
+        { kind: 'info', message: 'Copy', copy: true },
+        { kind: 'info', message: 'Dismiss', dismiss: true },
+        { kind: 'info', message: 'Persistent', persistent: true },
+      ];
+      const ids = new Set<string | number | undefined>();
+      for (const request of requests) {
+        const options = await show(request);
+        expect(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(String(options.id))).toBe(true);
+        ids.add(options.id);
+      }
+      expect(ids.size).toBe(requests.length);
+    } finally {
+      if (descriptor) Object.defineProperty(globalThis.crypto, 'randomUUID', descriptor);
+      else Reflect.deleteProperty(globalThis.crypto, 'randomUUID');
+    }
+  });
 
   test('Copy keeps a persistent toast open; OK dismisses that toast', async () => {
     const options = await show({ kind: 'info', message: 'Result', copy: true, dismiss: true, persistent: true });
@@ -92,7 +116,7 @@ describe('guest toast buttons', () => {
     expect(container.querySelectorAll('button').length).toBe(1);
     await click('OK');
     expect(dismissed.mock.calls[0]?.[0]).toBe(options.id);
-    showGuestToast({ kind: 'info', message: 'Plain' });
+    showGuestToast({ kind: 'info', message: 'Plain' }, `guest-${toastGuest++}`);
     expect(notice.mock.calls.at(-1)).toEqual(['Plain']);
     const timed = await show({ kind: 'info', message: 'Timed', dismiss: true });
     expect(timed.duration).toBeUndefined();
@@ -110,5 +134,14 @@ describe('guest toast buttons', () => {
     expect(container.textContent).toContain('Скопійовано');
     await click('Гаразд');
     expect(writes).toEqual(['Result']);
+  });
+});
+
+describe('allowGuestToast', () => {
+  test('drops a burst from one extension and leaves the others alone', () => {
+    const allowed = Array.from({ length: 8 }, () => allowGuestToast('burst', 1_000)).filter(Boolean);
+    expect(allowed).toHaveLength(5);
+    expect(allowGuestToast('another', 1_000)).toBe(true);
+    expect(allowGuestToast('burst', 12_000)).toBe(true);
   });
 });

@@ -285,6 +285,11 @@ mock.module('@/lib/product-plugins', () => ({
   },
 }));
 
+mock.module('@/stores/useDirectoryStore', () => ({
+  ensureHomeDirectoryResolved: () => Promise.resolve(),
+  useDirectoryStore: { getState: () => ({ isHomeReady: true }) },
+}));
+
 mock.module('@/lib/runtime-auth', () => ({
   getRuntimeExtraHeadersSync: mock(() => ({})),
 }));

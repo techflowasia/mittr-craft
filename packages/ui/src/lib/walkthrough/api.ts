@@ -22,25 +22,12 @@ interface ErrorPayload {
 const isJsonResponse = (response: Response): boolean =>
   /^application\/(?:[\w.+-]+\+)?json\b/i.test(response.headers.get('content-type') ?? '');
 
-/**
- * A server without these routes does not answer 404 with JSON. Unmatched
- * `/api/*` falls through to the OpenCode proxy, and OpenCode serves its embedded
- * web UI for any path it does not know — HTML, status 200. Parsing that as JSON
- * surfaced `Unexpected token '<', "<!doctype "...` in the panel, which names
- * neither the cause nor the remedy.
- *
- * Only a missing route is reported this way: 2xx and 404 are the shapes it
- * produces. A 5xx that is not JSON came from a server that did answer, so it
- * keeps its own failure rather than becoming advice to upgrade.
- */
 const serverUnsupported = () =>
   new WalkthroughError('This OpenChamber server has no walkthrough API', { code: 'server-unsupported' });
 
 const looksUnsupported = (response: Response): boolean =>
   !isJsonResponse(response) && (response.ok || response.status === 404);
 
-// An authoritative read that fails must never look like "there is nothing
-// here" — the caller would clear a perfectly good walkthrough off the screen.
 const throwFromResponse = async (response: Response, fallback: string): Promise<never> => {
   if (looksUnsupported(response)) throw serverUnsupported();
   const payload = (await response.json().catch(() => null)) as ErrorPayload | null;
@@ -57,8 +44,6 @@ const readJson = async <T>(response: Response): Promise<T> => {
   try {
     return (await response.json()) as T;
   } catch {
-    // Declared JSON, arrived truncated or empty: still not an answer, and the
-    // parser's own message says nothing a reader can act on.
     throw new WalkthroughError('The server returned a malformed walkthrough response');
   }
 };
@@ -74,6 +59,7 @@ const hasMatchingContext = (
   const context = result.source?.kind === 'pr' ? result.readContext : undefined;
   return result.source?.kind === 'pr'
     && result.source.number === target.source.number
+    && (result.source.revision ?? null) === (target.source.revision?.toLowerCase() ?? null)
     && context !== undefined
     && hasSameSourceControlReadContext(context, target.context);
 };
@@ -118,6 +104,7 @@ interface GenerateWalkthroughBody extends WalkthroughReadContextBody {
   force: boolean;
   model?: string;
   providerID?: string;
+  modelID?: string;
   language?: string;
 }
 
@@ -152,11 +139,12 @@ export const buildTargetQuery = (directory: string, target: WalkthroughTarget): 
 export async function fetchWalkthrough(
   directory: string,
   target: WalkthroughTarget,
-  options: { model?: string; providerID?: string; language?: string; signal?: AbortSignal } = {}
+  options: { model?: string; providerID?: string; modelID?: string; language?: string; signal?: AbortSignal } = {}
 ): Promise<WalkthroughResult> {
   const query = buildTargetQuery(directory, target);
   if (options.model) query.model = options.model;
   if (options.providerID) query.providerID = options.providerID;
+  if (options.modelID) query.modelID = options.modelID;
   if (options.language) query.language = options.language;
   const response = await runtimeFetch(BASE, {
     query,
@@ -171,7 +159,7 @@ export async function fetchWalkthrough(
 export async function generateWalkthrough(
   directory: string,
   target: WalkthroughTarget,
-  options: { force?: boolean; model?: string; providerID?: string; language?: string; signal?: AbortSignal } = {}
+  options: { force?: boolean; model?: string; providerID?: string; modelID?: string; language?: string; signal?: AbortSignal } = {}
 ): Promise<WalkthroughResult> {
   const body: GenerateWalkthroughBody = {
     directory,
@@ -181,12 +169,14 @@ export async function generateWalkthrough(
   if (isPullRequestTarget(target)) Object.assign(body, readContextFields(target.context));
   if (options.model) body.model = options.model;
   if (options.providerID) body.providerID = options.providerID;
+  if (options.modelID) body.modelID = options.modelID;
   if (options.language) body.language = options.language;
   const response = await runtimeFetch(`${BASE}/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
     signal: options.signal,
+    directory,
   });
   if (!response.ok) {
     return throwFromResponse(response, 'Failed to generate walkthrough');
@@ -194,10 +184,6 @@ export async function generateWalkthrough(
   return readWalkthroughResult(response, target);
 }
 
-/**
- * Stop a running generation. Explicit, because merely leaving the page must not
- * throw away work the user is paying for.
- */
 export async function cancelWalkthroughGeneration(
   directory: string,
   target: WalkthroughTarget
@@ -208,6 +194,7 @@ export async function cancelWalkthroughGeneration(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    directory,
   });
   if (!response.ok) {
     await throwFromResponse(response, 'Failed to cancel walkthrough generation');
@@ -221,10 +208,6 @@ export async function cancelWalkthroughGeneration(
   }
 }
 
-/**
- * Current stage of a running generation. Reads server memory only, so this is
- * safe to poll — unlike the full read, which re-runs the whole git pipeline.
- */
 export async function fetchWalkthroughStage(
   directory: string,
   target: WalkthroughTarget,

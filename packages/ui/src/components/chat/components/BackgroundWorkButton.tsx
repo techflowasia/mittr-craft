@@ -7,14 +7,8 @@ import { formatShortcutForDisplay, getEffectiveShortcutCombo } from '@/lib/short
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/useUIStore';
 
-/** The tooltip waits a beat: the button sits next to text the user reads while the agent works. */
 const TOOLTIP_DELAY_MS = 750;
 
-/**
- * "Move to background" for the work the agent is blocked on. Shared by the
- * status chip above the composer and the scroll-to-bottom pill that stands in
- * for it, so both carry the same action, label and shortcut.
- */
 export const BackgroundWorkButton: React.FC<{ onClick: () => void; className?: string }> = ({ onClick, className }) => {
     const { t } = useI18n();
     const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
@@ -42,7 +36,7 @@ export const BackgroundWorkButton: React.FC<{ onClick: () => void; className?: s
             </TooltipTrigger>
             <TooltipContent side="top" sideOffset={6}>
                 {label}
-                {shortcut ? <span className="ml-2 text-muted-foreground">{shortcut}</span> : null}
+                {shortcut ? <span className="ms-2 text-muted-foreground">{shortcut}</span> : null}
             </TooltipContent>
         </Tooltip>
     );

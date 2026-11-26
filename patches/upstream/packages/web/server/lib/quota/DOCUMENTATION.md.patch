@@ -1,0 +1,15 @@
+diff --git a/packages/web/server/lib/quota/DOCUMENTATION.md b/packages/web/server/lib/quota/DOCUMENTATION.md
+index 02b4ce102..53e353ac3 100644
+--- a/packages/web/server/lib/quota/DOCUMENTATION.md
++++ b/packages/web/server/lib/quota/DOCUMENTATION.md
+@@ -296,6 +296,10 @@ xAI quota reports the SuperGrok billing cycle from `POST https://grok.com/grok_a
+ - **Skipping the standalone refresh also required OpenCode 2.x**: the pre-2.x `auth.json` write path no longer exists (`packages/web/server/lib/opencode/auth.js` is read-only), so there is nowhere correct to persist a rotated pair.
+ - Keep `packages/web/server/lib/quota/providers/xai.js` and `packages/vscode/src/quotaProviders.ts` (`fetchXaiQuota`) in sync — the VS Code extension duplicates this logic rather than importing the web provider.
+ 
++## Registered provider request scope
++
++Registered providers may supply synchronous `fetchScope()`, returning an opaque identity for the current account or runtime generation. The dispatcher shares only in-flight requests with the same provider registration and `Object.is`-equal scope. Providers without this hook retain provider-ID coalescing. A replacement registration never inherits its predecessor's request. The provider owns stale-completion rejection and must change its scope on an owner round trip, not only when the account name differs. The dispatcher captures the registration before fetching and does not resolve it again after waiting.
++
+ ## Add a new provider (quick steps)
+ 1. Choose module shape based on complexity:
+    - Simple providers: create `packages/web/server/lib/quota/providers/<provider>.js`.

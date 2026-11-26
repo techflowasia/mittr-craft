@@ -46,6 +46,18 @@ function setup(overrides = {}, options = {}) {
 }
 
 describe('GitLab resource service', () => {
+  it('reads an upload from a project in the bound network only', async () => {
+    const download = vi.fn(async () => new Response('clip'));
+    const { service } = setup({}, { download });
+    const upload = { secret: '66dbcd21ec5d24ed6ea225176098d52b', filename: 'demo clip.mp4', range: 'bytes=0-' };
+
+    await service.readUpload('/repo', { owner: 'team', name: 'repo' }, 'origin', upload);
+    expect(download).toHaveBeenCalledWith('projects/2/uploads/66dbcd21ec5d24ed6ea225176098d52b/demo%20clip.mp4', { range: 'bytes=0-', signal: undefined });
+
+    await expect(service.readUpload('/repo', { owner: 'other', name: 'secret' }, 'origin', upload)).rejects.toMatchObject({ status: 404 });
+    expect(download).toHaveBeenCalledOnce();
+  });
+
   it('finds a fork merge request in its upstream and keeps CI separate', async () => {
     const { service, client } = setup();
     const result = await service.changeRequestStatus('/repo', 'feature');
@@ -86,10 +98,186 @@ describe('GitLab resource service', () => {
     await expect(result).rejects.toThrow('invalid merge request');
   });
 
+  it('lists by state and by whose items, reading the user once for review requests', async () => {
+    const all = list([openMR]);
+    const showCurrentUser = vi.fn(async () => ({ id: 3, username: 'sam' }));
+    const issuesAll = list([]);
+    const { service } = setup({
+      MergeRequests: { ...setup().client.MergeRequests, all },
+      Users: { showCurrentUser },
+      Issues: { ...setup().client.Issues, all: issuesAll },
+    });
+    await service.listChangeRequests('/repo', { state: 'merged', people: 'created' });
+    expect(all.mock.calls.at(-1)?.[0]).toMatchObject({ state: 'merged', scope: 'created_by_me' });
+    await service.listChangeRequests('/repo', { state: 'all', people: 'reviewRequested' });
+    await service.listChangeRequests('/repo', { people: 'reviewRequested' });
+    expect(all.mock.calls.at(-1)?.[0]).toMatchObject({ state: 'opened', scope: 'all', reviewerUsername: 'sam' });
+    expect(showCurrentUser).toHaveBeenCalledTimes(1);
+    await service.listIssues('/repo', { state: 'merged', people: 'assigned' });
+    expect(issuesAll.mock.calls.at(-1)?.[0]).toMatchObject({ state: 'closed', scope: 'assigned_to_me' });
+  });
+
+  it('adds commits and review verdicts only when the timeline asks', async () => {
+    const commits = [
+      { id: 'bbb', title: 'second', author_name: 'Sam', committed_date: '2026-10-02T10:00:00Z', web_url: `${origin}/team/repo/-/commit/bbb` },
+      { id: 'aaa', title: 'first', author_name: 'Sam', committed_date: '2026-10-01T10:00:00Z', web_url: `${origin}/team/repo/-/commit/aaa` },
+    ];
+    const notes = [
+      { id: 4, body: 'Looks good', author: { id: 3, username: 'sam' } },
+      { id: 5, body: 'approved this merge request', system: true, created_at: '2026-10-02T11:00:00Z', author: { id: 3, username: 'sam' } },
+      { id: 6, body: 'added 1 commit', system: true, author: { id: 3, username: 'sam' } },
+    ];
+    const allCommits = list(commits);
+    const { service } = setup({
+      MergeRequests: { ...setup().client.MergeRequests, allCommits, show: vi.fn(async () => ({ ...openMR, reviewers: [{ id: 7, username: 'ann' }, { username: 'no-id' }] })) },
+      MergeRequestNotes: { all: list(notes) },
+      // The timeline reads the same notes as their discussions.
+      MergeRequestDiscussions: { all: list(notes.map((note) => ({ id: `d${note.id}`, individual_note: true, notes: [note] }))) },
+    });
+    const plain = await service.changeRequestContext('/repo', 5, {});
+    expect(plain).not.toHaveProperty('commits');
+    expect(allCommits).not.toHaveBeenCalled();
+
+    const result = await service.changeRequestContext('/repo', 5, { includeTimeline: true });
+    expect(result.commits.map((commit) => commit.headline)).toEqual(['first', 'second']);
+    expect(result.commitsComplete).toBe(true);
+    expect(result.verdicts).toMatchObject([{ state: 'approved', createdAt: '2026-10-02T11:00:00Z', author: { username: 'sam' } }]);
+    expect(result.issueComments.map((comment) => comment.body)).toEqual(['Looks good']);
+    expect(result.reviewers).toEqual([expect.objectContaining({ id: '7', username: 'ann' })]);
+  });
+
+  it('reads the chain of open merge requests stacked by branch around this one, as far as each link is the only one', async () => {
+    const mergeRequest = (iid, source, target, sourceProject = 2) => ({
+      ...openMR, id: 100 + iid, iid, title: `MR ${iid}`, web_url: `${origin}/team/repo/-/merge_requests/${iid}`,
+      source_branch: source, target_branch: target, source_project_id: sourceProject, target_project_id: 2,
+    });
+    const opened = [
+      // A release merge request out of the default branch is no lower layer.
+      mergeRequest(9, 'main', 'production'),
+      // A fork's branch of the same name is another branch.
+      mergeRequest(10, 'feature', 'other', 1),
+      mergeRequest(4, 'layer-one', 'main'),
+      mergeRequest(5, 'feature', 'layer-one'),
+      mergeRequest(6, 'layer-three', 'feature'),
+      // Two on top of layer-three: the chain forks there and stops.
+      mergeRequest(7, 'fork-a', 'layer-three'),
+      mergeRequest(8, 'fork-b', 'layer-three'),
+    ];
+    const all = vi.fn(async (options) => {
+      const items = opened.filter((item) => (!options.sourceBranch || item.source_branch === options.sourceBranch)
+        && (!options.targetBranch || item.target_branch === options.targetBranch));
+      return options.showExpanded ? { data: items, paginationInfo: { next: null } } : items;
+    });
+    const { service } = setup({
+      MergeRequests: { ...setup().client.MergeRequests, all, allCommits: list([]), show: vi.fn(async () => mergeRequest(5, 'feature', 'layer-one')) },
+      MergeRequestDiscussions: { all: list([]) },
+    });
+
+    const result = await service.changeRequestContext('/repo', 5, { includeTimeline: true });
+    expect(result.stack).toEqual({
+      number: null,
+      base: 'main',
+      layers: [4, 5, 6].map((iid) => expect.objectContaining({ number: iid, state: 'open', head: opened.find((item) => item.iid === iid).source_branch })),
+    });
+  });
+
+  it('reads a thread as notes that say which thread they are in and its state', async () => {
+    const discussions = [
+      { id: 'abc', individual_note: false, notes: [
+        { id: 10, body: 'Rename this', resolvable: true, resolved: true, author: { id: 3, username: 'sam' } },
+        { id: 11, body: 'Done', resolvable: true, resolved: true, author: { id: 4, username: 'ann' } },
+      ] },
+      { id: 'def', individual_note: true, notes: [{ id: 12, body: 'Plain comment', author: { id: 3, username: 'sam' } }] },
+    ];
+    const { service } = setup({
+      MergeRequests: { ...setup().client.MergeRequests, allCommits: list([]) },
+      MergeRequestDiscussions: { all: list(discussions) },
+    });
+
+    const result = await service.changeRequestContext('/repo', 5, { includeTimeline: true });
+    expect(result.issueComments.map((note) => [note.body, note.thread ?? null])).toEqual([
+      ['Rename this', { id: 'abc', resolved: true, resolvable: true, first: true }],
+      ['Done', { id: 'abc', resolved: true, resolvable: true, first: false }],
+      ['Plain comment', null],
+    ]);
+  });
+
+  it("says what this account may do with a thread when GitLab's GraphQL answers", async () => {
+    const post = vi.fn(async () => ({ body: { data: { project: { mergeRequest: {
+      discussionLocked: true,
+      userPermissions: { createNote: true },
+      discussions: { nodes: [{ id: 'gid://gitlab/Discussion/abc', notes: { nodes: [{ userPermissions: { resolveNote: false } }] } }] },
+    } } } } }));
+    const { service } = setup({
+      MergeRequests: { ...setup().client.MergeRequests, allCommits: list([]), requester: { post } },
+      MergeRequestDiscussions: { all: list([{ id: 'abc', individual_note: false, notes: [{ id: 10, body: 'Rename', resolvable: true, resolved: false, author: { id: 3, username: 'sam' } }] }]) },
+    });
+
+    const result = await service.changeRequestContext('/repo', 5, { includeTimeline: true });
+    // A locked discussion takes no replies, and this account may not resolve the thread.
+    expect(result.issueComments[0].thread).toEqual({ id: 'abc', resolved: false, resolvable: true, first: true, canResolve: false, canReply: false });
+  });
+
+  it('starts, answers and resolves threads on the merge request the path names', async () => {
+    const thread = { id: 'abc', individual_note: false, notes: [{ id: 10, body: 'x', resolvable: true, resolved: true }] };
+    const discussions = {
+      create: vi.fn(async () => ({ ...thread, notes: [{ id: 10, body: 'x', resolvable: true, resolved: false }] })),
+      addNote: vi.fn(async () => ({ id: 11, body: 'y' })),
+      resolve: vi.fn(async () => thread),
+      show: vi.fn(async () => thread),
+    };
+    const { service } = setup({ MergeRequestDiscussions: discussions });
+    const providerTarget = { projectId: '2', number: 5 };
+
+    await service.startThread({ providerTarget, body: 'x' });
+    await service.replyToThread({ providerTarget, threadId: 'abc', body: 'y' });
+    await service.resolveThread({ providerTarget, threadId: 'abc', resolved: true });
+    await expect(service.resolveThread({ providerTarget, threadId: 'abc', resolved: false })).rejects.toThrow('invalid thread');
+    expect(discussions.create).toHaveBeenCalledWith('2', 5, 'x');
+    expect(discussions.addNote).toHaveBeenCalledWith('2', 5, 'abc', 'y');
+    expect(discussions.resolve).toHaveBeenCalledWith('2', 5, 'abc', true);
+
+    await expect(service.reconcileThreadResolve(providerTarget, 'abc', true)).resolves.toEqual({ state: 'succeeded', result: {} });
+    await expect(service.reconcileThreadResolve(providerTarget, 'abc', false)).resolves.toEqual({ state: 'outcome-unknown' });
+  });
+
   it('keeps merge-request context when CI jobs fail', async () => {
     const { service } = setup({ Jobs: { all: vi.fn(async () => { throw new Error('jobs unavailable'); }) } });
     const result = await service.changeRequestContext('/repo', 5, { includeDiff: true, includeCIDetails: true });
     expect(result).toMatchObject({ changeRequest: { number: 5 }, files: [{ path: 'a.ts' }], issueComments: [{ body: 'Looks good' }], ci: null });
+  });
+
+  it('counts the lines of a file too large for GitLab to send its diff', async () => {
+    const post = vi.fn(async () => ({ body: { data: { project: { mergeRequest: { diffStats: [
+      { path: 'small.ts', additions: 1, deletions: 1 },
+      { path: 'huge.json', additions: 140, deletions: 2500 },
+    ] } } } } }));
+    const diffs = [
+      { old_path: 'small.ts', new_path: 'small.ts', diff: '@@ -1 +1 @@\n-a\n+b\n' },
+      { old_path: 'huge.json', new_path: 'huge.json', diff: '', too_large: true },
+    ];
+    const { service } = setup({ MergeRequests: { ...setup().client.MergeRequests, allDiffs: list(diffs), requester: { post } } });
+
+    const result = await service.changeRequestContext('/repo', 5, { includeDiff: true });
+    expect(result.files).toMatchObject([
+      { path: 'small.ts', additions: 1, deletions: 1 },
+      { path: 'huge.json', additions: 140, deletions: 2500 },
+    ]);
+    expect(post).toHaveBeenCalledWith('../graphql', { body: { query: expect.stringContaining('diffStats'), variables: { path: 'me/repo', iid: '5' } } });
+
+    // Without GitLab's counts the hunks are counted, as before.
+    post.mockRejectedValueOnce(new Error('GraphQL unavailable'));
+    const fallback = await service.changeRequestContext('/repo', 5, { includeDiff: true });
+    expect(fallback.files).toMatchObject([{ additions: 1, deletions: 1 }, { additions: 0, deletions: 0 }]);
+  });
+
+  it('carries merge request labels with their colours', async () => {
+    const labelled = { ...openMR, labels: [{ name: 'bug', color: '#d73a4a' }, 'docs'] };
+    const { service, client } = setup({ MergeRequests: { ...setup().client.MergeRequests, all: list([labelled]) } });
+
+    const page = await service.listChangeRequests('/repo');
+    expect(page.items[0].labels).toEqual([{ name: 'bug', color: 'd73a4a' }, { name: 'docs' }]);
+    expect(client.MergeRequests.all).toHaveBeenCalledWith(expect.objectContaining({ withLabelsDetails: true }));
   });
 
   it.each([
@@ -411,6 +599,27 @@ describe('GitLab resource service', () => {
     expect(client.MergeRequests.edit).not.toHaveBeenCalled();
   });
 
+  it('converts a merge request to a draft by adding the title prefix, and does nothing when it already is one', async () => {
+    const mergeRequests = {
+      ...setup().client.MergeRequests,
+      show: vi.fn(async () => ({ ...openMR, draft: false, title: 'Feature' })),
+      edit: vi.fn(async (_id, _iid, options) => ({ ...openMR, draft: true, title: options.title })),
+    };
+    const { service, client } = setup({ MergeRequests: mergeRequests }, { canonicalReads: true });
+    const payload = {
+      providerTarget: { projectId: '2', number: 5 },
+      targetProject: { id: '2', owner: 'team', name: 'repo' },
+      expectedTarget: { project: { id: '2', owner: 'team', name: 'repo' }, number: 5, head: 'feature', base: 'main' },
+    };
+    await expect(service.draftChangeRequest(payload)).resolves.toEqual({ draft: true });
+    expect(client.MergeRequests.edit).toHaveBeenCalledWith('2', 5, { title: 'Draft: Feature' });
+
+    mergeRequests.show.mockResolvedValue({ ...openMR, draft: true, title: 'Draft: Feature' });
+    client.MergeRequests.edit.mockClear();
+    await expect(service.draftChangeRequest(payload)).resolves.toEqual({ draft: true });
+    expect(client.MergeRequests.edit).not.toHaveBeenCalled();
+  });
+
   it('rejects a malformed ready mutation response', async () => {
     const malformed = { ...openMR, draft: undefined, work_in_progress: undefined };
     const { service } = setup({
@@ -428,8 +637,8 @@ describe('GitLab resource service', () => {
     })).rejects.toThrow('invalid merge request draft state');
   });
 
-  it('rejects merge requests whose source project is outside the allowed network', async () => {
-    const outside = { ...openMR, source_project_id: 99 };
+  it('rejects a mutation on a merge request whose target project is outside the allowed network', async () => {
+    const outside = { ...openMR, target_project_id: 99 };
     const { service, client } = setup({
       MergeRequests: { ...setup().client.MergeRequests, show: vi.fn(async () => outside) },
     }, { canonicalReads: true });
@@ -466,9 +675,12 @@ describe('GitLab resource service', () => {
     mergeRequests.show.mockResolvedValue({ ...openMR, draft: false });
     await expect(service.reconcileChangeRequestMutation(providerTarget, 'change-request-ready'))
       .resolves.toEqual({ state: 'succeeded', result: { ready: true } });
+    mergeRequests.show.mockResolvedValue({ ...openMR, draft: true });
+    await expect(service.reconcileChangeRequestMutation(providerTarget, 'change-request-draft'))
+      .resolves.toEqual({ state: 'succeeded', result: { draft: true } });
     await expect(service.reconcileChangeRequestMutation(providerTarget, 'change-request-update'))
       .resolves.toEqual({ state: 'outcome-unknown' });
-    expect(mergeRequests.show).toHaveBeenCalledTimes(3);
+    expect(mergeRequests.show).toHaveBeenCalledTimes(4);
   });
 
   it('keeps ready reconciliation unknown when provider draft state is malformed', async () => {
@@ -545,6 +757,330 @@ describe('GitLab resource service', () => {
   });
 });
 
+describe('GitLab comments and reviews', () => {
+  const review = (overrides = {}) => ({
+    providerTarget: { projectId: '2', number: 5 },
+    targetProject: { id: '2', owner: 'team', name: 'repo' },
+    expectedTarget: { project: { id: '2', owner: 'team', name: 'repo' }, number: 5, headSha: 'abc' },
+    verdict: 'approve',
+    ...overrides,
+  });
+  const notes = (create) => ({ MergeRequestNotes: { ...setup().client.MergeRequestNotes, create } });
+  const noDrafts = { MergeRequestDraftNotes: { all: vi.fn(async () => []) } };
+
+  describe('review drafts', () => {
+    const refs = { base_sha: 'b', start_sha: 's', head_sha: 'h' };
+    const diff = { old_path: 'a.ts', new_path: 'a.ts', diff: '@@ -10,3 +10,4 @@\n ctx\n-old\n+new\n+more\n ctx2\n' };
+    const drafts = (overrides = {}) => ({
+      all: vi.fn(async () => []), publishBulk: vi.fn(async () => ({})), remove: vi.fn(async () => ({})),
+      create: vi.fn(async () => ({ id: 3 })), edit: vi.fn(async () => ({ id: 3 })), ...overrides,
+    });
+    const service = (notes) => setup({
+      MergeRequestDraftNotes: notes,
+      MergeRequests: { ...setup().client.MergeRequests, show: vi.fn(async () => ({ diff_refs: refs })), allDiffs: list([diff]) },
+      MergeRequestApprovals: { approve: vi.fn(async () => ({})) },
+    }).service;
+    const providerTarget = { projectId: '2', number: 5 };
+
+    it('names an unchanged line by both sides and a range by its ends', async () => {
+      const notes = drafts();
+      await service(notes).addReviewComment({ providerTarget, position: { path: 'a.ts', side: 'new', line: 10 }, body: 'Here' });
+      expect(notes.create.mock.calls[0][3].position).toMatchObject({ positionType: 'text', oldLine: 10, newLine: 10, headSha: 'h' });
+
+      await service(notes).addReviewComment({ providerTarget, position: { path: 'a.ts', side: 'new', startLine: 11, line: 12 }, body: 'Both' });
+      const { position } = notes.create.mock.calls[1][3];
+      expect(position.newLine).toBe(12);
+      expect(position.oldLine).toBeUndefined();
+      expect(position.lineRange.start).toMatchObject({ type: 'new', newLine: 11 });
+      expect(position.lineRange.start.lineCode).toMatch(/^[0-9a-f]{40}_11_11$/);
+    });
+
+    it('refuses a line the diff does not show and writes nothing', async () => {
+      const notes = drafts();
+      await expect(service(notes).addReviewComment({ providerTarget, position: { path: 'a.ts', side: 'new', line: 90 }, body: 'x' }))
+        .rejects.toMatchObject({ status: 422 });
+      expect(notes.create).not.toHaveBeenCalled();
+    });
+
+    it('publishes the draft notes before the verdict, and refuses an empty comment review', async () => {
+      const order = [];
+      const notes = drafts({ all: vi.fn(async () => [{ id: 3, note: 'Mine' }]), publishBulk: vi.fn(async () => { order.push('publish'); }) });
+      const approve = vi.fn(async () => { order.push('approve'); });
+      const reviewing = setup({ MergeRequestDraftNotes: notes, MergeRequestApprovals: { approve } }).service;
+
+      await reviewing.reviewChangeRequest(review());
+      expect(order).toEqual(['publish', 'approve']);
+
+      await expect(service(drafts()).reviewChangeRequest(review({ verdict: 'comment' }))).rejects.toMatchObject({ status: 422 });
+    });
+
+    it('discards every draft note', async () => {
+      const notes = drafts({ all: vi.fn(async () => [{ id: 3, note: 'a' }, { id: 4, note: 'b' }]) });
+      await service(notes).discardReview({ providerTarget });
+      expect(notes.remove.mock.calls.map((call) => call[2])).toEqual([3, 4]);
+    });
+  });
+
+  it('approves the commit the user read, then posts the text as a note', async () => {
+    const approve = vi.fn(async () => ({}));
+    const create = vi.fn(async () => ({ id: 7 }));
+    const { service } = setup({ MergeRequestApprovals: { approve }, ...notes(create), ...noDrafts });
+
+    await expect(service.reviewChangeRequest(review({ body: 'Nice' }))).resolves.toEqual({ commented: true });
+    await expect(service.reviewChangeRequest(review())).resolves.toEqual({ commented: false });
+
+    expect(approve).toHaveBeenCalledWith('2', 5, { sha: 'abc' });
+    expect(create).toHaveBeenCalledOnce();
+    expect(create).toHaveBeenCalledWith('2', 5, 'Nice');
+  });
+
+  it('keeps the verdict when its note fails and says the text did not post', async () => {
+    const create = vi.fn(async () => { throw Object.assign(new Error('locked'), { cause: { response: { status: 403 } } }); });
+    const { service } = setup({ MergeRequestApprovals: { approve: vi.fn(async () => ({})) }, ...notes(create), ...noDrafts });
+
+    await expect(service.reviewChangeRequest(review({ body: 'Nice' }))).resolves.toEqual({ commented: false });
+  });
+
+  it('turns an approval GitLab does not allow into a refusal, not a lost sign-in', async () => {
+    const refused = Object.assign(new Error('401 Unauthorized'), { cause: { response: { status: 401 } } });
+    const moved = Object.assign(new Error('SHA does not match'), { cause: { response: { status: 409 } } });
+    const own = setup({ MergeRequestApprovals: { approve: vi.fn(async () => { throw refused; }) }, ...noDrafts });
+    const late = setup({ MergeRequestApprovals: { approve: vi.fn(async () => { throw moved; }) }, ...noDrafts });
+
+    await expect(own.service.reviewChangeRequest(review())).rejects.toMatchObject({ status: 403 });
+    await expect(late.service.reviewChangeRequest(review())).rejects.toMatchObject({ code: 'SOURCE_CONTROL_MUTATION_TARGET_MISMATCH', status: 409 });
+  });
+
+  it('requests changes through GraphQL and reports its errors as a refusal', async () => {
+    const post = vi.fn(async () => ({ body: { data: { mergeRequestRequestChanges: { mergeRequest: { iid: '5' }, errors: [] } } } }));
+    const { service } = setup({ ...noDrafts, MergeRequests: { ...setup().client.MergeRequests, requester: { post } } });
+
+    await expect(service.reviewChangeRequest(review({ verdict: 'request-changes' }))).resolves.toEqual({ commented: false });
+    expect(post).toHaveBeenCalledWith('../graphql', {
+      body: { query: expect.stringContaining('mergeRequestRequestChanges'), variables: { path: 'team/repo', iid: '5' } },
+    });
+
+    post.mockResolvedValueOnce({ body: { data: { mergeRequestRequestChanges: { mergeRequest: null, errors: ['Reviewer not found'] } } } });
+    await expect(service.reviewChangeRequest(review({ verdict: 'request-changes' }))).rejects.toMatchObject({ message: 'Reviewer not found', status: 422 });
+    post.mockResolvedValueOnce({ body: { data: null, errors: [{ message: "Field 'mergeRequestRequestChanges' doesn't exist" }] } });
+    await expect(service.reviewChangeRequest(review({ verdict: 'request-changes' }))).rejects.toMatchObject({ status: 422 });
+  });
+
+  it('reads labels and active members, and sets labels and reviewers as whole sets', async () => {
+    const editMR = vi.fn(async (_id, _iid, update) => ({ ...openMR, labels: update.labels?.split(',') ?? [] }));
+    const editIssue = vi.fn(async () => ({ iid: 3, title: 'Bug', web_url: `${origin}/me/repo/-/issues/3`, state: 'opened' }));
+    const { service } = setup({
+      MergeRequests: { ...setup().client.MergeRequests, edit: editMR, show: vi.fn(async () => ({ ...openMR, labels: ['bug'], reviewers: [{ id: 7, username: 'ann' }] })) },
+      Issues: { ...setup().client.Issues, edit: editIssue },
+      ProjectLabels: { all: vi.fn(async () => [{ name: 'bug', color: '#d73a4a' }, { name: '' }]) },
+      ProjectMembers: { all: vi.fn(async () => [
+        { id: 7, username: 'ann', avatar_url: `${origin}/a.png`, state: 'active' },
+        { id: 8, username: 'gone', state: 'blocked' },
+      ]) },
+    });
+    const project = { id: '2', owner: 'team', name: 'repo' };
+
+    await expect(service.listLabels('/repo', { owner: 'team', name: 'repo' })).resolves.toEqual([{ name: 'bug', color: 'd73a4a' }]);
+    await expect(service.listReviewerCandidates('/repo', { owner: 'team', name: 'repo' }))
+      .resolves.toEqual([{ id: '7', login: 'ann', avatarUrl: `${origin}/a.png` }]);
+
+    await service.setLabels({ kind: 'change-request-labels', labels: ['bug', 'docs'], providerTarget: { projectId: '2', number: 5 } });
+    await service.setLabels({ kind: 'issue-labels', labels: [], providerTarget: { projectId: '1', number: 3 } });
+    await service.setReviewers({
+      reviewers: ['7'], providerTarget: { projectId: '2', number: 5 }, targetProject: project, expectedTarget: { project, number: 5 },
+    });
+    expect(editMR).toHaveBeenNthCalledWith(1, '2', 5, { labels: 'bug,docs' });
+    expect(editIssue).toHaveBeenCalledWith('1', 3, { labels: '' });
+    expect(editMR).toHaveBeenNthCalledWith(2, '2', 5, { reviewerIds: [7] });
+
+    await expect(service.reconcileSetMutation({ projectId: '2', number: 5 }, 'change-request-labels', ['bug'])).resolves.toMatchObject({ state: 'succeeded' });
+    await expect(service.reconcileSetMutation({ projectId: '2', number: 5 }, 'change-request-reviewers', ['7'])).resolves.toMatchObject({ state: 'succeeded' });
+    await expect(service.reconcileSetMutation({ projectId: '2', number: 5 }, 'change-request-labels', ['docs'])).resolves.toEqual({ state: 'outcome-unknown' });
+  });
+
+  it('closes and reopens through stateEvent and reconciles from the current state', async () => {
+    const editMR = vi.fn(async () => ({ ...openMR, state: 'closed' }));
+    const editIssue = vi.fn(async () => ({ iid: 3, title: 'Bug', web_url: `${origin}/me/repo/-/issues/3`, state: 'opened' }));
+    const { service } = setup({
+      MergeRequests: { ...setup().client.MergeRequests, edit: editMR },
+      Issues: { ...setup().client.Issues, edit: editIssue },
+    });
+    const project = { id: '2', owner: 'team', name: 'repo' };
+
+    await expect(service.setChangeRequestState({
+      state: 'closed', providerTarget: { projectId: '2', number: 5 }, targetProject: project, expectedTarget: { project, number: 5 },
+    })).resolves.toEqual({ state: 'closed' });
+    await expect(service.setIssueState({
+      state: 'open', providerTarget: { projectId: '1', number: 3 }, targetProject: { id: '1', owner: 'me', name: 'repo' },
+    })).resolves.toEqual({ state: 'open' });
+    expect(editMR).toHaveBeenCalledWith('2', 5, { stateEvent: 'close' });
+    expect(editIssue).toHaveBeenCalledWith('1', 3, { stateEvent: 'reopen' });
+
+    await expect(service.reconcileStateMutation({ projectId: '2', number: 5 }, 'change-request-state', 'open'))
+      .resolves.toEqual({ state: 'succeeded', result: { state: 'open' } });
+    await expect(service.reconcileStateMutation({ projectId: '1', number: 3 }, 'issue-state', 'closed'))
+      .resolves.toMatchObject({ state: 'failed' });
+  });
+
+  it('edits an issue title and description and reconciles from the answered issue', async () => {
+    const editIssue = vi.fn(async (_id, _iid, update) => ({
+      iid: 3, title: update.title, description: update.description, web_url: origin + '/me/repo/-/issues/3', state: 'opened',
+    }));
+    const showIssue = vi.fn(async () => ({
+      iid: 3, title: 'Bug, revised', description: 'Steps to reproduce', web_url: origin + '/me/repo/-/issues/3', state: 'opened',
+    }));
+    const { service } = setup({ Issues: { ...setup().client.Issues, edit: editIssue, show: showIssue } });
+    const project = { id: '1', owner: 'me', name: 'repo' };
+
+    await expect(service.updateIssue({
+      title: 'Bug, revised',
+      body: 'Steps to reproduce',
+      providerTarget: { projectId: '1', number: 3 },
+      targetProject: project,
+      expectedTarget: { project, number: 3 },
+    })).resolves.toEqual({});
+    expect(editIssue).toHaveBeenLastCalledWith('1', 3, { title: 'Bug, revised', description: 'Steps to reproduce' });
+
+    // Without a body the description is left as it is, not cleared.
+    await expect(service.updateIssue({
+      title: 'Bug, revised', providerTarget: { projectId: '1', number: 3 }, targetProject: project,
+    })).resolves.toEqual({});
+    expect(editIssue).toHaveBeenLastCalledWith('1', 3, { title: 'Bug, revised' });
+
+    editIssue.mockResolvedValueOnce({
+      iid: 3, title: 'Another title', description: 'Steps to reproduce', web_url: origin + '/me/repo/-/issues/3', state: 'opened',
+    });
+    await expect(service.updateIssue({
+      title: 'Bug, revised', body: 'Steps to reproduce', providerTarget: { projectId: '1', number: 3 }, targetProject: project,
+    })).rejects.toThrow('unexpected issue');
+
+    await expect(service.reconcileIssueUpdate({ projectId: '1', number: 3 }, { title: 'Bug, revised', body: 'Steps to reproduce' }))
+      .resolves.toEqual({ state: 'succeeded', result: {} });
+    showIssue.mockResolvedValueOnce({
+      iid: 3, title: 'Bug, revised', description: 'Other steps', web_url: origin + '/me/repo/-/issues/3', state: 'opened',
+    });
+    // A differing value cannot tell another edit from a write that never landed.
+    await expect(service.reconcileIssueUpdate({ projectId: '1', number: 3 }, { title: 'Bug, revised', body: 'Steps to reproduce' }))
+      .resolves.toEqual({ state: 'outcome-unknown' });
+  });
+
+  it('comments on merge requests and on issues in the bound project', async () => {
+    const mrNote = vi.fn(async () => ({ id: 8 }));
+    const issueNote = vi.fn(async () => ({ id: 9 }));
+    const { service, client } = setup({ ...notes(mrNote), IssueNotes: { ...setup().client.IssueNotes, create: issueNote } });
+    const context = { directory: '/repo', repositoryId: 'repo_one', bindingRevision: 3, primaryRemote: 'origin' };
+
+    const resolved = await service.resolveIssueMutation(context, { project: { owner: 'me', name: 'repo' }, number: 3 });
+    await service.commentIssue({ providerTarget: resolved.providerTarget, body: 'On it' });
+    await service.commentChangeRequest({ providerTarget: { projectId: '2', number: 5 }, body: 'Looks good' });
+
+    expect(resolved).toEqual({
+      providerTarget: { projectId: '1', number: 3 },
+      target: { repositoryId: 'repo_one', bindingRevision: 3, primaryRemote: 'origin', project: { id: '1', owner: 'me', name: 'repo' }, number: 3 },
+    });
+    expect(client.Issues.show).toHaveBeenCalledWith(3, { projectId: '1' });
+    expect(issueNote).toHaveBeenCalledWith('1', 3, 'On it');
+    expect(mrNote).toHaveBeenCalledWith('2', 5, 'Looks good');
+    await expect(service.resolveIssueMutation(context, { project: { owner: 'me', name: 'repo' }, number: 3, headSha: 'abc' }))
+      .rejects.toMatchObject({ code: 'INVALID_SOURCE_CONTROL_MUTATION_CONTEXT' });
+  });
+});
+
+describe('GitLab conversation note mutations', () => {
+  const providerTarget = { projectId: '2', number: 5 };
+  const issueTarget = { projectId: '1', number: 3 };
+  const noteClient = (overrides = {}) => ({
+    show: vi.fn(async (_project, _iid, noteId) => ({ id: noteId, body: 'Before', noteable_iid: 5, noteable_type: 'MergeRequest' })),
+    edit: vi.fn(async (_project, _iid, noteId, update) => ({ id: noteId, body: update.body, noteable_iid: 5, noteable_type: 'MergeRequest' })),
+    remove: vi.fn(async () => ({})),
+    ...overrides,
+  });
+
+  it('edits and removes a merge request note after confirming it belongs to the target', async () => {
+    const notes = noteClient();
+    const { service } = setup({ MergeRequestNotes: { ...setup().client.MergeRequestNotes, ...notes } });
+
+    await expect(service.updateChangeRequestComment({ providerTarget, commentId: '7', body: 'After' })).resolves.toEqual({});
+    expect(notes.edit).toHaveBeenCalledWith('2', 5, 7, { body: 'After' });
+    await expect(service.deleteChangeRequestComment({ providerTarget, commentId: '7' })).resolves.toEqual({});
+    expect(notes.remove).toHaveBeenCalledWith('2', 5, 7);
+    expect(notes.show).toHaveBeenCalledTimes(2);
+  });
+
+  it('edits and removes an issue note after confirming it belongs to the target', async () => {
+    const notes = noteClient({
+      show: vi.fn(async (_project, _iid, noteId) => ({ id: noteId, body: 'Before', noteable_iid: 3, noteable_type: 'Issue' })),
+      edit: vi.fn(async (_project, _iid, noteId, update) => ({ id: noteId, body: update.body, noteable_iid: 3, noteable_type: 'Issue' })),
+    });
+    const { service } = setup({ IssueNotes: { ...setup().client.IssueNotes, ...notes } });
+
+    await expect(service.updateIssueComment({ providerTarget: issueTarget, commentId: '9', body: 'After' })).resolves.toEqual({});
+    expect(notes.edit).toHaveBeenCalledWith('1', 3, 9, { body: 'After' });
+    await expect(service.deleteIssueComment({ providerTarget: issueTarget, commentId: '9' })).resolves.toEqual({});
+    expect(notes.remove).toHaveBeenCalledWith('1', 3, 9);
+  });
+
+  it('refuses a note another issue or merge request answered, writing nothing', async () => {
+    const foreign = noteClient({ show: vi.fn(async (_project, _iid, noteId) => ({ id: noteId, body: 'Before', noteable_iid: 9, noteable_type: 'MergeRequest' })) });
+    const merged = setup({ MergeRequestNotes: { ...setup().client.MergeRequestNotes, ...foreign } });
+    await expect(merged.service.updateChangeRequestComment({ providerTarget, commentId: '7', body: 'After' }))
+      .rejects.toMatchObject({ code: 'SOURCE_CONTROL_MUTATION_TARGET_INVALID', status: 409 });
+    await expect(merged.service.deleteChangeRequestComment({ providerTarget, commentId: '7' }))
+      .rejects.toMatchObject({ code: 'SOURCE_CONTROL_MUTATION_TARGET_INVALID', status: 409 });
+    expect(foreign.edit).not.toHaveBeenCalled();
+    expect(foreign.remove).not.toHaveBeenCalled();
+
+    const wrongType = noteClient({ show: vi.fn(async (_project, _iid, noteId) => ({ id: noteId, body: 'Before', noteable_iid: 3, noteable_type: 'MergeRequest' })) });
+    const issue = setup({ IssueNotes: { ...setup().client.IssueNotes, ...wrongType } });
+    await expect(issue.service.deleteIssueComment({ providerTarget: issueTarget, commentId: '9' }))
+      .rejects.toMatchObject({ code: 'SOURCE_CONTROL_MUTATION_TARGET_INVALID', status: 409 });
+    expect(wrongType.remove).not.toHaveBeenCalled();
+  });
+
+  it('verifies the edited body GitLab answers', async () => {
+    const notes = noteClient({ edit: vi.fn(async (_project, _iid, noteId) => ({ id: noteId, body: 'Something else' })) });
+    const { service } = setup({ MergeRequestNotes: { ...setup().client.MergeRequestNotes, ...notes } });
+    await expect(service.updateChangeRequestComment({ providerTarget, commentId: '7', body: 'After' }))
+      .rejects.toThrow('unexpected note');
+  });
+
+  it('reconciles both mutations without ever answering not-applied', async () => {
+    const show = vi.fn(async () => ({ id: 7, body: 'After' }));
+    const { service } = setup({ MergeRequestNotes: { ...setup().client.MergeRequestNotes, show } });
+    const update = { commentId: '7', body: 'After' };
+    await expect(service.reconcileChangeRequestComment(providerTarget, 'update', update))
+      .resolves.toEqual({ state: 'succeeded', result: {} });
+    show.mockResolvedValueOnce({ id: 7, body: 'Changed again' });
+    await expect(service.reconcileChangeRequestComment(providerTarget, 'update', update)).resolves.toEqual({ state: 'outcome-unknown' });
+    show.mockRejectedValueOnce(new Error('unreadable'));
+    await expect(service.reconcileChangeRequestComment(providerTarget, 'update', update)).resolves.toEqual({ state: 'outcome-unknown' });
+
+    show.mockRejectedValueOnce(Object.assign(new Error('gone'), { cause: { response: { status: 404 } } }));
+    await expect(service.reconcileChangeRequestComment(providerTarget, 'delete', { commentId: '7' }))
+      .resolves.toEqual({ state: 'succeeded', result: {} });
+    show.mockResolvedValueOnce({ id: 7, body: 'Still here' });
+    await expect(service.reconcileChangeRequestComment(providerTarget, 'delete', { commentId: '7' })).resolves.toEqual({ state: 'outcome-unknown' });
+    show.mockRejectedValueOnce(new Error('unreadable'));
+    await expect(service.reconcileChangeRequestComment(providerTarget, 'delete', { commentId: '7' })).resolves.toEqual({ state: 'outcome-unknown' });
+  });
+
+  it('marks only the notes this account wrote as editable, in discussion threads too', async () => {
+    const mine = { id: 4, body: 'Mine', author: { id: 3, username: 'sam' } };
+    const theirs = { id: 5, body: 'Theirs', author: { id: 4, username: 'ann' } };
+    const { service } = setup({
+      MergeRequests: { ...setup().client.MergeRequests, allCommits: list([]) },
+      MergeRequestNotes: { ...setup().client.MergeRequestNotes, all: list([mine, theirs]) },
+      MergeRequestDiscussions: { all: list([{ id: 'abc', individual_note: false, notes: [mine, theirs] }]) },
+      IssueNotes: { ...setup().client.IssueNotes, all: list([mine, theirs]) },
+    }, { providerUserId: `${origin}#3` });
+    const flags = (notes) => notes.map((note) => [note.id, note.canUpdate ?? null, note.canDelete ?? null]);
+
+    const timeline = await service.changeRequestContext('/repo', 5, { includeTimeline: true });
+    expect(flags(timeline.issueComments)).toEqual([['4', true, true], ['5', false, false]]);
+    expect(flags(await service.issueComments('/repo', 3))).toEqual([['4', true, true], ['5', false, false]]);
+  });
+});
+
 describe('GitLab merge request comparison reads', () => {
   const diffRefs = { base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40), start_sha: 'c'.repeat(40) };
 
@@ -571,7 +1107,8 @@ describe('GitLab merge request comparison reads', () => {
       'diff --git a/run.sh b/run.sh', 'old mode 100644', 'new mode 100755',
       '',
     ].join('\n'));
-    expect(client.MergeRequests.allDiffs).toHaveBeenCalledWith('2', 5, expect.objectContaining({ showExpanded: true }));
+    // GitLab before 18.0 fails a diff page larger than 30 with 500; the bound on files stays 2000.
+    expect(client.MergeRequests.allDiffs).toHaveBeenCalledWith('2', 5, expect.objectContaining({ showExpanded: true, perPage: 30, maxPages: 67 }));
   });
 
   it('reads both sides of a file at the merge base and the head', async () => {
@@ -588,6 +1125,15 @@ describe('GitLab merge request comparison reads', () => {
     expect(showRaw).toHaveBeenCalledWith('2', 'a.ts', diffRefs.base_sha);
   });
 
+  it('reads a merge request a link named outside the bound repository network', async () => {
+    const { service, client } = setup({
+      MergeRequests: { ...setup().client.MergeRequests, show: vi.fn(async () => ({ ...openMR, target_project_id: 99 })) },
+    });
+    const { meta } = await service.changeRequestPatch('/repo', 5, { project: { owner: 'stranger', name: 'elsewhere' }, remote: 'origin', linked: true });
+    expect(meta).toMatchObject({ number: 5 });
+    expect(client.MergeRequests.allDiffs).toHaveBeenCalled();
+  });
+
   it('refuses a merge request outside the bound repository network', async () => {
     const { service, client } = setup({
       MergeRequests: { ...setup().client.MergeRequests, show: vi.fn(async () => ({ ...openMR, target_project_id: 99 })) },
@@ -598,6 +1144,69 @@ describe('GitLab merge request comparison reads', () => {
   });
 });
 
+
+describe("GitLab fork merge requests through the maintainer's upstream clone", () => {
+  // The clone's remote is team/repo, which forks nothing: the network is team/repo
+  // alone, and me/repo, where !5's source branch lives, is not in it.
+  const diffRefs = { base_sha: 'a'.repeat(40), head_sha: 'b'.repeat(40), start_sha: 'c'.repeat(40) };
+  const forkMR = { ...openMR, sha: diffRefs.head_sha, diff_refs: diffRefs };
+  const upstream = { owner: 'team', name: 'repo' };
+  const context = { directory: '/repo', repositoryId: 'repo_one', bindingRevision: 3, primaryRemote: 'origin' };
+  const setupUpstream = (overrides = {}) => {
+    const result = setup({
+      Projects: { show: vi.fn(async (id) => (Number(id) === 2 || id === 'team/repo' ? targetProject : sourceProject)) },
+      ...overrides,
+      MergeRequests: { ...setup().client.MergeRequests, show: vi.fn(async () => forkMR), ...overrides.MergeRequests },
+    }, { canonicalReads: true });
+    result.resolveProjects.mockImplementation(async () => ({
+      branch: 'main', tracking: 'origin/main',
+      projects: [{ projectPath: 'team/repo', remoteName: 'origin', url: `${origin}/team/repo` }],
+    }));
+    return result;
+  };
+
+  it("reads the patch, both sides of a file at the fork's head and the context from the upstream", async () => {
+    const showRaw = vi.fn(async (_project, path, ref) => `${path}@${ref.slice(0, 1)}`);
+    const { service, client } = setupUpstream({ RepositoryFiles: { showRaw } });
+
+    await expect(service.changeRequestPatch('/repo', 5, { project: upstream, remote: 'origin' }))
+      .resolves.toMatchObject({ meta: { owner: 'team', repo: 'repo', number: 5 } });
+    await expect(service.changeRequestFileContents('/repo', 5, { project: upstream, remote: 'origin', path: 'a.ts', status: 'M' }))
+      .resolves.toEqual({ original: 'a.ts@a', modified: 'a.ts@b' });
+    const result = await service.changeRequestContext('/repo', 5, { project: upstream, remote: 'origin', constrainToPrimary: true });
+
+    expect(result.changeRequest).toMatchObject({ project: { id: '2' }, headProject: { id: '1', owner: 'me', name: 'repo' } });
+    expect(client.MergeRequests.allDiffs).toHaveBeenCalledWith('2', 5, expect.anything());
+    expect(showRaw).toHaveBeenCalledWith('2', 'a.ts', diffRefs.head_sha);
+  });
+
+  it('comments on and merges the fork merge request', async () => {
+    const create = vi.fn(async () => ({ id: 8 }));
+    const merge = vi.fn(async () => ({ ...forkMR, state: 'merged' }));
+    const { service } = setupUpstream({ MergeRequestNotes: { ...setup().client.MergeRequestNotes, create }, MergeRequests: { merge } });
+
+    const resolved = await service.resolveChangeRequestMutation(context, { project: upstream, number: 5, headSha: diffRefs.head_sha });
+    expect(resolved.target).toMatchObject({ project: { id: '2', owner: 'team', name: 'repo' }, number: 5, headSha: diffRefs.head_sha });
+    await service.commentChangeRequest({ providerTarget: resolved.providerTarget, body: 'Thanks' });
+    await expect(service.mergeChangeRequest({
+      providerTarget: resolved.providerTarget, targetProject: resolved.target.project, expectedTarget: resolved.target, method: 'merge',
+    })).resolves.toMatchObject({ merged: true });
+
+    expect(create).toHaveBeenCalledWith('2', 5, 'Thanks');
+    expect(merge).toHaveBeenCalledWith('2', 5, expect.objectContaining({ sha: diffRefs.head_sha }));
+  });
+
+  it('still refuses a merge request whose target is outside the network', async () => {
+    const { service, client } = setupUpstream();
+
+    // me/repo is not in team/repo's network, so no selector reaches it.
+    await expect(service.changeRequestPatch('/repo', 5, { project: { owner: 'me', name: 'repo' }, remote: 'origin' }))
+      .rejects.toMatchObject({ status: 404 });
+    await expect(service.resolveChangeRequestMutation(context, { project: { owner: 'me', name: 'repo' }, number: 5 }))
+      .rejects.toMatchObject({ status: 404 });
+    expect(client.MergeRequests.show).not.toHaveBeenCalled();
+  });
+});
 
 describe('GitLab live summaries', () => {
   it('maps merge request and issue state onto the shared badge shape and skips what GitLab cannot answer', async () => {
@@ -632,9 +1241,70 @@ describe('GitLab live summaries', () => {
     expect(client.Issues.show).toHaveBeenCalledWith(7, { projectId: 'group/sub/app' });
   });
 
+  it('details add the failed jobs and the newest notes people wrote, read only when asked', async () => {
+    const mr = { ...openMR, iid: 2, head_pipeline: { id: 90, project_id: 55, status: 'failed' } };
+    const jobs = vi.fn(async () => [{ name: 'lint' }, { name: '' }]);
+    const notes = vi.fn(async () => [
+      { system: true, author: { username: 'gitlab' }, created_at: '3' },
+      { system: false, author: { username: 'bob' }, created_at: '2' },
+    ]);
+    const { service } = setup({
+      MergeRequests: { ...setup().client.MergeRequests, show: vi.fn(async () => mr) },
+      Jobs: { all: jobs },
+      MergeRequestNotes: { all: notes },
+    });
+    const refs = [{ owner: 'group', repo: 'app', number: 2 }];
+
+    const { summaries: [plain] } = await service.liveSummaries({ refs });
+    expect(plain).not.toHaveProperty('failedChecks');
+    expect(jobs).not.toHaveBeenCalled();
+
+    const { summaries: [detailed] } = await service.liveSummaries({ refs, details: true });
+    expect(detailed).toMatchObject({ failedChecks: ['lint'], recentActivity: [{ author: 'bob', at: '2' }] });
+    expect(jobs).toHaveBeenCalledWith(55, expect.objectContaining({ pipelineId: 90, scope: 'failed' }));
+    expect(notes).toHaveBeenCalledWith('group/app', 2, expect.objectContaining({ sort: 'desc' }));
+  });
+
   it('fails the whole read when GitLab refuses the token', async () => {
     const refused = Object.assign(new Error('401 Unauthorized'), { cause: { response: { status: 401 } } });
     const { service } = setup({ MergeRequests: { ...setup().client.MergeRequests, show: vi.fn(async () => { throw refused; }) } });
     await expect(service.liveSummaries({ refs: [{ owner: 'team', repo: 'app', number: 1 }] })).rejects.toBe(refused);
+  });
+});
+
+describe('GitLab label filtering', () => {
+  it('asks for every label, comma-joined and in order, on both lists and a searched list', async () => {
+    const { service, client } = setup();
+    await service.listChangeRequests('/repo', { labels: ['bug'] });
+    expect(client.MergeRequests.all).toHaveBeenLastCalledWith(expect.objectContaining({ labels: 'bug' }));
+    await service.listChangeRequests('/repo', { labels: ['bug', 'needs review'] });
+    expect(client.MergeRequests.all).toHaveBeenLastCalledWith(expect.objectContaining({ labels: 'bug,needs review' }));
+    await service.listIssues('/repo', { labels: ['bug'] });
+    expect(client.Issues.all).toHaveBeenLastCalledWith(expect.objectContaining({ labels: 'bug' }));
+    await service.listIssues('/repo', { labels: ['bug', 'needs review'] });
+    expect(client.Issues.all).toHaveBeenLastCalledWith(expect.objectContaining({ labels: 'bug,needs review' }));
+    await service.listChangeRequests('/repo', { query: 'login', labels: ['bug'] });
+    expect(client.MergeRequests.all).toHaveBeenLastCalledWith(expect.objectContaining({ search: 'login', labels: 'bug' }));
+    await service.listIssues('/repo', { query: 'login', labels: ['bug'] });
+    expect(client.Issues.all).toHaveBeenLastCalledWith(expect.objectContaining({ search: 'login', labels: 'bug' }));
+  });
+
+  it('sends no label parameter for an empty filter', async () => {
+    const { service, client } = setup();
+    await service.listChangeRequests('/repo', { labels: [] });
+    expect(client.MergeRequests.all.mock.calls.at(-1)?.[0]).not.toHaveProperty('labels');
+    await service.listIssues('/repo', {});
+    expect(client.Issues.all.mock.calls.at(-1)?.[0]).not.toHaveProperty('labels');
+  });
+
+  it('refuses a label containing a comma before any provider call', async () => {
+    const { service, client } = setup();
+    await expect(service.listChangeRequests('/repo', { labels: ['bug,docs'] }))
+      .rejects.toMatchObject({ code: 'INVALID_SOURCE_CONTROL_READ_CONTEXT', status: 400 });
+    await expect(service.listIssues('/repo', { labels: ['bug,docs'] }))
+      .rejects.toMatchObject({ code: 'INVALID_SOURCE_CONTROL_READ_CONTEXT', status: 400 });
+    expect(client.Projects.show).not.toHaveBeenCalled();
+    expect(client.MergeRequests.all).not.toHaveBeenCalled();
+    expect(client.Issues.all).not.toHaveBeenCalled();
   });
 });

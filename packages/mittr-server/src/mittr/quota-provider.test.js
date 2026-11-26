@@ -16,6 +16,62 @@ const providerFor = (week, overrides = {}) => mittrQuotaProvider({
   ...overrides,
 });
 
+test('aliases resolve explicit status before membership before direct keys, sharing one bucket', async () => {
+  const week = quota([
+    { modelKey: 'pool', kind: 'chat', label: 'Pool', used: 20, limit: 100, agents: [{ key: 'writer' }, { key: 'reader' }] },
+    { modelKey: 'writer', kind: 'chat', label: 'Old', used: 99, limit: 100 },
+    { modelKey: 'override', kind: 'chat', label: 'Override', used: 40, limit: 100 },
+  ]);
+  const shared = await providerFor(week).fetchQuota();
+  assert.deepEqual(Object.keys(shared.usage.models), ['Writer, Reader']);
+  assert.equal(shared.usage.windows.weekly.usedPercent, 20);
+  const explicit = await providerFor({ ...week, agentStatus: { writer: { modelKey: 'override' } } }).fetchQuota();
+  assert.deepEqual(Object.keys(explicit.usage.models), ['Reader', 'Writer']);
+  assert.equal(explicit.usage.models.Writer.windows.weekly.usedPercent, 40);
+});
+
+test('an inherited constructor status cannot suppress shared alias membership', async () => {
+  const week = quota([
+    { modelKey: 'pool', kind: 'chat', label: 'Pool', used: 20, limit: 100, agents: [{ key: 'constructor' }, { key: 'reader' }] },
+  ], { agentStatus: { reader: { modelKey: 'pool', left: 80, limit: 100, resetsAt: RESETS_AT, state: 'ok' } } });
+  const result = JSON.parse(JSON.stringify(await providerFor(week, {
+    catalogModels: () => ({ configured: true, items: [{ alias: 'constructor', label: 'Constructor' }, { alias: 'reader', label: 'Reader' }] }),
+  }).fetchQuota()));
+  assert.deepEqual(Object.keys(result.usage.models), ['Constructor, Reader']);
+  assert.equal(result.usage.models['Constructor, Reader'].windows.weekly.usedPercent, 20);
+  assert.equal(result.usage.windows.weekly.usedPercent, 20);
+});
+
+for (const kind of ['chat', 'stt', 'tts']) {
+  test(`serialized Usage retains a __proto__ ${kind} meter`, async () => {
+    const result = JSON.parse(JSON.stringify(await providerFor(quota([
+      { modelKey: 'writer', kind, label: '__proto__', used: 30, limit: 100 },
+    ]), { catalogModels: () => ({ configured: true, items: [{ alias: 'writer', label: '__proto__' }] }) }).fetchQuota()));
+    assert.deepEqual(Object.keys(result.usage.models), ['__proto__']);
+    assert.equal(result.usage.models.__proto__.windows.weekly.usedPercent, 30);
+    assert.equal(result.usage.windows.weekly.usedPercent, 30);
+  });
+}
+
+test('shared aliases with the same opaque label serialize as one bucket', async () => {
+  const result = JSON.parse(JSON.stringify(await providerFor(quota([
+    { modelKey: 'pool', kind: 'chat', label: 'Pool', used: 40, limit: 100, agents: [{ key: 'writer' }, { key: 'reader' }] },
+  ]), { catalogModels: () => ({ configured: true, items: [{ alias: 'writer', label: '__proto__' }, { alias: 'reader', label: '__proto__' }] }) }).fetchQuota()));
+  assert.deepEqual(Object.keys(result.usage.models), ['__proto__']);
+  assert.equal(result.usage.models.__proto__.windows.weekly.usedPercent, 40);
+  assert.equal(result.usage.windows.weekly.usedPercent, 40);
+});
+
+test('projection pins its catalog before awaiting the quota sample', async () => {
+  let release;
+  let held = CATALOG;
+  const provider = providerFor(null, { catalogModels: () => held, service: { readMine: () => new Promise((resolve) => { release = resolve; }) } });
+  const reading = provider.fetchQuota();
+  held = { configured: true, items: [{ alias: 'writer', label: 'Other account' }] };
+  release(quota([{ modelKey: 'writer', kind: 'chat', label: 'Writer', used: 1, limit: 10 }]));
+  assert.deepEqual(Object.keys((await reading).usage.models), ['Writer']);
+});
+
 test('the provider is Mittr', () => {
   const provider = providerFor(quota([]));
   assert.equal(provider.providerId, 'mittr');

@@ -1,0 +1,53 @@
+diff --git a/packages/ui/src/components/chat/composer/ui/ComposerFooter.tsx b/packages/ui/src/components/chat/composer/ui/ComposerFooter.tsx
+index 4c0f736f4..633f683e4 100644
+--- a/packages/ui/src/components/chat/composer/ui/ComposerFooter.tsx
++++ b/packages/ui/src/components/chat/composer/ui/ComposerFooter.tsx
+@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
+ import { useConfigStore } from '@/stores/useConfigStore';
+ import { isVSCodeRuntime } from '@/lib/desktop';
+ import { isDictationCaptureSupported } from '@/lib/dictation/use-dictation-audio-source';
++import { ProductSlot, useProductDictationBlock } from '@/lib/product-plugins';
+ import { ModelControls } from '../../ModelControls';
+ import { ComposerActionButtons } from './ComposerActionButtons';
+ import { ComposerAttachmentControls, type ComposerTrackerPicker } from './ComposerAttachmentControls';
+@@ -147,6 +148,8 @@ function ComposerFooterView(props: ComposerFooterProps) {
+     const dictationEnabled = useConfigStore((state) => state.dictationEnabled);
+     const [dictationSupported] = React.useState(() => !isVSCodeRuntime() && isDictationCaptureSupported());
+     const showDictation = dictationEnabled && dictationSupported;
++    const dictationBlock = useProductDictationBlock();
++    const dictationStartLabel = dictationBlock.blocked && dictationBlock.reason ? dictationBlock.reason : t('chat.dictation.start');
+ 
+     return (
+         <div
+@@ -211,11 +214,12 @@ function ComposerFooterView(props: ComposerFooterProps) {
+                                         }
+                                     }}
+                                     onClick={onStartDictation}
+-                                    disabled={dictationActive}
+-                                    aria-label={t('chat.dictation.start')}
++                                    disabled={dictationActive || dictationBlock.blocked}
++                                    aria-label={dictationStartLabel}
+                                 >
+                                     <Icon name="mic" className={cn(iconSizeClass, 'text-current')} />
+-                                </button></TooltipTrigger><TooltipContent side="top"><TooltipLabelWithShortcut label={t('chat.dictation.start')} shortcut={formatShortcutForDisplay(getEffectiveShortcutCombo('toggle_dictation', shortcutOverrides), '')} /></TooltipContent></Tooltip> : null}
++                                </button></TooltipTrigger><TooltipContent side="top"><TooltipLabelWithShortcut label={dictationStartLabel} shortcut={formatShortcutForDisplay(getEffectiveShortcutCombo('toggle_dictation', shortcutOverrides), '')} /></TooltipContent></Tooltip> : null}
++                                {!isBtw ? <ProductSlot name="composer-actions" isMobile={isMobile} footerIconButtonClass={footerIconButtonClass} iconSizeClass={iconSizeClass} dictationActive={dictationActive} /> : null}
+                                 <ComposerActionButtons
+                                     isMobile={isMobile}
+                                     footerIconButtonClass={footerIconButtonClass}
+@@ -278,6 +282,7 @@ function ComposerFooterView(props: ComposerFooterProps) {
+                             footerPaddingClass={footerPaddingClass}
+                             iconSizeClass={iconSizeClass}
+                             sendIconSizeClass={sendIconSizeClass}
++                            disabled={dictationBlock.blocked && !dictationActive}
+                             onInsert={onDictationInsert}
+                             onInsertAndSend={onDictationInsertAndSend}
+                             onSendStart={onDictationSendStart}
+@@ -285,6 +290,7 @@ function ComposerFooterView(props: ComposerFooterProps) {
+                             onContentHeightChange={onDictationContentHeightChange}
+                             onActiveChange={onDictationActiveChange}
+                         /> : null}
++                        {!isBtw ? <ProductSlot name="composer-actions" isMobile={isMobile} footerIconButtonClass={footerIconButtonClass} iconSizeClass={iconSizeClass} dictationActive={dictationActive} /> : null}
+                         {parallelRun ? (
+                             <ComposerActionButtons
+                                 isMobile={isMobile}

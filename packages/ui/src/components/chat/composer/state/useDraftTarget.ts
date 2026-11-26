@@ -1,18 +1,3 @@
-/**
- * Choosing where a new session will run.
- *
- * The new-session draft targets a project and a directory within it — the
- * project root or one of its worktrees. Both are discovered lazily: whether a
- * project is even a git repository is unknown until asked, and its branch list
- * is served stale-while-revalidate so a cached list appears instantly and
- * refreshes behind it.
- *
- * The awkward part this hook contains is that the draft can point at a
- * directory that does not exist yet — a worktree being created. Such a
- * directory must survive not appearing in the list, or the selector would snap
- * back to the project root mid-creation and the session would be started in
- * the wrong place.
- */
 
 import React from 'react';
 
@@ -23,15 +8,25 @@ import { useGitBranches, useGitStore, useIsGitRepo } from '@/stores/useGitStore'
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { buildSessionTargetOptions } from '@/sync/session-worktree-contract';
+import {
+    listProjectWorktrees,
+    partitionWorktreesByRegisteredProject,
+    preserveClientTrackedWorktreeStatus,
+    replaceRepositoryWorktrees,
+    worktreeMapsEqual,
+} from '@/lib/worktrees/worktreeManager';
 import { normalizePath } from '../attachments/filePaths';
 import { CHAT_DRAFT_PROJECT_ID } from '@/lib/chatDirectories';
 import { useI18n } from '@/lib/i18n';
 import { getGitStatus } from '@/lib/gitApi';
-import { isSpaceCreationRequest, spaceOfCreationRequest } from '@/lib/spaces/space-creation';
-import { useSpacesStore } from '@/lib/spaces/spaces-store';
+import { draftSpaceTarget, isSpaceCreationRequest, spaceOfCreationRequest } from '@/lib/spaces/space-creation-requests';
+import { isSpaceDirectory } from '@/lib/spaces/space-route';
+import { useComposerFollowsSpace } from '@/lib/spaces/useComposerFollowsSpace';
+import { spacesOfProject, useSpacesStore } from '@/lib/spaces/spaces-store';
+import { useUIStore } from '@/stores/useUIStore';
 
-/** How long a cached branch list is served before it is refreshed. */
 const BRANCHES_SWR_TTL_MS = 30_000;
+const DRAFT_TARGET_REFRESH_THROTTLE_MS = 2_000;
 
 export interface DraftTargetProject {
     id: string;
@@ -44,7 +39,13 @@ export interface DraftTargetProject {
     kind?: 'chat' | 'project';
 }
 
-/** A project's display name, falling back to its directory name. */
+function releaseDraftDirectoryPin() {
+    const store = useSessionUIStore.getState();
+    if (store.newSessionDraft?.preserveDirectoryOverride) {
+        store.setDraftPreserveDirectoryOverride(false);
+    }
+}
+
 export function getProjectDisplayLabel(project: { label?: string; path: string }): string {
     return project.label?.trim() || formatDirectoryName(project.path);
 }
@@ -104,6 +105,92 @@ export function useDraftTarget(enabled: boolean) {
     const fetchBranches = useGitStore((state) => state.fetchBranches);
     const [isDiscoveringDraftBranches, setIsDiscoveringDraftBranches] = React.useState(false);
     const [dirtyDraftDirectory, setDirtyDraftDirectory] = React.useState<string | null>(null);
+    const lastDraftTargetRefreshRef = React.useRef(0);
+
+    const refreshDraftWorktrees = React.useCallback(async (project: DraftTargetProject) => {
+        if (project.kind === 'chat') {
+            return;
+        }
+
+        try {
+            const worktrees = await listProjectWorktrees({ id: project.id, path: project.path }, { force: true });
+            const draft = useSessionUIStore.getState().newSessionDraft;
+            if (draft.pendingWorktreeRequestId || draft.bootstrapPendingDirectory) {
+                return;
+            }
+            const published = useSessionUIStore.getState().availableWorktreesByProject;
+            const replaced = replaceRepositoryWorktrees(published, project.path, worktrees);
+            const partitioned = partitionWorktreesByRegisteredProject(useProjectsStore.getState().projects, replaced);
+            const next = preserveClientTrackedWorktreeStatus(partitioned, published);
+            if (worktreeMapsEqual(next, published)) {
+                return;
+            }
+            useSessionUIStore.setState({
+                availableWorktrees: [...next.values()].flat(),
+                availableWorktreesByProject: next,
+            });
+        } catch {
+            // Keep the last known list; the next focus or picker open retries.
+        }
+    }, []);
+
+    const refreshDraftTarget = React.useCallback(() => {
+        if (
+            !enabled
+            || !selectedDraftProject
+            || selectedDraftProject.kind === 'chat'
+            || !selectedDraftProjectPath
+            || !runtimeGit
+            || selectedDraftProjectIsGitRepo !== true
+            || newSessionDraft?.pendingWorktreeRequestId
+            || newSessionDraft?.bootstrapPendingDirectory
+            || useGitStore.getState().isAskingRemotes(selectedDraftProjectPath)
+        ) {
+            return;
+        }
+
+        const now = Date.now();
+        if (now - lastDraftTargetRefreshRef.current < DRAFT_TARGET_REFRESH_THROTTLE_MS) {
+            return;
+        }
+        lastDraftTargetRefreshRef.current = now;
+
+        void fetchBranches(selectedDraftProjectPath, runtimeGit);
+        void refreshDraftWorktrees(selectedDraftProject);
+    }, [
+        enabled,
+        fetchBranches,
+        newSessionDraft?.bootstrapPendingDirectory,
+        newSessionDraft?.pendingWorktreeRequestId,
+        refreshDraftWorktrees,
+        runtimeGit,
+        selectedDraftProject,
+        selectedDraftProjectIsGitRepo,
+        selectedDraftProjectPath,
+    ]);
+
+    React.useEffect(() => {
+        lastDraftTargetRefreshRef.current = 0;
+    }, [selectedDraftProjectPath]);
+
+    React.useEffect(() => {
+        if (!enabled) {
+            return;
+        }
+
+        const refreshWhenVisible = () => {
+            if (document.visibilityState === 'hidden') {
+                return;
+            }
+            refreshDraftTarget();
+        };
+        window.addEventListener('focus', refreshWhenVisible);
+        document.addEventListener('visibilitychange', refreshWhenVisible);
+        return () => {
+            window.removeEventListener('focus', refreshWhenVisible);
+            document.removeEventListener('visibilitychange', refreshWhenVisible);
+        };
+    }, [enabled, refreshDraftTarget]);
 
     React.useEffect(() => {
         if (!enabled || !selectedDraftProjectPath || !runtimeGit || selectedDraftProjectIsGitRepo !== null) {
@@ -119,10 +206,6 @@ export function useDraftTarget(enabled: boolean) {
             return;
         }
 
-        // Stale-while-revalidate: branches seeded from the persisted cache show
-        // instantly. Refresh based on staleness (not mere presence) so a cached
-        // list can't go stale, while only showing the discovering spinner when
-        // there is nothing to display yet.
         const isStale =
             !selectedDraftProjectBranchesFetchedAt ||
             Date.now() - selectedDraftProjectBranchesFetchedAt > BRANCHES_SWR_TTL_MS;
@@ -188,18 +271,27 @@ export function useDraftTarget(enabled: boolean) {
         }).filter((option) => option.kind === 'worktree');
     }, [availableWorktreesByProject, newSessionDraft?.bootstrapPendingDirectory, selectedDraftProject, selectedDraftProjectCurrentBranch, selectedDraftProjectPath]);
 
+    const isolatedSpacesEnabled = useUIStore((state) => state.isolatedSpacesEnabled);
+    const spaceBranchOptions = React.useMemo(() => {
+        if (!isolatedSpacesEnabled || !spacesJourney || !selectedDraftProjectPath) return [];
+        return spacesOfProject(spacesJourney, selectedDraftProjectPath).flatMap((entry) => {
+            const value = normalizePath(entry.directory);
+            if (!value || (entry.state !== 'running' && entry.state !== 'exited')) return [];
+            return [{ value, label: entry.name || t('sessions.sidebar.grouping.spaceUnnamed') }];
+        });
+    }, [isolatedSpacesEnabled, selectedDraftProjectPath, spacesJourney, t]);
+
+    const draftSpace = draftSpaceTarget(newSessionDraft?.pendingWorktreeRequestId, spacesJourney);
+    const draftSpaceDirectory = draftSpace?.kind === 'ready' ? normalizePath(draftSpace.directory) : null;
     const selectedDraftDirectory = React.useMemo(
-        () => normalizePath(newSessionDraft?.bootstrapPendingDirectory ?? null)
+        () => draftSpaceDirectory
+            ?? normalizePath(newSessionDraft?.bootstrapPendingDirectory ?? null)
             ?? normalizePath(newSessionDraft?.directoryOverride ?? null)
             ?? selectedDraftProjectPath,
-        [newSessionDraft?.bootstrapPendingDirectory, newSessionDraft?.directoryOverride, selectedDraftProjectPath],
+        [draftSpaceDirectory, newSessionDraft?.bootstrapPendingDirectory, newSessionDraft?.directoryOverride, selectedDraftProjectPath],
     );
+    useComposerFollowsSpace(enabled && isSpaceDirectory(selectedDraftDirectory) ? selectedDraftDirectory : null);
 
-    // The draft's own pending flags clear once the directory exists, which is
-    // before setup commands and the initial git reset finish; the bootstrap
-    // state covers that remaining window (and creations the draft never knew
-    // about, such as the New Worktree dialog), so the probe never reads the
-    // transient bootstrap files as the branch being dirty.
     const selectedDraftDirectoryBootstrapPending = useWorktreeBootstrapPending(selectedDraftDirectory);
     const draftDirectoryNeedsFreshStatusRef = React.useRef<string | null>(null);
 
@@ -208,6 +300,7 @@ export function useDraftTarget(enabled: boolean) {
             !enabled
             || !selectedDraftDirectory
             || selectedDraftProject?.kind === 'chat'
+            || isSpaceDirectory(selectedDraftDirectory)
             || newSessionDraft?.pendingWorktreeRequestId
             || newSessionDraft?.bootstrapPendingDirectory
             || selectedDraftDirectoryBootstrapPending
@@ -249,8 +342,6 @@ export function useDraftTarget(enabled: boolean) {
             newSessionDraft?.preserveDirectoryOverride
             ||
             newSessionDraft?.pendingWorktreeRequestId
-            // Git lists a created worktree only once its background attach
-            // finishes, so a refresh inside that window omits it.
             || selectedDraftDirectoryBootstrapPending
             || (pendingDirectory && pendingDirectory === selectedDraftDirectory)
         );
@@ -261,7 +352,7 @@ export function useDraftTarget(enabled: boolean) {
         if (projectRootBranchOption) {
             baseItems.push(projectRootBranchOption);
         }
-        baseItems.push(...worktreeBranchOptions);
+        baseItems.push(...worktreeBranchOptions, ...spaceBranchOptions);
 
         if (!selectedDraftDirectory) {
             return baseItems;
@@ -276,7 +367,7 @@ export function useDraftTarget(enabled: boolean) {
             ...baseItems,
             { value: selectedDraftDirectory, label: formatDirectoryName(selectedDraftDirectory) },
         ];
-    }, [projectRootBranchOption, selectedDraftDirectory, shouldKeepMissingSelectedDraftDirectory, worktreeBranchOptions]);
+    }, [projectRootBranchOption, selectedDraftDirectory, shouldKeepMissingSelectedDraftDirectory, spaceBranchOptions, worktreeBranchOptions]);
 
     const selectedDraftBranchLabel = React.useMemo(() => {
         if (newSessionDraft?.pendingWorktreeRequestId) {
@@ -300,14 +391,14 @@ export function useDraftTarget(enabled: boolean) {
         if (projectRootBranchOption?.value === selectedDraftDirectory) {
             return true;
         }
-        return worktreeBranchOptions.some((option) => option.value === selectedDraftDirectory);
-    }, [projectRootBranchOption?.value, selectedDraftDirectory, worktreeBranchOptions]);
+        return [...worktreeBranchOptions, ...spaceBranchOptions].some((option) => option.value === selectedDraftDirectory);
+    }, [projectRootBranchOption?.value, selectedDraftDirectory, spaceBranchOptions, worktreeBranchOptions]);
 
     React.useEffect(() => {
         if (!newSessionDraft?.open || !newSessionDraft?.preserveDirectoryOverride) {
             return;
         }
-        if (!selectedDraftDirectory || !selectedDraftBranchIsKnown) {
+        if (!selectedDraftDirectory || !selectedDraftBranchIsKnown || isSpaceDirectory(selectedDraftDirectory)) {
             return;
         }
         useSessionUIStore.getState().setDraftPreserveDirectoryOverride(false);
@@ -328,13 +419,17 @@ export function useDraftTarget(enabled: boolean) {
 
     const handleDraftProjectChange = React.useCallback((projectId: string) => {
         const draft = useSessionUIStore.getState().newSessionDraft;
-        if (draft?.pendingWorktreeRequestId || draft?.bootstrapPendingDirectory || draft?.preserveDirectoryOverride) {
+        if (draft?.pendingWorktreeRequestId || draft?.bootstrapPendingDirectory) {
             return;
         }
         const project = projects.find((entry) => entry.id === projectId);
         if (!project) {
             return;
         }
+        if (draft?.preserveDirectoryOverride && projectId === selectedDraftProject?.id) {
+            return;
+        }
+        releaseDraftDirectoryPin();
         if (project.kind === 'chat') {
             setNewSessionDraftTarget({ projectId: CHAT_DRAFT_PROJECT_ID, directoryOverride: null }, { force: true });
             return;
@@ -346,21 +441,26 @@ export function useDraftTarget(enabled: boolean) {
             projectId,
             directoryOverride: project.path,
         }, { force: true });
-    }, [activeProjectId, projects, setActiveProjectIdOnly, setNewSessionDraftTarget]);
+    }, [activeProjectId, projects, selectedDraftProject?.id, setActiveProjectIdOnly, setNewSessionDraftTarget]);
 
     const handleDraftDirectoryChange = React.useCallback((directory: string) => {
         const draft = useSessionUIStore.getState().newSessionDraft;
-        if (draft?.pendingWorktreeRequestId || draft?.bootstrapPendingDirectory || draft?.preserveDirectoryOverride) {
+        if (draft?.pendingWorktreeRequestId || draft?.bootstrapPendingDirectory) {
             return;
         }
         if (!selectedDraftProject) {
             return;
         }
+        if (draft?.preserveDirectoryOverride && normalizePath(directory) === selectedDraftDirectory) {
+            return;
+        }
+        releaseDraftDirectoryPin();
         setNewSessionDraftTarget({
             projectId: selectedDraftProject.id,
             directoryOverride: directory,
         }, { force: true });
-    }, [selectedDraftProject, setNewSessionDraftTarget]);
+        if (isSpaceDirectory(directory)) useSessionUIStore.getState().setDraftPreserveDirectoryOverride(true);
+    }, [selectedDraftDirectory, selectedDraftProject, setNewSessionDraftTarget]);
     return {
         projects,
         selectedDraftProject,
@@ -372,9 +472,11 @@ export function useDraftTarget(enabled: boolean) {
         selectedDraftDirectoryHasUncommittedChanges: dirtyDraftDirectory === selectedDraftDirectory,
         projectRootBranchOption,
         worktreeBranchOptions,
+        spaceBranchOptions,
         draftBranchItems,
         shouldShowDraftBranchSelector,
         handleDraftProjectChange,
         handleDraftDirectoryChange,
+        refreshDraftTarget,
     };
 }

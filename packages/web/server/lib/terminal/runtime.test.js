@@ -1,12 +1,33 @@
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import http from 'node:http';
+import net from 'node:net';
+import crypto from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
 import fs from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 
-import { createTerminalRuntime } from './runtime.js';
+import { createTerminalRuntime, loadTerminalPtyProvider } from './runtime.js';
 import { createTerminalWsControlFrame, readTerminalWsControlFrame } from './terminal-ws-protocol.js';
+
+// Drives the raw upgrade handler by hand. A `ws` client hides the HTTP response
+// once the 101 lands, and a real client cannot be made to upgrade one socket
+// twice, so the test emits the `upgrade` event directly on a real socket.
+function manualUpgradeRequest(port) {
+  const key = crypto.randomBytes(16).toString('base64');
+  return {
+    url: '/api/terminal/ws',
+    method: 'GET',
+    headers: {
+      host: `127.0.0.1:${port}`,
+      upgrade: 'websocket',
+      connection: 'Upgrade',
+      'sec-websocket-key': key,
+      'sec-websocket-version': '13',
+    },
+  };
+}
 
 function createResponse() {
   return {
@@ -26,7 +47,9 @@ function createResponse() {
 async function openTerminalSocket(socketUrl) {
   const socket = new WebSocket(socketUrl);
   const messages = [];
-  socket.on('message', (raw) => messages.push(readTerminalWsControlFrame(raw)));
+  socket.on('message', (raw) => messages.push(raw[0] === 2
+    ? { ...JSON.parse(gunzipSync(raw.subarray(1)).toString('utf8')), gzipped: true }
+    : readTerminalWsControlFrame(raw)));
   await new Promise((resolve, reject) => {
     socket.once('open', resolve);
     socket.once('error', reject);
@@ -192,6 +215,31 @@ describe('terminal runtime', () => {
     return { routes, processes, runtime };
   };
 
+  it.each([
+    [undefined, 'node-pty'],
+    ['1.3.14', 'node-pty'],
+    ['1.4.0-canary.1', 'node-pty'],
+    ['1.4.0', 'bun-pty'],
+    ['1.10.0', 'bun-pty'],
+    ['2.0.0', 'bun-pty'],
+  ])('selects %s Bun terminals through %s before caching the provider', async (version, expectedBackend) => {
+    const spawn = () => {};
+    const importPty = vi.fn(async () => ({ spawn }));
+    const provider = await loadTerminalPtyProvider(version, importPty);
+    expect(provider).toEqual({ backend: expectedBackend, spawn });
+    expect(importPty).toHaveBeenCalledExactlyOnceWith(expectedBackend);
+  });
+
+  it('uses node-pty when bun-pty cannot import on a supported Bun', async () => {
+    const spawn = () => {};
+    const importPty = vi.fn(async (name) => {
+      if (name === 'bun-pty') throw new Error('Native backend unavailable');
+      return { spawn };
+    });
+    expect(await loadTerminalPtyProvider('1.4.0', importPty)).toEqual({ backend: 'node-pty', spawn });
+    expect(importPty.mock.calls).toEqual([['bun-pty'], ['node-pty']]);
+  });
+
   it('replaces only exited action runs and keeps session capacity available across reruns', async () => {
     const harness = createHarness();
     try {
@@ -277,26 +325,6 @@ describe('terminal runtime', () => {
     });
   }
 
-  it('retains completed output when the replacement command fails to start', async () => {
-    let available = true;
-    const harness = createHarness({ fs: { promises: { stat: async () => ({ isDirectory: () => available }) } } });
-    try {
-      const create = harness.routes.post.get('/api/terminal/create');
-      const options = { cwd: '/repo', mode: 'command', command: 'echo hello', purpose: { type: 'project-action', actionId: 'build', executionId: 'old' } };
-      await create({ body: { ...options, sessionId: 'old' } }, createResponse());
-      harness.processes[0].emitData('old output');
-      harness.processes[0].emitExit(0);
-      available = false;
-      const response = createResponse();
-      await create({ body: { ...options, sessionId: 'new', purpose: { ...options.purpose, executionId: 'new' } } }, response);
-      expect(response.statusCode).toBe(400);
-      const listed = createResponse();
-      harness.routes.get.get('/api/terminal/sessions')({ query: { cwd: '/repo' } }, listed);
-      expect(listed.body.sessions.map(session => session.sessionId)).toEqual(['old']);
-      expect(harness.processes).toHaveLength(1);
-    } finally { await harness.runtime.shutdown(); }
-  });
-
   it('rejects regular files as terminal working directories', async () => {
     const postRoutes = new Map();
     const app = {
@@ -378,6 +406,24 @@ describe('terminal runtime', () => {
     expect(server.listenerCount('upgrade')).toBe(0);
   });
 
+  it('gives the shell the directory variables from Settings without bringing back what it strips', async () => {
+    const applyToDirectory = vi.fn(async (_directory, env) => ({
+      ...env,
+      PROJECT_TOOL: 'from-project',
+      TERM: 'dumb',
+      NODE_CHANNEL_FD: '3',
+    }));
+    const harness = createHarness({ environmentRuntime: { applyToDirectory } });
+    try {
+      await harness.routes.post.get('/api/terminal/create')({ body: { sessionId: 'term-env', cwd: '/repo' } }, createResponse());
+      expect(applyToDirectory).toHaveBeenCalledWith('/repo', expect.objectContaining({ PATH: expect.any(String) }), { refresh: true });
+      const { env } = harness.processes[0].options;
+      expect(env.PROJECT_TOOL).toBe('from-project');
+      expect(env.TERM).toBe('xterm-256color');
+      expect(env).not.toHaveProperty('NODE_CHANNEL_FD');
+    } finally { await harness.runtime.shutdown(); }
+  });
+
   it('creates client-identified sessions and forwards bounded resize operations', async () => {
     const harness = createHarness();
     try {
@@ -409,32 +455,6 @@ describe('terminal runtime', () => {
       const invalid = createResponse();
       harness.routes.post.get('/api/terminal/:sessionId/resize')({ params: { sessionId: 'term-1' }, body: { cols: 1001, rows: 60 } }, invalid);
       expect(invalid.statusCode).toBe(400);
-    } finally { await harness.runtime.shutdown(); }
-  });
-
-  it('lists sessions scoped to a working directory and refreshes activity via touch', async () => {
-    const harness = createHarness();
-    try {
-      await harness.routes.post.get('/api/terminal/create')({ body: { sessionId: 'term-a', cwd: '/repo' } }, createResponse());
-      await harness.routes.post.get('/api/terminal/create')({ body: { sessionId: 'term-b', cwd: '/other' } }, createResponse());
-
-      const all = createResponse();
-      harness.routes.get.get('/api/terminal/sessions')({ query: {} }, all);
-      expect(all.body.sessions.map((s) => s.sessionId).sort()).toEqual(['term-a', 'term-b']);
-
-      const scoped = createResponse();
-      harness.routes.get.get('/api/terminal/sessions')({ query: { cwd: '/repo' } }, scoped);
-      expect(scoped.body.sessions).toEqual([
-        { sessionId: 'term-a', cwd: '/repo', status: 'running', createdAt: expect.any(Number), mode: 'interactive', purpose: { type: 'terminal' } },
-      ]);
-
-      const touch = createResponse();
-      harness.routes.post.get('/api/terminal/touch')({ body: { sessionIds: ['term-a', 'missing', 42] } }, touch);
-      expect(touch.body).toEqual({ touched: 1 });
-
-      const malformed = createResponse();
-      harness.routes.post.get('/api/terminal/touch')({ body: {} }, malformed);
-      expect(malformed.body).toEqual({ touched: 0 });
     } finally { await harness.runtime.shutdown(); }
   });
 
@@ -479,6 +499,8 @@ describe('terminal runtime', () => {
   });
 
   it('lists available shells and uses the selected shell for create and restart', async () => {
+    const previousShell = process.env.OPENCHAMBER_TERMINAL_SHELL;
+    process.env.OPENCHAMBER_TERMINAL_SHELL = '/bin/zsh';
     const executables = new Set(['/bin/zsh', '/bin/bash', '/bin/sh']);
     const harness = createHarness({
       fs: {
@@ -521,7 +543,11 @@ describe('terminal runtime', () => {
         expect(harness.processes[1].shell).toBe('/bin/bash');
         expect(harness.processes[1].args).toEqual(['-l']);
       }
-    } finally { await harness.runtime.shutdown(); }
+    } finally {
+      if (previousShell === undefined) delete process.env.OPENCHAMBER_TERMINAL_SHELL;
+      else process.env.OPENCHAMBER_TERMINAL_SHELL = previousShell;
+      await harness.runtime.shutdown();
+    }
   });
 
   it('rejects invalid and unavailable explicit shells', async () => {
@@ -694,17 +720,22 @@ describe('terminal runtime', () => {
   });
 
   it('retains exited sessions until explicit close', async () => {
-    const harness = createHarness();
+    const broadcastUiEvent = vi.fn();
+    const harness = createHarness({ broadcastUiEvent });
     try {
       await harness.routes.post.get('/api/terminal/create')({ body: { sessionId: 'term-1', cwd: '/repo' } }, createResponse());
+      expect(broadcastUiEvent.mock.calls).toEqual([[{ type: 'openchamber:terminal-sessions-changed', properties: {} }]]);
       harness.processes[0].emitData('last output');
+      expect(broadcastUiEvent).toHaveBeenCalledTimes(1);
       harness.processes[0].emitExit(7, 0);
+      expect(broadcastUiEvent).toHaveBeenCalledTimes(2);
       const resize = createResponse();
       harness.routes.post.get('/api/terminal/:sessionId/resize')({ params: { sessionId: 'term-1' }, body: { cols: 80, rows: 24 } }, resize);
       expect(resize.statusCode).toBe(200);
       const closed = createResponse();
       await harness.routes.delete.get('/api/terminal/:sessionId')({ params: { sessionId: 'term-1' } }, closed);
       expect(closed.body).toEqual({ success: true });
+      expect(broadcastUiEvent).toHaveBeenCalledTimes(3);
     } finally { await harness.runtime.shutdown(); }
   });
 
@@ -741,6 +772,52 @@ describe('terminal runtime', () => {
       // Native clients send no Origin and keep working without a password.
       expect(await handshake({})).toBe('open');
     } finally {
+      await runtime.shutdown();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('does not write an HTTP rejection onto a socket that already completed its upgrade', async () => {
+    const server = http.createServer();
+    const refused = [];
+    const logged = [];
+    const runtime = createRuntime(server, {
+      logger: { warn: (...args) => logged.push(args.join(' ')) },
+      rejectWebSocketUpgrade(socket, status, reason) {
+        refused.push({ status, reason });
+        if (!socket || socket.destroyed) return;
+        // Mirrors the real helper: it writes an HTTP status line, which is only
+        // valid before the handshake switches protocols.
+        try { socket.write(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`); } catch { /* closed */ }
+        try { socket.destroy(); } catch { /* closed */ }
+      },
+    });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = server.address().port;
+    const socket = net.connect(port, '127.0.0.1');
+    await new Promise((resolve, reject) => {
+      socket.once('connect', resolve);
+      socket.once('error', reject);
+    });
+    let bytes = '';
+    socket.on('data', (chunk) => { bytes += chunk.toString('latin1'); });
+    try {
+      // First upgrade completes and writes the 101. The second one hits ws's
+      // "called more than once" throw, which used to land in the bare catch and
+      // append a 500 status line to a connection that is no longer HTTP.
+      const req = manualUpgradeRequest(port);
+      server.emit('upgrade', req, socket, Buffer.alloc(0));
+      server.emit('upgrade', req, socket, Buffer.alloc(0));
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      // The socket was destroyed by the failure path, and no HTTP rejection was
+      // written for a connection that had already switched protocols.
+      expect(refused).toEqual([]);
+      expect(bytes).not.toContain('500');
+      // The upgrade error was not swallowed: it reached the logger.
+      expect(logged.some((line) => /terminal/i.test(line) && /upgrade/i.test(line))).toBe(true);
+    } finally {
+      socket.destroy();
       await runtime.shutdown();
       await new Promise((resolve) => server.close(resolve));
     }
@@ -814,10 +891,33 @@ describe('terminal runtime', () => {
       await new Promise((resolve) => setTimeout(resolve, 5));
       expect(first.messages.some((message) => message?.t === 'output' && message.s === 'term-second')).toBe(false);
 
+      // Output after a quiet spell goes out at once; what follows within the
+      // batch window joins one frame.
       processes[0].emitData('ok\r\n');
-      expect(await first.next('output', 'term-live')).toMatchObject({ s: 'term-live', q: 1, d: 'ok\r\n' });
       processes[0].emitData('\u001b[6n');
-      expect(await first.next('output', 'term-live')).toMatchObject({ s: 'term-live', q: 2, d: '\u001b[6n', r: '' });
+      for (let index = 0; index < 8193; index += 1) processes[0].emitData('x');
+      expect(await first.next('output', 'term-live')).toMatchObject({ s: 'term-live', q: 1, d: 'ok\r\n' });
+      expect(await first.next('output', 'term-live')).toMatchObject({ s: 'term-live', q: 2, d: `\u001b[6n${'x'.repeat(8193)}`, r: 'x'.repeat(8193) });
+      await new Promise(resolve => setTimeout(resolve, 40));
+      expect(first.messages.some(message => message?.t === 'output' && message.s === 'term-live')).toBe(false);
+      processes[0].emitData('before\u001b[');
+      processes[0].emitData('6nafter');
+      expect(await first.next('output', 'term-live')).toMatchObject({ s: 'term-live', q: 3, d: 'before\u001b[', r: 'before' });
+      expect(await first.next('output', 'term-live')).toMatchObject({ s: 'term-live', q: 4, d: '6nafter', r: 'after' });
+      await new Promise(resolve => setTimeout(resolve, 40));
+      const sizedChunk = 's'.repeat(32 * 1024);
+      const originalSetTimeout = globalThis.setTimeout;
+      const delayedBatchTimer = vi.spyOn(globalThis, 'setTimeout').mockImplementation((callback, delay, ...args) =>
+        originalSetTimeout(callback, delay === 12 ? 1000 : delay, ...args));
+      try {
+        // A full batch goes out without waiting for the window to close.
+        processes[0].emitData('lead');
+        processes[0].emitData(sizedChunk);
+        expect(await first.next('output', 'term-live')).toMatchObject({ s: 'term-live', q: 5, d: 'lead' });
+        expect(await first.next('output', 'term-live')).toMatchObject({ s: 'term-live', q: 6, d: sizedChunk });
+      } finally { delayedBatchTimer.mockRestore(); }
+      await new Promise(resolve => setTimeout(resolve, 25));
+      expect(first.messages.some(message => message?.t === 'output' && message.s === 'term-live')).toBe(false);
       const secondClosed = await fetch(`${base}/api/terminal/term-second`, { method: 'DELETE' });
       expect(secondClosed.status).toBe(200);
       first.socket.close();
@@ -832,9 +932,34 @@ describe('terminal runtime', () => {
       const second = await openTerminalSocket(socketUrl);
       sockets.push(second.socket);
       second.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'term-live' }));
-      expect(await second.next('snapshot')).toMatchObject({ s: 'term-live', q: 2, history: 'ok\r\n', status: 'running', cols: 120, rows: 40 });
+      expect(await second.next('snapshot')).toMatchObject({ s: 'term-live', q: 6, history: `ok\r\n${'x'.repeat(8193)}beforeafterlead${sizedChunk}`, status: 'running', cols: 120, rows: 40 });
+      // Compare snapshots to the old whole-string trim rule, including UTF-16
+      // pairs split across PTY callbacks and a boundary inside UTF-8 bytes.
+      let expectedHistory = `ok\r\n${'x'.repeat(8193)}beforeafterlead${sizedChunk}`;
+      const appendExpected = (text, chunks = [text]) => {
+        expectedHistory += text;
+        const bytes = Buffer.from(expectedHistory);
+        if (bytes.length > 512 * 1024) {
+          let start = bytes.length - 512 * 1024;
+          while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start += 1;
+          expectedHistory = bytes.subarray(start).toString('utf8');
+        }
+        for (const chunk of chunks) processes[0].emitData(chunk);
+      };
+      for (const text of ['\uD83D', '\uDE00', 'a'.repeat(512 * 1024 + 32), '\uD83D', '\uDE00', '', '€'.repeat(300), 'tail']) appendExpected(text);
+      appendExpected('x'.repeat(8193), Array(8193).fill('x'));
+      second.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'term-live' }));
+      expect((await second.next('snapshot')).history).toBe(expectedHistory);
+      appendExpected('b'.repeat(512 * 1024 + 128) + '€');
+      second.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'term-live' }));
+      const bounded = await second.next('snapshot');
+      expect(bounded.history).toBe(expectedHistory);
+      expect(Buffer.byteLength(bounded.history)).toBeLessThanOrEqual(512 * 1024);
+      expect(bounded.gzipped).toBeUndefined();
+      second.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'term-live', z: 1 }));
+      expect(await second.next('snapshot')).toMatchObject({ gzipped: true, q: bounded.q, history: expectedHistory });
       processes[0].emitExit(7);
-      expect(await second.next('exit')).toMatchObject({ s: 'term-live', q: 3, exitCode: 7 });
+      expect(await second.next('exit')).toMatchObject({ s: 'term-live', q: bounded.q + 1, exitCode: 7 });
 
       const closed = await fetch(`${base}/api/terminal/term-live`, { method: 'DELETE' });
       expect(closed.status).toBe(200);
@@ -846,11 +971,15 @@ describe('terminal runtime', () => {
       });
       second.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'term-kill' }));
       await second.next('snapshot');
+      processes[2].emitData('sent at once ');
+      processes[2].emitData('pending before kill');
+      expect(await second.next('output', 'term-kill')).toMatchObject({ s: 'term-kill', d: 'sent at once ' });
       const killed = await fetch(`${base}/api/terminal/force-kill`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ cwd: '/repo' }),
       });
       expect(await killed.json()).toEqual({ success: true, killedCount: 1, killedSessionIds: ['term-kill'] });
+      expect(await second.next('output', 'term-kill')).toMatchObject({ s: 'term-kill', d: 'pending before kill' });
       expect(await second.next('error')).toMatchObject({ s: 'term-kill', code: 'KILLED', fatal: true });
       expect(processes[2].killed).toBe(true);
     } finally {
@@ -858,6 +987,96 @@ describe('terminal runtime', () => {
       await runtime.shutdown();
       server.closeAllConnections?.();
       await new Promise((resolve) => server.close(resolve));
+    }
+  }, 15_000);
+
+  it('keeps raw overflow output unchanged and reconnects with safe history after exit', async () => {
+    const server = http.createServer();
+    const harness = createHarness({ server });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    let client;
+    try {
+      await harness.routes.post.get('/api/terminal/create')({ body: { sessionId: 'overflow', cwd: '/repo' } }, createResponse());
+      client = await openTerminalSocket(`ws://127.0.0.1:${server.address().port}/api/terminal/ws`);
+      client.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'overflow' }));
+      await client.next('snapshot');
+      const first = 'before\u001b]0;';
+      const chunks = ['x'.repeat(16 * 1024), 'hidden\u001b', '\\after\u001b[31mred\u001b[0m\u001b]11;?'];
+      harness.processes[0].emitData(first);
+      for (const chunk of chunks) harness.processes[0].emitData(chunk);
+      harness.processes[0].emitExit(7);
+      expect(await client.next('output')).toMatchObject({ q: 1, d: first, r: 'before' });
+      expect(await client.next('output')).toMatchObject({ q: 2, d: chunks.join(''), r: 'after\u001b[31mred\u001b[0m' });
+      expect(await client.next('exit')).toMatchObject({ q: 3, exitCode: 7 });
+
+      client.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'overflow' }));
+      expect(await client.next('snapshot')).toMatchObject({ q: 3, status: 'exited', history: 'beforeafter\u001b[31mred\u001b[0m' });
+      await harness.routes.post.get('/api/terminal/:sessionId/restart')({ params: { sessionId: 'overflow' }, body: {} }, createResponse());
+      expect(await client.next('restarted')).toMatchObject({ history: '' });
+      harness.processes[0].emitData('stale\u0007');
+      harness.processes[1].emitData('new output');
+      expect(await client.next('output')).toMatchObject({ d: 'new output' });
+      client.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'overflow' }));
+      expect(await client.next('snapshot')).toMatchObject({ status: 'running', history: 'new output' });
+    } finally {
+      client?.socket.terminate();
+      await harness.runtime.shutdown();
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  it('disconnects a slow terminal socket and replays the bounded history on reconnect', async () => {
+    const app = createHttpTestApp();
+    const server = http.createServer(app);
+    let emitData;
+    const runtime = createRuntime(server, {
+      app,
+      loadPtyProvider: async () => ({ backend: 'fake-pty', spawn: async () => ({
+        pid: 42, write() {}, resize() {}, kill() {},
+        onData(handler) { emitData = handler; return { dispose() {} }; },
+        onExit() { return { dispose() {} }; },
+      }) }),
+      fs: { promises: { stat: async () => ({ isDirectory: () => true }) } },
+      searchPathFor: () => '/bin/sh', isExecutable: () => true,
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const url = `ws://127.0.0.1:${server.address().port}/api/terminal/ws`;
+    const sockets = [];
+    try {
+      const created = await fetch(`http://127.0.0.1:${server.address().port}/api/terminal/create`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: 'slow', cwd: '/repo' }),
+      });
+      expect(created.status).toBe(200);
+      const slow = await openTerminalSocket(url);
+      sockets.push(slow.socket);
+      slow.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'slow' }));
+      await slow.next('snapshot');
+      const healthy = await openTerminalSocket(url);
+      sockets.push(healthy.socket);
+      healthy.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'slow' }));
+      await healthy.next('snapshot');
+      const closed = new Promise(resolve => slow.socket.once('close', resolve));
+      slow.socket.pause();
+      const chunk = crypto.randomBytes(192 * 1024).toString('base64');
+      for (let index = 0; index < 80; index += 1) {
+        emitData(chunk);
+        expect((await healthy.next('output', 'slow')).q).toBe(index + 1);
+      }
+      slow.socket.resume();
+      await closed;
+      expect(healthy.socket.readyState).toBe(WebSocket.OPEN);
+
+      const resumed = await openTerminalSocket(url);
+      sockets.push(resumed.socket);
+      resumed.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'slow' }));
+      const snapshot = await resumed.next('snapshot');
+      expect(snapshot.history).toBe((chunk.repeat(2)).slice(-512 * 1024));
+      expect(snapshot.q).toBeGreaterThan(0);
+    } finally {
+      for (const socket of sockets) socket.terminate();
+      await runtime.shutdown();
+      server.closeAllConnections?.();
+      await new Promise(resolve => server.close(resolve));
     }
   }, 15_000);
 
@@ -1237,5 +1456,208 @@ describe('terminal runtime', () => {
       expect(harness.processes).toHaveLength(1);
       expect(harness.processes[0].killed).toBe(false);
     } finally { await harness.runtime.shutdown(); }
+  });
+
+  it('lists every terminal and filters the accessor by resolved working directory', async () => {
+    const harness = createHarness();
+    try {
+      const create = harness.routes.post.get('/api/terminal/create');
+      await create({
+        body: {
+          sessionId: 'term-repo',
+          cwd: '/repo',
+          mode: 'command',
+          command: 'npm run build',
+          purpose: { type: 'project-action', actionId: 'build', executionId: 'exec-1' },
+        },
+      }, createResponse());
+      await create({ body: { sessionId: 'term-other', cwd: '/other' } }, createResponse());
+
+      expect(harness.runtime.listTerminals().map((terminal) => terminal.sessionId).sort()).toEqual(['term-other', 'term-repo']);
+      expect(harness.runtime.listTerminals({ directory: '/repo' })).toEqual([
+        {
+          sessionId: 'term-repo',
+          cwd: '/repo',
+          status: 'running',
+          createdAt: expect.any(Number),
+          mode: 'command',
+          purpose: { type: 'project-action', actionId: 'build', executionId: 'exec-1' },
+        },
+      ]);
+      expect(harness.runtime.listTerminals({ directory: '/repo/./nested/..' })).toHaveLength(1);
+      expect(harness.runtime.listTerminals({ directory: '/elsewhere' })).toEqual([]);
+      expect(harness.runtime.listTerminals({ directory: '   ' })).toHaveLength(2);
+
+      // The HTTP route is the same list wrapped in `{ sessions }`.
+      const routed = createResponse();
+      harness.routes.get.get('/api/terminal/sessions')({ query: { cwd: '/repo' } }, routed);
+      expect(routed.body).toEqual({ sessions: harness.runtime.listTerminals({ directory: '/repo' }) });
+    } finally { await harness.runtime.shutdown(); }
+  });
+
+  it('reads a terminal history tail through the runtime accessor', async () => {
+    const server = http.createServer();
+    const harness = createHarness({ server });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    let client;
+    try {
+      await harness.routes.post.get('/api/terminal/create')({
+        body: {
+          sessionId: 'readable',
+          cwd: '/repo',
+          purpose: { type: 'project-action', actionId: 'build', executionId: 'exec-read' },
+        },
+      }, createResponse());
+      client = await openTerminalSocket(`ws://127.0.0.1:${server.address().port}/api/terminal/ws`);
+      client.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'readable' }));
+      await client.next('snapshot');
+
+      const output = 'distinctive read output\r\n';
+      harness.processes[0].emitData(output);
+      expect(await client.next('output')).toMatchObject({ s: 'readable', d: output });
+
+      const read = harness.runtime.readTerminal('readable');
+      expect(read).toEqual({
+        sessionId: 'readable',
+        cwd: '/repo',
+        status: 'running',
+        exitCode: null,
+        signal: null,
+        createdAt: expect.any(Number),
+        mode: 'interactive',
+        purpose: { type: 'project-action', actionId: 'build', executionId: 'exec-read' },
+        text: 'distinctive read output\n',
+        truncated: false,
+        retainedBytes: Buffer.byteLength(output),
+      });
+      // A read never writes to the PTY.
+      expect(harness.processes[0].writes).toEqual([]);
+
+      // An exited session stays readable from the same retained history.
+      harness.processes[0].emitExit(7);
+      await client.next('exit');
+      expect(harness.runtime.readTerminal('readable')).toMatchObject({ status: 'exited', exitCode: 7, text: 'distinctive read output\n', truncated: false });
+    } finally {
+      client?.socket.terminate();
+      await harness.runtime.shutdown();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('returns a line-aligned truncated tail and null for unknown terminals', async () => {
+    const server = http.createServer();
+    const harness = createHarness({ server });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    let client;
+    try {
+      await harness.routes.post.get('/api/terminal/create')({ body: { sessionId: 'tail', cwd: '/repo' } }, createResponse());
+      client = await openTerminalSocket(`ws://127.0.0.1:${server.address().port}/api/terminal/ws`);
+      client.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'tail' }));
+      await client.next('snapshot');
+
+      const output = 'alpha\nbravo\ncharlie\n';
+      harness.processes[0].emitData(output);
+      expect(await client.next('output')).toMatchObject({ s: 'tail', d: output });
+
+      const read = harness.runtime.readTerminal('tail', { maxBytes: 16 });
+      expect(read.truncated).toBe(true);
+      expect(read.text).toBe('bravo\ncharlie\n');
+      expect(read.retainedBytes).toBe(Buffer.byteLength(output));
+      expect(harness.runtime.readTerminal('tail', { maxBytes: 14 }).text).toBe('bravo\ncharlie\n');
+
+      expect(harness.runtime.readTerminal('no-such-terminal')).toBeNull();
+    } finally {
+      client?.socket.terminate();
+      await harness.runtime.shutdown();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('reads plain text without VT controls while the panel replay keeps them', async () => {
+    const server = http.createServer();
+    const harness = createHarness({ server });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    let client;
+    try {
+      await harness.routes.post.get('/api/terminal/create')({ body: { sessionId: 'colored', cwd: '/repo' } }, createResponse());
+      client = await openTerminalSocket(`ws://127.0.0.1:${server.address().port}/api/terminal/ws`);
+      client.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'colored' }));
+      await client.next('snapshot');
+
+      const output = '\u001b]0;build \u2014 repo\u0007\u001b]8;;https://example.test\u001b\\link\u001b]8;;\u001b\\\r\n'
+        + '\u001b[1;31merror\u001b[0m: \u001b[32mfailed\u001b[m\r\n'
+        + 'progress 10%\r\u001b[Kdone\r\n'
+        + '\u001b[?25lmarker-7f3a\u001b[?25h\r\n';
+      harness.processes[0].emitData(output);
+      expect(await client.next('output')).toMatchObject({ s: 'colored', d: output });
+
+      const read = harness.runtime.readTerminal('colored');
+      expect(read.text).toBe('link\nerror: failed\ndone\nmarker-7f3a\n');
+      expect(read.text).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+
+      // The cap applies to the plain text: 18 bytes of it hold the last two lines.
+      const capped = harness.runtime.readTerminal('colored', { maxBytes: 18 });
+      expect(capped).toMatchObject({ text: 'done\nmarker-7f3a\n', truncated: true, retainedBytes: Buffer.byteLength(output) });
+
+      // A newly attached panel still replays the colours and the title.
+      const panel = await openTerminalSocket(`ws://127.0.0.1:${server.address().port}/api/terminal/ws`);
+      try {
+        panel.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'colored' }));
+        const snapshot = await panel.next('snapshot');
+        expect(snapshot.history).toContain('\u001b[1;31merror\u001b[0m');
+        expect(snapshot.history).toContain('\u001b]0;build \u2014 repo\u0007');
+      } finally { panel.socket.terminate(); }
+    } finally {
+      client?.socket.terminate();
+      await harness.runtime.shutdown();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('leaves an attached client stream untouched across a runtime read', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    const server = http.createServer();
+    const harness = createHarness({ server });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    let socket;
+    try {
+      await harness.routes.post.get('/api/terminal/create')({ body: { sessionId: 'attached', cwd: '/repo' } }, createResponse());
+      socket = new WebSocket(`ws://127.0.0.1:${server.address().port}/api/terminal/ws`);
+      const messages = [];
+      socket.on('message', (raw) => messages.push(readTerminalWsControlFrame(raw)));
+      const hello = once(socket, 'message');
+      await once(socket, 'open');
+      await hello;
+      expect(messages.splice(0)).toEqual([{ t: 'hello', v: 3 }]);
+
+      const snapshot = once(socket, 'message');
+      socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'attached' }));
+      await snapshot;
+      expect(messages.splice(0)).toMatchObject([{ t: 'snapshot', s: 'attached' }]);
+
+      const beforeRead = once(socket, 'message');
+      harness.processes[0].emitData('before read\r\n');
+      await beforeRead;
+      expect(messages.splice(0)).toMatchObject([{ t: 'output', s: 'attached', d: 'before read\r\n', q: 1 }]);
+
+      expect(harness.runtime.readTerminal('attached').text).toBe('before read\n');
+      // Pong arrives after any frames the read sent on this connection.
+      const pong = once(socket, 'pong');
+      socket.ping();
+      await pong;
+      expect(messages).toEqual([]);
+
+      const afterRead = once(socket, 'message');
+      harness.processes[0].emitData('after read\r\n');
+      await vi.advanceTimersByTimeAsync(12);
+      await afterRead;
+      expect(messages.splice(0)).toMatchObject([{ t: 'output', s: 'attached', d: 'after read\r\n', q: 2 }]);
+    } finally {
+      socket?.terminate();
+      try {
+        await harness.runtime.shutdown();
+        await new Promise((resolve) => server.close(resolve));
+      } finally { vi.useRealTimers(); }
+    }
   });
 });

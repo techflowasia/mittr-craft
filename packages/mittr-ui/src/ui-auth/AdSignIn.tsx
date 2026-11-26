@@ -82,7 +82,7 @@ export function LdapFormView({ username, password, busy, blocked, failure, usern
   return (
     <form onSubmit={onSubmit} className="w-full space-y-2">
       <div className="relative">
-        <Icon name="user" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
+        <Icon name="user" className="absolute inset-s-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
         <Input
           ref={usernameRef}
           type="text"
@@ -93,13 +93,13 @@ export function LdapFormView({ username, password, busy, blocked, failure, usern
           aria-describedby={described}
           value={username}
           onChange={(event) => { onUsername(event.target.value); }}
-          className="pl-10"
+          className="ps-10"
           disabled={busy}
         />
       </div>
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
-          <Icon name="lock" className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
+          <Icon name="lock" className="absolute inset-s-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60" />
           <Input
             ref={passwordRef}
             type="password"
@@ -111,7 +111,7 @@ export function LdapFormView({ username, password, busy, blocked, failure, usern
             aria-invalid={failure ? true : undefined}
             value={password}
             onChange={(event) => { onPassword(event.target.value); }}
-            className="pl-10"
+            className="ps-10"
             disabled={busy}
           />
         </div>

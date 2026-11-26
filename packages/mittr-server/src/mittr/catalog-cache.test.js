@@ -107,6 +107,12 @@ test('a failed write leaves the last catalog whole and throws', (t) => {
 
 const collection = (items, configured = true) => ({ configured, items });
 
+test('keepConfigured preserves configured models when the next catalog omits them', () => {
+  const next = { ...catalog, bundleVersion: 8, models: collection([], false) };
+  assert.deepEqual(keepConfigured(catalog, next).models, catalog.models);
+  assert.deepEqual(keepConfigured(catalog, { ...next, models: collection([]) }).models, collection([]));
+});
+
 test('keepConfigured takes the previous mcp and skills for a next collection that is not configured', () => {
   const previous = { ...catalog, mcp: collection([{ name: 'law' }]), skills: collection([{ name: 'notes' }]) };
   const next = { ...catalog, bundleVersion: 8 };

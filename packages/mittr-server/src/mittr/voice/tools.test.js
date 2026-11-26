@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import '../../../../web/scripts/register-server-sources.mjs';
 
-import { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
 import { MITTR_TOOLS, createMittrActionRegistry } from '../tools/registry.js';
 import { END_TOOL_DESCRIPTION } from './descriptions.js';
 import { END_TOOL, READ_ACTIONS, REFUSED_AFTER_READ, VOICE_END_TITLE, VOICE_SESSION_ID, VOICE_STEP_CAP, VOICE_STRIPPED_INPUTS, VOICE_TOOLS, VOICE_UPSTREAM_ACTIONS, buildVoiceTools, guardCall, voiceActionTitles } from './tools.js';
 
-const UPSTREAM = { control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS };
+const { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_SCHEDULE_ACTION_DEFINITIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } = await import('../../../../web/server/lib/openchamber-control/actions.js');
+
+const UPSTREAM = { control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, schedule: OPENCHAMBER_SCHEDULE_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS };
 const ALL_ON = { control: true, web: true, chrome: true, computer: true };
 
 const setUpRegistry = ({ chromeAvailable = true, doTask = true } = {}) => {

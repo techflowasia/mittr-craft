@@ -16,7 +16,7 @@ export function MyWorkButton(): React.ReactNode {
       <Tooltip>
         <TooltipTrigger asChild>
           <button type="button" className={FOOTER_BUTTON_CLASS} aria-label={label} onClick={() => setOpen(true)}>
-            <Icon name="briefcase" className="h-4.5 w-4.5" />
+            <Icon name="briefcase" className="h-4 w-4" />
           </button>
         </TooltipTrigger>
         <TooltipContent side="top" sideOffset={4}><p>{label}</p></TooltipContent>

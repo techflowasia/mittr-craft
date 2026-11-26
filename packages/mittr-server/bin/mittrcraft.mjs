@@ -3,10 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { prepareCliEnvironment, readProductEnv, RIPGREP_DOWNLOAD_NOTICE, RIPGREP_MISSING_MESSAGE, startsServer } from '../src/cli-env.js';
+import { prepareCliEnvironment, readProductEnv, RIPGREP_DOWNLOAD_NOTICE, RIPGREP_MISSING_MESSAGE, serverCliOf, startsServer } from '../src/cli-env.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const SERVER_CLI = path.resolve(here, '..', '..', 'web', 'bin', 'cli.js');
+const SERVER_CLI = serverCliOf(path.resolve(here, '..', '..', 'web'));
 const ENTRY = path.resolve(here, 'openchamber.mjs');
 const PLUGIN = path.resolve(here, '..', 'src', 'plugin.js');
 const PRODUCT = path.resolve(here, 'product-env.json');

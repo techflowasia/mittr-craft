@@ -1,0 +1,20 @@
+diff --git a/packages/ui/src/components/chat/SessionErrorNotice.tsx b/packages/ui/src/components/chat/SessionErrorNotice.tsx
+index 880e6c78d..2f8b58fab 100644
+--- a/packages/ui/src/components/chat/SessionErrorNotice.tsx
++++ b/packages/ui/src/components/chat/SessionErrorNotice.tsx
+@@ -11,6 +11,7 @@ import { responseBodyOf, summarizeOpenCodeError } from '@/sync/session-error-log
+ import { useDirectoryStore, useSessionStatus, useSessionStatusSnapshotReady } from '@/sync/sync-context';
+ import { refetchSessionMessages } from '@/sync/session-actions';
+ import { LongErrorText } from './LongErrorText';
++import { SessionRetry } from './SessionRetry';
+ import { findRecordedTurnError, readLastMessageState, scheduleUnansweredRechecks, type LastMessageState } from './sessionErrorNoticeState';
+ 
+ interface SessionErrorNoticeProps {
+@@ -207,6 +208,7 @@ export const SessionErrorNotice: React.FC<SessionErrorNoticeProps> = ({ sessionI
+           </div>
+         ) : null}
+         {responseBody ? <ErrorResponseDetails body={responseBody} className="ps-[1.375rem]" /> : null}
++        {unanswered && !reportedError && !storedFailureApplies ? <SessionRetry sessionId={sessionId} directory={directory} unanswered /> : null}
+       </div>
+     </div>
+   );

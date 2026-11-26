@@ -1,0 +1,121 @@
+diff --git a/packages/ui/src/components/chat/ModelControls.tsx b/packages/ui/src/components/chat/ModelControls.tsx
+index 34f6a65a8..75fe62729 100644
+--- a/packages/ui/src/components/chat/ModelControls.tsx
++++ b/packages/ui/src/components/chat/ModelControls.tsx
+@@ -27,6 +27,7 @@ import { Icon } from "@/components/icon/Icon";
+ import { Spinner } from "@/components/ui/spinner";
+ import { ArrowsMerge } from '@/components/icons/ArrowsMerge';
+ import type { IconName } from "@/components/icon/icons";
++import { ModelEntryStatusPill } from '@/components/model-picker/ModelEntryStatusPill';
+ import { ModelPickerCardBody, ModelPickerList, type ModelPickerEntry } from '@/components/model-picker/ModelPickerList';
+ import { useIsVSCodeRuntime } from '@/hooks/useRuntimeAPIs';
+ import { isDesktopShell } from '@/lib/desktop';
+@@ -51,6 +52,7 @@ import type { State } from '@/sync/types';
+ import { useSync } from '@/sync/use-sync';
+ import { useUIStore } from '@/stores/useUIStore';
+ import { useModelLists } from '@/hooks/useModelLists';
++import { useProductModelPicker } from '@/lib/product-plugins';
+ import { useIsTextTruncated } from '@/hooks/useIsTextTruncated';
+ import { formatEffortLabel, getCycledPrimaryAgentName, getEffortTone, getEffortToneClass, isPrimaryMode, type MobileControlsPanel } from './mobileControlsUtils';
+ import { getCurrentIntlLocale, isRightToLeft, useI18n } from '@/lib/i18n';
+@@ -537,6 +539,19 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
+     const closeMobileTooltip = React.useCallback(() => setMobileTooltipOpen(null), []);
+     const longPressTimerRef = React.useRef<NodeJS.Timeout | undefined>(undefined);
+     const agentMenuOpen = isModelSelectorOpen;
++    const productModelPicker = useProductModelPicker(agentMenuOpen || activeMobilePanel === 'model');
++    const isProductModelAllowed = React.useCallback(
++        (providerID: string) => productModelPicker.isProviderShown(providerID),
++        [productModelPicker],
++    );
++    const entryStatusOf = (entry: ModelPickerEntry) => productModelPicker.entryStatus({
++        providerID: entry.providerID,
++        modelID: entry.modelID,
++        name: getSharedModelDisplayName(entry.model, entry.modelID),
++    });
++    const isEntryBlocked = (entry: ModelPickerEntry) => entryStatusOf(entry)?.blocked === true;
++    const offeredAutoEntry = autoEntry && isProductModelAllowed(autoEntry.providerID) ? autoEntry : null;
++    const offersAddProvider = productModelPicker.offersAddProvider !== false;
+     const modelTriggerRef = React.useRef<HTMLDivElement>(null);
+     const agentTriggerRef = React.useRef<HTMLDivElement>(null);
+     const agentListRef = React.useRef<HTMLDivElement>(null);
+@@ -1800,8 +1815,14 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
+                     onSelect={(entry) => handleMobileModelApply(entry.providerID, entry.modelID)}
+                     labels={modelPickerLabels}
+                     selectedModel={currentProviderId && currentModelId ? { providerID: currentProviderId, modelID: currentModelId } : null}
+-                    leadingEntry={autoEntry}
+-                    searchAction={selection ? null : { label: t('chat.modelControls.addNewProvider'), icon: 'add', onSelect: openAddProviderSettings }}
++                    leadingEntry={offeredAutoEntry}
++                    searchAction={selection || !offersAddProvider ? null : { label: t('chat.modelControls.addNewProvider'), icon: 'add', onSelect: openAddProviderSettings }}
++                    isModelAllowed={isProductModelAllowed}
++                    isEntryBlocked={isEntryBlocked}
++                    renderRowEnd={(entry, state) => {
++                        const status = entryStatusOf(entry);
++                        return status ? <ModelEntryStatusPill status={status} isHighlighted={state.isHighlighted} /> : null;
++                    }}
+                     isFavorite={(entry) => isFavoriteModel(entry.providerID, entry.modelID)}
+                     onToggleFavorite={(entry) => toggleFavoriteModel(entry.providerID, entry.modelID)}
+                     onEntryDetails={(entry) => {
+@@ -1830,6 +1851,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
+         const favorite = isFavoriteModel(providerID, modelID);
+         const metadata = mergeModelMetadataWithLiveModel(providerID, model, getModelMetadata(providerID, modelID));
+         const providerName = auto ? null : providers.find((provider) => provider.id === providerID)?.name || providerID;
++        const detailsStatus = entryStatusOf(mobileDetailsEntry);
++        const detailsBlocked = detailsStatus?.blocked === true;
+         return (
+             <MobileOverlayPanel
+                 open
+@@ -1837,7 +1860,7 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
+                 title={getModelDisplayName(model)}
+                 footer={(
+                     <div className="flex flex-col gap-2">
+-                        <Button size="lg" className="w-full" onClick={() => handleMobileModelApply(providerID, modelID)}>
++                        <Button size="lg" className="w-full" onClick={() => handleMobileModelApply(providerID, modelID)} disabled={detailsBlocked} title={detailsStatus?.title}>
+                             {t('chat.modelControls.useModel')}
+                         </Button>
+                         {!auto ? (
+@@ -2150,6 +2173,18 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
+             );
+         };
+ 
++        const renderRowEnd = (entry: ModelPickerEntry, state: { isHighlighted: boolean; isSelected: boolean }) => {
++            const status = entryStatusOf(entry);
++            const thinkingSlot = renderThinkingSlot(entry, state);
++            if (!status) return thinkingSlot;
++            return (
++                <>
++                    <ModelEntryStatusPill status={status} isHighlighted={state.isHighlighted} />
++                    {thinkingSlot}
++                </>
++            );
++        };
++
+         return (
+             <Tooltip delayDuration={600}>
+                 {!isCompact ? (
+@@ -2227,8 +2262,8 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
+                                 onSelect={handleSharedModelSelect}
+                                 labels={modelPickerLabels}
+                                 selectedModel={currentProviderId && currentModelId ? { providerID: currentProviderId, modelID: currentModelId } : null}
+-                                leadingEntry={autoEntry}
+-                                searchAction={selection ? null : { label: t('chat.modelControls.addNewProvider'), icon: 'add', onSelect: openAddProviderSettings }}
++                                leadingEntry={offeredAutoEntry}
++                                searchAction={selection || !offersAddProvider ? null : { label: t('chat.modelControls.addNewProvider'), icon: 'add', onSelect: openAddProviderSettings }}
+                                 leadingAction={onRunInParallel ? {
+                                     label: t('chat.modelControls.runInParallel'),
+                                     icon: <ArrowsMerge className="h-3.5 w-3.5 flex-shrink-0" />,
+@@ -2238,12 +2273,14 @@ export const ModelControls: React.FC<ModelControlsProps> = ({
+                                     },
+                                 } : null}
+                                 hiddenModels={hiddenModels}
++                                isModelAllowed={isProductModelAllowed}
+                                 onActiveKeyDown={handleModelPickerKeyDown}
+                                 onActiveEntryChange={(entry) => { activeModelPickerEntryRef.current = entry; }}
+                                 onVariantKey={handleThinkingVariantKey}
+                                 isFavorite={(entry) => isFavoriteModel(entry.providerID, entry.modelID)}
+                                 onToggleFavorite={(entry) => toggleFavoriteModel(entry.providerID, entry.modelID)}
+-                                renderRowEnd={renderThinkingSlot}
++                                renderRowEnd={renderRowEnd}
++                                isEntryBlocked={isEntryBlocked}
+                                 renderVersion={modelPickerRenderVersion}
+                                 onReorderFavorite={(active, over) => reorderFavoriteModel(
+                                     active.providerID,

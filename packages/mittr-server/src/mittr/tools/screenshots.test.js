@@ -3,11 +3,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import '../../../../web/scripts/register-server-sources.mjs';
 
 import { MARKER_PNG, PROVEN_IMAGE_PART } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
-import { SCREENSHOT_DIRECTORY, writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { MittrToolError } from './registry.js';
 import { MAX_IMAGE_BYTES, attachableImage, fitsAttachment, imageContent, imageOf, readCapture, saveScreenshot } from './screenshots.js';
+
+const { SCREENSHOT_DIRECTORY, writeScreenshot } = await import('../../../../web/server/lib/openchamber-control/screenshots.js');
 
 const REFUSAL = 'That image is not a saved screenshot of this project';
 const PNG = Buffer.from(MARKER_PNG, 'base64');

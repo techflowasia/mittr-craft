@@ -1,73 +1,120 @@
 import React from 'react';
 import { Icon } from '@/components/icon/Icon';
+import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import type { SessionSidebarActivityKey } from './sessionSidebarRowModel';
+import { ACTIVITY_TITLE_KEY, isBuiltinActivityKey } from './sessionSidebarActivityLabels';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { TooltipLabelWithShortcut } from '@/components/ui/action-toolbar';
+import { formatShortcutForDisplay, getEffectiveShortcutCombo } from '@/lib/shortcuts';
+import { sessionEvents } from '@/lib/sessionEvents';
+import { useUIStore } from '@/stores/useUIStore';
 
-const ACTIVITY_ICON = { work: 'eye', chats: 'chat-4', 'active-now': 'history', timeline: 'folder' } as const;
-const ACTIVITY_TITLE_KEY = {
-  work: 'sessions.sidebar.work.title',
-  chats: 'sessions.sidebar.activity.chatsTitle',
-  'active-now': 'sessions.sidebar.activity.recentTitle',
-  timeline: 'sessions.sidebar.activity.timelineTitle',
-} as const;
+const AddProjectButton: React.FC = () => {
+  const { t } = useI18n();
+  const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
+  const label = t('sessions.sidebar.header.actions.addProject');
+  return <Tooltip>
+    <TooltipTrigger asChild>
+      <button
+        type="button"
+        onClick={(event) => { event.stopPropagation(); sessionEvents.requestDirectoryDialog(); }}
+        className="absolute inset-e-0.5 top-1/2 z-10 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+        aria-label={label}
+      >
+        <Icon name="add" className="h-4 w-4" />
+      </button>
+    </TooltipTrigger>
+    <TooltipContent side="top">
+      <TooltipLabelWithShortcut label={label} shortcut={formatShortcutForDisplay(getEffectiveShortcutCombo('add_project', shortcutOverrides), '')} />
+    </TooltipContent>
+  </Tooltip>;
+};
+
+const PreviewMark: React.FC = () => {
+  const { t } = useI18n();
+  return <span className="ms-1 rounded-full bg-interactive-selection px-1.5 typography-micro text-interactive-selection-foreground">
+    {t('sessions.sidebar.sections.previewMark')}
+  </span>;
+};
+
 
 export const SessionSidebarActivityHeader: React.FC<{
   activityKey: SessionSidebarActivityKey;
+  label?: string;
+  preview?: boolean;
+  loading?: boolean;
   collapsed: boolean;
-  forceExpanded: boolean;
   alwaysShowActions: boolean;
   onToggle: () => void;
   onNewChat: () => void;
-  /** Timeline zones drop the leading icon and take a taller band; the
-      collapse chevron still appears on hover in the icon slot. */
-  timelineView?: boolean;
-}> = ({ activityKey, collapsed, forceExpanded, alwaysShowActions, onToggle, onNewChat, timelineView = false }) => {
+}> = ({ activityKey, label, preview = false, loading = false, collapsed, alwaysShowActions, onToggle, onNewChat }) => {
   const { t } = useI18n();
   const chats = activityKey === 'chats';
-  if (timelineView) {
-    // Timeline zone header: no icon, text flush with the rows' left edge, and
-    // an always-visible chevron right after the title showing collapse state.
-    return <div className="relative group/chats -mr-2">
-      <button
-        type="button"
-        onClick={forceExpanded ? undefined : onToggle}
-        disabled={forceExpanded}
-        className={cn('group flex w-full items-center gap-1 py-2 pl-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50', 'pr-3.5')}
-        aria-expanded={!collapsed}
-      >
-        <span className="typography-ui-label font-semibold lowercase text-foreground">
-          {t(ACTIVITY_TITLE_KEY[activityKey])}
-        </span>
-        {!forceExpanded ? <Icon name={collapsed ? 'arrow-right-s' : 'arrow-down-s'} className="h-3.5 w-3.5 text-muted-foreground" /> : null}
-      </button>
-    </div>;
-  }
-  return <div className="relative group/chats -ml-2.5 -mr-2">
+  const timeline = activityKey === 'timeline';
+  return <div className="relative group/chats -ms-2.5 -me-2">
     <button
       type="button"
-      onClick={forceExpanded ? undefined : onToggle}
-      disabled={forceExpanded}
-      className={cn('group flex w-full items-center gap-1.5 py-1 pl-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50', chats ? 'pr-10' : 'pr-3.5')}
+      onClick={onToggle}
+      data-row-drag=""
+      className={cn('group flex w-full items-center gap-1 py-1 ps-4 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50', chats || timeline ? 'pe-10' : 'pe-3.5')}
       aria-expanded={!collapsed}
     >
-      <span className="inline-flex h-3.5 w-3.5 items-center justify-center">
-        <Icon name={ACTIVITY_ICON[activityKey]} className={cn('h-3.5 w-3.5 text-muted-foreground/80', !forceExpanded && 'group-hover:hidden')} />
-        {!forceExpanded ? <span className="hidden h-3.5 w-3.5 items-center justify-center text-muted-foreground group-hover:inline-flex">
-          <Icon name={collapsed ? 'arrow-right-s' : 'arrow-down-s'} className="h-3.5 w-3.5" />
-        </span> : null}
+      <span className="min-w-0 truncate typography-ui-label font-medium text-muted-foreground" dir="auto">
+        {label ?? (isBuiltinActivityKey(activityKey) ? t(ACTIVITY_TITLE_KEY[activityKey]) : '')}
       </span>
-      <span className="typography-ui-label font-semibold lowercase text-foreground">
-        {t(ACTIVITY_TITLE_KEY[activityKey])}
-      </span>
+      {preview ? <PreviewMark /> : null}
+      <Icon
+        name={collapsed ? 'arrow-right-s' : 'arrow-down-s'}
+        className={cn(
+          'h-3.5 w-3.5 text-muted-foreground',
+          collapsed || alwaysShowActions ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
+        )}
+      />
+      {loading ? <Spinner className="size-3 text-muted-foreground" aria-label={t('sessions.sidebar.group.empty.loadingSessions')} /> : null}
     </button>
     {chats ? <button
       type="button"
       onClick={(event) => { event.stopPropagation(); onNewChat(); }}
-      className={cn('absolute right-0.5 top-1/2 z-10 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50', alwaysShowActions ? 'opacity-100' : 'opacity-0 pointer-events-none group-hover/chats:opacity-100 group-hover/chats:pointer-events-auto group-focus-within/chats:opacity-100 group-focus-within/chats:pointer-events-auto')}
+      className={cn('absolute inset-e-0.5 top-1/2 z-10 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50', alwaysShowActions ? 'opacity-100' : 'opacity-0 pointer-events-none group-hover/chats:opacity-100 group-hover/chats:pointer-events-auto group-has-[:focus-visible]/chats:opacity-100 group-has-[:focus-visible]/chats:pointer-events-auto')}
       aria-label={t('sessions.sidebar.header.actions.newSession')}
     >
       <Icon name="add" className="h-4 w-4" />
     </button> : null}
+    {timeline ? <AddProjectButton /> : null}
+  </div>;
+};
+
+export const SessionSidebarCaption: React.FC<{
+  label?: string;
+  preview?: boolean;
+  collapsed: boolean;
+  alwaysShowActions: boolean;
+  addsProjects: boolean;
+  onToggle: () => void;
+}> = ({ label, preview = false, collapsed, alwaysShowActions, addsProjects, onToggle }) => {
+  const { t } = useI18n();
+  return <div className="relative -ms-2.5 -me-2">
+    <button
+      type="button"
+      onClick={onToggle}
+      data-row-drag=""
+      className={cn('group flex w-full items-center gap-1 py-1 ps-4 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50', addsProjects ? 'pe-10' : 'pe-3.5')}
+      aria-expanded={!collapsed}
+    >
+      <span className="min-w-0 truncate typography-ui-label font-medium text-muted-foreground" dir="auto">
+        {label ?? t('sessions.sidebar.activity.projectsTitle')}
+      </span>
+      {preview ? <PreviewMark /> : null}
+      <Icon
+        name={collapsed ? 'arrow-right-s' : 'arrow-down-s'}
+        className={cn(
+          'h-3.5 w-3.5 text-muted-foreground',
+          collapsed || alwaysShowActions ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
+        )}
+      />
+    </button>
+    {addsProjects ? <AddProjectButton /> : null}
   </div>;
 };

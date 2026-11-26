@@ -21,16 +21,30 @@ import type {
   GitRemote,
   GitRemoteComparison,
   GitHubPullRequest,
-  GitHubChecksSummary,
+  PullRequestStack,
+  CISummary,
 } from '@/lib/api/types';
 import { useI18n } from '@/lib/i18n';
 import { identityDisplayName } from '@/lib/source-control/identity';
 import { cn } from '@/lib/utils';
 import { describeIdentityApplicability, type IdentityApplicability } from '@/lib/source-control/applyIdentity';
 import { useDeviceInfo } from '@/lib/device';
+import { useIsContributorWorktree } from '@/hooks/useIsContributorWorktree';
 import { changeRequestCopy } from '@/lib/source-control/changeRequestCopy';
-import { formatChangeRequestReference } from '@/lib/source-control/identity';
-import type { SourceControlProvider } from '@/lib/source-control/types';
+import { defaultSourceControlIdentities } from '@/lib/source-control/identity';
+import { formatChangeRequestLabel } from '@/lib/source-control/providers/terminology';
+import { useSourceControlDescriptorOf, useSourceControlProviderRegistry, useSourceControlProviders } from '@/lib/source-control/providers/registry';
+import { ProviderIcon } from '@/components/sourceControl/ProviderIcon';
+import { prVisualStateOf } from '@/lib/source-control/prVisualState';
+import { ContextPanelHeaderToolbar } from '@/components/layout/contextPanelHeaderSlot';
+import { useInContextPanelHeader } from '@/components/layout/contextPanelHeaderSlotContext';
+import { repositoryLinkFromRemotes } from '@/lib/source-control/repositoryUrl';
+import { useSourceControlAuthStore } from '@/stores/useSourceControlAuthStore';
+import { openExternalUrl } from '@/lib/url';
+import { useToolbarFit } from '@/components/views/useDiffToolbarFit';
+import { GIT_PANEL_HEADER_FIT } from './gitPanelHeaderFit';
+import { SpaceApplyButton } from '@/components/session/spaces/SpaceApplyButton';
+import { isSpaceDirectory } from '@/lib/spaces/space-route';
 
 type SyncAction = 'fetch' | 'pull' | 'sync' | 'publish' | null;
 
@@ -57,11 +71,9 @@ interface GitHeaderProps {
   availableIdentities: GitIdentityProfile[];
   onSelectIdentity: (profile: GitIdentityProfile) => void;
   isApplyingIdentity: boolean;
-  /** What the binding cannot currently do, shown beside the identity it belongs to. */
   identityAttention?: string | null;
   identityApplicability?: (identity: GitIdentityProfile) => IdentityApplicability;
   onConfigureRepository?: () => void;
-  /** Called when the identity menu opens, so connected accounts can be re-read before choosing. */
   onIdentityMenuOpen?: () => void;
   isWorktreeMode: boolean;
   onOpenHistory?: () => void;
@@ -70,13 +82,10 @@ interface GitHeaderProps {
   onOpenUpdateBranch?: () => void;
   onOpenReintegrateCommits?: () => void;
   pullRequest?: GitHubPullRequest | null;
-  /** Whose change request `pullRequest` is; GitLab's reads `!N` and "merge request". */
-  pullRequestProvider?: SourceControlProvider | null;
-  prChecks?: GitHubChecksSummary | null;
+  pullRequestProvider?: string | null;
+  prChecks?: CISummary | null;
+  pullRequestStack?: PullRequestStack | null;
   onOpenPullRequest?: () => void;
-  // Nested repository picker: shown when the Git tab operates on a repository
-  // nested inside a non-repository root. Options are absolute repository
-  // paths; `repositoryRoot` is the root those paths are relative to.
   repositoryOptions?: string[];
   selectedRepository?: string | null;
   onSelectRepository?: (repository: string) => void;
@@ -92,9 +101,6 @@ const IDENTITY_ICON_MAP: Record<string, IconName> = {
   heart: 'heart',
   user: 'user-3',
   fingerprint: 'fingerprint',
-  // Identities made from a connected account carry the provider's mark.
-  github: 'github',
-  gitlab: 'gitlab',
 };
 
 const IDENTITY_COLOR_MAP: Record<string, string> = {
@@ -119,15 +125,26 @@ interface IdentityIconProps {
   icon?: string | null;
   className?: string;
   colorToken?: string | null;
+  quiet?: boolean;
 }
 
-const IdentityIcon: React.FC<IdentityIconProps> = ({ icon, className, colorToken }) => {
-  const iconName = IDENTITY_ICON_MAP[icon ?? 'branch'] ?? 'user-3';
+const IdentityIcon: React.FC<IdentityIconProps> = ({ icon, className, colorToken, quiet = false }) => {
+  const providers = useSourceControlProviderRegistry((state) => state.byId);
+  const iconName = IDENTITY_ICON_MAP[icon ?? 'branch'];
+  const provider = !iconName && icon ? providers.get(icon) : undefined;
+  const style = quiet ? undefined : { color: getIdentityColor(colorToken) };
+  if (provider) {
+    return (
+      <span className="inline-flex shrink-0" style={style}>
+        <ProviderIcon descriptor={provider} className={className} />
+      </span>
+    );
+  }
   return (
     <Icon
-      name={iconName}
+      name={iconName ?? 'user-3'}
       className={className}
-      style={{ color: getIdentityColor(colorToken) }}
+      style={style}
     />
   );
 };
@@ -138,27 +155,13 @@ interface IdentityDropdownProps {
   onSelect: (profile: GitIdentityProfile) => void;
   isApplying: boolean;
   iconOnly?: boolean;
-  /**
-   * Whether the repository's binding is doing what its identity says. Shown on
-   * the button because the identity is the only thing naming it now: an
-   * account that was revoked or a configuration changed underneath has to be
-   * visible somewhere, and here it sits beside what it is about.
-   */
   attention?: string | null;
-  /** Opens what an identity does not carry: auxiliary grants, agent Git, reset. */
   onConfigure?: () => void;
-  /**
-   * Whether each identity can serve this repository's remote. One that cannot
-   * — an account on another instance, a transport that cannot reach the
-   * address — stays listed with the reason, so the person sees why it is not
-   * offered rather than wondering where it went.
-   */
   applicability?: (identity: GitIdentityProfile) => IdentityApplicability;
-  /** Lets a form give the trigger a field's width and border; the panel keeps its ghost button. */
   triggerClassName?: string;
   menuAlign?: 'start' | 'end';
-  /** Called when the menu opens, so connected accounts can be re-read before choosing. */
   onOpen?: () => void;
+  quiet?: boolean;
 }
 
 export const IdentityDropdown: React.FC<IdentityDropdownProps> = ({
@@ -173,6 +176,7 @@ export const IdentityDropdown: React.FC<IdentityDropdownProps> = ({
   triggerClassName,
   menuAlign = 'end',
   onOpen,
+  quiet = false,
 }) => {
   const { t } = useI18n();
   const isDisabled = isApplying || identities.length === 0;
@@ -185,8 +189,8 @@ export const IdentityDropdown: React.FC<IdentityDropdownProps> = ({
             <Button
               variant="ghost"
               size="sm"
-              className={cn('h-8 min-w-0 max-w-[15rem] justify-start gap-1.5 px-2 py-1 typography-ui-label', triggerClassName)}
-              style={{ color: getIdentityColor(activeProfile?.color) }}
+              className={cn('min-w-0 max-w-[15rem] justify-start gap-1.5 px-2 py-1 typography-ui-label', triggerClassName)}
+              style={quiet ? undefined : { color: getIdentityColor(activeProfile?.color) }}
               disabled={isDisabled}
               aria-label={t('gitView.header.identityTooltip')}
             >
@@ -196,11 +200,12 @@ export const IdentityDropdown: React.FC<IdentityDropdownProps> = ({
                 <IdentityIcon
                   icon={activeProfile?.icon}
                   colorToken={activeProfile?.color}
-                  className="size-4"
+                  quiet={quiet}
+                  className={cn('size-4', quiet && 'text-muted-foreground')}
                 />
               )}
               {!iconOnly && (
-                <span className="git-identity-label min-w-0 flex-1 truncate text-left">
+                <span className="git-identity-label min-w-0 flex-1 truncate text-start">
                   {activeProfile ? identityDisplayName(activeProfile, t) : t('gitView.header.noIdentity')}
                 </span>
               )}
@@ -215,9 +220,6 @@ export const IdentityDropdown: React.FC<IdentityDropdownProps> = ({
           {attention ?? (iconOnly && activeProfile ? identityDisplayName(activeProfile, t) : t('gitView.header.identityTooltip'))}
         </TooltipContent>
       </Tooltip>
-      {/* The list grows with the person's identities, and a trigger low on a
-          form leaves little room beneath it, so the menu scrolls inside
-          whatever height it is given rather than running past its own edge. */}
       <DropdownMenuContent align={menuAlign} className="w-64 overflow-y-auto">
         {identities.length === 0 ? (
           <div className="px-2 py-1.5">
@@ -247,7 +249,7 @@ export const IdentityDropdown: React.FC<IdentityDropdownProps> = ({
                     </span>
                   </span>
                   {isSelected ? (
-                    <Icon name="check" className="ml-auto size-4 text-foreground" />
+                    <Icon name="check" className="ms-auto size-4 text-foreground" />
                   ) : null}
                 </span>
               </DropdownMenuItem>
@@ -289,7 +291,7 @@ const UpstreamStatusPill: React.FC<UpstreamStatusPillProps> = ({
   return (
     <Tooltip delayDuration={tooltipDelayMs}>
       <TooltipTrigger asChild>
-        <div className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-md border border-[var(--interactive-border)] bg-[var(--surface-elevated)] px-2 typography-micro text-muted-foreground">
+        <div className="inline-flex h-7 max-w-full items-center gap-1.5 rounded-md border border-[var(--interactive-border)] bg-[var(--surface-elevated)] px-2 typography-micro text-muted-foreground">
           <Icon name="git-branch" className="size-3.5 shrink-0" />
           <span className="min-w-0 truncate text-foreground/80">{target}</span>
           {isSynced ? (
@@ -347,23 +349,38 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
   pullRequest,
   pullRequestProvider,
   prChecks,
+  pullRequestStack,
   onOpenPullRequest,
   repositoryOptions,
   selectedRepository,
   onSelectRepository,
   repositoryRoot,
 }) => {
+  const inPanelHeader = useInContextPanelHeader();
   const { t } = useI18n();
   const { isMobile } = useDeviceInfo();
+  const choosesPushDestination = useIsContributorWorktree(directory);
+  const knownIdentities = useSourceControlAuthStore((state) => state.identities);
+  const providers = useSourceControlProviders();
+  const descriptorOf = useSourceControlDescriptorOf();
+  const panelToolbarRef = React.useRef<HTMLDivElement | null>(null);
+  useToolbarFit(panelToolbarRef, GIT_PANEL_HEADER_FIT);
   if (!status) {
     return null;
   }
 
   const repositoryOptionsForPicker = (repositoryOptions ?? []).filter(Boolean);
 
+  const repositoryLink = repositoryLinkFromRemotes(remotes, [...knownIdentities, ...defaultSourceControlIdentities(providers)], providers);
+  const repositoryDescriptor = repositoryLink ? descriptorOf(repositoryLink.provider) : null;
+  const pullRequestDescriptor = descriptorOf(pullRequestProvider);
+  const hasRepositoryViewItems = Boolean(
+    onOpenHistory || onOpenGraph || onOpenStashes || onOpenUpdateBranch || onOpenReintegrateCommits
+  );
+
   const managementButtons = (
     <div className="flex items-center gap-1 shrink-0">
-      {onOpenHistory || onOpenGraph || onOpenStashes || onOpenUpdateBranch ? (
+      {hasRepositoryViewItems || repositoryLink ? (
         <DropdownMenu>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -371,7 +388,7 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-8 w-8 px-0"
+                  className="w-7 px-0"
                   aria-label={t('gitView.header.repositoryViews')}
                 >
                   <Icon name="more-fill" className="size-4" />
@@ -411,6 +428,15 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
                 {t('gitView.integrate.title')}
               </DropdownMenuItem>
             ) : null}
+            {repositoryLink ? (
+              <>
+                {hasRepositoryViewItems ? <DropdownMenuSeparator /> : null}
+                <DropdownMenuItem onSelect={() => { void openExternalUrl(repositoryLink.url); }}>
+                  {repositoryDescriptor ? <ProviderIcon descriptor={repositoryDescriptor} className="size-4" /> : null}
+                  {t('gitView.header.openRepository', { provider: repositoryDescriptor?.label ?? repositoryLink.provider })}
+                </DropdownMenuItem>
+              </>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
       ) : null}
@@ -426,20 +452,18 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
     : null;
 
   const prVisualState = pullRequest
-    ? pullRequest.state === 'merged'
-      ? 'merged'
-      : pullRequest.state === 'closed'
-        ? 'closed'
-        : pullRequest.draft
-          ? 'draft'
-          // A `blocked` merge state alone (usually a missing review) keeps
-          // the open colour; orange is for failed checks and conflicts.
-          : prChecks?.state === 'failure'
-            || pullRequest.mergeable === false
-            || pullRequest.mergeableState === 'dirty'
-            ? 'blocked'
-            : 'open'
+    ? prVisualStateOf({
+      state: pullRequest.state,
+      draft: pullRequest.draft,
+      checksState: prChecks?.state,
+      mergeable: pullRequest.mergeable,
+      mergeableState: pullRequest.mergeableState,
+    })
     : null;
+
+  const stackPosition = pullRequest && pullRequestStack
+    ? pullRequestStack.layers.findIndex((layer) => layer.number === pullRequest.number) + 1
+    : 0;
 
   const prChip = pullRequest && onOpenPullRequest ? (
     <Tooltip>
@@ -448,14 +472,20 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
           variant="ghost"
           size="sm"
           onClick={onOpenPullRequest}
-          className="h-8 gap-1.5 px-2 typography-micro"
+          className="gap-1.5 px-2 typography-micro"
         >
           <Icon
             name="git-pull-request"
             className="size-3.5"
             style={{ color: `var(--pr-${prVisualState})` }}
           />
-          <span className="tabular-nums text-foreground/80">{pullRequestProvider === 'gitlab' ? formatChangeRequestReference('gitlab', pullRequest.number) : t('gitView.pr.numberLabel', { number: pullRequest.number })}</span>
+          <span className="tabular-nums text-foreground/80">{formatChangeRequestLabel(pullRequestDescriptor, pullRequest.number)}</span>
+          {pullRequestStack && stackPosition > 0 ? (
+            <span className="inline-flex items-center gap-0.5 tabular-nums text-muted-foreground">
+              <Icon name="stack" className="size-3" />
+              {t('stacks.preview.position', { position: stackPosition, size: pullRequestStack.layers.length })}
+            </span>
+          ) : null}
           {prChecksColor ? (
             <span
               aria-hidden="true"
@@ -465,11 +495,11 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
           ) : null}
         </Button>
       </TooltipTrigger>
-      <TooltipContent sideOffset={8}>{t(changeRequestCopy('gitView.header.openPullRequest', pullRequestProvider))}</TooltipContent>
+      <TooltipContent sideOffset={8}>{t(changeRequestCopy('gitView.header.openPullRequest', pullRequestDescriptor.terminology.changeRequest))}</TooltipContent>
     </Tooltip>
   ) : null;
 
-  const syncButtons = (
+  const syncButtons = isSpaceDirectory(directory) ? null : (
     <SyncActions
       syncAction={syncAction}
       remotes={remotes}
@@ -490,6 +520,7 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
       trackingRemoteName={status.tracking?.split('/')[0]}
       trackingBranch={status.tracking}
       hasUncommittedChanges={hasUncommittedTrackedChanges(status.files)}
+      choosesPushDestination={choosesPushDestination}
     />
   );
 
@@ -501,7 +532,6 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
     />
   ) : null;
 
-  // The header keeps the identity to its icon; the menu and the tooltip name it.
   const identityControl = (
     <IdentityDropdown
       iconOnly
@@ -516,37 +546,64 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
     />
   );
 
+  const branchControls = (
+    <div data-git-header-pickers="" className="flex min-w-0 flex-1 items-center gap-1">
+      {isWorktreeMode && !isMobile ? (
+        <WorktreeBranchDisplay
+          currentBranch={status.current}
+          onRename={onRenameBranch}
+        />
+      ) : (
+        <BranchSelector
+          directory={directory}
+          currentBranch={status.current}
+          localBranches={localBranches}
+          remoteBranches={remoteBranches}
+          branchInfo={branchInfo}
+          currentBranchAhead={status.ahead}
+          onCheckout={onCheckoutBranch}
+          onCreate={onCreateBranch}
+          switchBlockedNotice={(status.files?.length ?? 0) > 0 ? t('gitView.branch.switchBlockedNotice') : null}
+        />
+      )}
+      {repositoryOptionsForPicker.length > 0 && onSelectRepository ? (
+        <NestedRepoPicker
+          repositories={repositoryOptionsForPicker}
+          selectedRepository={selectedRepository ?? null}
+          onSelectRepository={onSelectRepository}
+          repositoryRoot={repositoryRoot}
+        />
+      ) : null}
+    </div>
+  );
+
+  if (inPanelHeader) {
+    return (
+      <>
+        <ContextPanelHeaderToolbar>
+          <div ref={panelToolbarRef} className="flex min-w-0 flex-1 items-center gap-2 pe-1">
+            {branchControls}
+            <SpaceApplyButton directory={directory} />
+            {managementButtons}
+            <div className="shrink-0">{syncButtons}</div>
+          </div>
+        </ContextPanelHeaderToolbar>
+        <header className="flex h-10 min-w-0 items-center gap-2 px-3">
+          <div className="shrink-0">{identityControl}</div>
+          {prChip ? <div className="shrink-0">{prChip}</div> : null}
+          <div className="min-w-0 flex-1" />
+          {upstreamStatusPill ? (
+            <div className="min-w-0 shrink">{upstreamStatusPill}</div>
+          ) : null}
+        </header>
+      </>
+    );
+  }
+
   return (
     <header className="@container/git-header px-3 py-2 bg-transparent">
       <div className="flex items-center justify-between gap-2 min-w-0">
-        <div className="flex min-w-0 flex-1 items-center gap-1">
-          {isWorktreeMode && !isMobile ? (
-            <WorktreeBranchDisplay
-              currentBranch={status.current}
-              onRename={onRenameBranch}
-            />
-          ) : (
-            <BranchSelector
-              directory={directory}
-              currentBranch={status.current}
-              localBranches={localBranches}
-              remoteBranches={remoteBranches}
-              branchInfo={branchInfo}
-              currentBranchAhead={status.ahead}
-              onCheckout={onCheckoutBranch}
-              onCreate={onCreateBranch}
-              switchBlockedNotice={(status.files?.length ?? 0) > 0 ? t('gitView.branch.switchBlockedNotice') : null}
-            />
-          )}
-          {repositoryOptionsForPicker.length > 0 && onSelectRepository ? (
-            <NestedRepoPicker
-              repositories={repositoryOptionsForPicker}
-              selectedRepository={selectedRepository ?? null}
-              onSelectRepository={onSelectRepository}
-              repositoryRoot={repositoryRoot}
-            />
-          ) : null}
-        </div>
+        {branchControls}
         <div className="flex shrink-0 items-center gap-1">
           {identityControl}
         </div>
@@ -558,6 +615,7 @@ export const GitHeader: React.FC<GitHeaderProps> = ({
         {upstreamStatusPill ? (
           <div className="min-w-0 shrink">{upstreamStatusPill}</div>
         ) : null}
+        <SpaceApplyButton directory={directory} />
         {managementButtons}
         <div className="shrink-0">{syncButtons}</div>
       </div>

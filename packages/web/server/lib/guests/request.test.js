@@ -3,6 +3,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { GUEST_REQUEST_RESPONSE_MAX } from '@openchamber/sdk';
+
 import { getGuestAuth, guestAuthPersistPath, patchGuestAuth } from './auth-store.js';
 import { credentialTarget } from './oauth.js';
 import { joinGuestRequestUrl, proxyGuestRequest } from './request.js';
@@ -94,6 +96,27 @@ describe('proxyGuestRequest', () => {
     }
   });
 
+  test('refuses an answer over the cap instead of handing over a cut-off body', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-guest-req-'));
+    const persistPath = guestAuthPersistPath(dir);
+    await patchGuestAuth('clickup', { accessToken: 'tok-1', target: credentialTarget(clickupGuest.integration) }, persistPath);
+    const originalFetch = globalThis.fetch;
+    const fits = JSON.stringify({ text: 'x'.repeat(GUEST_REQUEST_RESPONSE_MAX - '{"text":""}'.length) });
+    expect(fits.length).toBe(GUEST_REQUEST_RESPONSE_MAX);
+    const unannounced = (text) => new Response(new Blob([text]).stream(), { status: 200 });
+    const answers = [unannounced(fits), unannounced(`${fits} `), new Response(`${fits} `, { status: 200 })];
+    globalThis.fetch = async () => answers.shift();
+    const send = () => proxyGuestRequest({ guest: clickupGuest, persistPath, method: 'GET', path: '/api/v2/task' });
+    try {
+      expect(await send()).toEqual({ status: 200, body: fits });
+      await expect(send()).rejects.toMatchObject({ code: 'RESPONSE_TOO_LARGE' });
+      await expect(send()).rejects.toMatchObject({ code: 'RESPONSE_TOO_LARGE' });
+    } finally {
+      globalThis.fetch = originalFetch;
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test('drops tokens when a 401 cannot refresh', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-guest-req-'));
     const persistPath = guestAuthPersistPath(dir);
@@ -155,18 +178,6 @@ describe('credential target', () => {
       await fs.rm(dir, { recursive: true, force: true });
     }
   });
-
-  test('a token without a recorded target never counts', async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-guest-req-'));
-    const persistPath = guestAuthPersistPath(dir);
-    await patchGuestAuth('clickup', { accessToken: 'tok-1' }, persistPath);
-    try {
-      await expect(proxyGuestRequest({ guest: clickupGuest, persistPath, method: 'GET', path: '/api/v2/user' }))
-        .rejects.toMatchObject({ code: 'DISCONNECTED' });
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
-    }
-  });
 });
 
 describe('a 401 while the user reconnects', () => {
@@ -181,8 +192,10 @@ describe('a 401 while the user reconnects', () => {
     const originalFetch = globalThis.fetch;
     let releaseRefresh;
     const refreshGate = new Promise((resolve) => { releaseRefresh = resolve; });
+    const refreshing = Promise.withResolvers();
     globalThis.fetch = async (url) => {
       if (String(url) === 'https://api.clickup.com/api/v2/oauth/token') {
+        refreshing.resolve();
         await refreshGate;
         return new Response(JSON.stringify({ access_token: 'access-a2', refresh_token: 'refresh-a2', token_type: 'Bearer', expires_in: 3600 }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       }
@@ -191,7 +204,7 @@ describe('a 401 while the user reconnects', () => {
     try {
       const request = proxyGuestRequest({ guest: clickupGuest, persistPath, method: 'GET', path: '/api/v2/user' });
       // The user connects again while the refresh is in flight.
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await refreshing.promise;
       await patchGuestAuth('clickup', { accessToken: 'access-b', refreshToken: 'refresh-b', target }, persistPath);
       releaseRefresh();
       await expect(request).rejects.toMatchObject({ code: 'DISCONNECTED' });

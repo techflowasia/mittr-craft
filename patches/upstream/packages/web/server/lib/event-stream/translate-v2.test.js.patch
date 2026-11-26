@@ -1,0 +1,28 @@
+diff --git a/packages/web/server/lib/event-stream/translate-v2.test.js b/packages/web/server/lib/event-stream/translate-v2.test.js
+index 006467f32..8e581d615 100644
+--- a/packages/web/server/lib/event-stream/translate-v2.test.js
++++ b/packages/web/server/lib/event-stream/translate-v2.test.js
+@@ -166,6 +166,23 @@ describe('translateWireEvent', () => {
+     });
+   });
+ 
++  for (const type of ['session.step.failed', 'session.execution.failed']) {
++    test(`${type} preserves the exact structured response body`, () => {
++      const body = ' { "error": { "code": "response_length_limit" } }\n';
++      const events = translateWireEvent(wire(type, {
++        sessionID: 's1', assistantMessageID: 'msg_2',
++        error: { type: 'provider.error', message: 'limited', status: 502, response: { body } },
++      }));
++      const error = type === 'session.step.failed'
++        ? events[0].properties.info.error
++        : events[1].properties.error;
++      expect(error).toEqual({
++        name: 'provider.error', type: 'provider.error', message: 'limited', status: 502,
++        response: { body: ' { "error": { "code": "response_length_limit" } }\n' },
++      });
++    });
++  }
++
+   test('a passed-through session.status is kept as is', () => {
+     const [event] = translateWireEvent(wire('session.status', { sessionID: 's1', status: { type: 'retry', attempt: 2 } }));
+     expect(event.properties.status).toEqual({ type: 'retry', attempt: 2 });

@@ -1,0 +1,33 @@
+diff --git a/packages/web/server/DOCUMENTATION.md b/packages/web/server/DOCUMENTATION.md
+index d3dcd3d83..91c57d06b 100644
+--- a/packages/web/server/DOCUMENTATION.md
++++ b/packages/web/server/DOCUMENTATION.md
+@@ -108,6 +108,28 @@ it imports.
+   and records already read. User takeover can change a child's parent status;
+   bounded eviction returns it to unknown, so stale ancestry is not permanent.
+ 
++## Server plugins
++
++A build that ships its own server behaviour names in-process plugins in `OPENCHAMBER_SERVER_PLUGINS`, a JSON array of absolute file paths read by `readServerPluginSpecifiers`; unset or blank means none, and without the variable nothing loads. Each plugin is an ESM file whose default export receives the server's context once at startup (`app`, `express`, `dataDir`, `logger`, and handles on the server, its settings, events, the managed OpenCode, git and shutdown, built in `runtime.ts`) and may mount routes on `app`. It may return:
++
++- `engineEnv()`: variables added to the managed OpenCode's environment on every start.
++- `managedConfig()`: an OpenCode config fragment written into the managed config layer beside OpenChamber's own plugins, read again on every start and every managed-config refresh.
++- `goalContinuation({ sessionId, directory, goalId, resumed })`: asked by goal mode (`lib/session-goal/`) right before each automatic continuation, after the progress check decided to continue and before the turn is counted. It may answer `{ block }` to settle the goal as `blocked` with that text as the reason, through the goal's usual settlement notification, or `{ note }` to add text to the continuation prompt after the budget lines. Plugins are asked in set-up order; the first block wins, notes are joined, and a plugin whose answer throws or is not text is logged and left out. The runtime gives the whole review 30 seconds (`lib/session-goal/continuation-review.ts`); a review that fails or takes longer changes nothing, and a goal the check settles is never reviewed. At most one review runs per session: while an earlier one that timed out is still running, the next continuation goes out without asking again. Before a block settles the goal, the runtime reads it again and drops the block when the goal changed during the review (another goal, no longer active, or resumed). Without a plugin that answers, the prompt and the loop are unchanged. Besides the progress check and the hard stops in the goal module's documentation, this block is the only way a goal settles; the working agent still has no channel to settle its own goal. The review is a plugin hook rather than loop detection in the runtime because what counts as a loop depends on a build's tools, models and folders, and a build may want to save work before each nudge.
++- `goalEnded({ sessionId, directory, reason })`: told when a goal completes or is cleared (`reason` is `complete` or `cleared`; `directory` may be empty when the change did not name one). Every plugin is told; one that throws is logged. A blocked or paused goal is not an ending.
++- `neverAutoAnswer(permission)`: true for a permission request that must always reach the user; the auto-accept runtime then holds it in every mode, and a plugin whose check throws holds it too. A program may not answer it either: an extension service with `sessionControl.answers` that answers such a request gets a 403 (`createProgramAnswerGuard` in `lib/server-plugins.ts`, wired around the control service's `answerPermission`, the only other place the server sends a permission reply from). The guard reads the request from OpenCode first, refuses when it cannot, and asks OpenCode nothing when no plugin has the check.
++- `dispose()`: run on shutdown, before OpenCode stops.
++
++A plugin that fails to load or set up fails the server start, because a build that relies on a plugin must not run as if it were absent. Plugins set up in order, so later plugins' engine variables and config win. Config fragments merge with `mergeEngineConfig`: objects deep-merge, the later one wins on scalars and on other arrays, and `plugins`, `policies` and `experimental.policies` are lists every config layer adds to rather than replaces, matched by key path.
++
++Composition rules in `runtime.ts`:
++
++- Plugins load behind the same CORS, auth and spaces middleware as the routes above them, and after them so upstream's own routes win. They load before the startup pipeline, which mounts the OpenCode proxy and starts OpenCode, so the first start already carries their engine variables. Their managed config is read on each write because they load later in startup but before OpenCode starts.
++- Their engine variables go to every OpenCode CLI call, not only the managed server: a version probe or an upgrade run without them would read and write the engine's default folders. Without plugins the set is empty.
++- `onReady` listeners and `onShutdown` handlers are what plugins asked to run after each managed OpenCode start and on shutdown, through their context.
++- Plugins stop with the host's other services and before OpenCode does: shutdown handlers run last registered first, then each plugin's own `dispose`, in reverse set-up order. A handler or `dispose` that fails is logged and does not keep the rest from stopping.
++- `OPENCHAMBER_HOST_APP_VERSION` names the version of an app that runs this server in its own process and ships under its own version; the About dialog reports it instead of the server package's version.
++- `opencode.launchedDataHome()` is the `XDG_DATA_HOME` the managed OpenCode was launched with. It is null when there is no managed OpenCode to ask about: an external server, before the first launch, and after a launch failed and nothing is running. During a planned restart it is the previous launch's until the next one is spawned. A plugin that must tell an external server from a stopped one asks when `onReady` fires: only an external server is ready with no launched data home.
++
+ ## Enterprise policy invariants
+ 
+ - The machine policy and server environment can each enable enterprise mode.

@@ -1,54 +1,39 @@
-/**
- * The places of isolated spaces in Settings (DESIGN.md, user journey step 9, and decision 12): each
- * place with how many spaces run and stand stopped there, the disk its image, tools and spaces take,
- * the spaces whose container is gone, and "Clean up…", which removes what OpenChamber can make again.
- * The server decides what goes, see `places/docker-disk.js`; this screen only shows and asks.
- *
- * A place that cannot be reached says so and what to do, never a count of zero: the spaces this
- * window last saw are listed as out of reach, and nothing is when it saw none. Nothing polls; "Try
- * again" reads the place again. Rendered only while the switch is on (decision 19).
- */
 
 import React from 'react';
 
 import { Icon } from '@/components/icon/Icon';
+import { Spinner } from '@/components/ui/spinner';
+import { DockerSetupNotice } from '@/components/session/spaces/DockerSetupNotice';
 import { SpaceRow } from '@/components/session/spaces/SpaceRow';
 import { failureOfError, spaceFailureText } from '@/components/session/spaces/spaceFailureText';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { MobileOverlayPanel } from '@/components/ui/MobileOverlayPanel';
-import { getCurrentIntlLocale, useI18n, type I18nKey } from '@/lib/i18n';
+import { useI18n, type I18nKey } from '@/lib/i18n';
+import { formatDiskSize } from '@/lib/spaces/space-disk';
+import { Input } from '@/components/ui/input';
+import { reportSettingsSaveState } from '@/lib/persistence';
 import {
+  SSH_PLACE_ID,
   cleanUpSpaceDisk,
   listSpacePlaces,
+  pullSpaceImage,
   readSpaceDisk,
+  setSpaceMachine,
   type SpaceCleanUp,
   type SpaceDisk,
   type SpaceEntry,
   type SpacePlace,
 } from '@/lib/spaces/spaces-api';
 import { refreshSpacesJourney, useSpacesJourneyRead } from '@/lib/spaces/spaces-store';
+import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/useUIStore';
-import { SettingsControlGroup } from '../shared/SettingsSection';
-
-// Decimal units, as Docker and the Mac's own disk tools count; only the number is localised.
-const SIZE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
-
-const formatDiskSize = (bytes: number): string => {
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1000 && unit < SIZE_UNITS.length - 1) {
-    value /= 1000;
-    unit += 1;
-  }
-  const number = new Intl.NumberFormat(getCurrentIntlLocale(), { maximumFractionDigits: unit === 0 ? 0 : 1 }).format(value);
-  return `${number} ${SIZE_UNITS[unit]}`;
-};
+import { SettingsControlGroup, SettingsFieldRow } from '../shared/SettingsSection';
+import { IMAGE_SETTLE_REFRESH_MS, nextDiskReadDelay } from './spacePlacesDisk';
 
 type Read<T> = { kind: 'reading' } | { kind: 'read'; value: T } | { kind: 'failed'; error: Error };
 
-/** Reads once when mounted and again on `retry`; a failure is kept apart, never read as empty. */
-const useRead = <T,>(load: (signal: AbortSignal) => Promise<T>): [Read<T>, () => void, (value: T) => void] => {
+const useRead = <T,>(load: (signal: AbortSignal) => Promise<T>): [Read<T>, () => void, (value: T) => void, (error: Error) => void] => {
   const [state, setState] = React.useState<Read<T>>({ kind: 'reading' });
   const [turn, setTurn] = React.useState(0);
   React.useEffect(() => {
@@ -62,20 +47,23 @@ const useRead = <T,>(load: (signal: AbortSignal) => Promise<T>): [Read<T>, () =>
   }, [load, turn]);
   const retry = React.useCallback(() => setTurn((current) => current + 1), []);
   const replace = React.useCallback((value: T) => setState({ kind: 'read', value }), []);
-  return [state, retry, replace];
+  const fail = React.useCallback((error: Error) => setState({ kind: 'failed', error }), []);
+  return [state, retry, replace, fail];
 };
 
-const DiskLine: React.FC<{ disk: SpaceDisk }> = ({ disk }) => {
-  const { t } = useI18n();
-  const parts = [
-    ...(disk.imageBytes === null ? [] : [t('settings.openchamber.spaces.places.disk.image', { size: formatDiskSize(disk.imageBytes) })]),
-    t('settings.openchamber.spaces.places.disk.tools', { size: formatDiskSize(disk.toolsBytes) }),
-    t('settings.openchamber.spaces.places.disk.spaces', { size: formatDiskSize(disk.spacesBytes) }),
-  ];
-  return <p className="typography-meta text-muted-foreground">{t('settings.openchamber.spaces.places.disk.line', { parts: parts.join(' · ') })}</p>;
-};
+type StatusTone = 'ready' | 'todo' | 'busy';
 
-/** The one confirmation of a clean-up, with what it frees and, when the image goes, what that costs later. */
+const StatusLine: React.FC<{ tone: StatusTone; children: React.ReactNode }> = ({ tone, children }) => (
+  <p className="flex items-start gap-1.5 typography-meta text-foreground" role="status">
+    {tone === 'busy' ? (
+      <Spinner className="mt-[0.2em] h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+    ) : (
+      <Icon name={tone === 'ready' ? 'checkbox-circle' : 'circle'} className={cn('mt-[0.2em] h-3.5 w-3.5 shrink-0', tone === 'ready' ? 'text-[var(--status-success)]' : 'text-muted-foreground')} />
+    )}
+    <span>{children}</span>
+  </p>
+);
+
 const CleanUpConfirm: React.FC<{ disk: SpaceDisk | null; onCancel: () => void; onConfirm: () => void }> = ({ disk, onCancel, onConfirm }) => {
   const { t } = useI18n();
   const isMobile = useUIStore((state) => state.isMobile);
@@ -119,7 +107,6 @@ const CleanUpConfirm: React.FC<{ disk: SpaceDisk | null; onCancel: () => void; o
 
 type CleanUpState = { kind: 'idle' } | { kind: 'confirming' } | { kind: 'cleaning' } | { kind: 'done'; outcome: SpaceCleanUp } | { kind: 'failed'; error: Error };
 
-/** What a finished clean-up says: what it freed, and what Docker kept. */
 const CleanUpOutcome: React.FC<{ outcome: SpaceCleanUp }> = ({ outcome }) => {
   const { t } = useI18n();
   const inUse = outcome.kept.some((item) => item.reason === 'in_use');
@@ -133,11 +120,12 @@ const CleanUpOutcome: React.FC<{ outcome: SpaceCleanUp }> = ({ outcome }) => {
   );
 };
 
-/** The disk of a place that answers, and its clean-up. */
+type DownloadState = { kind: 'idle' } | { kind: 'starting' } | { kind: 'failed'; error: Error };
+
 const PlaceDisk: React.FC<{ placeId: string }> = ({ placeId }) => {
   const { t } = useI18n();
   const load = React.useCallback((signal: AbortSignal) => readSpaceDisk(placeId, signal), [placeId]);
-  const [disk, , replaceDisk] = useRead(load);
+  const [disk, , replaceDisk, failDisk] = useRead(load);
   const [cleanUp, setCleanUp] = React.useState<CleanUpState>({ kind: 'idle' });
 
   const run = async () => {
@@ -152,23 +140,80 @@ const PlaceDisk: React.FC<{ placeId: string }> = ({ placeId }) => {
     }
   };
 
-  if (disk.kind === 'reading') return <p className="typography-meta text-muted-foreground">{t('settings.openchamber.spaces.places.disk.reading')}</p>;
+  const [download, setDownload] = React.useState<DownloadState>({ kind: 'idle' });
+  const settleReads = React.useRef(0);
+  React.useEffect(() => {
+    if (disk.kind !== 'read') return;
+    const delay = nextDiskReadDelay(disk.value, settleReads.current);
+    if (delay === null) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      readSpaceDisk(placeId, controller.signal).then(
+        (value) => {
+          if (controller.signal.aborted) return;
+          if (value.imagePulling) settleReads.current = 0;
+          else if (value.imageBytes === 0 && delay === IMAGE_SETTLE_REFRESH_MS) settleReads.current += 1;
+          replaceDisk(value);
+        },
+        (error: Error) => { if (!controller.signal.aborted) failDisk(error); },
+      );
+    }, delay);
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [disk, failDisk, placeId, replaceDisk]);
+  const downloadImage = async () => {
+    setDownload({ kind: 'starting' });
+    setCleanUp((current) => (current.kind === 'done' || current.kind === 'failed' ? { kind: 'idle' } : current));
+    settleReads.current = 0;
+    try {
+      replaceDisk(await pullSpaceImage(placeId));
+      setDownload({ kind: 'idle' });
+    } catch (error) {
+      if (!(error instanceof Error)) throw error;
+      setDownload({ kind: 'failed', error });
+    }
+  };
+
+  if (disk.kind === 'reading') return <StatusLine tone="busy">{t('settings.openchamber.spaces.places.disk.reading')}</StatusLine>;
   if (disk.kind === 'failed') {
     return <p className="typography-meta text-[var(--status-error)]">{t('settings.openchamber.spaces.places.disk.readFailed', { reason: spaceFailureText(t, failureOfError(disk.error)) })}</p>;
   }
-  const nothingToFree = disk.value.freeBytes === 0;
+  const imageFailure = download.kind === 'failed' ? failureOfError(download.error) : disk.value.imageFailure;
+  const downloading = disk.value.imagePulling || download.kind === 'starting';
+  const totalBytes = (disk.value.imageBytes ?? 0) + disk.value.toolsBytes + disk.value.spacesBytes;
+  const canFree = disk.value.freeBytes > 0 && !disk.value.imagePulling;
   return (
     <div className="space-y-2">
-      <DiskLine disk={disk.value} />
-      <Button
-        size="sm"
-        variant="outline"
-        disabled={nothingToFree || cleanUp.kind === 'cleaning'}
-        title={nothingToFree ? t('settings.openchamber.spaces.places.cleanUp.nothing') : undefined}
-        onClick={() => setCleanUp({ kind: 'confirming' })}
-      >
-        {cleanUp.kind === 'cleaning' ? t('settings.openchamber.spaces.places.cleanUp.running') : t('settings.openchamber.spaces.places.cleanUp.button')}
-      </Button>
+      {downloading ? (
+        <StatusLine tone="busy">{t('settings.openchamber.spaces.places.image.downloadingNote')}</StatusLine>
+      ) : disk.value.imageBytes === null ? (
+        <div className="space-y-2">
+          <StatusLine tone="todo">{t('settings.openchamber.spaces.places.image.missing')}</StatusLine>
+          <Button size="sm" variant="outline" onClick={() => void downloadImage()}>
+            <Icon name="download" className="size-3.5" />
+            {t('settings.openchamber.spaces.places.image.downloadNow')}
+          </Button>
+        </div>
+      ) : (
+        <StatusLine tone="ready">{t('settings.openchamber.spaces.places.image.ready')}</StatusLine>
+      )}
+      {totalBytes > 0 || cleanUp.kind === 'cleaning' ? (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <p className="typography-meta text-muted-foreground">{t('settings.openchamber.spaces.places.disk.total', { size: formatDiskSize(totalBytes) })}</p>
+          {cleanUp.kind === 'cleaning' ? (
+            <span className="inline-flex items-center gap-1.5 typography-meta text-muted-foreground" role="status">
+              <Spinner className="size-3.5" />
+              {t('settings.openchamber.spaces.places.cleanUp.running')}
+            </span>
+          ) : canFree ? (
+            <Button size="xs" variant="outline" onClick={() => setCleanUp({ kind: 'confirming' })}>
+              {t('settings.openchamber.spaces.places.cleanUp.freeUp', { size: formatDiskSize(disk.value.freeBytes) })}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {imageFailure ? (
+        <p className="typography-meta text-[var(--status-error)]" role="alert">{spaceFailureText(t, imageFailure)}</p>
+      ) : null}
       {cleanUp.kind === 'done' ? <CleanUpOutcome outcome={cleanUp.outcome} /> : null}
       {cleanUp.kind === 'failed' ? (
         <p className="typography-meta text-[var(--status-error)]" role="alert">
@@ -184,25 +229,28 @@ const PlaceDisk: React.FC<{ placeId: string }> = ({ placeId }) => {
   );
 };
 
-// The places the host has, by the name the user knows them by; a place from a later version keeps its id.
 const PLACE_NAMES: ReadonlyMap<string, I18nKey> = new Map<string, I18nKey>([['docker', 'settings.openchamber.spaces.places.docker']]);
 
-const PlaceBlock: React.FC<{ place: SpacePlace; spaces: SpaceEntry[] | null; spacesError: Error | null; onRetry: () => void }> = ({ place, spaces, spacesError, onRetry }) => {
+const DOCKER_PLACES: ReadonlySet<string> = new Set(['docker', SSH_PLACE_ID]);
+
+const PlaceBlock: React.FC<{ place: SpacePlace; title: string; field?: React.ReactNode; spaces: SpaceEntry[] | null; spacesError: Error | null; onRetry: () => void }> = ({ place, title, field = null, spaces, spacesError, onRetry }) => {
   const { t } = useI18n();
   const isMobile = useUIStore((state) => state.isMobile);
-  const nameKey = PLACE_NAMES.get(place.id);
-  const name = nameKey ? t(nameKey) : place.id;
+  const setupShown = Boolean(place.setup?.remedy || place.setup?.job);
 
   if (!place.available) {
-    // Out of reach: what to do, and the spaces this window last saw, never a count of zero.
     return (
-      <SettingsControlGroup title={name}>
+      <SettingsControlGroup title={title}>
         <div className="space-y-2">
-          {/* What the user can do about it: one line with the info mark, as Settings' own notes read. */}
-          <p className="flex items-start gap-1.5 typography-meta text-foreground" role="status">
-            <Icon name="information" className="mt-[0.2em] h-3.5 w-3.5 shrink-0 text-[var(--status-info)]" />
-            <span>{spaceFailureText(t, place)}</span>
-          </p>
+          {field}
+          {setupShown ? (
+            <DockerSetupNotice place={place} onRecheck={onRetry} withCheck />
+          ) : (
+            <p className="flex items-start gap-1.5 typography-meta text-foreground" role="status">
+              <Icon name="information" className="mt-[0.2em] h-3.5 w-3.5 shrink-0 text-[var(--status-info)]" />
+              <span>{spaceFailureText(t, place, place.machine === null ? undefined : { machine: place.machine })}</span>
+            </p>
+          )}
           {spaces && spaces.length > 0 ? (
             <div className="space-y-1">
               <p className="typography-meta text-muted-foreground">
@@ -212,14 +260,13 @@ const PlaceBlock: React.FC<{ place: SpacePlace; spaces: SpaceEntry[] | null; spa
               </p>
               {spaces.map((entry) => (
                 <div key={entry.id} className="flex items-center gap-2 opacity-60">
-                  <Icon name="box-3" className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  {/* A name from the label: text to show. */}
+                  <Icon name="instance" className="h-4 w-4 shrink-0 text-muted-foreground" />
                   <span className="typography-ui-label truncate text-foreground">{entry.name}</span>
                 </div>
               ))}
             </div>
           ) : null}
-          <Button size="sm" variant="outline" onClick={onRetry}>{t('settings.openchamber.spaces.places.retry')}</Button>
+          {setupShown ? null : <Button size="sm" variant="outline" onClick={onRetry}>{t('settings.openchamber.spaces.places.retry')}</Button>}
         </div>
       </SettingsControlGroup>
     );
@@ -228,17 +275,24 @@ const PlaceBlock: React.FC<{ place: SpacePlace; spaces: SpaceEntry[] | null; spa
   const running = spaces?.filter((entry) => entry.state === 'running').length ?? 0;
   const stopped = spaces?.filter((entry) => entry.state === 'exited').length ?? 0;
   const gone = spaces?.filter((entry) => entry.state === 'missing') ?? [];
+  const engine = place.setup?.memory?.engine;
+  const dockerText = engine === 'colima'
+    ? t('settings.openchamber.spaces.places.dockerRunningColima', { version: place.version })
+    : engine === 'docker_desktop'
+      ? t('settings.openchamber.spaces.places.dockerRunningDesktop', { version: place.version })
+      : t('settings.openchamber.spaces.places.dockerRunning', { version: place.version });
   return (
-    <SettingsControlGroup title={name}>
+    <SettingsControlGroup title={title}>
       <div className="space-y-2">
-        {/* A product name and its version, the same in every language. */}
-        {place.id === 'docker' && place.version ? <p className="typography-meta text-muted-foreground">{`Docker ${place.version}`}</p> : null}
-        {spaces ? (
-          <p className="typography-meta text-muted-foreground">{t('settings.openchamber.spaces.places.counts', { running, stopped })}</p>
+        {field}
+        {DOCKER_PLACES.has(place.id) && place.version ? <StatusLine tone="ready">{dockerText}</StatusLine> : null}
+        <DockerSetupNotice place={place} onRecheck={onRetry} />
+        <PlaceDisk placeId={place.id} />
+        {spaces && running + stopped > 0 ? (
+          <p className="typography-meta text-muted-foreground">{t('settings.openchamber.spaces.places.spaceCount', { running, stopped })}</p>
         ) : spacesError ? (
           <p className="typography-meta text-[var(--status-error)]">{t('spaces.page.loadFailed', { reason: spaceFailureText(t, failureOfError(spacesError)) })}</p>
         ) : null}
-        <PlaceDisk placeId={place.id} />
         {gone.length > 0 ? (
           <div className="space-y-1 pt-1">
             <p className="typography-ui-label text-foreground">{t('settings.openchamber.spaces.places.leftBehind')}</p>
@@ -250,13 +304,90 @@ const PlaceBlock: React.FC<{ place: SpacePlace; spaces: SpaceEntry[] | null; spa
   );
 };
 
+type MachineState = { kind: 'idle' } | { kind: 'saving' } | { kind: 'failed'; error: Error };
+
+const MachineField: React.FC<{ machine: string | null; onChange: (place: SpacePlace | null) => void }> = ({ machine, onChange }) => {
+  const { t } = useI18n();
+  const [draft, setDraft] = React.useState(machine ?? '');
+  const [state, setState] = React.useState<MachineState>({ kind: 'idle' });
+  const [edited, setEdited] = React.useState(false);
+  React.useEffect(() => {
+    if (!edited) setDraft(machine ?? '');
+  }, [edited, machine]);
+
+  const save = async (value: string) => {
+    setState({ kind: 'saving' });
+    reportSettingsSaveState('saving');
+    try {
+      const place = await setSpaceMachine(value.trim());
+      reportSettingsSaveState('saved');
+      setState({ kind: 'idle' });
+      setEdited(false);
+      onChange(place);
+    } catch (error) {
+      reportSettingsSaveState('error');
+      if (!(error instanceof Error)) throw error;
+      setState({ kind: 'failed', error });
+    }
+  };
+  const saving = state.kind === 'saving';
+  const unchanged = draft.trim() === (machine ?? '');
+
+  return (
+    <div className="space-y-1">
+      <SettingsFieldRow
+        settingsItem="general.isolated-spaces-machine"
+        label={t('settings.openchamber.spaces.places.machine.label')}
+        info={t('settings.openchamber.spaces.places.machine.info')}
+        alignEnd={false}
+        controlClassName="flex-wrap"
+      >
+        <Input
+          value={draft}
+          onChange={(event) => { setDraft(event.target.value); setEdited(true); if (state.kind === 'failed') setState({ kind: 'idle' }); }}
+          onKeyDown={(event) => { if (event.key === 'Enter' && !saving && !unchanged) { event.preventDefault(); void save(draft); } }}
+          placeholder={t('settings.openchamber.spaces.places.machine.placeholder')}
+          aria-label={t('settings.openchamber.spaces.places.machine.label')}
+          className="h-8 min-w-[14rem] flex-1 max-w-[24rem] font-mono"
+          autoComplete="off"
+          spellCheck={false}
+          disabled={saving}
+        />
+        <Button size="sm" variant="outline" className="shrink-0" disabled={saving || unchanged} onClick={() => void save(draft)}>
+          {saving ? (
+            <>
+              <Spinner className="size-3.5" />
+              {t('settings.openchamber.spaces.places.machine.checking')}
+            </>
+          ) : t('settings.openchamber.spaces.places.machine.check')}
+        </Button>
+        {machine !== null ? (
+          <Button size="sm" variant="ghost" className="shrink-0 !font-normal" disabled={saving} onClick={() => void save('')}>
+            {t('settings.openchamber.spaces.places.machine.remove')}
+          </Button>
+        ) : null}
+      </SettingsFieldRow>
+      {state.kind === 'failed' ? (
+        <p className="typography-meta text-[var(--status-error)]" role="alert">{spaceFailureText(t, failureOfError(state.error))}</p>
+      ) : null}
+    </div>
+  );
+};
+
 export const SpacePlacesSettings: React.FC = () => {
   const { t } = useI18n();
-  const [places, retryPlaces] = useRead(listSpacePlaces);
+  const isMobile = useUIStore((state) => state.isMobile);
+  const [places, retryPlaces, replacePlaces] = useRead(listSpacePlaces);
   const { journey, error: journeyError } = useSpacesJourneyRead();
   const spaces = journey ? Array.from(journey.values()) : null;
   const retry = () => {
     retryPlaces();
+    void refreshSpacesJourney().catch(() => undefined);
+  };
+  const machineChanged = (place: SpacePlace | null) => {
+    if (places.kind !== 'read') return;
+    const others = places.value.filter((candidate) => candidate.id !== SSH_PLACE_ID);
+    replacePlaces(place ? [...others, place] : others);
     void refreshSpacesJourney().catch(() => undefined);
   };
 
@@ -269,9 +400,38 @@ export const SpacePlacesSettings: React.FC = () => {
       </div>
     );
   }
+  const sshPlace = places.value.find((place) => place.id === SSH_PLACE_ID) ?? null;
+  const field = <MachineField machine={sshPlace?.machine ?? null} onChange={machineChanged} />;
+  const leftBehind = sshPlace ? [] : spaces?.filter((entry) => entry.placeId === SSH_PLACE_ID) ?? [];
+  const titleOf = (place: SpacePlace) => {
+    const nameKey = PLACE_NAMES.get(place.id);
+    return place.machine ?? (nameKey ? t(nameKey) : place.id);
+  };
   return (
     <div className="space-y-6">
-      {places.value.map((place) => <PlaceBlock key={place.id} place={place} spaces={spaces} spacesError={journeyError} onRetry={retry} />)}
+      {places.value.map((place) => (
+        <PlaceBlock
+          key={place.id}
+          place={place}
+          title={titleOf(place)}
+          field={place.id === SSH_PLACE_ID ? field : undefined}
+          spaces={spaces?.filter((entry) => entry.placeId === place.id) ?? null}
+          spacesError={journeyError}
+          onRetry={retry}
+        />
+      ))}
+      {sshPlace ? null : (
+        <SettingsControlGroup title={t('settings.openchamber.spaces.places.machine.title')}>
+          <div className="space-y-2">
+            {field}
+            {leftBehind.length > 0 ? (
+              <div className="space-y-1 pt-1">
+                {leftBehind.map((entry) => <SpaceRow key={entry.id} entry={entry} actions={isMobile ? 'sheet' : 'menu'} showFolder />)}
+              </div>
+            ) : null}
+          </div>
+        </SettingsControlGroup>
+      )}
     </div>
   );
 };

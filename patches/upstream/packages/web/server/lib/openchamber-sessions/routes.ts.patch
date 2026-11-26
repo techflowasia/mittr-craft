@@ -1,0 +1,54 @@
+diff --git a/packages/web/server/lib/openchamber-sessions/routes.ts b/packages/web/server/lib/openchamber-sessions/routes.ts
+index 9cfe87b94..635c3c6f3 100644
+--- a/packages/web/server/lib/openchamber-sessions/routes.ts
++++ b/packages/web/server/lib/openchamber-sessions/routes.ts
+@@ -27,6 +27,7 @@ import type { ControlErrorDetails } from '../openchamber-control/error.js';
+ import { readObjective, writeObjective } from '../session-goal/objectives.js';
+ import { worktreeSetupOf } from '../projects/worktree-setup.js';
+ import { createArchiveStore } from './archive-store.js';
++import type { ResponseRecoveryOwner } from '../session-response-recovery/owner.js';
+ import { createOpenCodeSessionArchive, createSessionArchive } from './session-archive.js';
+ import { applyForkInheritance } from './fork-inheritance.js';
+ import { createOpenCodeClient as defaultCreateOpenCodeClient } from './opencode-client.js';
+@@ -138,6 +139,7 @@ export interface SessionServiceDependencies {
+   resolveWorktreeTopLevel?: typeof resolveWorktreeTopLevelDefault;
+   validateWorktreeDirectory?: typeof validateWorktreeDirectoryDefault;
+   resolveAutoSelection?: ReturnType<typeof createRoutingRuntime>['resolveAutoSelection'] | null;
++  responseRecovery?: Pick<ResponseRecoveryOwner, 'isReserved' | 'admissions' | 'cancelSession'> | null;
+   isAutoReady?: (() => Promise<boolean>) | null;
+   readProjectSetup?: ((projectID: string) => Promise<WorktreeSetupInput>) | null;
+ }
+@@ -707,6 +709,7 @@ export const createOpenChamberSessionService = (dependencies: SessionServiceDepe
+     resolveWorktreeTopLevel = resolveWorktreeTopLevelDefault,
+     validateWorktreeDirectory = validateWorktreeDirectoryDefault,
+     resolveAutoSelection = null,
++    responseRecovery = null,
+     isAutoReady = null,
+     readProjectSetup = null,
+   } = dependencies;
+@@ -729,6 +732,7 @@ export const createOpenChamberSessionService = (dependencies: SessionServiceDepe
+     baseUrl: openCodeBaseUrl(),
+     headers: getOpenCodeAuthHeaders(),
+     directory,
++    fetchImpl: responseRecovery ? responseRecovery.admissions.fetch((...args) => fetch(...args), { capture: true }) : (...args) => fetch(...args),
+   });
+ 
+   const broadcastArchived = (sessionID: string, archivedAt: number | null) => {
+@@ -1170,6 +1174,8 @@ export const createOpenChamberSessionService = (dependencies: SessionServiceDepe
+     if (!parsed.ok) {
+       throw new OpenChamberControlError(parsed.error, 400);
+     }
++    await Promise.all(parsed.ids.map((id) => responseRecovery?.cancelSession(id, 'archive')));
++    if (parsed.ids.some((id) => responseRecovery?.isReserved(id))) throw new OpenChamberControlError('Response recovery admission is uncertain', 409);
+     return sessionArchive.archive(parsed.ids, parsed.archivedAt);
+   };
+ 
+@@ -1418,6 +1424,8 @@ export const createOpenChamberSessionService = (dependencies: SessionServiceDepe
+     const goalInput = resolveGoalInput(payload, prompt);
+     if (!goalInput.ok) throw new OpenChamberControlError(goalInput.error, 400);
+     const requestedModel = resolveRequestedModel(payload);
++    await responseRecovery?.cancelSession(sourceSessionID, 'new-input');
++    if (responseRecovery?.isReserved(sourceSessionID)) throw new OpenChamberControlError('Response recovery admission is uncertain', 409);
+ 
+     let targetSessionID = sourceSessionID;
+     let targetSession = null;

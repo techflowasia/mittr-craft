@@ -7,6 +7,7 @@ import { formatMessage, resetI18nDictionaryCacheForTests, useI18nStore, type I18
 import {
   getProductLogo,
   overlayDictionary,
+  productToolName,
   ProductRoot,
   ProductSlot,
   registerProductUiPlugin,
@@ -352,6 +353,14 @@ describe('session auth description', () => {
 });
 
 describe('remote model catalog', () => {
+  test('a tool keeps its own name until a plugin names it', () => {
+    expect(productToolName('acme_probe')).toBe(undefined);
+    registerProductUiPlugin({ id: 'names', toolNames: { acme_probe: 'Probe' } });
+    expect(productToolName('acme_probe')).toBe('Probe');
+    expect(productToolName('toString')).toBe(undefined);
+    expect(productToolName('other')).toBe(undefined);
+  });
+
   test('the window may fetch the public model catalog until a plugin turns it off', () => {
     expect(remoteModelCatalogAllowed()).toBe(true);
     registerProductUiPlugin({ id: 'brand' });

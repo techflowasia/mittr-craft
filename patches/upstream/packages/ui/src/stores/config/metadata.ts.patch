@@ -1,0 +1,27 @@
+diff --git a/packages/ui/src/stores/config/metadata.ts b/packages/ui/src/stores/config/metadata.ts
+index a51e48c19..c5684b6bb 100644
+--- a/packages/ui/src/stores/config/metadata.ts
++++ b/packages/ui/src/stores/config/metadata.ts
+@@ -7,6 +7,7 @@ import { fetchBypassingRuntimeBridge, runtimeFetch } from '@/lib/runtime-fetch';
+ import { markStartupTrace, measureStartupTrace } from '@/lib/startupTrace';
+ import { captureConfigRuntimeContext, isConfigRuntimeContextCurrent } from './runtime';
+ import { isRecord } from '@/lib/utils';
++import { remoteModelCatalogAllowed } from '@/lib/product-plugins';
+ 
+ const MODELS_DEV_API_URL = "https://models.dev/api.json";
+ const MODELS_DEV_PROXY_URL = "/api/openchamber/models-metadata";
+@@ -251,12 +252,12 @@ const transformModelsDevResponse = (payload: unknown): Map<string, ModelMetadata
+     return metadataMap;
+ };
+ 
+-const fetchModelsDevMetadata = async (): Promise<Map<string, ModelMetadata>> => {
++export const fetchModelsDevMetadata = async (): Promise<Map<string, ModelMetadata>> => {
+     if (typeof fetch !== 'function') {
+         return new Map();
+     }
+ 
+-    const sources = [MODELS_DEV_PROXY_URL, MODELS_DEV_API_URL];
++    const sources = remoteModelCatalogAllowed() ? [MODELS_DEV_PROXY_URL, MODELS_DEV_API_URL] : [MODELS_DEV_PROXY_URL];
+ 
+     for (const source of sources) {
+         const controller = typeof AbortController !== 'undefined' ? new AbortController() : undefined;

@@ -1,0 +1,13 @@
+diff --git a/packages/electron/early-startup.test.mjs b/packages/electron/early-startup.test.mjs
+index 9c2949a29..cd8cd74ce 100644
+--- a/packages/electron/early-startup.test.mjs
++++ b/packages/electron/early-startup.test.mjs
+@@ -4,7 +4,7 @@ import os from 'node:os';
+ import path from 'node:path';
+ 
+ mock.module('electron', () => ({
+-  app: { isPackaged: false, getAppPath: () => '' },
++  app: { isPackaged: false, getAppPath: () => '', getVersion: () => '' },
+   BrowserWindow: class {},
+   nativeTheme: {},
+   protocol: {},

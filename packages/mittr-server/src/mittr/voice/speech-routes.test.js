@@ -43,10 +43,12 @@ const serverLikeApp = () => {
   return app;
 };
 
-const setUp = async (t, { client = fakeClient(), offered = true, scope = 'local', host = {}, carried = false, dataDir = tempDataDir(t), port = 4100, upstream = {}, now = Date.now } = {}) => {
+const BEFORE_FIXTURE_RESET = () => Date.parse('2026-10-20T00:00:00Z');
+
+const setUp = async (t, { client = fakeClient(), offered = true, scope = 'local', host = {}, carried = false, dataDir = tempDataDir(t), port = 4100, upstream = {}, now = Date.now, stateNow } = {}) => {
   const app = serverLikeApp();
   const keys = createSpeechKeys({ dataDir });
-  const state = createSpeechState();
+  const state = createSpeechState(stateNow ? { now: stateNow } : {});
   t.after(() => state.close());
   const logger = recordingLogger();
   const carry = {
@@ -110,7 +112,7 @@ test('a transcription without a file answers 400 in the OpenAI shape', async (t)
 });
 
 test('a quota refusal answers 429 with x-should-retry false and the reset time in the text, and blocks stt in the state', async (t) => {
-  const { send, state } = await setUp(t, { client: fakeClient({ transcribe: async () => { throw quota('stt'); } }) });
+  const { send, state } = await setUp(t, { client: fakeClient({ transcribe: async () => { throw quota('stt'); } }), stateNow: BEFORE_FIXTURE_RESET });
   const answer = await send('POST', '/mittr-speech/v1/audio/transcriptions', { body: wavForm() });
   assert.equal(answer.status, 429);
   assert.equal(answer.headers.get('x-should-retry'), 'false');
@@ -133,7 +135,7 @@ test('a spoken-reply quota refusal says the reply goes to text, and blocks tts',
 test('a successful call clears the block', async (t) => {
   let refuse = true;
   const client = fakeClient({ transcribe: async () => { if (refuse) throw quota('stt'); return 'back'; } });
-  const { send, state } = await setUp(t, { client });
+  const { send, state } = await setUp(t, { client, stateNow: BEFORE_FIXTURE_RESET });
   await send('POST', '/mittr-speech/v1/audio/transcriptions', { body: wavForm() });
   assert.ok(state.view().stt.blockedUntil);
   refuse = false;

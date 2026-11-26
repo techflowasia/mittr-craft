@@ -1,16 +1,11 @@
 import React from "react";
+import { cancelWhenLayoutSettled, isLayoutAnimating, runWhenLayoutSettled } from "@/lib/layoutAnimation";
 
-// Scroll-shadow state as data attributes on a scroll container.
-//
-// The logic lives in a hook rather than only inside <ScrollShadow> because the
-// chat timeline's scroll container is owned by the virtualized list component,
-// which renders its own element — there is no wrapper to hand the styling to.
-// <ScrollShadow> is a thin wrapper over this hook, so both paths stay in sync.
 
 export type ScrollShadowOrientation = "vertical" | "horizontal";
 export type ScrollShadowVisibility = "both" | "none" | "top" | "bottom" | "left" | "right";
 
-export type UseScrollShadowOptions = {
+type UseScrollShadowOptions = {
   orientation?: ScrollShadowOrientation;
   offset?: number;
   isEnabled?: boolean;
@@ -78,9 +73,6 @@ export const useScrollShadow = (
       return;
     }
 
-    // Subpixel tolerance: on hi-DPI (Retina) and with fractional scrollTop,
-    // scrollTop+clientHeight can fall ~0.5px short of scrollHeight at the very end,
-    // which would otherwise keep the bottom fade visible after fully scrolling.
     const SUBPIXEL_TOLERANCE = 1;
     const hasBefore =
       orientation === "vertical"
@@ -122,17 +114,20 @@ export const useScrollShadow = (
     const el = elementRef.current;
     if (!el) return;
 
-    // Throttle with RAF to avoid excessive calls during rapid DOM changes
     let rafId: number | null = null;
     const throttledCheck = () => {
       if (rafId !== null) return;
+      if (isLayoutAnimating()) {
+        runWhenLayoutSettled(throttledCheck);
+        return;
+      }
       rafId = requestAnimationFrame(() => {
         rafId = null;
         checkOverflow();
       });
     };
 
-    const handleScroll = () => checkOverflow(); // Scroll should be immediate
+    const handleScroll = () => checkOverflow();
     const resizeObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(throttledCheck) : null;
     const mutationObserver =
       observeMutations && typeof MutationObserver !== "undefined" ? new MutationObserver(throttledCheck) : null;
@@ -141,8 +136,6 @@ export const useScrollShadow = (
 
     el.addEventListener("scroll", handleScroll, { passive: true });
     resizeObserver?.observe(el);
-    // checkOverflow mutates our data-scroll attributes; observing attributes
-    // would make the hook trigger its own observer indefinitely.
     mutationObserver?.observe(el, {
       childList: true,
       subtree: true,
@@ -151,9 +144,11 @@ export const useScrollShadow = (
 
     return () => {
       if (rafId !== null) cancelAnimationFrame(rafId);
+      cancelWhenLayoutSettled(throttledCheck);
       el.removeEventListener("scroll", handleScroll);
       resizeObserver?.disconnect();
       mutationObserver?.disconnect();
+      clearScrollShadowAttributes(el);
     };
   }, [checkOverflow, elementRef, observeMutations]);
 };

@@ -1,19 +1,31 @@
 import { getRuntimeUrlResolver } from './runtime-url';
 import { runtimeFetch } from './runtime-fetch';
+import { useAuthSessionStore, waitForAuthSession } from './runtime-auth-expiry';
+import { getRuntimeExtraHeadersSync } from './runtime-auth';
+import { isCapacitorApp } from './platform';
 import { isRelayModeActive } from './relay/runtime-tunnel';
 import { subscribeRuntimeEndpointChanged } from './runtime-switch';
 import { isVSCodeRuntime } from './desktop';
 import { canDriveBrowserPage } from './browser/hostCapability';
 import { messageQueueUpdatedEventSchema, type MessageQueueUpdatedEvent } from '@/stores/messageQueueStore';
+import { autoReviewUpdatedEventSchema, type AutoReviewUpdatedEvent } from '@/stores/useAutoReviewStore';
+import { prWatchUpdatedEventSchema, type PrWatchUpdatedEvent } from '@/sync/pr-watch';
+import { extensionWaitsUpdatedEventSchema, type ExtensionWaitsUpdatedEvent } from '@/sync/extension-waits';
+import { laterPagesUpdatedEventSchema, type LaterPagesUpdatedEvent } from '@/sync/later-pages';
+import { sessionWarmingSnapshotSchema, type SessionWarmingSnapshot } from '@/stores/useSessionWarmingStore';
+import { sessionTodosEventSchema, type SessionTodosEvent } from '@/stores/useSessionTodosStore';
+import { isJsonValue, type JsonValue } from '@openchamber/sdk';
 import { z } from 'zod';
 import { trackedItemRecordsSchema } from './trackedItems/model';
+import type { SyncEvent } from './opencode/events';
+import { classifyStreamPayload } from '@/sync/event-pipeline';
 
 type ScheduledTaskRanEvent = {
   type: 'scheduled-task-ran';
   projectId: string;
   taskId: string;
   ranAt: number;
-  status: 'running' | 'success' | 'error';
+  status: 'running' | 'sent' | 'success' | 'error';
   sessionId?: string;
 };
 
@@ -27,33 +39,27 @@ type SessionCreatedEvent = {
   dispatchedAsCommand: boolean;
 };
 
-/**
- * The set of linked worktrees of one repository changed: created or removed by
- * this server, by an agent, or from a terminal. `directories` are the
- * directories inside that repository the server has seen requests for, so a
- * listener can map them onto its registered projects and refresh only those.
- */
 type WorktreeChangedEvent = {
   type: 'worktree-changed';
   directories: string[];
   changedAt: number;
 };
 
-/**
- * One in-app browser action requested by the agent tool. Broadcast to every
- * connected client; only the one owning a browser view answers.
- */
 type BrowserControlRequestEvent = {
   type: 'browser-control-request';
   requestId: string;
   action: string;
   parameters: Record<string, unknown>;
+  context: BrowserControlRequestContext;
 };
 
-/**
- * The agent asked for a file to be shown in the user's file panel. Every
- * client receives it; one showing that project opens the file.
- */
+const browserControlRequestContextSchema = z.object({
+  directory: z.string().min(1).nullable().catch(null),
+  sessionId: z.string().min(1).nullable().catch(null),
+});
+export type BrowserControlRequestContext = z.infer<typeof browserControlRequestContextSchema>;
+const UNKNOWN_BROWSER_CONTROL_CONTEXT: BrowserControlRequestContext = { directory: null, sessionId: null };
+
 const fileOpenRequestSchema = z.object({
   path: z.string().min(1),
   directory: z.string().min(1).nullable(),
@@ -61,33 +67,72 @@ const fileOpenRequestSchema = z.object({
 });
 type FileOpenRequestEvent = { type: 'file-open-request' } & z.infer<typeof fileOpenRequestSchema>;
 
-/**
- * The agent changed what it remembers. Carries only which store moved, not the
- * entries: listeners re-read from the server, so the event cannot go stale
- * between being sent and being handled.
- */
+const planOpenRequestSchema = z.object({
+  projectId: z.string().min(1),
+  planId: z.string().min(1),
+  title: z.string(),
+  directory: z.string().min(1).nullable(),
+  sessionId: z.string().min(1).nullable(),
+});
+type PlanOpenRequestEvent = { type: 'plan-open-request' } & z.infer<typeof planOpenRequestSchema>;
+
 type AgentMemoryChangedEvent = {
   type: 'agent-memory-changed';
   scope: 'global' | 'project';
   projectId?: string;
 };
 
-/**
- * The extension chosen as browser provider can no longer serve (paused,
- * removed, or approval withdrawn), so the server put the in-app browser back.
- * The setting is already written; listeners update the store and tell the user.
- */
+const projectContextChangedSchema = z.object({ projectId: z.string().min(1) });
+type ProjectContextChangedEvent = { type: 'project-context-changed' } & z.infer<typeof projectContextChangedSchema>;
+
+const sessionFoldersChangedSchema = z.object({ updatedAt: z.number().finite() });
+type SessionFoldersChangedEvent = { type: 'session-folders-changed' } & z.infer<typeof sessionFoldersChangedSchema>;
+
+const sessionDraftsChangedSchema = z.object({ updatedAt: z.number().finite() });
+type SessionDraftsChangedEvent = { type: 'session-drafts-changed' } & z.infer<typeof sessionDraftsChangedSchema>;
+
 const browserProviderResetSchema = z.object({
   guestId: z.string().min(1),
   guestName: z.string().min(1),
 });
 type BrowserProviderResetEvent = { type: 'browser-provider-reset' } & z.infer<typeof browserProviderResetSchema>;
 
-/** Jev routing events; each carries what the routing store needs and nothing the UI must re-derive. */
+type SourceControlProvidersChangedEvent = { type: 'source-control-providers-changed' };
+
+type TrackerProvidersChangedEvent = { type: 'tracker-providers-changed' };
+
+type QuotaProvidersChangedEvent = { type: 'quota-providers-changed' };
+
+type GuestsChangedEvent = { type: 'guests-changed' };
+
+type GuestMarksChangedEvent = { type: 'guest-marks-changed' };
+
+type GuestServiceEvent = { type: 'guest-service-event'; guestId: string; topic: string; data: JsonValue };
+
+type ThemesChangedEvent = { type: 'themes-changed' };
+
+const limitFailoverSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('account'),
+    sessionId: z.string().min(1),
+    providerId: z.string().min(1),
+    fromAccount: z.string().nullable(),
+    toAccount: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal('model'),
+    sessionId: z.string().min(1),
+    providerId: z.string().min(1),
+    modelId: z.string().min(1),
+    toProviderId: z.string().min(1),
+    toModelId: z.string().min(1),
+  }),
+]);
+type LimitFailoverEvent = { type: 'limit-failover'; failover: z.infer<typeof limitFailoverSchema> };
+
 const routingUpdatedSchema = z.object({
   available: z.boolean(),
   autoReady: z.boolean(),
-  // Absent from servers before the classifier pick, where Jev always answered.
   jevAvailable: z.boolean().default(true),
   tokenPresent: z.boolean(),
   jevSource: z.enum(['typesafe', 'zen-free']),
@@ -109,7 +154,6 @@ const routingDecisionSchema = z.object({
 const routingPermissionHeldSchema = z.object({
   permissionId: z.string().min(1),
   sessionId: z.string().min(1),
-  // Where the request lives, so the held request can be announced from its directory's store.
   directory: z.string().nullable().default(null),
   score: z.number(),
   kind: z.string().nullable(),
@@ -127,11 +171,40 @@ type RoutingDecisionEvent = { type: 'routing-decision'; decision: z.infer<typeof
 type RoutingPermissionHeldEvent = { type: 'routing-permission-held' } & z.infer<typeof routingPermissionHeldSchema>;
 type RoutingSafetySkippedEvent = { type: 'routing-safety-skipped' } & z.infer<typeof routingSafetySkippedSchema>;
 
-/** Followed pull requests, merge requests or issues whose state the server saw move. */
+export type PermissionPolicySyncEvent = Extract<SyncEvent, { type: 'openchamber.permission-auto-accept' | 'openchamber.permission-left-for-user' }>;
+type PermissionPolicyEvent = { type: 'permission-policy'; event: PermissionPolicySyncEvent };
+
+const CONTROL_STREAM_SYNC_TYPES = new Set([
+  'openchamber:page-waiting',
+  'openchamber:page-settled',
+  'openchamber:session-assist',
+  'openchamber:session-archived',
+  'openchamber:workflow-run',
+  'openchamber:workflow-run-removed',
+]);
+export type ControlStreamSyncEvent = Extract<SyncEvent, {
+  type: 'openchamber.page-waiting' | 'openchamber.page-settled' | 'openchamber.session-assist' | 'session.patched'
+    | 'openchamber.workflow-run' | 'openchamber.workflow-run-removed';
+}>;
+type ControlStreamSyncEnvelope = { type: 'control-sync'; event: ControlStreamSyncEvent };
+
+const isControlStreamSyncEvent = (event: SyncEvent): event is ControlStreamSyncEvent => (
+  event.type === 'openchamber.page-waiting' || event.type === 'openchamber.page-settled'
+  || event.type === 'openchamber.session-assist' || event.type === 'session.patched'
+  || event.type === 'openchamber.workflow-run' || event.type === 'openchamber.workflow-run-removed'
+);
+
+const sharePageChangedSchema = z.object({ sessionId: z.string().min(1), callId: z.string().min(1) });
+type SharePageChangedEvent = { type: 'share-page-changed' } & z.infer<typeof sharePageChangedSchema>;
+
+const receivedPageChangedSchema = z.object({ receivedId: z.string().min(1) });
+type ReceivedPageChangedEvent = { type: 'received-page-changed' } & z.infer<typeof receivedPageChangedSchema>;
+
 type TrackedItemsChangedEvent = { type: 'tracked-items-changed'; records: z.infer<typeof trackedItemRecordsSchema> };
 
 const eventStreamReadySchema = z.object({ connectionId: z.string().min(1).optional() });
 const sourceControlActivitySchema = z.object({ directory: z.string().min(1) });
+const spaceStreamConnectedSchema = z.object({ spaceId: z.string().regex(/^[0-9a-f]{12}$/), status: z.literal('connected') });
 
 const notificationPropertiesSchema = z.object({
   title: z.string().optional(),
@@ -142,26 +215,50 @@ const notificationPropertiesSchema = z.object({
   directory: z.string().optional(),
   requireHidden: z.boolean().optional(),
   showWhenFocused: z.boolean().optional(),
+  toastOnly: z.boolean().optional(),
 });
 
 type OpenChamberEvent =
+  | { type: 'terminal-sessions-changed' }
   | { type: 'notification'; payload: z.infer<typeof notificationPropertiesSchema> }
-  /** `connectionId` names this connection on the server; absent from servers before tracked items. */
   | { type: 'event-stream-ready'; connectionId: string | null }
   | TrackedItemsChangedEvent
-  /** An agent turn finished in `directory`; its branches may have a new pull request. */
   | { type: 'source-control-activity'; directory: string }
   | RoutingUpdatedEvent
   | RoutingDecisionEvent
   | RoutingPermissionHeldEvent
   | RoutingSafetySkippedEvent
   | MessageQueueUpdatedEvent
+  | AutoReviewUpdatedEvent
+  | PrWatchUpdatedEvent
+  | ExtensionWaitsUpdatedEvent
+  | LaterPagesUpdatedEvent
+  | PermissionPolicyEvent
+  | ControlStreamSyncEnvelope
+  | { type: 'session-warming'; snapshot: SessionWarmingSnapshot }
+  | { type: 'session-todos'; event: SessionTodosEvent }
+  | { type: 'space-queue-stream'; spaceId: string }
+  | { type: 'space-permission-stream'; spaceId: string }
   | ScheduledTaskRanEvent
   | SessionCreatedEvent
   | WorktreeChangedEvent
   | BrowserControlRequestEvent
   | FileOpenRequestEvent
+  | PlanOpenRequestEvent
   | BrowserProviderResetEvent
+  | SourceControlProvidersChangedEvent
+  | TrackerProvidersChangedEvent
+  | QuotaProvidersChangedEvent
+  | GuestsChangedEvent
+  | GuestMarksChangedEvent
+  | GuestServiceEvent
+  | ThemesChangedEvent
+  | LimitFailoverEvent
+  | ProjectContextChangedEvent
+  | SharePageChangedEvent
+  | ReceivedPageChangedEvent
+  | SessionFoldersChangedEvent
+  | SessionDraftsChangedEvent
   | AgentMemoryChangedEvent;
 type Listener = (event: OpenChamberEvent) => void;
 
@@ -171,12 +268,14 @@ const worktreeChangedPropertiesSchema = z.object({
 });
 
 let eventSource: EventSource | null = null;
-let relayAbortController: AbortController | null = null;
+let streamAbortController: AbortController | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let authSessionWait: AbortController | null = null;
 let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempt = 0;
 let runtimeChangeUnsubscribe: (() => void) | null = null;
 const listeners = new Set<Listener>();
+let readyEvent: Extract<OpenChamberEvent, { type: 'event-stream-ready' }> | null = null;
 
 const MAX_RECONNECT_DELAY_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 45_000;
@@ -189,8 +288,24 @@ const clearHeartbeatTimer = () => {
   heartbeatTimer = null;
 };
 
+const cancelAuthSessionWait = () => {
+  authSessionWait?.abort();
+  authSessionWait = null;
+};
+
 const scheduleReconnect = () => {
-  if (reconnectTimer || listeners.size === 0) {
+  if (reconnectTimer || authSessionWait || listeners.size === 0) {
+    return;
+  }
+  if (useAuthSessionStore.getState().state !== 'ok') {
+    const wait = new AbortController();
+    authSessionWait = wait;
+    void waitForAuthSession(wait.signal).then(() => {
+      if (wait.signal.aborted) return;
+      authSessionWait = null;
+      reconnectAttempt = 0;
+      connect();
+    });
     return;
   }
   const delay = Math.min(1_000 * Math.pow(2, Math.min(reconnectAttempt, 5)), MAX_RECONNECT_DELAY_MS);
@@ -202,18 +317,19 @@ const scheduleReconnect = () => {
 };
 
 const cleanupSource = () => {
+  readyEvent = null;
   clearHeartbeatTimer();
-  relayAbortController?.abort();
-  relayAbortController = null;
+  streamAbortController?.abort();
+  streamAbortController = null;
   if (eventSource) {
     eventSource.close();
   }
   eventSource = null;
 };
 
-const connectRelay = (canControlBrowser: boolean) => {
+const connectFetchStream = (canControlBrowser: boolean) => {
   const controller = new AbortController();
-  relayAbortController = controller;
+  streamAbortController = controller;
   void (async () => {
     try {
       const response = await runtimeFetch('/api/openchamber/events', {
@@ -263,7 +379,7 @@ const connectRelay = (canControlBrowser: boolean) => {
     } catch {
       // A failed or ended stream follows the same reconnect path as EventSource.
     }
-    if (relayAbortController !== controller) return;
+    if (streamAbortController !== controller) return;
     cleanupSource();
     scheduleReconnect();
   })();
@@ -305,7 +421,13 @@ const getEventProperties = (properties: unknown): Record<string, unknown> | null
   return properties as Record<string, unknown>;
 };
 
+const guestServiceEventSchema = z.object({ guestId: z.string().min(1), topic: z.string().min(1), data: z.json() });
+
 const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) => {
+  if (envelope.type === 'openchamber:terminal-sessions-changed') {
+    for (const listener of listeners) listener({ type: 'terminal-sessions-changed' });
+    return;
+  }
   if (envelope.type === 'openchamber:notification') {
     const parsed = notificationPropertiesSchema.safeParse(envelope.properties);
     if (parsed.success) {
@@ -318,7 +440,9 @@ const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) =
     reconnectAttempt = 0;
     const ready = eventStreamReadySchema.safeParse(envelope.properties);
     const connectionId = ready.success ? ready.data.connectionId ?? null : null;
-    for (const listener of listeners) listener({ type: 'event-stream-ready', connectionId });
+    const event = { type: 'event-stream-ready', connectionId } as const;
+    readyEvent = event;
+    for (const listener of listeners) listener(event);
     return;
   }
 
@@ -339,6 +463,82 @@ const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) =
     if (parsed.success) {
       for (const listener of listeners) listener(parsed.data);
     }
+    return;
+  }
+
+  if (envelope.type === 'openchamber:pr-watch.updated') {
+    const parsed = prWatchUpdatedEventSchema.safeParse(envelope);
+    if (parsed.success) {
+      for (const listener of listeners) listener(parsed.data);
+    }
+    return;
+  }
+
+  if (envelope.type === 'openchamber:extension-waits.updated') {
+    const parsed = extensionWaitsUpdatedEventSchema.safeParse(envelope);
+    if (parsed.success) {
+      for (const listener of listeners) listener(parsed.data);
+    }
+    return;
+  }
+
+  if (envelope.type === 'openchamber:render-later.updated') {
+    const parsed = laterPagesUpdatedEventSchema.safeParse(envelope);
+    if (parsed.success) {
+      for (const listener of listeners) listener(parsed.data);
+    }
+    return;
+  }
+
+  if (envelope.type === 'openchamber:auto-review.updated') {
+    const parsed = autoReviewUpdatedEventSchema.safeParse(envelope);
+    if (parsed.success) {
+      for (const listener of listeners) listener(parsed.data);
+    }
+    return;
+  }
+
+  if (envelope.type === 'openchamber:permission-auto-accept.updated' || envelope.type === 'openchamber:permission-auto-accept.left-for-user') {
+    const classified = classifyStreamPayload(envelope, undefined);
+    if (classified.kind !== 'events') return;
+    for (const { event } of classified.events) {
+      if (event.type !== 'openchamber.permission-auto-accept' && event.type !== 'openchamber.permission-left-for-user') continue;
+      for (const listener of listeners) listener({ type: 'permission-policy', event });
+    }
+    return;
+  }
+
+  if (CONTROL_STREAM_SYNC_TYPES.has(envelope.type)) {
+    const classified = classifyStreamPayload(envelope, undefined);
+    if (classified.kind !== 'events') return;
+    for (const { event } of classified.events) {
+      if (!isControlStreamSyncEvent(event)) continue;
+      for (const listener of listeners) listener({ type: 'control-sync', event });
+    }
+    return;
+  }
+
+  if (envelope.type === 'openchamber:session-warming') {
+    const parsed = sessionWarmingSnapshotSchema.safeParse(envelope.properties);
+    if (parsed.success) for (const listener of listeners) listener({ type: 'session-warming', snapshot: parsed.data });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:session-todos') {
+    const parsed = sessionTodosEventSchema.safeParse(envelope.properties);
+    if (parsed.success) for (const listener of listeners) listener({ type: 'session-todos', event: parsed.data });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:space-queue-stream') {
+    const parsed = spaceStreamConnectedSchema.safeParse(envelope.properties);
+    if (parsed.success) for (const listener of listeners) listener({ type: 'space-queue-stream', spaceId: parsed.data.spaceId });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:space-permission-stream') {
+    const parsed = spaceStreamConnectedSchema.safeParse(envelope.properties);
+    if (parsed.success) for (const listener of listeners) listener({ type: 'space-permission-stream', spaceId: parsed.data.spaceId });
     return;
   }
 
@@ -370,6 +570,12 @@ const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) =
     return;
   }
 
+  if (envelope.type === 'openchamber:plan-open-request') {
+    const parsed = planOpenRequestSchema.safeParse(envelope.properties);
+    if (parsed.success) for (const listener of listeners) listener({ type: 'plan-open-request', ...parsed.data });
+    return;
+  }
+
   if (envelope.type === 'openchamber:file-open-request') {
     const parsed = fileOpenRequestSchema.safeParse(envelope.properties);
     if (parsed.success) for (const listener of listeners) listener({ type: 'file-open-request', ...parsed.data });
@@ -379,6 +585,79 @@ const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) =
   if (envelope.type === 'openchamber:browser-provider-reset') {
     const parsed = browserProviderResetSchema.safeParse(envelope.properties);
     if (parsed.success) for (const listener of listeners) listener({ type: 'browser-provider-reset', ...parsed.data });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:source-control-providers-changed') {
+    for (const listener of listeners) listener({ type: 'source-control-providers-changed' });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:tracker-providers-changed') {
+    for (const listener of listeners) listener({ type: 'tracker-providers-changed' });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:quota-providers-changed') {
+    for (const listener of listeners) listener({ type: 'quota-providers-changed' });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:guests-changed') {
+    for (const listener of listeners) listener({ type: 'guests-changed' });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:guest-marks-changed') {
+    for (const listener of listeners) listener({ type: 'guest-marks-changed' });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:guest-service-event') {
+    const parsed = guestServiceEventSchema.safeParse(envelope.properties);
+    if (!parsed.success || !isJsonValue(parsed.data.data)) return;
+    for (const listener of listeners) listener({ type: 'guest-service-event', ...parsed.data });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:themes-changed') {
+    for (const listener of listeners) listener({ type: 'themes-changed' });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:limit-failover') {
+    const parsed = limitFailoverSchema.safeParse(envelope.properties);
+    if (parsed.success) for (const listener of listeners) listener({ type: 'limit-failover', failover: parsed.data });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:project-context-changed') {
+    const parsed = projectContextChangedSchema.safeParse(envelope.properties);
+    if (parsed.success) for (const listener of listeners) listener({ type: 'project-context-changed', ...parsed.data });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:share-page') {
+    const parsed = sharePageChangedSchema.safeParse(envelope.properties);
+    if (parsed.success) for (const listener of listeners) listener({ type: 'share-page-changed', ...parsed.data });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:received-page') {
+    const parsed = receivedPageChangedSchema.safeParse(envelope.properties);
+    if (parsed.success) for (const listener of listeners) listener({ type: 'received-page-changed', ...parsed.data });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:session-drafts-changed') {
+    const parsed = sessionDraftsChangedSchema.safeParse(envelope.properties);
+    if (parsed.success) for (const listener of listeners) listener({ type: 'session-drafts-changed', ...parsed.data });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:session-folders-changed') {
+    const parsed = sessionFoldersChangedSchema.safeParse(envelope.properties);
+    if (parsed.success) for (const listener of listeners) listener({ type: 'session-folders-changed', ...parsed.data });
     return;
   }
 
@@ -451,6 +730,7 @@ const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) =
       parameters: rawParameters && typeof rawParameters === 'object' && !Array.isArray(rawParameters)
         ? rawParameters as Record<string, unknown>
         : {},
+      context: browserControlRequestContextSchema.safeParse(properties?.context).data ?? UNKNOWN_BROWSER_CONTROL_CONTEXT,
     };
     for (const listener of listeners) {
       listener(nextEvent);
@@ -467,7 +747,7 @@ const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) =
   const taskId = typeof properties?.taskId === 'string' ? properties.taskId : '';
   const ranAt = typeof properties?.ranAt === 'number' ? properties.ranAt : Date.now();
   const rawStatus = properties?.status;
-  const status = rawStatus === 'running' || rawStatus === 'error' ? rawStatus : 'success';
+  const status = rawStatus === 'running' || rawStatus === 'sent' || rawStatus === 'error' ? rawStatus : 'success';
   if (!projectId || !taskId) {
     return;
   }
@@ -491,19 +771,15 @@ const connect = () => {
   if (typeof window === 'undefined' || listeners.size === 0) {
     return;
   }
-  if (relayAbortController || (eventSource && eventSource.readyState !== EventSource.CLOSED)) {
+  if (streamAbortController || (eventSource && eventSource.readyState !== EventSource.CLOSED)) {
     return;
   }
 
   cleanupSource();
 
-  // Tell the server what this client can do while the connection lasts. Only a
-  // Chromium host can drive a page; a browser tab can display one but not be
-  // driven, and the agent tool needs to know which it is talking to without a
-  // setting anyone has to remember to change.
   const canControlBrowser = canDriveBrowserPage();
-  if (isRelayModeActive()) {
-    connectRelay(canControlBrowser);
+  if (isRelayModeActive() || (Object.keys(getRuntimeExtraHeadersSync()).length > 0 && isCapacitorApp())) {
+    connectFetchStream(canControlBrowser);
     return;
   }
   if (typeof EventSource !== 'function') return;
@@ -538,6 +814,7 @@ const ensureRuntimeChangeSubscription = () => {
   if (runtimeChangeUnsubscribe || typeof window === 'undefined') return;
   runtimeChangeUnsubscribe = subscribeRuntimeEndpointChanged(() => {
     cleanupSource();
+    cancelAuthSessionWait();
     reconnectAttempt = 0;
     connect();
   });
@@ -549,13 +826,17 @@ const cleanupRuntimeChangeSubscription = () => {
 };
 
 export const subscribeOpenchamberEvents = (listener: Listener): (() => void) => {
-  // VS Code runs OpenCode through its bridge, not the OpenChamber server that
-  // owns this stream. Opening it here retries against vscode-webview:// forever.
   if (isVSCodeRuntime()) return () => undefined;
 
   listeners.add(listener);
   ensureRuntimeChangeSubscription();
   connect();
+  if (readyEvent) {
+    const event = readyEvent;
+    queueMicrotask(() => {
+      if (readyEvent === event && listeners.has(listener)) listener(event);
+    });
+  }
 
   return () => {
     listeners.delete(listener);
@@ -564,6 +845,7 @@ export const subscribeOpenchamberEvents = (listener: Listener): (() => void) => 
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
       }
+      cancelAuthSessionWait();
       reconnectAttempt = 0;
       cleanupSource();
       cleanupRuntimeChangeSubscription();

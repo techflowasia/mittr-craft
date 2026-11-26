@@ -28,7 +28,6 @@ mock.module('./hooks/useSessionActions', () => ({
       args.setEditingId(id);
       args.setEditTitle(title);
     },
-    handleCopySessionId: () => undefined,
     handleDeleteSession: () => undefined,
     handleRestoreSession: () => undefined,
   }),
@@ -66,16 +65,13 @@ describe('SessionTreeItem public behavior', () => {
       const [menuKey, setMenuKey] = React.useState<string | null>(null);
       const rows = [
         { renderContext: 'project' as const, groupDirectory: '/workspace', rowKey: 'project:session:same-session' },
-        { renderContext: 'recent' as const, groupDirectory: '/workspace', rowKey: 'recent:session:same-session' },
+        { renderContext: 'timeline-mixed' as const, groupDirectory: '/workspace', rowKey: 'recent:session:same-session' },
       ];
       return <>{rows.map((context) => <SessionTreeItem
         key={context.renderContext}
         node={rowNode}
         pinnedSessionIds={new Set()}
         expandedParents={new Set()}
-        hasSessionSearchQuery={false}
-        normalizedSessionSearchQuery=""
-        notifyOnSubtasks={false}
         editingId={editingId}
         editingRowKey={editingRowKey}
         setEditingId={setEditingId}
@@ -86,7 +82,6 @@ describe('SessionTreeItem public behavior', () => {
         openSidebarMenuKey={menuKey}
         setOpenSidebarMenuKey={setMenuKey}
         allowReselect={false}
-        resetSessionSearch={noop}
         deleteSessionConfirm={null}
         setDeleteSessionConfirm={noop}
         startFolderRename={noop}

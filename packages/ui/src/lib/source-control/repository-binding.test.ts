@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { SourceControlBindingRead } from '@/lib/api/types';
+import { clearWorktreeBootstrapState, setWorktreeBootstrapState } from '@/lib/worktrees/worktreeBootstrap';
 import { RepositoryBindingOwner } from './repository-binding';
 
 const endpoint = { displayUrl: 'https://github.com/team/repo', fingerprint: 'fetch' };
@@ -54,6 +55,33 @@ describe('repository binding authority', () => {
     expect(empty.status).toBe('ready');
     expect(empty.read?.status).toBe('missing');
     expect(empty.error).toBeNull();
+  });
+
+  test('a worktree still being checked out is read once its checkout is ready', async () => {
+    let checkoutReady!: () => void;
+    const checkout = new Promise<void>((resolve) => { checkoutReady = resolve; });
+    const owner = new RepositoryBindingOwner(() => 'runtime', 64, () => checkout);
+    const scope = owner.scope('/worktree');
+    let requests = 0;
+    const pending = owner.read(scope, { repositoryBinding: async () => { requests += 1; return bound(); } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requests).toBe(0);
+    expect(owner.snapshot(scope).status).toBe('loading');
+    checkoutReady();
+    expect((await pending).status).toBe('ready');
+    expect(requests).toBe(1);
+  });
+
+  test('a worktree whose checkout failed is still read, so its recovery controls get the binding (#5811)', async () => {
+    setWorktreeBootstrapState('/failed-worktree', { status: 'failed', error: 'checkout hydration timed out', updatedAt: 1 });
+    try {
+      const owner = new RepositoryBindingOwner(() => 'runtime');
+      const snapshot = await owner.read(owner.scope('/failed-worktree'), { repositoryBinding: async () => bound() });
+      expect(snapshot.status).toBe('ready');
+      expect(snapshot.read?.binding).toEqual(bound().binding);
+    } finally {
+      clearWorktreeBootstrapState('/failed-worktree');
+    }
   });
 
   test('failed refresh retains the complete snapshot as stale but grants no read authority', async () => {

@@ -1,4 +1,4 @@
-import { afterAll, afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, describe, expect, mock, test } from 'bun:test';
 import React, { act } from 'react';
 import { Window } from 'happy-dom';
 
@@ -24,6 +24,7 @@ for (const [name, value] of Object.entries({
 const { createRoot } = await import('react-dom/client');
 const { I18nProvider } = await import('@/lib/i18n');
 const { registerProductUiPlugin, resetProductUiPluginsForTests } = await import('@/lib/product-plugins');
+mock.module('@/components/ui/AboutLogo', () => ({ AboutLogo: () => null }));
 const { AboutDialog } = await import('./AboutDialog');
 
 const renderOpenDialog = async (): Promise<string> => {

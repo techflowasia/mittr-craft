@@ -355,5 +355,7 @@ export function createAccountStore({
     return active ? active.home : NO_ACCOUNT_HOME;
   };
 
-  return { read, readOf, write, clear, activate, signOut, list, activeHome, engineHome, damaged, repair, legacyPending };
+  const homeOf = (userId) => readIndex().accounts.find((entry) => entry.userId === userId)?.home;
+
+  return { read, readOf, homeOf, write, clear, activate, signOut, list, activeHome, engineHome, damaged, repair, legacyPending };
 }

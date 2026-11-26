@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   isCredentialListRequest,
@@ -8,6 +8,7 @@ import {
   policyFilePaths,
   publicEnterprisePolicy,
   readEnterprisePolicy,
+  watchEnterprisePolicy,
 } from './enterprise-mode.js';
 
 const missing = () => {
@@ -29,6 +30,27 @@ const machine = (files, { platform = 'linux', env = {} } = {}) => ({
 const LINUX_POLICY = '/etc/openchamber/policy.json';
 
 describe('enterprise policy', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('a watch calls back once the policy in effect changes, and stays quiet while it does not', () => {
+    vi.useFakeTimers();
+    const policies = [{ enterpriseMode: false }, { enterpriseMode: false }, { enterpriseMode: true, allowedExtensions: [] }, { enterpriseMode: true, allowedExtensions: [] }];
+    let reads = 0;
+    const onChange = vi.fn();
+    const stop = watchEnterprisePolicy({ onChange, intervalMs: 1000, read: () => policies[Math.min(reads++, policies.length - 1)] });
+    vi.advanceTimersByTime(1000);
+    expect(onChange).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1000);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(3000);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    stop();
+    vi.advanceTimersByTime(5000);
+    expect(reads).toBe(6);
+  });
+
   it('is off with no policy file and no environment variable', () => {
     expect(readEnterprisePolicy(machine({}))).toEqual({
       enterpriseMode: false,
@@ -41,6 +63,7 @@ describe('enterprise policy', () => {
       allowedExtensions: [],
       allowLocalExtensions: false,
       opencodeBinary: null,
+      hideBuiltinSkillCatalogs: false,
     });
   });
 
@@ -70,6 +93,25 @@ describe('enterprise policy', () => {
       allowedExtensions: [],
       allowLocalExtensions: false,
       opencodeBinary: null,
+      hideBuiltinSkillCatalogs: false,
+    });
+  });
+
+  describe('hidden built-in skill catalogs', () => {
+    it('comes from the file with or without enterprise mode', () => {
+      expect(readEnterprisePolicy(machine({ [LINUX_POLICY]: '{"hideBuiltinSkillCatalogs": true}' })))
+        .toMatchObject({ enterpriseMode: false, hideBuiltinSkillCatalogs: true });
+      expect(readEnterprisePolicy(machine({ [LINUX_POLICY]: '{"enterpriseMode": true, "hideBuiltinSkillCatalogs": true}' })).hideBuiltinSkillCatalogs)
+        .toBe(true);
+    });
+
+    it('is never taken from the environment', () => {
+      expect(readEnterprisePolicy(machine({}, { env: { OPENCHAMBER_ENTERPRISE_MODE: '1', OPENCHAMBER_HIDE_BUILTIN_SKILL_CATALOGS: '1' } })).hideBuiltinSkillCatalogs)
+        .toBe(false);
+    });
+
+    it('hides them when the file is broken', () => {
+      expect(readEnterprisePolicy(machine({ [LINUX_POLICY]: '{"hideBuiltinSkillCatalogs": "yes"}' })).hideBuiltinSkillCatalogs).toBe(true);
     });
   });
 
@@ -272,6 +314,7 @@ describe('enterprise policy', () => {
       '/api/integration/anthropic/connect/oauth',
       '/api/integration/anthropic/connect/oauth/att_1/complete',
       '/api/integration/github-copilot/connect/command',
+      '/api/integration/amazon-bedrock/connect/external',
       '/api/experimental/integration/wellknown',
       '/api/integration/openai/connect',
       '/api/integration/openai/connect/key/',

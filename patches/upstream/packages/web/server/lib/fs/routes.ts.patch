@@ -1,0 +1,13 @@
+diff --git a/packages/web/server/lib/fs/routes.ts b/packages/web/server/lib/fs/routes.ts
+index a828b6785..60fec54d4 100644
+--- a/packages/web/server/lib/fs/routes.ts
++++ b/packages/web/server/lib/fs/routes.ts
+@@ -876,7 +876,7 @@ export const registerFsRoutes = (app: Application, dependencies: FsRouteDependen
+       }
+       const [canonicalChatsRoot, canonicalLegacyChatsRoot] = await Promise.all([
+         canonicalDirectoryPath(chatsRoot, fsPromises, path),
+-        canonicalDirectoryPath(path.join(home, '.config', 'openchamber', 'chats'), fsPromises, path).catch((error) => {
++        canonicalDirectoryPath(path.join(openchamberUserConfigRoot, 'chats'), fsPromises, path).catch((error) => {
+           console.warn('Failed to resolve legacy chats root:', error);
+           return undefined;
+         }),

@@ -1,0 +1,112 @@
+diff --git a/packages/web/server/lib/opencode/proxy.ts b/packages/web/server/lib/opencode/proxy.ts
+index e5e6256cc..31c263b05 100644
+--- a/packages/web/server/lib/opencode/proxy.ts
++++ b/packages/web/server/lib/opencode/proxy.ts
+@@ -30,6 +30,8 @@ import type { SessionMetadata } from '../openchamber-sessions/session-metadata-s
+ import type { UnreadBaselineOverlay } from '../openchamber-sessions/unread-baseline.js';
+ import type { mergeSessionLists } from '../spaces/space-sessions.js';
+ import type { Socket } from 'node:net';
++import type { ResponseRecoveryOwner } from '../session-response-recovery/owner.js';
++import type { RecoveryAdmissionTicket } from '../session-response-recovery/admission.js';
+ 
+ export interface OpenCodeProxyDependencies {
+   fs?: { promises: { realpath: (directory: string) => Promise<string> } };
+@@ -55,6 +57,7 @@ export interface OpenCodeProxyDependencies {
+   hiddenSessions?: ReturnType<typeof createHiddenSessionRegistry> | null;
+   openCodeTrust?: OpenCodeTrust | null;
+   mcpOAuthSignIn?: ReturnType<typeof createMcpOAuthSignIn> | null;
++  responseRecovery?: Pick<ResponseRecoveryOwner, 'admissions'> | null;
+ }
+ 
+ interface ErrorFields {
+@@ -434,6 +437,7 @@ export const registerOpenCodeProxy = (app: Application, deps: OpenCodeProxyDepen
+     getUnreadBaseline = null,
+     mergeSpaceSessionList = null,
+     spaceEventHub = null,
++    responseRecovery = null,
+     hiddenSessions = null,
+     openCodeTrust = null,
+     mcpOAuthSignIn = null,
+@@ -949,6 +953,8 @@ export const registerOpenCodeProxy = (app: Application, deps: OpenCodeProxyDepen
+     }
+   };
+ 
++  if (responseRecovery) app.use('/api', (_req, _res, next) => responseRecovery.admissions.run(next));
++
+   app.use('/api', (_req, _res, next) => {
+     ensureOpenCodeApiPrefix();
+     next();
+@@ -1216,6 +1222,7 @@ export const registerOpenCodeProxy = (app: Application, deps: OpenCodeProxyDepen
+ 
+   const resolveOpenCodeProxyAgent = createOpenCodeProxyAgentResolver(resolveProxyTarget);
+ 
++  const proxyAdmissions = new WeakMap<Request, { ticket: RecoveryAdmissionTicket; target: ReturnType<typeof resolveProxyTarget>; headers: Record<string, string> }>();
+   const createApiProxy = (timeoutMs: number) => createProxyMiddleware<ProxyRequest, Response>({
+     target: resolveProxyTarget(),
+     get agent() {
+@@ -1225,7 +1232,7 @@ export const registerOpenCodeProxy = (app: Application, deps: OpenCodeProxyDepen
+     timeout: timeoutMs,
+     proxyTimeout: timeoutMs,
+     pathRewrite: (proxiedPath) => `/api${proxiedPath === '/' ? '' : proxiedPath}`,
+-    router: () => resolveProxyTarget(),
++    router: (req) => proxyAdmissions.get(req)?.target ?? resolveProxyTarget(),
+     on: {
+       proxyReq: (proxyReq, req, res) => {
+         const onClientClose = () => {
+@@ -1234,8 +1241,10 @@ export const registerOpenCodeProxy = (app: Application, deps: OpenCodeProxyDepen
+         res.once('close', onClientClose);
+         proxyReq.once('close', () => res.off('close', onClientClose));
+         if (res.destroyed) onClientClose();
++        const admissionSignal = proxyAdmissions.get(req)?.ticket.signal;
++        admissionSignal?.addEventListener('abort', () => proxyReq.destroy(), { once: true });
+ 
+-        const authHeaders = getOpenCodeAuthHeaders();
++        const authHeaders = proxyAdmissions.get(req)?.headers ?? getOpenCodeAuthHeaders();
+         if (authHeaders.Authorization) {
+           proxyReq.setHeader('Authorization', authHeaders.Authorization);
+         }
+@@ -1246,7 +1255,14 @@ export const registerOpenCodeProxy = (app: Application, deps: OpenCodeProxyDepen
+ 
+         replayParsedBody(proxyReq, req);
+       },
+-      proxyRes: (proxyRes) => {
++      proxyRes: (proxyRes, req, res) => {
++        const admission = proxyAdmissions.get(req);
++        if (admission) {
++          proxyRes.once('end', () => admission.ticket.finish(proxyRes.complete && (proxyRes.statusCode ?? 0) < 500 && proxyRes.statusCode !== 408));
++          proxyRes.once('aborted', () => { admission.ticket.finish(false); res.destroy(); });
++          proxyRes.once('close', () => { if (!proxyRes.complete) admission.ticket.finish(false); });
++          proxyRes.once('error', () => admission.ticket.finish(false));
++        }
+         for (const key of Object.keys(proxyRes.headers || {})) {
+           if (!shouldForwardProxyResponseHeader(key)) {
+             delete proxyRes.headers[key];
+@@ -1254,6 +1270,7 @@ export const registerOpenCodeProxy = (app: Application, deps: OpenCodeProxyDepen
+         }
+       },
+       error: function onApiProxyError(err, req, res) {
++        proxyAdmissions.get(req)?.ticket.finish(false);
+         if (
+           req?.aborted ||
+           res?.writableEnded ||
+@@ -1287,6 +1304,20 @@ export const registerOpenCodeProxy = (app: Application, deps: OpenCodeProxyDepen
+     next();
+   });
+ 
++  if (responseRecovery) app.use('/api', (req, res, next) => {
++    if (req.method === 'GET' || req.method === 'HEAD') return next();
++    if (req.method === 'POST' && /^\/session\/[^/?]+\/(?:interrupt|abort)(?:\?|$)/.test(req.url)) return next();
++    const match = /^\/session\/([^/?]+)(?:\/|\?|$)/.exec(req.url);
++    try {
++      const ticket = responseRecovery.admissions.begin(match?.[1] ? decodeURIComponent(match[1]) : '*');
++      proxyAdmissions.set(req, { ticket, target: resolveProxyTarget(), headers: getOpenCodeAuthHeaders() });
++      req.once('aborted', () => ticket.finish(false));
++      res.once('close', () => { if (!res.writableFinished) ticket.finish(false); });
++      next();
++    } catch {
++      res.status(409).json({ error: 'Session admission is blocked during recovery or upstream transition.' });
++    }
++  });
+   app.use('/api', applyProxyResponseDeadline);
+   mcpOAuthSignIn?.registerStartRoutes(app, { readBody });
+   app.use('/api', apiProxy);

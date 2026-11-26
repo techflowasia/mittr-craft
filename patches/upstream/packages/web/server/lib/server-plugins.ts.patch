@@ -1,0 +1,194 @@
+diff --git a/packages/web/server/lib/server-plugins.ts b/packages/web/server/lib/server-plugins.ts
+new file mode 100644
+index 000000000..9c0dfac0b
+--- /dev/null
++++ b/packages/web/server/lib/server-plugins.ts
+@@ -0,0 +1,188 @@
++import path from 'node:path';
++import { pathToFileURL } from 'node:url';
++
++import { z } from 'zod';
++
++import { OpenChamberControlError } from './openchamber-control/error.js';
++import type { JsonObject, JsonValue } from './shared/json-values.js';
++
++const SERVER_PLUGINS_ENV = 'OPENCHAMBER_SERVER_PLUGINS';
++
++export type EngineConfig = JsonObject;
++
++export interface ServerPluginContext {
++  logger: Pick<Console, 'warn'>;
++}
++
++type EngineEnvironment = Record<string, string | undefined>;
++
++export interface GoalContinuationInput {
++  sessionId: string;
++  directory: string;
++  goalId: string;
++  resumed: boolean;
++}
++
++export interface GoalEndedInput {
++  sessionId: string;
++  directory: string;
++  reason: 'complete' | 'cleared';
++}
++
++const goalContinuationAnswerSchema = z.object({ block: z.string().optional(), note: z.string().optional() }).nullish();
++
++type GoalContinuationAnswer = z.infer<typeof goalContinuationAnswerSchema>;
++
++interface ServerPluginHooks {
++  engineEnv?: () => EngineEnvironment | Promise<EngineEnvironment>;
++  managedConfig?: () => EngineConfig | Promise<EngineConfig>;
++  neverAutoAnswer?: (permission: JsonObject) => boolean;
++  goalContinuation?: (input: GoalContinuationInput) => GoalContinuationAnswer | Promise<GoalContinuationAnswer>;
++  goalEnded?: (input: GoalEndedInput) => void | Promise<void>;
++  dispose?: () => void | Promise<void>;
++}
++
++type ServerPluginSetupResult = ServerPluginHooks | JsonValue | undefined;
++type ServerPluginSetup<Context extends ServerPluginContext> = (context: Context) => ServerPluginSetupResult | Promise<ServerPluginSetupResult>;
++
++interface LoadedServerPlugin extends ServerPluginHooks {
++  specifier: string;
++}
++
++type PluginCallable = (...args: never[]) => ServerPluginSetupResult | Promise<ServerPluginSetupResult> | void | Promise<void>;
++
++const isFunction = <Callable extends PluginCallable>(value: unknown): value is Callable => value instanceof Function;
++
++const isHooks = (value: unknown): value is ServerPluginHooks => value !== null && typeof value === 'object';
++
++const specifiersSchema = z.array(z.string().refine((entry) => path.isAbsolute(entry)));
++
++export const readServerPluginSpecifiers = (env: NodeJS.ProcessEnv = process.env) => {
++  const raw = (env[SERVER_PLUGINS_ENV] ?? '').trim();
++  if (!raw) return [];
++  let parsed: unknown;
++  try {
++    parsed = JSON.parse(raw);
++  } catch (error) {
++    throw new Error(`${SERVER_PLUGINS_ENV} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
++  }
++  const specifiers = specifiersSchema.safeParse(parsed);
++  if (!specifiers.success) throw new Error(`${SERVER_PLUGINS_ENV} must be a JSON array of absolute file paths`);
++  return specifiers.data;
++};
++
++export const isPlainObject = (value: unknown): value is EngineConfig => value !== null && value !== undefined && Object.getPrototypeOf(value) === Object.prototype;
++
++const isConcatenated = (keyPath: string) => keyPath === 'plugins' || keyPath === 'policies' || keyPath === 'experimental.policies';
++
++const mergeAt = (base: EngineConfig, override: EngineConfig, parentPath: string): EngineConfig => {
++  const merged = new Map<string, JsonValue | undefined>(Object.entries(base));
++  for (const [key, value] of Object.entries(override)) {
++    const keyPath = parentPath ? `${parentPath}.${key}` : key;
++    const current = merged.get(key);
++    if (isConcatenated(keyPath) && Array.isArray(current) && Array.isArray(value)) {
++      merged.set(key, [...current, ...value]);
++    } else if (isPlainObject(current) && isPlainObject(value)) {
++      merged.set(key, mergeAt(current, value, keyPath));
++    } else {
++      merged.set(key, value);
++    }
++  }
++  return Object.fromEntries(merged);
++};
++
++export const mergeEngineConfig = (base: EngineConfig, override: EngineConfig) => mergeAt(base, override, '');
++
++export const loadServerPlugins = async <Context extends ServerPluginContext>({ specifiers, context }: { specifiers: string[]; context: Context }) => {
++  const plugins: LoadedServerPlugin[] = [];
++  for (const specifier of specifiers) {
++    const module: { default?: unknown } = await import(pathToFileURL(specifier).href);
++    const setup = module.default;
++    if (!isFunction<ServerPluginSetup<Context>>(setup)) throw new Error(`Server plugin ${specifier} must export a default function`);
++    const hooks = await setup(context);
++    plugins.push(isHooks(hooks) ? { specifier, ...hooks } : { specifier });
++  }
++
++  return {
++    holdsPermissions: plugins.some((plugin) => isFunction(plugin.neverAutoAnswer)),
++    engineEnv: async () => {
++      const env: Record<string, string | undefined> = {};
++      for (const plugin of plugins) {
++        if (isFunction(plugin.engineEnv)) Object.assign(env, await plugin.engineEnv());
++      }
++      return env;
++    },
++    managedConfig: async () => {
++      let config: EngineConfig = {};
++      for (const plugin of plugins) {
++        if (!isFunction(plugin.managedConfig)) continue;
++        const fragment: unknown = await plugin.managedConfig();
++        if (!isPlainObject(fragment)) throw new Error(`Server plugin ${plugin.specifier} managedConfig() must return a JSON object`);
++        config = mergeEngineConfig(config, fragment);
++      }
++      return config;
++    },
++    neverAutoAnswer: (permission: JsonObject) => plugins.some((plugin) => {
++      if (!isFunction(plugin.neverAutoAnswer)) return false;
++      try {
++        return plugin.neverAutoAnswer(permission) === true;
++      } catch {
++        return true;
++      }
++    }),
++    goalContinuation: async (input: GoalContinuationInput) => {
++      const notes: string[] = [];
++      for (const plugin of plugins) {
++        if (!isFunction(plugin.goalContinuation)) continue;
++        let answer: GoalContinuationAnswer;
++        try {
++          answer = goalContinuationAnswerSchema.parse(await plugin.goalContinuation(input));
++        } catch (error) {
++          context.logger.warn(`Server plugin ${plugin.specifier} goalContinuation failed:`, error instanceof Error ? error.message : String(error));
++          continue;
++        }
++        const block = answer?.block?.trim();
++        if (block) return { block, note: '' };
++        const note = answer?.note?.trim();
++        if (note) notes.push(note);
++      }
++      return { block: '', note: notes.join('\n\n') };
++    },
++    goalEnded: async (input: GoalEndedInput) => {
++      for (const plugin of plugins) {
++        if (!isFunction(plugin.goalEnded)) continue;
++        try {
++          await plugin.goalEnded(input);
++        } catch (error) {
++          context.logger.warn(`Server plugin ${plugin.specifier} goalEnded failed:`, error instanceof Error ? error.message : String(error));
++        }
++      }
++    },
++    dispose: async () => {
++      for (const plugin of [...plugins].reverse()) {
++        if (!isFunction(plugin.dispose)) continue;
++        try {
++          await plugin.dispose();
++        } catch (error) {
++          context.logger.warn(`Server plugin ${plugin.specifier} failed to stop:`, error instanceof Error ? error.message : String(error));
++        }
++      }
++    },
++  };
++};
++
++interface PermissionAnswer {
++  sessionID: string;
++  requestID: string;
++}
++
++export const createProgramAnswerGuard = <Answer extends PermissionAnswer>({ holdsPermissions, isLeftForPerson, answer }: {
++  holdsPermissions: () => boolean;
++  isLeftForPerson: (sessionID: string, requestID: string) => Promise<boolean>;
++  answer: (input: Answer) => Promise<void>;
++}) => async (input: Answer) => {
++  if (holdsPermissions() && await isLeftForPerson(input.sessionID, input.requestID)) {
++    throw new OpenChamberControlError('This request has to be answered by the person in the app', 403);
++  }
++  await answer(input);
++};

@@ -1,5 +1,7 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
+import { GlassPopupMotion } from './GlassPopupMotion';
+import { publishFloatingPanelClearance, readFloatingPanelTailReserve, withdrawFloatingPanelClearance } from '../state/composerInsetReaders';
 
 interface ComposerFloatingPanelProps {
     header: React.ReactNode;
@@ -7,41 +9,38 @@ interface ComposerFloatingPanelProps {
     compact?: boolean;
     role?: 'dialog' | 'region';
     ariaLabel?: string;
+    maxHeight?: number;
+    holdReserve?: boolean;
 }
 
-/** Shared dock for mutually exclusive BTW, queue, and suggestion panels. */
-/** Panels mounted per chat column, so the marker survives an overlap. */
 const mountedPanels = new WeakMap<HTMLElement, number>();
 
-export function ComposerFloatingPanel({ header, children, compact = false, role, ariaLabel }: ComposerFloatingPanelProps) {
+export function ComposerFloatingPanel({ header, children, compact = false, role, ariaLabel, maxHeight, holdReserve = false }: ComposerFloatingPanelProps) {
     const panelRef = React.useRef<HTMLDivElement | null>(null);
+    const holdReserveRef = React.useRef(holdReserve);
+    holdReserveRef.current = holdReserve;
 
     React.useLayoutEffect(() => {
         const panel = panelRef.current;
         const column = panel?.closest<HTMLElement>('[data-composer-bound]');
         if (!panel || !column) return;
-        // Marks the column while any panel is docked above the composer, so
-        // chrome that would end up over the panel (the recap hint) can hide.
         mountedPanels.set(column, (mountedPanels.get(column) ?? 0) + 1);
         column.setAttribute('data-floating-panel', 'true');
-        // The floating status/navigation overlays translate up by this
-        // offset, and the transcript's tail spacer grows by it so the panel
-        // never covers the last rows.
+        let reserve = holdReserveRef.current ? readFloatingPanelTailReserve(column) : 0;
         const update = () => {
             const gap = Number.parseFloat(getComputedStyle(panel).marginBottom) || 0;
-            const clearance = `${Math.ceil(panel.getBoundingClientRect().height + gap)}px`;
-            if (column.style.getPropertyValue('--chat-floating-panel-clearance') !== clearance) {
-                column.style.setProperty('--chat-floating-panel-clearance', clearance);
-            }
+            const clearance = Math.ceil(panel.getBoundingClientRect().height + gap);
+            reserve = holdReserveRef.current ? Math.max(reserve, clearance) : clearance;
+            publishFloatingPanelClearance(column, { clearance, tailReserve: reserve });
         };
         update();
         const observer = globalThis.ResizeObserver ? new ResizeObserver(update) : null;
         observer?.observe(panel, { box: 'border-box' });
         return () => {
             observer?.disconnect();
-            column.style.removeProperty('--chat-floating-panel-clearance');
             const remaining = (mountedPanels.get(column) ?? 1) - 1;
             if (remaining <= 0) {
+                withdrawFloatingPanelClearance(column);
                 mountedPanels.delete(column);
                 column.removeAttribute('data-floating-panel');
             } else {
@@ -51,17 +50,15 @@ export function ComposerFloatingPanel({ header, children, compact = false, role,
     }, []);
 
     return (
-        <div ref={panelRef} className="chat-input-column absolute bottom-full left-0 right-0 z-30 mb-3" role={role} aria-label={ariaLabel}>
-            {/* Shadow on the wrapper, never on the glass: see "Floating composer"
-                in composer/DOCUMENTATION.md. */}
-            <div className="rounded-xl shadow-[0_4px_16px_-4px_rgb(0_0_0_/_0.12)]">
-            <div className="oc-glass-popover w-full min-w-0 overflow-hidden rounded-xl border border-[var(--interactive-border)]">
-                <div className={cn('flex items-center gap-2 px-3', compact ? 'min-h-8 py-0' : 'py-1.5')}>
+        <div ref={panelRef} className="chat-input-column absolute bottom-full inset-s-0 inset-e-0 z-30 mb-3" role={role} aria-label={ariaLabel}>
+            <GlassPopupMotion className="origin-bottom rounded-xl">
+            <div className={cn('oc-glass-popover oc-glass-floating w-full min-w-0 overflow-hidden rounded-xl', maxHeight !== undefined && 'flex flex-col')} style={{ maxHeight }}>
+                <div className={cn('flex shrink-0 items-center gap-2 px-3', compact ? 'min-h-8 py-0' : 'py-1.5')}>
                     {header}
                 </div>
                 {children}
             </div>
-            </div>
+            </GlassPopupMotion>
         </div>
     );
 }

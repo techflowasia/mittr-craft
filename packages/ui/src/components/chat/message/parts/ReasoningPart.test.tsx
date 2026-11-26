@@ -1,7 +1,5 @@
 import React, { act } from 'react';
 import { describe, expect, test } from 'bun:test';
-import { plugin } from 'bun';
-import { pathToFileURL } from 'node:url';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createRoot } from 'react-dom/client';
 import { Window } from 'happy-dom';
@@ -15,18 +13,9 @@ import type { RuntimeAPIs } from '@/lib/api/types';
 import { I18nProvider } from '@/lib/i18n';
 import ReasoningPart, { ReasoningTimelineBlock } from './ReasoningPart';
 import type { StreamPhase } from '../types';
+import { onRowExpand } from '@/components/chat/lib/scroll/timelineScrollIntent';
 
-// Bun does not implement Vite's asset-query imports. Preserve the real asset
-// URL while keeping the renderer and worker client modules unchanged.
-plugin({
-  name: 'reasoning-worker-url',
-  setup(build) {
-    build.onLoad({ filter: /markdown-shiki\.worker\.ts\?worker&url$/ }, ({ path }) => ({
-      contents: `export default ${JSON.stringify(pathToFileURL(path.split('?')[0]).href)};`,
-      loader: 'js',
-    }));
-  },
-});
+const { TimelineNotice } = await import('../TimelineNotice');
 
 const unavailable = (): never => { throw new Error('Reasoning scrolling must not call runtime APIs'); };
 const runtimeApis: RuntimeAPIs = {
@@ -53,6 +42,34 @@ const TestProviders = ({ children }: { children: React.ReactNode }) => (
 
 type ReasoningPartFixture = Extract<Part, { type: 'reasoning' }>;
 
+describe('compaction model attribution', () => {
+  const message = {
+    id: 'compact', sessionID: 'ses_1', role: 'compaction' as const, time: { created: 1 },
+    status: 'completed' as const, reason: 'auto' as const, summary: 'Summary',
+    model: { providerID: 'summary-provider', id: 'summary-model' },
+  };
+
+  test('shows the recorded model on summary and empty-summary headers', () => {
+    for (const summary of ['Summary', '']) {
+      const html = renderToStaticMarkup(<TestProviders><TimelineNotice message={{ ...message, summary }} /></TestProviders>);
+      const window = new Window();
+      window.document.body.innerHTML = html;
+      expect(window.document.body.textContent).toContain('Conversation compacted');
+      expect(window.document.body.textContent).toContain(' · summary-provider/summary-model');
+    }
+  });
+
+  test('keeps running, failed and older model-less compactions unattributed', () => {
+    for (const status of ['running', 'failed'] as const) {
+      const html = renderToStaticMarkup(<TestProviders><TimelineNotice message={{ ...message, status }} /></TestProviders>);
+      expect(html).not.toContain('summary-provider/summary-model');
+    }
+    const html = renderToStaticMarkup(<TestProviders><TimelineNotice message={{ ...message, model: undefined }} /></TestProviders>);
+    expect(html).toContain('Conversation compacted');
+    expect(html).not.toContain('summary-provider/summary-model');
+  });
+});
+
 /**
  * Mounts a real client root against a happy-dom document so mount/unmount
  * lifecycle is observable. bun test shares globalThis across a file, so the
@@ -76,6 +93,7 @@ const DOM_GLOBAL_NAMES = [
   'getComputedStyle',
   'ResizeObserver',
   'MutationObserver',
+  'CustomEvent',
   'IS_REACT_ACT_ENVIRONMENT',
 ] as const;
 
@@ -118,6 +136,7 @@ const installDomStub = () => {
     getComputedStyle: happyWindow.getComputedStyle.bind(happyWindow),
     ResizeObserver: ResizeObserverStub,
     MutationObserver: happyWindow.MutationObserver,
+    CustomEvent: happyWindow.CustomEvent,
     IS_REACT_ACT_ENVIRONMENT: true,
   };
   for (const name of DOM_GLOBAL_NAMES) {
@@ -148,21 +167,13 @@ const LONG_REASONING =
   'This second line goes into much deeper detail about the internal reasoning ' +
   'process that should remain hidden in the collapsed header view.';
 
-// A long text that should render the collapsible header with a label
-const LONG_JUSTIFICATION =
-  'Sorting by activity first because the active session needs immediate attention.\n' +
-  'Secondary sort by last updated timestamp ensures a stable deterministic ordering ' +
-  'when multiple sessions have the same activity state.';
-
 describe('ReasoningTimelineBlock', () => {
   test('renders reasoning traces behind an accessible collapsed disclosure by default', () => {
     const markup = renderToStaticMarkup(
       <TestProviders>
         <ReasoningTimelineBlock
           text={LONG_REASONING}
-          variant="thinking"
           blockId="reasoning-test"
-          showDuration={false}
         />
       </TestProviders>,
     );
@@ -185,9 +196,7 @@ describe('ReasoningTimelineBlock', () => {
       <TestProviders>
         <ReasoningTimelineBlock
           text={LONG_REASONING}
-          variant="thinking"
           blockId="reasoning-reveal"
-          showDuration={false}
           revealRequest={1}
           reasoningMessageId="msg_reveal"
         />
@@ -199,32 +208,12 @@ describe('ReasoningTimelineBlock', () => {
     expect(markup).toContain('data-reasoning-message-id="msg_reveal"');
   });
 
-  test('renders "Justification" label for justification variant when pre-expanded and not streaming', () => {
-    const markup = renderToStaticMarkup(
-      <TestProviders>
-        <ReasoningTimelineBlock
-          text={LONG_JUSTIFICATION}
-          variant="justification"
-          blockId="justification-test"
-          showDuration={false}
-          defaultExpanded={true}
-        />
-      </TestProviders>,
-    );
-
-    // Label shown in expanded header should be "Justification" not "Thinking"
-    expect(markup).toContain('Justification');
-    expect(markup).not.toContain('Thinking');
-  });
-
-  test('renders "Thinking" label for thinking variant when pre-expanded and not streaming', () => {
+  test('renders "Thinking" label when pre-expanded and not streaming', () => {
     const markup = renderToStaticMarkup(
       <TestProviders>
         <ReasoningTimelineBlock
           text={LONG_REASONING}
-          variant="thinking"
           blockId="thinking-test"
-          showDuration={false}
           defaultExpanded={true}
         />
       </TestProviders>,
@@ -239,9 +228,7 @@ describe('ReasoningTimelineBlock', () => {
       <TestProviders>
         <ReasoningTimelineBlock
           text={LONG_REASONING}
-          variant="thinking"
           blockId="reasoning-test"
-          showDuration={false}
         />
       </TestProviders>,
     );
@@ -257,15 +244,29 @@ describe('ReasoningTimelineBlock', () => {
       <TestProviders>
         <ReasoningTimelineBlock
           text={'Planning accessible icon labels with translations <!-- -->'}
-          variant="thinking"
           blockId="reasoning-comment-test"
-          showDuration={false}
         />
       </TestProviders>,
     );
 
     expect(markup).toContain('Planning accessible icon labels with translations');
     expect(markup).not.toContain('&lt;!-- --&gt;');
+  });
+
+  test('a long trace is summarized from its start, without the fence a cut left open', () => {
+    const text = `\`\`\`ts\nconst first = 1;\n${'const next = [value_of * 2;\n'.repeat(20_000)}\`\`\`\n`;
+    const started = performance.now();
+    const markup = renderToStaticMarkup(
+      <TestProviders>
+        <ReasoningTimelineBlock text={text} blockId="reasoning-long-test" />
+      </TestProviders>,
+    );
+    const title = /title="([^"]*)"/.exec(markup)?.[1] ?? '';
+
+    expect(title.startsWith('const first = 1;')).toBe(true);
+    expect(title.endsWith('…')).toBe(true);
+    // Stripping all 560,000 characters took seconds.
+    expect(performance.now() - started).toBeLessThan(500);
   });
 });
 
@@ -277,7 +278,7 @@ describe('ReasoningPart streaming gating (issue #2020)', () => {
   // complete text, letting us assert full content on first paint.
   const SHORT_REASONING = 'Persisted reasoning text that is already fully available.';
 
-  const BUSY_INDICATOR = 'animate-busy-wave';
+  const BUSY_INDICATOR = 'data-busy-dots';
 
   const makeReasoningPart = (
     time: ReasoningPartFixture['time'],
@@ -291,9 +292,6 @@ describe('ReasoningPart streaming gating (issue #2020)', () => {
     time,
   });
 
-  // Server rendering reads the UI store's initial state, which is
-  // chatRenderMode 'live' — the mode in which the streaming presentation is
-  // reachable and the issue reproduces.
   const renderPart = (part: ReasoningPartFixture, streamPhase?: StreamPhase): string =>
     renderToStaticMarkup(
       <TestProviders>
@@ -334,7 +332,6 @@ describe('ReasoningPart streaming gating (issue #2020)', () => {
     <TestProviders>
       <ReasoningTimelineBlock
         text={SHORT_REASONING}
-        variant="thinking"
         blockId="prt_reasoning_2020"
         time={{ start: 1_000 }}
         isStreaming
@@ -428,6 +425,39 @@ describe('ReasoningPart streaming gating (issue #2020)', () => {
   });
 });
 
+describe('ReasoningTimelineBlock opened by the reader', () => {
+  test('opening tells the timeline before the block grows; closing does not', async () => {
+    const dom = installDomStub();
+    const root = createRoot(dom.container);
+    let opened = 0;
+    const stop = onRowExpand(dom.container, () => { opened += 1; });
+    const header = () => dom.container.querySelector<HTMLElement>('[role="button"][aria-expanded]');
+
+    try {
+      await act(async () => {
+        root.render(
+          <TestProviders>
+            <ReasoningTimelineBlock text={LONG_REASONING} blockId="reasoning-open" />
+          </TestProviders>,
+        );
+      });
+      expect(header()?.getAttribute('aria-expanded')).toBe('false');
+
+      await act(async () => { header()?.click(); });
+      expect(header()?.getAttribute('aria-expanded')).toBe('true');
+      expect(opened).toBe(1);
+
+      await act(async () => { header()?.click(); });
+      expect(header()?.getAttribute('aria-expanded')).toBe('false');
+      expect(opened).toBe(1);
+    } finally {
+      stop();
+      await act(async () => { root.unmount(); });
+      dom.restore();
+    }
+  });
+});
+
 describe('ReasoningTimelineBlock live follow', () => {
   test('scrollbar scrolling releases live follow and returning to the bottom resumes it', async () => {
     const dom = installDomStub();
@@ -436,11 +466,9 @@ describe('ReasoningTimelineBlock live follow', () => {
       <TestProviders>
         <ReasoningTimelineBlock
           text="Working through the task step by step."
-          variant="thinking"
           blockId="reasoning-follow"
           defaultExpanded
           isStreaming={isStreaming}
-          showDuration={false}
         />
       </TestProviders>
     );

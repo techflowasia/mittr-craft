@@ -1,0 +1,158 @@
+diff --git a/packages/ui/src/components/chat/SessionRetry.test.tsx b/packages/ui/src/components/chat/SessionRetry.test.tsx
+new file mode 100644
+index 000000000..ea853d28d
+--- /dev/null
++++ b/packages/ui/src/components/chat/SessionRetry.test.tsx
+@@ -0,0 +1,152 @@
++import React, { act } from 'react'
++import { expect, spyOn, test } from 'bun:test'
++import { Window } from 'happy-dom'
++import { OpenCode } from '@opencode/client'
++import type { Message, Session, SessionStatus } from '@/lib/opencode/model'
++import { SyncProvider, useDirectoryStore } from '@/sync/sync-context'
++import { opencodeClient } from '@/lib/opencode/client'
++
++test('SessionRetry is visible only for verified idle recoverable turns', async () => {
++  const dom = new Window({ url: 'http://localhost' })
++  const originals = new Map<string, PropertyDescriptor | undefined>()
++  for (const [name, value] of Object.entries({
++    window: dom, document: dom.document, navigator: dom.navigator, localStorage: dom.localStorage,
++    Element: dom.Element, HTMLElement: dom.HTMLElement, Node: dom.Node,
++    Event: dom.Event, MouseEvent: dom.MouseEvent, KeyboardEvent: dom.KeyboardEvent,
++    MutationObserver: dom.MutationObserver, ResizeObserver: dom.ResizeObserver,
++    getComputedStyle: dom.getComputedStyle.bind(dom),
++    requestAnimationFrame: dom.requestAnimationFrame.bind(dom),
++    cancelAnimationFrame: dom.cancelAnimationFrame.bind(dom), IS_REACT_ACT_ENVIRONMENT: true,
++  })) {
++    originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name))
++    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
++  }
++  const container = document.createElement('div'); document.body.append(container)
++  const { createRoot } = await import('react-dom/client')
++  const { I18nProvider } = await import('@/lib/i18n')
++  const homeInfo = spyOn(opencodeClient, 'getFilesystemHomeInfo').mockResolvedValue({ home: '/home' })
++  const home = spyOn(opencodeClient, 'getFilesystemHome').mockResolvedValue('/home')
++  const location = spyOn(opencodeClient, 'getLocation').mockResolvedValue({ directory: '/project', project: { id: 'p', directory: '/project', canonical: '/project' } })
++  const config = spyOn(opencodeClient, 'getConfig').mockResolvedValue({})
++  const projects = spyOn(opencodeClient, 'listProjects').mockResolvedValue([])
++  const statusRead = spyOn(opencodeClient, 'getActiveSessionStatuses').mockResolvedValue({})
++  const permissions = spyOn(opencodeClient, 'listPendingPermissions').mockResolvedValue([])
++  const forms = spyOn(opencodeClient, 'listPendingForms').mockResolvedValue([])
++  const vcs = spyOn(opencodeClient, 'getVcs').mockResolvedValue({})
++  const shells = spyOn(opencodeClient, 'listRunningShells').mockResolvedValue({ directory: '/project', shells: [] })
++  const { SessionRetry } = await import('./SessionRetry')
++  const sdk = OpenCode.make({ baseUrl: 'https://sync.test', fetch: async (request) => {
++    const path = new URL(request instanceof Request ? request.url : request.toString()).pathname
++    if (path.endsWith('/event')) return new Response(new ReadableStream(), { headers: { 'content-type': 'text/event-stream' } })
++    return new Response(JSON.stringify(path.endsWith('/session') ? { items: [] } : {}), { headers: { 'content-type': 'application/json' } })
++  } })
++  let store: ReturnType<typeof useDirectoryStore> | undefined
++  const Probe = () => { store = useDirectoryStore('/project', { bootstrap: false }); return null }
++  const session: Session = { id: 's', directory: '/project', projectID: 'p', title: '', cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 2 } }
++  const user: Message = { id: 'u', sessionID: 's', role: 'user', time: { created: 1 } }
++  const assistant: Message = { id: 'a', sessionID: 's', role: 'assistant', agent: 'build', providerID: 'provider', modelID: 'model', finish: 'stop', time: { created: 2, completed: 3 } }
++  const root = createRoot(container)
++  const render = (unanswered = false) => act(async () => {
++    root.render(<SyncProvider sdk={sdk} directory=""><I18nProvider><Probe /><SessionRetry sessionId="s" directory="/project" unanswered={unanswered} /></I18nProvider></SyncProvider>)
++  })
++  type Case = { name: string; status?: SessionStatus; ready?: boolean; outcome?: Session['outcome']; latest?: Message; permission?: boolean; form?: boolean; unanswered?: boolean; visible: boolean }
++  const cases: Case[] = [
++    { name: 'healthy tool execution', status: { type: 'busy' }, visible: false },
++    { name: 'busy with stale persisted failure', status: { type: 'busy' }, outcome: 'failed', visible: false },
++    { name: 'active automatic retry', status: { type: 'retry', attempt: 1, message: 'Temporary failure', next: 100 }, outcome: 'failed', visible: false },
++    { name: 'idle failure', status: { type: 'idle' }, outcome: 'failed', visible: true },
++    { name: 'idle interruption', status: { type: 'idle' }, outcome: 'interrupted', visible: true },
++    { name: 'idle length limit', status: { type: 'idle' }, latest: { ...assistant, finish: 'length' }, visible: true },
++    { name: 'idle finish error', status: { type: 'idle' }, latest: { ...assistant, finish: 'error' }, visible: true },
++    { name: 'idle message error', status: { type: 'idle' }, latest: { ...assistant, error: { type: 'unknown', message: 'Failed' } }, visible: true },
++    { name: 'completed success', status: { type: 'idle' }, outcome: 'succeeded', visible: false },
++    { name: 'pending permission', status: { type: 'idle' }, outcome: 'failed', permission: true, visible: false },
++    { name: 'pending form', status: { type: 'idle' }, outcome: 'failed', form: true, visible: false },
++    { name: 'unknown activity', outcome: 'failed', visible: false },
++    { name: 'omitted status from verified snapshot', ready: true, outcome: 'failed', visible: true },
++    { name: 'unverified unanswered prompt', status: { type: 'idle' }, latest: user, visible: false },
++    { name: 'verified unanswered prompt', status: { type: 'idle' }, latest: user, unanswered: true, visible: true },
++    { name: 'unanswered prompt still busy', status: { type: 'busy' }, latest: user, unanswered: true, visible: false },
++  ]
++  try {
++    await render()
++    for (const item of cases) {
++      const target = store
++      if (!target) throw new Error('Missing directory store')
++      await act(async () => target.setState({
++        session: [{ ...session, outcome: item.outcome }], message: { s: [user, item.latest ?? assistant] },
++        session_status: item.status ? { s: item.status } : {}, sessionStatusReady: item.ready ?? false,
++        permission: { s: item.permission ? [{ id: 'permission', sessionID: 's', action: 'bash', resources: [] }] : [] },
++        form: { s: item.form ? [{ id: 'form', sessionID: 's', title: 'Answer', fields: [{ key: 'answer', type: 'boolean' }] }] : [] },
++      }))
++      await render(item.unanswered)
++      expect({ name: item.name, visible: [...container.querySelectorAll('button')].some((button) => button.textContent === 'Retry') }).toEqual({ name: item.name, visible: item.visible })
++    }
++  } finally {
++    await act(async () => root.unmount())
++    homeInfo.mockRestore(); home.mockRestore(); location.mockRestore(); config.mockRestore(); projects.mockRestore()
++    statusRead.mockRestore(); permissions.mockRestore(); forms.mockRestore(); vcs.mockRestore(); shells.mockRestore()
++    await dom.happyDOM.close()
++    for (const [name, descriptor] of originals) {
++      if (descriptor) Object.defineProperty(globalThis, name, descriptor)
++      else Reflect.deleteProperty(globalThis, name)
++    }
++  }
++})
++
++test('retry dialog cancels on turn replacement and ignores a late old invocation', async () => {
++  const dom = new Window({ url: 'http://localhost' })
++  const originals = new Map<string, PropertyDescriptor | undefined>()
++  for (const [name, value] of Object.entries({
++    window: dom, document: dom.document, navigator: dom.navigator,
++    Element: dom.Element, HTMLElement: dom.HTMLElement, Node: dom.Node,
++    Event: dom.Event, MouseEvent: dom.MouseEvent, KeyboardEvent: dom.KeyboardEvent,
++    MutationObserver: dom.MutationObserver, ResizeObserver: dom.ResizeObserver,
++    getComputedStyle: dom.getComputedStyle.bind(dom),
++    requestAnimationFrame: dom.requestAnimationFrame.bind(dom),
++    cancelAnimationFrame: dom.cancelAnimationFrame.bind(dom), IS_REACT_ACT_ENVIRONMENT: true,
++  })) {
++    originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name))
++    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value })
++  }
++  const { createRoot } = await import('react-dom/client')
++  const { I18nProvider } = await import('@/lib/i18n')
++  const { SessionRetryControl } = await import('./SessionRetryControl')
++  const container = document.createElement('div'); document.body.append(container)
++  const root = createRoot(container)
++  const choices: boolean[] = []
++  let lateConfirm: (() => Promise<boolean>) | undefined
++  const onRetry = async (confirm: () => Promise<boolean>) => { lateConfirm = confirm; choices.push(await confirm()) }
++  const render = (key: string) => act(async () => {
++    root.render(<I18nProvider><SessionRetryControl key={key} onRetry={onRetry} /></I18nProvider>)
++  })
++  const click = (text: string) => act(async () => {
++    const button = [...document.querySelectorAll<HTMLButtonElement>('button')].find((item) => item.textContent === text)
++    if (!button) throw new Error(`Missing ${text}`)
++    button.click()
++  })
++  try {
++    await render('turn-a')
++    await click('Retry')
++    expect(document.body.textContent).toContain('Stop and continue?')
++    await render('turn-b')
++    expect(choices).toEqual([false])
++    expect(document.body.textContent).not.toContain('Stop and continue?')
++    if (!lateConfirm) throw new Error('Missing old invocation')
++    expect(await lateConfirm()).toBe(false)
++    expect(document.body.textContent).not.toContain('Stop and continue?')
++    await click('Retry')
++    await click('Cancel')
++    expect(choices).toEqual([false, false])
++    await click('Retry')
++    await act(async () => { root.render(null) })
++    expect(choices).toEqual([false, false, false])
++  } finally {
++    await act(async () => root.unmount())
++    await dom.happyDOM.close()
++    for (const [name, descriptor] of originals) {
++      if (descriptor) Object.defineProperty(globalThis, name, descriptor)
++      else Reflect.deleteProperty(globalThis, name)
++    }
++  }
++})

@@ -1,8 +1,22 @@
 diff --git a/packages/ui/src/components/sections/openchamber/AboutSettings.tsx b/packages/ui/src/components/sections/openchamber/AboutSettings.tsx
-index 885fd7965..269d2fbcc 100644
+index 44eb15774..fbe8c1d1e 100644
 --- a/packages/ui/src/components/sections/openchamber/AboutSettings.tsx
 +++ b/packages/ui/src/components/sections/openchamber/AboutSettings.tsx
-@@ -25,6 +25,14 @@ const GITHUB_URL = 'https://github.com/openchamber/openchamber';
+@@ -18,11 +18,13 @@ import { runtimeFetch } from '@/lib/runtime-fetch';
+ import { loadDesktopSettings, updateDesktopSettings } from '@/lib/persistence';
+ import { copyTextToClipboard } from '@/lib/clipboard';
+ import { reloadOpenCodeConfiguration } from '@/stores/useAgentsStore';
++import { fetchOpenCodeCompatibility } from '@/lib/opencode/compatibility';
+ import { fetchOpenCodeUpgradeStatus, runOpenCodeUpgrade, type OpenCodeUpgradeStatus } from '@/components/update/openCodeUpgrade';
+ import { useDesktopRemoteHostActive } from '@/hooks/useDesktopRemoteHostActive';
+ import { getDesktopAppVersion } from '@/lib/desktopNative';
+ import { getUpdateCheckErrorMessage } from '@/lib/updateCheckError';
+ import { InstanceServiceUrls } from './InstanceServiceUrls';
++import { ProductSlot } from '@/lib/product-plugins';
+ import { AboutReleaseNotes } from './AboutReleaseNotes';
+ import { AboutUpdateBanners } from './AboutUpdateBanners';
+ import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
+@@ -37,6 +39,14 @@ const GITHUB_URL = 'https://github.com/openchamber/openchamber';
  const DISCORD_URL = 'https://discord.gg/ZYRSdnwwKA';
  const X_URL = 'https://x.com/openchamber_dev';
  
@@ -14,10 +28,38 @@ index 885fd7965..269d2fbcc 100644
 +  href ? <a href={href} target="_blank" rel="noopener noreferrer" {...props} /> : null
 +);
 +
- const MIN_CHECKING_DURATION = 800; // ms
+ const MIN_CHECKING_DURATION = 800;
  
- type ConnectedServerUpdate = {
-@@ -146,6 +154,15 @@ function useNativeAppVersion(enabled: boolean): string | null {
+ const loadServerUpdateChannel = async (serverVersion: string): Promise<UpdateChannel | null> => {
+@@ -124,6 +134,27 @@ function useOpenCodeUpgrade(failedFallback: string) {
+   return { status, phase, refresh, upgrade, reloadAfterUpgrade };
+ }
+ 
++function useEngineUpdatesApart(enabled: boolean): boolean {
++  const [apart, setApart] = React.useState(false);
++
++  React.useEffect(() => {
++    if (!enabled) return;
++    let cancelled = false;
++    const settle = (next: boolean) => {
++      if (!cancelled) setApart(next);
++    };
++    void fetchOpenCodeCompatibility().then(
++      ({ installation }) => settle(installation !== 'bundled'),
++      () => settle(true),
++    );
++    return () => {
++      cancelled = true;
++    };
++  }, [enabled]);
++
++  return enabled && apart;
++}
++
+ function useNativeAppVersion(enabled: boolean): string | null {
+   const [version, setVersion] = React.useState<string | null>(null);
+ 
+@@ -144,6 +175,15 @@ function useNativeAppVersion(enabled: boolean): string | null {
    return version;
  }
  
@@ -33,44 +75,49 @@ index 885fd7965..269d2fbcc 100644
  type AboutSettingsProps = {
    initialUpdateDialogOpen?: boolean;
  };
-@@ -193,6 +210,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
-       runtimeType: updateStore.runtimeType,
-     };
- 
+@@ -217,6 +257,8 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+       })
+       : version;
+   };
 +  const noUpdateChannel = hasNoUpdateChannel(update.info);
-   const currentVersion = openChamberVersion || update.info?.currentVersion || 'unknown';
-   const openCode = useOpenCodeUpgrade(t('opencodeUpdate.toast.failed.description'));
-   const openCodeVersion = openCode.status?.currentVersion ?? null;
-@@ -333,7 +351,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
++  const showEngineCheck = useEngineUpdatesApart(noUpdateChannel);
+   const offeredVersion = update.available ? update.info?.version : null;
+   const currentVersion = describeVersion(openChamberVersion || update.info?.currentVersion || 'unknown', offeredVersion);
+   const appVersion = describeVersion(desktopAppVersion || updateStore.info?.currentVersion || 'unknown', offeredVersion);
+@@ -535,7 +577,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
        const timer = setTimeout(() => {
          setShowChecking(false);
-         // Show toast if check completed with no update available
--        if (didInitiateCheck.current && !update.available && !update.error) {
-+        if (didInitiateCheck.current && !update.available && !update.error && !noUpdateChannel) {
-           toast.success(isNativeApp
-             ? t('settings.openchamber.about.toast.serverLatestVersion')
-             : t('settings.openchamber.about.toast.latestVersion'));
-@@ -342,7 +360,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+         const remoteHostPending = remoteHostUpdateChecking || remoteHostUpdateAvailable;
+-        if (didInitiateCheck.current && !update.available && !update.error && !remoteHostPending) {
++        if (didInitiateCheck.current && !update.available && !update.error && !remoteHostPending && !noUpdateChannel) {
+           toast.success(appUpdateOffered
+             ? t('settings.openchamber.about.toast.serverLatestAppUpdate')
+             : isNativeApp
+@@ -546,7 +588,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
        }, MIN_CHECKING_DURATION);
        return () => clearTimeout(timer);
      }
--  }, [t, isNativeApp, update.checking, showChecking, update.available, update.error]);
-+  }, [t, isNativeApp, update.checking, showChecking, update.available, update.error, noUpdateChannel]);
+-  }, [t, isNativeApp, update.checking, showChecking, update.available, update.error, remoteHostUpdateChecking, remoteHostUpdateAvailable, appChecking, appUpdateOffered]);
++  }, [t, isNativeApp, update.checking, showChecking, update.available, update.error, remoteHostUpdateChecking, remoteHostUpdateAvailable, appChecking, appUpdateOffered, noUpdateChannel]);
  
    const isChecking = update.checking || showChecking;
  
-@@ -370,7 +388,19 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+@@ -579,10 +621,22 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+           <InstanceServiceUrls />
          </div>
+ 
+-        {updateChannelControl && <div className="flex justify-center">{updateChannelControl}</div>}
++        {updateChannelControl && !noUpdateChannel && <div className="flex justify-center">{updateChannelControl}</div>}
  
          <div className="flex justify-center">
 -          {!update.available && !update.error && (
-+          {noUpdateChannel && (
++          {showEngineCheck && (
 +            <Button
 +              type="button"
 +              variant="outline"
 +              size="sm"
 +              onClick={() => void openCode.refresh()}
-+              className="h-10 w-auto justify-center gap-2 rounded-xl px-4"
++              className="w-auto justify-center gap-2"
 +            >
 +              <Icon name="refresh" className="size-4" />
 +              {t('settings.openchamber.about.actions.checkUpdates')}
@@ -80,7 +127,7 @@ index 885fd7965..269d2fbcc 100644
              <Button
                type="button"
                variant="outline"
-@@ -416,36 +446,30 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+@@ -638,36 +692,30 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
  
          <div className="flex flex-col items-center gap-3 text-center">
            <div className="flex items-center justify-center gap-5">
@@ -122,69 +169,75 @@ index 885fd7965..269d2fbcc 100644
 +          </LinkIfSet>
          </div>
  
-         <p className="text-center typography-ui text-muted-foreground/60">
-@@ -501,17 +525,26 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
-               </Button>
-             )}
- 
--            {!update.checking && !update.available && !update.error && (
-+            {!noUpdateChannel && !update.checking && !update.available && !update.error && (
-               <span className="typography-meta text-muted-foreground">{t('settings.openchamber.about.state.upToDate')}</span>
-             )}
- 
--            <Button size="sm"
--              variant="outline"
--              onClick={checkAll}
--              disabled={update.checking}
--            >
+         <p className="text-center typography-ui text-muted-foreground">
+@@ -703,7 +751,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+         {t('settings.openchamber.about.state.checking')}
+       </span>
+     </>
+-  ) : !update.available && !update.error ? (
++  ) : !noUpdateChannel && !update.available && !update.error ? (
+     <>
+       {statusSeparator}
+       <span className="typography-meta text-muted-foreground">{t('settings.openchamber.about.state.upToDate')}</span>
+@@ -737,16 +785,14 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+                 { href: DISCORD_URL, icon: 'discord-fill' as const, label: 'Discord' },
+                 { href: X_URL, icon: 'twitter-xfill' as const, label: '@openchamber_dev' },
+               ].map((link) => (
+-                <a
+-                  key={link.href}
++                <LinkIfSet
++                  key={link.label}
+                   href={link.href}
+-                  target="_blank"
+-                  rel="noopener noreferrer"
+                   className="flex items-center gap-1.5 typography-meta text-muted-foreground transition-colors hover:text-foreground"
+                 >
+                   <Icon name={link.icon} className="size-4" />
+                   <span>{link.label}</span>
+-                </a>
++                </LinkIfSet>
+               ))}
+             </div>
+           </div>
+@@ -788,21 +834,30 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
+               {openChamberStatus}
+             </SettingsFieldRow>
+           )}
+-          <SettingsFieldRow
+-            label={t('settings.openchamber.about.field.updateChannel')}
+-            info={updateChannelControl ? t('settings.openchamber.about.field.updateChannelHint') : undefined}
+-            {...valueRow}
+-          >
+-            {updateChannelControl}
+-            <Button size="sm" variant="ghost" onClick={checkAll} disabled={isChecking}>
+-              <Icon name="refresh" className="size-4" />
 -              {t('settings.openchamber.about.actions.checkForUpdates')}
 -            </Button>
-+            {noUpdateChannel ? (
-+              <Button size="sm"
-+                variant="outline"
-+                onClick={() => void openCode.refresh()}
-+              >
-+                {t('settings.openchamber.about.actions.checkUpdates')}
-+              </Button>
-+            ) : (
-+              <Button size="sm"
-+                variant="outline"
-+                onClick={checkAll}
-+                disabled={update.checking}
-+              >
+-          </SettingsFieldRow>
++          {!noUpdateChannel && (
++            <SettingsFieldRow
++              label={t('settings.openchamber.about.field.updateChannel')}
++              info={updateChannelControl ? t('settings.openchamber.about.field.updateChannelHint') : undefined}
++              {...valueRow}
++            >
++              {updateChannelControl}
++              <Button size="sm" variant="ghost" onClick={checkAll} disabled={isChecking}>
++                <Icon name="refresh" className="size-4" />
 +                {t('settings.openchamber.about.actions.checkForUpdates')}
 +              </Button>
++            </SettingsFieldRow>
++          )}
+           <SettingsFieldRow label={t('settings.openchamber.about.field.openCodeVersion')} {...valueRow}>
+             {versionValue(openCodeVersion || t('settings.openchamber.about.state.unknown'))}
+             {openCodeUpdate?.action}
++            {showEngineCheck && (
++              <Button size="sm" variant="ghost" onClick={() => void openCode.refresh()}>
++                <Icon name="refresh" className="size-4" />
++                {t('settings.openchamber.about.actions.checkUpdates')}
++              </Button>
 +            )}
-           </div>
+           </SettingsFieldRow>
++          <ProductSlot name="about-settings" />
+           <InstanceServiceUrls label={t('settings.openchamber.about.field.instanceUrls')} />
          </div>
-         
-@@ -535,25 +568,21 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
-         </div>
- 
-         <div className="flex items-center gap-4 px-4 py-4">
--          <a
-+          <LinkIfSet
-             href={GITHUB_URL}
--            target="_blank"
--            rel="noopener noreferrer"
-             className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground typography-meta transition-colors"
-           >
-             <Icon name="github-fill" className="h-4 w-4" />
-             <span>GitHub</span>
--          </a>
-+          </LinkIfSet>
- 
--            <a
-+            <LinkIfSet
-               href={X_URL}
--            target="_blank"
--            rel="noopener noreferrer"
-             className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground typography-meta transition-colors"
-           >
-             <Icon name="twitter-xfill" className="h-4 w-4" />
-               <span>@openchamber_dev</span>
--            </a>
-+            </LinkIfSet>
-         </div>
-       </div>
- 
+         {notes.length > 0 && <div className="space-y-3">{notes}</div>}

@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
+import '../../../web/scripts/register-server-sources.mjs';
 
-import { toMcpEntity } from '../../../web/server/lib/opencode/config-v2.js';
 import { catalogMcpEntity, heldMcpNames, mcpFragment, mcpServerName, sweepLegacyUserMcp } from './mcp-fragment.js';
+
+const { toMcpEntity } = await import('../../../web/server/lib/opencode/config-v2.js');
 
 const recording = () => {
   const calls = [];

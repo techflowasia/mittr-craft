@@ -20,6 +20,8 @@ import { ContextActivity } from './activity/ContextActivity';
 import { listContinuationEdit } from './composer/listContinuation';
 import { SIDEBAR_SIDE_SOURCE } from './layout/sidebarSideSource';
 import { PLEX_FONT_OPTIONS } from './fonts/plexFontOptions';
+import { TodoSnapshots } from './todo/TodoSnapshots';
+import { MITTR_TOOL_NAMES } from './tools/mittrToolNames';
 
 // Registered on import, which the entry points do before their first render:
 // the model picker takes its decorations once and keeps them.
@@ -39,7 +41,7 @@ export const MITTRCRAFT_UI_PLUGIN: ProductUiPlugin = {
     'session-auth-methods': AdSignIn,
     'about-dialog': SignOutButton,
     'about-settings': AboutSettingsSignOut,
-    'assistant-message-footer': [AnsweredByNotice, QuotaRetryButton],
+    'assistant-message-footer': [TodoSnapshots, AnsweredByNotice, QuotaRetryButton],
     'composer-actions': ComposerVoiceActions,
     'main-surface': TodayPage,
     'context-raw-messages': ContextActivity,
@@ -53,6 +55,7 @@ export const MITTRCRAFT_UI_PLUGIN: ProductUiPlugin = {
   composerShiftEnter: listContinuationEdit,
   sidebarSide: SIDEBAR_SIDE_SOURCE,
   fontOptions: PLEX_FONT_OPTIONS,
+  toolNames: MITTR_TOOL_NAMES,
 };
 
 registerProductUiPlugin(MITTRCRAFT_UI_PLUGIN);

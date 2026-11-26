@@ -1,9 +1,12 @@
 import { spawn as spawnChild } from 'node:child_process';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
+import os from 'node:os';
 import net from 'node:net';
 import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
-import { isText } from '../values.js';
+import { isRecord, isText } from '../values.js';
 import { MittrToolError } from './registry.js';
 
 const CUA_DRIVER = 'cua-driver';
@@ -453,20 +456,130 @@ export const createComputerControl = ({
   daemon = createDriverDaemon({ binary, dataDir, env, spawn, logger }),
   timeoutMs = CHILD_TIMEOUT_MS,
   maxOutputBytes = MAX_DRIVER_OUTPUT_BYTES,
+  platform = process.platform,
+  appBundle = driverAppBundle,
+  temporaryDirectory = os.tmpdir(),
+  permissionTimeoutMs = 180_000,
+  permissionCleanupMs = 1_000,
+  readinessTimeoutMs = 10_000,
+  readinessPollMs = 100,
+  signalPid = (pid, signal) => process.kill(pid, signal),
 }) => {
   const available = Boolean(binary) && daemon.usable !== false;
+  const permissionRequests = new Set();
+  let permissionClosed = false;
 
-  const call = (tool, args, signal) => runChild({
+  const requestPermissions = async ({ signal, token = null, directCapture = false, grant = 'Accessibility' } = {}) => {
+    const label = 'CuaDriver permission request';
+    if (signal?.aborted) throw cancelled(label);
+    if (permissionClosed || (token !== null && token !== daemon.token?.())) throw new MittrToolError(DRIVER_STOPPED, 503);
+    if (platform !== 'darwin') throw new MittrToolError('macOS permission requests are not supported on this platform', 501);
+    if (permissionRequests.size > 0) throw new MittrToolError('A macOS permission request is already open. Finish it before trying another Computer action.', 409);
+    const app = available ? appBundle(binary) : null;
+    if (!app) throw new MittrToolError('The Computer tool needs its bundled CuaDriver.app to request macOS permissions', 503);
+    const executable = path.join(app, 'Contents', 'MacOS', CUA_DRIVER);
+    const resultFile = path.join(temporaryDirectory, `cua-driver-permissions-${crypto.randomUUID()}.json`);
+    const descriptor = fs.openSync(resultFile, 'wx', 0o600);
+    fs.closeSync(descriptor);
+    const controller = new AbortController();
+    const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const args = ['__permissions-host-request', '--result-file', resultFile];
+    if (directCapture) args.push('--probe-direct-capture');
+    const expectedCommand = `${executable} ${args.join(' ')}`;
+    // open owns only its wait process. The LaunchServices app is independent.
+    // On interruption identify only this request by its unguessable result path,
+    // then kill that exact executable/argv, never a bundle id or the daemon.
+    const cleanupHost = async () => {
+      const deadline = Date.now() + permissionCleanupMs;
+      do {
+        const listed = await runChild({ spawn, command: '/bin/ps', args: ['-axww', '-o', 'pid=,command='], stdio: ['ignore', 'pipe', 'ignore'], env: { PATH: '/usr/bin:/bin' }, label: 'permission host cleanup', timeoutMs: 200, maxOutputBytes: MIB }).catch(() => '');
+        for (const line of listed.split('\n')) {
+          const match = /^\s*(\d+)\s+(.+)$/.exec(line);
+          if (match && match[2] === expectedCommand) {
+            try { signalPid(Number(match[1]), 'SIGKILL'); } catch { /* Already exited. */ }
+          }
+        }
+        if (Date.now() < deadline) await pause(50);
+      } while (Date.now() < deadline);
+    };
+    const operation = { controller, done: null };
+    permissionRequests.add(operation);
+    operation.done = (async () => {
+      try {
+        const childEnv = { ...daemon.env, TMPDIR: temporaryDirectory };
+        await runChild({ spawn, command: OPEN_COMMAND, args: ['-W', '-n', '-g', '-a', app, ...Object.entries(childEnv).flatMap(([key, value]) => ['--env', `${key}=${value}`]), '--args', ...args], stdio: ['ignore', 'ignore', 'pipe'], env: childEnv, label, timeoutMs: permissionTimeoutMs, signal: combined });
+        if (combined.aborted) throw cancelled(label);
+        const stat = fs.lstatSync(resultFile);
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024) throw new Error('CuaDriver permission result is not a bounded regular file');
+        const envelope = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
+        const result = isRecord(envelope) ? envelope.structuredContent : null;
+        if (!isRecord(result) || !isRecord(result.source) || result.source.attribution !== 'driver-daemon' || result.source.executable !== executable) throw new Error('CuaDriver permission result has the wrong app identity');
+        if (result.accessibility !== true) return false;
+        if (grant === 'Screen Recording' || directCapture) {
+          return result.screen_recording === true && (!directCapture || (result.screen_recording_capturable === true && !result.direct_capture_verification_error));
+        }
+        return true;
+      } catch (error) {
+        await cleanupHost();
+        throw error;
+      } finally {
+        permissionRequests.delete(operation);
+        fs.rmSync(resultFile, { force: true });
+      }
+    })();
+    return operation.done;
+  };
+
+  const stopPermissions = async () => {
+    const pending = [...permissionRequests];
+    for (const request of pending) request.controller.abort();
+    await Promise.all(pending.map((request) => request.done.catch(() => {})));
+  };
+
+  const permissionPending = (error) => error?.message === 'permissions_pending: macOS Accessibility or Screen Recording permission is still pending; no action started, retry after the permission gate completes';
+
+  const call = (tool, args, signal, limitMs = timeoutMs) => runChild({
     spawn,
     command: binary,
     args: ['call', tool, JSON.stringify(args ?? {}), '--socket', daemon.socketPath],
     stdio: ['ignore', 'pipe', 'pipe'],
     env: daemon.env,
     label: `cua-driver ${tool}`,
-    timeoutMs,
+    timeoutMs: limitMs,
     signal,
     maxOutputBytes,
   });
+
+  const callWhenReady = async (tool, args, signal, token, waitForPermissions) => {
+    try {
+      return await call(tool, args, signal);
+    } catch (error) {
+      if (!permissionPending(error)) throw error;
+      if (!waitForPermissions) throw new MittrToolError('CuaDriver is waiting for macOS permissions; no action started', 403, { code: 'computer_permissions_pending' });
+    }
+    // 0.28.2 serve.rs rejects before dispatch with this exact message. Only
+    // that refusal permits a replay. Poll a read-only tool, not the action.
+    const deadline = Date.now() + readinessTimeoutMs;
+    for (;;) {
+      if (signal?.aborted) throw cancelled(`cua-driver ${tool}`);
+      if (token !== null && token !== daemon.token?.()) throw new MittrToolError(DRIVER_STOPPED, 503);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new MittrToolError('The Computer tool permission gate timed out. Finish approving CuaDriver in System Settings, then try again.', 403);
+      try {
+        await call('check_permissions', { prompt: false }, signal, Math.min(timeoutMs, remaining));
+        break;
+      } catch (error) {
+        if (!permissionPending(error)) throw error;
+      }
+      try { await delay(Math.min(readinessPollMs, Math.max(0, deadline - Date.now())), undefined, { signal }); } catch (error) {
+        if (error?.name === 'AbortError') throw cancelled(`cua-driver ${tool}`);
+        throw error;
+      }
+    }
+    if (signal?.aborted) throw cancelled(`cua-driver ${tool}`);
+    if (token !== null && token !== daemon.token?.()) throw new MittrToolError(DRIVER_STOPPED, 503);
+    return call(tool, args, signal);
+  };
 
   const down = (reason) => {
     logger.warn(`[mittr] the Computer tool's desktop driver is not running: ${reason}`);
@@ -485,23 +598,26 @@ export const createComputerControl = ({
   return {
     available,
     socketPath: daemon.socketPath,
-    stop: () => daemon.stop(),
-    close: () => daemon.close(),
+    get canRequestPermissions() { return platform === 'darwin' && available && appBundle(binary) !== null; },
+    requestPermissions,
+    stop: async () => { await Promise.all([stopPermissions(), daemon.stop()]); },
+    close: async () => { permissionClosed = true; await Promise.all([stopPermissions(), daemon.close()]); },
     token: () => daemon.token?.() ?? null,
-    request: async (tool, args, { signal, token = null } = {}) => {
+    request: async (tool, args, { signal, token = null, waitForPermissions = true } = {}) => {
       if (!available) throw new MittrToolError(binary ? UNAVAILABLE : NOT_BUNDLED, 503);
       const label = `cua-driver ${tool}`;
       if (signal?.aborted) throw cancelled(label);
       const generation = await started(() => (token === null ? daemon.ensure() : daemon.ensure(token)), signal, label);
+      const actionToken = token ?? daemon.token?.() ?? null;
       let output;
       try {
-        output = await call(tool, args, signal);
+        output = await callWhenReady(tool, args, signal, actionToken, waitForPermissions);
       } catch (error) {
         if (!daemonGone(error, daemon.socketPath)) throw error;
         const next = await started(() => daemon.restart(generation), signal, label);
         if (!next) throw new MittrToolError(DRIVER_STOPPED, 503);
         try {
-          output = await call(tool, args, signal);
+          output = await callWhenReady(tool, args, signal, actionToken, waitForPermissions);
         } catch (again) {
           if (daemonGone(again, daemon.socketPath)) throw down('it stopped again right after a restart');
           throw again;

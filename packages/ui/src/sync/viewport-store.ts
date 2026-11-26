@@ -1,14 +1,9 @@
-/**
- * Viewport Store — per-session scroll anchors, streaming state, memory.
- * Extracted from session-ui-store for subscription isolation.
- */
 
 import { create } from "zustand"
 import { getRuntimeKey } from "@/lib/runtime-switch"
 
-export type SessionMemoryState = {
+type SessionMemoryState = {
   viewportAnchor: number
-  /** Last known scrollbar pixel state — saved on every scroll event. */
   scrollPosition?: {
     scrollTop: number
     scrollHeight: number
@@ -30,7 +25,7 @@ export type SessionMemoryState = {
   lastUserMessageAt?: number
 }
 
-export type ViewportState = {
+type ViewportState = {
   sessionMemoryState: Map<string, SessionMemoryState>
   isSyncing: boolean
 

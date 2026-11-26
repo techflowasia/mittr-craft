@@ -90,6 +90,33 @@ test('an aborted long-poll and a closed state stop waiting', async () => {
   assert.equal((await state.waitForChange(0, 60_000)).revision, 0);
 });
 
+test('authoritative positive quota lifts known speech blocks and wakes long-polls', async () => {
+  const state = createSpeechState();
+  state.block('stt', null);
+  state.block('tts', null);
+  const revision = state.view().revision;
+  const waiting = state.waitForChange(revision, 5000);
+  state.reconcileQuota({ lines: [{ kind: 'stt', used: 60, limit: 120 }, { kind: 'tts', used: 5, limit: 50 }] }, revision);
+  const lifted = await waiting;
+  assert.equal(lifted.stt.blockedUntil, null);
+  assert.equal(state.view().tts.blockedUntil, null);
+  state.close();
+});
+
+test('missing, malformed, exhausted quota and a newer refusal cannot lift speech', () => {
+  const state = createSpeechState();
+  state.block('stt', null);
+  const revision = state.view().revision;
+  for (const lines of [[], [{ kind: 'stt', used: 10, limit: 10 }], [{ kind: 'stt', used: '0', limit: 100 }]]) {
+    state.reconcileQuota({ lines }, revision);
+    assert.ok(state.view().stt.blockedUntil);
+  }
+  state.block('stt', null);
+  state.reconcileQuota({ lines: [{ kind: 'stt', used: 0, limit: 100 }] }, revision);
+  assert.ok(state.view().stt.blockedUntil, 'a repeated refusal is also a newer mutation');
+  state.close();
+});
+
 const UI_LOADER = `
   import { registerHooks } from 'node:module';
   import fs from 'node:fs';

@@ -1,4 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
+import { providerLogoUploadSupported } from '@/lib/customProviderLogos';
+import { guestProviderLogoOf } from '@/lib/guests/provider-logos';
+import { useUIStore } from '@/stores/useUIStore';
 
 import { remoteModelCatalogAllowed } from '@/lib/product-plugins';
 
@@ -8,11 +11,9 @@ interface UseProviderLogoReturn {
     src: string | null;
     onError: () => void;
     hasLogo: boolean;
+    isBundled: boolean;
 }
 
-// Vite rewrites `import.meta.glob` at build time into the matching modules. A runtime without
-// that transform (the bun test runner) throws on the call instead, so keep it failable and let
-// the hook fall back to the remote logo URL it already supports.
 const loadLocalLogoModules = (): Record<string, string> => {
     try {
         return import.meta.glob<string>('../assets/provider-logos/*.svg', {
@@ -33,6 +34,7 @@ const LOGO_ALIAS = new Map<string, string>([
     ['codex', 'openai'],
     ['chatgpt', 'openai'],
     ['claude', 'anthropic'],
+    ['claude-agent', 'claude-code'],
     ['cline-pass', 'cline'],
     ['gemini', 'google'],
     ['evroc-ai', 'evroc'],
@@ -67,6 +69,8 @@ const buildLogoCandidates = (providerId: string | null | undefined) => {
     return [...new Set(candidates)];
 };
 
+export const providerLogoIds = (providerId: string): string[] => [providerId, ...buildLogoCandidates(providerId)];
+
 const remoteLogoSrc = (providerId: string | null): string | null => (
     providerId && remoteModelCatalogAllowed() ? `https://models.dev/logos/${providerId}.svg` : null
 );
@@ -84,6 +88,8 @@ const resolveProviderLogoSrc = (providerId: string | null | undefined): string |
 
 const preloadProviderLogo = (providerId: string | null | undefined): void => {
     if (typeof Image === 'undefined') return;
+    if (providerId && providerLogoUploadSupported() && useUIStore.getState().customProviderLogos[providerId]) return;
+    if (providerId && guestProviderLogoOf(providerLogoIds(providerId))) return;
     const src = resolveProviderLogoSrc(providerId);
     if (!src || PRELOADED_LOGO_SRCS.has(src)) return;
 
@@ -128,7 +134,7 @@ export function useProviderLogo(providerId: string | null | undefined): UseProvi
     }, [hasLocalLogo]);
 
     if (!localResolvedId && !remoteSrc) {
-        return { src: null, onError: handleError, hasLogo: false };
+        return { src: null, onError: handleError, hasLogo: false, isBundled: false };
     }
 
     if (source === 'local' && localLogoSrc) {
@@ -136,6 +142,7 @@ export function useProviderLogo(providerId: string | null | undefined): UseProvi
             src: localLogoSrc,
             onError: handleError,
             hasLogo: true,
+            isBundled: true,
         };
     }
 
@@ -144,8 +151,9 @@ export function useProviderLogo(providerId: string | null | undefined): UseProvi
             src: remoteSrc,
             onError: handleError,
             hasLogo: true,
+            isBundled: false,
         };
     }
 
-    return { src: null, onError: handleError, hasLogo: false };
+    return { src: null, onError: handleError, hasLogo: false, isBundled: false };
 }

@@ -5,6 +5,7 @@ import { Select as BaseSelect } from "@base-ui/react/select"
 import type { SelectRootChangeEventDetails } from "@base-ui/react/select";
 
 import { cn } from "@/lib/utils"
+import { GlassRedrawGuard } from "./glass-redraw-guard"
 import { dropdownTriggerVariants } from "@/components/ui/dropdown-trigger"
 import { ScrollableOverlay } from "@/components/ui/ScrollableOverlay";
 import { Icon } from "@/components/icon/Icon";
@@ -135,15 +136,12 @@ function SelectValue({ placeholder, children, ...props }: SelectValueProps) {
 
 function SelectTrigger({
   className,
-  size = "default",
   children,
   asChild,
   onPointerDownCapture,
   onFocusCapture,
   ...props
-}: React.ComponentProps<typeof BaseSelect.Trigger> & AsChildProps & {
-  size?: "sm" | "default" | "lg" | "chip" | "settings"
-}) {
+}: React.ComponentProps<typeof BaseSelect.Trigger> & AsChildProps) {
   const portalContext = React.useContext(SelectPortalContext);
 
   const syncPortalContainer = React.useCallback((target: EventTarget | null) => {
@@ -161,12 +159,9 @@ function SelectTrigger({
   return (
     <BaseSelect.Trigger
       data-slot="select-trigger"
-      data-size={size}
       className={cn(
-        // Shared trigger chrome: one source of truth for every dropdown trigger.
-        // Legacy sizes map onto the two canonical ones: sm (dense) / default (forms).
-        dropdownTriggerVariants({ size: size === 'settings' || size === 'lg' ? 'default' : 'sm' }),
-        "w-fit data-[placeholder]:text-muted-foreground aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive *:data-[slot=select-value]:min-w-0 *:data-[slot=select-value]:flex-1 *:data-[slot=select-value]:truncate",
+        dropdownTriggerVariants(),
+        "w-fit data-[placeholder]:text-muted-foreground *:data-[slot=select-value]:min-w-0 *:data-[slot=select-value]:flex-1 *:data-[slot=select-value]:truncate",
         className
       )}
       onPointerDownCapture={(event) => {
@@ -218,8 +213,6 @@ function SelectContent({
   const portalContext = React.useContext(SelectPortalContext);
   const alignItemWithTrigger = position === "item-aligned";
   const portalContainer = portalContext?.portalContainer ?? null;
-  // Floating UI bounds the viewport, but native status/home areas live inside
-  // that viewport. Include the app's resolved insets in collision sizing too.
   const [collisionPadding, setCollisionPadding] = React.useState({ top: 8, right: 8, bottom: 8, left: 8 });
 
   React.useLayoutEffect(() => {
@@ -237,7 +230,6 @@ function SelectContent({
       frame = requestAnimationFrame(measure);
     };
     measure();
-    // Native safe-area updates can arrive after the viewport resize event.
     const observer = new MutationObserver(scheduleMeasure);
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class'] });
     window.addEventListener('resize', scheduleMeasure);
@@ -263,7 +255,7 @@ function SelectContent({
   };
 
   return (
-    <BaseSelect.Portal container={portalToBody ? undefined : portalContainer || undefined}>
+    <BaseSelect.Portal className="contents" container={portalToBody ? undefined : portalContainer || undefined}>
       <BaseSelect.Positioner
         alignItemWithTrigger={alignItemWithTrigger}
         sideOffset={sideOffset}
@@ -280,7 +272,7 @@ function SelectContent({
             color: 'var(--surface-elevated-foreground)',
           }}
           className={cn(
-            "oc-glass-popover oc-glass-floating pointer-events-auto transition-all duration-150 ease-out data-[starting-style]:opacity-0 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[ending-style]:scale-95 relative z-[120] max-h-[var(--available-height)] min-w-[8rem] origin-[var(--transform-origin)] overflow-x-hidden rounded-xl",
+            "oc-glass-popover oc-glass-floating pointer-events-auto oc-popup-motion data-[starting-style]:opacity-0 data-[starting-style]:scale-95 data-[ending-style]:opacity-0 data-[ending-style]:scale-95 relative z-[120] max-h-[var(--available-height)] min-w-[8rem] origin-[var(--transform-origin)] overflow-x-hidden rounded-xl",
             !alignItemWithTrigger &&
               "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
             fitContent && "w-max min-w-0",
@@ -305,6 +297,7 @@ function SelectContent({
           >
             {children}
           </ScrollableOverlay>
+          <GlassRedrawGuard />
         </BaseSelect.Popup>
       </BaseSelect.Positioner>
     </BaseSelect.Portal>
@@ -327,24 +320,20 @@ function SelectLabel({
 function SelectItem({
   className,
   children,
-  showSelectedBackground = true,
   ...props
-}: React.ComponentProps<typeof BaseSelect.Item> & {
-  showSelectedBackground?: boolean;
-}) {
+}: React.ComponentProps<typeof BaseSelect.Item>) {
   return (
     <BaseSelect.Item
       data-slot="select-item"
       className={cn(
-        "data-[highlighted]:bg-interactive-hover hover:bg-interactive-hover [&_svg:not([class*='text-'])]:text-muted-foreground relative flex w-full cursor-pointer items-center gap-2 rounded-lg py-1.5 pr-8 pl-2 typography-ui-label outline-none select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
-        showSelectedBackground && "data-[selected]:bg-interactive-selection data-[selected]:text-interactive-selection-foreground",
+        "data-[highlighted]:bg-interactive-hover hover:bg-interactive-hover [&_svg:not([class*='text-'])]:text-muted-foreground relative flex w-full cursor-pointer items-center gap-2 rounded-lg py-1.5 pe-8 ps-2 typography-ui-label outline-none select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
         className
       )}
       {...props}
     >
-      <span className="absolute right-2 flex size-3.5 items-center justify-center">
+      <span className="absolute inset-e-2 flex size-3.5 items-center justify-center">
         <BaseSelect.ItemIndicator>
-          <Icon name="check" className="size-4" />
+          <Icon name="check" className="size-4 text-foreground" />
         </BaseSelect.ItemIndicator>
       </span>
       <BaseSelect.ItemText>{children}</BaseSelect.ItemText>

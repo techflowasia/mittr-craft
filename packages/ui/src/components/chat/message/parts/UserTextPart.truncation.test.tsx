@@ -12,8 +12,8 @@ import UserTextPart from './UserTextPart';
 import type { Part } from '@/lib/opencode/model';
 import { CONTEXT_METADATA_KEY } from '@/lib/messages/contextParts';
 
-// Plain rendering keeps the lazy markdown module (and its shiki worker asset
-// import) out of the test graph; the expand affordance is mode-independent.
+// Plain rendering keeps the lazy markdown module out of the test graph; the
+// expand affordance is mode-independent.
 useUIStore.setState({ userMessageRenderingMode: 'plain' });
 
 const sdk = OpenCode.make({
@@ -42,8 +42,6 @@ const DOM_GLOBAL_NAMES = [
   'KeyboardEvent',
   'IS_REACT_ACT_ENVIRONMENT',
 ] as const;
-
-const EXPAND_ARIA = 'Expand user message';
 
 type TextPartFixture = Extract<Part, { type: 'text' }>;
 
@@ -147,10 +145,11 @@ const setClampedGeometry = (el: HTMLElement, clampedHeight: number, contentHeigh
 };
 
 describe('UserTextPart expand affordance (issue #3742)', () => {
-    test('collapsed truncated message renders the expand button and clicking it expands the message', async () => {
+    test('collapsed truncated message reports truncation and a click on the text expands the message', async () => {
         const dom = installDomStub();
-        const onExpandMessage = () => { expandCalls += 1; };
         let expandCalls = 0;
+        const onExpandMessage = () => { expandCalls += 1; };
+        const truncation: boolean[] = [];
         const part = makeTextPart(`${'Long user report. '.repeat(40)}`);
         const root = createRoot(dom.container);
 
@@ -161,10 +160,13 @@ describe('UserTextPart expand affordance (issue #3742)', () => {
                         <I18nProvider>
                             <UserTextPart
                                 part={part}
-                                messageId="msg_3742"
                                 isMobile={false}
                                 messageExpanded={false}
                                 onExpandMessage={onExpandMessage}
+                                partIndex={0}
+                                attachmentFilenames={[]}
+                                onTruncationChange={(_index, truncated) => { truncation.push(truncated); }}
+                                onCollapsedLinesChange={() => undefined}
                             />
                         </I18nProvider>
                     </SyncProvider>,
@@ -181,11 +183,10 @@ describe('UserTextPart expand affordance (issue #3742)', () => {
                 dom.observers.forEach((observer) => observer.notify());
             });
 
-            const expandButton = dom.container.querySelector<HTMLButtonElement>(`button[aria-label="${EXPAND_ARIA}"]`);
-            expect(expandButton).not.toBeNull();
+            expect(truncation.at(-1)).toBe(true);
 
             await act(async () => {
-                expandButton?.click();
+                textDiv.click();
             });
             expect(expandCalls).toBe(1);
         } finally {
@@ -196,9 +197,10 @@ describe('UserTextPart expand affordance (issue #3742)', () => {
         }
     });
 
-    test('short non-truncated collapsed message renders no expand button', async () => {
+    test('short non-truncated collapsed message reports no truncation', async () => {
         const dom = installDomStub();
         const part = makeTextPart('Short message.');
+        const truncation: boolean[] = [];
         const root = createRoot(dom.container);
 
         try {
@@ -208,10 +210,13 @@ describe('UserTextPart expand affordance (issue #3742)', () => {
                         <I18nProvider>
                             <UserTextPart
                                 part={part}
-                                messageId="msg_3742"
                                 isMobile={false}
                                 messageExpanded={false}
                                 onExpandMessage={() => undefined}
+                                partIndex={0}
+                                attachmentFilenames={[]}
+                                onTruncationChange={(_index, truncated) => { truncation.push(truncated); }}
+                                onCollapsedLinesChange={() => undefined}
                             />
                         </I18nProvider>
                     </SyncProvider>,
@@ -227,7 +232,8 @@ describe('UserTextPart expand affordance (issue #3742)', () => {
                 dom.observers.forEach((observer) => observer.notify());
             });
 
-            expect(dom.container.querySelector(`button[aria-label="${EXPAND_ARIA}"]`)).toBeNull();
+            expect(truncation.length).toBeGreaterThan(0);
+            expect(truncation.every((value) => value === false)).toBe(true);
         } finally {
             await act(async () => {
                 root.unmount();
@@ -250,10 +256,13 @@ describe('UserTextPart expand affordance (issue #3742)', () => {
                         <I18nProvider>
                             <UserTextPart
                                 part={part}
-                                messageId="msg_3742"
                                 isMobile={false}
                                 messageExpanded={false}
                                 onExpandMessage={onExpandMessage}
+                                partIndex={0}
+                                attachmentFilenames={[]}
+                                onTruncationChange={() => undefined}
+                                onCollapsedLinesChange={() => undefined}
                             />
                         </I18nProvider>
                     </SyncProvider>,

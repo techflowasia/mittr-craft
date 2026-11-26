@@ -1,7 +1,6 @@
 import React, { act } from 'react';
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { createRoot } from 'react-dom/client';
-import { renderToStaticMarkup } from 'react-dom/server';
 import { Window } from 'happy-dom';
 
 mock.module('@/components/ui/input', () => ({
@@ -29,6 +28,7 @@ const PROVIDERS: ListProps['providers'] = [{
 
 const LABELS: ListProps['labels'] = {
   searchPlaceholder: 'Search models',
+  list: 'Models',
   noResults: 'No models',
   favorites: 'Favorites',
   recent: 'Recent',
@@ -124,6 +124,7 @@ const mountList = async (props: ListProps) => {
     });
   };
   return {
+    rows,
     rowOf,
     press,
     click,
@@ -187,22 +188,18 @@ describe('ModelPickerList blocked entries', () => {
     await picker.unmount();
   });
 
-  test('a blocked row is marked aria-disabled and an open row is not', () => {
-    const html = renderToStaticMarkup(<ModelPickerList {...listProps({ isEntryBlocked: isWriter })} />);
-    const rows = html.split('role="option"').slice(1);
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toContain('Acme Writer');
-    expect(rows[0]).toContain('aria-disabled="true"');
-    expect(rows[1]).toContain('Acme Analyst');
-    expect(rows[1]).not.toContain('aria-disabled');
+  test('a blocked row is marked aria-disabled and an open row is not', async () => {
+    const picker = await mountList(listProps({ isEntryBlocked: isWriter }));
+    expect(picker.rows).toHaveLength(2);
+    expect(picker.rowOf('Acme Writer').getAttribute('aria-disabled')).toBe('true');
+    expect(picker.rowOf('Acme Analyst').hasAttribute('aria-disabled')).toBe(false);
+    await picker.unmount();
   });
 
   test('without isEntryBlocked nothing changes', async () => {
-    const html = renderToStaticMarkup(<ModelPickerList {...listProps()} />);
-    expect(html).not.toContain('aria-disabled');
-
     const chosen: string[] = [];
     const picker = await mountList(listProps({ onSelect: (entry) => chosen.push(entry.modelID) }));
+    expect(picker.rows.some((row) => row.hasAttribute('aria-disabled'))).toBe(false);
     const writer = picker.rowOf('Acme Writer');
     await picker.click(writer);
     await picker.press(writer, 'Enter');
@@ -211,9 +208,10 @@ describe('ModelPickerList blocked entries', () => {
     await picker.unmount();
   });
 
-  test('the whole list being disabled still blocks every row', () => {
-    const html = renderToStaticMarkup(<ModelPickerList {...listProps({ disabled: true, isEntryBlocked: isWriter })} />);
-    const rows = html.split('role="option"').slice(1);
-    expect(rows.every((row) => row.includes('aria-disabled="true"'))).toBe(true);
+  test('the whole list being disabled still blocks every row', async () => {
+    const picker = await mountList(listProps({ disabled: true, isEntryBlocked: isWriter }));
+    expect(picker.rows.length).toBeGreaterThan(0);
+    expect(picker.rows.every((row) => row.getAttribute('aria-disabled') === 'true')).toBe(true);
+    await picker.unmount();
   });
 });

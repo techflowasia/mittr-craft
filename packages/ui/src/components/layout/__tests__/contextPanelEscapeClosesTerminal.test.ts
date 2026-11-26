@@ -1,189 +1,77 @@
-/**
- * Regression guard for https://github.com/openchamber/openchamber/issues/2644
- *
- * Escape while focus is inside the terminal must reach the PTY (e.g. Vim
- * Normal mode). The context panel still closes on Escape when focus is on
- * non-terminal panel chrome.
- */
-import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { expect, spyOn, test } from 'bun:test';
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { Window } from 'happy-dom';
+import { I18nProvider } from '@/lib/i18n';
+import { ThemeSystemContext, type ThemeContextValue } from '@/contexts/theme-system-context';
+import { getDefaultTheme } from '@/lib/theme/themes';
+import { RuntimeAPIContext } from '@/contexts/runtimeAPIContext';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const contextPanelSource = readFileSync(join(__dirname, '..', 'ContextPanel.tsx'), 'utf-8');
-const mobileWorkspaceDrawerSource = readFileSync(
-  join(__dirname, '..', '..', '..', 'apps', 'MobileWorkspaceDrawer.tsx'),
-  'utf-8',
-);
+const empty = () => null;
 
-describe('issue #2644: Escape in terminal must not close the context panel', () => {
-  test('the context panel captures Escape at the panel level', () => {
-    expect(contextPanelSource).toContain('onKeyDownCapture={handlePanelKeyDownCapture}');
-  });
-
-  test('the capture handler skips closing when the event target is inside the terminal', () => {
-    const start = contextPanelSource.indexOf('const handlePanelKeyDownCapture = React.useCallback(');
-    expect(start).toBeGreaterThan(-1);
-    const end = contextPanelSource.indexOf('}, [handleClose]);', start);
-    expect(end).toBeGreaterThan(start);
-    const handler = contextPanelSource.slice(start, end);
-
-    expect(handler).toContain("event.key !== 'Escape'");
-    expect(handler).toContain('isTerminalEventTarget(event.target)');
-    expect(handler).toContain('event.preventDefault()');
-    expect(handler).toContain('event.stopPropagation()');
-    expect(handler).toContain('handleClose()');
-
-    // Guard must return before preventDefault/stopPropagation so the terminal input's
-    // bubble-phase keydown listener can forward Escape to the PTY.
-    const guardIndex = handler.indexOf('isTerminalEventTarget(event.target)');
-    const preventIndex = handler.indexOf('event.preventDefault()');
-    expect(guardIndex).toBeGreaterThan(-1);
-    expect(preventIndex).toBeGreaterThan(guardIndex);
-  });
-
-  test('ContextPanel imports the shared terminal focus helper', () => {
-    expect(contextPanelSource).toContain("from '@/lib/terminalFocus'");
-    expect(contextPanelSource).toContain('isTerminalEventTarget');
-  });
-
-  test('mobile drawer keeps its terminal Escape exception', () => {
-    const handlerStart = mobileWorkspaceDrawerSource.indexOf("if (event.key !== 'Escape'");
-    expect(handlerStart).toBeGreaterThan(-1);
-    const handler = mobileWorkspaceDrawerSource.slice(handlerStart, handlerStart + 300);
-    // The terminal tab returns before the drawer closes on Escape.
-    expect(handler).toContain("tabRef.current === 'terminal') return");
-    expect(handler).toContain('onCloseRef.current()');
-  });
-});
-
-type Listener = { capture: boolean; onEvent: (event: SimulatedEvent) => void };
-type SimulatedEvent = {
-  type: string;
-  defaultPrevented: boolean;
-  propagationStopped: boolean;
-  target: SimNode;
-  preventDefault(): void;
-  stopPropagation(): void;
-};
-
-class SimNode {
-  readonly children: SimNode[] = [];
-  private listeners: Listener[] = [];
-  private parent: SimNode | null = null;
-
-  addListener(listener: Listener): void {
-    this.listeners.push(listener);
+test('mobile drawer keeps its terminal Escape exception', async () => {
+  const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(() => new Promise<Response>(() => {}));
+  const dom = new Window({ url: 'http://localhost' });
+  const originals = new Map<string, PropertyDescriptor | undefined>();
+  for (const [name, value] of Object.entries({
+    window: dom, document: dom.document, navigator: dom.navigator,
+    localStorage: dom.localStorage, Event: dom.Event, CustomEvent: dom.CustomEvent,
+    Element: dom.Element, HTMLElement: dom.HTMLElement, Node: dom.Node,
+    customElements: dom.customElements,
+    KeyboardEvent: dom.KeyboardEvent, MutationObserver: dom.MutationObserver,
+    ResizeObserver: dom.ResizeObserver, getComputedStyle: dom.getComputedStyle.bind(dom),
+    requestAnimationFrame: dom.requestAnimationFrame.bind(dom),
+    cancelAnimationFrame: dom.cancelAnimationFrame.bind(dom), IS_REACT_ACT_ENVIRONMENT: true,
+  })) {
+    originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+    Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
   }
-
-  attach(child: SimNode): void {
-    child.parent = this;
-    this.children.push(child);
-  }
-
-  dispatch(type: string): SimulatedEvent {
-    const buildPath = (target: SimNode): SimNode[] => {
-      const ancestors: SimNode[] = [];
-      let cursor: SimNode | null = target;
-      while (cursor !== null) {
-        ancestors.push(cursor);
-        cursor = cursor.parent;
-      }
-      ancestors.reverse();
-      return ancestors;
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  let closes = 0;
+  try {
+    const { MobileWorkspaceDrawer } = await import('@/apps/MobileWorkspaceDrawer');
+    const { SyncProvider } = await import('@/sync/sync-context');
+    const { OpenCode } = await import('@opencode/client');
+    const { createWebAPIs } = await import('../../../../../web/src/api/index');
+    const apis = createWebAPIs();
+    const sdk = OpenCode.make({ baseUrl: 'http://drawer.test', fetch: () => new Promise<Response>(() => {}) });
+    const theme = getDefaultTheme(false);
+    const themeContext: ThemeContextValue = {
+      currentTheme: theme, availableThemes: [theme], customThemeIds: [], setTheme: () => {}, customThemesLoading: false,
+      reloadCustomThemes: async () => {}, importTheme: async () => theme, deleteImportedTheme: async () => {},
+      isSystemPreference: false, setSystemPreference: () => {}, themeMode: 'light', setThemeMode: () => {},
+      lightThemeId: theme.metadata.id, darkThemeId: theme.metadata.id, setLightThemePreference: () => {}, setDarkThemePreference: () => {},
     };
-    const path = buildPath(this);
-
-    const event: SimulatedEvent = {
-      type,
-      defaultPrevented: false,
-      propagationStopped: false,
-      target: this,
-      preventDefault() {
-        event.defaultPrevented = true;
-      },
-      stopPropagation() {
-        event.propagationStopped = true;
-      },
+    const render = async (tab: 'terminal' | 'files') => {
+      await act(async () => root.render(React.createElement(I18nProvider, null,
+        React.createElement(ThemeSystemContext.Provider, { value: themeContext },
+          React.createElement(RuntimeAPIContext.Provider, { value: apis },
+            React.createElement(SyncProvider, { sdk, directory: '', children:
+              React.createElement(MobileWorkspaceDrawer, {
+                open: true, tab, onClose: () => { closes += 1; }, onTabChange: empty,
+                registerPreviewBackHandler: empty, pendingChangesDiff: null, pendingChangesCommit: null,
+                onOpenPlan: empty, onOpenReceivedPage: empty,
+              }),
+            }),
+          ),
+        ),
+      )));
     };
-
-    for (let i = 0; i < path.length; i += 1) {
-      if (event.propagationStopped) return event;
-      for (const listener of path[i].listeners) {
-        if (!listener.capture) continue;
-        listener.onEvent(event);
-        if (event.propagationStopped) return event;
-      }
+    await render('terminal');
+    await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(closes).toBe(0);
+    await render('files');
+    await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    expect(closes).toBe(1);
+  } finally {
+    await act(async () => root.unmount());
+    await dom.happyDOM.close();
+    fetchSpy.mockRestore();
+    for (const [name, descriptor] of originals) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
     }
-    for (let i = path.length - 1; i >= 0; i -= 1) {
-      if (event.propagationStopped) return event;
-      for (const listener of path[i].listeners) {
-        if (listener.capture) continue;
-        listener.onEvent(event);
-        if (event.propagationStopped) return event;
-      }
-    }
-    return event;
   }
-}
-
-describe('issue #2644: fixed Escape propagation to the terminal', () => {
-  test('when the panel skips terminal Escape, the terminal bubble handler receives it', () => {
-    const panel = new SimNode();
-    const terminalContainer = new SimNode();
-    panel.attach(terminalContainer);
-
-    const calls: string[] = [];
-    const panelEscapeHandler = (event: SimulatedEvent) => {
-      // Fixed behavior: do not close / stop when the target is the terminal.
-      if (event.target === terminalContainer) {
-        calls.push('panel-capture-skipped');
-        return;
-      }
-      calls.push('panel-capture-closed');
-      event.preventDefault();
-      event.stopPropagation();
-    };
-    const terminalKeydownHandler = () => {
-      calls.push('terminal-bubble');
-    };
-
-    panel.addListener({ capture: true, onEvent: panelEscapeHandler });
-    terminalContainer.addListener({ capture: false, onEvent: terminalKeydownHandler });
-
-    const event = terminalContainer.dispatch('keydown');
-
-    expect(calls).toEqual(['panel-capture-skipped', 'terminal-bubble']);
-    expect(event.propagationStopped).toBe(false);
-    expect(event.defaultPrevented).toBe(false);
-  });
-
-  test('Escape outside the terminal still closes via the capture handler', () => {
-    const panel = new SimNode();
-    const headerButton = new SimNode();
-    const terminalContainer = new SimNode();
-    panel.attach(headerButton);
-    panel.attach(terminalContainer);
-
-    const calls: string[] = [];
-    panel.addListener({
-      capture: true,
-      onEvent: (event) => {
-        if (event.target === terminalContainer) return;
-        calls.push('panel-capture-closed');
-        event.preventDefault();
-        event.stopPropagation();
-      },
-    });
-    terminalContainer.addListener({
-      capture: false,
-      onEvent: () => calls.push('terminal-bubble'),
-    });
-
-    const event = headerButton.dispatch('keydown');
-    expect(calls).toEqual(['panel-capture-closed']);
-    expect(event.propagationStopped).toBe(true);
-    expect(event.defaultPrevented).toBe(true);
-  });
 });

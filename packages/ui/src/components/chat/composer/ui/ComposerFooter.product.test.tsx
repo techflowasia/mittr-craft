@@ -74,17 +74,14 @@ const footerProps = (isMobile: boolean): ComposerFooterProps => ({
     canSend: false,
     canAbort: false,
     hasContent: false,
-    isExpandedInput: false,
     permissionMode: 'ask',
     isPermissionAutoAcceptInteractive: false,
     dictationActive: false,
     onPickLocalFiles: noop,
     onOpenGitHubPicker: noop,
     onOpenAttachSheet: noop,
-    onToggleExpandedInput: noop,
     onCyclePermissionMode: noop,
     onPrimaryAction: noop,
-    onQueueMessage: noop,
     onAbort: noop,
     onStartDictation: noop,
     onDictationInsert: noop,
@@ -93,6 +90,7 @@ const footerProps = (isMobile: boolean): ComposerFooterProps => ({
     onDictationStart: noop,
     onDictationContentHeightChange: noop,
     btwSelection: { agent: undefined, model: null, variant: undefined },
+    waitingForOpenCode: false,
 });
 
 const render = async (isMobile: boolean, overrides: Partial<ComposerFooterProps> = {}): Promise<string> => {
@@ -214,7 +212,6 @@ describe('the composer-actions slot', () => {
         const mobile = await render(true);
         const mobileMic = micButtonOf(mobile);
         expect(mobileMic).toContain('disabled');
-        expect(mobileMic).toContain(`title="${ACME_REASON}"`);
         expect(mobileMic).toContain(`aria-label="${ACME_REASON}"`);
     });
 

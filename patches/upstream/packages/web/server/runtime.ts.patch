@@ -1,0 +1,483 @@
+diff --git a/packages/web/server/runtime.ts b/packages/web/server/runtime.ts
+index f1cf6fb30..680b1d75d 100644
+--- a/packages/web/server/runtime.ts
++++ b/packages/web/server/runtime.ts
+@@ -13,7 +13,7 @@ import { fileURLToPath } from 'url';
+ import os from 'os';
+ import crypto from 'crypto';
+ import http2 from 'node:http2';
+-import { createUiAuth, getBearerTokenFromRequest } from './lib/ui-auth/ui-auth.js';
++import { createUiAuth, getBearerTokenFromRequest, registerUiAuthProvider } from './lib/ui-auth/ui-auth.js';
+ import { createTunnelAuth } from './lib/tunnels/tunnel-auth.js';
+ import { createManagedTunnelConfigRuntime } from './lib/tunnels/managed-config.js';
+ import { createTunnelProviderRegistry } from './lib/tunnels/registry.js';
+@@ -56,6 +56,8 @@ import {
+   UPSTREAM_STALL_TIMEOUT_CONCURRENT_MS,
+ } from './lib/event-stream/index.js';
+ import { createFsSearchRuntime as createFsSearchRuntimeFactory } from './lib/fs/search.js';
++import { createRecoveryTransitions } from './lib/session-response-recovery/transitions.js';
++import { createResponseRecoveryOwner } from './lib/session-response-recovery/owner.js';
+ import { createOpenCodeLifecycleRuntime } from './lib/opencode/lifecycle.js';
+ import { createOpenCodeEnvRuntime } from './lib/opencode/env-runtime.js';
+ import { providedLoginShellEnvSnapshot } from './lib/opencode/login-shell-env.js';
+@@ -97,6 +99,8 @@ import { createOpenCodeWatcherRuntime } from './lib/opencode/watcher.js';
+ import { createTurnStartReader } from './lib/opencode/turn-start.js';
+ import { createSessionActivityProbe } from './lib/opencode/session-activity.js';
+ import { createSessionAssistRuntime } from './lib/session-assist/runtime.js';
++import { registerSuggestionStyle } from './lib/session-assist/prompt.js';
++import { toMcpEntity } from './lib/opencode/config-v2.js';
+ import { createSessionGoalRuntime } from './lib/session-goal/runtime.js';
+ import { createContextObligatoryRuntime } from './lib/context-obligatory/runtime.js';
+ import { createSessionWarmingRuntime } from './lib/session-warming/runtime.js';
+@@ -144,7 +148,6 @@ import {
+   createShareRelayClient,
+   createShareViewerClient,
+   isRelayBaseAllowed,
+-  isSharingAvailable,
+   resolveShareRelayBase,
+ } from './lib/share-pages/relay-client.js';
+ import { allowedReceiveBases } from './lib/share-pages/received-link.js';
+@@ -187,16 +190,25 @@ import { createInsideSpaceTaskNaming, SPACE_TASK_TITLE_ROUTE } from './lib/space
+ import { dockerHostOf } from './lib/spaces/places/ssh-host.js';
+ import { SPACE_IDLE_EXIT_CODE } from './lib/spaces/layout.js';
+ import { createSwitchController, registerSpaceRoutes } from './lib/spaces/routes.js';
+-import { configureGitEnvironment, getCheckedOutBranch, getWorktreeBootstrapGateStatus, getWorktrees, isWorktreeDirectoryPinned, readRenameableGeneratedBranch, renameGeneratedWorktreeBranch, resolvePrimaryWorktreeRoot, setWorktreeTaskTitle } from './lib/git/service.js';
++import { configureGitEnvironment, getCheckedOutBranch, getWorktreeBootstrapGateStatus, getWorktrees, isWorktreeDirectoryPinned, getRemoteUrl, readRenameableGeneratedBranch, renameGeneratedWorktreeBranch, resolvePrimaryWorktreeRoot, setWorktreeTaskTitle } from './lib/git/service.js';
+ import { createEnvironmentStore } from './lib/environment/store.js';
+ import { createEnvironmentRuntime } from './lib/environment/runtime.js';
+ import { readOpenCodeServiceEnv } from './lib/environment/opencode-service-env.js';
+-import { OPENCODE_CONFIG_DIR } from './lib/opencode/config-files.js';
++import {
++  CONFIG_FILE as OPENCODE_USER_CONFIG_FILE,
++  OPENCODE_CONFIG_DIR,
++  readConfigFile as readOpenCodeConfigFile,
++  writeConfig as writeOpenCodeConfig,
++} from './lib/opencode/config-files.js';
+ import { createWorktreeBootstrapStore } from './lib/git/worktree-bootstrap-storage.js';
+ import { createRemoteClientAuthRuntime } from './lib/client-auth/remote-clients.js';
+ import { createClientPushAccess } from './lib/notifications/client-push-access.js';
+ import { createClientPairingRuntime } from './lib/client-auth/pairing.js';
+ import { attachRealtimeProxy } from './lib/realtime-proxy.js';
++import { loadServerPlugins, mergeEngineConfig, readServerPluginSpecifiers } from './lib/server-plugins.js';
++import { createProgramAnswerGuard } from './lib/server-plugins.js';
++import { registerQuotaProvider } from './lib/quota/providers/registered.js';
++import { buildResult as buildQuotaResult, toUsageWindow } from './lib/quota/utils/formatters.js';
+ import { createRelayService, relayBlockedByEnterprise } from './lib/relay/service.js';
+ import { createRelayHostLock } from './lib/relay/host-lock.js';
+ import { createRelayKeyStore } from './lib/relay/key-store.js';
+@@ -207,7 +219,7 @@ import { createDevServerScanner } from './lib/dev-servers/routes.js';
+ import { createDevTunnelRuntime } from './lib/dev-tunnel/runtime.js';
+ import { registerBrowserControlRoutes } from './lib/browser-control/routes.js';
+ import { createUploadStore, registerUploadRoute } from './lib/browser-control/uploads.js';
+-import { createManagedConfigRuntime } from './lib/opencode/managed-config-file.js';
++import { areSharePagesAvailable, areSharePagesDisabled, createManagedConfigRuntime } from './lib/opencode/managed-config-file.js';
+ import { openCodePluginDelivery } from './lib/guests/opencode-plugin.js';
+ import { createLimitFailoverRuntime } from './lib/limit-failover/runtime.js';
+ import { prepareInstanceDir } from './lib/opencode/instance-dir.js';
+@@ -221,6 +233,8 @@ import { createModelCatalogReader } from './lib/scheduled-tasks/model-catalog.js
+ import { createOpenChamberControlService } from './lib/openchamber-control/service.js';
+ import { createPluginNotificationEmitter } from './lib/notifications/emit-route.js';
+ import { OpenChamberControlError } from './lib/openchamber-control/error.js';
++import { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_SCHEDULE_ACTION_DEFINITIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } from './lib/openchamber-control/actions.js';
++import { SCREENSHOT_DIRECTORY, writeScreenshot } from './lib/openchamber-control/screenshots.js';
+ import { createSessionLinker } from './lib/openchamber-sessions/session-link.js';
+ import { linkedWorktreeOf } from './lib/openchamber-sessions/work-naming.js';
+ import { createFileOpenRequester } from './lib/openchamber-control/file-open.js';
+@@ -288,6 +302,7 @@ interface WebUiServerOptions {
+   getDesktopRuntimeConfig?: Parameters<typeof attachRealtimeProxy>[0]['getDesktopRuntimeConfig'] | undefined;
+   desktopUpdater?: BootstrapInput['desktopUpdater'] | undefined;
+   builtInExtensionsDir?: string | undefined;
++  pluginHost?: unknown;
+ }
+ 
+ applyConnectAttemptTimeout();
+@@ -360,6 +375,10 @@ function shouldSkipCompression(req: Request, res: Response) {
+ }
+ 
+ const OPENCHAMBER_VERSION = (() => {
++  const hostAppVersion = process.env.OPENCHAMBER_HOST_APP_VERSION?.trim();
++  if (hostAppVersion) {
++    return hostAppVersion;
++  }
+   try {
+     const packagePath = webPackagePaths.packageJson;
+     const raw = fs.readFileSync(packagePath, 'utf8');
+@@ -814,6 +833,29 @@ let openCodeNotReadySince = 0;
+ let isExternalOpenCode = false;
+ let exitOnShutdown = true;
+ let uiAuthController: BootstrapResult['uiAuthController'] | null = null;
++let serverPlugins: Awaited<ReturnType<typeof loadServerPlugins>> | null = null;
++const getServerPluginEngineEnv = async () => (serverPlugins ? serverPlugins.engineEnv() : {});
++const engineReadyListeners = new Set<() => void>();
++const serverPluginShutdownHandlers: Array<() => void | Promise<void>> = [];
++const notifyEngineReadyListeners = () => {
++  for (const listener of engineReadyListeners) {
++    try {
++      listener();
++    } catch (error) {
++      console.warn('A server plugin OpenCode ready listener failed:', error instanceof Error ? error.message : error);
++    }
++  }
++};
++const stopServerPlugins = async () => {
++  for (const handler of serverPluginShutdownHandlers.splice(0).reverse()) {
++    try {
++      await handler();
++    } catch (error) {
++      console.warn('A server plugin shutdown handler failed:', error instanceof Error ? error.message : error);
++    }
++  }
++  await serverPlugins?.dispose();
++};
+ let spacesHost: Awaited<ReturnType<typeof createSpacesHost>> | null = null;
+ let activeTunnelController: ReturnType<TunnelWiringDependencies['getActiveTunnelController']> = null;
+ let globalWatcherStartPromise: ReturnType<typeof openCodeWatcherRuntime.start> | null = null;
+@@ -1102,6 +1144,39 @@ const maybeSendPushForTrigger: typeof notificationTriggerRuntime.maybeSendPushFo
+ const setAutoAcceptSession = (sessionId: string, enabled: boolean) => permissionAutoAcceptRuntime.setSessionPolicy(sessionId, enabled);
+ clearPendingPushBadge = () => notificationTriggerRuntime.clearPendingPushBadge();
+ 
++const responseRecoveryActivationVerified = false;
++let recoveryAccount = () => 'default';
++let recoveryAccountReady = () => true;
++const responseRecovery = responseRecoveryActivationVerified ? await createResponseRecoveryOwner({
++  dataDir: OPENCHAMBER_DATA_DIR,
++  getNamespace: () => {
++    if (isExternalOpenCode || ENV_SKIP_OPENCODE_START) {
++      const endpoint = new URL(buildOpenCodeUrl('/', ''));
++      endpoint.username = ''; endpoint.password = ''; endpoint.search = ''; endpoint.hash = '';
++      return `external:${endpoint.href.replace(/\/$/, '')}`;
++    }
++    const environment = openCodeLifecycleRuntime.getManagedOpenCodeProcessEnv();
++    if (!environment) throw new Error('recovery-upstream-identity-unavailable');
++    const home = environment.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
++    return `managed:${path.resolve(home)}`;
++  },
++  account: () => recoveryAccount(),
++  client: () => createOpenCodeClient({ baseUrl: buildOpenCodeUrl('/', '').replace(/\/$/, ''), headers: getOpenCodeAuthHeaders() }),
++  archiveStore: () => openChamberSessionService.archiveStore,
++}) : null;
++await responseRecovery?.suspend();
++const recoveryFetch: typeof fetch = responseRecovery
++  ? responseRecovery.admissions.fetch((...args) => fetch(...args))
++  : (...args) => fetch(...args);
++const recoveryTransitions = responseRecovery ? createRecoveryTransitions({
++  identity: () => recoveryAccount(),
++  suspend: () => responseRecovery.suspend(),
++  resume: async () => {
++    if (!isShuttingDown && isOpenCodeReady && recoveryAccountReady()) await responseRecovery.resume();
++  },
++}) : null;
++const resumeResponseRecovery = async () => { await recoveryTransitions?.ready(); };
++
+ const sessionLineage = createSessionLineage();
+ 
+ const unreadBaseline = createUnreadBaseline({ dataDir: OPENCHAMBER_DATA_DIR });
+@@ -1128,12 +1203,16 @@ const sessionAssistRuntime = createSessionAssistRuntime({
+ });
+ 
+ const sessionGoalRuntime = createSessionGoalRuntime({
++  responseRecovery,
++  fetchImpl: recoveryFetch,
+   buildOpenCodeUrl,
+   getOpenCodeAuthHeaders,
+   getSmallModelService: async () => import('./lib/small-model/index.js'),
+   classifierEndpoint: () => routingRuntime.classifierEndpoint(),
+   jev: createJevClient({ timeoutMs: JEV_BACKGROUND_TIMEOUT_MS }),
+   readSessionMetadata: readStoredSessionMetadata,
++  reviewContinuation: (input) => (serverPlugins ? serverPlugins.goalContinuation(input) : null),
++  onGoalEnded: (input) => serverPlugins?.goalEnded(input),
+   persistSessionGoal: async (sessionID, directory, goal, canWrite) => {
+     if (!canWrite) return persistSessionMetadataPatch(sessionID, { openchamber: { goal } }, { directory });
+     const result = await updateSessionMetadataWith(sessionID, (metadata) => (
+@@ -1233,6 +1312,8 @@ const sessionKnowledgeRuntime = createSessionKnowledgeRuntime({
+ });
+ 
+ const contextObligatoryRuntime = createContextObligatoryRuntime({
++  responseRecovery,
++  fetchImpl: recoveryFetch,
+   buildOpenCodeUrl,
+   getOpenCodeAuthHeaders,
+   readSessionMetadata: readStoredSessionMetadata,
+@@ -1281,6 +1362,10 @@ const globalMessageStreamHub = createGlobalMessageStreamHub({
+   deltaCoalesceWindowMs: resolveDeltaCoalesceWindowMs(),
+ });
+ 
++if (responseRecovery) globalMessageStreamHub.subscribeEvent((event) => {
++  void responseRecovery.processEvent(event.payload).catch(() => console.warn('[response-recovery] event refused; recovery remains fail-closed'));
++});
++
+ const routingRuntime = createRoutingRuntime({
+   dataDir: OPENCHAMBER_DATA_DIR,
+   buildOpenCodeUrl,
+@@ -1314,6 +1399,7 @@ const permissionAutoAcceptRuntime = createPermissionAutoAcceptRuntime({
+   evaluatePermission: (permission, directory) => routingRuntime.evaluatePermission(permission, directory),
+   onPermissionReplied: (permissionId) => routingRuntime.forgetPermission(permissionId),
+   resolveLegacyEnabledMode: async () => ((await routingRuntime.legacySafetyNetEnabled()) ? 'safety' : 'auto'),
++  neverAutoAnswer: (permission) => serverPlugins?.neverAutoAnswer?.(permission) === true,
+   readDefaultMode: spacePermissionDefaultFile
+     ? () => readSpacePermissionDefault(spacePermissionDefaultFile)
+     : undefined,
+@@ -1339,6 +1425,8 @@ const autoReviewRuntime = createAutoReviewRuntime({
+ autoReviewRuntime.start();
+ 
+ const messageQueueRuntime = createMessageQueueRuntime({
++  responseRecovery,
++  fetchImpl: recoveryFetch,
+   globalEventHub: globalMessageStreamHub,
+   buildOpenCodeUrl,
+   getOpenCodeAuthHeaders,
+@@ -1357,6 +1445,8 @@ const messageQueueRuntime = createMessageQueueRuntime({
+ messageQueueRuntime.start();
+ 
+ const dispatchResultsRuntime = createDispatchResultsRuntime({
++  responseRecovery,
++  fetchImpl: recoveryFetch,
+   globalEventHub: globalMessageStreamHub,
+   buildOpenCodeUrl,
+   getOpenCodeAuthHeaders,
+@@ -1428,8 +1518,8 @@ const sharePagesRuntime = createSharePagesRuntime({
+   postSynthetic: workflowAgentSessions.postSynthetic,
+   onAnswerDelivered: (answer) => notificationTriggerRuntime.notifyShareAnswer(answer),
+   broadcast: (event) => broadcastOpenChamberUiEvent(event),
+-  isAvailable: isSharingAvailable,
+-  isRelayBaseAllowed,
++  isAvailable: () => areSharePagesAvailable(),
++  isRelayBaseAllowed: (base) => areSharePagesAvailable() && isRelayBaseAllowed(base),
+   resolveRelayBase: async () => resolveShareRelayBase(await readSettingsFromDiskMigrated().catch(() => null)),
+ });
+ void sharePagesRuntime.start().catch((error) => {
+@@ -1439,7 +1529,7 @@ const receivedPagesRuntime = createReceivedPagesRuntime({
+   crypto,
+   store: createReceivedPageStore({ fsPromises, path, dataDir: OPENCHAMBER_DATA_DIR }),
+   relay: createShareViewerClient(),
+-  isAvailable: isSharingAvailable,
++  isAvailable: () => areSharePagesAvailable(),
+   isEnterpriseMode: () => isEnterpriseMode(),
+   allowedBases: async () => allowedReceiveBases(await readSettingsFromDiskMigrated().catch(() => null)),
+   broadcast: (event) => broadcastOpenChamberUiEvent(event),
+@@ -1611,6 +1701,7 @@ const mcpOAuthSignIn = createMcpOAuthSignIn({
+ });
+ 
+ const serverUtilsRuntime = createServerUtilsRuntime({
++  responseRecovery,
+   getArchivedSessions: () => openChamberSessionService.archiveStore.getAll(),
+   getUnreadBaseline: () => unreadBaseline.get(),
+   getStoredSessionMetadata: () => sessionMetadataStore.listUnmigrated(),
+@@ -1833,6 +1924,7 @@ const openCodeLifecycleState = {
+ };
+ 
+ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
++  beforeOpenCodeRestart: async () => { await responseRecovery?.suspend(); },
+   state: openCodeLifecycleState,
+   env: {
+     ENV_CONFIGURED_OPENCODE_PORT,
+@@ -1899,8 +1991,16 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
+       console.warn('Failed to reconcile sessions after OpenCode restart:', isRecord(error) ? error.message ?? error : error);
+     }
+   },
+-  getManagedOpenCodeEnv: async () => (managedConfigRuntime ? managedConfigRuntime.buildManagedChildEnv() : {}),
++  getManagedOpenCodeEnv: async () => {
++    const managedEnv = managedConfigRuntime ? await managedConfigRuntime.buildManagedChildEnv() : {};
++    return { ...managedEnv, ...(await getServerPluginEngineEnv()) };
++  },
+   getUserEnvironment: () => environmentRuntime.forOpenCode(),
++  isBundledOpenCodePath,
++  onEngineReady: () => {
++    notifyEngineReadyListeners();
++    void resumeResponseRecovery().catch(() => console.warn('[response-recovery] readiness refused; recovery remains suspended'));
++  },
+ });
+ 
+ configureOpenCodeCredentials(openCodeCredentialSource({
+@@ -1919,7 +2019,9 @@ const getOpenCodeCompatibility = async () => {
+   }
+   const binary = ensureOpencodeCliEnv();
+   const installation = isBundledOpenCodePath(binary) ? 'bundled' : 'managed';
+-  const version = await readOpenCodeCliVersion(resolveManagedOpenCodeLaunchSpec(binary)).catch(() => null);
++  const version = await readOpenCodeCliVersion(resolveManagedOpenCodeLaunchSpec(binary), {
++    env: { ...process.env, ...(await getServerPluginEngineEnv()) },
++  }).catch(() => null);
+   const pinnedByPolicy = Boolean(readEnterprisePolicy().opencodeBinary);
+   return describeOpenCodeCompatibility(version, installation, supportsOpenCodeV2Install() && !pinnedByPolicy, binary || null);
+ };
+@@ -1945,6 +2047,7 @@ const triggerHealthCheck = () => openCodeLifecycleRuntime.triggerHealthCheck();
+ const scheduledChatsScope = createChatsScope(OPENCHAMBER_CHATS_DIR);
+ const scheduledWorktreeBridge = createUnregisteredScheduledWorktreeBridge();
+ const scheduledTasksRuntime = createScheduledTasksRuntime({
++  responseRecovery,
+   projectConfigRuntime,
+   chatsScope: scheduledChatsScope,
+   readSessionMetadata: readStoredSessionMetadata,
+@@ -2062,6 +2165,7 @@ const scheduledTaskService = createScheduledTaskService({
+   readModelCatalog,
+ });
+ const openChamberSessionService = createOpenChamberSessionService({
++  responseRecovery,
+   onSessionArchived: (sessionID, archivedAt) => extensionSessionEvents.processPayload({
+     type: 'openchamber:session-archived',
+     properties: { sessionID, archivedAt },
+@@ -2182,7 +2286,11 @@ const serviceHostApi = createServiceHostApi({
+     execute: executeServiceControl,
+     resolveSessionDirectory: (sessionID) => openChamberControlService.resolveSessionDirectory(sessionID),
+     stopSession: (sessionID) => openChamberControlService.stopSession(sessionID),
+-    answerPermission: (input) => openChamberControlService.answerPermission(input),
++    answerPermission: createProgramAnswerGuard({
++      holdsPermissions: () => serverPlugins ? serverPlugins.holdsPermissions : readServerPluginSpecifiers(process.env).length > 0,
++      isLeftForPerson: async (sessionID, requestID) => !serverPlugins || permissionAutoAcceptRuntime.isLeftForPerson(sessionID, requestID),
++      answer: (input: Parameters<typeof openChamberControlService.answerPermission>[0]) => openChamberControlService.answerPermission(input),
++    }),
+     answerForm: (input) => openChamberControlService.answerForm(input),
+     dismissOpenForms: (sessionID) => openChamberControlService.dismissOpenForms(sessionID),
+   },
+@@ -2309,7 +2417,7 @@ const openChamberControlService = createOpenChamberControlService({
+   extensionWaits: extensionWaitsRuntime,
+   laterPages: process.env.OPENCHAMBER_SPACE_IDLE_STOP_FILE ? null : laterPagesRuntime,
+   workflowRuntime,
+-  sharePages: sharePagesRuntime,
++  sharePages: areSharePagesDisabled() ? null : sharePagesRuntime,
+   archiveStore: openChamberSessionService.archiveStore,
+   loadQuota: () => import('./lib/quota/index.js'),
+   getTerminalRuntime: () => terminalRuntime,
+@@ -2352,6 +2460,7 @@ const waitForPortRelease: typeof openCodeLifecycleRuntime.waitForPortRelease = (
+ 
+ const setupProxy: typeof serverUtilsRuntime.setupProxy = (...args) => serverUtilsRuntime.setupProxy(...args);
+ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
++  responseRecovery,
+   process,
+   shutdownTimeoutMs: SHUTDOWN_TIMEOUT,
+   getExitOnShutdown: () => exitOnShutdown,
+@@ -2407,7 +2516,13 @@ const gracefulShutdownRuntime = createGracefulShutdownRuntime({
+   tunnelAuthController,
+   scheduledTasksRuntime,
+   beginGuestServiceShutdown,
+-  stopAllGuestServices,
++  stopAllGuestServices: async () => {
++    try {
++      await stopServerPlugins();
++    } finally {
++      await stopAllGuestServices();
++    }
++  },
+   extensionSessionEvents,
+   extensionServiceLifetime,
+   getGuestSurfaceRuntime: () => guestSurfaceRuntime,
+@@ -2474,6 +2589,7 @@ async function main(options: WebUiServerOptions = {}) {
+     listExtensionPluginDirectories: guestAgentContext.pluginDirectories,
+     openchamberVersion: OPENCHAMBER_VERSION,
+     readPluginDenials: () => pluginSwitchStore.denials(),
++    contributeConfig: () => (serverPlugins ? serverPlugins.managedConfig() : {}),
+   });
+   stopEnterprisePolicyWatch = watchEnterprisePolicy({
+     onChange: () => {
+@@ -2719,6 +2835,7 @@ async function main(options: WebUiServerOptions = {}) {
+   let tunnelRuntimeContextHolder: ReturnType<typeof tunnelWiringRuntime.initialize> | null = null;
+ 
+   const bootstrapResult = bootstrapRuntime.setupBaseRoutes(app, {
++    responseRecovery,
+     process,
+     openchamberVersion: OPENCHAMBER_VERSION,
+     runtimeName: process.env.OPENCHAMBER_RUNTIME || 'web',
+@@ -2993,16 +3110,17 @@ async function main(options: WebUiServerOptions = {}) {
+     getOpenCodeCompatibility,
+     installOpenCodeV2: async () => {
+       const binary = await installOpenCodeV2({
+-        env: { ...getLoginShellEnvSnapshot(), ...process.env, PATH: buildManagedOpenCodePath() },
++        env: { ...getLoginShellEnvSnapshot(), ...process.env, ...(await getServerPluginEngineEnv()), PATH: buildManagedOpenCodePath() },
+       });
+       await persistSettings({ opencodeBinary: binary });
+       await refreshOpenCodeAfterConfigChange('OpenCode v2 installation');
+       await waitForOpenCodeReady();
+     },
+-    upgradeOpenCodeCli: () => {
++    upgradeOpenCodeCli: async () => {
+       const launch = resolveManagedOpenCodeLaunchSpec(lastOpenCodeLaunchDiagnostics?.sourceBinary || resolvedOpencodeBinary);
++      const pluginEngineEnv = await getServerPluginEngineEnv();
+       const upgrade = () => runOpenCodeCliUpgrade(launch, {
+-        env: { ...getLoginShellEnvSnapshot(), ...process.env, PATH: buildManagedOpenCodePath() },
++        env: { ...getLoginShellEnvSnapshot(), ...process.env, ...pluginEngineEnv, PATH: buildManagedOpenCodePath() },
+         cwd: os.homedir(),
+       });
+       // external: https://learn.microsoft.com/en-us/windows/win32/fileio/creating-and-opening-files Windows cannot replace the running executable; the managed process stops during installation.
+@@ -3058,6 +3176,82 @@ async function main(options: WebUiServerOptions = {}) {
+   });
+   void extensionServiceLifetime.reconcile();
+ 
++  serverPlugins = await loadServerPlugins({
++    specifiers: readServerPluginSpecifiers(process.env),
++    context: {
++      app,
++      express,
++      dataDir: OPENCHAMBER_DATA_DIR,
++      logger: console,
++      server: {
++        port: () => {
++          const address = server?.address?.();
++          return address && !isString(address) && Number.isInteger(address.port) ? address.port : null;
++        },
++      },
++      settings: { read: () => readSettingsFromDiskMigrated() },
++      events: {
++        broadcast: (type: string, payload: JsonValue) => broadcastOpenChamberUiEvent({ type, properties: payload }),
++        subscribe: (listener: Parameters<typeof globalMessageStreamHub.subscribeEvent>[0]) => globalMessageStreamHub.subscribeEvent(listener),
++      },
++      opencode: {
++        url: (route = '/') => buildOpenCodeUrl(route),
++        authHeaders: () => getOpenCodeAuthHeaders(),
++        restart: async (reason?: string) => { await restartOpenCode(reason); },
++        refresh: async (reason: string) => { await refreshOpenCodeAfterConfigChange(reason); },
++        waitReady: () => waitForOpenCodeReady(),
++        defaultDirectory: () => openCodeLifecycleRuntime.getDefaultOpenCodeDirectory(),
++        launchedDataHome: () => openCodeLifecycleRuntime.getManagedOpenCodeProcessEnv()?.XDG_DATA_HOME ?? null,
++        beforeAccountMutation: async () => recoveryTransitions?.begin(),
++        accountMutationSettled: async (token: symbol) => { await recoveryTransitions?.end(token); },
++        registerRecoveryAccount: ({ identity, ready }: { identity: () => string; ready: () => boolean }) => {
++          recoveryAccount = identity;
++          recoveryAccountReady = ready;
++        },
++        onReady: (listener: () => void) => {
++          engineReadyListeners.add(listener);
++          return () => engineReadyListeners.delete(listener);
++        },
++        userConfig: {
++          path: OPENCODE_USER_CONFIG_FILE,
++          read: () => readOpenCodeConfigFile(OPENCODE_USER_CONFIG_FILE),
++          write: (config: Parameters<typeof writeOpenCodeConfig>[0]) => writeOpenCodeConfig(config, OPENCODE_USER_CONFIG_FILE),
++        },
++        mcpEntity: toMcpEntity,
++      },
++      git: { remoteUrl: (directory: string) => getRemoteUrl(directory, 'origin') },
++      control: {
++        execute: openChamberControlService.execute,
++        resolveSessionDirectory: openChamberControlService.resolveSessionDirectory,
++        definitions: () => ({ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, schedule: OPENCHAMBER_SCHEDULE_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS }),
++        all: OPENCHAMBER_ALL_ACTIONS,
++        ControlError: OpenChamberControlError,
++        writeScreenshot,
++        SCREENSHOT_DIRECTORY,
++      },
++      managedConfig: {
++        refresh: () => {
++          if (!managedConfigRuntime) throw new TypeError("Cannot read properties of null (reading 'refreshManagedConfigFile')");
++          return managedConfigRuntime.refreshManagedConfigFile();
++        },
++      },
++      mergeEngineConfig,
++      registerQuotaProvider,
++      quotaResult: { buildResult: buildQuotaResult, toUsageWindow },
++      registerSuggestionStyle,
++      host: options.pluginHost ?? null,
++      requestScope: (req: Request) => tunnelAuthController.classifyRequestScope(req),
++      uiAuth: {
++        registerProvider: registerUiAuthProvider,
++        passwordEnabled: () => isString(uiPassword) && uiPassword.trim().length > 0,
++        createClient: (input: Parameters<typeof remoteClientAuthRuntime.createClient>[0]) => remoteClientAuthRuntime.createClient(input),
++      },
++      onShutdown: (handler: () => void | Promise<void>) => {
++        serverPluginShutdownHandlers.push(handler);
++      },
++    },
++  });
++
+   guestSurfaceRuntime = createGuestSurfaceRuntime({
+     server,
+     uiAuthController,

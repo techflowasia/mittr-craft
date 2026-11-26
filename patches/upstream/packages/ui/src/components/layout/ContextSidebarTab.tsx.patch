@@ -1,0 +1,41 @@
+diff --git a/packages/ui/src/components/layout/ContextSidebarTab.tsx b/packages/ui/src/components/layout/ContextSidebarTab.tsx
+index 4b7611e07..319ace414 100644
+--- a/packages/ui/src/components/layout/ContextSidebarTab.tsx
++++ b/packages/ui/src/components/layout/ContextSidebarTab.tsx
+@@ -27,6 +27,8 @@ import { useInContextPanelHeader } from './contextPanelHeaderSlotContext';
+ import { toolContentShellChars } from '@/lib/opencode/toolContentShells';
+ import { composeContextBreakdown, type ContextBuckets } from './contextBreakdown';
+ import { computeSessionTokenTotals } from '@/components/chat/work-status/contextUsage';
++import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
++import { ProductSlot, useProductSlotFilled } from '@/lib/product-plugins';
+ 
+ type SessionMessage = { info: Message; parts: Part[] };
+ 
+@@ -435,6 +437,7 @@ export const ContextPanelContent: React.FC = () => {
+     currentSessionDirectory ?? undefined,
+   );
+   const providers = useConfigStore((state) => state.providers);
++  const rawMessagesReplaced = useProductSlotFilled('context-raw-messages');
+ 
+   React.useEffect(() => {
+     if (copyResetTimeoutRef.current !== null) {
+@@ -670,6 +673,11 @@ export const ContextPanelContent: React.FC = () => {
+           </div>
+         </div>
+ 
++        {rawMessagesReplaced ? (
++          <ErrorBoundary>
++            <ProductSlot name="context-raw-messages" sessionId={currentSessionId} directory={currentSessionDirectory ?? null} messages={sessionMessages} />
++          </ErrorBoundary>
++        ) : (
+         <div>
+           <div className="typography-micro text-muted-foreground">{t('contextSidebar.section.rawMessages')}</div>
+           <div className="mt-2.5 space-y-1">
+@@ -686,6 +694,7 @@ export const ContextPanelContent: React.FC = () => {
+             ))}
+           </div>
+         </div>
++        )}
+       </div>
+     </ScrollableOverlay>
+   );

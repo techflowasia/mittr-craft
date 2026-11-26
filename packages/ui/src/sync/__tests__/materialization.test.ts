@@ -48,6 +48,20 @@ describe("getSessionMaterializationRequestKey", () => {
 })
 
 describe("materializeSessionSnapshots", () => {
+  test("a delivered record replaces the pending one a missed delivery left, at its delivery time", () => {
+    const pending: Message = { id: "msg_s", sessionID: "ses_1", role: "synthetic", time: { created: 1 }, text: "result", pending: true }
+    const delivered: Message = { id: "msg_s", sessionID: "ses_1", role: "synthetic", time: { created: 3 }, text: "result" }
+    const later = { ...message("msg_a"), time: { created: 2 } }
+
+    const result = materializeSessionSnapshots(
+      { message: { ses_1: [pending, later] }, part: {} },
+      "ses_1",
+      [{ info: delivered, parts: [] }],
+    )
+
+    expect(result.message.ses_1).toEqual([later, delivered])
+  })
+
   test("finalizes an active tool under a completed assistant message", () => {
     const completedMessage = completedAssistantMessage("msg_1")
     const staleRunningTool = {
@@ -208,6 +222,7 @@ describe("materializeSessionSnapshots", () => {
       ...unfinishedMessage,
       time: { created: 1, completed: 5000 },
       error: { type: "aborted", message: "aborted" },
+      closedLocally: true,
     }
     const staleMessage = message("msg_1")
     const state = {
@@ -233,6 +248,7 @@ describe("materializeSessionSnapshots", () => {
       ...unfinishedMessage,
       time: { created: 1, completed: 5000 },
       error: { type: "aborted", message: "aborted" },
+      closedLocally: true,
     }
     const completedMessage: Message = {
       ...unfinishedMessage,
@@ -417,6 +433,29 @@ describe("materializeSessionSnapshots", () => {
     expect(result.part).toBe(state.part)
     expect(result.part.msg_1[0]).toBe(completedTool)
     expect(getStaleRunningToolMessageID(result, "ses_1")).toBe(undefined)
+  })
+
+  test("keeps a whole finished call when a page brings its shell, and takes the whole call over a shell", () => {
+    const whole = {
+      id: "prt_1",
+      messageID: "msg_1",
+      sessionID: "ses_1",
+      type: "tool",
+      tool: "read",
+      callID: "call-prt_1",
+      state: { status: "completed", input: { path: "a.ts" }, output: "file body", metadata: {}, time: { start: 1, end: 2 } },
+    } satisfies ToolPart
+    const shell = {
+      ...whole,
+      state: { ...whole.state, output: "", metadata: { openchamberContentShell: { chars: 9 } } },
+    } satisfies ToolPart
+    const info = completedAssistantMessage("msg_1")
+
+    const holdingWhole = materializeSessionSnapshots({ message: { ses_1: [info] }, part: { msg_1: [whole] } }, "ses_1", [{ info, parts: [shell] }])
+    expect(holdingWhole.part.msg_1[0]).toBe(whole)
+
+    const holdingShell = materializeSessionSnapshots({ message: { ses_1: [info] }, part: { msg_1: [shell] } }, "ses_1", [{ info, parts: [whole] }])
+    expect(holdingShell.part.msg_1[0]).toEqual(whole)
   })
 
   test("preserves state.attachments from existing part when completed snapshot lacks them", () => {
@@ -643,6 +682,21 @@ describe("materializeSessionSnapshots", () => {
 })
 
 describe("getSessionMaterializationStatus", () => {
+  test("complete parts do not establish known-missing history coverage", () => {
+    const state = {
+      message: { ses_1: [userMessage("msg_u"), completedAssistantMessage("msg_done")] },
+      part: { msg_done: [part("prt_1", "msg_done")] },
+    }
+
+    expect(getSessionMaterializationStatus(state, "ses_1", { historyCovered: false })).toEqual({
+      hasMessages: true,
+      renderable: false,
+      missingPartMessageIDs: [],
+    })
+    expect(getSessionMaterializationStatus(state, "ses_1", { historyCovered: true }).renderable).toBe(true)
+    expect(getSessionMaterializationStatus(state, "ses_1").renderable).toBe(true)
+  })
+
   test("requires assistant parts for renderable cached state", () => {
     const state = {
       message: { ses_1: [message("msg_1")] },
@@ -666,6 +720,37 @@ describe("getSessionMaterializationStatus", () => {
       hasMessages: true,
       renderable: true,
       missingPartMessageIDs: [],
+    })
+  })
+
+  // OpenCode 2.x opens each step of a turn as a new assistant message and sends
+  // its parts seconds later. Counting that wait as a gap reloaded the whole
+  // transcript page once per step.
+  test("a running step without parts is renderable only in a transcript the loader holds", () => {
+    const state = {
+      message: { ses_1: [userMessage("msg_u"), completedAssistantMessage("msg_done"), message("msg_live")] },
+      part: { msg_done: [part("prt_1", "msg_done")] },
+    }
+
+    expect(getSessionMaterializationStatus(state, "ses_1", { historyCovered: true })).toEqual({
+      hasMessages: true,
+      renderable: true,
+      missingPartMessageIDs: [],
+    })
+    // Records only events delivered still need the session's history.
+    expect(getSessionMaterializationStatus(state, "ses_1").renderable).toBe(false)
+  })
+
+  test("a finished step without parts stays a gap even in a held transcript", () => {
+    const state = {
+      message: { ses_1: [completedAssistantMessage("msg_done")] },
+      part: {},
+    }
+
+    expect(getSessionMaterializationStatus(state, "ses_1", { historyCovered: true })).toEqual({
+      hasMessages: true,
+      renderable: false,
+      missingPartMessageIDs: ["msg_done"],
     })
   })
 })

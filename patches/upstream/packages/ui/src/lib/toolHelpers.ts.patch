@@ -1,0 +1,21 @@
+diff --git a/packages/ui/src/lib/toolHelpers.ts b/packages/ui/src/lib/toolHelpers.ts
+index 6ce0a17e8..228d326e7 100644
+--- a/packages/ui/src/lib/toolHelpers.ts
++++ b/packages/ui/src/lib/toolHelpers.ts
+@@ -6,6 +6,7 @@ import {
+   isSubagentTool,
+   isWriteTool,
+ } from '@/lib/opencode/tools';
++import { productToolName } from '@/lib/product-plugins';
+ 
+ const readInputPath = (input: Record<string, unknown> | undefined): string | null => {
+   const value = input?.path ?? input?.filePath ?? input?.file_path ?? input?.sourcePath;
+@@ -298,7 +299,7 @@ const OPENCODE_NAMESPACE_METADATA: ToolMetadata = {
+ export function getToolMetadata(toolName: string): ToolMetadata {
+   if (toolName === 'opencode' || opencodeNamespaceTool(toolName)) return OPENCODE_NAMESPACE_METADATA;
+   return TOOL_METADATA[toolName] || TOOL_METADATA[normalizeToolName(toolName)] || {
+-    displayName: formatUnknownToolDisplayName(toolName),
++    displayName: productToolName(toolName) ?? formatUnknownToolDisplayName(toolName),
+     category: 'system',
+     outputLanguage: 'text',
+     inputFields: []

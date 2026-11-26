@@ -12,6 +12,7 @@ import {
   readSplashSvg,
   resolveAppNames,
   serverVersionEnv,
+  withoutProductToken,
 } from './product.mjs';
 
 const HOME = '/home/someone';
@@ -42,7 +43,7 @@ test('UPSTREAM_PRODUCT is frozen and equals the upstream literals', () => {
     desktopPort: 57123,
     links: {
       bugReport: 'https://github.com/openchamber/openchamber/issues/new?template=bug_report.yml',
-      ideas: 'https://github.com/openchamber/openchamber/discussions/categories/ideas',
+      ideas: 'https://github.com/openchamber/openchamber/issues/new?template=feature_request.yml',
       discord: 'https://discord.gg/ZYRSdnwwKA',
     },
     updaterFeed: { provider: 'github', owner: 'openchamber', repo: 'openchamber' },
@@ -251,4 +252,23 @@ test('app names without a product.json equal the upstream literals', () => {
     linuxDesktopName: 'openchamber.desktop',
     devUserDataName: 'OpenChamber Dev',
   });
+});
+
+test('a user agent loses the token Electron builds from the app name, and nothing else', () => {
+  const chrome = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.7339.41 Safari/537.36';
+  const withToken = (token) => chrome.replace('Chrome/', `${token} Chrome/`);
+  assert.equal(withoutProductToken(withToken('Acme/1.22.0'), { appName: 'Acme' }), chrome);
+  assert.equal(withoutProductToken(withToken('AcmeDev/1.22.0-rc.1'), { appName: 'Acme Dev' }), chrome);
+  assert.equal(withoutProductToken(withToken('AcmeDev/1.22.0'), { appName: 'Acme' }), withToken('AcmeDev/1.22.0'));
+  assert.equal(withoutProductToken(withToken('A+c/1.0'), { appName: 'A+c' }), chrome);
+  assert.equal(withoutProductToken(withToken('Electron/45.0.0'), UPSTREAM_PRODUCT), withToken('Electron/45.0.0'));
+  assert.equal(withoutProductToken(undefined, { appName: 'Acme' }), '');
+});
+
+test('the shell drops the product token wherever it hands out a plain browser user agent', () => {
+  for (const file of ['entry.mjs', 'main.mjs']) {
+    const source = fs.readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
+    const calls = [...source.matchAll(/plainChromeUserAgent\((\w+)/g)].map((match) => match[1]);
+    assert.deepEqual(calls, ['withoutProductToken'], file);
+  }
 });

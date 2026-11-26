@@ -10,7 +10,9 @@ type ModelPrefsPayload = {
   collapsedModelProviders: string[];
   recentModels: ModelRef[];
   recentAgents: string[];
+  favoriteAgents: string[];
   recentEfforts: Record<string, string[]>;
+  lastUsedEfforts: Record<string, string | null>;
   customProviderIcons: Record<string, CustomProviderIcon>;
 };
 
@@ -40,6 +42,13 @@ const recentEffortsEqual = (a: Record<string, string[]>, b: Record<string, strin
   return aKeys.every((key) => Array.isArray(b[key]) && stringsEqual(a[key], b[key]));
 };
 
+const lastUsedEffortsEqual = (a: Record<string, string | null>, b: Record<string, string | null>): boolean => {
+  if (a === b) return true;
+  const aKeys = Object.keys(a);
+  if (aKeys.length !== Object.keys(b).length) return false;
+  return aKeys.every((key) => Object.prototype.hasOwnProperty.call(b, key) && a[key] === b[key]);
+};
+
 const customProviderIconsEqual = (a: Record<string, CustomProviderIcon>, b: Record<string, CustomProviderIcon>): boolean => {
   if (a === b) return true;
   const keys = Object.keys(a);
@@ -54,7 +63,9 @@ const snapshotModelPrefs = (): ModelPrefsPayload => {
     collapsedModelProviders: state.collapsedModelProviders,
     recentModels: state.recentModels,
     recentAgents: state.recentAgents,
+    favoriteAgents: state.favoriteAgents,
     recentEfforts: state.recentEfforts,
+    lastUsedEfforts: state.lastUsedEfforts,
     customProviderIcons: state.customProviderIcons,
   };
 };
@@ -65,7 +76,9 @@ const modelPrefsEqual = (a: ModelPrefsPayload, b: ModelPrefsPayload): boolean =>
   stringsEqual(a.collapsedModelProviders, b.collapsedModelProviders) &&
   refsEqual(a.recentModels, b.recentModels) &&
   stringsEqual(a.recentAgents, b.recentAgents) &&
+  stringsEqual(a.favoriteAgents, b.favoriteAgents) &&
   recentEffortsEqual(a.recentEfforts, b.recentEfforts) &&
+  lastUsedEffortsEqual(a.lastUsedEfforts, b.lastUsedEfforts) &&
   customProviderIconsEqual(a.customProviderIcons, b.customProviderIcons)
 );
 
@@ -75,7 +88,9 @@ const cloneModelPrefs = (prefs: ModelPrefsPayload): ModelPrefsPayload => ({
   collapsedModelProviders: prefs.collapsedModelProviders.slice(),
   recentModels: prefs.recentModels.slice(),
   recentAgents: prefs.recentAgents.slice(),
+  favoriteAgents: prefs.favoriteAgents.slice(),
   recentEfforts: Object.fromEntries(Object.entries(prefs.recentEfforts).map(([key, variants]) => [key, variants.slice()])),
+  lastUsedEfforts: { ...prefs.lastUsedEfforts },
   customProviderIcons: { ...prefs.customProviderIcons },
 });
 
@@ -109,7 +124,9 @@ export const startModelPrefsAutoSave = () => {
       collapsedModelProviders: state.collapsedModelProviders,
       recentModels: state.recentModels,
       recentAgents: state.recentAgents,
+      favoriteAgents: state.favoriteAgents,
       recentEfforts: state.recentEfforts,
+      lastUsedEfforts: state.lastUsedEfforts,
       customProviderIcons: state.customProviderIcons,
     };
     const prev = {
@@ -118,20 +135,18 @@ export const startModelPrefsAutoSave = () => {
       collapsedModelProviders: prevState.collapsedModelProviders,
       recentModels: prevState.recentModels,
       recentAgents: prevState.recentAgents,
+      favoriteAgents: prevState.favoriteAgents,
       recentEfforts: prevState.recentEfforts,
+      lastUsedEfforts: prevState.lastUsedEfforts,
       customProviderIcons: prevState.customProviderIcons,
     };
     if (modelPrefsEqual(next, prev)) {
       return;
     }
-    // Adopted from the server by the settings sync: that is the new baseline,
-    // not a change of this window's to send back.
     if (isApplyingServerSettings()) {
       lastSent = cloneModelPrefs(next);
       return;
     }
-    // updateDesktopSettings owns the shared debounce and lifecycle flush, so
-    // the change is queued immediately and cannot be lost on a quick reload.
     flush();
   });
 

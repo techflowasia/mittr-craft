@@ -1,0 +1,151 @@
+diff --git a/packages/ui/src/components/chat/sessionRetry.i18n.ts b/packages/ui/src/components/chat/sessionRetry.i18n.ts
+new file mode 100644
+index 000000000..92d2a05d5
+--- /dev/null
++++ b/packages/ui/src/components/chat/sessionRetry.i18n.ts
+@@ -0,0 +1,145 @@
++import type { Locale } from '@/lib/i18n/runtime'
++
++type SessionRetryKey = 'action' | 'note' | 'failed' | 'confirmTitle' | 'confirmDescription' | 'cancel' | 'stopContinue'
++
++const text: Record<Locale, Record<SessionRetryKey, string>> = {
++  en: {
++    action: "Retry",
++    note: "Continues in this chat with existing results. The model may repeat tools.",
++    failed: "Could not continue. Check session status before trying again.",
++    confirmTitle: "Stop and continue?",
++    confirmDescription: "This session is still running. Stop it first, then continue from where it stopped?",
++    cancel: "Cancel",
++    stopContinue: "Stop and continue",
++  },
++  de: {
++    action: "Erneut versuchen",
++    note: "Setzt diesen Chat mit vorhandenen Ergebnissen fort. Das Modell kann Werkzeuge erneut ausführen.",
++    failed: "Fortsetzen fehlgeschlagen. Prüfe vor einem weiteren Versuch den Sitzungsstatus.",
++    confirmTitle: "Anhalten und fortsetzen?",
++    confirmDescription: "Diese Sitzung läuft noch. Zuerst anhalten und dann an der letzten Stelle fortsetzen?",
++    cancel: "Abbrechen",
++    stopContinue: "Anhalten und fortsetzen",
++  },
++  es: {
++    action: "Reintentar",
++    note: "Continúa en este chat con los resultados existentes. El modelo puede repetir herramientas.",
++    failed: "No se pudo continuar. Revisa el estado de la sesión antes de reintentarlo.",
++    confirmTitle: "¿Detener y continuar?",
++    confirmDescription: "Esta sesión sigue en curso. ¿Detenerla primero y continuar desde donde se detuvo?",
++    cancel: "Cancelar",
++    stopContinue: "Detener y continuar",
++  },
++  fr: {
++    action: "Réessayer",
++    note: "Continue dans ce chat avec les résultats existants. Le modèle peut réutiliser les outils.",
++    failed: "Impossible de continuer. Vérifiez l’état de la session avant de réessayer.",
++    confirmTitle: "Arrêter et continuer ?",
++    confirmDescription: "Cette session est toujours en cours. L’arrêter puis reprendre là où elle s’est arrêtée ?",
++    cancel: "Annuler",
++    stopContinue: "Arrêter et continuer",
++  },
++  ja: {
++    action: "再試行",
++    note: "既存の結果を使ってこのチャットを続行します。モデルがツールを再実行する場合があります。",
++    failed: "続行できませんでした。再試行する前にセッションの状態を確認してください。",
++    confirmTitle: "停止して続行しますか？",
++    confirmDescription: "このセッションは実行中です。先に停止してから、停止したところから続行しますか？",
++    cancel: "キャンセル",
++    stopContinue: "停止して続行",
++  },
++  ko: {
++    action: "다시 시도",
++    note: "기존 결과를 사용해 이 채팅을 계속합니다. 모델이 도구를 다시 실행할 수 있습니다.",
++    failed: "계속할 수 없습니다. 다시 시도하기 전에 세션 상태를 확인하세요.",
++    confirmTitle: "중지하고 계속할까요?",
++    confirmDescription: "이 세션은 아직 실행 중입니다. 먼저 중지한 뒤 중지된 지점부터 계속할까요?",
++    cancel: "취소",
++    stopContinue: "중지하고 계속",
++  },
++  nl: {
++    action: "Opnieuw proberen",
++    note: "Gaat verder in deze chat met bestaande resultaten. Het model kan tools herhalen.",
++    failed: "Doorgaan mislukt. Controleer de sessiestatus voordat je het opnieuw probeert.",
++    confirmTitle: "Stoppen en doorgaan?",
++    confirmDescription: "Deze sessie loopt nog. Eerst stoppen en daarna verdergaan waar deze stopte?",
++    cancel: "Annuleren",
++    stopContinue: "Stoppen en doorgaan",
++  },
++  pl: {
++    action: "Ponów",
++    note: "Kontynuuje ten czat z istniejącymi wynikami. Model może ponownie użyć narzędzi.",
++    failed: "Nie udało się kontynuować. Sprawdź stan sesji przed ponowieniem.",
++    confirmTitle: "Zatrzymać i kontynuować?",
++    confirmDescription: "Ta sesja nadal działa. Zatrzymać ją, a następnie kontynuować od miejsca zatrzymania?",
++    cancel: "Anuluj",
++    stopContinue: "Zatrzymaj i kontynuuj",
++  },
++  'pt-BR': {
++    action: "Tentar novamente",
++    note: "Continua neste chat com os resultados existentes. O modelo pode repetir ferramentas.",
++    failed: "Não foi possível continuar. Verifique o estado da sessão antes de tentar novamente.",
++    confirmTitle: "Parar e continuar?",
++    confirmDescription: "Esta sessão ainda está em execução. Parar primeiro e continuar de onde parou?",
++    cancel: "Cancelar",
++    stopContinue: "Parar e continuar",
++  },
++  tr: {
++    action: "Yeniden dene",
++    note: "Mevcut sonuçlarla bu sohbete devam eder. Model araçları tekrar çalıştırabilir.",
++    failed: "Devam edilemedi. Yeniden denemeden önce oturum durumunu kontrol edin.",
++    confirmTitle: "Durdur ve devam et?",
++    confirmDescription: "Bu oturum hâlâ çalışıyor. Önce durdurup kaldığı yerden devam edilsin mi?",
++    cancel: "İptal",
++    stopContinue: "Durdur ve devam et",
++  },
++  uk: {
++    action: "Повторити",
++    note: "Продовжує цей чат із наявними результатами. Модель може повторно викликати інструменти.",
++    failed: "Не вдалося продовжити. Перевірте стан сеансу перед повторною спробою.",
++    confirmTitle: "Зупинити й продовжити?",
++    confirmDescription: "Цей сеанс ще працює. Спочатку зупинити його, а потім продовжити з місця зупинки?",
++    cancel: "Скасувати",
++    stopContinue: "Зупинити й продовжити",
++  },
++  'zh-CN': {
++    action: "重试",
++    note: "使用已有结果继续此聊天。模型可能会重复执行工具。",
++    failed: "无法继续。重试前请检查会话状态。",
++    confirmTitle: "停止并继续？",
++    confirmDescription: "此会话仍在运行。先停止，再从停止处继续？",
++    cancel: "取消",
++    stopContinue: "停止并继续",
++  },
++  'zh-TW': {
++    action: "重試",
++    note: "使用既有結果繼續此聊天。模型可能會重複執行工具。",
++    failed: "無法繼續。重試前請檢查工作階段狀態。",
++    confirmTitle: "停止並繼續？",
++    confirmDescription: "此工作階段仍在執行。先停止，再從停止處繼續？",
++    cancel: "取消",
++    stopContinue: "停止並繼續",
++  },
++  ar: {
++    action: "إعادة المحاولة",
++    note: "يتابع في هذه المحادثة بالنتائج الموجودة. قد يكرر النموذج تشغيل الأدوات.",
++    failed: "تعذّرت المتابعة. تحقق من حالة الجلسة قبل المحاولة مجددًا.",
++    confirmTitle: "إيقاف ثم متابعة؟",
++    confirmDescription: "هذه الجلسة لا تزال قيد التشغيل. هل تريد إيقافها أولًا ثم المتابعة من حيث توقفت؟",
++    cancel: "إلغاء",
++    stopContinue: "إيقاف ثم متابعة",
++  },
++  he: {
++    action: "נסה שוב",
++    note: "ממשיך בצ'אט הזה עם התוצאות הקיימות. המודל עשוי להפעיל כלים שוב.",
++    failed: "לא ניתן להמשיך. בדוק את מצב ההפעלה לפני ניסיון נוסף.",
++    confirmTitle: "לעצור ולהמשיך?",
++    confirmDescription: "ההפעלה הזו עדיין רצה. לעצור אותה קודם ואז להמשיך מהמקום שבו נעצרה?",
++    cancel: "ביטול",
++    stopContinue: "עצור והמשך",
++  },
++}
++
++export function sessionRetryText(locale: Locale, key: SessionRetryKey): string {
++  return (text[locale] ?? text.en)[key]
++}

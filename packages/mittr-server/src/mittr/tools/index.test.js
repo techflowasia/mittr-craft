@@ -2,12 +2,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
+import '../../../../web/scripts/register-server-sources.mjs';
 
 import express from 'express';
 
 import { MARKER_PNG } from '../../../../../scripts/mittr/probe-tool-plugin.mjs';
-import { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } from '../../../../web/server/lib/openchamber-control/actions.js';
-import { SCREENSHOT_DIRECTORY, writeScreenshot } from '../../../../web/server/lib/openchamber-control/screenshots.js';
 import { keyOf } from '../account-store.js';
 import { createMittrSettings } from '../mittr-settings.js';
 import { SCREEN_RECORDING_NOT_GRANTED, deferred, fakeFetch, json, listen, stubAgentBrowser, stubCuaDriver, stubCuaDriverCalls, tempDataDir, until } from '../test-helpers.js';
@@ -16,6 +15,9 @@ import { NO_APPROVALS } from './chrome-service.js';
 import { registerMittrControlRoutes } from './control-routes.js';
 import { CHROME_CLOSE_TIMEOUT_MS, bundledDrivers, setupMittrTools } from './index.js';
 import { MITTR_TOOLS, createMittrActionRegistry } from './registry.js';
+
+const { OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, OPENCHAMBER_ALL_ACTIONS, OPENCHAMBER_SCHEDULE_ACTION_DEFINITIONS, OPENCHAMBER_WEB_ACTION_DEFINITIONS } = await import('../../../../web/server/lib/openchamber-control/actions.js');
+const { SCREENSHOT_DIRECTORY, writeScreenshot } = await import('../../../../web/server/lib/openchamber-control/screenshots.js');
 
 const recordingLogger = () => {
   const lines = [];
@@ -41,7 +43,7 @@ const setUp = async (t, {
   engineBase = null,
   platform = fakePlatform((call) => (hang ? hang(call.signal) : json(CARD))).deps,
 } = {}) => {
-  const registry = createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, definitions: () => ({ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS }), execute: async () => ({}) } });
+  const registry = createMittrActionRegistry({ control: { all: OPENCHAMBER_ALL_ACTIONS, definitions: () => ({ control: OPENCHAMBER_AGENT_TOOL_ACTION_DEFINITIONS, schedule: OPENCHAMBER_SCHEDULE_ACTION_DEFINITIONS, web: OPENCHAMBER_WEB_ACTION_DEFINITIONS }), execute: async () => ({}) } });
   const readyListeners = new Set();
   const eventListeners = new Set();
   const app = express();
@@ -115,10 +117,36 @@ const setUp = async (t, {
 
 const toolNamesIn = (source) => [...source.matchAll(/name: "(mittrcraft_[a-z]+)"/g)].map((match) => match[1]);
 
+test('checklist is offered without a setting in either code mode and deleted conversations are cleaned up', async (t) => {
+  let account = keyOf('checklist-account');
+  const { tools, state, registry, call, emit } = await setUp(t, {
+    platform: { ...fakePlatform(() => json(CARD)).deps, activeAccountKey: () => account, engineOnActiveHome: () => true },
+  });
+  for (const agentToolsCodeMode of [false, true]) {
+    state.upstreamSettings = { agentToolsCodeMode, agentControlToolEnabled: false };
+    const source = await tools.signature();
+    assert.match(source, /name: "mittrcraft_todo",\n\s+description: .*\n\s+options: \{ codemode: false \}/);
+  }
+  const write = (sessionID, content) => call({ tool: MITTR_TOOLS.todo, input: { action: 'todo.write', parameters: { todos: [{ id: 'one', content, status: 'pending' }] } }, sessionID });
+  const read = (sessionID) => call({ tool: MITTR_TOOLS.todo, input: { action: 'todo.read' }, sessionID });
+  assert.equal((await write('ses_clean', 'First account')).ok, true);
+  const firstAccount = account;
+  account = keyOf('checklist-other');
+  assert.equal((await write('ses_clean', 'Second account')).ok, true);
+  account = firstAccount;
+  assert.equal((await write('ses_keep', 'Keep this conversation')).ok, true);
+  emit([{ type: 'session.deleted', properties: { info: { id: 'ses_clean' } } }]);
+  assert.deepEqual((await read('ses_clean')).data, { todos: [] });
+  assert.equal((await read('ses_keep')).data.todos[0].content, 'Keep this conversation');
+  account = keyOf('checklist-other');
+  assert.equal((await read('ses_clean')).data.todos[0].content, 'Second account');
+  await assert.rejects(registry.execute('todo.read', {}, { surface: 'http', sessionId: 'ses_clean', scope: { local: true } }), /not offered/);
+});
+
 test('every tool this install offers and the person left on is in the plugin, which the managed config loads', async (t) => {
   const { tools, dataDir, pluginSource } = await setUp(t);
   assert.deepEqual(await tools.managedConfig(), { plugins: [path.join(dataDir, 'engine-plugins', 'mittrcraft-tools')] });
-  assert.deepEqual(toolNamesIn(pluginSource()), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_work']);
+  assert.deepEqual(toolNamesIn(pluginSource()), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_work', 'mittrcraft_todo']);
 });
 
 test('turning Chrome off removes its tool from the plugin and refreshes the managed config', async (t) => {
@@ -128,7 +156,7 @@ test('turning Chrome off removes its tool from the plugin and refreshes the mana
   assert.deepEqual(await tools.applySwitches({ chrome: false }), { computer: true, chrome: false, widgets: true });
 
   assert.equal(state.refreshes, 1);
-  assert.deepEqual(toolNamesIn(pluginSource()), ['mittrcraft_computer', 'mittrcraft_work']);
+  assert.deepEqual(toolNamesIn(pluginSource()), ['mittrcraft_computer', 'mittrcraft_work', 'mittrcraft_todo']);
   assert.equal(JSON.parse(fs.readFileSync(path.join(dataDir, 'mittr-settings.json'), 'utf8')).tools.chrome, false);
   assert.deepEqual(await tools.switches(), { computer: true, chrome: false, widgets: true });
 });
@@ -155,18 +183,18 @@ test('a switch that cannot be stored refreshes nothing', async (t) => {
 test('a hosted runtime offers no computer or chrome tool', async (t) => {
   const { tools, pluginSource } = await setUp(t, { personalDesktop: () => false });
   await tools.managedConfig();
-  assert.deepEqual(toolNamesIn(pluginSource()), ['mittrcraft_work']);
+  assert.deepEqual(toolNamesIn(pluginSource()), ['mittrcraft_work', 'mittrcraft_todo']);
 });
 
 test('an unbundled driver offers no tool for it', async (t) => {
   const noComputer = await setUp(t, { drivers: { ...ALL_DRIVERS, computer: () => null } });
   await noComputer.tools.managedConfig();
-  assert.deepEqual(toolNamesIn(noComputer.pluginSource()), ['mittrcraft_chrome', 'mittrcraft_work']);
+  assert.deepEqual(toolNamesIn(noComputer.pluginSource()), ['mittrcraft_chrome', 'mittrcraft_work', 'mittrcraft_todo']);
 
   for (const drivers of [{ ...ALL_DRIVERS, chrome: () => null }, { ...ALL_DRIVERS, chromePath: () => null }]) {
     const noChrome = await setUp(t, { drivers });
     await noChrome.tools.managedConfig();
-    assert.deepEqual(toolNamesIn(noChrome.pluginSource()), ['mittrcraft_computer', 'mittrcraft_work']);
+    assert.deepEqual(toolNamesIn(noChrome.pluginSource()), ['mittrcraft_computer', 'mittrcraft_work', 'mittrcraft_todo']);
   }
 });
 
@@ -177,22 +205,26 @@ test('the work tool needs a signed-in account and the control switch', async (t)
 
   const controlOff = await setUp(t, { upstreamSettings: { agentControlToolEnabled: false } });
   await controlOff.tools.managedConfig();
-  assert.deepEqual(toolNamesIn(controlOff.pluginSource()), ['mittrcraft_computer', 'mittrcraft_chrome']);
+  assert.deepEqual(toolNamesIn(controlOff.pluginSource()), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_todo']);
 
   const unreadable = await setUp(t);
   unreadable.state.upstreamSettings = new Error('locked');
   await unreadable.tools.managedConfig();
-  assert.deepEqual(toolNamesIn(unreadable.pluginSource()), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_work'], 'an unreadable settings file reads as upstream\'s defaults');
+  assert.deepEqual(toolNamesIn(unreadable.pluginSource()), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_work', 'mittrcraft_todo'], 'an unreadable settings file reads as upstream\'s defaults');
 });
 
-test('Code Mode follows upstream\'s setting', async (t) => {
+test('every tool but the checklist sits behind Code Mode, as upstream\'s control and web tools do, whatever the retired setting says', async (t) => {
   const { tools, state, pluginSource } = await setUp(t);
+  const behindCodeMode = (source) => [...source.matchAll(/name: "(mittrcraft_[a-z]+)",\n\s+description: .*\n\s+options: \{ codemode: (true|false) \}/g)].map(([, name, codemode]) => [name, codemode === 'true']);
+  const expected = [['mittrcraft_computer', true], ['mittrcraft_chrome', true], ['mittrcraft_work', true], ['mittrcraft_todo', false]];
   await tools.managedConfig();
-  assert.equal(pluginSource().split('codemode: false').length - 1, 3);
-  state.upstreamSettings = { agentToolsCodeMode: true };
-  await tools.managedConfig();
-  assert.equal(pluginSource().split('codemode: true').length - 1, 3);
-  assert.equal(pluginSource().includes('codemode: false'), false);
+  assert.deepEqual(behindCodeMode(pluginSource()), expected);
+  assert.deepEqual([...pluginSource().matchAll(/tools\.namespace\(\{"name":"(mittrcraft_[a-z]+)"/g)].map(([, name]) => name), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_work']);
+  for (const agentToolsCodeMode of [true, false]) {
+    state.upstreamSettings = { agentToolsCodeMode };
+    await tools.managedConfig();
+    assert.deepEqual(behindCodeMode(pluginSource()), expected);
+  }
 });
 
 test('with no tool to offer and the panel browser tool off the managed config adds nothing', async (t) => {
@@ -221,7 +253,7 @@ test('the panel tool\'s capture is wrapped while upstream\'s web tool is on, eve
   const webOn = await setUp(t);
   await webOn.tools.managedConfig();
   assert.match(webOn.pluginSource(), /To look at the app being built, use openchamber_web instead\./);
-  assert.deepEqual(toolNamesIn(withTools.pluginSource()), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_work']);
+  assert.deepEqual(toolNamesIn(withTools.pluginSource()), ['mittrcraft_computer', 'mittrcraft_chrome', 'mittrcraft_work', 'mittrcraft_todo']);
 });
 
 test('the callback answers a panel capture\'s image from the session\'s project, and refuses it while the web tool is off', async (t) => {
@@ -373,7 +405,7 @@ test('1.22 tool settings parked under mittr reach the first plugin', async (t) =
   fs.writeFileSync(path.join(dataDir, 'settings.json'), JSON.stringify({ mittr: { agentChromeToolEnabled: false, agentComputerToolEnabled: true } }));
   const { tools, pluginSource, logger } = await setUp(t, { dataDir });
   await tools.managedConfig();
-  assert.deepEqual(toolNamesIn(pluginSource()), ['mittrcraft_computer', 'mittrcraft_work']);
+  assert.deepEqual(toolNamesIn(pluginSource()), ['mittrcraft_computer', 'mittrcraft_work', 'mittrcraft_todo']);
   assert.deepEqual(await tools.switches(), { computer: true, chrome: false, widgets: true });
   assert.ok(logger.lines.includes('[mittr] carried the 1.22 Computer and Chrome tool settings'), logger.lines.join('\n'));
 });
@@ -525,7 +557,7 @@ test('a data folder too long for the driver socket leaves the computer tool out 
   fs.mkdirSync(dataDir, { recursive: true });
   const { tools, pluginSource } = await setUp(t, { dataDir });
   await tools.managedConfig();
-  assert.deepEqual(toolNamesIn(pluginSource()), ['mittrcraft_chrome', 'mittrcraft_work']);
+  assert.deepEqual(toolNamesIn(pluginSource()), ['mittrcraft_chrome', 'mittrcraft_work', 'mittrcraft_todo']);
 });
 
 const everySite = () => {

@@ -6,7 +6,6 @@ interface RegisteredHandler {
   handler: ShortcutHandler;
 }
 
-/** Active application command handlers, keyed by shortcut action ID. */
 export class ShortcutRegistry {
   private readonly handlers = new Map<ShortcutActionId, RegisteredHandler[]>();
   private suspensionCount = 0;
@@ -15,11 +14,6 @@ export class ShortcutRegistry {
   register(actionId: ShortcutActionId, handler: ShortcutHandler): () => void {
     const registration = { handler };
     const registered = this.handlers.get(actionId) ?? [];
-    if (registered.length > 0 && typeof console !== 'undefined' && import.meta.env?.DEV) {
-      // First registration wins at dispatch; a silent second registration is
-      // almost always two components fighting over one action.
-      console.warn(`[shortcuts] duplicate handler registration for "${actionId}" — only the first will dispatch`);
-    }
     registered.push(registration);
     this.handlers.set(actionId, registered);
     return () => {
@@ -39,15 +33,17 @@ export class ShortcutRegistry {
     return this.handlers.get(actionId)?.[0]?.handler;
   }
 
-  /** Runs an action outside keyboard dispatch (command palette). Bypasses
-      suspension: the invoking surface, not the keyboard, owns the gesture. */
+  getAll(actionId: ShortcutActionId): ShortcutHandler[] {
+    if (this.suspensionCount > 0) return [];
+    return (this.handlers.get(actionId) ?? []).map((registration) => registration.handler);
+  }
+
   invoke(actionId: ShortcutActionId): boolean {
     const handler = this.handlers.get(actionId)?.[0]?.handler;
     if (!handler) return false;
     return handler(new KeyboardEvent('keydown')) !== false;
   }
 
-  /** Temporarily disables every registered application shortcut. */
   suspend(): () => void {
     this.suspensionCount += 1;
     this.suspensionVersion += 1;
@@ -75,5 +71,4 @@ export class ShortcutRegistry {
   }
 }
 
-/** Shared registry for application commands registered by React surfaces. */
 export const shortcutRegistry = new ShortcutRegistry();

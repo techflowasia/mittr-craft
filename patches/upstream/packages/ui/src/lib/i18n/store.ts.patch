@@ -1,5 +1,5 @@
 diff --git a/packages/ui/src/lib/i18n/store.ts b/packages/ui/src/lib/i18n/store.ts
-index 73f94fe81..391f4539b 100644
+index a1138e72d..7e875b873 100644
 --- a/packages/ui/src/lib/i18n/store.ts
 +++ b/packages/ui/src/lib/i18n/store.ts
 @@ -1,6 +1,7 @@
@@ -8,9 +8,9 @@ index 73f94fe81..391f4539b 100644
  import { dict as enDict, type I18nKey } from './messages/en';
 +import { overlayDictionary, subscribeProductUiPlugins } from '../product-plugins';
  import { DEFAULT_LOCALE, detectInitialLocale, type Locale, writeStoredLocale } from './runtime';
+ import { formatTemplate, type I18nParams } from './format';
  
- export type I18nParams = Record<string, string | number | boolean | null | undefined>;
-@@ -57,7 +58,7 @@ async function loadDictionary(locale: Locale): Promise<I18nDictionary> {
+@@ -61,7 +62,7 @@ async function loadDictionary(locale: Locale): Promise<I18nDictionary> {
  
  export const useI18nStore = create<I18nState>()((set, get) => ({
    locale: DEFAULT_LOCALE,
@@ -19,7 +19,7 @@ index 73f94fe81..391f4539b 100644
    loadingLocale: null,
    setLocale: (locale) => {
      const current = get();
-@@ -70,7 +71,7 @@ export const useI18nStore = create<I18nState>()((set, get) => ({
+@@ -74,7 +75,7 @@ export const useI18nStore = create<I18nState>()((set, get) => ({
  
      set({
        locale,
@@ -28,7 +28,7 @@ index 73f94fe81..391f4539b 100644
        loadingLocale: cached ? null : locale,
      });
  
-@@ -82,22 +83,33 @@ export const useI18nStore = create<I18nState>()((set, get) => ({
+@@ -86,22 +87,33 @@ export const useI18nStore = create<I18nState>()((set, get) => ({
        if (get().locale !== locale) {
          return;
        }
@@ -60,8 +60,8 @@ index 73f94fe81..391f4539b 100644
  }
  
  export function formatMessage(dictionary: I18nDictionary, key: I18nKey, params?: I18nParams): string {
--  const template = dictionary[key] ?? enDict[key] ?? key;
-+  const template = dictionary[key] ?? overlayDictionary(DEFAULT_LOCALE, enDict)[key] ?? key;
-   if (!params) {
-     return template;
-   }
+-  return formatTemplate(dictionary[key] ?? enDict[key] ?? key, params);
++  return formatTemplate(dictionary[key] ?? overlayDictionary(DEFAULT_LOCALE, enDict)[key] ?? key, params);
+ }
+ 
+ export type { I18nKey, I18nParams, Locale };

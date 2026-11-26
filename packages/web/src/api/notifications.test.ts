@@ -58,6 +58,7 @@ const installWindowMock = (overrides?: {
         removeItem: (key: string) => storage.delete(key),
       },
       location: {
+        origin: 'https://app.example',
         pathname: overrides?.pathname ?? '/',
         search: overrides?.search ?? '',
         assign,
@@ -94,6 +95,31 @@ afterEach(() => {
 });
 
 describe('web notifications API', () => {
+  it('switches from another session without reloading when the app router is mounted', async () => {
+    const assign = vi.fn();
+    const focus = vi.fn();
+    installWindowMock({ search: '?session=ses_other', focus, assign });
+    installFocusedDocument();
+    installEmptyNavigator();
+    const captured: CapturedNotification[] = [];
+    installNotificationMock(() => undefined, captured);
+    const { listenForNotificationNavigation } = await import('@openchamber/ui/lib/router/notificationNavigation');
+    const accept = vi.fn(() => true);
+    const cleanup = listenForNotificationNavigation(accept);
+    try {
+      const { createWebNotificationsAPI } = await import('./notifications');
+      await createWebNotificationsAPI().notifyAgentCompletion({ title: 'Ready', sessionId: 'ses_target' });
+      const instance = captured[0].instance;
+      instance.onclick?.call(instance, new Event('click'));
+      expect(assign).not.toHaveBeenCalled();
+      expect(accept).toHaveBeenCalledWith(new URL('https://app.example/?session=ses_target'));
+      expect(focus).toHaveBeenCalledOnce();
+      expect(instance.close).toHaveBeenCalledOnce();
+    } finally {
+      cleanup();
+    }
+  });
+
   it('deduplicates repeated foreground notifications by tag', async () => {
     installWindowMock();
     const created: Array<{ title: string; options?: NotificationOptions }> = [];
@@ -286,5 +312,32 @@ describe('web notifications API', () => {
     // SAFETY: NotificationOptions.data carries our own { url, sessionId } target;
     // read the key only to assert it is omitted when there is no session.
     expect((shown[0]?.options as { data?: unknown } | undefined)?.data).toBeUndefined();
+  });
+
+  it('forwards the owning runtime key through the desktop bridge', async () => {
+    installWindowMock();
+    installFocusedDocument();
+    installEmptyNavigator();
+    const invoke = vi.fn(async () => null);
+    // SAFETY: `installWindowMock` installed `globalThis.window` for this test,
+    // so the asserted shape describes this own mock; the bridge reads only its
+    // `invoke`.
+    (globalThis.window as { __OPENCHAMBER_DESKTOP__?: unknown }).__OPENCHAMBER_DESKTOP__ = { invoke };
+
+    const { createWebNotificationsAPI } = await import('./notifications');
+    const api = createWebNotificationsAPI();
+
+    await expect(api.notifyAgentCompletion({
+      title: 'Ready',
+      body: 'Done',
+      tag: 'ready-ses_123',
+      sessionId: 'ses_123',
+      runtimeKey: 'host:abc123',
+    })).resolves.toBe(true);
+
+    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).toHaveBeenCalledWith('desktop_notify', {
+      payload: expect.objectContaining({ sessionId: 'ses_123', runtimeKey: 'host:abc123' }),
+    });
   });
 });

@@ -15,10 +15,12 @@ const recordingLogger = () => {
   return { lines, log: record, warn: record, error: record };
 };
 
-const setUp = async (t, { scope = 'local', host = {}, client, runTurn } = {}) => {
+const BEFORE_FIXTURE_RESET = () => Date.parse('2026-10-20T00:00:00Z');
+
+const setUp = async (t, { scope = 'local', host = {}, client, runTurn, stateNow } = {}) => {
   const app = express();
   const conversation = createVoiceConversation();
-  const state = createSpeechState();
+  const state = createSpeechState(stateNow ? { now: stateNow } : {});
   t.after(() => state.close());
   const turns = [];
   const logger = recordingLogger();
@@ -136,7 +138,7 @@ test('a speech refusal answers its status and reason, and a quota one blocks the
     transcribe: async () => { throw new SpeechError('llm_quota_exhausted', 429, { kind: 'stt', resetsAt: '2026-10-26T17:00:00Z' }); },
     synthesize: async () => { throw new SpeechError('not_configured'); },
   };
-  const { post, state } = await setUp(t, { client });
+  const { post, state } = await setUp(t, { client, stateNow: BEFORE_FIXTURE_RESET });
   const { conversationId } = (await post('/api/mittr/voice/start')).body;
   const heard = await post('/api/mittr/voice/transcribe', audioForm(), { [CONVERSATION_HEADER]: conversationId });
   assert.deepEqual([heard.status, heard.body], [429, { error: 'Voice input is out of quota this week', reasonCode: 'llm_quota_exhausted', resetsAt: '2026-10-26T17:00:00Z' }]);

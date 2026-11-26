@@ -75,7 +75,7 @@ const toolSchema = ({ name, description, definitions, properties }) => ({
 });
 
 const offeredUpstream = (upstream, vendored) => {
-  const present = new Set([...(upstream?.control ?? []), ...(upstream?.web ?? [])].map(({ action }) => action));
+  const present = new Set([...(upstream?.control ?? []), ...(upstream?.schedule ?? []), ...(upstream?.web ?? [])].map(({ action }) => action));
   return vendored.filter(({ action }) => present.has(action));
 };
 

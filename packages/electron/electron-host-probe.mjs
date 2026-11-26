@@ -4,8 +4,8 @@ import { z } from 'zod';
 const optionalIdentity = z.string().catch('').transform((value) => value.trim());
 const versionEnvelope = z.object({
   status: z.literal('ok'),
-  // Arrays historically classify as incompatible rather than wrong-service.
   compatibility: z.union([z.looseObject({}), z.array(z.unknown())]),
+  openchamberVersion: optionalIdentity,
 });
 
 const buildProbeUrl = (url, pathname) => {
@@ -18,13 +18,21 @@ const buildProbeUrl = (url, pathname) => {
   }
 };
 
+const isServerBeforeOpenCode2 = (version) => {
+  const major = /^(\d+)\./.exec(version)?.[1];
+  return major !== undefined && Number(major) < 2;
+};
+
 const classifyVersionPayload = (payload) => {
   const parsed = versionEnvelope.safeParse(payload);
   if (!parsed.success) {
     return 'wrong-service';
   }
-  const { compatibility } = parsed.data;
+  const { compatibility, openchamberVersion } = parsed.data;
   if (!Array.isArray(compatibility.capabilities) || !compatibility.capabilities.includes('api.runtime-url.v1')) {
+    return 'incompatible';
+  }
+  if (isServerBeforeOpenCode2(openchamberVersion)) {
     return 'incompatible';
   }
   if (compatibility.apiVersion !== 1 || compatibility.minClientApiVersion > 1) {
@@ -45,8 +53,8 @@ export const probeElectronHostWithDeadline = async ({
   scheduleTimeout = setTimeout,
   cancelTimeout = clearTimeout,
 }) => {
-  const started = now();
-  const result = (status) => ({ status, latencyMs: now() - started });
+  let requestStarted = now();
+  const result = (status) => ({ status, latencyMs: now() - requestStarted });
   if (!isReady()) return result('unreachable');
 
   const versionUrl = buildProbeUrl(url, '/api/version');
@@ -69,10 +77,12 @@ export const probeElectronHostWithDeadline = async ({
   };
   const fetchProbe = async (requestUrl, headers) => {
     controller.signal.throwIfAborted();
+    requestStarted = now();
     const response = await chromiumFetch(requestUrl, {
       headers,
       signal: controller.signal,
       redirect: 'manual',
+      cache: 'no-store',
     });
     if (controller.signal.aborted) {
       await discardBody(response);
@@ -89,7 +99,6 @@ export const probeElectronHostWithDeadline = async ({
       if (healthUrl) {
         try {
           const response = await fetchProbe(healthUrl, { Accept: 'application/json' });
-          // A redirected identity belongs to another candidate, even if its ID matches.
           if (response.status >= 300 && response.status < 400 || response.redirected) return result('wrong-service');
           if (response.ok) {
             const payload = await response.json().catch(() => null);
@@ -98,9 +107,8 @@ export const probeElectronHostWithDeadline = async ({
           }
         } catch (error) {
           if (controller.signal.aborted) throw error;
-          // Electron 43 net.fetch rejects manual redirects instead of returning a 3xx response.
+          // external: https://www.electronjs.org/docs/latest/api/net Electron 43 net.fetch rejects manual redirects instead of returning a 3xx response.
           if (error instanceof Error && error.message === 'Redirect was cancelled') return result('wrong-service');
-          // Identity is optional on older servers; the authenticated request remains authoritative.
         }
       }
     }

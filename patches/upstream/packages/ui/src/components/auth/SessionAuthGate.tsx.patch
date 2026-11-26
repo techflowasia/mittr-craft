@@ -1,0 +1,107 @@
+diff --git a/packages/ui/src/components/auth/SessionAuthGate.tsx b/packages/ui/src/components/auth/SessionAuthGate.tsx
+index 0eee3c7d1..e5404decd 100644
+--- a/packages/ui/src/components/auth/SessionAuthGate.tsx
++++ b/packages/ui/src/components/auth/SessionAuthGate.tsx
+@@ -16,6 +16,7 @@ import { runtimeFetch } from '@/lib/runtime-fetch';
+ import { installAuthSessionFocusWatch, useAuthSessionStore } from '@/lib/runtime-auth-expiry';
+ import { AuthExpiredBanner } from './AuthExpiredBanner';
+ import { getRuntimeExtraHeadersSync } from '@/lib/runtime-auth';
++import { ProductSlot, translateProductSessionAuthDescription, type SessionAuthRuntime } from '@/lib/product-plugins';
+ import { getRuntimeApiBaseUrl, getRuntimeKey, subscribeRuntimeEndpointChanged, switchRuntimeEndpoint } from '@/lib/runtime-switch';
+ import { desktopHostsGet, desktopHostsSet, getDesktopHostApiUrl, normalizeHostUrl } from '@/lib/desktopHosts';
+ import { runtimeIdentityMatches, type GateState, type RuntimeIdentity } from './sessionAuthGateState';
+@@ -150,6 +151,11 @@ const shouldUseDesktopShellPasswordLogin = (): boolean => {
+   return isDesktopShell() && !isLocalDesktopRuntime();
+ };
+ 
++const sessionAuthRuntime = (): SessionAuthRuntime => {
++  if (!isDesktopShell()) return 'web';
++  return isLocalDesktopRuntime() ? 'desktop-local' : 'desktop-remote';
++};
++
+ const captureRuntimeIdentity = (): RuntimeIdentity => ({
+   apiBaseUrl: getRuntimeApiBaseUrl(),
+   runtimeKey: getRuntimeKey(),
+@@ -334,6 +340,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
+   const [errorMessage, setErrorMessage] = React.useState('');
+   const [retryAfter, setRetryAfter] = React.useState<number | undefined>(undefined);
+   const [isTunnelLocked, setIsTunnelLocked] = React.useState(false);
++  const [passwordEnabled, setPasswordEnabled] = React.useState(true);
+   const [passkeyStatus, setPasskeyStatus] = React.useState<PasskeyStatus>(defaultPasskeyStatus);
+   const [supportsPasskeys, setSupportsPasskeys] = React.useState(false);
+   const [isPasskeyBusy, setIsPasskeyBusy] = React.useState(false);
+@@ -460,7 +467,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
+           return;
+         }
+         if (response.status === 401) {
+-          let data: { tunnelLocked?: boolean; debug?: { hasRefreshToken: boolean; message: string } } = {};
++          let data: { tunnelLocked?: boolean; passwordEnabled?: boolean; debug?: { hasRefreshToken: boolean; message: string } } = {};
+           try {
+             data = JSON.parse(responseText);
+           } catch {
+@@ -468,6 +475,7 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
+           }
+           resetTransientRetry();
+           setIsTunnelLocked(data.tunnelLocked === true);
++          setPasswordEnabled(data.passwordEnabled !== false);
+           setPasskeyStatus(latestPasskeyStatus);
+           setState('locked');
+           setRetryAfter(undefined);
+@@ -594,6 +602,29 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
+     }
+   }, [skipAuth, state]);
+ 
++  const signInHostKey = getRuntimeKey();
++  const signInApiBaseUrl = getRuntimeApiBaseUrl();
++  const finishProviderSignIn = React.useMemo(() => {
++    const runtime: RuntimeIdentity = { apiBaseUrl: signInApiBaseUrl, runtimeKey: signInHostKey };
++    return async (issuedClientToken?: string): Promise<boolean> => {
++      if (!isRuntimeIdentityActive(runtime)) return false;
++      if (shouldIssueDesktopClientToken()) {
++        let clientToken = issuedClientToken?.trim() ?? '';
++        if (!clientToken) {
++          clientToken = await issueDesktopClientToken();
++          if (!isRuntimeIdentityActive(runtime)) return false;
++        }
++        if (!clientToken) return false;
++        if (!await applyDesktopClientToken(clientToken, runtime, getRuntimeExtraHeadersSync())) return false;
++      }
++      if (!isRuntimeIdentityActive(runtime)) return false;
++      setIsTunnelLocked(false);
++      setErrorMessage('');
++      setState('authenticated');
++      return true;
++    };
++  }, [signInApiBaseUrl, signInHostKey]);
++
+   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+     event.preventDefault();
+     await handlePasswordUnlock(false);
+@@ -880,11 +911,11 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
+             <p className="typography-meta text-muted-foreground">
+               {isTunnelLocked
+                 ? t('sessionAuth.locked.tunnelDescription')
+-                : t('sessionAuth.locked.passwordDescription')}
++                : (translateProductSessionAuthDescription({ passwordEnabled, runtime: sessionAuthRuntime() }) ?? t('sessionAuth.locked.passwordDescription'))}
+             </p>
+           </div>
+ 
+-          {!isTunnelLocked && (
++          {!isTunnelLocked && passwordEnabled && (
+             <form onSubmit={handleSubmit} className="w-full space-y-2">
+               {canUsePasskey && (
+                 <Button
+@@ -986,6 +1017,13 @@ export const SessionAuthGate: React.FC<SessionAuthGateProps> = ({
+             </form>
+           )}
+ 
++          <ProductSlot
++            name="session-auth-methods"
++            isTunnelLocked={isTunnelLocked}
++            runtime={sessionAuthRuntime()}
++            onSignedIn={finishProviderSignIn}
++          />
++
+           {showHostSwitcher && (
+             <div className="w-full">
+               <DesktopHostSwitcherInline />

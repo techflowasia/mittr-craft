@@ -1,8 +1,8 @@
 diff --git a/knip.json b/knip.json
-index 73dfa83d3..eebfe74b6 100644
+index e2377ab07..f947ca72f 100644
 --- a/knip.json
 +++ b/knip.json
-@@ -84,6 +84,15 @@
+@@ -100,6 +100,15 @@
          "scripts/**/*.ts"
        ]
      },

@@ -125,6 +125,18 @@ test('Code Mode puts every tool behind the execute tool', async () => {
   assert.deepEqual(added.map((tool) => tool.options), [{ codemode: true }, { codemode: true }]);
 });
 
+test('a tool named direct stays a direct tool under Code Mode, and each Code Mode tool names its namespace with its first sentence where the engine has namespaces', async () => {
+  const named = [];
+  const source = toolsPluginSource({ tools: [{ ...CHROME, description: 'Drive a page. Then click.' }, COMPUTER], codeMode: true, direct: ['acme_computer'] });
+  const plugin = (await import(`data:text/javascript,${encodeURIComponent(source)}`)).default;
+  const added = [];
+  await plugin.setup({ tool: { transform: async (fn) => fn({ add: (tool) => added.push(tool), namespace: (entry) => named.push(entry) }) } });
+  assert.deepEqual(added.map((tool) => [tool.name, tool.options]), [['acme_chrome', { codemode: true }], ['acme_computer', { codemode: false }]]);
+  assert.deepEqual(named, [{ name: 'acme_chrome', description: 'Drive a page.' }]);
+  const { added: withoutNamespaces } = await loadPlugin(source);
+  assert.equal(withoutNamespaces.length, 2);
+});
+
 test('a tool lists only its own actions and parameters', async () => {
   const { added } = await loadPlugin(toolsPluginSource({ tools: [CHROME, COMPUTER], codeMode: false }));
   const [chrome, computer] = added.map((tool) => tool.input);
@@ -211,7 +223,7 @@ test('an answer that is not the envelope, a failed call and a missing connection
   assert.deepEqual(JSON.parse(missing.content), { schemaVersion: 1, ok: false, action: 'chrome.click', error: { message: 'The MittrCraft tools connection is unavailable', kind: 'runtime' } });
 });
 
-test('an aborted turn closes the callback request', async (t) => {
+test('an aborted turn closes the callback request, and the call ends stopped, as upstream\'s tools do since OpenCode 2.3.0, not with an answer', async (t) => {
   let closed;
   const requestClosed = new Promise((resolve) => { closed = resolve; });
   const base = await listen(t, (req) => { req.on('close', closed); });
@@ -221,11 +233,11 @@ test('an aborted turn closes the callback request', async (t) => {
 
   const pending = added[0].execute({ action: 'chrome.open' }, { sessionID: 'ses_1', signal: controller.signal });
   await new Promise((resolve) => setTimeout(resolve, 50));
+  const stopped = assert.rejects(pending, { name: 'AbortError' });
   controller.abort();
 
   await requestClosed;
-  const result = await pending;
-  assert.equal(JSON.parse(result.content).ok, false);
+  await stopped;
 });
 
 test('the plugin is written privately under the data dir, and an unchanged one is left alone', { skip: process.platform === 'win32' }, async (t) => {
@@ -431,7 +443,7 @@ test('a capture callback that does not answer in time leaves the panel result un
   await requestClosed;
 });
 
-test('the capture callback stops when the turn is aborted', async (t) => {
+test('the capture callback stops when the turn is aborted, and the wrapped call ends stopped', async (t) => {
   let closed;
   const requestClosed = new Promise((resolve) => { closed = resolve; });
   const base = await listen(t, (req) => { req.on('close', closed); });
@@ -442,9 +454,10 @@ test('the capture callback stops when the turn is aborted', async (t) => {
 
   const pending = panel.tool.execute({ action: 'capture' }, { sessionID: 'ses_1', signal: controller.signal });
   await new Promise((resolve) => setTimeout(resolve, 50));
+  const stopped = assert.rejects(pending, { name: 'AbortError' });
   controller.abort();
 
-  assert.equal((await pending).content, panel.content);
+  await stopped;
   await requestClosed;
 });
 

@@ -1,0 +1,138 @@
+diff --git a/packages/web/server/opencode-proxy.test.js b/packages/web/server/opencode-proxy.test.js
+index 33cd3e66e..fa09847e2 100644
+--- a/packages/web/server/opencode-proxy.test.js
++++ b/packages/web/server/opencode-proxy.test.js
+@@ -1,10 +1,14 @@
+ import { afterEach, describe, expect, it, vi } from 'vitest';
+ import { EventEmitter } from 'node:events';
++import { mkdtemp, rm } from 'node:fs/promises';
++import { tmpdir } from 'node:os';
++import { createResponseRecoveryOwner } from './lib/session-response-recovery/owner.js';
+ import net from 'node:net';
+ import http from 'node:http';
+ import express from 'express';
+ import path from 'path';
+ 
++import { createRecoveryAdmissionGate } from './lib/session-response-recovery/admission.js';
+ import { createSseBoundaryTracker, registerOpenCodeProxy, writeSseChunkWithBackpressure } from './lib/opencode/proxy.js';
+ 
+ const listen = (app, host = '127.0.0.1') => new Promise((resolve, reject) => {
+@@ -85,6 +89,118 @@ describe('OpenCode proxy SSE forwarding', () => {
+     upstreamServer = undefined;
+   });
+ 
++  it.each(['interrupt', 'abort'])('completes the authenticated %s response before a pending mutation body finishes, retaining its fence', async action => {
++    const dataDir = await mkdtemp(path.join(tmpdir(), 'recovery-stop-proxy-'));
++    const owner = await createResponseRecoveryOwner({ dataDir, namespace: 'test', client: () => ({}), archiveStore: () => ({}) });
++    let finish;
++    let arrived;
++    const pending = new Promise(resolve => { arrived = resolve; });
++    let stops = 0;
++    const upstream = express();
++    upstream.post('/api/session/ses_1/prompt', (_req, res) => {
++      // Withhold an actual body byte. Sending the full Content-Length and only
++      // delaying end() lets clients reuse the socket before this server ends it.
++      res.writeHead(200, { 'content-type': 'application/json', 'content-length': 2 });
++      res.write('{'); finish = () => res.end('}'); arrived();
++    });
++    upstream.post(`/api/session/ses_1/${action}`, (_req, res) => { stops++; res.json({ interrupted: true }); });
++    upstreamServer = await listen(upstream);
++    const port = upstreamServer.address().port;
++    const app = express();
++    app.use((req, res, next) => req.headers['x-test-auth'] === 'yes' ? next() : res.sendStatus(401));
++    app.use(owner.beforeRequest);
++    registerOpenCodeProxy(app, {
++      fs: {}, os: {}, path, OPEN_CODE_READY_GRACE_MS: 0, responseRecovery: owner,
++      getRuntime: () => ({ openCodePort: port, isOpenCodeReady: true }),
++      getOpenCodeAuthHeaders: () => ({}), buildOpenCodeUrl: route => `http://127.0.0.1:${port}${route}`, ensureOpenCodeApiPrefix: () => {},
++    });
++    proxyServer = await listen(app);
++    const base = `http://127.0.0.1:${proxyServer.address().port}/api/session/ses_1`;
++    const headers = { 'x-test-auth': 'yes' };
++    let response;
++    let drain;
++    try {
++      let promptCompleted = false;
++      response = fetch(`${base}/prompt`, { method: 'POST', headers }).then(res => res.text()).then(body => { promptCompleted = true; return body; });
++      await pending;
++      let drained = false;
++      drain = owner.admissions.drain('ses_1').then(() => { drained = true; });
++      expect((await fetch(`${base}/${action}`, { method: 'POST' })).status).toBe(401);
++      expect(stops).toBe(0);
++      // Suspension must not make the safety action queue behind the response it stops.
++      const suspended = owner.admissions.suspend();
++      const stopping = fetch(`${base}/${action}`, { method: 'POST', headers }).then(async res => ({ status: res.status, body: await res.json() }));
++      const result = await Promise.race([stopping, new Promise(resolve => setTimeout(() => resolve(null), 500))]);
++      expect(result).toEqual({ status: 200, body: { interrupted: true } });
++      expect(promptCompleted).toBe(false);
++      expect(stops).toBe(1); expect(drained).toBe(false);
++      finish(); await response; await drain; await suspended;
++      owner.admissions.resume();
++      const uncertain = owner.admissions.begin('ses_1'); uncertain.finish(false);
++      expect((await fetch(`${base}/${action}`, { method: 'POST', headers })).status).toBe(200);
++      expect(owner.isReserved('ses_1')).toBe(true);
++      expect((await fetch(`${base}/prompt`, { method: 'POST', headers })).status).toBe(409);
++    } finally {
++      finish?.(); await response; await drain;
++      await owner.stop().catch(() => {});
++      await rm(dataDir, { recursive: true, force: true });
++    }
++  });
++
++  it('drains started streamed mutation admissions and fences a truncated response', async () => {
++    const admissions = createRecoveryAdmissionGate({ isReserved: () => false });
++    let complete;
++    const arrived = new Promise(resolve => { complete = resolve; });
++    let finish;
++    const upstream = express();
++    upstream.post('/api/session/ses_1/prompt', (_req, res) => {
++      res.writeHead(200, { 'content-type': 'application/json' });
++      res.write('{'); finish = () => res.end('}'); complete();
++    });
++    upstream.post('/api/session/ses_2/prompt', (_req, res) => {
++      res.writeHead(200); res.write('{'); setTimeout(() => res.destroy(), 10);
++    });
++    upstreamServer = await listen(upstream);
++    const port = upstreamServer.address().port;
++    const app = express();
++    registerOpenCodeProxy(app, {
++      fs: {}, os: {}, path, OPEN_CODE_READY_GRACE_MS: 0, responseRecovery: { admissions },
++      getRuntime: () => ({ openCodePort: port, isOpenCodeReady: true }),
++      getOpenCodeAuthHeaders: () => ({}), buildOpenCodeUrl: route => `http://127.0.0.1:${port}${route}`, ensureOpenCodeApiPrefix: () => {},
++    });
++    proxyServer = await listen(app);
++    const base = `http://127.0.0.1:${proxyServer.address().port}`;
++    const response = fetch(`${base}/api/session/ses_1/prompt`, { method: 'POST' }).then(res => res.text());
++    await arrived;
++    let drained = false;
++    const drain = admissions.drain('ses_1').then(() => { drained = true; });
++    await new Promise(resolve => setTimeout(resolve, 10));
++    expect(drained).toBe(false);
++    finish(); await response; await drain;
++    await fetch(`${base}/api/session/ses_2/prompt`, { method: 'POST' }).then(res => res.text()).catch(() => {});
++    await expect(admissions.drain('ses_2')).rejects.toThrow('admission-uncertain');
++  });
++
++  it('rejects a request captured before an upstream transition while readiness held it', async () => {
++    const admissions = createRecoveryAdmissionGate({ isReserved: () => false });
++    let ready = false;
++    let forwards = 0;
++    const upstream = express(); upstream.post('/api/session/ses_1/prompt', (_req, res) => { forwards++; res.json({}); });
++    upstreamServer = await listen(upstream);
++    const port = upstreamServer.address().port;
++    const app = express();
++    registerOpenCodeProxy(app, {
++      fs: {}, os: {}, path, OPEN_CODE_READY_GRACE_MS: 10000, responseRecovery: { admissions },
++      getRuntime: () => ({ openCodePort: port, isOpenCodeReady: ready, openCodeNotReadySince: 0 }),
++      getOpenCodeAuthHeaders: () => ({}), buildOpenCodeUrl: route => `http://127.0.0.1:${port}${route}`, ensureOpenCodeApiPrefix: () => {},
++    });
++    proxyServer = await listen(app);
++    const response = fetch(`http://127.0.0.1:${proxyServer.address().port}/api/session/ses_1/prompt`, { method: 'POST' });
++    await new Promise(resolve => setTimeout(resolve, 20));
++    await admissions.suspend(); admissions.resume(); ready = true;
++    expect((await response).status).toBe(409); expect(forwards).toBe(0);
++  });
++
+   it('forwards event streams with nginx-safe headers', async () => {
+     let seenAuthorization = null;
+ 

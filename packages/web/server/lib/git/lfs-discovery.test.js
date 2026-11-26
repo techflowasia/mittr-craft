@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { discoverLfs, parseLfsPointer, parseTreeObjects, scanLfsFiles, scanLfsPushObjects, resolveLfsPushConfig, LFS_DISCOVERY_LIMITS } from './lfs-discovery.js';
+import { createLfsFileScanner, discoverLfs, parseLfsPointer, scanLfsPushObjects, resolveLfsPushConfig, LFS_DISCOVERY_LIMITS } from './lfs-discovery.js';
 
 const OID = 'a'.repeat(64);
 const pointer = (size = 42) => [
@@ -10,6 +10,12 @@ const pointer = (size = 42) => [
 ].join('\n');
 const configOutput = (records) => records.map(([key, value]) => `${key}\n${value}\0`).join('');
 const attributesOutput = (records) => records.map(([path, value]) => `${path}\0filter\0${value}\0`).join('');
+const canonicalFilters = [
+  ['filter.lfs.clean', 'git-lfs clean -- %f'],
+  ['filter.lfs.smudge', 'git-lfs smudge -- %f'],
+  ['filter.lfs.process', 'git-lfs filter-process'],
+  ['filter.lfs.required', 'true'],
+];
 
 const input = (overrides = {}) => ({
   attributesOutput: attributesOutput([['assets/model.bin', 'lfs']]),
@@ -32,8 +38,8 @@ const scanFixture = (files, { attribute = () => 'unspecified', transform = (_arg
       output = Buffer.from(attributesOutput(paths.map((file) => [file, attribute(file)])));
     } else if (args[1] === '--batch-check') {
       output = Buffer.from(paths.map((ref) => {
-        const { oid, file } = ref.startsWith('HEAD:') ? byPath.get(ref.slice('HEAD:'.length)) : { oid: ref, file: objects.get(ref) };
-        return `${oid} ${file.type ?? 'blob'} ${Buffer.byteLength(file.content)}\n`;
+        const file = objects.get(ref);
+        return `${ref} ${file.type ?? 'blob'} ${Buffer.byteLength(file.content)}\n`;
       }).join(''));
     } else {
       output = Buffer.concat(paths.flatMap((oid) => {
@@ -45,14 +51,14 @@ const scanFixture = (files, { attribute = () => 'unspecified', transform = (_arg
     expect(output.length).toBeLessThanOrEqual(LFS_DISCOVERY_LIMITS.maxBatchBytes);
     return transform(args, output, calls.length);
   };
-  const filesOutput = () => Buffer.from(files.map((file) => `${file.path}\0`).join(''));
-  // `ls-tree -rz -l` for the given paths, in Git's own record shape.
-  const treeListing = (paths) => paths.map((path) => {
-    const { oid, file } = byPath.get(path);
-    return `100644 blob ${oid} ${String(Buffer.byteLength(file.content)).padStart(7)}\t${path}\0`;
-  }).join('');
-  return { calls, treeListing, run: () => scanLfsFiles(filesOutput(), query),
-    runWithTree: (listing) => scanLfsFiles(filesOutput(), query, [], parseTreeObjects(listing)),
+  // Stage-zero index entries name an object id but no size, as `ls-files --stage` does.
+  const indexEntries = new Map([...byPath].map(([path, { oid }]) => [path, { oid, type: 'blob' }]));
+  const scanner = createLfsFileScanner(query);
+  return { calls, query, scanner, indexEntries,
+    run: async () => {
+      await scanner.scanBatch(files.map((file) => file.path), indexEntries);
+      return scanner.result();
+    },
     runPush: () => scanLfsPushObjects(Buffer.from([...objects.keys()].map((oid) => `${oid}\n`).join('')), query) };
 };
 
@@ -113,32 +119,103 @@ describe('LFS publication discovery', () => {
   });
 });
 
-describe('incremental LFS file discovery', () => {
-  it('reads sizes from the tree listing and asks Git only for paths it lacks', async () => {
-    const files = Array.from({ length: 2_000 }, (_, index) => ({ path: `file-${index}`, content: `ordinary ${index}` }));
-    files.push({ path: 'late-pointer', content: pointer() });
-    const fixture = scanFixture(files);
-    const listed = await fixture.runWithTree(fixture.treeListing(files.map((file) => file.path)));
-    expect(listed.pointerSamples.map((sample) => sample.path)).toEqual(['late-pointer']);
-    expect(fixture.calls.filter((call) => call.args.includes('--batch-check'))).toHaveLength(0);
+describe.each([['checkout', discoverLfs], ['publication', resolveLfsPushConfig]])('LFS configuration validation for %s', (_label, resolve) => {
+  const read = (overrides) => resolve(input({ lfsConfigOutput: '', effectiveConfigOutput: '', ...overrides }));
 
-    // A path the listing lacks is still resolved by Git, with the same result.
-    const partial = scanFixture(files);
-    const result = await partial.runWithTree(partial.treeListing(files.slice(0, 10).map((file) => file.path)));
-    expect(result.pointerSamples.map((sample) => sample.path)).toEqual(['late-pointer']);
-    expect(partial.calls.filter((call) => call.args.includes('--batch-check')).length).toBeGreaterThan(0);
+  it.each([1, 2])('accepts %i copies of canonical effective filters', (copies) => {
+    expect(() => read({ effectiveConfigOutput: configOutput(Array.from({ length: copies }, () => canonicalFilters).flat()) })).not.toThrow();
   });
 
-  it('parses long and short tree records and rejects anything else', () => {
-    const oid = 'a'.repeat(40);
-    const entries = parseTreeObjects([
-      `100644 blob ${oid}      12\tsrc/a.ts`, `160000 commit ${oid}       -\tvendor/child`, `100644 blob ${oid}\tshort`,
-    ].map((record) => `${record}\0`).join(''));
-    expect(entries.get('src/a.ts')).toEqual({ type: 'blob', oid, size: 12 });
-    expect(entries.get('vendor/child')).toEqual({ type: 'commit', oid, size: 0 });
-    // A short record carries no size; that path is left to Git.
-    expect(entries.has('short')).toBe(false);
-    expect(() => parseTreeObjects('garbage\0')).toThrow();
+  it.each(['filter.lfs.clean', 'filter.lfs.smudge', 'filter.lfs.process'])('rejects conflicting %s values in either order', (key) => {
+    const canonical = canonicalFilters.find(([filter]) => filter === key);
+    for (const records of [[canonical, [key, 'sh -c unsafe']], [[key, 'sh -c unsafe'], canonical]]) {
+      expect(() => read({ effectiveConfigOutput: configOutput(records) }))
+        .toThrow(expect.objectContaining({ code: 'INVALID_LFS_DISCOVERY_INPUT' }));
+    }
+  });
+
+  it.each(['filter.lfs.clean', 'filter.lfs.smudge', 'filter.lfs.process'])('rejects identical unsafe %s values', (key) => {
+    const record = [key, 'sh -c unsafe'];
+    expect(() => read({ effectiveConfigOutput: configOutput([record, record]) }))
+      .toThrow(expect.objectContaining({ code: 'INVALID_LFS_DISCOVERY_INPUT' }));
+  });
+
+  it.each([
+    ['lfs.customtransfer.bad.path', '/tmp/program'],
+    ['lfs.customtransfer.bad.args', '--execute'],
+    ['lfs.standalonetransferagent', 'custom'],
+  ])('rejects %s alongside repeated canonical filters', (key, value) => {
+    expect(() => read({ effectiveConfigOutput: configOutput([...canonicalFilters, ...canonicalFilters, [key, value]]) }))
+      .toThrow(expect.objectContaining({ code: 'UNSAFE_LFS_EXECUTABLE_CONFIG' }));
+  });
+
+  it.each(['lfs.url', 'lfs.pushurl', 'lfs.storage', 'remote.origin.lfsurl'])('keeps duplicate effective %s values strict', (key) => {
+    const record = [key, 'https://example.com/storage'];
+    expect(() => read({ effectiveConfigOutput: configOutput([record, record]) })).toThrow(`contains duplicate ${key}`);
+  });
+
+  it('keeps duplicate committed metadata strict', () => {
+    const record = ['lfs.url', 'https://example.com/storage'];
+    expect(() => read({ lfsConfigOutput: configOutput([record, record]) })).toThrow('contains duplicate lfs.url');
+  });
+
+  it('rejects repeated non-canonical required settings', () => {
+    const record = ['filter.lfs.required', 'false'];
+    expect(() => read({ effectiveConfigOutput: configOutput([record, record]) })).toThrow('contains duplicate filter.lfs.required');
+  });
+
+  it.each(['constructor', '__proto__'])('keeps inherited filter name %s rejected', (key) => {
+    expect(() => read({ effectiveConfigOutput: configOutput([[key, 'value']]) }))
+      .toThrow(expect.objectContaining({ code: 'UNSAFE_LFS_EXECUTABLE_CONFIG' }));
+    expect(() => read({ effectiveConfigOutput: configOutput([[key, 'value'], [key, 'value']]) }))
+      .toThrow(expect.objectContaining({ code: 'INVALID_LFS_DISCOVERY_INPUT' }));
+  });
+
+  it.each([
+    ['filter.lfs.clean\ngit-lfs clean -- %f', 'incomplete'],
+    ['filter.lfs.clean\0', 'malformed'],
+    ['filter.lfs.clean\n\0', 'malformed'],
+  ])('rejects invalid effective config %j', (output, message) => {
+    expect(() => read({ effectiveConfigOutput: output })).toThrow(message);
+  });
+});
+
+describe('incremental LFS file discovery', () => {
+  it('processes an unbounded listing in bounded file batches', async () => {
+    const files = Array.from({ length: 10_000 }, (_, index) => ({ path: `file-${index}`, content: 'ordinary' }));
+    files.push({ path: 'late-pointer', content: pointer() });
+    const fixture = scanFixture(files);
+    const { scanner } = fixture;
+    for (let offset = 0; offset < files.length; offset += 37) {
+      await scanner.scanBatch(files.slice(offset, offset + 37).map((file) => file.path), fixture.indexEntries);
+    }
+    expect(scanner.result().pointerSamples.map((sample) => sample.path)).toEqual(['late-pointer']);
+    expect(fixture.calls.every((call) => call.bytes <= LFS_DISCOVERY_LIMITS.maxBatchBytes)).toBe(true);
+  });
+
+  it('resolves sizes of stage-zero object ids through cat-file --batch-check', async () => {
+    const files = Array.from({ length: 2_000 }, (_, index) => ({ path: `file-${index}`, content: `ordinary ${index}` }));
+    files.push({ path: 'late-pointer', content: pointer() });
+    const inputs = [];
+    const fixture = scanFixture(files);
+    const query = async (args, data) => {
+      if (args[1] === '--batch-check') inputs.push(data.toString());
+      return fixture.query(args, data);
+    };
+    const scanner = createLfsFileScanner(query);
+    await scanner.scanBatch(files.map((file) => file.path), fixture.indexEntries);
+    expect(scanner.result().pointerSamples.map((sample) => sample.path)).toEqual(['late-pointer']);
+    expect(inputs).toHaveLength(Math.ceil(files.length / LFS_DISCOVERY_LIMITS.fileBatchSize));
+    const asked = inputs.join('').split('\n').filter(Boolean);
+    expect(asked).toEqual(files.map((file) => fixture.indexEntries.get(file.path).oid));
+    expect(asked.some((ref) => ref.startsWith('HEAD:'))).toBe(false);
+  });
+
+  it('rejects a tracked file without an index object id before querying Git', async () => {
+    let queried = false;
+    const scanner = createLfsFileScanner(async () => { queried = true; });
+    await expect(scanner.scanBatch(['file'], new Map())).rejects.toMatchObject({ code: 'INVALID_LFS_DISCOVERY_INPUT' });
+    expect(queried).toBe(false);
   });
 
   it('covers 10000 ordinary paths with bounded batches and no retained samples', async () => {
@@ -162,12 +239,21 @@ describe('incremental LFS file discovery', () => {
     expect(fixture.calls).toHaveLength(6);
   });
 
+  it('treats an empty filter value from `filter=` as not LFS', async () => {
+    const fixture = scanFixture([
+      { path: 'docs/small.pdf', content: 'ordinary' },
+      { path: 'docs/large.pdf', content: 'ordinary' },
+    ], { attribute: (file) => file === 'docs/small.pdf' ? '' : 'lfs' });
+    expect(discoverLfs(input(await fixture.run())).attributePaths).toEqual(['docs/large.pdf']);
+  });
+
   it('skips large blobs and absent superproject gitlink objects without fetching content', async () => {
     const fixture = scanFixture([{ path: 'large', content: Buffer.alloc(2 * 1024 * 1024) }]);
     expect(await fixture.run()).toMatchObject({ pointerScanComplete: true, pointerSamples: [] });
     expect(fixture.calls).toHaveLength(2);
-    await expect(scanLfsFiles('vendor/child\0', async () => { throw new Error('gitlink must not be queried'); }, ['vendor/child']))
-      .resolves.toEqual({ pointerScanComplete: true, pointerSamples: [], attributesOutput: '' });
+    const gitlinkScanner = createLfsFileScanner(async () => { throw new Error('gitlink must not be queried'); }, ['vendor/child']);
+    await gitlinkScanner.scanBatch(['vendor/child'], new Map());
+    expect(gitlinkScanner.result()).toEqual({ pointerScanComplete: true, pointerSamples: [], attributesOutput: '' });
   });
 
   it.each(['check-attr', '--batch-check', '--batch'])('rejects truncated %s output', async (command) => {
@@ -177,10 +263,12 @@ describe('incremental LFS file discovery', () => {
     await expect(fixture.run()).rejects.toThrow();
   });
 
-  it.each(['missing', 'wrong-oid', 'extra-content'])('rejects invalid object responses: %s', async (mode) => {
+  it.each(['missing', 'other-object', 'other-type', 'wrong-oid', 'extra-content'])('rejects invalid object responses: %s', async (mode) => {
     const fixture = scanFixture([{ path: 'file', content: 'ordinary' }], {
       transform: (args, output) => {
-        if (mode === 'missing' && args[1] === '--batch-check') return Buffer.from('HEAD:file missing\n');
+        if (mode === 'missing' && args[1] === '--batch-check') return Buffer.from(`${'1'.padStart(40, '0')} missing\n`);
+        if (mode === 'other-object' && args[1] === '--batch-check') return Buffer.from(`${'f'.repeat(40)} blob 8\n`);
+        if (mode === 'other-type' && args[1] === '--batch-check') return Buffer.from(`${'1'.padStart(40, '0')} commit 8\n`);
         if (args[1] !== '--batch') return output;
         if (mode === 'wrong-oid') return Buffer.from(output.toString().replace(/^0/, 'f'));
         if (mode === 'extra-content') return Buffer.concat([output, Buffer.from('unexpected')]);
@@ -190,18 +278,51 @@ describe('incremental LFS file discovery', () => {
     await expect(fixture.run()).rejects.toThrow();
   });
 
-  it('keeps pointer and attribute public limits across batches', async () => {
-    for (const attributes of [false, true]) {
-      const fixture = scanFixture(Array.from({ length: 257 }, (_, index) => ({ path: `file-${index}`, content: attributes ? 'ordinary' : pointer() })),
-        { attribute: () => attributes ? 'lfs' : 'unspecified' });
-      await expect(fixture.run()).rejects.toMatchObject({ code: 'LFS_DISCOVERY_LIMIT_EXCEEDED' });
-    }
+  it.each([257, 3_000])('accepts %i LFS files with long paths and keeps bounded evidence', async (count) => {
+    const directory = `assets/${'deeply-nested-directory/'.repeat(8)}`;
+    const files = Array.from({ length: count }, (_, index) => ({ path: `${directory}file-${index}.bin`, content: pointer() }));
+    const fixture = scanFixture(files, { attribute: () => 'lfs' });
+    const scan = await fixture.run();
+    expect(scan.pointerSamples).toHaveLength(LFS_DISCOVERY_LIMITS.maxPointerSamples);
+    expect(Buffer.byteLength(scan.attributesOutput)).toBeLessThanOrEqual(LFS_DISCOVERY_LIMITS.maxAttributesBytes);
+    const result = discoverLfs(input(scan));
+    expect(result.needed).toBe(true);
+    expect(result.attributePaths).toHaveLength(LFS_DISCOVERY_LIMITS.maxPublicRecords);
   });
 
-  it('does not query unsafe or incomplete paths and enforces the listing byte bound', async () => {
-    for (const files of ['file', '../secret\0', 'file\ncommand\0', 'x'.repeat(LFS_DISCOVERY_LIMITS.maxFilesBytes + 1)]) {
+  it('keeps a pattern-attributed LFS checkout bounded and derives its SSH hydration endpoint', async () => {
+    const files = Array.from({ length: 1_500 }, (_, index) => ({
+      path: `assets/model-${index}.glb`,
+      content: pointer().replace(OID, index.toString(16).padStart(64, '0')),
+    }));
+    files.push({ path: 'docs/notes.txt', content: 'ordinary' });
+    const fixture = scanFixture(files, {
+      attribute: (file) => file.endsWith('.glb') ? 'lfs' : 'unspecified',
+    });
+    const scan = await fixture.run();
+    expect(scan.pointerSamples).toHaveLength(LFS_DISCOVERY_LIMITS.maxPointerSamples);
+    expect(Buffer.byteLength(scan.attributesOutput)).toBeLessThanOrEqual(LFS_DISCOVERY_LIMITS.maxAttributesBytes);
+    const result = discoverLfs(input({ ...scan, gitRemoteUrl: 'git@github.com:GaryBer/anna.git' }));
+    expect(result.needed).toBe(true);
+    expect(result.attributePaths).toHaveLength(LFS_DISCOVERY_LIMITS.maxPublicRecords);
+    expect(result.endpoint).toMatchObject({
+      status: 'resolved',
+      source: 'git-remote',
+      candidate: { endpoint: 'https://github.com/GaryBer/anna.git/info/lfs' },
+    });
+  });
+
+  it('validates every pointer, including those past the kept samples', async () => {
+    const files = Array.from({ length: 1_500 }, (_, index) => ({ path: `file-${index}`, content: pointer() }));
+    files.push({ path: 'late-broken', content: pointer().replace('size 42', 'size forty-two') });
+    await expect(scanFixture(files).run()).rejects.toMatchObject({ code: 'INVALID_LFS_DISCOVERY_INPUT' });
+  });
+
+  it('does not query unsafe or oversized paths', async () => {
+    for (const file of ['../secret', 'file\ncommand', 'x'.repeat(LFS_DISCOVERY_LIMITS.maxBatchBytes)]) {
       let queried = false;
-      await expect(scanLfsFiles(files, async () => { queried = true; })).rejects.toThrow();
+      const scanner = createLfsFileScanner(async () => { queried = true; });
+      await expect(scanner.scanBatch([file], new Map([[file, { oid: 'a'.repeat(40), type: 'blob' }]]))).rejects.toThrow();
       expect(queried).toBe(false);
     }
   });
@@ -227,6 +348,14 @@ describe('Git LFS discovery', () => {
       },
       client: { status: 'available' },
     });
+  });
+
+  it('derives the LFS endpoint of an HTTPS remote that names a user without the name', () => {
+    const gitRemoteUrl = 'https://myorg@dev.azure.com/myorg/app/_git/app';
+    expect(discoverLfs(input({ gitRemoteUrl })).endpoint.candidate.endpoint)
+      .toBe('https://dev.azure.com/myorg/app/_git/app/info/lfs');
+    expect(resolveLfsPushConfig({ ...input({ gitRemoteUrl }), lfsConfigOutput: '', effectiveConfigOutput: '' }).endpoint.endpoint)
+      .toBe('https://dev.azure.com/myorg/app/_git/app.git/info/lfs');
   });
 
   it('uses explicit .lfsconfig authority before remote-specific input', () => {
@@ -259,6 +388,33 @@ describe('Git LFS discovery', () => {
       remoteLfsUrls: [{ remote: 'origin', url: 'https://remote.example.net/repository' }],
     }));
     expect(withoutCommitted.endpoint).toMatchObject({ candidate: { endpoint: 'https://local.example.net/repository' } });
+  });
+
+  it.each([
+    ['git@github.com:GaryBer/anna.git', 'https://github.com/GaryBer/anna.git/info/lfs'],
+    ['ssh://git@github.com/GaryBer/anna.git', 'https://github.com/GaryBer/anna.git/info/lfs'],
+    ['ssh://git@github.com:2222/GaryBer/anna.git', 'https://github.com/GaryBer/anna.git/info/lfs'],
+    ['git@example.com:repository', 'https://example.com/repository.git/info/lfs'],
+    ['ssh://git@example.com/group/repository', 'https://example.com/group/repository.git/info/lfs'],
+    ['ssh://git@example.com/group/re%23po.git', 'https://example.com/group/re%23po.git/info/lfs'],
+    ['ssh://git@example.com/group/%252e%252e/evil.git', 'https://example.com/group/%252e%252e/evil.git/info/lfs'],
+  ])('derives the HTTPS LFS endpoint Git LFS uses for SSH remote %s', (gitRemoteUrl, expected) => {
+    const result = discoverLfs(input({ gitRemoteUrl }));
+    expect(result.endpoint).toMatchObject({
+      status: 'resolved',
+      source: 'git-remote',
+      candidate: { kind: 'https', endpoint: expected },
+    });
+  });
+
+  it('keeps an explicit HTTPS LFS endpoint ahead of the SSH-derived one', () => {
+    const result = discoverLfs(input({
+      gitRemoteUrl: 'git@github.com:GaryBer/anna.git',
+      lfsConfigOutput: configOutput([['lfs.url', 'https://lfs.example.net/storage']]),
+    }));
+    expect(result.endpoint).toMatchObject({
+      status: 'resolved', source: 'lfsconfig', candidate: { endpoint: 'https://lfs.example.net/storage' },
+    });
   });
 
   it('supports an HTTPS LFS endpoint with an SSH Git remote and exposes cross-host facts', () => {

@@ -1,83 +1,80 @@
-/**
- * The composer's autocomplete popups.
- *
- * Four pickers, one at a time: the command palette, the inline skill picker,
- * the snippet picker and the file/agent mention picker. Which one is open is
- * decided by the prompt language, not here.
- *
- * They are positioned differently depending on the composer's shape. In the
- * normal composer each picker anchors itself to the composer edge, which its
- * own styles handle. In desktop focus mode the composer fills the surface, so
- * a picker pinned to its edge would sit far from the text — there they are
- * placed at the caret instead, which is what `overlayPosition` carries.
- */
 
 import React from 'react';
+import { AnimatePresence } from 'motion/react';
 
+import { EmojiAutocomplete, type EmojiAutocompleteHandle } from '@/components/emoji/EmojiAutocomplete';
 import { CommandAutocomplete, type CommandAutocompleteHandle, type CommandInfo } from '../../CommandAutocomplete';
 import { FileMentionAutocomplete, type FileMentionHandle } from '../../FileMentionAutocomplete';
+import type { GuestMention } from '@/lib/guests/mentions';
 import { SkillAutocomplete, type SkillAutocompleteHandle } from '../../SkillAutocomplete';
 import { SnippetAutocomplete, type SnippetAutocompleteHandle } from '../../SnippetAutocomplete';
+import type { Session } from '@/lib/opencode/model';
 import type { AutocompleteKind } from '../language/triggers';
+import { GlassPopupMotion } from './GlassPopupMotion';
 
 export interface AutocompleteOverlayPosition {
     top: number;
     left: number;
+    width: number;
     place: 'above' | 'below';
     maxHeight: number;
 }
 
-/** Widths each picker asks for when placed at the caret. */
-const CARET_PLACED_WIDTH: Record<AutocompleteKind, number> = {
-    mention: 520,
-    command: 450,
-    snippet: 450,
-    skill: 360,
-};
-
-/**
- * Caret placement, or undefined to let the picker anchor to the composer.
- * Only focus mode uses the caret; everywhere else the composer is short
- * enough that its edge is close to the text.
- */
-function caretStyle(
-    kind: AutocompleteKind,
-    position: AutocompleteOverlayPosition | null,
-): React.CSSProperties | undefined {
+function caretStyle(position: AutocompleteOverlayPosition | null): React.CSSProperties | undefined {
     if (!position) return undefined;
     return {
         left: `${position.left}px`,
+        right: 'auto',
         top: `${position.top}px`,
         bottom: 'auto',
-        width: `min(${CARET_PLACED_WIDTH[kind]}px, calc(100% - ${position.left + 8}px))`,
+        width: `${position.width}px`,
+        maxWidth: `${position.width}px`,
         maxHeight: `${position.maxHeight}px`,
+        marginBottom: 0,
         transform: position.place === 'above' ? 'translateY(-100%)' : undefined,
     };
 }
 
-export interface ComposerAutocompletePopupsProps {
-    /** Which picker is open, if any. */
+interface ComposerAutocompletePopupsProps {
     open: AutocompleteKind | null;
     query: string;
-    /** Caret placement in focus mode; null when the picker anchors itself. */
     overlayPosition: AutocompleteOverlayPosition | null;
     commandRef: React.RefObject<CommandAutocompleteHandle | null>;
     skillRef: React.RefObject<SkillAutocompleteHandle | null>;
     snippetRef: React.RefObject<SnippetAutocompleteHandle | null>;
     mentionRef: React.RefObject<FileMentionHandle | null>;
+    emojiRef: React.RefObject<EmojiAutocompleteHandle | null>;
     onCommandSelect: (command: CommandInfo) => void;
     onSkillSelect: (skillName: string) => void;
     onSnippetSelect: (snippet: unknown, trigger: string) => void;
+    snippetDraftText?: string;
+    onSnippetDraftSaved?: (name: string) => void;
     onFileSelect: (file: { name: string; path: string; relativePath?: string }) => void;
     onAgentSelect: (agentName: string) => void;
+    onSessionSelect?: (session: Session) => void;
+    onExtensionMentionSelect?: (mention: GuestMention) => void;
+    currentSessionId: string | null;
+    onEmojiSelect: (emoji: string) => void;
     onClose: () => void;
 }
 
-export function ComposerAutocompletePopups(props: ComposerAutocompletePopupsProps) {
-    const { open, query, overlayPosition, onClose } = props;
-    if (!open) return null;
+function ComposerAutocompletePopupsView(props: ComposerAutocompletePopupsProps) {
+    const { open } = props;
+    return (
+        <AnimatePresence>
+            {open ? (
+                <GlassPopupMotion key={open} pace="brief" className="absolute inset-x-0 top-0 z-[100] h-0 origin-top-left rtl:origin-top-right">
+                    <AutocompletePopup {...props} open={open} />
+                </GlassPopupMotion>
+            ) : null}
+        </AnimatePresence>
+    );
+}
 
-    const style = caretStyle(open, overlayPosition);
+function AutocompletePopup(props: ComposerAutocompletePopupsProps & { open: AutocompleteKind }) {
+    const { open, query, overlayPosition, onClose } = props;
+
+    const style = caretStyle(overlayPosition);
 
     switch (open) {
         case 'command':
@@ -106,6 +103,8 @@ export function ComposerAutocompletePopups(props: ComposerAutocompletePopupsProp
                     ref={props.snippetRef}
                     searchQuery={query}
                     onSnippetSelect={props.onSnippetSelect}
+                    draftText={props.snippetDraftText}
+                    onDraftSaved={props.onSnippetDraftSaved}
                     onClose={onClose}
                     style={style}
                 />
@@ -117,9 +116,24 @@ export function ComposerAutocompletePopups(props: ComposerAutocompletePopupsProp
                     searchQuery={query}
                     onFileSelect={props.onFileSelect}
                     onAgentSelect={props.onAgentSelect}
+                    onSessionSelect={props.onSessionSelect}
+                    onExtensionMentionSelect={props.onExtensionMentionSelect}
+                    currentSessionId={props.currentSessionId}
+                    onClose={onClose}
+                    style={style}
+                />
+            );
+        case 'emoji':
+            return (
+                <EmojiAutocomplete
+                    ref={props.emojiRef}
+                    searchQuery={query}
+                    onEmojiSelect={props.onEmojiSelect}
                     onClose={onClose}
                     style={style}
                 />
             );
     }
 }
+
+export const ComposerAutocompletePopups = React.memo(ComposerAutocompletePopupsView);
